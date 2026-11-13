@@ -39,3 +39,6 @@ deps/*
 *~
 .DS_Store
 Thumbs.db
+
+# Release folders and archives written by `nim package`
+/dist/

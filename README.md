@@ -26,6 +26,36 @@ cross-builds SDL 3.4.18 with zig (`tools/sdl3-windows.sh`: git, CMake, Ninja; on
 `nim depsCheck` verifies that `atlas.lock`, `nim.cfg` and `deps/` agree
 (`tools/deps.nim`). `nim help` lists every task.
 
+## Packaging
+
+`nim package` builds both release binaries (x86-64-v3, static SDL3; the Windows one as
+`nim winRelease` does) and writes a self-contained folder and an archive for each OS into
+`dist/`:
+
+```
+dist/viewSEG-<version>-linux-x64/      and  dist/viewSEG-<version>-linux-x64.tar.gz
+dist/viewSEG-<version>-windows-x64/    and  dist/viewSEG-<version>-windows-x64.zip
+  viewSEG | viewSEG.exe
+  vendormaps/   vendor header maps (*.nif): parseSEG's and this repository's vendormaps/
+  config/       settings; its presence makes the release portable
+  assets/       themes, fonts (this repository's assets/)
+  logs/         session logs
+  licences/     viewSEG's licence and those of everything linked or bundled (see its README)
+  docs/         README.md, QUICKSTART.md (docs/user/), BUILD.txt (commits it was built from)
+```
+
+The version comes from `viewSEG.nimble`. Running it again replaces the folders and
+archives. It never reaches the network: the Windows SDL3 build must exist (run
+`nim winRelease` once). `nim -d:packageTargets=linux package` (or `windows`) packages one
+OS; `nim packageTest` packages, then checks `dist/` and runs the packaged Linux binary
+(`tests/package/tpackage.nim`).
+
+**Portable mode.** While `config/` next to the executable exists and is writable, viewSEG
+writes everything (settings, `logs/`, `cache/`) inside its own folder. Without it, or in a
+read-only location such as `Program Files`, it uses the per-user directories of the OS.
+`viewSEG --paths` prints the directories in use and exits; `viewSEG --version` prints the
+version.
+
 ## License
 
 MIT

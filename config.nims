@@ -133,6 +133,11 @@ task zigDebug, "Build debug binary using Zig CC with debug symbols":
   ## Compiles debug binary using Zig toolchain preserving debug symbols.
   selfExec "c -d:zigcc --cc:clang --clang.exe:\"" & zigccExe & "\" --clang.linkerexe:\"" & zigccExe & "\" --debuginfo:on src/viewSEG.nim"
 
+let winReleaseBuild = "c -d:zigcc --os:windows --cpu:amd64 --cc:clang --clang.exe:\"" &
+  zigccExe & "\" --clang.linkerexe:\"" & zigccExe & "\" --passC:\"-target x86_64-windows-gnu\"" &
+  " --passL:\"-target x86_64-windows-gnu\" -d:release -d:danger --opt:speed" &
+  " -o:bin/viewSEG.exe src/viewSEG.nim"
+
 task winRelease, "Cross-build bin/viewSEG.exe for Windows x86-64 with zig cc (no MinGW needed)":
   ## zig ships the MinGW-w64 headers and import libraries, a linker and a resource
   ## compiler (`zig rc`, used by src/viewSEG/platform/winres.nim), so this works
@@ -141,10 +146,52 @@ task winRelease, "Cross-build bin/viewSEG.exe for Windows x86-64 with zig cc (no
   ## cross-builds it (tools/sdl3-windows.sh, about two minutes, needs network).
   if buildOS != "windows":
     exec "bash tools/sdl3-windows.sh " & quoteShell(sdl3WindowsPrefix())
-  selfExec "c -d:zigcc --os:windows --cpu:amd64 --cc:clang --clang.exe:\"" & zigccExe &
-    "\" --clang.linkerexe:\"" & zigccExe & "\" --passC:\"-target x86_64-windows-gnu\"" &
-    " --passL:\"-target x86_64-windows-gnu\" -d:release -d:danger --opt:speed" &
-    " -o:bin/viewSEG.exe src/viewSEG.nim"
+  selfExec winReleaseBuild
+
+# ---------------------------------------------------------------- packaging --
+# `nim package` builds the release binaries and assembles dist/ (README.md,
+# "Packaging"); tools/package.nim does the assembly. It never reaches the
+# network: the Windows SDL3 build must already exist (`nim winRelease` makes it).
+# `nim -d:packageTargets=linux package` (or windows) packages one OS only.
+const packageTargets {.strdefine.} = "linux,windows"
+
+task package, "Build the release binaries and write dist/viewSEG-<version>-<os>-x64 and archives":
+  ## Linux: the release settings of winRelease (-d:danger, x86-64-v3) with
+  ## static SDL3, stripped, into bin/release/viewSEG. Windows: winRelease's
+  ## bin/viewSEG.exe. Then tools/package.nim writes the folders and archives.
+  if buildOS != "linux" or buildCPU != "amd64":
+    quit "nim package: needs an x86-64 Linux host (the devcontainer or CI)"
+  let root = thisDir()
+  var toolArgs = " --root:" & quoteShell(root) & " --nim:" & quoteShell(getCurrentCompilerExe())
+  let targets = packageTargets.split(',')
+  for t in targets:
+    if t notin ["linux", "windows"]:
+      quit "nim package: unknown target " & t & " in -d:packageTargets (linux, windows)"
+  if "linux" in targets:
+    let (libDir, code) = gorgeEx("pkg-config --variable=libdir sdl3")
+    if code != 0 or not fileExists(libDir.strip & "/libSDL3.a"):
+      quit "nim package: no static SDL3 (pkg-config sdl3, libSDL3.a); a release must not " &
+        "need libSDL3.so"
+    let output = root & "/bin/release/viewSEG"
+    selfExec "c --hints:off -d:release -d:danger --opt:speed --passL:-s --nimcache:" &
+      quoteShell(getEnv("HOME") & "/.cache/nim/viewSEG_package_linux") & " -o:" &
+      quoteShell(output) & " src/viewSEG.nim"
+    toolArgs.add " --linux:" & quoteShell(output)
+  if "windows" in targets:
+    let sdl = sdl3WindowsPrefix()
+    if not fileExists(sdl & "/lib/libSDL3.a"):
+      quit "nim package: no SDL3 build for Windows in " & sdl & ". Run `nim winRelease` " &
+        "once (it builds SDL3, which needs the network), then `nim package` again."
+    selfExec winReleaseBuild
+    toolArgs.add " --windows:" & quoteShell(root & "/bin/viewSEG.exe")
+  selfExec "r --hints:off tools/package.nim" & toolArgs
+
+task packageTest, "nim package, then check dist/ and run the packaged Linux binary":
+  ## Slow (two release builds when the caches are cold): not part of `nim test`.
+  ## Checks the targets of -d:packageTargets, like `nim package`.
+  let define = " -d:packageTargets=" & packageTargets
+  selfExec define & " package"
+  selfExec "c -r --hints:off" & define & " tests/package/tpackage.nim"
 
 # Every test task builds the runner tests/tester.nim once, in debug; the runner
 # compiles and runs each tests/t*.nim with the flags given after it.

@@ -92,8 +92,21 @@ jobs:
       - name: Run test suite (headless)
         run: xvfb-run -a -s "-screen 0 1920x1080x24" nim test
 
+      # dist/viewSEG-<version>-linux-x64.tar.gz; packageTest also unpacks it and runs
+      # the binary with --paths (no window, so no display needed).
+      - name: Package (Linux)
+        run: nim -d:packageTargets=linux packageTest
+
+      - name: Upload the Linux package
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewSEG-linux-x64
+          path: dist/viewSEG-*-linux-x64.tar.gz
+          if-no-files-found: error
+
   # bin/viewSEG.exe cross-built with zig, as `nim winRelease` does in the
-  # devcontainer: static SDL3 (tools/sdl3-windows.sh), no DLLs to ship.
+  # devcontainer: static SDL3 (tools/sdl3-windows.sh), no DLLs to ship; then
+  # packaged with `nim package`.
   windows-exe:
     runs-on: ubuntu-latest
     steps:
@@ -139,9 +152,14 @@ jobs:
             echo "unexpected DLL import"; exit 1
           fi
 
-      - name: Upload viewSEG.exe
+      # dist/viewSEG-<version>-windows-x64.zip around the same bin/viewSEG.exe
+      # (rebuilt from the warm cache); packageTest checks the folder and the zip.
+      - name: Package (Windows)
+        run: nim -d:packageTargets=windows packageTest
+
+      - name: Upload the Windows package
         uses: actions/upload-artifact@v4
         with:
           name: viewSEG-windows-x64
-          path: bin/viewSEG.exe
+          path: dist/viewSEG-*-windows-x64.zip
           if-no-files-found: error
