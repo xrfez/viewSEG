@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Embedded into viewSEG.exe at compile time (src/viewSEG/platform/winres.nim).
+     Without it Windows treats the program as a legacy app: Common Controls v5
+     (pre-XP look for native dialogs, menus and the tray menu), bitmap-stretched
+     blurry windows on scaled monitors, and Windows 8 compatibility shims. -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"
+          xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+  <assemblyIdentity type="win32" name="viewSEG" version="0.0.0.0" processorArchitecture="*"/>
+  <description>viewSEG seismic viewer</description>
+  <!-- Visual styles for native controls, dialogs, menus and tray menus. -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0"
+                        processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
+  <!-- Windows 10 and 11: real version numbers, current DWM behaviour, no shims. -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+  <asmv3:application>
+    <asmv3:windowsSettings>
+      <!-- Per-monitor DPI v2: crisp on every monitor, rescales when dragged between them. -->
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <!-- The A (narrow) Win32 APIs take UTF-8, like Nim strings. -->
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+      <!-- Paths longer than 260 characters (also needs the system policy). -->
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </asmv3:windowsSettings>
+  </asmv3:application>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>

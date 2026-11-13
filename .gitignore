@@ -1,0 +1,41 @@
+# Nim compiler artifacts
+nimcache/
+bin/
+htmldocs/
+*.exe
+*.out
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Tooling and dependencies
+.nimble-paths
+deps/*
+!deps/atlas.config
+.atlas/
+# tlanif model checker, cloned and built by .devcontainer/postCreate.sh
+/tools/tlanif/
+
+# Seismic sample data stays local: it is large and not redistributable.
+/exampleFiles/
+# Throwaway spikes (PLAN.md Phase 0.3)
+/spikes/
+
+# Local development environment and agent workflow files (not published)
+/.agents/
+/.claude/
+/.devcontainer/
+/.mcp/
+/PLAN.md
+/AGENTS.md
+/CLAUDE.md
+
+# Editor and OS metadata
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
