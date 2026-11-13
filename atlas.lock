@@ -71,13 +71,33 @@
       "url": "https://github.com/nim-lang/opencl",
       "commit": "7b138ac19d7f5452a74742392ffadac3d26ee397",
       "version": ""
+    },
+    "imguin": {
+      "dir": "$deps/imguin",
+      "url": "https://github.com/dinau/imguin",
+      "commit": "513c499d6a6c72686b56ffc4be284de4ad2e10cc",
+      "version": ""
+    },
+    "sdl3_nim": {
+      "dir": "$deps/sdl3",
+      "url": "https://github.com/dinau/sdl3_nim",
+      "commit": "9b34536879319193de0f80987839d04b9fdbcfed",
+      "version": ""
+    },
+    "basic2d": {
+      "dir": "$deps/basic2d",
+      "url": "https://github.com/nim-lang/basic2d",
+      "commit": "6187392211fc701067e3c206a3024d291b98804c",
+      "version": ""
     }
   },
   "nimcfg": [
     "############# begin Atlas config section ##########",
     "--noNimblePath",
     "--path:\"deps/arraymancer/src\"",
+    "--path:\"deps/basic2d\"",
     "--path:\"deps/clblast/src\"",
+    "--path:\"deps/imguin/src\"",
     "--path:\"deps/nimblas\"",
     "--path:\"deps/nimcl\"",
     "--path:\"deps/nimcuda/src\"",
@@ -85,6 +105,7 @@
     "--path:\"deps/opencl/src\"",
     "--path:\"deps/parseSEG/src\"",
     "--path:\"deps/processSEG/src\"",
+    "--path:\"deps/sdl3/src\"",
     "--path:\"deps/stb_image\"",
     "--path:\"deps/untar/src\"",
     "--path:\"deps/zip\"",
@@ -109,6 +130,8 @@
       "requires \"nim >= 2.4.0\"",
       "requires \"https://github.com/xrfez/parseSEG >= 0.11.0\"",
       "requires \"https://github.com/xrfez/processSEG >= 0.4.0\"",
+      "requires \"https://github.com/dinau/imguin >= 1.92.9.0\"",
+      "requires \"https://github.com/dinau/sdl3_nim >= 3.4.18.0\"",
       ""
     ]
   },

@@ -6,8 +6,8 @@ import std/[os, sequtils, strutils]
 
 const
   srcDir = currentSourcePath().parentDir.parentDir / "src" / "viewSEG"
-  toolkits = ["imguin", "imgui", "implot", "sdl2", "sdl3", "glfw", "nimgl", "seaqt",
-    "owlkettle", "windy", "boxy", "silky", "merenda"]
+  toolkits = ["imguin", "imgui", "implot", "sdl2", "sdl3", "sdl2_nim", "sdl3_nim", "glad",
+    "opengl", "glfw", "nimgl", "seaqt", "owlkettle", "windy", "boxy", "silky", "merenda"]
   # layer -> sibling layers (directories under src/viewSEG) it must not import
   forbidden = [
     ("core", @["ui", "gpu", "view", "platform"]),
@@ -65,5 +65,6 @@ block checkerCatchesViolations:
   # ../ui/imgui/app twice (layer ui, toolkit imgui), imguin, ../gpu, ../platform
   doAssert found.len == 5, $found
   doAssert found.anyIt("platform/theme" in it), $found
+  doAssert violations("view", "v.nim", "import sdl3_nim\nimport imguin/glad/gl\n", []).len == 2
   doAssert violations("core", "ok.nim", "import std/[os, strutils]\nimport geometry\n",
     ["ui"]).len == 0

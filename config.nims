@@ -20,6 +20,38 @@ when defined(amd64) and not defined(baselineCpu):
 
 const baseTarget = when defined(amd64): " --passC:-march=x86-64 " else: " "
 
+# ------------------------------------------------------------- GUI stack --
+# imguin compiles only the Dear ImGui add-ons that are defined.
+switch("define", "ImPlot")
+
+# Linux: SDL3 is linked statically, so the binary needs no libSDL3 at run time.
+# - sdl3_nim loads "libSDL3.so" with {.dynlib.}; --dynlibOverride turns those
+#   imports into plain symbols.
+# - imguin's impl_sdl3 links `-lSDL3`, ahead of any flag given here. ld searches
+#   every -L directory before its defaults, and a directory holding only
+#   libSDL3.a (bin/sdl3-static, a symlink) makes that -lSDL3 the static archive.
+# - pkg-config's static libs, minus SDL3's own, are what libSDL3.a needs (SDL
+#   dlopens X11, Wayland and GL itself). Its rpath is dropped: nothing to find.
+# - Without a static SDL3 (pkg-config fails), or with -d:sdlShared, the binary
+#   needs libSDL3.so.0 at run time instead.
+when defined(linux) and not defined(sdlShared):
+  let
+    (sdlLibDir, sdlMissing) = gorgeEx("pkg-config --variable=libdir sdl3")
+    sdlArchive = sdlLibDir.strip / "libSDL3.a"
+  if sdlMissing == 0 and fileExists(sdlArchive):
+    let staticDir = thisDir() / "bin" / "sdl3-static"
+    mkDir(staticDir)
+    discard gorgeEx("ln -sfn " & quoteShell(sdlArchive) & " " &
+      quoteShell(staticDir / "libSDL3.a")) # refreshed: SDL may have moved
+    var sdlDeps: seq[string]
+    for flag in gorgeEx("pkg-config --static --libs sdl3").output.splitWhitespace:
+      if flag != "-lSDL3" and not flag.startsWith("-L") and not flag.startsWith("-Wl,"):
+        sdlDeps.add flag
+    switch("dynlibOverride", "SDL3")
+    switch("passL", "-L" & quoteShell(staticDir) & " -lSDL3 " & sdlDeps.join(" "))
+  else:
+    echo "config.nims: no static SDL3 (pkg-config sdl3, libSDL3.a); linking libSDL3.so"
+
 let zigccExe =
   if findExe("zigcc").len > 0:
     "zigcc"

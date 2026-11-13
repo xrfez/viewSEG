@@ -25,11 +25,42 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # GUI system libraries: keep in step with .devcontainer/postCreate.sh.
+      # GUI build libraries, xvfb and SDL 3.4.18 from source: keep in step with
+      # the nim-dev image the devcontainer uses (Ubuntu and Debian ship no SDL 3.4).
       - name: Install system libraries
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb xauth libgl1-mesa-dri
+          sudo apt-get install -y -qq --no-install-recommends \
+            xvfb xauth libgl1-mesa-dri cmake ninja-build pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
+            libxinerama-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev \
+            libdecor-0-dev libegl-dev libgl-dev libgles-dev libdbus-1-dev libudev-dev
+
+      - name: Cache SDL3
+        id: sdl3-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/sdl3
+          key: sdl3-3.4.18-${{ runner.os }}-${{ runner.arch }}-v1
+
+      # Static and shared, like the image. config.nims links libSDL3.a (found
+      # through pkg-config), so the tests need no libSDL3.so at run time.
+      - name: Build SDL3
+        if: steps.sdl3-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone -q --depth 1 --branch release-3.4.18 \
+            https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/SDL"
+          cmake -S "$RUNNER_TEMP/SDL" -B "$RUNNER_TEMP/SDL/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/sdl3" \
+            -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DSDL_SHARED=ON -DSDL_STATIC=ON -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+          cmake --build "$RUNNER_TEMP/SDL/build"
+          cmake --install "$RUNNER_TEMP/SDL/build"
+
+      - name: Put SDL3 on pkg-config's path
+        run: |
+          echo "PKG_CONFIG_PATH=$HOME/sdl3/lib/pkgconfig" >> "$GITHUB_ENV"
+          PKG_CONFIG_PATH="$HOME/sdl3/lib/pkgconfig" pkg-config --modversion sdl3
 
       - name: Set up Nim
         uses: jiro4989/setup-nim-action@v2
@@ -56,5 +87,7 @@ jobs:
           done
           exit $status
 
+      # tests/tgui.nim opens a window and fails without a display: xvfb (Mesa
+      # llvmpipe) provides one.
       - name: Run test suite (headless)
-        run: xvfb-run -a nim test
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" nim test
