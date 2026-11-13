@@ -52,6 +52,55 @@ when defined(linux) and not defined(sdlShared):
   else:
     echo "config.nims: no static SDL3 (pkg-config sdl3, libSDL3.a); linking libSDL3.so"
 
+# Windows with zig (`nim winRelease`, also from this Linux container): SDL3 is
+# linked statically too, from tools/sdl3-windows.sh's cross-build.
+const sdl3WindowsVersion = "3.4.18" # = sdl3_nim's and the Linux SDL's version
+
+proc sdl3WindowsPrefix(): string =
+  ## Where tools/sdl3-windows.sh installs SDL3 for x86_64-windows-gnu.
+  result = getEnv("SDL3_WINDOWS_PREFIX")
+  if result.len == 0:
+    result = getEnv("HOME") & "/.cache/viewSEG/sdl3-" & sdl3WindowsVersion &
+      "-x86_64-windows-gnu"
+
+# Each fix below is for a library that takes its Windows branch while the host
+# is Linux; none needs a change under deps/.
+# - imguin's cimgui.nim runs `nimble path glfw` on Windows (for a GLFW backend
+#   viewSEG does not use) and passes the output as an -I flag; without that
+#   package it is an error message, which zig reads as file names. The stub
+#   `nimble` in tools/winbuild prints nothing, so the flag becomes a harmless
+#   `-Iglfw/include`. config.nims runs inside the compiler, so putEnv reaches
+#   imguin's staticExec.
+# - sdl3_nim joins its header path with the target's `\`, so its -I is
+#   `\workspaces\...` and finds nothing; the headers come from SDL's own install
+#   instead (the same 3.4.18 headers).
+# - impl_sdl3 links -lSDL3 on Linux only; here it is the static archive.
+#   --dynlibOverride turns sdl3_nim's {.dynlib: "SDL3.dll".} imports into plain
+#   symbols, so no SDL3.dll is needed; the Win32 libraries SDL needs come from
+#   its sdl3.pc. -mwindows and -lm are left out: zig ignores the first (winres
+#   sets the subsystem) and Windows has no libm.
+# - Dear ImGui is C++ and zig cc links no C++ runtime by itself: -lc++ links
+#   zig's libc++/libc++abi statically (no libstdc++ or libgcc DLLs).
+# Paths here are joined with "/", not `/`: with --os:windows, `/` uses the
+# target's `\` (sdl3_nim's bug above), which a Linux host cannot use.
+when defined(windows) and defined(zigcc):
+  putEnv("PATH", thisDir() & "/tools/winbuild" & (if buildOS == "windows": ";" else: ":") &
+    getEnv("PATH"))
+  let sdlPrefix = sdl3WindowsPrefix()
+  if not fileExists(sdlPrefix & "/lib/libSDL3.a"):
+    quit "config.nims: no static SDL3 for Windows in " & sdlPrefix &
+      "; run tools/sdl3-windows.sh (nim winRelease does)"
+  var sdlLibs: seq[string]
+  for line in readFile(sdlPrefix & "/lib/pkgconfig/sdl3.pc").splitLines:
+    if line.startsWith("Libs:"):
+      for flag in line.splitWhitespace:
+        if flag.startsWith("-l") and flag notin ["-lSDL3", "-lm"]:
+          sdlLibs.add flag
+  switch("dynlibOverride", "SDL3")
+  switch("passC", "-I" & quoteShell(sdlPrefix & "/include"))
+  switch("passL", "-L" & quoteShell(sdlPrefix & "/lib") & " -lSDL3 " & sdlLibs.join(" ") &
+    " -lc++")
+
 let zigccExe =
   if findExe("zigcc").len > 0:
     "zigcc"
@@ -88,7 +137,10 @@ task winRelease, "Cross-build bin/viewSEG.exe for Windows x86-64 with zig cc (no
   ## zig ships the MinGW-w64 headers and import libraries, a linker and a resource
   ## compiler (`zig rc`, used by src/viewSEG/platform/winres.nim), so this works
   ## from the Linux container. AVX2 build (x86-64-v3) like nimRelease; add
-  ## -d:baselineCpu for older CPUs.
+  ## -d:baselineCpu for older CPUs. SDL3 is linked statically: the first run
+  ## cross-builds it (tools/sdl3-windows.sh, about two minutes, needs network).
+  if buildOS != "windows":
+    exec "bash tools/sdl3-windows.sh " & quoteShell(sdl3WindowsPrefix())
   selfExec "c -d:zigcc --os:windows --cpu:amd64 --cc:clang --clang.exe:\"" & zigccExe &
     "\" --clang.linkerexe:\"" & zigccExe & "\" --passC:\"-target x86_64-windows-gnu\"" &
     " --passL:\"-target x86_64-windows-gnu\" -d:release -d:danger --opt:speed" &

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Stand-in for nimble during Windows builds with zig; config.nims puts this
+# directory first on PATH. imguin's cimgui.nim runs `nimble path glfw` when the
+# target is Windows and turns the output into an -I flag; printing nothing keeps
+# an error message out of the C compiler's command line. viewSEG uses no GLFW.
+exit 0

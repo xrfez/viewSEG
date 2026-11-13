@@ -91,3 +91,57 @@ jobs:
       # llvmpipe) provides one.
       - name: Run test suite (headless)
         run: xvfb-run -a -s "-screen 0 1920x1080x24" nim test
+
+  # bin/viewSEG.exe cross-built with zig, as `nim winRelease` does in the
+  # devcontainer: static SDL3 (tools/sdl3-windows.sh), no DLLs to ship.
+  windows-exe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake ninja-build binutils
+
+      # Keep in step with the nim-dev image's zig.
+      - name: Set up zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
+
+      - name: Cache SDL3 for Windows
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/viewSEG/sdl3-3.4.18-x86_64-windows-gnu
+          key: sdl3-3.4.18-x86_64-windows-gnu-zig-0.17.1-v1
+
+      - name: Set up Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.4.2'
+
+      - name: Fetch dependencies (Atlas)
+        run: atlas rep atlas.lock
+
+      # Builds SDL3 first when the cache missed.
+      - name: Build bin/viewSEG.exe
+        run: nim winRelease
+
+      # GUI subsystem, resources present, and only Windows system DLLs imported.
+      - name: Check the executable
+        run: |
+          objdump -p bin/viewSEG.exe | tee "$RUNNER_TEMP/pe.txt" | grep -E 'Subsystem|DLL Name'
+          grep -q 'Subsystem.*(Windows GUI)' "$RUNNER_TEMP/pe.txt"
+          objdump -h bin/viewSEG.exe | grep -q '\.rsrc'
+          if grep -iE 'DLL Name: .*(SDL|stdc\+\+|libgcc|winpthread|c\+\+)' "$RUNNER_TEMP/pe.txt"; then
+            echo "unexpected DLL import"; exit 1
+          fi
+
+      - name: Upload viewSEG.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewSEG-windows-x64
+          path: bin/viewSEG.exe
+          if-no-files-found: error
