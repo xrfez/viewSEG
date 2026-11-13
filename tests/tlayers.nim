@@ -7,7 +7,8 @@ import std/[os, sequtils, strutils]
 const
   srcDir = currentSourcePath().parentDir.parentDir / "src" / "viewSEG"
   toolkits = ["imguin", "imgui", "implot", "sdl2", "sdl3", "sdl2_nim", "sdl3_nim", "glad",
-    "opengl", "glfw", "nimgl", "seaqt", "owlkettle", "windy", "boxy", "silky", "merenda"]
+    "opengl", "glfw", "nimgl", "seaqt", "owlkettle", "windy", "boxy", "silky", "merenda",
+    "stb_image"]
   # layer -> sibling layers (directories under src/viewSEG) it must not import
   forbidden = [
     ("core", @["ui", "gpu", "view", "platform"]),
