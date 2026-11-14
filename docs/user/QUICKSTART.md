@@ -273,8 +273,10 @@ the status bar follow the order shown.
 
 **Cursor time line.** The button after the fill buttons (a line drawn to an axis) turns
 on a thin line from the pointer across to the time axis, with the pointer's time written
-at the axis, so a time can be read off against the tick values. It follows the pointer
-and goes when the pointer leaves the plot; viewSEG remembers whether it is on.
+at the axis, so a time can be read off against the tick values, and the display
+header's values of the trace under the pointer, each in a box over its row (also where
+the rows are thinned because the traces are close). It follows the pointer and goes when
+the pointer leaves the plot; viewSEG remembers whether it is on.
 
 **Scales.** The two boxes over the plot state the zoom as traces per inch and ms per inch.
 Type a value and press Enter to set it; zooming any other way updates them. The settings

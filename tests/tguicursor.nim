@@ -9,8 +9,14 @@
 ## while nothing is read (no new request), no tile is uploaded and no new
 ## image of the data is drawn (counted); with the pointer off the plot,
 ## neither the line nor the time is drawn; and the file is never changed.
+## With the line, the display header's values of the trace under the
+## pointer stand in a box over each of the header's rows, at the trace's
+## column, as the tiles hold them, in every look and as the pointer moves;
+## none with the line off or the pointer off the plot.
 ##
-## Seen to fail: with the line not drawn (`drawCursorLine` not called), "wiggle
+## Seen to fail: with the header's boxes not drawn (`drawCursorHeader` not
+## called), "wiggle on paper: @[] for the rows @[FFID, channel]". With the
+## line not drawn (`drawCursorLine` not called), "wiggle
 ## on paper: the line's colour on 0.0 of its row"; with the plot's image
 ## drawn again whenever the line moves (its marks bumped), "moving the
 ## pointer along a trace: (images: 35, ...) became (63, ...)". A first
@@ -22,7 +28,7 @@
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
-import viewSEG/view/[plotink, theme, timeaxis]
+import viewSEG/view/[displayheader, plotink, theme, timeaxis]
 import viewSEG/ui/imgui/[app, symbols]
 import utils/fixtures
 
@@ -102,6 +108,34 @@ withFixtures fx:
       for x in int(label.pos.x) ..< int(label.pos.x + label.size.x):
         if distance(f.readPixel(x, y), f.theme.roles[rlText]) <= 60: inc ink
     doAssert ink > 5, what & ": the time is not drawn (" & $ink & " pixels of text)"
+    # the display header's values of the trace under the pointer, a box over
+    # each row at its column, as the tiles hold them
+    let fields = f.panel.shownFields
+    let tile = f.core.tiles(f.core.findPanel(MainPanel))[^1]
+    let r = tile.request
+    let position = f.pick.position
+    doAssert position >= r.first and (position - r.first) mod r.stride == 0
+    let header = f.markOf("plot.header")
+    doAssert f.tracePanel.cursorHeader.len == fields.len, what & ": " &
+      $f.tracePanel.cursorHeader & " for the rows " & $fields
+    for i, field in fields:
+      let want = headerText(tile.header[i][(position - r.first) div r.stride])
+      doAssert f.tracePanel.cursorHeader[i] == want and want.len > 0, what & ": row " & $field &
+        " says " & f.tracePanel.cursorHeader[i] & ", the trace has " & want
+      let box = f.markOf("plot.cursor header " & $field)
+      doAssert box.size.x > 0, what & ": no box over the " & $field & " row"
+      let mid = box.pos.y + box.size.y / 2
+      doAssert mid > header.pos.y + float32(i) * box.size.y * 0.9 and mid < plot.pos.y,
+        what & ": the " & $field & " box is not over its row: " & $box
+      let x = plot.pos.x + float32((float64(position) - f.tracePanel.drawnView.traces.lo) /
+        f.tracePanel.drawnView.traces.width) * plot.size.x
+      doAssert abs(box.pos.x + box.size.x / 2 - x) <= 2, what & ": the " & $field &
+        " box is not at the trace's column: " & $box & ", the trace at " & $x
+      var letters = 0
+      for y in int(box.pos.y) ..< int(box.pos.y + box.size.y):
+        for bx in int(box.pos.x) ..< int(box.pos.x + box.size.x):
+          if distance(f.readPixel(bx, y), f.theme.roles[rlText]) <= 60: inc letters
+      doAssert letters > 5, what & ": the " & $field & " box's value is not drawn"
     lastRow = row
 
   proc lookStep(mode: DisplayMode; colours: PlotColours) =
@@ -139,8 +173,8 @@ withFixtures fx:
     f.moveMouse(q), proc (f: FrameInfo): bool =
     result = wait > 4 and f.pick.inside
     if result:
-      doAssert f.markOf("plot.cursor line").size.x == 0 and f.tracePanel.cursorText == "",
-        "drawn while off"
+      doAssert f.markOf("plot.cursor line").size.x == 0 and f.tracePanel.cursorText == "" and
+        f.tracePanel.cursorHeader.len == 0, "drawn while off"
       doAssert f.share(int(q.y), int(plot.pos.x) + 2, int(q.x) - 3) <= 0.02, "a line while off")
   step("point at the toggle", proc (f: FrameInfo) =
     q = f.markOf("plot." & $syCursorTime).centre
@@ -171,8 +205,8 @@ withFixtures fx:
     if result:
       doAssert not f.pick.inside
       let (line, time) = (f.markOf("plot.cursor line"), f.markOf("plot.cursor time"))
-      doAssert line.size.x == 0 and time.size.x == 0 and f.tracePanel.cursorText == "",
-        "drawn with the pointer off the plot"
+      doAssert line.size.x == 0 and time.size.x == 0 and f.tracePanel.cursorText == "" and
+        f.tracePanel.cursorHeader.len == 0, "drawn with the pointer off the plot"
       doAssert f.share(lastRow, int(plot.pos.x) + 2, int(plot.pos.x + plot.size.x) - 2) <= 0.02,
         "the line stayed on the plot")
   step("kept in the settings", noop, proc (f: FrameInfo): bool =

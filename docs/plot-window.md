@@ -60,7 +60,13 @@
   frame, so it follows the pointer without lag and reads and redraws nothing; it is not
   drawn when the pointer is off the plot. Its colour is the theme's crosshair colour,
   made readable on the plot's background, with a halo of that background on each side,
-  so it shows on paper and on the theme's plot, over wiggles and over density.
+  so it shows on paper and on the theme's plot, over wiggles and over density. **With
+  it, the display header's values of the trace under the pointer** stand in a box over
+  each of the header's rows, at that trace's column, in the style of the time box: a
+  trace's line and point can be read where the rows are thinned because the traces are
+  close (the user: "a box displaying the header like the one that gives the time would
+  be nice for when not all headers are shown"). No vertical line: the trace's highlight
+  marks the trace.
 - **Scroll bars** appear when part of the data is out of view: under the plot when not
   every trace is shown, right of it when not all of the record's time is; none when
   everything is in view. The thumb's length is the share in view. Dragging the thumb

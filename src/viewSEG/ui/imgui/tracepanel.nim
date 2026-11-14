@@ -44,8 +44,9 @@
 ##
 ## **The cursor's time line** (a toggle in the strip, a setting): a thin
 ## line from the pointer across to the time axis and the pointer's time at
-## the axis, drawn over the image each frame, so it reads and redraws
-## nothing. The time axis's labels are all as wide as the record's longest
+## the axis, and the display header's values of the trace under the
+## pointer, each in a box over its row, drawn over the image each frame, so
+## it reads and redraws nothing. The time axis's labels are all as wide as the record's longest
 ## (`view/timeaxis`), so the plot's left edge stays put as they change.
 ## Ctrl + click does nothing: it is the mute editor's.
 ##
@@ -163,6 +164,7 @@ type
     menuTarget: string ## what the plot's menu acts on, said when it opened
     menuUnder: int = -1 ## the trace under the pointer when it opened (survey-wide); -1 for none
     cursorText: string ## the time the cursor's time line showed last; "" for none
+    cursorHeader: seq[string] ## the header values it showed over the rows; none for none
     focus: FocusClicks ## a click selects only in a window that had the focus
     picking: int ## the colour whose picker is open (as `colourKeys` lists them)
     hex: array[12, char] ## what the picker's `#rrggbb` box holds
@@ -220,6 +222,11 @@ func drawnView*(tp: TracePanelUi): Viewport {.inline.} = tp.drawn
 func cursorText*(tp: TracePanelUi): lent string {.inline.} = tp.cursorText
   ## The time the cursor's time line showed at the axis last frame; "" when
   ## it was not drawn (for tests).
+
+func cursorHeader*(tp: TracePanelUi): lent seq[string] {.inline.} = tp.cursorHeader
+  ## The values the cursor's boxes showed over the display header's rows
+  ## last frame, top row first ("" where the trace has none); empty when
+  ## they were not drawn (for tests).
 
 func menuTarget*(tp: TracePanelUi): lent string {.inline.} = tp.menuTarget
   ## What the plot's menu said it acts on when it last opened: "Trace 12",
@@ -1122,6 +1129,35 @@ proc drawCursorLine(tp: var TracePanelUi; at, pos: ImVec2_c; tMs, dtMs: float64;
     tp.cursorText.cstring, nil)
   marks.markRect("plot.cursor time", lo, hi)
 
+proc drawCursorHeader(tp: var TracePanelUi; tiles: openArray[Tile];
+    fields: openArray[HeaderField]; position: int; view: Viewport; top, plotPos,
+    plotSize: ImVec2_c; ink: PlotInk; t: Theme; marks: var Marks) =
+  ## With the cursor's time line, the display header's value of each row for
+  ## the trace at `position` (the pointer's), in a box over its row at the
+  ## trace's column, in the style of the time at the axis: the value is
+  ## there when the row's labels are thinned because the traces are close.
+  ## The trace's highlight marks the trace; no line is drawn. From the
+  ## tiles' header values: nothing is read.
+  let dl = igGetWindowDrawList()
+  let lineH = igGetTextLineHeight()
+  let colour = readableOn(t.roles[rlCrosshair], ink.background)
+  let x = plotPos.x + float32((float64(position) - view.traces.lo) * float64(plotSize.x) /
+    max(view.traces.width, 1e-9))
+  for i, f in fields:
+    let (have, v) = headerValue(tiles, fields, i, position)
+    let text = if have: headerText(v) else: ""
+    tp.cursorHeader.add text
+    if text.len > 0:
+      let ts = igCalcTextSize(text.cstring, nil, false, -1)
+      let left = clamp(round(x - ts.x / 2) - 3, plotPos.x, plotPos.x + plotSize.x - ts.x - 6)
+      let lo = ImVec2_c(x: left, y: top.y + float32(i) * lineH - 1)
+      let hi = ImVec2_c(x: lo.x + ts.x + 6, y: lo.y + lineH + 1)
+      ImDrawList_AddRectFilled(dl, lo, hi, u32(t.roles[rlWindow]), 0, 0)
+      ImDrawList_AddRect(dl, lo, hi, u32(colour), 0, 1, 0)
+      ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + 3, y: lo.y + 1), u32(t.roles[rlText]),
+        text.cstring, nil)
+      marks.markRect("plot.cursor header " & $f, lo, hi)
+
 proc burst(tp: var TracePanelUi; g: Gesture): bool =
   ## Whether a wheel turn or key press of kind `g` starts a new gesture (for
   ## back): another kind, or a pause since the last one. Notes it.
@@ -1425,11 +1461,15 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     tp.handleKeys(after, view, plot, limNow, hovered, p, st.selection.selected.len > 0,
       recordOf(st, p), remember, res)
     tp.cursorText = ""
+    tp.cursorHeader.setLen 0
     if hovered:
       let m = igGetIO_Nil().MousePos
       res.pick = pick(tiles, p.layout, view, plot, vec2(m.x, m.y))
       if st.settings.cursorLine and res.pick.inside:
         tp.drawCursorLine(m, pos, res.pick.at.tMs, p.layout.dtMs, ink, t, marks)
+        if res.pick.found and res.pick.position >= 0:
+          tp.drawCursorHeader(tiles, fields, res.pick.position, view, headerTop, pos, size, ink,
+            t, marks)
     # The trace under the pointer is the hover; a click selects it.
     let under = if res.pick.found and res.pick.trace >= 0 and base >= 0: base + res.pick.trace
                 else: -1
