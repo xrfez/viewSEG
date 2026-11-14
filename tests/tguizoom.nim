@@ -8,7 +8,8 @@
 ## and zooming updates the boxes; zooming in asks for fewer traces; the
 ## status bar reads out the trace under the pointer; the scroll bars appear
 ## only while part of the data is out of view, without moving the plot,
-## dragging a thumb pans (and back undoes it), a click on a track pans by
+## dragging a thumb pans (and back undoes it), Esc or Backspace while a
+## thumb is still held moves the view for good, a click on a track pans by
 ## a whole view, and with both thumbs at their ends the last trace and the
 ## last sample are drawn in full beside the bars; and the file is never
 ## changed.
@@ -18,7 +19,11 @@
 ## `thumbDrags` never saw the view move; with the plot making room for the
 ## bars only once they show, `wheelZooms` found the plot 14 pixels smaller
 ## and the view cut short by them; with the bars drawn over the data's
-## edges, `barsAppear` found a bar over the data.
+## edges, `barsAppear` found a bar over the data; with a held bar paging on
+## after Esc dropped its thumb (any press repeating, not only one on the
+## track), `keyWhileHeld` found the view a page on, at 456 ms where it was
+## at 166 ms; with a held thumb kept when `core` set the view (back), it
+## found the view dragged again to 493 ms.
 ##
 ## Seen to fail: with the wheel's notches ignored, `wheelZooms` zoomed by
 ## 1.25 where two notches give 1.5625; with the drag moving the view the
@@ -66,6 +71,8 @@ proc main() =
     var backs = 0 # views to go back to before a step
     var preDrag: Viewport # the view before a drag, for back
     var pageDown = false # the track was clicked below its thumb
+    var held: Vec2 # where the pointer holds a thumb
+    var since = 0.0 # when a key was pressed, in seconds
 
     template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
 
@@ -402,6 +409,41 @@ proc main() =
       result = f.changed
       if result:
         doAssert f.panel.view.sameSpans(preDrag), $f.panel.view & " not " & $preDrag)
+
+    # A key that moves the view while a thumb is still held: Esc puts the
+    # view back where it was when the thumb was grabbed, Backspace goes back
+    # to the view before the drag, and either holds while the button stays
+    # down, past ImGui's mouse repeat delay, with the pointer off the thumb.
+    proc keyWhileHeld(key: SimKey) =
+      # a proc, so that each key's steps keep their own `key`
+      step("keyWhileHeld: " & $key & ", the pointer on the thumb", proc (f: FrameInfo) =
+        let th = f.markOf("plot.thumb.time")
+        grab = vec2(round(th.pos.x + th.size.x / 2), round(th.pos.y + th.size.y / 2))
+        f.moveMouse(grab), proc (f: FrameInfo): bool = true)
+      step("keyWhileHeld: " & $key & ", the thumb dragged", proc (f: FrameInfo) =
+        was = f.panel.view
+        let b = f.markOf("plot.bar.time")
+        let th = f.markOf("plot.thumb.time")
+        # far enough that the thumb, back where it was, is not under the pointer
+        let room = b.pos.y + b.size.y - (th.pos.y + th.size.y) > th.size.y + 12
+        held = vec2(grab.x, round(if room: grab.y + th.size.y + 10 else: grab.y - th.size.y - 10))
+        f.pressMouse(grab, true)
+        f.moveMouse(vec2(grab.x, round((grab.y + held.y) / 2)))
+        f.moveMouse(held), proc (f: FrameInfo): bool =
+        # the grab kept `was` for back (once: it is the newest kept already
+        # after the Esc round)
+        result = f.changed and f.panel.back.len > 0 and f.panel.back[^1].sameSpans(was))
+      step("keyWhileHeld: " & $key & " pressed", proc (f: FrameInfo) =
+        f.chord(key)
+        since = epochTime(), proc (f: FrameInfo): bool =
+        sleep(5) # frames are fast under xvfb: wait in time, not in frames
+        result = epochTime() - since > 0.8
+        if result:
+          doAssert f.panel.view.sameSpans(was), $key & " with the thumb held: " &
+            $f.panel.view & ", not " & $was
+          f.pressMouse(held, false))
+    keyWhileHeld(skEscape)
+    keyWhileHeld(skBackspace)
 
     step("trackPages", proc (f: FrameInfo) =
       let b = f.markOf("plot.bar.time")

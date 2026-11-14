@@ -7,7 +7,10 @@
 ## again while the button is held, until the thumb reaches the pointer; the
 ## wheel over a bar pans along it. Every change is a new view, which the
 ## plot window sends to `core` like any other gesture's, so reads stay
-## bounded by the view and "back" returns to the view before.
+## bounded by the view and "back" returns to the view before. Esc lets go
+## of a held bar (a dragged thumb puts the view back where it was), and so
+## does a view `core` sets itself (back, a new gather): the bar does nothing
+## more until it is pressed again.
 ##
 ## The bars sit in room kept for them right of and below the plot's data
 ## area (`barRoom`), so the plot neither moves nor changes size when a bar
@@ -29,12 +32,15 @@ type
     beWheel ## the wheel over a bar panned
 
   ScrollBars* = object
-    ## The bars' state between frames: the thumb being dragged.
+    ## The bars' state between frames: the thumb being dragged, or the track
+    ## being held. `ScrollBars()` lets go of both until the button is pressed
+    ## again (Esc, or a view `core` sets itself).
     grabbed: bool
     axis: Axis
-    press: float32  ## the pointer along the bar when the thumb was grabbed
+    press: float32 ## the pointer along the bar when the thumb was grabbed
     start: Viewport ## the view then
     moved: bool
+    paging: bool ## a press on a track pages on while it is held
 
 proc barRoom*(): ImVec2_c =
   ## The room to keep right of and below the plot's frame for the bars,
@@ -48,7 +54,8 @@ func grabbed*(sb: ScrollBars): bool {.inline.} = sb.grabbed
 
 proc cancel*(sb: var ScrollBars; after: var Viewport): bool =
   ## Drops the thumb being dragged, the view back where it was when it was
-  ## grabbed (Esc). False when no thumb was.
+  ## grabbed, or stops a held track paging (Esc); the bar does nothing more
+  ## until it is pressed again. False when no thumb was dragged.
   result = sb.grabbed
   if sb.grabbed and sb.moved: after = sb.start
   sb = ScrollBars()
@@ -85,9 +92,10 @@ proc drawScrollBars*(sb: var ScrollBars; after: var Viewport; view: Viewport;
         if onThumb:
           sb = ScrollBars(grabbed: true, axis: a, press: float32(along), start: after)
         else:
+          sb = ScrollBars(axis: a, paging: true)
           after = after.paged(a, (if along < th.start: -1.0 else: 1.0), lim)
           result = bePage
-      elif igIsItemActive() and not sb.grabbed and
+      elif igIsItemActive() and sb.paging and sb.axis == a and
           igIsMouseClicked_Bool(ImGui_MouseButton_Left.cint, true):
         # held on the track: page on until the thumb is under the pointer
         if along < th.start:
@@ -107,6 +115,8 @@ proc drawScrollBars*(sb: var ScrollBars; after: var Viewport; view: Viewport;
           after = scrolled(sb.start, a, lim, track, least, moved)
         if not igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
           sb = ScrollBars()
+      elif sb.paging and sb.axis == a and not igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
+        sb = ScrollBars()
       if hovered and not sb.grabbed:
         let notches = if a == axTraces and io.MouseWheelH != 0: -io.MouseWheelH
                       else: io.MouseWheel

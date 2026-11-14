@@ -696,10 +696,11 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   # This frame's view: what `core` set itself (back, a new gather), else
   # what a control or a test asked for, else last frame's.
   var remember = false
-  if tp.jumps != p.jumps:
+  if tp.jumps != p.jumps: # a drag or a held scroll bar does not undo it
     tp.cur = p.view
     tp.jumps = p.jumps
     tp.drag = Drag()
+    tp.bars = ScrollBars()
   var next = tp.cur
   if tp.want:
     next.traces = tp.wanted.traces

@@ -30,6 +30,11 @@
 ##   that order, so every request, and the tile's traces, keys and display
 ##   header values, follow it. A newer note stops a sort between runs of
 ##   traces; until a sort is done, no request is served.
+## - **Before processing** (`readyForProcessing`), a trace marked dead in the
+##   file is blanked and a sample that is not a number (NaN, ±Inf) is set
+##   to 0, as the tile draws it anyway: processSEG leaves such a trace as it
+##   is, so under AGC or a per-trace normalization it would be drawn at its
+##   raw amplitude among gained traces, saturated.
 ## - **Threads and ORC.** The reader is a worker (`core/threads`); it
 ##   empties its list of cycle roots after closing a prefetcher, before it
 ##   ends a hold, and before it exits. A tile holds no `ref`.
@@ -233,6 +238,19 @@ proc levelOf(rd: var Reader; tile: Tile; list: seq[int]; failed: seq[int];
   except ValueError as e:
     rd.note(sevWarning, "Cannot work out the display gain of " & rd.name & ": " & e.msg)
 
+proc readyForProcessing(c: var PrefetchChunk[float32]) =
+  ## Blanks the rows of `c` marked dead in the file and sets every sample
+  ## that is not a number to 0: the display processing leaves such a row as
+  ## it is, and it would stand out at its raw amplitude.
+  let b = rowBlock(c.samples)
+  for k in 0 ..< c.count:
+    let row = b.rowPtr(k)
+    if c.rows.keysAt(k).status == tsDead:
+      for i in 0 ..< b.cols: row[i] = 0
+    else:
+      for i in 0 ..< b.cols:
+        if not (abs(row[i]) < Inf): row[i] = 0 # NaN fails the test too
+
 proc serve(rd: var Reader; req: sink ReaderRequest) =
   ## Reads, processes and posts the tile `req` asks for, unless a newer note
   ## comes first.
@@ -268,6 +286,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
   var given = false
   while pf.nextInto(c):
     if processing:
+      c.readyForProcessing()
       try:
         plan.apply(c.samples, chunkMeta(c, rd.layout.dtMs), rd.ws)
       except ValueError as e:

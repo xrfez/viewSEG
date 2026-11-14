@@ -223,8 +223,10 @@ frame over budget (50 ms) with its parts, longest first.
    window; per chunk, the display pipeline (the layer's pipeline, then the part of the
    display gain that changes the samples: AGC, by default on pre-stack gathers,
    Exponential, Normalized per trace) runs in place (`chunkMeta(c)`), and each row is
-   cut to the kept samples and peak-decimated into the tile. A newer note stops the
-   read between chunks.
+   cut to the kept samples and peak-decimated into the tile. Before the pipeline, rows
+   marked dead are blanked and samples that are not numbers set to 0: processSEG leaves
+   such a row as it is, and it would be drawn at its raw amplitude among processed ones.
+   A newer note stops the read between chunks.
 5. **Tile** (reader). A `Tile` (plain seqs, moved through the inbox, never shared)
    holds the values, the display header's values per trace and its `Level`: the RMS,
    peak and clip percentile of |x| over its live traces (`panelStats`).

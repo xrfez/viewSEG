@@ -89,7 +89,10 @@
 
     Changing the amount, a Fixed amplitude, or between types that do nothing to the
     samples (None, Fixed, Float, Normalized for the whole record) reads nothing again;
-    the others read the view again with the new processing;
+    the others read the view again with the new processing. Under those (AGC,
+    Exponential, Normalized per trace), a trace marked dead in the file is drawn blank,
+    and a sample that is not a number counts as 0, so such a trace never shows up
+    saturated at its raw amplitude among gained ones;
   - **three sort buttons**, the button of the order in use drawn selected:
 
     | Button | Order |

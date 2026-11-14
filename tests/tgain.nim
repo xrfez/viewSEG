@@ -15,7 +15,8 @@
 ## changed; with the exponential curve in dB per millisecond,
 ## `exponentialGain` found trace 0's sample 79 at 0.271 where 0.303 is due.
 
-import std/[algorithm, math, sequtils]
+import std/[algorithm, math, os, sequtils]
+import parseSEG
 import viewSEG/core/state {.all.}
 import utils/[fixtures, waiting]
 
@@ -249,4 +250,62 @@ block normalizedPerTrace:
       let k = int(floor(h))
       let p99 = a[k] + (h - float64(k)) * (a[min(k + 1, a.high)] - a[k])
       doAssert near(p99, 1, 1e-4), "trace " & $row & ": " & $p99
+    st.shutdown()
+
+proc deadAndNotANumberSegy(fx: Fixtures): string =
+  ## The survey's first shot at 1000 times its amplitude, with channel 5
+  ## marked dead (its samples as they were), one NaN sample in channel 7 and
+  ## one infinite sample in channel 11.
+  result = fx.dir / "dead-and-nan.sgy"
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+    text: @["C01 viewSEG test: a dead trace, a NaN sample, an infinite sample"]))
+  var buf = newSeq[float32](Samples)
+  for channel in 1 .. Channels:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.srcPoint) = (11.0, float64(channel), FirstSrcPoint)
+    (k.rcvLine, k.rcvPoint) = (RcvLine, FirstRcvPoint + float64(channel - 1))
+    (k.t0Ms, k.intervalUs, k.status) = (0.0, DtMs * 1000, tsLive)
+    for i in 0 ..< Samples: buf[i] = 1000 * surveySample(0, channel, i)
+    if channel == 5: k.status = tsDead
+    if channel == 7: buf[100] = NaN
+    if channel == 11: buf[200] = Inf
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0
+
+block deadAndNotANumber:
+  # The gain types that run on the samples (AGC, Normalized per trace,
+  # Exponential) leave a trace marked dead, or one holding a NaN or an
+  # infinite sample, as it is (processSEG's rule). Drawn beside gained
+  # traces at its raw amplitude, such a trace would be the loudest on the
+  # screen, saturated black and white. A dead trace is drawn blank instead,
+  # and a sample that is not a number counts as 0, so its trace is gained
+  # like its neighbours.
+  #
+  # Seen to fail: with the samples handed to the gain as decoded (no
+  # blanking), under AGC the dead trace peaked at 999.2 and the NaN and the
+  # infinite sample's traces at 993.1, where their neighbours peak at 5.0.
+  withFixtures fx:
+    var st = initAppState()
+    st.apply Command(kind: ckOpen, paths: @[fx.deadAndNotANumberSegy()])
+    doAssert st.settle(st.main.layout.traces == Channels)
+    st.look()
+    for g in [dgAgc, dgNormalized, dgExponential, dgNone]: # Normalized: per trace
+      var d = st.main.layers[0].display
+      d.gain = g
+      st.display(d)
+      doAssert st.settle(st.answered), $g
+      let t = st.shown[^1]
+      doAssert t.request.count == Channels and t.request.decimation == 1
+      proc peak(row: int): float64 =
+        for i in 0 ..< t.columns: result = max(result, abs(float64(t.data[row * t.columns + i])))
+      let neighbours = max(peak(5), peak(7))
+      if g == dgNone:
+        # nothing runs on the samples: every trace as it is in the file
+        doAssert near(peak(4), peak(3), 0.2) and near(peak(6), neighbours, 0.2), $g
+      else:
+        doAssert peak(4) == 0, $g & ": the dead trace peaks at " & $peak(4)
+        for row in [6, 10]: # the NaN and the infinite sample's traces
+          doAssert peak(row) > 0 and peak(row) < 2 * neighbours,
+            $g & ": trace " & $(row + 1) & " peaks at " & $peak(row) & ", its neighbours at " &
+            $neighbours
     st.shutdown()
