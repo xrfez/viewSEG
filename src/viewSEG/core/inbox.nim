@@ -17,6 +17,7 @@ type
     mkOpened  ## an open job's file
     mkLog     ## a message for the log
     mkLayout  ## what a panel's traces span, from its reader
+    mkOrder   ## the traces at a panel's positions, in the order shown, from its reader
     mkTile    ## samples a panel asked for, from its reader
     mkRead    ## a document the disk thread read
     mkListed  ## files a folder scan found
@@ -40,6 +41,10 @@ type
       sourceGen*: uint64         ## the panel's `sourceGen` it answers
       layout*: PanelLayout
       known*: set[HeaderField]   ## the header fields the traces have values for
+    of mkOrder:
+      orderPanel*: PanelId
+      orderGen*: uint64          ## the panel's newer of `sourceGen` and `orderGen` it answers
+      positions*: seq[int]       ## per position: the trace's index in its file
     of mkTile: tile*: Tile
     of mkRead:
       purpose*: ReadPurpose

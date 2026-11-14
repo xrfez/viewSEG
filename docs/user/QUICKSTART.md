@@ -177,7 +177,8 @@ point by default): right-click them, or their names at the left, to choose its f
 | Fit the whole record (in wiggles: as far as one pixel a trace, from the first) | the fit button | Ctrl+0 |
 | Go back to the view before | the back button | Backspace, or Alt+Left |
 | Select a trace | click it | |
-| Add a trace to the selection, or take it out | Shift + click | |
+| Add a trace to the selection, or take it out | Ctrl + click | |
+| Select every trace from the one clicked last to this one | Shift + click | |
 | Cancel a drag, else clear the selection | | Esc |
 | Kill or restore the trace under the pointer (the selection, if it is in it) | right-click: Kill / Restore | `K` |
 | Reverse its polarity, or put it back | right-click: Reverse polarity | `R` |
@@ -243,7 +244,8 @@ for the next run.
 
 **Highlight.** The trace under the pointer is drawn in orange, line and fill (under
 density, its column is tinted), and the status bar reads it out. Click a trace to select
-it; Shift + click adds another or takes one out; Esc clears the selection. Selected
+it; Ctrl + click adds another or takes one out; Shift + click selects every trace from
+the one clicked last to this one, in the order shown; Esc clears the selection. Selected
 traces are drawn in the theme's accent colour. Nothing is read again for any of this.
 
 **Gain.** The drop-down in the strip picks the gain type, and its settings are in the

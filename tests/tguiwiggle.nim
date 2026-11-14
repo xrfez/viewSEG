@@ -14,7 +14,7 @@
 ## - moving the mouse over a trace draws it, line and fill, in the
 ##   highlight colour and its neighbours not, with nothing read again (no
 ##   request) and no tile uploaded again (counted); a click selects it (the
-##   selection colour once the pointer has moved on), Shift + click adds
+##   selection colour once the pointer has moved on), Ctrl + click adds
 ##   another, Esc clears them; under density alone the hovered trace's
 ##   column is tinted;
 ## - with the pointer still over the plot, the next gather and then another
@@ -265,12 +265,12 @@ withFixtures fx:
       if waited == 3: f.moveMouse(f.baselineAt(5, 450))
       if waited > 8:
         clicked = f.capture
-        f.pressKey(skShift, true, {smShift}) # the event carries the modifier, as SDL's do
+        f.pressKey(skCtrl, true, {smCtrl}) # the event carries the modifier, as SDL's do
         waited = 0
         stage = 3
-    of 3: # Shift + click on trace 5, then on to trace 17
+    of 3: # Ctrl + click on trace 5, then on to trace 17
       if waited == 2: f.click(f.baselineAt(5, 450))
-      if waited == 4: f.pressKey(skShift, false)
+      if waited == 4: f.pressKey(skCtrl, false)
       if waited == 6: f.moveMouse(f.baselineAt(17, 450))
       if waited > 10:
         added = f.capture
@@ -459,7 +459,7 @@ withFixtures fx:
     let (bad, seen) = s.mismatches()
     doAssert bad == 0, "selected: " & $bad & " of " & $seen & " pixels off the reference"
 
-  block shiftClickAdds:
+  block ctrlClickAdds:
     let s = added
     doAssert s.selection.selected.len == 2 and 5 in s.selection.selected and
       knownChannel - 1 in s.selection.selected, "selected: " & $s.selection.selected

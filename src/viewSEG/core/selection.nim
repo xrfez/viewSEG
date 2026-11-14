@@ -17,15 +17,21 @@ type
     gather*: int = -1
 
   SelectMode* = enum
-    smReplace = "replace" ## the traces become the selection
+    smReplace = "replace" ## the traces become the selection (a click)
     smAdd = "add"         ## the traces join the selection
-    smToggle = "toggle"   ## each trace is selected unless it was, then not (Shift + click)
+    smToggle = "toggle"   ## each trace is selected unless it was, then not (Ctrl + click)
+    smRange = "range"
+      ## the traces become the selection, and the anchor stays where it is
+      ## (Shift + click: the traces from the anchor to the one clicked)
 
   Selection* = object
     hover*: int = -1       ## the trace under the cursor; -1 for none
     selected*: IntSet      ## the selected traces
+    anchor*: int = -1
+      ## the trace clicked last (`smReplace` or `smToggle` of one trace),
+      ## where a Shift + click's range starts; -1 for none
     activeGather*: GatherRef
-    revision*: int         ## bumped on every change
+    revision*: int ## bumped on every change
     selectedRevision*: int ## bumped when `selected` changes
 
 func targets*(s: Selection; under: int): seq[int] =
@@ -46,8 +52,10 @@ proc setHover*(s: var Selection; trace: int): bool =
     inc s.revision
 
 proc select*(s: var Selection; traces: openArray[int]; mode: SelectMode) =
-  ## Changes the selection by `traces`, as `mode` says.
-  if mode == smReplace: s.selected.clear()
+  ## Changes the selection by `traces`, as `mode` says. One trace replaced
+  ## or toggled becomes the anchor of the next range.
+  if mode in {smReplace, smRange}: s.selected.clear()
+  if mode in {smReplace, smToggle} and traces.len == 1: s.anchor = traces[0]
   for t in traces:
     if mode == smToggle and t in s.selected: s.selected.excl t
     else: s.selected.incl t
@@ -67,6 +75,7 @@ proc forget*(s: var Selection; file: SessionId; traces: Slice[int]) =
   if s.hover in traces:
     s.hover = -1
     changed = true
+  if s.anchor in traces: s.anchor = -1
   var gone: seq[int]
   for t in s.selected:
     if t in traces: gone.add t

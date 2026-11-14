@@ -244,6 +244,10 @@ type
       ## the view of the gather shown before, until the next one is laid out
       ## and shown at the same scales; no width for none (it fits instead)
     carryLayout*: PanelLayout ## that gather's layout
+    shown*: seq[int]
+      ## per position, the index in its file of the trace shown there (the
+      ## gather after the trace filter, in the order shown), from the
+      ## reader; empty until it says
     revision*: int ## bumped on every change
 
 const
@@ -481,6 +485,17 @@ func viewLimits*(p: Panel; layout: PanelLayout; columns: int): ViewLimits =
 func viewLimits*(p: Panel; columns: int): ViewLimits {.inline.} =
   ## The limits of `p`'s view on a plot `columns` pixels wide.
   p.viewLimits(p.layout, columns)
+
+func rangeOf*(p: Panel; base, anchor, to: int): seq[int] =
+  ## The traces `p` shows from survey-wide trace `anchor` to `to`, both
+  ## included, in the order shown, as survey-wide ids (its file's trace 0 is
+  ## `base`): what a Shift + click selects. `@[to]` alone when `anchor` is
+  ## not shown (none, another file, another gather) or the order is not
+  ## known yet.
+  let a = p.shown.find(anchor - base)
+  let b = p.shown.find(to - base)
+  if anchor < 0 or a < 0 or b < 0: return @[to]
+  for k in min(a, b) .. max(a, b): result.add base + p.shown[k]
 
 func displayMargin*(flow: Pipeline; dtMs: float64): int =
   ## The samples `flow` needs beyond a window on each side; 0 when it

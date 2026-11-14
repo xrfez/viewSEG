@@ -286,11 +286,11 @@ its shortcut shown there.
 |---|---|
 | Move the mouse | **Hover:** the trace under the cursor is drawn in the hover colour, its source and receiver light up on the map, and the status bar reads it out |
 | Left click | **Select** that trace (replaces the selection) |
-| Shift + left click | Add the trace to the selection, or take it out |
+| Ctrl + left click | Add the trace to the selection, or take it out; the rest stays |
+| Shift + left click | Select every trace from the one clicked last to this one, in the order shown (replaces the selection) |
 | Left drag | **Pan** |
 | Shift + left drag | **Box select:** the traces and time window in the box become the selection; the spectrum and f-k windows follow the box while it is drawn, and show it once released |
 | Ctrl + left drag | **Velocity ruler:** a line from press to release; its apparent velocity is shown beside it until Esc |
-| Ctrl + left click | Add a point to the mute being edited (only while the mute editor is open; otherwise nothing) |
 | Right drag | **Box zoom** to the dragged rectangle |
 | Right click | **The plot's menu:** the trace operations, on the trace under the cursor or the selection (see below) |
 | Right click on the display header (its values, or their names at the left) | **The display header's menu:** automatic fields, or the fields ticked |
@@ -330,7 +330,7 @@ The map uses the same gestures wherever the meaning carries over, always at equa
 | Move the mouse | **Hover:** the point under the cursor shows its line, point, coordinates and the records or traces it belongs to (in a popup or in a strip along the map's bottom, as the user chooses); a receiver's traces light up in the plot; the status bar shows the cursor's coordinates with their units |
 | Left click on a source | Open its gather in the plot |
 | Left click on a receiver | Select its traces |
-| Shift + left click | Add the point's traces to the selection, or take them out |
+| Ctrl + left click | Add the point's traces to the selection, or take them out |
 | Left drag | **Pan** |
 | Shift + left drag | **Box select:** the traces of every point in the box |
 | Ctrl + left drag | **Measure** a distance (with units) until Esc |
@@ -506,9 +506,12 @@ Defaults taken in this draft, for the user to confirm or change:
     same reference as density's full black, so the gain amount moves both alike; it is
     the user's to set, in plain sight in the strip ("Trace overlap should be
     configurable").
-21. **Shift + click adds a trace to the selection or takes it out**; a plain click
-    replaces the selection; a click is a press and release without moving (a drag still
-    pans).
+21. **Decided by the user:** **Ctrl + click adds a trace to the selection or takes it
+    out** (the user: "shoudnt this be control click"), a plain click replaces the
+    selection, and **Shift + click selects every trace from the one clicked last to this
+    one**, in the order shown; a click is a press and release without moving, so Ctrl +
+    drag stays free for the velocity ruler and Shift + drag for the box. The mute
+    editor's points will take a gesture of their own.
 22. **Decided by the user:** the negative fill is the theme's red on paper and on the
     theme's plot ("I kind of like the other color for negative fill"), and every colour
     of the plot (background, wiggle line, positive and negative fill, hovered and

@@ -6,7 +6,7 @@
 ## and Clear all edits for this file: `tguiedits` uses them) and nothing
 ## about the display (the menu ends below its last item, so nothing else is
 ## drawn in it); its first line names the trace under the pointer, or "3
-## selected traces" when that trace is one of three selected (Shift + click
+## selected traces" when that trace is one of three selected (Ctrl + click
 ## adds them); "Reverse polarity of all traces" reverses every trace (read
 ## again, the trace under the pointer reads out the negated amplitude) and
 ## is shown ticked when the menu opens again. A right click on the display
@@ -127,17 +127,17 @@ withFixtures fx:
       theme = f.theme)
   rightClickStep("a trace", 20, "Trace 21")
   # three traces selected: a right click on one of them acts on all three
-  proc selectStep(name: string; position: int; shift: bool) =
-    ## Steps: the pointer over `position`, then a click there (with Shift
-    ## held from the frame before, as a hand would).
+  proc selectStep(name: string; position: int; ctrl: bool) =
+    ## Steps: the pointer over `position`, then a click there (with Ctrl
+    ## held from the frame before, as a hand would: it adds the trace).
     var q: Vec2
     step(name & ": point", proc (f: FrameInfo) =
       q = f.pointAt(position)
       f.moveMouse(q), proc (f: FrameInfo): bool = wait > 3)
     step(name, proc (f: FrameInfo) =
-      if shift: f.pressKey(skShift, true, {smShift}), proc (f: FrameInfo): bool =
+      if ctrl: f.pressKey(skCtrl, true, {smCtrl}), proc (f: FrameInfo): bool =
       if wait == 2: f.click(q)
-      if wait == 4 and shift: f.pressKey(skShift, false)
+      if wait == 4 and ctrl: f.pressKey(skCtrl, false)
       wait > 6)
   selectStep("select 4", 4, false)
   selectStep("add 8", 8, true)

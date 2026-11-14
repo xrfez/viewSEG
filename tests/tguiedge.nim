@@ -3,18 +3,16 @@
 ## (four), 5000 to 5900 ms and the whole record, through the same view
 ## command a pan or a zoom sends, puts the plot's data area at the same
 ## place and size every time, because every time label is padded to the
-## longest the record can have. And Ctrl + click on a trace selects nothing
-## (docs/plot-window.md: it belongs to the mute editor), where a plain click
-## on it selects it.
+## longest the record can have. (The clicks on a trace, which this test also
+## checked, are `tguiselect`'s.)
 ##
 ## Seen to fail: with the labels not padded (no `ImPlot_SetupAxisFormat`),
 ## the data area started at x = 359 over 0 to 900 ms and at x = 366 over
-## 1000 to 1900 ms; with Ctrl not looked at in a click, "Ctrl + click
-## selected 1 traces".
+## 1000 to 1900 ms.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os]
+import std/[options, os]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import utils/fixtures
@@ -26,8 +24,6 @@ withFixtures fx:
   var rects: seq[Rect]
   var stage = 0
   var wait = 0
-  var q: Vec2
-  var ctrlClicked, clicked = -1
   template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
   proc answered(f: FrameInfo): bool =
     let p = f.panel
@@ -46,32 +42,7 @@ withFixtures fx:
         inc stage
         wait = 0
       elif not f.panel.laidOut: wait = 0
-    else:
-      let k = stage - spans.len
-      case k
-      of 0: # the pointer over trace 10
-        let p = f.markOf("plot.data")
-        let v = f.panel.view.screenAt(p, DataPoint(x: 10, tMs: 80))
-        q = vec2(round(v.x), round(v.y))
-        f.moveMouse(q)
-        (stage, wait) = (stage + 1, 0)
-      of 1: # Ctrl + click, Ctrl held from the frame before
-        if wait == 3: f.pressKey(skCtrl, true, {smCtrl})
-        if wait == 5:
-          f.pressMouse(q, true)
-          f.pressMouse(q, false)
-        if wait == 8: f.pressKey(skCtrl, false)
-        if wait == 14:
-          ctrlClicked = f.core.selection.selected.len
-          (stage, wait) = (stage + 1, 0)
-      of 2: # a plain click
-        if wait == 3:
-          f.pressMouse(q, true)
-          f.pressMouse(q, false)
-        if wait == 9:
-          clicked = f.core.selection.selected.len
-          f.stop()
-      else: discard
+    else: f.stop()
     if f.index > 3000: f.stop()
   let code = run(RunOptions(maxFrames: 3500, openPaths: @[path], windowSize: (1400, 900),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
@@ -81,6 +52,4 @@ withFixtures fx:
   for i in 1 ..< rects.len:
     doAssert rects[i] == rects[0], "over " & $spans[i] & " ms the plot is at " & $rects[i] &
       ", over " & $spans[0] & " ms at " & $rects[0]
-  doAssert ctrlClicked == 0, "Ctrl + click selected " & $ctrlClicked & " traces"
-  doAssert clicked == 1, "a click selected " & $clicked & " traces"
   echo "tguiedge: the plot at ", rects[0], " over ", spans.len, " views"

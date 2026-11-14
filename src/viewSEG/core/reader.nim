@@ -199,6 +199,12 @@ proc arrange(rd: var Reader; order: seq[SortKey]) =
       for k, row in perm: list[k] = base.traceAt(row)
       rd.positions = Positions(traces: base.traces, listed: true, list: list)
       rd.sorted = true
+  if rd.sorted:
+    # The traces in the order shown, for the panel (a Shift + click's range).
+    var shown = newSeq[int](rd.positions.len)
+    for k in 0 ..< shown.len: shown[k] = rd.positions.traceAt(k)
+    rd.r.poster.post Msg(job: NoJob, kind: mkOrder, orderPanel: rd.r.panel,
+      orderGen: max(rd.src.gen, rd.orderGen), positions: shown)
 
 proc adopt(rd: var Reader; src: sink ReaderSource) =
   ## Starts showing `src`: its positions, its layout, posted; then the

@@ -365,7 +365,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    traces in layer 0's order (`Layer.order`: display header fields, each ascending or
    descending; none for the file's order) with parseSEG's `sortOrder` over the keys in
    the index, one key at a time, the last first (`core/sorting`), stopping between runs
-   of traces when a newer source or order comes. A position is then the place of a trace
+   of traces when a newer source or order comes, and posts the traces in the order
+   shown (`mkOrder`: each position's trace), which the panel keeps (`Panel.shown`) for
+   what needs a position's trace beyond the tiles, a Shift + click's range. A position is then the place of a trace
    in that order, so every request, and each tile's traces, keys and header values,
    follow it; no request is served until the sort is done. **A new order** (`ckSort`)
    keeps the file and the view: `AppState` bumps the panel's `requestGen` (its
@@ -531,6 +533,7 @@ type
   Selection = object         # core/selection: read by the trace panel, the map, the header table
     hover: int = -1          # survey-wide trace id under the cursor; -1: none
     selected: IntSet         # survey-wide trace ids: the file's base + the trace's index
+    anchor: int = -1         # the trace clicked last: where a Shift + click's range starts
     activeGather: GatherRef  # (file: SessionId, gather: int = -1)
     revision: int            # bumped on every change
     selectedRevision: int    # bumped when `selected` changes (a hover does not)
@@ -577,6 +580,8 @@ type
     relevel: bool            # the next tile sets `level` again (a kill or a restore)
     carry: Viewport          # the view of the gather before, until the next is laid out
                              # and shown at the same scales (zoom.carried)
+    shown: seq[int]          # per position, the trace's index in its file, in the order
+                             # shown (from the reader: mkOrder); a Shift + click's range
     revision: int
 
   Layer = object             # one is the usual case; more are overlays
@@ -616,6 +621,7 @@ type
     of mkOpened: session: Session  # moved, never shared
     of mkLog: entry: LogEntry      # time, severity, source, text, location, offset
     of mkLayout: panel, sourceGen, layout, known   # from a panel's reader
+    of mkOrder: orderPanel, orderGen, positions    # the traces in the order shown, from it
     of mkTile: tile: Tile          # moved, never shared
     of mkRead: purpose, readPath, content, readError # a document the disk thread read
     of mkListed: listGen, listed, others, unreadable, listDone, listFolder, listChosen,

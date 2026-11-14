@@ -34,8 +34,10 @@
 ## (`core/pick`) goes back to the caller for the status bar.
 ##
 ## **Highlighting.** The trace under the pointer is the selection's hover
-## (`ckHover`), a click selects it (`ckSelect`; Shift + click adds it or
-## takes it out) and Esc clears the selection, all as survey-wide trace ids,
+## (`ckHover`), a click selects it (`ckSelect`; Ctrl + click adds it or
+## takes it out, Shift + click selects every trace from the one clicked
+## last, in the order shown) and Esc clears the selection, all as
+## survey-wide trace ids,
 ## so another view (the map) shows the same traces. The hovered trace is
 ## drawn in the highlight colour and the selected ones in the selection
 ## colour, line and fill (under density alone, their columns are tinted):
@@ -48,7 +50,6 @@
 ## pointer, each in a box over its row, drawn over the image each frame, so
 ## it reads and redraws nothing. The time axis's labels are all as wide as the record's longest
 ## (`view/timeaxis`), so the plot's left edge stays put as they change.
-## Ctrl + click does nothing: it is the mute editor's.
 ##
 ## Nothing about a plot sits in the main toolbar: the display mode and the
 ## fills, the trace overlap (a box, - and +, greyed in density), the
@@ -106,7 +107,7 @@ type
     gsNone, gsWheel, gsKeyZoom, gsKeyPan, gsPage, gsBarWheel
 
   ClickKind = enum
-    clNone, clClick, clShiftClick
+    clNone, clClick, clCtrlClick, clShiftClick
 
   ViewAskKind = enum
     vaNone, vaFit, vaZoomIn, vaZoomOut, vaTraceScale, vaTimeScale
@@ -1215,10 +1216,10 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
       igSetMouseCursor(ImGui_MouseCursor_ResizeAll.cint)
     if not down:
       if not tp.drag.moved and tp.drag.button == ImGui_MouseButton_Left.cint and hovered:
-        # Ctrl + click is the mute editor's (docs/plot-window.md): nothing here.
         # The click that brings the window forward selects nothing.
-        click = if io.KeyCtrl or not tp.focus.acts: clNone
+        click = if not tp.focus.acts: clNone
                 elif io.KeyShift: clShiftClick
+                elif io.KeyCtrl: clCtrlClick
                 else: clClick
       tp.drag = Drag()
   of dkBox:
@@ -1479,9 +1480,16 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     elif not hovered and tp.hovering:
       res.commands.add Command(kind: ckHover, trace: -1)
       tp.hovering = false
-    if click != clNone and under >= 0:
-      res.commands.add Command(kind: ckSelect, traces: @[under],
-        mode: (if click == clShiftClick: smToggle else: smReplace))
+    # A click selects the trace, Ctrl + click adds it or takes it out, Shift
+    # + click selects the traces from the one clicked last, in the order shown.
+    if under >= 0:
+      case click
+      of clNone: discard
+      of clClick: res.commands.add Command(kind: ckSelect, traces: @[under], mode: smReplace)
+      of clCtrlClick: res.commands.add Command(kind: ckSelect, traces: @[under], mode: smToggle)
+      of clShiftClick:
+        res.commands.add Command(kind: ckSelect, mode: smRange,
+          traces: p.rangeOf(base, st.selection.anchor, under))
     editKeys(st, k, if hovered: under else: -1, res)
     if menu:
       tp.menuTarget = targetOf(under, res.pick, st.selection)

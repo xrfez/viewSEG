@@ -688,6 +688,7 @@ proc newSource(state: var AppState; k: int) =
   inc p.requestGen
   p.sourceGen = p.requestGen
   p.layout = PanelLayout()
+  p.shown.setLen 0
   p.known = {}
   p.kind = gkUnknown
   p.pending = ReadRequest()
@@ -811,6 +812,7 @@ proc reorder(state: var AppState; k: int) =
   template p: untyped = state.panels[k]
   inc p.requestGen
   p.orderGen = p.requestGen
+  p.shown.setLen 0
   p.pending = ReadRequest()
   inc p.revision
   if not state.readers[k].isNil:
@@ -1822,6 +1824,11 @@ proc drainInbox*(state: var AppState): bool =
         inc p.jumps
         inc p.revision
         state.requestView(k)
+    of mkOrder:
+      let k = state.findPanel(m.orderPanel)
+      if k >= 0 and m.orderGen == max(state.panels[k].sourceGen, state.panels[k].orderGen):
+        state.panels[k].shown = move m.positions
+        inc state.panels[k].revision
     of mkTile:
       let k = state.findPanel(m.tile.panel)
       if k >= 0 and m.tile.request.gen == state.panels[k].requestGen:

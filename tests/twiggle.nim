@@ -10,7 +10,8 @@
 ## the other way for a negative scale); a style's overlap is in its range, whatever
 ## the settings hold; density is drawn only in the modes that name it, at
 ## any trace spacing; the hovered and selected rows of a tile are found from
-## survey-wide trace ids; and a hover on a trace no open file has clears
+## survey-wide trace ids; a Shift + click's range is the traces from the
+## anchor (the trace clicked last) to the one clicked, in the order shown; and a hover on a trace no open file has clears
 ## the hover without a warning.
 ##
 ## Seen to fail: with `minMaxInto` keeping the extremes smallest first
@@ -27,7 +28,9 @@
 ## overlap 1.5; with `ckHover` warning about an unknown trace, as it did,
 ## `staleHoverIsQuiet` found "Ignored "hover": no open file has trace 7.";
 ## with `styleFor` only clamping the overlap (as it did), `overlapInRange`
-## found an overlap that is not a number drawn as one (nothing drawn).
+## found an overlap that is not a number drawn as one (nothing drawn); with
+## `rangeOf` giving the clicked trace alone, `rangesInTheOrderShown` found no
+## range.
 
 import std/[math, random]
 import viewSEG/core/[geometry, state, wiggle]
@@ -210,6 +213,31 @@ block marksFromTraceIds:
   doAssert rows == @[true, false, true], $rows
   doAssert markOf(1, 1, rows) == tmHovered and markOf(0, 1, rows) == tmSelected and
     markOf(1, -1, rows) == tmNone
+
+block rangesInTheOrderShown:
+  # a Shift + click's range: the traces from the anchor to the one clicked,
+  # in the order shown (here every trace of a file whose trace 0 is 100, in
+  # reverse)
+  let p = Panel(shown: @[5, 4, 3, 2, 1, 0])
+  doAssert p.rangeOf(100, 104, 101) == @[104, 103, 102, 101]
+  doAssert p.rangeOf(100, 101, 104) == @[104, 103, 102, 101], "either way"
+  doAssert p.rangeOf(100, 103, 103) == @[103]
+  doAssert p.rangeOf(100, -1, 102) == @[102], "no anchor: the trace alone"
+  doAssert p.rangeOf(100, 7, 102) == @[102], "an anchor not shown: the trace alone"
+  doAssert Panel().rangeOf(100, 104, 102) == @[102], "the order not known yet"
+  # the anchor: the one trace clicked or toggled last; a range leaves it
+  var sel = Selection()
+  doAssert sel.anchor == -1
+  sel.select([7], smReplace)
+  doAssert sel.anchor == 7
+  sel.select([9], smToggle)
+  doAssert sel.anchor == 9 and sel.selected.len == 2
+  sel.select([1, 2, 3], smRange)
+  doAssert sel.anchor == 9 and sel.selected.len == 3 and 9 notin sel.selected
+  sel.select([4, 5], smReplace)
+  doAssert sel.anchor == 9, "many traces at once are no click"
+  sel.forget(SessionId(1), 0 .. 10)
+  doAssert sel.anchor == -1, "the anchor goes with its file"
 
 block readerFillsTheEnvelope:
   withFixtures fx:
