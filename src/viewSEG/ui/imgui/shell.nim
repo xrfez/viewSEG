@@ -13,7 +13,8 @@
 ## The window icon (`res/viewSEG-64.png`) is the 64-pixel PNG image of
 ## `res/viewSEG.ico`, extracted as is; replace both together.
 
-import std/locks
+import std/[locks, strutils]
+from std/os import getEnv
 import sdl3_nim
 
 type
@@ -184,12 +185,22 @@ let seismicFilters = [
   ## Module-lifetime storage: SDL reads the filters until the callback runs.
   ## Patterns match case-insensitively on every platform SDL supports.
 
+const DialogParentEnvVar* = "VIEWSEG_DIALOG_PARENT"
+  ## Set to `none` to open dialogs without a parent window. On a Wayland desktop an
+  ## X11 window (the app under Xwayland) is a parent the portal's dialog cannot attach to.
+
+func wantsParent(setting: string): bool =
+  ## Whether dialogs get a parent window, given the value of `DialogParentEnvVar`.
+  setting.strip.toLowerAscii != "none"
+
 proc showOpenDialog*(kind: DialogKind; parentWindowId = 0'u32) =
   ## Opens the native dialog for `kind` and returns at once; the outcome arrives
   ## later from `pollShellEvents`. The dialog is modal to the window with SDL id
-  ## `parentWindowId` (0 for none). Main thread only.
+  ## `parentWindowId` (0 for none, as is `DialogParentEnvVar=none`). Main thread only.
   let
-    parent = if parentWindowId == 0: nil else: SDL_GetWindowFromID(parentWindowId)
+    parent =
+      if parentWindowId == 0 or not wantsParent(getEnv(DialogParentEnvVar)): nil
+      else: SDL_GetWindowFromID(parentWindowId)
     userdata = cast[pointer](kind.int)
   case kind
   of dkOpenFile, dkOpenFiles:

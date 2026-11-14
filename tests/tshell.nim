@@ -59,3 +59,9 @@ block dialogResultsFromAnotherThread:
   doAssert evs[2].error.len > 0 # SDL's text, or "unknown error" when it has none
   doAssert evs[3].kind == seThemeChanged and evs[3].theme == stLight
   doAssert pollShellEvents().len == 0
+
+block dialogParentSetting:
+  doAssert wantsParent("")
+  doAssert wantsParent("window")
+  doAssert not wantsParent("none")
+  doAssert not wantsParent(" None ")
