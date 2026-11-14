@@ -1,2 +1,16 @@
 #!/usr/bin/env bash
+# `zig cc` for Nim's builds with zig. Cross-compiling for Windows, Nim joins
+# paths with `\`, so a module's `{.header: currentSourcePath().parentDir /
+# "x.h".}` becomes `#include "\abs\path\x.h"`, which a Linux or macOS host
+# cannot open (parseSEG's cpu.h). Such lines of the generated C file are
+# rewritten with `/` before it is compiled; other files are left alone.
+for a in "$@"; do
+  case "$a" in
+    *.c | *.cpp)
+      if [ -f "$a" ] && grep -q '^#include "\\' "$a"; then
+        sed '/^#include "\\/ s|\\|/|g' "$a" > "$a.zigcc" && mv "$a.zigcc" "$a"
+      fi
+      ;;
+  esac
+done
 exec zig cc "$@"
