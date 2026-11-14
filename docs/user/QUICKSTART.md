@@ -35,23 +35,37 @@ folder (`viewSEG --paths` shows where it is).
 
 Files and folders can also be dragged from a file manager and dropped on the window.
 
+**Survey files** (SPS source, receiver and relation files, `.s` `.r` `.x` or `.sps` `.rps`
+`.xps`, and SEG P1 files) open the same ways: File > Open, a drop (several at once), the
+command line. viewSEG tells them by what they hold, not by their name, and loads them into
+the survey (on a job, with progress, in the Jobs window) instead of the Seismic window,
+which stays on the file it shows. Messages says what each held ("Loaded line7.rps (SPS R):
+6385 receiver points.") and what was left out: records without coordinates or at (0, 0),
+stations given twice (the last one is kept), damaged lines by number. A file that is not a
+survey file, or a damaged one, is refused or read as far as it goes, and the program goes
+on. Each open seismic file's source and receiver positions are read into the survey too.
+The map that shows the survey comes next; for now the survey is what Messages and the
+Files window say of it.
+
 **File > Open recent** lists the files and the folders opened last (the start screen
 shows the newest ones); the file dialogs start in the folder of the last file opened.
 
 ## Step through a folder
 
-The **Files** window, at the left, lists the seismic files (SEG-Y, SEG-D, SEG-2) of a
-folder with their type, size and date; other files are counted at the bottom, not listed.
+The **Files** window, at the left, lists the seismic files (SEG-Y, SEG-D, SEG-2) and the
+survey files (SPS S, R and X, P1) of a folder with their type, size and date; other files
+are counted at the bottom, not listed.
 Opening a folder lists it and shows its first file; opening a file shows it and lists its
 folder beside it. Listing reads only the first few kilobytes of each file, in the
 background, so a folder of thousands of files lists without opening any of them.
 
 - **Click a file** to show it in the Seismic window, in place of the one shown. The display
   (mode, gain, sort order, display header) and the scales stay as they were, so records
-  compare one after the other.
+  compare one after the other. **Click a survey file** to load it into the survey: a pin
+  marks it once loaded (its tooltip says what it holds); the Seismic window stays as it is.
 - **With the Files window focused** (click in it), **Up / Down** or **Tab / Shift+Tab**
-  step to the next or previous file and show it; **Page Up / Page Down** skip ten,
-  **Home / End** go to the first and last.
+  step to the next or previous seismic file and show it (survey files are passed by);
+  **Page Up / Page Down** skip ten, **Home / End** go to the first and last.
 - **Filter by name:** type in the box over the table; only the files whose names hold
   every word typed are shown.
 - **Sort** by any column: click its header (click again to reverse).

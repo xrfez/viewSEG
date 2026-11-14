@@ -10,7 +10,7 @@
 ## still running when the program closes can post safely.
 
 import std/locks
-import filelist, jobs, log, nif, panels, session, tiles
+import filelist, jobs, log, nif, panels, session, survey, tiles
 
 type
   MsgKind* = enum
@@ -21,6 +21,7 @@ type
     mkRead    ## a document the disk thread read
     mkListed  ## files a folder scan found
     mkWatched ## what a look at the listed folder found changed
+    mkSurvey  ## a survey layer: a survey file read, or an open file's positions
 
   ReadPurpose* = enum
     ## What a document is read for.
@@ -63,6 +64,8 @@ type
       watched*: seq[WatchedFile] ## the files that changed, appeared or went, or stopped changing
       watchProblem*: string ## why the folder cannot be looked at now; "" when it can
       problemChanged*: bool ## `watchProblem` is news (it began, or ended)
+    of mkSurvey:
+      layer*: SurveyLayer ## moved, never shared
 
   InboxObj = object
     lock: Lock

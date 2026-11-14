@@ -1,13 +1,15 @@
 ## The file list: the seismic files of a folder, or of files the user chose,
-## that the user steps through, one shown at a time.
+## that the user steps through, one shown at a time, and the survey files
+## (SPS, SEG P1) beside them, which are loaded into the survey instead.
 ##
 ## A listing is made off the UI thread (`filejobs.scanWork`, a job on the
 ## background lane): the folder's names are read and put in natural order
 ## ("shot2" before "shot10"), then the first bytes of each file are read to
-## tell whether it is SEG-Y, SEG-D or SEG-2 (parseSEG's `detectKind`), so a
-## folder of thousands of files is listed without opening any of them. The
-## files that are not seismic are counted, not listed. The scan posts what it
-## found in batches (`mkListed`), so the first files appear at once.
+## tell whether it is SEG-Y, SEG-D or SEG-2 (parseSEG's `detectKind`), or an
+## SPS or P1 file (`core/filekinds`), so a folder of thousands of files is
+## listed without opening any of them. The other files are counted, not
+## listed. The scan posts what it found in batches (`mkListed`), so the
+## first files appear at once.
 ##
 ## `chosen` is the file the main plot window shows, or is opening to show:
 ## the list marks it, and stepping (the arrow keys) goes on from it.
@@ -18,10 +20,9 @@
 ## file in the rows it already has, instead of sorting every row again.
 
 import std/[os, strutils, times]
-import parseSEG/common/seismickind
-import jobs
+import filekinds, jobs
 
-export SeismicKind
+export filekinds
 
 const
   SniffBytes* = 4096 ## the bytes read from each file to tell its standard
@@ -37,10 +38,10 @@ type
                            ## or cut short)
 
   FileEntry* = object
-    ## One seismic file of the list.
+    ## One file of the list: a seismic file, or a survey file.
     path*: string ## absolute and normalized, as files are opened
     name*: string
-    kind*: SeismicKind
+    kind*: FileKind
     size*: int64
     modified*: Time
     status*: FileStatus
@@ -49,12 +50,12 @@ type
   WatchedFile* = object
     ## A file as a look at the folder (or a scan) found it.
     path*: string
-    exists*: bool      ## false: it is gone (removed, renamed)
-    kind*: SeismicKind ## skUnknown: not seismic, or not yet (too short to tell)
+    exists*: bool   ## false: it is gone (removed, renamed)
+    kind*: FileKind ## fkUnknown: neither seismic nor survey, or not yet (too short to tell)
     size*: int64
     modified*: Time
-    changing*: bool    ## it changed since the look before, or was not there then
-    listed*: bool      ## one of the files the listing names (else an open file elsewhere)
+    changing*: bool ## it changed since the look before, or was not there then
+    listed*: bool   ## one of the files the listing names (else an open file elsewhere)
 
   EntryChangeKind* = enum
     ecAppended ## `count` entries were added at the end, from `at`
@@ -74,8 +75,8 @@ type
     title*: string           ## the folder listed, or "3 files"; "" before any listing
     folder*: string          ## the folder listed; "" for files chosen one by one
     asked*: seq[string]      ## the paths the listing was asked for (for a refresh)
-    entries*: seq[FileEntry] ## the seismic files, in natural order of their names
-    others*: int             ## files that are not seismic, so not listed
+    entries*: seq[FileEntry] ## the seismic and survey files, in natural order of their names
+    others*: int             ## files that are neither, so not listed
     unreadable*: int         ## files that could not be read
     scanning*: bool          ## the scan has not finished
     job*: JobId              ## the scan's job; `NoJob` for none

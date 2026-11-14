@@ -78,7 +78,10 @@ block openShowsTheFirstGather:
     # The same file again: nothing new is opened.
     st.apply openCmd(path)
     doAssert st.log.has(name & " is already open.")
-    doAssert st.jobs.list.len == 1
+    var opens = 0 # (the other job reads its positions for the survey)
+    for j in st.jobs.list:
+      if j.spec.title.startsWith("Open "): inc opens
+    doAssert opens == 1
     st.shutdown()
     doAssert snapshot(path) == before, "opening changed the file"
 

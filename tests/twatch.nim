@@ -26,7 +26,7 @@
 ## the original finding).
 
 import std/[monotimes, os, strutils, times]
-import viewSEG/core/[filejobs, state]
+import viewSEG/core/state
 import utils/[fixtures, waiting]
 when not defined(windows):
   from std/posix import nil
@@ -86,7 +86,7 @@ block newFilesAreListed:
     copyFile(fx.threeComponentSegd(), dir / "shot3.sgd")
     doAssert st.settle(st.steady(dir / "shot3.sgd"))
     let e = st.entry(dir / "shot3.sgd")
-    doAssert e.isNew and e.kind == skSegd and e.size == getFileSize(dir / "shot3.sgd"), $e
+    doAssert e.isNew and e.kind == fkSegd and e.size == getFileSize(dir / "shot3.sgd"), $e
     doAssert not st.entry(dir / "shot1.sgy").isNew and not st.entry(dir / "shot2.sgd").isNew
     doAssert st.shownPath == dir / "shot1.sgy" and st.fileList.chosen == dir / "shot1.sgy",
       "the plot left the file chosen"

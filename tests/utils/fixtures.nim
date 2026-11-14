@@ -20,6 +20,13 @@
 ##   lines: those come from the SPS join.
 ## - `surveySegy(planted)`: the same survey with one `PlantedDefect`.
 ## - `surveySps()`: the S, R and X files (SPS 2.1) that match the survey.
+## - `plantedSps()`: the same S, R and X files with planted problems:
+##   stations given twice (once at other coordinates), at (0, 0) and without
+##   coordinates (`PlantedSps` says which).
+## - `surveyP1()`: a SEG P1 file of `P1Shots` shotpoints on line `P1Line`,
+##   one shot again (a reshoot) and one at (0, 0).
+## - `hostileSurvey(h)`: survey files that are damaged or not survey files
+##   at all (`HostileSurvey`).
 ## - `twoSetSegd()`: SEG-D Rev 3.0, format 8058, one record: a time break, a
 ##   pilot, and two seismic channel sets (receiver lines 100 and 101).
 ## - `threeComponentSegd()`: SEG-D Rev 3.0, one record: a time break and three
@@ -106,6 +113,18 @@ type
     dir*: string
 
   SpsPaths* = tuple[s, r, x: string]
+
+  HostileSurvey* = enum
+    ## A damaged survey file, or one that only looks like one by its name.
+    hsTruncated = "truncated"      ## an R file cut short in its last record's coordinates
+    hsHugeLine = "huge-line"       ## an R file with a 6 MB line of `x` after its tenth record
+    hsJunkTail = "junk-tail"
+      ## an R file of `JunkTailReceivers` records (more than the 4 KiB a file is
+      ## told by), then 24 MiB of random bytes
+    hsBinary = "binary" ## 64 KiB of random bytes, named as an R file
+    hsEmpty = "empty" ## no bytes, named as an S file
+    hsHeadersOnly = "headers-only" ## SPS header records and nothing else, named as an R file
+    hsNoLineEnds = "no-line-ends" ## an R file's records as 80-byte cards without line ends
 
 proc newFixtures*(): Fixtures =
   ## A new, empty temporary folder.
@@ -310,6 +329,132 @@ proc surveySps*(fx: Fixtures): SpsPaths =
   for (f, path) in [(s, result.s), (r, result.r), (x, result.x)]:
     let log = writeSps(f, path)
     doAssert log.len == 0, $log
+
+const PlantedSps* = (sourceAgain: FirstSrcPoint, sourceZero: FirstSrcPoint + 3,
+    sourceMissing: FirstSrcPoint + 4, receiverAgain: FirstRcvPoint + 4,
+    receiverMoved: FirstRcvPoint + 9, receiverZero: FirstRcvPoint + 24,
+    receiverMissing: FirstRcvPoint + 25)
+  ## The planted problems of `plantedSps`, stations of `SrcLine` and
+  ## `RcvLine`: a station given twice at the same coordinates (`sourceAgain`,
+  ## `receiverAgain`), one given again 1 m further east (`receiverMoved`: the
+  ## second is kept), one at (0, 0) (`...Zero`) and one without coordinates
+  ## (`...Missing`) of each. It has `Shots` sources and `Channels` receivers
+  ## placed.
+
+proc spsPoint(kind: SpsPointKind; line, pt, x, y: float64): SpsPoint =
+  SpsPoint(kind: kind, line: line, point: pt, index: 1, code: "G1", easting: x, northing: y,
+    elevation: Elevation, dayOfYear: -1, hour: -1, minute: -1, second: -1)
+
+proc plantedSps*(fx: Fixtures): SpsPaths =
+  ## The survey's S, R and X files (SPS 2.1) with the problems of
+  ## `PlantedSps`.
+  result = (fx.dir / "planted.s", fx.dir / "planted.r", fx.dir / "planted.x")
+  if fileExists(result.x): return
+  let header = SpsHeader(code: "00", description: "SPS format version num.",
+    data: "SPS 2.1;")
+  let p = PlantedSps
+  var s, r, x = SpsFile(headers: @[header])
+  for shot in 0 ..< Shots:
+    s.points.add spsPoint(pkSource, SrcLine, FirstSrcPoint + float64(shot), srcX(shot), OriginY)
+  s.points.add spsPoint(pkSource, SrcLine, p.sourceAgain, srcX(0), OriginY)
+  s.points.add spsPoint(pkSource, SrcLine, p.sourceZero, 0, 0)
+  s.points.add spsPoint(pkSource, SrcLine, p.sourceMissing, NaN, NaN)
+  for channel in 1 .. Channels:
+    r.points.add spsPoint(pkReceiver, RcvLine, FirstRcvPoint + float64(channel - 1),
+      rcvX(channel), OriginY)
+  r.points.add spsPoint(pkReceiver, RcvLine, p.receiverAgain, rcvX(5), OriginY)
+  r.points.add spsPoint(pkReceiver, RcvLine, p.receiverMoved, rcvX(10) + 1, OriginY)
+  r.points.add spsPoint(pkReceiver, RcvLine, p.receiverZero, 0, 0)
+  r.points.add spsPoint(pkReceiver, RcvLine, p.receiverMissing, NaN, NaN)
+  for shot in 0 ..< Shots:
+    x.relations.add SpsRelation(fieldRecord: FirstRecord + shot, recordIncrement: 1,
+      instrumentCode: '1', srcLine: SrcLine, srcPoint: FirstSrcPoint + float64(shot),
+      srcIndex: 1, fromChannel: 1, toChannel: Channels, channelIncrement: 1,
+      rcvLine: RcvLine, fromReceiver: FirstRcvPoint,
+      toReceiver: FirstRcvPoint + float64(Channels - 1), rcvIndex: 1)
+  for (f, path) in [(s, result.s), (r, result.r), (x, result.x)]:
+    let log = writeSps(f, path)
+    doAssert log.len == 0, $log
+
+const
+  P1Line* = 7.0          ## the shot line of `surveyP1`
+  P1Shots* = 5           ## its shotpoints 1 .. P1Shots
+  P1OriginX* = 600_000.0 ## easting of shotpoint 1 (metres); each next one 50 m east
+  P1Y* = 6_100_000.0     ## northing of every shotpoint but the reshoot
+  P1Reshot* = 3.0        ## shotpoint 3 is shot again (reshoot `A`, point index 2) 10 m north
+  P1Zero* = 9.0          ## shotpoint 9 is at (0, 0)
+
+func p1X*(point: float64): float64 =
+  ## Easting of shotpoint `point` of `surveyP1`.
+  P1OriginX + 50 * (point - 1)
+
+proc surveyP1*(fx: Fixtures): string =
+  ## A SEG P1 file (whole metres): shotpoints 1 .. `P1Shots` of line `P1Line`,
+  ## then the reshoot of `P1Reshot` and shotpoint `P1Zero` at (0, 0).
+  result = fx.dir / "survey.p1"
+  if fileExists(result): return
+  proc shot(point: float64; reshoot: char; x, y: float64): P1Record =
+    result = initP1Record()
+    (result.lineName, result.pointName, result.point, result.reshoot) = ($int(P1Line),
+      $int(point), point, reshoot)
+    (result.latitude, result.longitude) = (55.0 + point / 1000, -2.0)
+    (result.easting, result.northing, result.depthOrElevation) = (x, y, 12.0)
+  var lf = PLogicalFile(format: pfP1, header: @["H SEG P1 viewSEG test fixture: line " &
+    $int(P1Line), " PROJECTION UTM 30N, GRID UNITS METRES"])
+  for point in 1 .. P1Shots:
+    lf.records.add shot(float64(point), ' ', p1X(float64(point)), P1Y)
+  lf.records.add shot(P1Reshot, 'A', p1X(P1Reshot), P1Y + 10)
+  lf.records.add shot(P1Zero, ' ', 0, 0)
+  let log = writeP1(P1File(files: @[lf]), result)
+  doAssert log.len == 0, $log
+
+const JunkTailReceivers* = 5 * Channels
+  ## the receivers of `hostileSurvey(hsJunkTail)`: lines 100 .. 104, points
+  ## as the survey's
+
+proc hostileSurvey*(fx: Fixtures; h: HostileSurvey): string =
+  ## A survey file damaged as `h` says (written on first use).
+  const names: array[HostileSurvey, string] = ["truncated.rps", "huge-line.rps",
+    "junk-tail.rps", "binary.rps", "empty.sps", "headers-only.rps", "no-line-ends.rps"]
+  result = fx.dir / "hostile" / names[h]
+  if fileExists(result): return
+  createDir(fx.dir / "hostile")
+  let header = SpsHeader(code: "00", description: "SPS format version num.",
+    data: "SPS 2.1;")
+  var r = SpsFile(headers: @[header])
+  for channel in 1 .. Channels:
+    r.points.add spsPoint(pkReceiver, RcvLine, FirstRcvPoint + float64(channel - 1),
+      rcvX(channel), OriginY)
+  var cards: seq[string]
+  for line in spsText(r).text.splitLines:
+    if line.len > 0: cards.add line
+  var random = 12345'u32
+  proc junk(n: int): string =
+    result = newString(n)
+    for c in result.mitems:
+      random = random * 1664525'u32 + 1013904223'u32
+      c = char(random shr 24)
+  var text = ""
+  case h
+  of hsTruncated: text = cards.join("\n")[0 ..< ^40] # in the last record's coordinates
+  of hsHugeLine:
+    text = cards[0 .. 10].join("\n") & "\n" & 'x'.repeat(6_000_000) & "\n" &
+      cards[11 .. ^1].join("\n") & "\n"
+  of hsJunkTail:
+    var more = SpsFile(headers: @[header])
+    for line in 0 ..< JunkTailReceivers div Channels:
+      for channel in 1 .. Channels:
+        more.points.add spsPoint(pkReceiver, RcvLine + float64(line), FirstRcvPoint +
+          float64(channel - 1), rcvX(channel), OriginY + 50 * float64(line))
+    text = spsText(more).text & junk(24 * 1024 * 1024)
+  of hsBinary: text = junk(65_536)
+  of hsEmpty: text = ""
+  of hsHeadersOnly:
+    for i in 0 ..< 80: text.add alignLeft("H" & align($i, 2, '0') & " Header record " & $i,
+      80) & "\n"
+  of hsNoLineEnds:
+    for c in cards: text.add alignLeft(c, 80)
+  writeFile(result, text)
 
 # ---------------------------------------------------------------- SEG-D --
 

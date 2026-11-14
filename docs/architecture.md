@@ -29,7 +29,7 @@ src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows res
 
 | Layer | Owns | Must not import |
 |---|---|---|
-| `core` | `AppState` (open files, panels and their layers, the selection, the message log), `Command`s (each user intent as data), jobs in two lanes (prefetch through parseSEG's `Prefetcher`, processing through processSEG plans and its pool; results posted to a main-thread inbox), thread guards and the frame watchdog, kernels (colour maps, decimation, picking, cursor readout), map maths (tiles, projections, hit-testing) | `ui`, `gpu`, `platform`, any toolkit, SDL, OpenGL |
+| `core` | `AppState` (open files, panels and their layers, the selection, the message log, the survey: where sources and receivers are, with a spatial index), `Command`s (each user intent as data), jobs in two lanes (prefetch through parseSEG's `Prefetcher`, processing through processSEG plans and its pool; results posted to a main-thread inbox), thread guards and the frame watchdog, kernels (colour maps, decimation, picking, cursor readout), map maths (tiles, projections, hit-testing) | `ui`, `gpu`, `platform`, any toolkit, SDL, OpenGL |
 | `view` | View models such as `PanelView`, `TableModel`, `TreeModel`, `PlotSeries` and `MapLayer`. Each has plain-Nim geometry (`Vec2`, `Rect`, `Rgba`) and a `revision` counter that bumps on change | `ui`, `gpu`, `platform`, any toolkit |
 | `gpu` | OpenGL 3 objects behind small procs: upload a sample tile as `R32F` textures (`textures`), the density shader and its colour-map LUT (`density`), the wiggle shader (`wiggle`), and the plot's image that draws a panel's tiles with them (`plotimage`). It loads the GL functions it needs itself (`gpu/gl`), through a loader the frontend passes in (`SDL_GL_GetProcAddress`), so it imports no GL binding package | `ui`, any toolkit (OpenGL itself is allowed) |
 | `platform` | `winres` (compile-time manifest, icon, version info), window chrome (DWM attributes on a native window handle), config paths, and whatever else needs raw OS APIs. Services the windowing library already has (SDL3: file dialogs, system theme, tray) are wrapped in `ui/<toolkit>/shell` instead, because only `ui` may import SDL | `ui`, `core`, any toolkit |
@@ -98,7 +98,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | Thread | Created and owned by | Runs |
 |---|---|---|
 | UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), reads one trace's headers, hex bytes or textual header, closes files, and makes every OpenGL call |
-| Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, `ensureKeys`, survey joins, sorts across files |
+| Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, an open file's positions, survey files read, `ensureKeys`, survey joins, sorts across files |
 | Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes, folder scans, brute stack, conversions, exports and patches, queued workflows |
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
 | Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
@@ -164,8 +164,11 @@ way and one file is never opened twice.
 **The file list** (`core/filelist`). `ckBrowse` lists folders or files: a job on the
 background lane (`filejobs.scanWork`) reads each folder's names, puts them in natural order
 ("shot2" before "shot10"), reads the first 4 KiB of each file to tell SEG-Y, SEG-D and
-SEG-2 apart (parseSEG's `detectKind`) and posts what it found in batches (`mkListed`), so
-the list fills as the scan goes and no file is opened. What is not a regular file (a named
+SEG-2 apart (parseSEG's `detectKind`), and SPS (S, R, X) and SEG P1 survey files
+(`core/filekinds`), and posts what it found in batches (`mkListed`), so
+the list fills as the scan goes and no file is opened. Survey files are listed as what
+they are; stepping through the list passes them by, and a click on one loads it into the
+survey (below), as do the survey files among the files named to `ckBrowse` (a drop). What is not a regular file (a named
 pipe, a socket, a device) is counted and never opened: opening a named pipe waits for a
 writer, which would hold the scan, the background lane and the quit. One file named alone stands for its
 folder. `ckShowFile` shows a file in a panel in place of the one it shows: at once when it
@@ -214,6 +217,53 @@ while a read of it is under way still ends the program; only reading the samples
 `pread`, or a guard around decoding, in parseSEG, removes that. Edits made on a file are
 kept with its size and time; when the file is opened again changed, they are set aside
 as "Clear all edits" does, so Ctrl+Z brings them back.
+
+**The survey** (`core/survey`, `core/surveyjobs`, `core/spatial`). Where the sources and
+receivers are, for the map and for linking traces to the places they were recorded at. One
+model, two sources of positions, each a `SurveyLayer`:
+
+- **an open file's traces:** when a file is opened, a job on the interactive lane
+  (`positionsWork`, the file in its `reads`, so a close cancels it and waits for it) copies
+  its keys (`traceKeysInto`: source and receiver coordinates with the SEG-Y scalar
+  applied) a chunk at a time into a layer, which goes when the file closes;
+- **survey files** loaded on their own, with or without a seismic file: SPS source,
+  receiver and relation files and SEG P1 files (`ckLoadSurvey`). File → Open, a drop, the
+  command line and a click in Files all reach them: the open job reads a file's first
+  bytes and loads a survey file into the survey instead of opening it (`openFileWork`),
+  and the plot stays as it is. An SPS file is read in 4 MiB chunks (`parseSps`, the
+  revision and layout of the first chunk kept), each cut after its last line end, so
+  any size is read in bounded memory, with progress and a cancel between chunks; lines
+  that hold binary bytes are passed by, and a file that turns into other data (16 MiB in
+  a row of binary lines or of lines that are no record) is read no further. A P1 file is
+  read whole, up to 64 MiB. A file's problems go to the log by line, the first 20 one by
+  one, then a count. A file that is not a survey file, or not a regular file (a named
+  pipe is never opened), is refused with a message.
+
+**Positions are per trace**, so land, marine and transition data all work: each trace's
+source and receiver become points of its file's layer, merged only where they repeat, at
+the same station and the same coordinates (a land receiver recorded in every shot); a
+streamer's receivers move with every shot and stay apart. A survey file's station given
+twice is one point, where it was given last (as parseSEG's join takes it). **Missing and
+zero coordinates are data:** a position without coordinates, or at (0, 0), is counted per
+role (`Positions`), said in the log, and left off the map; nothing raises. Each role's
+points (`PointSet`) are kept in the order of a **uniform-grid spatial index**
+(`SpatialIndex`: square cells over the points' bounds, about one point a cell, the points
+of a cell side by side): `nearest(x, y, radius)` looks at rings of cells around the place
+until no nearer point can be in the next ring, `within(box)` at the cells the box
+covers, and `bounds` gives what fit needs. A traces layer also keeps each trace's point
+and station and the traces of each point and station; a survey file's layer finds a
+point by station as parseSEG's join finds one (the same index, then any index, then the
+first position). **Links:** `tracePoints` gives the points a trace was recorded at in
+every layer (its own file's by trace; the survey files' by its stations, filled from the
+loaded relations with `joinStations` when its keys lack them), and `tracesAt` the traces
+of the open files at a point. **The join:** `joinGeometry` makes parseSEG's
+`SurveyGeometry` from loaded survey files (the first relation file's relations and every
+file's stations) for `applySurvey`, so a join reads no file again. Layers are made off
+the UI thread and never change once made: a file loaded again, or keys changed by a
+join, make a new layer in place of the old (each layer's `keysRevision` says which keys
+it was made from). A million traces become a layer in about 0.1 s (land) to 0.25 s
+(marine, every receiver a point of its own) in an optimised build; a lookup takes a few
+microseconds.
 
 **Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
 severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`
@@ -416,7 +466,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 | `openSeismic`, `saveIndex`, `summary`, `channelSets`, `gathers`, `crsText` | interactive job | A move-only `SeismicFile`, kept in the `Session`; owned copies |
 | `close` | UI, once a job holding the file exclusively has ended | Unmaps the file |
 | `ensureKeys`, `applySurvey`, `applyGeometry` | job, exclusive | Bump `keysRevision` |
-| `readSps`, `addSps`, `readP1` | job | `SurveyGeometry`, moved to the session |
+| `parseSps` (a chunk at a time), `addSps` (its relations), `parseP1`; `traceKeysInto` (an open file's positions, while the job reads the file) | interactive job | A `SurveyLayer`, moved to the UI thread (`mkSurvey`) |
+| `joinStations` (a copy of a hovered trace's keys) | UI | Fills the copy's stations from a loaded relation file |
 | `newPrefetcher`, `seek`, `nextInto`, `tryNextInto`, `recycle`, `close` | panel reader (the thread that made it) | `PrefetchChunk.samples` is the caller's until recycled |
 | `rowsOf`, `traceKeys`, `maxSamples`, `isSeismic` (the index in memory) | panel reader, while it holds the file | Views and copies of keys; nothing changes the index while the file is held |
 | `chunkMeta(c)`, `flow.compile`, `requiredMargin` | panel | A view of `c.rows` (no copy); a plan owned by the panel |
@@ -486,7 +537,8 @@ type
 
   FileList = object          # core/filelist: what the Files window lists
     title, folder: string    # the folder listed ("" for files chosen one by one)
-    entries: seq[FileEntry]  # path, name, kind (SEG-Y, SEG-D, SEG-2), size, modified,
+    entries: seq[FileEntry]  # path, name, kind (SEG-Y, SEG-D, SEG-2, SPS S / R / X, P1:
+                             # core/filekinds), size, modified,
                              # status (steady, writing, incomplete), isNew
     changes: seq[EntryChange] # the newest changes of `entries`, for the file table
     others, unreadable: int  # files not listed
@@ -535,7 +587,8 @@ type
     ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack,
     ckEdit, ckUndoEdit, ckClearEdits, ckHover, ckSelect,
     ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
-    ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog
+    ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog,
+    ckLoadSurvey, ckUnloadSurvey
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
@@ -558,6 +611,7 @@ type
     of mkListed: listGen, listed, others, unreadable, listDone, listFolder, listChosen,
       listLooked                   # with listDone: every file looked at, for the watch
     of mkWatched: watchGen, watched, watchProblem, problemChanged # what a look found changed
+    of mkSurvey: layer: SurveyLayer # a survey file read, or an open file's positions; moved
     # to come: mkResult (FoldMap, StackResult, QC rows ...)
 
   AppState = object          # move-only; owned by the UI thread
@@ -568,6 +622,7 @@ type
     files: FileList          # the file list
     edits: Table[string, FileEdits] # core/edits, per file's path: the traces killed and
                              # reversed, and the last change for the undo
+    survey: Survey           # core/survey: the survey files loaded, the open files' positions
     inbox: Inbox             # Poster handles for workers; freed with the last handle
     disk: DiskIo             # core/diskio: the session log, settings and layouts, off this thread
     watch: FolderWatch       # core/watch: the folder listed and the open files, looked at
@@ -599,6 +654,20 @@ type
     amplitude: float32       # as drawn; NaN when not held
     binned: int              # samples behind it, zoomed out
     edits: set[TraceEdit]    # the trace's edits, as drawn: killed, reversed
+
+  SurveyLayer = object       # core/survey: where one file's sources and receivers are
+    id: SurveyLayerId        # never reused
+    origin: LayerOrigin      # an open file's traces, or a survey file
+    kind: FileKind           # SPS S / R / X, P1, or the seismic file's standard
+    path, name: string
+    session: SessionId       # traces: the open file, its `base`, its `keysRevision`
+    points: array[PointRole, PointSet] # sources, receivers: a SpatialIndex (positions in
+                             # its order), elevation and station per point
+    counts: array[PointRole, Positions] # given, placed, missing, zero, merged, replaced,
+                             # moved, without a station
+    relations: SurveyGeometry # survey files: X / O records, as parseSEG's join reads them
+    gridUnit: GridUnit       # survey files: what the SPS header says the units are
+    bounds: Bounds
 
   Tile = object              # core/tiles: one request's samples, moved, never shared
     id: uint64               # given when taken in; the GPU keys its textures on it

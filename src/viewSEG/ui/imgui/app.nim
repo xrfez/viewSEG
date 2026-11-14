@@ -625,7 +625,8 @@ proc drawSaveLayout(ui: var Ui) =
 
 proc drop(paths: var seq[string]; core: var AppState) =
   ## Opens what was dropped on the window: one file is shown with its folder
-  ## listed; a folder, or several files, are listed and the first is shown.
+  ## listed; a folder, or several files, are listed and the first seismic
+  ## file is shown; survey files dropped are loaded into the survey.
   if paths.len > 0:
     core.apply Command(kind: ckBrowse, paths: paths, showFirst: true)
     paths.setLen 0
@@ -640,7 +641,8 @@ proc drawDropHint(ui: Ui) =
   let b = ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x, y: vp.WorkPos.y + vp.WorkSize.y)
   ImDrawList_AddRectFilled(dl, a, b, u32(withAlpha(ui.theme.roles[rlAccent], 40)), 0, 0)
   ImDrawList_AddRect(dl, a, b, u32(ui.theme.roles[rlAccent]), 0, 0, 4)
-  let text = "Drop to open: a folder lists its seismic files; a file is shown, its folder listed"
+  let text = "Drop to open: a folder lists its files; a seismic file is shown, its folder " &
+    "listed; survey files (SPS, P1) are loaded into the survey"
   let ts = igCalcTextSize(text.cstring, nil, false, -1)
   let at = ImVec2_c(x: a.x + (vp.WorkSize.x - ts.x) / 2, y: a.y + (vp.WorkSize.y - ts.y) / 2)
   let pad = igGetStyle().FramePadding

@@ -87,14 +87,14 @@ block listAFolder:
     var names: seq[string]
     for e in f.entries: names.add e.name
     doAssert names == @["Shot1.sgd", "shot2.sgd", "shot10.sgy"], $names
-    doAssert f.entries[0].kind == skSegd and f.entries[2].kind == skSegy
+    doAssert f.entries[0].kind == fkSegd and f.entries[2].kind == fkSegy
     doAssert f.entries[2].size == getFileSize(dir / "shot10.sgy")
     doAssert f.entries[2].path == dir / "shot10.sgy"
     doAssert f.others == 1, "the text file is counted, not listed: " & $f.others
     doAssert st.sessions.len == 0, "listing opened a file"
     doAssert st.shownPath == "" and st.panel(MainPanel).layers.len == 0
     doAssert st.settings.recentFolders[0] == dir
-    doAssert sniff(dir / "notes.txt") == skUnknown and sniff(dir / "nothing") == skUnknown
+    doAssert sniff(dir / "notes.txt") == fkUnknown and sniff(dir / "nothing") == fkUnknown
     doAssert not st.log.has("is done"), "a listing is no news for the log"
     st.shutdown()
 
@@ -241,7 +241,7 @@ when not defined(windows):
       doAssert listed, "the scan is stuck on the named pipe"
       doAssert st.fileList.entries.len == 1 and st.fileList.entries[0].name == "a.sgy"
       doAssert st.fileList.others == 1, "the pipe is counted, not listed"
-      doAssert sniff(pipe) == skUnknown
+      doAssert sniff(pipe) == fkUnknown
       st.shutdown()
 
 block exportsNeverGoOverSeismicFiles:

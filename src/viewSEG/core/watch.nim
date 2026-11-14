@@ -73,7 +73,7 @@ type
     ## The thread's own: a file as the last look found it.
     size: int64
     modified: Time
-    kind: SeismicKind
+    kind: FileKind
     changing: bool
     listed: bool
     turn: int ## the look that saw it last
@@ -133,22 +133,22 @@ proc see(w: var Watcher; path: string; listed: bool; news: var seq[WatchedFile])
     s.turn = w.turn
     s.listed = s.listed or listed
     if s.size != info.size or s.modified != info.lastWriteTime:
-      let wasSeismic = s.kind != skUnknown
+      let wasKnown = s.kind != fkUnknown
       s.size = info.size
       s.modified = info.lastWriteTime
-      if s.kind == skUnknown: s.kind = sniff(path) # long enough to tell now?
+      if s.kind == fkUnknown: s.kind = sniff(path) # long enough to tell now?
       s.changing = true
-      if s.kind != skUnknown or wasSeismic or announced: news.add s.report(path)
+      if s.kind != fkUnknown or wasKnown or announced: news.add s.report(path)
     elif s.changing:
       s.changing = false
-      if s.kind != skUnknown or announced: news.add s.report(path)
+      if s.kind != fkUnknown or announced: news.add s.report(path)
     elif announced:
       news.add s.report(path)
   else:
     let s = Seen(size: info.size, modified: info.lastWriteTime, kind: sniff(path),
       changing: true, listed: listed, turn: w.turn)
     w.seen[path] = s
-    if s.kind != skUnknown or announced: news.add s.report(path)
+    if s.kind != fkUnknown or announced: news.add s.report(path)
 
 proc look(w: var Watcher): seq[WatchedFile] =
   ## One look at the listed files and the open ones: what changed.
@@ -178,7 +178,7 @@ proc look(w: var Watcher): seq[WatchedFile] =
     for path in gone:
       let s = w.seen[path]
       w.seen.del path
-      if s.kind != skUnknown or path in w.open:
+      if s.kind != fkUnknown or path in w.open:
         result.add WatchedFile(path: path, exists: false, kind: s.kind, listed: s.listed)
   if problem != w.problem:
     w.problem = problem

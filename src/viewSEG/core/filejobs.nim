@@ -153,23 +153,24 @@ proc closeWork*(): JobWork =
   result = proc (ctx: JobContext) {.gcsafe.} =
     discard
 
-proc sniff*(path: string): SeismicKind =
-  ## The standard of the file at `path`, from its first `SniffBytes`
-  ## (parseSEG's `detectKind`); `skUnknown` when it is none, or cannot be
-  ## read. Reads the file and changes nothing in it. What is not a regular
-  ## file (a named pipe, a socket, a device) is not opened at all: opening a
-  ## named pipe waits until something writes to it, which may be never.
-  if not fileExists(path): return skUnknown
+proc sniff*(path: string): FileKind =
+  ## What the file at `path` is, from its first `SniffBytes`
+  ## (`filekinds.fileKindOf`: SEG-Y, SEG-D, SEG-2, SPS or P1); `fkUnknown`
+  ## when it is none, or cannot be read. Reads the file and changes nothing
+  ## in it. What is not a regular file (a named pipe, a socket, a device) is
+  ## not opened at all: opening a named pipe waits until something writes to
+  ## it, which may be never.
+  if not fileExists(path): return fkUnknown
   var head = newSeq[byte](SniffBytes)
   var f: File
-  if not open(f, path, fmRead): return skUnknown
+  if not open(f, path, fmRead): return fkUnknown
   try:
     head.setLen readBuffer(f, addr head[0], SniffBytes)
   except IOError:
     head.setLen 0
   finally:
     close(f)
-  if head.len == 0: skUnknown else: detectKind(head)
+  fileKindOf(head, path.extractFilename, whole = head.len < SniffBytes)
 
 proc listedNames(paths: openArray[string]): seq[string] =
   ## The files `paths` name: each folder's files (not its subfolders, nor
@@ -194,8 +195,8 @@ proc listedNames(paths: openArray[string]): seq[string] =
 const ListPause = initDuration(milliseconds = 100) ## a scan posts at least this often
 
 proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
-  ## The work of a job that lists the seismic files `paths` name (folders
-  ## and files, absolute) and posts them as `mkListed` messages for listing
+  ## The work of a job that lists the seismic and survey files `paths` name
+  ## (folders and files, absolute) and posts them as `mkListed` messages for listing
   ## `gen`, in batches, the last one with `listDone`. One file alone stands
   ## for its folder: the folder is listed, and the first message names both
   ## (`listFolder`, `listChosen`); one folder is named in it too; the last
@@ -232,7 +233,7 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
           let kind = sniff(path)
           looked.add WatchedFile(path: path, exists: true, kind: kind, size: info.size,
             modified: info.lastWriteTime, listed: true)
-          if kind == skUnknown: inc batch.others
+          if kind == fkUnknown: inc batch.others
           else:
             batch.listed.add FileEntry(path: path, name: path.extractFilename, kind: kind,
               size: info.size, modified: info.lastWriteTime)

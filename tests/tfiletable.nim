@@ -23,7 +23,7 @@ import std/[monotimes, random, times]
 import viewSEG/core/filelist
 import viewSEG/view/filetable
 
-func entry(name: string; kind: SeismicKind; size: int64; modified = 0): FileEntry =
+func entry(name: string; kind: FileKind; size: int64; modified = 0): FileEntry =
   FileEntry(path: "/data/" & name, name: name, kind: kind, size: size,
     modified: fromUnix(modified))
 
@@ -35,8 +35,8 @@ proc names(t: FileTable; f: FileList): seq[string] =
   for i in t.rows: result.add f.entries[i].name
 
 var f = FileList(gen: 1, revision: 1)
-f.merge([entry("Shot1.sgd", skSegd, 300, 3), entry("shot2.sgy", skSegy, 100, 1),
-  entry("shot10.sgd", skSegd, 100, 2), entry("shot11.sg2", skSeg2, 900, 2)])
+f.merge([entry("Shot1.sgd", fkSegd, 300, 3), entry("shot2.sgy", fkSegy, 100, 1),
+  entry("shot10.sgd", fkSegd, 100, 2), entry("shot11.sg2", fkSeg2, 900, 2)])
 
 block naturalOrderFirst:
   var t: FileTable
@@ -78,7 +78,7 @@ block noAllocationPerFile:
   var big = FileList(gen: 1, revision: 1)
   var found: seq[FileEntry]
   for i in 0 ..< 20_000:
-    found.add entry("shot" & $i & ".sgd", (if i mod 3 == 0: skSegy else: skSegd),
+    found.add entry("shot" & $i & ".sgd", (if i mod 3 == 0: fkSegy else: fkSegd),
       int64((i * 7919) mod 100_003), i mod 97)
   big.merge(found)
   var t: FileTable
@@ -107,7 +107,7 @@ block aScanIsMerged:
   var batch: seq[FileEntry]
   var worst = Duration()
   for i in 0 ..< 100_000:
-    batch.add entry("shot" & $i & ".sgd", skSegd, int64((i * 7919) mod 100_003), i mod 97)
+    batch.add entry("shot" & $i & ".sgd", fkSegd, int64((i * 7919) mod 100_003), i mod 97)
     if batch.len == 640:
       big.merge(batch)
       batch.setLen 0
@@ -133,7 +133,7 @@ block changesAreFollowed:
       var next = 0
       proc fresh(r: var Rand; next: var int): FileEntry =
         inc next
-        entry("f" & $r.rand(5_000) & "_" & $next & ".sgy", SeismicKind(1 + r.rand(2)),
+        entry("f" & $r.rand(5_000) & "_" & $next & ".sgy", FileKind(1 + r.rand(2)),
           r.rand(1000), r.rand(50))
       var first: seq[FileEntry]
       for i in 0 ..< 300: first.add r.fresh(next)
@@ -156,7 +156,7 @@ block changesAreFollowed:
           var tail: seq[FileEntry]
           for j in 0 ..< 5:
             inc next
-            tail.add entry("zz" & $next & ".sgd", skSegd, r.rand(1000), r.rand(50))
+            tail.add entry("zz" & $next & ".sgd", fkSegd, r.rand(1000), r.rand(50))
           list.merge(tail)
         t.update(list, filter, order)
         var made: FileTable
@@ -166,10 +166,10 @@ block changesAreFollowed:
 block chosenRowIsKept:
   var t: FileTable
   var list = FileList(gen: 1, revision: 1)
-  list.merge([entry("a.sgy", skSegy, 1), entry("b.sgy", skSegy, 2)])
+  list.merge([entry("a.sgy", fkSegy, 1), entry("b.sgy", fkSegy, 2)])
   t.update(list, "", FileOrder())
   doAssert t.chosenRow(list, "/data/b.sgy") == 1
-  discard list.insertEntry(entry("a0.sgy", skSegy, 3))
+  discard list.insertEntry(entry("a0.sgy", fkSegy, 3))
   t.update(list, "", FileOrder())
   doAssert t.chosenRow(list, "/data/b.sgy") == 2
   doAssert t.chosenRow(list, "/data/none.sgy") == -1

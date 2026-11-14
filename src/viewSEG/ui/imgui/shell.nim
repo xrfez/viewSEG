@@ -181,8 +181,11 @@ proc postShellEvent*(ev: sink ShellEvent) =
 # ---------------------------------------------------------------- dialogs --
 
 let seismicFilters = [
+  SDL_DialogFileFilter(name: "Seismic and survey files",
+    pattern: "sgy;segy;sgd;segd;sg2;sps;rps;xps;ops;s;r;x;p1"),
   SDL_DialogFileFilter(name: "Seismic files (SEG-Y, SEG-D, SEG-2)",
     pattern: "sgy;segy;sgd;segd;sg2"),
+  SDL_DialogFileFilter(name: "Survey files (SPS, SEG P1)", pattern: "sps;rps;xps;ops;s;r;x;p1"),
   SDL_DialogFileFilter(name: "SEG-Y (*.sgy, *.segy)", pattern: "sgy;segy"),
   SDL_DialogFileFilter(name: "SEG-D (*.sgd, *.segd)", pattern: "sgd;segd"),
   SDL_DialogFileFilter(name: "SEG-2 (*.sg2)", pattern: "sg2"),

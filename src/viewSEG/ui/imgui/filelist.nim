@@ -1,12 +1,14 @@
 ## The "Files" window: the file list (`core/filelist`) as a table at the side
-## of the main window. A folder's seismic files, with their type, size and
-## date; a filter box; the folders opened before, one click away; a refresh.
-## Clicking a row shows that file in the plot window in place of the one it
-## shows, keeping the display settings; while the window has the focus, the
-## arrow keys, Tab and Shift + Tab step to the next or previous file and
-## show it, Home and End to the first and last. Only the rows in view are
-## drawn (ImGui's list clipper), so a folder of thousands of files costs a
-## frame no more than a few.
+## of the main window. A folder's seismic and survey files, with their type,
+## size and date; a filter box; the folders opened before, one click away; a
+## refresh. Clicking a seismic file's row shows that file in the plot window
+## in place of the one it shows, keeping the display settings; while the
+## window has the focus, the arrow keys, Tab and Shift + Tab step to the next
+## or previous seismic file and show it, Home and End to the first and last.
+## Clicking a survey file's row (SPS, P1) loads it into the survey instead:
+## a pin marks it once loaded. Only the rows in view are drawn (ImGui's list
+## clipper), so a folder of thousands of files costs a frame no more than a
+## few.
 ##
 ## The folder is watched (`core/watch`): a file that appears is listed and
 ## marked new (a dot in the accent colour) until it is shown; one whose size
@@ -65,6 +67,13 @@ func markText(e: FileEntry): string =
     of fsSteady: ""
   if e.isNew: result.add "\nNew: it appeared after the folder was listed."
 
+proc surveyText(e: FileEntry; st: AppState): string =
+  ## What a survey file's row says of it, for its tooltip.
+  let i = st.survey.findFile(e.path)
+  if i >= 0: "\nLoaded into the survey: " & st.survey.layers[i].summary & "."
+  elif st.surveyLoading(e.path): "\nBeing loaded into the survey."
+  else: "\nA survey file: click to load it into the survey."
+
 func folderLabel(f: FileList): string =
   if f.folder.len > 0: f.folder.extractFilename
   elif f.title.len > 0: f.title
@@ -103,7 +112,7 @@ proc drawFolderRow(ui: var FileListUi; f: FileList; recent: openArray[string]; t
   marks.mark("files.refresh")
   tip("List the folder again")
 
-proc drawRows(ui: var FileListUi; f: FileList; t: Theme; marks: var Marks;
+proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: var Marks;
     res: var FileListOutput) =
   ## The table, sorted as its headers say, with only the rows in view drawn.
   # The name takes the room the others leave; a column can be hidden from
@@ -142,17 +151,21 @@ proc drawRows(ui: var FileListUi; f: FileList; t: Theme; marks: var Marks;
       let failed = e.path in f.failed
       let x = igGetCursorPosX()
       igPushID_Int(cint(r))
+      let survey = e.kind.isSurvey
       if igSelectable_Bool("##row", e.path == f.chosen,
           ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and
           e.path != f.chosen:
-        res.commands.add Command(kind: ckShowFile, panel: MainPanel, path: e.path)
+        res.commands.add(if survey: Command(kind: ckLoadSurvey, paths: @[e.path])
+          else: Command(kind: ckShowFile, panel: MainPanel, path: e.path))
       igPopID()
       marks.mark("files.row " & e.name)
       if r == chosenRow and ui.follow:
         if not igIsItemVisible(): igSetScrollHereY(0.5)
         ui.follow = false
       tip(e.path & "\n" & sizeText(e.size) & ", modified " & dateText(e.modified) &
-        markText(e) & (if failed: "\nIt could not be opened: Messages says why." else: ""))
+        markText(e) & (if survey: surveyText(e, st) else: "") &
+        (if failed: "\nIt could not be " & (if survey: "loaded" else: "opened") &
+          ": Messages says why." else: ""))
       # The mark and the name, over the row's selectable.
       igSameLine(0, 0)
       igSetCursorPosX(x)
@@ -162,6 +175,12 @@ proc drawRows(ui: var FileListUi; f: FileList; t: Theme; marks: var Marks;
         igTextUnformatted(mark.cstring, nil)
         igPopStyleColor(1)
         marks.mark("files.mark " & e.name)
+        igSameLine(0, -1)
+      if survey and st.survey.findFile(e.path) >= 0:
+        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
+        igTextUnformatted(IconLocation.cstring, nil)
+        igPopStyleColor(1)
+        marks.mark("files.loaded " & e.name)
         igSameLine(0, -1)
       let dim = e.status == fsWriting
       if failed or dim:
@@ -185,7 +204,7 @@ proc drawRows(ui: var FileListUi; f: FileList; t: Theme; marks: var Marks;
 
 proc footer(f: FileList; shown: int; t: Theme) =
   ## What the list holds, or how far the listing is, under the table: how
-  ## many files are new and being written too.
+  ## many files are seismic and survey files, and new and being written.
   var text = ""
   var colour = t.roles[rlTextDim]
   if f.error.len > 0:
@@ -196,7 +215,13 @@ proc footer(f: FileList; shown: int; t: Theme) =
   elif f.title.len == 0:
     text = "Open a folder to list its seismic files."
   else:
-    text = $f.entries.len & (if f.entries.len == 1: " seismic file" else: " seismic files")
+    var surveys = 0
+    for e in f.entries:
+      if e.kind.isSurvey: inc surveys
+    let seismic = f.entries.len - surveys
+    text = $seismic & (if seismic == 1: " seismic file" else: " seismic files")
+    if surveys == 1: text.add ", 1 survey file"
+    elif surveys > 1: text.add ", " & $surveys & " survey files"
     if shown < f.entries.len: text.add ", " & $shown & " shown"
     var fresh, writing = 0
     for e in f.entries:
@@ -260,7 +285,7 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
     if following: igPopStyleColor(2)
     marks.mark("files.follow")
     tip("Follow the latest file: " & (if following: "on" else: "off") & ".\n" & FollowHelp)
-    ui.drawRows(f, t, marks, result)
+    ui.drawRows(st, f, t, marks, result)
     footer(f, ui.table.rows.len, t)
     marks.mark("files.footer")
     if igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint):

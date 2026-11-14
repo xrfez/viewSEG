@@ -25,7 +25,7 @@ Status values:
 | Open SEG-Y, SEG-D and SEG-2, detected from content | `openSeismic`, `detectKind`, `f.kind`, `f.len`, `f.isOpen` | File → Open, drag and drop, file browser | planned |
 | Progress and cancel while indexing | `Progress`, `SegCancelledError`, `ProgressStep` | Progress bar with Cancel | planned |
 | Index cache for instant reopening | `OpenOptions.cache`, `saveIndex`, `f.fromCache` | Instant stepping between files in the file browser | planned |
-| Per-trace geometry keys, all or on demand | `keys = true`, `ensureKeys`, `traceKeys(traces)`, `traceKeysInto`, `hasKeys` | Map, status bar, gathers (keys built when first needed) | planned |
+| Per-trace geometry keys, all or on demand | `keys = true`, `ensureKeys`, `traceKeys(traces)`, `traceKeysInto`, `hasKeys` | The open file's source and receiver positions in the survey (`traceKeysInto` on a job after each open); map, status bar, gathers (keys built when first needed) | built (positions); planned (the rest) |
 | Open options: force the standard, verify every header, two's-complement mantissas (SEG-D 8015, SEG-2 format 3), demux folder | `OpenOptions(kind, verify: vfFull, twosComplement8015, demuxDir)` | "Reopen with options…" (offered on a "not recognised" log entry) | planned |
 | Multiplexed SEG-D read transparently | `openSeismic` (demux copy), `f.demuxPath`, `dcMultiplexed` | Opens like any file; a log note says a temporary copy is used | planned |
 | File facts in one summary | `summary` (`FileSummary`: standard, revision, byte order, format, counts, interval, record length, `coordinateUnits`, `decodable`), `recordCount`, `maxSamples`, `index.prefersFloat64` | "File properties" panel | planned |
@@ -90,11 +90,11 @@ Status values:
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Read SPS 1.0 / 2.1 (S, R, X, O) | `readSps`, `parseSps`, `addSps`, `SpsOptions`, `looksLikeSps` | File → Join geometry…; survey files as map layers | planned |
-| Read SEG P1 | `readP1`, `parseP1`, `addP1`, `P1Options` (`angleUnit`) | Join geometry from P1 | planned |
-| Survey-file problems | `SurveyGeometry.log`, `SpsFile.log` | Log window | planned |
-| Station tables | `table`, `sourceCount`, `receiverCount`, `relationCount` | Map layers per survey file | planned |
-| Join by station, with statistics | `applySurvey`, `joinStations`, `JoinStats`, `JoinMatch` | Join geometry: matched / unmatched counts | planned |
+| Read SPS 1.0 / 2.1 (S, R, X, O) | `parseSps` (a file a 4 MiB chunk at a time, the revision and layout of the first kept: `SpsOptions`), `detectLayout`, `addSps` (the relations), `relationDomainOf`; `readSps`, `looksLikeSps` not used (the file list tells SPS also from a head of header records only) | File → Open, drag and drop, a click in Files: survey files are loaded into the survey on a job, with progress, and listed as SPS S / R / X; map layers and File → Join geometry… to come | built (loading); planned (map, join) |
+| Read SEG P1 | `parseP1` (whole, up to 64 MiB), `P1Options` (`angleUnit`) | Loaded into the survey as SPS files are (sources; a reshoot is a station of its own); join geometry from P1, with the implied decimals, to come | built (loading); planned (join) |
+| Survey-file problems | `SurveyGeometry.log`, `SpsFile.log`, `P1File.log` | Messages: each file's first 20 problems by line, then a count; what was left off the map (no coordinates, at (0, 0)) and stations given twice | built |
+| Station tables | `table`, `sourceCount`, `receiverCount`, `relationCount`, `records` | The survey's own layers (stations found by key as `lookup` finds them); `relationCount` and `records` give a relation file's counts; map layers per survey file to come | built (layers); planned (map) |
+| Join by station, with statistics | `applySurvey`, `joinStations`, `JoinStats`, `JoinMatch`, `stationKey` | `joinStations` fills a hovered trace's stations from the loaded relations, to find its points in the survey files (the link for linked highlighting); a join geometry made from the loaded files, for `applySurvey`; File → Join geometry with matched / unmatched counts to come | built (link, join input); planned (join) |
 | Traces by join outcome (conflict, ambiguous, unmatched) | `joinStations` per trace | Join report: select the traces of each outcome | planned |
 | Join options: line names, trailing digits, multi-component, one tape | `mapLine`, `trailingDigits`, `multiComponent`, `tape` | Join geometry dialog, advanced options | planned |
 | Relation lookups (the spread of a shot, the shots of a receiver) | `relation`, `relations`, `records`, `expectedChannels`, `recordsAt`, `channelOf`, `relationRuns`, `relationsDisjoint` | Map: hover a source to see its planned spread, a receiver to see its shots | planned |

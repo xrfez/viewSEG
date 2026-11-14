@@ -63,6 +63,14 @@
 ## the next tile set the panel's level again, as the level leaves killed
 ## traces out.
 ##
+## **The survey** (`core/survey`): where sources and receivers are, for the
+## map. Each open file's positions are read from its keys by a job once it
+## is open (`surveyjobs.positionsWork`), and leave with the file. Survey
+## files (SPS, SEG P1) are loaded on their own (`ckLoadSurvey`): a file
+## named to File > Open, dropped, given on the command line or clicked in
+## the file list that is a survey file goes there instead of the plot (the
+## open job tells by its first bytes, `surveyjobs.openFileWork`).
+##
 ## **No undo history.** Each change to the edits is its own inverse, so
 ## `ckUndoEdit` reverts a file's last one and `ckClearEdits` takes every
 ## edit away (and is undone the same way); header edits are a patch, undone
@@ -73,10 +81,10 @@ import std/[math, monotimes, os, sequtils, sets, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 import diskio, edits, filejobs, filelist, inbox, jobs, layouts, log, panels, persist, pick,
-  reader, selection, session, settings, threads, tiles, watch, zoom
+  reader, selection, session, settings, survey, surveyjobs, threads, tiles, watch, zoom
 
 export edits, filelist, inbox, jobs, layouts, log, panels, persist, pick, selection, session,
-  settings, threads, tiles, zoom
+  settings, survey, threads, tiles, zoom
 export WatchInterval
 
 const
@@ -119,11 +127,13 @@ type
     ckHover = "hover"                    ## the trace under the cursor
     ckSelect = "select"                  ## change the selected traces
     ckClearSelection = "clear selection"
+    ckLoadSurvey = "load survey"         ## read SPS or P1 files into the survey
+    ckUnloadSurvey = "unload survey"     ## take a survey file's layer out of the survey
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
     case kind*: CommandKind
-    of ckOpen, ckBrowse:
+    of ckOpen, ckBrowse, ckLoadSurvey:
       paths*: seq[string]
         ## relative or absolute: one file opens once, however it is named
       showFirst*: bool                ## ckBrowse: show the first file found in the main panel
@@ -160,6 +170,7 @@ type
       docPath*: string                ## the file written or read
     of ckLayout: arrangement*: string ## the toolkit's layout text
     of ckSaveLayout: layoutName*: string
+    of ckUnloadSurvey: layer*: SurveyLayerId
 
   Notice* = object
     ## A brief notice: a background job ended (the frontend shows it for a
@@ -186,10 +197,22 @@ type
     panel: PanelId
     gather: int
 
+  Loading = object
+    ## A survey file being loaded, or an open file's positions being read.
+    job: JobId
+    path: string
+    session: SessionId ## positions: the open file; `NoSession` for a survey file
+
   AppState* = object
     ## Everything the views show. Move-only.
     log: MessageLog
     selection: Selection
+    survey: Survey        ## the survey files loaded and the open files' positions
+    loading: seq[Loading] ## the jobs that fill the survey
+    loadNamed: seq[string]
+      ## the files the listing was asked for: loaded when it finds them survey files
+    saidPositions: HashSet[string]
+      ## files whose positions' problems were said; folders said to hold no coordinates
     panels: seq[Panel]
     sessions: seq[Session]
     opening, closing: seq[Pending]
@@ -440,6 +463,16 @@ func fileList*(state: AppState): lent FileList {.inline.} =
   ## the one the main panel shows.
   state.files
 
+func survey*(state: AppState): lent Survey {.inline.} =
+  ## The survey: the survey files loaded and the open files' positions.
+  state.survey
+
+func surveyLoading*(state: AppState; path: string): bool =
+  ## Whether survey file `path` (canonical) is being loaded, or opened by a
+  ## job that may find it one.
+  state.loading.anyIt(it.session == NoSession and it.path == path) or
+    state.opening.anyIt(it.path == path and not it.unwanted)
+
 func shownFile*(state: AppState; panelIndex: int): int =
   ## The index in `sessions` of the file `panels[panelIndex]` shows; -1 for
   ## none.
@@ -613,7 +646,8 @@ proc seismicAt(state: AppState; path: string): bool =
   ## (Working rules: a loaded file is never changed).
   let p = canonical(path)
   state.sessions.anyIt(it.path == p) or state.opening.anyIt(it.path == p) or
-    state.closing.anyIt(it.path == p) or state.files.find(p) >= 0
+    state.closing.anyIt(it.path == p) or state.files.find(p) >= 0 or
+    state.survey.findFile(p) >= 0
 
 proc refusedExport(state: var AppState; cmd: Command): bool =
   ## Says why `cmd` (an export) writes nothing, when it may not: no file
@@ -842,6 +876,8 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
         (s.path in job.spec.reads or s.path in job.spec.exclusive):
       discard state.jobs.cancel(job.id)
   state.selection.forget(s.id, s.traceIds)
+  let positions = state.survey.findTraces(s.id)
+  if positions >= 0: discard state.survey.remove(state.survey.layers[positions].id)
   for k in 0 ..< state.panels.len:
     if keepLayers:
       if state.panels[k].layers.anyIt(it.shows(s.id)): state.newSource(k)
@@ -937,6 +973,81 @@ proc checkEdits(state: var AppState; s: Session) =
       "edited, so its kills and polarity reversals are set aside: by trace number they may " &
       "not fit the traces it holds now. Ctrl+Z (with the plot focused) brings them back.")
 
+proc readPositions(state: var AppState; s: Session) =
+  ## Reads the source and receiver positions of open file `s` on a job: its
+  ## layer of the survey.
+  let job = state.jobs.submit(JobSpec(title: "Read the positions in " & s.name,
+    lane: jlInteractive, reads: @[s.path]), positionsWork(s.filePtr, s.path,
+    fileKind(s.file.kind), s.id, s.base, state.inbox.poster))
+  state.loading.add Loading(job: job, path: s.path, session: s.id)
+
+proc loadSurvey(state: var AppState; path: string; quiet = false) =
+  ## Loads survey file `path` (canonical) on a job, unless it is being
+  ## loaded already, or is loaded as the file list says it is now; `quiet`
+  ## says nothing then.
+  let name = path.extractFilename
+  let i = state.survey.findFile(path)
+  let e = state.files.find(path)
+  if state.surveyLoading(path):
+    if not quiet: state.log.add(sevInfo, name, name & " is already being loaded.")
+  elif i >= 0 and e >= 0 and state.files.entries[e].size == state.survey.layers[i].size and
+      state.files.entries[e].modified == state.survey.layers[i].modified:
+    if not quiet: state.log.add(sevInfo, name, name & " is loaded already, as it is now.")
+  else:
+    let job = state.jobs.submit(JobSpec(title: "Load " & name, lane: jlInteractive,
+      reads: @[path]), surveyWork(path, state.inbox.poster))
+    state.loading.add Loading(job: job, path: path)
+
+proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
+  ## A layer a job made: an open file's positions, kept while the file is
+  ## open and its keys are as they were read; or a survey file, in place of
+  ## its layer from before.
+  for i, x in state.loading:
+    if x.job == job:
+      state.loading.delete(i)
+      break
+  let (name, path) = (layer.name, layer.path)
+  let problems = layer.problems
+  case layer.origin
+  of loTraces:
+    let i = state.findSession(layer.session)
+    if i < 0 or state.sessions[i].file.keysRevision != layer.keysRevision: return
+    let placed = layer.points[prSource].len + layer.points[prReceiver].len
+    let stations = layer.stationCount(prSource) + layer.stationCount(prReceiver)
+    discard state.survey.add(layer)
+    if placed == 0:
+      # Field records often carry stations only: said once a folder, and not
+      # once survey files are loaded.
+      let folder = "no coordinates: " & path.parentDir
+      if folder notin state.saidPositions and
+          not state.survey.layers.anyIt(it.origin == loSurveyFile):
+        state.saidPositions.incl folder
+        state.log.add(sevInfo, name, name & " carries no source or receiver coordinates" &
+          (if stations > 0: " (its traces name their stations): load its survey files " &
+            "(SPS, P1) to place it on the map." else: "."))
+    elif problems.len > 0 and path notin state.saidPositions:
+      state.saidPositions.incl path
+      state.log.add(sevInfo, name, name & ": " & problems.join("; ") & ". They are left " &
+        "off the map.")
+  of loSurveyFile:
+    for i, p in state.opening:
+      if p.job == job: # an open that found a survey file: no file to show
+        let panel = p.panel
+        state.opening.delete(i)
+        if panel in [NoPanel, MainPanel]: state.chooseShown()
+        break
+    let failed = state.files.failed.find(path)
+    if failed >= 0:
+      state.files.failed.delete(failed)
+      inc state.files.revision
+    let again = state.survey.findFile(path) >= 0
+    let text = "Loaded " & name & " (" & $layer.kind & ")" & (if again: " again" else: "") &
+      ": " & layer.summary & "." & (if problems.len > 0: " " & problems.join("; ") & "." else: "")
+    var lost = 0
+    for c in layer.counts: lost += c.missing + c.zero + c.moved
+    discard state.survey.add(layer)
+    state.log.add(if lost > 0: sevWarning else: sevInfo, name, text)
+
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
   ## Takes in a file an open job opened, and shows its first gather (or the
   ## gather the open asks for) in the panel the open was for (the main panel
@@ -985,6 +1096,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   let short = s.file.cutShort
   state.onDiskSaid.del path
   state.sessions.add s
+  state.readPositions(state.sessions[^1])
   state.watchOpen()
   let k = state.findPanel(panel)
   if replacing and k >= 0: state.showReplacing(k, id, gather)
@@ -1020,6 +1132,22 @@ proc notify(state: var AppState; severity: Severity; text: string) =
 
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
+  for i in 0 ..< state.loading.len:
+    if state.loading[i].job == job.id: # (one that posted its layer was let go of then)
+      let x = state.loading[i]
+      state.loading.delete(i)
+      let name = x.path.extractFilename
+      if x.session == NoSession:
+        case job.state
+        of jsFailed:
+          state.log.add(sevError, name, "Cannot load " & x.path & ": " & job.error & ".")
+          state.failed(x.path)
+        of jsCancelled: state.log.add(sevInfo, name, "Loading " & name & " was cancelled.")
+        else: discard
+      elif job.state == jsFailed:
+        state.log.add(sevWarning, name, "Cannot read the positions in " & name & ": " &
+          job.error & ".")
+      return
   for i, p in state.opening:
     if p.job == job.id:
       state.endOpening(i, job.state, job.error)
@@ -1086,7 +1214,7 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
       if not follow: state.opening[o].follow = false # the user's own choice: shown as it is
     else:
       let job = state.jobs.submit(JobSpec(title: "Open " & path.extractFilename,
-        lane: jlInteractive, reads: @[path]), openWork(path, state.inbox.poster,
+        lane: jlInteractive, reads: @[path]), openFileWork(path, state.inbox.poster,
         indexCacheFile(state.indexCache, path), whole = follow))
       state.opening.add Pending(job: job, path: path, panel: panel, gather: gather,
         follow: follow)
@@ -1117,6 +1245,8 @@ proc takeListed(state: var AppState; m: sink Msg) =
     var st = state.settings
     st.recentFolders.addRecent(m.listFolder, MaxRecent)
     state.change st
+  for e in m.listed:
+    if e.kind.isSurvey and e.path in state.loadNamed: state.loadSurvey(e.path, quiet = true)
   f.merge(m.listed)
   f.others += m.others
   f.unreadable += m.unreadable
@@ -1127,9 +1257,9 @@ proc takeListed(state: var AppState; m: sink Msg) =
     state.folderWatch.watch(f.gen, paths, move m.listLooked)
   inc f.revision
   if state.showFound != NoPanel:
-    let target = if m.listChosen.len > 0: m.listChosen
-                 elif f.entries.len > 0: f.entries[0].path
-                 else: ""
+    var target = m.listChosen # (an open job finds it a survey file, if it is one)
+    for e in f.entries:
+      if target.len == 0 and e.kind.isSeismic: target = e.path
     if target.len > 0 or m.listDone:
       let k = state.findPanel(state.showFound)
       state.showFound = NoPanel
@@ -1144,7 +1274,7 @@ proc followNewest(state: var AppState) =
   template f: untyped = state.files
   var best = -1
   for i, e in f.entries:
-    if e.isNew and e.status == fsSteady and e.path != f.chosen and
+    if e.kind.isSeismic and e.isNew and e.status == fsSteady and e.path != f.chosen and
         e.path notin state.followed and e.path notin f.failed and
         (best < 0 or e.modified >= f.entries[best].modified):
       best = i
@@ -1233,7 +1363,7 @@ proc takeWatched(state: var AppState; m: sink Msg) =
         let failed = f.failed.find(w.path)
         if failed >= 0: f.failed.delete(failed)
       elif i < 0:
-        if w.kind != skUnknown:
+        if w.kind != fkUnknown:
           discard f.insertEntry FileEntry(path: w.path, name: w.path.extractFilename,
             kind: w.kind, size: w.size, modified: w.modified,
             status: (if w.changing: fsWriting else: fsSteady), isNew: true)
@@ -1340,7 +1470,7 @@ proc apply*(state: var AppState; cmd: Command) =
         state.log.add(sevInfo, name, name & " is already being opened.")
       else:
         let job = state.jobs.submit(JobSpec(title: "Open " & name, lane: jlInteractive,
-          reads: @[path]), openWork(path, state.inbox.poster,
+          reads: @[path]), openFileWork(path, state.inbox.poster,
           indexCacheFile(state.indexCache, path)))
         state.opening.add Pending(job: job, path: path)
   of ckBrowse:
@@ -1351,6 +1481,7 @@ proc apply*(state: var AppState; cmd: Command) =
     else:
       # A copy: as an argument beside `paths`, `paths[0]` would be moved.
       let title = if paths.len == 1: paths[0] else: $paths.len & " chosen files"
+      state.loadNamed = paths # the survey files among them are loaded once listed
       state.startListing(paths, title, "")
       state.showFound = if cmd.showFirst: MainPanel else: NoPanel
   of ckShowTrace:
@@ -1381,9 +1512,13 @@ proc apply*(state: var AppState; cmd: Command) =
     elif cmd.path.len == 0: state.ignore(cmd, "no file was named")
     else:
       let path = canonical(cmd.path)
-      state.jump = ("", -1, -1) # another choice than a message's trace
-      if cmd.panel == MainPanel: state.showFound = NoPanel # the user chose
-      state.showPath(k, path)
+      let e = state.files.find(path)
+      if e >= 0 and state.files.entries[e].kind.isSurvey:
+        state.loadSurvey(path) # a survey file: into the survey, the plot stays
+      else:
+        state.jump = ("", -1, -1) # another choice than a message's trace
+        if cmd.panel == MainPanel: state.showFound = NoPanel # the user chose
+        state.showPath(k, path)
       let folder = path.parentDir
       if cmd.listFolder and state.files.folder != folder:
         state.startListing(@[folder], folder, folder)
@@ -1568,6 +1703,20 @@ proc apply*(state: var AppState; cmd: Command) =
       state.selection.select(known, cmd.mode)
   of ckClearSelection:
     state.selection.clear()
+  of ckLoadSurvey:
+    if cmd.paths.len == 0: state.ignore(cmd, "no file was named")
+    for given in cmd.paths:
+      if given.len == 0: state.ignore(cmd, "a file name was empty")
+      else: state.loadSurvey(canonical(given))
+  of ckUnloadSurvey:
+    let i = state.survey.find(cmd.layer)
+    if i < 0: state.ignore(cmd, $cmd.layer & " is not loaded")
+    elif state.survey.layers[i].origin != loSurveyFile:
+      state.ignore(cmd, $cmd.layer & " holds an open file's positions: they go when it is closed")
+    else:
+      let name = state.survey.layers[i].name
+      discard state.survey.remove(cmd.layer)
+      state.log.add(sevInfo, name, name & " was taken out of the survey.")
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept
@@ -1639,6 +1788,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkRead: state.takeIn(m)
     of mkListed: state.takeListed(move m)
     of mkWatched: state.takeWatched(move m)
+    of mkSurvey: state.takeSurvey(move m.layer, m.job)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:

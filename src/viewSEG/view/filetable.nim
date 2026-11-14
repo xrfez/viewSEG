@@ -1,7 +1,7 @@
 ## The file list as a table: the rows the filter lets through, in the order
 ## the user sorted the table by (name in natural order, type, size or date,
 ## either way), each cell as text; and stepping from the chosen file to the
-## next or previous row, as the arrow keys do. Toolkit-neutral: a frontend
+## next or previous seismic file's row, as the arrow keys do. Toolkit-neutral: a frontend
 ## draws the rows it has room for. The rows follow the list's changes
 ## (`FileList.changes`): a scan's batch, or a file that appears, grows or
 ## goes while the folder is watched, is merged into the rows there are.
@@ -37,10 +37,10 @@ type
 
 const kindRank = block:
   ## Each kind's place when the types are sorted by the names shown.
-  var names: seq[(string, SeismicKind)]
-  for k in SeismicKind: names.add ($k, k)
+  var names: seq[(string, FileKind)]
+  for k in FileKind: names.add ($k, k)
   names.sort()
-  var rank: array[SeismicKind, int]
+  var rank: array[FileKind, int]
   for i, (_, k) in names: rank[k] = i
   rank
 
@@ -171,14 +171,27 @@ proc chosenRow*(t: var FileTable; list: FileList; path: string): int =
   t.chosen.row
 
 func stepped*(t: FileTable; list: FileList; current: string; delta: int): string =
-  ## The file `delta` rows after `current` (before it, for a negative
-  ## `delta`), stopping at the first and last row; the first row (the last,
-  ## stepping back) when `current` is not shown. "" when no row is shown.
-  if t.rows.len == 0: return ""
+  ## The seismic file `delta` seismic files' rows after `current` (before
+  ## it, for a negative `delta`), stopping at the first and last; survey
+  ## files are passed by (they are loaded into the survey, not shown). The
+  ## first seismic row (the last, stepping back) when `current` is not
+  ## shown; "" when no seismic file is.
   let r = t.rowOf(list, current)
-  let to = if r < 0: (if delta >= 0: 0 else: t.rows.high)
-           else: clamp(r + delta, 0, t.rows.high)
-  list.entries[t.rows[to]].path
+  let dir = if delta >= 0: 1 else: -1
+  template seismic(row: int): bool = list.entries[t.rows[row]].kind.isSeismic
+  if r < 0:
+    var i = if dir > 0: 0 else: t.rows.high
+    while i in 0 .. t.rows.high:
+      if seismic(i): return list.entries[t.rows[i]].path
+      i += dir
+    return ""
+  var (at, left, i) = (r, abs(delta), r + dir)
+  while left > 0 and i in 0 .. t.rows.high:
+    if seismic(i):
+      at = i
+      dec left
+    i += dir
+  list.entries[t.rows[at]].path
 
 func sizeText*(bytes: int64): string =
   ## "812 B", "4.2 KB", "65.1 MB", "1.27 GB" (powers of 1000, as file
