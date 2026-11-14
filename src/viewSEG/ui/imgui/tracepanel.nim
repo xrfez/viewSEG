@@ -75,7 +75,7 @@ import imguin/cimgui
 import ../../core/[geometry, state, wiggle]
 import ../../gpu/[plotimage, textures]
 import ../../view/[displayheader, plotink, theme, timeaxis]
-import chrome, dpi, fonts, icons, menus, plotbars, plotgain, plotsort, style, symbols
+import chrome, dpi, focus, fonts, icons, menus, plotbars, plotgain, plotsort, style, symbols
 
 export PaperBackground, PaperInk
 
@@ -163,6 +163,7 @@ type
     menuTarget: string ## what the plot's menu acts on, said when it opened
     menuUnder: int = -1 ## the trace under the pointer when it opened (survey-wide); -1 for none
     cursorText: string ## the time the cursor's time line showed last; "" for none
+    focus: FocusClicks ## a click selects only in a window that had the focus
     picking: int ## the colour whose picker is open (as `colourKeys` lists them)
     hex: array[12, char] ## what the picker's `#rrggbb` box holds
 
@@ -1179,7 +1180,10 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
     if not down:
       if not tp.drag.moved and tp.drag.button == ImGui_MouseButton_Left.cint and hovered:
         # Ctrl + click is the mute editor's (docs/plot-window.md): nothing here.
-        click = if io.KeyCtrl: clNone elif io.KeyShift: clShiftClick else: clClick
+        # The click that brings the window forward selects nothing.
+        click = if io.KeyCtrl or not tp.focus.acts: clNone
+                elif io.KeyShift: clShiftClick
+                else: clClick
       tp.drag = Drag()
   of dkBox:
     let a = clampTo(tp.drag.press, plot)
@@ -1469,6 +1473,7 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
     ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoScrollbar.cint
   var plotted = false
   if igBegin(title.cstring, nil, windowFlags):
+    tp.focus.watch()
     # The window never scrolls as a whole: the strip wraps and the plot fits.
     igSetScrollX_Float(0)
     igSetScrollY_Float(0)
@@ -1510,6 +1515,7 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
       else:
         tp.drawPlot(st, k, t, fonts, marks, result, ask, ppi)
         plotted = true
+  tp.focus.settle()
   igEnd()
   # No plot this frame (a new gather or file is being read, the window is
   # hidden): the trace this plot hovered is not shown, so it is not hovered.

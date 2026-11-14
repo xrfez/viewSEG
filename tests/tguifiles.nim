@@ -97,10 +97,13 @@ withFixtures fx:
         at = f.markOf("files.row shot10.sgy").centre
         f.moveMouse(at)
         f.next "listed"
-    of 1: # a click on shot10
+    of 1: # a click on shot10: the first brings the window forward only
       if wait == 3: f.pressMouse(at, true)
       if wait == 5: f.pressMouse(at, false)
-      if wait > 5 and shown == dir / "shot10.sgy" and f.laidOut: f.next "click"
+      if wait == 9: doAssert shown == dir / "Shot1.sgd", "a focusing click showed " & shown
+      if wait == 10: f.pressMouse(at, true)
+      if wait == 12: f.pressMouse(at, false)
+      if wait > 12 and shown == dir / "shot10.sgy" and f.laidOut: f.next "click"
     of 2:
       f.key(skUp)
       if wait > 4 and shown == dir / "shot2.sgd" and f.laidOut: f.next "up"

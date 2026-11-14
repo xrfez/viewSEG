@@ -52,12 +52,16 @@ withFixtures fx:
     of 4:
       if smCtrl in mods: f.pressKey(skCtrl, false)
     else: discard
-  proc click(f: FrameInfo; mark: string) =
+  proc click(f: FrameInfo; mark: string; focusing = false) =
+    ## A click on `mark`; with `focusing`, two: the first only brings an
+    ## unfocused window forward.
     if wait == 1:
       at = f.markOf(mark).centre
       f.moveMouse(at)
     if wait == 3: f.pressMouse(at, true)
     if wait == 5: f.pressMouse(at, false)
+    if focusing and wait == 8: f.pressMouse(at, true)
+    if focusing and wait == 10: f.pressMouse(at, false)
   proc onFrame(f: FrameInfo) =
     inc wait
     if f.index == 0: f.moveMouse(vec2(4, 4))
@@ -73,7 +77,8 @@ withFixtures fx:
           f.markOf("records.current").size.x > 0:
         next "listed"
     of 1:
-      f.click("records.row 2")
+      f.click("records.row 2", focusing = true)
+      if wait == 7: doAssert f.gatherShown != 2, "a focusing click showed record 3"
       reach("click", 2)
     of 2:
       f.key(skUp)
@@ -162,8 +167,8 @@ withFixtures fx:
         stage = 1
         wait = 0
     of 1:
-      f.click("records.row 2")
-      if wait > 6 and f.gatherShown == 2:
+      f.click("records.row 2", focusing = true)
+      if wait > 12 and f.gatherShown == 2:
         stage = 2
         wait = 0
     of 2:

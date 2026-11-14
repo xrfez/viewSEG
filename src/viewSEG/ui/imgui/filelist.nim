@@ -6,7 +6,8 @@
 ## window has the focus, the arrow keys, Tab and Shift + Tab step to the next
 ## or previous seismic file and show it, Home and End to the first and last.
 ## Clicking a survey file's row (SPS, P1) loads it into the survey instead:
-## a pin marks it once loaded. Only the rows in view are drawn (ImGui's list
+## a pin marks it once loaded. The click that only brings the window forward
+## does neither (`focus`). Only the rows in view are drawn (ImGui's list
 ## clipper), so a folder of thousands of files costs a frame no more than a
 ## few.
 ##
@@ -21,7 +22,7 @@ import std/[os, times]
 import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../view/[filetable, theme]
-import chrome, icons, menus, style
+import chrome, focus, icons, menus, style
 
 type
   FileListUi* = object
@@ -29,8 +30,9 @@ type
     filter: array[128, char]
     table: FileTable
     order: FileOrder
-    chosen: string ## the chosen file last frame: a new one is scrolled into view
+    chosen: string     ## the chosen file last frame: a new one is scrolled into view
     follow: bool
+    focus: FocusClicks ## a click on a row acts only in a window that had the focus
 
   FileListOutput* = object
     ## What the window asks for.
@@ -154,7 +156,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
       let survey = e.kind.isSurvey
       if igSelectable_Bool("##row", e.path == f.chosen,
           ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and
-          e.path != f.chosen:
+          e.path != f.chosen and ui.focus.acts:
         res.commands.add(if survey: Command(kind: ckLoadSurvey, paths: @[e.path])
           else: Command(kind: ckShowFile, panel: MainPanel, path: e.path))
       igPopID()
@@ -260,6 +262,7 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
   # The arrow keys and Tab step through the files, so ImGui's keyboard
   # navigation does not move between the rows here.
   if igBegin(title.cstring, nil, ImGui_WindowFlags_NoNavInputs.cint):
+    ui.focus.watch()
     marks.markWindow("files")
     template f: untyped = st.fileList # a view: a copy would take every entry each frame
     if f.chosen != ui.chosen:
@@ -290,4 +293,5 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
     marks.mark("files.footer")
     if igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint):
       ui.handleKeys(f, result)
+  ui.focus.settle()
   igEnd()

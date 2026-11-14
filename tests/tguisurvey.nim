@@ -58,10 +58,13 @@ withFixtures fx:
         at = f.markOf("files.row planted.r").centre
         f.moveMouse(at)
         f.next "listed"
-    of 1: # a click on planted.r: loaded, pinned
+    of 1: # a click on planted.r: loaded, pinned (the first click brings the
+      # Files window forward only)
       if wait == 3: f.pressMouse(at, true)
       if wait == 5: f.pressMouse(at, false)
-      if wait > 5 and f.core.survey.findFile(dir / "planted.r") >= 0 and
+      if wait == 10: f.pressMouse(at, true)
+      if wait == 12: f.pressMouse(at, false)
+      if wait > 12 and f.core.survey.findFile(dir / "planted.r") >= 0 and
           f.markOf("files.loaded planted.r").size.x > 0:
         f.next "clicked"
     of 2: # dropped: the other survey files, from where the fixtures are

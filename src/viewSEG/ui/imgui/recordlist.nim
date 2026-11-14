@@ -2,7 +2,8 @@
 ## shows (`core/records`), one row each: its place in the file, its field
 ## record number (FFID), its CDP, its source and receiver stations where
 ## they tell it apart, and how many traces it holds. The record on show is
-## marked; clicking a row shows that record. While the window has the
+## marked; clicking a row shows that record (not the click that only brings
+## the window forward: `focus`). While the window has the
 ## focus, Up / Down step to the next or previous record, Page Up / Page Down
 ## by a page, Home / End to the first and last. Only the rows in view are
 ## drawn (ImGui's list clipper), so a file of 100 000 records scrolls as
@@ -11,13 +12,14 @@
 import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../view/theme
-import chrome, style
+import chrome, focus, style
 
 type
   RecordListUi* = object
     ## The window's own state between frames.
     shown: (SessionId, int) ## the record on show last frame: a new one is scrolled into view
     follow: bool
+    focus: FocusClicks      ## a click on a row acts only in a window that had the focus
 
   RecordListOutput* = object
     commands*: seq[Command]
@@ -39,6 +41,7 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
   ## The window, docked or floating like any other, titled `title`, for the
   ## file `panel` shows.
   if igBegin(title.cstring, nil, ImGui_WindowFlags_NoNavInputs.cint):
+    ui.focus.watch()
     marks.markWindow("records")
     let k = st.findPanel(panel)
     let s = if k >= 0: st.shownFile(k) else: -1
@@ -95,7 +98,7 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
             igPushID_Int(cint(i))
             if igSelectable_Bool(cstring($(i + 1)), i == current,
                 ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and
-                i != current:
+                i != current and ui.focus.acts:
               result.commands.add Command(kind: ckGather, panel: panel, gather: i)
             igPopID()
             if i == current:
@@ -141,4 +144,5 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
         to = clamp(to, 0, rows.high)
         if to != current:
           result.commands.add Command(kind: ckGather, panel: panel, gather: to)
+  ui.focus.settle()
   igEnd()

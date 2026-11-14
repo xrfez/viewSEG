@@ -255,6 +255,9 @@ withFixtures fx:
     of 1: # the pointer over the known trace
       if waited > 4 and f.core.selection.hover >= 0:
         hovered = f.capture
+        # twice: the click that brings the window forward selects nothing, and
+        # a plain click on a selected trace leaves it the selection
+        f.click(f.baselineAt(knownChannel - 1, 450))
         f.click(f.baselineAt(knownChannel - 1, 450))
         waited = 0
         stage = 2
@@ -583,12 +586,13 @@ proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
         wait = 0
         stage = 2
     of 2:
-      if wait == 3: f.pressMouse(f.baselineAt(floor(selected), timeMs.lo + 0.4 *
+      # twice: the click that brings the window forward selects nothing
+      if wait in [3, 9]: f.pressMouse(f.baselineAt(floor(selected), timeMs.lo + 0.4 *
         timeMs.width), true)
-      if wait == 5: f.pressMouse(f.baselineAt(floor(selected), timeMs.lo + 0.4 *
+      if wait in [5, 11]: f.pressMouse(f.baselineAt(floor(selected), timeMs.lo + 0.4 *
         timeMs.width), false)
-      if wait == 8: f.moveMouse(f.baselineAt(floor(hovered), timeMs.lo + 0.4 * timeMs.width))
-      if wait > 14:
+      if wait == 14: f.moveMouse(f.baselineAt(floor(hovered), timeMs.lo + 0.4 * timeMs.width))
+      if wait > 20:
         saved = f.savePng(dir / file)
         wait = 0
         stage = 3

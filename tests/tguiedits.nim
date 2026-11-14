@@ -265,6 +265,9 @@ withFixtures fx:
   step("focus the plot", proc (f: FrameInfo) =
     q0 = f.pointAt(0)
     f.moveMouse(q0), proc (f: FrameInfo): bool = wait > 3)
+  # the click that brings the window forward selects nothing; the next one does
+  step("a focusing click", proc (f: FrameInfo) = f.click(q0), proc (f: FrameInfo): bool =
+    wait > 4 and f.core.selection.selected.len == 0)
   step("click", proc (f: FrameInfo) = f.click(q0), proc (f: FrameInfo): bool =
     f.core.selection.selected.len == 1)
   step("Esc", proc (f: FrameInfo) = f.chord(skEscape), proc (f: FrameInfo): bool =

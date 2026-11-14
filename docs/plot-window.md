@@ -268,7 +268,10 @@ the gains that run on the samples it is blank either way).
 
 **One gesture, one action.** Each row is one input; no input appears twice for the same
 window. Keys act on the focused window (the plot, the map or the file list); the
-application keys work everywhere. Every action is also in a menu or on a control, with
+application keys work everywhere. **The click that brings a window forward does only
+that** (the user: "should be only when window i already active"): a click selects a
+trace, shows a file or shows a record only in a window that had the focus already; the
+first click in another window gives it the focus and nothing else. Every action is also in a menu or on a control, with
 its shortcut shown there.
 
 ### The plot
@@ -350,9 +353,9 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Drop files or a folder on the window | A folder: list it and show its first file; one file: show it and list its folder; several files: list them and show the first |
 | Up / Down, Tab / Shift + Tab (file list focused) | Step to the next / previous file and show it in the same plot, keeping the display settings and the scales |
 | Page Down / Page Up, Home / End (file list focused) | Ten files on / back; the first / last file |
-| Click a file in the file list | Show it in the plot, in place of the one shown |
+| Click a file in the file list (focused) | Show it in the plot, in place of the one shown |
 | Up / Down, Page Up / Page Down, Home / End (record list focused) | The next / previous record, a page on / back, the first / last record, shown in the plot |
-| Click a record in the record list | Show it in the plot |
+| Click a record in the record list (focused) | Show it in the plot |
 
 ## The plot's menu: functions on the data
 

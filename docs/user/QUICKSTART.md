@@ -183,7 +183,9 @@ point by default): right-click them, or their names at the left, to choose its f
 | Reverse its polarity, or put it back | right-click: Reverse polarity | `R` |
 | Undo the last kill, restore or polarity change | right-click: Undo last edit | Ctrl+Z |
 
-Keys act while the Seismic window has the focus: click in it first.
+Keys act while the Seismic window has the focus: click in it first. The click that brings
+a window forward does only that: it selects no trace, and in Files or Records it shows no
+other file or record; click again to do so.
 
 A new size of the Seismic window (its edge, the windows beside it, the main window) keeps
 the scales and the top-left corner: what no longer fits is reached with the scroll bars,
