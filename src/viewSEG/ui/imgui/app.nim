@@ -33,7 +33,8 @@ import imguin/glad/gl
 import ../../core/[geometry, state, watchdog]
 import ../../platform/paths
 import ../../view/jobstatus
-import chrome, dpi, filelist, fonts, icons, menus, messages, shell, style, tracepanel
+import chrome, dpi, filelist, fonts, icons, jobswindow, menus, messages, shell, style,
+  tracepanel
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel
 
@@ -44,6 +45,8 @@ const
   tableTitle = IconTable & "  Headers (example)###headers"
   messagesTitle = IconLog & "  Messages###Messages"
   filesTitle = IconList & "  Files###files"
+  jobsTitle = IconTasks & "  Jobs###jobs"
+  noticeSeconds = 5.0                     ## how long a notice stays on screen
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
 
 type
@@ -64,6 +67,9 @@ type
     files: FileListUi                          ## the file list's window
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
     dropAt: float64                            ## when a drag was last seen over the window
+    focus: set[MenuAction]                     ## windows to bring forward next frame (maShow...)
+    noticed: int                               ## the core's notices taken so far (serials)
+    shownNotices: seq[(Notice, float64)]       ## notices on screen, and since when
     pick: Pick                                 ## under the mouse in the plot last frame: the readout
     typed: seq[string]                         ## text events pushed by `typeText`, kept until the end
     logView: LogView
@@ -486,6 +492,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       showDialog(dkExportLayout, parent,
         (if dir.len > 0: dir / "viewSEG-layout.nif" else: "viewSEG-layout.nif"))
     of maImportLayout: showDialog(dkImportLayout, parent)
+    of maShowFiles, maShowJobs, maShowMessages: ui.focus.incl a
 
 # ------------------------------------------------------------------- frame --
 
@@ -526,7 +533,8 @@ proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   igDockBuilderDockWindow(filesTitle, side)
   igDockBuilderDockWindow(plotTitle, top)
   igDockBuilderDockWindow(tableTitle, right)
-  igDockBuilderDockWindow(messagesTitle, bottom)
+  igDockBuilderDockWindow(jobsTitle, bottom)
+  igDockBuilderDockWindow(messagesTitle, bottom) # the tab shown
   igDockBuilderFinish(dockId)
   ui.layoutDone = true
 
@@ -616,6 +624,56 @@ proc drawDropHint(ui: Ui) =
     u32(ui.theme.roles[rlPopup]), igGetStyle().FrameRounding, 0)
   ImDrawList_AddText_Vec2(dl, at, u32(ui.theme.roles[rlText]), text.cstring, nil)
 
+proc bringForward(title: string) =
+  ## Shows the window titled `title` in front and gives it the focus; a
+  ## window docked as a tab gets its tab selected (Dear ImGui's own way, as
+  ## a click on the tab does: focus alone shows it for one frame only, then
+  ## an older pending tab choice wins).
+  let w = igFindWindowByName(title.cstring)
+  if w != nil:
+    if w.DockNode != nil and w.DockNode.TabBar != nil:
+      w.DockNode.TabBar.NextSelectedTabId = w.TabId
+    igFocusWindow(w, 0)
+
+proc drawNotices(ui: var Ui) =
+  ## The notices of background jobs that ended, each for `noticeSeconds`, in
+  ## the main window's bottom-right corner over the status bar; a click
+  ## brings the Jobs window forward.
+  for n in ui.core.notices:
+    if n.serial >= ui.noticed:
+      ui.shownNotices.add (n, igGetTime())
+      ui.noticed = n.serial + 1
+  var kept: seq[(Notice, float64)]
+  for x in ui.shownNotices:
+    if igGetTime() - x[1] < noticeSeconds: kept.add x
+  ui.shownNotices = kept
+  if kept.len == 0: return
+  let vp = igGetMainViewport()
+  let pad = igGetStyle().WindowPadding
+  igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x - pad.x,
+    y: vp.WorkPos.y + vp.WorkSize.y - pad.y), ImGui_Cond_Always.cint, ImVec2_c(x: 1, y: 1))
+  igSetNextWindowViewport(vp.ID)
+  igPushStyleColor_Vec4(ImGui_Col_WindowBg.cint, vec4(ui.theme.roles[rlPopup]))
+  const flags = ImGui_WindowFlags_NoDecoration.cint or ImGui_WindowFlags_AlwaysAutoResize.cint or
+    ImGui_WindowFlags_NoSavedSettings.cint or ImGui_WindowFlags_NoFocusOnAppearing.cint or
+    ImGui_WindowFlags_NoNav.cint or ImGui_WindowFlags_NoDocking.cint
+  if igBegin("##notices", nil, flags):
+    ui.marks.markWindow("notice")
+    for (n, _) in kept:
+      let level = levelOf(n.severity)
+      let icon = if level == mlError: IconError else: IconCheck
+      let colour = if level == mlError: ui.theme.roles[rlError] else: ui.theme.roles[rlInfo]
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
+      igTextUnformatted(icon.cstring, nil)
+      igPopStyleColor(1)
+      igSameLine(0, -1)
+      igTextUnformatted(n.text.cstring, nil)
+    if igIsWindowHovered(0) and igIsMouseClicked_Bool(ImGui_MouseButton_Left.cint, false):
+      ui.focus.incl maShowJobs
+      ui.shownNotices.setLen 0
+  igEnd()
+  igPopStyleColor(1)
+
 proc drawUi(ui: var Ui): set[MenuAction] =
   ui.marks.setLen 0
   let menu = drawMainMenu(MenuInput(themes: ui.themes, theme: ui.selected,
@@ -645,6 +703,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.pick, ui.marks)
   if status.cancel != NoJob:
     ui.core.apply Command(kind: ckCancelJob, job: status.cancel)
+  if status.showJobs: ui.focus.incl maShowJobs
   if status.chose:
     var s = ui.core.settings
     s.readout = status.fields
@@ -658,6 +717,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.say(n, mlWarning)
   for c in plot.commands.mitems:
     ui.core.apply move c
+  if maShowFiles in ui.focus: bringForward(filesTitle)
   var files = ui.files.drawFileList(filesTitle, ui.core, ui.theme, ui.marks)
   result.incl files.actions
   for c in files.commands.mitems:
@@ -665,7 +725,14 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   drawSampleTable(tableTitle, ui.fonts, ui.theme, ui.marks)
   ui.drawSaveLayout()
   ui.drawDropHint()
+  if maShowJobs in ui.focus: bringForward(jobsTitle)
+  var jobs = drawJobs(jobsTitle, ui.core, ui.theme, ui.marks)
+  for c in jobs.commands.mitems:
+    ui.core.apply move c
+  if maShowMessages in ui.focus: bringForward(messagesTitle)
   ui.logView.draw(ui.core.log, messagesTitle, ui.theme)
+  ui.focus = {}
+  ui.drawNotices()
   when defined(imguiDemo):
     igShowDemoWindow(nil)
     ImPlot_ShowDemoWindow(nil)

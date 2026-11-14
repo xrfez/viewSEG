@@ -32,6 +32,7 @@ type
   StatusOutput* = object
     ## What the status bar asks for.
     cancel*: JobId             ## the job to cancel, or `NoJob`
+    showJobs*: bool            ## the job field was clicked: bring the Jobs window forward
     chose*: bool               ## the user changed the readout's fields
     fields*: seq[ReadoutField] ## ... to these, in this order
 
@@ -146,6 +147,9 @@ proc drawToolbar*(t: Theme; marks: var Marks): set[MenuAction] =
     if iconButton(IconOpenFolder, "Open folder", shortcutName(maOpenFolder), size, t, marks):
       result.incl maOpenFolder
     igSameLine(0, 2)
+    if iconButton(IconTasks, "Jobs", "", size, t, marks):
+      result.incl maShowJobs
+    igSameLine(0, 2)
     # the theme toggle sits at the right end
     let avail = igGetContentRegionAvail().x
     if avail > size:
@@ -234,11 +238,10 @@ proc drawReadoutMenu(fields: openArray[ReadoutField]; res: var StatusOutput) =
     res.chose = true
     res.fields = chosen
 
-proc jobField(job: JobStatus; t: Theme; marks: var Marks): JobId =
+proc jobField(job: JobStatus; t: Theme; marks: var Marks; res: var StatusOutput) =
   ## The running job: a progress bar labelled with what it does and how far
-  ## it is, Cancel, and what else runs or waits. Returns the job to cancel,
-  ## or `NoJob`.
-  result = NoJob
+  ## it is, Cancel, and what else runs or waits. Clicking the bar or the
+  ## words asks for the Jobs window.
   igSameLine(0, -1)
   if job.job != NoJob:
     let style = igGetStyle()
@@ -250,18 +253,21 @@ proc jobField(job: JobStatus; t: Theme; marks: var Marks): JobId =
       ImVec2_c(x: style.FramePadding.x, y: round(style.FramePadding.y / 2)))
     igProgressBar(fraction, ImVec2_c(x: width, y: height), "")
     marks.mark("status.progress")
+    if igIsItemClicked(0): res.showJobs = true
     if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
       igTextUnformatted(job.text.cstring, nil)
+      igTextDisabled("Click for the Jobs window")
       igEndTooltip()
     # The label beside the bar, so a long title never hides the bar itself.
     igSameLine(0, 6)
     igTextUnformatted(job.text.cstring, nil)
     marks.mark("status.job")
+    if igIsItemClicked(0): res.showJobs = true
     if job.cancellable:
       igSameLine(0, 8)
       igBeginDisabled(job.cancelling)
       if igSmallButton((IconClose & " Cancel##job").cstring):
-        result = job.job
+        res.cancel = job.job
       igEndDisabled()
       marks.mark("status.cancel")
     igPopStyleVar(1)
@@ -272,6 +278,7 @@ proc jobField(job: JobStatus; t: Theme; marks: var Marks): JobId =
     igTextUnformatted(others.cstring, nil)
     igPopStyleColor(1)
     marks.mark("status.others")
+    if igIsItemClicked(0): res.showJobs = true
   igSameLine(0, 18)
 
 proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
@@ -288,7 +295,7 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     igSetCursorPosY(round((height - igGetFontSize()) / 2))
     igDummy(ImVec2_c(x: 0, y: 0))
     if job.shown:
-      result.cancel = jobField(job, t, marks)
+      jobField(job, t, marks, result)
     for f in fields:
       readoutField(fonts, f, at.text(f), t, marks)
     let right = info.themeName & "   " & $int(round(info.scale * 100)) & " %"

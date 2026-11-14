@@ -63,6 +63,23 @@ Coming back to it is quick: its index is kept in the index cache (`viewSEG --pat
 shows where), so it is not read through again. The folder listed last is listed again at
 the next start.
 
+## Jobs
+
+Anything that takes a while (opening a large file, listing a folder) runs while you go
+on working. The status bar shows the job running, how far it is and the time left, with
+**Cancel**; click it (or the toolbar's Jobs button, or **View > Windows > Jobs**) for the
+**Jobs** window, which lists every job:
+
+- **Running:** a progress bar for each, with Cancel.
+- **Waiting:** in the order they will run, in two lanes: *foreground* for what you are
+  waiting on (opening a file) and *background* for long work, so a long job never holds up
+  an open. The arrows move a job up or down its lane; the bin takes it off the list.
+- **Finished:** how each ended (done, failed and why, cancelled) and how long it took;
+  *Clear the list* empties it (Messages keeps the record).
+
+When a background job ends, a short notice appears in the bottom-right corner for a few
+seconds; click it for the Jobs window.
+
 ## Look at a record
 
 An opened file shows its first record in the Plot window: traces across, time down, as

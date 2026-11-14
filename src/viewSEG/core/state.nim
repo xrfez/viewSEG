@@ -71,6 +71,7 @@ const
     ## The panel `initAppState` makes; opened files appear in it.
   MaxTiles* = 4         ## tiles kept per panel, newest last
   FloatValues* = 32_768 ## values in view the Float gain takes its level from, at most
+  MaxNotices* = 20      ## notices kept
 
 type
   CommandKind* = enum
@@ -133,6 +134,13 @@ type
     of ckLayout: arrangement*: string ## the toolkit's layout text
     of ckSaveLayout: layoutName*: string
 
+  Notice* = object
+    ## A brief notice: a background job ended (the frontend shows it for a
+    ## moment; the log keeps it).
+    severity*: Severity
+    text*: string
+    serial*: int ## counts up from 0, never reused
+
   Pending = object
     ## An open or close job the state waits for.
     job: JobId
@@ -152,6 +160,8 @@ type
     files: FileList       ## the file list
     showFound: PanelId    ## show the first file the listing finds here; NoPanel for none
     oldScans: seq[JobId]  ## scans replaced by a newer listing: they end quietly
+    notices: seq[Notice]  ## the newest `MaxNotices`
+    nextNotice: int
     mail: seq[Msg]
     indexCache: string    ## the index cache folder; "" for none
     settings: Settings
@@ -371,6 +381,11 @@ func shownFile*(state: AppState; panelIndex: int): int =
   if p.layers.len > 0 and p.layers[0].source.kind == lsRecord:
     for i, s in state.sessions:
       if s.id == p.layers[0].source.file: return i
+
+func notices*(state: AppState): lent seq[Notice] {.inline.} =
+  ## The newest notices, oldest first: what background jobs had to say
+  ## when they ended. Each has its own `serial`.
+  state.notices
 
 func indexCache*(state: AppState): lent string {.inline.} =
   ## The folder of parseSEG's index caches; "" for none.
@@ -728,6 +743,12 @@ proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
     if how == jsFailed: state.failed(p)
     state.chooseShown()
 
+proc notify(state: var AppState; severity: Severity; text: string) =
+  ## A brief notice for the frontend to show: a background job ended.
+  state.notices.add Notice(severity: severity, text: text, serial: state.nextNotice)
+  inc state.nextNotice
+  if state.notices.len > MaxNotices: state.notices.delete(0)
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
   for i, p in state.opening:
@@ -757,11 +778,15 @@ proc onFinished(state: var AppState; job: JobInfo) =
     inc state.files.revision
     return
   case job.state
-  of jsFailed: state.log.add(sevError, "jobs", job.spec.title & " failed: " & job.error)
+  of jsFailed:
+    state.log.add(sevError, "jobs", job.spec.title & " failed: " & job.error)
+    if job.spec.lane == jlBackground:
+      state.notify(sevError, job.spec.title & " failed: " & job.error)
   of jsCancelled: state.log.add(sevInfo, "jobs", job.spec.title & " was cancelled.")
   of jsDone:
     if job.spec.lane == jlBackground:
       state.log.add(sevInfo, "jobs", job.spec.title & " is done.")
+      state.notify(sevInfo, job.spec.title & " is done.")
   of jsQueued, jsRunning: discard
 
 proc showPath(state: var AppState; k: int; path: string) =

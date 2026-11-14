@@ -140,6 +140,12 @@ the wait the user notices is never behind a long job.
   are always taken in no later than its end.
 - **Stop.** `shutdown` (or destroying `AppState`) cancels the queued jobs, asks the
   running ones to stop and joins both runners. Work must notice its cancel.
+- **What the user sees.** The status bar shows the job the user most likely waits for
+  (`view/jobstatus`); the Jobs window (`view/joblist`) lists the running, queued (in each
+  lane's order, with up, down and remove) and finished ones, and turns its buttons into
+  `ckCancelJob`, `ckReorderJob` and `ckRemoveJob`. A background job that ends (done or
+  failed) also leaves a `Notice` (`AppState.notices`, the newest 20) that the frontend
+  shows for a few seconds; a listing of the file list does not, the list shows it.
 
 **Open and close.** An open is an interactive job that reads the file; its session comes
 back as an `mkOpened` message, and `AppState` gives it a `SessionId` and the survey-wide id
