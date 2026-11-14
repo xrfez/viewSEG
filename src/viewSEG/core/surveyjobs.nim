@@ -25,6 +25,7 @@
 
 import std/[os, strutils, times]
 import parseSEG
+import processSEG/qc/record
 import filejobs, filekinds, inbox, jobs, log, session, survey, threads
 
 const
@@ -252,6 +253,36 @@ proc openFileWork*(path: string; to: Poster; cache = "";
   let load = surveyWork(path, to)
   result = proc (ctx: JobContext) {.gcsafe.} =
     if sniff(path).isSurvey: load(ctx) else: open(ctx)
+
+proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[int]];
+    relations: sink SurveyGeometry; against: string; layer: SurveyLayerId;
+    to: Poster): JobWork =
+  ## The work of a job that checks each of `gathers` of open file `session`
+  ## (`file`) against the X records of a loaded relation file (`relations`,
+  ## of layer `layer`, named `against`): processSEG's `recordCompleteness`,
+  ## from the keys alone, posted as the stations each record's X record
+  ## plans and those with no trace in it (`mkChecked`). Submitted with the
+  ## file in `reads`.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "checking the records"
+    var planned, missing = newSeq[int](gathers.len)
+    var revision = 0
+    {.cast(gcsafe).}:
+      revision = file[].keysRevision
+      for i, g in gathers:
+        (planned[i], missing[i]) = (-1, -1)
+        if g.len > 0:
+          try:
+            let c = relations.recordCompleteness(file[].rowsOf(g))
+            if c.xpsRecord >= 0: (planned[i], missing[i]) = (c.expected, c.missing)
+          except ValueError:
+            discard # no keys: nothing to check against
+        if i mod 64 == 0 and not ctx.progress(i, gathers.len):
+          raise newException(JobCancelledError, "cancelled")
+    discard ctx.progress(1, 1)
+    clearCycleRoots()
+    to.post Msg(job: ctx.id, kind: mkChecked, checkedSession: session, against: against,
+      againstLayer: layer, keysRevision: revision, planned: planned, plannedMissing: missing)
 
 proc positionsWork*(file: ptr SeismicFile; path: string; kind: FileKind; session: SessionId;
     base: int; to: Poster): JobWork =

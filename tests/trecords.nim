@@ -5,7 +5,9 @@
 ## last, a place typed, an FFID typed) shows each in the same plot window,
 ## which keeps its scales, its display (gain included) and its order; a
 ## file of 100 000 records is listed whole, and found by FFID. A row holds
-## only what its gather's kind keeps constant (a shot's FFID and source).
+## only what its gather's kind keeps constant (a shot's FFID and source),
+## its traces (seismic, auxiliary, dead) and those missing from its patch
+## (`keyInformation`).
 ##
 ## Seen to fail: with a shot's row taking its first trace's CDP too,
 ## `rowsOfAShot` found CDP 0 on every shot of the survey; with the view
@@ -50,6 +52,57 @@ block rowsOfAShot:
     let segd = st.sessions[0]
     doAssert segd.records.len >= 1
     doAssert segd.records[0].record == float64(SegdRecordNo), $segd.records[0]
+    st.shutdown()
+
+block keyInformation:
+  # Each record's seismic, auxiliary and dead traces, and the traces
+  # missing from its patch: against what the file declares (a SEG-Y file's
+  # data traces per ensemble, a SEG-D record's seismic channel sets), and,
+  # once the survey's relation file is loaded, against its X records
+  # (processSEG's `recordCompleteness`, on a job): empty (-1), never 0,
+  # where nothing says what was expected. Taking the relation file out of
+  # the survey takes its check away.
+  #
+  # Seen to fail: with the declared count left out (no binary header
+  # field read), the first row's "declared: -1"; with the check against the X file
+  # never made (`checkRecords` not called when a relation file comes),
+  # "no check against survey.x".
+  withFixtures fx:
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.patchySegy())
+    doAssert st.settle(st.sessions.len == 1)
+    block fromTheFile:
+      let rows = st.sessions[0].records
+      doAssert rows.len == Shots
+      for k, r in rows:
+        doAssert r.seismic == (if k == PatchyShort: 19 else: Channels) and r.aux == 0, $r
+        doAssert r.dead == (if k == 1: PatchyDead.len else: 0), $r
+        doAssert r.declared == Channels and r.missingSource == msFile, $r
+        doAssert r.missing == (if k == PatchyShort: 5 else: 0),
+          "record " & $(FirstRecord + k) & ": missing " & $r.missing
+    # the survey's relation file: the same, against the plan
+    let sps = fx.surveySps()
+    st.apply Command(kind: ckLoadSurvey, paths: @[sps.x])
+    doAssert st.settle(st.sessions[0].checkedAgainst.len > 0), "no check against survey.x"
+    block fromTheSurvey:
+      let rows = st.sessions[0].records
+      doAssert st.sessions[0].checkedAgainst == "survey.x"
+      for k, r in rows:
+        doAssert r.planned == Channels and r.missingSource == msSurvey, $r
+        doAssert r.missing == (if k == PatchyShort: 5 else: 0), $r
+    st.apply Command(kind: ckUnloadSurvey, layer: st.survey.layers[^1].id)
+    doAssert st.sessions[0].checkedAgainst == "" and
+      st.sessions[0].records[0].missingSource == msFile
+    # a file that says nothing: an empty cell, never 0
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.pilotSegy())
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].path == fx.pilotSegy())
+    let pilot = st.sessions[0].records[0]
+    doAssert pilot.missing == -1 and pilot.missingSource == msNone and pilot.aux == 1, $pilot
+    # SEG-D: the seismic channel sets declare the record's seismic traces
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.twoSetSegd())
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].path == fx.twoSetSegd())
+    let segd = st.sessions[0].records[0]
+    doAssert segd.declared == segd.seismic and segd.seismic > 0 and segd.missing == 0, $segd
     st.shutdown()
 
 block stepThroughRecords:

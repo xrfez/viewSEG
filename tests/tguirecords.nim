@@ -8,9 +8,16 @@
 ## to record", where a place or an FFID typed and Enter shows that record.
 ## A file of 100 000 records: End shows the last record and scrolls the list
 ## to it, and turning the wheel over the list costs a frame no more than a
-## short list does (only the rows in view are drawn).
+## short list does (only the rows in view are drawn). A file with a record
+## short of five traces and one with two dead traces: the Traces, Dead and
+## Missing columns are shown, the short record's missing count in the
+## warning colour (and a whole record's not), a click on Missing's header
+## puts the short record first, and Up steps in the order shown.
 ##
-## Seen to fail: with the keyboard's focus left on the row it was on
+## Seen to fail: with the missing count drawn in the text colour, "the
+## short record's missing count is not in the warning colour"; with the
+## keys stepping in the file's order (`placeOf` left out), "Up did not
+## step in the order shown"; with the keyboard's focus left on the row it was on
 ## (`ListFocus.stepped` not called), "the focus stayed on the record
 ## before"; with the record list's rows all drawn (no clipper), every
 ## frame with 100 000 records took about 184 ms (5 ms with it), "the list
@@ -219,3 +226,66 @@ withFixtures fx:
     " ms"
   doAssert medScroll < 50 and medScroll < medIdle * 3 + 10,
     "the list lags: median " & $medScroll & " ms a frame while scrolling, " & $medIdle & " idle"
+
+  # A short record and one with dead traces: the columns, the warning colour,
+  # a sort by what is missing, and the keys in the order shown.
+  stage = 0
+  wait = 0
+  var sortedShort = false
+  var keyedInOrder = false
+  var warned, calm = false
+  proc warm(f: FrameInfo; mark: string): bool =
+    ## Whether the cell `mark` holds text in the theme's warning colour: in
+    ## Everforest it is near the text colour in brightness, but much warmer
+    ## (red well over blue), so the warmest pixel tells them apart.
+    let r = f.markOf(mark)
+    let w = f.theme.roles[rlWarning]
+    var warmest = -255
+    for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
+      for x in int(r.pos.x) ..< int(r.pos.x + r.size.x):
+        let c = f.readPixel(x, y)
+        warmest = max(warmest, int(c.r) - int(c.b))
+    warmest > (int(w.r) - int(w.b)) * 6 div 10
+  proc onPatchy(f: FrameInfo) =
+    inc wait
+    if f.index == 0: f.moveMouse(vec2(4, 4))
+    case stage
+    of 0:
+      if f.laidOut and f.markOf("records.missing 2").size.x > 0 and wait > 5:
+        let rows = f.core.sessions[0].records
+        doAssert rows[PatchyShort].missing == 5 and rows[1].dead == PatchyDead.len
+        doAssert f.markOf("records.header Missing").size.x > 0 and
+          f.markOf("records.header Dead").size.x > 0 and
+          f.markOf("records.header Traces").size.x > 0, "a column is not shown"
+        warned = f.warm("records.missing " & $PatchyShort)
+        calm = not f.warm("records.missing 0")
+        stage = 1
+        wait = 0
+    of 1: # sort by Missing: the short record first
+      f.click("records.header Missing")
+      if wait > 10:
+        sortedShort = f.markOf("records.row " & $PatchyShort).pos.y <
+          f.markOf("records.row 0").pos.y
+        stage = 2
+        wait = 0
+    of 2: # focus the list on the record shown (the first), then Up: the one
+      # before it in that order (in file numbers 3, 1, 2: record 3, where the
+      # file's order has none before record 1)
+      f.click("records.row 0", focusing = true)
+      if wait == 14: f.pressKey(skUp, true)
+      if wait == 15: f.pressKey(skUp, false)
+      if wait > 24:
+        keyedInOrder = f.gatherShown == PatchyShort
+        if shots.len > 0: discard f.savePng(shots / "records-missing.png")
+        f.stop()
+    else: f.stop()
+    if f.index > 2000: f.stop()
+  let code3 = run(RunOptions(maxFrames: 2500, openPaths: @[fx.patchySegy()],
+    windowSize: (1600, 1000), indexCacheDir: some(fx.dir / "cache"), theme: forceDark,
+    userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onPatchy))
+  doAssert code3 == 0
+  doAssert warned, "the short record's missing count is not in the warning colour"
+  doAssert calm, "a whole record's missing count is in the warning colour"
+  doAssert sortedShort, "the sort by Missing did not put the short record first"
+  doAssert keyedInOrder, "Up did not step in the order shown"
+  echo "tguirecords: the columns, the warning colour, the sort and the keys in its order"

@@ -123,12 +123,21 @@ once in Messages and keeps its list.
 A file often holds several records (shots, receiver gathers, CDPs). The Seismic window shows
 one at a time; the **Records** window, under the file list, lists them all, one row each,
 with what tells them apart (a shot's FFID and source station, a receiver gather's
-receiver, a CDP) and how many traces each holds. The record shown is highlighted.
+receiver, a CDP), and its key information: its seismic **Traces**, its auxiliary traces
+(**Aux**, when the file has any), the traces the file marks **Dead**, and the traces
+**Missing** from its patch. Missing counts against what the file itself declares for the
+record (a SEG-D record's seismic channel sets, a SEG-Y file's traces per ensemble) and,
+once the survey's relation file (SPS X) is loaded, against the stations its X record
+plans for the shot; the cell's tooltip says which. A record with traces missing is drawn
+in the warning colour, and the footer counts them; where nothing says how many traces a
+record should hold, the cell is empty. The record shown is highlighted. Click a column's
+header to sort by it (again for the other way; **#** is the file's order): sorted by
+Missing, the short records come first.
 
 - **Click a record** to show it. With the Records window focused, **Up / Down** step to
-  the next or previous one, **Page Up / Page Down** by a page, **Home / End** to the first
-  and last. A file of a hundred thousand records scrolls as lightly as one of ten. Tab
-  steps no record (the list is the window's one control).
+  the next or previous one in the order shown, **Page Up / Page Down** by a page,
+  **Home / End** to the first and last. A file of a hundred thousand records scrolls as
+  lightly as one of ten. Tab steps no record (the list is the window's one control).
 - **In the Seismic window:** **Page Down / Page Up** show the next or previous record,
   **Home / End** the first and last; the arrows in the strip do the same, and the number
   between them ("2 / 120") opens **Go to record** (also **Ctrl+G**): type a place in the

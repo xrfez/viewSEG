@@ -23,6 +23,7 @@ type
     mkListed  ## files a folder scan found
     mkWatched ## what a look at the listed folder found changed
     mkSurvey  ## a survey layer: a survey file read, or an open file's positions
+    mkChecked ## an open file's records checked against a relation file
 
   ReadPurpose* = enum
     ## What a document is read for.
@@ -71,6 +72,17 @@ type
       problemChanged*: bool ## `watchProblem` is news (it began, or ended)
     of mkSurvey:
       layer*: SurveyLayer ## moved, never shared
+    of mkChecked:
+      checkedSession*: SessionId
+        ## the open file whose records were checked
+      against*: string
+        ## the relation file's name
+      againstLayer*: SurveyLayerId
+        ## its layer
+      keysRevision*: int
+        ## the file's keys the check was made with
+      planned*, plannedMissing*: seq[int]
+        ## per gather: the stations planned, and those with no trace; -1 where not planned
 
   InboxObj = object
     lock: Lock

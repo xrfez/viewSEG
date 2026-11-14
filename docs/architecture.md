@@ -99,7 +99,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 |---|---|---|
 | UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), reads one trace's headers, hex bytes or textual header, closes files, and makes every OpenGL call |
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, an open file's positions, survey files read, `ensureKeys`, survey joins, sorts across files |
-| Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes, folder scans, brute stack, conversions, exports and patches, queued workflows |
+| Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, brute stack, conversions, exports and patches, queued workflows |
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
 | Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
@@ -352,8 +352,14 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 1. **Open** (interactive job). `openSeismic(path, keys = true, progress,
    OpenOptions(cache: path))`, then `saveIndex` if `not f.fromCache`; the job reads the
    gathers and makes the record list's rows (`core/records`: each gather's FFID, CDP,
-   source and receiver from its first seismic trace), moves the file into a `Session` and
-   posts the session. The progress hook is a
+   source and receiver from its first seismic trace; its seismic, auxiliary and dead
+   traces from the keys; the seismic traces the file declares for it, from a SEG-D
+   record's channel set descriptors or a SEG-Y file's traces per ensemble), moves the file
+   into a `Session` and posts the session. When a relation file (SPS X) is loaded, each
+   open file's records are checked against it on a background job (`checkWork`:
+   processSEG's `recordCompleteness` per gather, from the keys; `mkChecked`), again for a
+   file opened later or another relation file loaded, and the check goes with the
+   relation file. No sample is read for any of it. The progress hook is a
    `gcsafe` closure on the job thread that calls `JobContext.progress`. Not yet: reading
    `summary`, `channelSets` and `crsText` on the job.
 2. **Show** (UI). Pointing a panel at a gather bumps its `requestGen` (and `sourceGen`),
@@ -549,7 +555,11 @@ type
     modified: Time
     file: SeismicFile        # parseSEG, move-only
     gathers: seq[Gather]
-    records: seq[RecordRow]  # core/records: one row per gather for the record list
+    records: seq[RecordRow]  # core/records: one row per gather for the record list: what
+                             # tells it apart; its seismic, auxiliary and dead traces; the
+                             # seismic traces the file declares for it; the stations a loaded
+                             # relation file plans and those missing (`setChecks`)
+    checkedAgainst: string   # the relation file the records were checked against
 
   FileList = object          # core/filelist: what the Files window lists
     title, folder: string    # the folder listed ("" for files chosen one by one)
@@ -631,6 +641,8 @@ type
       listLooked                   # with listDone: every file looked at, for the watch
     of mkWatched: watchGen, watched, watchProblem, problemChanged # what a look found changed
     of mkSurvey: layer: SurveyLayer # a survey file read, or an open file's positions; moved
+    of mkChecked: checkedSession, against, againstLayer, keysRevision, planned,
+      plannedMissing             # an open file's records against a relation file (X)
     # to come: mkResult (FoldMap, StackResult, QC rows ...)
 
   AppState = object          # move-only; owned by the UI thread

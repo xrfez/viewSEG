@@ -230,6 +230,40 @@ proc surveySegy*(fx: Fixtures; planted = pdNone): string =
   w.checkClose()
 
 const
+  PatchyShort* = 2
+    ## the shot of `patchySegy` short of traces: channels 20 to 24 left out
+  PatchyDead* = [3, 9]
+    ## the channels of its shot 1 marked dead
+
+proc patchySegy*(fx: Fixtures): string =
+  ## The survey with shot `PatchyShort` short of five traces (channels 20 to
+  ## 24 left out) and shot 1's channels `PatchyDead` marked dead (their
+  ## samples as recorded); its binary header declares `Channels` data
+  ## traces per ensemble (bytes 3213-3214).
+  result = fx.dir / "patchy.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+    text: @["C01 viewSEG test fixture: a short record and dead traces"]))
+  var buf = newSeq[float32](Samples)
+  for shot in 0 ..< Shots:
+    for channel in 1 .. Channels:
+      if shot != PatchyShort or channel < 20:
+        var k = initTraceKeys()
+        (k.record, k.channel) = (float64(FirstRecord + shot), float64(channel))
+        k.srcPoint = FirstSrcPoint + float64(shot)
+        (k.t0Ms, k.intervalUs) = (0.0, DtMs * 1000)
+        k.status = if shot == 1 and channel in PatchyDead: tsDead else: tsLive
+        for i in 0 ..< Samples: buf[i] = surveySample(shot, channel, i)
+        w.writeTrace(k, buf)
+  w.checkClose()
+  var f = open(result, fmReadWriteExisting)
+  f.setFilePos(3212)
+  # big-endian int16
+  let declared = [uint8(Channels shr 8), uint8(Channels and 0xff)]
+  doAssert f.writeBytes(declared, 0, 2) == 2
+  f.close()
+
+const
   LongSpread* = 400  ## channels of `longSpreadSegy`
   LongSamples* = 200 ## its samples per trace, at `DtMs`
 

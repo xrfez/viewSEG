@@ -2,11 +2,24 @@
 ## gather (parseSEG's `gathers`), with what tells it apart, taken from its
 ## first seismic trace (its first trace when it has none): a shot's field
 ## record number (FFID) and source station, a receiver gather's receiver
-## station, a CMP gather's CDP; and how many traces it holds.
+## station, a CMP gather's CDP; how many traces it holds, seismic and
+## auxiliary apart, and how many of its seismic traces the file marks dead;
+## and how many are missing from its patch (`missing`):
 ##
-## The rows are made once, on the open job's thread, so the list costs the
-## UI thread nothing however many records a file has; the UI formats only
-## the rows in view.
+## - against what the file itself declares for the record (`declared`): a
+##   SEG-D record's seismic channel sets (their channel counts), a SEG-Y
+##   file's data traces per ensemble (binary header, where it is set);
+## - against the survey once a relation file (SPS X) is loaded: the
+##   stations its X record plans for the shot that have no trace in the
+##   record (processSEG's `recordCompleteness`; `planned`, `plannedMissing`,
+##   filled by a job, `surveyjobs.checkWork`), which then takes precedence.
+##
+## Where nothing says what was expected, `missing` is -1 (an empty cell,
+## never 0).
+##
+## The rows are made once, on the open job's thread, from the index alone
+## (no sample is read), so the list costs the UI thread nothing however many
+## records a file has; the UI formats only the rows in view.
 
 import std/math
 import parseSEG
@@ -21,6 +34,15 @@ type
     ensemble*: float64           ## the CDP; NaN when not known
     srcLine*, srcPoint*: float64 ## NaN when not known
     rcvLine*, rcvPoint*: float64
+    seismic*: int                ## its seismic traces
+    aux*: int                    ## its auxiliary traces
+    dead*: int                   ## its seismic traces the file marks dead
+    declared*: int = -1
+      ## seismic traces the file declares for it; -1 when it does not say
+    planned*: int = -1
+      ## stations its X record plans for it (`recordCompleteness`); -1 when
+      ## no relation file was checked, or none plans it
+    plannedMissing*: int = -1 ## of those, the stations it has no trace of
 
   RecordColumn* = enum
     ## The columns of the record list besides the record's place and size.
@@ -29,7 +51,46 @@ type
     rcSource = "Source"
     rcReceiver = "Receiver"
 
+  MissingSource* = enum
+    ## What a record's missing traces are counted against.
+    msNone = "nothing"
+    msFile = "the file's own count"
+    msSurvey = "the survey's relation file"
+
 func known(x: float64): bool {.inline.} = not x.isNaN
+
+func missingSource*(r: RecordRow): MissingSource =
+  ## What `missing` counts against: the relation file when it planned the
+  ## record, else the file's declared count, else nothing.
+  if r.planned >= 0: msSurvey
+  elif r.declared >= 0: msFile
+  else: msNone
+
+func missing*(r: RecordRow): int =
+  ## The record's traces missing from its patch: the planned stations with
+  ## no trace, else the declared seismic traces it does not hold (none when
+  ## it holds as many or more); -1 when nothing says what was expected.
+  case r.missingSource
+  of msSurvey: r.plannedMissing
+  of msFile: max(0, r.declared - r.seismic)
+  of msNone: -1
+
+func seismicSet(rec: SegdRecord; channelType: int): bool {.inline.} =
+  ## Whether a channel set of `channelType` holds seismic traces, as parseSEG
+  ## tells them apart (Rev 1/2: 1; Rev 3: 0x10 and 0x11).
+  if rec.isRev3: channelType in [0x10, 0x11] else: channelType == 1
+
+func declaredSeismic(rec: SegdRecord): int =
+  ## The seismic traces a SEG-D record's channel set descriptors announce.
+  for st, s in rec.scanTypes:
+    case s.layout
+    of slRev2:
+      for cs, c in s.descriptors:
+        if c.channelCount > 0 and rec.seismicSet(rec.channelType(st, cs)):
+          result += c.channelCount
+    of slRev3:
+      for cs, c in s.descriptorsRev3:
+        if rec.seismicSet(rec.channelType(st, cs)): result += int(c.channelsInSet)
 
 proc recordRows*(f: SeismicFile; gathers: openArray[Gather]): seq[RecordRow] =
   ## A row for each of `gathers` of `f`. Reads the index only (the keys
@@ -37,6 +98,8 @@ proc recordRows*(f: SeismicFile; gathers: openArray[Gather]): seq[RecordRow] =
   ## the file.
   result = newSeqOfCap[RecordRow](gathers.len)
   let keyed = f.index.keys.len == f.len
+  let perEnsemble = if f.kind == skSegy:
+      int(f.index.segy.binary.effectiveDataTracesPerEnsemble) else: 0
   for g in gathers:
     var row = RecordRow(kind: g.kind, first: g.traces.a, traces: g.traces.len, record: NaN,
       ensemble: NaN, srcLine: NaN, srcPoint: NaN, rcvLine: NaN, rcvPoint: NaN)
@@ -57,6 +120,20 @@ proc recordRows*(f: SeismicFile; gathers: openArray[Gather]): seq[RecordRow] =
       of gkUnknown, gkOther: # what the keys cannot tell apart: as a shot
         row.record = k.record
         (row.srcLine, row.srcPoint) = (k.srcLine, k.srcPoint)
+    # its traces, seismic, auxiliary and dead; the SEG-D records they are in
+    var lastRecord = -1
+    for t in g.traces:
+      if isSeismic(f.index, t):
+        inc row.seismic
+        if keyed and f.index.keys[t].status == tsDead: inc row.dead
+      else:
+        inc row.aux
+      if f.kind == skSegd:
+        let r = int(f.index.entries[t].record)
+        if r != lastRecord and r in 0 ..< f.index.segdRecords.len:
+          lastRecord = r
+          row.declared = max(row.declared, 0) + declaredSeismic(f.index.segdRecords[r])
+    if perEnsemble > 0: row.declared = perEnsemble
     result.add row
 
 func columnsOf*(rows: openArray[RecordRow]): set[RecordColumn] =

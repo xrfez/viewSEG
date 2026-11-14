@@ -248,7 +248,7 @@ Status values:
 | Automatic bin grid of a survey | `surveyGrid` | Fold map: grid proposed from the SPS | planned |
 | Pre-plot, actual and difference fold | `preplotFold`, `initFoldMap`, `addFold`, `foldDifference`, `FoldMap` | Fold map layers and their difference | planned |
 | Fold by offset class and azimuth sector, offset range | `FoldOptions`, `offsetFold`, `azimuthFold`, `offsetMin`, `offsetMax` | Fold map: offset-class and azimuth layers, min / max offset maps | planned |
-| Field records against the XPS | `recordCompleteness`, `RecordCompleteness`, `RecordMatch`, `TraceMatch` | Survey QC issue list: missing, unlisted, duplicate stations | planned |
+| Field records against the XPS | `recordCompleteness`, `RecordCompleteness`, `RecordMatch`, `TraceMatch` | Records window: each record's stations missing against the loaded relation file (`expected`, `missing`, a job per open file); survey QC issue list: missing, unlisted, duplicate stations | built (Records: missing); planned (the issue list) |
 | Missing stations of a record | `RecordCompleteness.missingStations`, `missingRanges`, `lines` | Missing-stations map layer | planned |
 | Completeness over many records | `summarize`, `CompletenessSummary` | QC report section | planned |
 

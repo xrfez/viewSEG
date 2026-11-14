@@ -396,7 +396,7 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Tab / Shift + Tab | Move between the controls of the window that has the focus, as in every window (the user: "tab should move between options in the window not files"): in the file list the folder's drop-down, its buttons, the filter, "Latest" and the list (one stop, at the file shown); Space or Enter acts on the control reached |
 | Page Down / Page Up, Home / End (file list focused) | Ten files on / back; the first / last file |
 | Click a file in the file list (focused) | Show it in the plot, in place of the one shown |
-| Up / Down, Page Up / Page Down, Home / End (record list focused) | The next / previous record, a page on / back, the first / last record, shown in the plot |
+| Up / Down, Page Up / Page Down, Home / End (record list focused) | The next / previous record, a page on / back, the first / last record, in the order the list shows (a click on a column's header sorts it), shown in the plot |
 | Click a record in the record list (focused) | Show it in the plot |
 
 ## The plot's menu: functions on the data

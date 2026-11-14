@@ -990,6 +990,37 @@ proc readPositions(state: var AppState; s: Session) =
     fileKind(s.file.kind), s.id, s.base, state.inbox.poster))
   state.loading.add Loading(job: job, path: s.path, session: s.id)
 
+func relationLayer(state: AppState): int =
+  ## The first loaded survey file with relations (X records): what the
+  ## records of the open files are checked against; -1 for none.
+  for i, l in state.survey.layers:
+    if l.origin == loSurveyFile and l.relations.relationCount > 0: return i
+  -1
+
+proc checkRecords(state: var AppState; s: Session) =
+  ## Checks the records of open file `s` against the loaded relation file
+  ## on a job (the Records window's planned and missing stations), or
+  ## clears the check when none is loaded.
+  let r = state.relationLayer
+  if r < 0:
+    s.setChecks("", [], [])
+    return
+  template l: untyped = state.survey.layers[r]
+  var gathers = newSeq[Slice[int]](s.gathers.len)
+  for i, g in s.gathers: gathers[i] = g.traces
+  discard state.jobs.submit(JobSpec(title: "Check the records of " & s.name & " against " &
+    l.name, lane: jlBackground, reads: @[s.path]), checkWork(s.filePtr, s.id, gathers,
+    l.relations, l.name, l.id, state.inbox.poster))
+
+proc takeChecked(state: var AppState; m: sink Msg) =
+  ## An open file's records checked against a relation file that is still
+  ## the one loaded, with the file's keys as they were.
+  let i = state.findSession(m.checkedSession)
+  let r = state.relationLayer
+  if i >= 0 and r >= 0 and state.survey.layers[r].id == m.againstLayer and
+      state.sessions[i].file.keysRevision == m.keysRevision:
+    state.sessions[i].setChecks(m.against, m.planned, m.plannedMissing)
+
 proc loadSurvey(state: var AppState; path: string; quiet = false) =
   ## Loads survey file `path` (canonical) on a job, unless it is being
   ## loaded already, or is loaded as the file list says it is now; `quiet`
@@ -1054,8 +1085,13 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
       ": " & layer.summary & "." & (if problems.len > 0: " " & problems.join("; ") & "." else: "")
     var lost = 0
     for c in layer.counts: lost += c.missing + c.zero + c.moved
+    let before = state.relationLayer
+    let wasId = if before >= 0: state.survey.layers[before].id else: NoSurveyLayer
     discard state.survey.add(layer)
     state.log.add(if lost > 0: sevWarning else: sevInfo, name, text)
+    let now = state.relationLayer
+    if now >= 0 and state.survey.layers[now].id != wasId:
+      for s in state.sessions: state.checkRecords(s) # against the relation file now loaded
 
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
   ## Takes in a file an open job opened, and shows its first gather (or the
@@ -1106,6 +1142,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   state.onDiskSaid.del path
   state.sessions.add s
   state.readPositions(state.sessions[^1])
+  if state.relationLayer >= 0: state.checkRecords(state.sessions[^1])
   state.watchOpen()
   let k = state.findPanel(panel)
   if replacing and k >= 0: state.showReplacing(k, id, gather)
@@ -1737,8 +1774,11 @@ proc apply*(state: var AppState; cmd: Command) =
       state.ignore(cmd, $cmd.layer & " holds an open file's positions: they go when it is closed")
     else:
       let name = state.survey.layers[i].name
+      let checked = state.relationLayer
       discard state.survey.remove(cmd.layer)
       state.log.add(sevInfo, name, name & " was taken out of the survey.")
+      if checked == i: # the records were checked against it
+        for s in state.sessions: state.checkRecords(s)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept
@@ -1811,6 +1851,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkListed: state.takeListed(move m)
     of mkWatched: state.takeWatched(move m)
     of mkSurvey: state.takeSurvey(move m.layer, m.job)
+    of mkChecked: state.takeChecked(move m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:

@@ -3,7 +3,8 @@
 ## A `Session` is made on a job thread (`filejobs.openSession`), moved to the
 ## UI thread through the inbox, and kept by `AppState`, which gives it a
 ## `SessionId` and the survey-wide number of its first trace. Its fields do not
-## change after that, apart from the file being closed.
+## change after that, apart from the file being closed and its records'
+## check against a loaded relation file (`setChecks`).
 ##
 ## Trace ids are survey-wide: `base + index`. Bases are never reused, so an id
 ## kept by a view never names a trace of a file opened later.
@@ -31,6 +32,7 @@ type
     columns: set[RecordColumn]
     size: int64 ## the file's size when it was opened; -1 when not known
     modified: Time ## its modification time then
+    checkedAgainst: string ## the relation file its records were checked against; "" none
 
 const NoSession* = SessionId(0)
 
@@ -65,6 +67,23 @@ func records*(s: Session): lent seq[RecordRow] {.inline.} = s.records
   ## One row per gather, for the record list.
 func recordColumns*(s: Session): set[RecordColumn] {.inline.} = s.columns
   ## The record list's columns some row has a value for.
+func checkedAgainst*(s: Session): lent string {.inline.} = s.checkedAgainst
+  ## The relation file the records' planned stations come from; "" for none.
+
+proc setChecks*(s: Session; against: string; planned, missing: openArray[int]) =
+  ## The records checked against relation file `against` (its name): per
+  ## gather, the stations planned and those with no trace (-1 for a record
+  ## the file does not plan). An `against` of "" clears the check. Lists of
+  ## another length than the records change nothing.
+  if against.len == 0:
+    s.checkedAgainst = ""
+    for r in s.records.mitems:
+      (r.planned, r.plannedMissing) = (-1, -1)
+  elif planned.len == s.records.len and missing.len == s.records.len:
+    s.checkedAgainst = against
+    for i, r in s.records.mpairs:
+      (r.planned, r.plannedMissing) = (planned[i], missing[i])
+
 func len*(s: Session): int {.inline.} = s.file.len
   ## The number of traces.
 func size*(s: Session): int64 {.inline.} = s.size
