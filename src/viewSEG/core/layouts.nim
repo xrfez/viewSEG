@@ -69,17 +69,19 @@ func layoutDocument*(l: Layout): string =
   w.close()
   w.finish
 
-proc readLayout*(text, name: string; problems: var seq[string]): Layout =
-  ## The layout in the document `text` (error messages call it `name`); what
-  ## it holds that is not used goes to `problems`. Raises `NifError` when it
-  ## is not NIF, or holds no layout.
-  let doc = parseNif(text, name)
+proc readLayout*(doc: openArray[NifNode]; name: string; problems: var seq[string]): Layout =
+  ## The layout in the document `doc` (`parseNif`; error messages call it
+  ## `name`); what it holds that is not used goes to `problems` (past the
+  ## first `WordedProblems`, an empty line each). Raises `NifError` when it
+  ## holds no layout.
+  template problem(text: string) =
+    if problems.len < WordedProblems: problems.add text else: problems.add ""
   var root = -1
   for i, n in doc:
     if n.kind == nkTree and n.tag.startsWith("."): discard
     elif root < 0 and n.isTree("layout"): root = i
-    else: problems.add name & " line " & $n.line & ": " & describe(n) & " is not part of a " &
-      "layout; skipped."
+    else: problem(name & " line " & $n.line & ": " & describe(n) & " is not part of a " &
+      "layout; skipped.")
   var imgui = false
   var version = 0
   if root >= 0:
@@ -93,8 +95,8 @@ proc readLayout*(text, name: string; problems: var seq[string]): Layout =
         result.imgui = c.kids[0].text
         imgui = true
       else:
-        problems.add name & " line " & $c.line & ": " & describe(c) & " in (layout) is " &
-          "not known or not usable; skipped."
+        problem(name & " line " & $c.line & ": " & describe(c) & " in (layout) is " &
+          "not known or not usable; skipped.")
   if not imgui:
     var e = newException(NifError, name & " holds no layout (no (layout ... (imgui \"...\")))")
     e.line = (if root >= 0: doc[root].line else: 0)
@@ -102,6 +104,11 @@ proc readLayout*(text, name: string; problems: var seq[string]): Layout =
   if version > LayoutVersion:
     problems.add name & ": written by a newer viewSEG (layout version " & $version &
       "); read as far as this one can."
+
+proc readLayout*(text, name: string; problems: var seq[string]): Layout =
+  ## `readLayout` of the document in `text`. Raises `NifError` when it is
+  ## not NIF, or holds no layout.
+  readLayout(parseNif(text, name), name, problems)
 
 func layoutNameProblem*(name: string): string =
   ## Why `name` cannot name a layout file on every system; "" when it can.

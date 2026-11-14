@@ -27,6 +27,10 @@ const
   MaxNifNodes* = 100_000  ## the most nodes (atoms and compound nodes) it builds
   MaxNifWord* = 256       ## the longest tag or identifier
   MaxNifNumber* = 64      ## the longest number, in characters
+  WordedProblems* = 100
+    ## problems a reader of these documents words (`readSettings`,
+    ## `readLayout`); it counts the rest as empty lines, since a hostile
+    ## document can hold tens of thousands
   NifIdentStart = {'A'..'Z', 'a'..'z', '_'}
   NifIdentChars = NifIdentStart + {'0'..'9'}
   NifSpecial = {'(', ')', '[', ']', '{', '}', '~', '\'', '"', '\\', '@'}
@@ -254,7 +258,9 @@ proc number(p: var Parser): NifNode =
       p.fail("bad or out-of-range integer " & t)
     result = NifNode(kind: nkInt, line: line, intVal: i)
 
-proc node(p: var Parser; depth: int): NifNode
+proc node(p: var Parser; depth: int): NifNode {.gcsafe.}
+  # Recursive: Nim does not infer GC safety through the forward declaration,
+  # and the disk thread parses documents.
 
 proc tree(p: var Parser; depth: int): NifNode =
   ## After `(`: the node's tag and children, up to its `)`.
@@ -274,7 +280,7 @@ proc tree(p: var Parser; depth: int): NifNode =
       break
     result.kids.add p.node(depth)
 
-proc node(p: var Parser; depth: int): NifNode =
+proc node(p: var Parser; depth: int): NifNode {.gcsafe.} =
   ## The node at `pos`, which is not blank.
   p.counted()
   let c = p.s[p.pos]

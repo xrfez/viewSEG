@@ -10,7 +10,7 @@
 ## still running when the program closes can post safely.
 
 import std/locks
-import filelist, jobs, log, panels, session, tiles
+import filelist, jobs, log, nif, panels, session, tiles
 
 type
   MsgKind* = enum
@@ -44,6 +44,8 @@ type
       readPath*: string
       content*: string
       readError*: string       ## why it could not be read; "" when it was
+      doc*: seq[NifNode]       ## `content` as NIF, read on the disk thread
+      docError*: string        ## why `content` is not NIF; "" when it is (or was not read)
     of mkListed:
       listGen*: uint64         ## the file list's `gen` it answers
       listed*: seq[FileEntry]  ## seismic files, in natural order

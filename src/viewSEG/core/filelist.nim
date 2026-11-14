@@ -11,8 +11,13 @@
 ##
 ## `chosen` is the file the main plot window shows, or is opening to show:
 ## the list marks it, and stepping (the arrow keys) goes on from it.
+##
+## **Changes.** The entries are changed only through `merge`, `insertEntry`,
+## `removeAt` and `changedAt`, which note each change (`changes`), so that
+## the file table (`view/filetable`) follows a scan's batches or a single new
+## file in the rows it already has, instead of sorting every row again.
 
-import std/[strutils, times]
+import std/[os, strutils, times]
 import parseSEG/common/seismickind
 import jobs
 
@@ -21,6 +26,7 @@ export SeismicKind
 const
   SniffBytes* = 4096 ## the bytes read from each file to tell its standard
   ListBatch* = 64    ## entries a scan posts at a time, at most
+  MaxChanges* = 4096 ## changes of the entries kept for the file table, at most
 
 type
   FileEntry* = object
@@ -30,6 +36,19 @@ type
     kind*: SeismicKind
     size*: int64
     modified*: Time
+
+  EntryChangeKind* = enum
+    ecAppended ## `count` entries were added at the end, from `at`
+    ecInserted ## an entry was added at `at`: those after it moved one on
+    ecRemoved  ## the entry at `at` was taken out: those after it moved one back
+    ecChanged  ## the entry at `at` changed (its size, time or marks; never its name)
+
+  EntryChange* = object
+    ## One change of a list's entries, at the indices of the list as it was
+    ## right after it.
+    kind*: EntryChangeKind
+    at*: int
+    count*: int ## ecAppended: how many
 
   FileList* = object
     ## What the file list shows. Changed only by `AppState`.
@@ -46,6 +65,10 @@ type
     failed*: seq[string]     ## files of the list that could not be opened
     error*: string           ## why the listing failed; "" when it did not
     revision*: int           ## bumped on every change
+    entriesRev*: int         ## bumped on every change of `entries`, once per change noted
+    changes*: seq[EntryChange]
+      ## the newest changes of `entries`, oldest first, at most `MaxChanges`:
+      ## the last one made `entriesRev`
 
 func isDigit(c: char): bool {.inline.} = c in {'0'..'9'}
 
@@ -102,18 +125,69 @@ func matches*(e: FileEntry; filter: string): bool =
   ## filter matches every file.
   e.matches(filterWords(filter))
 
+func entryCmp(name, path: string; e: FileEntry): int =
+  ## The order of the entries: by name, in natural order, then by path (the
+  ## same name in two folders of a listing of chosen files).
+  result = naturalCmp(name, e.name)
+  if result == 0: result = cmp(path, e.path)
+
+func place(list: FileList; name, path: string): int =
+  ## Where an entry named `name` at `path` goes in the entries: the first
+  ## index whose entry is not before it.
+  var (lo, hi) = (0, list.entries.len)
+  while lo < hi:
+    let mid = (lo + hi) div 2
+    if entryCmp(name, path, list.entries[mid]) > 0: lo = mid + 1 else: hi = mid
+  lo
+
 func find*(list: FileList; path: string): int =
-  ## The index of `path` in the list's entries; -1 when it is not listed.
-  for i, e in list.entries:
-    if e.path == path: return i
-  -1
+  ## The index of `path` in the list's entries; -1 when it is not listed. A
+  ## binary search: the entries are in order (`merge`, `insertEntry`).
+  let name = path.extractFilename
+  let at = list.place(name, path)
+  if at < list.entries.len and list.entries[at].path == path: at else: -1
+
+proc note(list: var FileList; kind: EntryChangeKind; at: int; count = 1) =
+  if list.changes.len >= MaxChanges: list.changes = list.changes[MaxChanges div 2 .. ^1]
+  list.changes.add EntryChange(kind: kind, at: at, count: count)
+  inc list.entriesRev
+  inc list.revision
+
+proc insertEntry*(list: var FileList; e: sink FileEntry): int =
+  ## Adds `e` (a file not listed yet) in its place in the entries and
+  ## returns its index.
+  result = list.place(e.name, e.path)
+  if result == list.entries.len:
+    list.entries.add e
+    list.note(ecAppended, result)
+  else:
+    list.entries.insert(e, result)
+    list.note(ecInserted, result)
+
+proc removeAt*(list: var FileList; i: int) =
+  ## Takes entry `i` out.
+  list.entries.delete(i)
+  list.note(ecRemoved, i)
+
+proc changedAt*(list: var FileList; i: int) =
+  ## Notes that entry `i` changed: its size, time or marks (`FileEntry`'s
+  ## fields but its name and path).
+  list.note(ecChanged, i)
 
 proc merge*(list: var FileList; found: openArray[FileEntry]) =
   ## Adds `found` (files not listed yet: a scan names each file once) to the
-  ## entries, keeping them in natural order. A scan posts in that order, so
-  ## each entry goes at the end.
+  ## entries, keeping them in order. A scan posts in that order, so its
+  ## entries go at the end, and a batch is one change.
+  var appended = -1 # the first of a run of entries added at the end
   for e in found:
-    var at = list.entries.len
-    while at > 0 and naturalCmp(list.entries[at - 1].name, e.name) > 0: dec at
-    list.entries.insert(e, at)
-  if found.len > 0: inc list.revision
+    let at = list.place(e.name, e.path)
+    if at == list.entries.len:
+      if appended < 0: appended = at
+      list.entries.add e
+    else:
+      if appended >= 0: # the run first: an insertion moves its indices
+        list.note(ecAppended, appended, list.entries.len - appended)
+        appended = -1
+      list.entries.insert(e, at)
+      list.note(ecInserted, at)
+  if appended >= 0: list.note(ecAppended, appended, list.entries.len - appended)

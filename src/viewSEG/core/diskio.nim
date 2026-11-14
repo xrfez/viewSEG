@@ -17,15 +17,20 @@
 ##   and flushed after each, so a crash keeps every line written. When a
 ##   file cannot be written, that is said once, and nothing more is tried
 ##   for it until an append to another file.
+## - **Log entries** given to an append or a replace are written as the
+##   session log's lines (`fileLine`) here, not on the UI thread: a line
+##   costs a few microseconds (the local time zone), so a full log is a
+##   tenth of a second.
 ## - **Prune** keeps the newest files of a folder whose names match.
 ## - **Read** reads a whole file up to a size, and posts it (or why it could
-##   not be read) for the UI thread.
+##   not be read) for the UI thread, with its NIF tree (`parseNif`) or why
+##   it is not NIF, so the UI thread only takes in a tree.
 ##
 ## `flush` waits until everything left so far is done; `stop` (and
 ## destroying the `DiskIo`) does what is left, then ends the thread.
 
 import std/[algorithm, locks, os, strutils, times]
-import inbox, jobs, log, threads
+import inbox, jobs, log, nif, threads
 
 when not defined(windows):
   import std/posix
@@ -36,15 +41,16 @@ type
 
   Task = object
     kind: TaskKind
-    path: string         ## the file; for a prune, the folder
-    text: string         ## what to write; for a prune, the names' start
-    what: string         ## what the file is, for a message: "the settings"
-    keep: int            ## a prune: how many to keep
-    suffix: string       ## a prune: the names' end
-    spare: string        ## a prune: a file never removed
-    done: string         ## a replace: what to say once it is written ("" for nothing)
-    purpose: ReadPurpose ## a read: what for
-    limit: int           ## a read: the largest file read, in bytes
+    path: string           ## the file; for a prune, the folder
+    text: string           ## what to write; for a prune, the names' start
+    entries: seq[LogEntry] ## an append or a replace: written after `text`, a line each
+    what: string           ## what the file is, for a message: "the settings"
+    keep: int              ## a prune: how many to keep
+    suffix: string         ## a prune: the names' end
+    spare: string          ## a prune: a file never removed
+    done: string           ## a replace: what to say once it is written ("" for nothing)
+    purpose: ReadPurpose   ## a read: what for
+    limit: int             ## a read: the largest file read, in bytes
 
   DiskObj = object
     lock: Lock
@@ -90,6 +96,11 @@ proc syncToDisk(f: File) =
   when not defined(windows):
     discard fsync(getFileHandle(f))
 
+proc body(t: Task): string =
+  ## What `t` writes: its text, then its log entries, a line each.
+  result = t.text
+  for e in t.entries: result.add fileLine(e)
+
 proc replaceFile(w: var Writer; t: Task) =
   let tmp = t.path & "." & $getCurrentProcessId() & ".tmp"
   try:
@@ -98,7 +109,7 @@ proc replaceFile(w: var Writer; t: Task) =
     if not open(f, tmp, fmWrite):
       raise newException(IOError, "it cannot be created")
     try:
-      f.write t.text
+      f.write t.body
       f.flushFile()
       syncToDisk(f)
     finally:
@@ -136,7 +147,7 @@ proc appendTo(w: var Writer; t: Task) =
         ". The Messages window still has every message.")
       return
   try:
-    w.log.write t.text
+    w.log.write t.body
     w.log.flushFile()
   except IOError:
     let path = w.logPath
@@ -175,6 +186,11 @@ proc readFor(w: var Writer; t: Task) =
   except IOError, OSError:
     msg.readError = getCurrentExceptionMsg()
     if msg.readError.len == 0: msg.readError = "it cannot be read"
+  if msg.readError.len == 0:
+    try:
+      msg.doc = parseNif(msg.content, t.path.extractFilename)
+    except NifError as e:
+      msg.docError = e.msg
   w.d.poster.post msg
 
 proc run(d: ptr DiskObj) {.thread.} =
@@ -247,30 +263,42 @@ proc leave(x: DiskIo; t: sink Task) =
     of tkAppend: # one write for a run of appends to one file
       if x.p.tasks.len > 0 and x.p.tasks[^1].kind == tkAppend and
           x.p.tasks[^1].path == t.path:
-        x.p.tasks[^1].text.add t.text
-        return
+        template last: untyped = x.p.tasks[^1]
+        if last.entries.len == 0: # its text, then this one's text and entries
+          last.text.add t.text
+          last.entries = move t.entries
+          return
+        if t.text.len == 0:
+          last.entries.add t.entries
+          return
     of tkPrune, tkRead: discard
     x.p.tasks.add t
     signal(x.p.changed)
 
-proc replace*(x: DiskIo; path: string; text: sink string; what: string; done = "") =
-  ## Writes `text` to `path` atomically, soon (the module documentation);
-  ## `what` names the document in a message ("the settings"), and `done`,
-  ## when not "", is logged once it is written.
+proc replace*(x: DiskIo; path: string; text: sink string; what: string; done = "";
+    entries: sink seq[LogEntry] = @[]) =
+  ## Writes `text`, then each of `entries` as a line (`fileLine`), to `path`
+  ## atomically, soon (the module documentation); `what` names the document
+  ## in a message ("the settings"), and `done`, when not "", is logged once
+  ## it is written.
   if x.p != nil:
-    x.leave Task(kind: tkReplace, path: path, text: text, what: what, done: done)
+    x.leave Task(kind: tkReplace, path: path, text: text, what: what, done: done,
+      entries: entries)
 
 proc read*(x: DiskIo; path: string; purpose: ReadPurpose; limit: int) =
-  ## Reads `path`, soon, and posts it as an `mkRead` message for `purpose`;
-  ## a file larger than `limit` bytes is not read (the message says so).
+  ## Reads `path`, soon, and posts it as an `mkRead` message for `purpose`,
+  ## with its NIF tree; a file larger than `limit` bytes is not read (the
+  ## message says so).
   if x.p != nil:
     x.leave Task(kind: tkRead, path: path, purpose: purpose, limit: limit)
 
-proc append*(x: DiskIo; path: string; text: sink string; what: string) =
-  ## Adds `text` to the end of `path`, soon; `what` names the file in a
-  ## message ("the session log").
-  if x.p != nil and text.len > 0:
-    x.leave Task(kind: tkAppend, path: path, text: text, what: what)
+proc append*(x: DiskIo; path: string; text: sink string; what: string;
+    entries: sink seq[LogEntry] = @[]) =
+  ## Adds `text`, then each of `entries` as a line (`fileLine`), to the end
+  ## of `path`, soon; `what` names the file in a message ("the session
+  ## log").
+  if x.p != nil and (text.len > 0 or entries.len > 0):
+    x.leave Task(kind: tkAppend, path: path, text: text, what: what, entries: entries)
 
 proc prune*(x: DiskIo; dir, prefix, suffix: string; keep: Natural; spare = "") =
   ## Removes the files of `dir` whose names start with `prefix` and end with

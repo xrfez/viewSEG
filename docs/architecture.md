@@ -100,7 +100,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), reads one trace's headers, hex bytes or textual header, closes files, and makes every OpenGL call |
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, `ensureKeys`, survey joins, sorts across files |
 | Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes, folder scans, brute stack, conversions, exports and patches, queued workflows |
-| Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log, replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; failures come back as log messages |
+| Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
 | Pool workers | processSEG: one `ProcessPool`, made by `core` at start-up | The rows of `pool.apply`, `pool.pickInto` and `pool.traceAmplitudeInto`; destroyed at shutdown, once every caller has stopped |
@@ -175,13 +175,22 @@ another is still opening cancels that open (if it comes all the same, it is drop
 next file is shown at the scales of the one before (`zoom.carried`), with the same display,
 order and display header. `FileList.chosen` is the file the main panel shows or is
 opening; the frontend's file table (`view/filetable`) filters, sorts and steps from it.
+The list notes each change of its entries (`FileList.changes`: a batch added at the end,
+an entry added, changed or taken out), and the table follows them in the rows it has, so
+a batch, or one file that appears, costs a pass over the rows instead of a sort of a
+folder of 100 000 files.
 
 **Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
 severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`
 (the file, the trace, and the SEG-D record it counts in, as parseSEG's `Location` has
 them): `core` shows the gather holding it, selected, and opens the file first when it is
-not open (the request waits in `AppState.jump` for the open). `ckExportLog` writes every
-entry as a line of text through the disk thread.
+not open (the request waits in `AppState.jump` for the open). `ckExportLog` hands a copy
+of every entry to the disk thread, which writes each as a line of text: making a line
+takes a few microseconds (the local time), so a full log made on the UI thread would hold
+a frame for a tenth of a second. The session log is written the same way. An import
+(settings, a layout) is read and parsed on the disk thread too (`mkRead` carries the NIF
+tree), and a reader of these documents words only the first `WordedProblems` problems of
+a hostile one.
 
 **The index cache.** `initAppState(indexCache = dir)` names the folder for parseSEG's
 index caches; the frontend passes `<cache>/index` from `platform/paths`, since `core`

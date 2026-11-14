@@ -20,7 +20,9 @@
 ## `unreadableIsLeftAlone` found it written over; with a reset's backup
 ## named without the names asked for before, `twoResetsKeepBoth` found one
 ## backup, the second reset's; with `(readout ...)` taken whatever it held,
-## `noUsableFieldKeepsTheReadout` found the status bar's fields gone.
+## `noUsableFieldKeepsTheReadout` found the status bar's fields gone; with
+## the import parsed on the UI thread (`readSettings(m.content, ...)` in
+## `takeIn`), `importHoldsNoFrame` found a frame held 51 ms.
 
 import std/[math, monotimes, os, random, strutils, times]
 import viewSEG/core/[geometry, state]
@@ -408,6 +410,38 @@ block exportImportReset:
   st.apply Command(kind: ckImportSettings, docPath: tmp / "missing.nif")
   doAssert st.settle(st.log.has("Cannot import the settings in " & tmp / "missing.nif",
     sevError))
+  st.shutdown()
+
+block importHoldsNoFrame:
+  # The disk thread reads an import and makes its NIF tree, so the frame that
+  # takes in a document at the reader's bound (4 MB) only reads the tree;
+  # and of a document of tens of thousands of unknown settings only the
+  # first problems are worded.
+  let dir = tmp / "app5b"
+  var st = appIn(dir)
+  var text = "(.nif27)\n(settings (version 1) (theme \"everforest-dark\")\n"
+  while text.len < MaxNifBytes - 70_000:
+    text.add " (recentFiles \"" & "x".repeat(60_000) & "\")\n"
+  text.add ")\n"
+  writeFile(tmp / "large.nif", text)
+  st.apply Command(kind: ckImportSettings, docPath: tmp / "large.nif")
+  var longest = Duration()
+  doAssert waitUntil((
+    let t0 = getMonoTime()
+    discard st.drainInbox()
+    longest = max(longest, getMonoTime() - t0)
+    st.log.has("Settings imported from " & tmp / "large.nif")))
+  doAssert longest < initDuration(milliseconds = 25), "taking in the import held a frame " &
+    $longest.inMilliseconds & " ms"
+  doAssert st.settings.theme == "everforest-dark"
+  var many = "(.nif27)\n(settings (version 1)\n"
+  for i in 0 ..< 40_000: many.add "(gadget)\n"
+  many.add "(cursorLine true))\n"
+  var problems: seq[string]
+  let s = readSettings(many, "many.nif", Settings(), problems)
+  doAssert s.cursorLine and problems.len == 40_000
+  for i, p in problems:
+    doAssert (p.len > 0) == (i < WordedProblems), $i & ": " & p
   st.shutdown()
 
 block newPlotsFollow:

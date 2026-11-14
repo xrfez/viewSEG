@@ -265,17 +265,20 @@ func logFile*(state: AppState): lent string {.inline.} =
   state.logFile
 
 proc writeLog(state: var AppState) =
-  ## Hands what was logged since the last call to the disk thread.
+  ## Hands what was logged since the last call to the disk thread, which
+  ## makes the lines: a line takes a few microseconds (the local time), a
+  ## copy of the entry a fraction of that.
   if state.logFile.len == 0 or state.logged == state.log.nextSerial: return
   var text = ""
   let first = state.log.nextSerial - state.log.len
   if state.logged < first:
     text.add "(" & $(first - state.logged) & " messages were dropped before they " &
       "could be written)\n"
+  var entries = newSeqOfCap[LogEntry](state.log.nextSerial - max(state.logged, first))
   for e in state.log.since(state.logged):
-    text.add fileLine(e)
+    entries.add e
   state.logged = state.log.nextSerial
-  state.disk.append(state.logFile, text, "the session log")
+  state.disk.append(state.logFile, text, "the session log", entries)
 
 proc settingsFile*(state: AppState): string =
   ## Where the settings are saved; "" when they are not.
@@ -1133,10 +1136,11 @@ proc apply*(state: var AppState; cmd: Command) =
         state.showPath(k, path)
   of ckExportLog:
     if not state.refusedExport(cmd):
-      var text = ""
-      for e in state.log: text.add fileLine(e)
-      state.diskIo.replace(cmd.docPath, text, "the exported messages",
-        done = "Messages exported to " & cmd.docPath & ".")
+      # The disk thread makes the lines: 10 000 of them take a tenth of a second.
+      var entries = newSeqOfCap[LogEntry](state.log.len)
+      for e in state.log: entries.add e
+      state.diskIo.replace(cmd.docPath, "", "the exported messages",
+        done = "Messages exported to " & cmd.docPath & ".", entries = entries)
   of ckShowFile:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
@@ -1340,7 +1344,9 @@ proc takeLayout(state: var AppState; m: Msg) =
   var problems: seq[string]
   var l: Layout
   try:
-    l = readLayout(m.content, file, problems)
+    # The disk thread read the NIF tree: only taking it in is left here.
+    if m.docError.len > 0: raise newException(NifError, m.docError)
+    l = readLayout(m.doc, file, problems)
   except NifError as e:
     state.log.add(sevError, "layouts", "Cannot load the layout: " & e.msg & ".")
     return
@@ -1370,7 +1376,8 @@ proc takeIn(state: var AppState; m: Msg) =
     else:
       var problems: seq[string]
       try:
-        let s = readSettings(m.content, name, state.settings, problems)
+        if m.docError.len > 0: raise newException(NifError, m.docError)
+        let s = readSettings(m.doc, name, state.settings, problems)
         state.logProblems("settings", problems)
         state.change cleaned(s)[0]
         state.log.add(sevInfo, "settings", "Settings imported from " & m.readPath &

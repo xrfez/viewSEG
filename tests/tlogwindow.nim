@@ -2,15 +2,17 @@
 ## shows that trace's gather in the plot, the trace selected, whether its
 ## file is open or must be opened again first (and the open does not lose
 ## the request); a trace the file does not have is a warning; Export writes
-## every message, one line each, off the UI thread; the Messages window's
-## toggles are settings and survive a restart.
+## every message, one line each, off the UI thread (a full log holds no
+## frame); the Messages window's toggles are settings and survive a restart.
 ##
 ## Seen to fail: with `adopt` not taking up the pending jump, `closedFile`
 ## found the first gather shown and nothing selected; with `gatherOf` off
 ## by one at a gather's last trace, `openFile` showed gather 0 for trace 47;
-## with the export writing only the newest entry, `exported` found one line.
+## with the export writing only the newest entry, `exported` found one line;
+## with the lines made on the UI thread (`fileLine` in `apply`),
+## `exportHoldsNoFrame` found the export holding the frame 88 ms.
 
-import std/[os, strutils]
+import std/[monotimes, os, strutils, times]
 import viewSEG/core/[persist, state]
 import utils/[fixtures, waiting]
 
@@ -87,6 +89,23 @@ block exported:
     doAssert lines == 5, text
     st.apply Command(kind: ckExportLog, docPath: "")
     doAssert st.log.has("no file was named", sevWarning)
+    st.shutdown()
+
+block exportHoldsNoFrame:
+  # A full log (10 000 messages) is exported without holding the frame: the
+  # disk thread makes the lines, a few microseconds each for the local time.
+  withFixtures fx:
+    var st = initAppState()
+    for i in 1 .. DefaultLogCapacity: st.report(sevWarning, "test", "warning number " & $i)
+    let path = fx.dir / "full.log"
+    let t0 = getMonoTime()
+    st.apply Command(kind: ckExportLog, docPath: path)
+    let took = getMonoTime() - t0
+    doAssert took < initDuration(milliseconds = 30), "the export held the frame " &
+      $took.inMilliseconds & " ms"
+    st.flushFiles()
+    doAssert st.settle(st.log.has("Messages exported to " & path))
+    doAssert readFile(path).countLines >= DefaultLogCapacity
     st.shutdown()
 
 block togglesAreSettings:

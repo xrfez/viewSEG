@@ -209,8 +209,11 @@ proc settingsDocument*(s: Settings): string =
 
 # ----------------------------------------------------------------- reading --
 
-proc problem(r: var Reading; n: NifNode; text: string) =
-  r.problems.add r.name & " line " & $n.line & ": " & text
+template problem(r: var Reading; n: NifNode; text: string) =
+  ## Adds a problem at `n`; past the first `WordedProblems`, counted only
+  ## (an empty line), and `text` is not made.
+  if r.problems.len < WordedProblems: r.problems.add r.name & " line " & $n.line & ": " & text
+  else: r.problems.add ""
 
 proc unusable(r: var Reading; n: NifNode; tag, needs: string) =
   ## `(tag ...)` at `n` holds what it should not.
@@ -436,8 +439,9 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
     problems: var seq[string]): Settings =
   ## The settings document `doc` (`parseNif`) taken over `base`: each
   ## setting it holds replaces `base`'s, the others keep theirs. What could
-  ## not be used is added to `problems`, one line each. Raises `NifError`
-  ## when `doc` is not a settings document at all.
+  ## not be used is added to `problems`, one line each (past the first
+  ## `WordedProblems`, an empty line each). Raises `NifError` when `doc` is
+  ## not a settings document at all.
   var r = Reading(name: name)
   result = base
   var root = -1

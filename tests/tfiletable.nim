@@ -5,11 +5,21 @@
 ## large folder allocates nothing per file, so a scan that adds a batch every
 ## frame, or a word typed in the filter, does not stall the frame.
 ##
+## The rows follow the list's changes: a scan's batch, or a file that
+## appears, changes or goes, is merged into the rows there are, so a folder
+## of 100 000 files sorted by size is not sorted again with each batch; the
+## rows so followed are those made from scratch, whatever the changes; and
+## the chosen file's row is found once, not every frame.
+##
 ## Seen to fail: with the sort's closure naming `list` (it held a copy of
 ## every entry), `noAllocationPerFile` counted 40 013 allocations for 20 000
-## files sorted by size; with the filter lower-casing each name, 20 012.
+## files sorted by size; with the filter lower-casing each name, 20 012; with
+## `update` making every row again after a change, `aScanIsMerged` found an
+## update of 85 ms; with `follow` not moving the indices of the rows after
+## an inserted entry, `changesAreFollowed` found the rows differing from
+## those made from scratch at its first insertion.
 
-import std/[times]
+import std/[monotimes, random, times]
 import viewSEG/core/filelist
 import viewSEG/view/filetable
 
@@ -88,3 +98,79 @@ block noAllocationPerFile:
   t.update(big, "", FileOrder(column: fcSize, descending: true))
   for r in 1 ..< t.rows.len:
     doAssert big.entries[t.rows[r - 1]].size >= big.entries[t.rows[r]].size
+
+block aScanIsMerged:
+  # 100 000 files, listed in batches and shown sorted by size: each update
+  # merges the batch into the rows (it used to sort them all again).
+  var big = FileList(gen: 1, revision: 1)
+  var t: FileTable
+  var batch: seq[FileEntry]
+  var worst = Duration()
+  for i in 0 ..< 100_000:
+    batch.add entry("shot" & $i & ".sgd", skSegd, int64((i * 7919) mod 100_003), i mod 97)
+    if batch.len == 640:
+      big.merge(batch)
+      batch.setLen 0
+      let t0 = getMonoTime()
+      t.update(big, "", FileOrder(column: fcSize, descending: true))
+      worst = max(worst, getMonoTime() - t0)
+  doAssert worst < initDuration(milliseconds = 25), "an update took " &
+    $worst.inMilliseconds & " ms"
+  var fresh: FileTable
+  fresh.update(big, "", FileOrder(column: fcSize, descending: true))
+  doAssert t.rows == fresh.rows
+
+block changesAreFollowed:
+  # Files added, changed and taken out at random, a few at a time between
+  # updates (as the folder's watch reports them), under every order and a
+  # filter: the rows followed are the rows made from scratch.
+  var r = initRand(20261114)
+  for order in [FileOrder(), FileOrder(column: fcName, descending: true),
+      FileOrder(column: fcSize), FileOrder(column: fcModified, descending: true),
+      FileOrder(column: fcType)]:
+    for filter in ["", "3"]:
+      var list = FileList(gen: 1, revision: 1)
+      var next = 0
+      proc fresh(r: var Rand; next: var int): FileEntry =
+        inc next
+        entry("f" & $r.rand(5_000) & "_" & $next & ".sgy", SeismicKind(1 + r.rand(2)),
+          r.rand(1000), r.rand(50))
+      var first: seq[FileEntry]
+      for i in 0 ..< 300: first.add r.fresh(next)
+      list.merge(first)
+      var t: FileTable
+      t.update(list, filter, order)
+      for round in 0 ..< 200:
+        for k in 0 .. r.rand(12):
+          case r.rand(3)
+          of 0, 1: discard list.insertEntry(r.fresh(next))
+          of 2:
+            if list.entries.len > 0: list.removeAt(r.rand(list.entries.high))
+          else:
+            if list.entries.len > 0:
+              let i = r.rand(list.entries.high)
+              list.entries[i].size = r.rand(1000)
+              list.entries[i].modified = fromUnix(r.rand(50))
+              list.changedAt(i)
+        if r.rand(9) == 0: # a scan's batch, at the end
+          var tail: seq[FileEntry]
+          for j in 0 ..< 5:
+            inc next
+            tail.add entry("zz" & $next & ".sgd", skSegd, r.rand(1000), r.rand(50))
+          list.merge(tail)
+        t.update(list, filter, order)
+        var made: FileTable
+        made.update(list, filter, order)
+        doAssert t.rows == made.rows, "round " & $round & ", " & $order & ", filter " & filter
+
+block chosenRowIsKept:
+  var t: FileTable
+  var list = FileList(gen: 1, revision: 1)
+  list.merge([entry("a.sgy", skSegy, 1), entry("b.sgy", skSegy, 2)])
+  t.update(list, "", FileOrder())
+  doAssert t.chosenRow(list, "/data/b.sgy") == 1
+  discard list.insertEntry(entry("a0.sgy", skSegy, 3))
+  t.update(list, "", FileOrder())
+  doAssert t.chosenRow(list, "/data/b.sgy") == 2
+  doAssert t.chosenRow(list, "/data/none.sgy") == -1
+  doAssert list.find("/data/a0.sgy") == 1 and list.find("/data/none.sgy") == -1

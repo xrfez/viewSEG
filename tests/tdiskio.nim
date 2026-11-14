@@ -18,7 +18,7 @@
 ## found the thread stuck in a named pipe's open (it waits for a writer).
 
 import std/[os, sequtils, strutils, times]
-import viewSEG/core/[diskio, inbox, log, persist, state]
+import viewSEG/core/[diskio, inbox, log, nif, persist, state]
 import utils/waiting
 when not defined(windows):
   from std/posix import nil
@@ -67,6 +67,49 @@ block appendsInOrder:
     d.append(path, line, "the log")
   d.flush()
   doAssert readFile(path) == want
+
+block entriesAreLinesInOrder:
+  # Log entries given to an append become the session log's lines on the
+  # disk thread, after the append's own text, in the order given, also when
+  # appends are merged into one write.
+  let box = initInbox()
+  var d = newDiskIo(box.poster)
+  let path = tmp / "log" / "entries.log"
+  proc entry(text: string): LogEntry =
+    LogEntry(time: getTime(), severity: sevInfo, source: "test", text: text)
+  d.append(path, "A\n", "the log")
+  d.append(path, "", "the log", @[entry("one")])
+  d.append(path, "B\n", "the log", @[entry("two"), entry("three")])
+  d.append(path, "", "the log", @[entry("four")])
+  let five = entry("five")
+  d.replace(tmp / "log" / "whole.log", "head\n", "the export", entries = @[five])
+  d.flush()
+  var got: seq[string]
+  for line in readFile(path).splitLines:
+    if line.len > 0: got.add(if "[test] " in line: line.split("[test] ")[1] else: line)
+  doAssert got == @["A", "one", "B", "two", "three", "four"], $got
+  let whole = readFile(tmp / "log" / "whole.log")
+  doAssert whole == "head\n" & fileLine(five), whole
+
+block documentsComeAsTrees:
+  # A document read for an import comes with its NIF tree, made on the disk
+  # thread, or with why it is not NIF.
+  let box = initInbox()
+  var d = newDiskIo(box.poster)
+  writeFile(tmp / "good.nif", "(.nif27)\n(settings (version 1) (theme \"x\"))\n")
+  writeFile(tmp / "bad.nif", "(settings (theme")
+  d.read(tmp / "good.nif", rpImportSettings, 1 shl 20)
+  d.read(tmp / "bad.nif", rpLoadLayout, 1 shl 20)
+  d.flush()
+  var mail: seq[Msg]
+  box.drainInto(mail)
+  var reads: seq[Msg]
+  for m in mail.mitems:
+    if m.kind == mkRead: reads.add move m
+  doAssert reads.len == 2
+  doAssert reads[0].docError == "" and reads[0].doc.len == 2 and
+    reads[0].doc[1].isTree("settings"), reads[0].docError
+  doAssert reads[1].doc.len == 0 and "bad.nif" in reads[1].docError, reads[1].docError
 
 block pruneKeepsTheNewest:
   let box = initInbox()

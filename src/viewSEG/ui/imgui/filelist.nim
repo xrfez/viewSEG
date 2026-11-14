@@ -100,7 +100,7 @@ proc drawRows(ui: var FileListUi; f: FileList; t: Theme; marks: var Marks;
       descending: s.SortDirection == ImGui_SortDirection_Descending)
     specs.SpecsDirty = false
   ui.table.update(f, ui.filterText, ui.order)
-  let chosenRow = ui.table.rowOf(f, f.chosen)
+  let chosenRow = ui.table.chosenRow(f, f.chosen)
   let today = getTime()
   let clipper = ImGuiListClipper_ImGuiListClipper()
   ImGuiListClipper_Begin(clipper, cint(ui.table.rows.len), -1)
@@ -108,7 +108,7 @@ proc drawRows(ui: var FileListUi; f: FileList; t: Theme; marks: var Marks;
     ImGuiListClipper_IncludeItemByIndex(clipper, cint(chosenRow))
   while ImGuiListClipper_Step(clipper):
     for r in clipper.DisplayStart ..< clipper.DisplayEnd:
-      let e = f.entries[ui.table.rows[r]]
+      template e: untyped = f.entries[ui.table.rows[r]]
       igTableNextRow(0, 0)
       discard igTableNextColumn()
       let failed = e.path in f.failed
