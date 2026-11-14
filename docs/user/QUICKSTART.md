@@ -192,8 +192,12 @@ has pixels narrows the view to one pixel a trace, keeping its left edge. The two
 lobes (right of the trace) and negative lobes (left of it): either, both or none. The
 settings button (the gear) holds the **trace overlap**, how far the strongest amplitudes
 swing a trace, in trace spacings (1 reaches the next trace; anything stronger is clipped
-there), and the colours: paper (black on white; negative fills red), the theme's colours,
-or your own.
+there), and the **colours**: a swatch for each of the plot's six colours (background,
+wiggle line, positive fill, negative fill, the trace under the pointer, selected traces),
+always shown. Click one to pick a colour, or type it as `#rrggbb` and press Enter: the
+plot becomes "My own" colours. **Paper** (black on white; negative fills red) and
+**Follow the theme** put ready-made colours back; **My own** brings yours back. They are
+remembered when you quit.
 
 **The plot's menu** (right-click the plot) holds what acts on the data, and nothing about
 how it looks. Its first line names what it acts on: the trace under the pointer, or the

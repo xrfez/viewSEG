@@ -206,12 +206,19 @@
 
 ## Colours
 
-- **"Paper", the default:** white background, black wiggles and black positive fill, the
-  theme's red (darkened to read on white) for the negative fill, whatever the UI theme.
-  Density uses its own grey colour map. Alternatives: **"Follow the theme"** (the plot
-  takes the theme's plot background, trace and fill colours) and **custom** colours:
-  background, line, positive and negative fill, hovered and selected trace, each picked
-  in the "more" popover, starting from the colours shown.
+- **Every colour of the plot is the user's**, and all six are in plain sight: the gear
+  popover's **Colours** section always shows a swatch for each, with its name:
+  **background, wiggle line, positive fill, negative fill, the trace under the pointer,
+  selected traces**. A click on a swatch opens a colour picker with a box for
+  `#rrggbb`; changing a colour there makes the scheme **"My own"**, starting from the
+  colours shown, with that one changed. Above the swatches, the schemes: **"Paper"**
+  (the default) and **"Follow the theme"**, the two ready-made ones, which also put the
+  ready-made colours back, and "My own", which brings the user's own back unchanged.
+  The six and the scheme are remembered between runs. Density keeps its own grey colour
+  map (a choice of colour maps is to come).
+- **"Paper":** white background, black wiggles and black positive fill, the theme's red
+  (darkened to read on white) for the negative fill, whatever the UI theme. **"Follow
+  the theme":** the theme's plot background, trace and fill colours.
 - **Highlighting recolours the traces themselves:** the hovered trace and the selected
   traces are redrawn in their colours (line and fill), never marked with a band behind
   them; under density alone, their columns are tinted. Hover is the theme's highlight
@@ -481,4 +488,7 @@ Defaults taken in this draft, for the user to confirm or change:
 21. **Shift + click adds a trace to the selection or takes it out**; a plain click
     replaces the selection; a click is a press and release without moving (a drag still
     pans).
-22. **The negative fill is the theme's red** on paper and on the theme's plot.
+22. **Decided by the user:** the negative fill is the theme's red on paper and on the
+    theme's plot ("I kind of like the other color for negative fill"), and every colour
+    of the plot (background, wiggle line, positive and negative fill, hovered and
+    selected trace) is the user's to set, in plain sight in the gear popover.

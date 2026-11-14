@@ -54,7 +54,8 @@
 ## back, the record shown (previous, next, and "Go to record" by place or
 ## FFID; Page Up / Page Down, Home / End and Ctrl + G) and the trace order
 ## (`plotsort`: the sort buttons and Custom...) are in the strip, which
-## wraps in a narrow window; the colours, the trace overlap, the display
+## wraps in a narrow window; the colours (a swatch for each of the six,
+## always shown), the trace overlap, the display
 ## header's fields and the scales in its gear popover, the display header's
 ## fields also in the header's own menu (a right click on it). The plot's
 ## own menu (right click) holds only functions on the data: the trace
@@ -161,6 +162,8 @@ type
     menuTarget: string ## what the plot's menu acts on, said when it opened
     menuUnder: int = -1 ## the trace under the pointer when it opened (survey-wide); -1 for none
     cursorText: string ## the time the cursor's time line showed last; "" for none
+    picking: int ## the colour whose picker is open (as `colourKeys` lists them)
+    hex: array[12, char] ## what the picker's `#rrggbb` box holds
 
   PanelOutput* = object
     ## What the plot window asks for.
@@ -332,50 +335,122 @@ proc drawHeaderChoice(p: Panel; marks: var Marks; prefix: string; res: var Panel
           header: HeaderChoice(auto: false, fields: fields))
   igEndDisabled()
 
-proc colourBox(label: string; c: Rgba; changed: var Rgba): bool =
-  ## A colour swatch that opens a colour picker; true when the user changed
-  ## it, the new colour in `changed`.
-  var col: array[3, cfloat] = [cfloat(c.r) / 255, cfloat(c.g) / 255, cfloat(c.b) / 255]
-  result = igColorEdit3(label.cstring, col, ImGui_ColorEditFlags_NoInputs.ImGuiColorEditFlags)
-  if result:
-    func byte(v: cfloat): uint8 = uint8(clamp(round(v * 255), 0, 255))
-    changed = Rgba(r: byte(col[0]), g: byte(col[1]), b: byte(col[2]), a: 255)
-
-proc drawColours(p: Panel; t: Theme; res: var PanelOutput) =
-  ## The plot's colour scheme: paper, the theme's, or the user's own
-  ## colours.
-  let d = p.layers[0].display
-  for c in PlotColours:
-    let text = case c
-      of pcPaper: "Paper: white, black traces"
-      of pcTheme: "Follow the theme"
-      of pcCustom: "My own colours"
-    if igRadioButton_Bool(text.cstring, d.colours == c) and d.colours != c:
-      var nd = d
-      if c == pcCustom: nd.custom = customOf(plotInk(t, d)) # start from what is shown
-      nd.colours = c
-      res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
-  if d.colours == pcCustom:
-    let ink = plotInk(t, d)
-    var c = customOf(ink)
-    var changed = false
-    var picked: Rgba
-    for (field, label) in [(addr c.background, "Background"), (addr c.line, "Line"),
-        (addr c.positive, "Positive fill"), (addr c.negative, "Negative fill"),
-        (addr c.hover, "Trace under the pointer"), (addr c.selected, "Selected traces")]:
-      if colourBox(label, field[], picked):
-        field[] = picked
-        changed = true
-    if changed:
-      var nd = d
-      nd.custom = c
-      res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
-
 proc tip(text: string) =
   ## The last item's tooltip.
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
+
+const
+  colourKeys = ["background", "line", "positive", "negative", "hover", "selected"]
+    ## each of the plot's colours, as its swatch is marked
+  colourNames = ["Background", "Wiggle line", "Positive fill (the lobes right of a trace)",
+    "Negative fill (the lobes left of it)", "The trace under the pointer",
+    "Selected traces"]
+  pickerId = "##colourpicker"
+
+func colourOf(ink: PlotInk; i: int): Rgba =
+  ## The plot's colour `i` (as `colourKeys` lists them).
+  case i
+  of 0: ink.background
+  of 1: ink.wiggle.line
+  of 2: ink.wiggle.positive
+  of 3: ink.wiggle.negative
+  of 4: ink.wiggle.hover
+  else: ink.wiggle.selected
+
+proc setColour(c: var CustomColours; i: int; v: Rgba) =
+  case i
+  of 0: c.background = v
+  of 1: c.line = v
+  of 2: c.positive = v
+  of 3: c.negative = v
+  of 4: c.hover = v
+  else: c.selected = v
+
+func chosen(c: CustomColours): bool =
+  ## Whether the user has chosen colours of their own (`plotInk` takes a
+  ## colour with no alpha for one not chosen).
+  c.background.a != 0 or c.line.a != 0 or c.positive.a != 0 or c.negative.a != 0 or
+    c.hover.a != 0 or c.selected.a != 0
+
+proc fillHex(tp: var TracePanelUi; c: Rgba) =
+  let text = toHex(Rgba(r: c.r, g: c.g, b: c.b, a: 255))
+  zeroMem(addr tp.hex[0], tp.hex.len)
+  copyMem(addr tp.hex[0], text.cstring, min(text.len, tp.hex.len - 1))
+
+proc drawColours(tp: var TracePanelUi; p: Panel; t: Theme; marks: var Marks;
+    res: var PanelOutput) =
+  ## The plot's colours: the two ready-made schemes (paper, the theme's),
+  ## which also reset them, or the user's own; then each of the six colours
+  ## of the scheme in use, a swatch with its name. A click on a swatch opens
+  ## a colour picker with a box for `#rrggbb`; changing a colour makes the
+  ## scheme the user's own, starting from the colours shown.
+  let d = p.layers[0].display
+  let ink = plotInk(t, d)
+  for c in PlotColours:
+    let (text, help) = case c
+      of pcPaper: ("Paper", "White paper, black wiggles and fill, red negative fill, " &
+        "whatever the theme")
+      of pcTheme: ("Follow the theme", "The theme's plot colours")
+      of pcCustom: ("My own", "The colours you chose below")
+    if c != pcPaper: igSameLine(0, -1)
+    if igRadioButton_Bool(text.cstring, d.colours == c) and d.colours != c:
+      var nd = d
+      nd.colours = c
+      if c == pcCustom and not d.custom.chosen:
+        nd.custom = customOf(ink) # none chosen yet: start from what is shown
+      res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+    marks.mark("plot.colours." & $c)
+    tip(help)
+  let size = igGetFrameHeight()
+  for i in 0 ..< colourKeys.len:
+    let shown = ink.colourOf(i)
+    if igColorButton(("##colour" & colourKeys[i]).cstring, vec4(shown),
+        ImGui_ColorEditFlags_NoAlpha.ImGuiColorEditFlags, ImVec2_c(x: size, y: size)):
+      tp.picking = i
+      tp.fillHex(shown)
+      igOpenPopup_Str(pickerId, 0)
+    marks.mark("plot.colour." & colourKeys[i])
+    igSameLine(0, -1)
+    igTextUnformatted(colourNames[i].cstring, nil)
+  if igBeginPopup(pickerId, 0):
+    marks.markWindow("plot.colour picker")
+    let i = clamp(tp.picking, 0, colourKeys.high)
+    let was = ink.colourOf(i)
+    igTextUnformatted(colourNames[i].cstring, nil)
+    var col: array[3, cfloat] = [cfloat(was.r) / 255, cfloat(was.g) / 255, cfloat(was.b) / 255]
+    var picked = was
+    var changed = false
+    if igColorPicker3("##picker", col, (ImGui_ColorEditFlags_NoInputs.cint or
+        ImGui_ColorEditFlags_NoSidePreview.cint).ImGuiColorEditFlags):
+      func byte(v: cfloat): uint8 = uint8(clamp(round(v * 255), 0, 255))
+      picked = Rgba(r: byte(col[0]), g: byte(col[1]), b: byte(col[2]), a: 255)
+      changed = true
+    igSetNextItemWidth(round(igCalcTextSize("#0000000", nil, false, -1).x +
+      2 * igGetStyle().FramePadding.x))
+    let hexActive = igInputText("##hex", cast[cstring](addr tp.hex[0]), csize_t(tp.hex.len),
+      ImGui_InputTextFlags_EnterReturnsTrue.cint or ImGui_InputTextFlags_AutoSelectAll.cint,
+      nil, nil) or igIsItemDeactivatedAfterEdit()
+    let typing = igIsItemActive()
+    marks.mark("plot.colour hex")
+    tip("The colour as #rrggbb: type one and press Enter")
+    if hexActive:
+      var c: Rgba
+      let text = $cast[cstring](addr tp.hex[0])
+      if parseColor(text.strip, c):
+        picked = Rgba(r: c.r, g: c.g, b: c.b, a: 255)
+        changed = true
+      else:
+        res.notes.add "A colour is written #rrggbb (as #ff8000), not \"" & text.strip & "\"."
+    if changed and picked != was:
+      var nd = d
+      if d.colours != pcCustom: nd.custom = customOf(ink) # from the colours shown
+      nd.custom.setColour(i, picked)
+      nd.colours = pcCustom
+      res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+    if not typing and not hexActive: tp.fillHex(if changed: picked else: was)
+    igEndPopup()
 
 proc drawWiggleSettings(p: Panel; res: var PanelOutput) =
   ## The trace overlap: how far the reference amplitude swings a trace.
@@ -713,7 +788,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     tip("Colours, display header, scale units and screen calibration")
   if igBeginPopup(moreId, 0):
     igSeparatorText("Colours")
-    drawColours(p, t, res)
+    tp.drawColours(p, t, marks, res)
     igSeparatorText("Wiggles")
     drawWiggleSettings(p, res)
     igSeparatorText("Display header")
