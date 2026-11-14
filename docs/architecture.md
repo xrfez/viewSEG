@@ -249,7 +249,8 @@ frame over budget (50 ms) with its parts, longest first.
    reference, `displayScale`; a colour-map texture) or as the plot's background, then
    its wiggles, one instanced quad per trace whose fragment shader computes the line's
    and the fills' coverage of each pixel, then its hovered and selected traces again,
-   on top. Which of density and wiggles a layer shows depends on its mode and on the
+   on top. The wiggle shader gets positions and times relative to the view's top-left
+   corner (taken in float64), since float32 loses whole traces at position 10 000 000. Which of density and wiggles a layer shows depends on its mode and on the
    trace spacing on screen (`drawsDensity`, `drawsWiggles`: wiggles need 4 pixels).
    Everything but the tiles is a uniform, so a change of gain amount, of a type that is
    a scale alone, of the mode, the fills, the overlap or the colours, and a hover, draws

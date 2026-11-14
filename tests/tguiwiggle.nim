@@ -12,10 +12,14 @@
 ## - the overlap clip: at overlap 0.5 the spike swings its trace half a
 ##   trace spacing and not a pixel further;
 ## - moving the mouse over a trace draws it, line and fill, in the
-##   highlight colour and its neighbours not, with nothing read again;
-##   a click selects it (the selection colour once the pointer has moved
-##   on), Shift + click adds another, Esc clears them; under density alone
-##   the hovered trace's column is tinted;
+##   highlight colour and its neighbours not, with nothing read again (no
+##   request) and no tile uploaded again (counted); a click selects it (the
+##   selection colour once the pointer has moved on), Shift + click adds
+##   another, Esc clears them; under density alone the hovered trace's
+##   column is tinted;
+## - with the pointer still over the plot, the next gather and then another
+##   file are shown: in no frame does the hover name a trace the plot does
+##   not show, and once each is drawn the trace under the pointer is hovered;
 ## - a plot in which nothing changes draws no new image;
 ## - the gain amount scales the wiggles under every gain type, as the
 ##   reference says, and reversed polarity swings them the other way, with
@@ -36,9 +40,14 @@
 ## `densityTint` found 2610 pixels of the hovered column off; with the
 ## renderer drawing every frame, `idleDrawsNothing` counted 7 images while
 ## nothing changed; with wiggles drawn at any trace spacing,
-## `densityTakesOver` found wiggles at 1.24 pixels a trace and no note; with the wiggles drawn at the reference's scale, without the gain
+## `densityTakesOver` found wiggles at 1.24 pixels a trace and no note;
+## with the wiggles drawn at the reference's scale, without the gain
 ## amount and the polarity, `gainAmountUnderEveryType` found 969 pixels off
-## under Automatic at +6 dB.
+## under Automatic at +6 dB; with the tiles uploaded again whenever the
+## selection changed, `hoverHighlights` counted 1 tile uploaded for a
+## hover; with the plot keeping its hover while it showed "Reading..."
+## (as it did), `noStaleHover` found the trace of the file before hovered
+## in the frame the new file came in.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -69,6 +78,7 @@ type
     selection: Selection
     gen: uint64       ## the panel's request generation then
     ids: seq[uint64]  ## its tiles then
+    uploads: int      ## tiles uploaded to the GPU so far
     screen: seq[Rgba] ## the whole frame
     width: int        ## the frame's width
     plot: Rect        ## where the plot lies in it
@@ -83,8 +93,8 @@ proc capture(f: FrameInfo): Shot =
   result = Shot(image: img, w: w, h: h, view: v, display: d, ink: plotInk(f.theme, d),
     style: d.styleFor(v, scale, 1, 2), scale: scale, density: d.drawsDensity(v),
     wiggles: d.drawsWiggles(v), hover: f.core.selection.hover,
-    selection: f.core.selection, gen: p.requestGen, screen: f.readFrame, width: f.width,
-    plot: f.markOf("plot.data"))
+    selection: f.core.selection, gen: p.requestGen, uploads: f.tracePanel.tilesUploaded,
+    screen: f.readFrame, width: f.width, plot: f.markOf("plot.data"))
   for t in f.core.tiles(k):
     result.tiles.add t
     result.ids.add t.id
@@ -190,6 +200,20 @@ withFixtures fx:
   var stage = 0
   var waited = 0
   var drawnBefore = 0
+  # the gather, then the file, changed under a still pointer: frames whose
+  # hover named a trace the plot did not show, and the hovers that came after
+  var watching = false
+  var stale: seq[string]
+  var newGather, newFile = -1
+  let second = fx.surveySegy() # survey-clean.sgy: another file
+  proc hoverShown(f: FrameInfo): bool =
+    ## Whether the hover is none, or a trace of the gather the plot shows.
+    let h = f.core.selection.hover
+    if h < 0: return true
+    let src = f.core.panels[f.core.findPanel(MainPanel)].layers[0].source
+    let s = f.core.findSession(src.file)
+    s >= 0 and h in f.core.sessions[s] and src.gather in 0 ..< f.core.sessions[s].gathers.len and
+      h - f.core.sessions[s].base in f.core.sessions[s].gathers[src.gather].traces
   proc answered(f: FrameInfo): bool =
     let k = f.core.findPanel(MainPanel)
     let p = f.core.panels[k]
@@ -208,6 +232,9 @@ withFixtures fx:
     inc waited
     let p = f.core.panels[f.core.findPanel(MainPanel)]
     if f.index == 0: f.moveMouse(vec2(4, 4)) # off the plot: no hover until stage 1
+    if watching and not f.hoverShown:
+      stale.add "frame " & $f.index & " (stage " & $stage & "): hover " &
+        $f.core.selection.hover & " is not shown"
     case stage
     of 0: # each look in turn, once drawn
       if p.laidOut and f.answered:
@@ -295,15 +322,34 @@ withFixtures fx:
     of 10:
       if f.answered and waited > 3:
         reversed = f.capture
+        f.moveMouse(f.baselineAt(3, 450))
+        waited = 0
         stage = 11
+    of 11: # a trace hovered; then the next gather, the pointer still
+      if waited > 3 and f.core.selection.hover >= 0:
+        watching = true
+        f.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
+        waited = 0
+        stage = 12
+    of 12: # the new gather drawn, and a trace of it hovered; then another file
+      if f.answered and waited > 3 and f.core.selection.hover >= 0:
+        newGather = f.core.selection.hover
+        f.apply Command(kind: ckOpen, paths: @[second])
+        waited = 0
+        stage = 13
+    of 13:
+      if f.core.sessions.len == 2 and p.layers[0].source.file == f.core.sessions[1].id and
+          f.answered and waited > 3 and f.core.selection.hover >= 0:
+        newFile = f.core.selection.hover
+        stage = 14
         f.stop()
     else: discard
-    if f.index > 1500: f.stop() # given up: the checks below say what is missing
-  let code = run(RunOptions(maxFrames: 2000, openPaths: @[path], windowSize: (1280, 900),
+    if f.index > 2500: f.stop() # given up: the checks below say what is missing
+  let code = run(RunOptions(maxFrames: 3000, openPaths: @[path], windowSize: (1280, 900),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
-  doAssert stage == 11, "stopped at stage " & $stage & " with " & $shots.len & " looks, " &
+  doAssert stage == 14, "stopped at stage " & $stage & " with " & $shots.len & " looks, " &
     $amounts.len & " gain types"
 
   block everyModeAsTheReferenceSays:
@@ -376,7 +422,10 @@ withFixtures fx:
     let s = hovered
     let hover = s.ink.wiggle.hover
     doAssert s.hover == knownChannel - 1, "the hover is trace " & $s.hover
+    # no request (so nothing read or decimated again) and no tile uploaded
     doAssert s.gen == shots[1].gen and s.ids == shots[1].ids, "a hover read again"
+    doAssert s.uploads == shots[1].uploads, $(s.uploads - shots[1].uploads) &
+      " tiles uploaded for a hover"
     let lit = s.share(knownChannel - 1, hover, 400, 650)
     doAssert lit > 0.9, "the hovered trace is in the highlight colour on " & $lit & " of its rows"
     for n in [knownChannel - 2, knownChannel]:
@@ -401,6 +450,8 @@ withFixtures fx:
       "the selected trace is not in the selection colour"
     doAssert s.share(5, s.ink.wiggle.hover, 400, 650) > 0.9, "trace 5 is not hovered"
     doAssert s.gen == shots[1].gen and s.ids == shots[1].ids, "a click read again"
+    doAssert s.uploads == shots[1].uploads, $(s.uploads - shots[1].uploads) &
+      " tiles uploaded for a click"
     let (bad, seen) = s.mismatches()
     doAssert bad == 0, "selected: " & $bad & " of " & $seen & " pixels off the reference"
 
@@ -431,6 +482,13 @@ withFixtures fx:
       not close(s.at(c, j), plain), "the hovered column is not tinted"
     let n = s.column(knownChannel)
     doAssert close(s.at(n, j), plain), "the neighbour's column is tinted"
+
+  block noStaleHover:
+    # while the next gather, then another file, was read, the pointer still
+    # over the plot: the hover never named a trace the plot did not show,
+    # and once each was drawn, the trace under the pointer was hovered
+    doAssert stale.len == 0, $stale.len & " frames: " & stale[0 .. min(2, stale.high)].join("; ")
+    doAssert newGather >= 0 and newFile >= 0, $(newGather, newFile)
 
   block idleDrawsNothing:
     doAssert idle[1] == idle[0], $(idle[1] - idle[0]) & " images drawn while nothing changed"

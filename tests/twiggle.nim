@@ -5,7 +5,8 @@
 ## cover a view that needs them; the panel's reader fills them from the
 ## file's own samples; the wiggle's line and fills cover a pixel as the
 ## shader is to (straight between vertices, clipped at the overlap,
-## reversed with the polarity); density takes over below four pixels a
+## reversed with the polarity); a style's overlap is in its range, whatever
+## the settings hold; density takes over below four pixels a
 ## trace; the hovered and selected rows of a tile are found from
 ## survey-wide trace ids; and a hover on a trace no open file has clears
 ## the hover without a warning.
@@ -19,7 +20,9 @@
 ## filling the envelope, `readerFillsTheEnvelope` found row 0 all zeros;
 ## with the swing not clipped, `swingIsClipped` found 4.5 trace spacings at
 ## overlap 1.5; with `ckHover` warning about an unknown trace, as it did,
-## `staleHoverIsQuiet` found "Ignored "hover": no open file has trace 7."
+## `staleHoverIsQuiet` found "Ignored "hover": no open file has trace 7.";
+## with `styleFor` only clamping the overlap (as it did), `overlapInRange`
+## found an overlap that is not a number drawn as one (nothing drawn).
 
 import std/[math, random]
 import viewSEG/core/[geometry, state, wiggle]
@@ -117,6 +120,17 @@ block swingIsClipped:
   doAssert swing(0.5, 1, 1.5) == 0.75
   doAssert swing(3, 1, 1.5) == 1.5 and swing(-3, 1, 1.5) == -1.5
   doAssert swing(0.5, -1, 1.5) == -0.75, "reversed polarity swings the other way"
+
+block overlapInRange:
+  # the overlap a style gets is within its range, also from settings that
+  # did not come through the strip's box
+  let v = fitAll(PanelLayout(traces: 10, samples: 100, dtMs: 2), 400, 300)
+  for (given, want) in [(1.5, 1.5), (0.0, MinOverlap), (1e9, MaxOverlap), (NaN, 1.0),
+      (-Inf, MinOverlap), (Inf, MaxOverlap)]:
+    var d = DisplaySettings()
+    d.overlap = given
+    let st = d.styleFor(v, 1, 1, 2)
+    doAssert st.overlap == want, "overlap " & $given & " drawn as " & $st.overlap
 
 block lineAndFillCoverage:
   # one trace: a positive lobe then a negative one, 1 ms samples

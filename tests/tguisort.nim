@@ -4,7 +4,9 @@
 ## strip's three buttons (Line/Station, By Flag, By Component) sorts the
 ## traces in its known order, is then drawn selected while the others are
 ## not, and the trace under the pointer (the pick, which the status bar reads
-## out) and the display header's values there are the ones of that order;
+## out) and the display header's values there are the ones of that order,
+## and so is the hover, drawn in the hover colour there and not three traces
+## away;
 ## clicking the selected button again gives the file's order back; the
 ## plot's menu opens the popover of the user's own keys, where a key's
 ## direction is turned to descending and "Sort" sorts by them, with no
@@ -19,7 +21,9 @@
 ## file's order` never saw the order go; with the popover opened inside the
 ## menu's ID scope (`openSortKeys` called in the menu), it never opened; with
 ## the buttons never greyed out, `buttonsWithoutTheirKeys` found the survey
-## sorted by line and point. A first version checked nothing at the pick
+## sorted by line and point; with a tile's hovered row found by position
+## instead of by trace (`hoverRow`), the file's order already had the hover
+## colour on none of the rows at position 71. A first version checked nothing at the pick
 ## steps (their closures, made in a loop, shared one position) and still
 ## passed; the steps are now made by a proc each, and counted.
 ##
@@ -28,7 +32,7 @@
 import std/[algorithm, math, options, os, sequtils, times]
 import parseSEG
 import viewSEG/core/[geometry, state]
-import viewSEG/view/theme
+import viewSEG/view/[plotink, theme]
 import viewSEG/ui/imgui/app
 import utils/fixtures
 
@@ -77,6 +81,7 @@ proc main() =
     var theme: Theme
     var picked = 0 # positions whose pick was checked
     var looked = 0 # times the buttons' look was checked
+    var hovered = 0 # positions whose hover and highlight were checked
 
     template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
 
@@ -135,14 +140,49 @@ proc main() =
             "the display header's " & $field & " at position " & $position
         inc picked
 
+    proc highlighted(f: FrameInfo; position: int; halfWidth: float64): int =
+      ## The rows of the plot image with a pixel in the hover colour within
+      ## `halfWidth` trace spacings of `position`'s baseline.
+      let (img, w, h) = f.tracePanel.plotImage
+      let v = f.tracePanel.drawnView
+      let hover = plotInk(f.theme, f.panel.layers[0].display).wiggle.hover
+      let ppt = float64(w) / v.traces.width
+      let c = (float64(position) - v.traces.lo) * ppt
+      for j in 0 ..< h:
+        for i in max(0, int(c - halfWidth * ppt)) .. min(w - 1, int(c + halfWidth * ppt)):
+          if distance(img[j * w + i], hover) <= 30:
+            inc result
+            break
+
+    proc hoverAgrees(f: FrameInfo; position: int) =
+      ## The hover, with the pointer still over `position`, is the trace the
+      ## expected order puts there, and that trace is the one drawn in the
+      ## hover colour (the file is the only one open: its traces' survey-wide
+      ## ids are their indices).
+      let trace = want[position]
+      doAssert f.core.selection.hover == trace, "position " & $position & ": trace " &
+        $f.core.selection.hover & " is hovered, the order puts " & $trace & " there"
+      let (_, _, h) = f.tracePanel.plotImage
+      let lit = f.highlighted(position, 1.0)
+      doAssert lit > h div 2, "position " & $position & ": the hover colour on " & $lit &
+        " of " & $h & " rows"
+      for n in [position - 3, position + 3]:
+        if n in 0 ..< seismic.len:
+          doAssert f.highlighted(n, 0.5) == 0, "position " & $n & " is drawn hovered"
+      inc hovered
+
     proc pickStep(name: string; position, selected: int) =
-      ## A step: the pointer over `position`, the pick and the header checked
-      ## there; at position 0 also the buttons' look. (A proc per step:
-      ## closures made in a loop would share the loop's variables.)
+      ## Steps: the pointer over `position`, the pick and the header checked
+      ## there (at position 0 also the buttons' look), then the hover and its
+      ## highlight, drawn a frame later. (A proc per step: closures made in a
+      ## loop would share the loop's variables.)
       step(name & ": pick at " & $position, proc (f: FrameInfo) =
         f.moveMouse(f.pointAt(position)), proc (f: FrameInfo): bool =
         result = f.pickAgrees(position)
         if result and position == 0: f.checkLit(selected))
+      step(name & ": hover at " & $position, noop, proc (f: FrameInfo): bool =
+        f.hoverAgrees(position)
+        true)
 
     proc checkPicks(name: string; selected: int) =
       ## Steps: the pointer over a few positions, the first of them 0.
@@ -237,9 +277,10 @@ proc main() =
     doAssert code == 0, "run() exit code " & $code
     doAssert failed.len == 0, failed
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
-    echo "tguisort: ", steps.len, " steps, ", picked, " picks checked, the buttons' look ",
-      looked, " times"
-    doAssert picked == 35 and looked == 7, $picked & " picks, " & $looked & " looks"
+    echo "tguisort: ", steps.len, " steps, ", picked, " picks and ", hovered,
+      " hovers checked, the buttons' look ", looked, " times"
+    doAssert picked == 35 and hovered == 35 and looked == 7, $picked & " picks, " & $hovered &
+      " hovers, " & $looked & " looks"
     doAssert snapshot(path) == before, "sorting changed the file"
 
 main()

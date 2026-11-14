@@ -14,6 +14,11 @@
 ##
 ## A second pass draws the hovered and selected traces again, on top: the
 ## quads of the other traces are collapsed in the vertex shader.
+##
+## Positions and times reach the shaders relative to the view's top-left
+## corner, taken in float64 here: in float32, position 10 000 000 is a
+## whole trace off and 20 000 ms a pixel off when zoomed in, so the
+## wiggles of a large gather or a long record would leave their traces.
 
 import ../core/[panels, tiles, viewport, wiggle]
 import density, gl, textures
@@ -37,6 +42,7 @@ type
 const
   vertexShader = """
 #version 330 core
+// Positions and times are relative to the view's left and top edges.
 uniform vec2 xMap;       // ndc = position * xMap.x + xMap.y
 uniform vec2 tMap;       // ndc = ms * tMap.x + tMap.y
 uniform float firstPos;  // the position of the block's first trace
@@ -68,7 +74,7 @@ void main() {
 #version 330 core
 uniform sampler2D series;
 uniform int count;
-uniform float firstMs, stepMs;
+uniform float firstMs, stepMs; // times relative to the view's top edge, as tMs
 uniform float scale, overlap, pxPerPos, msPerPx, lineHalf, markedHalf;
 uniform int fills;       // 1 positive, 2 negative
 uniform vec4 lineColour, positiveColour, negativeColour, hoverColour, selectedColour;
@@ -146,11 +152,10 @@ proc use*(w: WiggleProgram; view: Viewport; st: WiggleStyle; ink: WiggleInk) =
   template loc(u: WiggleUniform): GLint = w.loc[u]
   glUniform1i(loc(wuSeries), 0)
   glUniform1i(loc(wuMarks), 2)
-  # ndc = (v - lo) / (hi - lo) * 2 - 1, time flipped (down the screen)
-  let xs = 2 / view.traces.width
-  glUniform2f(loc(wuXMap), float32(xs), float32(-view.traces.lo * xs - 1))
-  let ts = 2 / view.timeMs.width
-  glUniform2f(loc(wuTMap), float32(-ts), float32(view.timeMs.lo * ts + 1))
+  # ndc = (v - lo) / (hi - lo) * 2 - 1, time flipped (down the screen); `draw`
+  # passes v - lo
+  glUniform2f(loc(wuXMap), float32(2 / view.traces.width), -1)
+  glUniform2f(loc(wuTMap), float32(-2 / view.timeMs.width), 1)
   glUniform1f(loc(wuReach), float32(st.reach))
   glUniform1f(loc(wuScale), st.scale)
   glUniform1f(loc(wuOverlap), float32(st.overlap))
@@ -167,22 +172,26 @@ proc use*(w: WiggleProgram; view: Viewport; st: WiggleStyle; ink: WiggleInk) =
   uniform4(loc(wuSelected), ink.selected)
   glBindVertexArray(w.vao)
 
-proc draw*(w: WiggleProgram; t: Tile; tt: TileTextures; hoverRow: int; markedOnly: bool) =
-  ## Draws the traces of tile `t` (its GPU copy `tt`), after `use`: every
-  ## trace, or only the hovered (`hoverRow`, -1 for none) and selected ones.
+proc draw*(w: WiggleProgram; view: Viewport; t: Tile; tt: TileTextures; hoverRow: int;
+    markedOnly: bool) =
+  ## Draws the traces of tile `t` (its GPU copy `tt`) as they fall in `view`
+  ## (the one given to `use`): every trace, or only the hovered (`hoverRow`,
+  ## -1 for none) and selected ones.
   let s = t.series
   let r = t.request
+  let (x0, t0) = (view.traces.lo, view.timeMs.lo) # the shaders' origin
   template loc(u: WiggleUniform): GLint = w.loc[u]
   glUniform1i(loc(wuMarkedOnly), GLint(markedOnly))
   glUniform1f(loc(wuStride), float32(r.stride))
   for k, b in tt.blocks:
     let q = t.quad(b)
-    glUniform1f(loc(wuFirstPos), float32(r.position(b.row)))
-    glUniform2f(loc(wuTSpan), float32(q.t0), float32(q.t1))
+    glUniform1f(loc(wuFirstPos), float32(float64(r.position(b.row)) - x0))
+    glUniform2f(loc(wuTSpan), float32(q.t0 - t0), float32(q.t1 - t0))
     glUniform1i(loc(wuHoverRow), GLint(if hoverRow >= b.row and hoverRow < b.row + b.rows:
       hoverRow - b.row else: -1))
     glUniform1i(loc(wuCount), GLint(b.cols * s.perColumn))
-    glUniform1f(loc(wuFirstMs), float32(s.firstMs + float64(b.col * s.perColumn) * s.stepMs))
+    glUniform1f(loc(wuFirstMs), float32(s.firstMs + float64(b.col * s.perColumn) * s.stepMs -
+      t0))
     glUniform1f(loc(wuStepMs), float32(s.stepMs))
     glActiveTexture(GL_TEXTURE0 + 2)
     glBindTexture(GL_TEXTURE_2D, tt.marks[k])

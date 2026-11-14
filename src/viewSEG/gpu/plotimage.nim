@@ -184,8 +184,8 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
     if f.wiggles:
       glEnable(GL_BLEND)
       r.wiggle.use(f.view, f.style, f.ink)
-      r.wiggle.draw(tiles[i], tt, tt.hoverRow, markedOnly = false)
-      r.wiggle.draw(tiles[i], tt, tt.hoverRow, markedOnly = true)
+      r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = false)
+      r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = true)
   r.last = f
   r.lastTiles.setLen 0
   r.lastHover.setLen 0

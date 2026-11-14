@@ -107,6 +107,7 @@ type
     ## view it shows, the gesture in progress and what it drew last.
     renderer: PlotRenderer
     textures: seq[TileTextures] ## the GPU copies of the panel's tiles, in their order
+    uploads: int ## tiles uploaded so far (for tests)
     marks: int ## bumped whenever a tile's marks of selected traces change
     selected: seq[bool] ## scratch: a tile's selected rows
     hovering: bool ## the selection's hover was set by this plot
@@ -188,6 +189,9 @@ func imagesDrawn*(tp: TracePanelUi): int {.inline.} = tp.renderer.imagesDrawn
   ## How many plot images were drawn: a frame in which nothing changed draws
   ## none (for tests).
 
+func tilesUploaded*(tp: TracePanelUi): int {.inline.} = tp.uploads
+  ## How many tiles were uploaded to the GPU: each once (for tests).
+
 func textureLimit*(tp: TracePanelUi): int {.inline.} = tp.renderer.maxSize
   ## The largest texture side the renderer uses.
 
@@ -217,6 +221,7 @@ proc sync(tp: var TracePanelUi; tiles: openArray[Tile]; base: int; sel: Selectio
       tp.textures.delete(found)
     else:
       kept.add tp.renderer.upload(t)
+      inc tp.uploads
   for tt in tp.textures.mitems: tt.free()
   tp.textures = move kept
   for i, t in tiles:
@@ -985,6 +990,7 @@ proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: P
   # the wheel zooms, so it does not scroll the window.
   const windowFlags = ImGui_WindowFlags_NoNavInputs.cint or
     ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoScrollbar.cint
+  var plotted = false
   if igBegin(title.cstring, nil, windowFlags):
     # The window never scrolls as a whole: the strip wraps and the plot fits.
     igSetScrollX_Float(0)
@@ -1020,4 +1026,10 @@ proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: P
           t.roles[rlTextDim])
       else:
         tp.drawPlot(st, k, t, fonts, marks, result, ask, ppi)
+        plotted = true
   igEnd()
+  # No plot this frame (a new gather or file is being read, the window is
+  # hidden): the trace this plot hovered is not shown, so it is not hovered.
+  if not plotted and tp.hovering:
+    result.commands.add Command(kind: ckHover, trace: -1)
+    tp.hovering = false

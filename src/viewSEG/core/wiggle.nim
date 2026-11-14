@@ -222,8 +222,10 @@ func styleFor*(d: DisplaySettings; view: Viewport; scale: float32; lineWidth,
     markedWidth: float64): WiggleStyle =
   ## The wiggle style of a layer drawn with `d` in `view` at display gain
   ## `scale`, lines `lineWidth` pixels wide (`markedWidth` when hovered or
-  ## selected).
-  WiggleStyle(scale: scale, overlap: clamp(d.overlap, MinOverlap, MaxOverlap),
+  ## selected). An overlap that is not a number counts as 1 (`clamp` would
+  ## keep it, and nothing would be drawn).
+  let overlap = if d.overlap.isNaN: 1.0 else: clamp(d.overlap, MinOverlap, MaxOverlap)
+  WiggleStyle(scale: scale, overlap: overlap,
     pixelsPerTrace: pixelsPerTrace(view),
     msPerPixel: view.timeMs.width / float64(max(view.rows, 1)),
     lineWidth: lineWidth, markedWidth: markedWidth, fills: d.fills)
