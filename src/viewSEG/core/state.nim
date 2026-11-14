@@ -34,7 +34,14 @@
 ## A command that does not fit the state (a file that is no longer open, a
 ## gather out of range) changes nothing and says why in the log, as a
 ## warning: the UI may issue a command in the same frame as the change that
-## made it stale, and that must not crash anything.
+## made it stale, and that must not crash anything. A hover is the
+## exception: it comes with every move of the mouse, so a hover on a trace
+## no open file has clears the hover and says nothing.
+##
+## **Highlighting.** The trace under the pointer (`ckHover`) and the
+## selected traces (`ckSelect`, `ckClearSelection`) are survey-wide trace
+## ids in the `Selection`, so the plot and the map show the same ones. A
+## change of either only recolours traces: nothing is read again.
 ##
 ## **No undo history.** Edits to traces (kill, reverse polarity) are kept as
 ## lists beside an untouched file, so each one is undone by its inverse;
@@ -606,10 +613,11 @@ proc apply*(state: var AppState; cmd: Command) =
       state.panels[k].layers[0].order = cmd.order
       state.reorder(k)
   of ckHover:
-    if cmd.trace != -1 and state.findTrace(cmd.trace) < 0:
-      state.ignore(cmd, "no open file has trace " & $cmd.trace)
-    else:
-      discard state.selection.setHover(cmd.trace)
+    # The UI sends a hover on every move, so one on a trace of a file closed
+    # in the same frame is no mistake the user could act on: it clears the
+    # hover, and says nothing.
+    let known = cmd.trace >= 0 and state.findTrace(cmd.trace) >= 0
+    discard state.selection.setHover(if known: cmd.trace else: -1)
   of ckSelect:
     var known: seq[int]
     for t in cmd.traces:

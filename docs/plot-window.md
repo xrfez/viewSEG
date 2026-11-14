@@ -361,4 +361,7 @@ Defaults taken in this draft, for the user to confirm or change:
 20. **The trace overlap is 1** (the strongest amplitudes reach the next trace's
     baseline), from 0.1 to 10, and the wiggles' clip is the same reference as density's
     full black, so the gain amount moves both alike.
-21. **The negative fill is the theme's red** on paper and on the theme's plot.
+21. **Shift + click adds a trace to the selection or takes it out**; a plain click
+    replaces the selection; a click is a press and release without moving (a drag still
+    pans).
+22. **The negative fill is the theme's red** on paper and on the theme's plot.

@@ -1,5 +1,6 @@
-## Wiggles in the running frontend, headless, on the survey fixture with a
-## spike (`pdSpike`: one sample of 100 among values of at most 1):
+## Wiggles and trace highlighting in the running frontend, headless, on the
+## survey fixture with a spike (`pdSpike`: one sample of 100 among values
+## of at most 1):
 ##
 ## - each display mode (wiggle with no fill, positive fill, negative fill,
 ##   both, wiggle over density, density) draws the plot image the CPU
@@ -10,6 +11,11 @@
 ##   spacing at overlap 1;
 ## - the overlap clip: at overlap 0.5 the spike swings its trace half a
 ##   trace spacing and not a pixel further;
+## - moving the mouse over a trace draws it, line and fill, in the
+##   highlight colour and its neighbours not, with nothing read again;
+##   a click selects it (the selection colour once the pointer has moved
+##   on), Shift + click adds another, Esc clears them; under density alone
+##   the hovered trace's column is tinted;
 ## - a plot in which nothing changes draws no new image;
 ## - the gain amount scales the wiggles under every gain type, as the
 ##   reference says, and reversed polarity swings them the other way, with
@@ -22,16 +28,21 @@
 ## Seen to fail: with the shader's swing not clipped (`clamp` left out),
 ## the first look already had 35 pixels off the reference (the spike's
 ## line); with the fills' sides swapped in the shader, 1496 pixels of the
-## positive fill were off; with the renderer drawing every frame,
-## `idleDrawsNothing` counted 7 images while nothing changed; with wiggles drawn at any trace
-## spacing, `densityTakesOver` found wiggles at 1.24 pixels a trace and no
-## note; with the wiggles drawn at the reference's scale, without the gain
+## positive fill were off; with the second pass of marked traces left out,
+## `hoverHighlights` found 34 pixels off where a neighbour covered the
+## hovered trace; with the plot not sending `ckHover`, the test waited for
+## a hover that never came; with no `ckSelect` on a click, `clickSelects`
+## found nothing selected; with the density shader not tinting,
+## `densityTint` found 2610 pixels of the hovered column off; with the
+## renderer drawing every frame, `idleDrawsNothing` counted 7 images while
+## nothing changed; with wiggles drawn at any trace spacing,
+## `densityTakesOver` found wiggles at 1.24 pixels a trace and no note; with the wiggles drawn at the reference's scale, without the gain
 ## amount and the polarity, `gainAmountUnderEveryType` found 969 pixels off
 ## under Automatic at +6 dB.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, times]
+import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state, wiggle]
 import viewSEG/view/[plotink, theme]
 import viewSEG/ui/imgui/app
@@ -168,6 +179,7 @@ withFixtures fx:
     (dmWiggle, {wfNegative}, 1.0), (dmWiggle, {wfPositive, wfNegative}, 1.0),
     (dmWiggleDensity, {wfPositive}, 1.0), (dmDensity, {}, 1.0), (dmWiggle, {wfPositive}, 0.5)]
   var shots: seq[Shot]
+  var hovered, clicked, added, cleared, tinted: Shot
   var idle: (int, int)
   type Amount = object
     ## A gain type's wiggles before and after +6.02 dB.
@@ -189,10 +201,13 @@ withFixtures fx:
     (d.mode, d.fills, d.overlap) = look
     d.gain = dgNone # the samples as they are
     f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+  proc click(f: FrameInfo; at: Vec2) =
+    f.pressMouse(at, true)
+    f.pressMouse(at, false)
   proc onFrame(f: FrameInfo) =
     inc waited
     let p = f.core.panels[f.core.findPanel(MainPanel)]
-    if f.index == 0: f.moveMouse(vec2(4, 4)) # off the plot
+    if f.index == 0: f.moveMouse(vec2(4, 4)) # off the plot: no hover until stage 1
     case stage
     of 0: # each look in turn, once drawn
       if p.laidOut and f.answered:
@@ -208,9 +223,46 @@ withFixtures fx:
             f.show(want)
             waited = 0
         else:
-          drawnBefore = f.tracePanel.imagesDrawn
+          f.show(looks[1])
+          f.moveMouse(f.baselineAt(knownChannel - 1, 450))
           waited = 0
-          stage = 6
+          stage = 1
+    of 1: # the pointer over the known trace
+      if waited > 4 and f.core.selection.hover >= 0:
+        hovered = f.capture
+        f.click(f.baselineAt(knownChannel - 1, 450))
+        waited = 0
+        stage = 2
+    of 2: # clicked; the pointer moves on to trace 5
+      if waited == 3: f.moveMouse(f.baselineAt(5, 450))
+      if waited > 8:
+        clicked = f.capture
+        f.pressKey(skShift, true, {smShift}) # the event carries the modifier, as SDL's do
+        waited = 0
+        stage = 3
+    of 3: # Shift + click on trace 5, then on to trace 17
+      if waited == 2: f.click(f.baselineAt(5, 450))
+      if waited == 4: f.pressKey(skShift, false)
+      if waited == 6: f.moveMouse(f.baselineAt(17, 450))
+      if waited > 10:
+        added = f.capture
+        f.pressKey(skEscape, true)
+        f.pressKey(skEscape, false)
+        waited = 0
+        stage = 4
+    of 4: # Esc cleared the selection; then density alone, over trace 11
+      if waited > 4:
+        cleared = f.capture
+        f.show(looks[5])
+        f.moveMouse(f.baselineAt(knownChannel - 1, 450))
+        waited = 0
+        stage = 5
+    of 5:
+      if waited > 6:
+        tinted = f.capture
+        drawnBefore = f.tracePanel.imagesDrawn
+        waited = 0
+        stage = 6
     of 6: # nothing changes: nothing is drawn
       if waited > 6:
         idle = (drawnBefore, f.tracePanel.imagesDrawn)
@@ -320,6 +372,66 @@ withFixtures fx:
           reach = max(reach, i - c)
     doAssert float64(reach) >= ppt - 4, "at overlap 1 the spike swings only " & $reach & " px"
 
+  block hoverHighlights:
+    let s = hovered
+    let hover = s.ink.wiggle.hover
+    doAssert s.hover == knownChannel - 1, "the hover is trace " & $s.hover
+    doAssert s.gen == shots[1].gen and s.ids == shots[1].ids, "a hover read again"
+    let lit = s.share(knownChannel - 1, hover, 400, 650)
+    doAssert lit > 0.9, "the hovered trace is in the highlight colour on " & $lit & " of its rows"
+    for n in [knownChannel - 2, knownChannel]:
+      doAssert s.share(float64(n), hover, 400, 650, int(s.style.pixelsPerTrace / 2) - 2) == 0,
+        "trace " & $n & " has the highlight colour"
+    let (bad, seen) = s.mismatches()
+    doAssert bad == 0, "hovered: " & $bad & " of " & $seen & " pixels off the reference"
+    # and on the screen, where the plot shows the image
+    let x = int(s.plot.pos.x + float32((float64(knownChannel - 1) - s.view.traces.lo) /
+      s.view.traces.width) * s.plot.size.x)
+    let y = int(s.plot.pos.y + s.plot.size.y * 0.4)
+    var onScreen = false
+    for i in x - 2 .. x + 2:
+      if close(s.screen[y * s.width + i], hover, 30): onScreen = true
+    doAssert onScreen, "no highlight colour on the screen at the trace"
+
+  block clickSelects:
+    let s = clicked
+    doAssert knownChannel - 1 in s.selection.selected and s.selection.selected.len == 1
+    doAssert s.hover == 5
+    doAssert s.share(knownChannel - 1, s.ink.wiggle.selected, 400, 650) > 0.9,
+      "the selected trace is not in the selection colour"
+    doAssert s.share(5, s.ink.wiggle.hover, 400, 650) > 0.9, "trace 5 is not hovered"
+    doAssert s.gen == shots[1].gen and s.ids == shots[1].ids, "a click read again"
+    let (bad, seen) = s.mismatches()
+    doAssert bad == 0, "selected: " & $bad & " of " & $seen & " pixels off the reference"
+
+  block shiftClickAdds:
+    let s = added
+    doAssert s.selection.selected.len == 2 and 5 in s.selection.selected and
+      knownChannel - 1 in s.selection.selected, "selected: " & $s.selection.selected
+    doAssert s.share(5, s.ink.wiggle.selected, 400, 650) > 0.9 and
+      s.share(knownChannel - 1, s.ink.wiggle.selected, 400, 650) > 0.9
+    doAssert s.share(17, s.ink.wiggle.hover, 400, 650) > 0.9
+
+  block escClears:
+    let s = cleared
+    doAssert s.selection.selected.len == 0, "Esc left " & $s.selection.selected
+    for n in [5, knownChannel - 1]:
+      doAssert s.share(float64(n), s.ink.wiggle.selected, 400, 650) == 0
+
+  block densityTint:
+    let s = tinted
+    doAssert not s.wiggles and s.density and s.hover == knownChannel - 1
+    let (bad, seen) = s.mismatches()
+    doAssert bad == 0, "tinted: " & $bad & " of " & $seen & " pixels off the reference"
+    # the column is tinted towards the hover colour; its neighbours are not
+    let c = s.column(knownChannel - 1)
+    let j = s.row(450)
+    let plain = greyLut().densityColour(0, s.scale)
+    doAssert close(s.at(c, j), densityTint(plain, tmHovered, s.ink.wiggle, DensityTint)) and
+      not close(s.at(c, j), plain), "the hovered column is not tinted"
+    let n = s.column(knownChannel)
+    doAssert close(s.at(n, j), plain), "the neighbour's column is tinted"
+
   block idleDrawsNothing:
     doAssert idle[1] == idle[0], $(idle[1] - idle[0]) & " images drawn while nothing changed"
 
@@ -384,3 +496,100 @@ withFixtures fx:
     doAssert note[2] < WiggleMinPixels and note[0] and not note[1],
       "narrow traces: " & $note
     doAssert after[2] >= WiggleMinPixels and not after[0] and after[1], "zoomed in: " & $after
+
+# ------------------------------------------------- screenshots of real data --
+# With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
+# local only), the plot window is saved zoomed in on the Morgantown record in
+# every mode, one trace hovered and one selected, as wiggle-*.png
+# (docs/screenshots/ holds the committed ones), and the frame times while
+# panning in each mode are printed.
+
+const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
+
+proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
+    traces, timeMs: Span; colours = pcPaper) =
+  ## Opens `path` in a 1600 × 1000 window, shows `traces` and `timeMs` in
+  ## `mode` with `fills`, selects the trace a fifth of the way across and
+  ## hovers the one at the middle, saves the frame, then pans to and fro for
+  ## 120 frames and prints their times.
+  let dir = getEnv("VIEWSEG_SCREENSHOTS")
+  var stage = 0
+  var wait = 0
+  var saved = false
+  var times: seq[float64]
+  var last = getMonoTime()
+  let selected = traces.lo + 0.2 * traces.width + 0.5
+  let hovered = traces.lo + 0.5 * traces.width + 0.5
+  proc onFrame(f: FrameInfo) =
+    let now = getMonoTime()
+    let k = f.core.findPanel(MainPanel)
+    let p = f.core.panels[k]
+    inc wait
+    case stage
+    of 0:
+      if f.index == 0: f.moveMouse(vec2(4, 4))
+      if p.laidOut and p.layout.traces > 0:
+        var v = p.view
+        v.traces = traces
+        v.timeMs = timeMs
+        f.showView(v)
+        var d = p.layers[0].display
+        (d.mode, d.fills, d.colours) = (mode, fills, colours)
+        f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+        wait = 0
+        stage = 1
+    of 1:
+      let tiles = f.core.tiles(k)
+      if wait > 10 and tiles.len > 0 and tiles[^1].request == p.pending:
+        f.moveMouse(f.baselineAt(floor(selected), timeMs.lo + 0.4 * timeMs.width))
+        wait = 0
+        stage = 2
+    of 2:
+      if wait == 3: f.pressMouse(f.baselineAt(floor(selected), timeMs.lo + 0.4 *
+        timeMs.width), true)
+      if wait == 5: f.pressMouse(f.baselineAt(floor(selected), timeMs.lo + 0.4 *
+        timeMs.width), false)
+      if wait == 8: f.moveMouse(f.baselineAt(floor(hovered), timeMs.lo + 0.4 * timeMs.width))
+      if wait > 14:
+        saved = f.savePng(dir / file)
+        wait = 0
+        stage = 3
+    of 3: # frame times while panning, a trace every other frame
+      if wait > 1: times.add float64((now - last).inMicroseconds) / 1000
+      if wait mod 2 == 0:
+        var v = p.view
+        let dx = if (wait div 40) mod 2 == 0: 0.5 else: -0.5
+        v.traces = Span(lo: v.traces.lo + dx, hi: v.traces.hi + dx)
+        f.showView(v)
+      if wait > 121: f.stop()
+    else: discard
+    last = now
+    if f.index > 3000: f.stop()
+  let tmp = getTempDir() / ("viewseg-wiggleshot-" & $getCurrentProcessId())
+  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
+    theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
+    onFrame: onFrame))
+  removeDir(tmp)
+  doAssert code == 0 and saved, "no screenshot of " & path
+  times.sort
+  echo "tguiwiggle: saved ", dir / file, "; ", times.len, " frames panning: median ",
+    formatFloat(times[times.len div 2], ffDecimal, 1), " ms, 90 % ",
+    formatFloat(times[int(0.9 * float64(times.high))], ffDecimal, 1), " ms, slowest ",
+    formatFloat(times[^1], ffDecimal, 1), " ms"
+
+if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
+  let morgantown = examples / "00000151_12900_11300.sgd"
+  if fileExists(morgantown):
+    createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+    let traces = Span(lo: 999.5, hi: 1039.5)
+    let timeMs = Span(lo: 400, hi: 1000)
+    wiggleShot(morgantown, "wiggle-morgantown.png", dmWiggle, {wfPositive}, traces, timeMs)
+    wiggleShot(morgantown, "wiggle-morgantown-line.png", dmWiggle, {}, traces, timeMs)
+    wiggleShot(morgantown, "wiggle-morgantown-both.png", dmWiggle, {wfPositive, wfNegative},
+      traces, timeMs)
+    wiggleShot(morgantown, "wiggle-morgantown-density.png", dmWiggleDensity, {}, traces,
+      timeMs)
+    wiggleShot(morgantown, "wiggle-morgantown-theme.png", dmWiggle, {wfPositive}, traces,
+      timeMs, pcTheme)
+    wiggleShot(morgantown, "density-morgantown-highlight.png", dmDensity, {},
+      Span(lo: 899.5, hi: 1299.5), Span(lo: 0, hi: 2500))

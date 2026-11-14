@@ -6,8 +6,9 @@
 ## file's own samples; the wiggle's line and fills cover a pixel as the
 ## shader is to (straight between vertices, clipped at the overlap,
 ## reversed with the polarity); density takes over below four pixels a
-## trace; and the hovered and selected rows of a tile are found from
-## survey-wide trace ids.
+## trace; the hovered and selected rows of a tile are found from
+## survey-wide trace ids; and a hover on a trace no open file has clears
+## the hover without a warning.
 ##
 ## Seen to fail: with `minMaxInto` keeping the extremes smallest first
 ## whatever their order, `minMaxKeepsOrder` found (-1, 5) for a bin that
@@ -16,8 +17,9 @@
 ## trace; with `covers` ignoring the envelope, `envelopeIsCovered` found a
 ## request without it covering a view that needs it; with the reader never
 ## filling the envelope, `readerFillsTheEnvelope` found row 0 all zeros;
-## and with the swing not clipped, `swingIsClipped` found 4.5 trace
-## spacings at overlap 1.5.
+## with the swing not clipped, `swingIsClipped` found 4.5 trace spacings at
+## overlap 1.5; with `ckHover` warning about an unknown trace, as it did,
+## `staleHoverIsQuiet` found "Ignored "hover": no open file has trace 7."
 
 import std/[math, random]
 import viewSEG/core/[geometry, state, wiggle]
@@ -27,6 +29,8 @@ template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
 
 proc main(st: AppState): lent Panel = st.panel(MainPanel)
+
+proc lastText(log: MessageLog): string = log[log.len - 1].text
 
 func tileOf(values: openArray[float32]; rows: int; dtMs = 2.0; decimation = 1): Tile =
   ## A tile of `rows` traces at positions 0, 1, ... (traces 10, 11, ... of
@@ -199,4 +203,21 @@ block readerFillsTheEnvelope:
         want)
       doAssert t.envelope[row * 2 * t.columns ..< (row + 1) * 2 * t.columns] == want,
         "row " & $row
+    st.shutdown()
+
+block staleHoverIsQuiet:
+  withFixtures fx:
+    var st = initAppState()
+    st.apply Command(kind: ckOpen, paths: @[fx.surveySegy()])
+    doAssert st.settle(st.sessions.len == 1)
+    st.apply Command(kind: ckHover, trace: 5)
+    doAssert st.selection.hover == 5
+    let warnings = st.log.count(sevWarning)
+    st.apply Command(kind: ckHover, trace: 1_000_000) # a trace of no open file
+    doAssert st.selection.hover == -1
+    st.apply Command(kind: ckHover, trace: 7)
+    st.apply Command(kind: ckClose, file: st.sessions[0].id)
+    st.apply Command(kind: ckHover, trace: 7) # the frame after a close
+    doAssert st.selection.hover == -1
+    doAssert st.log.count(sevWarning) == warnings, "a stale hover warned: " & st.log.lastText
     st.shutdown()

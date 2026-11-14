@@ -262,7 +262,9 @@ frame over budget (50 ms) with its parts, longest first.
    it), the nearest sample and the value drawn for it, and the trace's keys, which each
    tile carries per row. Nothing is read from the file. The status bar formats the
    fields the user chose (`Settings.readout`) from that `Pick`, blank where a value is
-   not known.
+   not known. The trace under the pointer becomes the selection's hover (`ckHover`, a
+   survey-wide id: the file's `base` plus the trace's index), and a click selects it
+   (`ckSelect`).
 
 | Work | Cancelled or dropped by |
 |---|---|

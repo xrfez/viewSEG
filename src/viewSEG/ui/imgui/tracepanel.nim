@@ -31,10 +31,14 @@
 ## drawing the tiles it has, stretched. What lies under the mouse
 ## (`core/pick`) goes back to the caller for the status bar.
 ##
-## **Highlighting.** The trace the selection's hover names is drawn in the
-## highlight colour and the selected ones in the selection colour, line and
-## fill (under density alone, their columns are tinted): a uniform and a
-## small texture of marks per tile, so a hover reads and uploads nothing.
+## **Highlighting.** The trace under the pointer is the selection's hover
+## (`ckHover`), a click selects it (`ckSelect`; Shift + click adds it or
+## takes it out) and Esc clears the selection, all as survey-wide trace ids,
+## so another view (the map) shows the same traces. The hovered trace is
+## drawn in the highlight colour and the selected ones in the selection
+## colour, line and fill (under density alone, their columns are tinted):
+## a uniform and a small texture of marks per tile, so a hover reads and
+## uploads nothing.
 ##
 ## Nothing about a plot sits in the main toolbar: the display mode, the
 ## gain (`plotgain`: the type and the amount in dB), the scales, zoom, fit,
@@ -76,6 +80,9 @@ type
   Gesture = enum
     gsNone, gsWheel, gsKeyZoom, gsKeyPan, gsPage, gsBarWheel
 
+  ClickKind = enum
+    clNone, clClick, clShiftClick
+
   ViewAskKind = enum
     vaNone, vaFit, vaZoomIn, vaZoomOut, vaTraceScale, vaTimeScale
 
@@ -102,6 +109,7 @@ type
     textures: seq[TileTextures] ## the GPU copies of the panel's tiles, in their order
     marks: int ## bumped whenever a tile's marks of selected traces change
     selected: seq[bool] ## scratch: a tile's selected rows
+    hovering: bool ## the selection's hover was set by this plot
     gpuError: string ## why it cannot draw; "" when it can
     started: bool
     maxTexture: int ## 0: the GPU's limit (tests set a small one)
@@ -676,9 +684,10 @@ func clampTo(p: ImVec2_c; r: Rect): Vec2 =
   vec2(clamp(p.x, r.pos.x, r.pos.x + r.size.x), clamp(p.y, r.pos.y, r.pos.y + r.size.y))
 
 proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot: Rect;
-    lim: ViewLimits; hovered: bool; t: Theme; remember, menu: var bool) =
+    lim: ViewLimits; hovered: bool; t: Theme; remember, menu: var bool;
+    click: var ClickKind) =
   ## The wheel and the buttons over the plot (the invisible button just
-  ## drawn over it).
+  ## drawn over it). A left press released where it went down is a click.
   let io = igGetIO_Nil()
   let mouse = io.MousePos
   if hovered:
@@ -709,7 +718,10 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
     if tp.drag.moved:
       after = dragged(tp.drag.start, plot, moved, lim)
       igSetMouseCursor(ImGui_MouseCursor_ResizeAll.cint)
-    if not down: tp.drag = Drag()
+    if not down:
+      if not tp.drag.moved and tp.drag.button == ImGui_MouseButton_Left.cint and hovered:
+        click = if io.KeyShift: clShiftClick else: clClick
+      tp.drag = Drag()
   of dkBox:
     let a = clampTo(tp.drag.press, plot)
     let b = clampTo(mouse, plot)
@@ -733,7 +745,8 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
       tp.drag = Drag()
 
 proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot: Rect;
-    lim: ViewLimits; hovered: bool; p: Panel; remember: var bool; res: var PanelOutput) =
+    lim: ViewLimits; hovered: bool; p: Panel; selected: bool; remember: var bool;
+    res: var PanelOutput) =
   ## The plot's keys, while its window has the focus (docs/plot-window.md).
   let io = igGetIO_Nil()
   if io.WantTextInput: return # typing into a box
@@ -780,12 +793,12 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
   if once(ImGui_Key_Backspace.cint) or once(alt or ImGui_Key_LeftArrow.cint):
     res.commands.add Command(kind: ckBack, panel: p.id)
   gainKeys(p, res.commands)
-  if once(ImGui_Key_Escape.cint):
+  if once(ImGui_Key_Escape.cint): # innermost first: a drag, a thumb, the selection
     if tp.drag.kind != dkNone:
       if tp.drag.kind == dkPan and tp.drag.moved: after = tp.drag.start
       tp.drag = Drag()
-    else:
-      discard tp.bars.cancel(after)
+    elif not tp.bars.cancel(after) and selected:
+      res.commands.add Command(kind: ckClearSelection)
 
 proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts;
     marks: var Marks; res: var PanelOutput; ask: ViewAsk; ppi: float64) =
@@ -907,7 +920,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     var after = if view.columns != next.columns or view.rows != next.rows:
         next.resized(view.columns, view.rows, lim)
       else: view
-    tp.handleMouse(after, view, plot, lim, hovered, t, remember, menu)
+    var click = clNone
+    tp.handleMouse(after, view, plot, lim, hovered, t, remember, menu, click)
     case tp.bars.drawScrollBars(after, view, pos, size, lim, t, marks)
     of beNone, beDrag: discard
     of beGrab:
@@ -915,10 +929,23 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       tp.gesture = gsNone
     of bePage: (if tp.burst(gsPage): remember = true)
     of beWheel: (if tp.burst(gsBarWheel): remember = true)
-    tp.handleKeys(after, view, plot, lim, hovered, p, remember, res)
+    tp.handleKeys(after, view, plot, lim, hovered, p, st.selection.selected.len > 0, remember,
+      res)
     if hovered:
       let m = igGetIO_Nil().MousePos
       res.pick = pick(tiles, p.layout, view, plot, vec2(m.x, m.y))
+    # The trace under the pointer is the hover; a click selects it.
+    let under = if res.pick.found and res.pick.trace >= 0 and base >= 0: base + res.pick.trace
+                else: -1
+    if hovered and under != st.selection.hover:
+      res.commands.add Command(kind: ckHover, trace: under)
+      tp.hovering = under >= 0
+    elif not hovered and tp.hovering:
+      res.commands.add Command(kind: ckHover, trace: -1)
+      tp.hovering = false
+    if click != clNone and under >= 0:
+      res.commands.add Command(kind: ckSelect, traces: @[under],
+        mode: (if click == clShiftClick: smToggle else: smReplace))
     tp.cur = after
     if after != p.view:
       res.commands.add Command(kind: ckView, panel: p.id, view: after, remember: remember)

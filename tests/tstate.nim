@@ -106,8 +106,10 @@ block gatherHoverSelect:
     doAssert st.selection.hover == 5 and st.selection.revision == rev + 1
     st.apply Command(kind: ckHover, trace: 5)
     doAssert st.selection.revision == rev + 1, "hovering the same trace changed nothing"
-    st.apply Command(kind: ckHover, trace: 10_000)
-    doAssert st.selection.hover == 5 and st.log.lastText.contains("no open file has trace 10000")
+    let entries = st.log.len
+    st.apply Command(kind: ckHover, trace: 10_000) # of no open file: no hover, and no warning
+    doAssert st.selection.hover == -1 and st.log.len == entries, st.log.lastText
+    st.apply Command(kind: ckHover, trace: 5)
     st.apply Command(kind: ckHover, trace: -1)
     doAssert st.selection.hover == -1
 

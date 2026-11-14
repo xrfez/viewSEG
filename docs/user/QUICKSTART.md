@@ -4,8 +4,8 @@ viewSEG is a viewer for SEG-Y and SEG-D seismic data with quality-control tools.
 no installation and no internet connection.
 
 **Status:** early development. The window, the File menu, the folders below, and one
-record on screen as wiggles or greyscale density, with zoom, pan, gain, sorting and a
-cursor readout, work.
+record on screen as wiggles or greyscale density, with zoom, pan, gain, sorting, trace
+highlighting and a cursor readout, work.
 
 ## Start it
 
@@ -52,7 +52,9 @@ by default).
 | Zoom to a box | drag with the right button | |
 | Fit the whole record | the fit button | Ctrl+0 |
 | Go back to the view before | the back button | Backspace, or Alt+Left |
-| Cancel a drag | | Esc |
+| Select a trace | click it | |
+| Add a trace to the selection, or take it out | Shift + click | |
+| Cancel a drag, else clear the selection | | Esc |
 
 Keys act while the Plot window has the focus: click in it first.
 
@@ -64,6 +66,10 @@ swing a trace, in trace spacings (1 reaches the next trace; anything stronger is
 there), and the colours: paper (black on white; negative fills red), the theme's colours,
 or your own.
 
+**Highlight.** The trace under the pointer is drawn in orange, line and fill (under
+density, its column is tinted), and the status bar reads it out. Click a trace to select
+it; Shift + click adds another or takes one out; Esc clears the selection. Selected
+traces are drawn in the theme's accent colour. Nothing is read again for any of this.
 
 **Gain.** The drop-down in the strip picks the gain type, and its settings are in the
 same list: Automatic (AGC on shot and receiver records, none on stacked data), None,
