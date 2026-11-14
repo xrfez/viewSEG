@@ -7,7 +7,7 @@
 ## (FFID), offset, amplitude, and the shot time (the record's UTC time; the
 ## cursor's time within the record is the first field). Every trace key can
 ## be added. Whatever the fields, the readout says when the trace under the
-## pointer is killed or its polarity reversed (`editNote`).
+## pointer is dead in the file, killed or its polarity reversed (`editNote`).
 
 import std/[math, strutils, times]
 import parseSEG
@@ -144,12 +144,14 @@ proc text*(p: Pick; f: ReadoutField): string =
     of rfTime, rfSample, rfAmplitude: "" # handled above
 
 func editNote*(p: Pick): string =
-  ## What the readout says of the edits of the trace at `p`: "killed",
-  ## "polarity reversed", both, or "" for none (or no trace).
+  ## What the readout says of the trace at `p` beyond its fields: "dead"
+  ## when the file marks it dead (it is drawn blank), then its edits,
+  ## "killed", "polarity reversed", each after a comma; "" for none (or no
+  ## trace).
   if not (p.inside and p.found): return ""
-  if teKilled in p.edits: result = "killed"
-  if teReversed in p.edits:
-    result.add (if result.len > 0: ", " else: "") & "polarity reversed"
+  if p.keys.status == tsDead: result = "dead"
+  for (edit, word) in [(teKilled, "killed"), (teReversed, "polarity reversed")]:
+    if edit in p.edits: result.add (if result.len > 0: ", " else: "") & word
 
 func cleaned*(fields: openArray[ReadoutField]): seq[ReadoutField] =
   ## `fields` in their order, each once.

@@ -88,17 +88,18 @@ proc buildProgram*(vertex, fragment, what: string): (GLuint, string) =
 
 func marksOf(t: Tile; b: TileBlock; selected: openArray[bool]): seq[uint8] =
   ## The marks of block `b`'s rows: selected (`selected[row]`; a row past
-  ## its end is not), killed.
+  ## its end is not), drawn blank (killed, or dead in the file).
   result = newSeq[uint8](b.rows)
   for i in 0 ..< b.rows:
     let row = b.row + i
     if row < selected.len and selected[row]: result[i] = result[i] or SelectedMark
-    if t.isKilled(row): result[i] = result[i] or KilledMark
+    if t.isBlank(row): result[i] = result[i] or KilledMark
 
 proc upload*(t: Tile; maxSize: int): TileTextures =
   ## The GPU's copy of `t`, in blocks of at most `maxSize` texels a side
   ## (half that in time when the tile has an envelope, which takes two
-  ## texels a column). Nothing is selected; its killed traces are marked.
+  ## texels a column). Nothing is selected; its blank traces (killed, dead)
+  ## are marked.
   result = TileTextures(id: t.id, selectionRevision: -1, hoverRevision: -1, hoverRow: -1)
   if t.request.count == 0 or t.columns == 0: return
   let envelope = t.hasEnvelope

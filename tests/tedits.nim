@@ -24,8 +24,8 @@
 ## - commands that do not fit are ignored with a warning;
 ## - what the screen asks of the lists every frame or view does not grow
 ##   with the traces edited elsewhere in the file;
-## - a trace marked dead in the file, drawn as recorded under gain None, is
-##   drawn reversed once reversed;
+## - a trace marked dead in the file is blank under every gain, reversed or
+##   not, and the status bar says "dead";
 ## - the file is never changed.
 ##
 ## Seen to fail: with the reader not blanking killed rows (`prepare`
@@ -40,9 +40,9 @@
 ## keeping the change (a second undo would redo it), the check that nothing
 ## is left to undo; with the lists kept as `IntSet`s (every query walking
 ## them), "a frame's questions to the lists take 4987.1 µs with 200 000
-## traces edited elsewhere"; with the reversal limited to live traces
-## (`meta.isLive`), "the dead-marked trace 5 is drawn as recorded, not
-## reversed".
+## traces edited elsewhere"; with the dead trace drawn as recorded under
+## None (the blanking only when something runs on the samples), "under
+## None the dead-marked trace is drawn".
 
 import std/[algorithm, math, monotimes, os, sequtils, strutils, times]
 import parseSEG
@@ -396,10 +396,10 @@ proc deadMarkedSegy(dir: string): string =
   doAssert w.close().len == 0
 
 block deadMarked:
-  # A trace marked dead in the file is drawn as recorded when nothing runs
-  # on the samples (gain None); reversed by the user, it is drawn reversed,
-  # as the display header and the status bar then say. Under a gain that
-  # runs on the samples it is blank, reversed or not.
+  # A trace marked dead in the file is never drawn, under any gain, and
+  # reversing it changes nothing on screen: its row stays blank, its edits
+  # say it is reversed (the display header and the status bar say so), and
+  # the status bar says it is dead.
   withFixtures fx:
     let path = deadMarkedSegy(fx.dir)
     var st = initAppState()
@@ -411,19 +411,16 @@ block deadMarked:
     let lay = st.panel(MainPanel).layout
     st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 640, 2 * lay.samples))
     doAssert st.settle(st.answered)
-    let recorded = st.tiles(0)[^1]
     const dead = 4
-    doAssert not recorded.rowOf(dead).blank, "the dead-marked trace is not drawn as recorded"
+    doAssert st.tiles(0)[^1].rowOf(dead).blank, "under None the dead-marked trace is drawn"
     st.edit(teReversed, @[st.sessions[0].base + dead])
     doAssert st.settle(st.answered)
     let t = st.tiles(0)[^1]
-    doAssert t.editsAt(t.traces.find(dead)) == {teReversed}
-    let want = recorded.rowOf(dead).mapIt(-it)
-    let got = t.rowOf(dead)
-    var i = 0
-    while i < got.high and got[i] == want[i]: inc i
-    doAssert got == want, "the dead-marked trace 5 is not drawn reversed: value " & $i &
-      " is " & $got[i] & ", reversed " & $want[i]
+    let row = t.traces.find(dead)
+    doAssert t.editsAt(row) == {teReversed} and t.isDead(row) and t.rowOf(dead).blank
+    var p = pickAt(st.tiles(0), lay, DataPoint(x: float64(dead), tMs: 100))
+    p.inside = true
+    doAssert editNote(p) == "dead, polarity reversed", editNote(p)
     d.gain = dgAgc
     st.display(d)
     doAssert st.settle(st.answered)

@@ -33,11 +33,13 @@
 ## - **The tile.** Each row is cut to the kept samples and peak-decimated
 ##   (`decimatePeakInto`); with `envelope`, its columns' extremes are kept
 ##   too (`minMaxInto`), so a wiggle zoomed out in time keeps its peaks.
-## - **Before processing** (`readyForProcessing`), a trace marked dead in the
-##   file is blanked and a sample that is not a number (NaN, ±Inf) is set
-##   to 0, as the tile draws it anyway: processSEG leaves such a trace as it
-##   is, so under AGC or a per-trace normalization it would be drawn at its
-##   raw amplitude among gained traces, saturated.
+## - **Dead traces and bad samples** (`readyForProcessing`), before any
+##   processing: a trace marked dead in the file is blanked, passed by like a
+##   trace that could not be decoded (so neither the processing nor the
+##   tile's level sees it) and marked in the tile (`Tile.dead`), so it is
+##   never drawn, under any gain; a sample that is not a number (NaN, ±Inf)
+##   is set to 0, and the first gather of a file that has such samples is
+##   said in the log once, with how many traces hold them.
 ## - **Edits** (`core/edits`, with each request): a killed trace is blanked
 ##   and passed by, like a trace that could not be decoded, so neither the
 ##   processing nor the tile's level sees it; a reversed trace's samples are
@@ -132,6 +134,7 @@ type
     raw: RawCache
     ws: Workspace
     toldShort: bool      ## the file was found shorter than when it was opened: said once
+    toldNotNumbers: bool ## samples that are not numbers were found in the file: said once
 
 proc `=destroy`*(x: PanelReader)
 proc `=wasMoved`*(x: var PanelReader) = x.p = nil
@@ -178,6 +181,7 @@ proc letGo(rd: var Reader) =
   rd.layout = PanelLayout()
   rd.raw = RawCache()
   rd.toldShort = false
+  rd.toldNotNumbers = false
 
 proc arrange(rd: var Reader; order: seq[SortKey]) =
   ## Puts the positions in `order` (the traces the filter keeps, sorted),
@@ -276,17 +280,22 @@ proc levelOf(rd: var Reader; tile: Tile; list: seq[int]; excluded: seq[int];
   except ValueError as e:
     rd.note(sevWarning, "Cannot work out the display gain of " & rd.name & ": " & e.msg)
 
-proc readyForProcessing(b: RowBlock[float32]; rows: TraceRows) =
+proc readyForProcessing(b: RowBlock[float32]; rows: TraceRows): int =
   ## Blanks the rows of `b` marked dead in the file and sets every sample
   ## that is not a number to 0: the display processing leaves such a row as
-  ## it is, and it would stand out at its raw amplitude.
+  ## it is, and it would stand out at its raw amplitude. Returns how many
+  ## rows held a sample that is not a number.
   for k in 0 ..< b.len:
     let row = b.rowPtr(k)
     if rows.keysAt(k).status == tsDead:
       for i in 0 ..< b.cols: row[i] = 0
     else:
+      var bad = false
       for i in 0 ..< b.cols:
-        if not (abs(row[i]) < Inf): row[i] = 0 # NaN fails the test too
+        if not (abs(row[i]) < Inf): # NaN fails the test too
+          row[i] = 0
+          bad = true
+      if bad: inc result
 
 type Preparing = object
   ## What every block of one request is readied with (`prepare`).
@@ -294,18 +303,18 @@ type Preparing = object
   processing: bool
   plan: PipelinePlan[float32]
   firstSample: int           ## the trace sample of column 0
+  notNumbers: int            ## rows that held a sample that is not a number
 
 proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: TraceRows;
     first: int; failedRows: openArray[int]) =
   ## Readies rows `first ..< first + b.len` of a request, decoded into `b`
   ## (`rows`: their traces; `failedRows`: those not decoded, 0-based in the
-  ## block, ascending) for the tile: killed rows blanked, the samples of
+  ## block, ascending) for the tile: killed rows and rows marked dead in the
+  ## file blanked, samples that are not numbers set to 0, the samples of
   ## reversed rows negated, then the display processing, which passes by
-  ## the killed rows and those not decoded. A reversed row is negated
-  ## whatever its trace's status: one marked dead in the file is drawn as
-  ## recorded when nothing runs on the samples, so the user who reversed it
-  ## sees it reversed (with processing it is blanked anyway).
-  var passed: seq[int] # rows of the block not decoded or killed, ascending
+  ## the blank rows and those not decoded.
+  pr.notNumbers += readyForProcessing(b, rows)
+  var passed: seq[int] # rows of the block not decoded, killed or dead, ascending
   var fi = 0
   for k in 0 ..< b.len:
     while fi < failedRows.len and failedRows[fi] < k: inc fi
@@ -313,8 +322,9 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
     if killed:
       let row = b.rowPtr(k)
       for i in 0 ..< b.cols: row[i] = 0
-    if killed or (fi < failedRows.len and failedRows[fi] == k): passed.add k
-  if pr.processing: readyForProcessing(b, rows)
+    if killed or rows.keysAt(k).status == tsDead or
+        (fi < failedRows.len and failedRows[fi] == k):
+      passed.add k
   try:
     let meta = initChunkMeta(rows, rd.layout.dtMs, pr.firstSample, passed)
     if pr.edits.len > 0:
@@ -401,6 +411,9 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
           tile.envelope.toOpenArray(e, e + 2 * tile.columns - 1))
       let keys = rows.keysAt(k)
       tile.keys[row] = keys
+      if keys.status == tsDead:
+        if tile.dead.len == 0: tile.dead = newSeq[bool](q.count)
+        tile.dead[row] = true
       for i, field in req.fields:
         tile.header[i][row] = keys.value(field, list[row])
 
@@ -474,14 +487,19 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
         ".")
   if given: return
   tile.traces = list
-  var excluded = failed # rows left out of the level: not decoded, or killed
-  for row in 0 ..< tile.edits.len:
-    if teKilled in tile.edits[row]: excluded.add row
+  var excluded = failed # rows left out of the level: not decoded, killed or dead
+  for row in 0 ..< q.count:
+    if tile.isBlank(row): excluded.add row
   excluded.sort()
   var unique: seq[int]
   for row in excluded:
     if unique.len == 0 or unique[^1] != row: unique.add row
   tile.level = rd.levelOf(tile, list, unique, req.clipPercentile)
+  if pr.notNumbers > 0 and not rd.toldNotNumbers:
+    rd.toldNotNumbers = true
+    rd.note(sevWarning, $pr.notNumbers & " of the " & $q.count & " traces shown of " & rd.name &
+      " hold samples that are not numbers (NaN or infinite), which are drawn as 0: the file " &
+      "may hold a bad conversion or a damaged block.")
   rd.r.poster.post Msg(job: NoJob, kind: mkTile, tile: move tile)
 
 proc run(r: ptr ReaderObj) {.thread.} =

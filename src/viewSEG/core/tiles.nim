@@ -5,8 +5,9 @@
 ## trace by trace, processed for display, with each trace's index in its
 ## file and its keys (what the cursor readout shows), the values of the
 ## display header's fields for each trace, the edits it was made with (a
-## trace killed or reversed: `core/edits`) and the amplitude statistics of
-## its live traces that are not killed (its `Level`). It is made on the
+## trace killed or reversed: `core/edits`), the traces the file marks dead
+## and the amplitude statistics of its live traces that are not killed (its
+## `Level`). Killed and dead traces are drawn blank. It is made on the
 ## reader's thread, moved through the inbox and
 ## kept by `AppState`; it holds no `ref`, so it may be freed on any thread.
 ## Zoomed out in time with traces wide enough for wiggles, it also keeps
@@ -45,6 +46,9 @@ type
     level*: Level           ## RMS, peak and clip percentile of |x| over the live traces
     failed*: int            ## traces that could not be decoded (zero rows)
     cached*: bool           ## the reader made it from samples it held, not from the file
+    dead*: seq[bool]
+      ## per row: the trace is marked dead in the file, so it is drawn blank;
+      ## empty when none is
 
   Quad* = object
     ## Where a block of a tile is drawn, in data coordinates (positions and
@@ -65,6 +69,16 @@ func isKilled*(t: Tile; row: int): bool {.inline.} =
   ## Whether row `row`'s trace was killed when `t` was made: it is drawn
   ## blank (the plot's background), and left out of the levels.
   teKilled in t.editsAt(row)
+
+func isDead*(t: Tile; row: int): bool {.inline.} =
+  ## Whether row `row`'s trace is marked dead in the file: drawn blank, and
+  ## left out of the levels, under every gain.
+  row in 0 ..< t.dead.len and t.dead[row]
+
+func isBlank*(t: Tile; row: int): bool {.inline.} =
+  ## Whether row `row` is drawn blank (the plot's background, no wiggle):
+  ## its trace was killed, or the file marks it dead.
+  t.isKilled(row) or t.isDead(row)
 
 func timeOf*(t: Tile; column: float64): float64 {.inline.} =
   ## The time of column `column`'s centre.
@@ -152,8 +166,8 @@ func cellsIn(s: Span; first, step: float64; n: int): Slice[int] =
 proc valuesInView*(t: Tile; view: Viewport; most: int; dst: var seq[float32]) =
   ## Adds to `dst` the values of `t` whose trace and time lie in `view`, on
   ## an even grid of at most about `most` of them (all of them when they are
-  ## fewer): what the Float gain takes its level from. Killed traces are left
-  ## out. Nothing when the tile and the view do not meet.
+  ## fewer): what the Float gain takes its level from. Killed and dead
+  ## traces are left out. Nothing when the tile and the view do not meet.
   let r = t.request
   if r.count <= 0 or t.columns <= 0 or most <= 0: return
   let (xs, ts) = t.span
@@ -165,7 +179,7 @@ proc valuesInView*(t: Tile; view: Viewport; most: int; dst: var seq[float32]) =
   let thin = max(1, int(ceil(sqrt(float64(rows.len) * float64(cols.len) / float64(most)))))
   var row = rows.a
   while row <= rows.b:
-    if not t.isKilled(row):
+    if not t.isBlank(row):
       var c = cols.a
       while c <= cols.b:
         dst.add t.data[row * t.columns + c]
@@ -204,9 +218,9 @@ func densityColour*(lut: Lut; amplitude, scale: float32): Rgba {.inline.} =
 
 func densityAt*(t: Tile; lut: Lut; x, tMs: float64; scale: float32; background: Rgba): Rgba =
   ## The density colour drawn at (`x`, `tMs`): the colour of `amplitudeAt`
-  ## at display gain `scale`, or `background` on a killed trace (drawn
-  ## blank). What the density shader computes.
-  if t.isKilled(t.rowAt(x)): background else: lut.densityColour(t.amplitudeAt(x, tMs), scale)
+  ## at display gain `scale`, or `background` on a killed or dead trace
+  ## (drawn blank). What the density shader computes.
+  if t.isBlank(t.rowAt(x)): background else: lut.densityColour(t.amplitudeAt(x, tMs), scale)
 
 func greyLut*(): Lut =
   ## The grey density map of seismic plots: positive amplitudes black,

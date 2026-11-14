@@ -158,10 +158,14 @@
 
     Changing the amount, a Fixed amplitude, or between types that do nothing to the
     samples (None, Fixed, Float, Normalized for the whole record) reads nothing again;
-    the others read the view again with the new processing. Under those (AGC,
-    Exponential, Normalized per trace), a trace marked dead in the file is drawn blank,
-    and a sample that is not a number counts as 0, so such a trace never shows up
-    saturated at its raw amplitude among gained ones;
+    the others read the view again with the new processing. **A trace the file marks
+    dead is never drawn**, under any gain type and in every display mode: it is blank,
+    as a killed trace is, and left out of the levels every type takes its reference
+    from (the user: "it looks like the are not drawn under none. and they shouldnt
+    be"); the status bar says "dead" over it. A sample that is not a number counts as
+    0, so its trace never shows up saturated at its raw amplitude among gained ones,
+    and the log says once, for the first record of a file that has such samples, how
+    many of the traces shown hold them;
   - **three sort buttons and Custom...**, the button of the order in use drawn selected:
 
     | Button | Order |
@@ -198,8 +202,9 @@
   pixel ("peak of 4"). Right-click the bar to choose the fields and their order; any of
   the trace's keys can be added (sample number, UTC at the cursor, CDP, inline,
   crossline, source, receiver and midpoint coordinates, elevations, component, trace
-  status). Unknown values are left blank. Whatever the fields, the bar says "killed",
-  "polarity reversed" or both, in the theme's warning colour, over an edited trace.
+  status). Unknown values are left blank. Whatever the fields, the bar says "dead" over a
+  trace the file marks dead, and "killed", "polarity reversed" or both over an edited
+  trace, in the theme's warning colour.
 
 ## Wiggles
 
@@ -248,9 +253,9 @@
   the map.
 - **Components** of multi-component units each have a colour and can be shown or
   hidden one by one.
-- **Killed traces** are drawn blank: the plot's background shows where the trace was, in
-  every mode (no line and no fill among wiggles, no grey under density), with only the
-  hover's tint under density alone. Hiding them instead (the traces closing up) is a
+- **Killed traces, and traces the file marks dead,** are drawn blank: the plot's
+  background shows where the trace was, in every mode (no line and no fill among wiggles,
+  no grey under density), with only the hover's tint under density alone. Hiding them instead (the traces closing up) is a
   setting to come.
 
 ## Polarity
@@ -269,9 +274,9 @@ recorded.
 plot's menu), is an edit of the file's traces (see [Edits](#edits-to-traces)): those
 traces' samples are negated (processSEG's `reversePolarity` on their live samples, as
 `polarityOp` does) where the window's reader prepares them, before the pipeline and the
-gain. A trace reversed both ways is as recorded. A trace the file marks dead is reversed
-too: under the gain None it is drawn as recorded, so reversed it is drawn reversed (under
-the gains that run on the samples it is blank either way).
+gain. A trace reversed both ways is as recorded. A trace the file marks dead stays blank,
+reversed or not (it is never drawn); the display header and the status bar still say it is
+reversed.
 
 ## Mouse and keys
 

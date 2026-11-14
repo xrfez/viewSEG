@@ -256,7 +256,9 @@ Fixed (one scale for every record, so records compare), Normalized (every trace,
 record, to the same level), Exponential (more gain later in the record: dB per second,
 or a power of time), Float (the scale follows what is in view) and AGC. Beside it, the
 gain amount in dB works with every type: type a value, click - or +, or press `]` and
-`[` (keypad `*` and `/`); the picture brightens or darkens at once.
+`[` (keypad `*` and `/`); the picture brightens or darkens at once. A trace the file
+marks dead is never drawn, whatever the gain: it is blank, like a killed trace, it does
+not count in the brightness, and the status bar says "dead" over it.
 
 The view never goes past the data: panning and zooming stop at the first and last trace
 (in wiggles, past them by their swing) and at the record's start and end, and zoomed out
@@ -291,8 +293,8 @@ monitor's diagonal or make a bar on the screen as long as a ruler held to it say
 
 **Readout.** The status bar along the bottom reads out what lies under the pointer: the
 time, the trace and channel, receiver and source line and point, FFID, offset, the
-amplitude as displayed, and the record's UTC time; and, whatever the fields, "killed" or
-"polarity reversed" for an edited trace. Right-click the status bar to choose the fields
+amplitude as displayed, and the record's UTC time; and, whatever the fields, "dead" for
+a trace the file marks dead, "killed" or "polarity reversed" for an edited trace. Right-click the status bar to choose the fields
 and their order.
 
 ## Messages

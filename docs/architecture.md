@@ -407,8 +407,11 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    largest sample are kept too, in the order they occur (`core/wiggle.minMaxInto`), so a
    wiggle keeps its peaks (the request asks for them when the layer draws wiggles).
    Before the pipeline, rows
-   marked dead are blanked and samples that are not numbers set to 0: processSEG leaves
-   such a row as it is, and it would be drawn at its raw amplitude among processed ones.
+   marked dead in the file are blanked, passed by as failed rows and marked in the tile
+   (`Tile.dead`), so they are never drawn and never counted in a level, under any gain;
+   samples that are not numbers are set to 0 (processSEG leaves such a row as it is, and
+   it would be drawn at its raw amplitude among processed ones), and the log says so once
+   per file shown.
    The file's **edits** come with each request (`core/edits`: the gather's killed and
    reversed traces): a killed row is blanked and passed to the pipeline and the level as
    a failed row, so neither sees it; a reversed row's live samples are negated
@@ -421,7 +424,7 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    holds the values (and, for wiggles zoomed out in time, the columns' extremes), the
    display header's values per trace, the edits each row was made with, and its
    `Level`: the RMS, peak and clip percentile of |x| over its live traces that are not
-   killed (`panelStats`).
+   killed (`panelStats`; a trace marked dead is not live).
 6. **Take in** (UI). A tile whose `request.gen` is not the panel's `requestGen` is
    dropped. `AppState` keeps the newest four per panel (after a new order, or the
    polarity of every trace reversed, the tiles from before are drawn until the first
@@ -431,12 +434,12 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    first after a kill or a restore (`relevel`). The gain type picks the *reference* drawn full black from it (`reference`):
    that level, a Fixed amplitude kept across gathers and files, 1 for traces normalized
    on the CPU, or, for Float, the level of the data in view, taken on the UI thread from
-   at most 32 768 of the kept values (killed traces left out) whenever the view or the
+   at most 32 768 of the kept values (killed and dead traces left out) whenever the view or the
    tiles change.
 7. **Draw** (UI, `gpu/plotimage`). Each kept tile is uploaded once, as `R32F` textures
    cut to the GPU's size limit (`splitBlocks`), with its columns' extremes when it has
    them and a small texture marking its selected traces and those it was made with
-   killed (drawn blank: the background, no wiggle). The tiles are drawn, oldest
+   killed or that the file marks dead (drawn blank: the background, no wiggle). The tiles are drawn, oldest
    first, into an RGBA image the size of the plot: each tile's area as density (nearest
    trace, linear in time, the scale as a uniform: the gain amount in dB over the
    reference, `displayScale`; a colour-map texture) or as the plot's background, then
@@ -698,6 +701,7 @@ type
     fields: seq[HeaderField]
     header: seq[seq[float64]] # per field, one value per trace
     edits: seq[set[TraceEdit]] # per row: the edits it was made with; empty for none
+    dead: seq[bool]          # per row: marked dead in the file (drawn blank); empty for none
     level: Level             # RMS, peak, clip percentile of |x| over the live traces
                              # that are not killed
     cached: bool             # made from the samples the reader held, not read
