@@ -9,7 +9,10 @@
 ## Shift or the sideways wheel: traces only), `+` / `-`, Ctrl + arrows for
 ## one axis, drag to pan (left or middle button), right drag to zoom to a
 ## box, arrows to pan, Ctrl + 0 to fit, Backspace or Alt + Left for back,
-## Esc to cancel a drag. Each new view goes to `core` (`ckView`), which
+## Esc to cancel a drag, and the scroll bars (`plotbars`) beside the plot
+## when part of the data is out of view. No view ever shows anything past
+## the data, and a new plot size keeps the scale from the top-left corner
+## (`core/zoom`). Each new view goes to `core` (`ckView`), which
 ## decides what to read; the first view of a gesture is sent with
 ## `remember`, so back returns to the view before it.
 ##
@@ -34,7 +37,7 @@ import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../gpu/density
 import ../../view/[displayheader, theme]
-import chrome, dpi, fonts, icons, menus, style, symbols
+import chrome, dpi, fonts, icons, menus, plotbars, style, symbols
 
 const
   PaperBackground* = Rgba(r: 255, g: 255, b: 255, a: 255)
@@ -60,7 +63,7 @@ type
     moved: bool     ## the pointer moved past ImGui's drag threshold
 
   Gesture = enum
-    gsNone, gsWheel, gsKeyZoom, gsKeyPan
+    gsNone, gsWheel, gsKeyZoom, gsKeyPan, gsPage, gsBarWheel
 
   ViewAskKind = enum
     vaNone, vaFit, vaZoomIn, vaZoomOut, vaTraceScale, vaTimeScale
@@ -94,12 +97,14 @@ type
     drawn: Viewport ## the view of the last image
     labelChars: Table[uint64, int] ## per tile: the longest header label
     drag: Drag
+    bars: ScrollBars
     gesture: Gesture ## the last wheel or key gesture, and when
     gestureAt: float64
     wanted: Viewport ## a view to give the plot next frame (`show`)
     want: bool
     traceBox, timeBox: ScaleBox
     calib: CalibrationUi
+    stripWidths: array[5, float32] ## the strip's groups as drawn last frame
 
   PanelOutput* = object
     ## What the plot window asks for.
@@ -414,60 +419,79 @@ proc drawScaleSettings(tp: var TracePanelUi; st: AppState; res: var PanelOutput;
       tp.calib.rulerPx = 0
       res.commands.add Command(kind: ckSettings, settings: s)
 
+template stripGroup(tp: var TracePanelUi; i: int; right, spacing: float32; body: untyped) =
+  ## Group `i` of the strip, on the line of the group before it when it fits
+  ## left of `right` (its width as drawn last frame), else on a new line: the
+  ## strip wraps, so the window never needs to scroll.
+  if i > 0 and igGetItemRectMax().x + spacing + tp.stripWidths[i] <= right:
+    igSameLine(0, spacing)
+  igBeginGroup()
+  body
+  igEndGroup()
+  tp.stripWidths[i] = igGetItemRectSize().x
+
 proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks: var Marks;
     res: var PanelOutput; ask: var ViewAsk; ppi: float64; mon: MonitorInfo) =
-  ## The strip at the top of the window.
+  ## The strip at the top of the window, in groups that wrap onto more lines
+  ## when the window is narrow.
   let size = round(igGetFontSize() * IconScale + 2 * igGetStyle().FramePadding.y)
+  let lift = round((size - igGetFrameHeight()) / 2) # centres a text control on the symbols
+  let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
   let mode = p.layers[0].display.mode
-  for m in DisplayMode:
-    let ready = m == dmDensity
-    igBeginDisabled(not ready)
-    if symbolButton(modeSymbols[m], size, t, marks, selected = m == mode,
-        note = (if ready: "" else: " (not available yet)"), markPrefix = "plot.") and
-        m != mode:
-      var d = p.layers[0].display
-      d.mode = m
-      res.commands.add Command(kind: ckDisplay, panel: p.id, display: d)
-    igEndDisabled()
-    igSameLine(0, 2)
-  igSameLine(0, 12)
-  igSetCursorPosY(igGetCursorPosY() + round((size - igGetFrameHeight()) / 2))
-  drawGainCombo(p, t, res)
+  tp.stripGroup(0, right, 0):
+    for m in DisplayMode:
+      let ready = m == dmDensity
+      igBeginDisabled(not ready)
+      if symbolButton(modeSymbols[m], size, t, marks, selected = m == mode,
+          note = (if ready: "" else: " (not available yet)"), markPrefix = "plot.") and
+          m != mode:
+        var d = p.layers[0].display
+        d.mode = m
+        res.commands.add Command(kind: ckDisplay, panel: p.id, display: d)
+      igEndDisabled()
+      if m != DisplayMode.high: igSameLine(0, 2)
+  tp.stripGroup(1, right, 12):
+    igSetCursorPosY(igGetCursorPosY() + lift)
+    drawGainCombo(p, t, res)
   # the scales
   let u = st.settings.scale
   let per = lengthName(u.length)
-  igSameLine(0, 14)
-  if tp.traceBox.scaleBox("##tracescale", traceLabel(u), "Traces per " & per &
-      ": type a value and press Enter", traceScale(tp.cur, ppi, u), marks, "plot.trace scale"):
-    askScale(tp.traceBox, vaTraceScale, "trace scale", ask, res)
-  igSameLine(0, 10)
-  let timeTip = if u.speed: per & "es per second" else: "Milliseconds per " & per
-  if tp.timeBox.scaleBox("##timescale", timeLabel(u), timeTip & ": type a value and press " &
-      "Enter", timeScale(tp.cur, ppi, u), marks, "plot.time scale"):
-    askScale(tp.timeBox, vaTimeScale, "time scale", ask, res)
+  tp.stripGroup(2, right, 14):
+    igSetCursorPosY(igGetCursorPosY() + lift)
+    if tp.traceBox.scaleBox("##tracescale", traceLabel(u), "Traces per " & per &
+        ": type a value and press Enter", traceScale(tp.cur, ppi, u), marks, "plot.trace scale"):
+      askScale(tp.traceBox, vaTraceScale, "trace scale", ask, res)
+    igSameLine(0, 10)
+    let timeTip = if u.speed: per & "es per second" else: "Milliseconds per " & per
+    if tp.timeBox.scaleBox("##timescale", timeLabel(u), timeTip & ": type a value and " &
+        "press Enter", timeScale(tp.cur, ppi, u), marks, "plot.time scale"):
+      askScale(tp.timeBox, vaTimeScale, "time scale", ask, res)
   # zoom, fit, back
-  igSameLine(0, 14)
-  if button(IconZoomOut & "##zoomout", t, marks, "plot.zoom out"): ask = ViewAsk(kind: vaZoomOut)
-  tip("Zoom out (-, or the wheel)")
-  igSameLine(0, 2)
-  if button(IconZoomIn & "##zoomin", t, marks, "plot.zoom in"): ask = ViewAsk(kind: vaZoomIn)
-  tip("Zoom in (+, or the wheel; Ctrl: time only, Shift: traces only)")
-  igSameLine(0, 2)
-  if button(IconFit & "##fit", t, marks, "plot.fit"): ask = ViewAsk(kind: vaFit)
-  tip("Fit all: every trace and the whole record (Ctrl+0)")
-  igSameLine(0, 2)
-  igBeginDisabled(p.back.len == 0)
-  if button(IconPrevious & "##back", t, marks, "plot.back"):
-    res.commands.add Command(kind: ckBack, panel: p.id)
-  igEndDisabled()
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
-      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
-    igTextUnformatted("Back to the view before (Backspace, Alt+Left)", nil)
-    igEndTooltip()
-  igSameLine(0, 8)
-  if button(IconSettings & "##more", t, marks, "plot.more"):
-    igOpenPopup_Str(moreId, 0)
-  tip("Colours, display header, scale units and screen calibration")
+  tp.stripGroup(3, right, 14):
+    igSetCursorPosY(igGetCursorPosY() + lift)
+    if button(IconZoomOut & "##zoomout", t, marks, "plot.zoom out"):
+      ask = ViewAsk(kind: vaZoomOut)
+    tip("Zoom out (-, or the wheel)")
+    igSameLine(0, 2)
+    if button(IconZoomIn & "##zoomin", t, marks, "plot.zoom in"): ask = ViewAsk(kind: vaZoomIn)
+    tip("Zoom in (+, or the wheel; Ctrl: time only, Shift: traces only)")
+    igSameLine(0, 2)
+    if button(IconFit & "##fit", t, marks, "plot.fit"): ask = ViewAsk(kind: vaFit)
+    tip("Fit all: every trace and the whole record (Ctrl+0)")
+    igSameLine(0, 2)
+    igBeginDisabled(p.back.len == 0)
+    if button(IconPrevious & "##back", t, marks, "plot.back"):
+      res.commands.add Command(kind: ckBack, panel: p.id)
+    igEndDisabled()
+    if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+        ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+      igTextUnformatted("Back to the view before (Backspace, Alt+Left)", nil)
+      igEndTooltip()
+  tp.stripGroup(4, right, 8):
+    igSetCursorPosY(igGetCursorPosY() + lift)
+    if button(IconSettings & "##more", t, marks, "plot.more"):
+      igOpenPopup_Str(moreId, 0)
+    tip("Colours, display header, scale units and screen calibration")
   if igBeginPopup(moreId, 0):
     igSeparatorText("Colours")
     drawColours(p, res)
@@ -669,9 +693,12 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
     tp.gesture = gsNone
   if once(ImGui_Key_Backspace.cint) or once(alt or ImGui_Key_LeftArrow.cint):
     res.commands.add Command(kind: ckBack, panel: p.id)
-  if once(ImGui_Key_Escape.cint) and tp.drag.kind != dkNone:
-    if tp.drag.kind == dkPan and tp.drag.moved: after = tp.drag.start
-    tp.drag = Drag()
+  if once(ImGui_Key_Escape.cint):
+    if tp.drag.kind != dkNone:
+      if tp.drag.kind == dkPan and tp.drag.moved: after = tp.drag.start
+      tp.drag = Drag()
+    else:
+      discard tp.bars.cancel(after)
 
 proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts;
     marks: var Marks; res: var PanelOutput; ask: ViewAsk; ppi: float64) =
@@ -721,10 +748,16 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   const flags = ImPlot_Flags_NoTitle.cint or ImPlot_Flags_NoLegend.cint or
     ImPlot_Flags_NoMenus.cint or ImPlot_Flags_NoMouseText.cint or ImPlot_Flags_NoInputs.cint
   var menu = false
-  if ImPlot_BeginPlot("##traces", ImVec2_c(x: -1, y: -1), flags):
+  # Room for the scroll bars is always kept, so the plot does not move or
+  # change size when one appears.
+  let avail = igGetContentRegionAvail()
+  let room = barRoom()
+  if ImPlot_BeginPlot("##traces", ImVec2_c(x: max(1, avail.x - room.x),
+      y: max(1, avail.y - room.y)), flags):
     ImPlot_SetupAxis(ImAxis_X1.cint, nil, ImPlot_AxisFlags_NoDecorations.cint or
       ImPlot_AxisFlags_NoMenus.cint)
-    ImPlot_SetupAxis(ImAxis_Y1.cint, "Time (ms)", ImPlot_AxisFlags_Invert.cint or
+    # Tick values only: the unit is in the ms/in box and the status bar.
+    ImPlot_SetupAxis(ImAxis_Y1.cint, nil, ImPlot_AxisFlags_Invert.cint or
       ImPlot_AxisFlags_NoMenus.cint or ImPlot_AxisFlags_NoGridLines.cint or
       ImPlot_AxisFlags_NoTickMarks.cint) # nothing drawn over the data
     ImPlot_SetupAxesLimits(next.traces.lo, next.traces.hi, next.timeMs.lo, next.timeMs.hi,
@@ -763,8 +796,18 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     discard igInvisibleButton("##plotinput", size, ImGui_ButtonFlags_MouseButtonLeft.cint or
       ImGui_ButtonFlags_MouseButtonRight.cint or ImGui_ButtonFlags_MouseButtonMiddle.cint)
     let hovered = igIsItemHovered(0)
-    var after = view
+    # A new plot size keeps the scale (or the whole data) from the top left.
+    var after = if view.columns != next.columns or view.rows != next.rows:
+        next.resized(view.columns, view.rows, lim)
+      else: view
     tp.handleMouse(after, view, plot, lim, hovered, t, remember, menu)
+    case tp.bars.drawScrollBars(after, view, pos, size, lim, t, marks)
+    of beNone, beDrag: discard
+    of beGrab:
+      remember = true
+      tp.gesture = gsNone
+    of bePage: (if tp.burst(gsPage): remember = true)
+    of beWheel: (if tp.burst(gsBarWheel): remember = true)
     tp.handleKeys(after, view, plot, lim, hovered, p, remember, res)
     if hovered:
       let m = igGetIO_Nil().MousePos
@@ -805,6 +848,9 @@ proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: P
   const windowFlags = ImGui_WindowFlags_NoNavInputs.cint or
     ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoScrollbar.cint
   if igBegin(title.cstring, nil, windowFlags):
+    # The window never scrolls as a whole: the strip wraps and the plot fits.
+    igSetScrollX_Float(0)
+    igSetScrollY_Float(0)
     marks.markWindow("plot")
     let k = st.findPanel(panel)
     if k < 0 or st.panels[k].layers.len == 0:

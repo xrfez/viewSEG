@@ -14,19 +14,39 @@
 │ line    100  100  100  100  100  100  100  100  100        │  display header
 │ point   101  103  105  107  109  111  113  115  117        │  (thinned to fit)
 ├────────────────────────────────────────────────────────────┤
-│ 0 ms   ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏     │
-│        traces across, time down                            │
-│ 4000 ms                                                    │
+│    0   ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏   ┃ │  time: values only
+│        traces across, time down                        ┃ │  scroll bars when
+│ 4000                                                   ┃ │  data is out of view
+│        ━━━━━━━━━━                                        │
 └────────────────────────────────────────────────────────────┘
 ```
 
 - **Vertical, as seismic is plotted:** time runs down, traces run across. Single traces
   and overlays are vertical too; overlays also offer a horizontal option.
+- **Never past the data:** every way of moving the view (wheel, keys, drags, box zoom,
+  typed scales, the scroll bars, back, a new window size) stops at the first and last
+  trace and at the record's start and end. Zoomed out as far as it goes, the record
+  fills the plot exactly.
+- **The time axis shows tick values only**, no title: the unit is in the ms/in box and
+  in the status bar.
+- **Scroll bars** appear when part of the data is out of view: under the plot when not
+  every trace is shown, right of it when not all of the record's time is; none when
+  everything is in view. The thumb's length is the share in view. Dragging the thumb
+  pans; a click on the track pans by a whole view towards the click (held, it repeats
+  until the thumb reaches the pointer); the wheel over a bar pans along it. They move
+  the view like any other gesture, so "back" returns to the view before. They sit in
+  their own gutters right of and below the plot, never over the data, and the gutters
+  are always kept, so the plot does not move or change size (and the scales do not
+  jump) when a bar comes or goes.
+- **A new window size keeps the scale:** along an axis that shows part of the data the
+  plot shows more or less of it from the same top-left corner, as a sheet of paper
+  would; an axis that shows the whole record goes on showing all of it.
 - **Display header along the top:** rows of trace header values over the traces, thinned
   so labels never overlap. Any trace header field can be a row, and there can be several;
   the default is receiver **line** and **point**. Reversed traces are marked there.
 - **The window's own controls**, in a slim strip at its top (nothing about a plot sits in
-  the main toolbar):
+  the main toolbar). In a narrow window the strip wraps onto more lines; the window
+  itself never scrolls, so no window scroll bar ever covers the plot:
   - display mode (▒ ∿ ◢ ◣ above): density (greyscale), wiggle, wiggle with positive
     fill, wiggle with negative fill; wiggle can be drawn over density. The mode a user picks becomes the
     default for new plot windows and is remembered;
@@ -92,6 +112,9 @@ its shortcut shown there.
 | Right drag | **Box zoom** to the dragged rectangle |
 | Right click | **Context menu** of the trace under the cursor (see below) |
 | Middle drag | Pan (always, also while a ruler or mute is being drawn) |
+| Drag a scroll bar's thumb | Pan along that bar |
+| Click a scroll bar's track | Pan by a whole view towards the click; held, it repeats |
+| Wheel over a scroll bar | Pan along that bar, a tenth of the view per notch |
 | Wheel | **Zoom** in or out about the cursor, in time and traces together |
 | Ctrl + wheel | Zoom in time only, about the cursor |
 | Shift + wheel, or the sideways wheel | Zoom in traces only, about the cursor (some systems send Shift + wheel as the sideways wheel) |
@@ -232,3 +255,9 @@ Defaults taken in this draft, for the user to confirm or change:
     time) can be added.
 13. **The amplitude read out is the displayed value** (after processing and gain), not
     the raw sample in the file.
+14. **A new window size keeps the scale** (traces and ms per pixel) and the top-left
+    corner, so the scale boxes keep what was typed; an axis that showed the whole record
+    goes on showing all of it. The alternative stretches the same data over the new
+    size.
+15. **A click on a scroll bar's track pans by a whole view** towards the click (as on
+    Windows), rather than jumping the thumb to the pointer.

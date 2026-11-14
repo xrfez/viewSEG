@@ -193,8 +193,10 @@ frame over budget (50 ms) with its parts, longest first.
    with the header fields the traces have values for. `AppState` takes it in only if its
    `sourceGen` is still the panel's, and fits the view to it.
 3. **Request** (UI). The frontend moves the view itself, with `core/zoom` (zoom about
-   the pointer along one axis or both, pan, drag, box zoom, all kept within limits the
-   panel's traces set) and `core/scales` (traces and ms per inch or cm, at the monitor's
+   the pointer along one axis or both, pan, drag, box zoom, a new plot size, the scroll
+   bars, all kept within the data: never past the first and last trace or the record's
+   start and end; `core` keeps any view it is sent inside too) and `core/scales` (traces
+   and ms per inch or cm, at the monitor's
    pixels per inch), and reports what its plot shows (`ckView`: the x range in
    positions, the y range in ms, the size in pixels). The first view of a gesture comes
    with `remember`, and the panel keeps the view it replaces (at most 50) for `ckBack`;

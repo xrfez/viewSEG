@@ -4,7 +4,23 @@
 ## fewer traces, zooming out for more, but never more than the plot has
 ## columns.
 ##
-## Seen to fail: with `zoomed` holding the anchor at the middle of the span,
+## No gesture ever shows anything past the data: wheel and key zooms, pans,
+## drags, box zooms, typed scales, a new plot size and the scroll bars all
+## stop at the first and last trace and at the record's start and end, and
+## zoomed out as far as it goes the data fills the plot exactly. A new plot
+## size keeps the scale of an axis that hides part of the data; the scroll
+## bars' thumbs show the share in view and move the view with them.
+##
+## Seen to fail: with the limits 5 % past the data on each side, as they
+## were, `neverPastTheData` found a pan of the whole gather showing up to
+## position 10 499.5 where the data ends at 9999.5; with `resized` keeping
+## the spans (stretching the view), `resizeKeepsTheScale` found the trace
+## width unchanged; with the thumb's length taken from the view's width
+## over the track instead of over the data, `scrollBarThumbs` found a thumb
+## of 1000 pixels where 200 are due;
+## with `scrolled` turning pixels into data over the whole track instead of
+## the thumb's room, the thumb did not stay under the pointer.
+## Earlier: with `zoomed` holding the anchor at the middle of the span,
 ## `zoomKeepsTheAnchor` found it drawn at (410, 320) instead of (210, 470);
 ## with `kept` recentring every span, `validViewsAreLeftAlone` found 0.1 ..
 ## 0.7 moved; with `remember` keeping a view equal to the last one kept,
@@ -12,8 +28,8 @@
 ## read-ahead cap removed from `requestFor`, `zoomChangesTheTracesRead`
 ## asked for 1205 traces on 800 columns.
 
-import std/math
-import viewSEG/core/[geometry, viewport, zoom]
+import std/[math, random]
+import viewSEG/core/[geometry, scales, viewport, zoom]
 import viewSEG/core/state {.all.}
 
 const layout = PanelLayout(traces: 10_000, samples: 4001, dtMs: 1, t0Ms: 0)
@@ -23,10 +39,13 @@ let lim = limitsOf(layout)
 func near(a, b: float64; eps = 1e-9): bool = abs(a - b) <= eps * max(1.0, abs(b))
 
 block limits:
-  doAssert lim[axTraces].bounds == Span(lo: -0.5 - 500, hi: 9999.5 + 500)
-  doAssert lim[axTraces].least == MinTraces and lim[axTraces].most == 11_000
-  doAssert lim[axTime].bounds == Span(lo: -200, hi: 4200)
-  doAssert lim[axTime].least == 8 and lim[axTime].most == 4400
+  # the data itself: the traces' outer edges, the record's start and end
+  doAssert lim[axTraces].bounds == Span(lo: -0.5, hi: 9999.5)
+  doAssert lim[axTraces].least == MinTraces and lim[axTraces].most == 10_000
+  doAssert lim[axTime].bounds == Span(lo: 0, hi: 4000)
+  doAssert lim[axTime].least == 8 and lim[axTime].most == 4000
+  let fit = fitAll(layout, 800, 600)
+  doAssert fit.traces == lim[axTraces].bounds and fit.timeMs == lim[axTime].bounds
   # one trace of one sample: the limits still have a width
   let tiny = limitsOf(PanelLayout(traces: 1, samples: 1, dtMs: 2))
   doAssert tiny[axTraces].least == 1 and tiny[axTime].least == 2 and tiny[axTime].most > 0
@@ -36,7 +55,7 @@ block limits:
 block validViewsAreLeftAlone:
   let fit = fitAll(layout, 800, 600)
   doAssert kept(fit, lim) == fit
-  let v = Viewport(traces: Span(lo: -1.5, hi: 23.5), timeMs: Span(lo: 100, hi: 300),
+  let v = Viewport(traces: Span(lo: 0.25, hi: 23.5), timeMs: Span(lo: 100, hi: 300),
     columns: 800, rows: 600)
   doAssert kept(v, lim) == v, $kept(v, lim)
   doAssert kept(Span(lo: 0.1, hi: 0.7), Limits(bounds: Span(lo: 0, hi: 1), least: 0.1,
@@ -46,17 +65,16 @@ block keptClampsAndMoves:
   # too narrow: widened about its centre
   let narrow = kept(Span(lo: 100, hi: 101), lim[axTraces])
   doAssert narrow == Span(lo: 98.5, hi: 102.5), $narrow
-  # too wide: the widest view, inside the bounds
+  # too wide: the whole data
   let wide = kept(Span(lo: -9000, hi: 30_000), lim[axTraces])
-  doAssert wide.width == 11_000 and wide.lo >= lim[axTraces].bounds.lo and
-    wide.hi <= lim[axTraces].bounds.hi, $wide
+  doAssert wide == lim[axTraces].bounds, $wide
   # past an edge: moved back inside, width kept
   let past = kept(Span(lo: 10_400, hi: 10_600), lim[axTraces])
-  doAssert past == Span(lo: 10_299.5, hi: 10_499.5), $past
+  doAssert past == Span(lo: 9799.5, hi: 9999.5), $past
   let before = kept(Span(lo: -900, hi: -100), lim[axTraces])
-  doAssert before == Span(lo: -500.5, hi: 299.5), $before
+  doAssert before == Span(lo: -0.5, hi: 799.5), $before
   let nan = kept(Span(lo: NaN, hi: 5), lim[axTraces])
-  doAssert nan.width == 11_000 and not nan.lo.isNaN
+  doAssert nan == lim[axTraces].bounds
 
 block zoomKeepsTheAnchor:
   let v = fitAll(layout, 800, 600)
@@ -179,6 +197,117 @@ block zoomChangesTheTracesRead:
   let in128 = requestFor(layout, f.zoomed(128, at, {axTraces}, lim)).count
   doAssert in64 < requestFor(layout, f).count and in128 < in64, $in64 & ", " & $in128
 
+func inside(v: Viewport; lay: PanelLayout): bool =
+  ## Whether `v` shows nothing past the data of `lay` (as `fitAll` shows
+  ## it, not as the limits say).
+  let all = fitAll(lay, 1, 1)
+  result = true
+  for (s, d) in [(v.traces, all.traces), (v.timeMs, all.timeMs)]:
+    let eps = 1e-9 * d.width
+    if not (s.lo >= d.lo - eps and s.hi <= d.hi + eps and s.width > 0):
+      result = false
+
+block neverPastTheData:
+  # Gestures of every kind, at random, on a large gather, on one narrower
+  # than the narrowest view and on a record that starts late (a SEG-D
+  # delay): after each, nothing past the data is in view.
+  var rng = initRand(20261114)
+  for lay in [layout, PanelLayout(traces: 3, samples: 1501, dtMs: 2, t0Ms: 0),
+      PanelLayout(traces: 480, samples: 2001, dtMs: 0.5, t0Ms: 120)]:
+    let l = limitsOf(lay)
+    let plot = Rect(pos: vec2(40, 30), size: vec2(800, 600))
+    var v = fitAll(lay, 800, 600)
+    proc anywhere(): DataPoint =
+      # also past the data, where a pointer or a box corner may be
+      DataPoint(x: rng.rand(-2.0 .. 2.0) * float64(lay.traces),
+        tMs: lay.t0Ms + rng.rand(-1.0 .. 2.0) * float64(lay.samples) * lay.dtMs)
+    for i in 0 ..< 3000:
+      let what = rng.rand(9)
+      let was = v
+      case what
+      of 0: v = v.zoomed(pow(WheelStep, rng.rand(-8.0 .. 8.0)), anywhere(), BothAxes, l)
+      of 1: v = v.zoomed(KeyStep, anywhere(), {[axTraces, axTime][rng.rand(1)]}, l)
+      of 2: v = v.zoomed(1 / KeyStep, anywhere(), BothAxes, l)
+      of 3: v = v.panned(rng.rand(-3.0 .. 3.0) * v.traces.width,
+        rng.rand(-3.0 .. 3.0) * v.timeMs.width, l)
+      of 4: v = v.stepped(float64(rng.rand(-1 .. 1)), float64(rng.rand(-1 .. 1)), l)
+      of 5: v = v.dragged(plot, vec2(float32(rng.rand(-3000 .. 3000)),
+        float32(rng.rand(-3000 .. 3000))), l)
+      of 6: v = v.boxed(anywhere(), anywhere(), BothAxes, l)
+      of 7:
+        let value = pow(10.0, rng.rand(-3.0 .. 6.0))
+        v = if rng.rand(1) == 0: withTraceScale(v, value, 96, ScaleUnits(), l)
+            else: withTimeScale(v, value, 96, ScaleUnits(), l)
+      of 8: v = v.resized(rng.rand(1 .. 3000), rng.rand(1 .. 2000), l)
+      else:
+        let a = [axTraces, axTime][rng.rand(1)]
+        v = if rng.rand(1) == 0: v.paged(a, float64(rng.rand(-3 .. 3)), l)
+            else: v.scrolled(a, l, 800, 20, float64(rng.rand(-1000 .. 1000)))
+      doAssert v.inside(lay), "gesture " & $what & " on " & $lay & " from " & $was & " showed " & $v
+    # zoomed out as far as it goes, by any way, the data fills the plot exactly
+    for _ in 0 ..< 60: v = v.zoomed(1 / WheelStep, anywhere(), BothAxes, l)
+    doAssert v.traces == l[axTraces].bounds and v.timeMs == l[axTime].bounds, $v
+    let wide = withTimeScale(withTraceScale(v.zoomed(9, v.centre, BothAxes, l), 1e9, 96,
+      ScaleUnits(), l), 1e9, 96, ScaleUnits(), l)
+    doAssert wide.traces == l[axTraces].bounds and wide.timeMs == l[axTime].bounds, $wide
+    doAssert v.resized(3000, 2000, l).traces == l[axTraces].bounds
+
+block resizeKeepsTheScale:
+  let fit = fitAll(layout, 800, 600)
+  let v = Viewport(traces: Span(lo: 100, hi: 300), timeMs: Span(lo: 1000, hi: 1600),
+    columns: 800, rows: 600)
+  # bigger: more of the data at the same scale, from the same top-left corner
+  let big = v.resized(1000, 900, lim)
+  doAssert big.columns == 1000 and big.rows == 900
+  doAssert big.traces == Span(lo: 100, hi: 350) and big.timeMs == Span(lo: 1000, hi: 1900), $big
+  # smaller: less of it
+  let small = v.resized(400, 300, lim)
+  doAssert small.traces == Span(lo: 100, hi: 200) and small.timeMs == Span(lo: 1000, hi: 1300)
+  # an axis that shows all the data goes on showing all of it
+  var oneAxis = fit
+  oneAxis.traces = v.traces
+  let r = oneAxis.resized(1200, 300, lim)
+  doAssert r.timeMs == fit.timeMs and r.traces == Span(lo: 100, hi: 400), $r
+  doAssert fit.resized(1600, 1200, lim).traces == fit.traces
+  doAssert fit.resized(200, 100, lim).timeMs == fit.timeMs
+  # growing past the data: it stops there, moved back inside
+  let late = Viewport(traces: Span(lo: 9900, hi: 9999.5), timeMs: v.timeMs, columns: 800,
+    rows: 600)
+  let grown = late.resized(1600, 600, lim)
+  doAssert grown.traces == Span(lo: 9800.5, hi: 9999.5), $grown
+  # a size not known yet (0): the spans as they are
+  var unsized = v
+  unsized.columns = 0
+  doAssert unsized.resized(800, 600, lim).traces == v.traces
+
+block scrollBarThumbs:
+  let fit = fitAll(layout, 800, 600)
+  doAssert fit.showsAll(axTraces, lim) and fit.showsAll(axTime, lim)
+  doAssert fit.thumbOf(axTraces, lim, 2000, 20) == Thumb(start: 0, length: 2000)
+  # a tenth of the traces in view, a third of the way in: the thumb is a
+  # tenth of the track, a third of the way along the room it has
+  let v = Viewport(traces: Span(lo: 2999.5, hi: 3999.5), timeMs: Span(lo: 0, hi: 4000),
+    columns: 800, rows: 600)
+  doAssert not v.showsAll(axTraces, lim) and v.showsAll(axTime, lim)
+  let th = v.thumbOf(axTraces, lim, 2000, 20)
+  doAssert near(th.length, 200) and near(th.start, 1800 * 3000 / 9000), $th
+  # at least `least` pixels, so it can be grabbed
+  let narrow = Viewport(traces: Span(lo: 0, hi: 4), timeMs: v.timeMs)
+  doAssert narrow.thumbOf(axTraces, lim, 2000, 20).length == 20
+  # dragged: the thumb stays under the pointer, and stops at the track's ends
+  for moved in [-50.0, 37.5, 400.0]:
+    let s = v.scrolled(axTraces, lim, 2000, 20, moved)
+    doAssert near(s.thumbOf(axTraces, lim, 2000, 20).start, th.start + moved, 1e-6), $moved
+    doAssert s.timeMs == v.timeMs and near(s.traces.width, v.traces.width)
+  doAssert v.scrolled(axTraces, lim, 2000, 20, -1e6).traces.lo == -0.5
+  doAssert v.scrolled(axTraces, lim, 2000, 20, 1e6).traces.hi == 9999.5
+  # nothing to scroll: nothing moves
+  doAssert fit.scrolled(axTime, lim, 600, 20, 100) == fit
+  # a click on the track: a whole view towards it, stopping at the end
+  doAssert v.paged(axTraces, 1, lim).traces == Span(lo: 3999.5, hi: 4999.5)
+  doAssert v.paged(axTraces, -1, lim).traces == Span(lo: 1999.5, hi: 2999.5)
+  doAssert v.paged(axTraces, 10, lim).traces == Span(lo: 8999.5, hi: 9999.5)
+
 proc laidOut(st: var AppState; layout: PanelLayout) =
   ## The main panel as a reader would leave it once it has looked at a
   ## gather of `layout`.
@@ -226,8 +355,9 @@ block backGoesToTheViewBeforeAGesture:
   doAssert st.panel(MainPanel).view.sameSpans(fit) and st.panel(MainPanel).jumps == 4
   doAssert st.log.len == logged
   # a bounded history
+  let z = fit.zoomed(4, fit.centre, BothAxes, lim)
   for i in 0 ..< MaxBack + 10:
-    st.view(fit.panned(float64(i + 1), 0, lim), remember = true)
+    st.view(z.panned(float64(i + 1), 0, lim), remember = true)
   doAssert st.panel(MainPanel).back.len == MaxBack
   # an unknown panel is ignored, with a warning
   st.apply Command(kind: ckBack, panel: PanelId(99))
@@ -239,4 +369,16 @@ block nothingToRememberBeforeALayout:
   st.view(fitAll(layout, 800, 600), remember = true)
   st.view(fitAll(layout, 400, 600), remember = true)
   doAssert st.panel(MainPanel).back.len == 0
+  st.shutdown()
+
+block coreKeepsViewsInside:
+  # a view past the data, from whoever sends it, is kept inside
+  var st = initAppState()
+  st.laidOut(layout)
+  var past = fitAll(layout, 800, 600)
+  past.traces = Span(lo: -100, hi: 50)
+  past.timeMs = Span(lo: 3900, hi: 4500)
+  st.view(past)
+  let v = st.panel(MainPanel).view
+  doAssert v.traces == Span(lo: -0.5, hi: 149.5) and v.timeMs == Span(lo: 3400, hi: 4000), $v
   st.shutdown()

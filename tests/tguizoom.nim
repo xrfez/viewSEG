@@ -6,8 +6,19 @@
 ## box, Backspace goes back to the view before the last gesture, Ctrl + 0
 ## fits, the zoom buttons zoom; typing into the scale boxes sets the zoom
 ## and zooming updates the boxes; zooming in asks for fewer traces; the
-## status bar reads out the trace under the pointer; and the file is never
+## status bar reads out the trace under the pointer; the scroll bars appear
+## only while part of the data is out of view, without moving the plot,
+## dragging a thumb pans (and back undoes it), a click on a track pans by
+## a whole view, and with both thumbs at their ends the last trace and the
+## last sample are drawn in full beside the bars; and the file is never
 ## changed.
+##
+## Seen to fail: with the bars always drawn, `the file opens` found one
+## while the whole gather was in view; with the thumb's drag ignored,
+## `thumbDrags` never saw the view move; with the plot making room for the
+## bars only once they show, `wheelZooms` found the plot 14 pixels smaller
+## and the view cut short by them; with the bars drawn over the data's
+## edges, `barsAppear` found a bar over the data.
 ##
 ## Seen to fail: with the wheel's notches ignored, `wheelZooms` zoomed by
 ## 1.25 where two notches give 1.5625; with the drag moving the view the
@@ -51,6 +62,10 @@ proc main() =
     var was: Viewport # the view before a step
     var lim: ViewLimits
     var counts: seq[int]
+    var grab: Vec2 # where a thumb is grabbed
+    var backs = 0 # views to go back to before a step
+    var preDrag: Viewport # the view before a drag, for back
+    var pageDown = false # the track was clicked below its thumb
 
     template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
 
@@ -89,6 +104,8 @@ proc main() =
       result = f.panel.laidOut and f.answered and f.markOf("plot.data").size.x > 0
       if result:
         plot = f.markOf("plot.data")
+        doAssert f.markOf("plot.bar.traces").size.x == 0 and
+          f.markOf("plot.bar.time").size.x == 0, "a scroll bar with everything in view"
         # whole pixels: the pointer is warped to one
         q = vec2(round(plot.pos.x + plot.size.x * 0.3), round(plot.pos.y + plot.size.y * 0.4))
         r = vec2(round(plot.pos.x + plot.size.x * 0.7), round(plot.pos.y + plot.size.y * 0.75))
@@ -337,6 +354,130 @@ proc main() =
         for m in f.messages:
           if "time scale needs a positive number" in m.text: said = true
         doAssert said)
+
+    # The scroll bars, now that part of the data is out of view both ways.
+    step("barsAppear", noop, proc (f: FrameInfo): bool =
+      let h = f.markOf("plot.bar.traces")
+      let v = f.markOf("plot.bar.time")
+      result = h.size.x > 0 and v.size.y > 0
+      if result:
+        doAssert f.markOf("plot.data") == plot, "the plot moved or changed size when the " &
+          "bars appeared: " & $f.markOf("plot.data") & ", was " & $plot
+        doAssert h.pos.y >= plot.pos.y + plot.size.y and v.pos.x >= plot.pos.x + plot.size.x,
+          "a bar over the data"
+        # the thumbs are the share of the data in view
+        let all = fitAll(f.panel.layout, 0, 0)
+        let th = f.markOf("plot.thumb.traces")
+        let tv = f.markOf("plot.thumb.time")
+        doAssert abs(th.size.x - h.size.x * f.panel.view.traces.width / all.traces.width) < 1,
+          $th & " on " & $h
+        doAssert abs(tv.size.y - v.size.y * f.panel.view.timeMs.width / all.timeMs.width) < 1,
+          $tv & " on " & $v)
+
+    step("thumbDrags", proc (f: FrameInfo) =
+      let th = f.markOf("plot.thumb.traces")
+      grab = vec2(round(th.pos.x + th.size.x / 2), round(th.pos.y + th.size.y / 2))
+      f.moveMouse(grab), proc (f: FrameInfo): bool = true)
+    step("thumbDrags", proc (f: FrameInfo) =
+      was = f.panel.view
+      preDrag = was
+      backs = f.panel.back.len
+      f.pressMouse(grab, true)
+      f.moveMouse(vec2(grab.x + 20, grab.y))
+      f.moveMouse(vec2(grab.x + 40, grab.y)), proc (f: FrameInfo): bool =
+      let h = f.markOf("plot.bar.traces")
+      let th = f.markOf("plot.thumb.traces")
+      let room = float64(h.size.x - th.size.x)
+      let free = fitAll(f.panel.layout, 0, 0).traces.width - was.traces.width
+      result = f.changed and near(f.panel.view.traces.lo, was.traces.lo + 40 / room * free, 1e-3)
+      if result:
+        f.pressMouse(vec2(grab.x + 40, grab.y), false)
+        doAssert f.panel.view.timeMs == was.timeMs, "the trace bar moved the time axis"
+        doAssert near(f.panel.view.traces.width, was.traces.width)
+        doAssert f.panel.back.len == backs + 1, "the drag left nothing to go back to")
+
+    step("backUndoesTheDrag", proc (f: FrameInfo) =
+      was = f.panel.view
+      f.chord(skBackspace), proc (f: FrameInfo): bool =
+      result = f.changed
+      if result:
+        doAssert f.panel.view.sameSpans(preDrag), $f.panel.view & " not " & $preDrag)
+
+    step("trackPages", proc (f: FrameInfo) =
+      let b = f.markOf("plot.bar.time")
+      let th = f.markOf("plot.thumb.time")
+      # below the thumb if there is room there, else above it
+      pageDown = b.pos.y + b.size.y - (th.pos.y + th.size.y) > 8
+      let y = if pageDown: (th.pos.y + th.size.y + b.pos.y + b.size.y) / 2
+              else: (b.pos.y + th.pos.y) / 2
+      grab = vec2(round(b.pos.x + b.size.x / 2), round(y))
+      f.moveMouse(grab), proc (f: FrameInfo): bool = true)
+    step("trackPages", proc (f: FrameInfo) =
+      was = f.panel.view
+      f.click(grab), proc (f: FrameInfo): bool =
+      result = f.changed
+      if result:
+        let all = fitAll(f.panel.layout, 0, 0).timeMs
+        let w = was.timeMs.width
+        let want = if pageDown: min(was.timeMs.lo + w, all.hi - w)
+                   else: max(was.timeMs.lo - w, all.lo)
+        doAssert near(f.panel.view.timeMs.lo, want, 1e-6) and
+          f.panel.view.traces == was.traces, $f.panel.view & ", wanted " & $want)
+
+    # Both thumbs dragged to their ends: the last trace and the last sample
+    # are drawn in full beside the bars, not under them.
+    proc toTheEnd(axis: Axis) =
+      # a proc, so that each axis's steps keep their own `axis`
+      step("toTheEnd", proc (f: FrameInfo) =
+        let th = f.markOf("plot.thumb." & $axis)
+        grab = vec2(round(th.pos.x + th.size.x / 2), round(th.pos.y + th.size.y / 2))
+        f.moveMouse(grab), proc (f: FrameInfo): bool = true)
+      step("toTheEnd", proc (f: FrameInfo) =
+        was = f.panel.view
+        # just past the track's end, inside the window
+        let bar = f.markOf("plot.bar." & $axis)
+        let far = if axis == axTraces: vec2(round(bar.pos.x + bar.size.x + 10), grab.y)
+                  else: vec2(grab.x, round(bar.pos.y + bar.size.y + 10))
+        f.pressMouse(grab, true)
+        f.moveMouse(vec2((grab.x + far.x) / 2, (grab.y + far.y) / 2))
+        f.moveMouse(far), proc (f: FrameInfo): bool =
+        let all = fitAll(f.panel.layout, 0, 0)
+        let atEnd = if axis == axTraces: f.panel.view.traces.hi == all.traces.hi
+                    else: f.panel.view.timeMs.hi == all.timeMs.hi
+        result = atEnd and f.tracePanel.drawnView.sameSpans(f.panel.view)
+        if result:
+          f.pressMouse(grab, false))
+    toTheEnd(axTraces)
+    toTheEnd(axTime)
+    step("lastTraceAndSampleVisible", noop, proc (f: FrameInfo): bool =
+      let all = fitAll(f.panel.layout, 0, 0)
+      result = f.answered and f.tracePanel.drawnView.sameSpans(f.panel.view)
+      if result:
+        doAssert f.panel.view.traces.hi == all.traces.hi and
+          f.panel.view.timeMs.hi == all.timeMs.hi, $f.panel.view
+        let p = f.markOf("plot.data")
+        let h = f.markOf("plot.bar.traces")
+        let v = f.markOf("plot.bar.time")
+        doAssert h.pos.y >= p.pos.y + p.size.y and v.pos.x >= p.pos.x + p.size.x,
+          "a bar over the data: " & $h & ", " & $v & " on " & $p
+        # the image's last column and last row are on screen as drawn
+        let (img, w, hgt) = f.tracePanel.densityImage
+        doAssert w == int(round(p.size.x)) and hgt == int(round(p.size.y)), $w & "x" & $hgt
+        let (x0, y0) = (int(round(p.pos.x)), int(round(p.pos.y)))
+        var off = 0
+        for y in countup(4, hgt - 5, 7):
+          if distance(f.readPixel(x0 + w - 1, y0 + y), img[y * w + w - 1]) > 3: inc off
+        for x in countup(4, w - 5, 7):
+          if distance(f.readPixel(x0 + x, y0 + hgt - 1), img[(hgt - 1) * w + x]) > 3: inc off
+        doAssert off == 0, $off & " pixels of the last trace or sample not as drawn")
+
+    step("fitHidesTheBars", proc (f: FrameInfo) =
+      was = f.panel.view
+      f.chord(skZero, {smCtrl}), proc (f: FrameInfo): bool =
+      result = f.changed and f.markOf("plot.bar.traces").size.x == 0 and
+        f.markOf("plot.bar.time").size.x == 0
+      if result:
+        doAssert f.markOf("plot.data") == plot)
 
     # ------------------------------------------------------------ driver --
     proc onFrame(f: FrameInfo) =

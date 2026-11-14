@@ -4,15 +4,20 @@
 ## (`amplitudeAt`, `densityColour`), with tiles cut into blocks of a small
 ## texture limit, for the whole gather and for a zoom in which each sample
 ## spans several pixels; outside the data the plot is white; the display
-## header shows the gather's values; the window's own controls are drawn in
-## it (the selected display mode on the selection colour), not on the main
-## toolbar; and the file is never changed.
+## header shows the gather's values; a view asked for past the data shows
+## the data to the plot's edges, no paper beside it; the window's own
+## controls are drawn in it (the selected display mode on the selection
+## colour), not on the main toolbar, and wrap onto more lines in a narrow
+## window instead of running past it; and the file is never changed.
 ##
 ## Seen to fail: with the shader taking the nearest sample instead of
 ## interpolating, `wholeGather` found 1619 of 24960 pixels off the
 ## reference; with the image's texture coordinates upside down, 5064; with
 ## blocks side by side in time not sharing a column, 480 (the seams); with
-## the plot background left to the theme, `paperOutsideTheData` found 936.
+## the view limits 5 % past the data, as they were, `noPaperPastTheData`
+## found the view starting at -1.5, a trace's width of paper on the left;
+## with the strip never wrapping, `narrowWindowWrapsTheStrip` found the
+## trace scale box past the window's right edge.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -131,12 +136,12 @@ withFixtures fx:
       if f.answered and f.tracePanel.drawnView.timeMs.lo == 100:
         zoomed = f.capture
         var v = p.view
-        v.traces = Span(lo: -1.5, hi: 23.5) # a trace's width of paper on the left
-        v.timeMs = Span(lo: 0, hi: 998)
+        v.traces = Span(lo: -1.5, hi: 23.5) # a trace's width past the first one
+        v.timeMs = Span(lo: -20, hi: 998)
         f.showView(v)
         stage = 3
     of 3:
-      if f.answered and f.tracePanel.drawnView.traces.lo == -1.5:
+      if f.answered and f.tracePanel.drawnView.traces.hi > 20:
         wider = f.capture
         stage = 4
         f.stop()
@@ -167,14 +172,19 @@ withFixtures fx:
     echo "tguipanel: zoomed in, ", seen, " pixels, ", bad, " off the reference"
     doAssert bad == 0, $bad & " of " & $seen & " pixels differ from the reference"
 
-  block paperOutsideTheData:
+  block noPaperPastTheData:
+    # asked for a view past the first trace and before the record's start,
+    # the plot shows the data to its edges
     let s = wider
+    doAssert s.view.traces == Span(lo: -0.5, hi: 23.5) and s.view.timeMs == Span(lo: 0, hi: 998),
+      "the view went past the data: " & $s.view
     let (bad, seen) = s.mismatches()
     doAssert bad == 0, $bad & " of " & $seen & " pixels differ from the reference"
-    let y = int(s.plot.pos.y + s.plot.size.y / 2)
-    let x = int(s.plot.pos.x + s.plot.size.x / 25 / 2)         # inside the first trace's width
-    doAssert s.pixels[y * s.width + x] == PaperBackground,
-      "outside the data: " & toHex(s.pixels[y * s.width + x])
+    var paper = 0
+    let x = int(s.plot.pos.x) + 3 # just inside the left edge (its border is drawn over it)
+    for y in int(s.plot.pos.y) + 3 ..< int(s.plot.pos.y + s.plot.size.y) - 3:
+      if s.pixels[y * s.width + x] == PaperBackground: inc paper
+    doAssert paper < int(s.plot.size.y / 4), $paper & " paper pixels down the left edge"
 
   block controlsInTheWindow:
     let s = whole
@@ -193,6 +203,35 @@ withFixtures fx:
       "the selected mode is not marked: " & $lit & " pixels"
 
   doAssert snapshot(path) == before, "showing the file changed it"
+
+  block narrowWindowWrapsTheStrip:
+    # In a narrow window the strip's controls wrap onto more lines, inside
+    # the window, above the plot; nothing makes the window scroll.
+    const strip = ["plot.Greyscale density", "plot.Wiggle", "plot.trace scale",
+      "plot.time scale", "plot.zoom out", "plot.zoom in", "plot.fit", "plot.back", "plot.more"]
+    var marks: seq[(string, Rect)]
+    proc onNarrow(f: FrameInfo) =
+      if f.answered and f.markOf("plot.data").size.x > 0:
+        for name in @strip & @["plot", "plot.data"]:
+          marks.add (name, f.markOf(name))
+        f.stop()
+      if f.index > 1500: f.stop()
+    let code = run(RunOptions(maxFrames: 2000, openPaths: @[path], windowSize: (640, 720),
+      theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
+      indexCacheDir: some(fx.dir / "cache"), onFrame: onNarrow))
+    doAssert code == 0 and marks.len > 0, "the narrow window never showed the plot"
+    let s = Shot(marks: marks)
+    let win = s.mark("plot")
+    let data = s.mark("plot.data")
+    var lowest = 0'f32
+    for name in strip:
+      let m = s.mark(name)
+      doAssert m.size.x > 0, name & " is not drawn"
+      doAssert m.pos.x >= win.pos.x and m.pos.x + m.size.x <= win.pos.x + win.size.x,
+        name & " is outside the window: " & $m & " in " & $win
+      lowest = max(lowest, m.pos.y + m.size.y)
+    doAssert data.pos.y >= lowest and data.pos.x + data.size.x <= win.pos.x + win.size.x and
+      data.pos.y + data.size.y <= win.pos.y + win.size.y, "the plot " & $data & " in " & $win
 
 # ------------------------------------------------- screenshots of real data --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are

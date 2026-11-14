@@ -43,12 +43,21 @@ over the traces is the display header (receiver line and point by default).
 | Zoom in time only | Ctrl + wheel | Ctrl + Up / Down |
 | Zoom across the traces only | Shift + wheel, or the sideways wheel | Ctrl + Right / Left |
 | Pan | drag with the left or middle button | arrows (a tenth of the view; with Shift, a whole view) |
+| Pan with a scroll bar | drag its thumb; click the bar for a whole view; or the wheel over it | |
 | Zoom to a box | drag with the right button | |
 | Fit the whole record | the fit button | Ctrl+0 |
 | Go back to the view before | the back button | Backspace, or Alt+Left |
 | Cancel a drag | | Esc |
 
 Keys act while the Plot window has the focus: click in it first.
+
+The view never goes past the data: panning and zooming stop at the first and last trace
+and at the record's start and end, and zoomed out as far as it goes the record fills the
+plot. Whenever part of the record is out of view, a scroll bar shows how much and where:
+under the plot for the traces, right of it for the time. The time axis shows the times
+only; its unit is in the ms/in box and in the status bar. Making the window larger or
+smaller keeps the scale and shows more or less of the record, from the same top-left
+corner (an axis that showed the whole record goes on showing all of it).
 
 **Scales.** The two boxes over the plot state the zoom as traces per inch and ms per inch.
 Type a value and press Enter to set it; zooming any other way updates them. The settings

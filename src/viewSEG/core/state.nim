@@ -19,7 +19,8 @@
 ## what it has (the previous tile, the coarser one) until the new tile comes.
 ##
 ## **Views.** The frontend moves a panel's view with the `core/zoom` forms
-## and reports each new one (`ckView`). A view that starts a gesture (a
+## and reports each new one (`ckView`); a view reported past the data is
+## kept inside it (`core/zoom`'s limits). A view that starts a gesture (a
 ## drag, a box zoom, a burst of wheel turns, a typed scale, a fit) is sent
 ## with `remember`, and the one it replaces is kept for "back" (`ckBack`).
 ## When `core` sets a view itself (back, or the whole gather once it is laid
@@ -481,10 +482,16 @@ proc apply*(state: var AppState; cmd: Command) =
   of ckView:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
-    elif cmd.view != state.panels[k].view:
-      if cmd.remember: state.remember(k)
-      state.panels[k].view = cmd.view
-      state.requestView(k)
+    else:
+      # Never a view past the data, whoever asks (the frontend keeps its
+      # own views inside already).
+      var v = cmd.view
+      if state.panels[k].layout.traces > 0:
+        v = kept(v, limitsOf(state.panels[k].layout))
+      if v != state.panels[k].view:
+        if cmd.remember: state.remember(k)
+        state.panels[k].view = v
+        state.requestView(k)
   of ckBack:
     # Nothing to go back to is not a mistake: the control is only disabled.
     let k = state.findPanel(cmd.panel)
