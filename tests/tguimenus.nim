@@ -255,3 +255,66 @@ withFixtures fx:
   doAssert ticks[3] > 5, "the tick: " & $ticks[3] & " pixels"
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
   echo "tguimenus: ", steps.len, " steps; the tick ", ticks
+
+# With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
+# local only), the plot's menu is saved open over a trace of the Morgantown
+# record (menu-morgantown.png), and the display header's menu
+# (header-menu-morgantown.png): docs/screenshots/ holds the committed ones.
+
+const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
+
+proc menuShot(path, file: string; header: bool) =
+  ## Opens `path` in a 1600 × 1000 window zoomed in on 40 traces, right-clicks
+  ## a trace (or the display header when `header`) and saves the frame with
+  ## the menu open.
+  let dir = getEnv("VIEWSEG_SCREENSHOTS")
+  var stage = 0
+  var wait = 0
+  var saved = false
+  var q: Vec2
+  proc onFrame(f: FrameInfo) =
+    let k = f.core.findPanel(MainPanel)
+    let p = f.core.panels[k]
+    inc wait
+    case stage
+    of 0:
+      if p.laidOut and p.layout.traces > 0:
+        var v = p.view
+        (v.traces, v.timeMs) = (Span(lo: 999.5, hi: 1039.5), Span(lo: 400, hi: 1000))
+        f.showView(v)
+        (stage, wait) = (1, 0)
+    of 1:
+      let tiles = f.core.tiles(k)
+      if wait > 10 and tiles.len > 0 and tiles[^1].request == p.pending:
+        let plot = f.markOf("plot.data")
+        if header:
+          let r = f.markOf("plot.header")
+          q = vec2(round(plot.pos.x + plot.size.x * 0.3), round(r.pos.y + 5))
+        else:
+          let at = p.view.screenAt(plot, DataPoint(x: 1012, tMs: 640))
+          q = vec2(round(at.x), round(at.y))
+        f.moveMouse(q)
+        (stage, wait) = (2, 0)
+    of 2:
+      if wait == 4:
+        f.pressMouse(q, true, button = 3)
+        f.pressMouse(q, false, button = 3)
+      if wait > 12:
+        saved = f.savePng(dir / file)
+        f.stop()
+    else: discard
+    if f.index > 3000: f.stop()
+  let tmp = getTempDir() / ("viewseg-menushot-" & $getCurrentProcessId())
+  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
+    theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
+    onFrame: onFrame))
+  removeDir(tmp)
+  doAssert code == 0 and saved, "no screenshot of " & path
+  echo "tguimenus: saved ", dir / file
+
+if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
+  let morgantown = examples / "00000151_12900_11300.sgd"
+  if fileExists(morgantown):
+    createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+    menuShot(morgantown, "menu-morgantown.png", header = false)
+    menuShot(morgantown, "header-menu-morgantown.png", header = true)
