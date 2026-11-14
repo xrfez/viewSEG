@@ -88,6 +88,7 @@ type
     ckDisplay = "display"                ## how a panel's layer 0 is drawn
     ckHeader = "display header"          ## the rows of a panel's display header
     ckSort = "sort"                      ## the order of a panel's traces
+    ckReverseAll = "reverse all"         ## reverse the polarity of every trace of a panel, or not
     ckBack = "back"                      ## a panel's view before the last gesture
     ckSettings = "settings"              ## replace the settings
     ckExportSettings = "export settings" ## write the settings to a file of the user's
@@ -115,7 +116,8 @@ type
     of ckReorderJob:
       reordered*: JobId
       position*: int                  ## 0 runs next
-    of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckBack, ckShowFile, ckShowTrace:
+    of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
+        ckShowTrace:
       panel*: PanelId
       gather*: int                    ## ckGather: index into the file's gathers
       path*: string                   ## ckShowFile, ckShowTrace: the file to show
@@ -127,6 +129,7 @@ type
       display*: DisplaySettings       ## ckDisplay: how layer 0 is drawn
       header*: HeaderChoice           ## ckHeader: the display header's rows
       order*: seq[SortKey]            ## ckSort: layer 0's keys, the first first; empty: the file's order
+      reverse*: bool                  ## ckReverseAll: every trace of layer 0 reversed, or none
     of ckHover: trace*: int           ## survey-wide trace id; -1 for none
     of ckSelect:
       traces*: seq[int]               ## survey-wide trace ids
@@ -635,6 +638,17 @@ proc refetch(state: var AppState; k: int; keepTiles: bool) =
     state.tiles[k].setLen 0
     p.level = Level()
     p.viewLevel = Level()
+  inc p.revision
+  state.requestView(k)
+
+proc resample(state: var AppState; k: int) =
+  ## Asks again for `panels[k]`'s view: what its samples hold has changed
+  ## (the polarity). The tiles from before are drawn until the first one
+  ## after the change comes (`drainInbox`), so the plot never goes blank.
+  template p: untyped = state.panels[k]
+  inc p.requestGen
+  p.samplesGen = p.requestGen
+  p.pending = ReadRequest()
   inc p.revision
   state.requestView(k)
 
@@ -1175,6 +1189,14 @@ proc apply*(state: var AppState; cmd: Command) =
         s.customOrder = cmd.order # the user's own keys, offered again
       state.change s
       state.reorder(k)
+  of ckReverseAll:
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
+    elif cmd.reverse != state.panels[k].layers[0].reversed:
+      # An operation on the data, so not a setting: a new plot starts as recorded.
+      state.panels[k].layers[0].reversed = cmd.reverse
+      state.resample(k)
   of ckHover:
     # The UI sends a hover on every move, so one on a trace of a file closed
     # in the same frame is no mistake the user could act on: it clears the
@@ -1282,9 +1304,10 @@ proc drainInbox*(state: var AppState): bool =
         m.tile.id = state.nextTile
         inc state.nextTile
         if state.panels[k].level.clip.isNaN: state.panels[k].level = m.tile.level
-        # The first tile in a new order replaces every tile in the old one.
-        let orderGen = state.panels[k].orderGen
-        state.tiles[k].keepItIf(it.request.gen >= orderGen)
+        # The first tile in a new order, or after the samples changed,
+        # replaces every tile from before.
+        let since = max(state.panels[k].orderGen, state.panels[k].samplesGen)
+        state.tiles[k].keepItIf(it.request.gen >= since)
         state.tiles[k].add move m.tile
         if state.tiles[k].len > MaxTiles: state.tiles[k].delete(0)
         inc state.panels[k].revision

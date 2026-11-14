@@ -69,8 +69,7 @@ block whatReadsAgain:
   e.gainDb = 12
   e.fixedClip = 3
   e.colours = pcTheme
-  e.reversed = true
-  doAssert same(d, e), "the amount, Fixed's amplitude, colours, polarity read nothing"
+  doAssert same(d, e), "the amount, Fixed's amplitude, colours read nothing"
   var a, b: DisplaySettings
   for (x, y) in [(dgNone, dgFixed), (dgFixed, dgFloat), (dgNone, dgFloat)]:
     a.gain = x

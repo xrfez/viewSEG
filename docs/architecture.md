@@ -296,7 +296,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    request carries the new `requestGen`. The reader acts only on the newest note.
 4. **Prefetch and process** (reader). A selection-mode prefetcher over the request's
    traces (`uniform = true`, `quickFirst = true`) with the decode window as its sample
-   window; per chunk, the display pipeline (the layer's pipeline, then the part of the
+   window; per chunk, the display pipeline (`polarityOp` when every trace is reversed,
+   then the layer's pipeline, then the part of the
    display gain that changes the samples: AGC, by default on pre-stack gathers,
    Exponential, Normalized per trace) runs in place (`chunkMeta(c)`), and each row is
    cut to the kept samples and peak-decimated into the tile; when the request asks for
@@ -311,7 +312,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    display header's values per trace and its `Level`: the RMS, peak and clip percentile
    of |x| over its live traces (`panelStats`).
 6. **Take in** (UI). A tile whose `request.gen` is not the panel's `requestGen` is
-   dropped. `AppState` keeps the newest four per panel; the first tile after a change of
+   dropped. `AppState` keeps the newest four per panel (after a new order, or the
+   polarity of every trace reversed, the tiles from before are drawn until the first
+   one after the change comes, then dropped: `orderGen`, `samplesGen`); the first tile after a change of
    gather or processing sets the panel's level, so the brightness holds while the user
    pans. The gain type picks the *reference* drawn full black from it (`reference`):
    that level, a Fixed amplitude kept across gathers and files, 1 for traces normalized
@@ -458,15 +461,17 @@ type
     order: seq[SortKey]      # display header fields, each ascending or descending; empty:
                              # the file's order (SortPresets: the plot window's buttons)
     pipeline: Pipeline       # processSEG operations; empty shows raw samples
+    reversed: bool           # every trace's polarity reversed: polarityOp runs first
     display: DisplaySettings # density, wiggle or wiggle over density, the fills (positive,
                              # negative), the trace overlap, "paper", theme or own colours,
                              # gain type (automatic, none, fixed, normalized, exponential,
                              # float, AGC) and its settings, gain amount in dB, clip
-                             # percentile, overlap, reversed polarity
+                             # percentile, overlap
 
   CommandKind = enum         # core/state: every user intent, the only way state changes
     ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
-    ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckBack, ckHover, ckSelect,
+    ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack,
+    ckHover, ckSelect,
     ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
     ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog
 

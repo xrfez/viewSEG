@@ -153,8 +153,8 @@
   smallest and largest sample, in the order they occur, so no peak or trough is lost.
 - **The swing.** The amplitude the gain draws full black in density swings a trace the
   **trace overlap** (1 by default: to the next trace's baseline), in trace spacings;
-  stronger amplitudes are clipped there, flat. The gain amount, every gain type and
-  reversed polarity act on wiggles as on density, and none of them reads anything again.
+  stronger amplitudes are clipped there, flat. The gain amount and every gain type act
+  on wiggles as on density, and the gain amount reads nothing again.
 - **The fills** cover the area between the trace's baseline and its line, on the side
   chosen, edge to edge with the line.
 - **Order:** each trace is drawn over the one before it; the hovered and selected traces
@@ -181,6 +181,18 @@
 - **Components** of multi-component units each have a colour and can be shown or
   hidden one by one.
 - **Killed traces** are drawn blank (or hidden: a setting).
+
+## Polarity
+
+Reversing the polarity turns the trace data 180 degrees out of phase: an operation on the
+samples, not a way of colouring them. **Reverse polarity of all traces**, in the plot's
+right-click menu (ticked while it is on), runs processSEG's `polarityOp` first on every
+trace the window reads, before its gain, so the picture, the gain's statistics, the status
+bar's amplitude and whatever is later computed from the window (a spectrum, an overlay
+comparison, an export) see the reversed data. Turning it on or off reads the view again;
+the picture before stays until the reversed one is drawn. It holds for the next record and
+file shown in the window, and is never kept as a setting: a new plot shows the data as
+recorded. Single traces, or the selection, are to be reversed from the same menu (`R`).
 
 ## Mouse and keys
 

@@ -134,6 +134,12 @@ swing a trace, in trace spacings (1 reaches the next trace; anything stronger is
 there), and the colours: paper (black on white; negative fills red), the theme's colours,
 or your own.
 
+**Polarity.** Right-click the plot and choose **Reverse polarity of all traces** to see
+every trace 180 degrees out of phase; the item is ticked while it is on, and choosing it
+again goes back. It reverses the data itself, before the gain, so the status bar's
+amplitude is the reversed one too. It holds for the next record and file, and is not kept
+for the next run.
+
 **Highlight.** The trace under the pointer is drawn in orange, line and fill (under
 density, its column is tinted), and the status bar reads it out. Click a trace to select
 it; Shift + click adds another or takes one out; Esc clears the selection. Selected

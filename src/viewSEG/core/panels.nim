@@ -42,6 +42,12 @@
 ## has its own order; the order is a list of trace numbers, and nothing in
 ## the file moves.
 ##
+## **Polarity.** Reversing the polarity of every trace of a layer
+## (`Layer.reversed`) is an operation on its data, not a way of drawing it:
+## processSEG's `polarityOp` runs first in the display pipeline, so the
+## tiles, the readout's amplitude, the gain's statistics and anything
+## computed from the layer later hold the reversed samples.
+##
 ## **Names.** A panel's window is named for what it shows (`windowTitle`):
 ## "Seismic" for seismic traces, "Aux" for auxiliary ones, "FFT" for
 ## spectra, "F-K" for an f-k plot; a second window of a kind is numbered
@@ -152,13 +158,16 @@ type
       ## a wiggle's largest swing, in trace spacings (1 reaches the next
       ## trace's baseline): the reference amplitude swings this far, and
       ## nothing further
-    reversed*: bool ## polarity reversed for display
 
   Layer* = object
     source*: LayerSource
     filter*: TraceFilter
     order*: seq[SortKey] ## the traces' order, the first key first; empty: the file's order
     pipeline*: Pipeline  ## processSEG operations; empty shows the raw samples
+    reversed*: bool
+      ## every trace's polarity reversed: processSEG's `polarityOp` runs on the
+      ## samples before anything else (`displayPipeline`), so the gain, the
+      ## readout and whatever is computed from the layer see reversed data
     display*: DisplaySettings
 
   HeaderField* = enum
@@ -218,6 +227,10 @@ type
     orderGen*: uint64
       ## `requestGen` when layer 0's order last changed: tiles from before
       ## it are kept until the first tile in the new order comes
+    samplesGen*: uint64
+      ## `requestGen` when what layer 0's samples hold last changed (the
+      ## polarity): tiles from before it are drawn until the first tile
+      ## after it comes, then dropped
     jumps*: int
       ## bumped when `core` sets the view itself (the whole gather when it
       ## is first laid out, back): the UI follows
@@ -357,9 +370,12 @@ func cpuGain(d: DisplaySettings; kind: GatherKind): DisplayGain =
   of dgAuto, dgNone, dgFixed, dgFloat: dgNone
 
 func displayPipeline*(layer: Layer; kind: GatherKind): Pipeline =
-  ## What the reader runs on layer `layer`'s samples: its pipeline, then
-  ## the CPU part of its display gain.
-  result = layer.pipeline
+  ## What the reader runs on layer `layer`'s samples: the polarity reversal
+  ## when every trace is reversed (`polarityOp`), its pipeline, then the CPU
+  ## part of its display gain.
+  result = initPipeline()
+  if layer.reversed: result.add polarityOp()
+  for op in layer.pipeline: result.add op
   let d = layer.display
   case d.cpuGain(kind)
   of dgAgc: result.add agcOp(windowMs = d.agcWindowMs)

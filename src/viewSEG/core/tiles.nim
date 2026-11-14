@@ -168,8 +168,7 @@ func lutIndex*(scaled: float32): int {.inline.} =
   int(floor((u + 1) * 127.5'f32 + 0.5'f32))
 
 func densityColour*(lut: Lut; amplitude, scale: float32): Rgba {.inline.} =
-  ## The colour of `amplitude` at display gain `scale` (1 / the clip;
-  ## negative for reversed polarity).
+  ## The colour of `amplitude` at display gain `scale` (1 / the clip).
   lut[lutIndex(amplitude * scale)]
 
 func greyLut*(): Lut =
@@ -183,10 +182,9 @@ func gainFactor*(db: float64): float64 {.inline.} =
   ## The amplitude factor of a gain of `db` decibels.
   pow(10.0, db / 20)
 
-func displayScale*(reference: float64; gainDb = 0.0; reversed = false): float32 =
+func displayScale*(reference: float64; gainDb = 0.0): float32 =
   ## The display gain: `reference` (`Panel.reference`), raised or lowered by
   ## `gainDb`, maps to full black or white. 0 when the reference is unknown
   ## or 0, or the scale is past what a float32 holds (everything mid grey).
   let f = if reference > 0 and reference < Inf: gainFactor(gainDb) / reference else: 0.0
-  result = if f < maximumPositiveValue(float32): float32(f) else: 0'f32 # high() is Inf
-  if reversed: result = -result
+  if f < maximumPositiveValue(float32): float32(f) else: 0'f32 # high() is Inf

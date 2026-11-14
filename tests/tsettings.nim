@@ -76,7 +76,7 @@ block everyField:
   for name, a, b in fieldPairs(s, d):
     doAssert a != b, "field " & name & " is at its default"
   for name, a, b in fieldPairs(s.plot.display, d.plot.display):
-    when name notin ["visible", "reversed"]: # not kept: `remembered`
+    when name != "visible": # not kept: `remembered`
       doAssert a != b, "display field " & name & " is at its default"
   for name, a, b in fieldPairs(s.window, d.window):
     doAssert a != b, "window field " & name & " is at its default"
@@ -415,8 +415,9 @@ block newPlotsFollow:
       d.mode = dmDensity
       d.gain = dgNone
       d.gainDb = 6
-      d.reversed = true
       st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: true)
+      doAssert st.panel(MainPanel).layers[0].reversed
       let order = @[SortKey(field: hfOffset, descending: true)]
       st.apply Command(kind: ckSort, panel: MainPanel, order: order)
       st.apply Command(kind: ckHeader, panel: MainPanel,
@@ -428,7 +429,8 @@ block newPlotsFollow:
       doAssert st.settle(st.sessions.len == 1)
       let p = st.panel(MainPanel)
       doAssert p.layers[0].display.mode == dmDensity and p.layers[0].display.gainDb == 6
-      doAssert not p.layers[0].display.reversed, "polarity is not a display default"
+      doAssert not p.layers[0].reversed, "polarity is not kept for a new plot"
+      doAssert "revers" notin settingsDocument(st.settings), "polarity is not a setting"
       doAssert p.layers[0].order == order and p.header.fields == @[hfChannel]
       doAssert st.settings.recentFiles == @[b, a]
       st.shutdown()

@@ -15,10 +15,9 @@
 ##
 ## **The swing.** A value `a` swings the trace `swing(a, scale, overlap)`
 ## trace spacings right of its baseline (left when negative): `a * scale`
-## (the display gain, `displayScale`, negative for reversed polarity)
-## clipped to ±1, times the overlap. So the reference amplitude, the one
-## density draws full black, swings a trace `overlap` trace spacings, and
-## nothing swings further: the clip. Overlap 1 reaches the next trace's
+## (the display gain, `displayScale`) clipped to ±1, times the overlap. So
+## the reference amplitude, the one density draws full black, swings a
+## trace `overlap` trace spacings, and nothing swings further: the clip. Overlap 1 reaches the next trace's
 ## baseline.
 ##
 ## **A pixel.** The line covers the part of a pixel between its smallest

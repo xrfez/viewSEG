@@ -103,8 +103,7 @@ proc capture(f: FrameInfo): Shot =
   let k = f.core.findPanel(MainPanel)
   let p = f.core.panels[k]
   result = Shot(pixels: f.readFrame, width: f.width, plot: f.markOf("plot.data"),
-    view: f.tracePanel.drawnView, scale: displayScale(p.reference, p.layers[0].display.gainDb,
-    p.layers[0].display.reversed))
+    view: f.tracePanel.drawnView, scale: displayScale(p.reference, p.layers[0].display.gainDb))
   for t in f.core.tiles(k): result.tiles.add t
   for name in ["plot.Greyscale density", "plot.Wiggle", "tool.Greyscale density", "toolbar"]:
     result.marks.add (name, f.markOf(name))

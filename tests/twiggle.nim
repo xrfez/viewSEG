@@ -5,7 +5,7 @@
 ## cover a view that needs them; the panel's reader fills them from the
 ## file's own samples; the wiggle's line and fills cover a pixel as the
 ## shader is to (straight between vertices, clipped at the overlap,
-## reversed with the polarity); a style's overlap is in its range, whatever
+## the other way for a negative scale); a style's overlap is in its range, whatever
 ## the settings hold; density takes over below four pixels a
 ## trace; the hovered and selected rows of a tile are found from
 ## survey-wide trace ids; and a hover on a trace no open file has clears
@@ -119,7 +119,7 @@ block seriesAndValues:
 block swingIsClipped:
   doAssert swing(0.5, 1, 1.5) == 0.75
   doAssert swing(3, 1, 1.5) == 1.5 and swing(-3, 1, 1.5) == -1.5
-  doAssert swing(0.5, -1, 1.5) == -0.75, "reversed polarity swings the other way"
+  doAssert swing(0.5, -1, 1.5) == -0.75, "a negative scale swings the other way"
 
 block overlapInRange:
   # the overlap a style gets is within its range, also from settings that

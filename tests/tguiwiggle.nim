@@ -22,8 +22,9 @@
 ##   not show, and once each is drawn the trace under the pointer is hovered;
 ## - a plot in which nothing changes draws no new image;
 ## - the gain amount scales the wiggles under every gain type, as the
-##   reference says, and reversed polarity swings them the other way, with
-##   nothing read again;
+##   reference says, with nothing read again; reversed polarity, an
+##   operation on the data, reads the view again with every value negated
+##   and swings the wiggles the other way;
 ## - where traces are closer than four pixels (a 400-trace record in a
 ##   small window), density is drawn and the strip says so, and
 ##   zoomed in on the traces, wiggles are drawn and the note goes;
@@ -42,7 +43,7 @@
 ## nothing changed; with wiggles drawn at any trace spacing,
 ## `densityTakesOver` found wiggles at 1.24 pixels a trace and no note;
 ## with the wiggles drawn at the reference's scale, without the gain
-## amount and the polarity, `gainAmountUnderEveryType` found 969 pixels off
+## amount, `gainAmountUnderEveryType` found 969 pixels off
 ## under Automatic at +6 dB; with the tiles uploaded again whenever the
 ## selection changed, `hoverHighlights` counted 1 tile uploaded for a
 ## hover; with the plot keeping its hover while it showed "Reading..."
@@ -89,7 +90,7 @@ proc capture(f: FrameInfo): Shot =
   let d = p.layers[0].display
   let (img, w, h) = f.tracePanel.plotImage
   let v = f.tracePanel.drawnView
-  let scale = displayScale(p.reference, d.gainDb, d.reversed)
+  let scale = displayScale(p.reference, d.gainDb)
   result = Shot(image: img, w: w, h: h, view: v, display: d, ink: plotInk(f.theme, d),
     style: d.styleFor(v, scale, 1, 2), scale: scale, density: d.drawsDensity(v),
     wiggles: d.drawsWiggles(v), hover: f.core.selection.hover,
@@ -303,9 +304,9 @@ withFixtures fx:
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
         amounts.add Amount(gain: d.gain)
         stage = 8
-      else: # and reversed polarity
-        d.reversed = true
+      else: # and reversed polarity, at 0 dB
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+        f.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: true)
         stage = 10
       waited = 0
     of 8:
@@ -512,13 +513,25 @@ withFixtures fx:
         " pixels changed"
 
   block polarity:
+    # An operation on the data: the view is read again, its samples
+    # reversed (as processSEG's polarityOp makes them: tpolarity), at the
+    # same scale, and drawn mirrored.
     let s = reversed
-    let last = amounts[^1].after
-    doAssert s.gen == last.gen and s.ids == last.ids, "reversing the polarity read again"
-    let zero = amounts[^1].before # reversed at 0 dB, as this was drawn
-    doAssert s.scale == -zero.scale, $s.scale & " after " & $zero.scale
+    let zero = amounts[^1].before # as it was at 0 dB, before the reversal
+    doAssert s.gen > zero.gen, "reversing the polarity read nothing"
+    doAssert s.scale == zero.scale, $s.scale & " after " & $zero.scale
+    let (a, b) = (zero.tiles[^1], s.tiles[^1])
+    doAssert a.request.first == b.request.first and a.request.count == b.request.count and
+      a.data.len == b.data.len, "another view was read"
+    for i in 0 ..< a.data.len:
+      doAssert b.data[i] == -a.data[i], "value " & $i & ": " & $b.data[i] & " for " &
+        $a.data[i]
     let (bad, seen) = s.mismatches(step = 3)
     doAssert bad == 0, "reversed: " & $bad & " of " & $seen & " pixels off the reference"
+    var mirrored = 0
+    for k in countup(0, s.image.high, 7):
+      if distance(s.image[k], zero.image[k]) > 6: inc mirrored
+    doAssert mirrored > s.image.len div 7 div 50, "only " & $mirrored & " pixels changed"
 
   doAssert snapshot(path) == before, "showing the file changed it"
 

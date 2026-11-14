@@ -80,10 +80,10 @@ proc calibrate*(s: var Settings; monitor: string; ppi: float64) =
   s.calibrations = kept
 
 func remembered*(d: DisplaySettings): DisplaySettings =
-  ## `d` as new plot windows keep it: shown, polarity as recorded.
+  ## `d` as new plot windows keep it: shown. (The polarity is not a display
+  ## setting: `Layer.reversed`.)
   result = d
   result.visible = true
-  result.reversed = false
 
 proc addRecent*(list: var seq[string]; item: string; most: Positive) =
   ## Puts `item` first in `list`, once, keeping at most `most` items.

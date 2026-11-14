@@ -307,8 +307,8 @@ proc colourBox(label: string; c: Rgba; changed: var Rgba): bool =
     changed = Rgba(r: byte(col[0]), g: byte(col[1]), b: byte(col[2]), a: 255)
 
 proc drawColours(p: Panel; t: Theme; res: var PanelOutput) =
-  ## The plot's colour scheme (paper, the theme's, or the user's own
-  ## colours) and the polarity.
+  ## The plot's colour scheme: paper, the theme's, or the user's own
+  ## colours.
   let d = p.layers[0].display
   for c in PlotColours:
     let text = case c
@@ -335,11 +335,6 @@ proc drawColours(p: Panel; t: Theme; res: var PanelOutput) =
       var nd = d
       nd.custom = c
       res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
-  var reversed = d.reversed
-  if igCheckbox("Reverse polarity", addr reversed):
-    var nd = d
-    nd.reversed = reversed
-    res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
 
 proc tip(text: string) =
   ## The last item's tooltip.
@@ -1022,7 +1017,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     if tp.gpuError.len == 0 and tp.started:
       tp.sync(tiles, base, st.selection)
       let d = layer.display
-      let scale = displayScale(p.reference, d.gainDb, d.reversed)
+      let scale = displayScale(p.reference, d.gainDb)
       let shown = Viewport(traces: Span(lo: lim2.X.Min, hi: lim2.X.Max),
         timeMs: Span(lo: lim2.Y.Min, hi: lim2.Y.Max), columns: view.columns, rows: view.rows)
       # one pixel of line at 100 %, two for a hovered or selected trace
@@ -1116,6 +1111,11 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     drawColours(p, t, res)
     igSeparatorText("Display header")
     drawHeaderChoice(p, res)
+    igSeparatorText("Trace data")
+    # An operation on the samples (processSEG's polarityOp), not a colour.
+    if igMenuItem_Bool("Reverse polarity of all traces", nil, layer.reversed, true):
+      res.commands.add Command(kind: ckReverseAll, panel: p.id, reverse: not layer.reversed)
+    marks.mark("plot.menu.reverse all")
     igEndPopup()
   # Opened here, not in the menu, so that it has the window's ID, as below.
   if sortKeys: tp.sortKeys.openSortKeys(p, st.settings)

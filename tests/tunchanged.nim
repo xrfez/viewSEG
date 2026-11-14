@@ -78,8 +78,9 @@ proc drive(st: var AppState) =
   d = d.withGainDb(9)
   d.gain = dgAuto
   st.display(d)
-  d.reversed = not d.reversed
-  st.display(d)
+  st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: true)
+  doAssert st.settle(st.answered)
+  st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: false)
   st.apply Command(kind: ckHeader, panel: MainPanel, header: HeaderChoice(auto: false,
     fields: @[hfRecord, hfChannel, hfOffset]))
   st.view(fitAll(lay, 640, 480), remember = true)

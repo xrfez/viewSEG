@@ -164,7 +164,7 @@ Status values:
 | Chunk metadata from parseSEG reads | `initChunkMeta`, `chunkMeta`, `intervalMs`, `ChunkMeta` (`isLive`, `sampleTimeMs`) | internal: every processing call | internal |
 | Row views and scratch | `rowBlock`, `RowBlock`, `Workspace`, `reserve`, `WorkspaceSize` | internal: allocation-free processing | internal |
 | Remove mean or trend | `demean`, `detrend`, `demeanOp`, `detrendOp` | Processing window: remove DC / trend | planned |
-| Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Processing window; display polarity (for now a sign on the plot's scale, density and wiggles alike); the wiggles' clip at the trace overlap is the shader's own | planned |
+| Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Seismic window: "Reverse polarity of all traces" in the plot's menu, `polarityOp` first in the window's display pipeline; processing window: scale and clip; the wiggles' clip at the trace overlap is the shader's own | built (polarity of all traces); planned (the rest) |
 | Top and bottom mutes (time, table, LMO) | `timeMute`, `tableMute`, `lmoMute`, `muteTop`, `muteBottom`, `muteTopOp`, `muteBottomOp`, `muteTimeMs` | Processing window: mutes, drawn as a line on the panel, table picked by clicking | planned |
 | Pad tapers | `cosTaperInto`, `taperPads` | internal: filters and padded kernels | internal |
 | Fractional shifts | `shiftSamples`, `ShiftInterp` | internal: statics, LMO, NMO | internal |
