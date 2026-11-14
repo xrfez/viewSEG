@@ -1,9 +1,8 @@
 # The plot window and the map: design
 
-> **Draft for the user to confirm.** Built from the user's requirements and feedback so
-> far. Where a choice was open, the default below is taken and listed under
-> [Open choices](#open-choices) at the end; corrections go into this page before the
-> trace panel is built on it.
+> **Confirmed by the user** (2026-11-14). Built from the user's requirements and feedback;
+> every choice that was open in the draft is now the user's decision, as
+> [Decisions](#decisions) at the end lists, with what the user changed.
 
 ## Layout
 
@@ -490,81 +489,66 @@ sometimes a laptop with integrated graphics; plan for 16 GB of RAM and files ove
 | Work per view | only the traces and samples on screen (plus that read-ahead, which shrinks to keep a tile within 64 MiB, and the filter margin); a panel's tiles hold 192 MiB at most; in density zoomed out past a trace per pixel, only the traces drawn; in the wiggle modes at most a trace per pixel column, every one of them read |
 | Open | progress and Cancel at once; a second open of an unchanged file reads its index cache |
 
-## Open choices
+## Decisions
 
-Defaults taken in this draft, for the user to confirm or change:
+Each choice the draft left open, with the user's answer (2026-11-14). "Confirmed": as
+the draft had it; otherwise, what the user changed is what this page describes.
 
-1. **Wheel zooms** and drag pans. On a laptop touchpad, two-finger scrolling then
-   zooms; the alternative is wheel = scroll in time, Ctrl + wheel = zoom.
-2. **Shift + drag selects a box; Ctrl + drag draws a ruler** (velocity in the plot,
-   distance on the map). Alt is left alone: several Linux desktops move windows with
-   Alt + drag, and on Windows Alt opens the menu.
-3. **Right drag is box zoom**, right click the context menu (they are told apart by
-   whether the mouse moved).
-4. **Single keys** (`K`, `R`, `F`, `H`, `M`, Space) act on the hovered trace or the
-   selection when the plot has focus.
-5. **Hover orange (the theme's highlight), selection in the theme's accent colour**
-   (not its "selection" colour, a background tint that does not show as a line on
-   paper), each made readable on the plot's background; a trace both hovered and
-   selected shows the hover.
-6. **Fit all is Ctrl + `0` (and a button); back is Backspace or Alt + Left**, since
-   Home and End step to the first and last gather.
-7. **A double-click does nothing extra.** Its first click already selects a trace (or,
-   on the map, opens a source's gather), so "double-click to fit" would do two things.
-8. **Zoom along one axis from the keyboard is Ctrl + arrow keys**, not Shift + `+`: on
-   many layouts `+` itself needs Shift.
-9. **The display gain starts automatic:** a pre-stack gather (a shot or receiver
-   record) opens with AGC over 500 ms, so every trace and every time is visible; stacked
-   data opens with none, so amplitudes compare. The plot window says which is in use.
-   **Float** is read as "the scale follows the data in view"; **Exponential** is the
-   dB-per-second gain (6 dB/s offered), with a power of time beside it. Normalized
-   draws the chosen level full black and defaults to each trace's clip percentile.
-   The gain amount steps by 3 dB and its keys are `]` / `[` (keypad `*` / `/`).
-10. **A typed scale keeps the top-left corner** of the view, not its centre, so the
-    record's start stays in place as on a paper plot.
-11. **One wheel notch zooms by 1.25, a key press or button by 1.5**; wheel turns or key
-    presses less than 0.6 s apart count as one gesture for "back". The sideways wheel
-    zooms in traces when tilted left (or Shift + wheel up), out when tilted right.
-12. **The status bar's shot time is the record's UTC time**; the cursor's time within
-    the record is its first field. "UTC at the cursor" (the shot time plus the cursor's
-    time) can be added.
-13. **The amplitude read out is the displayed value** (after processing and gain), not
-    the raw sample in the file.
-14. **Decided by the user:** a new window size always keeps the scale (traces and ms
-    per pixel) and the top-left corner, so the scale boxes keep what was typed, also
-    along an axis that showed the whole record ("i would rather the plot scale stays the
-    same and scroll bars apear if ti cannot be shown"); the scale grows only where the
-    plot becomes larger than the whole record.
-15. **A click on a scroll bar's track pans by a whole view** towards the click (as on
-    Windows), rather than jumping the thumb to the pointer.
-16. **Line/Station and By Flag differ only within a station:** Line/Station keeps a
-    station's traces in the file's order, By Flag puts its components in order. Clicking
-    the selected sort button goes back to the file's order (there is no button for it;
-    the Custom... popover also has "File order").
-17. **A sort keeps the view** (the same positions and times, so the scale boxes keep
-    their values) rather than fitting the whole gather; "back" is not changed by a sort.
-18. **Sort keys are the display header's fields** (the trace keys parseSEG reads for
-    every format alike), not raw header words; sorting by any raw header field comes with
-    the gather domains. No key has a shortcut yet (open choice 4's single keys come
-    first).
-19. **Decided by the user:** the plot opens in wiggles with the positive fill, black on
-    white paper, and **density is drawn only in the modes that name it** ("it should
-    only be on if the user is asking for it"); there is no hand-over to density where
-    traces are close. In the wiggle modes zooming out stops at one pixel a trace (the
-    user: "maybe dont allow a zoom out that far?"), so a whole shot of thousands of
-    traces opens at that limit from its first trace; the density mode shows it whole.
-20. **Decided by the user:** the trace overlap is 1 by default (the strongest
-    amplitudes reach the next trace's baseline), from 0.1 to 10, the wiggles' clip the
-    same reference as density's full black, so the gain amount moves both alike; it is
-    the user's to set, in plain sight in the strip ("Trace overlap should be
-    configurable").
-21. **Decided by the user:** **Ctrl + click adds a trace to the selection or takes it
-    out** (the user: "shoudnt this be control click"), a plain click replaces the
-    selection, and **Shift + click selects every trace from the one clicked last to this
-    one**, in the order shown; a click is a press and release without moving, so Ctrl +
-    drag stays free for the velocity ruler and Shift + drag for the box. The mute
-    editor's points will take a gesture of their own.
-22. **Decided by the user:** the negative fill is the theme's red on paper and on the
-    theme's plot ("I kind of like the other color for negative fill"), and every colour
-    of the plot (background, wiggle line, positive and negative fill, hovered and
-    selected trace) is the user's to set, in plain sight in the gear popover.
+1. **Wheel zooms, drag pans** (on a touchpad, two-finger scrolling zooms). Confirmed.
+2. **Shift + drag selects a box, Ctrl + drag draws a ruler** (velocity in the plot,
+   distance on the map); Alt is left alone. Confirmed.
+3. **Right drag is box zoom, a right click the menu** (told apart by whether the mouse
+   moved). Confirmed.
+4. **Single keys** (`K`, `R`, `F`, `H`, `M`, Space) act on the trace under the pointer
+   or the selection holding it, while the plot has the focus. Confirmed.
+5. **Hover orange (the theme's highlight), the selection in the theme's accent
+   colour**, each made readable on the plot's background. Confirmed, and both are the
+   user's to set among the plot's six colours (22).
+6. **Fit all is Ctrl + `0`** (and a button); **back is Backspace or Alt + Left**.
+   Confirmed.
+7. **A double-click does nothing extra.** Confirmed.
+8. **Ctrl + arrow keys zoom along one axis.** Confirmed.
+9. **The display gain starts automatic:** AGC over 500 ms on pre-stack records, none on
+   stacked data; 3 dB steps on `]` / `[`. Confirmed; and the user asked that every
+   setting of the gain drop-down be remembered, with sane defaults for a new
+   installation (the defaults' table under the gain), and that the Exponential gain
+   have a cutoff time (2 000 ms by default, after which it holds).
+10. **A typed scale keeps the top-left corner.** Confirmed.
+11. **Zoom steps:** a wheel notch 1.25, a key or button 1.5. Confirmed.
+12. **The shot time is the record's UTC time.** Confirmed.
+13. **The amplitude read out is the displayed value.** Confirmed, with a **raw
+    amplitude** field beside it, off by default (the user: "ok but off by default").
+14. **A new window size always keeps the scale** and the top-left corner (the user: "i
+    would rather the plot scale stays the same and scroll bars apear if ti cannot be
+    shown"); the scale grows only where the plot becomes larger than the whole record.
+    Changed by the user: the draft kept the whole record along an axis that showed it.
+15. **A click on a scroll bar's track pans by a whole view.** Confirmed ("this is also
+    what fast panning with the arrows and modifier should do"): Shift + arrow pans by a
+    whole view, and the plot reads ahead far enough that such a step shows its data at
+    once (a view and a half on each side, kept to at least a view as the view moves).
+16. **Line/Station and By Flag differ only within a station**, By Component groups the
+    components; clicking the selected sort button goes back to the file's order.
+    Confirmed ("by flag will sort by line/station then by component").
+17. **A sort keeps the view.** Confirmed.
+18. **Sort keys are the display header's fields**; raw header words come with the gather
+    domains. Taken as built.
+19. **Density only when it is chosen**, and in the wiggle modes zooming out stops at one
+    pixel a trace (the user: "it should only be on if the user is asking for it",
+    "maybe dont allow a zoom out that far?"). Changed by the user: the draft handed over
+    to density below 4 pixels a trace.
+20. **The trace overlap is 1 by default**, from 0.1 to 10, in plain sight in the strip
+    ("Trace overlap should be configurable"). Changed by the user: it was in the gear
+    popover only.
+21. **Ctrl + click adds a trace to the selection or takes it out**, a plain click
+    replaces it, Shift + click selects a range in the order shown (the user: "shoudnt
+    this be control click"). Changed by the user: the draft had Shift + click add.
+22. **Every colour of the plot is the user's**, the negative fill red by default ("I kind
+    of like the other color for negative fill"), all six in plain sight in the gear
+    popover. Changed by the user: the colours were behind "My own colours".
+
+Also decided with the user, beyond this list: the click that brings a window forward
+does only that (Mouse and keys); a trace the file marks dead is never drawn (the display
+gain); Tab moves between a window's controls, not between files (Everywhere); the
+Records window shows each record's traces, dead traces and the traces missing from its
+patch; auxiliary traces are shown through the Seismic and Aux toggles, ahead of an Aux
+window of their own.
