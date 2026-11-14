@@ -887,7 +887,7 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     res.commands.add Command(kind: ckReverseAll, panel: p.id, reverse: not reversed)
   marks.mark("plot.menu.reverse all")
   igSeparator()
-  let e = st.editsOf(k)
+  template e: untyped = st.editsOf(k) # not copied
   let undo = if e.canUndo: "Undo last edit (" & describe(e.last) & ")" else: "Undo last edit"
   if igMenuItem_Bool(undo.cstring, "Ctrl+Z", false, e.canUndo):
     res.commands.add Command(kind: ckUndoEdit, panel: p.id)
@@ -920,12 +920,13 @@ func holds(t: Tile; position: int): bool {.inline.} =
   r.count > 0 and position >= r.first and position <= r.last and
     (position - r.first) mod r.stride == 0
 
-proc drawEditRow(st: AppState; k: int; tiles: openArray[Tile]; view: Viewport;
+proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
     layout: PanelLayout; y: float32; plotPos, plotSize: ImVec2_c; t: Theme; marks: var Marks) =
   ## The display header's row of edits, at `y` under its other rows: over
-  ## each edited trace in view, as the file's edits are now, "K" (killed, in
-  ## the theme's error colour) or "R" (reversed, in its accent colour), "KR"
-  ## for both; a thin bar where traces are too close for the letters.
+  ## each edited trace in view, as the file's edits `e` are now, "K"
+  ## (killed, in the theme's error colour) or "R" (reversed, in its accent
+  ## colour), "KR" for both; a thin bar where traces are too close for the
+  ## letters.
   let dl = igGetWindowDrawList()
   let lineH = igGetTextLineHeight()
   let name = "edits"
@@ -934,7 +935,6 @@ proc drawEditRow(st: AppState; k: int; tiles: openArray[Tile]; view: Viewport;
     name.cstring, nil)
   marks.markRect("plot.header.edits", ImVec2_c(x: plotPos.x - nw - 6, y: y),
     ImVec2_c(x: plotPos.x, y: y + lineH))
-  let e = st.editsOf(k)
   let perPos = plotSize.x / max(view.traces.width, 1e-9)
   ImDrawList_PushClipRect(dl, ImVec2_c(x: plotPos.x, y: y),
     ImVec2_c(x: plotPos.x + plotSize.x, y: y + lineH), true)
@@ -1260,8 +1260,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     let stride = if p.pending.isEmpty: 1 else: p.pending.stride
     tp.drawHeader(tiles, fields, stride, view, p.layout, headerTop, pos, size, t, paper)
     if edited:
-      drawEditRow(st, k, tiles, view, p.layout, headerTop.y + float32(fields.len) * lineH, pos,
-        size, t, marks)
+      drawEditRow(st.editsOf(k), tiles, view, p.layout, headerTop.y + float32(fields.len) *
+        lineH, pos, size, t, marks)
     ImPlot_EndPlot()
     if st.sorting(k): # the old order stays drawn until the new one comes
       let dl = igGetWindowDrawList()

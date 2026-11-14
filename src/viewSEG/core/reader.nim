@@ -292,7 +292,10 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
   ## (`rows`: their traces; `failedRows`: those not decoded, 0-based in the
   ## block, ascending) for the tile: killed rows blanked, the samples of
   ## reversed rows negated, then the display processing, which passes by
-  ## the killed rows and those not decoded.
+  ## the killed rows and those not decoded. A reversed row is negated
+  ## whatever its trace's status: one marked dead in the file is drawn as
+  ## recorded when nothing runs on the samples, so the user who reversed it
+  ## sees it reversed (with processing it is blanked anyway).
   var passed: seq[int] # rows of the block not decoded or killed, ascending
   var fi = 0
   for k in 0 ..< b.len:
@@ -307,7 +310,7 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
     let meta = initChunkMeta(rows, rd.layout.dtMs, pr.firstSample, passed)
     if pr.edits.len > 0:
       for k in 0 ..< b.len:
-        if teReversed in pr.edits[first + k] and meta.isLive(k):
+        if teReversed in pr.edits[first + k] and not meta.isFailed(k):
           reversePolarity(b.row(k, meta.liveSamples(k, b.cols)))
     if pr.processing: pr.plan.apply(b, meta, rd.ws)
   except ValueError as e:

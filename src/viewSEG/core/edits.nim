@@ -14,13 +14,16 @@
 ## back and forgets it. `clearAll` empties both lists, and is undone the
 ## same way.
 ##
+## **Cost.** The lists are kept ascending, so what the screen asks for
+## every frame or every new view (whether a gather has an edit, its edited
+## traces, a trace's edits) is a binary search, however many traces a file
+## has edited elsewhere; only a change walks a list.
+##
 ## The lists are plain data, changed only by `AppState` when it applies a
 ## `Command`; the reader of a panel gets a copy of those of its gather with
 ## each request.
 
-import std/[algorithm, intsets]
-
-export intsets
+import std/algorithm
 
 type
   TraceEdit* = enum
@@ -43,22 +46,40 @@ type
 
   FileEdits* = object
     ## The edits of one file's traces, by their index in the file.
-    lists: array[TraceEdit, IntSet]
+    lists: array[TraceEdit, seq[int]] ## each ascending, each trace once
     last: LastEdit
-    revision: int ## bumped on every change
+    revision: int                     ## bumped on every change
 
-func sorted(s: IntSet): seq[int] =
-  for t in s: result.add t
-  result.sort()
+func union(a, b: openArray[int]): seq[int] =
+  ## The values of `a` and of `b` (both ascending), ascending, each once.
+  result = newSeqOfCap[int](a.len + b.len)
+  var i, j = 0
+  while i < a.len or j < b.len:
+    let x = if j >= b.len or (i < a.len and a[i] <= b[j]): a[i] else: b[j]
+    if result.len == 0 or result[^1] != x: result.add x
+    if i < a.len and a[i] == x: inc i
+    if j < b.len and b[j] == x: inc j
+
+func difference(a, b: openArray[int]): seq[int] =
+  ## The values of `a` that are not in `b` (both ascending), ascending.
+  result = newSeqOfCap[int](a.len)
+  var j = 0
+  for x in a:
+    while j < b.len and b[j] < x: inc j
+    if j >= b.len or b[j] != x: result.add x
+
+func span(list: openArray[int]; traces: Slice[int]): Slice[int] =
+  ## The indices in `list` (ascending) of its values in `traces`.
+  list.lowerBound(traces.a) ..< list.upperBound(traces.b)
 
 func has*(e: FileEdits; edit: TraceEdit; trace: int): bool {.inline.} =
   ## Whether trace `trace` has edit `edit`.
-  trace in e.lists[edit]
+  e.lists[edit].binarySearch(trace) >= 0
 
 func editsOf*(e: FileEdits; trace: int): set[TraceEdit] =
   ## The edits trace `trace` has.
   for edit in TraceEdit:
-    if trace in e.lists[edit]: result.incl edit
+    if e.has(edit, trace): result.incl edit
 
 func len*(e: FileEdits; edit: TraceEdit): int {.inline.} =
   ## How many traces have edit `edit`.
@@ -81,33 +102,34 @@ func canUndo*(e: FileEdits): bool {.inline.} = e.last.kind != lkNone
 
 func listIn*(e: FileEdits; edit: TraceEdit; traces: Slice[int]): seq[int] =
   ## The traces in `traces` with edit `edit`, ascending.
-  for t in e.lists[edit]:
-    if t in traces: result.add t
-  result.sort()
+  let s = span(e.lists[edit], traces)
+  if s.len > 0: e.lists[edit][s] else: @[]
 
 func anyIn*(e: FileEdits; traces: Slice[int]): bool =
   ## Whether a trace in `traces` has an edit.
   for edit in TraceEdit:
-    for t in e.lists[edit]:
-      if t in traces: return true
+    if span(e.lists[edit], traces).len > 0: return true
   false
 
-func put(e: var FileEdits; edit: TraceEdit; trace: int; on: bool) {.inline.} =
-  if on: e.lists[edit].incl trace else: e.lists[edit].excl trace
+proc put(e: var FileEdits; edit: TraceEdit; traces: openArray[int]; on: bool) =
+  ## Gives the traces `traces` (ascending) edit `edit`, or takes it away.
+  e.lists[edit] = if on: union(e.lists[edit], traces) else: difference(e.lists[edit], traces)
 
 proc change*(e: var FileEdits; edit: TraceEdit; traces: openArray[int]; on: bool): int =
   ## Gives every trace of `traces` edit `edit` (`on`) or takes it away, and
   ## keeps the traces that changed for `undo`. Returns how many changed; a
   ## change of none leaves the last change to undo as it was. Raises
   ## `ValueError` for a negative trace index.
-  var changed: seq[int]
+  var wanted = newSeqOfCap[int](traces.len)
   for t in traces:
     if t < 0: raise newException(ValueError, "a trace index must not be negative, got " & $t)
-    if (t in e.lists[edit]) != on: # a trace given twice changes once
-      e.put(edit, t, on)
-      changed.add t
+    wanted.add t
+  wanted.sort()
+  var changed: seq[int]
+  for t in wanted: # a trace given twice changes once
+    if e.has(edit, t) != on and (changed.len == 0 or changed[^1] != t): changed.add t
   if changed.len > 0:
-    changed.sort()
+    e.put(edit, changed, on)
     e.last = LastEdit(kind: lkChange, edit: edit, on: on, traces: changed)
     inc e.revision
   changed.len
@@ -120,11 +142,10 @@ proc undo*(e: var FileEdits): LastEdit =
   case result.kind
   of lkNone: discard
   of lkChange:
-    for t in result.traces: e.put(result.edit, t, not result.on)
+    e.put(result.edit, result.traces, not result.on)
     inc e.revision
   of lkClear:
-    for edit in TraceEdit:
-      for t in result.before[edit]: e.lists[edit].incl t
+    for edit in TraceEdit: e.put(edit, result.before[edit], true)
     inc e.revision
 
 proc clearAll*(e: var FileEdits): bool =
@@ -133,9 +154,7 @@ proc clearAll*(e: var FileEdits): bool =
   result = not e.isEmpty
   if result:
     var last = LastEdit(kind: lkClear)
-    for edit in TraceEdit:
-      last.before[edit] = sorted(e.lists[edit])
-      e.lists[edit].clear()
+    for edit in TraceEdit: last.before[edit] = move e.lists[edit]
     e.last = last
     inc e.revision
 
@@ -150,14 +169,10 @@ func changedIn*(l: LastEdit; traces: Slice[int]): bool =
   ## Whether change `l` changed a trace in `traces`.
   case l.kind
   of lkNone: false
-  of lkChange:
-    for t in l.traces:
-      if t in traces: return true
-    false
+  of lkChange: span(l.traces, traces).len > 0
   of lkClear:
     for edit in TraceEdit:
-      for t in l.before[edit]:
-        if t in traces: return true
+      if span(l.before[edit], traces).len > 0: return true
     false
 
 func tracesText(traces: openArray[int]): string =

@@ -222,7 +222,9 @@ recorded.
 plot's menu), is an edit of the file's traces (see [Edits](#edits-to-traces)): those
 traces' samples are negated (processSEG's `reversePolarity` on their live samples, as
 `polarityOp` does) where the window's reader prepares them, before the pipeline and the
-gain. A trace reversed both ways is as recorded.
+gain. A trace reversed both ways is as recorded. A trace the file marks dead is reversed
+too: under the gain None it is drawn as recorded, so reversed it is drawn reversed (under
+the gains that run on the samples it is blank either way).
 
 ## Mouse and keys
 

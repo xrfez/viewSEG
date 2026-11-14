@@ -186,6 +186,7 @@ type
     files: FileList       ## the file list
     edits: Table[string, FileEdits]
       ## per file (its canonical path): the traces killed and reversed
+    noEdits: FileEdits    ## always empty: `editsOf` for a file with none
     showFound: PanelId    ## show the first file the listing finds here; NoPanel for none
     jump: tuple[path: string; trace, record: int]
       ## a trace to show once its file is open (`ckShowTrace`); "" for none
@@ -479,11 +480,16 @@ func traceEdits*(state: AppState; trace: int): set[TraceEdit] =
   if i >= 0 and state.sessions[i].path in state.edits:
     result = state.edits[state.sessions[i].path].editsOf(trace - state.sessions[i].base)
 
-func editsOf*(state: AppState; panelIndex: int): FileEdits =
-  ## The edits of the file `panels[panelIndex]` shows (a copy); none when it
-  ## shows none or the file has none.
+func editsOf*(state: AppState; panelIndex: int): lent FileEdits =
+  ## The edits of the file `panels[panelIndex]` shows; none when it shows
+  ## none or the file has none. Not a copy: the screen asks every frame, so
+  ## pass it on rather than keep it in a `let`, which copies.
+  # Not an `if` expression: Nim 2.4.2 copies its branch into a temporary
+  # and returns a view of that, freed on return.
   let i = state.shownFile(panelIndex)
-  if i >= 0: state.edits.getOrDefault(state.sessions[i].path) else: FileEdits()
+  if i >= 0 and state.sessions[i].path in state.edits:
+    return state.edits[state.sessions[i].path]
+  state.noEdits
 
 func shownTraces(state: AppState; panelIndex: int): (int, Slice[int]) =
   ## The index in `sessions` of the file `panels[panelIndex]` shows, and the

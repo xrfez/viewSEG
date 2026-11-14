@@ -22,6 +22,10 @@
 ## - the edits hold through another record, a sort, a gain change and a
 ##   step to another file and back (the file opened again, under a new id);
 ## - commands that do not fit are ignored with a warning;
+## - what the screen asks of the lists every frame or view does not grow
+##   with the traces edited elsewhere in the file;
+## - a trace marked dead in the file, drawn as recorded under gain None, is
+##   drawn reversed once reversed;
 ## - the file is never changed.
 ##
 ## Seen to fail: with the reader not blanking killed rows (`prepare`
@@ -34,9 +38,13 @@
 ## in the tile, polarityOp gives -0.117537394"; with the samples held never
 ## used, "the tile after the kill was read from the file"; with `undo`
 ## keeping the change (a second undo would redo it), the check that nothing
-## is left to undo.
+## is left to undo; with the lists kept as `IntSet`s (every query walking
+## them), "a frame's questions to the lists take 4987.1 µs with 200 000
+## traces edited elsewhere"; with the reversal limited to live traces
+## (`meta.isLive`), "the dead-marked trace 5 is drawn as recorded, not
+## reversed".
 
-import std/[algorithm, math, os, strutils, times]
+import std/[algorithm, math, monotimes, os, sequtils, strutils, times]
 import parseSEG
 import processSEG/[adapters, pipeline]
 import processSEG/core/workspace
@@ -77,6 +85,44 @@ block lists:
   discard e.undo()
   doAssert e.editsOf(3) == {teKilled, teReversed} and e.len(teKilled) == 1
   doAssertRaises ValueError: discard e.change(teKilled, [-1], true)
+
+block cost:
+  # What the screen asks of a file's lists every frame (whether the gather
+  # shown has an edit: `gatherEdited`) and with every new view (the
+  # gather's edited traces, sent with the request: `requestView`) does not
+  # grow with the traces edited elsewhere in the file: a large selection
+  # killed in another record.
+  var e: FileEdits
+  var far = newSeq[int](200_000)
+  for i, t in far.mpairs: t = 1_000_000 + i
+  doAssert e.change(teKilled, far, true) == far.len
+  doAssert e.change(teReversed, [5, 7, 1_000_003], true) == 3
+  doAssert e.listIn(teKilled, 1_000_000 .. 1_000_004) == @[1_000_000, 1_000_001, 1_000_002,
+    1_000_003, 1_000_004]
+  doAssert e.listIn(teReversed, 0 .. high(int)) == @[5, 7, 1_000_003]
+  doAssert e.anyIn(1_199_999 .. 1_300_000) and not e.anyIn(1_200_000 .. 1_300_000)
+  doAssert e.editsOf(1_000_003) == {teKilled, teReversed}
+  const calls = 200
+  var found = 0
+  let start = getMonoTime()
+  for i in 0 ..< calls:
+    if e.anyIn(0 .. 99) and not e.anyIn(100 .. 999): inc found
+    found += e.listIn(teKilled, 0 .. 99).len + e.listIn(teReversed, 0 .. 99).len
+  let us = float64((getMonoTime() - start).inNanoseconds) / 1000 / calls
+  doAssert found == 3 * calls, $found
+  doAssert us < 50, "a frame's questions to the lists take " & $us &
+    " µs with 200 000 traces edited elsewhere"
+  # a change, its undo and a clearing keep the lists ascending, each trace once
+  doAssert e.change(teKilled, [999_999, 1_000_001, 999_999], true) == 1
+  doAssert e.listIn(teKilled, 999_998 .. 1_000_001) == @[999_999, 1_000_000, 1_000_001]
+  doAssert e.change(teKilled, [1_000_000, 1_000_002, 5], false) == 2
+  doAssert e.listIn(teKilled, 999_998 .. 1_000_003) == @[999_999, 1_000_001, 1_000_003]
+  discard e.undo()
+  doAssert e.listIn(teKilled, 999_998 .. 1_000_003) == @[999_999, 1_000_000, 1_000_001,
+    1_000_002, 1_000_003]
+  doAssert e.clearAll() and e.len(teKilled) == 0 and not e.anyIn(0 .. high(int))
+  discard e.undo()
+  doAssert e.len(teKilled) == far.len + 1 and e.len(teReversed) == 3
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
@@ -331,4 +377,56 @@ withFixtures fx:
     doAssert st.warnings == w + 4 and "shows no file" in st.last, st.last
   st.shutdown()
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
+
+proc deadMarkedSegy(dir: string): string =
+  ## The survey's first shot with channel 5 marked dead in the file, its
+  ## samples as they were.
+  result = dir / "dead-marked.sgy"
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+    text: @["C01 viewSEG test: a trace marked dead that holds samples"]))
+  var buf = newSeq[float32](Samples)
+  for channel in 1 .. Channels:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.srcPoint) = (11.0, float64(channel), FirstSrcPoint)
+    (k.rcvLine, k.rcvPoint) = (RcvLine, FirstRcvPoint + float64(channel - 1))
+    (k.t0Ms, k.intervalUs) = (0.0, DtMs * 1000)
+    k.status = if channel == 5: tsDead else: tsLive
+    for i in 0 ..< Samples: buf[i] = surveySample(0, channel, i)
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0
+
+block deadMarked:
+  # A trace marked dead in the file is drawn as recorded when nothing runs
+  # on the samples (gain None); reversed by the user, it is drawn reversed,
+  # as the display header and the status bar then say. Under a gain that
+  # runs on the samples it is blank, reversed or not.
+  withFixtures fx:
+    let path = deadMarkedSegy(fx.dir)
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    var d = st.panel(MainPanel).layers[0].display
+    d.gain = dgNone
+    st.display(d)
+    let lay = st.panel(MainPanel).layout
+    st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 640, 2 * lay.samples))
+    doAssert st.settle(st.answered)
+    let recorded = st.tiles(0)[^1]
+    const dead = 4
+    doAssert not recorded.rowOf(dead).blank, "the dead-marked trace is not drawn as recorded"
+    st.edit(teReversed, @[st.sessions[0].base + dead])
+    doAssert st.settle(st.answered)
+    let t = st.tiles(0)[^1]
+    doAssert t.editsAt(t.traces.find(dead)) == {teReversed}
+    let want = recorded.rowOf(dead).mapIt(-it)
+    let got = t.rowOf(dead)
+    var i = 0
+    while i < got.high and got[i] == want[i]: inc i
+    doAssert got == want, "the dead-marked trace 5 is not drawn reversed: value " & $i &
+      " is " & $got[i] & ", reversed " & $want[i]
+    d.gain = dgAgc
+    st.display(d)
+    doAssert st.settle(st.answered)
+    doAssert st.tiles(0)[^1].rowOf(dead).blank, "under AGC the dead-marked trace is drawn"
+    st.shutdown()
   echo "tedits: ok"
