@@ -72,6 +72,7 @@ type
     gen*: uint64           ## the panel's `sourceGen`: its layout carries it
     file*: ptr SeismicFile ## nil: nothing
     path*: string          ## the file's path, as held
+    size*: int64           ## the file's size when it was opened; -1 when not known
     traces*: Slice[int]    ## the gather
     filter*: TraceFilter
     order*: seq[SortKey]   ## the layer's order; empty: the file's
@@ -130,6 +131,7 @@ type
     layout: PanelLayout
     raw: RawCache
     ws: Workspace
+    toldShort: bool      ## the file was found shorter than when it was opened: said once
 
 proc `=destroy`*(x: PanelReader)
 proc `=wasMoved`*(x: var PanelReader) = x.p = nil
@@ -175,6 +177,7 @@ proc letGo(rd: var Reader) =
   rd.sorted = false
   rd.layout = PanelLayout()
   rd.raw = RawCache()
+  rd.toldShort = false
 
 proc arrange(rd: var Reader; order: seq[SortKey]) =
   ## Puts the positions in `order` (the traces the filter keeps, sorted),
@@ -317,6 +320,27 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
     rd.note(sevError, "The display processing stopped on " & rd.name & ": " & e.msg)
     pr.processing = false
 
+proc cutShort(rd: var Reader): bool =
+  ## Whether the file is shorter now than when it was opened (another
+  ## program cut it short, or is writing it again): reading it then would
+  ## touch pages of the map past its end, which ends the program (SIGBUS),
+  ## so nothing is read. Said once; the UI closes the file when the folder's
+  ## watch sees the change. A file that cannot be looked at is read as
+  ## before. Windows does not let a mapped file be cut.
+  when defined(windows):
+    result = false
+  else:
+    result = false
+    if rd.src.size >= 0:
+      try:
+        result = getFileInfo(rd.src.path).size < rd.src.size
+      except OSError:
+        result = false
+    if result and not rd.toldShort:
+      rd.toldShort = true
+      rd.note(sevWarning, rd.name & " is shorter than when it was opened: another program " &
+        "has cut it short or is writing it again, so it is not read until it is opened again.")
+
 proc serve(rd: var Reader; req: sink ReaderRequest) =
   ## Reads, processes and posts the tile `req` asks for, unless a newer note
   ## comes first. The samples come from the file through a prefetcher, or,
@@ -405,6 +429,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       if rd.r.interrupted:
         given = true
         break
+  elif rd.cutShort: return
   else:
     let keep = q.count * cols <= MaxRawSamples
     if keep: # its buffer reused

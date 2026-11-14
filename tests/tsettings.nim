@@ -53,7 +53,8 @@ proc everyFieldSet(): Settings =
     sortPresets: @[SortPreset(name: "Mine", keys: @[SortKey(field: hfOffset, descending: true)]),
       SortPreset(name: "Channels", keys: @[SortKey(field: hfChannel)])],
     customOrder: @[SortKey(field: hfSrcPoint), SortKey(field: hfTrace, descending: true)],
-    messages: MessagesView(autoScroll: false, hidden: {sevInfo, sevWarning}), cursorLine: true)
+    messages: MessagesView(autoScroll: false, hidden: {sevInfo, sevWarning}), cursorLine: true,
+    files: FilesView(followLatest: true))
   result.plot = PlotDefaults(
     display: DisplaySettings(mode: dmWiggleDensity, fills: {wfNegative}, colours: pcCustom,
       custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),
@@ -78,6 +79,7 @@ block savedByAnOlderBuild:
   let s = readSettings(readFile(saved), "settings.nif", Settings(), problems)
   doAssert problems.len == 0, $problems
   doAssert not s.cursorLine and s.recentFiles.len == 1 and s.plot.display.mode == dmWiggle
+  doAssert not s.files.followLatest, "a new setting takes its default"
   doAssert cleaned(s)[1] == 0
 
 block everyField:

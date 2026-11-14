@@ -30,6 +30,7 @@ type
     canClose*: bool             ## a file is shown, so File > Close closes it
     layouts*: seq[SavedLayout]  ## View > Layout > Load: the user's, then the presets
     keepsLayouts*: bool         ## layouts can be saved by name (the program keeps its settings)
+    followLatest*: bool         ## File > Follow the latest file is checked
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -39,6 +40,7 @@ type
     browseRecent*: string ## a recent folder to list; "" for none
     clearRecent*: bool    ## "Clear the list" under File > Open recent
     loadLayout*: string   ## a layout file to load; "" for none
+    toggleFollow*: bool   ## File > Follow the latest file was clicked
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
@@ -54,6 +56,11 @@ const
   menuIcons: array[MenuAction, string] = [IconOpenFile, IconOpenFiles, IconOpenFolder,
     IconClose, IconQuit, IconTheme, IconSave, IconOpenFile, IconClose, IconSave, IconClose,
     IconSave, IconOpenFile, IconList, IconRecords, IconTasks, IconLog, IconExport]
+
+const FollowHelp* = "On: each file that appears in the folder listed is shown in the " &
+  "plot once it is completely written (its size has stopped changing and it is whole). " &
+  "Off: the plot stays on the file you chose; new files are marked in Files."
+  ## The tooltip of "Follow the latest", in the menu and in Files
 
 proc shortcutName*(a: MenuAction): string =
   ## The shortcut of `a` as shown to the user ("Ctrl+O"), or "".
@@ -144,6 +151,10 @@ proc drawMainMenu*(input: MenuInput): MenuResult =
       item(maClose, result)
       igEndDisabled()
       tip("Close the file the plot window shows")
+      if igMenuItem_Bool((IconFollow & "  Follow the latest file").cstring, nil,
+          input.followLatest, true):
+        result.toggleFollow = true
+      tip(FollowHelp)
       igSeparator()
       if igBeginMenu((IconSettings & "  Settings").cstring, true):
         item(maExportSettings, result)

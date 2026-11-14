@@ -63,6 +63,43 @@ Coming back to it is quick: its index is kept in the index cache (`viewSEG --pat
 shows where), so it is not read through again. The folder listed last is listed again at
 the next start.
 
+### Files that arrive while you look
+
+The folder listed is looked at again about once a second, so files a crew or a copy
+writes into it while you work appear in the list by themselves (no refresh needed):
+
+- A file that **appeared** after the folder was listed is marked with a **dot** until you
+  show it.
+- A file whose size or time **changed** at the last look is marked with a **pencil** and
+  its name is dimmed: it is being written. It stays listed, and you can click it to see
+  what is there so far.
+- A file that has stopped changing but **ends before its last trace** is marked with a
+  warning sign: it is still being written (the writer paused), or it was cut short.
+- The line under the table counts the new files and those being written.
+
+By default the Seismic window **stays on the file you chose**. Turn on **Latest** (the
+button beside the filter box, or **File > Follow the latest file**; it is remembered) to
+show each new file as soon as it is completely written: its size has stopped changing
+and it holds every trace it announces. A file still being written is never shown early;
+each new file is shown once, so stepping back to an older one is not undone, and the
+next new file is shown again.
+
+**When the file shown changes on disk** (an acquisition system writes it again, or a newer
+copy is put over it), viewSEG shows it again, as it is now, once it stops changing,
+keeping the display, the record and the scales; kills and polarity reversals made on the
+old file are set aside (Messages says so; Ctrl+Z in the Seismic window brings them back).
+If the file was **cut short**, viewSEG stops reading it at once and says so in Messages.
+On Linux and macOS one case remains: a file cut short by another program *while viewSEG is
+reading it* (in the fraction of a second a pan, zoom or new record takes) stops viewSEG
+with "Bus error". Do not copy over or truncate a file viewSEG is reading; copy the new file
+in under a new name, or rename it into place (Windows does not let a program cut a file
+another program is reading).
+
+Looking costs little: a folder of 5 000 files is looked at in about 15 ms, on a thread of
+its own; a slow network folder is looked at less often (ten times as long as a look
+takes), and a folder that cannot be read for a while (a share that went away) is said
+once in Messages and keeps its list.
+
 ## Step through the records of a file
 
 A file often holds several records (shots, receiver gathers, CDPs). The Seismic window shows

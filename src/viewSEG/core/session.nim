@@ -8,7 +8,7 @@
 ## Trace ids are survey-wide: `base + index`. Bases are never reused, so an id
 ## kept by a view never names a trace of a file opened later.
 
-import std/os
+import std/[os, times]
 import parseSEG
 import records
 
@@ -29,16 +29,20 @@ type
     gathers: seq[Gather]
     records: seq[RecordRow]
     columns: set[RecordColumn]
+    size: int64 ## the file's size when it was opened; -1 when not known
+    modified: Time ## its modification time then
 
 const NoSession* = SessionId(0)
 
 func `==`*(a, b: SessionId): bool {.borrow.}
 func `$`*(id: SessionId): string = "file " & $int(id)
 
-proc newSession*(path: string; file: sink SeismicFile): Session =
+proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
+    modified = Time()): Session =
   ## A session for `file`, opened from `path`, with its gathers and the
-  ## record list's rows. On the thread that opened the file.
-  result = Session(path: path, file: file)
+  ## record list's rows; `size` and `modified` are the file's as it was
+  ## opened. On the thread that opened the file.
+  result = Session(path: path, file: file, size: size, modified: modified)
   result.gathers = result.file.gathers
   result.records = recordRows(result.file, result.gathers)
   result.columns = columnsOf(result.records)
@@ -63,6 +67,10 @@ func recordColumns*(s: Session): set[RecordColumn] {.inline.} = s.columns
   ## The record list's columns some row has a value for.
 func len*(s: Session): int {.inline.} = s.file.len
   ## The number of traces.
+func size*(s: Session): int64 {.inline.} = s.size
+  ## The file's size in bytes when it was opened; -1 when not known.
+func modified*(s: Session): Time {.inline.} = s.modified
+  ## The file's modification time when it was opened.
 
 func traceIds*(s: Session): Slice[int] {.inline.} =
   ## The survey-wide ids of the file's traces.

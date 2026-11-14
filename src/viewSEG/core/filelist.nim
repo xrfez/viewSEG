@@ -29,6 +29,13 @@ const
   MaxChanges* = 4096 ## changes of the entries kept for the file table, at most
 
 type
+  FileStatus* = enum
+    ## What the folder's watch knows of a listed file.
+    fsSteady = "steady"    ## as listed, or as it was at the look before
+    fsWriting = "writing"  ## it changed since the look before, or just appeared: being written
+    fsShort = "incomplete" ## steady, but it ends before its last trace (still being written,
+                           ## or cut short)
+
   FileEntry* = object
     ## One seismic file of the list.
     path*: string ## absolute and normalized, as files are opened
@@ -36,6 +43,18 @@ type
     kind*: SeismicKind
     size*: int64
     modified*: Time
+    status*: FileStatus
+    isNew*: bool  ## it appeared after the folder was listed, and has not been shown yet
+
+  WatchedFile* = object
+    ## A file as a look at the folder (or a scan) found it.
+    path*: string
+    exists*: bool      ## false: it is gone (removed, renamed)
+    kind*: SeismicKind ## skUnknown: not seismic, or not yet (too short to tell)
+    size*: int64
+    modified*: Time
+    changing*: bool    ## it changed since the look before, or was not there then
+    listed*: bool      ## one of the files the listing names (else an open file elsewhere)
 
   EntryChangeKind* = enum
     ecAppended ## `count` entries were added at the end, from `at`

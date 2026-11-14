@@ -3,7 +3,8 @@
 ## a new plot window starts with (display, order, display header), how
 ## scales are stated, each monitor's calibration, the status bar's fields,
 ## the sort presets, the user's own sort keys, the Messages window's
-## toggles and the plot's cursor time line. Every field has a default.
+## toggles, the plot's cursor time line and whether the Files window follows
+## the latest file. Every field has a default.
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
 ## whole object, and the plot window's own commands (display, sort, display
@@ -42,6 +43,12 @@ type
     autoScroll*: bool = true ## follow new messages; off: stay where the user scrolled
     hidden*: set[Severity]   ## severities not shown (an error hides with sevFatal)
 
+  FilesView* = object
+    ## How the Files window follows its folder.
+    followLatest*: bool
+      ## show each new file in the plot once it is completely written; off:
+      ## the plot stays on the file the user chose
+
   Settings* = object
     theme*: string                                ## the theme file's name; "" follows the system
     window*: WindowPlacement
@@ -55,6 +62,7 @@ type
     customOrder*: seq[SortKey]                    ## the user's own keys, used last
     messages*: MessagesView                       ## the Messages window's toggles
     cursorLine*: bool                             ## the plot's cursor time line is on
+    files*: FilesView                             ## the Files window's toggles
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not

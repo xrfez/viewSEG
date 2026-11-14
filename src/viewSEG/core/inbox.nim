@@ -14,12 +14,13 @@ import filelist, jobs, log, nif, panels, session, tiles
 
 type
   MsgKind* = enum
-    mkOpened ## an open job's file
-    mkLog    ## a message for the log
-    mkLayout ## what a panel's traces span, from its reader
-    mkTile   ## samples a panel asked for, from its reader
-    mkRead   ## a document the disk thread read
-    mkListed ## files a folder scan found
+    mkOpened  ## an open job's file
+    mkLog     ## a message for the log
+    mkLayout  ## what a panel's traces span, from its reader
+    mkTile    ## samples a panel asked for, from its reader
+    mkRead    ## a document the disk thread read
+    mkListed  ## files a folder scan found
+    mkWatched ## what a look at the listed folder found changed
 
   ReadPurpose* = enum
     ## What a document is read for.
@@ -29,31 +30,39 @@ type
 
   Msg* = object
     ## One message for the UI thread.
-    job*: JobId                ## the job that sent it; `NoJob` for none
+    job*: JobId                  ## the job that sent it; `NoJob` for none
     case kind*: MsgKind
     of mkOpened: session*: Session
     of mkLog: entry*: LogEntry
     of mkLayout:
       panel*: PanelId
-      sourceGen*: uint64       ## the panel's `sourceGen` it answers
+      sourceGen*: uint64         ## the panel's `sourceGen` it answers
       layout*: PanelLayout
-      known*: set[HeaderField] ## the header fields the traces have values for
+      known*: set[HeaderField]   ## the header fields the traces have values for
     of mkTile: tile*: Tile
     of mkRead:
       purpose*: ReadPurpose
       readPath*: string
       content*: string
-      readError*: string       ## why it could not be read; "" when it was
-      doc*: seq[NifNode]       ## `content` as NIF, read on the disk thread
-      docError*: string        ## why `content` is not NIF; "" when it is (or was not read)
+      readError*: string         ## why it could not be read; "" when it was
+      doc*: seq[NifNode]         ## `content` as NIF, read on the disk thread
+      docError*: string          ## why `content` is not NIF; "" when it is (or was not read)
     of mkListed:
-      listGen*: uint64         ## the file list's `gen` it answers
-      listed*: seq[FileEntry]  ## seismic files, in natural order
-      others*: int             ## files found that are not seismic
-      unreadable*: int         ## files that could not be read
-      listDone*: bool          ## the scan's last message
-      listFolder*: string      ## the folder listed, once known; "" for files chosen one by one
-      listChosen*: string      ## the one file named, when only a file was named; "" otherwise
+      listGen*: uint64           ## the file list's `gen` it answers
+      listed*: seq[FileEntry]    ## seismic files, in natural order
+      others*: int               ## files found that are not seismic
+      unreadable*: int           ## files that could not be read
+      listDone*: bool            ## the scan's last message
+      listFolder*: string        ## the folder listed, once known; "" for files chosen one by one
+      listChosen*: string        ## the one file named, when only a file was named; "" otherwise
+      listLooked*: seq[WatchedFile]
+        ## with `listDone`: every file the scan looked at, seismic or not, as it
+        ## found it: what the folder's watch starts from
+    of mkWatched:
+      watchGen*: uint64 ## the file list's `gen` it is for
+      watched*: seq[WatchedFile] ## the files that changed, appeared or went, or stopped changing
+      watchProblem*: string ## why the folder cannot be looked at now; "" when it can
+      problemChanged*: bool ## `watchProblem` is news (it began, or ended)
 
   InboxObj = object
     lock: Lock

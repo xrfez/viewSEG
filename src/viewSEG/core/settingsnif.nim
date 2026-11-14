@@ -22,7 +22,8 @@
 ##  (sortPresets (preset "Line/Station" (key rcvLine) (key rcvPoint)))
 ##  (customOrder (key offset))
 ##  (messages (autoScroll true) (hide info))
-##  (cursorLine false))
+##  (cursorLine false)
+##  (files (followLatest false)))
 ## ```
 ##
 ## Reading is forgiving where it can be and says what it did: a setting that
@@ -204,6 +205,9 @@ proc settingsDocument*(s: Settings): string =
   w.close()
   w.close()
   w.value("cursorLine", s.cursorLine)
+  w.open("files")
+  w.value("followLatest", s.files.followLatest)
+  w.close()
   w.close()
   w.finish
 
@@ -491,6 +495,10 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
             result.messages.hidden = hidden
           else: r.unknown(k, "messages")
       of "cursorLine": r.flag(c, result.cursorLine)
+      of "files":
+        for k in c.kids:
+          if k.isTree("followLatest"): r.flag(k, result.files.followLatest)
+          else: r.unknown(k, "files")
       else: r.unknown(c, "settings")
   if version == 0:
     r.problem(doc[root], "(settings) gives no (version); read as version " &

@@ -69,14 +69,15 @@
 ## by removing an entry; views have "back". None of these needs a general
 ## history of commands.
 
-import std/[math, monotimes, os, sequtils, strutils, tables, times]
+import std/[math, monotimes, os, sequtils, sets, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 import diskio, edits, filejobs, filelist, inbox, jobs, layouts, log, panels, persist, pick,
-  reader, selection, session, settings, threads, tiles, zoom
+  reader, selection, session, settings, threads, tiles, watch, zoom
 
 export edits, filelist, inbox, jobs, layouts, log, panels, persist, pick, selection, session,
   settings, threads, tiles, zoom
+export WatchInterval
 
 const
   MainPanel* = PanelId(1)
@@ -173,8 +174,17 @@ type
     path: string
     session: Session ## a closing file's session, kept until its close job ends
     panel: PanelId   ## an open: the panel it is shown in (`ckShowFile`); NoPanel: the main one
+    gather: int      ## an open: the gather shown first (a file opened again: the one it showed)
     unwanted: bool   ## an open no longer wanted (another file was chosen): dropped when it comes
+    follow: bool     ## an open "Follow the latest" made: shown only when the file is whole
     quiet: bool      ## a close of a file the plot stepped away from: not logged
+
+  Reopen = object
+    ## A panel that showed a file another program changed: it shows the
+    ## file again once the file stops changing.
+    path: string
+    panel: PanelId
+    gather: int
 
   AppState* = object
     ## Everything the views show. Move-only.
@@ -191,6 +201,16 @@ type
     jump: tuple[path: string; trace, record: int]
       ## a trace to show once its file is open (`ckShowTrace`); "" for none
     oldScans: seq[JobId]  ## scans replaced by a newer listing: they end quietly
+    watch: FolderWatch
+      ## looks at the listed folder and the open files; none until needed
+    watchEvery: Duration  ## the pause between its looks
+    reopens: seq[Reopen]  ## panels waiting for a changed file to stop changing
+    followed: HashSet[string]
+      ## files "Follow the latest" opened (each is shown once)
+    onDiskSaid: Table[string, string]
+      ## per open file: what was said last of its changes
+    editStamps: Table[string, tuple[size: int64; modified: Time]]
+      ## per file with edits: its size and time when they were made
     notices: seq[Notice]  ## the newest `MaxNotices`
     nextNotice: int
     mail: seq[Msg]
@@ -226,17 +246,19 @@ type
       ## jobs and the files go.
 
 proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
-    jobHistory: Natural = DefaultJobHistory; indexCache = ""): AppState =
+    jobHistory: Natural = DefaultJobHistory; indexCache = "";
+    watchEvery = WatchInterval): AppState =
   ## The state of a program with no file open and one empty panel
   ## (`MainPanel`), with both job lanes running. Marks the calling thread as
   ## the UI thread. `indexCache` is the folder for parseSEG's index caches
   ## (the frontend passes one under the cache directory; it is created when
-  ## first needed); "" opens every file without one.
+  ## first needed); "" opens every file without one. The folder listed and
+  ## the open files are looked at every `watchEvery` (`core/watch`).
   markUiThread()
   result = AppState(log: initMessageLog(logCapacity), inbox: initInbox(),
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
     nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
-    files: FileList(job: NoJob))
+    files: FileList(job: NoJob), watchEvery: watchEvery)
   result.panels.add Panel(id: MainPanel)
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
@@ -248,6 +270,11 @@ proc diskIo(state: var AppState): lent DiskIo =
   ## The disk thread, started when first needed.
   if state.disk.isNil: state.disk = newDiskIo(state.inbox.poster)
   state.disk
+
+proc folderWatch(state: var AppState): lent FolderWatch =
+  ## The folder's watch, started when first needed.
+  if state.watch.isNil: state.watch = newFolderWatch(state.inbox.poster, state.watchEvery)
+  state.watch
 
 proc logTo*(state: var AppState; dir: string) =
   ## From now on, writes the log to a new file in `dir`, this run's session
@@ -379,6 +406,7 @@ proc shutdown*(state: var AppState) =
   assertUiThread()
   for r in state.readers:
     r.stop()
+  state.watch.stop()
   state.jobs.stop()
   if state.savedRev != state.settingsRev: state.saveSettings()
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
@@ -462,6 +490,24 @@ func windowTitle*(state: AppState; id: PanelId): string =
   ## second of a kind on ("Seismic", "Seismic 2", "Aux"; `panels`).
   let k = state.findPanel(id)
   if k < 0: "Seismic" else: windowTitle(state.panels, k)
+
+proc watchLook*(state: AppState): Duration =
+  ## How long the folder's watch took for its last look (it runs on its own
+  ## thread); zero before the first.
+  state.watch.lookTime
+
+func reopening*(state: AppState; panel: PanelId): tuple[path: string; waiting: bool] =
+  ## The file `panel` lets go of because another program changed it, and
+  ## shows again: `waiting` until the file stops changing, then while it
+  ## opens. ("", false) for none.
+  for r in state.reopens:
+    if r.panel == panel: return (r.path, true)
+  let k = state.findPanel(panel)
+  if k >= 0 and state.shownFile(k) < 0 and state.panels[k].layers.len > 0 and
+      state.panels[k].layers[0].source.kind == lsRecord:
+    for o in state.opening:
+      if o.panel == panel and not o.unwanted: return (o.path, false)
+  ("", false)
 
 func findSession*(state: AppState; id: SessionId): int =
   ## The index of open file `id` in `sessions`; -1 when it is not open.
@@ -626,7 +672,7 @@ proc newSource(state: var AppState; k: int) =
       let s = state.sessions[i]
       p.kind = s.gathers[g].kind
       if state.jobs.hold(s.path):
-        src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path,
+        src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path, size: s.size,
           traces: s.gathers[g].traces, filter: p.layers[0].filter, order: p.layers[0].order)
       else:
         busy = true
@@ -774,10 +820,21 @@ proc chooseShown(state: var AppState) =
   let i = state.shownFile(state.findPanel(MainPanel))
   state.choose(if i >= 0: state.sessions[i].path else: "")
 
-proc closeSession(state: var AppState; i: int; quiet = false) =
+proc watchOpen(state: var AppState) =
+  ## Tells the folder's watch which files are open now, or are to be shown
+  ## again once they stop changing.
+  var paths: seq[string]
+  for s in state.sessions: paths.add s.path
+  for r in state.reopens:
+    if r.path notin paths: paths.add r.path
+  if paths.len > 0 or not state.watch.isNil: state.folderWatch.watchOpen(paths)
+
+proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false) =
   ## Takes open file `i` out of every view at once, cancels the jobs that use
   ## it, and closes it once none does (after its close job, on this thread);
-  ## `quiet` logs nothing when it is closed.
+  ## `quiet` logs nothing when it is closed. With `keepLayers`, the panels
+  ## that showed it keep their layers (display, order, view) for the file
+  ## to be shown again, opened anew; they show nothing meanwhile.
   var s = move state.sessions[i]
   state.sessions.delete(i)
   for job in state.jobs.list:
@@ -786,16 +843,21 @@ proc closeSession(state: var AppState; i: int; quiet = false) =
       discard state.jobs.cancel(job.id)
   state.selection.forget(s.id, s.traceIds)
   for k in 0 ..< state.panels.len:
-    let before = state.panels[k].layers.len
-    state.panels[k].layers.keepItIf(not it.shows(s.id))
-    if state.panels[k].layers.len != before:
-      state.newSource(k) # the reader lets go of the file, then the close may run
+    if keepLayers:
+      if state.panels[k].layers.anyIt(it.shows(s.id)): state.newSource(k)
+    else:
+      let before = state.panels[k].layers.len
+      state.panels[k].layers.keepItIf(not it.shows(s.id))
+      if state.panels[k].layers.len != before:
+        state.newSource(k) # the reader lets go of the file, then the close may run
   # Not cancellable: the file must not be released while a job still reads it.
   let job = state.jobs.submit(JobSpec(title: "Close " & s.name, lane: jlInteractive,
     exclusive: @[s.path], cancellable: false), closeWork())
-  if state.files.chosen == s.path and state.shownFile(state.findPanel(MainPanel)) < 0:
+  if not keepLayers and state.files.chosen == s.path and
+      state.shownFile(state.findPanel(MainPanel)) < 0:
     state.choose("")
   state.closing.add Pending(job: job, path: s.path, session: s, quiet: quiet)
+  state.watchOpen()
 
 proc failed(state: var AppState; path: string) =
   ## Notes that `path` of the file list could not be shown.
@@ -851,16 +913,52 @@ proc showTrace(state: var AppState; k: int; i: int; trace: int; record = -1) =
     elif state.panels[k].layers[0].source.gather != g: state.show(state.panels[k].id, s.id, g)
     state.selection.select([s.base + trace], smReplace)
 
+proc mark(state: var AppState; path: string; short, seen: bool) =
+  ## Marks the file list's entry of `path`: with `short`, as ending before
+  ## its last trace (when the watch finds it steady); with `seen`, as not new.
+  let i = state.files.find(path)
+  if i >= 0:
+    template e: untyped = state.files.entries[i]
+    let was = (e.status, e.isNew)
+    if short and e.status == fsSteady: e.status = fsShort
+    if seen: e.isNew = false
+    if (e.status, e.isNew) != was: state.files.changedAt(i)
+
+proc checkEdits(state: var AppState; s: Session) =
+  ## Sets the edits of `s`'s path aside (as "Clear all edits" does, so Ctrl+Z
+  ## brings them back) when they were made on the file as it was before
+  ## another program changed it: by the trace's index, they may not fit.
+  if s.path notin state.edits or state.edits[s.path].isEmpty: return
+  let now = (size: s.size, modified: s.modified)
+  let was = state.editStamps.getOrDefault(s.path, now)
+  state.editStamps[s.path] = now
+  if was != now and state.edits[s.path].clearAll():
+    state.log.add(sevWarning, s.name, s.name & " changed on disk after its traces were " &
+      "edited, so its kills and polarity reversals are set aside: by trace number they may " &
+      "not fit the traces it holds now. Ctrl+Z (with the plot focused) brings them back.")
+
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
-  ## Takes in a file an open job opened, and shows its first gather in the
-  ## panel the open was for (the main panel unless `ckShowFile` named
-  ## another); drops it when no longer wanted.
+  ## Takes in a file an open job opened, and shows its first gather (or the
+  ## gather the open asks for) in the panel the open was for (the main panel
+  ## unless `ckShowFile` named another); drops it when no longer wanted, and
+  ## when "Follow the latest" opened it and it is not whole yet.
   var panel = MainPanel
   var replacing = false # `ckShowFile`: in place of the file the panel shows
+  var gather = 0
+  var follow = false
   for p in state.opening:
     if p.job == job:
       if p.unwanted: return # another file was chosen meanwhile: closed here
       if p.panel != NoPanel: (panel, replacing) = (p.panel, true)
+      (gather, follow) = (p.gather, p.follow)
+  if follow and s.file.kind != skUnknown and s.file.cutShort:
+    # Not shown early: it ends before its last trace. Shown when it changes and is whole.
+    state.mark(s.path, short = true, seen = false)
+    state.log.add(sevInfo, s.name, s.name & " is not shown yet: it ends before its last " &
+      "trace, so it is still being written (or was cut short). It is shown once it has " &
+      "changed and is whole; click it in Files to see it as it is.")
+    if panel == MainPanel: state.chooseShown()
+    return # `s` is closed here, on the UI thread: nothing else has it
   if s.file.kind == skUnknown:
     state.log.add(s.file.log, s.name)
     state.log.add(sevError, s.name, s.name & " is not a SEG-Y, SEG-D or SEG-2 file, " &
@@ -877,17 +975,23 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   state.log.add(sevInfo, "open", "Opened " & s.name & ": " & plural(s.len, "trace") &
     " in " & plural(s.gathers.len, "gather") &
     (if s.file.fromCache: " (index from the cache)." else: "."))
-  let gather = if s.gathers.len > 0: 0 else: -1
+  gather = if s.gathers.len == 0: -1 else: clamp(gather, 0, s.gathers.high)
   var st = state.settings
   st.recentFiles.addRecent(s.path, MaxRecent)
   st.recentFolders.addRecent(s.path.parentDir, MaxRecent)
   state.change st
+  state.checkEdits(s)
   let path = s.path
+  let short = s.file.cutShort
+  state.onDiskSaid.del path
   state.sessions.add s
+  state.watchOpen()
   let k = state.findPanel(panel)
   if replacing and k >= 0: state.showReplacing(k, id, gather)
   else: state.show(MainPanel, id, gather)
-  if panel == MainPanel: state.choose(path)
+  if panel == MainPanel:
+    state.choose(path)
+    state.mark(path, short, seen = true)
   if state.jump.path == path and k >= 0: # a message's trace, asked for before the file opened
     state.showTrace(k, state.sessions.high, state.jump.trace, state.jump.record)
     state.jump = ("", -1, -1)
@@ -954,16 +1058,19 @@ proc onFinished(state: var AppState; job: JobInfo) =
       state.notify(sevInfo, job.spec.title & " is done.")
   of jsQueued, jsRunning: discard
 
-proc showPath(state: var AppState; k: int; path: string) =
+proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = false) =
   ## Shows the file at `path` (canonical) in `panels[k]`, in place of the
-  ## one it shows: at once when it is open, else once an open job opened it.
-  ## An open started earlier for this panel and another file is no longer
-  ## wanted: it is cancelled, and dropped if it comes all the same.
+  ## one it shows: at once when it is open, else once an open job opened it
+  ## (at `gather`; with `follow`, only if it is whole). An open started
+  ## earlier for this panel and another file is no longer wanted: it is
+  ## cancelled, and dropped if it comes all the same; so is the wait to show
+  ## a changed file again.
   let panel = state.panels[k].id
   for o in state.opening.mitems:
     if o.panel == panel and o.path != path and not o.unwanted:
       o.unwanted = true
       discard state.jobs.cancel(o.job) # queued: never runs; running: asked to stop
+  state.reopens.keepItIf(it.panel != panel or it.path == path)
   if panel == MainPanel: state.choose(path)
   var i = -1
   for j, s in state.sessions:
@@ -974,12 +1081,15 @@ proc showPath(state: var AppState; k: int; path: string) =
     var o = -1
     for j, p in state.opening:
       if p.path == path and not p.unwanted: o = j
-    if o >= 0: state.opening[o].panel = panel
+    if o >= 0:
+      state.opening[o].panel = panel
+      if not follow: state.opening[o].follow = false # the user's own choice: shown as it is
     else:
       let job = state.jobs.submit(JobSpec(title: "Open " & path.extractFilename,
         lane: jlInteractive, reads: @[path]), openWork(path, state.inbox.poster,
-        indexCacheFile(state.indexCache, path)))
-      state.opening.add Pending(job: job, path: path, panel: panel)
+        indexCacheFile(state.indexCache, path), whole = follow))
+      state.opening.add Pending(job: job, path: path, panel: panel, gather: gather,
+        follow: follow)
 
 proc startListing(state: var AppState; paths: seq[string]; title, folder: string) =
   ## Lists the files `paths` (canonical) name in the file list, in place of
@@ -988,6 +1098,7 @@ proc startListing(state: var AppState; paths: seq[string]; title, folder: string
   if state.files.job != NoJob:
     discard state.jobs.cancel(state.files.job)
     state.oldScans.add state.files.job # it ends quietly
+  state.watch.unwatch() # until the scan is done
   let gen = state.files.gen + 1
   state.files = FileList(title: title, folder: folder, asked: paths, scanning: true, gen: gen,
     chosen: state.files.chosen, revision: state.files.revision + 1)
@@ -1009,7 +1120,11 @@ proc takeListed(state: var AppState; m: sink Msg) =
   f.merge(m.listed)
   f.others += m.others
   f.unreadable += m.unreadable
-  if m.listDone: f.scanning = false
+  if m.listDone:
+    f.scanning = false
+    # Watched from what the scan found: a folder listed, or the files chosen.
+    let paths = if f.folder.len > 0: @[f.folder] else: f.asked
+    state.folderWatch.watch(f.gen, paths, move m.listLooked)
   inc f.revision
   if state.showFound != NoPanel:
     let target = if m.listChosen.len > 0: m.listChosen
@@ -1019,6 +1134,124 @@ proc takeListed(state: var AppState; m: sink Msg) =
       let k = state.findPanel(state.showFound)
       state.showFound = NoPanel
       if k >= 0 and target.len > 0: state.showPath(k, target)
+
+proc followNewest(state: var AppState) =
+  ## With "Follow the latest": shows in the main panel the newest file that
+  ## appeared since the folder was listed and is steady, unless it was
+  ## followed already (each is shown once, so a file the user stepped away
+  ## from is not forced back) or failed to open.
+  if not state.settings.files.followLatest: return
+  template f: untyped = state.files
+  var best = -1
+  for i, e in f.entries:
+    if e.isNew and e.status == fsSteady and e.path != f.chosen and
+        e.path notin state.followed and e.path notin f.failed and
+        (best < 0 or e.modified >= f.entries[best].modified):
+      best = i
+  let k = state.findPanel(MainPanel)
+  if best >= 0 and k >= 0:
+    let path = f.entries[best].path
+    state.followed.incl path
+    state.showPath(k, path, follow = true)
+
+proc showAgain(state: var AppState; path: string) =
+  ## Shows `path` again in the panels that wait for it (`reopens`).
+  var waiting: seq[Reopen]
+  for r in state.reopens:
+    if r.path == path: waiting.add r
+  state.reopens.keepItIf(it.path != path)
+  for r in waiting:
+    let k = state.findPanel(r.panel)
+    if k >= 0: state.showPath(k, path, r.gather)
+
+proc reopen(state: var AppState; i: int; now: bool) =
+  ## Open file `sessions[i]` changed on disk: its panels let it go at once
+  ## (keeping their display and view), and show it again, opened anew, now,
+  ## or with `now` false once it stops changing.
+  let s = state.sessions[i]
+  let path = s.path
+  for k in 0 ..< state.panels.len:
+    template p: untyped = state.panels[k]
+    if p.layers.len > 0 and p.layers[0].shows(s.id):
+      state.reopens.add Reopen(path: path, panel: p.id, gather: p.layers[0].source.gather)
+  state.closeSession(i, quiet = true, keepLayers = true)
+  if now: state.showAgain(path)
+
+proc onDisk(state: var AppState; w: WatchedFile) =
+  ## What the watch saw of a file that is open, or that a panel waits for:
+  ## a file another program changed is opened again once it stops changing,
+  ## and one it cut short is let go of at once, so nothing reads past its new
+  ## end (which would end the program); a file removed or renamed stays shown
+  ## as it was read.
+  let name = w.path.extractFilename
+  var i = -1
+  for j, s in state.sessions:
+    if s.path == w.path: i = j
+  if i >= 0:
+    let s = state.sessions[i]
+    if not w.exists:
+      if state.onDiskSaid.getOrDefault(w.path) != "gone":
+        state.onDiskSaid[w.path] = "gone"
+        state.log.add(sevWarning, name, name & " was removed or renamed while it was open: " &
+          "it stays shown as it was read.")
+    elif w.size != s.size or w.modified != s.modified:
+      let cut = w.size < s.size
+      if cut:
+        state.log.add(sevWarning, name, name & " was cut short by another program while it " &
+          "was open (" & $s.size & " bytes, now " & $w.size & "), so it is no longer read: " &
+          "reading past its new end would stop viewSEG. It is shown again once it stops " &
+          "changing.")
+        state.reopen(i, now = not w.changing)
+      elif not w.changing:
+        state.log.add(sevInfo, name, name & " changed on disk (" & $s.size & " bytes, now " &
+          $w.size & "): it is shown again as it is now.")
+        state.reopen(i, now = true)
+      elif state.onDiskSaid.getOrDefault(w.path) != "changing":
+        state.onDiskSaid[w.path] = "changing"
+        state.log.add(sevInfo, name, name & " is being changed by another program: it is " &
+          "shown again once it stops changing.")
+  elif w.exists and not w.changing and state.reopens.anyIt(it.path == w.path):
+    state.showAgain(w.path)
+
+proc takeWatched(state: var AppState; m: sink Msg) =
+  ## What a look at the folder found: files that appeared (marked new),
+  ## changed (marked as being written until they stop), stopped changing or
+  ## went; then the open files' changes, and "Follow the latest".
+  template f: untyped = state.files
+  let listing = m.watchGen != 0 and m.watchGen == f.gen
+  if m.problemChanged and listing:
+    if m.watchProblem.len > 0:
+      state.log.add(sevWarning, "files", "Cannot look at the folder now: " & m.watchProblem &
+        ". The list keeps what it had; the folder is looked at again until it can be read.")
+    else:
+      state.log.add(sevInfo, "files", "The folder " & f.title & " can be looked at again.")
+  for w in m.watched:
+    if listing and w.listed:
+      let i = f.find(w.path)
+      if not w.exists:
+        if i >= 0: f.removeAt(i)
+        let failed = f.failed.find(w.path)
+        if failed >= 0: f.failed.delete(failed)
+      elif i < 0:
+        if w.kind != skUnknown:
+          discard f.insertEntry FileEntry(path: w.path, name: w.path.extractFilename,
+            kind: w.kind, size: w.size, modified: w.modified,
+            status: (if w.changing: fsWriting else: fsSteady), isNew: true)
+      else:
+        template e: untyped = f.entries[i]
+        let same = e.size == w.size and e.modified == w.modified
+        e.size = w.size
+        e.modified = w.modified
+        if w.changing:
+          e.status = fsWriting
+          state.followed.excl w.path # a file that changed is followed again once whole
+          let failed = f.failed.find(w.path) # and may open now
+          if failed >= 0: f.failed.delete(failed)
+        elif e.status == fsWriting or not same:
+          e.status = fsSteady # (steady and the same: an incomplete file stays marked)
+        f.changedAt(i)
+    state.onDisk(w)
+  state.followNewest()
 
 proc goToGather(state: var AppState; cmd: Command) =
   ## Shows gather `cmd.gather` of the file in layer 0 of `cmd.panel`.
@@ -1067,6 +1300,7 @@ proc editTraces(state: var AppState; cmd: Command) =
       if e.change(cmd.edit, traces, cmd.on) > 0:
         changed = e.last
         said = describe(changed).capitalizeAscii & "."
+        state.editStamps[s.path] = (s.size, s.modified) # made on the file as it is now
   of ckUndoEdit:
     if s.path in state.edits: changed = state.edits[s.path].undo()
     said = if changed.kind == lkNone: "Nothing to undo."
@@ -1217,7 +1451,9 @@ proc apply*(state: var AppState; cmd: Command) =
       state.log.add(sevWarning, "settings", $dropped & " of the settings given could not " &
         "be used (a calibration that is not a positive number, an entry given twice, a " &
         "sort preset without a name or keys) and were left out.")
+    let follow = s.files.followLatest and not state.settings.files.followLatest
     state.change s
+    if follow: state.followNewest() # the newest file whole now, at once
   of ckExportSettings:
     if not state.refusedExport(cmd):
       state.diskIo.replace(cmd.docPath, settingsDocument(state.settings),
@@ -1402,6 +1638,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkLog: state.log.add(move m.entry)
     of mkRead: state.takeIn(m)
     of mkListed: state.takeListed(move m)
+    of mkWatched: state.takeWatched(move m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:

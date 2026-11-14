@@ -101,6 +101,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, `ensureKeys`, survey joins, sorts across files |
 | Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes, folder scans, brute stack, conversions, exports and patches, queued workflows |
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
+| Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
 | Pool workers | processSEG: one `ProcessPool`, made by `core` at start-up | The rows of `pool.apply`, `pool.pickInto` and `pool.traceAmplitudeInto`; destroyed at shutdown, once every caller has stopped |
@@ -179,6 +180,40 @@ The list notes each change of its entries (`FileList.changes`: a batch added at 
 an entry added, changed or taken out), and the table follows them in the rows it has, so
 a batch, or one file that appears, costs a pass over the rows instead of a sort of a
 folder of 100 000 files.
+
+**Watching the folder** (`core/watch`). When a scan is done, its last message carries every
+file it looked at (`listLooked`), and the folder's watch, a thread of its own, starts from
+that: about once a second (`WatchInterval`; ten looks' time when a look is slow, as on a
+network share) it reads the folder's names and `stat`s each file, and posts what changed
+(`mkWatched`): a seismic file that appeared (a file being written is too short to tell at
+first, so a file not known to be seismic is sniffed again when it changes), one whose size
+or time changed since the look before (`changing`), one that stopped changing, one that
+went. No operating system notification is used, so it works the same on every system and
+on shares. A folder that cannot be read is said once and keeps its list. It is its own
+thread, not a job on the background lane, so a long background job (a QC pass) never
+holds it up and the Jobs window is not filled with looks; its `stop` waits two seconds at
+most, so a share that hangs a look cannot hold the quit. `AppState.takeWatched` updates
+the entries: a new one is marked `isNew` until it is shown, one that changed is
+`fsWriting` until a look finds it the same, one found cut short when opened is
+`fsShort`. With **Follow the latest** (`Settings.files.followLatest`), the newest file
+that is new and steady is shown in the main panel, once, through an open made with
+`whole`: if parseSEG finds it cut short (a `truncated` diagnostic), it is not shown (and
+not cached), and it is tried again once it has changed. Without it, nothing moves: the
+plot stays on the file the user chose.
+
+**An open file that changes on disk.** The watch also looks at the open files
+(`watchOpen`), and `AppState` compares each with its size and time when it was opened
+(`Session.size`, `modified`). One that grew or was written again is let go of and opened
+anew once it stops changing, in the same panels, at the same record and scales, with the
+same layers (`closeSession(keepLayers)`, `Reopen`); one that is shorter is let go of at
+once, since reading the map past the file's new end ends the program (SIGBUS), and shown
+again once it stops changing. The panel's reader also `stat`s the file before each read
+from it, and reads nothing of a file shorter than it was opened. What remains (POSIX
+only: Windows does not let a mapped file be cut): a file cut short by another program
+while a read of it is under way still ends the program; only reading the samples with
+`pread`, or a guard around decoding, in parseSEG, removes that. Edits made on a file are
+kept with its size and time; when the file is opened again changed, they are set aside
+as "Clear all edits" does, so Ctrl+Z brings them back.
 
 **Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
 severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`
@@ -443,13 +478,17 @@ type
     id: SessionId
     base: int                # survey-wide id of trace 0; bases are never reused
     path: string
+    size: int64              # the file's size and time just before it was opened
+    modified: Time
     file: SeismicFile        # parseSEG, move-only
     gathers: seq[Gather]
     records: seq[RecordRow]  # core/records: one row per gather for the record list
 
   FileList = object          # core/filelist: what the Files window lists
     title, folder: string    # the folder listed ("" for files chosen one by one)
-    entries: seq[FileEntry]  # path, name, kind (SEG-Y, SEG-D, SEG-2), size, modified
+    entries: seq[FileEntry]  # path, name, kind (SEG-Y, SEG-D, SEG-2), size, modified,
+                             # status (steady, writing, incomplete), isNew
+    changes: seq[EntryChange] # the newest changes of `entries`, for the file table
     others, unreadable: int  # files not listed
     scanning: bool
     gen: uint64              # bumped by each listing; a scan's messages carry it
@@ -516,7 +555,9 @@ type
     of mkLayout: panel, sourceGen, layout, known   # from a panel's reader
     of mkTile: tile: Tile          # moved, never shared
     of mkRead: purpose, readPath, content, readError # a document the disk thread read
-    of mkListed: listGen, listed, others, unreadable, listDone, listFolder, listChosen
+    of mkListed: listGen, listed, others, unreadable, listDone, listFolder, listChosen,
+      listLooked                   # with listDone: every file looked at, for the watch
+    of mkWatched: watchGen, watched, watchProblem, problemChanged # what a look found changed
     # to come: mkResult (FoldMap, StackResult, QC rows ...)
 
   AppState = object          # move-only; owned by the UI thread
@@ -529,6 +570,7 @@ type
                              # reversed, and the last change for the undo
     inbox: Inbox             # Poster handles for workers; freed with the last handle
     disk: DiskIo             # core/diskio: the session log, settings and layouts, off this thread
+    watch: FolderWatch       # core/watch: the folder listed and the open files, looked at
     indexCache: string       # the folder of parseSEG's index caches; "" for none
     settings: Settings       # what is remembered between runs; saved by `persist`
     tiles: seq[seq[Tile]]    # per panel: the newest four, oldest first
@@ -547,6 +589,7 @@ type
     customOrder: seq[SortKey]      # the user's own keys, used last
     messages: MessagesView         # the Messages window's toggles: auto-scroll, hidden severities
     cursorLine: bool               # the plot's cursor time line is on
+    files: FilesView               # the Files window: followLatest
 
   Pick = object              # core/pick: what lies under the pointer
     inside, found: bool      # over the plot; a tile holds the trace there

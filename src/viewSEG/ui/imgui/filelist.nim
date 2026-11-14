@@ -7,6 +7,13 @@
 ## show it, Home and End to the first and last. Only the rows in view are
 ## drawn (ImGui's list clipper), so a folder of thousands of files costs a
 ## frame no more than a few.
+##
+## The folder is watched (`core/watch`): a file that appears is listed and
+## marked new (a dot in the accent colour) until it is shown; one whose size
+## or time changed at the last look is marked as being written (a pencil, in
+## the warning colour), and one that ends before its last trace as
+## incomplete. "Follow the latest", at the foot, shows each new file once it
+## is whole; off, the plot stays on the file the user chose.
 
 import std/[os, times]
 import imguin/cimgui
@@ -27,6 +34,7 @@ type
     ## What the window asks for.
     commands*: seq[Command]
     actions*: set[MenuAction]
+    toggleFollow*: bool ## "Follow the latest" was clicked
 
 proc tip(text: string) =
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
@@ -36,6 +44,26 @@ proc tip(text: string) =
     igEndTooltip()
 
 func filterText(ui: FileListUi): string = $cast[cstring](addr ui.filter[0])
+
+func markOf(e: FileEntry): string =
+  ## The glyph before a file's name: being written, incomplete, new, or none.
+  case e.status
+  of fsWriting: IconWriting
+  of fsShort: IconWarning
+  of fsSteady: (if e.isNew: IconNew else: "")
+
+func markColour(e: FileEntry; t: Theme): Rgba =
+  if e.status == fsSteady: t.roles[rlAccent] else: t.roles[rlWarning]
+
+func markText(e: FileEntry): string =
+  ## What a file's mark means, for its tooltip.
+  result = case e.status
+    of fsWriting: "\nBeing written: its size or time changed at the last look. It is " &
+      "not shown by \"Follow the latest\" until it stops changing."
+    of fsShort: "\nIncomplete: it ends before its last trace (still being written, or " &
+      "cut short)."
+    of fsSteady: ""
+  if e.isNew: result.add "\nNew: it appeared after the folder was listed."
 
 func folderLabel(f: FileList): string =
   if f.folder.len > 0: f.folder.extractFilename
@@ -112,20 +140,35 @@ proc drawRows(ui: var FileListUi; f: FileList; t: Theme; marks: var Marks;
       igTableNextRow(0, 0)
       discard igTableNextColumn()
       let failed = e.path in f.failed
-      if failed: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlError]))
+      let x = igGetCursorPosX()
       igPushID_Int(cint(r))
-      if igSelectable_Bool(e.name.cstring, e.path == f.chosen,
+      if igSelectable_Bool("##row", e.path == f.chosen,
           ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and
           e.path != f.chosen:
         res.commands.add Command(kind: ckShowFile, panel: MainPanel, path: e.path)
       igPopID()
-      if failed: igPopStyleColor(1)
       marks.mark("files.row " & e.name)
       if r == chosenRow and ui.follow:
         if not igIsItemVisible(): igSetScrollHereY(0.5)
         ui.follow = false
       tip(e.path & "\n" & sizeText(e.size) & ", modified " & dateText(e.modified) &
-        (if failed: "\nIt could not be opened: Messages says why." else: ""))
+        markText(e) & (if failed: "\nIt could not be opened: Messages says why." else: ""))
+      # The mark and the name, over the row's selectable.
+      igSameLine(0, 0)
+      igSetCursorPosX(x)
+      let mark = markOf(e)
+      if mark.len > 0:
+        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(markColour(e, t)))
+        igTextUnformatted(mark.cstring, nil)
+        igPopStyleColor(1)
+        marks.mark("files.mark " & e.name)
+        igSameLine(0, -1)
+      let dim = e.status == fsWriting
+      if failed or dim:
+        igPushStyleColor_Vec4(ImGui_Col_Text.cint,
+          vec4(if failed: t.roles[rlError] else: t.roles[rlTextDim]))
+      igTextUnformatted(e.name.cstring, nil)
+      if failed or dim: igPopStyleColor(1)
       discard igTableNextColumn()
       igTextUnformatted(typeText(e).cstring, nil)
       discard igTableNextColumn()
@@ -141,7 +184,8 @@ proc drawRows(ui: var FileListUi; f: FileList; t: Theme; marks: var Marks;
   marks.mark("files.table")
 
 proc footer(f: FileList; shown: int; t: Theme) =
-  ## What the list holds, or how far the listing is, under the table.
+  ## What the list holds, or how far the listing is, under the table: how
+  ## many files are new and being written too.
   var text = ""
   var colour = t.roles[rlTextDim]
   if f.error.len > 0:
@@ -154,6 +198,12 @@ proc footer(f: FileList; shown: int; t: Theme) =
   else:
     text = $f.entries.len & (if f.entries.len == 1: " seismic file" else: " seismic files")
     if shown < f.entries.len: text.add ", " & $shown & " shown"
+    var fresh, writing = 0
+    for e in f.entries:
+      if e.isNew: inc fresh
+      if e.status == fsWriting: inc writing
+    if fresh > 0: text.add ", " & $fresh & " new"
+    if writing > 0: text.add ", " & $writing & " being written"
     if f.others > 0: text.add "; " & $f.others & " other files not listed"
     if f.unreadable > 0: text.add "; " & $f.unreadable & " could not be read"
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
@@ -186,16 +236,30 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
   # navigation does not move between the rows here.
   if igBegin(title.cstring, nil, ImGui_WindowFlags_NoNavInputs.cint):
     marks.markWindow("files")
-    let f = st.fileList
+    template f: untyped = st.fileList # a view: a copy would take every entry each frame
     if f.chosen != ui.chosen:
       ui.chosen = f.chosen
       ui.follow = true
     ui.drawFolderRow(f, st.settings.recentFolders, t, marks, result)
-    igSetNextItemWidth(-1)
+    # The filter, then "Follow the latest" at the row's end.
+    let following = st.settings.files.followLatest
+    let label = IconFollow & " Latest"
+    let style = igGetStyle()
+    let w = igCalcTextSize(label.cstring, nil, false, -1).x + 2 * style.FramePadding.x
+    igSetNextItemWidth(max(4 * igGetFontSize(), igGetContentRegionAvail().x - w -
+      style.ItemSpacing.x))
     discard igInputTextWithHint("##filter", (IconFilter & "  Filter by name").cstring,
       cast[cstring](addr ui.filter[0]), csize_t(ui.filter.len), 0, nil, nil)
     marks.mark("files.filter")
     tip("Show only the files whose names hold every word typed here")
+    igSameLine(0, -1)
+    if following: # drawn selected, as the plot's toggles are
+      igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(t.roles[rlSelection]))
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
+    if igButton(label.cstring, ImVec2_c(x: 0, y: 0)): result.toggleFollow = true
+    if following: igPopStyleColor(2)
+    marks.mark("files.follow")
+    tip("Follow the latest file: " & (if following: "on" else: "off") & ".\n" & FollowHelp)
     ui.drawRows(f, t, marks, result)
     footer(f, ui.table.rows.len, t)
     marks.mark("files.footer")

@@ -69,18 +69,29 @@ proc openSession*(path: string; progress: Progress = nil; cache = ""): Session =
   ## from the index cache file `cache` when that is current. Worker-only: it
   ## reads the file. Raises `IOError` or `OSError` when the file cannot be
   ## opened, and parseSEG's `SegCancelledError` when `progress` returns
-  ## false; problems with the data are in the file's log instead.
+  ## false; problems with the data are in the file's log instead. The
+  ## session keeps the file's size and time from just before it was opened,
+  ## so a change made meanwhile is seen as one (`Session.size`).
   assertWorkerThread()
   # Checked here too, for a plainer message, and because parseSEG 0.11 loses
   # a small allocation when it cannot open the file it is given.
   if not fileExists(path):
     raise newException(IOError, "there is no such file")
+  let info = getFileInfo(path)
   # parseSEG's record sources are objects with methods, which Nim cannot
   # prove GC-safe. Opening touches no global GC'd memory: parseSEG's viewer
   # guide opens files on a job thread, as here.
   {.cast(gcsafe).}:
     result = newSession(path, openSeismic(path, keys = true, progress = progress,
-      opts = OpenOptions(cache: cache)))
+      opts = OpenOptions(cache: cache)), info.size, info.lastWriteTime)
+
+func cutShort*(f: SeismicFile): bool =
+  ## Whether the file ends before a structure it announces is complete
+  ## (parseSEG's `truncated` diagnostic): a file still being written, or
+  ## cut short.
+  for d in f.log:
+    if d.code == dcTruncated: return true
+  false
 
 proc note(to: Poster; job: JobId; severity: Severity; path, text: string) =
   ## Posts `text` for the log, about file `path` (which `text` names).
@@ -106,12 +117,14 @@ proc saveCache(s: Session; cache: string; budget: int64; to: Poster; job: JobId)
       "file again.")
 
 proc openWork*(path: string; to: Poster; cache = "";
-    cacheBudget = DefaultIndexCacheBudget): JobWork =
+    cacheBudget = DefaultIndexCacheBudget; whole = false): JobWork =
   ## The work of a job that opens `path` and posts its session (`mkOpened`).
   ## With a `cache` file (`indexCacheFile`), a current cache is read instead
   ## of walking the file, and a file that had none gets one. A cancel asked
   ## for at any point before the session is posted closes the file again and
-  ## posts nothing.
+  ## posts nothing. With `whole` (an open the file list's "Follow the
+  ## latest" made, which shows the file only when it is complete), a file
+  ## cut short gets no cache: it is still being written.
   result = proc (ctx: JobContext) {.gcsafe.} =
     let cached = cache.len > 0 and fileExists(cache)
     ctx.setPhase(if cached: "reading the index cache" else: "indexing")
@@ -125,7 +138,8 @@ proc openWork*(path: string; to: Poster; cache = "";
           setLastModificationTime(cache, getTime()) # used now: pruned last
         except OSError:
           discard
-      elif s.file.demuxPath.len == 0: # a demultiplexed copy is never cached
+      elif s.file.demuxPath.len == 0 and not (whole and s.file.cutShort):
+        # (a demultiplexed copy is never cached)
         ctx.setPhase "saving the index cache"
         s.saveCache(cache, cacheBudget, to, ctx.id)
         ctx.checkCancelled()
@@ -184,9 +198,10 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
   ## and files, absolute) and posts them as `mkListed` messages for listing
   ## `gen`, in batches, the last one with `listDone`. One file alone stands
   ## for its folder: the folder is listed, and the first message names both
-  ## (`listFolder`, `listChosen`); one folder is named in it too. Raises
-  ## `OSError` when a folder cannot be read, `IOError` when the one path
-  ## given does not exist; stops at a cancel.
+  ## (`listFolder`, `listChosen`); one folder is named in it too; the last
+  ## one has every file it looked at (`listLooked`), for the folder's watch.
+  ## Raises `OSError` when a folder cannot be read, `IOError` when the one
+  ## path given does not exist; stops at a cancel.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading the folder"
     var asked = paths
@@ -203,6 +218,7 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
     let names = listedNames(asked)
     ctx.setPhase "looking at the files"
     var batch = Msg(job: ctx.id, kind: mkListed, listGen: gen)
+    var looked = newSeqOfCap[WatchedFile](names.len)
     var last = getMonoTime()
     for i, path in names:
       if not ctx.progress(i, names.len): raise newException(JobCancelledError, "cancelled")
@@ -214,6 +230,8 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
           inc batch.others
         else:
           let kind = sniff(path)
+          looked.add WatchedFile(path: path, exists: true, kind: kind, size: info.size,
+            modified: info.lastWriteTime, listed: true)
           if kind == skUnknown: inc batch.others
           else:
             batch.listed.add FileEntry(path: path, name: path.extractFilename, kind: kind,
@@ -226,4 +244,5 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
         last = getMonoTime()
     discard ctx.progress(names.len, names.len)
     batch.listDone = true
+    batch.listLooked = move looked
     to.post move batch

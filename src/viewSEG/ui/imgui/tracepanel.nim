@@ -1371,8 +1371,14 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
       let source = p.layers[0].source
       let s = if source.kind == lsRecord: st.findSession(source.file) else: -1
       let name = if s >= 0: st.sessions[s].name else: "the file"
+      let again = if s < 0: st.reopening(panel) else: ("", false)
       if tp.gpuError.len > 0:
         centredText("The plot cannot be drawn: " & tp.gpuError, t.roles[rlError])
+      elif again.path.len > 0:
+        let changed = again.path.extractFilename
+        centredText(if again.waiting: changed & " is being changed by another program: it " &
+            "is shown again once it stops changing."
+          else: "Opening " & changed & " again...", t.roles[rlTextDim])
       elif not p.laidOut:
         centredText("Reading " & name & "...", t.roles[rlTextDim])
       elif s >= 0 and st.sessions[s].gathers.len == 0:

@@ -704,7 +704,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   let menu = drawMainMenu(MenuInput(themes: ui.themes, theme: ui.selected,
     recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,
     canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
-    keepsLayouts: ui.keepsLayouts))
+    keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest))
   if menu.loadLayout.len > 0:
     ui.core.apply Command(kind: ckLoadLayout, docPath: menu.loadLayout)
   result = menu.actions
@@ -745,6 +745,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   if maShowFiles in ui.focus: bringForward(filesTitle)
   var files = ui.files.drawFileList(filesTitle, ui.core, ui.theme, ui.marks)
   result.incl files.actions
+  if files.toggleFollow or menu.toggleFollow:
+    var s = ui.core.settings
+    s.files.followLatest = not s.files.followLatest
+    ui.core.apply Command(kind: ckSettings, settings: s)
   for c in files.commands.mitems:
     ui.core.apply move c
   if maShowRecords in ui.focus: bringForward(recordsTitle)
