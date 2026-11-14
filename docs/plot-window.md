@@ -37,7 +37,10 @@
   trace and at the record's start and end. Zoomed out as far as it goes, the record
   fills the plot exactly.
 - **The time axis shows tick values only**, no title: the unit is in the ms/in box and
-  in the status bar.
+  in the status bar. Every label is as wide as the longest the record can have (its
+  first or last time, with the decimals of the finest step a view of it can show), so
+  the axis keeps one width and the plot's left edge does not move when the labels grow
+  from "999" to "1000" as the view pans.
 - **The cursor's time line**, a toggle in the strip after the fills (⊢; off by default,
   remembered between runs): when on, a thin line runs along the pointer's pixel row
   from the pointer across the plot to the time axis, and the pointer's time is written

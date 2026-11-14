@@ -32,6 +32,9 @@
 ## - `longSpreadSegy()`: SEG-Y, one shot record of `LongSpread` channels of
 ##   `LongSamples` samples (a 25 Hz sine), more traces than a plot has room
 ##   for as wiggles.
+## - `longRecordSegy()`: SEG-Y, one shot record of `Channels` traces of
+##   `LongRecordSamples` samples (6 s at `DtMs`), whose times run from one to
+##   four digits.
 ## - `demoFile(name)`: parseSEG's demo files (`demoFileNames`: a post-stack
 ##   line, a SEG-D shot with three auxiliaries, a Rev 2 record, a SEG-2 line).
 ##
@@ -219,6 +222,26 @@ proc longSpreadSegy*(fx: Fixtures): string =
   for i in 0 ..< LongSamples:
     buf[i] = float32(sin(2 * PI * WaveHz * float64(i) * DtMs / 1000))
   for channel in 1 .. LongSpread:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(channel), 0.0,
+      DtMs * 1000, tsLive)
+    w.writeTrace(k, buf)
+  w.checkClose()
+
+const LongRecordSamples* = 3000 ## samples per trace of `longRecordSegy`: 6 s at `DtMs`
+
+proc longRecordSegy*(fx: Fixtures): string =
+  ## One shot record of `Channels` traces, channel 1 .. `Channels`, of
+  ## `LongRecordSamples` samples: a 25 Hz sine fading over the record.
+  result = fx.dir / "long-record.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: one shot of " & $LongRecordSamples & " samples"]))
+  var buf = newSeq[float32](LongRecordSamples)
+  for i in 0 ..< LongRecordSamples:
+    let t = float64(i) * DtMs / 1000
+    buf[i] = float32(sin(2 * PI * WaveHz * t) * exp(-t / 3))
+  for channel in 1 .. Channels:
     var k = initTraceKeys()
     (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(channel), 0.0,
       DtMs * 1000, tsLive)

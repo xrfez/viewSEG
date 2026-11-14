@@ -43,7 +43,9 @@
 ## **The cursor's time line** (a toggle in the strip, a setting): a thin
 ## line from the pointer across to the time axis and the pointer's time at
 ## the axis, drawn over the image each frame, so it reads and redraws
-## nothing.
+## nothing. The time axis's labels are all as wide as the record's longest
+## (`view/timeaxis`), so the plot's left edge stays put as they change.
+## Ctrl + click does nothing: it is the mute editor's.
 ##
 ## Nothing about a plot sits in the main toolbar: the display mode, the
 ## gain (`plotgain`: the type and the amount in dB), the scales, zoom, fit,
@@ -959,7 +961,8 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
       igSetMouseCursor(ImGui_MouseCursor_ResizeAll.cint)
     if not down:
       if not tp.drag.moved and tp.drag.button == ImGui_MouseButton_Left.cint and hovered:
-        click = if io.KeyShift: clShiftClick else: clClick
+        # Ctrl + click is the mute editor's (docs/plot-window.md): nothing here.
+        click = if io.KeyCtrl: clNone elif io.KeyShift: clShiftClick else: clClick
       tp.drag = Drag()
   of dkBox:
     let a = clampTo(tp.drag.press, plot)
@@ -1112,6 +1115,9 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     ImPlot_SetupAxis(ImAxis_Y1.cint, nil, ImPlot_AxisFlags_Invert.cint or
       ImPlot_AxisFlags_NoMenus.cint or ImPlot_AxisFlags_NoGridLines.cint or
       ImPlot_AxisFlags_NoTickMarks.cint) # nothing drawn over the data
+    # Every label as wide as the longest the record can have, so the axis,
+    # and the plot's left edge, stay put as the labels change length.
+    ImPlot_SetupAxisFormat_Str(ImAxis_Y1.cint, ("%" & $timeLabelChars(p.layout) & "g").cstring)
     ImPlot_SetupAxesLimits(next.traces.lo, next.traces.hi, next.timeMs.lo, next.timeMs.hi,
       ImPlot_Cond_Always.cint)
     ImPlot_SetupFinish()
