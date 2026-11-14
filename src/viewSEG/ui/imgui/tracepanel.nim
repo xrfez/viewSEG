@@ -43,10 +43,13 @@
 ## Nothing about a plot sits in the main toolbar: the display mode, the
 ## gain (`plotgain`: the type and the amount in dB), the scales, zoom, fit,
 ## back, the record shown (previous, next, and "Go to record" by place or
-## FFID; Page Up / Page Down, Home / End and Ctrl + G), the trace order
-## (`plotsort`: the sort buttons, and the user's own keys from the menu)
-## and the display header's fields are here, in the strip (which wraps in a
-## narrow window) and in the plot's context menu (right click).
+## FFID; Page Up / Page Down, Home / End and Ctrl + G) and the trace order
+## (`plotsort`: the sort buttons and Custom...) are in the strip, which
+## wraps in a narrow window; the colours, the trace overlap, the display
+## header's fields and the scales in its gear popover. The plot's own menu
+## (right click) holds only functions on the data: the trace operations,
+## on the trace under the pointer or the selection, and the polarity of
+## every trace.
 
 import std/[math, os, strutils, tables]
 import imguin/cimgui
@@ -136,8 +139,9 @@ type
     traceBox, timeBox: ScaleBox
     calib: CalibrationUi
     sortKeys: SortKeysUi
-    stripWidths: array[7, float32] ## the strip's groups as drawn last frame
+    stripWidths: array[8, float32] ## the strip's groups as drawn last frame
     goto: GoToUi
+    menuTarget: string ## what the plot's menu acts on, said when it opened
 
   PanelOutput* = object
     ## What the plot window asks for.
@@ -188,6 +192,10 @@ proc show*(tp: var TracePanelUi; v: Viewport) =
 
 func drawnView*(tp: TracePanelUi): Viewport {.inline.} = tp.drawn
   ## The view of the last plot image (for tests).
+
+func menuTarget*(tp: TracePanelUi): lent string {.inline.} = tp.menuTarget
+  ## What the plot's menu said it acts on when it last opened: "Trace 12",
+  ## "3 selected traces", "No trace here" (for tests).
 
 proc plotImage*(tp: TracePanelUi): (seq[Rgba], int, int) =
   ## The last plot image, row by row from the top, and its size (for tests;
@@ -678,7 +686,10 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     tipAlways("Next record (Page Down; End: the last)")
   tp.stripGroup(5, right, 14, lift):
     drawSortButtons(p, st.settings.sortPresets, t, marks, res.commands)
-  tp.stripGroup(6, right, 8, lift):
+  tp.stripGroup(6, right, 2, lift): # on a line of its own in a narrow window
+    if drawCustomSort(p, st.settings.sortPresets, t, marks):
+      tp.sortKeys.openSortKeys(p, st.settings) # in the window's ID scope, as it is drawn
+  tp.stripGroup(7, right, 8, lift):
     if button(IconSettings & "##more", t, marks, "plot.more"):
       igOpenPopup_Str(moreId, 0)
     tip("Colours, display header, scale units and screen calibration")
@@ -792,6 +803,38 @@ proc drawHeader(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[
     ImDrawList_PopClipRect(dl)
   ImDrawList_PopClipRect(dl)
   discard paper
+
+func targetOf(under: int; pick: Pick; sel: Selection): string =
+  ## What the plot's menu acts on, in words: the selection when the trace
+  ## under the pointer (`under`, survey-wide) is in it, else that trace.
+  if under < 0: "No trace here"
+  elif under in sel.selected:
+    let n = sel.selected.len
+    if n == 1: "1 selected trace" else: $n & " selected traces"
+  else: "Trace " & $(pick.trace + 1)
+
+proc drawTraceMenu(tp: var TracePanelUi; p: Panel; marks: var Marks; res: var PanelOutput) =
+  ## The plot's right-click menu: functions on the data only. Its first
+  ## line says what the trace operations act on; then the operations on
+  ## that trace or the selection (not built yet: shown disabled, so the
+  ## menu has its final shape), then those on every trace.
+  if not igBeginPopup(menuId, 0): return
+  marks.markWindow("plot.menu")
+  igTextDisabled("%s", tp.menuTarget.cstring)
+  marks.mark("plot.menu.target")
+  igSeparator()
+  for (label, key, mark) in [("Reverse polarity", "R", "reverse"), ("Kill", "K", "kill"),
+      ("FFT in a new window", "F", "fft")]:
+    discard igMenuItem_Bool((label & "  (not available yet)").cstring, key.cstring, false,
+      false)
+    marks.mark("plot.menu." & mark)
+  igSeparator()
+  # An operation on the samples (processSEG's polarityOp), not a colour.
+  let reversed = p.layers[0].reversed
+  if igMenuItem_Bool("Reverse polarity of all traces", nil, reversed, true):
+    res.commands.add Command(kind: ckReverseAll, panel: p.id, reverse: not reversed)
+  marks.mark("plot.menu.reverse all")
+  igEndPopup()
 
 proc burst(tp: var TracePanelUi; g: Gesture): bool =
   ## Whether a wheel turn or key press of kind `g` starts a new gesture (for
@@ -1086,39 +1129,13 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     if click != clNone and under >= 0:
       res.commands.add Command(kind: ckSelect, traces: @[under],
         mode: (if click == clShiftClick: smToggle else: smReplace))
+    if menu: tp.menuTarget = targetOf(under, res.pick, st.selection)
     tp.cur = after
     if after != p.view:
       res.commands.add Command(kind: ckView, panel: p.id, view: after, remember: remember)
   ImPlot_PopStyleColor(1)
-  var sortKeys = false
-  if menu:
-    igOpenPopup_Str(menuId, 0)
-  if igBeginPopup(menuId, 0):
-    if igMenuItem_Bool((IconFit & "  Fit all").cstring, "Ctrl+0", false, true):
-      tp.show(fitAll(p.layout, p.view.columns, p.view.rows))
-    if igMenuItem_Bool((IconPrevious & "  Back").cstring, "Backspace", false, p.back.len > 0):
-      res.commands.add Command(kind: ckBack, panel: p.id)
-    igSeparatorText("Sort")
-    let order = layer.order
-    if igMenuItem_Bool("Sort by keys...", nil, order.len > 0 and
-        presetOf(order, st.settings.sortPresets) < 0, true):
-      sortKeys = true
-    marks.mark("plot.menu.sort keys")
-    if igMenuItem_Bool("File order", nil, order.len == 0, true) and order.len > 0:
-      res.commands.add Command(kind: ckSort, panel: p.id)
-    marks.mark("plot.menu.file order")
-    igSeparatorText("Colours")
-    drawColours(p, t, res)
-    igSeparatorText("Display header")
-    drawHeaderChoice(p, res)
-    igSeparatorText("Trace data")
-    # An operation on the samples (processSEG's polarityOp), not a colour.
-    if igMenuItem_Bool("Reverse polarity of all traces", nil, layer.reversed, true):
-      res.commands.add Command(kind: ckReverseAll, panel: p.id, reverse: not layer.reversed)
-    marks.mark("plot.menu.reverse all")
-    igEndPopup()
-  # Opened here, not in the menu, so that it has the window's ID, as below.
-  if sortKeys: tp.sortKeys.openSortKeys(p, st.settings)
+  if menu: igOpenPopup_Str(menuId, 0)
+  tp.drawTraceMenu(p, marks, res)
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)
 

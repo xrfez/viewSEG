@@ -8,9 +8,10 @@
 ## and so is the hover, drawn in the hover colour there and not three traces
 ## away;
 ## clicking the selected button again gives the file's order back; the
-## plot's menu opens the popover of the user's own keys, where a key's
-## direction is turned to descending and "Sort" sorts by them, with no
-## button selected; on traces with none of a button's keys (the survey has
+## strip's fourth button, Custom..., opens the popover of the user's own
+## keys, where a key's direction is turned to descending and "Sort" sorts
+## by them, with Custom... drawn selected and no other button; on traces
+## with none of a button's keys (the survey has
 ## no receiver line, point or component) the buttons are greyed out and a
 ## click changes nothing; and the file is never changed.
 ##
@@ -19,7 +20,9 @@
 ## pixels in the selection colour; with a click on the selected button
 ## sending its keys again instead of the file's order, `click again: the
 ## file's order` never saw the order go; with the popover opened inside the
-## menu's ID scope (`openSortKeys` called in the menu), it never opened; with
+## menu's ID scope (`openSortKeys` called in the menu), it never opened;
+## with Custom... not drawn selected under keys of the user's own (`own`
+## false), "Custom... is not drawn selected: 0.0026"; with
 ## the buttons never greyed out, `buttonsWithoutTheirKeys` found the survey
 ## sorted by line and point; with a tile's hovered row found by position
 ## instead of by trace (`hoverRow`), the file's order already had the hover
@@ -109,12 +112,14 @@ proc main() =
       float64(n) / max(1.0, float64(r.size.x * r.size.y))
 
     proc checkLit(f: FrameInfo; selected: int) =
-      ## Button `selected` (-1: none) is drawn on the selection colour, the
-      ## others are not.
-      for i, s in SortPresets:
-        let share = f.lit(f.markOf("plot.sort." & s.name))
-        if i == selected: doAssert share > 0.4, s.name & " is not drawn selected: " & $share
-        else: doAssert share < 0.05, s.name & " is drawn selected: " & $share
+      ## Button `selected` (-1: none; `SortPresets.len`: Custom...) is drawn
+      ## on the selection colour, the others are not.
+      for i in 0 .. SortPresets.len:
+        let name = if i < SortPresets.len: SortPresets[i].name else: "Custom..."
+        let share = f.lit(f.markOf(if i < SortPresets.len: "plot.sort." & name
+                                   else: "plot.sort.custom"))
+        if i == selected: doAssert share > 0.4, name & " is not drawn selected: " & $share
+        else: doAssert share < 0.05, name & " is drawn selected: " & $share
       inc looked
 
     proc pointAt(f: FrameInfo; position: int): Vec2 =
@@ -222,19 +227,11 @@ proc main() =
       if result: want = seismic)
     checkPicks("the file's order again", -1)
     clickPreset(SortPresets.high)
-    # the user's own keys, from the plot's menu
-    var q: Vec2
-    step("right click on the plot", proc (f: FrameInfo) =
-      q = f.pointAt(20)
-      f.moveMouse(q), proc (f: FrameInfo): bool = true)
-    step("the menu opens", proc (f: FrameInfo) =
-      f.pressMouse(q, true, button = 3)
-      f.pressMouse(q, false, button = 3), proc (f: FrameInfo): bool =
-      f.markOf("plot.menu.sort keys").size.x > 0)
-    step("point at Sort by keys", proc (f: FrameInfo) =
-      f.moveMouse(f.markOf("plot.menu.sort keys").centre), proc (f: FrameInfo): bool = true)
+    # the user's own keys, from the strip's Custom... button
+    step("point at Custom...", proc (f: FrameInfo) =
+      f.moveMouse(f.markOf("plot.sort.custom").centre), proc (f: FrameInfo): bool = true)
     step("the popover opens", proc (f: FrameInfo) =
-      f.click(f.markOf("plot.menu.sort keys").centre), proc (f: FrameInfo): bool =
+      f.click(f.markOf("plot.sort.custom").centre), proc (f: FrameInfo): bool =
       f.markOf("plot.sort keys").size.x > 0 and f.markOf("plot.sort keys.direction 0").size.x > 0)
     step("point at the first key's direction", proc (f: FrameInfo) =
       f.moveMouse(f.markOf("plot.sort keys.direction 0").centre), proc (f: FrameInfo): bool =
@@ -251,7 +248,7 @@ proc main() =
       result = f.panel.layers[0].order == custom and f.answered and
         f.markOf("plot.sort keys").size.x == 0
       if result: want = expected(keys, seismic, custom))
-    checkPicks("component descending", -1)
+    checkPicks("component descending", SortPresets.len)
 
     # ------------------------------------------------------------ driver --
     proc onFrame(f: FrameInfo) =
@@ -325,7 +322,8 @@ block buttonsWithoutTheirKeys:
 # mixed-order fixture (sort-components.png: By Flag, the display header
 # showing line, point and component), and, when the example files are
 # present (they are local only), the popover of the user's own keys on a
-# real record sorted by offset (sort-morgantown.png): docs/screenshots/
+# real record sorted by offset, opened by the strip's Custom... button
+# (sort-morgantown.png): docs/screenshots/
 # holds the committed ones.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
@@ -338,8 +336,8 @@ proc sortShot(path, file: string; order: seq[SortKey]; header: seq[HeaderField];
     traces: Span; popover: bool) =
   ## Opens `path` in a 1600 x 1000 window, sorts it by `order` (with the
   ## display header `header` when not empty), shows `traces` (all when
-  ## empty), opens the popover of the user's own keys from the plot's menu
-  ## when `popover`, and saves the frame.
+  ## empty), opens the popover of the user's own keys with the strip's
+  ## Custom... button when `popover`, and saves the frame.
   let dir = getEnv("VIEWSEG_SCREENSHOTS")
   var stage = 0
   var wait = 0
@@ -375,10 +373,7 @@ proc sortShot(path, file: string; order: seq[SortKey]; header: seq[HeaderField];
         stage = if popover: 2 else: 5
     of 2:
       if wait == 3:
-        f.pressMouse(q, true, button = 3)
-        f.pressMouse(q, false, button = 3)
-      if wait > 6 and f.markOf("plot.menu.sort keys").size.x > 0:
-        q = f.markOf("plot.menu.sort keys").centre
+        q = f.markOf("plot.sort.custom").centre
         f.moveMouse(q)
         wait = 0
         stage = 3

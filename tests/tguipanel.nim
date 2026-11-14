@@ -288,7 +288,8 @@ withFixtures fx:
     # the window, above the plot; nothing makes the window scroll.
     const strip = ["plot.Greyscale density", "plot.Wiggle", "plot.trace scale",
       "plot.time scale", "plot.zoom out", "plot.zoom in", "plot.fit", "plot.back",
-      "plot.sort.Line/Station", "plot.sort.By Flag", "plot.sort.By Component", "plot.more"]
+      "plot.sort.Line/Station", "plot.sort.By Flag", "plot.sort.By Component", "plot.sort.custom",
+      "plot.more"]
     var marks: seq[(string, Rect)]
     proc onNarrow(f: FrameInfo) =
       if f.answered and f.markOf("plot.data").size.x > 0:

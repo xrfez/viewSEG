@@ -134,6 +134,11 @@ swing a trace, in trace spacings (1 reaches the next trace; anything stronger is
 there), and the colours: paper (black on white; negative fills red), the theme's colours,
 or your own.
 
+**The plot's menu** (right-click the plot) holds what acts on the data, and nothing about
+how it looks. Its first line names what it acts on: the trace under the pointer, or the
+selection when that trace is selected. Reverse polarity, Kill and FFT in a new window are
+listed, greyed out: they are not available yet.
+
 **Polarity.** Right-click the plot and choose **Reverse polarity of all traces** to see
 every trace 180 degrees out of phase; the item is ticked while it is on, and choosing it
 again goes back. It reverses the data itself, before the gain, so the status bar's
@@ -165,9 +170,9 @@ corner (an axis that showed the whole record goes on showing all of it).
 (receiver line, then station), **By Flag** (the same, with each station's components side
 by side, in order) and **By Component** (the traces grouped by component, each group by
 line, then station). The button of the order in use is highlighted; click it again for
-the file's order. For an order of your own, right-click the plot and choose **Sort by
-keys...**: pick the header fields to sort by, the first first, each ascending or
-descending, and click Sort. Sorting never changes the file, and the display header and
+the file's order. For an order of your own, click the fourth button, **Custom...**: pick
+the header fields to sort by, the first first, each ascending or descending, and click
+Sort (Custom... is then highlighted; *File order* there goes back). Sorting never changes the file, and the display header and
 the status bar follow the order shown.
 
 **Scales.** The two boxes over the plot state the zoom as traces per inch and ms per inch.

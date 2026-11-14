@@ -109,7 +109,7 @@
     Exponential, Normalized per trace), a trace marked dead in the file is drawn blank,
     and a sample that is not a number counts as 0, so such a trace never shows up
     saturated at its raw amplitude among gained ones;
-  - **three sort buttons**, the button of the order in use drawn selected:
+  - **three sort buttons and Custom...**, the button of the order in use drawn selected:
 
     | Button | Order |
     |---|---|
@@ -117,17 +117,17 @@
     | By Flag | receiver line, then station, then component: a station's components side by side, in order |
     | By Component | the traces grouped by component, each group by line, then station |
 
-    Clicking the selected button again goes back to the file's order. A button whose
-    keys the traces have none of (post-stack data has no receiver line, point or
-    component) is greyed out, as it would change nothing. Other orders are
-    keys of the user's own, from the plot's menu ("Sort by keys..."): a small popover
-    lists the keys, the first first, each a display header field (line, point,
-    component, channel, FFID, source line and point, offset, CDP, inline, crossline,
-    trace number) and each ascending or descending; "Sort" applies them, "File order"
-    goes back. Traces equal in every key keep the file's order, and unknown values come
-    last either way. The keys sorted by last are remembered and offered again; the
-    buttons themselves are data in the settings (`sortPresets` in `settings.nif`), so a
-    site can rename them or add its own;
+    Clicking the selected button again goes back to the file's order (each button's tip
+    says so). A button whose keys the traces have none of (post-stack data has no receiver
+    line, point or component) is greyed out, as it would change nothing. Other orders are
+    keys of the user's own, from the fourth button, **Custom...**, drawn selected while
+    such an order is in use: a small popover lists the keys, the first first, each a
+    display header field (line, point, component, channel, FFID, source line and point,
+    offset, CDP, inline, crossline, trace number) and each ascending or descending; "Sort"
+    applies them, "File order" goes back. Traces equal in every key keep the file's order,
+    and unknown values come last either way. The keys sorted by last are remembered and
+    offered again; the buttons themselves are data in the settings (`sortPresets` in
+    `settings.nif`), so a site can rename them or add its own;
   - the **record** shown: the previous and next record, and its place ("2 / 120"), which
     opens **Go to record** (a place in the file or an FFID). The next record is shown at
     the same scales as the one before (the same positions and times; the whole record
@@ -213,7 +213,7 @@ its shortcut shown there.
 | Ctrl + left drag | **Velocity ruler:** a line from press to release; its apparent velocity is shown beside it until Esc |
 | Ctrl + left click | Add a point to the mute being edited (only while the mute editor is open; otherwise nothing) |
 | Right drag | **Box zoom** to the dragged rectangle |
-| Right click | **Context menu** of the trace under the cursor (see below) |
+| Right click | **The plot's menu:** the trace operations, on the trace under the cursor or the selection (see below) |
 | Middle drag | Pan (always, also while a ruler or mute is being drawn) |
 | Drag a scroll bar's thumb | Pan along that bar |
 | Click a scroll bar's track | Pan by a whole view towards the click; held, it repeats |
@@ -282,26 +282,30 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Up / Down, Page Up / Page Down, Home / End (record list focused) | The next / previous record, a page on / back, the first / last record, shown in the plot |
 | Click a record in the record list | Show it in the plot |
 
-## The trace context menu
+## The plot's menu: functions on the data
 
-Right-click a trace. If it is in the selection, the menu acts on the whole selection;
-otherwise on that trace alone, and the selection stays as it was.
+Right-click the plot. The menu holds only what acts on the data; how the plot looks is in
+the strip (display modes, gain, sort, zoom, fit, back) and in the gear popover (colours,
+trace overlap, display header, scales).
+
+Its first line says what the trace operations act on: the trace under the pointer
+("Trace 37"), or, when that trace is in the selection, the whole selection ("12 selected
+traces"); the selection stays as it was. Over no trace it says "No trace here".
 
 | Item | Key | |
 |---|---|---|
+| Reverse polarity | `R` | that trace or the selection, 180 degrees out of phase; marked in the display header; remembered for the file |
 | Kill / Restore | `K` | drawn blank, left out of processing, spectra and statistics; remembered for the file |
-| Reverse polarity | `R` | marked in the display header; remembered for the file |
 | FFT in a new window | `F` | amplitude spectrum, raw and processed; several can be open |
-| Show headers | `H` | the trace's header in the header table |
-| Select its station on the map | `M` | |
+| Reverse polarity of all traces | | every trace of the window, ticked while on ([Polarity](#polarity)) |
+
+The first three are listed, greyed out with "(not available yet)", until they are built;
+later: show headers (`H`), select its station on the map (`M`), and, perhaps, a filter on
+one trace.
 
 Edits to traces are lists kept beside the file, never written into it: each is undone by
 its inverse, Ctrl + Z reverts the last one, and "Clear all edits for this file" returns to
 the file as it is on disk.
-
-Right-clicking an empty part of the plot opens the plot's own menu: fit all, back, the
-order ("Sort by keys...", "File order"), colours, display header fields. The display
-modes are in the strip only.
 
 ## Empty and first-run state
 
@@ -381,8 +385,8 @@ Defaults taken in this draft, for the user to confirm or change:
     Windows), rather than jumping the thumb to the pointer.
 16. **Line/Station and By Flag differ only within a station:** Line/Station keeps a
     station's traces in the file's order, By Flag puts its components in order. Clicking
-    the selected sort button goes back to the file's order (there is no fourth button
-    for it; the plot's menu also has "File order").
+    the selected sort button goes back to the file's order (there is no button for it;
+    the Custom... popover also has "File order").
 17. **A sort keeps the view** (the same positions and times, so the scale boxes keep
     their values) rather than fitting the whole gather; "back" is not changed by a sort.
 18. **Sort keys are the display header's fields** (the trace keys parseSEG reads for
