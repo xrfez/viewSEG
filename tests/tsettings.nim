@@ -51,7 +51,7 @@ proc everyFieldSet(): Settings =
     sortPresets: @[SortPreset(name: "Mine", keys: @[SortKey(field: hfOffset, descending: true)]),
       SortPreset(name: "Channels", keys: @[SortKey(field: hfChannel)])],
     customOrder: @[SortKey(field: hfSrcPoint), SortKey(field: hfTrace, descending: true)],
-    messages: MessagesView(autoScroll: false, hidden: {sevInfo, sevWarning}))
+    messages: MessagesView(autoScroll: false, hidden: {sevInfo, sevWarning}), cursorLine: true)
   result.plot = PlotDefaults(
     display: DisplaySettings(mode: dmWiggleDensity, fills: {wfNegative}, colours: pcCustom,
       custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),
@@ -67,6 +67,16 @@ proc everyFieldSet(): Settings =
 proc roundTrip(s: Settings; base = Settings()): (Settings, seq[string]) =
   var problems: seq[string]
   result = (readSettings(settingsDocument(s), "settings.nif", base, problems), problems)
+
+block savedByAnOlderBuild:
+  # The settings a 0.1.0 build wrote read with no problem; what that build
+  # did not have (the cursor time line) takes its default.
+  const saved = currentSourcePath().parentDir / "data" / "saved-0.1.0" / "settings.nif"
+  var problems: seq[string]
+  let s = readSettings(readFile(saved), "settings.nif", Settings(), problems)
+  doAssert problems.len == 0, $problems
+  doAssert not s.cursorLine and s.recentFiles.len == 1 and s.plot.display.mode == dmWiggle
+  doAssert cleaned(s)[1] == 0
 
 block everyField:
   let s = everyFieldSet()

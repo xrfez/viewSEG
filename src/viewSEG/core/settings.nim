@@ -2,8 +2,8 @@
 ## The theme, where the main window was, the recent files and folders, what
 ## a new plot window starts with (display, order, display header), how
 ## scales are stated, each monitor's calibration, the status bar's fields,
-## the sort presets, the user's own sort keys and the Messages window's
-## toggles. Every field has a default.
+## the sort presets, the user's own sort keys, the Messages window's
+## toggles and the plot's cursor time line. Every field has a default.
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
 ## whole object, and the plot window's own commands (display, sort, display
@@ -54,6 +54,7 @@ type
     sortPresets*: seq[SortPreset] = @SortPresets  ## the plot window's sort buttons
     customOrder*: seq[SortKey]                    ## the user's own keys, used last
     messages*: MessagesView                       ## the Messages window's toggles
+    cursorLine*: bool                             ## the plot's cursor time line is on
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not

@@ -9,15 +9,16 @@
 
 ```
 ┌ Seismic ───────────────────────────────────────────────────┐
-│ [▒|∿|▒∿][◢|◣] [gain▾] [-][+0.0][+] dB [12.5] tr/in [200] ms/in│  controls (they
-│ [-][+][fit][<] [Line/Station|By Flag|By Component] [⋯]     │  wrap when narrow)
+│ [▒|∿|▒∿][◢|◣][⊢] [gain▾] [-][+0.0][+] dB [12.5] tr/in [200]│  controls (they
+│ ms/in [-][+][fit][<] [Line/Station|By Flag|By Component]   │  wrap when narrow)
+│ [Custom...] [⋯]                                            │
 ├────────────────────────────────────────────────────────────┤
 │ line    100  100  100  100  100  100  100  100  100        │  display header
 │ point   101  103  105  107  109  111  113  115  117        │  (thinned to fit)
 ├────────────────────────────────────────────────────────────┤
 │    0   ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏   ┃ │  time: values only
-│        traces across, time down                          ┃ │  scroll bars when
-│ 4000                                                     ┃ │  data is out of view
+│ [1234]──────────────┼ traces across, time down           ┃ │  the cursor's time
+│ 4000                                                     ┃ │  line; scroll bars
 │        ━━━━━━━━━━                                          │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -37,6 +38,15 @@
   fills the plot exactly.
 - **The time axis shows tick values only**, no title: the unit is in the ms/in box and
   in the status bar.
+- **The cursor's time line**, a toggle in the strip after the fills (⊢; off by default,
+  remembered between runs): when on, a thin line runs along the pointer's pixel row
+  from the pointer across the plot to the time axis, and the pointer's time is written
+  at the axis on that row, right-aligned as the tick values are, on a small box over
+  them, to the sample interval (whole ms at 1 ms or coarser). It is drawn over the plot's image each
+  frame, so it follows the pointer without lag and reads and redraws nothing; it is not
+  drawn when the pointer is off the plot. Its colour is the theme's crosshair colour,
+  made readable on the plot's background, with a halo of that background on each side,
+  so it shows on paper and on the theme's plot, over wiggles and over density.
 - **Scroll bars** appear when part of the data is out of view: under the plot when not
   every trace is shown, right of it when not all of the record's time is; none when
   everything is in view. The thumb's length is the share in view. Dragging the thumb

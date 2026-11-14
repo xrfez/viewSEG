@@ -2,7 +2,8 @@
 ## window's draw list, so they are crisp at any size and take any theme colour:
 ## the display modes (wiggle, positive fill, negative fill, greyscale density,
 ## wiggle over density),
-## the gather domains (shot, receiver) and the map markers (source, receiver).
+## the gather domains (shot, receiver), the map markers (source, receiver)
+## and the cursor's time line.
 ##
 ## Traces run downwards (time increases down the screen), as in the trace
 ## panel. The density symbol is drawn in neutral greys whatever the theme, like
@@ -25,6 +26,7 @@ type
     syReceiverGather = "Receiver gather"
     sySource = "Source"
     syReceiver = "Receiver"
+    syCursorTime = "Cursor time line"
 
   SymbolColours* = object
     line*: Rgba ## strokes and markers
@@ -123,6 +125,18 @@ proc drawSymbol*(dl: ptr ImDrawList; sym: Symbol; topLeft: ImVec2_c; size: float
     star(dl, x0 + s * 0.5, y0 + s * 0.53, s * 0.42, line)
   of syReceiver:
     triangleDown(dl, x0 + s * 0.5, y0 + s * 0.45, s * 0.38, line)
+  of syCursorTime:
+    # a time axis at the left, its ticks, and a line from the pointer (a
+    # cross at the right) across to it, in the fill colour
+    let axis = x0 + s * 0.22
+    ImDrawList_AddLine(dl, p(axis, y0 + s * 0.08), p(axis, y0 + s * 0.92), line, thick)
+    for k in 0 .. 3:
+      let y = y0 + s * (0.14 + 0.24 * k.float32)
+      ImDrawList_AddLine(dl, p(axis - s * 0.12, y), p(axis, y), line, thick)
+    let (cx, cy) = (x0 + s * 0.78, y0 + s * 0.5)
+    ImDrawList_AddLine(dl, p(axis, cy), p(cx, cy), u32(c.fill), thick * 1.5)
+    ImDrawList_AddLine(dl, p(cx, cy - s * 0.16), p(cx, cy + s * 0.16), line, thick)
+    ImDrawList_AddLine(dl, p(cx - s * 0.16, cy), p(cx + s * 0.16, cy), line, thick)
 
 func symbolColours*(t: Theme; selected = false): SymbolColours =
   ## The theme's colours for a symbol: text-coloured strokes, accent fills; a

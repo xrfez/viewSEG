@@ -176,6 +176,11 @@ the header fields to sort by, the first first, each ascending or descending, and
 Sort (Custom... is then highlighted; *File order* there goes back). Sorting never changes the file, and the display header and
 the status bar follow the order shown.
 
+**Cursor time line.** The button after the fill buttons (a line drawn to an axis) turns
+on a thin line from the pointer across to the time axis, with the pointer's time written
+at the axis, so a time can be read off against the tick values. It follows the pointer
+and goes when the pointer leaves the plot; viewSEG remembers whether it is on.
+
 **Scales.** The two boxes over the plot state the zoom as traces per inch and ms per inch.
 Type a value and press Enter to set it; zooming any other way updates them. The settings
 button (the gear) switches to per cm, or time as inches per second, and calibrates the
@@ -209,12 +214,12 @@ stepped away from it.
 
 Everything you set is kept for the next run, in `settings.nif` in the settings folder
 (`config/` next to the program, or the folder `viewSEG --paths` names): the theme, where
-the window was and its size, the recent files and folders, how the plot looks (display mode, fills,
-overlap, colours, gain type and amount, the sort order and the display header: a new plot
-starts as you left the last one; polarity is not kept), scale units and screen
-calibrations, the status bar's fields, the sort buttons and your own sort keys, and the
-Messages window's toggles. It is
-saved a second after a change and when you quit.
+the window was and its size, the recent files and folders, how the plot looks (display
+mode, fills, overlap, colours, gain type and amount, the sort order and the display
+header: a new plot starts as you left the last one; polarity is not kept), the cursor
+time line, scale units and screen calibrations, the status bar's fields, the sort buttons
+and your own sort keys, and the Messages window's toggles. It is saved a second after a
+change and when you quit.
 
 **Layouts.** The windows open where they were when you quit (`layout.nif` beside the
 settings). **View > Layout** saves the arrangement on screen under a name (*Save as...*),

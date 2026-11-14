@@ -40,6 +40,11 @@
 ## a uniform and a small texture of marks per tile, so a hover reads and
 ## uploads nothing.
 ##
+## **The cursor's time line** (a toggle in the strip, a setting): a thin
+## line from the pointer across to the time axis and the pointer's time at
+## the axis, drawn over the image each frame, so it reads and redraws
+## nothing.
+##
 ## Nothing about a plot sits in the main toolbar: the display mode, the
 ## gain (`plotgain`: the type and the amount in dB), the scales, zoom, fit,
 ## back, the record shown (previous, next, and "Go to record" by place or
@@ -56,7 +61,7 @@ import std/[math, os, strutils, tables]
 import imguin/cimgui
 import ../../core/[geometry, state, wiggle]
 import ../../gpu/[plotimage, textures]
-import ../../view/[displayheader, plotink, theme]
+import ../../view/[displayheader, plotink, theme, timeaxis]
 import chrome, dpi, fonts, icons, menus, plotbars, plotgain, plotsort, style, symbols
 
 export PaperBackground, PaperInk
@@ -144,6 +149,7 @@ type
     stripWidths: array[8, float32] ## the strip's groups as drawn last frame
     goto: GoToUi
     menuTarget: string ## what the plot's menu acts on, said when it opened
+    cursorText: string ## the time the cursor's time line showed last; "" for none
 
   PanelOutput* = object
     ## What the plot window asks for.
@@ -194,6 +200,10 @@ proc show*(tp: var TracePanelUi; v: Viewport) =
 
 func drawnView*(tp: TracePanelUi): Viewport {.inline.} = tp.drawn
   ## The view of the last plot image (for tests).
+
+func cursorText*(tp: TracePanelUi): lent string {.inline.} = tp.cursorText
+  ## The time the cursor's time line showed at the axis last frame; "" when
+  ## it was not drawn (for tests).
 
 func menuTarget*(tp: TracePanelUi): lent string {.inline.} = tp.menuTarget
   ## What the plot's menu said it acts on when it last opened: "Trace 12",
@@ -620,6 +630,16 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
       if f != WiggleFill.high: igSameLine(0, 2)
     igEndDisabled()
+    # the cursor's time line: on the symbols' line, so the strip keeps its height
+    igSameLine(0, 6)
+    let on = st.settings.cursorLine
+    let note = if on: " (on): a line from the pointer across to the time axis, and its time"
+               else: " (off): click for a line from the pointer across to the time axis"
+    if symbolButton(syCursorTime, size, t, marks, selected = on, note = note,
+        markPrefix = "plot."):
+      var s = st.settings
+      s.cursorLine = not on
+      res.commands.add Command(kind: ckSettings, settings: s)
     if d.mode != dmDensity:
       # Room for the note is kept in the wiggle modes, so that the strip does
       # not wrap anew when zooming crosses the limit.
@@ -850,6 +870,37 @@ proc drawHeaderMenu(p: Panel; marks: var Marks; res: var PanelOutput) =
   igSeparatorText("Display header")
   drawHeaderChoice(p, marks, "plot.header menu.", res)
   igEndPopup()
+
+proc drawCursorLine(tp: var TracePanelUi; at, pos: ImVec2_c; tMs, dtMs: float64;
+    ink: PlotInk; t: Theme; marks: var Marks) =
+  ## The cursor's time line: a thin line from the pointer at `at` across to
+  ## the time axis at the plot's left edge `pos.x`, and the pointer's time
+  ## there, right-aligned as the tick values are, over them. Drawn over the
+  ## plot's image, so nothing is read or drawn again for it. The line takes
+  ## the theme's crosshair colour made readable on the plot's background,
+  ## with a halo of the background around it, so it shows over wiggles and
+  ## over density's black and white alike.
+  let dl = igGetWindowDrawList()
+  let fb = igGetIO_Nil().DisplayFramebufferScale.y
+  let px = 1 / max(fb, 0.01) # one framebuffer pixel
+  let top = floor(at.y * fb) / fb # the pointer's pixel row: rectangles, so no blur
+  let colour = readableOn(t.roles[rlCrosshair], ink.background)
+  ImDrawList_AddRectFilled(dl, ImVec2_c(x: pos.x, y: top - px), ImVec2_c(x: at.x,
+    y: top + 2 * px), u32(withAlpha(ink.background, 150)), 0, 0)
+  ImDrawList_AddRectFilled(dl, ImVec2_c(x: pos.x, y: top), ImVec2_c(x: at.x, y: top + px),
+    u32(colour), 0, 0)
+  marks.markRect("plot.cursor line", ImVec2_c(x: pos.x, y: top), ImVec2_c(x: at.x, y: top + px))
+  let y = top + px / 2
+  tp.cursorText = cursorTimeText(tMs, dtMs)
+  let ts = igCalcTextSize(tp.cursorText.cstring, nil, false, -1)
+  let right = pos.x - ImPlot_GetStyle().LabelPadding.x # where the tick values end
+  let lo = ImVec2_c(x: right - ts.x - 3, y: round(y - ts.y / 2) - 1)
+  let hi = ImVec2_c(x: pos.x, y: lo.y + ts.y + 2)
+  ImDrawList_AddRectFilled(dl, lo, hi, u32(t.roles[rlWindow]), 0, 0)
+  ImDrawList_AddRect(dl, lo, hi, u32(colour), 0, 1, 0)
+  ImDrawList_AddText_Vec2(dl, ImVec2_c(x: right - ts.x, y: lo.y + 1), u32(t.roles[rlText]),
+    tp.cursorText.cstring, nil)
+  marks.markRect("plot.cursor time", lo, hi)
 
 proc burst(tp: var TracePanelUi; g: Gesture): bool =
   ## Whether a wheel turn or key press of kind `g` starts a new gesture (for
@@ -1138,9 +1189,12 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     of beWheel: (if tp.burst(gsBarWheel): remember = true)
     tp.handleKeys(after, view, plot, lim, hovered, p, st.selection.selected.len > 0,
       recordOf(st, p), remember, res)
+    tp.cursorText = ""
     if hovered:
       let m = igGetIO_Nil().MousePos
       res.pick = pick(tiles, p.layout, view, plot, vec2(m.x, m.y))
+      if st.settings.cursorLine and res.pick.inside:
+        tp.drawCursorLine(m, pos, res.pick.at.tMs, p.layout.dtMs, ink, t, marks)
     # The trace under the pointer is the hover; a click selects it.
     let under = if res.pick.found and res.pick.trace >= 0 and base >= 0: base + res.pick.trace
                 else: -1
