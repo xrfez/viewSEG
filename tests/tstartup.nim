@@ -8,12 +8,16 @@
 ## SDL video driver).
 ##
 ## Seen to fail: with the result of `ImGui_ImplSDL3_InitForOpenGL` discarded
-## again, as it was, the `ssImguiSdl` case ran to the end and returned 0.
+## again, as it was, the `ssImguiSdl` case ran to the end and returned 0; with
+## `fail` writing to stderr directly again, `noStderr` got "errno: 9 `Bad file
+## descriptor`" from the write and the hook (the message box) was never called.
 ##
 ## Needs a display for the steps after SDL video: run under
 ## `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
 import std/[options, os, strutils]
+when defined(posix):
+  import std/posix
 import viewSEG/ui/imgui/app {.all.}
 
 let tmp = getTempDir() / ("viewseg_tstartup_" & $getCurrentProcessId())
@@ -59,6 +63,27 @@ try:
       onFailure: proc (f: StartupFailure) = got.add f).simulating({ssWindow}))
     doAssert code == 1 and got.len == 1
     doAssert got[0].logFile == "" and "saved in" notin got[0].text, got[0].text
+
+  block noStderr:
+    # A program started from the desktop (on Windows, say) may have no usable
+    # stderr, and Nim raises when a write fails: the failure must still reach
+    # the message box (the hook here). Closing descriptor 2 makes writes fail
+    # that way. SDL video is not started (simulated), so nothing else takes
+    # descriptor 2 meanwhile.
+    when defined(posix):
+      let saved = dup(2)
+      discard posix.close(2)
+      var failures: seq[StartupFailure]
+      var code = -1
+      var raised = ""
+      try:
+        code = start({ssVideo}, failures)
+      except IOError as e:
+        raised = e.msg
+      discard dup2(saved, 2)
+      discard posix.close(saved)
+      doAssert raised.len == 0, "a failed write to stderr stopped the report: " & raised
+      doAssert code == 1 and failures.len == 1, $code & ", " & $failures.len
 
   block startsAfterwards:
     var failures: seq[StartupFailure]

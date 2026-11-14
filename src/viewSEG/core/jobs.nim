@@ -11,7 +11,9 @@
 ##   (`remove`) or cancelled (`cancel`); a running job can be asked to stop
 ##   (`cancel`); a finished job stays listed until it is removed or the
 ##   history is full (`initJobs(historyLimit)`), so the Jobs window can show
-##   it.
+##   it. A job submitted with `cancellable = false` (closing a file, which
+##   waits until no job reads it) can only be reordered until it has run;
+##   `stop` still cancels it.
 ## - **Files.** A job names the files it reads and the files it needs to
 ##   itself (`JobSpec.reads`, `exclusive`). A job does not start while a
 ##   running job, or a job queued ahead of it in its lane, holds one of its
@@ -67,6 +69,9 @@ type
     lane*: JobLane
     reads*: seq[string]     ## files it reads; other jobs may read them too
     exclusive*: seq[string] ## files it needs to itself: no other job may use them meanwhile
+    cancellable*: bool = true
+      ## false for a job that must run once submitted: `cancel` and `remove`
+      ## refuse it (until it has finished), `stop` does not
 
   JobProgress* = object
     ## How far a job is: `done` of `total` units (bytes, traces), and the
@@ -311,12 +316,12 @@ proc submit*(jobs: Jobs; spec: sink JobSpec; work: sink JobWork): JobId =
 
 proc cancel*(jobs: Jobs; id: JobId): bool =
   ## Cancels a queued job, or asks a running one to stop. False when `id` is
-  ## finished or unknown.
+  ## finished, unknown or not `cancellable`.
   let q = jobs.obj
   var doomed: JobWork
   withLock q.lock:
     let i = q.find(id)
-    if i < 0: return false
+    if i < 0 or not q.recs[i].info.spec.cancellable: return false
     case q.recs[i].info.state
     of jsQueued:
       q.unqueue(i)
@@ -348,13 +353,15 @@ proc reorder*(jobs: Jobs; id: JobId; position: int): bool =
 
 proc remove*(jobs: Jobs; id: JobId): bool =
   ## Takes a queued or finished job off the list; a queued one never runs.
-  ## False when `id` is running (cancel it first) or unknown.
+  ## False when `id` is running (cancel it first), queued but not
+  ## `cancellable`, or unknown.
   let q = jobs.obj
   var doomed: JobWork
   withLock q.lock:
     let i = q.find(id)
     if i < 0 or q.recs[i].info.state == jsRunning: return false
     if q.recs[i].info.state == jsQueued:
+      if not q.recs[i].info.spec.cancellable: return false
       q.unqueue(i)
       doomed = move q.recs[i].work
       broadcast(q.changed)

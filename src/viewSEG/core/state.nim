@@ -42,7 +42,9 @@ type
   Command* = object
     ## A user intent: the only way the UI changes the state.
     case kind*: CommandKind
-    of ckOpen: paths*: seq[string]
+    of ckOpen:
+      paths*: seq[string]
+        ## relative or absolute: one file opens once, however it is named
     of ckClose: file*: SessionId
     of ckCancelJob, ckRemoveJob: job*: JobId
     of ckReorderJob:
@@ -159,6 +161,16 @@ proc report*(state: var AppState; severity: Severity; source, text: string) =
 func plural(n: int; word: string): string =
   $n & " " & word & (if n == 1: "" else: "s")
 
+proc canonical(path: string): string =
+  ## `path` made absolute and normalized ("./a.sgy", "data/../a.sgy" and the
+  ## full path name one file), without touching the disk: jobs compare files
+  ## by these strings. As given, normalized, when there is no current
+  ## directory to resolve it against.
+  try:
+    absolutePath(path).normalizedPath
+  except OSError, ValueError:
+    path.normalizedPath
+
 proc ignore(state: var AppState; cmd: Command; why: string) =
   state.log.add(sevWarning, "commands", "Ignored \"" & $cmd.kind & "\": " & why & ".")
 
@@ -210,20 +222,26 @@ proc closeSession(state: var AppState; i: int) =
     if p.layers.len != before:
       inc p.requestGen
       inc p.revision
+  # Not cancellable: the file must not be released while a job still reads it.
   let job = state.jobs.submit(JobSpec(title: "Close " & s.name, lane: jlInteractive,
-    exclusive: @[s.path]), closeWork())
+    exclusive: @[s.path], cancellable: false), closeWork())
   state.closing.add Pending(job: job, path: s.path, session: s)
+
+proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
+  ## Says how open job `opening[i]` ended, and forgets it.
+  let p = state.opening[i].path
+  let name = p.extractFilename
+  case how
+  of jsFailed: state.log.add(sevError, name, "Cannot open " & p & ": " & error)
+  of jsCancelled: state.log.add(sevInfo, name, "Opening " & name & " was cancelled.")
+  else: discard # done: `adopt` took the file
+  state.opening.delete(i)
 
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
   for i, p in state.opening:
     if p.job == job.id:
-      let name = p.path.extractFilename
-      case job.state
-      of jsFailed: state.log.add(sevError, name, "Cannot open " & p.path & ": " & job.error)
-      of jsCancelled: state.log.add(sevInfo, name, "Opening " & name & " was cancelled.")
-      else: discard # done: `adopt` took the file
-      state.opening.delete(i)
+      state.endOpening(i, job.state, job.error)
       return
   for i, p in state.closing:
     if p.job == job.id:
@@ -266,11 +284,13 @@ proc apply*(state: var AppState; cmd: Command) =
   case cmd.kind
   of ckOpen:
     if cmd.paths.len == 0: state.ignore(cmd, "no file was named")
-    for path in cmd.paths:
-      let name = path.extractFilename
-      if path.len == 0:
+    for given in cmd.paths:
+      if given.len == 0:
         state.ignore(cmd, "a file name was empty")
-      elif state.sessions.anyIt(it.path == path):
+        continue
+      let path = canonical(given)
+      let name = path.extractFilename
+      if state.sessions.anyIt(it.path == path):
         state.log.add(sevInfo, name, name & " is already open.")
       elif state.opening.anyIt(it.path == path):
         state.log.add(sevInfo, name, name & " is already being opened.")
@@ -285,14 +305,27 @@ proc apply*(state: var AppState; cmd: Command) =
   of ckCancelJob:
     let job = state.jobs.info(cmd.job)
     if job.isNone: state.ignore(cmd, $cmd.job & " is not listed")
-    elif not state.jobs.cancel(cmd.job): state.ignore(cmd, $cmd.job & " has finished")
+    elif state.jobs.cancel(cmd.job): discard
+    elif job.get.spec.cancellable or job.get.state notin {jsQueued, jsRunning}:
+      state.ignore(cmd, $cmd.job & " has finished")
+    else: state.ignore(cmd, "\"" & job.get.spec.title & "\" cannot be cancelled")
   of ckReorderJob:
     if not state.jobs.reorder(cmd.reordered, cmd.position):
       state.ignore(cmd, $cmd.reordered & " is not queued")
   of ckRemoveJob:
     let job = state.jobs.info(cmd.job)
     if job.isNone: state.ignore(cmd, $cmd.job & " is not listed")
-    elif not state.jobs.remove(cmd.job): state.ignore(cmd, $cmd.job & " is running; cancel it first")
+    elif state.jobs.remove(cmd.job):
+      # A queued job never runs now, so it never finishes either: an open
+      # left waiting would refuse every later open of its file.
+      if job.get.state == jsQueued:
+        for i, p in state.opening:
+          if p.job == cmd.job:
+            state.endOpening(i, jsCancelled)
+            break
+    elif job.get.state in {jsQueued, jsRunning} and not job.get.spec.cancellable:
+      state.ignore(cmd, "\"" & job.get.spec.title & "\" cannot be removed before it has run")
+    else: state.ignore(cmd, $cmd.job & " is running; cancel it first")
   of ckGather:
     state.goToGather(cmd)
   of ckHover:

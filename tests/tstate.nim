@@ -3,19 +3,26 @@
 ## every view at once and closes it on a job; go to a gather, hover and
 ## select; commands that do not fit the state warn and change nothing; a
 ## failed, refused or cancelled open is reported and nothing raises; a slow
-## background job does not delay an open; the log keeps its bound; and the
-## files are never changed.
+## background job does not delay an open; a close waits for the jobs that
+## read the file and cannot be cancelled or removed; a removed open does not
+## block the file; one file named in several ways opens once; the log keeps
+## its bound; and the files are never changed.
 ##
 ## Seen to fail: with `adopt` no longer pointing the main panel at the new
 ## file, `openShowsTheFirstGather` found no layer; with `closeSession` not
 ## calling `forget`, `closeTakesTheFileAway` still had the closed file's
-## trace under the cursor.
+## trace under the cursor; with the close job cancellable, as it was,
+## `closeWaitsForItsReaders` found it cancelled while a reader ran (under
+## `nim asan`, a reader holding `filePtr` then read the freed session:
+## heap-use-after-free); with `ckRemoveJob` not forgetting the open it
+## removed, `removedOpenCanBeOpenedAgain` was told the file "is already being
+## opened"; with paths compared as given, `oneFileManySpellings` made 3 opens.
 
-import std/[algorithm, os, strutils, times]
+import std/[algorithm, monotimes, os, strutils, times]
 import viewSEG/core/state
 import utils/[fixtures, waiting]
 
-var gates: array[2, Gate]
+var gates: array[4, Gate]
 
 template settle(st: var AppState; cond: untyped): bool =
   ## Takes in the inbox every millisecond until `cond` holds.
@@ -216,6 +223,67 @@ block backgroundDoesNotDelayOpen:
     doAssert st.jobs.info(scan).get.state == jsRunning
     gates[1].open()
     doAssert st.settle(st.log.has("Scan the folder is done."))
+
+proc stubborn(gate: int): JobWork =
+  ## A reader in the middle of a chunk: it stops only when its gate opens,
+  ## whatever cancel was asked for meanwhile.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    let deadline = getMonoTime() + Patience * 2
+    while not gates[gate].isOpen and getMonoTime() < deadline: sleep 1
+
+block closeWaitsForItsReaders:
+  # The file is released only once no job reads it, so the close job cannot
+  # be cancelled or removed: a reader still running would read freed memory.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let name = path.extractFilename
+    var st = initAppState()
+    st.apply openCmd(path)
+    doAssert st.settle(st.sessions.len == 1)
+    let reader = st.jobs.submit(JobSpec(title: "QC pass", lane: jlBackground,
+      reads: @[path]), stubborn(2))
+    doAssert waitUntil(st.jobs.info(reader).get.state == jsRunning)
+    st.apply Command(kind: ckClose, file: st.sessions[0].id)
+    doAssert st.jobs.info(reader).get.cancelRequested, "the close did not stop the reader"
+    let close = st.jobTitled("Close " & name)
+    doAssert close.state == jsQueued
+    st.apply Command(kind: ckCancelJob, job: close.id)
+    doAssert st.log.lastText.contains("cannot be cancelled"), st.log.lastText
+    st.apply Command(kind: ckRemoveJob, job: close.id)
+    doAssert st.log.lastText.contains("cannot be removed"), st.log.lastText
+    discard st.drainInbox()
+    doAssert st.jobs.info(close.id).get.state == jsQueued
+    doAssert not st.log.has("Closed " & name & "."), "closed while a job read the file"
+    gates[2].open()
+    doAssert st.settle(st.log.has("Closed " & name & "."))
+
+block removedOpenCanBeOpenedAgain:
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let name = path.extractFilename
+    var st = initAppState()
+    let holder = st.jobs.submit(JobSpec(title: "Hold the file", lane: jlInteractive,
+      exclusive: @[path]), gated(3))
+    doAssert waitUntil(st.jobs.info(holder).get.state == jsRunning)
+    st.apply openCmd(path)
+    st.apply Command(kind: ckRemoveJob, job: st.jobTitled("Open " & name).id)
+    doAssert st.log.has("Opening " & name & " was cancelled.")
+    st.apply openCmd(path)
+    doAssert not st.log.lastText.contains("already being opened"), st.log.lastText
+    gates[3].open()
+    doAssert st.settle(st.sessions.len == 1)
+
+block oneFileManySpellings:
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let name = path.extractFilename
+    var st = initAppState()
+    st.apply openCmd(path, fx.dir & "/./" & name, relativePath(path, getCurrentDir()))
+    doAssert st.jobs.list.len == 1, $st.jobs.list.len & " opens of one file"
+    doAssert st.settle(st.sessions.len == 1)
+    st.apply openCmd(fx.dir & "/sub/../" & name)
+    doAssert st.log.lastText == name & " is already open.", st.log.lastText
+    doAssert st.sessions[0].path == path
 
 block logKeepsItsBound:
   var st = initAppState(logCapacity = 3)

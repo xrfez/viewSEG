@@ -12,9 +12,14 @@
 ## the release of the file); with the `broadcast` of `remove`, of `reorder`
 ## or of `cancel` removed, `unblockingWakesTheRunner` timed out ("... left
 ## the runner asleep"); with `cancel` leaving a queued job in its queue,
-## `cancelQueuedAndRunning` found it still queued.
+## `cancelQueuedAndRunning` found it still queued; with `cancel` and `remove`
+## not checking `cancellable`, `notCancellable` cancelled a job that must
+## run; with `shutdown` no longer marking running jobs as cancelled, or no
+## longer joining the runners, `destroyStopsRunningJobs` found that the job
+## had not seen its cancel (its earlier form, which only checked that the
+## job never finished its work, passed both ways).
 
-import std/[atomics, os, strutils]
+import std/[atomics, os, strutils, times]
 import viewSEG/core/[jobs, threads]
 import utils/waiting
 
@@ -239,11 +244,52 @@ block stopCancelsAndWaits:
   sleep 20
   doAssert ran[3].load == 0
 
-block destroyStopsRunningJobs:
-  # Leaving the scope with a job running cancels it and joins the runners.
+block notCancellable:
+  # A job that must run once submitted (closing a file): `cancel` and
+  # `remove` refuse it while it is queued or running, it can still be moved,
+  # it can be removed once finished, and `stop` still cancels it.
   reset()
+  var jobs = initJobs()
+  let blocker = jobs.submit(spec("Blocker"), fake(0, gate = 2))
+  doAssert waitUntil(jobs.state(blocker) == jsRunning)
+  var barrier = spec("Close x.sgy", exclusive = @["x.sgy"])
+  barrier.cancellable = false
+  let close = jobs.submit(barrier, fake(1, gate = 3))
+  doAssert not jobs.cancel(close), "a job that must run was cancelled while queued"
+  doAssert not jobs.remove(close), "a job that must run was removed while queued"
+  doAssert jobs.state(close) == jsQueued and not jobs.info(close).get.cancelRequested
+  doAssert jobs.reorder(close, 0)
+  gates[2].open()
+  doAssert waitUntil(jobs.state(close) == jsRunning)
+  doAssert not jobs.cancel(close), "a job that must run was asked to stop"
+  doAssert not jobs.info(close).get.cancelRequested
+  gates[3].open()
+  doAssert waitUntil(jobs.state(close) == jsDone)
+  doAssert jobs.remove(close), "a finished job could not be removed"
+  gates[2].close()
+  let again = jobs.submit(spec("Blocker again"), fake(2, gate = 2))
+  doAssert waitUntil(jobs.state(again) == jsRunning)
+  let queued = jobs.submit(barrier, fake(3))
+  jobs.stop()
+  doAssert jobs.state(queued) == jsCancelled and ran[3].load == 0
+
+var sawCancel: Atomic[bool]
+
+block destroyStopsRunningJobs:
+  # Leaving the scope with a job running cancels it and waits for it: by
+  # then the job has seen its cancel, long before its gate would give up.
+  reset()
+  var left: MonoTime
   block:
     let jobs = initJobs()
-    let job = jobs.submit(spec("Running at the end"), fake(0, gate = 0))
+    let job = jobs.submit(spec("Running at the end"), proc (ctx: JobContext) {.gcsafe.} =
+      try:
+        gates[0].waitAt(ctx)
+      except JobCancelledError:
+        sawCancel.store(true)
+        raise)
     doAssert waitUntil(jobs.state(job) == jsRunning)
+    left = getMonoTime()
+  doAssert sawCancel.load, "leaving the scope did not wait for the running job to stop"
+  doAssert getMonoTime() - left < Patience, "leaving the scope did not cancel the running job"
   doAssert ran[0].load == 0

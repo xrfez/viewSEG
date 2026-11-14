@@ -116,7 +116,9 @@ the wait the user notices is never behind a long job.
 - **A job** (`JobSpec`, `JobInfo`) has a title in plain words, a lane, a state (queued,
   running, done, failed, cancelled), progress (done of total, a phase label), and the
   files it reads or needs to itself. Queued jobs can be reordered, removed or cancelled;
-  a running job can be asked to stop; finished jobs stay listed up to a history limit.
+  a running job can be asked to stop; finished jobs stay listed up to a history limit. A
+  job submitted with `cancellable = false` (closing a file) can only be reordered until
+  it has run; `stop` still cancels it.
 - **Files.** A job does not start while a running job, or a job queued ahead of it in its
   lane, uses one of its files in a conflicting way: reading is shared, exclusive use is
   not. A job that must wait does not hold up the jobs behind it that need not.
@@ -138,7 +140,9 @@ back as an `mkOpened` message, and `AppState` gives it a `SessionId` and the sur
 of its first trace, logs parseSEG's diagnostics, and shows its first gather in the main
 panel. A close takes the file out of every view at once, cancels the jobs that use it, and
 queues a close job that needs the file exclusively; when that job ends, the UI thread
-closes the file.
+closes the file. The close job cannot be cancelled or removed: until it has run, a job
+may still be reading the file. Paths are made absolute and normalized when a file is
+opened, so every job names a file the same way and one file is never opened twice.
 
 **ORC across threads.** ORC keeps a per-thread list of objects that may be in a cycle, and
 marks each listed object with its place in that list. An object listed by one thread and
@@ -271,7 +275,8 @@ type
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
-    spec: JobSpec            # title, lane (jlInteractive, jlBackground), reads, exclusive
+    spec: JobSpec            # title, lane (jlInteractive, jlBackground), reads, exclusive,
+                             # cancellable
     state: JobState          # jsQueued, jsRunning, jsDone, jsFailed, jsCancelled
     progress: JobProgress    # done, total, phase
     error: string

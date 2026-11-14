@@ -349,6 +349,15 @@ proc writeFailureLog(dir, text: string): string =
   except OSError, IOError:
     result = ""
 
+proc toStderr(text: string) =
+  ## Writes `text` as a line on stderr if it can. A failed write raises, and a
+  ## program started from the desktop (on Windows, say) may have no usable
+  ## stderr.
+  try:
+    stderr.writeLine "viewSEG: ", text
+  except IOError:
+    discard
+
 proc fail(opts: RunOptions; step: StartupStep; reason: string): int =
   ## Reports a failed start-up step everywhere the user may look; returns the
   ## exit code, 1.
@@ -357,12 +366,12 @@ proc fail(opts: RunOptions; step: StartupStep; reason: string): int =
   var f = StartupFailure(step: step, reason: reason)
   f.logFile = writeFailureLog(dir, failureText(step, reason, dir / failureLogName))
   f.text = failureText(step, reason, f.logFile)
-  stderr.writeLine "viewSEG: ", f.text.replace("\n\n", "\n  ")
+  toStderr f.text.replace("\n\n", "\n  ")
   if opts.onFailure != nil:
     opts.onFailure(f)
   elif not SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "viewSEG cannot start",
       f.text.cstring, nil):
-    stderr.writeLine "viewSEG: no message box either: ", SDL_GetError()
+    toStderr "no message box either: " & $SDL_GetError()
   1
 
 proc sdlError(): string = $SDL_GetError()
@@ -432,7 +441,7 @@ proc run*(opts = RunOptions()): int =
   defer: SDL_DestroyWindow(window)
   when not defined(windows) and not defined(macosx):
     if not setWindowIcon(SDL_GetWindowID(window)):
-      stderr.writeLine "viewSEG: no window icon: ", SDL_GetError()
+      toStderr "no window icon: " & $SDL_GetError()
   let glContext = if ssGlContext in opts.simulate: nil else: SDL_GL_CreateContext(window)
   if glContext.isNil:
     return opts.fail(ssGlContext, sdlError())
