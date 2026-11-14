@@ -156,6 +156,26 @@
     | Float | nothing | the clip percentile of the data in view, again whenever the view changes | |
     | AGC | AGC | the record's clip percentile after AGC | the window (500 ms) |
 
+    **Every setting of the drop-down is remembered** (the user: "everything setup in the
+    gain settings dropdown should remember its last settings and have sane defaults for
+    new installations"), for every type, not only the one in use: the AGC window,
+    Fixed's amplitude (typed, or taken from a record), Normalized's scope and level,
+    Exponential's shape, dB per second, power of time and cutoff, and the gain amount.
+    They are kept in the settings (`settings.nif`, with the rest of a new plot's
+    display) and come back in the next run; a settings file of an earlier build gives
+    what it does not hold its default. A new installation starts with settings meant
+    for land shot records:
+
+    | Setting | Default |
+    |---|---|
+    | Gain type | Automatic: AGC on shot and receiver records, none on stacked data |
+    | AGC window | 500 ms |
+    | Fixed amplitude | none until Fixed is chosen: then the record's clip percentile |
+    | Normalized | each trace, to its clip percentile |
+    | Exponential | 6 dB per second (the power of time: 2), until 2 000 ms |
+    | Clip percentile | 99 (of \|x\|) |
+    | Gain amount | 0 dB, in steps of 3 dB |
+
     **Exponential's cutoff** (the user: "with exponential the basemet gets pretty blown
     out. maybe there should be a cutoff time"): the gain rises with time until the time
     in its "until" box and holds the value it reached there for the rest of the record,

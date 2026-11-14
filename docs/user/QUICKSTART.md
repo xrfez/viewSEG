@@ -322,8 +322,10 @@ stepped away from it.
 Everything you set is kept for the next run, in `settings.nif` in the settings folder
 (`config/` next to the program, or the folder `viewSEG --paths` names): the theme, where
 the window was and its size, the recent files and folders, how the plot looks (display
-mode, fills, overlap, colours, gain type and amount, the sort order and the display
-header: a new plot starts as you left the last one; polarity is not kept), the cursor
+mode, fills, overlap, colours, the gain type and amount and every setting of every gain
+type, also the ones not in use: the AGC window, Fixed's amplitude, Normalized's choices,
+Exponential's rate, power and cutoff; the sort order and the display header: a new plot
+starts as you left the last one; polarity is not kept), the cursor
 time line, scale units and screen calibrations, the status bar's fields, the sort buttons
 and your own sort keys, and the Messages window's toggles. It is saved a second after a
 change and when you quit.

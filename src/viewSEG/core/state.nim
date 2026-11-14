@@ -823,7 +823,8 @@ func usable(x: float64): bool {.inline.} = x > 0 and x < Inf
 
 proc settleGain(state: var AppState; k: int) =
   ## After a change of display, view or tiles of `panels[k]`: Fixed takes
-  ## its amplitude from the data shown when it has none yet, and Float
+  ## its amplitude from the data shown when it has none yet (and the
+  ## settings keep it, for new plots and the next run), and Float
   ## takes its level from the data now in view (keeping the one before
   ## when no tile holds any of it yet).
   template p: untyped = state.panels[k]
@@ -834,6 +835,10 @@ proc settleGain(state: var AppState; k: int) =
     if not usable(d.fixedClip) and usable(p.level.clip):
       d.fixedClip = p.level.clip
       inc p.revision
+      # kept for the next run too, as a typed amplitude is
+      var s = state.settings
+      s.plot.display = remembered(d)
+      state.change s
   of dgFloat:
     var values: seq[float32]
     for i in countdown(state.tiles[k].high, 0): # the newest tile that meets the view
