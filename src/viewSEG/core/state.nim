@@ -78,6 +78,7 @@ type
     ckOpen = "open"                      ## open files (one interactive job each) and keep them open
     ckBrowse = "browse"                  ## list files and folders in the file list
     ckShowFile = "show file"             ## show a file in a panel, in place of the one it shows
+    ckShowTrace = "show trace"           ## show a trace of a file (a message names it), selected
     ckClose = "close"                    ## close an open file
     ckCancelJob = "cancel job"
     ckReorderJob = "reorder job"
@@ -97,6 +98,7 @@ type
     ckLoadLayout = "load layout"         ## arrange the windows as a layout file says
     ckExportLayout = "export layout"     ## write the arrangement to a file of the user's
     ckImportLayout = "import layout"     ## load such a file and keep it among the layouts
+    ckExportLog = "export messages"      ## write the messages to a file of the user's
     ckHover = "hover"                    ## the trace under the cursor
     ckSelect = "select"                  ## change the selected traces
     ckClearSelection = "clear selection"
@@ -113,10 +115,12 @@ type
     of ckReorderJob:
       reordered*: JobId
       position*: int                  ## 0 runs next
-    of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckBack, ckShowFile:
+    of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckBack, ckShowFile, ckShowTrace:
       panel*: PanelId
       gather*: int                    ## ckGather: index into the file's gathers
-      path*: string                   ## ckShowFile: the file to show
+      path*: string                   ## ckShowFile, ckShowTrace: the file to show
+      traceIndex*: int                ## ckShowTrace: the trace's index (in its record)
+      recordIndex*: int               ## ckShowTrace: the SEG-D record it counts in; -1: the file
       listFolder*: bool               ## ckShowFile: the file list lists its folder too
       view*: Viewport                 ## ckView: what the panel's plot shows now
       remember*: bool                 ## ckView: a gesture starts; keep the view it replaces for back
@@ -129,7 +133,8 @@ type
       mode*: SelectMode
     of ckClearSelection, ckResetSettings: discard
     of ckSettings: settings*: Settings
-    of ckExportSettings, ckImportSettings, ckLoadLayout, ckExportLayout, ckImportLayout:
+    of ckExportSettings, ckImportSettings, ckLoadLayout, ckExportLayout, ckImportLayout,
+        ckExportLog:
       docPath*: string                ## the file written or read
     of ckLayout: arrangement*: string ## the toolkit's layout text
     of ckSaveLayout: layoutName*: string
@@ -159,6 +164,8 @@ type
     opening, closing: seq[Pending]
     files: FileList       ## the file list
     showFound: PanelId    ## show the first file the listing finds here; NoPanel for none
+    jump: tuple[path: string; trace, record: int]
+      ## a trace to show once its file is open (`ckShowTrace`); "" for none
     oldScans: seq[JobId]  ## scans replaced by a newer listing: they end quietly
     notices: seq[Notice]  ## the newest `MaxNotices`
     nextNotice: int
@@ -689,6 +696,43 @@ proc showReplacing(state: var AppState; k: int; file: SessionId; gather: int) =
       not state.panels.anyIt(it.layers.anyIt(it.shows(old))):
     state.closeSession(state.findSession(old), quiet = true)
 
+func gatherOf(s: Session; trace: int): int =
+  ## The index of the gather of `s` that holds trace `trace`; -1 for none.
+  var (lo, hi) = (0, s.gathers.high)
+  while lo <= hi:
+    let mid = (lo + hi) div 2
+    let g = s.gathers[mid].traces
+    if trace < g.a: hi = mid - 1
+    elif trace > g.b: lo = mid + 1
+    else: return mid
+  -1
+
+func fileTrace(s: Session; record, trace: int): int =
+  ## The index in the file of trace `trace` of SEG-D record `record` (as
+  ## parseSEG's diagnostics count them); `trace` itself for a record below
+  ## 1 (SEG-Y, the first record) and when the record is not found.
+  result = trace
+  if record > 0:
+    template e: untyped = s.file.index.entries
+    var (lo, hi) = (0, e.len) # the first entry of the record: records are in file order
+    while lo < hi:
+      let mid = (lo + hi) div 2
+      if int(e[mid].record) < record: lo = mid + 1 else: hi = mid
+    if lo < e.len and int(e[lo].record) == record: result = lo + trace
+
+proc showTrace(state: var AppState; k: int; i: int; trace: int; record = -1) =
+  ## Shows the gather of open file `sessions[i]` that holds `trace` (of
+  ## SEG-D record `record`) in `panels[k]`, and selects the trace.
+  let s = state.sessions[i]
+  let trace = fileTrace(s, record, trace)
+  let g = gatherOf(s, trace)
+  if g < 0:
+    state.log.add(sevWarning, s.name, s.name & " has no trace " & $trace & ".")
+  else:
+    if state.shownFile(k) != i: state.showReplacing(k, s.id, g)
+    elif state.panels[k].layers[0].source.gather != g: state.show(state.panels[k].id, s.id, g)
+    state.selection.select([s.base + trace], smReplace)
+
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
   ## Takes in a file an open job opened, and shows its first gather in the
   ## panel the open was for (the main panel unless `ckShowFile` named
@@ -726,6 +770,9 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   if replacing and k >= 0: state.showReplacing(k, id, gather)
   else: state.show(MainPanel, id, gather)
   if panel == MainPanel: state.choose(path)
+  if state.jump.path == path and k >= 0: # a message's trace, asked for before the file opened
+    state.showTrace(k, state.sessions.high, state.jump.trace, state.jump.record)
+    state.jump = ("", -1, -1)
 
 proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
   ## Says how open job `opening[i]` ended, and forgets it. An open no longer
@@ -907,12 +954,35 @@ proc apply*(state: var AppState; cmd: Command) =
       let title = if paths.len == 1: paths[0] else: $paths.len & " chosen files"
       state.startListing(paths, title, "")
       state.showFound = if cmd.showFirst: MainPanel else: NoPanel
+  of ckShowTrace:
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif cmd.path.len == 0 or cmd.traceIndex < 0: state.ignore(cmd, "no trace was named")
+    else:
+      let path = canonical(cmd.path)
+      var i = -1
+      for j, s in state.sessions:
+        if s.path == path: i = j
+      if i >= 0:
+        state.jump = ("", -1, -1)
+        state.showTrace(k, i, cmd.traceIndex, cmd.recordIndex)
+      else: # opened first, then shown
+        state.jump = (path, cmd.traceIndex, cmd.recordIndex)
+        state.showPath(k, path)
+  of ckExportLog:
+    if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
+    else:
+      var text = ""
+      for e in state.log: text.add fileLine(e)
+      state.diskIo.replace(cmd.docPath, text, "the exported messages",
+        done = "Messages exported to " & cmd.docPath & ".")
   of ckShowFile:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
     elif cmd.path.len == 0: state.ignore(cmd, "no file was named")
     else:
       let path = canonical(cmd.path)
+      state.jump = ("", -1, -1) # another choice than a message's trace
       if cmd.panel == MainPanel: state.showFound = NoPanel # the user chose
       state.showPath(k, path)
       let folder = path.parentDir

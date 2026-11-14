@@ -29,7 +29,8 @@ type
     dkExportSettings = "Export settings", ## a NIF file to write (a save dialog)
     dkImportSettings = "Import settings", ## a NIF file to read
     dkExportLayout = "Export layout",     ## a NIF file to write (a save dialog)
-    dkImportLayout = "Import layout"      ## a NIF file to read
+    dkImportLayout = "Import layout",     ## a NIF file to read
+    dkExportLog = "Export messages"       ## a text file to write (a save dialog)
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -193,6 +194,10 @@ let nifFilters = [
   SDL_DialogFileFilter(name: "viewSEG settings and layouts (*.nif)", pattern: "nif"),
   SDL_DialogFileFilter(name: "All files", pattern: "*")]
 
+let logFilters = [
+  SDL_DialogFileFilter(name: "Text (*.log, *.txt)", pattern: "log;txt"),
+  SDL_DialogFileFilter(name: "All files", pattern: "*")]
+
 var startAt: string
   ## where the last dialog started: SDL may read it until the dialog is shown
 
@@ -237,6 +242,9 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   of dkExportSettings, dkExportLayout:
     SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],
       nifFilters.len.cint, at)
+  of dkExportLog:
+    SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr logFilters[0],
+      logFilters.len.cint, at)
 
 # ------------------------------------------------------------------ theme --
 

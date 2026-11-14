@@ -15,15 +15,14 @@ import std/[math, strutils]
 import imguin/cimgui
 import ../../core/[geometry, jobs, pick, readout]
 import ../../view/[jobstatus, theme]
-import fonts, icons, menus, style, symbols
+import fonts, icons, marks, menus, style, symbols
+
+export marks
 
 const IconScale* = 1.3'f32
   ## toolbar icons and symbols, relative to the text size
 
 type
-  Marks* = seq[(string, Rect)]
-    ## Named screen rectangles of the last frame (framebuffer pixels).
-
   ChromeInfo* = object
     ## Facts the status bar shows.
     themeName*: string
@@ -37,26 +36,6 @@ type
     fields*: seq[ReadoutField] ## ... to these, in this order
 
 const readoutMenu = "##readoutfields"
-
-func toRect(a, b: ImVec2_c): Rect =
-  Rect(pos: vec2(a.x, a.y), size: vec2(b.x - a.x, b.y - a.y))
-
-proc markRect*(marks: var Marks; name: string; a, b: ImVec2_c) =
-  ## Records the screen rectangle `a`..`b` as `name`, in framebuffer pixels of
-  ## the main window (ImGui's coordinates are the desktop's, with viewports).
-  let s = igGetIO_Nil().DisplayFramebufferScale
-  let o = igGetMainViewport().Pos
-  marks.add (name, toRect(ImVec2_c(x: (a.x - o.x) * s.x, y: (a.y - o.y) * s.y),
-    ImVec2_c(x: (b.x - o.x) * s.x, y: (b.y - o.y) * s.y)))
-
-proc mark*(marks: var Marks; name: string) =
-  ## Records the last item's rectangle as `name`.
-  marks.markRect(name, igGetItemRectMin(), igGetItemRectMax())
-
-proc markWindow*(marks: var Marks; name: string) =
-  ## Records the current window's rectangle as `name`.
-  let (pos, size) = (igGetWindowPos(), igGetWindowSize())
-  marks.markRect(name, pos, ImVec2_c(x: pos.x + size.x, y: pos.y + size.y))
 
 proc tooltip(text, shortcut: string; t: Theme) =
   ## The last item's tooltip: `text`, then the shortcut in dim text.

@@ -20,7 +20,8 @@
 ##  (calibrations (monitor "DELL U2720Q 3840x2160" 163.2))
 ##  (readout time trace channel receiver)
 ##  (sortPresets (preset "Line/Station" (key rcvLine) (key rcvPoint)))
-##  (customOrder (key offset)))
+##  (customOrder (key offset))
+##  (messages (autoScroll true) (hide info)))
 ## ```
 ##
 ## Reading is forgiving where it can be and says what it did: a setting that
@@ -35,7 +36,7 @@
 ## making old files unreadable.
 
 import std/strutils
-import geometry, nif, panels, readout, scales, settings, wiggle
+import geometry, log, nif, panels, readout, scales, settings, wiggle
 
 export nif
 
@@ -56,6 +57,7 @@ const
   LengthNames: array[LengthUnit, string] = ["inch", "cm"]
   FieldNames: array[HeaderField, string] = ["rcvLine", "rcvPoint", "component", "channel",
     "ffid", "srcLine", "srcPoint", "offset", "cdp", "inline", "crossline", "trace"]
+  SeverityNames: array[Severity, string] = ["info", "warning", "error", "fatal"]
   ReadoutNames: array[ReadoutField, string] = ["time", "trace", "channel", "receiver",
     "source", "ffid", "offset", "amplitude", "shotTime", "cursorUtc", "sample", "cdp",
     "inline", "crossline", "sourceXY", "receiverXY", "midpointXY", "sourceZ", "receiverZ",
@@ -71,7 +73,7 @@ func persistedNames*(): seq[seq[string]] =
   ## Every table of names written for a choice (for tests: each must be a
   ## NIF identifier and unique in its table).
   @[@ModeNames, @FillNames, @ColourNames, @GainNames, @TimeGainNames, @ScopeNames,
-    @StatNames, @LengthNames, @FieldNames, @ReadoutNames]
+    @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames]
 
 # ----------------------------------------------------------------- writing --
 
@@ -193,6 +195,12 @@ proc settingsDocument*(s: Settings): string =
   w.close()
   w.open("customOrder")
   w.keys(s.customOrder)
+  w.close()
+  w.open("messages")
+  w.value("autoScroll", s.messages.autoScroll)
+  w.open("hide")
+  for v in s.messages.hidden: w.ident SeverityNames[v]
+  w.close()
   w.close()
   w.close()
   w.finish
@@ -465,6 +473,16 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
         result.readout = fields
       of "sortPresets": r.presets(c, result.sortPresets)
       of "customOrder": r.keys(c, 0, result.customOrder)
+      of "messages":
+        for k in c.kids:
+          if k.isTree("autoScroll"): r.flag(k, result.messages.autoScroll)
+          elif k.isTree("hide"):
+            var hidden: set[Severity]
+            for v in k.kids:
+              var x = sevInfo
+              if r.pick(v, SeverityNames, "hide", x): hidden.incl x
+            result.messages.hidden = hidden
+          else: r.unknown(k, "messages")
       else: r.unknown(c, "settings")
   if version == 0:
     r.problem(doc[root], "(settings) gives no (version); read as version " &

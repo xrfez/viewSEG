@@ -2,7 +2,8 @@
 ## The theme, where the main window was, the recent files and folders, what
 ## a new plot window starts with (display, order, display header), how
 ## scales are stated, each monitor's calibration, the status bar's fields,
-## the sort presets and the user's own sort keys. Every field has a default.
+## the sort presets, the user's own sort keys and the Messages window's
+## toggles. Every field has a default.
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
 ## whole object, and the plot window's own commands (display, sort, display
@@ -10,7 +11,7 @@
 ## (`core/settingsnif`) by `AppState`.
 
 import std/math
-import panels, readout, scales
+import log, panels, readout, scales
 
 export readout, scales
 
@@ -36,6 +37,11 @@ type
     order*: seq[SortKey]
     header*: HeaderChoice
 
+  MessagesView* = object
+    ## How the Messages window shows the log.
+    autoScroll*: bool = true ## follow new messages; off: stay where the user scrolled
+    hidden*: set[Severity]   ## severities not shown (an error hides with sevFatal)
+
   Settings* = object
     theme*: string                                ## the theme file's name; "" follows the system
     window*: WindowPlacement
@@ -47,6 +53,7 @@ type
     readout*: seq[ReadoutField] = @DefaultReadout ## the status bar's fields, in order
     sortPresets*: seq[SortPreset] = @SortPresets  ## the plot window's sort buttons
     customOrder*: seq[SortKey]                    ## the user's own keys, used last
+    messages*: MessagesView                       ## the Messages window's toggles
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not

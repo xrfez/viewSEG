@@ -222,6 +222,10 @@ proc messages*(frame: FrameInfo): seq[Message] =
   for e in frame.ui.core.log:
     result.add Message(level: levelOf(e.severity), text: line(e))
 
+proc shownMessages*(frame: FrameInfo): int =
+  ## How many lines the Messages window shows (for tests).
+  frame.ui.logView.shown
+
 proc layoutText*(frame: FrameInfo): string =
   ## How Dear ImGui would save the windows' arrangement now (for tests).
   $igSaveIniSettingsToMemory(nil)
@@ -452,6 +456,9 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
       ui.core.apply Command(kind: ckExportLayout, docPath: path)
     of dkImportLayout:
       ui.core.apply Command(kind: ckImportLayout, docPath: ev.paths[0])
+    of dkExportLog:
+      let path = if ev.paths[0].splitFile.ext.len == 0: ev.paths[0] & ".log" else: ev.paths[0]
+      ui.core.apply Command(kind: ckExportLog, docPath: path)
   of seCancelled:
     discard # the user closed the dialog: nothing to say
   of seDialogFailed:
@@ -493,6 +500,10 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
         (if dir.len > 0: dir / "viewSEG-layout.nif" else: "viewSEG-layout.nif"))
     of maImportLayout: showDialog(dkImportLayout, parent)
     of maShowFiles, maShowJobs, maShowMessages: ui.focus.incl a
+    of maExportLog:
+      let dir = ui.core.settingsFile.parentDir
+      showDialog(dkExportLog, parent, (if dir.len > 0: dir / "viewSEG-messages.log"
+        else: "viewSEG-messages.log"))
 
 # ------------------------------------------------------------------- frame --
 
@@ -730,7 +741,16 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   for c in jobs.commands.mitems:
     ui.core.apply move c
   if maShowMessages in ui.focus: bringForward(messagesTitle)
-  ui.logView.draw(ui.core.log, messagesTitle, ui.theme)
+  let log = ui.logView.draw(ui.core.log, messagesTitle, ui.theme, ui.core.settings.messages,
+    ui.marks)
+  if log.changed:
+    var s = ui.core.settings
+    s.messages = log.view
+    ui.core.apply Command(kind: ckSettings, settings: s)
+  if log.exportLog: result.incl maExportLog
+  if log.showPath.len > 0:
+    ui.core.apply Command(kind: ckShowTrace, panel: MainPanel, path: log.showPath,
+      traceIndex: log.showTrace, recordIndex: log.showRecord)
   ui.focus = {}
   ui.drawNotices()
   when defined(imguiDemo):

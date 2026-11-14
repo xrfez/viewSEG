@@ -44,7 +44,8 @@ proc everyFieldSet(): Settings =
     readout: @[rfAmplitude, rfTime, rfMidpointXY, rfStatus],
     sortPresets: @[SortPreset(name: "Mine", keys: @[SortKey(field: hfOffset, descending: true)]),
       SortPreset(name: "Channels", keys: @[SortKey(field: hfChannel)])],
-    customOrder: @[SortKey(field: hfSrcPoint), SortKey(field: hfTrace, descending: true)])
+    customOrder: @[SortKey(field: hfSrcPoint), SortKey(field: hfTrace, descending: true)],
+    messages: MessagesView(autoScroll: false, hidden: {sevInfo, sevWarning}))
   result.plot = PlotDefaults(
     display: DisplaySettings(mode: dmWiggleDensity, fills: {wfNegative}, colours: pcCustom,
       custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),

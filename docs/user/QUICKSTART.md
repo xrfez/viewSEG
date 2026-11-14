@@ -155,6 +155,23 @@ time, the trace and channel, receiver and source line and point, FFID, offset, t
 amplitude as displayed, and the record's UTC time. Right-click the status bar to choose
 the fields and their order.
 
+## Messages
+
+The **Messages** window lists what viewSEG has to say, newest last: files opened, problems
+found in them (with the record, trace or header field and the byte offset; hover a line
+for all of it), jobs that failed. Its strip:
+
+- **The three counts** (information, warnings, errors) are toggles: click one to hide or
+  show those lines.
+- **Auto-scroll:** on, the list follows new messages; off, it stays where you scrolled.
+- **Copy** puts the lines shown on the clipboard (right-click a line to copy only it).
+- **Clear** empties the window; the session's log file keeps everything.
+- **Export...** writes every message to a text file of your choice.
+
+Click a message that names a trace (a damaged trace, say) to see that trace: its record is
+shown in the plot window with the trace selected, and its file is opened again if you have
+stepped away from it.
+
 ## What viewSEG remembers
 
 Everything you set is kept for the next run, in `settings.nif` in the settings folder
@@ -162,7 +179,8 @@ Everything you set is kept for the next run, in `settings.nif` in the settings f
 the window was and its size, the recent files and folders, how the plot looks (display mode, fills,
 overlap, colours, gain type and amount, the sort order and the display header: a new plot
 starts as you left the last one; polarity is not kept), scale units and screen
-calibrations, the status bar's fields, the sort buttons and your own sort keys. It is
+calibrations, the status bar's fields, the sort buttons and your own sort keys, and the
+Messages window's toggles. It is
 saved a second after a change and when you quit.
 
 **Layouts.** The windows open where they were when you quit (`layout.nif` beside the

@@ -17,7 +17,8 @@ type
     maResetSettings = "Reset to defaults",
     maSaveLayout = "Save as...", maResetLayout = "Reset",
     maExportLayout = "Export... ", maImportLayout = "Import... ",
-    maShowFiles = "Files", maShowJobs = "Jobs", maShowMessages = "Messages"
+    maShowFiles = "Files", maShowJobs = "Jobs", maShowMessages = "Messages",
+    maExportLog = "Export messages..."
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
@@ -47,11 +48,11 @@ const
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
     maToggleTheme: 0, maExportSettings: 0, maImportSettings: 0, maResetSettings: 0,
     maSaveLayout: 0, maResetLayout: 0, maExportLayout: 0, maImportLayout: 0,
-    maShowFiles: 0, maShowJobs: 0, maShowMessages: 0]
+    maShowFiles: 0, maShowJobs: 0, maShowMessages: 0, maExportLog: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [IconOpenFile, IconOpenFiles, IconOpenFolder,
     IconClose, IconQuit, IconTheme, IconSave, IconOpenFile, IconClose, IconSave, IconClose,
-    IconSave, IconOpenFile, IconList, IconTasks, IconLog]
+    IconSave, IconOpenFile, IconList, IconTasks, IconLog, IconExport]
 
 proc shortcutName*(a: MenuAction): string =
   ## The shortcut of `a` as shown to the user ("Ctrl+O"), or "".

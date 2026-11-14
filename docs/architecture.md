@@ -174,6 +174,13 @@ next file is shown at the scales of the one before (`zoom.carried`), with the sa
 order and display header. `FileList.chosen` is the file the main panel shows or is
 opening; the frontend's file table (`view/filetable`) filters, sorts and steps from it.
 
+**Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
+severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`
+(the file, the trace, and the SEG-D record it counts in, as parseSEG's `Location` has
+them): `core` shows the gather holding it, selected, and opens the file first when it is
+not open (the request waits in `AppState.jump` for the open). `ckExportLog` writes every
+entry as a line of text through the disk thread.
+
 **The index cache.** `initAppState(indexCache = dir)` names the folder for parseSEG's
 index caches; the frontend passes `<cache>/index` from `platform/paths`, since `core`
 does not import `platform`. One cache per file, named after the file plus a hash of its
@@ -445,11 +452,10 @@ type
                              # percentile, overlap, reversed polarity
 
   CommandKind = enum         # core/state: every user intent, the only way state changes
-    ckOpen, ckBrowse, ckShowFile, ckClose, ckCancelJob, ckReorderJob, ckRemoveJob, ckGather,
-    ckView, ckDisplay,
-    ckHeader, ckSort, ckBack, ckHover, ckSelect, ckClearSelection, ckSettings,
-    ckExportSettings, ckImportSettings, ckResetSettings, ckLayout, ckSaveLayout,
-    ckLoadLayout, ckExportLayout, ckImportLayout
+    ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
+    ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckBack, ckHover, ckSelect,
+    ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
+    ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
@@ -496,6 +502,7 @@ type
     readout: seq[ReadoutField]     # the status bar's fields, in order
     sortPresets: seq[SortPreset]   # the sort buttons
     customOrder: seq[SortKey]      # the user's own keys, used last
+    messages: MessagesView         # the Messages window's toggles: auto-scroll, hidden severities
 
   Pick = object              # core/pick: what lies under the pointer
     inside, found: bool      # over the plot; a tile holds the trace there
