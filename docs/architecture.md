@@ -725,6 +725,8 @@ type
     level: Level             # RMS, peak, clip percentile of |x| over the live traces
                              # that are not killed
     cached: bool             # made from the samples the reader held, not read
+    raw: seq[float32]        # with the raw amplitude field on: the file's own samples, cut
+                             # and decimated as `data` (before polarity, edits and gain)
 ```
 
 **No undo history.** Edits to traces (kill, reverse polarity) are lists kept beside an

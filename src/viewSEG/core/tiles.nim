@@ -46,6 +46,10 @@ type
     level*: Level           ## RMS, peak and clip percentile of |x| over the live traces
     failed*: int            ## traces that could not be decoded (zero rows)
     cached*: bool           ## the reader made it from samples it held, not from the file
+    raw*: seq[float32]
+      ## when asked for (`ReaderRequest.raw`): the samples as the file has
+      ## them, before polarity, edits, processing and gain, cut and
+      ## decimated as `data`; empty otherwise
     dead*: seq[bool]
       ## per row: the trace is marked dead in the file, so it is drawn blank;
       ## empty when none is

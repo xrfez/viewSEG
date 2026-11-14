@@ -2,16 +2,23 @@
 ## known trace, every field blank (not "NaN", not 0) when its keys are not
 ## known, when no trace is under the cursor and when the cursor is off the
 ## plot; half-known pairs, zoomed-out amplitudes, the UTC times, and the
-## number formats.
+## number formats. The raw amplitude, off by default: turned on, the tiles
+## carry the file's own samples, before polarity, edits and gain, and the
+## readout reads them (`rawAmplitude`).
 ##
 ## Seen to fail: with `numberText` printing NaN, `otherFields` showed "nan"
 ## for an unknown inline number; with `pair` dropping the known half,
 ## `halfKnownPairs` read "" for a point alone; with the times shown in local
-## time (run with TZ=Asia/Tokyo), `defaultFields` read 20:33:20.123.
+## time (run with TZ=Asia/Tokyo), `defaultFields` read 20:33:20.123; with
+## the raw samples cut after `prepare` (the processed ones), `rawAmplitude`
+## found "the raw sample of trace 3 at 100 is -3.296956, the file's
+## -0.98078525" (after AGC); with no read again when the field is turned on, "no raw
+## samples in the tile".
 
 import std/[math, strutils]
 import parseSEG
-import viewSEG/core/[pick, readout, zoom]
+import viewSEG/core/[pick, readout, state, zoom]
+import utils/[fixtures, waiting]
 
 proc knownPick(): Pick =
   ## The cursor at 1284 ms over trace 13 (index 12) of shot 11.
@@ -122,3 +129,55 @@ block cleanedFields:
   doAssert cleaned([rfTime, rfAmplitude, rfTime, rfShotTime, rfAmplitude]) ==
     @[rfTime, rfAmplitude, rfShotTime]
   doAssert cleaned(newSeq[ReadoutField]()).len == 0
+
+block rawAmplitude:
+  doAssert rfRawAmplitude notin DefaultReadout, "the raw amplitude is off by default"
+  template settle(st: var AppState; cond: untyped): bool =
+    waitUntil((discard st.drainInbox(); cond))
+  proc answered(st: AppState): bool =
+    let p = st.panel(MainPanel)
+    let tiles = st.tiles(st.findPanel(MainPanel))
+    tiles.len > 0 and tiles[^1].request == p.pending and p.pending.gen == p.requestGen
+  withFixtures fx:
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.surveySegy())
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let lay = st.panel(MainPanel).layout
+    var d = st.panel(MainPanel).layers[0].display
+    d.gain = dgAgc
+    st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+    st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 640, 2 * lay.samples))
+    doAssert st.settle(st.answered)
+    doAssert st.tiles(0)[^1].raw.len == 0, "raw samples carried while the field is off"
+    var s = st.settings
+    s.readout.add rfRawAmplitude
+    st.apply Command(kind: ckSettings, settings: s)
+    doAssert st.settle(st.answered and st.tiles(0)[^1].raw.len > 0), "no raw samples in the tile"
+    proc check(st: AppState; what: string) =
+      let t = st.tiles(0)[^1]
+      doAssert t.request.decimation == 1 and t.request.stride == 1, what
+      for (row, i) in [(2, 100), (7, 250), (20, 400)]:
+        let want = surveySample(0, row + 1, t.request.firstSample + i)
+        let got = t.raw[row * t.columns + i]
+        doAssert got == want, what & ": the raw sample of trace " & $(row + 1) & " at " & $i &
+          " is " & $got & ", the file's " & $want
+      var at = 300 # a loud sample of trace 8: the flat event
+      while abs(surveySample(0, 8, t.request.firstSample + at)) < 0.1: inc at
+      var p = pickAt(st.tiles(0), st.panel(MainPanel).layout, DataPoint(x: 7,
+        tMs: float64(t.request.firstSample + at) * DtMs))
+      p.inside = true
+      doAssert p.raw == surveySample(0, 8, t.request.firstSample + at), what & ": " & $p.raw
+      doAssert p.text(rfRawAmplitude) == significant(p.raw), what & ": " & p.text(rfRawAmplitude)
+      doAssert p.amplitude != p.raw, what & ": the amplitude drawn is the raw one (AGC is on)"
+    st.check("as recorded")
+    st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: true)
+    doAssert st.settle(st.answered and st.tiles(0).len == 1)
+    st.check("all reversed")
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled,
+      edited: @[st.sessions[0].base + 7], on: true)
+    doAssert st.settle(st.answered and st.tiles(0)[^1].isKilled(7))
+    st.check("trace 8 killed")
+    s.readout.setLen s.readout.len - 1
+    st.apply Command(kind: ckSettings, settings: s)
+    doAssert st.settle(st.answered and st.tiles(0)[^1].raw.len == 0)
+    st.shutdown()

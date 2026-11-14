@@ -63,7 +63,7 @@ const
   ReadoutNames: array[ReadoutField, string] = ["time", "trace", "channel", "receiver",
     "source", "ffid", "offset", "amplitude", "shotTime", "cursorUtc", "sample", "cdp",
     "inline", "crossline", "sourceXY", "receiverXY", "midpointXY", "sourceZ", "receiverZ",
-    "component", "status"]
+    "component", "status", "rawAmplitude"]
 
 type
   Reading = object

@@ -778,7 +778,8 @@ proc requestView(state: var AppState; k: int) =
     reversed = e.listIn(teReversed, traces)
     killed = e.listIn(teKilled, traces)
   state.readers[k].request ReaderRequest(read: req, fields: p.shownFields, flow: flow,
-    clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed)
+    clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
+    raw: rfRawAmplitude in state.settings.readout)
 
 proc remember(state: var AppState; k: int) =
   ## Keeps `panels[k]`'s view for back, unless it is the one kept last or
@@ -1655,8 +1656,11 @@ proc apply*(state: var AppState; cmd: Command) =
         "be used (a calibration that is not a positive number, an entry given twice, a " &
         "sort preset without a name or keys) and were left out.")
     let follow = s.files.followLatest and not state.settings.files.followLatest
+    let raw = (rfRawAmplitude in s.readout) != (rfRawAmplitude in state.settings.readout)
     state.change s
     if follow: state.followNewest() # the newest file whole now, at once
+    if raw: # the tiles carry their raw samples, or no longer: made again from the samples held
+      for k in 0 ..< state.panels.len: state.resample(k)
   of ckExportSettings:
     if not state.refusedExport(cmd):
       state.diskIo.replace(cmd.docPath, settingsDocument(state.settings),

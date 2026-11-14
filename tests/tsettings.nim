@@ -49,7 +49,7 @@ proc everyFieldSet(): Settings =
     scale: ScaleUnits(length: luCm, speed: true),
     calibrations: @[Calibration(monitor: "DELL U2720Q 3840x2160", ppi: 163.25),
       Calibration(monitor: "eDP-1 1920x1080", ppi: 141)],
-    readout: @[rfAmplitude, rfTime, rfMidpointXY, rfStatus],
+    readout: @[rfAmplitude, rfTime, rfMidpointXY, rfStatus, rfRawAmplitude],
     sortPresets: @[SortPreset(name: "Mine", keys: @[SortKey(field: hfOffset, descending: true)]),
       SortPreset(name: "Channels", keys: @[SortKey(field: hfChannel)])],
     customOrder: @[SortKey(field: hfSrcPoint), SortKey(field: hfTrace, descending: true)],

@@ -147,7 +147,7 @@ func valueChars(f: ReadoutField): int =
   of rfChannel, rfInline, rfCrossline: 5
   of rfReceiver, rfSource: 12
   of rfOffset, rfSourceZ, rfReceiverZ: 8
-  of rfAmplitude: 9
+  of rfAmplitude, rfRawAmplitude: 9
   of rfShotTime, rfCursorUtc: 23
   of rfSourceXY, rfReceiverXY, rfMidpointXY: 21
   of rfComponent: 2

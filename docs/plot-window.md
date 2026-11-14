@@ -240,7 +240,12 @@
   pixel ("peak of 4"). Right-click the bar to choose the fields and their order; any of
   the trace's keys can be added (sample number, UTC at the cursor, CDP, inline,
   crossline, source, receiver and midpoint coordinates, elevations, component, trace
-  status). Unknown values are left blank. Whatever the fields, the bar says "dead" over a
+  status), and the **raw amplitude** (the user: "ok but off by default"): the sample as
+  it is in the file at the cursor, before polarity, edits, processing and gain (zoomed
+  out, the largest of the samples there, as the amplitude). It is off until chosen;
+  while it is on, each tile carries the file's samples beside the drawn ones, cut the
+  same way, so the readout takes them from what is on hand and nothing is read for it
+  on the screen's thread. Unknown values are left blank. Whatever the fields, the bar says "dead" over a
   trace the file marks dead, and "killed", "polarity reversed" or both over an edited
   trace, in the theme's warning colour.
 

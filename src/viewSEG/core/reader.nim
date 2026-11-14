@@ -87,6 +87,7 @@ type
     clipPercentile*: float64
     reversed*: seq[int]       ## the gather's traces whose polarity is reversed, ascending
     killed*: seq[int]         ## the gather's traces killed, ascending
+    raw*: bool                ## the tile carries the samples as the file has them too
 
   ReaderObj = object
     lock: Lock
@@ -398,6 +399,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
   tile.data = newSeq[float32](q.count * tile.columns)
   if q.envelope: tile.envelope = newSeq[float32](q.count * 2 * tile.columns)
   tile.keys = newSeq[TraceKeys](q.count)
+  if req.raw: tile.raw = newSeq[float32](q.count * tile.columns)
   tile.header = newSeq[seq[float64]](req.fields.len)
   for h in tile.header.mitems: h = newSeq[float64](q.count)
   # the edits of each row
@@ -410,6 +412,15 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       if pr.edits[row] != {}: any = true
     if any: tile.edits = pr.edits
     else: pr.edits.setLen 0
+
+  template cutRaw(b: RowBlock[float32]; first: int) =
+    ## Rows `first ..< first + b.len` of the tile's raw samples, from `b` as
+    ## decoded (before `prepare`).
+    if req.raw:
+      for k in 0 ..< b.len:
+        let at = (first + k) * tile.columns
+        decimatePeakInto(b.rowPtr(k).toOpenArray(skip, skip + q.samples - 1), q.decimation,
+          tile.raw.toOpenArray(at, at + tile.columns - 1))
 
   template cut(b: RowBlock[float32]; rows: TraceRows; first: int) =
     ## Rows `first ..< first + b.len` of the tile, from the readied block `b`.
@@ -456,6 +467,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       var partFailed: seq[int]
       for fr in failed:
         if fr in a ..< a + n: partFailed.add fr - a
+      cutRaw(b, a)
       rd.prepare(pr, b, rows, a, partFailed)
       cut(b, rows, a)
       a += n
@@ -481,6 +493,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       if keep and c.count * cols > 0: # as read, before anything changes them
         copyMem(addr rd.raw.samples[c.first * cols], b.rowPtr(0), c.count * cols *
           sizeof(float32))
+      cutRaw(b, c.first)
       rd.prepare(pr, b, c.rows, c.first, c.failedRows)
       cut(b, c.rows, c.first)
       for fr in c.failedRows: failed.add c.first + fr

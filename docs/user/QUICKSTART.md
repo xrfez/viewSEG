@@ -317,7 +317,9 @@ monitor's diagonal or make a bar on the screen as long as a ruler held to it say
 **Readout.** The status bar along the bottom reads out what lies under the pointer: the
 time, the trace and channel, receiver and source line and point, FFID, offset, the
 amplitude as displayed, and the record's UTC time; and, whatever the fields, "dead" for
-a trace the file marks dead, "killed" or "polarity reversed" for an edited trace. Right-click the status bar to choose the fields
+a trace the file marks dead, "killed" or "polarity reversed" for an edited trace. The
+**raw amplitude** (the sample as the file has it, before polarity, edits and gain) is
+one of the fields you can add; it is off until you do. Right-click the status bar to choose the fields
 and their order.
 
 ## Messages

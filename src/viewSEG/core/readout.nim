@@ -6,7 +6,9 @@
 ## channel, receiver line and point, source line and point, field record
 ## (FFID), offset, amplitude, and the shot time (the record's UTC time; the
 ## cursor's time within the record is the first field). Every trace key can
-## be added. Whatever the fields, the readout says when the trace under the
+## be added, and the raw amplitude: the sample as the file has it, before
+## polarity, edits, processing and gain (off by default; while it is on, the
+## tiles carry their raw samples too, `ReaderRequest.raw`). Whatever the fields, the readout says when the trace under the
 ## pointer is dead in the file, killed or its polarity reversed (`editNote`).
 
 import std/[math, strutils, times]
@@ -23,6 +25,7 @@ type
     rfRecord = "FFID"                 ## field record
     rfOffset = "offset"
     rfAmplitude = "amplitude"         ## as displayed, after processing and gain
+    rfRawAmplitude = "raw amplitude"  ## as the file has it, before everything (off by default)
     rfShotTime = "shot time"          ## the record's UTC time
     rfCursorUtc = "UTC at the cursor" ## the shot time plus the cursor's time
     rfSample = "sample"               ## the nearest sample's number, from 1
@@ -53,6 +56,7 @@ func caption*(f: ReadoutField): string =
   of rfRecord: "FFID"
   of rfOffset: "offset"
   of rfAmplitude: "amp"
+  of rfRawAmplitude: "raw"
   of rfShotTime: "shot"
   of rfCursorUtc: "UTC"
   of rfSample: "sample"
@@ -115,6 +119,10 @@ proc text*(p: Pick; f: ReadoutField): string =
     if p.amplitude.isNaN: ""
     elif p.binned > 1: significant(p.amplitude) & " (peak of " & $p.binned & ")"
     else: significant(p.amplitude)
+  of rfRawAmplitude:
+    if p.raw.isNaN: ""
+    elif p.binned > 1: significant(p.raw) & " (peak of " & $p.binned & ")"
+    else: significant(p.raw)
   else:
     if not p.found: return ""
     case f
@@ -141,7 +149,7 @@ proc text*(p: Pick; f: ReadoutField): string =
       of tsLive: "live"
       of tsDead: "dead"
       of tsAuxiliary: "auxiliary"
-    of rfTime, rfSample, rfAmplitude: "" # handled above
+    of rfTime, rfSample, rfAmplitude, rfRawAmplitude: "" # handled above
 
 func editNote*(p: Pick): string =
   ## What the readout says of the trace at `p` beyond its fields: "dead"

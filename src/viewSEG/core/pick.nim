@@ -26,6 +26,7 @@ type
     trace*: int = -1          ## its index in its file; -1 when not known
     keys*: TraceKeys          ## its keys; every field unknown when not `found`
     amplitude*: float32 = NaN ## the value drawn at the nearest sample; NaN when not held
+    raw*: float32 = NaN       ## the file's sample there, before anything; NaN when not held
     binned*: int = 1          ## samples behind `amplitude`: more than 1 zoomed out
     edits*: set[TraceEdit]    ## the trace's edits, as drawn: killed, reversed
 
@@ -63,6 +64,7 @@ func pickAt*(tiles: openArray[Tile]; layout: PanelLayout; at: DataPoint): Pick =
     let c = clamp(int(round((at.tMs - t.timeOf(0)) / (float64(r.decimation) * t.dtMs))), 0,
       t.columns - 1)
     result.amplitude = t.data[row * t.columns + c]
+    if t.raw.len == t.data.len: result.raw = t.raw[row * t.columns + c]
     result.binned = r.decimation
 
 func pick*(tiles: openArray[Tile]; layout: PanelLayout; view: Viewport; plot: Rect;
