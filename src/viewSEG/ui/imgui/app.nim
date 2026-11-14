@@ -43,7 +43,7 @@ export ThemeChoice, theme, messages, ImguiCheck, tracepanel
 const
   glslVersion = "#version 330"
   defaultSize = (1280, 800)               ## the first window size at 100 %
-  plotTitle = IconPlot & "  Plot###plot"
+  plotId = "plot"                         ## the main plot window's ImGui ID: "###plot"
   tableTitle = IconTable & "  Headers (example)###headers"
   messagesTitle = IconLog & "  Messages###Messages"
   filesTitle = IconList & "  Files###files"
@@ -206,12 +206,18 @@ proc savePng*(frame: FrameInfo; path: string): bool =
     stderr.writeLine "viewSEG: cannot write ", path, ": ", SDL_GetError()
 
 proc markOf*(frame: FrameInfo; name: string): Rect =
-  ## Where the named part (`"toolbar"`, `"statusbar"`, `"plot"`,
+  ## Where the named part (`"toolbar"`, `"statusbar"`, `"seismic"`,
   ## `"tool.Open file"`, `"tool.Open folder"` ...) was drawn in this frame, in
   ## framebuffer pixels; an empty rectangle when it was not.
   result = Rect()
   for (n, r) in frame.ui.marks:
     if n == name: result = r
+
+proc windowName*(frame: FrameInfo; id: string): string =
+  ## The full name of the window whose ImGui ID is `id` (`"plot"`, `"files"`
+  ## ...): its title, then `###` and the ID; "" when there is none.
+  let w = igFindWindowByName(("###" & id).cstring)
+  if w == nil: "" else: $w.Name
 
 proc chooseTheme*(frame: FrameInfo; name: string) =
   ## Picks theme file `name` ("" follows the system) as View > Theme does;
@@ -549,7 +555,7 @@ proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   discard igDockBuilderSplitNode(left, ImGui_Dir_Down, 0.3, addr bottom, addr top)
   igDockBuilderDockWindow(filesTitle, files)
   igDockBuilderDockWindow(recordsTitle, records)
-  igDockBuilderDockWindow(plotTitle, top)
+  igDockBuilderDockWindow("###" & plotId, top)
   igDockBuilderDockWindow(tableTitle, right)
   igDockBuilderDockWindow(jobsTitle, bottom)
   igDockBuilderDockWindow(messagesTitle, bottom) # the tab shown
@@ -727,7 +733,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     s.readout = status.fields
     ui.core.apply Command(kind: ckSettings, settings: s)
   ui.drawDockSpace()
-  var plot = ui.trace.drawTracePanel(plotTitle, ui.core, MainPanel, ui.theme, ui.fonts,
+  var plot = ui.trace.drawTracePanel(plotId, ui.core, MainPanel, ui.theme, ui.fonts,
     ui.marks)
   result.incl plot.actions
   ui.pick = plot.pick

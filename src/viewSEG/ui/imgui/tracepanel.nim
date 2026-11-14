@@ -1122,12 +1122,17 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)
 
-proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: PanelId;
+proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: PanelId;
     t: Theme; fonts: Fonts; marks: var Marks): PanelOutput =
-  ## The plot window of `panel`: its controls, then the start screen, a
-  ## note, or the plot. Returns the commands and actions it asks for, and
-  ## what lies under the mouse.
+  ## The plot window of `panel`, titled for what it shows ("Seismic", "Aux":
+  ## `windowTitle`) with the ImGui ID `id` (`"###" & id`), so that a new
+  ## title keeps the window's place in the layout; marked as its title in
+  ## lower case ("seismic"). Its controls, then the start screen, a note, or
+  ## the plot. Returns the commands and actions it asks for, and what lies
+  ## under the mouse.
   result.pick = noPick()
+  let name = st.windowTitle(panel)
+  let title = IconPlot & "  " & name & "###" & id
   # Arrow keys pan the plot, so they do not move ImGui's keyboard focus here;
   # the wheel zooms, so it does not scroll the window.
   const windowFlags = ImGui_WindowFlags_NoNavInputs.cint or
@@ -1137,7 +1142,7 @@ proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: P
     # The window never scrolls as a whole: the strip wraps and the plot fits.
     igSetScrollX_Float(0)
     igSetScrollY_Float(0)
-    marks.markWindow("plot")
+    marks.markWindow(name.toLowerAscii)
     let k = st.findPanel(panel)
     if k < 0 or st.panels[k].layers.len == 0:
       drawStartScreen(t, st.settings.recentFiles, st.settings.recentFolders, marks, result)

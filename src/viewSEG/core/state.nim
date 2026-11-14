@@ -430,6 +430,12 @@ func findPanel*(state: AppState; id: PanelId): int =
     if p.id == id: return i
   -1
 
+func windowTitle*(state: AppState; id: PanelId): string =
+  ## The title of panel `id`'s window: what it shows, numbered from the
+  ## second of a kind on ("Seismic", "Seismic 2", "Aux"; `panels`).
+  let k = state.findPanel(id)
+  if k < 0: "Seismic" else: windowTitle(state.panels, k)
+
 func findSession*(state: AppState; id: SessionId): int =
   ## The index of open file `id` in `sessions`; -1 when it is not open.
   for i, s in state.sessions:

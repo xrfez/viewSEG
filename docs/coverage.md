@@ -52,7 +52,7 @@ Status values:
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Sort by header fields (shot, receiver, CMP, offset, any) | `sortTraces(by[, traces])` | Sort by any raw header field, and gather domains | planned |
-| Sort by the viewer's own columns | `sortOrder(columns)` | Plot window: the sort buttons (Line/Station, By Flag, By Component) and "Sort by keys…" over the trace keys (`TraceKeys`, among them `component`), each ascending or descending, sorted by the panel's reader; later a gather by a QC attribute (RMS, pick time, SNR) | built (keys); planned (QC attributes) |
+| Sort by the viewer's own columns | `sortOrder(columns)` | Seismic window: the sort buttons (Line/Station, By Flag, By Component) and "Sort by keys…" over the trace keys (`TraceKeys`, among them `component`), each ascending or descending, sorted by the panel's reader; later a gather by a QC attribute (RMS, pick time, SNR) | built (keys); planned (QC attributes) |
 
 ### Headers
 
@@ -194,12 +194,12 @@ Status values:
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Fixed gain in dB | `scaleDb`, `gainDbOp`, `dbToFactor` | Plot window: the gain amount in dB and the Fixed gain, both as the shader's scale; `gainDbOp` in the processing window | built (display); planned (processing) |
-| Normalisation per trace or panel (max, RMS, percentile) | `initNormalizePlan`, `normalize`, `normalizeOp`, `panelFactor` | Plot window: gain "Normalized" (`normalizeOp(stat, perTrace)` per trace; per panel the scale alone, from `panelStats`) | built |
-| AGC (RMS, mean absolute) | `initAgcPlan`, `agc`, `agcOp` | Plot window: gain "AGC" (the default on pre-stack gathers); processing window: AGC | built |
+| Fixed gain in dB | `scaleDb`, `gainDbOp`, `dbToFactor` | Seismic window: the gain amount in dB and the Fixed gain, both as the shader's scale; `gainDbOp` in the processing window | built (display); planned (processing) |
+| Normalisation per trace or panel (max, RMS, percentile) | `initNormalizePlan`, `normalize`, `normalizeOp`, `panelFactor` | Seismic window: gain "Normalized" (`normalizeOp(stat, perTrace)` per trace; per panel the scale alone, from `panelStats`) | built |
+| AGC (RMS, mean absolute) | `initAgcPlan`, `agc`, `agcOp` | Seismic window: gain "AGC" (the default on pre-stack gathers); processing window: AGC | built |
 | AGC gain kept and removed | `agc(..., gains)`, `removeGain` | Show the AGC gain function; undo AGC on export | planned |
-| Time-variant gain (knots, tᵖ, exponential) | `knotGain`, `powerGain`, `exponentialGain`, `gainCurveOp`, `initGainCurvePlan`, `applyGainCurve` | Plot window: gain "Exponential" (`exponentialGain`, `powerGain`); processing window: gain curve editor (knots) | built (display); planned (knots) |
-| Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats` | Plot window: clip at a percentile and the Normalized levels (`panelStats`, a shader uniform), Float's level of the data in view (`percentileAbs`); the same reference is full black in density and the full swing (the trace overlap) of a wiggle; per-trace statistics later | built |
+| Time-variant gain (knots, tᵖ, exponential) | `knotGain`, `powerGain`, `exponentialGain`, `gainCurveOp`, `initGainCurvePlan`, `applyGainCurve` | Seismic window: gain "Exponential" (`exponentialGain`, `powerGain`); processing window: gain curve editor (knots) | built (display); planned (knots) |
+| Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats` | Seismic window: clip at a percentile and the Normalized levels (`panelStats`, a shader uniform), Float's level of the data in view (`percentileAbs`); the same reference is full black in density and the full swing (the trace overlap) of a wiggle; per-trace statistics later | built |
 
 ### Pipelines and threads
 

@@ -293,7 +293,7 @@ withFixtures fx:
     var marks: seq[(string, Rect)]
     proc onNarrow(f: FrameInfo) =
       if f.answered and f.markOf("plot.data").size.x > 0:
-        for name in @strip & @["plot", "plot.data"]:
+        for name in @strip & @["seismic", "plot.data"]:
           marks.add (name, f.markOf(name))
         f.stop()
       if f.index > 1500: f.stop()
@@ -302,7 +302,7 @@ withFixtures fx:
       indexCacheDir: some(fx.dir / "cache"), onFrame: onNarrow))
     doAssert code == 0 and marks.len > 0, "the narrow window never showed the plot"
     let s = Shot(marks: marks)
-    let win = s.mark("plot")
+    let win = s.mark("seismic")
     let data = s.mark("plot.data")
     var lowest = 0'f32
     for name in strip:

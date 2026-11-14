@@ -71,7 +71,7 @@ withFixtures fx:
       of 2:
         if f.theme.mode == tmLight and f.windowSize == wanted and wait > 3:
           # The splitter: the gap between the plot window and the Headers window.
-          let plot = f.markOf("plot")
+          let plot = f.markOf("seismic")
           tableBefore = f.markOf("table")
           doAssert tableBefore.pos.x > plot.pos.x + plot.size.x, "the Headers window is not right"
           at = vec2(round((plot.pos.x + plot.size.x + tableBefore.pos.x) / 2),
@@ -87,7 +87,7 @@ withFixtures fx:
           let table = f.markOf("table")
           doAssert abs(table.size.x - (tableBefore.size.x + drag)) <= 2,
             "the drag did not widen the Headers window: " & $tableBefore & " -> " & $table
-          arranged = (f.markOf("plot"), table)
+          arranged = (f.markOf("seismic"), table)
           f.stop()
           stage = 4
       else: discard
@@ -110,7 +110,7 @@ withFixtures fx:
         if wait == 3:
           doAssert f.theme.mode == tmLight, "the theme was not restored"
           doAssert f.windowSize == wanted, "the size was not restored: " & $f.windowSize
-          doAssert near(f.markOf("plot"), arranged[0]) and near(f.markOf("table"), arranged[1]),
+          doAssert near(f.markOf("seismic"), arranged[0]) and near(f.markOf("table"), arranged[1]),
             "the windows are not where they were: " & $f.markOf("table") & ", not " &
             $arranged[1]
           let recent = f.markOf("plot.recent 0")

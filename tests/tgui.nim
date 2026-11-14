@@ -50,7 +50,7 @@ proc render(opts: RunOptions; save = ""): Shot =
     if f.index == frames - 1:
       shot = Shot(width: f.width, height: f.height, theme: f.theme, scale: f.scale,
         pixels: f.readFrame(), messages: f.messages)
-      for n in @["toolbar", "statusbar", "plot", "table", "table.note"] & @appTools:
+      for n in @["toolbar", "statusbar", "seismic", "table", "table.note"] & @appTools:
         shot.marks.add (n, f.markOf(n))
       for sym in Symbol:
         shot.marks.add ("tool." & $sym, f.markOf("tool." & $sym))

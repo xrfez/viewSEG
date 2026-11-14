@@ -8,7 +8,7 @@
 ## Layout
 
 ```
-┌ Plot ──────────────────────────────────────────────────────┐
+┌ Seismic ───────────────────────────────────────────────────┐
 │ [▒|∿|▒∿][◢|◣] [gain▾] [-][+0.0][+] dB [12.5] tr/in [200] ms/in│  controls (they
 │ [-][+][fit][<] [Line/Station|By Flag|By Component] [⋯]     │  wrap when narrow)
 ├────────────────────────────────────────────────────────────┤
@@ -22,6 +22,13 @@
 └────────────────────────────────────────────────────────────┘
 ```
 
+- **Named for what it shows:** the plot window of seismic traces is **Seismic**; the
+  same window showing auxiliary traces (the auxiliary viewer) is **Aux**, and the spectrum
+  and f-k windows, built on it, are **FFT** and **F-K**. The name comes from the window's
+  trace filter and kind, so a window renamed by a new filter keeps its place; a second
+  window of a kind is numbered ("Seismic 2"). Saved layouts name a window by an identity
+  of its own (Dear ImGui's `###plot`), never by its title, so a layout saved before a
+  rename puts every window back where it was.
 - **Vertical, as seismic is plotted:** time runs down, traces run across. Single traces
   and overlays are vertical too; overlays also offer a horizontal option.
 - **Never past the data:** every way of moving the view (wheel, keys, drags, box zoom,

@@ -41,6 +41,12 @@
 ## buttons for. The panel's reader sorts (`core/sorting`), so each panel
 ## has its own order; the order is a list of trace numbers, and nothing in
 ## the file moves.
+##
+## **Names.** A panel's window is named for what it shows (`windowTitle`):
+## "Seismic" for seismic traces, "Aux" for auxiliary ones, "FFT" for
+## spectra, "F-K" for an f-k plot; a second window of a kind is numbered
+## ("Seismic 2"). The name follows the panel's trace filter and kind, so
+## the same window names itself again when it is reused.
 
 import std/math
 import parseSEG
@@ -187,8 +193,15 @@ type
     name*: string
     keys*: seq[SortKey] ## the first key first
 
+  PanelShows* = enum
+    ## What a panel draws, which names its window (`windowTitle`).
+    psTraces = "traces"     ## traces over time, as filtered: Seismic or Aux
+    psSpectrum = "spectrum" ## amplitude spectra
+    psFk = "f-k"            ## an f-k plot
+
   Panel* = object
     id*: PanelId
+    shows*: PanelShows        ## what it draws
     layers*: seq[Layer]       ## drawn in order; layer 0 is the one gather navigation moves
     header*: HeaderChoice
     requestGen*: uint64       ## bumped whenever the panel needs new data; tiles carry it
@@ -284,6 +297,31 @@ func defaultFields*(known: set[HeaderField]; kind = gkUnknown): seq[HeaderField]
 func shownFields*(p: Panel): seq[HeaderField] =
   ## The rows of `p`'s display header, top first.
   if p.header.auto: defaultFields(p.known, p.kind) else: p.header.fields
+
+func contentName*(p: Panel): string =
+  ## What `p` shows, as its window is named: "Seismic" (seismic traces),
+  ## "Aux" (auxiliary traces), "Seismic + Aux" (both), "FFT" (spectra),
+  ## "F-K". A panel with no layer yet is named for the filter a new layer
+  ## gets.
+  case p.shows
+  of psSpectrum: "FFT"
+  of psFk: "F-K"
+  of psTraces:
+    let f = if p.layers.len > 0: p.layers[0].filter else: TraceFilter()
+    if f.seismic and f.auxiliary: "Seismic + Aux"
+    elif f.auxiliary: "Aux"
+    elif f.seismic: "Seismic"
+    else: "Traces"
+
+func windowTitle*(panels: openArray[Panel]; k: int): string =
+  ## The title of `panels[k]`'s window: what it shows (`contentName`),
+  ## numbered from the second window of that name on, in the order of
+  ## `panels` ("Seismic", "Seismic 2").
+  result = contentName(panels[k])
+  var n = 1
+  for i in 0 ..< k:
+    if contentName(panels[i]) == result: inc n
+  if n > 1: result.add " " & $n
 
 func presetOf*(order: openArray[SortKey]; presets: openArray[SortPreset] = SortPresets): int =
   ## The index in `presets` of the preset whose keys are `order`; -1 for

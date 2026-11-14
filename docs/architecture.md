@@ -434,6 +434,8 @@ type
 
   Panel = object             # core/panels
     id: PanelId
+    shows: PanelShows        # traces, spectra or f-k: with layer 0's filter, it names the
+                             # window ("Seismic", "Aux", "FFT", "F-K": windowTitle)
     layers: seq[Layer]       # drawn in order; layer 0 is the one gather navigation moves
     header: HeaderChoice     # the display header's rows: automatic, or the user's fields
     requestGen: uint64       # bumped whenever the panel needs new data; tiles carry it

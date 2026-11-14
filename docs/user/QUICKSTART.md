@@ -46,7 +46,7 @@ Opening a folder lists it and shows its first file; opening a file shows it and 
 folder beside it. Listing reads only the first few kilobytes of each file, in the
 background, so a folder of thousands of files lists without opening any of them.
 
-- **Click a file** to show it in the plot window, in place of the one shown. The display
+- **Click a file** to show it in the Seismic window, in place of the one shown. The display
   (mode, gain, sort order, display header) and the scales stay as they were, so records
   compare one after the other.
 - **With the Files window focused** (click in it), **Up / Down** or **Tab / Shift+Tab**
@@ -65,7 +65,7 @@ the next start.
 
 ## Step through the records of a file
 
-A file often holds several records (shots, receiver gathers, CDPs). The plot window shows
+A file often holds several records (shots, receiver gathers, CDPs). The Seismic window shows
 one at a time; the **Records** window, under the file list, lists them all, one row each,
 with what tells them apart (a shot's FFID and source station, a receiver gather's
 receiver, a CDP) and how many traces each holds. The record shown is highlighted.
@@ -73,7 +73,7 @@ receiver, a CDP) and how many traces each holds. The record shown is highlighted
 - **Click a record** to show it. With the Records window focused, **Up / Down** step to
   the next or previous one, **Page Up / Page Down** by a page, **Home / End** to the first
   and last. A file of a hundred thousand records scrolls as lightly as one of ten.
-- **In the plot window:** **Page Down / Page Up** show the next or previous record,
+- **In the Seismic window:** **Page Down / Page Up** show the next or previous record,
   **Home / End** the first and last; the arrows in the strip do the same, and the number
   between them ("2 / 120") opens **Go to record** (also **Ctrl+G**): type a place in the
   file or a field record number (FFID) and press Enter.
@@ -101,7 +101,8 @@ seconds; click it for the Jobs window.
 
 ## Look at a record
 
-An opened file shows its first record in the Plot window: traces across, time down, as
+An opened file shows its first record in the **Seismic** window (a window is named for
+what it shows): traces across, time down, as
 black wiggles with their positive lobes filled, on white paper, with automatic gain (AGC
 on shot and receiver records). Where the traces are closer together than 4 pixels (a
 whole shot of a few thousand traces, say), the plot shows greyscale density instead, and
@@ -123,7 +124,7 @@ by default).
 | Add a trace to the selection, or take it out | Shift + click | |
 | Cancel a drag, else clear the selection | | Esc |
 
-Keys act while the Plot window has the focus: click in it first.
+Keys act while the Seismic window has the focus: click in it first.
 
 **Display.** The first buttons in the strip choose how traces are drawn: greyscale
 density, wiggles, or wiggles over density. The two after them fill the wiggles' positive
@@ -189,7 +190,7 @@ for all of it), jobs that failed. Its strip:
   file viewSEG has open or lists: it refuses, and says so).
 
 Click a message that names a trace (a damaged trace, say) to see that trace: its record is
-shown in the plot window with the trace selected, and its file is opened again if you have
+shown in the Seismic window with the trace selected, and its file is opened again if you have
 stepped away from it.
 
 ## What viewSEG remembers
