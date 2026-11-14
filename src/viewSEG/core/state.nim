@@ -8,6 +8,16 @@
 ## thread that calls it as the UI thread. The UI reads the state through the
 ## accessors below, which do not let it change anything.
 ##
+## **Trace panels.** A panel that shows a file has a reader thread
+## (`core/reader`). Showing a gather holds the file (`Jobs.hold`) and hands
+## it to the reader, which posts the panel's layout; the view then fits the
+## whole gather. The UI reports what its plot shows (`ckView`); when the
+## request sent last does not cover that view (`covers`), a new one is made
+## (`requestFor`) and the panel's `requestGen` goes up. A tile is taken in
+## only when it answers the newest request: older ones are dropped. The
+## newest `MaxTiles` tiles of each panel are kept, so a view keeps showing
+## what it has (the previous tile, the coarser one) until the new tile comes.
+##
 ## A command that does not fit the state (a file that is no longer open, a
 ## gather out of range) changes nothing and says why in the log, as a
 ## warning: the UI may issue a command in the same frame as the change that
@@ -18,25 +28,30 @@
 ## header edits are a patch, undone by removing an entry; views have "back".
 ## None of these needs a general history of commands.
 
-import std/[os, sequtils]
+import std/[math, os, sequtils]
 import parseSEG
-import filejobs, inbox, jobs, log, panels, selection, session, threads
+import filejobs, inbox, jobs, log, panels, reader, selection, session, threads, tiles
 
-export inbox, jobs, log, panels, selection, session, threads
+export inbox, jobs, log, panels, selection, session, threads, tiles
 
-const MainPanel* = PanelId(1)
-  ## The panel `initAppState` makes; opened files appear in it.
+const
+  MainPanel* = PanelId(1)
+    ## The panel `initAppState` makes; opened files appear in it.
+  MaxTiles* = 4 ## tiles kept per panel, newest last
 
 type
   CommandKind* = enum
-    ckOpen = "open"           ## open files (one interactive job each)
-    ckClose = "close"         ## close an open file
+    ckOpen = "open"             ## open files (one interactive job each)
+    ckClose = "close"           ## close an open file
     ckCancelJob = "cancel job"
     ckReorderJob = "reorder job"
     ckRemoveJob = "remove job"
-    ckGather = "go to gather" ## show another gather of the file a panel shows
-    ckHover = "hover"         ## the trace under the cursor
-    ckSelect = "select"       ## change the selected traces
+    ckGather = "go to gather"   ## show another gather of the file a panel shows
+    ckView = "view"             ## what a panel's plot shows (zoom, pan, size)
+    ckDisplay = "display"       ## how a panel's layer 0 is drawn
+    ckHeader = "display header" ## the rows of a panel's display header
+    ckHover = "hover"           ## the trace under the cursor
+    ckSelect = "select"         ## change the selected traces
     ckClearSelection = "clear selection"
 
   Command* = object
@@ -49,13 +64,16 @@ type
     of ckCancelJob, ckRemoveJob: job*: JobId
     of ckReorderJob:
       reordered*: JobId
-      position*: int        ## 0 runs next
-    of ckGather:
+      position*: int            ## 0 runs next
+    of ckGather, ckView, ckDisplay, ckHeader:
       panel*: PanelId
-      gather*: int          ## index into the file's gathers
-    of ckHover: trace*: int ## survey-wide trace id; -1 for none
+      gather*: int              ## ckGather: index into the file's gathers
+      view*: Viewport           ## ckView: what the panel's plot shows now
+      display*: DisplaySettings ## ckDisplay: how layer 0 is drawn
+      header*: HeaderChoice     ## ckHeader: the display header's rows
+    of ckHover: trace*: int     ## survey-wide trace id; -1 for none
     of ckSelect:
-      traces*: seq[int]     ## survey-wide trace ids
+      traces*: seq[int]         ## survey-wide trace ids
       mode*: SelectMode
     of ckClearSelection: discard
 
@@ -73,12 +91,18 @@ type
     sessions: seq[Session]
     opening, closing: seq[Pending]
     mail: seq[Msg]
-    indexCache: string ## the index cache folder; "" for none
+    indexCache: string    ## the index cache folder; "" for none
     nextFile, nextPanel, nextBase: int
+    tiles: seq[seq[Tile]] ## per panel, as `panels`: the newest last
+    nextTile: uint64
     inbox: Inbox
     jobs: Jobs
-      ## Declared last: fields are destroyed last to first, so the runners
-      ## stop before anything a running job uses is freed.
+      ## Fields are destroyed last to first: the runners stop before
+      ## anything a running job uses is freed.
+    readers: seq[PanelReader]
+      ## per panel, as `panels`; started when the panel first shows a file.
+      ## Declared last: the readers stop (and end their holds) before the
+      ## jobs and the files go.
 
 proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     jobHistory: Natural = DefaultJobHistory; indexCache = ""): AppState =
@@ -90,13 +114,17 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   markUiThread()
   result = AppState(log: initMessageLog(logCapacity), inbox: initInbox(),
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
-    nextPanel: int(MainPanel) + 1)
+    nextPanel: int(MainPanel) + 1, nextTile: 1)
   result.panels.add Panel(id: MainPanel)
+  result.tiles.add newSeq[Tile]()
+  result.readers.add PanelReader()
 
 proc shutdown*(state: var AppState) =
-  ## Cancels every job and waits for the running ones to stop. Destroying the
-  ## state does this too.
+  ## Stops the panels' readers, cancels every job and waits for the running
+  ## ones to stop. Destroying the state does this too.
   assertUiThread()
+  for r in state.readers:
+    r.stop()
   state.jobs.stop()
 
 # --------------------------------------------------------------- reading --
@@ -124,6 +152,11 @@ func jobs*(state: AppState): lent Jobs {.inline.} =
 func indexCache*(state: AppState): lent string {.inline.} =
   ## The folder of parseSEG's index caches; "" for none.
   state.indexCache
+
+func tiles*(state: AppState; panelIndex: int): lent seq[Tile] {.inline.} =
+  ## The tiles kept for `panels[panelIndex]`, oldest first: draw them in
+  ## that order. Each has its own `id`, never reused.
+  state.tiles[panelIndex]
 
 func findPanel*(state: AppState; id: PanelId): int =
   ## The index of panel `id` in `panels`; -1 when there is none.
@@ -159,6 +192,11 @@ func session*(state: AppState; id: SessionId): lent Session =
   if i < 0: missing($id & " is not open")
   state.sessions[i]
 
+proc mailbox(state: AppState): Poster =
+  ## A handle to the inbox, as workers have (tests import this module with
+  ## `{.all.}` to post as a reader would).
+  state.inbox.poster
+
 proc report*(state: var AppState; severity: Severity; source, text: string) =
   ## Adds a message to the log: for what the frontend itself has to say (a
   ## dialog that could not be shown, a slow frame).
@@ -182,6 +220,43 @@ proc canonical(path: string): string =
 proc ignore(state: var AppState; cmd: Command; why: string) =
   state.log.add(sevWarning, "commands", "Ignored \"" & $cmd.kind & "\": " & why & ".")
 
+proc reader(state: var AppState; k: int): lent PanelReader =
+  ## The reader of `panels[k]`, started when first needed.
+  if state.readers[k].isNil:
+    state.readers[k] = newPanelReader(state.panels[k].id, state.inbox.poster,
+      state.jobs.holdRelease)
+  state.readers[k]
+
+proc newSource(state: var AppState; k: int) =
+  ## Forgets what `panels[k]` knew about its traces: its layer 0 now shows
+  ## something else, or nothing. Tells its reader.
+  template p: untyped = state.panels[k]
+  inc p.requestGen
+  p.sourceGen = p.requestGen
+  p.layout = PanelLayout()
+  p.laidOut = false
+  p.known = {}
+  p.kind = gkUnknown
+  p.pending = ReadRequest()
+  p.clip = NaN
+  inc p.revision
+  state.tiles[k].setLen 0
+  var src = ReaderSource(gen: p.sourceGen)
+  if p.layers.len > 0 and p.layers[0].source.kind == lsRecord:
+    let i = state.findSession(p.layers[0].source.file)
+    let g = p.layers[0].source.gather
+    if i >= 0 and g in 0 ..< state.sessions[i].gathers.len:
+      let s = state.sessions[i]
+      p.kind = s.gathers[g].kind
+      if state.jobs.hold(s.path):
+        src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path,
+          traces: s.gathers[g].traces, filter: p.layers[0].filter)
+      else:
+        state.log.add(sevWarning, s.name, s.name & " is busy (a job needs it to itself), " &
+          "so it is not shown.")
+  if not src.file.isNil or not state.readers[k].isNil:
+    state.reader(k).show(src)
+
 proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
   ## Points layer 0 of `panel` at `gather` of `file`, keeping its filter,
   ## pipeline and display; makes the layer when the panel has none.
@@ -191,10 +266,45 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
     state.panels[k].layers.add recordLayer(file, gather)
   else:
     state.panels[k].layers[0].source = LayerSource(kind: lsRecord, file: file, gather: gather)
-  inc state.panels[k].requestGen
-  inc state.panels[k].revision
+  state.newSource(k)
   state.selection.activeGather = GatherRef(file: file, gather: gather)
   inc state.selection.revision
+
+func gatherKind(state: AppState; layer: Layer): GatherKind =
+  ## The kind of the gather `layer` shows; unknown for none.
+  result = gkUnknown
+  if layer.source.kind == lsRecord:
+    let i = state.findSession(layer.source.file)
+    if i >= 0 and layer.source.gather in 0 ..< state.sessions[i].gathers.len:
+      result = state.sessions[i].gathers[layer.source.gather].kind
+
+proc requestView(state: var AppState; k: int) =
+  ## Asks `panels[k]`'s reader for its view, unless the request sent last
+  ## already covers it.
+  template p: untyped = state.panels[k]
+  if p.layers.len == 0 or p.layout.traces == 0 or state.readers[k].isNil: return
+  let flow = p.layers[0].displayPipeline(state.gatherKind(p.layers[0]))
+  let margin = displayMargin(flow, p.layout.dtMs)
+  if p.pending.gen == p.requestGen and p.pending.covers(p.layout, p.view, margin): return
+  var req = requestFor(p.layout, p.view, margin)
+  if req.isEmpty: return
+  inc p.requestGen
+  req.gen = p.requestGen
+  p.pending = req
+  state.readers[k].request ReaderRequest(read: req, fields: p.shownFields, flow: flow,
+    clipPercentile: p.layers[0].display.clipPercentile)
+
+proc refetch(state: var AppState; k: int; keepTiles: bool) =
+  ## Drops the request sent last and asks again for `panels[k]`'s view:
+  ## what a tile holds has changed.
+  template p: untyped = state.panels[k]
+  inc p.requestGen
+  p.pending = ReadRequest()
+  if not keepTiles:
+    state.tiles[k].setLen 0
+    p.clip = NaN
+  inc p.revision
+  state.requestView(k)
 
 proc adopt(state: var AppState; s: sink Session) =
   ## Takes in a file an open job opened, and shows its first gather.
@@ -225,12 +335,11 @@ proc closeSession(state: var AppState; i: int) =
         (s.path in job.spec.reads or s.path in job.spec.exclusive):
       discard state.jobs.cancel(job.id)
   state.selection.forget(s.id, s.traceIds)
-  for p in state.panels.mitems:
-    let before = p.layers.len
-    p.layers.keepItIf(not it.shows(s.id))
-    if p.layers.len != before:
-      inc p.requestGen
-      inc p.revision
+  for k in 0 ..< state.panels.len:
+    let before = state.panels[k].layers.len
+    state.panels[k].layers.keepItIf(not it.shows(s.id))
+    if state.panels[k].layers.len != before:
+      state.newSource(k) # the reader lets go of the file, then the close may run
   # Not cancellable: the file must not be released while a job still reads it.
   let job = state.jobs.submit(JobSpec(title: "Close " & s.name, lane: jlInteractive,
     exclusive: @[s.path], cancellable: false), closeWork())
@@ -338,6 +447,32 @@ proc apply*(state: var AppState; cmd: Command) =
     else: state.ignore(cmd, $cmd.job & " is running; cancel it first")
   of ckGather:
     state.goToGather(cmd)
+  of ckView:
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif cmd.view != state.panels[k].view:
+      state.panels[k].view = cmd.view
+      state.requestView(k)
+  of ckDisplay:
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
+    else:
+      let was = state.panels[k].layers[0].display
+      let d = cmd.display
+      state.panels[k].layers[0].display = d
+      inc state.panels[k].revision
+      if d.gain != was.gain or d.agcWindowMs != was.agcWindowMs or
+          d.clipPercentile != was.clipPercentile:
+        state.refetch(k, keepTiles = false)
+  of ckHeader:
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif not cmd.header.auto and cmd.header.fields.len == 0:
+      state.ignore(cmd, "a display header needs at least one field")
+    else:
+      state.panels[k].header = cmd.header
+      state.refetch(k, keepTiles = true)
   of ckHover:
     if cmd.trace != -1 and state.findTrace(cmd.trace) < 0:
       state.ignore(cmd, "no open file has trace " & $cmd.trace)
@@ -369,6 +504,26 @@ proc drainInbox*(state: var AppState): bool =
     case m.kind
     of mkOpened: state.adopt(move m.session)
     of mkLog: state.log.add(move m.entry)
+    of mkLayout:
+      let k = state.findPanel(m.panel)
+      if k >= 0 and m.sourceGen == state.panels[k].sourceGen:
+        template p: untyped = state.panels[k]
+        p.layout = m.layout
+        p.laidOut = true
+        p.known = m.known
+        p.view = fitAll(p.layout, p.view.columns, p.view.rows)
+        inc p.fits
+        inc p.revision
+        state.requestView(k)
+    of mkTile:
+      let k = state.findPanel(m.tile.panel)
+      if k >= 0 and m.tile.request.gen == state.panels[k].requestGen:
+        m.tile.id = state.nextTile
+        inc state.nextTile
+        if state.panels[k].clip.isNaN: state.panels[k].clip = m.tile.clip
+        state.tiles[k].add move m.tile
+        if state.tiles[k].len > MaxTiles: state.tiles[k].delete(0)
+        inc state.panels[k].revision
   state.mail.setLen 0
   for job in finished:
     state.onFinished(job)

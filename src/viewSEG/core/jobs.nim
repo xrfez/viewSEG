@@ -398,11 +398,7 @@ proc hold*(jobs: Jobs; path: string): bool {.raises: [].} =
     q.holds.add path
     result = true
 
-proc release*(jobs: Jobs; path: string): bool {.raises: [].} =
-  ## Ends one `hold` of `path`, from any thread, once the reader no longer
-  ## touches the file (its prefetchers closed). False when `path` was not
-  ## held.
-  let q = jobs.obj
+proc endHold(q: ptr JobsObj; path: string): bool {.raises: [].} =
   withLock q.lock:
     let i = q.holds.find(path)
     if i >= 0:
@@ -410,11 +406,32 @@ proc release*(jobs: Jobs; path: string): bool {.raises: [].} =
       broadcast(q.changed) # a job that needs the file to itself may start
       result = true
 
+proc release*(jobs: Jobs; path: string): bool {.raises: [].} =
+  ## Ends one `hold` of `path`, from any thread, once the reader no longer
+  ## touches the file (its prefetchers closed). False when `path` was not
+  ## held.
+  jobs.obj.endHold(path)
+
 proc held*(jobs: Jobs; path: string): int =
   ## How many holds `path` has.
   let q = jobs.obj
   withLock q.lock:
     result = q.holds.count(path)
+
+type
+  HoldRelease* = object
+    ## Lets a reader that is not a job end its holds from its own thread
+    ## (`release`). Valid while the `Jobs` it came from lives: stop the
+    ## reader before the `Jobs` goes.
+    q: ptr JobsObj
+
+proc holdRelease*(jobs: Jobs): HoldRelease =
+  ## A handle a reader thread ends its holds with.
+  HoldRelease(q: jobs.obj)
+
+proc release*(h: HoldRelease; path: string): bool {.raises: [].} =
+  ## `Jobs.release`, from any thread. False when `path` was not held.
+  h.q != nil and h.q.endHold(path)
 
 proc list*(jobs: Jobs): seq[JobInfo] =
   ## Every job listed, oldest first.

@@ -10,19 +10,27 @@
 ## still running when the program closes can post safely.
 
 import std/locks
-import jobs, log, session
+import jobs, log, panels, session, tiles
 
 type
   MsgKind* = enum
     mkOpened ## an open job's file
     mkLog    ## a message for the log
+    mkLayout ## what a panel's traces span, from its reader
+    mkTile   ## samples a panel asked for, from its reader
 
   Msg* = object
     ## One message for the UI thread.
-    job*: JobId ## the job that sent it; `NoJob` for none
+    job*: JobId                ## the job that sent it; `NoJob` for none
     case kind*: MsgKind
     of mkOpened: session*: Session
     of mkLog: entry*: LogEntry
+    of mkLayout:
+      panel*: PanelId
+      sourceGen*: uint64       ## the panel's `sourceGen` it answers
+      layout*: PanelLayout
+      known*: set[HeaderField] ## the header fields the traces have values for
+    of mkTile: tile*: Tile
 
   InboxObj = object
     lock: Lock
