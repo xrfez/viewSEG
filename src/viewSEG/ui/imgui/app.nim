@@ -8,6 +8,12 @@
 ## (`view/theme`, `style`, `fonts`); the shell services (dialogs, system theme,
 ## icon) are in `shell`, DPI handling in `dpi`, the chrome in `chrome`.
 ##
+## The application state (`core/state`) lives here, on the UI thread: each
+## frame drains its inbox, and what it logs is shown in the Messages window
+## until the log window replaces it. Debug builds time every frame
+## (`core/watchdog`) and log the frames whose work is over budget, with what
+## the frame was doing.
+##
 ## A start-up step that fails (SDL, the window, OpenGL 3.3, either ImGui
 ## backend) is reported in a message box, on stderr and in
 ## `<logs>/startup-failure.log`, and `run` returns 1. In release builds a failed
@@ -19,7 +25,7 @@ import asserts # before imguin: Nim keys its cache of imguin's C++ objects on th
 import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
-import ../../core/geometry
+import ../../core/[geometry, state, watchdog]
 import ../../platform/paths
 import chrome, dpi, fonts, icons, menus, messages, shell, style
 
@@ -46,6 +52,9 @@ type
     fontDirs: seq[string]
     fonts: Fonts
     messages: Messages
+    core: AppState               ## the application state
+    logSeen: int                 ## the core log's entries shown in `messages` so far
+    dog: FrameWatchdog
     marks: Marks
     pendingTheme: Option[string] ## picked in the menu, applied after the frame
     layoutDone: bool
@@ -155,6 +164,10 @@ proc messages*(frame: FrameInfo): lent Messages =
   ## The Messages window's contents so far.
   frame.ui.messages
 
+proc core*(frame: FrameInfo): lent AppState =
+  ## The application state as this frame drew it.
+  frame.ui.core
+
 # ------------------------------------------------------------------ themes --
 
 proc themeDirs(userDir: string; assetDirs: openArray[string]): seq[string] =
@@ -232,6 +245,19 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maToggleTheme: ui.toggleTheme()
 
 # ------------------------------------------------------------------- frame --
+
+template mark(ui: var Ui; part: string; idle = false) =
+  ## Starts the part of the frame named `part` for the watchdog; `idle` when
+  ## the thread waits in it.
+  when FrameWatchdogOn:
+    ui.dog.phase(part, waiting = idle)
+
+proc showNewLog(ui: var Ui) =
+  ## Shows what the core logged since the last call in the Messages window.
+  const level: array[Severity, MessageLevel] = [mlInfo, mlWarning, mlError, mlError]
+  for e in ui.core.log.since(ui.logSeen):
+    ui.messages.add(e.text, level[e.severity])
+  ui.logSeen = ui.core.log.nextSerial
 
 proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   ## The first layout: the plot top left, the messages under it, the header
@@ -373,7 +399,7 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions): Ui =
     selected.setLen selected.len - ThemeExt.len
   result = Ui(window: window, choice: choice, system: systemTheme(), selected: selected,
     themes: themeFiles(themeDirs(userThemes, assets)), scale: windowScale(window),
-    running: true)
+    core: initAppState(), dog: initFrameWatchdog(), running: true)
   for d in assets:
     result.fontDirs.add d / "fonts"
   if assets.len == 0:
@@ -444,6 +470,9 @@ proc run*(opts = RunOptions()): int =
     frame = 0
     event: SDL_Event
   while ui.running:
+    when FrameWatchdogOn:
+      ui.dog.beginFrame()
+    ui.mark "events"
     while SDL_PollEvent(addr event):
       discard ImGui_ImplSDL3_ProcessEvent(addr event)
       noteSdlEvent(event.type_field)
@@ -460,13 +489,19 @@ proc run*(opts = RunOptions()): int =
           ui.messages.add("Display scale: " & $int(round(scale * 100)) & " %")
     for ev in pollShellEvents():
       ui.onShellEvent(ev)
+    ui.mark "inbox"
+    discard ui.core.drainInbox()
+    ui.showNewLog()
     if (SDL_GetWindowFlags(window) and SDL_WINDOW_MINIMIZED) != 0:
+      ui.mark("minimized", idle = true)
       SDL_Delay(10)
     else:
+      ui.mark "draw"
       ImGui_Impl_OpenGL3_NewFrame()
       ImGui_ImplSDL3_NewFrame()
       igNewFrame()
       let actions = ui.drawUi(plot)
+      ui.mark "render"
       igRender()
       for c in newImguiChecks():
         ui.messages.add c.describe, mlError
@@ -479,8 +514,10 @@ proc run*(opts = RunOptions()): int =
       glClear(GL_COLOR_BUFFER_BIT)
       ImGui_Impl_OpenGL3_RenderDrawData(igGetDrawData())
       if opts.onFrame != nil:
+        ui.mark("test hook", idle = true) # not the program's own work
         opts.onFrame(FrameInfo(index: frame, width: w.int, height: h.int, theme: ui.theme,
           scale: ui.scale, ui: addr ui))
+      ui.mark "viewports"
       if (io.ConfigFlags and ImGui_ConfigFlags_ViewportsEnable.cint) != 0:
         # Viewport windows switch the GL context; restore the main one.
         let (backupWindow, backupContext) = (SDL_GL_GetCurrentWindow(),
@@ -488,8 +525,10 @@ proc run*(opts = RunOptions()): int =
         igUpdatePlatformWindows()
         igRenderPlatformWindowsDefault(nil, nil)
         discard SDL_GL_MakeCurrent(backupWindow, backupContext)
+      ui.mark("swap", idle = true) # waits for the display under vsync
       discard SDL_GL_SwapWindow(window)
       # Actions change fonts and styles, which ImGui allows only between frames.
+      ui.mark "actions"
       ui.onActions(actions)
       if ui.pendingTheme.isSome:
         ui.selected = ui.pendingTheme.get
@@ -499,4 +538,8 @@ proc run*(opts = RunOptions()): int =
       inc frame
       if opts.maxFrames > 0 and frame >= opts.maxFrames:
         ui.running = false
+    when FrameWatchdogOn:
+      let slow = ui.dog.endFrame()
+      if slow.isSome:
+        ui.core.report(sevWarning, "frame", describe(slow.get))
   0
