@@ -470,7 +470,8 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
         for v in c.kids:
           var f = rfTime
           if r.pick(v, ReadoutNames, "readout", f) and f notin fields: fields.add f
-        result.readout = fields
+        # None of them usable: the setting keeps its value (`(readout)` is no fields).
+        if fields.len > 0 or c.kids.len == 0: result.readout = fields
       of "sortPresets": r.presets(c, result.sortPresets)
       of "customOrder": r.keys(c, 0, result.customOrder)
       of "messages":

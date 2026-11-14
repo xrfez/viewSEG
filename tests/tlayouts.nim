@@ -2,14 +2,17 @@
 ## a document that is not a layout raises `NifError`; layout names that no
 ## system can hold are refused; the user's layouts are listed before the
 ## presets and hide a preset of their name; a damaged `layout.nif` is moved
-## aside with a message; every shipped preset reads. `AppState` saves the arrangement a moment after it
-## changes and at shutdown, saves it under a name, loads, exports and
-## imports layouts, and says what failed.
+## aside with a message, and one with thousands of unused nodes says the
+## first and counts the rest; every shipped preset reads. `AppState` saves
+## the arrangement a moment after it changes and at shutdown, saves it under
+## a name, loads, exports and imports layouts, and says what failed.
 ##
 ## Seen to fail: with `layoutDocument` not writing `(name ...)`, `roundTrip`
 ## lost the name; with `added` keeping the entries of the new one's name,
 ## `listing` still listed the preset of that name; with `ckLayout` not
-## noting the change, `lastExit` found no `layout.nif`.
+## noting the change, `lastExit` found no `layout.nif`; with every problem
+## of a layout or an imported settings file said, `thousandsOfProblems` got
+## 5 000 notes at start, and 5 001 lines logged by a load.
 
 import std/[os, strutils]
 import viewSEG/core/state
@@ -141,6 +144,31 @@ block saveAs:
   st.apply Command(kind: ckLoadLayout, docPath: tmp / "bad.nif")
   doAssert st.settle(st.log.has("Cannot load the layout: ", sevError))
   doAssert st.layoutLoads == loads + 2
+  st.shutdown()
+
+block thousandsOfProblems:
+  # A layout file can hold thousands of nodes this version does not use:
+  # the first ones are said one by one, the rest counted, at start and at
+  # an import alike.
+  let dir = tmp / "noisy"
+  createDir(dir)
+  let text = "(layout (imgui \"[Window][x]\n\")" & repeat(" (gadget 1)", 5000) & ")"
+  writeFile(dir / LayoutFileName, text)
+  let got = loadLayoutFile(dir / LayoutFileName)
+  doAssert got.found
+  doAssert got.notes.len == MaxProblemLines + 1, $got.notes.len & " notes"
+  doAssert "4980 more problems" in got.notes[^1].text, got.notes[^1].text
+  var st = appIn(tmp / "noisyApp")
+  let before = st.log.len
+  st.apply Command(kind: ckLoadLayout, docPath: dir / LayoutFileName)
+  doAssert st.settle(st.log.has("loaded."))
+  doAssert st.log.len - before <= MaxProblemLines + 2, $(st.log.len - before) & " lines logged"
+  writeFile(dir / "noisy settings.nif", "(settings (version 1)" & repeat(" (gadget 1)", 5000) &
+    ")")
+  st.apply Command(kind: ckImportSettings, docPath: dir / "noisy settings.nif")
+  doAssert st.settle(st.log.has("Settings imported from"))
+  doAssert st.log.len - before <= 2 * (MaxProblemLines + 2), $(st.log.len - before) &
+    " lines logged"
   st.shutdown()
 
 block notKept:

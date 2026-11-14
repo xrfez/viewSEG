@@ -142,7 +142,10 @@ proc closeWork*(): JobWork =
 proc sniff*(path: string): SeismicKind =
   ## The standard of the file at `path`, from its first `SniffBytes`
   ## (parseSEG's `detectKind`); `skUnknown` when it is none, or cannot be
-  ## read. Reads the file and changes nothing in it.
+  ## read. Reads the file and changes nothing in it. What is not a regular
+  ## file (a named pipe, a socket, a device) is not opened at all: opening a
+  ## named pipe waits until something writes to it, which may be never.
+  if not fileExists(path): return skUnknown
   var head = newSeq[byte](SniffBytes)
   var f: File
   if not open(f, path, fmRead): return skUnknown
@@ -207,6 +210,8 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
         let info = getFileInfo(path)
         if info.kind notin {pcFile, pcLinkToFile}:
           inc batch.unreadable
+        elif not fileExists(path): # a named pipe, a socket, a device: never opened
+          inc batch.others
         else:
           let kind = sniff(path)
           if kind == skUnknown: inc batch.others

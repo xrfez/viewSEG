@@ -5,7 +5,8 @@
 ## settings, the order and the scales it had, closes the file stepped away
 ## from, and reads the index cache when it comes back; a file chosen while
 ## another is still opening replaces it; one file named lists its folder; a
-## folder that does not exist is reported; the files are never changed.
+## folder that does not exist is reported; a named pipe in a folder is never
+## opened; the files are never changed, not even by an export named after one.
 ##
 ## Seen to fail: with `showReplacing` not closing the file it replaces,
 ## `stepThroughAFolder` found 2 files open after the first step; with
@@ -14,11 +15,17 @@
 ## to the end (and dropped); with `takeListed` ignoring `listChosen`,
 ## `oneFileListsItsFolder` showed the folder's first file instead of the one
 ## named; with `naturalCmp` comparing digits as text, `naturalOrder` put
-## shot10 before shot2.
+## shot10 before shot2; with the scan sniffing every name of the folder,
+## `namedPipesAreNotOpened` found the scan stuck in the pipe's open (and
+## with it the background lane and the quit); with exports not checking the
+## path, `exportsNeverGoOverSeismicFiles` saw the messages export accepted
+## over the file shown.
 
 import std/[os, strutils, times]
 import viewSEG/core/[filejobs, state]
 import utils/[fixtures, waiting]
+when not defined(windows):
+  from std/posix import nil
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
@@ -214,6 +221,55 @@ block chosenFilesAndMissingFolders:
     doAssert st.fileList.folder == fx.dir
     doAssert not st.log.has("cancelled"), "a replaced listing is no news"
     st.shutdown()
+
+when not defined(windows):
+  block namedPipesAreNotOpened:
+    # A named pipe in the folder: opening it would wait for a writer, maybe
+    # forever, holding the scan, the background lane behind it, and the quit.
+    withFixtures fx:
+      let dir = fx.dir / "with a pipe"
+      createDir(dir)
+      copyFile(fx.surveySegy(), dir / "a.sgy")
+      let pipe = dir / "b.sgy"
+      doAssert posix.mkfifo(cstring(pipe), 0o600) == 0
+      var st = initAppState()
+      st.apply Command(kind: ckBrowse, paths: @[dir])
+      let listed = st.settle(not st.fileList.scanning)
+      # Free a scan stuck in the pipe's open, so a failure fails and does not hang.
+      let fd = posix.open(cstring(pipe), posix.O_WRONLY or posix.O_NONBLOCK)
+      if fd >= 0: discard posix.close(fd)
+      doAssert listed, "the scan is stuck on the named pipe"
+      doAssert st.fileList.entries.len == 1 and st.fileList.entries[0].name == "a.sgy"
+      doAssert st.fileList.others == 1, "the pipe is counted, not listed"
+      doAssert sniff(pipe) == skUnknown
+      st.shutdown()
+
+block exportsNeverGoOverSeismicFiles:
+  # The messages, the settings and the layout are written to files the user
+  # names: never over a seismic file viewSEG has open, or lists.
+  withFixtures fx:
+    let dir = makeFolder(fx)
+    let shown = dir / "shot2.sgd"
+    let listed = dir / "shot10.sgy"
+    let before = @[snapshot(shown), snapshot(listed)]
+    var st = initAppState()
+    st.apply Command(kind: ckBrowse, paths: @[shown], showFirst: true)
+    doAssert st.settle(st.shownPath == shown and not st.fileList.scanning)
+    st.apply Command(kind: ckLayout, arrangement: "[Window][x]\n")
+    let roundabout = dir & DirSep & ".." & DirSep & dir.extractFilename & DirSep & "shot10.sgy"
+    for cmd in [Command(kind: ckExportLog, docPath: shown),
+        Command(kind: ckExportSettings, docPath: listed),
+        Command(kind: ckExportLayout, docPath: shown),
+        Command(kind: ckExportLog, docPath: roundabout)]:
+      let refused = st.log.count("never writes over one")
+      st.apply cmd
+      doAssert st.log.count("never writes over one") == refused + 1, $cmd.kind & " " & cmd.docPath
+    st.apply Command(kind: ckExportLog, docPath: dir / "messages.log")
+    st.flushFiles()
+    doAssert st.settle(st.log.has("Messages exported to " & dir / "messages.log"))
+    doAssert st.log.count("never writes over one") == 4
+    st.shutdown()
+    doAssert @[snapshot(shown), snapshot(listed)] == before, "an export wrote over a seismic file"
 
 block closeForgetsTheChoice:
   withFixtures fx:

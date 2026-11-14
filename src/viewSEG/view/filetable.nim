@@ -28,17 +28,28 @@ type
     order: FileOrder
     made: bool
 
+const kindRank = block:
+  ## Each kind's place when the types are sorted by the names shown.
+  var names: seq[(string, SeismicKind)]
+  for k in SeismicKind: names.add ($k, k)
+  names.sort()
+  var rank: array[SeismicKind, int]
+  for i, (_, k) in names: rank[k] = i
+  rank
+
 func cmpEntries(a, b: FileEntry; column: FileColumn): int =
-  result = case column
-    of fcName: 0
-    of fcType: cmp($a.kind, $b.kind)
-    of fcSize: cmp(a.size, b.size)
-    of fcModified: cmp(a.modified, b.modified)
-  if result == 0: result = naturalCmp(a.name, b.name)
+  ## By `column` alone: 0 when equal there.
+  case column
+  of fcName: 0
+  of fcType: cmp(kindRank[a.kind], kindRank[b.kind])
+  of fcSize: cmp(a.size, b.size)
+  of fcModified: cmp(a.modified, b.modified)
 
 proc update*(t: var FileTable; list: FileList; filter: string; order: FileOrder) =
   ## Makes the rows again when the list, the filter or the order changed
   ## since the last call; otherwise does nothing, so it can run every frame.
+  ## Making them allocates nothing per file (a scan of a large folder makes
+  ## them again with each batch it lists).
   if t.made and t.gen == list.gen and t.revision == list.revision and t.filter == filter and
       t.order == order:
     return
@@ -48,11 +59,17 @@ proc update*(t: var FileTable; list: FileList; filter: string; order: FileOrder)
   t.order = order
   t.made = true
   t.rows.setLen 0
+  let words = filterWords(filter)
   for i, e in list.entries:
-    if e.matches(filter): t.rows.add i
+    if e.matches(words): t.rows.add i
   if order.column != fcName or order.descending:
+    # The entries are in natural order of their names, so an entry's index
+    # breaks a tie by name. By address: a closure that named `list` would
+    # hold a copy of every entry.
+    let entries = addr list.entries
     t.rows.sort(proc (a, b: int): int =
-      result = cmpEntries(list.entries[a], list.entries[b], order.column)
+      result = cmpEntries(entries[][a], entries[][b], order.column)
+      if result == 0: result = cmp(a, b)
       if order.descending: result = -result)
 
 func rowOf*(t: FileTable; list: FileList; path: string): int =

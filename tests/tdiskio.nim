@@ -1,8 +1,9 @@
 ## The disk thread and the session log: a document is replaced whole, with
 ## no temporary file left and only the newest of a burst written; appends
 ## keep their order; a prune keeps the newest names and the file it spares;
-## a file that cannot be written is said once, through the inbox; `stop`
-## writes what was left. `AppState` writes each log entry to this run's
+## a file that cannot be written is said once, through the inbox; a named
+## pipe is never read; `stop` writes what was left. `AppState` writes each
+## log entry to this run's
 ## session log, one line each, the entries logged before `logTo` first,
 ## prunes the old session logs, and writes the last entries at shutdown.
 ##
@@ -10,10 +11,17 @@
 ## first kept entry, `sessionLog` lost the entry logged before it; with
 ## `shutdown` not calling `persist`, `lastWords` found no session log at
 ## all; with `appendTo` trying a failed file again, `unwritable` got 4
-## warnings, not 2.
+## warnings, not 2; under AddressSanitizer (`nim asan`), with the disk
+## thread ending without `clearCycleRoots`, LeakSanitizer found the thread's
+## list of cycle roots (16 KB, made by the exceptions `unwritable` causes)
+## never freed; with `readFor` reading whatever it is given, `pipeIsNotRead`
+## found the thread stuck in a named pipe's open (it waits for a writer).
 
-import std/[os, strutils, times]
+import std/[os, sequtils, strutils, times]
 import viewSEG/core/[diskio, inbox, log, persist, state]
+import utils/waiting
+when not defined(windows):
+  from std/posix import nil
 
 let tmp = getTempDir() / ("viewseg_tdiskio_" & $getCurrentProcessId())
 removeDir(tmp)
@@ -92,6 +100,25 @@ block unwritable:
   doAssert w[0].startsWith("Could not save the settings in " & tmp / "plain" / "settings.nif"), w[0]
   doAssert w[1].startsWith("Could not write the session log to "), w[1]
   doAssert "Messages window" in w[1]
+
+when not defined(windows):
+  block pipeIsNotRead:
+    let box = initInbox()
+    var d = newDiskIo(box.poster)
+    let pipe = tmp / "chosen.nif"
+    doAssert posix.mkfifo(cstring(pipe), 0o600) == 0
+    d.read(pipe, rpImportSettings, 1 shl 20)
+    var got: seq[Msg]
+    let answered = waitUntil((box.drainInto(got); got.anyIt(it.kind == mkRead)))
+    # Free a thread stuck in the pipe's open, so a failure fails and does not hang.
+    let fd = posix.open(cstring(pipe), posix.O_WRONLY or posix.O_NONBLOCK)
+    if fd >= 0: discard posix.close(fd)
+    doAssert answered, "the disk thread is stuck on the named pipe"
+    for m in got:
+      if m.kind == mkRead:
+        doAssert m.readError == "it is not a regular file" and m.content == "", m.readError
+    d.stop()
+    removeFile(pipe)
 
 block noDisk:
   var d: DiskIo # none: work is dropped, nothing waits

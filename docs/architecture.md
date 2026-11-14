@@ -164,7 +164,9 @@ way and one file is never opened twice.
 background lane (`filejobs.scanWork`) reads each folder's names, puts them in natural order
 ("shot2" before "shot10"), reads the first 4 KiB of each file to tell SEG-Y, SEG-D and
 SEG-2 apart (parseSEG's `detectKind`) and posts what it found in batches (`mkListed`), so
-the list fills as the scan goes and no file is opened. One file named alone stands for its
+the list fills as the scan goes and no file is opened. What is not a regular file (a named
+pipe, a socket, a device) is counted and never opened: opening a named pipe waits for a
+writer, which would hold the scan, the background lane and the quit. One file named alone stands for its
 folder. `ckShowFile` shows a file in a panel in place of the one it shows: at once when it
 is open, else through an open job made for that panel; when the panel has shown it, the file
 it showed before is closed unless another panel shows it, so stepping through a folder
@@ -232,9 +234,13 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   (`persist.loadSettings`), and saved atomically by the disk thread a second after the
   last change (`SaveDelay`) and at shutdown (`AppState.keepSettingsIn`, `persist`). A file
   that cannot be read is moved aside as `settings.nif.<time>.bak` and the defaults are
-  used; one with settings that cannot be used gives the others, and a copy is kept; the log
-  says which, with the line. A release that is not portable may carry site defaults in its
-  `config/settings.nif`.
+  used (one that cannot be moved aside either is left as it is, and that run saves no
+  settings); one with settings that cannot be used gives the others, and a copy is kept;
+  the log says which, with the line, the first 20 problems one by one and a count of the
+  rest. A reset keeps a backup of its own (no two resets share a name, even before the
+  first is written). A release that is not portable may carry site defaults in its
+  `config/settings.nif`. The exports (`ckExportSettings`, `ckExportLayout`, `ckExportLog`)
+  never write over a seismic file the program has open, is opening or closing, or lists.
 - **Layouts** (`core/layouts`): the toolkit's own layout text (Dear ImGui's `.ini` form,
   which `core` never reads) in a NIF document. The frontend reports the arrangement when
   Dear ImGui says it changed (`ckLayout`; `io.IniFilename` is nil, so ImGui writes no file

@@ -166,7 +166,9 @@ proc readFor(w: var Writer; t: Task) =
   var msg = Msg(job: NoJob, kind: mkRead, purpose: t.purpose, readPath: t.path)
   try:
     let size = getFileSize(t.path)
-    if size > t.limit:
+    if not fileExists(t.path): # a named pipe would hold this thread until written to
+      msg.readError = "it is not a regular file"
+    elif size > t.limit:
       msg.readError = "it is larger than " & $(t.limit shr 20) & " MB"
     else:
       msg.content = readFile(t.path)
@@ -198,6 +200,7 @@ proc run(d: ptr DiskObj) {.thread.} =
       d.busy = false
       if d.tasks.len == 0: broadcast(d.idle)
   w.closeLog()
+  clearCycleRoots() # e.g. a caught exception's; and free the list before the thread ends
   withLock d.lock:
     broadcast(d.idle)
 

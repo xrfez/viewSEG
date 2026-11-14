@@ -185,7 +185,8 @@ for all of it), jobs that failed. Its strip:
 - **Auto-scroll:** on, the list follows new messages; off, it stays where you scrolled.
 - **Copy** puts the lines shown on the clipboard (right-click a line to copy only it).
 - **Clear** empties the window; the session's log file keeps everything.
-- **Export...** writes every message to a text file of your choice.
+- **Export...** writes every message to a text file of your choice (never over a seismic
+  file viewSEG has open or lists: it refuses, and says so).
 
 Click a message that names a trace (a damaged trace, say) to see that trace: its record is
 shown in the plot window with the trace selected, and its file is opened again if you have
@@ -217,7 +218,8 @@ in a copy).
 is damaged, viewSEG says so in the Messages window, moves it aside as
 `settings.nif.<date-time>.bak` and starts from the defaults; a setting it cannot use (a
 typing mistake, say) keeps its default, with the line it is on, and a copy of the file as
-it was is kept the same way. A release folder may carry a `config/settings.nif` of site
+it was is kept the same way. If the file can neither be read nor moved aside, viewSEG
+leaves it as it is and saves no settings in that run, saying so. A release folder may carry a `config/settings.nif` of site
 defaults: settings a user has not set come from it.
 
 ## The folders next to the program

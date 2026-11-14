@@ -30,7 +30,7 @@ const
   SettingsFileName* = "settings.nif"
   BackupSuffix* = ".bak"
   KeptBackups* = 5               ## backups kept of a document
-  MaxProblemLines = 20           ## problems listed one by one; the rest are counted
+  MaxProblemLines* = 20          ## problems listed one by one; the rest are counted
 
 type
   Note* = tuple[severity: Severity, text: string]
@@ -57,13 +57,14 @@ proc sessionLogPath*(dir: string): string =
   ## Where this run's log goes in `dir`.
   dir / sessionLogName(now(), getCurrentProcessId())
 
-proc backupPath*(path: string; at = now()): string =
-  ## A name for a backup of `path` that no file has yet:
+proc backupPath*(path: string; at = now(); taken: openArray[string] = []): string =
+  ## A name for a backup of `path` that no file has yet, nor is one of
+  ## `taken` (backups asked for but perhaps not written yet):
   ## "settings.nif.20261114-153012.bak", then "...-2.bak" and on.
   let stem = path & "." & at.format("yyyyMMdd'-'HHmmss")
   result = stem & BackupSuffix
   var n = 2
-  while fileExists(result):
+  while fileExists(result) or result in taken:
     result = stem & "-" & $n & BackupSuffix
     inc n
 
@@ -98,7 +99,10 @@ proc readDocument*(path: string; text: var string): string =
     result = getCurrentExceptionMsg()
     if result.len == 0: result = "it cannot be read"
 
-proc addProblems(notes: var seq[Note]; problems: openArray[string]) =
+proc addProblems*(notes: var seq[Note]; problems: openArray[string]) =
+  ## Adds `problems` to `notes` as warnings, the first `MaxProblemLines`
+  ## one by one and a count of the rest: a hostile document can hold
+  ## thousands.
   for i, p in problems:
     if i < MaxProblemLines: notes.add (sevWarning, p)
   if problems.len > MaxProblemLines:

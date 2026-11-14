@@ -181,4 +181,4 @@ proc loadLayoutFile*(path: string): LoadedLayout =
       result.notes.add (sevWarning, "The window layout in " & path & " could not be read (" &
         why & "); the windows start as they are by default.")
     pruneBackups(path)
-  for p in problems: result.notes.add (sevWarning, p)
+  result.notes.addProblems(problems)

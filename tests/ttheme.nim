@@ -210,3 +210,22 @@ block themeDiscovery:
     removeDir(root)
   doAssert displayName("everforest-dark") == "Everforest Dark"
   doAssert displayName("my_theme 2") == "My Theme 2"
+
+block parsingLeavesNothingBehind:
+  # Parsing a theme file frees all it allocates. Seen to fail: with
+  # `stripComment` setting `result` to the line and then returning the line
+  # cut at its `#` (Nim 2.4.2 then never frees the first value), 900 parses
+  # of a file of commented lines left 9 000 strings allocated.
+  proc live(): int =
+    let s = cast[tuple[allocs, deallocs: int]](getAllocStats())
+    s.allocs - s.deallocs
+  var text = ""
+  for i in 0 ..< 10:
+    text.add "accent = \"#7fbbb3\" # a comment on line " & $i & ", long enough for the heap\n"
+  var messages: seq[string]
+  discard parseTheme(text, "commented", messages) # whatever is made once and kept
+  let before = live()
+  for i in 0 ..< 900:
+    messages.setLen 0
+    discard parseTheme(text, "commented", messages)
+  doAssert live() - before < 100, $(live() - before) & " allocations left"

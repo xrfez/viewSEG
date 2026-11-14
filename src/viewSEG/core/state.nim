@@ -180,7 +180,9 @@ type
     disk: DiskIo          ## writes the session log and the settings; none until needed
     logFile: string       ## the session log; "" for none
     logged: int           ## the log's serial the session log has reached
-    configDir: string     ## where the settings are saved; "" for nowhere
+    configDir: string     ## where the settings and layouts are saved; "" for nowhere
+    keepsSettings: bool   ## the settings are saved there; false: their file is left alone
+    backups: seq[string]  ## backups of the settings asked for this run: no name twice
     defaults: Settings    ## what a reset goes back to
     settingsRev: int      ## bumped on every change of `settings`
     savedRev: int         ## the revision saved last
@@ -253,7 +255,8 @@ proc writeLog(state: var AppState) =
 
 proc settingsFile*(state: AppState): string =
   ## Where the settings are saved; "" when they are not.
-  if state.configDir.len == 0: "" else: state.configDir / SettingsFileName
+  if state.configDir.len == 0 or not state.keepsSettings: ""
+  else: state.configDir / SettingsFileName
 
 proc keepSettingsIn*(state: var AppState; dir: string; loaded: LoadedSettings) =
   ## Takes the settings `loadSettings` read from `dir` and logs what it
@@ -265,7 +268,8 @@ proc keepSettingsIn*(state: var AppState; dir: string; loaded: LoadedSettings) =
     state.log.add(severity, "settings", text)
   state.settings = cleaned(loaded.settings)[0]
   state.defaults = cleaned(loaded.defaults)[0]
-  state.configDir = if loaded.saveable: dir else: ""
+  state.configDir = dir
+  state.keepsSettings = loaded.saveable
   inc state.settingsRev
   state.savedRev = if loaded.rewrite: state.settingsRev - 1 else: state.settingsRev
   state.changedAt = getMonoTime()
@@ -309,8 +313,9 @@ func settingsRevision*(state: AppState): int {.inline.} =
   state.settingsRev
 
 proc saveSettings(state: var AppState) =
-  if state.configDir.len > 0:
-    state.disk.replace(state.settingsFile, settingsDocument(state.settings), "the settings")
+  let file = state.settingsFile
+  if file.len > 0:
+    state.disk.replace(file, settingsDocument(state.settings), "the settings")
   state.savedRev = state.settingsRev
 
 proc saveArrangement(state: var AppState) =
@@ -480,6 +485,31 @@ proc canonical(path: string): string =
 
 proc ignore(state: var AppState; cmd: Command; why: string) =
   state.log.add(sevWarning, "commands", "Ignored \"" & $cmd.kind & "\": " & why & ".")
+
+proc logProblems(state: var AppState; source: string; problems: openArray[string]) =
+  ## Logs `problems` as warnings, the first `MaxProblemLines` one by one and
+  ## a count of the rest (`addProblems`).
+  var notes: seq[Note]
+  notes.addProblems(problems)
+  for (severity, text) in notes: state.log.add(severity, source, text)
+
+proc seismicAt(state: AppState; path: string): bool =
+  ## Whether `path` names a seismic file the program has open, is opening or
+  ## closing, or lists: what it writes of its own never goes over one
+  ## (Working rules: a loaded file is never changed).
+  let p = canonical(path)
+  state.sessions.anyIt(it.path == p) or state.opening.anyIt(it.path == p) or
+    state.closing.anyIt(it.path == p) or state.files.find(p) >= 0
+
+proc refusedExport(state: var AppState; cmd: Command): bool =
+  ## Says why `cmd` (an export) writes nothing, when it may not: no file
+  ## named, or a seismic file named.
+  result = true
+  if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
+  elif state.seismicAt(cmd.docPath):
+    state.ignore(cmd, cmd.docPath & " is a seismic file viewSEG has open or lists, and " &
+      "viewSEG never writes over one; choose another name")
+  else: result = false
 
 proc change(state: var AppState; s: sink Settings) =
   ## Makes `s` the settings, noting a change when it is one (as saved:
@@ -970,8 +1000,7 @@ proc apply*(state: var AppState; cmd: Command) =
         state.jump = (path, cmd.traceIndex, cmd.recordIndex)
         state.showPath(k, path)
   of ckExportLog:
-    if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
-    else:
+    if not state.refusedExport(cmd):
       var text = ""
       for e in state.log: text.add fileLine(e)
       state.diskIo.replace(cmd.docPath, text, "the exported messages",
@@ -1054,8 +1083,7 @@ proc apply*(state: var AppState; cmd: Command) =
         "sort preset without a name or keys) and were left out.")
     state.change s
   of ckExportSettings:
-    if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
-    else:
+    if not state.refusedExport(cmd):
       state.diskIo.replace(cmd.docPath, settingsDocument(state.settings),
         "the exported settings", done = "Settings exported to " & cmd.docPath & ".")
   of ckImportSettings:
@@ -1078,7 +1106,7 @@ proc apply*(state: var AppState; cmd: Command) =
       state.diskIo.read(cmd.docPath, (if cmd.kind == ckLoadLayout: rpLoadLayout
         else: rpImportLayout), MaxNifBytes)
   of ckExportLayout:
-    if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
+    if state.refusedExport(cmd): discard
     elif state.arrangement.len == 0: state.ignore(cmd, "the window layout is not known yet")
     else:
       state.diskIo.replace(cmd.docPath, layoutDocument(Layout(
@@ -1091,7 +1119,10 @@ proc apply*(state: var AppState; cmd: Command) =
     s.window = state.settings.window
     let file = state.settingsFile
     if file.len > 0:
-      let backup = backupPath(file)
+      # Not a name asked for before: the disk thread may not have written
+      # that backup yet, and a second reset must not write over the first's.
+      let backup = backupPath(file, taken = state.backups)
+      state.backups.add backup
       state.diskIo.replace(backup, settingsDocument(state.settings), "a copy of the settings")
       state.log.add(sevInfo, "settings", "Settings reset to their defaults; the settings " &
         "before are kept in " & backup & ".")
@@ -1171,7 +1202,7 @@ proc takeLayout(state: var AppState; m: Msg) =
   except NifError as e:
     state.log.add(sevError, "layouts", "Cannot load the layout: " & e.msg & ".")
     return
-  for p in problems: state.log.add(sevWarning, "layouts", p)
+  state.logProblems("layouts", problems)
   if l.name.len == 0 or layoutNameProblem(l.name).len > 0: l.name = m.readPath.splitFile.name
   if layoutNameProblem(l.name).len > 0: l.name = "Imported"
   state.loaded = l
@@ -1198,7 +1229,7 @@ proc takeIn(state: var AppState; m: Msg) =
       var problems: seq[string]
       try:
         let s = readSettings(m.content, name, state.settings, problems)
-        for p in problems: state.log.add(sevWarning, "settings", p)
+        state.logProblems("settings", problems)
         state.change cleaned(s)[0]
         state.log.add(sevInfo, "settings", "Settings imported from " & m.readPath &
           (if problems.len > 0: ", except what is said above." else: "."))

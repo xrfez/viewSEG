@@ -77,13 +77,30 @@ func naturalCmp*(a, b: string): int =
   result = cmp(a.len - i, b.len - j)
   if result == 0: result = cmp(a, b)
 
+func filterWords*(filter: string): seq[string] =
+  ## The words of a filter typed by the user, in lower case.
+  filter.toLowerAscii.splitWhitespace
+
+func holds(name, word: string): bool =
+  ## Whether `name` holds `word` (lower case), in any case. Allocates
+  ## nothing: the file table runs it on every file of a folder.
+  for i in 0 .. name.len - word.len:
+    var j = 0
+    while j < word.len and name[i + j].toLowerAscii == word[j]: inc j
+    if j == word.len: return true
+  false
+
+func matches*(e: FileEntry; words: openArray[string]): bool =
+  ## Whether `e`'s name holds every one of `words` (`filterWords`), in any
+  ## case; no words match every file.
+  for word in words:
+    if not e.name.holds(word): return false
+  true
+
 func matches*(e: FileEntry; filter: string): bool =
   ## Whether `e`'s name holds every word of `filter`, in any case; an empty
   ## filter matches every file.
-  let name = e.name.toLowerAscii
-  for word in filter.toLowerAscii.splitWhitespace:
-    if word notin name: return false
-  true
+  e.matches(filterWords(filter))
 
 func find*(list: FileList; path: string): int =
   ## The index of `path` in the list's entries; -1 when it is not listed.

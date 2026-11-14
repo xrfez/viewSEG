@@ -5,16 +5,22 @@
 ## defaults, a backup with its bytes and a message, and a file with problems
 ## gives the rest, a copy and a message; a file written with Windows paths and
 ## line endings reads the same as one with Linux ones. `AppState` saves the
-## settings a moment after they change and at shutdown, never at once;
-## exports, imports and resets them; remembers the recent files; and gives a
-## new plot what the user last chose, also in the next run.
+## settings a moment after they change and at shutdown, never at once, and
+## never over a file it could neither read nor move aside; exports, imports
+## and resets them, each reset keeping its own backup; remembers the recent
+## files; and gives a new plot what the user last chose, also in the next run.
 ##
 ## Seen to fail: with the `(fills ...)` writer dropped, `everyField` found the
 ## fills at their default; with `loadSettings` reading a damaged file as
 ## defaults without moving it, `damaged` found no backup; with `persist`
 ## saving at once, `debounce` found the file before the delay; with `show`
 ## making a new layer with the built-in display, `newPlotsFollow` drew the
-## second file as wiggles.
+## second file as wiggles; with `settingsFile` not minding that the file
+## could neither be read nor moved aside (the layouts set the folder again),
+## `unreadableIsLeftAlone` found it written over; with a reset's backup
+## named without the names asked for before, `twoResetsKeepBoth` found one
+## backup, the second reset's; with `(readout ...)` taken whatever it held,
+## `noUsableFieldKeepsTheReadout` found the status bar's fields gone.
 
 import std/[math, monotimes, os, random, strutils, times]
 import viewSEG/core/[geometry, state]
@@ -136,6 +142,18 @@ block unknownAndUnusable:
   doAssert s.calibrations == @[Calibration(monitor: "B", ppi: 120)]
   doAssert s.sortPresets == @[SortPreset(name: "Ok", keys: @[SortKey(field: hfOffset)])]
   doAssert s.recentFiles == @["/a", "/b"]
+
+block noUsableFieldKeepsTheReadout:
+  # A typing mistake in the only field named keeps the status bar's fields;
+  # an empty list is a choice of no fields.
+  var problems: seq[string]
+  let base = Settings(readout: @[rfAmplitude, rfTime])
+  let s = readSettings("(settings (version 1) (readout tme))", "settings.nif", base, problems)
+  doAssert s.readout == base.readout, $s.readout
+  doAssert problems.len == 1 and "(readout) needs one of" in problems[0], $problems
+  problems.setLen 0
+  doAssert readSettings("(settings (version 1) (readout))", "settings.nif", base,
+    problems).readout.len == 0
 
 block versions:
   var problems: seq[string]
@@ -309,6 +327,49 @@ block rewrittenWhenItHadProblems:
   st.flushFiles()
   let text = readFile(dir / SettingsFileName)
   doAssert "gadget" notin text and "(theme \"t\")" in text
+  st.shutdown()
+
+block unreadableIsLeftAlone:
+  # A settings file that could be neither read nor moved aside is never
+  # written over, also once the layouts are kept in the same folder.
+  let dir = tmp / "app7"
+  createDir(dir)
+  let file = dir / SettingsFileName
+  writeFile(file, "the user's settings, which this run could not read")
+  var st = initAppState()
+  st.keepSettingsIn(dir, LoadedSettings(saveable: false,
+    notes: @[(sevWarning, "could not be read nor moved aside")]))
+  st.keepLayoutsIn(dir, [])
+  var s = st.settings
+  s.theme = "changed"
+  st.apply Command(kind: ckSettings, settings: s)
+  st.apply Command(kind: ckResetSettings)
+  st.apply Command(kind: ckLayout, arrangement: "[Window][x]\n")
+  st.flushFiles()
+  doAssert readFile(file) == "the user's settings, which this run could not read"
+  doAssert backups(dir).len == 0
+  doAssert fileExists(dir / LayoutFileName), "the layout is still kept"
+  st.shutdown()
+  doAssert readFile(file) == "the user's settings, which this run could not read"
+  doAssert st.settingsFile == ""
+
+block twoResetsKeepBoth:
+  # Two resets before the disk thread wrote the first one's backup: each
+  # keeps its own, so the settings before the first are not lost.
+  let dir = tmp / "app8"
+  var st = appIn(dir)
+  var s = everyFieldSet()
+  st.apply Command(kind: ckSettings, settings: s)
+  st.apply Command(kind: ckResetSettings)
+  var t = st.settings
+  t.theme = "between the resets"
+  st.apply Command(kind: ckSettings, settings: t)
+  st.apply Command(kind: ckResetSettings)
+  st.flushFiles()
+  var kept: seq[string]
+  for b in backups(dir): kept.add readFile(b)
+  doAssert kept.len == 2, $kept.len & " backups"
+  doAssert settingsDocument(s) in kept, "the settings before the first reset are lost"
   st.shutdown()
 
 block exportImportReset:

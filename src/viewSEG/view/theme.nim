@@ -305,15 +305,19 @@ type
 
 func stripComment(line: string): string =
   ## `line` without a `#` comment (a `#` inside quotes is kept).
+  # `result` is set once: Nim 2.4.2 leaks a `result` set before a `return`
+  # of another value.
   var quote = '\0'
-  result = line
+  var cut = line.len
   for i, ch in line:
     if quote != '\0':
       if ch == quote: quote = '\0'
     elif ch in {'"', '\''}:
       quote = ch
     elif ch == '#':
-      return line[0 ..< i]
+      cut = i
+      break
+  line[0 ..< cut]
 
 func parseString(s: string; i: var int; v: var string): string =
   ## A quoted string starting at `s[i]`; returns an error or "".
