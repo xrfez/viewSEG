@@ -40,7 +40,7 @@ const
   glslVersion = "#version 330"
   defaultSize = (1280, 800)               ## the first window size at 100 %
   plotTitle = IconPlot & "  Plot###plot"
-  tableTitle = IconTable & "  Headers###headers"
+  tableTitle = IconTable & "  Headers (example)###headers"
   messagesTitle = IconLog & "  Messages###Messages"
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
 

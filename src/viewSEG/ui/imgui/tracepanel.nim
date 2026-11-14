@@ -817,13 +817,23 @@ proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: P
       tp.drawControls(st, p, t, marks, result, ask, ppi, mon)
       let source = p.layers[0].source
       let s = if source.kind == lsRecord: st.findSession(source.file) else: -1
+      let name = if s >= 0: st.sessions[s].name else: "the file"
       if tp.gpuError.len > 0:
         centredText("The plot cannot be drawn: " & tp.gpuError, t.roles[rlError])
       elif not p.laidOut:
-        centredText("Reading " & (if s >= 0: st.sessions[s].name else: "the file") & "...",
-          t.roles[rlTextDim])
+        centredText("Reading " & name & "...", t.roles[rlTextDim])
+      elif s >= 0 and st.sessions[s].gathers.len == 0:
+        centredText(name & " has no traces to show (see Messages).", t.roles[rlTextDim])
       elif p.layout.traces == 0:
-        centredText("This gather has no traces the trace filter shows.", t.roles[rlTextDim])
+        let f = p.layers[0].filter
+        let which = if f.seismic and not f.auxiliary: " (it shows seismic traces only)"
+                    elif f.auxiliary and not f.seismic: " (it shows auxiliary traces only)"
+                    else: ""
+        centredText("The trace filter hides every trace of this gather" & which & ".",
+          t.roles[rlTextDim])
+      elif p.layout.samples == 0:
+        centredText("The traces of this gather have no samples (see Messages).",
+          t.roles[rlTextDim])
       else:
         tp.drawPlot(st, k, t, fonts, marks, result, ask, ppi)
   igEnd()

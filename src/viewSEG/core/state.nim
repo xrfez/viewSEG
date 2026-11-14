@@ -251,7 +251,6 @@ proc newSource(state: var AppState; k: int) =
   inc p.requestGen
   p.sourceGen = p.requestGen
   p.layout = PanelLayout()
-  p.laidOut = false
   p.known = {}
   p.kind = gkUnknown
   p.pending = ReadRequest()
@@ -260,6 +259,7 @@ proc newSource(state: var AppState; k: int) =
   inc p.revision
   state.tiles[k].setLen 0
   var src = ReaderSource(gen: p.sourceGen)
+  var busy = false
   if p.layers.len > 0 and p.layers[0].source.kind == lsRecord:
     let i = state.findSession(p.layers[0].source.file)
     let g = p.layers[0].source.gather
@@ -270,8 +270,12 @@ proc newSource(state: var AppState; k: int) =
         src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path,
           traces: s.gathers[g].traces, filter: p.layers[0].filter)
       else:
+        busy = true
         state.log.add(sevWarning, s.name, s.name & " is busy (a job needs it to itself), " &
           "so it is not shown.")
+  # Nothing to read (no file, or a file with no traces): the reader posts no
+  # layout, so the empty one stands, and the panel says so instead of waiting.
+  p.laidOut = src.file.isNil and not busy
   if not src.file.isNil or not state.readers[k].isNil:
     state.reader(k).show(src)
 

@@ -3,17 +3,24 @@
 ## a tile with the file's exact samples and the display header's values; a
 ## zoomed-out view reads every n-th trace and keeps peak-decimated samples; a
 ## pre-stack gather is shown with AGC by default, decoded with its margin;
-## auxiliary traces are left out; a pan inside the read-ahead reads nothing,
-## a pan past it reads again; tiles answering an older request are dropped;
-## the reader lets go of a file it no longer shows, so a close completes;
-## and the files are never changed.
+## auxiliary traces are left out, and a gather of auxiliary traces only shows
+## nothing; a file with no traces lays the panel out empty at once, and
+## traces without samples are said to have none; a pan inside the read-ahead
+## reads nothing, a pan past it reads again; tiles answering an older
+## request are dropped; the reader lets go of a file it no longer shows, so a
+## close completes; and the files are never changed.
 ##
 ## Seen to fail: with `drainInbox` taking in tiles of any generation,
 ## `staleTilesAreDropped` kept the old one; with the reader not ending its
 ## hold in `letGo`, `rawSamplesOnScreen` still found the file held after shutdown;
 ## with the trace filter keeping auxiliary traces, `auxiliaryTracesLeftOut`
 ## found 26 positions; with the panel requesting on every view,
-## `panInsideTheReadAhead` saw the request generation move.
+## `panInsideTheReadAhead` saw the request generation move; with an empty
+## filtered list taken for "every trace", as it was, `filteredToNothing`
+## found the pilot's auxiliary trace laid out as one position; with the panel
+## waiting for a layout when it has nothing to read, as it did,
+## `nothingToRead` found it never laid out (the window said "Reading..."
+## forever); with no warning for traces without samples, it found none.
 
 import std/[algorithm, math, os, sequtils, strutils, times]
 import parseSEG
@@ -161,6 +168,47 @@ block auxiliaryTracesLeftOut:
         doAssert t.data[row * t.columns + i] == segdSample(1, line, channel, i),
           "row " & $row & " sample " & $i
     st.shutdown()
+
+block filteredToNothing:
+  # The pilot's one trace is auxiliary: the default filter (seismic traces)
+  # leaves no position, so the panel shows none and reads nothing.
+  withFixtures fx:
+    var st = initAppState()
+    st.apply openCmd(fx.pilotSegy())
+    doAssert st.settle(st.main.laidOut)
+    doAssert st.main.layout.traces == 0, "the auxiliary trace is shown: " & $st.main.layout
+    st.look()
+    discard st.drainInbox()
+    doAssert st.main.pending.isEmpty and st.shown.len == 0, $st.main.pending
+    st.shutdown()
+
+block nothingToRead:
+  # A file that opens with no traces (cut after its headers): the panel is
+  # laid out at once, empty, and holds nothing; parseSEG says what is wrong.
+  # Traces with no samples (parseSEG's demo SEG-Y with its binary header's
+  # samples per trace set to 0) are laid out, and the reader says so.
+  withFixtures fx:
+    let none = fx.dir / "headers-only.sgy"
+    writeFile(none, readFile(fx.surveySegy())[0 ..< 3600])
+    var st = initAppState()
+    st.apply openCmd(none)
+    doAssert st.settle(st.sessions.len == 1)
+    doAssert st.sessions[0].gathers.len == 0 and st.main.layers.len == 1
+    doAssert st.main.laidOut, "the panel waits for a layout that never comes"
+    doAssert st.main.layout.traces == 0 and st.jobs.held(none) == 0
+    doAssert st.log.count(sevFatal) > 0
+    st.shutdown()
+    let empty = fx.dir / "no-samples.sgy"
+    var bytes = readFile(fx.demoFile("survey.sgy"))
+    bytes[3220] = '\0' # samples per trace, bytes 3221-3222
+    bytes[3221] = '\0'
+    writeFile(empty, bytes)
+    var st2 = initAppState()
+    st2.apply openCmd(empty)
+    doAssert st2.settle(st2.main.laidOut and st2.sessions.len == 1)
+    doAssert st2.main.layout.traces > 0 and st2.main.layout.samples == 0, $st2.main.layout
+    doAssert st2.settle(st2.log.has("have no samples"))
+    st2.shutdown()
 
 block panInsideTheReadAhead:
   withFixtures fx:

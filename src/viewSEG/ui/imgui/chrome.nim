@@ -334,10 +334,20 @@ proc drawSampleTable*(title: string; fonts: Fonts; t: Theme; marks: var Marks) =
   ## row and one row lit by the linked selection. The columns share the width
   ## while it holds every number, and scroll sideways when it does not, so a
   ## number is never clipped.
+  ##
+  ## The rows are made up, not read from any file, and the window says so
+  ## above them: it shows the table's look until the header table exists.
   const
     cols = ["Trace", "FFID", "Chan", "Offset m", "Elev m", "Static ms"]
     rows = 14
   if igBegin(title.cstring, nil, 0):
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    igPushTextWrapPos(0)
+    igTextUnformatted("Example rows, not read from any file: the trace header table " &
+      "is still to come.", nil)
+    igPopTextWrapPos()
+    igPopStyleColor(1)
+    marks.mark("table.note")
     var need = 0'f32
     for i, c in cols:
       var w = fonts.textWidth(frHeading, c)

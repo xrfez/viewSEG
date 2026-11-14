@@ -75,7 +75,8 @@ type
   Positions = object
     ## The traces of a panel's positions: `traces.a + k`, or `list[k]`.
     traces: Slice[int]
-    list: seq[int] ## empty when every trace of `traces` is shown
+    filtered: bool ## `list` holds the traces shown, maybe none; else every trace of `traces`
+    list: seq[int]
 
   Reader = object
     ## The reader thread's own state.
@@ -96,10 +97,10 @@ func isNil*(x: PanelReader): bool {.inline.} =
   x.p == nil
 
 func len(p: Positions): int =
-  if p.list.len > 0: p.list.len else: p.traces.len
+  if p.filtered: p.list.len else: p.traces.len
 
 func traceAt(p: Positions; k: int): int {.inline.} =
-  if p.list.len > 0: p.list[k] else: p.traces.a + k
+  if p.filtered: p.list[k] else: p.traces.a + k
 
 # ------------------------------------------------------------ the thread --
 
@@ -140,7 +141,8 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
       list.add g.a + k
     else:
       all = false
-  rd.positions = if all: Positions(traces: g) else: Positions(traces: g, list: list)
+  rd.positions = if all: Positions(traces: g)
+                 else: Positions(traces: g, filtered: true, list: list)
   let n = rd.positions.len
   var known: set[HeaderField]
   var layout = PanelLayout(traces: n, dtMs: 1, t0Ms: 0)
@@ -161,6 +163,9 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
       for field in HeaderField:
         if not keys.value(field, t).isNaN: known.incl field
       k += step
+    if layout.samples == 0:
+      rd.note(sevWarning, "The traces shown of " & rd.name & " have no samples, so the plot " &
+        "stays empty.")
   rd.layout = layout
   rd.r.poster.post Msg(job: NoJob, kind: mkLayout, panel: rd.r.panel,
     sourceGen: rd.src.gen, layout: layout, known: known)

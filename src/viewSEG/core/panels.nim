@@ -111,7 +111,7 @@ type
     requestGen*: uint64      ## bumped whenever the panel needs new data; tiles carry it
     sourceGen*: uint64       ## `requestGen` when layer 0's source last changed; layouts carry it
     layout*: PanelLayout     ## layer 0's traces, from the reader; `traces` 0 until it says
-    laidOut*: bool           ## whether the reader has said (`layout` may be empty: no traces)
+    laidOut*: bool           ## `layout` is known: the reader said, or there is nothing to read
     known*: set[HeaderField] ## the header fields layer 0's traces have values for
     kind*: GatherKind        ## the kind of gather layer 0 shows
     view*: Viewport          ## what the plot shows
