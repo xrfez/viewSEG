@@ -167,7 +167,7 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and fileExists(morgantown):
     of 0:
       if f.answered and wait > 10:
         let v = f.panel.view
-        f.showView(Viewport(traces: Span(lo: -0.5, hi: 59.5), timeMs: Span(lo: 0, hi: 2000),
+        f.showView(Viewport(traces: Span(lo: -0.5, hi: 24.5), timeMs: Span(lo: 0, hi: 1500),
           columns: v.columns, rows: v.rows))
         var flt = f.panel.layers[0].filter
         flt.auxiliary = true
