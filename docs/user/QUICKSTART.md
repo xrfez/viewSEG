@@ -16,6 +16,10 @@ seismic display is not there yet.
 
 It needs a 64-bit PC with AVX2 (Intel from 2013, AMD from 2017) and OpenGL 3.3.
 
+If it cannot start, for example because the graphics driver has no OpenGL 3.3, a message
+box says what failed, and the same text is saved as `startup-failure.log` in the logs
+folder (`viewSEG --paths` shows where it is).
+
 ## Open data
 
 **File** menu, or the shortcuts:

@@ -9,8 +9,10 @@
 ##
 ## What is checked, in each theme: the panels are the theme's window colour,
 ## the bars its bar colour and the gaps its backdrop; an icon glyph (Open file)
-## and a custom symbol (Wiggle, selected, so in the accent colour) leave pixels
-## where the frontend says it drew them; no pixel is Dear ImGui's stock blue.
+## leaves pixels where the frontend says it drew it; no pixel is Dear ImGui's
+## stock blue. The toolbar holds application-level actions only: no display-mode
+## or gather symbol is drawn on it (seen to fail with one symbol button put
+## back).
 ## Then: missing and unreadable fonts fall back and say so; a theme file that is
 ## not Everforest changes the background and the accent; 200 % grows the bars.
 ##
@@ -20,13 +22,12 @@
 import std/[options, os, strutils]
 import viewSEG/core/geometry
 import viewSEG/view/theme
-import viewSEG/ui/imgui/[app, shell]
+import viewSEG/ui/imgui/[app, shell, symbols]
 
 const
   frames = 5
   repoAssets = currentSourcePath().parentDir.parentDir / "assets"
-  markNames = ["toolbar", "statusbar", "plot", "table", "tool.Open file", "tool.Wiggle",
-    "tool.Greyscale density"]
+  appTools = ["tool.Open file", "tool.Open folder", "tool.Light / dark theme"]
   stockBlue = Rgba(r: 66, g: 150, b: 250, a: 255) # Dear ImGui's accent
 
 type Shot = object
@@ -48,8 +49,10 @@ proc render(opts: RunOptions; save = ""): Shot =
     if f.index == frames - 1:
       shot = Shot(width: f.width, height: f.height, theme: f.theme, scale: f.scale,
         pixels: f.readFrame(), messages: f.messages.items)
-      for n in markNames:
+      for n in @["toolbar", "statusbar", "plot", "table"] & @appTools:
         shot.marks.add (n, f.markOf(n))
+      for sym in Symbol:
+        shot.marks.add ("tool." & $sym, f.markOf("tool." & $sym))
       let dir = getEnv("VIEWSEG_SCREENSHOTS")
       if save.len > 0 and dir.len > 0:
         createDir(dir)
@@ -101,11 +104,12 @@ proc checkLook(s: Shot; t: Theme) =
   let gap = s.at(1, int(toolbar.pos.y + toolbar.size.y) + 60)
   doAssert distance(gap, r[rlBackdrop]) <= 1, t.name & ": gap " & toHex(gap)
   let bar = r[rlBar]
-  let accent = r[rlAccent]
   let glyph = s.count(s.mark("tool.Open file"), proc (c: Rgba): bool = distance(c, bar) > 60)
   doAssert glyph >= 10, t.name & ": the Open file icon left " & $glyph & " pixels"
-  let symbol = s.count(s.mark("tool.Wiggle"), proc (c: Rgba): bool = distance(c, accent) <= 24)
-  doAssert symbol >= 10, t.name & ": the Wiggle symbol left " & $symbol & " accent pixels"
+  for name in appTools:
+    doAssert s.mark(name).size.x > 0, t.name & ": no " & name & " button"
+  for sym in Symbol:
+    doAssert s.mark("tool." & $sym).size.x == 0, t.name & ": " & $sym & " on the toolbar"
   let blue = s.count(Rect(size: vec2(s.width.float32, s.height.float32)),
     proc (c: Rgba): bool = distance(c, stockBlue) <= 30)
   doAssert blue == 0, t.name & ": " & $blue & " pixels of Dear ImGui's blue"

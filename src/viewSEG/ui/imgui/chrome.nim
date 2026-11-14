@@ -1,6 +1,8 @@
 ## The shell's chrome around the docked panels: the icon toolbar under the menu
 ## bar, the status bar along the bottom, and tool buttons (a Nerd Font icon or
-## a seismic `Symbol`) with tooltips that name their shortcut. Also the two
+## a seismic `Symbol`) with tooltips that name their shortcut. The toolbar holds
+## application-level actions only; display and gather controls belong to the
+## plot windows, which use `symbolButton`. Also the two
 ## sample panels (a plot and a table) that show the look until the real trace
 ## panel and header table exist.
 ##
@@ -19,12 +21,6 @@ const IconScale* = 1.3'f32
 type
   Marks* = seq[(string, Rect)]
     ## Named screen rectangles of the last frame (framebuffer pixels).
-
-  Tool* = object
-    ## What the toolbar shows and the user picked. The display mode and the
-    ## gather domain are placeholders until the trace panel uses them.
-    display*: Symbol ## syWiggle .. syDensity
-    domain*: Symbol ## syShotGather or syReceiverGather
 
   ChromeInfo* = object
     ## Facts the status bar shows.
@@ -93,7 +89,7 @@ proc iconButton*(icon, text, shortcut: string; size: float32; t: Theme;
 
 proc symbolButton*(sym: Symbol; size: float32; t: Theme; marks: var Marks;
     selected = false; note = ""): bool =
-  ## A toolbar button showing a seismic symbol.
+  ## A tool button showing a seismic symbol, for a plot window's own controls.
   let (clicked, pos) = toolButton("##" & $sym, size, selected, t)
   marks.mark("tool." & $sym)
   let inset = round(size * 0.17)
@@ -101,16 +97,6 @@ proc symbolButton*(sym: Symbol; size: float32; t: Theme; marks: var Marks;
     size - 2 * inset, symbolColours(t, selected))
   tooltip($sym & note, "", t)
   clicked
-
-proc separatorV(height: float32; t: Theme) =
-  ## A short vertical rule between toolbar groups.
-  igSameLine(0, -1)
-  let pos = igGetCursorScreenPos()
-  let x = round(pos.x + 4)
-  ImDrawList_AddLine(igGetWindowDrawList(), ImVec2_c(x: x, y: pos.y + height * 0.2),
-    ImVec2_c(x: x, y: pos.y + height * 0.8), u32(t.roles[rlBorder]), 1)
-  igDummy(ImVec2_c(x: 9, y: height))
-  igSameLine(0, -1)
 
 const barFlags = ImGui_WindowFlags_NoScrollbar.cint or ImGui_WindowFlags_NoSavedSettings.cint or
   ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoDecoration.cint
@@ -133,8 +119,9 @@ proc beginBar(name: string; dir: ImGuiDir; height: float32; t: Theme): bool =
     ImDrawList_AddLine(igGetWindowDrawList(), ImVec2_c(x: wp.x, y: y),
       ImVec2_c(x: wp.x + ws.x, y: y), u32(t.roles[rlBorder]), 1)
 
-proc drawToolbar*(tool: var Tool; t: Theme; marks: var Marks): set[MenuAction] =
-  ## The icon toolbar under the menu bar. Returns the actions it asks for.
+proc drawToolbar*(t: Theme; marks: var Marks): set[MenuAction] =
+  ## The icon toolbar under the menu bar: opening files and folders, and the
+  ## theme toggle. Returns the actions it asks for.
   result = {}
   let style = igGetStyle()
   let size = round(igGetFontSize() * IconScale + 2 * style.FramePadding.y + 2)
@@ -147,17 +134,7 @@ proc drawToolbar*(tool: var Tool; t: Theme; marks: var Marks): set[MenuAction] =
     igSameLine(0, 2)
     if iconButton(IconOpenFolder, "Open folder", shortcutName(maOpenFolder), size, t, marks):
       result.incl maOpenFolder
-    separatorV(size, t)
-    const placeholder = " (not available yet)"
-    for sym in syWiggle .. syDensity:
-      if symbolButton(sym, size, t, marks, tool.display == sym, placeholder):
-        tool.display = sym
-      igSameLine(0, 2)
-    separatorV(size, t)
-    for sym in [syShotGather, syReceiverGather]:
-      if symbolButton(sym, size, t, marks, tool.domain == sym, placeholder):
-        tool.domain = sym
-      igSameLine(0, 2)
+    igSameLine(0, 2)
     # the theme toggle sits at the right end
     let avail = igGetContentRegionAvail().x
     if avail > size:

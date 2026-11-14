@@ -7,8 +7,15 @@
 ## adds the Dear ImGui demo window. The look comes from a theme file
 ## (`view/theme`, `style`, `fonts`); the shell services (dialogs, system theme,
 ## icon) are in `shell`, DPI handling in `dpi`, the chrome in `chrome`.
+##
+## A start-up step that fails (SDL, the window, OpenGL 3.3, either ImGui
+## backend) is reported in a message box, on stderr and in
+## `<logs>/startup-failure.log`, and `run` returns 1. In release builds a failed
+## Dear ImGui check is logged instead of aborting (`asserts`).
 
-import std/[math, options, os, strutils]
+import std/[math, options, os, strutils, times]
+import asserts # before imguin: Nim keys its cache of imguin's C++ objects on the
+               # C flags in force when imguin is compiled, and this adds one
 import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
@@ -16,7 +23,7 @@ import ../../core/geometry
 import ../../platform/paths
 import chrome, dpi, fonts, icons, menus, messages, shell, style
 
-export ThemeChoice, theme, messages
+export ThemeChoice, theme, messages, ImguiCheck
 
 const
   glslVersion = "#version 330"
@@ -24,6 +31,7 @@ const
   plotTitle = IconPlot & "  Plot###plot"
   tableTitle = IconTable & "  Headers###headers"
   messagesTitle = IconLog & "  Messages###Messages"
+  failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
 
 type
   Ui = object
@@ -37,7 +45,6 @@ type
     scale: float32
     fontDirs: seq[string]
     fonts: Fonts
-    tool: Tool
     messages: Messages
     marks: Marks
     pendingTheme: Option[string] ## picked in the menu, applied after the frame
@@ -55,6 +62,24 @@ type
 
   FrameHook* = proc (frame: FrameInfo) {.closure.}
 
+  StartupStep* = enum
+    ## The steps of opening the main window, in order.
+    ssVideo = "start SDL's video subsystem"
+    ssWindow = "create the main window"
+    ssGlContext = "create an OpenGL 3.3 core context"
+    ssGlFunctions = "load the OpenGL functions"
+    ssImguiSdl = "start Dear ImGui's SDL3 backend"
+    ssImguiGl = "start Dear ImGui's OpenGL 3 backend"
+
+  StartupFailure* = object
+    ## Why the main window could not be opened.
+    step*: StartupStep
+    reason*: string  ## the library's own words; "" when it gave none
+    text*: string    ## the whole message shown to the user
+    logFile*: string ## where `text` was written; "" when it could not be
+
+  FailureHook* = proc (failure: StartupFailure) {.closure.}
+
   RunOptions* = object
     maxFrames*: int     ## stop after this many frames; 0 runs until the window closes
     onFrame*: FrameHook ## called once per frame, nil for none
@@ -68,6 +93,11 @@ type
       ## where `fonts/` and `themes/` are looked up; default `paths.assetDirs()`
     userThemeDir*: Option[string]
       ## the user's own themes, searched first; default `<config>/themes`
+    logDir*: Option[string]
+      ## where a start-up failure is written; default `paths.logDir()`
+    onFailure*: FailureHook
+      ## called when start-up fails; nil shows a message box
+    simulate: set[StartupStep] ## tests: these steps fail without being tried
 
 proc readPixel*(frame: FrameInfo; x, y: int): Rgba =
   ## The colour at (`x`, `y`) of the frame being drawn, in framebuffer pixels
@@ -110,7 +140,7 @@ proc savePng*(frame: FrameInfo; path: string): bool =
 
 proc markOf*(frame: FrameInfo; name: string): Rect =
   ## Where the named part (`"toolbar"`, `"statusbar"`, `"plot"`,
-  ## `"tool.Open file"`, `"tool.Wiggle"` ...) was drawn in this frame, in
+  ## `"tool.Open file"`, `"tool.Open folder"` ...) was drawn in this frame, in
   ## framebuffer pixels; an empty rectangle when it was not.
   result = Rect()
   for (n, r) in frame.ui.marks:
@@ -250,7 +280,7 @@ proc drawUi(ui: var Ui; plot: SamplePlot): set[MenuAction] =
   result = menu.actions
   if menu.pickedTheme and menu.theme != ui.selected:
     ui.pendingTheme = some(menu.theme) # fonts and styles change between frames
-  result.incl drawToolbar(ui.tool, ui.theme, ui.marks)
+  result.incl drawToolbar(ui.theme, ui.marks)
   drawStatusBar(ui.fonts, ui.theme,
     ChromeInfo(themeName: ui.theme.name, scale: ui.scale), ui.marks)
   ui.drawDockSpace()
@@ -261,9 +291,61 @@ proc drawUi(ui: var Ui; plot: SamplePlot): set[MenuAction] =
     igShowDemoWindow(nil)
     ImPlot_ShowDemoWindow(nil)
 
-proc fail(what: string): int =
-  stderr.writeLine "viewSEG: ", what, ": ", SDL_GetError()
+func hint(step: StartupStep): string =
+  case step
+  of ssVideo:
+    "No display was found, or SDL has no video driver for it."
+  of ssWindow:
+    "The display did not accept a new window."
+  of ssGlContext, ssGlFunctions:
+    "viewSEG needs OpenGL 3.3. The graphics driver may be missing or too old: " &
+      "update it, or use a computer whose graphics support OpenGL 3.3."
+  of ssImguiSdl, ssImguiGl:
+    "The graphics driver did not accept the display code."
+
+func failureText*(step: StartupStep; reason, logFile: string): string =
+  ## The message a start-up failure shows: what failed, the library's words,
+  ## a hint, and where the details are kept.
+  result = "viewSEG cannot start: it could not " & $step & "."
+  if reason.len > 0:
+    result.add "\n\n" & reason
+  result.add "\n\n" & hint(step)
+  if logFile.len > 0:
+    result.add "\n\nThis message is saved in " & logFile
+
+proc writeFailureLog(dir, text: string): string =
+  ## Writes `text`, dated, to `dir/startup-failure.log`; the file's path, or ""
+  ## when it cannot be written.
+  result = dir / failureLogName
+  try:
+    createDir(dir)
+    writeFile(result, now().format("yyyy-MM-dd HH:mm:ss") & "\n" & text & "\n")
+  except OSError, IOError:
+    result = ""
+
+proc fail(opts: RunOptions; step: StartupStep; reason: string): int =
+  ## Reports a failed start-up step everywhere the user may look; returns the
+  ## exit code, 1.
+  let dir = if opts.logDir.isSome: opts.logDir.get
+            else: currentContext().logDir
+  var f = StartupFailure(step: step, reason: reason)
+  f.logFile = writeFailureLog(dir, failureText(step, reason, dir / failureLogName))
+  f.text = failureText(step, reason, f.logFile)
+  stderr.writeLine "viewSEG: ", f.text.replace("\n\n", "\n  ")
+  if opts.onFailure != nil:
+    opts.onFailure(f)
+  elif not SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "viewSEG cannot start",
+      f.text.cstring, nil):
+    stderr.writeLine "viewSEG: no message box either: ", SDL_GetError()
   1
+
+proc sdlError(): string = $SDL_GetError()
+
+func simulating(opts: RunOptions; steps: set[StartupStep]): RunOptions =
+  ## `opts` with `steps` failing without being tried (tests import this module
+  ## with `{.all.}`).
+  result = opts
+  result.simulate = steps
 
 proc createMainWindow(): ptr SDL_Window =
   ## The main window, sized for the primary display's scale.
@@ -301,14 +383,16 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions): Ui =
 proc run*(opts = RunOptions()): int =
   ## Opens the main window and runs the event loop until the window closes, the
   ## user quits, or `opts.maxFrames` frames are drawn. Returns the process exit
-  ## code: 1 when SDL, the window or the GL context cannot be set up.
+  ## code: 1 when a `StartupStep` fails, after reporting it (`onFailure`).
+  template tried(step: StartupStep; call: untyped): bool =
+    step notin opts.simulate and call
   when defined(linux):
     # ImGui's SDL3 backend creates viewport windows on X11 but not on Wayland,
     # so prefer X11 (Xwayland). SDL_VIDEO_DRIVER in the environment still wins.
     discard SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11,wayland")
   setIconHints()
-  if not SDL_Init(SDL_INIT_VIDEO):
-    return fail("cannot initialise SDL video")
+  if not tried(ssVideo, SDL_Init(SDL_INIT_VIDEO)):
+    return opts.fail(ssVideo, sdlError())
   defer: SDL_Quit_proc()
 
   discard SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0)
@@ -316,21 +400,21 @@ proc run*(opts = RunOptions()): int =
   discard SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
   discard SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
   discard SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)
-  let window = createMainWindow()
+  let window = if ssWindow in opts.simulate: nil else: createMainWindow()
   if window.isNil:
-    return fail("cannot create the window")
+    return opts.fail(ssWindow, sdlError())
   defer: SDL_DestroyWindow(window)
   when not defined(windows) and not defined(macosx):
     if not setWindowIcon(SDL_GetWindowID(window)):
       stderr.writeLine "viewSEG: no window icon: ", SDL_GetError()
-  let glContext = SDL_GL_CreateContext(window)
+  let glContext = if ssGlContext in opts.simulate: nil else: SDL_GL_CreateContext(window)
   if glContext.isNil:
-    return fail("cannot create an OpenGL 3.3 core context")
+    return opts.fail(ssGlContext, sdlError())
   defer: discard SDL_GL_DestroyContext(glContext)
   discard SDL_GL_MakeCurrent(window, glContext)
   discard SDL_GL_SetSwapInterval(1) # vsync
-  if not gladLoadGL(SDL_GL_GetProcAddress):
-    return fail("cannot load the OpenGL functions")
+  if not tried(ssGlFunctions, gladLoadGL(SDL_GL_GetProcAddress)):
+    return opts.fail(ssGlFunctions, sdlError())
 
   let imgui = igCreateContext(nil)
   defer: igDestroyContext(imgui)
@@ -340,10 +424,16 @@ proc run*(opts = RunOptions()): int =
   io.ConfigFlags = io.ConfigFlags or ImGui_ConfigFlags_NavEnableKeyboard.cint or
     ImGui_ConfigFlags_DockingEnable.cint or ImGui_ConfigFlags_ViewportsEnable.cint
   io.IniFilename = nil # no layout file until the config paths exist
+  when RoutedChecks:
+    io.ConfigErrorRecoveryEnableTooltip = false # failed checks go to the log instead
 
-  discard ImGui_ImplSDL3_InitForOpenGL(window, glContext)
+  # A backend that failed to start must not be shut down: it registers its
+  # shutdown only once it has started.
+  if not tried(ssImguiSdl, ImGui_ImplSDL3_InitForOpenGL(window, glContext)):
+    return opts.fail(ssImguiSdl, "")
   defer: ImGui_ImplSDL3_Shutdown()
-  discard ImGui_Impl_opengl3_Init(glslVersion)
+  if not tried(ssImguiGl, ImGui_Impl_opengl3_Init(glslVersion)):
+    return opts.fail(ssImguiGl, "")
   defer: ImGui_Impl_OpenGL3_Shutdown()
   installDpiScaling(window)
 
@@ -378,6 +468,8 @@ proc run*(opts = RunOptions()): int =
       igNewFrame()
       let actions = ui.drawUi(plot)
       igRender()
+      for c in newImguiChecks():
+        ui.messages.add c.describe, mlError
 
       var w, h: cint
       discard SDL_GetWindowSizeInPixels(window, addr w, addr h)
