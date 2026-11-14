@@ -45,14 +45,44 @@ proc primaryDisplayScale*(): float32 =
 
 var mainWindowId: SDL_WindowID
 
-proc viewportScale(vp: ptr ImGuiViewport): cfloat {.cdecl.} =
-  ## ImGui's `Platform_GetWindowDpiScale`. The SDL3 backend stores the SDL
-  ## window id as the platform handle; without one (no multi-viewport support,
-  ## e.g. Wayland) the viewport is the main window.
-  let id = if vp.PlatformHandle.isNil: mainWindowId
+type
+  MonitorInfo* = object
+    ## The monitor a window is on, for physical scales (`core/scales`).
+    name*: string            ## its name and size in pixels: what a calibration is kept under
+    widthPx*, heightPx*: int ## its size in pixels
+    displayScale*: float32   ## the system's display scale there (1 = 100 %)
+
+proc windowOf(vp: ptr ImGuiViewport): ptr SDL_Window =
+  ## The SDL window of a viewport. The SDL3 backend stores the SDL window id
+  ## as the platform handle; without one (no multi-viewport support, e.g.
+  ## Wayland) the viewport is the main window.
+  let id = if vp.isNil or vp.PlatformHandle.isNil: mainWindowId
            else: SDL_WindowID(cast[uint](vp.PlatformHandle))
-  let window = SDL_GetWindowFromID(id)
+  SDL_GetWindowFromID(id)
+
+proc viewportScale(vp: ptr ImGuiViewport): cfloat {.cdecl.} =
+  ## ImGui's `Platform_GetWindowDpiScale`.
+  let window = windowOf(vp)
   if window.isNil: 1 else: windowScale(window)
+
+proc monitorOf*(vp: ptr ImGuiViewport): MonitorInfo =
+  ## The monitor viewport `vp` is on (the one holding most of it); a
+  ## monitor named "display" at scale 1 when SDL cannot say.
+  result = MonitorInfo(name: "display", displayScale: 1)
+  let window = windowOf(vp)
+  if window.isNil: return
+  let scale = SDL_GetWindowDisplayScale(window)
+  if scale > 0: result.displayScale = scale
+  let display = SDL_GetDisplayForWindow(window)
+  if display == 0: return
+  let name = SDL_GetDisplayName(display)
+  let mode = SDL_GetCurrentDisplayMode(display)
+  if not mode.isNil:
+    let density = if mode.pixel_density > 0: mode.pixel_density else: 1'f32
+    result.widthPx = int(round(float32(mode.w) * density))
+    result.heightPx = int(round(float32(mode.h) * density))
+  result.name = (if name.isNil or name[0] == '\0': "display " & $display else: $name) &
+    " " & $result.widthPx & "x" & $result.heightPx
 
 proc installDpiScaling*(mainWindow: ptr SDL_Window) =
   ## Turns on ImGui's per-viewport DPI handling, with the scale from

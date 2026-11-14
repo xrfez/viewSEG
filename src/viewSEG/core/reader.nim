@@ -203,6 +203,8 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
   var tile = Tile(panel: rd.r.panel, request: q, dtMs: rd.layout.dtMs, t0Ms: rd.layout.t0Ms,
     columns: q.columns, fields: req.fields)
   tile.data = newSeq[float32](q.count * tile.columns)
+  tile.traces = list
+  tile.keys = newSeq[TraceKeys](q.count)
   tile.header = newSeq[seq[float64]](req.fields.len)
   for h in tile.header.mitems: h = newSeq[float64](q.count)
   var failed: seq[int]
@@ -226,6 +228,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       decimatePeakInto(src.toOpenArray(skip, skip + q.samples - 1), q.decimation,
         tile.data.toOpenArray(at, at + tile.columns - 1))
       let keys = c.rows.keysAt(k)
+      tile.keys[row] = keys
       for i, field in req.fields:
         tile.header[i][row] = keys.value(field, list[row])
     for fr in c.failedRows: failed.add c.first + fr

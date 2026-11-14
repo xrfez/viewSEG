@@ -2,10 +2,11 @@
 ## drawn.
 ##
 ## A `Tile` answers one `ReadRequest`: `count` traces of `columns` values,
-## trace by trace, processed for display, with the values of the display
-## header's fields for each trace and the amplitude the display clips at. It
-## is made on the reader's thread, moved through the inbox and kept by
-## `AppState`; it holds no `ref`, so it may be freed on any thread.
+## trace by trace, processed for display, with each trace's index in its
+## file and its keys (what the cursor readout shows), the values of the
+## display header's fields for each trace and the amplitude the display
+## clips at. It is made on the reader's thread, moved through the inbox and
+## kept by `AppState`; it holds no `ref`, so it may be freed on any thread.
 ##
 ## The pixels come from these procs (docs/architecture.md, rule 4): the GPU
 ## draws a tile as `quad`s, one per `TileBlock`, with a shader that does
@@ -13,6 +14,7 @@
 ## reference the GPU is tested against, and what an export draws with.
 
 import std/math
+from parseSEG import TraceKeys
 import geometry, panels, viewport
 
 type
@@ -24,6 +26,8 @@ type
     dtMs*, t0Ms*: float64 ## the panel's time axis
     columns*: int         ## values per trace: `request.columns`
     data*: seq[float32]   ## `request.count` traces of `columns` values, trace by trace
+    traces*: seq[int]     ## per row: the trace's index in its file
+    keys*: seq[TraceKeys] ## per row: the trace's keys
     fields*: seq[HeaderField]
     header*: seq[seq[float64]]
       ## per field, one value per trace (NaN when unknown)
@@ -41,7 +45,7 @@ type
     ## A colour map: index 0 for the most negative amplitude, 255 for the
     ## most positive.
 
-func timeOf(t: Tile; column: float64): float64 {.inline.} =
+func timeOf*(t: Tile; column: float64): float64 {.inline.} =
   ## The time of column `column`'s centre.
   let r = t.request
   t.t0Ms + (float64(r.firstSample) + column * float64(r.decimation) +
@@ -73,6 +77,15 @@ func contains*(t: Tile; x, tMs: float64): bool =
   ## Whether the point (`x`, `tMs`) lies on the tile.
   let (xs, ts) = t.span
   x >= xs.lo and x < xs.hi and tMs >= ts.lo and tMs < ts.hi
+
+func rowAt*(t: Tile; x: float64): int =
+  ## The row drawn at position `x` (the nearest trace the tile holds, as
+  ## `amplitudeAt` takes it); -1 when `x` is off the tile's traces.
+  let (xs, _) = t.span
+  if t.request.count <= 0 or not (x >= xs.lo and x < xs.hi): return -1
+  let r = t.request
+  clamp(int(floor((x - (float64(r.first) - r.stride / 2)) / float64(r.stride))), 0,
+    r.count - 1)
 
 func amplitudeAt*(t: Tile; x, tMs: float64): float32 =
   ## The value drawn at (`x`, `tMs`): the nearest trace, interpolated

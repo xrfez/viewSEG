@@ -18,6 +18,13 @@
 ## newest `MaxTiles` tiles of each panel are kept, so a view keeps showing
 ## what it has (the previous tile, the coarser one) until the new tile comes.
 ##
+## **Views.** The frontend moves a panel's view with the `core/zoom` forms
+## and reports each new one (`ckView`). A view that starts a gesture (a
+## drag, a box zoom, a burst of wheel turns, a typed scale, a fit) is sent
+## with `remember`, and the one it replaces is kept for "back" (`ckBack`).
+## When `core` sets a view itself (back, or the whole gather once it is laid
+## out) it bumps the panel's `jumps`, and the frontend follows.
+##
 ## A command that does not fit the state (a file that is no longer open, a
 ## gather out of range) changes nothing and says why in the log, as a
 ## warning: the UI may issue a command in the same frame as the change that
@@ -30,9 +37,10 @@
 
 import std/[math, os, sequtils]
 import parseSEG
-import filejobs, inbox, jobs, log, panels, reader, selection, session, threads, tiles
+import filejobs, inbox, jobs, log, panels, pick, reader, selection, session, settings,
+  threads, tiles, zoom
 
-export inbox, jobs, log, panels, selection, session, threads, tiles
+export inbox, jobs, log, panels, pick, selection, session, settings, threads, tiles, zoom
 
 const
   MainPanel* = PanelId(1)
@@ -50,6 +58,8 @@ type
     ckView = "view"             ## what a panel's plot shows (zoom, pan, size)
     ckDisplay = "display"       ## how a panel's layer 0 is drawn
     ckHeader = "display header" ## the rows of a panel's display header
+    ckBack = "back"             ## a panel's view before the last gesture
+    ckSettings = "settings"     ## scale units, monitor calibrations, the readout's fields
     ckHover = "hover"           ## the trace under the cursor
     ckSelect = "select"         ## change the selected traces
     ckClearSelection = "clear selection"
@@ -65,10 +75,11 @@ type
     of ckReorderJob:
       reordered*: JobId
       position*: int            ## 0 runs next
-    of ckGather, ckView, ckDisplay, ckHeader:
+    of ckGather, ckView, ckDisplay, ckHeader, ckBack:
       panel*: PanelId
       gather*: int              ## ckGather: index into the file's gathers
       view*: Viewport           ## ckView: what the panel's plot shows now
+      remember*: bool           ## ckView: a gesture starts; keep the view it replaces for back
       display*: DisplaySettings ## ckDisplay: how layer 0 is drawn
       header*: HeaderChoice     ## ckHeader: the display header's rows
     of ckHover: trace*: int     ## survey-wide trace id; -1 for none
@@ -76,6 +87,7 @@ type
       traces*: seq[int]         ## survey-wide trace ids
       mode*: SelectMode
     of ckClearSelection: discard
+    of ckSettings: settings*: Settings
 
   Pending = object
     ## An open or close job the state waits for.
@@ -92,6 +104,7 @@ type
     opening, closing: seq[Pending]
     mail: seq[Msg]
     indexCache: string    ## the index cache folder; "" for none
+    settings: Settings
     nextFile, nextPanel, nextBase: int
     tiles: seq[seq[Tile]] ## per panel, as `panels`: the newest last
     nextTile: uint64
@@ -152,6 +165,10 @@ func jobs*(state: AppState): lent Jobs {.inline.} =
 func indexCache*(state: AppState): lent string {.inline.} =
   ## The folder of parseSEG's index caches; "" for none.
   state.indexCache
+
+func settings*(state: AppState): lent Settings {.inline.} =
+  ## The user's settings: scale units, monitor calibrations, readout fields.
+  state.settings
 
 func tiles*(state: AppState; panelIndex: int): lent seq[Tile] {.inline.} =
   ## The tiles kept for `panels[panelIndex]`, oldest first: draw them in
@@ -239,6 +256,7 @@ proc newSource(state: var AppState; k: int) =
   p.kind = gkUnknown
   p.pending = ReadRequest()
   p.clip = NaN
+  p.back.setLen 0
   inc p.revision
   state.tiles[k].setLen 0
   var src = ReaderSource(gen: p.sourceGen)
@@ -293,6 +311,15 @@ proc requestView(state: var AppState; k: int) =
   p.pending = req
   state.readers[k].request ReaderRequest(read: req, fields: p.shownFields, flow: flow,
     clipPercentile: p.layers[0].display.clipPercentile)
+
+proc remember(state: var AppState; k: int) =
+  ## Keeps `panels[k]`'s view for back, unless it is the one kept last or
+  ## the panel shows nothing yet.
+  template p: untyped = state.panels[k]
+  if p.laidOut and p.view.traces.width > 0 and
+      (p.back.len == 0 or not p.back[^1].sameSpans(p.view)):
+    p.back.add p.view
+    if p.back.len > MaxBack: p.back.delete(0)
 
 proc refetch(state: var AppState; k: int; keepTiles: bool) =
   ## Drops the request sent last and asks again for `panels[k]`'s view:
@@ -451,8 +478,29 @@ proc apply*(state: var AppState; cmd: Command) =
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
     elif cmd.view != state.panels[k].view:
+      if cmd.remember: state.remember(k)
       state.panels[k].view = cmd.view
       state.requestView(k)
+  of ckBack:
+    # Nothing to go back to is not a mistake: the control is only disabled.
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif state.panels[k].back.len > 0:
+      template p: untyped = state.panels[k]
+      var v = p.back.pop()
+      v.columns = p.view.columns # the plot's size is its own
+      v.rows = p.view.rows
+      p.view = v
+      inc p.jumps
+      inc p.revision
+      state.requestView(k)
+  of ckSettings:
+    let (s, dropped) = cleaned(cmd.settings)
+    if dropped > 0:
+      state.log.add(sevWarning, "settings", $dropped & " of the settings given could not " &
+        "be used (a calibration that is not a positive number, or an entry given twice) " &
+        "and were left out.")
+    state.settings = s
   of ckDisplay:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
@@ -512,7 +560,7 @@ proc drainInbox*(state: var AppState): bool =
         p.laidOut = true
         p.known = m.known
         p.view = fitAll(p.layout, p.view.columns, p.view.rows)
-        inc p.fits
+        inc p.jumps
         inc p.revision
         state.requestView(k)
     of mkTile:

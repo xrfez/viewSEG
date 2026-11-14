@@ -3,23 +3,38 @@
 ## along the top and the window's own controls in a strip above it.
 ##
 ## The window reads the panel from `core` and issues `Command`s; it never
-## changes the state itself. ImPlot draws the axes and handles pan and zoom;
-## each frame the plot's limits and size go to `core` as the panel's view
-## (`ckView`), which decides what to read. The density image comes from
-## `gpu/density`: the panel's tiles, uploaded once each, drawn into an image
-## the size of the plot, shown with ImPlot's image item. Until a tile for the
-## new view arrives, the plot keeps drawing the tiles it has, stretched.
+## changes the state itself. ImPlot only draws the axes: the window handles
+## the mouse and keys itself (docs/plot-window.md, "The plot") and moves the
+## view with `core/zoom`: wheel zoom about the cursor (Ctrl: time only,
+## Shift or the sideways wheel: traces only), `+` / `-`, Ctrl + arrows for
+## one axis, drag to pan (left or middle button), right drag to zoom to a
+## box, arrows to pan, Ctrl + 0 to fit, Backspace or Alt + Left for back,
+## Esc to cancel a drag. Each new view goes to `core` (`ckView`), which
+## decides what to read; the first view of a gesture is sent with
+## `remember`, so back returns to the view before it.
+##
+## The scale boxes state the view as traces per inch and ms per inch (or per
+## cm, or inches per second: `core/scales`), at the pixels per inch of the
+## monitor the window is on (96 times its display scale unless it is
+## calibrated, in the "more" popover). Typing a value sets the zoom; every
+## other zoom updates them.
+##
+## The density image comes from `gpu/density`: the panel's tiles, uploaded
+## once each, drawn into an image the size of the plot, shown with ImPlot's
+## image item. Until a tile for the new view arrives, the plot keeps drawing
+## the tiles it has, stretched. What lies under the mouse (`core/pick`) goes
+## back to the caller for the status bar.
 ##
 ## Nothing about a plot sits in the main toolbar: the display mode, the
-## gain, fit all and the display header's fields are here, in the strip and
-## in the plot's context menu (right click).
+## gain, the scales, zoom, fit, back and the display header's fields are
+## here, in the strip and in the plot's context menu (right click).
 
 import std/[math, strutils, tables]
 import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../gpu/density
 import ../../view/[displayheader, theme]
-import chrome, fonts, icons, menus, style, symbols
+import chrome, dpi, fonts, icons, menus, style, symbols
 
 const
   PaperBackground* = Rgba(r: 255, g: 255, b: 255, a: 255)
@@ -29,27 +44,69 @@ const
   gainChoices = [dgAuto, dgNone, dgTraceBalance, dgAgc]
   menuId = "##plotmenu"
   moreId = "##plotmore"
+  burstSeconds = 0.6   ## wheel turns or key presses closer than this are one gesture
+  boxMinPixels = 4'f32 ## a box zoom narrower than this zooms the other axis only
 
 type
+  DragKind = enum
+    dkNone, dkPan, dkBox
+
+  Drag = object
+    ## A mouse button held down over the plot.
+    kind: DragKind
+    button: cint
+    press: ImVec2_c ## where it went down, in ImGui's coordinates
+    start: Viewport ## the view then
+    moved: bool     ## the pointer moved past ImGui's drag threshold
+
+  Gesture = enum
+    gsNone, gsWheel, gsKeyZoom, gsKeyPan
+
+  ViewAskKind = enum
+    vaNone, vaFit, vaZoomIn, vaZoomOut, vaTraceScale, vaTimeScale
+
+  ViewAsk = object
+    ## A change of view asked for by the controls.
+    kind: ViewAskKind
+    value: float64 ## the scale typed
+
+  ScaleBox = object
+    text: array[24, char] ## what the box holds while it is edited
+    editing: bool
+
+  CalibrationUi = object
+    ## The calibration controls' values between frames.
+    diagonal: cdouble = 24    ## inches
+    rulerPx: cfloat           ## the bar's length in framebuffer pixels; 0 until shown
+    rulerLength: cdouble = 10 ## what the bar measures on a ruler
+    rulerUnit: LengthUnit = luCm
+
   TracePanelUi* = object
-    ## The plot window's own state between frames: its GPU objects and what
-    ## it drew last.
+    ## The plot window's own state between frames: its GPU objects, the
+    ## view it shows, the gesture in progress and what it drew last.
     renderer: DensityRenderer
     textures: seq[TileTextures] ## the GPU copies of the panel's tiles, in their order
     gpuError: string ## why it cannot draw; "" when it can
     started: bool
     maxTexture: int ## 0: the GPU's limit (tests set a small one)
-    fits: int ## the panel's `fits` last applied to the plot
+    cur: Viewport ## the view the plot shows, with the plot's size last frame
+    jumps: int ## the panel's `jumps` last followed
     drawn: Viewport ## the view of the last image
     labelChars: Table[uint64, int] ## per tile: the longest header label
-    dragged: bool ## the right button moved since it went down
+    drag: Drag
+    gesture: Gesture ## the last wheel or key gesture, and when
+    gestureAt: float64
     wanted: Viewport ## a view to give the plot next frame (`show`)
     want: bool
+    traceBox, timeBox: ScaleBox
+    calib: CalibrationUi
 
   PanelOutput* = object
     ## What the plot window asks for.
     commands*: seq[Command]
     actions*: set[MenuAction]
+    pick*: Pick         ## what lies under the mouse; `noPick()` when it is not over the plot
+    notes*: seq[string] ## warnings for the log (a scale that is not a number)
 
 func isPaper(d: DisplaySettings): bool = d.colours != pcTheme
 
@@ -101,6 +158,17 @@ proc densityImage*(tp: TracePanelUi): (seq[Rgba], int, int) =
 
 func textureLimit*(tp: TracePanelUi): int {.inline.} = tp.renderer.maxSize
   ## The largest texture side the renderer uses.
+
+func scaleTexts*(tp: TracePanelUi): (string, string) =
+  ## What the trace and time scale boxes hold (for tests).
+  var a, b: string
+  for c in tp.traceBox.text:
+    if c == '\0': break
+    a.add c
+  for c in tp.timeBox.text:
+    if c == '\0': break
+    b.add c
+  (a, b)
 
 proc sync(tp: var TracePanelUi; tiles: openArray[Tile]) =
   ## Uploads the tiles the GPU does not have and frees the ones `core` no
@@ -215,8 +283,139 @@ proc drawColours(p: Panel; res: var PanelOutput) =
     nd.reversed = reversed
     res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
 
-proc drawControls(tp: var TracePanelUi; p: Panel; t: Theme; marks: var Marks;
-    res: var PanelOutput; fit: var bool) =
+proc tip(text: string) =
+  ## The last item's tooltip.
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igTextUnformatted(text.cstring, nil)
+    igEndTooltip()
+
+proc fill(box: var ScaleBox; text: string) =
+  let n = min(text.len, box.text.len - 1)
+  for i in 0 ..< n: box.text[i] = text[i]
+  box.text[n] = '\0'
+
+func typed(box: ScaleBox): string =
+  for c in box.text:
+    if c == '\0': break
+    result.add c
+
+proc scaleBox(box: var ScaleBox; id, units, tipText: string; value: float64;
+    marks: var Marks; mark: string): bool =
+  ## A box showing `value`, its units after it. True when the user has just
+  ## finished typing into it (Enter, or clicking away): `box.typed` holds
+  ## what they typed.
+  if not box.editing: box.fill(significant(value, 4))
+  let style = igGetStyle()
+  igSetNextItemWidth(round(igCalcTextSize("0000.00", nil, false, -1).x +
+    2 * style.FramePadding.x))
+  discard igInputText(id.cstring, cast[cstring](addr box.text[0]), csize_t(box.text.len),
+    ImGui_InputTextFlags_CharsScientific.cint or ImGui_InputTextFlags_AutoSelectAll.cint,
+    nil, nil)
+  box.editing = igIsItemActive()
+  result = igIsItemDeactivatedAfterEdit()
+  marks.mark(mark)
+  tip(tipText)
+  igSameLine(0, 4)
+  igTextUnformatted(units.cstring, nil)
+
+proc askScale(box: ScaleBox; kind: ViewAskKind; what: string; ask: var ViewAsk;
+    res: var PanelOutput) =
+  ## The view asked for by a value typed into `box`, or a note why not.
+  let text = box.typed.strip
+  var v = NaN
+  try:
+    v = parseFloat(text)
+  except ValueError:
+    discard
+  if v > 0 and v < Inf:
+    ask = ViewAsk(kind: kind, value: v)
+  else:
+    res.notes.add "The " & what & " needs a positive number, not \"" & text & "\"."
+
+func lengthName(u: LengthUnit): string =
+  if u == luInch: "inch" else: "cm"
+
+proc drawScaleSettings(tp: var TracePanelUi; st: AppState; res: var PanelOutput;
+    ppi: float64; mon: MonitorInfo) =
+  ## The scale units, and the calibration of the monitor the window is on.
+  var s = st.settings
+  igTextUnformatted("Scales per", nil)
+  for u in LengthUnit:
+    igSameLine(0, -1)
+    if igRadioButton_Bool(lengthName(u).cstring, s.scale.length == u) and
+        s.scale.length != u:
+      s.scale.length = u
+      res.commands.add Command(kind: ckSettings, settings: s)
+  var speed = s.scale.speed
+  if igCheckbox(("Time as speed (" & $s.scale.length & "/s, not ms/" & $s.scale.length &
+      ")").cstring, addr speed):
+    s.scale.speed = speed
+    res.commands.add Command(kind: ckSettings, settings: s)
+  igSeparatorText("Screen")
+  let cal = s.calibration(mon.name)
+  igTextUnformatted((mon.name & ": " & formatFloat(ppi, ffDecimal, 1) & " pixels per inch " &
+    (if cal.isNaN: "(assumed: 96 x the display scale, " &
+      $int(round(mon.displayScale * 100)) & " %)" else: "(calibrated)")).cstring, nil)
+  let style = igGetStyle()
+  let numberWidth = round(igCalcTextSize("00000.0", nil, false, -1).x + 2 * style.FramePadding.x)
+  # from the monitor's diagonal
+  igBeginDisabled(mon.widthPx <= 0 or mon.heightPx <= 0)
+  igSetNextItemWidth(numberWidth)
+  discard igInputDouble("##diagonal", addr tp.calib.diagonal, 0, 0, "%.1f", 0)
+  igSameLine(0, 4)
+  igTextUnformatted("inch diagonal", nil)
+  igSameLine(0, -1)
+  if igButton("Use the diagonal", ImVec2_c(x: 0, y: 0)):
+    try:
+      s.calibrate(mon.name, ppiFromDiagonal(mon.widthPx, mon.heightPx, tp.calib.diagonal))
+      res.commands.add Command(kind: ckSettings, settings: s)
+    except ValueError as e:
+      res.notes.add "Cannot calibrate the screen: " & e.msg & "."
+  tip("The picture's size corner to corner, as the monitor's specification gives it")
+  igEndDisabled()
+  # by matching a bar to a ruler
+  let fb = igGetIO_Nil().DisplayFramebufferScale.x
+  if not (tp.calib.rulerPx > 0):
+    tp.calib.rulerPx = cfloat(ppi * (if tp.calib.rulerUnit == luInch: tp.calib.rulerLength
+      else: tp.calib.rulerLength / CmPerInch))
+  igTextUnformatted("Or hold a ruler to the screen and make this bar", nil)
+  igSetNextItemWidth(numberWidth)
+  discard igInputDouble("##rulerlength", addr tp.calib.rulerLength, 0, 0, "%.1f", 0)
+  for u in LengthUnit:
+    igSameLine(0, -1)
+    if igRadioButton_Bool(($u & "##ruler").cstring, tp.calib.rulerUnit == u):
+      tp.calib.rulerUnit = u
+  igSameLine(0, -1)
+  igTextUnformatted("long:", nil)
+  igSetNextItemWidth(round(igGetFontSize() * 24))
+  discard igSliderFloat("##rulerpx", addr tp.calib.rulerPx, 50, 2400, "%.0f pixels",
+    ImGui_SliderFlags_AlwaysClamp.cint)
+  let dl = igGetWindowDrawList()
+  let at = igGetCursorScreenPos()
+  let w = tp.calib.rulerPx / max(fb, 0.01)
+  let h = round(igGetFontSize() * 0.6)
+  let ink = igGetColorU32_Col(ImGui_Col_Text.cint, 1)
+  ImDrawList_AddRectFilled(dl, ImVec2_c(x: at.x, y: at.y + h / 3),
+    ImVec2_c(x: at.x + w, y: at.y + 2 * h / 3), ink, 0, 0)
+  for x in [at.x, at.x + w]:
+    ImDrawList_AddLine(dl, ImVec2_c(x: x, y: at.y), ImVec2_c(x: x, y: at.y + h), ink, 1)
+  igDummy(ImVec2_c(x: w + 1, y: h))
+  if igButton("Use the bar", ImVec2_c(x: 0, y: 0)):
+    try:
+      s.calibrate(mon.name, ppiFromRuler(tp.calib.rulerPx, tp.calib.rulerLength,
+        tp.calib.rulerUnit))
+      res.commands.add Command(kind: ckSettings, settings: s)
+    except ValueError as e:
+      res.notes.add "Cannot calibrate the screen: " & e.msg & "."
+  if not cal.isNaN:
+    igSameLine(0, -1)
+    if igButton("Forget the calibration", ImVec2_c(x: 0, y: 0)):
+      s.calibrate(mon.name, NaN)
+      tp.calib.rulerPx = 0
+      res.commands.add Command(kind: ckSettings, settings: s)
+
+proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks: var Marks;
+    res: var PanelOutput; ask: var ViewAsk; ppi: float64; mon: MonitorInfo) =
   ## The strip at the top of the window.
   let size = round(igGetFontSize() * IconScale + 2 * igGetStyle().FramePadding.y)
   let mode = p.layers[0].display.mode
@@ -234,23 +433,48 @@ proc drawControls(tp: var TracePanelUi; p: Panel; t: Theme; marks: var Marks;
   igSameLine(0, 12)
   igSetCursorPosY(igGetCursorPosY() + round((size - igGetFrameHeight()) / 2))
   drawGainCombo(p, t, res)
-  igSameLine(0, 8)
-  if button(IconFit & "  Fit all", t, marks, "plot.fit"):
-    fit = true
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
-    igTextUnformatted("Show every trace and the whole record", nil)
+  # the scales
+  let u = st.settings.scale
+  let per = lengthName(u.length)
+  igSameLine(0, 14)
+  if tp.traceBox.scaleBox("##tracescale", traceLabel(u), "Traces per " & per &
+      ": type a value and press Enter", traceScale(tp.cur, ppi, u), marks, "plot.trace scale"):
+    askScale(tp.traceBox, vaTraceScale, "trace scale", ask, res)
+  igSameLine(0, 10)
+  let timeTip = if u.speed: per & "es per second" else: "Milliseconds per " & per
+  if tp.timeBox.scaleBox("##timescale", timeLabel(u), timeTip & ": type a value and press " &
+      "Enter", timeScale(tp.cur, ppi, u), marks, "plot.time scale"):
+    askScale(tp.timeBox, vaTimeScale, "time scale", ask, res)
+  # zoom, fit, back
+  igSameLine(0, 14)
+  if button(IconZoomOut & "##zoomout", t, marks, "plot.zoom out"): ask = ViewAsk(kind: vaZoomOut)
+  tip("Zoom out (-, or the wheel)")
+  igSameLine(0, 2)
+  if button(IconZoomIn & "##zoomin", t, marks, "plot.zoom in"): ask = ViewAsk(kind: vaZoomIn)
+  tip("Zoom in (+, or the wheel; Ctrl: time only, Shift: traces only)")
+  igSameLine(0, 2)
+  if button(IconFit & "##fit", t, marks, "plot.fit"): ask = ViewAsk(kind: vaFit)
+  tip("Fit all: every trace and the whole record (Ctrl+0)")
+  igSameLine(0, 2)
+  igBeginDisabled(p.back.len == 0)
+  if button(IconPrevious & "##back", t, marks, "plot.back"):
+    res.commands.add Command(kind: ckBack, panel: p.id)
+  igEndDisabled()
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+    igTextUnformatted("Back to the view before (Backspace, Alt+Left)", nil)
     igEndTooltip()
   igSameLine(0, 8)
   if button(IconSettings & "##more", t, marks, "plot.more"):
     igOpenPopup_Str(moreId, 0)
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
-    igTextUnformatted("Colours and display header", nil)
-    igEndTooltip()
+  tip("Colours, display header, scale units and screen calibration")
   if igBeginPopup(moreId, 0):
     igSeparatorText("Colours")
     drawColours(p, res)
     igSeparatorText("Display header")
     drawHeaderChoice(p, res)
+    igSeparatorText("Scales")
+    tp.drawScaleSettings(st, res, ppi, mon)
     igEndPopup()
 
 proc drawStartScreen(t: Theme; marks: var Marks; res: var PanelOutput) =
@@ -321,84 +545,242 @@ proc drawHeader(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[
   ImDrawList_PopClipRect(dl)
   discard paper
 
+proc burst(tp: var TracePanelUi; g: Gesture): bool =
+  ## Whether a wheel turn or key press of kind `g` starts a new gesture (for
+  ## back): another kind, or a pause since the last one. Notes it.
+  let now = igGetTime()
+  result = tp.gesture != g or now - tp.gestureAt > burstSeconds
+  tp.gesture = g
+  tp.gestureAt = now
+
+func wheelOf(io: ptr ImGuiIO): (float64, set[Axis]) =
+  ## Wheel notches this frame and the axes they zoom: both; Ctrl, time
+  ## only; Shift or the sideways wheel, traces only.
+  if io.MouseWheel != 0:
+    let axes = if io.KeyCtrl: {axTime} elif io.KeyShift: {axTraces} else: BothAxes
+    (float64(io.MouseWheel), axes)
+  elif io.MouseWheelH != 0: (float64(io.MouseWheelH), {axTraces})
+  else: (0.0, {})
+
+func clampTo(p: ImVec2_c; r: Rect): Vec2 =
+  vec2(clamp(p.x, r.pos.x, r.pos.x + r.size.x), clamp(p.y, r.pos.y, r.pos.y + r.size.y))
+
+proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot: Rect;
+    lim: ViewLimits; hovered: bool; t: Theme; remember, menu: var bool) =
+  ## The wheel and the buttons over the plot (the invisible button just
+  ## drawn over it).
+  let io = igGetIO_Nil()
+  let mouse = io.MousePos
+  if hovered:
+    let (notches, axes) = wheelOf(io)
+    if notches != 0 and axes.card > 0:
+      after = after.zoomed(pow(WheelStep, notches), view.dataAt(plot, vec2(mouse.x, mouse.y)),
+        axes, lim)
+      if tp.burst(gsWheel): remember = true
+      if tp.drag.kind == dkPan: # go on dragging from here
+        tp.drag.start = after
+        tp.drag.press = mouse
+  if igIsItemActivated():
+    for b in [ImGui_MouseButton_Left, ImGui_MouseButton_Middle, ImGui_MouseButton_Right]:
+      if tp.drag.kind == dkNone and igIsMouseClicked_Bool(b.cint, false):
+        tp.drag = Drag(kind: (if b == ImGui_MouseButton_Right: dkBox else: dkPan),
+          button: b.cint, press: mouse, start: after)
+  if tp.drag.kind == dkNone: return
+  let moved = vec2(mouse.x - tp.drag.press.x, mouse.y - tp.drag.press.y)
+  if not tp.drag.moved and max(abs(moved.x), abs(moved.y)) > io.MouseDragThreshold:
+    tp.drag.moved = true
+    if tp.drag.kind == dkPan:
+      remember = true
+      tp.gesture = gsNone
+  let down = igIsMouseDown_Nil(tp.drag.button)
+  case tp.drag.kind
+  of dkNone: discard
+  of dkPan:
+    if tp.drag.moved:
+      after = dragged(tp.drag.start, plot, moved, lim)
+      igSetMouseCursor(ImGui_MouseCursor_ResizeAll.cint)
+    if not down: tp.drag = Drag()
+  of dkBox:
+    let a = clampTo(tp.drag.press, plot)
+    let b = clampTo(mouse, plot)
+    if tp.drag.moved and down:
+      let dl = igGetWindowDrawList()
+      let (lo, hi) = (ImVec2_c(x: min(a.x, b.x), y: min(a.y, b.y)),
+        ImVec2_c(x: max(a.x, b.x), y: max(a.y, b.y)))
+      ImDrawList_AddRectFilled(dl, lo, hi, u32(withAlpha(t.roles[rlAccent], 40)), 0, 0)
+      ImDrawList_AddRect(dl, lo, hi, u32(t.roles[rlAccent]), 0, 1.5, 0)
+    if not down:
+      if tp.drag.moved:
+        var axes: set[Axis]
+        if abs(a.x - b.x) >= boxMinPixels: axes.incl axTraces
+        if abs(a.y - b.y) >= boxMinPixels: axes.incl axTime
+        if axes.card > 0:
+          after = view.boxed(view.dataAt(plot, a), view.dataAt(plot, b), axes, lim)
+          remember = true
+          tp.gesture = gsNone
+      elif hovered:
+        menu = true # a right click: the context menu
+      tp.drag = Drag()
+
+proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot: Rect;
+    lim: ViewLimits; hovered: bool; p: Panel; remember: var bool; res: var PanelOutput) =
+  ## The plot's keys, while its window has the focus (docs/plot-window.md).
+  let io = igGetIO_Nil()
+  if io.WantTextInput: return # typing into a box
+  template held(chord: cint): bool = igShortcut_Nil(chord, ImGui_InputFlags_Repeat.cint)
+  template once(chord: cint): bool = igShortcut_Nil(chord, 0)
+  const
+    ctrl = ImGui_Mod_Ctrl.cint
+    shift = ImGui_Mod_Shift.cint
+    alt = ImGui_Mod_Alt.cint
+  let zoomIn = held(ImGui_Key_Equal.cint) or held(shift or ImGui_Key_Equal.cint) or
+    held(ImGui_Key_KeypadAdd.cint)
+  let zoomOut = held(ImGui_Key_Minus.cint) or held(ImGui_Key_KeypadSubtract.cint)
+  let timeIn = held(ctrl or ImGui_Key_UpArrow.cint)
+  let timeOut = held(ctrl or ImGui_Key_DownArrow.cint)
+  let tracesIn = held(ctrl or ImGui_Key_RightArrow.cint)
+  let tracesOut = held(ctrl or ImGui_Key_LeftArrow.cint)
+  let at = if hovered: view.dataAt(plot, vec2(io.MousePos.x, io.MousePos.y)) else: after.centre
+  var zooms: seq[(float64, set[Axis])]
+  if zoomIn: zooms.add (KeyStep, BothAxes)
+  if zoomOut: zooms.add (1 / KeyStep, BothAxes)
+  if timeIn: zooms.add (KeyStep, {axTime})
+  if timeOut: zooms.add (1 / KeyStep, {axTime})
+  if tracesIn: zooms.add (KeyStep, {axTraces})
+  if tracesOut: zooms.add (1 / KeyStep, {axTraces})
+  for (factor, axes) in zooms:
+    after = after.zoomed(factor, at, axes, lim)
+  if zooms.len > 0 and tp.burst(gsKeyZoom): remember = true
+  var fx, fy = 0.0
+  for (key, dx, dy) in [(ImGui_Key_LeftArrow, -1.0, 0.0), (ImGui_Key_RightArrow, 1.0, 0.0),
+      (ImGui_Key_UpArrow, 0.0, -1.0), (ImGui_Key_DownArrow, 0.0, 1.0)]:
+    if held(key.cint):
+      fx += dx * PanStep
+      fy += dy * PanStep
+    if held(shift or key.cint):
+      fx += dx
+      fy += dy
+  if fx != 0 or fy != 0:
+    after = after.stepped(fx, fy, lim)
+    if tp.burst(gsKeyPan): remember = true
+  if once(ctrl or ImGui_Key_0.cint) or once(ctrl or ImGui_Key_Keypad0.cint):
+    after = fitAll(p.layout, after.columns, after.rows)
+    remember = true
+    tp.gesture = gsNone
+  if once(ImGui_Key_Backspace.cint) or once(alt or ImGui_Key_LeftArrow.cint):
+    res.commands.add Command(kind: ckBack, panel: p.id)
+  if once(ImGui_Key_Escape.cint) and tp.drag.kind != dkNone:
+    if tp.drag.kind == dkPan and tp.drag.moved: after = tp.drag.start
+    tp.drag = Drag()
+
 proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts;
-    marks: var Marks; res: var PanelOutput; fit: bool) =
-  ## The display header and the plot of `panels[k]`.
+    marks: var Marks; res: var PanelOutput; ask: ViewAsk; ppi: float64) =
+  ## The display header and the plot of `panels[k]`, and the mouse and keys
+  ## over it.
   # Aliases, not copies: a `let` would copy the panel's tiles every frame.
   template p: untyped = st.panels[k]
   template layer: untyped = st.panels[k].layers[0]
   template tiles: untyped = st.tiles(k)
+  let lim = limitsOf(p.layout)
   let fields = p.shownFields
   let paper = layer.display.isPaper
   let lineH = igGetTextLineHeight()
   let headerTop = igGetCursorScreenPos()
   igDummy(ImVec2_c(x: 1, y: float32(fields.len) * lineH + 2))
-  let lastPos = float64(p.layout.traces) - 0.5
-  let tEnd = p.layout.t0Ms + float64(max(p.layout.samples - 1, 1)) * p.layout.dtMs
-  let span = tEnd - p.layout.t0Ms
+  # This frame's view: what `core` set itself (back, a new gather), else
+  # what a control or a test asked for, else last frame's.
+  var remember = false
+  if tp.jumps != p.jumps:
+    tp.cur = p.view
+    tp.jumps = p.jumps
+    tp.drag = Drag()
+  var next = tp.cur
+  if tp.want:
+    next.traces = tp.wanted.traces
+    next.timeMs = tp.wanted.timeMs
+    tp.want = false
+    remember = true
+  let units = st.settings.scale
+  case ask.kind
+  of vaNone: discard
+  of vaFit: next = fitAll(p.layout, next.columns, next.rows)
+  of vaZoomIn: next = next.zoomed(KeyStep, next.centre, BothAxes, lim)
+  of vaZoomOut: next = next.zoomed(1 / KeyStep, next.centre, BothAxes, lim)
+  of vaTraceScale: next = withTraceScale(next, ask.value, ppi, units, lim)
+  of vaTimeScale: next = withTimeScale(next, ask.value, ppi, units, lim)
+  case ask.kind
+  of vaNone: discard
+  of vaZoomIn, vaZoomOut: (if tp.burst(gsKeyZoom): remember = true)
+  else:
+    remember = true
+    tp.gesture = gsNone
+  next = kept(next, lim)
   if paper:
     ImPlot_PushStyleColor_Vec4(ImPlot_Col_PlotBg.cint, vec4(PaperBackground))
+  # ImPlot only draws: the mouse and keys are handled below.
   const flags = ImPlot_Flags_NoTitle.cint or ImPlot_Flags_NoLegend.cint or
-    ImPlot_Flags_NoMenus.cint or ImPlot_Flags_NoMouseText.cint
+    ImPlot_Flags_NoMenus.cint or ImPlot_Flags_NoMouseText.cint or ImPlot_Flags_NoInputs.cint
+  var menu = false
   if ImPlot_BeginPlot("##traces", ImVec2_c(x: -1, y: -1), flags):
     ImPlot_SetupAxis(ImAxis_X1.cint, nil, ImPlot_AxisFlags_NoDecorations.cint or
       ImPlot_AxisFlags_NoMenus.cint)
     ImPlot_SetupAxis(ImAxis_Y1.cint, "Time (ms)", ImPlot_AxisFlags_Invert.cint or
       ImPlot_AxisFlags_NoMenus.cint or ImPlot_AxisFlags_NoGridLines.cint or
       ImPlot_AxisFlags_NoTickMarks.cint) # nothing drawn over the data
-    let n = float64(p.layout.traces)
-    ImPlot_SetupAxisLimitsConstraints(ImAxis_X1.cint, -0.5 - 0.05 * n, lastPos + 0.05 * n)
-    ImPlot_SetupAxisLimitsConstraints(ImAxis_Y1.cint, p.layout.t0Ms - 0.05 * span,
-      tEnd + 0.05 * span)
-    ImPlot_SetupAxisZoomConstraints(ImAxis_X1.cint, min(4.0, n), 1.1 * n + 1)
-    ImPlot_SetupAxisZoomConstraints(ImAxis_Y1.cint, min(span, 8 * p.layout.dtMs),
-      1.1 * span + p.layout.dtMs)
-    if fit or tp.want or tp.fits != p.fits:
-      let v = if fit: fitAll(p.layout, 0, 0) elif tp.want: tp.wanted else: p.view
-      ImPlot_SetupAxesLimits(v.traces.lo, v.traces.hi, v.timeMs.lo, v.timeMs.hi,
-        ImPlot_Cond_Always.cint)
-      tp.fits = p.fits
-      tp.want = false
+    ImPlot_SetupAxesLimits(next.traces.lo, next.traces.hi, next.timeMs.lo, next.timeMs.hi,
+      ImPlot_Cond_Always.cint)
     ImPlot_SetupFinish()
-    let lim = ImPlot_GetPlotLimits(ImAxis_X1.cint, ImAxis_Y1.cint)
+    let lim2 = ImPlot_GetPlotLimits(ImAxis_X1.cint, ImAxis_Y1.cint)
     let pos = ImPlot_GetPlotPos()
     let size = ImPlot_GetPlotSize()
     let fb = igGetIO_Nil().DisplayFramebufferScale
-    let view = Viewport(traces: Span(lo: lim.X.Min, hi: lim.X.Max),
-      timeMs: Span(lo: lim.Y.Min, hi: lim.Y.Max), columns: int(round(size.x * fb.x)),
-      rows: int(round(size.y * fb.y)))
-    if view != p.view:
-      res.commands.add Command(kind: ckView, panel: p.id, view: view)
+    var view = next
+    view.columns = int(round(size.x * fb.x))
+    view.rows = int(round(size.y * fb.y))
     marks.markRect("plot.data", pos, ImVec2_c(x: pos.x + size.x, y: pos.y + size.y))
     if tp.gpuError.len == 0 and tp.started:
       tp.sync(tiles)
       let bg = if paper: PaperBackground else: t.roles[rlPlotBackground]
       let scale = displayScale(p.clip, layer.display.reversed)
-      let tex = tp.renderer.render(view, view.columns, view.rows, bg, scale, tiles,
+      let shown = Viewport(traces: Span(lo: lim2.X.Min, hi: lim2.X.Max),
+        timeMs: Span(lo: lim2.Y.Min, hi: lim2.Y.Max), columns: view.columns, rows: view.rows)
+      let tex = tp.renderer.render(shown, shown.columns, shown.rows, bg, scale, tiles,
         tp.textures)
-      tp.drawn = view
+      tp.drawn = shown
       if tex != 0:
         ImPlot_PlotImage("##density", ImTextureRef_c(internal_TexID: ImTextureID(tex)),
-          ImPlotPoint_c(x: lim.X.Min, y: lim.Y.Min), ImPlotPoint_c(x: lim.X.Max, y: lim.Y.Max),
+          ImPlotPoint_c(x: lim2.X.Min, y: lim2.Y.Min),
+          ImPlotPoint_c(x: lim2.X.Max, y: lim2.Y.Max),
           # ImPlot puts uv0 at (x min, y max): the bottom, the image's first row
           ImVec2_c(x: 0, y: 0), ImVec2_c(x: 1, y: 1), ImVec4_c(x: 1, y: 1, z: 1, w: 1),
           ImPlot_ItemFlags_NoFit.cint)
     let stride = if p.pending.isEmpty: 1 else: p.pending.stride
     tp.drawHeader(tiles, fields, stride, view, p.layout, headerTop, pos, size, t, paper)
-    # The context menu: a right click that did not drag (a drag is a box zoom).
-    let io = igGetIO_Nil()
-    if igIsMouseClicked_Bool(ImGui_MouseButton_Right.cint, false): tp.dragged = false
-    if igIsMouseDragging(ImGui_MouseButton_Right.cint, -1): tp.dragged = true
-    if ImPlot_IsPlotHovered() and igIsMouseReleased_Nil(ImGui_MouseButton_Right.cint) and
-        not tp.dragged:
-      igOpenPopup_Str(menuId, 0)
-    discard io
     ImPlot_EndPlot()
+    # The mouse and keys, over the plot's data area.
+    let plot = Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y))
+    igSetCursorScreenPos(pos)
+    discard igInvisibleButton("##plotinput", size, ImGui_ButtonFlags_MouseButtonLeft.cint or
+      ImGui_ButtonFlags_MouseButtonRight.cint or ImGui_ButtonFlags_MouseButtonMiddle.cint)
+    let hovered = igIsItemHovered(0)
+    var after = view
+    tp.handleMouse(after, view, plot, lim, hovered, t, remember, menu)
+    tp.handleKeys(after, view, plot, lim, hovered, p, remember, res)
+    if hovered:
+      let m = igGetIO_Nil().MousePos
+      res.pick = pick(tiles, p.layout, view, plot, vec2(m.x, m.y))
+    tp.cur = after
+    if after != p.view:
+      res.commands.add Command(kind: ckView, panel: p.id, view: after, remember: remember)
   if paper:
     ImPlot_PopStyleColor(1)
+  if menu:
+    igOpenPopup_Str(menuId, 0)
   if igBeginPopup(menuId, 0):
-    if igMenuItem_Bool((IconFit & "  Fit all").cstring, nil, false, true):
+    if igMenuItem_Bool((IconFit & "  Fit all").cstring, "Ctrl+0", false, true):
       tp.show(fitAll(p.layout, p.view.columns, p.view.rows))
+    if igMenuItem_Bool((IconPrevious & "  Back").cstring, "Backspace", false, p.back.len > 0):
+      res.commands.add Command(kind: ckBack, panel: p.id)
     igSeparatorText("Display")
     for m in DisplayMode:
       if igMenuItem_Bool(($m).cstring, nil, m == layer.display.mode, m == dmDensity) and
@@ -415,16 +797,24 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
 proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: PanelId;
     t: Theme; fonts: Fonts; marks: var Marks): PanelOutput =
   ## The plot window of `panel`: its controls, then the start screen, a
-  ## note, or the plot. Returns the commands and actions it asks for.
-  if igBegin(title.cstring, nil, 0):
+  ## note, or the plot. Returns the commands and actions it asks for, and
+  ## what lies under the mouse.
+  result.pick = noPick()
+  # Arrow keys pan the plot, so they do not move ImGui's keyboard focus here;
+  # the wheel zooms, so it does not scroll the window.
+  const windowFlags = ImGui_WindowFlags_NoNavInputs.cint or
+    ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoScrollbar.cint
+  if igBegin(title.cstring, nil, windowFlags):
     marks.markWindow("plot")
     let k = st.findPanel(panel)
     if k < 0 or st.panels[k].layers.len == 0:
       drawStartScreen(t, marks, result)
     else:
       template p: untyped = st.panels[k]
-      var fit = false
-      tp.drawControls(p, t, marks, result, fit)
+      let mon = monitorOf(igGetWindowViewport())
+      let ppi = st.settings.ppiFor(mon.name, mon.displayScale)
+      var ask = ViewAsk()
+      tp.drawControls(st, p, t, marks, result, ask, ppi, mon)
       let source = p.layers[0].source
       let s = if source.kind == lsRecord: st.findSession(source.file) else: -1
       if tp.gpuError.len > 0:
@@ -435,5 +825,5 @@ proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: P
       elif p.layout.traces == 0:
         centredText("This gather has no traces the trace filter shows.", t.roles[rlTextDim])
       else:
-        tp.drawPlot(st, k, t, fonts, marks, result, fit)
+        tp.drawPlot(st, k, t, fonts, marks, result, ask, ppi)
   igEnd()

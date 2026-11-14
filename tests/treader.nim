@@ -70,7 +70,7 @@ block rawSamplesOnScreen:
     doAssert st.settle(st.main.layout.traces > 0)
     doAssert st.main.layout == PanelLayout(traces: Channels, samples: Samples, dtMs: DtMs,
       t0Ms: 0), $st.main.layout
-    doAssert st.main.fits == 1
+    doAssert st.main.jumps == 1
     doAssert st.jobs.held(path) == 1, "the panel holds the file it shows"
     doAssert st.main.shownFields == @[hfRecord, hfChannel], $st.main.shownFields
     st.setGain(dgNone) # the samples as they are, for an exact comparison

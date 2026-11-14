@@ -1,6 +1,8 @@
 ## The shell's chrome around the docked panels: the icon toolbar under the menu
-## bar, the status bar along the bottom (with the running job's progress bar
-## and its Cancel button), and tool buttons (a Nerd Font icon or
+## bar, the status bar along the bottom (the running job's progress bar and
+## its Cancel button, then the cursor readout: the fields the user chose,
+## from `core/readout`; a right click on the bar chooses them and their
+## order), and tool buttons (a Nerd Font icon or
 ## a seismic `Symbol`) with tooltips that name their shortcut. The toolbar holds
 ## application-level actions only; display and gather controls belong to the
 ## plot windows, which use `symbolButton`. Also the sample header table that
@@ -11,7 +13,7 @@
 
 import std/[math, strutils]
 import imguin/cimgui
-import ../../core/[geometry, jobs]
+import ../../core/[geometry, jobs, pick, readout]
 import ../../view/[jobstatus, theme]
 import fonts, icons, menus, style, symbols
 
@@ -26,6 +28,14 @@ type
     ## Facts the status bar shows.
     themeName*: string
     scale*: float32
+
+  StatusOutput* = object
+    ## What the status bar asks for.
+    cancel*: JobId             ## the job to cancel, or `NoJob`
+    chose*: bool               ## the user changed the readout's fields
+    fields*: seq[ReadoutField] ## ... to these, in this order
+
+const readoutMenu = "##readoutfields"
 
 func toRect(a, b: ImVec2_c): Rect =
   Rect(pos: vec2(a.x, a.y), size: vec2(b.x - a.x, b.y - a.y))
@@ -144,16 +154,87 @@ proc drawToolbar*(t: Theme; marks: var Marks): set[MenuAction] =
       result.incl maToggleTheme
   igEnd()
 
-proc field(fonts: Fonts; icon, label, value: string; t: Theme) =
-  ## One status-bar field: a dim icon and label, then the value in mono.
+func valueChars(f: ReadoutField): int =
+  ## The room a field's value takes at least, in characters, so the bar
+  ## does not jump as the cursor moves.
+  case f
+  of rfTime: 10
+  of rfTrace, rfSample, rfRecord, rfEnsemble: 6
+  of rfChannel, rfInline, rfCrossline: 5
+  of rfReceiver, rfSource: 12
+  of rfOffset, rfSourceZ, rfReceiverZ: 8
+  of rfAmplitude: 9
+  of rfShotTime, rfCursorUtc: 23
+  of rfSourceXY, rfReceiverXY, rfMidpointXY: 21
+  of rfComponent: 2
+  of rfStatus: 9
+
+proc readoutField(fonts: Fonts; f: ReadoutField; value: string; t: Theme;
+    marks: var Marks) =
+  ## One field of the readout: its caption, dim, then its value in mono,
+  ## given room for `valueChars`.
   igSameLine(0, -1)
+  igBeginGroup()
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-  igTextUnformatted((if icon.len > 0: icon & " " & label else: label).cstring, nil)
+  igTextUnformatted(caption(f).cstring, nil)
   igPopStyleColor(1)
   igSameLine(0, 6)
   fonts.withFont(frMono, 0):
+    let room = igCalcTextSize(repeat('0', valueChars(f)).cstring, nil, false, -1).x
     igTextUnformatted(value.cstring, nil)
-  igSameLine(0, 18)
+    let used = igGetItemRectSize().x
+    if used < room:
+      igSameLine(0, 0)
+      igDummy(ImVec2_c(x: room - used, y: 1))
+  igEndGroup()
+  marks.mark("status." & $f)
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igTextUnformatted(($f & (if f == rfAmplitude: ", as displayed (after processing and " &
+      "gain)" else: "") & ". Right-click the bar to choose the fields.").cstring, nil)
+    igEndTooltip()
+  igSameLine(0, 16)
+
+proc drawReadoutMenu(fields: openArray[ReadoutField]; res: var StatusOutput) =
+  ## The status bar's menu: which fields it shows, and in what order.
+  igSeparatorText("Status bar fields")
+  var chosen = @fields
+  var changed = false
+  for i, f in fields:
+    igPushID_Int(cint(ord(f)))
+    var on = true
+    if igCheckbox("##on", addr on):
+      chosen.delete(chosen.find(f))
+      changed = true
+    igSameLine(0, -1)
+    igBeginDisabled(i == 0)
+    if igArrowButton("##up", ImGui_Dir_Up) and not changed:
+      swap(chosen[i], chosen[i - 1])
+      changed = true
+    igEndDisabled()
+    igSameLine(0, 2)
+    igBeginDisabled(i == fields.high)
+    if igArrowButton("##down", ImGui_Dir_Down) and not changed:
+      swap(chosen[i], chosen[i + 1])
+      changed = true
+    igEndDisabled()
+    igSameLine(0, -1)
+    igTextUnformatted(($f).cstring, nil)
+    igPopID()
+  for f in ReadoutField:
+    if f notin fields:
+      igPushID_Int(cint(ord(f)))
+      var on = false
+      if igCheckbox(($f).cstring, addr on):
+        chosen.add f
+        changed = true
+      igPopID()
+  igSeparator()
+  if igButton("Restore the defaults", ImVec2_c(x: 0, y: 0)):
+    chosen = @DefaultReadout
+    changed = true
+  if changed:
+    res.chose = true
+    res.fields = chosen
 
 proc jobField(job: JobStatus; t: Theme; marks: var Marks): JobId =
   ## The running job: a progress bar labelled with what it does and how far
@@ -196,11 +277,12 @@ proc jobField(job: JobStatus; t: Theme; marks: var Marks): JobId =
   igSameLine(0, 18)
 
 proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
-    marks: var Marks): JobId =
-  ## The status strip along the bottom of the main window; returns the job
-  ## the user asked to cancel, or `NoJob`. The cursor fields are
-  ## placeholders until the trace panel exists.
-  result = NoJob
+    fields: openArray[ReadoutField]; at: Pick; marks: var Marks): StatusOutput =
+  ## The status strip along the bottom of the main window: the running job,
+  ## then the readout of `fields` at `at` (blank where a value is not known),
+  ## the theme and the scale on the right. A right click on it opens the
+  ## menu that chooses the fields.
+  result = StatusOutput(cancel: NoJob)
   let style = igGetStyle()
   let height = round(igGetFontSize() + 2 * style.FramePadding.y + 2)
   if beginBar("##statusbar", ImGui_Dir_Down, height, t):
@@ -208,21 +290,22 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     igSetCursorPosY(round((height - igGetFontSize()) / 2))
     igDummy(ImVec2_c(x: 0, y: 0))
     if job.shown:
-      result = jobField(job, t, marks)
-    field(fonts, IconPulse, "t", "1.284 s", t)
-    field(fonts, "", "trace", "128 / 480", t)
-    field(fonts, "", "FFID", "1001", t)
-    field(fonts, IconLocation, "src", "1201.5", t)
-    field(fonts, "", "rcv", "3301.0", t)
-    field(fonts, "", "amp", "-0.0412", t)
+      result.cancel = jobField(job, t, marks)
+    for f in fields:
+      readoutField(fonts, f, at.text(f), t, marks)
     let right = info.themeName & "   " & $int(round(info.scale * 100)) & " %"
     let w = igCalcTextSize(right.cstring, nil, false, -1).x
     let avail = igGetContentRegionAvail().x
     if avail > w:
       igSetCursorPosX(igGetCursorPosX() + avail - w)
-    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-    igTextUnformatted(right.cstring, nil)
-    igPopStyleColor(1)
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+      igTextUnformatted(right.cstring, nil)
+      igPopStyleColor(1)
+    if igIsWindowHovered(0) and igIsMouseReleased_Nil(ImGui_MouseButton_Right.cint):
+      igOpenPopup_Str(readoutMenu, 0)
+    if igBeginPopup(readoutMenu, 0):
+      drawReadoutMenu(fields, result)
+      igEndPopup()
   igEnd()
 
 # ------------------------------------------------------------- samples --

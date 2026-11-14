@@ -4,7 +4,8 @@
 ##
 ## The window holds a menu bar, an icon toolbar, a dockspace with the trace
 ## panel (`tracepanel`), a sample header table and the Messages window, and a
-## status bar with the running job's progress and its Cancel button;
+## status bar with the running job's progress and its Cancel button, and the
+## readout of what lies under the mouse in the plot;
 ## `-d:imguiDemo` adds the Dear ImGui demo window. The look comes from a theme file
 ## (`view/theme`, `style`, `fonts`); the shell services (dialogs, system theme,
 ## icon) are in `shell`, DPI handling in `dpi`, the chrome in `chrome`.
@@ -58,6 +59,8 @@ type
     messages: Messages           ## the frontend's messages, on their way to the log
     core: AppState               ## the application state
     trace: TracePanelUi          ## the main panel's plot window
+    pick: Pick                   ## under the mouse in the plot last frame: the readout
+    typed: seq[string]           ## text events pushed by `typeText`, kept until the end
     logView: LogView
     echoed: int                  ## the core log's entries echoed to stdout so far
     dog: FrameWatchdog
@@ -95,6 +98,14 @@ type
     logFile*: string ## where `text` was written; "" when it could not be
 
   FailureHook* = proc (failure: StartupFailure) {.closure.}
+
+  SimKey* = enum
+    ## Keys a test can press (`pressKey`).
+    skEquals, skMinus, skKeypadPlus, skKeypadMinus, skLeft, skRight, skUp, skDown,
+    skBackspace, skZero, skEscape, skEnter, skCtrl, skShift, skAlt
+
+  SimMod* = enum
+    smCtrl, smShift, smAlt
 
   RunOptions* = object
     maxFrames*: int            ## stop after this many frames; 0 runs until the window closes
@@ -199,17 +210,68 @@ proc moveMouse*(frame: FrameInfo; at: Vec2) =
     windowID: SDL_GetWindowID(w), x: x, y: y)
   discard SDL_PushEvent(addr ev)
 
-proc pressMouse*(frame: FrameInfo; at: Vec2; down: bool) =
-  ## Presses (`down`) or releases the left mouse button at `at`, where
-  ## `moveMouse` put the pointer. For tests.
+proc pressMouse*(frame: FrameInfo; at: Vec2; down: bool; button = 1) =
+  ## Presses (`down`) or releases a mouse button (1 left, 2 middle, 3 right)
+  ## at `at`, where `moveMouse` put the pointer. For tests.
   let w = frame.ui.window
   let density = SDL_GetWindowPixelDensity(w)
   let (x, y) = (at.x / density, at.y / density)
   var ev: SDL_Event
   ev.button = SDL_MouseButtonEvent(type_field: (if down: SDL_EVENT_MOUSE_BUTTON_DOWN
-    else: SDL_EVENT_MOUSE_BUTTON_UP), windowID: SDL_GetWindowID(w), button: 1, down: down,
-    clicks: 1, x: x, y: y)
+    else: SDL_EVENT_MOUSE_BUTTON_UP), windowID: SDL_GetWindowID(w), button: uint8(button),
+    down: down, clicks: 1, x: x, y: y)
   discard SDL_PushEvent(addr ev)
+
+proc scrollWheel*(frame: FrameInfo; at: Vec2; notches: float32; sideways = 0'f32) =
+  ## Turns the mouse wheel by `notches` (up is positive) and sideways
+  ## (right is positive) with the pointer at `at`. For tests; modifiers come
+  ## from the last `pressKey`.
+  let w = frame.ui.window
+  let density = SDL_GetWindowPixelDensity(w)
+  var ev: SDL_Event
+  ev.wheel = SDL_MouseWheelEvent(type_field: SDL_EVENT_MOUSE_WHEEL, windowID: SDL_GetWindowID(w),
+    x: sideways, y: notches, direction: SDL_MOUSEWHEEL_NORMAL, mouse_x: at.x / density,
+    mouse_y: at.y / density, integer_x: int32(sideways), integer_y: int32(notches))
+  discard SDL_PushEvent(addr ev)
+
+proc pressKey*(frame: FrameInfo; key: SimKey; down: bool; mods: set[SimMod] = {}) =
+  ## Presses (`down`) or releases `key` with `mods` held, as the keyboard
+  ## would. For tests.
+  const scancodes: array[SimKey, SDL_Scancode] = [SDL_SCANCODE_EQUALS, SDL_SCANCODE_MINUS,
+    SDL_SCANCODE_KP_PLUS, SDL_SCANCODE_KP_MINUS, SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT,
+    SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, SDL_SCANCODE_BACKSPACE, SDL_SCANCODE_0,
+    SDL_SCANCODE_ESCAPE, SDL_SCANCODE_RETURN, SDL_SCANCODE_LCTRL, SDL_SCANCODE_LSHIFT,
+    SDL_SCANCODE_LALT]
+  var m = 0'u16
+  if smCtrl in mods: m = m or uint16(SDL_KMOD_LCTRL)
+  if smShift in mods: m = m or uint16(SDL_KMOD_LSHIFT)
+  if smAlt in mods: m = m or uint16(SDL_KMOD_LALT)
+  let w = frame.ui.window
+  var ev: SDL_Event
+  ev.key = SDL_KeyboardEvent(type_field: (if down: SDL_EVENT_KEY_DOWN else: SDL_EVENT_KEY_UP),
+    windowID: SDL_GetWindowID(w), scancode: scancodes[key],
+    key: SDL_GetKeyFromScancode(scancodes[key], SDL_Keymod(m), true), mod_field: SDL_Keymod(m),
+    down: down)
+  discard SDL_PushEvent(addr ev)
+
+proc typeText*(frame: FrameInfo; text: string) =
+  ## Types `text` into the item that has the keyboard, as text input
+  ## would. For tests.
+  let w = frame.ui.window
+  frame.ui.typed.add text # the event points at it
+  var ev: SDL_Event
+  ev.text = SDL_TextInputEvent(type_field: SDL_EVENT_TEXT_INPUT, windowID: SDL_GetWindowID(w),
+    text: frame.ui.typed[^1].cstring)
+  discard SDL_PushEvent(addr ev)
+
+proc typing*(frame: FrameInfo): bool =
+  ## Whether a text box has the keyboard (for tests).
+  igGetIO_Nil().WantTextInput
+
+proc pick*(frame: FrameInfo): Pick =
+  ## What lies under the mouse in the plot, as this frame found it: what
+  ## the status bar reads out next.
+  frame.ui.pick
 
 proc core*(frame: FrameInfo): lent AppState =
   ## The application state as this frame drew it.
@@ -390,16 +452,25 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.pendingTheme = some(menu.theme) # fonts and styles change between frames
   result.incl drawToolbar(ui.theme, ui.marks)
   let job = jobStatus(ui.core.jobs.active, getMonoTime())
-  let cancel = drawStatusBar(ui.fonts, ui.theme,
-    ChromeInfo(themeName: ui.theme.name, scale: ui.scale), job, ui.marks)
-  if cancel != NoJob:
-    ui.core.apply Command(kind: ckCancelJob, job: cancel)
+  # The readout is last frame's pick: the bar is drawn before the plot.
+  let status = drawStatusBar(ui.fonts, ui.theme,
+    ChromeInfo(themeName: ui.theme.name, scale: ui.scale), job, ui.core.settings.readout,
+    ui.pick, ui.marks)
+  if status.cancel != NoJob:
+    ui.core.apply Command(kind: ckCancelJob, job: status.cancel)
+  if status.chose:
+    var s = ui.core.settings
+    s.readout = status.fields
+    ui.core.apply Command(kind: ckSettings, settings: s)
   ui.drawDockSpace()
-  let plot = ui.trace.drawTracePanel(plotTitle, ui.core, MainPanel, ui.theme, ui.fonts,
+  var plot = ui.trace.drawTracePanel(plotTitle, ui.core, MainPanel, ui.theme, ui.fonts,
     ui.marks)
   result.incl plot.actions
-  for c in plot.commands:
-    ui.core.apply c
+  ui.pick = plot.pick
+  for n in plot.notes:
+    ui.say(n, mlWarning)
+  for c in plot.commands.mitems:
+    ui.core.apply move c
   drawSampleTable(tableTitle, ui.fonts, ui.theme, ui.marks)
   ui.logView.draw(ui.core.log, messagesTitle, ui.theme)
   when defined(imguiDemo):
@@ -504,7 +575,7 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions): Ui =
                    else: ctx.cacheDir / "index"
   result = Ui(window: window, choice: choice, system: systemTheme(), selected: selected,
     themes: themeFiles(themeDirs(userThemes, assets)), scale: windowScale(window),
-    core: initAppState(indexCache = indexCache), dog: initFrameWatchdog(),
+    core: initAppState(indexCache = indexCache), pick: noPick(), dog: initFrameWatchdog(),
     slow: initSlowFrameDigest(), running: true)
   for d in assets:
     result.fontDirs.add d / "fonts"

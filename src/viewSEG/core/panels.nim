@@ -7,9 +7,10 @@
 ## auxiliary traces, with its own pipeline.
 ##
 ## A panel also holds what its reader thread said about its traces (the
-## layout, the header fields they have values for), the view the UI last
-## reported and the request sent for it (`core/viewport`). The tiles that
-## answer the requests are kept by `AppState` beside the panel.
+## layout, the header fields they have values for), the view the UI
+## reported, the views before it (for "back") and the request sent for it
+## (`core/viewport`). The tiles that answer the requests are kept by
+## `AppState` beside the panel.
 ##
 ## Panels and layers are plain data, read by the views and changed only by
 ## `AppState` when it applies a `Command` or takes in what a reader posted.
@@ -113,13 +114,18 @@ type
     laidOut*: bool           ## whether the reader has said (`layout` may be empty: no traces)
     known*: set[HeaderField] ## the header fields layer 0's traces have values for
     kind*: GatherKind        ## the kind of gather layer 0 shows
-    view*: Viewport          ## what the UI last showed
+    view*: Viewport          ## what the plot shows
+    back*: seq[Viewport]     ## earlier views, newest last, for "back"; at most `MaxBack`
     pending*: ReadRequest    ## the request sent last; empty for none
     clip*: float64 = NaN     ## the display clip: the first tile's since the source or gain changed
-    fits*: int               ## bumped when the view is reset to show everything; the UI follows
-    revision*: int           ## bumped on every change
+    jumps*: int
+      ## bumped when `core` sets the view itself (the whole gather when it
+      ## is first laid out, back): the UI follows
+    revision*: int ## bumped on every change
 
-const NoPanel* = PanelId(0)
+const
+  NoPanel* = PanelId(0)
+  MaxBack* = 50 ## earlier views a panel remembers
 
 func `==`*(a, b: PanelId): bool {.borrow.}
 func `$`*(id: PanelId): string = "panel " & $int(id)

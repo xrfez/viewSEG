@@ -7,7 +7,8 @@
 ## label. Steps of that kind keep labels on round positions, and since they
 ## are multiples of the stride, a zoomed-out tile has a value for each.
 
-import std/[math, strutils]
+import std/math
+from ../core/readout import numberText
 
 func headerStep*(stride: int; pixelsPerPosition, labelPixels: float64): int =
   ## The step between labelled positions: `stride` times the smallest of 1,
@@ -31,8 +32,5 @@ iterator labelled*(visible: Slice[int]; step: int): int =
 
 func headerText*(v: float64): string =
   ## A header value as the header shows it: whole numbers without decimals,
-  ## others with up to two; "" when unknown.
-  if v.isNaN or v.classify in {fcInf, fcNegInf}: ""
-  elif v == floor(v) and abs(v) < 1e15: $int64(v)
-  else: formatFloat(v, ffDecimal, 2).strip(leading = false, chars = {'0'}).strip(
-    leading = false, chars = {'.'})
+  ## others with up to two; "" when unknown (as the status bar shows them).
+  numberText(v)
