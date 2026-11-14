@@ -394,13 +394,20 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    positions, the y range in ms, the size in pixels). The first view of a gesture comes
    with `remember`, and the panel keeps the view it replaces (at most 50) for `ckBack`;
    when `core` sets the view itself (back, the whole gather once it is laid out) it
-   bumps the panel's `jumps` and the frontend follows. When the request
-   sent last does not cover it (`covers`), `core/viewport.requestFor` makes a new one:
-   the visible positions plus half a view of read-ahead on each side, every `stride`-th
+   bumps the panel's `jumps` and the frontend follows. When the request sent last does
+   not hold the view with a whole view more on each side where the data goes on
+   (`covers` with `keep = KeepAhead`), `core/viewport.requestFor` makes a new one (but
+   while the view itself is in a request not yet answered, it waits for that one, and
+   asks again once a tile is taken in, so a key held down does not start a read every
+   few frames and finish none): the visible positions plus a view and a half of
+   read-ahead on each side (`ReadAhead`), so a step of a whole view (Shift + arrow, a
+   click on a scroll bar's track) finds its data on hand, every `stride`-th
    position when zoomed out past a trace per pixel column (density only; never more
    than the pixel columns), the visible samples plus
    read-ahead, kept at `decimation` samples per column (at most two columns per pixel
    row), and the display pipeline's margin (`requiredMargin`, `decodeWindow`). The
+   read-ahead of a large view shrinks on both axes alike to keep the tile within
+   `MaxAheadValues` (64 MiB); the view itself is always read. The
    request carries the new `requestGen`. The reader acts only on the newest note.
 4. **Prefetch and process** (reader). A selection-mode prefetcher over the request's
    traces (`uniform = true`, `quickFirst = true`) with the decode window as its sample
@@ -432,7 +439,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    `Level`: the RMS, peak and clip percentile of |x| over its live traces that are not
    killed (`panelStats`; a trace marked dead is not live).
 6. **Take in** (UI). A tile whose `request.gen` is not the panel's `requestGen` is
-   dropped. `AppState` keeps the newest four per panel (after a new order, or the
+   dropped. `AppState` keeps the newest four per panel, and no more than
+   `MaxPanelValues` (192 MiB) in all, the oldest dropped first (after a new order, or the
    polarity of every trace reversed, the tiles from before are drawn until the first
    one after the change comes, then dropped: `orderGen`, `samplesGen`; an edit of a
    trace in view is such a change); the first tile after a change of gather or processing

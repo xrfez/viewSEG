@@ -93,6 +93,9 @@ const
   MaxTiles* = 4         ## tiles kept per panel, newest last
   FloatValues* = 32_768 ## values in view the Float gain takes its level from, at most
   MaxNotices* = 20      ## notices kept
+  MaxPanelValues* = 48 * 1024 * 1024
+    ## the values (192 MiB, and as much on the GPU) a panel's tiles hold at
+    ## most: the oldest are dropped first, the newest is always kept
 
 type
   CommandKind* = enum
@@ -754,8 +757,15 @@ proc requestView(state: var AppState; k: int) =
   let flow = p.layers[0].displayPipeline(state.gatherKind(p.layers[0]))
   let margin = displayMargin(flow, p.layout.dtMs)
   let wiggles = p.layers[0].display.drawsWiggles
-  if p.pending.gen == p.requestGen and p.pending.covers(p.layout, p.view, margin, wiggles):
-    return
+  if p.pending.gen == p.requestGen:
+    # Enough on hand on every side: nothing to ask. The view itself on hand,
+    # or on its way: the read-ahead is filled again once the request sent is
+    # answered, so a key held down does not start a read every few frames
+    # and finish none.
+    if p.pending.covers(p.layout, p.view, margin, wiggles, keep = KeepAhead): return
+    if p.pending.covers(p.layout, p.view, margin, wiggles) and
+        not state.tiles[k].anyIt(it.request.gen == p.pending.gen):
+      return
   var req = requestFor(p.layout, p.view, margin, wiggles = wiggles)
   if req.isEmpty: return
   inc p.requestGen
@@ -1901,8 +1911,16 @@ proc drainInbox*(state: var AppState): bool =
         state.tiles[k].keepItIf(it.request.gen >= since)
         state.tiles[k].add move m.tile
         if state.tiles[k].len > MaxTiles: state.tiles[k].delete(0)
+        var values = 0
+        for t in state.tiles[k]: values += t.data.len + t.envelope.len
+        while state.tiles[k].len > 1 and values > MaxPanelValues: # the oldest go first
+          values -= state.tiles[k][0].data.len + state.tiles[k][0].envelope.len
+          state.tiles[k].delete(0)
         inc state.panels[k].revision
         state.settleGain(k)
+        # The view may have moved on while the tile was read: the read-ahead
+        # is filled again around it now.
+        state.requestView(k)
   state.mail.setLen 0
   for job in finished:
     state.onFinished(job)

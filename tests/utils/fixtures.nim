@@ -287,6 +287,30 @@ proc deadAndNotANumberSegy*(fx: Fixtures): string =
     w.writeTrace(k, buf)
   doAssert w.close().len == 0
 
+const
+  WideTraces* = 2000  ## channels of `wideShotSegy`
+  WideSamples* = 2500 ## its samples per trace (5 s at `DtMs`)
+
+proc wideShotSegy*(fx: Fixtures): string =
+  ## One shot record of `WideTraces` traces of `WideSamples` samples, each a
+  ## 25 Hz sine whose amplitude changes with the channel and with time: a
+  ## whole view of it is read at a coarser resolution than a view zoomed in.
+  result = fx.dir / "wide-shot.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: one shot of " & $WideTraces & " channels"]))
+  var buf = newSeq[float32](WideSamples)
+  for channel in 1 .. WideTraces:
+    for i in 0 ..< WideSamples:
+      let t = float64(i) * DtMs / 1000
+      buf[i] = float32(sin(2 * PI * WaveHz * t + float64(channel) / 7) *
+        (1 + 0.5 * sin(float64(channel) / 50 + t)))
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(channel), 0.0,
+      DtMs * 1000, tsLive)
+    w.writeTrace(k, buf)
+  w.checkClose()
+
 proc longSpreadSegy*(fx: Fixtures): string =
   ## One shot record of `LongSpread` traces, channel 1 .. `LongSpread`, each
   ## a 25 Hz sine.

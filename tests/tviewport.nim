@@ -4,7 +4,10 @@
 ## covers a view, the decode margin, peak decimation, tiles cut to the GPU's
 ## texture limit, and the CPU twin of the density shader.
 ##
-## Seen to fail: with the read-ahead left uncapped when zoomed out,
+## Seen to fail: with no budget on the read-ahead, `readAheadBudget` found
+## "12000 traces of 13500 samples asked for"; with `covers` not minding
+## `keep`, "less than a view on hand, and no new request"; with the
+## read-ahead left uncapped when zoomed out,
 ## `zoomLevels` asked for 803 traces on 800 columns (801 visible); with
 ## blocks side by side in time not sharing their edge column,
 ## `blocksAreSeamless` found a gap no block covers; with `decimatePeakInto`
@@ -64,7 +67,18 @@ block coversPansAndZooms:
   let r = requestFor(layout, view)
   doAssert r.covers(layout, view)
   doAssert r.covers(layout, viewOf(1040, 1139)), "a pan inside the read-ahead"
-  doAssert not r.covers(layout, viewOf(1100, 1199)), "a pan past it"
+  doAssert r.covers(layout, viewOf(1100, 1199)), "a whole view's pan inside the read-ahead"
+  doAssert not r.covers(layout, viewOf(1200, 1299)), "a pan past it"
+  # a view and a half read ahead on each side; a view kept on hand
+  doAssert r.first == 1000 - 150 and r.last == 1099 + 150, $r
+  doAssert r.covers(layout, view, keep = KeepAhead)
+  doAssert r.covers(layout, viewOf(1040, 1139), keep = KeepAhead), "a view still on hand"
+  doAssert not r.covers(layout, viewOf(1060, 1159), keep = KeepAhead),
+    "less than a view on hand, and no new request"
+  # where the data ends, nothing more is wanted there
+  let edge = requestFor(layout, viewOf(9900, 9999))
+  doAssert edge.last == layout.traces - 1 and edge.covers(layout, viewOf(9900, 9999),
+    keep = KeepAhead)
   doAssert not r.covers(layout, viewOf(0, 1599)), "zoomed out: another stride"
   doAssert not r.covers(layout, viewOf(1000, 1099), margin = 50), "another margin"
   let wide = requestFor(layout, viewOf(0, 9999))
@@ -73,6 +87,25 @@ block coversPansAndZooms:
   doAssert requestFor(layout, viewOf(0, 99, columns = 0)).isEmpty
   doAssert requestFor(PanelLayout(), view).isEmpty
   doAssert not ReadRequest().covers(layout, view)
+
+block readAheadBudget:
+  # A large view's read-ahead shrinks to keep the tile within the budget
+  # (the view itself is always read), alike on both axes, and a request so
+  # made still keeps its share on hand (no request every frame).
+  let big = PanelLayout(traces: 100_000, samples: 20_001, dtMs: 1, t0Ms: 0)
+  let v = Viewport(traces: Span(lo: 40_000 - 0.5, hi: 42_999.5),
+    timeMs: Span(lo: 5000, hi: 8399), columns: 3000, rows: 3400)
+  let r = requestFor(big, v)
+  doAssert r.stride == 1 and r.decimation == 1
+  let values = float64(r.count) * float64(r.columns)
+  doAssert values * 4 <= 64.0 * 1024 * 1024, $r.count & " traces of " & $r.columns &
+    " samples asked for" # 64 MiB of float32
+  doAssert r.count > 3000 and r.columns > 3400, "no read-ahead at all: " & $r
+  doAssert r.covers(big, v, keep = KeepAhead)
+  let huge = Viewport(traces: Span(lo: 0 - 0.5, hi: 5999.5),
+    timeMs: Span(lo: 0, hi: 3399), columns: 6000, rows: 3400)
+  let h = requestFor(big, huge)
+  doAssert h.count >= 6000 and h.columns >= 3400, "the view itself was cut: " & $h
 
 block decodeMargin:
   let r = requestFor(layout, viewOf(0, 99, t0 = 1000, t1 = 1599), margin = 250)

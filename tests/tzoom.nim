@@ -203,8 +203,9 @@ block zoomChangesTheTracesRead:
     strides.add r.stride
     v = v.zoomed(WheelStep, at, BothAxes, lim)
   doAssert strides[0] == 16 and strides[^1] == 1, $strides
-  # four positions wide covers five at most, plus three on each side
-  doAssert counts[^1] <= 5 + 2 * 3, "narrowest view: " & $counts[^1] & " traces"
+  # four positions wide covers five at most, plus the read-ahead on each side
+  doAssert counts[^1] <= 5 + 2 * int(ceil(5 * ReadAhead)), "narrowest view: " & $counts[^1] &
+    " traces"
   for i in 1 ..< counts.len:
     doAssert strides[i] <= strides[i - 1]
     if strides[i] == 1 and strides[i - 1] == 1:
@@ -222,9 +223,9 @@ block zoomChangesTheTracesRead:
   # in traces: first the stride falls (the count stays near the columns),
   # then, at one trace per column or fewer, the count falls with the view
   doAssert requestFor(layout, f.zoomed(8, at, {axTraces}, lim)).count <= 800
-  let in64 = requestFor(layout, f.zoomed(64, at, {axTraces}, lim)).count
   let in128 = requestFor(layout, f.zoomed(128, at, {axTraces}, lim)).count
-  doAssert in64 < requestFor(layout, f).count and in128 < in64, $in64 & ", " & $in128
+  let in256 = requestFor(layout, f.zoomed(256, at, {axTraces}, lim)).count
+  doAssert in128 < requestFor(layout, f).count and in256 < in128, $in128 & ", " & $in256
 
 func inside(v: Viewport; lay: PanelLayout): bool =
   ## Whether `v` shows nothing past the data of `lay` (as `fitAll` shows

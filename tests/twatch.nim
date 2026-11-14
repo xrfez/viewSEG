@@ -205,12 +205,14 @@ block readerReadsNothingPastTheEnd:
     var st = initAppState(watchEvery = initDuration(hours = 1))
     st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
     doAssert st.settle(st.shownPath == path and st.laidOut)
+    # three traces in view, so the next view (past their read-ahead of a view and
+    # a half on each side) must be read
     var v = st.panel(MainPanel).view
-    (v.traces, v.columns, v.rows) = (Span(lo: -0.5, hi: 10), 800, 600)
+    (v.traces, v.columns, v.rows) = (Span(lo: -0.5, hi: 2.5), 800, 600)
     st.apply Command(kind: ckView, panel: MainPanel, view: v)
     doAssert st.settle(st.tiles(0).len > 0)
     writeFile(path, readFile(path)[0 ..< 6080])
-    v.traces = Span(lo: 12, hi: 23)
+    v.traces = Span(lo: 20, hi: 23)
     st.apply Command(kind: ckView, panel: MainPanel, view: v)
     doAssert st.settle(st.log.has("is shorter than when it was opened", sevWarning))
     st.shutdown()

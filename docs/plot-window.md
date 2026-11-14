@@ -481,8 +481,8 @@ sometimes a laptop with integrated graphics; plan for 16 GB of RAM and files ove
 | Floor | software OpenGL (Mesa llvmpipe), as in CI |
 | Frame time while panning or zooming | under 16 ms on a GPU; under 33 ms on software OpenGL |
 | Frame watchdog | a frame whose UI-thread work passes 50 ms is logged as a stall |
-| Response to a zoom or pan | the view moves at once with what is already drawn; new data replaces it as it arrives |
-| Work per view | only the traces and samples on screen (plus a small read-ahead and the filter margin); in density zoomed out past a trace per pixel, only the traces drawn; in the wiggle modes at most a trace per pixel column, every one of them read |
+| Response to a zoom or pan | the view moves at once with what is already drawn; new data replaces it as it arrives; a pan of up to a whole view (an arrow key, Shift + arrow, a click on a scroll bar's track) finds its data on hand: a view and a half is read ahead on each side, and read again as the view moves once less than a view is left (the user: "arrow and shift arrow have visible delay in data being drawn") |
+| Work per view | only the traces and samples on screen (plus that read-ahead, which shrinks to keep a tile within 64 MiB, and the filter margin); a panel's tiles hold 192 MiB at most; in density zoomed out past a trace per pixel, only the traces drawn; in the wiggle modes at most a trace per pixel column, every one of them read |
 | Open | progress and Cancel at once; a second open of an unchanged file reads its index cache |
 
 ## Open choices

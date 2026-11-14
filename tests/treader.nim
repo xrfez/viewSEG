@@ -218,14 +218,14 @@ block panInsideTheReadAhead:
     var st = initAppState()
     st.apply openCmd(fx.surveySegy())
     doAssert st.settle(st.main.layout.traces > 0)
-    st.lookAt(8, 11) # 4 traces; 2 more on each side are read
+    st.lookAt(8, 11) # 4 traces; 6 more on each side are read
     let gen = st.main.requestGen
     let r = st.main.pending
-    doAssert r.first == 6 and r.last == 13, $r
+    doAssert r.first == 2 and r.last == 17, $r
     st.lookAt(9, 12)
     st.lookAt(7, 10)
     doAssert st.main.requestGen == gen, "a pan inside the read-ahead read again"
-    st.lookAt(14, 17)
+    st.lookAt(18, 21)
     doAssert st.main.requestGen > gen, "a pan past the read-ahead read nothing"
     # a burst of views: only the newest is answered
     for first in 0 .. 15:

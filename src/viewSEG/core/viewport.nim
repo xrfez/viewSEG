@@ -10,8 +10,12 @@
 ## **The view bounds the work.** `requestFor` turns what is on screen into
 ## a `ReadRequest`:
 ##
-## - the visible positions, plus a read-ahead of half the visible count on
-##   each side, so a pan of up to half a view needs nothing new;
+## - the visible positions, plus a read-ahead of a view and a half on each
+##   side (`ReadAhead`), so a pan of up to a whole view finds its data on
+##   hand; the panel asks again once less than a view is left on a side
+##   where the data goes on (`covers` with `keep`, `KeepAhead`), so the
+##   margin stays filled as the view moves; the read-ahead of a large view
+##   shrinks to stay within `MaxAheadValues`;
 ## - zoomed out past one position per pixel column (in density only: the
 ##   wiggle modes stop at one pixel a trace, `MinTracePixels`), every
 ##   `stride`-th position only (a power of two, positions that are multiples
@@ -38,9 +42,18 @@ import std/math
 from processSEG/pipeline import decodeWindow
 
 const
-  ReadAhead* = 0.5
+  ReadAhead* = 1.5
     ## positions (and samples) read beyond the view on each side, as a
-    ## fraction of the visible count
+    ## fraction of the visible count: a whole view and a half, so a step of
+    ## a whole view (Shift + arrow, a click on a scroll bar's track) finds
+    ## its data on hand
+  KeepAhead* = 1.0
+    ## the read-ahead kept on hand as the view moves, in views on each side:
+    ## a new request is made once less is left (`covers` with `keep`), so a
+    ## whole view's step never leaves the tiles on hand
+  MaxAheadValues* = 16.0 * 1024 * 1024
+    ## the values (64 MiB) a request's read-ahead may bring its tile to; the
+    ## view itself is always read whole
   MinTracePixels* = 1.0
     ## the narrowest trace spacing, in pixels, of a view in a wiggle mode:
     ## zoomed out as far as it goes, every trace in view has a pixel column
@@ -149,51 +162,98 @@ func spread(lo, hi, top, ahead: int): (int, int) =
   ## `lo .. hi` (in steps) widened by `ahead` on each side within `0 .. top`.
   (max(0, lo - ahead), min(top, hi + ahead))
 
+type Reach = object
+  ## What a view needs and how far a request for it reads ahead, in steps:
+  ## positions of `stride`, columns of `decimation` samples.
+  stride, dec: int
+  kLo, kHi, kTop: int ## the visible positions' steps, the last step of the layout
+  jLo, jHi, jTop: int ## the visible columns, the last column of the layout
+  aheadK, aheadJ: int ## the read-ahead on each side
+  envelope: bool
+
+func reachFor(layout: PanelLayout; view: Viewport; readAhead: float64;
+    wiggles: bool): Reach =
+  ## The steps of `view` and its read-ahead: `readAhead` views on each side
+  ## along each axis (less where the data ends), zoomed out never more than
+  ## the plot's columns (density) or two columns per pixel row, and no more
+  ## in all than `MaxAheadValues` values (both axes' read-ahead shrunk
+  ## alike), however much the view itself holds.
+  let vis = visiblePositions(layout, view)
+  let vs = visibleSamples(layout, view)
+  # Positions: multiples of the stride. A view no wider than the plot's
+  # columns may touch one more position than it is wide (both edges cut
+  # through one), and still reads every one of them.
+  result.stride = if view.traces.width <= float64(view.columns) * (1 + 1e-9): 1
+                  else: strideFor(vis.len, view.columns)
+  result.kLo = (vis.a + result.stride - 1) div result.stride
+  result.kHi = max(result.kLo, vis.b div result.stride)
+  result.kTop = (layout.traces - 1) div result.stride
+  let shown = result.kHi - result.kLo + 1
+  var ahead = int(ceil(float64(shown) * readAhead))
+  if result.stride > 1: # zoomed out: never more than the columns
+    ahead = min(ahead, max(0, (view.columns - shown) div 2))
+  # Samples: whole decimation bins.
+  result.dec = decimationFor(vs.len, view.rows)
+  result.jLo = vs.a div result.dec
+  result.jHi = vs.b div result.dec
+  result.jTop = (layout.samples - 1) div result.dec
+  let cols = result.jHi - result.jLo + 1
+  var aheadS = int(ceil(float64(cols) * readAhead))
+  if result.dec > 1: # at most two columns per row
+    aheadS = min(aheadS, max(0, (2 * view.rows - cols) div 2))
+  result.envelope = result.dec > 1 and wiggles
+  # The budget: the values of the tile (and its envelope's two a column).
+  let r = result
+  let per = if r.envelope: 3.0 else: 1.0
+  proc values(a, b: int): float64 =
+    let (k0, k1) = spread(r.kLo, r.kHi, r.kTop, a)
+    let (j0, j1) = spread(r.jLo, r.jHi, r.jTop, b)
+    float64(k1 - k0 + 1) * float64(j1 - j0 + 1) * per
+  var f = 1.0
+  if values(ahead, aheadS) > MaxAheadValues:
+    var (lo, hi) = (0.0, 1.0)
+    for _ in 0 ..< 30:
+      let m = (lo + hi) / 2
+      if values(int(float64(ahead) * m), int(float64(aheadS) * m)) > MaxAheadValues: hi = m
+      else: lo = m
+    f = lo
+  result.aheadK = int(float64(ahead) * f)
+  result.aheadJ = int(float64(aheadS) * f)
+
 func requestFor*(layout: PanelLayout; view: Viewport; margin = 0;
     readAhead = ReadAhead; wiggles = false): ReadRequest =
   ## What to read for `view` of a layer that draws wiggles (`wiggles`) or
   ## not: see the module documentation. Empty (`count` 0) when the panel has
   ## no traces or no size. `gen` is left 0.
-  let vis = visiblePositions(layout, view)
-  let vs = visibleSamples(layout, view)
-  if vis.len == 0 or vs.len == 0 or view.columns <= 0 or view.rows <= 0:
+  if visiblePositions(layout, view).len == 0 or visibleSamples(layout, view).len == 0 or
+      view.columns <= 0 or view.rows <= 0:
     return ReadRequest(stride: 1, decimation: 1)
-  # Positions: multiples of the stride. A view no wider than the plot's
-  # columns may touch one more position than it is wide (both edges cut
-  # through one), and still reads every one of them.
-  let stride = if view.traces.width <= float64(view.columns) * (1 + 1e-9): 1
-               else: strideFor(vis.len, view.columns)
-  let kLo = (vis.a + stride - 1) div stride
-  let kHi = max(kLo, vis.b div stride)
-  let shown = kHi - kLo + 1
-  var ahead = int(ceil(float64(shown) * readAhead))
-  if stride > 1: # zoomed out: never more than the columns
-    ahead = min(ahead, max(0, (view.columns - shown) div 2))
-  let (k0, k1) = spread(kLo, kHi, (layout.traces - 1) div stride, ahead)
-  # Samples: whole decimation bins.
-  let dec = decimationFor(vs.len, view.rows)
-  let jLo = vs.a div dec
-  let jHi = vs.b div dec
-  let cols = jHi - jLo + 1
-  var aheadS = int(ceil(float64(cols) * readAhead))
-  if dec > 1: # at most two columns per row
-    aheadS = min(aheadS, max(0, (2 * view.rows - cols) div 2))
-  let (j0, j1) = spread(jLo, jHi, (layout.samples - 1) div dec, aheadS)
-  let firstSample = j0 * dec
-  ReadRequest(first: k0 * stride, count: k1 - k0 + 1, stride: stride,
-    firstSample: firstSample, samples: min(layout.samples, (j1 + 1) * dec) - firstSample,
-    decimation: dec, margin: max(margin, 0), envelope: dec > 1 and wiggles)
+  let r = reachFor(layout, view, readAhead, wiggles)
+  let (k0, k1) = spread(r.kLo, r.kHi, r.kTop, r.aheadK)
+  let (j0, j1) = spread(r.jLo, r.jHi, r.jTop, r.aheadJ)
+  let firstSample = j0 * r.dec
+  ReadRequest(first: k0 * r.stride, count: k1 - k0 + 1, stride: r.stride,
+    firstSample: firstSample, samples: min(layout.samples, (j1 + 1) * r.dec) - firstSample,
+    decimation: r.dec, margin: max(margin, 0), envelope: r.envelope)
 
 func covers*(r: ReadRequest; layout: PanelLayout; view: Viewport; margin = 0;
-    wiggles = false): bool =
+    wiggles = false; keep = 0.0): bool =
   ## Whether `r` holds what `view` shows, at the resolution it needs (with
-  ## the extremes wiggles need, for `wiggles`): then nothing new is read.
-  let need = requestFor(layout, view, margin, readAhead = 0, wiggles = wiggles)
-  not r.isEmpty and not need.isEmpty and r.stride == need.stride and
-    r.decimation == need.decimation and r.margin == need.margin and
-    (r.envelope or not need.envelope) and
-    r.first <= need.first and r.last >= need.last and r.firstSample <= need.firstSample and
-    r.firstSample + r.samples >= need.firstSample + need.samples
+  ## the extremes wiggles need, for `wiggles`), and with `keep` views on
+  ## each side of it as well (of the `ReadAhead` a request for `view` would
+  ## read, where the data goes on; 0: the view alone): then nothing new is
+  ## read.
+  if r.isEmpty or visiblePositions(layout, view).len == 0 or
+      visibleSamples(layout, view).len == 0 or view.columns <= 0 or view.rows <= 0:
+    return false
+  let n = reachFor(layout, view, ReadAhead, wiggles)
+  let share = clamp(keep / ReadAhead, 0.0, 1.0)
+  let (k0, k1) = spread(n.kLo, n.kHi, n.kTop, int(float64(n.aheadK) * share))
+  let (j0, j1) = spread(n.jLo, n.jHi, n.jTop, int(float64(n.aheadJ) * share))
+  r.stride == n.stride and r.decimation == n.dec and r.margin == max(margin, 0) and
+    (r.envelope or not n.envelope) and r.first <= k0 * n.stride and
+    r.last >= k1 * n.stride and r.firstSample <= j0 * n.dec and
+    r.firstSample + r.samples >= min(layout.samples, (j1 + 1) * n.dec)
 
 func decodeSpan*(r: ReadRequest; traceSamples: int): Slice[int] =
   ## The samples to decode for `r`: the kept ones and `margin` more on each
