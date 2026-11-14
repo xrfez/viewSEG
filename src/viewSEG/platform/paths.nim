@@ -36,9 +36,9 @@ type
   PathContext* = object
     ## Everything the path rules read, so tests can supply their own.
     os*: OsFamily
-    appDir*: string                         ## the executable's directory
-    env*: proc (name: string): string       ## an environment variable, "" if unset
-    isDir*: proc (path: string): bool       ## an existing directory
+    appDir*: string                           ## the executable's directory
+    env*: proc (name: string): string         ## an environment variable, "" if unset
+    isDir*: proc (path: string): bool         ## an existing directory
     isWritableDir*: proc (path: string): bool ## an existing directory we may write to
 
 func sep(os: OsFamily): char =

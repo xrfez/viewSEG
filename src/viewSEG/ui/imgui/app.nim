@@ -31,8 +31,8 @@ type
     window: ptr SDL_Window
     choice: ThemeChoice
     system: SystemTheme
-    themes: seq[ThemeFile] ## the theme files found, user's first
-    selected: string       ## the chosen theme file's name; "" follows the system
+    themes: seq[ThemeFile]       ## the theme files found, user's first
+    selected: string             ## the chosen theme file's name; "" follows the system
     theme: Theme
     scale: float32
     fontDirs: seq[string]
@@ -90,7 +90,7 @@ proc readFrame*(frame: FrameInfo): seq[Rgba] =
     addr raw[0])
   result = newSeq[Rgba](frame.width * frame.height)
   for y in 0 ..< frame.height:
-    let src = (frame.height - 1 - y) * frame.width * 4 # GL rows start at the bottom
+    let src = (frame.height - 1 - y) * frame.width * 4         # GL rows start at the bottom
     for x in 0 ..< frame.width:
       let i = src + 4 * x
       result[y * frame.width + x] = Rgba(r: raw[i], g: raw[i + 1], b: raw[i + 2], a: 255)

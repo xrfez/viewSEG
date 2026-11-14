@@ -22,9 +22,9 @@ type
     stUnknown = "unknown", stLight = "light", stDark = "dark"
 
   DialogKind* = enum
-    dkOpenFile = "Open file",     ## one seismic file
-    dkOpenFiles = "Open files",   ## several seismic files
-    dkOpenFolder = "Open folder"  ## one folder
+    dkOpenFile = "Open file",    ## one seismic file
+    dkOpenFiles = "Open files",  ## several seismic files
+    dkOpenFolder = "Open folder" ## one folder
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -73,7 +73,7 @@ type
     next: ptr Pending
     dialog: DialogKind
     outcome: ShellEventKind
-    count: int            ## strings in `text`: paths, or 1 for the error
+    count: int ## strings in `text`: paths, or 1 for the error
     text: UncheckedArray[char]
 
 var

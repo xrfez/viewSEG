@@ -5,7 +5,7 @@
 ## or `regen`. It never runs Atlas, and it **never touches a bind-mounted
 ## dependency**: in the devcontainer, `deps/parseSEG`, `deps/processSEG` and
 ## `deps/processSEG/deps/parseSEG` are the real repositories, possibly with
-## another session's uncommitted work in them.
+## uncommitted work in them.
 ##
 ## Usage, from the repository root (or with `--root:DIR` for another Atlas
 ## project, such as `deps/processSEG`):

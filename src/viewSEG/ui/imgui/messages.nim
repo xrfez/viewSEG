@@ -1,6 +1,6 @@
 ## A small "Messages" window: what the shell, the theme and the font loader
 ## reported, newest last, each with an icon for its level. Each message is also
-## echoed to stdout. The real log window comes later (1.1).
+## echoed to stdout. A full log window replaces it later.
 
 import std/strutils
 import imguin/cimgui

@@ -16,7 +16,7 @@ type
   Fonts* = object
     ## The faces in use, by role; each is a loaded font or ImGui's built-in one.
     faces*: array[FontRole, ptr ImFont]
-    files*: array[FontRole, string] ## the file of each face, "" for the built-in
+    files*: array[FontRole, string]  ## the file of each face, "" for the built-in
     cache: seq[(string, ptr ImFont)] ## every face added to the atlas, by file
     builtin: ptr ImFont
 
@@ -24,29 +24,37 @@ func be16(s: string; at: int): int = s[at].int shl 8 or s[at + 1].int
 
 func be32(s: string; at: int): int = be16(s, at) shl 16 or be16(s, at + 2)
 
+func fontAt(data: string; start: int): bool =
+  ## A TrueType / OpenType table directory at `start` that fits in `data`, with
+  ## every table inside `data` and the tables a font needs.
+  result = false
+  if start >= 0 and start + 12 <= data.len and
+      data[start ..< start + 4] in ["\x00\x01\x00\x00", "true", "OTTO"]:
+    let tables = be16(data, start + 4)
+    if tables > 0 and start + 12 + 16 * tables <= data.len:
+      var found = 0
+      result = true
+      for i in 0 ..< tables:
+        let at = start + 12 + 16 * i
+        let (name, offset, length) = (data[at ..< at + 4], be32(data, at + 8),
+          be32(data, at + 12))
+        if offset + length > data.len:
+          result = false
+        if name in ["cmap", "head", "hhea", "hmtx"]:
+          inc found
+      result = result and found == 4
+
 func looksLikeFont*(data: string): bool =
   ## A TrueType / OpenType file whose table directory fits in `data` and has
-  ## the tables a font needs; a font collection only needs its header. Checked
-  ## before ImGui sees the bytes, whose own checks assert.
-  result = false
-  if data.len >= 12:
-    let tag = data[0 ..< 4]
-    if tag == "ttcf":
-      result = data.len >= 16
-    elif tag in ["\x00\x01\x00\x00", "true", "OTTO"]:
-      let tables = be16(data, 4)
-      if tables > 0 and 12 + 16 * tables <= data.len:
-        var found = 0
-        result = true
-        for i in 0 ..< tables:
-          let at = 12 + 16 * i
-          let (name, offset, length) = (data[at ..< at + 4], be32(data, at + 8),
-            be32(data, at + 12))
-          if offset < 0 or length < 0 or offset + length > data.len:
-            result = false
-          if name in ["cmap", "head", "hhea", "hmtx"]:
-            inc found
-        result = result and found == 4
+  ## the tables a font needs; for a font collection, its first font (the one
+  ## ImGui loads). Checked before ImGui sees the bytes, whose own checks assert
+  ## (it also wants more than 100 bytes) or read out of bounds.
+  if data.len <= 100:
+    result = false
+  elif data.startsWith("ttcf"):
+    result = data.len >= 16 and be32(data, 8) >= 1 and fontAt(data, be32(data, 12))
+  else:
+    result = fontAt(data, 0)
 
 proc findFont*(name: string; fontDirs: openArray[string]): string =
   ## The path of font file `name`: itself when absolute, else the first
@@ -137,7 +145,7 @@ proc load*(f: var Fonts; t: Theme; fontDirs: openArray[string]; log: var Message
   if problems.len > 0:
     log.add "Fonts: " & problems.join("; ") & ". Using the built-in font instead" &
       (if fontDirs.len == 0: " (no assets folder found)."
-       else: " (searched " & fontDirs.join(", ") & ")."), mlWarning
+        else: " (searched " & fontDirs.join(", ") & ")."), mlWarning
 
 proc push*(f: Fonts; role: FontRole; size = 0'f32) =
   ## Draws with the `role` face from here to `pop`; `size` 0 keeps the current

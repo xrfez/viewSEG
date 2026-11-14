@@ -134,13 +134,13 @@ try:
     var seen: seq[string]
     let code = run(RunOptions(maxFrames: 7, userThemeDir: noUserThemes,
       onFrame: proc (f: FrameInfo) =
-        seen.add f.theme.name
-        case f.index
-        of 1: postShellEvent(ShellEvent(kind: seThemeChanged, theme: stDark))
-        of 3: postShellEvent(ShellEvent(kind: seThemeChanged, theme: stLight))
-        of 4: f.chooseTheme("everforest-dark")
-        of 5: f.chooseTheme("")
-        else: discard))
+      seen.add f.theme.name
+      case f.index
+      of 1: postShellEvent(ShellEvent(kind: seThemeChanged, theme: stDark))
+      of 3: postShellEvent(ShellEvent(kind: seThemeChanged, theme: stLight))
+      of 4: f.chooseTheme("everforest-dark")
+      of 5: f.chooseTheme("")
+      else: discard))
     doAssert code == 0
     doAssert seen[2 .. 6] == @["Everforest Dark", "Everforest Dark", "Everforest Light",
       "Everforest Dark", "Everforest Light"], $seen

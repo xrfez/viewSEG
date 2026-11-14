@@ -1,8 +1,8 @@
 ## The shell's chrome around the docked panels: the icon toolbar under the menu
 ## bar, the status bar along the bottom, and tool buttons (a Nerd Font icon or
 ## a seismic `Symbol`) with tooltips that name their shortcut. Also the two
-## sample panels (a plot and a table) that show the look until Phase 1 brings
-## real ones.
+## sample panels (a plot and a table) that show the look until the real trace
+## panel and header table exist.
 ##
 ## Each piece records where it drew its named parts in `Marks`, so tests can
 ## look at the right pixels.
@@ -22,9 +22,9 @@ type
 
   Tool* = object
     ## What the toolbar shows and the user picked. The display mode and the
-    ## gather domain are placeholders until Phase 1 and 2 give them meaning.
+    ## gather domain are placeholders until the trace panel uses them.
     display*: Symbol ## syWiggle .. syDensity
-    domain*: Symbol  ## syShotGather or syReceiverGather
+    domain*: Symbol ## syShotGather or syReceiverGather
 
   ChromeInfo* = object
     ## Facts the status bar shows.
@@ -148,14 +148,14 @@ proc drawToolbar*(tool: var Tool; t: Theme; marks: var Marks): set[MenuAction] =
     if iconButton(IconOpenFolder, "Open folder", shortcutName(maOpenFolder), size, t, marks):
       result.incl maOpenFolder
     separatorV(size, t)
-    const placeholder = " (display modes arrive in Phase 2)"
+    const placeholder = " (not available yet)"
     for sym in syWiggle .. syDensity:
       if symbolButton(sym, size, t, marks, tool.display == sym, placeholder):
         tool.display = sym
       igSameLine(0, 2)
     separatorV(size, t)
     for sym in [syShotGather, syReceiverGather]:
-      if symbolButton(sym, size, t, marks, tool.domain == sym, " (Phase 1)"):
+      if symbolButton(sym, size, t, marks, tool.domain == sym, placeholder):
         tool.domain = sym
       igSameLine(0, 2)
     # the theme toggle sits at the right end
@@ -179,7 +179,7 @@ proc field(fonts: Fonts; icon, label, value: string; t: Theme) =
 
 proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; marks: var Marks) =
   ## The status strip along the bottom of the main window. The cursor fields
-  ## are placeholders until the trace panel exists (1.5).
+  ## are placeholders until the trace panel exists.
   let style = igGetStyle()
   let height = round(igGetFontSize() + 2 * style.FramePadding.y + 2)
   if beginBar("##statusbar", ImGui_Dir_Down, height, t):
@@ -265,7 +265,7 @@ proc drawSampleTable*(title: string; fonts: Fonts; t: Theme; marks: var Marks) =
     let roomy = igGetContentRegionAvail().x >= need
     let flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
       (if roomy: ImGui_TableFlags_SizingStretchProp.cint
-       else: ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_SizingFixedFit.cint)
+        else: ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_SizingFixedFit.cint)
     if igBeginTable("##headers", cols.len.cint, flags, ImVec2_c(x: 0, y: 0), 0):
       igTableSetupScrollFreeze(0, 1)
       for c in cols:

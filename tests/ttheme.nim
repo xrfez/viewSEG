@@ -122,6 +122,18 @@ just text
   doAssert t.palette[bcDarkBackground] != EverforestDark.palette[bcDarkBackground]
   doAssert luminance(t.palette[bcDarkerBackground]) < luminance(t.palette[bcBackground])
 
+block notANumberIsOutOfRange:
+  # `nan` parses as a number but fails every comparison: it must not slip
+  # through the range checks into the metrics.
+  var messages: seq[string]
+  let t = parseTheme("[fonts]\nsize = nan\nheading_size = -NaN\n[metrics]\nrounding = nan\n",
+    "NaN", messages, "nan.toml")
+  doAssert t.metrics == DefaultMetrics, $t.metrics
+  for part in ["nan.toml:2: `fonts.size` must be 6 .. 72",
+      "nan.toml:3: `fonts.heading_size` must be 6 .. 72",
+      "nan.toml:5: `metrics.rounding` must be 0 .. 64"]:
+    doAssert messages.has(part), "missing message " & part & " in:\n" & messages.join("\n")
+
 block emptyFileIsTheBuiltin:
   var messages: seq[string]
   let t = parseTheme("", "Empty", messages)

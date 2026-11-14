@@ -20,10 +20,10 @@ deps/*
 
 # Seismic sample data stays local: it is large and not redistributable.
 /exampleFiles/
-# Throwaway spikes (PLAN.md Phase 0.3)
+# Throwaway spikes
 /spikes/
 
-# Local development environment and agent workflow files (not published)
+# Local development environment files (not published)
 /.agents/
 /.claude/
 /.devcontainer/

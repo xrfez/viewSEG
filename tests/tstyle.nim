@@ -23,21 +23,21 @@ block resolveThemeRules:
 
 block uiScaleRules:
   doAssert uiScale(1, 1) == 1
-  doAssert uiScale(2, 1) == 2           # Windows / X11 at 200 %
+  doAssert uiScale(2, 1) == 2 # Windows / X11 at 200 %
   doAssert uiScale(1.5, 1) == 1.5
-  doAssert uiScale(2, 2) == 1           # Retina, Wayland: ImGui's framebuffer scale does it
-  doAssert uiScale(3, 2) == 1.5         # Wayland 300 % with a 2x buffer
-  doAssert uiScale(0, 1) == 1           # SDL failed
+  doAssert uiScale(2, 2) == 1 # Retina, Wayland: ImGui's framebuffer scale does it
+  doAssert uiScale(3, 2) == 1.5 # Wayland 300 % with a 2x buffer
+  doAssert uiScale(0, 1) == 1 # SDL failed
   doAssert uiScale(2, 0) == 1
   doAssert uiScale(NaN, 1) == 1
-  doAssert uiScale(10, 1) == 4          # clamped
+  doAssert uiScale(10, 1) == 4 # clamped
   doAssert uiScale(0.25, 1) == 0.5
 
 block windowSize:
   doAssert scaledWindowSize((1280, 800), 1, (1920, 1040)) == (1280, 800)
   doAssert scaledWindowSize((1280, 800), 1.5, (3840, 2100)) == (1920, 1200)
   doAssert scaledWindowSize((1280, 800), 2, (1920, 1040)) == (1728, 936) # 90 % of usable
-  doAssert scaledWindowSize((1280, 800), 2, (0, 0)) == (2560, 1600)     # unknown display
+  doAssert scaledWindowSize((1280, 800), 2, (0, 0)) == (2560, 1600) # unknown display
 
 block colourPacking:
   doAssert u32(Rgba(r: 1, g: 2, b: 3, a: 4)) == 0x04030201'u32
@@ -82,19 +82,28 @@ block applyStyleOnContext:
   let style = igGetStyle()
   let plot = ImPlot_GetStyle()
 
+  # A colour the theme forgets is transparent black (`imguiColours` and
+  # `implotColours` start from zero), or, if `applyStyle` skipped it, what a
+  # fresh style holds: ImGui's dark colours, IMPLOT_AUTO_COL for ImPlot.
+  let (fresh, freshPlot) = (stockImgui(tmDark), ImPlotStyle_ImPlotStyle())
+  defer: ImPlotStyle_destroy(freshPlot)
   for t in [EverforestDark, EverforestLight]:
     applyStyle(t, 1)
     let (stock, stockPlot) = (stockImgui(t.mode), stockImplot(t.mode))
     var unchanged: seq[string]
     for col in ImGui_Col_Text ..< ImGui_Col_COUNT:
       let (mine, theirs) = (style.Colors[col.int], stock.Colors[col.int])
-      if same(mine, theirs) != (col in imguiSameAsStock):
+      let left = same(mine, theirs) or same(mine, fresh.Colors[col.int]) or
+        same(mine, ImVec4_c())
+      if left != (col in imguiSameAsStock):
         unchanged.add $col
       doAssert not sameRgb(mine, stockBlue, 0.06) or mine.w == 0,
         t.name & ": " & $col & " is ImGui's blue"
     for col in ImPlot_Col_Line ..< ImPlot_Col_COUNT:
       let (mine, theirs) = (plot.Colors[col.int], stockPlot.Colors[col.int])
-      if same(mine, theirs) != (col in implotSameAsStock):
+      let left = same(mine, theirs) or same(mine, freshPlot.Colors[col.int]) or
+        same(mine, ImVec4_c())
+      if left != (col in implotSameAsStock):
         unchanged.add $col
     doAssert unchanged.len == 0, t.name & ": left at (or wrongly away from) stock: " &
       $unchanged

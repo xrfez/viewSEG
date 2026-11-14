@@ -38,17 +38,17 @@ type
 
   BaseColor* = enum
     ## The palette: the keys of an Omarchy `colors.toml`. The string is the key.
-    bcAccent = "accent"                 ## focus, the active tab, links
-    bcSelection = "selection"           ## selected and hovered items
-    bcMuted = "muted"                   ## borders and separators
-    bcBackground = "background"         ## windows and panels
-    bcDarkBackground = "dark_background"     ## bars: menu, toolbar, status, tabs
-    bcDarkerBackground = "darker_background" ## the backdrop between panels
+    bcAccent = "accent"                        ## focus, the active tab, links
+    bcSelection = "selection"                  ## selected and hovered items
+    bcMuted = "muted"                          ## borders and separators
+    bcBackground = "background"                ## windows and panels
+    bcDarkBackground = "dark_background"       ## bars: menu, toolbar, status, tabs
+    bcDarkerBackground = "darker_background"   ## the backdrop between panels
     bcLighterBackground = "lighter_background" ## raised: inputs, buttons, popups
-    bcForeground = "foreground"         ## text
-    bcDarkForeground = "dark_foreground"     ## the faintest text: hints
-    bcLightForeground = "light_foreground"   ## secondary text
-    bcBrightForeground = "bright_foreground" ## emphasised text
+    bcForeground = "foreground"                ## text
+    bcDarkForeground = "dark_foreground"       ## the faintest text: hints
+    bcLightForeground = "light_foreground"     ## secondary text
+    bcBrightForeground = "bright_foreground"   ## emphasised text
     bcRed = "red", bcYellow = "yellow", bcOrange = "orange", bcGreen = "green",
     bcCyan = "cyan", bcBlue = "blue", bcMagenta = "magenta", bcBrown = "brown",
     bcBrightRed = "bright_red", bcBrightYellow = "bright_yellow",
@@ -60,26 +60,26 @@ type
   Role* = enum
     ## What a colour is for. `deriveRoles` documents where each comes from; a
     ## theme file may override any of them in `[roles]` under this name.
-    rlBackdrop = "backdrop"           ## behind and between docked panels
-    rlWindow = "window"               ## window and panel backgrounds
-    rlPopup = "popup"                 ## menus, popups, tooltips
-    rlBar = "bar"                     ## menu bar, toolbar, status bar, tab strips
-    rlFrame = "frame"                 ## inputs, buttons, scrollbar grabs
+    rlBackdrop = "backdrop" ## behind and between docked panels
+    rlWindow = "window" ## window and panel backgrounds
+    rlPopup = "popup" ## menus, popups, tooltips
+    rlBar = "bar" ## menu bar, toolbar, status bar, tab strips
+    rlFrame = "frame" ## inputs, buttons, scrollbar grabs
     rlText = "text"
-    rlTextDim = "text_dim"            ## secondary text, labels, units
-    rlTextDisabled = "text_disabled"  ## disabled items, hints
+    rlTextDim = "text_dim" ## secondary text, labels, units
+    rlTextDisabled = "text_disabled" ## disabled items, hints
     rlBorder = "border"
-    rlSelection = "selection"         ## selected rows, items, tabs
-    rlHover = "hover"                 ## anything under the mouse
-    rlActive = "active"               ## pressed
-    rlAccent = "accent"               ## focus, current tab, checks, sliders
-    rlHighlight = "highlight"         ## linked selection: map <-> traces
+    rlSelection = "selection" ## selected rows, items, tabs
+    rlHover = "hover" ## anything under the mouse
+    rlActive = "active" ## pressed
+    rlAccent = "accent" ## focus, current tab, checks, sliders
+    rlHighlight = "highlight" ## linked selection: map <-> traces
     rlOk = "ok", rlWarning = "warning", rlError = "error", rlInfo = "info"
     rlPlotBackground = "plot_background"
     rlPlotGrid = "plot_grid"
-    rlTrace = "trace"                 ## the default wiggle line
-    rlFillPositive = "fill_positive"  ## the default positive-lobe fill
-    rlFillNegative = "fill_negative"  ## the default negative-lobe fill
+    rlTrace = "trace" ## the default wiggle line
+    rlFillPositive = "fill_positive" ## the default positive-lobe fill
+    rlFillNegative = "fill_negative" ## the default negative-lobe fill
     rlCrosshair = "crosshair"
 
   FontRole* = enum
@@ -108,7 +108,7 @@ type
     series*: array[8, Rgba] ## categorical colours: components, overlays
     fonts*: array[FontRole, string]
       ## font file names, relative to an assets `fonts/` directory, or absolute
-    iconFont*: string ## a font merged into `ui` for icons; "" when `ui` has them
+    iconFont*: string       ## a font merged into `ui` for icons; "" when `ui` has them
     metrics*: Metrics
 
   ThemeFile* = object
@@ -249,7 +249,7 @@ func makeTheme*(name: string; mode: ThemeMode; p: Palette;
 const
   everforestDarkPalette: Palette = [
     # Omarchy's Everforest (the owner's desktop): upstream medium contrast,
-    # except orange and the two darkest backgrounds.
+      # except orange and the two darkest backgrounds.
     bcAccent: rgb(0x7fbbb3), bcSelection: rgb(0x3d484d), bcMuted: rgb(0x475258),
     bcBackground: rgb(0x2d353b), bcDarkBackground: rgb(0x21272c),
     bcDarkerBackground: rgb(0x181d20), bcLighterBackground: rgb(0x343f44),
@@ -263,10 +263,10 @@ const
     bcBrightBlue: rgb(0x7fbbb3), bcBrightMagenta: rgb(0xd699b6)]
   everforestLightPalette: Palette = [
     # Upstream sainnhe/everforest, light, medium contrast, in Omarchy's keys:
-    # background bg0, dark_background bg1, lighter_background bg2, selection
-    # bg3, darker_background bg4, muted bg5, dark_foreground grey0,
-    # light_foreground grey2. Brown has no upstream value: orange 55 % of the
-    # way to bg0.
+      # background bg0, dark_background bg1, lighter_background bg2, selection
+      # bg3, darker_background bg4, muted bg5, dark_foreground grey0,
+      # light_foreground grey2. Brown has no upstream value: orange 55 % of the
+      # way to bg0.
     bcAccent: rgb(0x3a94c5), bcSelection: rgb(0xe6e2cc), bcMuted: rgb(0xbdc3af),
     bcBackground: rgb(0xfdf6e3), bcDarkBackground: rgb(0xf4f0d9),
     bcDarkerBackground: rgb(0xe0dcc7), bcLighterBackground: rgb(0xefebd4),
@@ -471,10 +471,10 @@ func kindProblem(e: Entry; kind: ValueKind): string =
   else:
     "`" & e.key & "` needs a " &
       (case kind
-       of vkString: "string"
-       of vkNumber: "number"
-       of vkBool: "true or false"
-       of vkArray: "list of strings") & ", ignored"
+        of vkString: "string"
+        of vkNumber: "number"
+        of vkBool: "true or false"
+        of vkArray: "list of strings") & ", ignored"
 
 proc check(e: Entry; kind: ValueKind; at: string; messages: var seq[string]): bool =
   let problem = kindProblem(e, kind)
@@ -529,7 +529,7 @@ proc parseTheme*(text, name: string; messages: var seq[string]; where = name): T
         if expect(vkString): result.iconFont = e.value.str
       of "size", "heading_size":
         if expect(vkNumber):
-          if e.value.num < 6 or e.value.num > 72:
+          if e.value.num notin 6.0 .. 72.0: # also NaN
             messages.add at & "`" & key & "` must be 6 .. 72 pixels"
           elif sub == "size": result.metrics.fontSize = e.value.num
           else: result.metrics.headingSize = e.value.num
@@ -550,7 +550,7 @@ proc parseTheme*(text, name: string; messages: var seq[string]; where = name): T
       if field.isNil:
         messages.add at & "unknown key `" & key & "`, ignored"
       elif expect(vkNumber):
-        if e.value.num < 0 or e.value.num > 64:
+        if e.value.num notin 0.0 .. 64.0: # also NaN
           messages.add at & "`" & key & "` must be 0 .. 64 pixels"
         else:
           field[] = e.value.num

@@ -14,8 +14,8 @@ type
 
   MenuResult* = object
     actions*: set[MenuAction]
-    pickedTheme*: bool  ## a theme was chosen under View > Theme
-    theme*: string      ## its file name, or "" for "Follow system"
+    pickedTheme*: bool ## a theme was chosen under View > Theme
+    theme*: string     ## its file name, or "" for "Follow system"
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
