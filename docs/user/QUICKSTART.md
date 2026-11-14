@@ -112,7 +112,7 @@ the fields and their order.
 | Folder | What it holds |
 |---|---|
 | `config/` | your settings, and your own vendor header maps in `config/vendormaps/` |
-| `logs/` | one log file per session |
+| `logs/` | one log file per session, with every message of the Messages window; the newest 20 are kept |
 | `vendormaps/` | the vendor header maps that ship with viewSEG |
 | `assets/` | themes, fonts and colour maps |
 | `licences/` | the licences of viewSEG and of the software it includes |

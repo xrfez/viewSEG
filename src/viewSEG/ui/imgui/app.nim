@@ -12,7 +12,8 @@
 ##
 ## The application state (`core/state`) lives here, on the UI thread: each
 ## frame drains its inbox, and the Messages window shows its log, where the
-## frontend's own messages go too. File > Open file and the files named on the
+## frontend's own messages go too; with `RunOptions.persist` the log is also
+## written to this run's session log file (`core/state.logTo`). File > Open file and the files named on the
 ## command line (`RunOptions.openPaths`) are opened by `core`'s open job, with
 ## parseSEG's index cache in `RunOptions.indexCacheDir`. Debug builds time
 ## every frame (`core/watchdog`) and log the frames whose work is over budget,
@@ -23,7 +24,7 @@
 ## `<logs>/startup-failure.log`, and `run` returns 1. In release builds a failed
 ## Dear ImGui check is logged instead of aborting (`asserts`).
 
-import std/[math, options, os, strutils, times]
+import std/[math, options, os, strutils, terminal, times]
 import asserts # before imguin: Nim keys its cache of imguin's C++ objects on the
                # C flags in force when imguin is compiled, and this adds one
 import sdl3_nim
@@ -63,6 +64,7 @@ type
     typed: seq[string]           ## text events pushed by `typeText`, kept until the end
     logView: LogView
     echoed: int                  ## the core log's entries echoed to stdout so far
+    echoing: bool                ## stdout is a terminal
     dog: FrameWatchdog
     slow: SlowFrameDigest
     marks: Marks
@@ -128,6 +130,11 @@ type
       ## seismic files to open once the window is up (the command line's)
     indexCacheDir*: Option[string]
       ## where parseSEG's index caches go; default `<cache>/index`
+    persist*: bool
+      ## write this run's session log in `logDir` (the program does; tests
+      ## choose)
+    version*: string
+      ## the program's version, logged first ("" for none)
     windowSize*: (int, int)
       ## the main window's size in pixels at 100 %; (0, 0) for the default
     maxTextureSize*: int
@@ -389,8 +396,11 @@ template mark(ui: var Ui; part: string; idle = false) =
     ui.dog.phase(part, waiting = idle)
 
 proc echoNewLog(ui: var Ui) =
-  ## Echoes what was logged since the last call to stdout, until the log has
-  ## its own file.
+  ## Echoes what was logged since the last call to stdout when it is a
+  ## terminal (the session log file has everything anyway).
+  if not ui.echoing:
+    ui.echoed = ui.core.log.nextSerial
+    return
   for e in ui.core.log.since(ui.echoed):
     try:
       stdout.writeLine (if e.severity == sevInfo: "" else: $levelOf(e.severity) & ": "), line(e)
@@ -576,7 +586,12 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions): Ui =
   result = Ui(window: window, choice: choice, system: systemTheme(), selected: selected,
     themes: themeFiles(themeDirs(userThemes, assets)), scale: windowScale(window),
     core: initAppState(indexCache = indexCache), pick: noPick(), dog: initFrameWatchdog(),
-    slow: initSlowFrameDigest(), running: true)
+    slow: initSlowFrameDigest(), echoing: isatty(stdout), running: true)
+  if opts.version.len > 0:
+    result.say("viewSEG " & opts.version)
+  if opts.persist:
+    result.core.logTo(if opts.logDir.isSome: opts.logDir.get else: ctx.logDir)
+    result.say("Session log: " & result.core.logFile)
   for d in assets:
     result.fontDirs.add d / "fonts"
   if assets.len == 0:
@@ -729,6 +744,7 @@ proc run*(opts = RunOptions()): int =
       if report.isSome:
         ui.core.report(sevWarning, "frame", report.get)
     ui.echoNewLog()
+    ui.core.persist()
   ui.trace.stopGpu() # while the GL context is current
   ui.core.shutdown()
   0

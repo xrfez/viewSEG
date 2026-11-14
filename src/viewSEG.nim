@@ -97,4 +97,5 @@ when isMainModule:
     quit QuitFailure
   of caRun:
     echo versionLine()
-    quit run(RunOptions(openPaths: cmd.files))
+    quit run(RunOptions(openPaths: cmd.files, persist: true,
+      version: ViewSEGVersion & " (parseSEG " & parseSEG.PackageVersion & ")"))

@@ -51,8 +51,8 @@
 import std/[math, os, sequtils]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
-import filejobs, inbox, jobs, log, panels, pick, reader, selection, session, settings,
-  threads, tiles, zoom
+import diskio, filejobs, inbox, jobs, log, panels, persist, pick, reader, selection, session,
+  settings, threads, tiles, zoom
 
 export inbox, jobs, log, panels, pick, selection, session, settings, threads, tiles, zoom
 
@@ -127,6 +127,9 @@ type
     nextTile: uint64
     scratch: Workspace    ## for the Float gain's level, on this thread
     inbox: Inbox
+    disk: DiskIo          ## writes the session log; none until `logTo`
+    logFile: string       ## the session log; "" for none
+    logged: int           ## the log's serial the session log has reached
     jobs: Jobs
       ## Fields are destroyed last to first: the runners stop before
       ## anything a running job uses is freed.
@@ -150,13 +153,57 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
 
+proc logTo*(state: var AppState; dir: string) =
+  ## From now on, writes the log to a new file in `dir`, this run's session
+  ## log (`sessionLogPath`), off this thread, entries logged so far first;
+  ## removes the oldest session logs there, keeping `KeptSessionLogs`.
+  assertUiThread()
+  if state.disk.isNil: state.disk = newDiskIo(state.inbox.poster)
+  state.logFile = sessionLogPath(dir)
+  state.logged = state.log.nextSerial - state.log.len
+  state.disk.prune(dir, SessionLogPrefix, SessionLogSuffix, KeptSessionLogs - 1,
+    spare = state.logFile)
+
+func logFile*(state: AppState): lent string {.inline.} =
+  ## This run's session log; "" when the log is not written to a file.
+  state.logFile
+
+proc writeLog(state: var AppState) =
+  ## Hands what was logged since the last call to the disk thread.
+  if state.logFile.len == 0 or state.logged == state.log.nextSerial: return
+  var text = ""
+  let first = state.log.nextSerial - state.log.len
+  if state.logged < first:
+    text.add "(" & $(first - state.logged) & " messages were dropped before they " &
+      "could be written)\n"
+  for e in state.log.since(state.logged):
+    text.add fileLine(e)
+  state.logged = state.log.nextSerial
+  state.disk.append(state.logFile, text, "the session log")
+
+proc persist*(state: var AppState) =
+  ## Hands what is due to the disk thread: what was logged since the last
+  ## call. Call it once per frame, after the frame's commands; it never
+  ## waits.
+  assertUiThread()
+  state.writeLog()
+
+proc flushFiles*(state: var AppState) =
+  ## Waits until the disk thread has written everything handed to it (tests).
+  assertUiThread()
+  state.persist()
+  state.disk.flush()
+
 proc shutdown*(state: var AppState) =
   ## Stops the panels' readers, cancels every job and waits for the running
-  ## ones to stop. Destroying the state does this too.
+  ## ones to stop, then writes what is left to the session log. Destroying
+  ## the state does this too.
   assertUiThread()
   for r in state.readers:
     r.stop()
   state.jobs.stop()
+  state.persist()
+  state.disk.stop()
 
 # --------------------------------------------------------------- reading --
 

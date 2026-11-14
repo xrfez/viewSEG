@@ -9,7 +9,7 @@
 ## The log belongs to the UI thread (`AppState` holds it). Workers do not
 ## write to it directly: they post entries through the inbox.
 
-import std/[deques, times]
+import std/[deques, strutils, times]
 import parseSEG/common/diagnostics
 
 export Severity, Location
@@ -101,3 +101,30 @@ iterator since*(log: MessageLog; serial: int): lent LogEntry =
   let first = max(0, serial - (log.next - log.entries.len))
   for i in first ..< log.entries.len:
     yield log.entries[i]
+
+func where*(loc: Location): string =
+  ## Where an entry points, in plain words: "record 2, trace 71,
+  ## GH1.formatCode"; "" when it names no place inside a file.
+  var parts: seq[string]
+  if loc.record >= 0: parts.add "record " & $loc.record
+  if loc.channelSet >= 0: parts.add "channel set " & $loc.channelSet
+  if loc.trace >= 0: parts.add "trace " & $loc.trace
+  if loc.field.len > 0: parts.add loc.field
+  parts.join(", ")
+
+proc fileLine*(e: LogEntry): string =
+  ## `e` as the session log file writes it: local time to the millisecond,
+  ## severity, who reported it, the message, then the file, the place in it
+  ## and the byte offset when known; one line, with any further lines of
+  ## the message indented under it.
+  result = e.time.local.format("yyyy-MM-dd HH:mm:ss'.'fff") & "  " &
+    alignLeft($e.severity, 7) & "  "
+  if e.source.len > 0: result.add "[" & e.source & "] "
+  result.add e.text.replace("\r\n", "\n").replace("\n", "\n    ")
+  var facts: seq[string]
+  if e.loc.file.len > 0: facts.add e.loc.file
+  let at = where(e.loc)
+  if at.len > 0: facts.add at
+  if e.offset >= 0: facts.add "byte " & $e.offset
+  if facts.len > 0: result.add "  (" & facts.join(", ") & ")"
+  result.add "\n"

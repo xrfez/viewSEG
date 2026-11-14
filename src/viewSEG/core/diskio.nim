@@ -1,0 +1,252 @@
+## The thread that writes the program's own files, so the UI thread never
+## waits for a disk: the session log, appended to as the log grows, and
+## documents (the settings, layouts) replaced whole.
+##
+## The UI thread only leaves work under a lock (`append`, `replace`,
+## `prune`) and goes on; the thread does it in order. What it could not do
+## comes back as a warning through the inbox, in plain words.
+##
+## - **Replace** writes a document atomically: to a temporary file next to
+##   it, flushed to the disk, then renamed over it, so a crash or a full
+##   disk leaves the old document or the new one, never half of one. A
+##   replace of a path waiting to be written takes the place of the one
+##   before it: only the newest is written.
+## - **Append** adds text to the end of a file, kept open between appends
+##   and flushed after each, so a crash keeps every line written. When a
+##   file cannot be written, that is said once, and nothing more is tried
+##   for it until an append to another file.
+## - **Prune** keeps the newest files of a folder whose names match.
+##
+## `flush` waits until everything left so far is done; `stop` (and
+## destroying the `DiskIo`) does what is left, then ends the thread.
+
+import std/[algorithm, locks, os, strutils, times]
+import inbox, jobs, log, threads
+
+when not defined(windows):
+  import std/posix
+
+type
+  TaskKind = enum
+    tkAppend, tkReplace, tkPrune
+
+  Task = object
+    kind: TaskKind
+    path: string   ## the file; for a prune, the folder
+    text: string   ## what to write; for a prune, the names' start
+    what: string   ## what the file is, for a message: "the settings"
+    keep: int      ## a prune: how many to keep
+    suffix: string ## a prune: the names' end
+    spare: string  ## a prune: a file never removed
+
+  DiskObj = object
+    lock: Lock
+    changed, idle: Cond
+    tasks: seq[Task]
+    busy, quit, started: bool
+    poster: Poster
+    thread: Thread[ptr DiskObj]
+
+  DiskIo* = object
+    ## The disk thread. Move-only; destroying it does what is left, then
+    ## stops the thread. A default `DiskIo` is none: work given to it is
+    ## dropped.
+    p: ptr DiskObj
+
+  Writer = object
+    ## The thread's own state.
+    d: ptr DiskObj
+    log: File      ## the file appended to last; nil for none
+    logPath: string
+    failed: string ## the file an append failed on last; "" for none
+
+proc `=destroy`*(x: DiskIo)
+proc `=wasMoved`*(x: var DiskIo) = x.p = nil
+proc `=copy`*(dest: var DiskIo; src: DiskIo) {.error.}
+proc `=dup`*(src: DiskIo): DiskIo {.error.}
+
+func isNil*(x: DiskIo): bool {.inline.} =
+  ## Whether `x` is none (never started).
+  x.p == nil
+
+# ------------------------------------------------------------ the thread --
+
+proc warn(w: Writer; text: string) =
+  w.d.poster.post Msg(job: NoJob, kind: mkLog, entry: LogEntry(time: getTime(),
+    severity: sevWarning, source: "files", text: text))
+
+proc syncToDisk(f: File) =
+  ## Asks the OS to put what was written on the disk (POSIX; on Windows the
+  ## rename that follows is enough for a document this small).
+  when not defined(windows):
+    discard fsync(getFileHandle(f))
+
+proc replaceFile(w: var Writer; t: Task) =
+  let tmp = t.path & "." & $getCurrentProcessId() & ".tmp"
+  try:
+    createDir(t.path.parentDir)
+    var f: File
+    if not open(f, tmp, fmWrite):
+      raise newException(IOError, "it cannot be created")
+    try:
+      f.write t.text
+      f.flushFile()
+      syncToDisk(f)
+    finally:
+      f.close()
+    moveFile(tmp, t.path)
+  except IOError, OSError:
+    let why = getCurrentExceptionMsg()
+    try:
+      removeFile(tmp)
+    except OSError:
+      discard
+    w.warn("Could not save " & t.what & " in " & t.path & ": " & why)
+
+proc closeLog(w: var Writer) =
+  if w.log != nil:
+    w.log.close()
+    w.log = nil
+  w.logPath = ""
+
+proc appendTo(w: var Writer; t: Task) =
+  if t.path != w.logPath:
+    w.closeLog()
+    if t.path == w.failed: return # said once already
+    w.failed = ""
+    try:
+      createDir(t.path.parentDir)
+      if not open(w.log, t.path, fmAppend):
+        raise newException(IOError, "it cannot be opened")
+      w.logPath = t.path
+    except IOError, OSError:
+      w.log = nil
+      w.failed = t.path
+      w.warn("Could not write " & t.what & " to " & t.path & ": " & getCurrentExceptionMsg() &
+        ". The Messages window still has every message.")
+      return
+  try:
+    w.log.write t.text
+    w.log.flushFile()
+  except IOError:
+    let path = w.logPath
+    w.closeLog()
+    w.failed = path
+    w.warn("Could not write " & t.what & " to " & path & ": " & getCurrentExceptionMsg() &
+      ". The Messages window still has every message.")
+
+proc pruneDir(w: var Writer; t: Task) =
+  var names: seq[string]
+  try:
+    for kind, path in walkDir(t.path):
+      let name = path.extractFilename
+      if kind == pcFile and name.startsWith(t.text) and name.endsWith(t.suffix) and
+          path != t.spare:
+        names.add path
+  except OSError:
+    discard # nothing to prune
+  names.sort()
+  for i in 0 ..< names.len - t.keep:
+    try:
+      removeFile(names[i])
+    except OSError:
+      w.warn("Could not remove the old file " & names[i] & ": " & getCurrentExceptionMsg())
+
+proc run(d: ptr DiskObj) {.thread.} =
+  markWorkerThread()
+  var w = Writer(d: d)
+  var work: seq[Task]
+  while true:
+    withLock d.lock:
+      while d.tasks.len == 0 and not d.quit:
+        wait(d.changed, d.lock)
+      if d.tasks.len == 0:
+        break # quit, and nothing is left
+      swap(work, d.tasks)
+      d.busy = true
+    for t in work:
+      case t.kind
+      of tkAppend: w.appendTo(t)
+      of tkReplace: w.replaceFile(t)
+      of tkPrune: w.pruneDir(t)
+    work.setLen 0
+    withLock d.lock:
+      d.busy = false
+      if d.tasks.len == 0: broadcast(d.idle)
+  w.closeLog()
+  withLock d.lock:
+    broadcast(d.idle)
+
+# ------------------------------------------------------------- the handle --
+
+proc stop*(x: DiskIo) =
+  ## Does what is left, then ends the thread and waits for it. Idempotent;
+  ## destroying the `DiskIo` does it.
+  if x.p != nil and x.p.started:
+    withLock x.p.lock:
+      x.p.quit = true
+      signal(x.p.changed)
+    joinThread(x.p.thread)
+    x.p.started = false
+
+proc `=destroy`*(x: DiskIo) =
+  if x.p != nil:
+    x.stop()
+    deinitCond(x.p.changed)
+    deinitCond(x.p.idle)
+    deinitLock(x.p.lock)
+    `=destroy`(x.p[])
+    deallocShared(x.p)
+
+proc newDiskIo*(poster: sink Poster): DiskIo =
+  ## Starts the disk thread; it reports through `poster`.
+  let p = cast[ptr DiskObj](allocShared0(sizeof(DiskObj)))
+  initLock p.lock
+  initCond p.changed
+  initCond p.idle
+  p.poster = poster
+  result = DiskIo(p: p)
+  createThread(p.thread, run, p)
+  p.started = true
+
+proc leave(x: DiskIo; t: sink Task) =
+  withLock x.p.lock:
+    if x.p.quit: return
+    case t.kind
+    of tkReplace: # only the newest document of a path is written
+      for i in countdown(x.p.tasks.high, 0):
+        if x.p.tasks[i].kind == tkReplace and x.p.tasks[i].path == t.path:
+          x.p.tasks.delete(i)
+    of tkAppend: # one write for a run of appends to one file
+      if x.p.tasks.len > 0 and x.p.tasks[^1].kind == tkAppend and
+          x.p.tasks[^1].path == t.path:
+        x.p.tasks[^1].text.add t.text
+        return
+    of tkPrune: discard
+    x.p.tasks.add t
+    signal(x.p.changed)
+
+proc replace*(x: DiskIo; path: string; text: sink string; what: string) =
+  ## Writes `text` to `path` atomically, soon (the module documentation);
+  ## `what` names the document in a message ("the settings").
+  if x.p != nil: x.leave Task(kind: tkReplace, path: path, text: text, what: what)
+
+proc append*(x: DiskIo; path: string; text: sink string; what: string) =
+  ## Adds `text` to the end of `path`, soon; `what` names the file in a
+  ## message ("the session log").
+  if x.p != nil and text.len > 0:
+    x.leave Task(kind: tkAppend, path: path, text: text, what: what)
+
+proc prune*(x: DiskIo; dir, prefix, suffix: string; keep: Natural; spare = "") =
+  ## Removes the files of `dir` whose names start with `prefix` and end with
+  ## `suffix`, all but the `keep` last in name order, and never `spare`.
+  if x.p != nil:
+    x.leave Task(kind: tkPrune, path: dir, text: prefix, suffix: suffix, keep: keep,
+      spare: spare)
+
+proc flush*(x: DiskIo) =
+  ## Waits until everything left so far is done.
+  if x.p != nil:
+    withLock x.p.lock:
+      while x.p.started and (x.p.tasks.len > 0 or x.p.busy):
+        wait(x.p.idle, x.p.lock)

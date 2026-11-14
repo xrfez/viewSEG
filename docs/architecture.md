@@ -100,6 +100,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), reads one trace's headers, hex bytes or textual header, closes files, and makes every OpenGL call |
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, `ensureKeys`, survey joins, sorts across files |
 | Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes, folder scans, brute stack, conversions, exports and patches, queued workflows |
+| Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log, replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; failures come back as log messages |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher`; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
 | Pool workers | processSEG: one `ProcessPool`, made by `core` at start-up | The rows of `pool.apply`, `pool.pickInto` and `pool.traceAmplitudeInto`; destroyed at shutdown, once every caller has stopped |
@@ -178,6 +179,19 @@ that belongs to one side; they are checked in debug builds (`-d:threadGuards` ke
 in release). The frame watchdog (`core/watchdog`) times each frame's work in debug builds
 (`-d:frameWatchdog` in release), leaving out waits such as the buffer swap, and logs every
 frame over budget (50 ms) with its parts, longest first.
+
+### The program's own files
+
+Written by the disk thread (`core/diskio`), so the UI thread only hands text over.
+
+- **Session log.** One file per run in the log folder (`platform/paths.logDir`), named
+  `viewSEG-<start time>-<process id>.log` (`core/persist`); the newest 20 are kept. Every
+  entry of the message log becomes one line (time, severity, source, text, then the file,
+  the place in it and the byte offset), the entries logged before the file was opened
+  first: `AppState.persist`, once per frame, hands over what was logged since
+  (`MessageLog.since`), and `shutdown` the rest. The frontend echoes the log to stdout
+  only when it is a terminal. Tests do not write one unless they ask
+  (`RunOptions.persist`).
 
 ### From file to pixels
 
@@ -403,6 +417,7 @@ type
     panels: seq[Panel]       # MainPanel first
     sessions: seq[Session]
     inbox: Inbox             # Poster handles for workers; freed with the last handle
+    disk: DiskIo             # core/diskio: the session log, settings and layouts, off this thread
     indexCache: string       # the folder of parseSEG's index caches; "" for none
     settings: Settings       # scale units, monitor calibrations, the readout's fields
     tiles: seq[seq[Tile]]    # per panel: the newest four, oldest first

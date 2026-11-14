@@ -54,16 +54,6 @@ func contains*(m: Messages; part: string): bool =
     if part in it.text: return true
   false
 
-func where*(loc: Location): string =
-  ## Where a log entry points, in plain words: "record 2, trace 71, GH1.formatCode";
-  ## "" when it names no place inside the file.
-  var parts: seq[string]
-  if loc.record >= 0: parts.add "record " & $loc.record
-  if loc.channelSet >= 0: parts.add "channel set " & $loc.channelSet
-  if loc.trace >= 0: parts.add "trace " & $loc.trace
-  if loc.field.len > 0: parts.add loc.field
-  parts.join(", ")
-
 func line*(e: LogEntry): string =
   ## Entry `e` as one line of the window. One that points into a file (a
   ## parseSEG diagnostic) starts with the file's name and where in it:
