@@ -4,6 +4,7 @@
 
 import std/os
 import imguin/cimgui
+import ../../core/layouts
 import ../../view/theme
 import icons
 
@@ -13,13 +14,17 @@ type
     maOpenFolder = "Open folder...", maQuit = "Quit",
     maToggleTheme = "Light / dark",
     maExportSettings = "Export...", maImportSettings = "Import...",
-    maResetSettings = "Reset to defaults"
+    maResetSettings = "Reset to defaults",
+    maSaveLayout = "Save as...", maResetLayout = "Reset",
+    maExportLayout = "Export... ", maImportLayout = "Import... "
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
-    themes*: seq[ThemeFile] ## listed under View > Theme
-    theme*: string          ## the one checked; "" for following the system
-    recent*: seq[string]    ## File > Open recent, newest first
+    themes*: seq[ThemeFile]    ## listed under View > Theme
+    theme*: string             ## the one checked; "" for following the system
+    recent*: seq[string]       ## File > Open recent, newest first
+    layouts*: seq[SavedLayout] ## View > Layout > Load: the user's, then the presets
+    keepsLayouts*: bool        ## layouts can be saved by name (the program keeps its settings)
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -27,6 +32,7 @@ type
     theme*: string      ## its file name, or "" for "Follow system"
     openRecent*: string ## a recent file to open; "" for none
     clearRecent*: bool  ## "Clear the list" under File > Open recent
+    loadLayout*: string ## a layout file to load; "" for none
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
@@ -34,10 +40,12 @@ const
     maOpenFiles: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_O.cint,
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
-    maToggleTheme: 0, maExportSettings: 0, maImportSettings: 0, maResetSettings: 0]
+    maToggleTheme: 0, maExportSettings: 0, maImportSettings: 0, maResetSettings: 0,
+    maSaveLayout: 0, maResetLayout: 0, maExportLayout: 0, maImportLayout: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [IconOpenFile, IconOpenFiles, IconOpenFolder,
-    IconQuit, IconTheme, IconSave, IconOpenFile, IconClose]
+    IconQuit, IconTheme, IconSave, IconOpenFile, IconClose, IconSave, IconClose, IconSave,
+    IconOpenFile]
 
 proc shortcutName*(a: MenuAction): string =
   ## The shortcut of `a` as shown to the user ("Ctrl+O"), or "".
@@ -69,6 +77,34 @@ proc drawRecent(recent: openArray[string]; res: var MenuResult) =
       igSeparator()
       if igMenuItem_Bool("Clear the list", nil, false, true):
         res.clearRecent = true
+    igEndMenu()
+
+proc drawLayoutMenu(input: MenuInput; res: var MenuResult) =
+  ## View > Layout: how the windows are arranged.
+  if igBeginMenu((IconLayers & "  Layout").cstring, true):
+    igBeginDisabled(not input.keepsLayouts)
+    item(maSaveLayout, res)
+    tip("Keep the windows as they are now under a name, to load again")
+    igEndDisabled()
+    if igBeginMenu((IconFolder & "  Load").cstring, input.layouts.len > 0):
+      var presets = false
+      for i, e in input.layouts:
+        if e.preset and not presets:
+          if i > 0: igSeparator()
+          igTextDisabled("Presets")
+          presets = true
+        igPushID_Int(cint(i))
+        if igMenuItem_Bool(e.name.cstring, nil, false, true): res.loadLayout = e.path
+        tip(e.path)
+        igPopID()
+      igEndMenu()
+    item(maResetLayout, res)
+    tip("The windows as they are when viewSEG first starts")
+    igSeparator()
+    item(maExportLayout, res)
+    tip("Write the windows' arrangement to a file of your choice")
+    item(maImportLayout, res)
+    tip("Arrange the windows as such a file says, and keep it among the layouts")
     igEndMenu()
 
 proc drawMainMenu*(input: MenuInput): MenuResult =
@@ -113,5 +149,7 @@ proc drawMainMenu*(input: MenuInput): MenuResult =
         igEndMenu()
       if igMenuItem_Bool(label(maToggleTheme).cstring, nil, false, true):
         result.actions.incl maToggleTheme
+      igSeparator()
+      drawLayoutMenu(input, result)
       igEndMenu()
     igEndMainMenuBar()

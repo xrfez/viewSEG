@@ -57,14 +57,14 @@
 ## header edits are a patch, undone by removing an entry; views have "back".
 ## None of these needs a general history of commands.
 
-import std/[math, monotimes, os, sequtils, times]
+import std/[math, monotimes, os, sequtils, strutils, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
-import diskio, filejobs, inbox, jobs, log, panels, persist, pick, reader, selection, session,
-  settings, threads, tiles, zoom
+import diskio, filejobs, inbox, jobs, layouts, log, panels, persist, pick, reader, selection,
+  session, settings, threads, tiles, zoom
 
-export inbox, jobs, log, panels, persist, pick, selection, session, settings, threads, tiles,
-  zoom
+export inbox, jobs, layouts, log, panels, persist, pick, selection, session, settings, threads,
+  tiles, zoom
 
 const
   MainPanel* = PanelId(1)
@@ -89,6 +89,11 @@ type
     ckExportSettings = "export settings" ## write the settings to a file of the user's
     ckImportSettings = "import settings" ## take settings in from such a file
     ckResetSettings = "reset settings"   ## back to the defaults
+    ckLayout = "window layout"           ## how the windows are arranged now
+    ckSaveLayout = "save layout"         ## keep the arrangement under a name
+    ckLoadLayout = "load layout"         ## arrange the windows as a layout file says
+    ckExportLayout = "export layout"     ## write the arrangement to a file of the user's
+    ckImportLayout = "import layout"     ## load such a file and keep it among the layouts
     ckHover = "hover"                    ## the trace under the cursor
     ckSelect = "select"                  ## change the selected traces
     ckClearSelection = "clear selection"
@@ -103,23 +108,25 @@ type
     of ckCancelJob, ckRemoveJob: job*: JobId
     of ckReorderJob:
       reordered*: JobId
-      position*: int            ## 0 runs next
+      position*: int                  ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckBack:
       panel*: PanelId
-      gather*: int              ## ckGather: index into the file's gathers
-      view*: Viewport           ## ckView: what the panel's plot shows now
-      remember*: bool           ## ckView: a gesture starts; keep the view it replaces for back
-      display*: DisplaySettings ## ckDisplay: how layer 0 is drawn
-      header*: HeaderChoice     ## ckHeader: the display header's rows
-      order*: seq[SortKey]      ## ckSort: layer 0's keys, the first first; empty: the file's order
-    of ckHover: trace*: int     ## survey-wide trace id; -1 for none
+      gather*: int                    ## ckGather: index into the file's gathers
+      view*: Viewport                 ## ckView: what the panel's plot shows now
+      remember*: bool                 ## ckView: a gesture starts; keep the view it replaces for back
+      display*: DisplaySettings       ## ckDisplay: how layer 0 is drawn
+      header*: HeaderChoice           ## ckHeader: the display header's rows
+      order*: seq[SortKey]            ## ckSort: layer 0's keys, the first first; empty: the file's order
+    of ckHover: trace*: int           ## survey-wide trace id; -1 for none
     of ckSelect:
-      traces*: seq[int]         ## survey-wide trace ids
+      traces*: seq[int]               ## survey-wide trace ids
       mode*: SelectMode
     of ckClearSelection, ckResetSettings: discard
     of ckSettings: settings*: Settings
-    of ckExportSettings, ckImportSettings:
-      docPath*: string          ## the file written or read
+    of ckExportSettings, ckImportSettings, ckLoadLayout, ckExportLayout, ckImportLayout:
+      docPath*: string                ## the file written or read
+    of ckLayout: arrangement*: string ## the toolkit's layout text
+    of ckSaveLayout: layoutName*: string
 
   Pending = object
     ## An open or close job the state waits for.
@@ -150,6 +157,12 @@ type
     settingsRev: int      ## bumped on every change of `settings`
     savedRev: int         ## the revision saved last
     changedAt: MonoTime   ## when `settings` last changed
+    arrangement: string   ## how the windows are arranged now (the toolkit's text)
+    layoutRev, layoutSaved: int
+    layoutAt: MonoTime    ## when the arrangement last changed
+    layoutList: seq[SavedLayout]
+    loaded: Layout        ## the layout loaded last, for the frontend to show
+    loads: int            ## bumped each time a layout is loaded
     jobs: Jobs
       ## Fields are destroyed last to first: the runners stop before
       ## anything a running job uses is freed.
@@ -229,6 +242,39 @@ proc keepSettingsIn*(state: var AppState; dir: string; loaded: LoadedSettings) =
   state.changedAt = getMonoTime()
   discard state.diskIo
 
+proc saveNamed(state: var AppState; name, imgui: string) =
+  ## Keeps `imgui` as the user's layout `name`, replacing one of that name.
+  let path = layoutPath(state.configDir, name)
+  state.diskIo.replace(path, layoutDocument(Layout(name: name, imgui: imgui)),
+    "the layout \"" & name & "\"", done = "Layout \"" & name & "\" saved in " & path & ".")
+  state.layoutList = state.layoutList.added(SavedLayout(name: name, path: path))
+
+proc keepLayoutsIn*(state: var AppState; dir: string; presetDirs: openArray[string]) =
+  ## From now on, saves the arrangement in `dir`'s `LayoutFileName` (a
+  ## moment after it changes, and at `shutdown`) and named layouts in its
+  ## `layouts/`; lists those and the presets in `presetDirs`' `layouts/`.
+  assertUiThread()
+  if state.configDir.len == 0: state.configDir = dir
+  state.layoutList = listLayouts(dir, presetDirs)
+  discard state.diskIo
+
+func layouts*(state: AppState): lent seq[SavedLayout] {.inline.} =
+  ## The layouts that can be loaded: the user's, then the presets.
+  state.layoutList
+
+func loadedLayout*(state: AppState): lent Layout {.inline.} =
+  ## The layout loaded last (`ckLoadLayout`, `ckImportLayout`): the
+  ## frontend arranges its windows so when `layoutLoads` goes up.
+  state.loaded
+
+func layoutLoads*(state: AppState): int {.inline.} =
+  ## Bumped each time a layout is loaded.
+  state.loads
+
+func arrangement*(state: AppState): lent string {.inline.} =
+  ## How the windows are arranged, as the frontend last said (`ckLayout`).
+  state.arrangement
+
 func settingsRevision*(state: AppState): int {.inline.} =
   ## Bumped on every change of the settings.
   state.settingsRev
@@ -238,15 +284,23 @@ proc saveSettings(state: var AppState) =
     state.disk.replace(state.settingsFile, settingsDocument(state.settings), "the settings")
   state.savedRev = state.settingsRev
 
+proc saveArrangement(state: var AppState) =
+  if state.configDir.len > 0 and state.arrangement.len > 0:
+    state.disk.replace(state.configDir / LayoutFileName,
+      layoutDocument(Layout(imgui: state.arrangement)), "the window layout")
+  state.layoutSaved = state.layoutRev
+
 proc persist*(state: var AppState; now = getMonoTime()) =
   ## Hands what is due to the disk thread: what was logged since the last
-  ## call, and the settings once `SaveDelay` has passed since they last
-  ## changed. Call it once per frame, after the frame's commands; it never
-  ## waits.
+  ## call, and the settings and the arrangement once `SaveDelay` has passed
+  ## since they last changed. Call it once per frame, after the frame's
+  ## commands; it never waits.
   assertUiThread()
   state.writeLog()
   if state.savedRev != state.settingsRev and now - state.changedAt >= SaveDelay:
     state.saveSettings()
+  if state.layoutSaved != state.layoutRev and now - state.layoutAt >= SaveDelay:
+    state.saveArrangement()
 
 proc flushFiles*(state: var AppState) =
   ## Saves what is due now, without waiting for `SaveDelay`, and waits
@@ -254,6 +308,7 @@ proc flushFiles*(state: var AppState) =
   assertUiThread()
   state.writeLog()
   if state.savedRev != state.settingsRev: state.saveSettings()
+  if state.layoutSaved != state.layoutRev: state.saveArrangement()
   state.disk.flush()
 
 proc shutdown*(state: var AppState) =
@@ -265,6 +320,7 @@ proc shutdown*(state: var AppState) =
     r.stop()
   state.jobs.stop()
   if state.savedRev != state.settingsRev: state.saveSettings()
+  if state.layoutSaved != state.layoutRev: state.saveArrangement()
   state.writeLog()
   state.disk.stop()
 
@@ -721,6 +777,29 @@ proc apply*(state: var AppState; cmd: Command) =
   of ckImportSettings:
     if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
     else: state.diskIo.read(cmd.docPath, rpImportSettings, MaxNifBytes)
+  of ckLayout:
+    if cmd.arrangement != state.arrangement:
+      state.arrangement = cmd.arrangement
+      inc state.layoutRev
+      state.layoutAt = getMonoTime()
+  of ckSaveLayout:
+    let why = layoutNameProblem(cmd.layoutName)
+    if why.len > 0: state.ignore(cmd, why)
+    elif state.configDir.len == 0: state.ignore(cmd, "layouts are not kept in this run")
+    elif state.arrangement.len == 0: state.ignore(cmd, "the window layout is not known yet")
+    else: state.saveNamed(cmd.layoutName.strip, state.arrangement)
+  of ckLoadLayout, ckImportLayout:
+    if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
+    else:
+      state.diskIo.read(cmd.docPath, (if cmd.kind == ckLoadLayout: rpLoadLayout
+        else: rpImportLayout), MaxNifBytes)
+  of ckExportLayout:
+    if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
+    elif state.arrangement.len == 0: state.ignore(cmd, "the window layout is not known yet")
+    else:
+      state.diskIo.replace(cmd.docPath, layoutDocument(Layout(
+        name: cmd.docPath.splitFile.name, imgui: state.arrangement)), "the exported layout",
+        done = "Layout exported to " & cmd.docPath & ".")
   of ckResetSettings:
     var s = state.defaults
     s.recentFiles = state.settings.recentFiles # memory, not preferences
@@ -793,10 +872,40 @@ proc apply*(state: var AppState; cmd: Command) =
   of ckClearSelection:
     state.selection.clear()
 
+proc takeLayout(state: var AppState; m: Msg) =
+  ## A layout the disk thread read: shown, and with `rpImportLayout` kept
+  ## among the user's layouts under its name.
+  let file = m.readPath.extractFilename
+  if m.readError.len > 0:
+    state.log.add(sevError, "layouts", "Cannot load the layout in " & m.readPath & ": " &
+      m.readError & ".")
+    return
+  var problems: seq[string]
+  var l: Layout
+  try:
+    l = readLayout(m.content, file, problems)
+  except NifError as e:
+    state.log.add(sevError, "layouts", "Cannot load the layout: " & e.msg & ".")
+    return
+  for p in problems: state.log.add(sevWarning, "layouts", p)
+  if l.name.len == 0 or layoutNameProblem(l.name).len > 0: l.name = m.readPath.splitFile.name
+  if layoutNameProblem(l.name).len > 0: l.name = "Imported"
+  state.loaded = l
+  inc state.loads
+  state.log.add(sevInfo, "layouts", "Layout \"" & l.name & "\" loaded.")
+  if m.purpose == rpImportLayout and state.configDir.len > 0:
+    var name = l.name
+    var n = 2
+    while state.layoutList.anyIt(not it.preset and it.name.toLowerAscii == name.toLowerAscii):
+      name = l.name & " " & $n
+      inc n
+    state.saveNamed(name, l.imgui)
+
 proc takeIn(state: var AppState; m: Msg) =
-  ## A document the disk thread read: settings to import.
+  ## A document the disk thread read: settings to import, a layout to load.
   let name = m.readPath.extractFilename
   case m.purpose
+  of rpLoadLayout, rpImportLayout: state.takeLayout(m)
   of rpImportSettings:
     if m.readError.len > 0:
       state.log.add(sevError, "settings", "Cannot import the settings in " & m.readPath &

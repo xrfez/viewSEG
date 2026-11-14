@@ -120,6 +120,12 @@ starts as you left the last one; polarity is not kept), scale units and screen
 calibrations, the status bar's fields, the sort buttons and your own sort keys. It is
 saved a second after a change and when you quit.
 
+**Layouts.** The windows open where they were when you quit (`layout.nif` beside the
+settings). **View > Layout** saves the arrangement on screen under a name (*Save as...*),
+loads one of yours or a preset that ships with viewSEG (*Load*: "Wide plot", "Side by
+side"), puts the windows back as at a first start (*Reset*), and exports or imports a
+layout file.
+
 **File > Settings** exports them to a file of your choice (to keep, or to take to another
 computer), imports such a file (what it does not hold stays as it is), or resets them to
 the defaults (the recent files and the window's place stay; the settings before are kept
@@ -139,7 +145,7 @@ defaults: settings a user has not set come from it.
 | `config/` | your settings, and your own vendor header maps in `config/vendormaps/` |
 | `logs/` | one log file per session, with every message of the Messages window; the newest 20 are kept |
 | `vendormaps/` | the vendor header maps that ship with viewSEG |
-| `assets/` | themes, fonts and colour maps |
+| `assets/` | themes, fonts, colour maps and layout presets |
 | `licences/` | the licences of viewSEG and of the software it includes |
 | `docs/` | this guide |
 

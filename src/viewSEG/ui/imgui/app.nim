@@ -51,26 +51,30 @@ type
     window: ptr SDL_Window
     choice: ThemeChoice
     system: SystemTheme
-    themes: seq[ThemeFile]       ## the theme files found, user's first
-    selected: string             ## the chosen theme file's name; "" follows the system
+    themes: seq[ThemeFile]                     ## the theme files found, user's first
+    selected: string                           ## the chosen theme file's name; "" follows the system
     theme: Theme
     scale: float32
     fontDirs: seq[string]
     fonts: Fonts
-    messages: Messages           ## the frontend's messages, on their way to the log
-    core: AppState               ## the application state
-    trace: TracePanelUi          ## the main panel's plot window
-    pick: Pick                   ## under the mouse in the plot last frame: the readout
-    typed: seq[string]           ## text events pushed by `typeText`, kept until the end
+    messages: Messages                         ## the frontend's messages, on their way to the log
+    core: AppState                             ## the application state
+    trace: TracePanelUi                        ## the main panel's plot window
+    pick: Pick                                 ## under the mouse in the plot last frame: the readout
+    typed: seq[string]                         ## text events pushed by `typeText`, kept until the end
     logView: LogView
-    echoed: int                  ## the core log's entries echoed to stdout so far
-    echoing: bool                ## stdout is a terminal
+    echoed: int                                ## the core log's entries echoed to stdout so far
+    echoing: bool                              ## stdout is a terminal
     dog: FrameWatchdog
     slow: SlowFrameDigest
     marks: Marks
-    pendingTheme: Option[string] ## picked in the menu, applied after the frame
-    appliedTheme: string         ## the settings' theme last followed
-    placed: bool                 ## the main window moved or changed size this frame
+    pendingTheme: Option[string]               ## picked in the menu, applied after the frame
+    appliedTheme: string                       ## the settings' theme last followed
+    layoutLoads: int                           ## the core's `layoutLoads` last followed
+    layoutName: array[MaxLayoutName + 1, char] ## the name typed in "Save layout"
+    askLayoutName: bool                        ## open the "Save layout" popup this frame
+    keepsLayouts: bool
+    placed: bool                               ## the main window moved or changed size this frame
     layoutDone: bool
     running: bool
 
@@ -206,6 +210,15 @@ proc messages*(frame: FrameInfo): seq[Message] =
   ## as one line.
   for e in frame.ui.core.log:
     result.add Message(level: levelOf(e.severity), text: line(e))
+
+proc layoutText*(frame: FrameInfo): string =
+  ## How Dear ImGui would save the windows' arrangement now (for tests).
+  $igSaveIniSettingsToMemory(nil)
+
+proc resetLayout*(frame: FrameInfo) =
+  ## Puts the windows back where they are at a first start, as View >
+  ## Layout > Reset does; it takes effect next frame.
+  frame.ui.layoutDone = false
 
 proc stop*(frame: FrameInfo) =
   ## Ends the run after this frame, as closing the window does.
@@ -402,6 +415,11 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
       ui.core.apply Command(kind: ckExportSettings, docPath: path)
     of dkImportSettings:
       ui.core.apply Command(kind: ckImportSettings, docPath: ev.paths[0])
+    of dkExportLayout:
+      let path = if ev.paths[0].splitFile.ext.len == 0: ev.paths[0] & ".nif" else: ev.paths[0]
+      ui.core.apply Command(kind: ckExportLayout, docPath: path)
+    of dkImportLayout:
+      ui.core.apply Command(kind: ckImportLayout, docPath: ev.paths[0])
   of seCancelled:
     discard # the user closed the dialog: nothing to say
   of seDialogFailed:
@@ -432,6 +450,13 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
         (if dir.len > 0: dir / "viewSEG-settings.nif" else: "viewSEG-settings.nif"))
     of maImportSettings: showDialog(dkImportSettings, parent)
     of maResetSettings: ui.core.apply Command(kind: ckResetSettings)
+    of maSaveLayout: ui.askLayoutName = true
+    of maResetLayout: ui.layoutDone = false # rebuilt next frame
+    of maExportLayout:
+      let dir = ui.core.settingsFile.parentDir
+      showDialog(dkExportLayout, parent,
+        (if dir.len > 0: dir / "viewSEG-layout.nif" else: "viewSEG-layout.nif"))
+    of maImportLayout: showDialog(dkImportLayout, parent)
 
 # ------------------------------------------------------------------- frame --
 
@@ -500,10 +525,47 @@ proc drawDockSpace(ui: var Ui) =
   igPopStyleColor(1)
   igEnd()
 
+proc drawSaveLayout(ui: var Ui) =
+  ## The "Save layout" popup: a name, then Save.
+  const id = "Save layout##savelayout"
+  if ui.askLayoutName:
+    igOpenPopup_Str(id, 0)
+    ui.askLayoutName = false
+  if igBeginPopupModal(id, nil, ImGui_WindowFlags_AlwaysAutoResize.cint):
+    ui.marks.markWindow("save layout")
+    igTextUnformatted("A name for the arrangement on screen:", nil)
+    if igIsWindowAppearing(): igSetKeyboardFocusHere(0)
+    igSetNextItemWidth(igGetFontSize() * 18)
+    let entered = igInputText("##name", cast[cstring](addr ui.layoutName[0]),
+      csize_t(ui.layoutName.len), ImGui_InputTextFlags_EnterReturnsTrue.cint, nil, nil)
+    ui.marks.mark("save layout.name")
+    let name = $cast[cstring](addr ui.layoutName[0])
+    let why = layoutNameProblem(name)
+    if why.len > 0 and name.len > 0:
+      igTextColored(vec4(ui.theme.roles[rlWarning]), "%s", why.cstring)
+    var taken = false
+    for e in ui.core.layouts:
+      if not e.preset and e.name.toLowerAscii == name.strip.toLowerAscii: taken = true
+    if taken: igTextDisabled("A layout of this name is replaced.")
+    igBeginDisabled(why.len > 0)
+    if (igButton("Save", ImVec2_c(x: 0, y: 0)) or entered) and why.len == 0:
+      ui.core.apply Command(kind: ckLayout, arrangement: $igSaveIniSettingsToMemory(nil))
+      ui.core.apply Command(kind: ckSaveLayout, layoutName: name)
+      igCloseCurrentPopup()
+    igEndDisabled()
+    ui.marks.mark("save layout.save")
+    igSameLine(0, -1)
+    if igButton("Cancel", ImVec2_c(x: 0, y: 0)) or igIsKeyPressed_Bool(ImGui_Key_Escape, false):
+      igCloseCurrentPopup()
+    igEndPopup()
+
 proc drawUi(ui: var Ui): set[MenuAction] =
   ui.marks.setLen 0
   let menu = drawMainMenu(MenuInput(themes: ui.themes, theme: ui.selected,
-    recent: ui.core.settings.recentFiles))
+    recent: ui.core.settings.recentFiles, layouts: ui.core.layouts,
+    keepsLayouts: ui.keepsLayouts))
+  if menu.loadLayout.len > 0:
+    ui.core.apply Command(kind: ckLoadLayout, docPath: menu.loadLayout)
   result = menu.actions
   if menu.pickedTheme and menu.theme != ui.selected:
     ui.chooseTheme(menu.theme) # applied between frames: fonts and styles change
@@ -536,6 +598,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   for c in plot.commands.mitems:
     ui.core.apply move c
   drawSampleTable(tableTitle, ui.fonts, ui.theme, ui.marks)
+  ui.drawSaveLayout()
   ui.logView.draw(ui.core.log, messagesTitle, ui.theme)
   when defined(imguiDemo):
     igShowDemoWindow(nil)
@@ -673,6 +736,28 @@ proc notePlacement(ui: var Ui) =
     s.window = p
     ui.core.apply Command(kind: ckSettings, settings: s)
 
+proc noteLayout(ui: var Ui) =
+  ## Tells `core` how the windows are arranged when Dear ImGui says it
+  ## changed (it waits `IniSavingRate` after a change).
+  let io = igGetIO_Nil()
+  if io.WantSaveIniSettings:
+    io.WantSaveIniSettings = false
+    ui.core.apply Command(kind: ckLayout, arrangement: $igSaveIniSettingsToMemory(nil))
+
+proc arrange(ui: var Ui; text: string) =
+  ## Arranges the windows as Dear ImGui's layout `text` says; between
+  ## frames. Text without the dockspace's arrangement leaves the default
+  ## one to be built.
+  igClearIniSettings()
+  igLoadIniSettingsFromMemory(text.cstring, csize_t(text.len))
+  ui.layoutDone = "[Docking]" in text and "DockSpace" in text
+
+proc followLayouts(ui: var Ui) =
+  ## A layout `core` loaded (View > Layout > Load, Import) is shown.
+  if ui.core.layoutLoads != ui.layoutLoads:
+    ui.layoutLoads = ui.core.layoutLoads
+    ui.arrange(ui.core.loadedLayout.imgui)
+
 proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
     configDir: string): Ui =
   ## The frontend's state: where its assets are, which theme, the fonts; the
@@ -704,6 +789,8 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
     result.core.logTo(if opts.logDir.isSome: opts.logDir.get else: ctx.logDir)
     result.say("Session log: " & result.core.logFile)
     result.core.keepSettingsIn(configDir, loaded)
+    result.core.keepLayoutsIn(configDir, assets)
+    result.keepsLayouts = true
   result.appliedTheme = result.core.settings.theme
   for d in assets:
     result.fontDirs.add d / "fonts"
@@ -767,7 +854,8 @@ proc run*(opts = RunOptions()): int =
   let io = igGetIO_Nil()
   io.ConfigFlags = io.ConfigFlags or ImGui_ConfigFlags_NavEnableKeyboard.cint or
     ImGui_ConfigFlags_DockingEnable.cint or ImGui_ConfigFlags_ViewportsEnable.cint
-  io.IniFilename = nil # no layout file until the config paths exist
+  io.IniFilename = nil # the layout goes into the settings folder as NIF (`core/layouts`)
+  io.IniSavingRate = 1 # seconds after a change before Dear ImGui says it changed
   when RoutedChecks:
     io.ConfigErrorRecoveryEnableTooltip = false # failed checks go to the log instead
 
@@ -782,6 +870,10 @@ proc run*(opts = RunOptions()): int =
   installDpiScaling(window)
 
   var ui = initUi(window, opts, loaded, configDir)
+  if opts.persist: # the windows as they were at the last exit
+    let last = loadLayoutFile(configDir / LayoutFileName)
+    for (severity, text) in last.notes: ui.core.report(severity, "layouts", text)
+    if last.found: ui.arrange(last.layout.imgui)
   ui.setTheme()
   let gpuError = ui.trace.startGpu(glProc, opts.maxTextureSize)
   if gpuError.len > 0:
@@ -859,6 +951,8 @@ proc run*(opts = RunOptions()): int =
         ui.notePlacement()
         ui.placed = false
       ui.followSettings()
+      ui.noteLayout()
+      ui.followLayouts()
       if ui.pendingTheme.isSome:
         ui.selected = ui.pendingTheme.get
         ui.pendingTheme = none(string)
@@ -878,5 +972,6 @@ proc run*(opts = RunOptions()): int =
     ui.core.persist()
   ui.trace.stopGpu() # while the GL context is current
   ui.notePlacement()
-  ui.core.shutdown() # saves the settings
+  ui.core.apply Command(kind: ckLayout, arrangement: $igSaveIniSettingsToMemory(nil))
+  ui.core.shutdown() # saves the settings and the layout
   0

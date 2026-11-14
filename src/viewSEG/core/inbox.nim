@@ -23,6 +23,8 @@ type
   ReadPurpose* = enum
     ## What a document is read for.
     rpImportSettings ## settings to take in (File > Settings > Import)
+    rpLoadLayout     ## a layout to show (View > Layout > Load)
+    rpImportLayout   ## a layout to show and keep among the user's (View > Layout > Import)
 
   Msg* = object
     ## One message for the UI thread.

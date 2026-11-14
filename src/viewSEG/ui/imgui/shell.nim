@@ -27,7 +27,9 @@ type
     dkOpenFiles = "Open files",           ## several seismic files
     dkOpenFolder = "Open folder",         ## one folder
     dkExportSettings = "Export settings", ## a NIF file to write (a save dialog)
-    dkImportSettings = "Import settings"  ## a NIF file to read
+    dkImportSettings = "Import settings", ## a NIF file to read
+    dkExportLayout = "Export layout",     ## a NIF file to write (a save dialog)
+    dkImportLayout = "Import layout"      ## a NIF file to read
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -229,10 +231,10 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
       seismicFilters.len.cint, at, kind == dkOpenFiles)
   of dkOpenFolder:
     SDL_ShowOpenFolderDialog(onDialogResult, userdata, parent, at, false)
-  of dkImportSettings:
+  of dkImportSettings, dkImportLayout:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],
       nifFilters.len.cint, at, false)
-  of dkExportSettings:
+  of dkExportSettings, dkExportLayout:
     SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],
       nifFilters.len.cint, at)
 

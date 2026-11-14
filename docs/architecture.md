@@ -208,6 +208,17 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   used; one with settings that cannot be used gives the others, and a copy is kept; the log
   says which, with the line. A release that is not portable may carry site defaults in its
   `config/settings.nif`.
+- **Layouts** (`core/layouts`): the toolkit's own layout text (Dear ImGui's `.ini` form,
+  which `core` never reads) in a NIF document. The frontend reports the arrangement when
+  Dear ImGui says it changed (`ckLayout`; `io.IniFilename` is nil, so ImGui writes no file
+  itself) and at exit; `persist` saves it as `<config>/layout.nif` a second after a change,
+  and the frontend applies it before the first frame (`loadLayoutFile`; a damaged file is
+  moved aside as for the settings). Named layouts: `ckSaveLayout` writes
+  `<config>/layouts/<name>.nif`; `ckLoadLayout` and `ckImportLayout` read a file on the disk
+  thread, and the frontend arranges its windows when `AppState.layoutLoads` goes up
+  (`igClearIniSettings`, `igLoadIniSettingsFromMemory`, between frames); `ckExportLayout`
+  writes one anywhere. Presets ship in `assets/layouts/`; a user's layout of the same name
+  hides a preset.
 
 ### From file to pixels
 
@@ -407,7 +418,8 @@ type
   CommandKind = enum         # core/state: every user intent, the only way state changes
     ckOpen, ckClose, ckCancelJob, ckReorderJob, ckRemoveJob, ckGather, ckView, ckDisplay,
     ckHeader, ckSort, ckBack, ckHover, ckSelect, ckClearSelection, ckSettings,
-    ckExportSettings, ckImportSettings, ckResetSettings
+    ckExportSettings, ckImportSettings, ckResetSettings, ckLayout, ckSaveLayout,
+    ckLoadLayout, ckExportLayout, ckImportLayout
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
