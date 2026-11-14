@@ -10,7 +10,7 @@
 ## still running when the program closes can post safely.
 
 import std/locks
-import jobs, log, panels, session, tiles
+import filelist, jobs, log, panels, session, tiles
 
 type
   MsgKind* = enum
@@ -19,6 +19,7 @@ type
     mkLayout ## what a panel's traces span, from its reader
     mkTile   ## samples a panel asked for, from its reader
     mkRead   ## a document the disk thread read
+    mkListed ## files a folder scan found
 
   ReadPurpose* = enum
     ## What a document is read for.
@@ -43,6 +44,14 @@ type
       readPath*: string
       content*: string
       readError*: string       ## why it could not be read; "" when it was
+    of mkListed:
+      listGen*: uint64         ## the file list's `gen` it answers
+      listed*: seq[FileEntry]  ## seismic files, in natural order
+      others*: int             ## files found that are not seismic
+      unreadable*: int         ## files that could not be read
+      listDone*: bool          ## the scan's last message
+      listFolder*: string      ## the folder listed, once known; "" for files chosen one by one
+      listChosen*: string      ## the one file named, when only a file was named; "" otherwise
 
   InboxObj = object
     lock: Lock

@@ -33,7 +33,7 @@ import imguin/glad/gl
 import ../../core/[geometry, state, watchdog]
 import ../../platform/paths
 import ../../view/jobstatus
-import chrome, dpi, fonts, icons, menus, messages, shell, style, tracepanel
+import chrome, dpi, filelist, fonts, icons, menus, messages, shell, style, tracepanel
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel
 
@@ -43,6 +43,7 @@ const
   plotTitle = IconPlot & "  Plot###plot"
   tableTitle = IconTable & "  Headers (example)###headers"
   messagesTitle = IconLog & "  Messages###Messages"
+  filesTitle = IconList & "  Files###files"
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
 
 type
@@ -60,6 +61,9 @@ type
     messages: Messages                         ## the frontend's messages, on their way to the log
     core: AppState                             ## the application state
     trace: TracePanelUi                        ## the main panel's plot window
+    files: FileListUi                          ## the file list's window
+    dropped: seq[string]                       ## paths dropped on the window, until the drop ends
+    dropAt: float64                            ## when a drag was last seen over the window
     pick: Pick                                 ## under the mouse in the plot last frame: the readout
     typed: seq[string]                         ## text events pushed by `typeText`, kept until the end
     logView: LogView
@@ -110,7 +114,8 @@ type
   SimKey* = enum
     ## Keys a test can press (`pressKey`).
     skEquals, skMinus, skKeypadPlus, skKeypadMinus, skLeft, skRight, skUp, skDown,
-    skBackspace, skZero, skEscape, skEnter, skCtrl, skShift, skAlt
+    skBackspace, skZero, skEscape, skEnter, skCtrl, skShift, skAlt, skTab, skHome, skEnd,
+    skPageUp, skPageDown, skW, skG
 
   SimMod* = enum
     smCtrl, smShift, smAlt
@@ -268,7 +273,8 @@ proc pressKey*(frame: FrameInfo; key: SimKey; down: bool; mods: set[SimMod] = {}
     SDL_SCANCODE_KP_PLUS, SDL_SCANCODE_KP_MINUS, SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT,
     SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, SDL_SCANCODE_BACKSPACE, SDL_SCANCODE_0,
     SDL_SCANCODE_ESCAPE, SDL_SCANCODE_RETURN, SDL_SCANCODE_LCTRL, SDL_SCANCODE_LSHIFT,
-    SDL_SCANCODE_LALT]
+    SDL_SCANCODE_LALT, SDL_SCANCODE_TAB, SDL_SCANCODE_HOME, SDL_SCANCODE_END,
+    SDL_SCANCODE_PAGEUP, SDL_SCANCODE_PAGEDOWN, SDL_SCANCODE_W, SDL_SCANCODE_G]
   var m = 0'u16
   if smCtrl in mods: m = m or uint16(SDL_KMOD_LCTRL)
   if smShift in mods: m = m or uint16(SDL_KMOD_LSHIFT)
@@ -300,6 +306,21 @@ proc typeText*(frame: FrameInfo; text: string) =
   var ev: SDL_Event
   ev.text = SDL_TextInputEvent(type_field: SDL_EVENT_TEXT_INPUT, windowID: SDL_GetWindowID(w),
     text: frame.ui.typed[^1].cstring)
+  discard SDL_PushEvent(addr ev)
+
+proc dropPaths*(frame: FrameInfo; paths: openArray[string]) =
+  ## Drops `paths` (files or folders) on the main window, as a file manager
+  ## would. For tests.
+  let w = frame.ui.window
+  var ev: SDL_Event
+  ev.drop = SDL_DropEvent(type_field: SDL_EVENT_DROP_BEGIN, windowID: SDL_GetWindowID(w))
+  discard SDL_PushEvent(addr ev)
+  for p in paths:
+    frame.ui.typed.add p # the event points at it
+    ev.drop = SDL_DropEvent(type_field: SDL_EVENT_DROP_FILE, windowID: SDL_GetWindowID(w),
+      data: frame.ui.typed[^1].cstring)
+    discard SDL_PushEvent(addr ev)
+  ev.drop = SDL_DropEvent(type_field: SDL_EVENT_DROP_COMPLETE, windowID: SDL_GetWindowID(w))
   discard SDL_PushEvent(addr ev)
 
 proc typing*(frame: FrameInfo): bool =
@@ -405,10 +426,15 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
   of sePathsChosen:
     case ev.dialog
     of dkOpenFile, dkOpenFiles:
-      ui.core.apply Command(kind: ckOpen, paths: ev.paths)
+      # One file: shown at once, its folder listed beside it; several: listed
+      # together, the first shown.
+      if ev.paths.len == 1:
+        ui.core.apply Command(kind: ckShowFile, panel: MainPanel, path: ev.paths[0],
+          listFolder: true)
+      else:
+        ui.core.apply Command(kind: ckBrowse, paths: ev.paths, showFirst: true)
     of dkOpenFolder:
-      ui.say("Opening a whole folder is not available yet: File > Open files... opens " &
-        "the files in " & ev.paths[0] & ".", mlWarning)
+      ui.core.apply Command(kind: ckBrowse, paths: ev.paths, showFirst: true)
     of dkExportSettings:
       # Not every desktop adds the extension the filter names.
       let path = if ev.paths[0].splitFile.ext.len == 0: ev.paths[0] & ".nif" else: ev.paths[0]
@@ -442,6 +468,9 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maOpenFile: showDialog(dkOpenFile, parent, folder)
     of maOpenFiles: showDialog(dkOpenFiles, parent, folder)
     of maOpenFolder: showDialog(dkOpenFolder, parent, folder)
+    of maClose:
+      let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
+      if i >= 0: ui.core.apply Command(kind: ckClose, file: ui.core.sessions[i].id)
     of maQuit: ui.running = false
     of maToggleTheme: ui.toggleTheme()
     of maExportSettings:
@@ -485,14 +514,16 @@ proc echoNewLog(ui: var Ui) =
   ui.echoed = ui.core.log.nextSerial
 
 proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
-  ## The first layout: the plot top left, the messages under it, the header
-  ## table on the right.
+  ## The first layout: the file list at the left, the plot beside it with
+  ## the messages under it, the header table on the right.
   igDockBuilderRemoveNode(dockId)
   discard igDockBuilderAddNode(dockId, ImGui_DockNodeFlags_DockSpace.cint)
   igDockBuilderSetNodeSize(dockId, size)
-  var left, right, top, bottom: ImGuiID
-  discard igDockBuilderSplitNode(dockId, ImGuiDir_Right, 0.36, addr right, addr left)
+  var side, rest, left, right, top, bottom: ImGuiID
+  discard igDockBuilderSplitNode(dockId, ImGuiDir_Left, 0.22, addr side, addr rest)
+  discard igDockBuilderSplitNode(rest, ImGuiDir_Right, 0.3, addr right, addr left)
   discard igDockBuilderSplitNode(left, ImGui_Dir_Down, 0.3, addr bottom, addr top)
+  igDockBuilderDockWindow(filesTitle, side)
   igDockBuilderDockWindow(plotTitle, top)
   igDockBuilderDockWindow(tableTitle, right)
   igDockBuilderDockWindow(messagesTitle, bottom)
@@ -559,10 +590,37 @@ proc drawSaveLayout(ui: var Ui) =
       igCloseCurrentPopup()
     igEndPopup()
 
+proc drop(paths: var seq[string]; core: var AppState) =
+  ## Opens what was dropped on the window: one file is shown with its folder
+  ## listed; a folder, or several files, are listed and the first is shown.
+  if paths.len > 0:
+    core.apply Command(kind: ckBrowse, paths: paths, showFirst: true)
+    paths.setLen 0
+
+proc drawDropHint(ui: Ui) =
+  ## While files are dragged over the window: a frame and a line saying
+  ## what dropping them does.
+  if ui.dropAt <= 0 or igGetTime() - ui.dropAt > 0.5: return
+  let vp = igGetMainViewport()
+  let dl = igGetForegroundDrawList_ViewportPtr(vp)
+  let a = vp.WorkPos
+  let b = ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x, y: vp.WorkPos.y + vp.WorkSize.y)
+  ImDrawList_AddRectFilled(dl, a, b, u32(withAlpha(ui.theme.roles[rlAccent], 40)), 0, 0)
+  ImDrawList_AddRect(dl, a, b, u32(ui.theme.roles[rlAccent]), 0, 0, 4)
+  let text = "Drop to open: a folder lists its seismic files; a file is shown, its folder listed"
+  let ts = igCalcTextSize(text.cstring, nil, false, -1)
+  let at = ImVec2_c(x: a.x + (vp.WorkSize.x - ts.x) / 2, y: a.y + (vp.WorkSize.y - ts.y) / 2)
+  let pad = igGetStyle().FramePadding
+  ImDrawList_AddRectFilled(dl, ImVec2_c(x: at.x - 2 * pad.x, y: at.y - 2 * pad.y),
+    ImVec2_c(x: at.x + ts.x + 2 * pad.x, y: at.y + ts.y + 2 * pad.y),
+    u32(ui.theme.roles[rlPopup]), igGetStyle().FrameRounding, 0)
+  ImDrawList_AddText_Vec2(dl, at, u32(ui.theme.roles[rlText]), text.cstring, nil)
+
 proc drawUi(ui: var Ui): set[MenuAction] =
   ui.marks.setLen 0
   let menu = drawMainMenu(MenuInput(themes: ui.themes, theme: ui.selected,
-    recent: ui.core.settings.recentFiles, layouts: ui.core.layouts,
+    recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,
+    canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
     keepsLayouts: ui.keepsLayouts))
   if menu.loadLayout.len > 0:
     ui.core.apply Command(kind: ckLoadLayout, docPath: menu.loadLayout)
@@ -570,7 +628,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   if menu.pickedTheme and menu.theme != ui.selected:
     ui.chooseTheme(menu.theme) # applied between frames: fonts and styles change
   if menu.openRecent.len > 0:
-    ui.core.apply Command(kind: ckOpen, paths: @[menu.openRecent])
+    ui.core.apply Command(kind: ckShowFile, panel: MainPanel, path: menu.openRecent,
+      listFolder: true)
+  if menu.browseRecent.len > 0:
+    ui.core.apply Command(kind: ckBrowse, paths: @[menu.browseRecent], showFirst: true)
   if menu.clearRecent:
     var s = ui.core.settings
     s.recentFiles.setLen 0
@@ -597,8 +658,13 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.say(n, mlWarning)
   for c in plot.commands.mitems:
     ui.core.apply move c
+  var files = ui.files.drawFileList(filesTitle, ui.core, ui.theme, ui.marks)
+  result.incl files.actions
+  for c in files.commands.mitems:
+    ui.core.apply move c
   drawSampleTable(tableTitle, ui.fonts, ui.theme, ui.marks)
   ui.drawSaveLayout()
+  ui.drawDropHint()
   ui.logView.draw(ui.core.log, messagesTitle, ui.theme)
   when defined(imguiDemo):
     igShowDemoWindow(nil)
@@ -879,7 +945,11 @@ proc run*(opts = RunOptions()): int =
   if gpuError.len > 0:
     ui.say("The plot cannot be drawn: " & gpuError, mlError)
   if opts.openPaths.len > 0:
-    ui.core.apply Command(kind: ckOpen, paths: opts.openPaths)
+    ui.core.apply Command(kind: ckBrowse, paths: opts.openPaths, showFirst: true)
+  elif opts.persist and ui.core.settings.recentFolders.len > 0 and
+      dirExists(ui.core.settings.recentFolders[0]):
+    # The folder listed last, listed again; nothing is opened until chosen.
+    ui.core.apply Command(kind: ckBrowse, paths: @[ui.core.settings.recentFolders[0]])
   var
     frame = 0
     event: SDL_Event
@@ -898,6 +968,16 @@ proc run*(opts = RunOptions()): int =
           SDL_EVENT_WINDOW_RESIZED.uint32, SDL_EVENT_WINDOW_MAXIMIZED.uint32,
           SDL_EVENT_WINDOW_RESTORED.uint32]:
         ui.placed = true
+      elif event.type_field == SDL_EVENT_DROP_BEGIN.uint32:
+        ui.dropped.setLen 0
+        ui.dropAt = igGetTime()
+      elif event.type_field == SDL_EVENT_DROP_POSITION.uint32:
+        ui.dropAt = igGetTime()
+      elif event.type_field == SDL_EVENT_DROP_FILE.uint32:
+        if event.drop.data != nil: ui.dropped.add $event.drop.data
+      elif event.type_field == SDL_EVENT_DROP_COMPLETE.uint32:
+        ui.dropAt = 0
+        ui.dropped.drop(ui.core)
       elif event.type_field == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED.uint32 and
           mainWindowEvent:
         let scale = windowScale(window)

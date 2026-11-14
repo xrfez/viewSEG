@@ -60,11 +60,11 @@
 import std/[math, monotimes, os, sequtils, strutils, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
-import diskio, filejobs, inbox, jobs, layouts, log, panels, persist, pick, reader, selection,
-  session, settings, threads, tiles, zoom
+import diskio, filejobs, filelist, inbox, jobs, layouts, log, panels, persist, pick, reader,
+  selection, session, settings, threads, tiles, zoom
 
-export inbox, jobs, layouts, log, panels, persist, pick, selection, session, settings, threads,
-  tiles, zoom
+export filelist, inbox, jobs, layouts, log, panels, persist, pick, selection, session, settings,
+  threads, tiles, zoom
 
 const
   MainPanel* = PanelId(1)
@@ -74,7 +74,9 @@ const
 
 type
   CommandKind* = enum
-    ckOpen = "open"                      ## open files (one interactive job each)
+    ckOpen = "open"                      ## open files (one interactive job each) and keep them open
+    ckBrowse = "browse"                  ## list files and folders in the file list
+    ckShowFile = "show file"             ## show a file in a panel, in place of the one it shows
     ckClose = "close"                    ## close an open file
     ckCancelJob = "cancel job"
     ckReorderJob = "reorder job"
@@ -101,17 +103,20 @@ type
   Command* = object
     ## A user intent: the only way the UI changes the state.
     case kind*: CommandKind
-    of ckOpen:
+    of ckOpen, ckBrowse:
       paths*: seq[string]
         ## relative or absolute: one file opens once, however it is named
+      showFirst*: bool                ## ckBrowse: show the first file found in the main panel
     of ckClose: file*: SessionId
     of ckCancelJob, ckRemoveJob: job*: JobId
     of ckReorderJob:
       reordered*: JobId
       position*: int                  ## 0 runs next
-    of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckBack:
+    of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckBack, ckShowFile:
       panel*: PanelId
       gather*: int                    ## ckGather: index into the file's gathers
+      path*: string                   ## ckShowFile: the file to show
+      listFolder*: bool               ## ckShowFile: the file list lists its folder too
       view*: Viewport                 ## ckView: what the panel's plot shows now
       remember*: bool                 ## ckView: a gesture starts; keep the view it replaces for back
       display*: DisplaySettings       ## ckDisplay: how layer 0 is drawn
@@ -133,6 +138,9 @@ type
     job: JobId
     path: string
     session: Session ## a closing file's session, kept until its close job ends
+    panel: PanelId   ## an open: the panel it is shown in (`ckShowFile`); NoPanel: the main one
+    unwanted: bool   ## an open no longer wanted (another file was chosen): dropped when it comes
+    quiet: bool      ## a close of a file the plot stepped away from: not logged
 
   AppState* = object
     ## Everything the views show. Move-only.
@@ -141,6 +149,9 @@ type
     panels: seq[Panel]
     sessions: seq[Session]
     opening, closing: seq[Pending]
+    files: FileList       ## the file list
+    showFound: PanelId    ## show the first file the listing finds here; NoPanel for none
+    oldScans: seq[JobId]  ## scans replaced by a newer listing: they end quietly
     mail: seq[Msg]
     indexCache: string    ## the index cache folder; "" for none
     settings: Settings
@@ -181,7 +192,8 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   markUiThread()
   result = AppState(log: initMessageLog(logCapacity), inbox: initInbox(),
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
-    nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace())
+    nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
+    files: FileList(job: NoJob))
   result.panels.add Panel(id: MainPanel)
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
@@ -346,6 +358,20 @@ func jobs*(state: AppState): lent Jobs {.inline.} =
   ## The jobs, for the Jobs window and the status bar (`list`, `info`).
   state.jobs
 
+func fileList*(state: AppState): lent FileList {.inline.} =
+  ## The file list: the files of the folder (or the files) listed last, and
+  ## the one the main panel shows.
+  state.files
+
+func shownFile*(state: AppState; panelIndex: int): int =
+  ## The index in `sessions` of the file `panels[panelIndex]` shows; -1 for
+  ## none.
+  template p: untyped = state.panels[panelIndex]
+  result = -1
+  if p.layers.len > 0 and p.layers[0].source.kind == lsRecord:
+    for i, s in state.sessions:
+      if s.id == p.layers[0].source.file: return i
+
 func indexCache*(state: AppState): lent string {.inline.} =
   ## The folder of parseSEG's index caches; "" for none.
   state.indexCache
@@ -452,6 +478,13 @@ proc newSource(state: var AppState; k: int) =
   ## Forgets what `panels[k]` knew about its traces: its layer 0 now shows
   ## something else, or nothing. Tells its reader.
   template p: untyped = state.panels[k]
+  # The next gather or file is shown at the same scales (`carried`); a panel
+  # that showed nothing yet, or shows nothing now, fits the new one.
+  if p.layers.len == 0:
+    p.carry = Viewport()
+  elif p.laidOut and p.layout.traces > 0 and p.view.traces.width > 0:
+    p.carry = p.view
+    p.carryLayout = p.layout
   inc p.requestGen
   p.sourceGen = p.requestGen
   p.layout = PanelLayout()
@@ -589,32 +622,22 @@ proc settleGain(state: var AppState; k: int) =
         inc p.revision
   else: discard
 
-proc adopt(state: var AppState; s: sink Session) =
-  ## Takes in a file an open job opened, and shows its first gather.
-  if s.file.kind == skUnknown:
-    state.log.add(s.file.log, s.name)
-    state.log.add(sevError, s.name, s.name & " is not a SEG-Y, SEG-D or SEG-2 file, " &
-      "so it was not opened.")
-    return # `s` is closed here, on the UI thread: nothing else has it
-  let id = SessionId(state.nextFile)
-  inc state.nextFile
-  s.register(id, state.nextBase)
-  state.nextBase += s.len
-  state.log.add(s.file.log, s.name)
-  state.log.add(sevInfo, "open", "Opened " & s.name & ": " & plural(s.len, "trace") &
-    " in " & plural(s.gathers.len, "gather") &
-    (if s.file.fromCache: " (index from the cache)." else: "."))
-  let gather = if s.gathers.len > 0: 0 else: -1
-  var st = state.settings
-  st.recentFiles.addRecent(s.path, MaxRecent)
-  st.recentFolders.addRecent(s.path.parentDir, MaxRecent)
-  state.change st
-  state.sessions.add s
-  state.show(MainPanel, id, gather)
+proc choose(state: var AppState; path: string) =
+  ## Marks `path` as the file the main panel shows (or is opening).
+  if state.files.chosen != path:
+    state.files.chosen = path
+    inc state.files.revision
 
-proc closeSession(state: var AppState; i: int) =
+proc chooseShown(state: var AppState) =
+  ## Marks the file the main panel shows as chosen again (an open for it
+  ## failed or was cancelled).
+  let i = state.shownFile(state.findPanel(MainPanel))
+  state.choose(if i >= 0: state.sessions[i].path else: "")
+
+proc closeSession(state: var AppState; i: int; quiet = false) =
   ## Takes open file `i` out of every view at once, cancels the jobs that use
-  ## it, and closes it once none does (after its close job, on this thread).
+  ## it, and closes it once none does (after its close job, on this thread);
+  ## `quiet` logs nothing when it is closed.
   var s = move state.sessions[i]
   state.sessions.delete(i)
   for job in state.jobs.list:
@@ -630,17 +653,80 @@ proc closeSession(state: var AppState; i: int) =
   # Not cancellable: the file must not be released while a job still reads it.
   let job = state.jobs.submit(JobSpec(title: "Close " & s.name, lane: jlInteractive,
     exclusive: @[s.path], cancellable: false), closeWork())
-  state.closing.add Pending(job: job, path: s.path, session: s)
+  if state.files.chosen == s.path and state.shownFile(state.findPanel(MainPanel)) < 0:
+    state.choose("")
+  state.closing.add Pending(job: job, path: s.path, session: s, quiet: quiet)
+
+proc failed(state: var AppState; path: string) =
+  ## Notes that `path` of the file list could not be shown.
+  if path notin state.files.failed:
+    state.files.failed.add path
+    inc state.files.revision
+
+proc showReplacing(state: var AppState; k: int; file: SessionId; gather: int) =
+  ## Shows `gather` of `file` in `panels[k]`, in place of what it showed,
+  ## and closes the file it showed when no other panel shows it: stepping
+  ## through a folder keeps one file open, not every file seen.
+  let shown = state.shownFile(k)
+  let old = if shown >= 0: state.sessions[shown].id else: NoSession
+  state.show(state.panels[k].id, file, gather)
+  if old != NoSession and not (old == file) and
+      not state.panels.anyIt(it.layers.anyIt(it.shows(old))):
+    state.closeSession(state.findSession(old), quiet = true)
+
+proc adopt(state: var AppState; s: sink Session; job: JobId) =
+  ## Takes in a file an open job opened, and shows its first gather in the
+  ## panel the open was for (the main panel unless `ckShowFile` named
+  ## another); drops it when no longer wanted.
+  var panel = MainPanel
+  var replacing = false # `ckShowFile`: in place of the file the panel shows
+  for p in state.opening:
+    if p.job == job:
+      if p.unwanted: return # another file was chosen meanwhile: closed here
+      if p.panel != NoPanel: (panel, replacing) = (p.panel, true)
+  if s.file.kind == skUnknown:
+    state.log.add(s.file.log, s.name)
+    state.log.add(sevError, s.name, s.name & " is not a SEG-Y, SEG-D or SEG-2 file, " &
+      "so it was not opened.")
+    if panel == MainPanel:
+      state.failed(s.path)
+      state.chooseShown()
+    return # `s` is closed here, on the UI thread: nothing else has it
+  let id = SessionId(state.nextFile)
+  inc state.nextFile
+  s.register(id, state.nextBase)
+  state.nextBase += s.len
+  state.log.add(s.file.log, s.name)
+  state.log.add(sevInfo, "open", "Opened " & s.name & ": " & plural(s.len, "trace") &
+    " in " & plural(s.gathers.len, "gather") &
+    (if s.file.fromCache: " (index from the cache)." else: "."))
+  let gather = if s.gathers.len > 0: 0 else: -1
+  var st = state.settings
+  st.recentFiles.addRecent(s.path, MaxRecent)
+  st.recentFolders.addRecent(s.path.parentDir, MaxRecent)
+  state.change st
+  let path = s.path
+  state.sessions.add s
+  let k = state.findPanel(panel)
+  if replacing and k >= 0: state.showReplacing(k, id, gather)
+  else: state.show(MainPanel, id, gather)
+  if panel == MainPanel: state.choose(path)
 
 proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
-  ## Says how open job `opening[i]` ended, and forgets it.
-  let p = state.opening[i].path
+  ## Says how open job `opening[i]` ended, and forgets it. An open no longer
+  ## wanted ends quietly.
+  let o = state.opening[i]
+  let p = o.path
   let name = p.extractFilename
+  state.opening.delete(i)
+  if o.unwanted: return
   case how
   of jsFailed: state.log.add(sevError, name, "Cannot open " & p & ": " & error)
   of jsCancelled: state.log.add(sevInfo, name, "Opening " & name & " was cancelled.")
   else: discard # done: `adopt` took the file
-  state.opening.delete(i)
+  if how in {jsFailed, jsCancelled} and o.panel == MainPanel:
+    if how == jsFailed: state.failed(p)
+    state.chooseShown()
 
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
@@ -651,9 +737,25 @@ proc onFinished(state: var AppState; job: JobInfo) =
   for i, p in state.closing:
     if p.job == job.id:
       let name = p.path.extractFilename
-      if job.state == jsDone: state.log.add(sevInfo, name, "Closed " & name & ".")
+      if job.state == jsDone and not p.quiet: state.log.add(sevInfo, name, "Closed " & name & ".")
       state.closing.delete(i) # the file is closed here, on the UI thread
       return
+  let old = state.oldScans.find(job.id)
+  if old >= 0: # replaced by a newer listing: nothing to say
+    state.oldScans.delete(old)
+    return
+  if job.id == state.files.job:
+    state.files.scanning = false
+    state.files.job = NoJob
+    case job.state
+    of jsFailed:
+      state.files.error = job.error
+      state.log.add(sevError, "files", "Cannot list " & state.files.title & ": " & job.error &
+        ".")
+    of jsCancelled: state.files.error = "the listing was stopped before the end"
+    else: discard
+    inc state.files.revision
+    return
   case job.state
   of jsFailed: state.log.add(sevError, "jobs", job.spec.title & " failed: " & job.error)
   of jsCancelled: state.log.add(sevInfo, "jobs", job.spec.title & " was cancelled.")
@@ -661,6 +763,72 @@ proc onFinished(state: var AppState; job: JobInfo) =
     if job.spec.lane == jlBackground:
       state.log.add(sevInfo, "jobs", job.spec.title & " is done.")
   of jsQueued, jsRunning: discard
+
+proc showPath(state: var AppState; k: int; path: string) =
+  ## Shows the file at `path` (canonical) in `panels[k]`, in place of the
+  ## one it shows: at once when it is open, else once an open job opened it.
+  ## An open started earlier for this panel and another file is no longer
+  ## wanted: it is cancelled, and dropped if it comes all the same.
+  let panel = state.panels[k].id
+  for o in state.opening.mitems:
+    if o.panel == panel and o.path != path and not o.unwanted:
+      o.unwanted = true
+      discard state.jobs.cancel(o.job) # queued: never runs; running: asked to stop
+  if panel == MainPanel: state.choose(path)
+  var i = -1
+  for j, s in state.sessions:
+    if s.path == path: i = j
+  if i >= 0:
+    if state.shownFile(k) != i: state.showReplacing(k, state.sessions[i].id, 0)
+  else:
+    var o = -1
+    for j, p in state.opening:
+      if p.path == path and not p.unwanted: o = j
+    if o >= 0: state.opening[o].panel = panel
+    else:
+      let job = state.jobs.submit(JobSpec(title: "Open " & path.extractFilename,
+        lane: jlInteractive, reads: @[path]), openWork(path, state.inbox.poster,
+        indexCacheFile(state.indexCache, path)))
+      state.opening.add Pending(job: job, path: path, panel: panel)
+
+proc startListing(state: var AppState; paths: seq[string]; title, folder: string) =
+  ## Lists the files `paths` (canonical) name in the file list, in place of
+  ## what it listed: a scan on the background lane (`scanWork`). The file
+  ## chosen stays chosen.
+  if state.files.job != NoJob:
+    discard state.jobs.cancel(state.files.job)
+    state.oldScans.add state.files.job # it ends quietly
+  let gen = state.files.gen + 1
+  state.files = FileList(title: title, folder: folder, asked: paths, scanning: true, gen: gen,
+    chosen: state.files.chosen, revision: state.files.revision + 1)
+  state.files.job = state.jobs.submit(JobSpec(title: "List the files in " &
+    (if folder.len > 0: folder.extractFilename else: title), lane: jlBackground),
+    scanWork(gen, paths, state.inbox.poster))
+
+proc takeListed(state: var AppState; m: sink Msg) =
+  ## What a scan found for the file list; shows the first file found (or the
+  ## file named) when asked to.
+  if m.listGen != state.files.gen: return # a listing replaced since
+  template f: untyped = state.files
+  if m.listFolder.len > 0:
+    f.folder = m.listFolder
+    f.title = m.listFolder
+    var st = state.settings
+    st.recentFolders.addRecent(m.listFolder, MaxRecent)
+    state.change st
+  f.merge(m.listed)
+  f.others += m.others
+  f.unreadable += m.unreadable
+  if m.listDone: f.scanning = false
+  inc f.revision
+  if state.showFound != NoPanel:
+    let target = if m.listChosen.len > 0: m.listChosen
+                 elif f.entries.len > 0: f.entries[0].path
+                 else: ""
+    if target.len > 0 or m.listDone:
+      let k = state.findPanel(state.showFound)
+      state.showFound = NoPanel
+      if k >= 0 and target.len > 0: state.showPath(k, target)
 
 proc goToGather(state: var AppState; cmd: Command) =
   ## Shows gather `cmd.gather` of the file in layer 0 of `cmd.panel`.
@@ -697,13 +865,34 @@ proc apply*(state: var AppState; cmd: Command) =
       let name = path.extractFilename
       if state.sessions.anyIt(it.path == path):
         state.log.add(sevInfo, name, name & " is already open.")
-      elif state.opening.anyIt(it.path == path):
+      elif state.opening.anyIt(it.path == path and not it.unwanted):
         state.log.add(sevInfo, name, name & " is already being opened.")
       else:
         let job = state.jobs.submit(JobSpec(title: "Open " & name, lane: jlInteractive,
           reads: @[path]), openWork(path, state.inbox.poster,
           indexCacheFile(state.indexCache, path)))
         state.opening.add Pending(job: job, path: path)
+  of ckBrowse:
+    var paths: seq[string]
+    for p in cmd.paths:
+      if p.len > 0: paths.add canonical(p)
+    if paths.len == 0: state.ignore(cmd, "no file or folder was named")
+    else:
+      # A copy: as an argument beside `paths`, `paths[0]` would be moved.
+      let title = if paths.len == 1: paths[0] else: $paths.len & " chosen files"
+      state.startListing(paths, title, "")
+      state.showFound = if cmd.showFirst: MainPanel else: NoPanel
+  of ckShowFile:
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif cmd.path.len == 0: state.ignore(cmd, "no file was named")
+    else:
+      let path = canonical(cmd.path)
+      if cmd.panel == MainPanel: state.showFound = NoPanel # the user chose
+      state.showPath(k, path)
+      let folder = path.parentDir
+      if cmd.listFolder and state.files.folder != folder:
+        state.startListing(@[folder], folder, folder)
   of ckClose:
     let i = state.findSession(cmd.file)
     if i < 0: state.ignore(cmd, $cmd.file & " is not open")
@@ -934,9 +1123,10 @@ proc drainInbox*(state: var AppState): bool =
   result = finished.len > 0 or state.mail.len > 0
   for m in state.mail.mitems:
     case m.kind
-    of mkOpened: state.adopt(move m.session)
+    of mkOpened: state.adopt(move m.session, m.job)
     of mkLog: state.log.add(move m.entry)
     of mkRead: state.takeIn(m)
+    of mkListed: state.takeListed(move m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:
@@ -944,7 +1134,13 @@ proc drainInbox*(state: var AppState): bool =
         p.layout = m.layout
         p.laidOut = true
         p.known = m.known
-        p.view = fitAll(p.layout, p.view.columns, p.view.rows)
+        # The next gather at the scales of the one before; a first one fits.
+        p.view = if p.carry.traces.width > 0:
+            carried(Viewport(traces: p.carry.traces, timeMs: p.carry.timeMs,
+              columns: p.view.columns, rows: p.view.rows), limitsOf(p.carryLayout),
+              limitsOf(p.layout))
+          else: fitAll(p.layout, p.view.columns, p.view.rows)
+        p.carry = Viewport()
         inc p.jumps
         inc p.revision
         state.requestView(k)

@@ -189,25 +189,29 @@ type
 
   Panel* = object
     id*: PanelId
-    layers*: seq[Layer]      ## drawn in order; layer 0 is the one gather navigation moves
+    layers*: seq[Layer]       ## drawn in order; layer 0 is the one gather navigation moves
     header*: HeaderChoice
-    requestGen*: uint64      ## bumped whenever the panel needs new data; tiles carry it
-    sourceGen*: uint64       ## `requestGen` when layer 0's source last changed; layouts carry it
-    layout*: PanelLayout     ## layer 0's traces, from the reader; `traces` 0 until it says
-    laidOut*: bool           ## `layout` is known: the reader said, or there is nothing to read
-    known*: set[HeaderField] ## the header fields layer 0's traces have values for
-    kind*: GatherKind        ## the kind of gather layer 0 shows
-    view*: Viewport          ## what the plot shows
-    back*: seq[Viewport]     ## earlier views, newest last, for "back"; at most `MaxBack`
-    pending*: ReadRequest    ## the request sent last; empty for none
-    level*: Level            ## the first tile's since the source or the processing changed
-    viewLevel*: Level        ## Float: the data in view, since the view last changed
+    requestGen*: uint64       ## bumped whenever the panel needs new data; tiles carry it
+    sourceGen*: uint64        ## `requestGen` when layer 0's source last changed; layouts carry it
+    layout*: PanelLayout      ## layer 0's traces, from the reader; `traces` 0 until it says
+    laidOut*: bool            ## `layout` is known: the reader said, or there is nothing to read
+    known*: set[HeaderField]  ## the header fields layer 0's traces have values for
+    kind*: GatherKind         ## the kind of gather layer 0 shows
+    view*: Viewport           ## what the plot shows
+    back*: seq[Viewport]      ## earlier views, newest last, for "back"; at most `MaxBack`
+    pending*: ReadRequest     ## the request sent last; empty for none
+    level*: Level             ## the first tile's since the source or the processing changed
+    viewLevel*: Level         ## Float: the data in view, since the view last changed
     orderGen*: uint64
       ## `requestGen` when layer 0's order last changed: tiles from before
       ## it are kept until the first tile in the new order comes
     jumps*: int
       ## bumped when `core` sets the view itself (the whole gather when it
       ## is first laid out, back): the UI follows
+    carry*: Viewport
+      ## the view of the gather shown before, until the next one is laid out
+      ## and shown at the same scales; no width for none (it fits instead)
+    carryLayout*: PanelLayout ## that gather's layout
     revision*: int ## bumped on every change
 
 const

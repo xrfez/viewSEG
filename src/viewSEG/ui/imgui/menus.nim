@@ -11,7 +11,7 @@ import icons
 type
   MenuAction* = enum
     maOpenFile = "Open file...", maOpenFiles = "Open files...",
-    maOpenFolder = "Open folder...", maQuit = "Quit",
+    maOpenFolder = "Open folder...", maClose = "Close", maQuit = "Quit",
     maToggleTheme = "Light / dark",
     maExportSettings = "Export...", maImportSettings = "Import...",
     maResetSettings = "Reset to defaults",
@@ -20,32 +20,36 @@ type
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
-    themes*: seq[ThemeFile]    ## listed under View > Theme
-    theme*: string             ## the one checked; "" for following the system
-    recent*: seq[string]       ## File > Open recent, newest first
-    layouts*: seq[SavedLayout] ## View > Layout > Load: the user's, then the presets
-    keepsLayouts*: bool        ## layouts can be saved by name (the program keeps its settings)
+    themes*: seq[ThemeFile]     ## listed under View > Theme
+    theme*: string              ## the one checked; "" for following the system
+    recent*: seq[string]        ## File > Open recent, newest first
+    recentFolders*: seq[string] ## the folders there, newest first
+    canClose*: bool             ## a file is shown, so File > Close closes it
+    layouts*: seq[SavedLayout]  ## View > Layout > Load: the user's, then the presets
+    keepsLayouts*: bool         ## layouts can be saved by name (the program keeps its settings)
 
   MenuResult* = object
     actions*: set[MenuAction]
-    pickedTheme*: bool  ## a theme was chosen under View > Theme
-    theme*: string      ## its file name, or "" for "Follow system"
-    openRecent*: string ## a recent file to open; "" for none
-    clearRecent*: bool  ## "Clear the list" under File > Open recent
-    loadLayout*: string ## a layout file to load; "" for none
+    pickedTheme*: bool    ## a theme was chosen under View > Theme
+    theme*: string        ## its file name, or "" for "Follow system"
+    openRecent*: string   ## a recent file to open; "" for none
+    browseRecent*: string ## a recent folder to list; "" for none
+    clearRecent*: bool    ## "Clear the list" under File > Open recent
+    loadLayout*: string   ## a layout file to load; "" for none
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
     maOpenFile: ImGui_Mod_Ctrl.cint or ImGui_Key_O.cint,
     maOpenFiles: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_O.cint,
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
+    maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
     maToggleTheme: 0, maExportSettings: 0, maImportSettings: 0, maResetSettings: 0,
     maSaveLayout: 0, maResetLayout: 0, maExportLayout: 0, maImportLayout: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [IconOpenFile, IconOpenFiles, IconOpenFolder,
-    IconQuit, IconTheme, IconSave, IconOpenFile, IconClose, IconSave, IconClose, IconSave,
-    IconOpenFile]
+    IconClose, IconQuit, IconTheme, IconSave, IconOpenFile, IconClose, IconSave, IconClose,
+    IconSave, IconOpenFile]
 
 proc shortcutName*(a: MenuAction): string =
   ## The shortcut of `a` as shown to the user ("Ctrl+O"), or "".
@@ -63,17 +67,27 @@ proc tip(text: string) =
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
 
-proc drawRecent(recent: openArray[string]; res: var MenuResult) =
-  if igBeginMenu((IconOpenFile & "  Open recent").cstring, true):
-    if recent.len == 0:
-      igTextDisabled("No file opened yet")
+proc drawRecent(recent, folders: openArray[string]; res: var MenuResult) =
+  ## File > Open recent: the files, then the folders, newest first.
+  if igBeginMenu((IconHistory & "  Open recent").cstring, true):
+    if recent.len == 0 and folders.len == 0:
+      igTextDisabled("Nothing opened yet")
+    if recent.len > 0: igSeparatorText("Files")
     for i, path in recent:
       igPushID_Int(cint(i))
-      if igMenuItem_Bool(path.extractFilename.cstring, nil, false, true):
+      if igMenuItem_Bool((IconOpenFile & "  " & path.extractFilename).cstring, nil, false, true):
         res.openRecent = path
-      tip(path)
+      tip(path & "\nShown with its folder in the file list")
       igPopID()
-    if recent.len > 0:
+    if folders.len > 0: igSeparatorText("Folders")
+    for i, path in folders:
+      igPushID_Int(cint(1000 + i))
+      let name = if path.extractFilename.len > 0: path.extractFilename else: path
+      if igMenuItem_Bool((IconFolder & "  " & name).cstring, nil, false, true):
+        res.browseRecent = path
+      tip(path & "\nIts seismic files in the file list")
+      igPopID()
+    if recent.len > 0 or folders.len > 0:
       igSeparator()
       if igMenuItem_Bool("Clear the list", nil, false, true):
         res.clearRecent = true
@@ -121,7 +135,11 @@ proc drawMainMenu*(input: MenuInput): MenuResult =
     if igBeginMenu("File", true):
       for a in maOpenFile .. maOpenFolder:
         item(a, result)
-      drawRecent(input.recent, result)
+      drawRecent(input.recent, input.recentFolders, result)
+      igBeginDisabled(not input.canClose)
+      item(maClose, result)
+      igEndDisabled()
+      tip("Close the file the plot window shows")
       igSeparator()
       if igBeginMenu((IconSettings & "  Settings").cstring, true):
         item(maExportSettings, result)

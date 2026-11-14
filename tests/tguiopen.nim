@@ -1,10 +1,11 @@
 ## Opening files in the running frontend, headless: a file named on the
 ## command line and one chosen in File > Open file (the dialog's event) both
 ## open through the open job and appear in the Messages window, which shows
-## the application's log; "Open folder" says it is not available yet; the
-## index caches land in the folder the run is given; a running job shows a
-## progress bar with Cancel in the status bar, and clicking Cancel (a real
-## pointer move and button press) cancels it; the files are never changed.
+## the application's log; the one chosen last is shown, in place of the
+## first, which is closed; the index caches land in the folder the run is
+## given; a running job shows a progress bar with Cancel in the status bar,
+## and clicking Cancel (a real pointer move and button press) cancels it;
+## the files are never changed.
 ##
 ## Seen to fail: with the status bar not drawing the job field, "no progress
 ## bar"; with the Cancel click not applied as a command, "Cancel did
@@ -50,13 +51,17 @@ withFixtures fx:
     bar, cancel: Rect
     accent, barPixels = 0
     clickAt = -1
+    posted = false
     cancelled = -1
     lines: seq[Message]
   proc onFrame(f: FrameInfo) =
-    if f.index == 0:
+    let k = f.core.findPanel(MainPanel)
+    let shown = f.core.shownFile(k)
+    if not posted and shown >= 0 and f.core.sessions[shown].path == survey:
       postShellEvent ShellEvent(kind: sePathsChosen, dialog: dkOpenFile, paths: @[segd])
-      postShellEvent ShellEvent(kind: sePathsChosen, dialog: dkOpenFolder, paths: @[fx.dir])
-    if opened < 0 and f.core.sessions.len == 2:
+      posted = true
+    if opened < 0 and shown >= 0 and f.core.sessions[shown].path == segd and
+        f.core.sessions.len == 1 and f.messages.has("Opened " & survey.extractFilename):
       opened = f.index
       scan = f.core.jobs.submit(JobSpec(title: "Scan the folder", lane: jlBackground),
         scanning)
@@ -96,7 +101,7 @@ withFixtures fx:
   doAssert lines.has("Opened " & survey.extractFilename & ": 72 traces in 3 gathers."),
     $lines
   doAssert lines.has("Opened " & segd.extractFilename & ": ")
-  doAssert lines.has("Opening a whole folder is not available yet", mlWarning)
+  doAssert not lines.has("Closed "), "the file shown first was closed, quietly"
   doAssert bar.size.x > 50, "no progress bar: " & $bar
   doAssert accent >= barPixels div 2 - 8 and accent <= barPixels div 2 + 8,
     "the bar is not half full: " & $accent & " of " & $barPixels & " pixels"

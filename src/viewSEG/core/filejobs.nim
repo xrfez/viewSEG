@@ -17,9 +17,9 @@
 ## says, so losing one costs only time; the seismic file itself is never
 ## written.
 
-import std/[algorithm, os, strutils, times]
+import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
-import inbox, jobs, log, session, threads
+import filelist, inbox, jobs, log, session, threads
 
 const
   IndexCacheExt* = ".pidx" ## the extension of an index cache file
@@ -138,3 +138,87 @@ proc closeWork*(): JobWork =
   ## the UI thread closes the file.
   result = proc (ctx: JobContext) {.gcsafe.} =
     discard
+
+proc sniff*(path: string): SeismicKind =
+  ## The standard of the file at `path`, from its first `SniffBytes`
+  ## (parseSEG's `detectKind`); `skUnknown` when it is none, or cannot be
+  ## read. Reads the file and changes nothing in it.
+  var head = newSeq[byte](SniffBytes)
+  var f: File
+  if not open(f, path, fmRead): return skUnknown
+  try:
+    head.setLen readBuffer(f, addr head[0], SniffBytes)
+  except IOError:
+    head.setLen 0
+  finally:
+    close(f)
+  if head.len == 0: skUnknown else: detectKind(head)
+
+proc listedNames(paths: openArray[string]): seq[string] =
+  ## The files `paths` name: each folder's files (not its subfolders, nor
+  ## hidden files), and each file itself; absolute, normalized, once each,
+  ## in natural order of their names. Raises `OSError` when a folder cannot
+  ## be read.
+  for p in paths:
+    if dirExists(p):
+      for kind, path in walkDir(p, checkDir = true):
+        if kind in {pcFile, pcLinkToFile} and not path.extractFilename.startsWith("."):
+          result.add path.normalizedPath
+    elif p.len > 0:
+      result.add p.normalizedPath
+  result.sort(proc (a, b: string): int =
+    result = naturalCmp(a.extractFilename, b.extractFilename)
+    if result == 0: result = cmp(a, b))
+  var unique: seq[string]
+  for p in result:
+    if unique.len == 0 or unique[^1] != p: unique.add p
+  result = unique
+
+const ListPause = initDuration(milliseconds = 100) ## a scan posts at least this often
+
+proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
+  ## The work of a job that lists the seismic files `paths` name (folders
+  ## and files, absolute) and posts them as `mkListed` messages for listing
+  ## `gen`, in batches, the last one with `listDone`. One file alone stands
+  ## for its folder: the folder is listed, and the first message names both
+  ## (`listFolder`, `listChosen`); one folder is named in it too. Raises
+  ## `OSError` when a folder cannot be read, `IOError` when the one path
+  ## given does not exist; stops at a cancel.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "reading the folder"
+    var asked = paths
+    if paths.len == 1:
+      var first = Msg(job: ctx.id, kind: mkListed, listGen: gen)
+      if dirExists(paths[0]):
+        first.listFolder = paths[0]
+      elif fileExists(paths[0]):
+        (first.listFolder, first.listChosen) = (paths[0].parentDir, paths[0])
+        asked = @[first.listFolder]
+      else:
+        raise newException(IOError, "there is no such file or folder")
+      to.post move first
+    let names = listedNames(asked)
+    ctx.setPhase "looking at the files"
+    var batch = Msg(job: ctx.id, kind: mkListed, listGen: gen)
+    var last = getMonoTime()
+    for i, path in names:
+      if not ctx.progress(i, names.len): raise newException(JobCancelledError, "cancelled")
+      try:
+        let info = getFileInfo(path)
+        if info.kind notin {pcFile, pcLinkToFile}:
+          inc batch.unreadable
+        else:
+          let kind = sniff(path)
+          if kind == skUnknown: inc batch.others
+          else:
+            batch.listed.add FileEntry(path: path, name: path.extractFilename, kind: kind,
+              size: info.size, modified: info.lastWriteTime)
+      except OSError:
+        inc batch.unreadable
+      if batch.listed.len >= ListBatch or getMonoTime() - last >= ListPause:
+        to.post move batch
+        batch = Msg(job: ctx.id, kind: mkListed, listGen: gen)
+        last = getMonoTime()
+    discard ctx.progress(names.len, names.len)
+    batch.listDone = true
+    to.post move batch

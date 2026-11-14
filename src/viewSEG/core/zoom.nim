@@ -21,6 +21,10 @@
 ## top-left corner, as a sheet of paper would; an axis that shows all the
 ## data goes on showing all of it.
 ##
+## **The next gather** (`carried`) is shown at the same scales: the same
+## positions and times, or all of it along an axis that showed all of the
+## gather before.
+##
 ## **Scroll bars.** Along an axis where part of the data is out of view
 ## (`showsAll` is false) the plot has a scroll bar. Its thumb (`thumbOf`) is
 ## as long as the share of the data in view and lies where the view lies;
@@ -214,6 +218,17 @@ func resized*(v: Viewport; columns, rows: int; lim: ViewLimits): Viewport =
         lim[a]))
     else:
       result.setSpan(a, kept(s, lim[a]))
+
+func carried*(v: Viewport; was, now: ViewLimits): Viewport =
+  ## `v`, a view of data within `was`, on the next gather, within `now`, at
+  ## the same scales: along an axis where it showed all the data it shows
+  ## all of the new; along the others the same positions or times, kept
+  ## within `now` (so they compare, record after record). Its pixel size
+  ## unchanged.
+  result = v
+  for a in Axis:
+    if v.showsAll(a, was): result.setSpan(a, now[a].bounds)
+    else: result.setSpan(a, kept(v.span(a), now[a]))
 
 func thumbOf*(v: Viewport; a: Axis; lim: ViewLimits; track, least: float64): Thumb =
   ## The thumb of the scroll bar along `a` on a track `track` pixels long:

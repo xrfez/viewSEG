@@ -600,10 +600,10 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     tp.drawScaleSettings(st, res, ppi, mon)
     igEndPopup()
 
-proc drawStartScreen(t: Theme; recent: openArray[string]; marks: var Marks;
+proc drawStartScreen(t: Theme; recent, folders: openArray[string]; marks: var Marks;
     res: var PanelOutput) =
   ## What the window shows with no file: the ways to open one, and the
-  ## files opened last.
+  ## folders and files opened last.
   let avail = igGetContentRegionAvail()
   let big = ImVec2_c(x: round(igGetFontSize() * 14), y: round(igGetFontSize() * 2.6))
   let top = igGetCursorPos()
@@ -616,12 +616,28 @@ proc drawStartScreen(t: Theme; recent: openArray[string]; marks: var Marks;
   if igButton((IconOpenFolder & "  Open a folder...").cstring, big):
     res.actions.incl maOpenFolder
   marks.mark("plot.open folder")
-  let hint = "Ctrl+O opens a file. Files named on the command line open at start."
+  let hint = "Ctrl+O opens a file, Ctrl+Alt+O a folder; files and folders can also be " &
+    "dropped on the window."
   let w = igCalcTextSize(hint.cstring, nil, false, -1).x
   igSetCursorPosX(top.x + max(0, (avail.x - w) / 2))
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextUnformatted(hint.cstring, nil)
   igPopStyleColor(1)
+  if folders.len > 0:
+    igDummy(ImVec2_c(x: 0, y: igGetFontSize()))
+    igSetCursorPosX(top.x + max(0, (avail.x - big.x) / 2))
+    igTextDisabled("Recent folders")
+    for i in 0 ..< min(folders.len, 4):
+      igSetCursorPosX(top.x + max(0, (avail.x - big.x) / 2))
+      igPushID_Int(cint(100 + i))
+      let name = if folders[i].extractFilename.len > 0: folders[i].extractFilename
+                 else: folders[i]
+      if igSelectable_Bool((IconFolder & "  " & name).cstring, false, 0,
+          ImVec2_c(x: big.x, y: 0)):
+        res.commands.add Command(kind: ckBrowse, paths: @[folders[i]], showFirst: true)
+      marks.mark("plot.recent folder " & $i)
+      tip(folders[i] & "\nIts seismic files in the file list, the first one shown")
+      igPopID()
   if recent.len > 0:
     igDummy(ImVec2_c(x: 0, y: igGetFontSize()))
     igSetCursorPosX(top.x + max(0, (avail.x - big.x) / 2))
@@ -631,7 +647,8 @@ proc drawStartScreen(t: Theme; recent: openArray[string]; marks: var Marks;
       igPushID_Int(cint(i))
       if igSelectable_Bool((IconOpenFile & "  " & recent[i].extractFilename).cstring, false,
           0, ImVec2_c(x: big.x, y: 0)):
-        res.commands.add Command(kind: ckOpen, paths: @[recent[i]])
+        res.commands.add Command(kind: ckShowFile, panel: MainPanel, path: recent[i],
+          listFolder: true)
       marks.mark("plot.recent " & $i)
       tip(recent[i])
       igPopID()
@@ -1014,7 +1031,7 @@ proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: P
     marks.markWindow("plot")
     let k = st.findPanel(panel)
     if k < 0 or st.panels[k].layers.len == 0:
-      drawStartScreen(t, st.settings.recentFiles, marks, result)
+      drawStartScreen(t, st.settings.recentFiles, st.settings.recentFolders, marks, result)
     else:
       template p: untyped = st.panels[k]
       let mon = monitorOf(igGetWindowViewport())

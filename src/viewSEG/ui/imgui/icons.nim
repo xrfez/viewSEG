@@ -40,12 +40,24 @@ const
   IconTarget* = ""     ## nf-cod-target
   IconLocation* = ""   ## nf-cod-location
   IconQuit* = ""       ## nf-cod-close
+  IconRefresh* = ""    ## nf-cod-refresh
+  IconArrowUp* = ""    ## nf-cod-arrow_up
+  IconArrowDown* = ""  ## nf-cod-arrow_down
+  IconTrash* = ""      ## nf-cod-trash
+  IconCopy* = ""       ## nf-cod-copy
+  IconClearAll* = ""   ## nf-cod-clear_all
+  IconTasks* = ""      ## nf-cod-tasklist
+  IconList* = ""       ## nf-cod-list_flat
+  IconGoTo* = ""       ## nf-cod-go_to_file
+  IconExport* = ""     ## nf-cod-export
+  IconHistory* = ""    ## nf-cod-history
 
   AllIcons* = [IconOpenFile, IconOpenFiles, IconOpenFolder, IconFolder, IconSave,
     IconSettings, IconLog, IconMap, IconFilter, IconEye, IconEyeOff, IconZoomIn,
     IconZoomOut, IconFit, IconPlay, IconStep, IconPrevious, IconNext, IconWarning,
     IconError, IconInfo, IconClose, IconCheck, IconTheme, IconTable, IconPlot, IconPulse,
-    IconLayers, IconTarget, IconLocation]
+    IconLayers, IconTarget, IconLocation, IconRefresh, IconArrowUp, IconArrowDown, IconTrash,
+    IconCopy, IconClearAll, IconTasks, IconList, IconGoTo, IconExport, IconHistory]
     ## for tests: every glyph above must be in the UI font
 
 func codepoint*(icon: string): int =

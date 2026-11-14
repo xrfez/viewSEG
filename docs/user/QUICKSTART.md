@@ -3,9 +3,9 @@
 viewSEG is a viewer for SEG-Y and SEG-D seismic data with quality-control tools. It needs
 no installation and no internet connection.
 
-**Status:** early development. The window, the File menu, the folders below, and one
-record on screen as wiggles or greyscale density, with zoom, pan, gain, sorting, trace
-highlighting and a cursor readout, work.
+**Status:** early development. The window, the File menu, the file list, the folders
+below, and one record on screen as wiggles or greyscale density, with zoom, pan, gain,
+sorting, trace highlighting and a cursor readout, work.
 
 ## Start it
 
@@ -30,10 +30,38 @@ folder (`viewSEG --paths` shows where it is).
 | Open a file | Ctrl+O |
 | Open several files | Ctrl+Shift+O |
 | Open a folder | Ctrl+Alt+O |
+| Close the file shown | Ctrl+W |
 | Quit | Ctrl+Q |
 
-**File > Open recent** lists the files opened last (the start screen shows the newest
-five); the file dialogs start in the folder of the last file opened.
+Files and folders can also be dragged from a file manager and dropped on the window.
+
+**File > Open recent** lists the files and the folders opened last (the start screen
+shows the newest ones); the file dialogs start in the folder of the last file opened.
+
+## Step through a folder
+
+The **Files** window, at the left, lists the seismic files (SEG-Y, SEG-D, SEG-2) of a
+folder with their type, size and date; other files are counted at the bottom, not listed.
+Opening a folder lists it and shows its first file; opening a file shows it and lists its
+folder beside it. Listing reads only the first few kilobytes of each file, in the
+background, so a folder of thousands of files lists without opening any of them.
+
+- **Click a file** to show it in the plot window, in place of the one shown. The display
+  (mode, gain, sort order, display header) and the scales stay as they were, so records
+  compare one after the other.
+- **With the Files window focused** (click in it), **Up / Down** or **Tab / Shift+Tab**
+  step to the next or previous file and show it; **Page Up / Page Down** skip ten,
+  **Home / End** go to the first and last.
+- **Filter by name:** type in the box over the table; only the files whose names hold
+  every word typed are shown.
+- **Sort** by any column: click its header (click again to reverse).
+- The drop-down at the top lists the **folders opened before**; the buttons beside it open
+  another folder and list this one again.
+
+A file stepped away from is closed, so stepping through hundreds of files keeps one open.
+Coming back to it is quick: its index is kept in the index cache (`viewSEG --paths`
+shows where), so it is not read through again. The folder listed last is listed again at
+the next start.
 
 ## Look at a record
 
@@ -114,7 +142,7 @@ the fields and their order.
 
 Everything you set is kept for the next run, in `settings.nif` in the settings folder
 (`config/` next to the program, or the folder `viewSEG --paths` names): the theme, where
-the window was and its size, the recent files, how the plot looks (display mode, fills,
+the window was and its size, the recent files and folders, how the plot looks (display mode, fills,
 overlap, colours, gain type and amount, the sort order and the display header: a new plot
 starts as you left the last one; polarity is not kept), scale units and screen
 calibrations, the status bar's fields, the sort buttons and your own sort keys. It is

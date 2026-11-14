@@ -154,6 +154,20 @@ cancelled or removed: until it has run, a job may still be reading the file. Pat
 made absolute and normalized when a file is opened, so every job names a file the same
 way and one file is never opened twice.
 
+**The file list** (`core/filelist`). `ckBrowse` lists folders or files: a job on the
+background lane (`filejobs.scanWork`) reads each folder's names, puts them in natural order
+("shot2" before "shot10"), reads the first 4 KiB of each file to tell SEG-Y, SEG-D and
+SEG-2 apart (parseSEG's `detectKind`) and posts what it found in batches (`mkListed`), so
+the list fills as the scan goes and no file is opened. One file named alone stands for its
+folder. `ckShowFile` shows a file in a panel in place of the one it shows: at once when it
+is open, else through an open job made for that panel; when the panel has shown it, the file
+it showed before is closed unless another panel shows it, so stepping through a folder
+keeps one file open, and the index cache makes stepping back quick. A file chosen while
+another is still opening cancels that open (if it comes all the same, it is dropped). The
+next file is shown at the scales of the one before (`zoom.carried`), with the same display,
+order and display header. `FileList.chosen` is the file the main panel shows or is
+opening; the frontend's file table (`view/filetable`) filters, sorts and steps from it.
+
 **The index cache.** `initAppState(indexCache = dir)` names the folder for parseSEG's
 index caches; the frontend passes `<cache>/index` from `platform/paths`, since `core`
 does not import `platform`. One cache per file, named after the file plus a hash of its
@@ -387,6 +401,15 @@ type
     file: SeismicFile        # parseSEG, move-only
     gathers: seq[Gather]
 
+  FileList = object          # core/filelist: what the Files window lists
+    title, folder: string    # the folder listed ("" for files chosen one by one)
+    entries: seq[FileEntry]  # path, name, kind (SEG-Y, SEG-D, SEG-2), size, modified
+    others, unreadable: int  # files not listed
+    scanning: bool
+    gen: uint64              # bumped by each listing; a scan's messages carry it
+    chosen: string           # the file the main panel shows or is opening
+    failed: seq[string]      # files that could not be opened
+
   Panel = object             # core/panels
     id: PanelId
     layers: seq[Layer]       # drawn in order; layer 0 is the one gather navigation moves
@@ -416,7 +439,8 @@ type
                              # percentile, overlap, reversed polarity
 
   CommandKind = enum         # core/state: every user intent, the only way state changes
-    ckOpen, ckClose, ckCancelJob, ckReorderJob, ckRemoveJob, ckGather, ckView, ckDisplay,
+    ckOpen, ckBrowse, ckShowFile, ckClose, ckCancelJob, ckReorderJob, ckRemoveJob, ckGather,
+    ckView, ckDisplay,
     ckHeader, ckSort, ckBack, ckHover, ckSelect, ckClearSelection, ckSettings,
     ckExportSettings, ckImportSettings, ckResetSettings, ckLayout, ckSaveLayout,
     ckLoadLayout, ckExportLayout, ckImportLayout
@@ -439,6 +463,7 @@ type
     of mkLayout: panel, sourceGen, layout, known   # from a panel's reader
     of mkTile: tile: Tile          # moved, never shared
     of mkRead: purpose, readPath, content, readError # a document the disk thread read
+    of mkListed: listGen, listed, others, unreadable, listDone, listFolder, listChosen
     # to come: mkResult (FoldMap, StackResult, QC rows ...)
 
   AppState = object          # move-only; owned by the UI thread
@@ -446,6 +471,7 @@ type
     selection: Selection
     panels: seq[Panel]       # MainPanel first
     sessions: seq[Session]
+    files: FileList          # the file list
     inbox: Inbox             # Poster handles for workers; freed with the last handle
     disk: DiskIo             # core/diskio: the session log, settings and layouts, off this thread
     indexCache: string       # the folder of parseSEG's index caches; "" for none

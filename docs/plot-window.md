@@ -250,8 +250,12 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Ctrl + O | Open file |
 | Ctrl + Shift + O | Open files |
 | Ctrl + Alt + O | Open folder |
+| Ctrl + W | Close the file the plot shows |
 | Ctrl + Q | Quit |
-| Up / Down, Tab / Shift + Tab (file list focused) | Step to the next / previous file and open it in the same plot, keeping the display settings |
+| Drop files or a folder on the window | A folder: list it and show its first file; one file: show it and list its folder; several files: list them and show the first |
+| Up / Down, Tab / Shift + Tab (file list focused) | Step to the next / previous file and show it in the same plot, keeping the display settings and the scales |
+| Page Down / Page Up, Home / End (file list focused) | Ten files on / back; the first / last file |
+| Click a file in the file list | Show it in the plot, in place of the one shown |
 
 ## The trace context menu
 
