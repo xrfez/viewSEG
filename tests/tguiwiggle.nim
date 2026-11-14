@@ -541,7 +541,8 @@ withFixtures fx:
 # ------------------------------------------------- screenshots of real data --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
 # local only), the plot window is saved zoomed in on the Morgantown record in
-# every mode, one trace hovered and one selected, as wiggle-*.png
+# every mode, and as it opens (at the wiggle mode's limit, a trace a pixel),
+# one trace hovered and one selected, as wiggle-*.png
 # (docs/screenshots/ holds the committed ones), and the frame times while
 # panning in each mode are printed.
 
@@ -550,17 +551,19 @@ const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
     traces, timeMs: Span; colours = pcPaper) =
   ## Opens `path` in a 1600 × 1000 window, shows `traces` and `timeMs` in
-  ## `mode` with `fills`, selects the trace a fifth of the way across and
-  ## hovers the one at the middle, saves the frame, then pans to and fro for
-  ## 120 frames and prints their times.
+  ## `mode` with `fills` (with no `traces`, the view the record opens at),
+  ## selects the trace a fifth of the way across and hovers the one at the
+  ## middle, saves the frame, then pans to and fro for 120 frames and prints
+  ## their times.
   let dir = getEnv("VIEWSEG_SCREENSHOTS")
   var stage = 0
   var wait = 0
   var saved = false
   var times: seq[float64]
   var last = getMonoTime()
-  let selected = traces.lo + 0.2 * traces.width + 0.5
-  let hovered = traces.lo + 0.5 * traces.width + 0.5
+  var timeMs = timeMs
+  var selected = traces.lo + 0.2 * traces.width + 0.5
+  var hovered = traces.lo + 0.5 * traces.width + 0.5
   proc onFrame(f: FrameInfo) =
     let now = getMonoTime()
     let k = f.core.findPanel(MainPanel)
@@ -571,9 +574,10 @@ proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
       if f.index == 0: f.moveMouse(vec2(4, 4))
       if p.laidOut and p.layout.traces > 0:
         var v = p.view
-        v.traces = traces
-        v.timeMs = timeMs
-        f.showView(v)
+        if traces.width > 0:
+          v.traces = traces
+          v.timeMs = timeMs
+          f.showView(v)
         var d = p.layers[0].display
         (d.mode, d.fills, d.colours) = (mode, fills, colours)
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
@@ -582,6 +586,11 @@ proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
     of 1:
       let tiles = f.core.tiles(k)
       if wait > 10 and tiles.len > 0 and tiles[^1].request == p.pending:
+        if traces.width <= 0: # the view it opened at
+          let w = p.view.traces
+          timeMs = p.view.timeMs
+          selected = w.lo + 0.2 * w.width + 0.5
+          hovered = w.lo + 0.5 * w.width + 0.5
         f.moveMouse(f.baselineAt(floor(selected), timeMs.lo + 0.4 * timeMs.width))
         wait = 0
         stage = 2
@@ -635,3 +644,6 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
       timeMs, pcTheme)
     wiggleShot(morgantown, "density-morgantown-highlight.png", dmDensity, {},
       Span(lo: 899.5, hi: 1299.5), Span(lo: 0, hi: 2500))
+    # as it opens: wiggles at one pixel a trace, from the first trace
+    wiggleShot(morgantown, "wiggle-morgantown-limit.png", dmWiggle, {wfPositive}, Span(),
+      Span())
