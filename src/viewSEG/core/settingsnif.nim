@@ -139,6 +139,7 @@ proc display(w: var NifWriter; d: DisplaySettings) =
   w.choice("timeGain", TimeGainNames[d.timeGain])
   w.value("dbPerS", d.dbPerS)
   w.value("power", d.power)
+  w.value("untilMs", d.untilMs)
   w.value("clipPercentile", d.clipPercentile)
 
 proc settingsDocument*(s: Settings): string =
@@ -371,6 +372,7 @@ proc display(r: var Reading; n: NifNode; d: var DisplaySettings) =
       of "timeGain": r.choice(c, TimeGainNames, d.timeGain)
       of "dbPerS": r.number(c, -60, 60, d.dbPerS)
       of "power": r.number(c, -5, 5, d.power)
+      of "untilMs": r.number(c, MinUntilMs, MaxUntilMs, d.untilMs)
       of "clipPercentile": r.number(c, 50, 100, d.clipPercentile)
       else: r.unknown(c, "plot")
 

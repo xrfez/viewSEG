@@ -152,9 +152,16 @@
     | None | nothing | the record's clip percentile of \|x\| (99 by default), held while panning | |
     | Fixed | nothing | one amplitude, the same for every record and file until changed, so records compare; taken from the record shown when Fixed is chosen | the amplitude; "From this record" |
     | Normalized | each trace to the same level (per trace), or nothing (whole record) | that level: RMS, peak or clip percentile, of each trace or of the record | per trace or the whole record; the level |
-    | Exponential | `10^(dB/s · t / 20)`, or `(t / 1 s)^n` | the record's clip percentile after the gain | dB per second (6 by default), or the power of time |
+    | Exponential | `10^(dB/s · t / 20)`, or `(t / 1 s)^n`, rising until a cutoff time and held at its value after it | the record's clip percentile after the gain | dB per second (6 by default), or the power of time (2); the cutoff, "until" (2 000 ms by default) |
     | Float | nothing | the clip percentile of the data in view, again whenever the view changes | |
     | AGC | AGC | the record's clip percentile after AGC | the window (500 ms) |
+
+    **Exponential's cutoff** (the user: "with exponential the basemet gets pretty blown
+    out. maybe there should be a cutoff time"): the gain rises with time until the time
+    in its "until" box and holds the value it reached there for the rest of the record,
+    for dB per second and the power of time alike. It is processSEG's gain curve
+    (`gainCurveOp` with knots: two for dB per second, which is a straight line in dB;
+    one every 2 % of time for the power of time, within 0.001 dB of it).
 
     Changing the amount, a Fixed amplitude, or between types that do nothing to the
     samples (None, Fixed, Float, Normalized for the whole record) reads nothing again;

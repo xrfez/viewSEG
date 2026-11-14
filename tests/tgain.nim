@@ -2,8 +2,9 @@
 ## full black), which changes read again and which only rescale, the gain
 ## amount in dB on top of every type, Fixed kept across gathers and files
 ## and taken again on request, Float following the data in view, and the samples the
-## reader sends for Exponential (processSEG's exponential curve) and for
-## Normalized per trace (each trace's 99th percentile of |x| at 1).
+## reader sends for Exponential (processSEG's exponential curve and power of
+## time, held after the cutoff time) and for Normalized per trace (each
+## trace's 99th percentile of |x| at 1).
 ##
 ## Seen to fail: with the gain amount left out of `displayScale`,
 ## `amountRescalesWithNoRead` found the scale unchanged at +6 dB; with a
@@ -17,6 +18,7 @@
 
 import std/[algorithm, math, os, sequtils, strutils]
 import parseSEG
+import processSEG/gain/curves
 import viewSEG/core/state {.all.}
 import utils/[fixtures, waiting]
 
@@ -102,6 +104,9 @@ block whatReadsAgain:
   b.power = 3 # not in use with dB per second
   doAssert same(a, b)
   b.timeGain = tgPower
+  doAssert not same(a, b)
+  b = a
+  b.untilMs = 1500 # the cutoff, for either shape
   doAssert not same(a, b)
   # what each runs on the samples
   for (g, ops) in [(dgNone, 0), (dgFixed, 0), (dgFloat, 0), (dgAgc, 1), (dgExponential, 1),
@@ -227,6 +232,46 @@ block exponentialGain:
             $want
           inc checked
     doAssert checked > 100, $checked
+    st.shutdown()
+
+block exponentialCutoff:
+  # The Exponential gain rises until its cutoff time and holds its value
+  # after it, for dB per second and for the power of time alike: the
+  # samples the reader sends are the file's times processSEG's own curve
+  # (`exponentialGain`, `powerGain`) at the time, or at the cutoff past it.
+  # The record runs to 998 ms; the cutoff is at 400 ms.
+  #
+  # Seen to fail: with no hold (the cutoff at 60 s), "dB per second: trace
+  # 0 sample 351: -0.2509299, want -0.2036818..."; with the power of time's
+  # knots every 20 % of time, "power of time: trace 0 sample 85:
+  # 0.023919893, want 0.0240294..." (linear in dB between knots too far
+  # apart).
+  withFixtures fx:
+    var st = initAppState()
+    st.apply Command(kind: ckOpen, paths: @[fx.surveySegy()])
+    doAssert st.settle(st.main.layout.traces > 0)
+    st.look()
+    for (shape, curve) in [(tgDbPerSecond, exponentialGain(6)), (tgPower, powerGain(2))]:
+      var d = st.main.layers[0].display
+      d.gain = dgExponential
+      (d.timeGain, d.dbPerS, d.power, d.untilMs) = (shape, 6.0, 2.0, 400.0)
+      st.display(d)
+      doAssert st.settle(st.answered and st.main.layers[0].display.timeGain == shape)
+      let t = st.shown[^1]
+      doAssert t.request.decimation == 1 and t.request.stride == 1 and t.request.firstSample == 0
+      var checked, held = 0
+      for row in 0 ..< t.request.count:
+        for i in 0 ..< t.columns:
+          let raw = surveySample(0, row + 1, i)
+          if abs(raw) > 0.1:
+            let ms = float64(i) * DtMs
+            let want = float64(raw) * curve.factorAt(min(ms, 400))
+            doAssert near(float64(t.data[row * t.columns + i]), want, 1e-4),
+              $shape & ": trace " & $row & " sample " & $i & ": " &
+              $t.data[row * t.columns + i] & ", want " & $want
+            inc checked
+            if ms > 400: inc held
+      doAssert checked > 100 and held > 50, $checked & " " & $held
     st.shutdown()
 
 block normalizedPerTrace:

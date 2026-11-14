@@ -17,11 +17,12 @@
 ##
 ## **Display gain.** A layer is drawn after its pipeline, then its gain
 ## type's processing on the CPU (`displayPipeline`: AGC, per-trace
-## normalization, an exponential gain; none for the other types), then a
-## scale on the GPU: a *reference* amplitude is drawn full black (or white),
-## raised or lowered by the gain amount in dB (`DisplaySettings.gainDb`),
-## which every type has. The amount changes only the scale, so it never
-## reads or processes anything again. The reference (`reference`) is:
+## normalization, an exponential gain held after its cutoff time; none for
+## the other types), then a scale on the GPU: a *reference* amplitude is
+## drawn full black (or white), raised or lowered by the gain amount in dB
+## (`DisplaySettings.gainDb`), which every type has. The amount changes only
+## the scale, so it never reads or processes anything again. The reference
+## (`reference`) is:
 ##
 ## - None, AGC, Exponential, Automatic: the clip percentile of |x| of the
 ##   gather's first tile after a change of gather or processing, so the
@@ -156,6 +157,7 @@ type
     timeGain*: TimeGain = tgDbPerSecond    ## Exponential: its shape
     dbPerS*: float64 = 6.0                 ## Exponential: dB per second
     power*: float64 = 2.0                  ## Exponential: the power of time
+    untilMs*: float64 = 2000.0             ## Exponential: rises until this time, then holds
     clipPercentile*: float64 = 99.0        ## amplitudes above this percentile are clipped
     overlap*: float64 = 1.0
       ## a wiggle's largest swing, in trace spacings (1 reaches the next
@@ -270,6 +272,12 @@ const
     ## By Component: the traces grouped by component, each group by line,
     ## then point.
 
+const
+  MinUntilMs* = 10.0
+    ## the Exponential gain's cutoff time (`DisplaySettings.untilMs`) stays
+    ## within this and `MaxUntilMs`
+  MaxUntilMs* = 60_000.0
+
 func `==`*(a, b: PanelId): bool {.borrow.}
 func `$`*(id: PanelId): string = "panel " & $int(id)
 
@@ -381,6 +389,33 @@ func cpuGain(d: DisplaySettings; kind: GatherKind): DisplayGain =
   of dgNormalized: (if d.normScope == perTrace: dgNormalized else: dgNone)
   of dgAuto, dgNone, dgFixed, dgFloat: dgNone
 
+const PowerKnotStep = 1.02
+  ## the ratio of one knot's time to the one before, along a power of time:
+  ## linear in dB between them, the curve is within 0.001 dB of the power's
+
+proc heldGain*(d: DisplaySettings): GainCurve =
+  ## The Exponential gain of `d` as processSEG's gain curve: `dbPerS` dB per
+  ## second (`exponentialGain`) or the power of time (`powerGain`), rising
+  ## until `untilMs` and held at its value there after it: a knot curve,
+  ## which is flat past its last knot. dB per second is a straight line in
+  ## dB, so two knots give it exactly; the power of time is a knot every 2 %
+  ## of time from 1 ms (`powerGain`'s floor). Raises `ValueError` for a
+  ## setting that is not finite.
+  let until = if d.untilMs.isNaN: 2000.0 else: clamp(d.untilMs, MinUntilMs, MaxUntilMs)
+  var knots: seq[GainKnot]
+  case d.timeGain
+  of tgDbPerSecond:
+    let c = exponentialGain(d.dbPerS)
+    knots = @[GainKnot(tMs: 0, dB: 0), GainKnot(tMs: until, dB: c.gainDbAt(until))]
+  of tgPower:
+    let c = powerGain(d.power)
+    var t = 1.0
+    while t < until:
+      knots.add GainKnot(tMs: t, dB: c.gainDbAt(t))
+      t *= PowerKnotStep
+    knots.add GainKnot(tMs: until, dB: c.gainDbAt(until))
+  knotGain(knots)
+
 func displayPipeline*(layer: Layer; kind: GatherKind): Pipeline =
   ## What the reader runs on layer `layer`'s samples: the polarity reversal
   ## when every trace is reversed (`polarityOp`), its pipeline, then the CPU
@@ -394,8 +429,7 @@ func displayPipeline*(layer: Layer; kind: GatherKind): Pipeline =
   of dgNormalized: result.add normalizeOp(d.normStat, perTrace, percentile = d.clipPercentile)
   of dgExponential:
     try:
-      result.add gainCurveOp(if d.timeGain == tgDbPerSecond: exponentialGain(d.dbPerS)
-                             else: powerGain(d.power))
+      result.add gainCurveOp(heldGain(d))
     except ValueError:
       discard # a value that is not finite: no curve (the control refuses one)
   else: discard
@@ -412,8 +446,8 @@ func sameProcessing*(a, b: DisplaySettings; kind: GatherKind): bool =
     of dgAgc: result = a.agcWindowMs == b.agcWindowMs
     of dgNormalized: result = a.normStat == b.normStat
     of dgExponential:
-      result = a.timeGain == b.timeGain and (if a.timeGain == tgDbPerSecond:
-        a.dbPerS == b.dbPerS else: a.power == b.power)
+      result = a.timeGain == b.timeGain and a.untilMs == b.untilMs and
+        (if a.timeGain == tgDbPerSecond: a.dbPerS == b.dbPerS else: a.power == b.power)
     else: discard
 
 func usable(x: float64): bool {.inline.} = x > 0 and x < Inf

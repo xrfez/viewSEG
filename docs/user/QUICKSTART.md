@@ -254,7 +254,9 @@ traces are drawn in the theme's accent colour. Nothing is read again for any of 
 same list: Automatic (AGC on shot and receiver records, none on stacked data), None,
 Fixed (one scale for every record, so records compare), Normalized (every trace, or the
 record, to the same level), Exponential (more gain later in the record: dB per second,
-or a power of time), Float (the scale follows what is in view) and AGC. Beside it, the
+or a power of time, rising until the time in its "until" box, 2 000 ms at first, and
+held after it, so the deep part of the record is not blown out), Float (the scale
+follows what is in view) and AGC. Beside it, the
 gain amount in dB works with every type: type a value, click - or +, or press `]` and
 `[` (keypad `*` and `/`); the picture brightens or darkens at once. A trace the file
 marks dead is never drawn, whatever the gain: it is blank, like a killed trace, it does

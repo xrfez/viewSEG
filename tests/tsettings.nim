@@ -63,7 +63,7 @@ proc everyFieldSet(): Settings =
         selected: Rgba(b: 200, a: 255)),
       gain: dgExponential, gainDb: -7.5, agcWindowMs: 250, fixedClip: 0.125,
       normScope: perPanel, normStat: normRms, timeGain: tgPower, dbPerS: 12, power: 1.5,
-      clipPercentile: 98.5, overlap: 2.5),
+      untilMs: 3500, clipPercentile: 98.5, overlap: 2.5),
     order: @[SortKey(field: hfComponent), SortKey(field: hfOffset, descending: true)],
     header: HeaderChoice(auto: false, fields: @[hfSrcLine, hfCrossline]))
 
@@ -80,6 +80,7 @@ block savedByAnOlderBuild:
   doAssert problems.len == 0, $problems
   doAssert not s.cursorLine and s.recentFiles.len == 1 and s.plot.display.mode == dmWiggle
   doAssert not s.files.followLatest, "a new setting takes its default"
+  doAssert s.plot.display.untilMs == 2000, "the Exponential gain's cutoff takes its default"
   doAssert cleaned(s)[1] == 0
 
 block everyField:

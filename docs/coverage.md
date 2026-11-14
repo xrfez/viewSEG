@@ -198,7 +198,7 @@ Status values:
 | Normalisation per trace or panel (max, RMS, percentile) | `initNormalizePlan`, `normalize`, `normalizeOp`, `panelFactor` | Seismic window: gain "Normalized" (`normalizeOp(stat, perTrace)` per trace; per panel the scale alone, from `panelStats`) | built |
 | AGC (RMS, mean absolute) | `initAgcPlan`, `agc`, `agcOp` | Seismic window: gain "AGC" (the default on pre-stack gathers); processing window: AGC | built |
 | AGC gain kept and removed | `agc(..., gains)`, `removeGain` | Show the AGC gain function; undo AGC on export | planned |
-| Time-variant gain (knots, tᵖ, exponential) | `knotGain`, `powerGain`, `exponentialGain`, `gainCurveOp`, `initGainCurvePlan`, `applyGainCurve` | Seismic window: gain "Exponential" (`exponentialGain`, `powerGain`); processing window: gain curve editor (knots) | built (display); planned (knots) |
+| Time-variant gain (knots, tᵖ, exponential) | `knotGain`, `powerGain`, `exponentialGain`, `gainCurveOp`, `initGainCurvePlan`, `applyGainCurve` | Seismic window: gain "Exponential" (`exponentialGain`, `powerGain`, held after its cutoff time as a `knotGain`); processing window: gain curve editor (knots) | built (display); planned (the editor) |
 | Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats` | Seismic window: clip at a percentile and the Normalized levels (`panelStats`, a shader uniform), Float's level of the data in view (`percentileAbs`); the same reference is full black in density and the full swing (the trace overlap) of a wiggle; killed traces left out of each; per-trace statistics later | built |
 
 ### Pipelines and threads

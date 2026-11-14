@@ -26,8 +26,9 @@ proc label(d: DisplaySettings; kind: GatherKind): string =
     of dgFixed: "fixed"
     of dgNormalized: "normalized, " & (if d.normScope == perTrace: "each trace" else: "record")
     of dgExponential:
-      if d.timeGain == tgDbPerSecond: "exponential, " & significant(d.dbPerS, 3) & " dB/s"
-      else: "exponential, t^" & significant(d.power, 3)
+      let shape = if d.timeGain == tgDbPerSecond: significant(d.dbPerS, 3) & " dB/s"
+                  else: "t^" & significant(d.power, 3)
+      "exponential, " & shape & " to " & $int(round(d.untilMs)) & " ms"
     of dgFloat: "float"
     of dgAuto: "automatic"
   if d.gain == dgAuto: result.add " (auto)"
@@ -61,8 +62,10 @@ proc numberBox(id: string; value: float64; format: string; width: float32;
   typed = float64(v)
   igIsItemDeactivatedAfterEdit()
 
-proc settings(p: Panel; d: DisplaySettings; cmds: var seq[Command]; notes: var seq[string]) =
-  ## The settings of the type in use, under the list of types.
+proc settings(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Command];
+    notes: var seq[string]) =
+  ## The settings of the type in use, under the list of types; each control
+  ## is marked "plot.gain <what>" for tests.
   let w = round(igCalcTextSize("000000.00", nil, false, -1).x + 2 * igGetStyle().FramePadding.x)
   let pct = significant(d.clipPercentile, 3) & "th percentile"
   var typed = 0.0
@@ -76,6 +79,7 @@ proc settings(p: Panel; d: DisplaySettings; cmds: var seq[Command]; notes: var s
         nd.agcWindowMs = typed
         p.send(nd, cmds)
       else: notes.add "The AGC window needs 10 to 20 000 ms, not " & significant(typed) & "."
+    marks.mark("plot.gain agc window")
     igSameLine(0, -1)
     igTextUnformatted("ms", nil)
     if d.gain == dgAuto:
@@ -91,10 +95,12 @@ proc settings(p: Panel; d: DisplaySettings; cmds: var seq[Command]; notes: var s
         nd.fixedClip = typed
         p.send(nd, cmds)
       else: notes.add "The fixed gain needs a positive amplitude, not " & significant(typed) & "."
+    marks.mark("plot.gain fixed amplitude")
     igSameLine(0, -1)
     if igButton("From this record", ImVec2_c(x: 0, y: 0)):
       nd.fixedClip = NaN # core takes it from the record shown
       p.send(nd, cmds)
+    marks.mark("plot.gain from this record")
     tip("Takes the " & pct & " of |x| of the record shown")
     igTextUnformatted("Kept for every record and file until changed.", nil)
   of dgNormalized:
@@ -102,6 +108,7 @@ proc settings(p: Panel; d: DisplaySettings; cmds: var seq[Command]; notes: var s
       if igRadioButton_Bool(text.cstring, d.normScope == scope) and d.normScope != scope:
         nd.normScope = scope
         p.send(nd, cmds)
+      marks.mark("plot.gain " & $scope)
       if scope == perTrace: igSameLine(0, -1)
     igTextUnformatted("to its", nil)
     for (stat, text) in [(normRms, "RMS"), (normMax, "peak"), (normPercentile, pct)]:
@@ -109,12 +116,14 @@ proc settings(p: Panel; d: DisplaySettings; cmds: var seq[Command]; notes: var s
       if igRadioButton_Bool(text.cstring, d.normStat == stat) and d.normStat != stat:
         nd.normStat = stat
         p.send(nd, cmds)
+      marks.mark("plot.gain " & $stat)
     igTextUnformatted("drawn full black.", nil)
   of dgExponential:
     if igRadioButton_Bool("dB per second", d.timeGain == tgDbPerSecond) and
         d.timeGain != tgDbPerSecond:
       nd.timeGain = tgDbPerSecond
       p.send(nd, cmds)
+    marks.mark("plot.gain " & $tgDbPerSecond)
     igSameLine(0, -1)
     if numberBox("##dbpers", d.dbPerS, "%.1f", w, typed):
       if abs(typed) <= 60:
@@ -122,9 +131,11 @@ proc settings(p: Panel; d: DisplaySettings; cmds: var seq[Command]; notes: var s
         nd.timeGain = tgDbPerSecond
         p.send(nd, cmds)
       else: notes.add "The exponential gain needs -60 to 60 dB/s, not " & significant(typed) & "."
+    marks.mark("plot.gain dB per second box")
     if igRadioButton_Bool("Power of time, t^", d.timeGain == tgPower) and d.timeGain != tgPower:
       nd.timeGain = tgPower
       p.send(nd, cmds)
+    marks.mark("plot.gain " & $tgPower)
     igSameLine(0, -1)
     if numberBox("##power", d.power, "%.2f", w, typed):
       if abs(typed) <= 5:
@@ -132,6 +143,21 @@ proc settings(p: Panel; d: DisplaySettings; cmds: var seq[Command]; notes: var s
         nd.timeGain = tgPower
         p.send(nd, cmds)
       else: notes.add "The power of time needs -5 to 5, not " & significant(typed) & "."
+    marks.mark("plot.gain power box")
+    igTextUnformatted("Until", nil)
+    igSameLine(0, -1)
+    if numberBox("##until", d.untilMs, "%.0f", w, typed):
+      if typed >= MinUntilMs and typed <= MaxUntilMs:
+        nd.untilMs = typed
+        p.send(nd, cmds)
+      else:
+        notes.add "The exponential gain's cutoff needs " & significant(MinUntilMs) & " to " &
+          significant(MaxUntilMs) & " ms, not " & significant(typed) & "."
+    marks.mark("plot.gain until")
+    tip("The gain rises until this time and holds its value after it, so late times " &
+      "(the basement) are not blown out")
+    igSameLine(0, -1)
+    igTextUnformatted("ms, then held", nil)
   of dgFloat:
     igTextUnformatted(("Amplitudes past the " & pct & " of |x| of the data in view\n" &
       "are drawn full black or white, so the scale changes as you pan and zoom.").cstring, nil)
@@ -154,8 +180,9 @@ proc drawGainControls*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Comma
         var nd = d
         nd.gain = gt
         p.send(nd, cmds)
+      marks.mark("plot.gain type " & $gt)
     igSeparatorText("Settings")
-    settings(p, d, cmds, notes)
+    settings(p, d, marks, cmds, notes)
     igEndCombo()
   marks.mark("plot.gain")
   tip("Gain type: how amplitudes are scaled for display. Its settings are in this list.")
