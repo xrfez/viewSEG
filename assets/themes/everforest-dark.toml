@@ -1,0 +1,78 @@
+# viewSEG theme: Everforest Dark (Omarchy's Everforest palette).
+#
+# A theme is an Omarchy colors.toml: any Omarchy theme's colors.toml dropped
+# into a themes folder works as it is. To make your own, copy this file to
+# <config>/themes/<name>.toml (`viewSEG --paths` shows <config>), change the
+# colours, and pick it under View > Theme.
+#
+# Only the colours are needed. Everything else on screen (window, bar, popup,
+# text, border, selection, plot, trace colours, the series palette) is derived
+# from them; a missing colour is derived or taken from the built-in Everforest,
+# and the Messages window says which.
+
+name = "Everforest Dark"
+mode = "dark"                    # "dark" or "light"; guessed from background if absent
+
+accent = "#7fbbb3"               # focus, the current tab, checks, sliders
+selection = "#3d484d"            # selected and hovered items
+muted = "#475258"                # borders, separators
+
+background = "#2d353b"           # windows and panels
+dark_background = "#21272c"      # menu bar, toolbar, status bar, tab strips, plots
+darker_background = "#181d20"    # the backdrop between docked panels
+lighter_background = "#343f44"   # inputs, buttons, popups
+
+foreground = "#d3c6aa"           # text
+dark_foreground = "#4f585e"      # the faintest text (hints, disabled)
+light_foreground = "#9da9a0"     # secondary text
+bright_foreground = "#d3c6aa"
+
+red = "#e67e80"                  # errors; negative fill
+yellow = "#dbbc7f"               # warnings
+orange = "#e09d7f"               # the linked-selection highlight
+green = "#a7c080"                # ok
+cyan = "#83c092"
+blue = "#7fbbb3"                 # information
+magenta = "#d699b6"
+brown = "#704e3f"
+
+bright_red = "#e67e80"
+bright_yellow = "#dbbc7f"
+bright_green = "#a7c080"
+bright_cyan = "#83c092"
+bright_blue = "#7fbbb3"
+bright_magenta = "#d699b6"
+
+# Optional: viewSEG's own settings. Leave a table out to keep the defaults.
+
+[fonts]
+# Font files, looked up in the assets' fonts/ folders (or absolute paths).
+# A font that cannot be loaded falls back to the built-in one.
+ui = "JetBrainsMonoNerdFontPropo-Regular.ttf"      # labels, menus, icons
+mono = "JetBrainsMonoNerdFontMono-Regular.ttf"     # tables, numbers, status bar
+heading = "JetBrainsMonoNerdFontPropo-Bold.ttf"    # headings, table headers
+# icons = "SymbolsNerdFont-Regular.ttf"   # merged into `ui` if it has no icons
+size = 15                        # pixels at 100 %; the display scale multiplies it
+heading_size = 16
+
+[metrics]
+# Pixels at 100 %.
+rounding = 6                     # popups, panels
+frame_rounding = 4               # buttons, inputs, tabs, scrollbars
+border_width = 1
+window_padding = 10
+frame_padding_x = 8
+frame_padding_y = 5
+item_spacing_x = 8
+item_spacing_y = 6
+scrollbar_size = 12
+
+# [roles]
+# Any derived colour can be set directly, as "#rrggbb", "#rrggbbaa" or a
+# colour name from above, e.g.:
+# highlight = "yellow"
+# plot_background = "#1e2326"
+# series = ["blue", "orange", "green", "magenta"]
+# Roles: backdrop window popup bar frame text text_dim text_disabled border
+# selection hover active accent highlight ok warning error info
+# plot_background plot_grid trace fill_positive fill_negative crosshair

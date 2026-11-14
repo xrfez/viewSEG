@@ -153,19 +153,23 @@ proc existing(c: PathContext; candidates: openArray[string]): seq[string] =
 
 proc assetDirs*(c: PathContext): seq[string] =
   ## Read-only asset directories to search, in order: `<appDir>/assets`, then
-  ## `<appDir>/../share/viewSEG/assets` (an installed Linux layout). Only the
-  ## ones that exist.
-  c.existing([join(c.os, c.appDir, "assets"),
-    join(c.os, parentOf(c.os, c.appDir), "share", AppName, "assets")])
+  ## `<appDir>/../share/viewSEG/assets` (an installed Linux layout), then
+  ## `<appDir>/../assets` (development: the binaries are in `bin/`, the assets
+  ## in the repository root). Only the ones that exist.
+  let parent = parentOf(c.os, c.appDir)
+  c.existing([join(c.os, c.appDir, "assets"), join(c.os, parent, "share", AppName, "assets"),
+    join(c.os, parent, "assets")])
 
 proc vendorMapDirs*(c: PathContext): seq[string] =
   ## Directories to search for parseSEG vendor header maps (`*.nif`), in order:
   ## the user's own (`<configDir>/vendormaps`), the ones shipped with the release
-  ## (`<appDir>/vendormaps`), then each directory in `PARSESEG_VENDOR_PATH`. Only
-  ## the ones that exist.
+  ## (`<appDir>/vendormaps`), each directory in `PARSESEG_VENDOR_PATH`, then
+  ## `<appDir>/../vendormaps` (development, as in `assetDirs`). Only the ones
+  ## that exist.
   var candidates = @[join(c.os, c.configDir, "vendormaps"), join(c.os, c.appDir, "vendormaps")]
   for d in c.env(VendorPathVar).split(if c.os == ofWindows: ';' else: ':'):
     candidates.add d.strip
+  candidates.add join(c.os, parentOf(c.os, c.appDir), "vendormaps")
   c.existing(candidates)
 
 # ------------------------------------------------------------ real environment

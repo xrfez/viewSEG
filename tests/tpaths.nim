@@ -85,6 +85,19 @@ block assetDirsInOrder:
     dirs = [r"C:\v\share\viewSEG\assets"])
   doAssert w.assetDirs == @[r"C:\v\share\viewSEG\assets"], $w.assetDirs
 
+block assetDirsDevelopmentFallback:
+  # Development and tests: binaries in <repo>/bin, assets in <repo>/assets,
+  # searched after the release and installed layouts.
+  let dev = context(ofLinux, "/repo/bin", {"HOME": "/h"}, dirs = ["/repo/assets"])
+  doAssert dev.assetDirs == @["/repo/assets"], $dev.assetDirs
+  let all = context(ofLinux, "/repo/bin", {"HOME": "/h"},
+    dirs = ["/repo/assets", "/repo/bin/assets", "/repo/share/viewSEG/assets"])
+  doAssert all.assetDirs == @["/repo/bin/assets", "/repo/share/viewSEG/assets",
+    "/repo/assets"], $all.assetDirs
+  let w = context(ofWindows, r"D:\repo\bin", {"USERPROFILE": r"C:\u"},
+    dirs = [r"D:\repo\assets"])
+  doAssert w.assetDirs == @[r"D:\repo\assets"], $w.assetDirs
+
 block vendorMapDirsInOrder:
   let c = context(ofLinux, "/r", {"HOME": "/h",
     "PARSESEG_VENDOR_PATH": "/x/maps::/missing:/r/vendormaps"},
@@ -97,6 +110,13 @@ block vendorMapDirsInOrder:
     r"E:\v\config\vendormaps"])
   doAssert p.vendorMapDirs == @[r"E:\v\config\vendormaps", r"E:\v\vendormaps", r"F:\maps"],
     $p.vendorMapDirs
+
+block vendorMapDirsDevelopmentFallback:
+  # <appDir>/../vendormaps comes last, after PARSESEG_VENDOR_PATH.
+  let c = context(ofLinux, "/repo/bin", {"HOME": "/h", "PARSESEG_VENDOR_PATH": "/x"},
+    dirs = ["/repo/vendormaps", "/x", "/repo/bin/vendormaps"])
+  doAssert c.vendorMapDirs == @["/repo/bin/vendormaps", "/x", "/repo/vendormaps"],
+    $c.vendorMapDirs
 
 block realEnvironment:
   # The host's own context: directories are created on demand under a
@@ -111,7 +131,8 @@ block realEnvironment:
     for d in dirs:
       doAssert d.startsWith(root) and dirExists(d), d
     doAssert dirs[0].endsWith("viewSEG"), dirs[0]
-    doAssert assetDirs().len == 0 or assetDirs()[0].startsWith(appDir())
+    # bin/ in this repository: the development fallback finds <repo>/assets
+    doAssert assetDirs().len == 0 or assetDirs()[0].startsWith(appDir().parentDir)
     createDir(dirs[0] / "vendormaps")
     doAssert vendorMapDirs()[0] == dirs[0] / "vendormaps", $vendorMapDirs()
   finally:

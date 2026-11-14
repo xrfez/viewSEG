@@ -2,32 +2,56 @@
 ## plus ImPlot) on SDL3 and OpenGL 3. Only `ui/imgui/` may import imguin, ImPlot
 ## or SDL (docs/architecture.md).
 ##
-## For now the window holds a menu bar, a dockspace over the main viewport, one
-## ImPlot window and a "Messages" window; `-d:imguiDemo` adds the Dear ImGui
-## demo window. The shell services (dialogs, theme, icon) are in `shell`, the
-## look in `style`, DPI handling in `dpi`.
+## The window holds a menu bar, an icon toolbar, a dockspace with a sample plot,
+## a sample table and the Messages window, and a status bar; `-d:imguiDemo`
+## adds the Dear ImGui demo window. The look comes from a theme file
+## (`view/theme`, `style`, `fonts`); the shell services (dialogs, system theme,
+## icon) are in `shell`, DPI handling in `dpi`, the chrome in `chrome`.
 
-import std/[math, os, strutils]
+import std/[math, options, os, strutils]
 import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
 import ../../core/geometry
-import dpi, menus, messages, shell, style
+import ../../platform/paths
+import chrome, dpi, fonts, icons, menus, messages, shell, style
 
-export ThemeMode, ThemeChoice, clearColor
+export ThemeChoice, theme, messages
 
 const
   glslVersion = "#version 330"
   defaultSize = (1280, 800) ## the first window size at 100 %
+  plotTitle = IconPlot & "  Plot###plot"
+  tableTitle = IconTable & "  Headers###headers"
+  messagesTitle = IconLog & "  Messages###Messages"
 
 type
+  Ui = object
+    ## The frontend's own state between frames.
+    window: ptr SDL_Window
+    choice: ThemeChoice
+    system: SystemTheme
+    themes: seq[ThemeFile] ## the theme files found, user's first
+    selected: string       ## the chosen theme file's name; "" follows the system
+    theme: Theme
+    scale: float32
+    fontDirs: seq[string]
+    fonts: Fonts
+    tool: Tool
+    messages: Messages
+    marks: Marks
+    pendingTheme: Option[string] ## picked in the menu, applied after the frame
+    layoutDone: bool
+    running: bool
+
   FrameInfo* = object
     ## What a frame hook sees. The hook runs after the main window is drawn and
     ## before its buffers swap, with its GL context current.
     index*: int ## 0 for the first frame
     width*, height*: int ## framebuffer size in pixels
-    theme*: ThemeMode ## the theme the frame was drawn with
+    theme*: Theme ## the theme the frame was drawn with
     scale*: float32 ## the main window's UI scale (1 = 100 %)
+    ui: ptr Ui
 
   FrameHook* = proc (frame: FrameInfo) {.closure.}
 
@@ -36,27 +60,14 @@ type
     onFrame*: FrameHook ## called once per frame, nil for none
     theme*: ThemeChoice
       ## `followSystem` (the default) also honours the VIEWSEG_THEME
-      ## environment variable (`dark` or `light`).
-
-  Plot = object
-    xs, ys: seq[float32]
-
-  Ui = object
-    ## The frontend's own state between frames.
-    window: ptr SDL_Window
-    choice: ThemeChoice
-    theme: ThemeMode
-    scale: float32
-    messages: Messages
-    running: bool
-
-func dampedSine(n: int): Plot =
-  ## A small line series for the placeholder plot.
-  result = Plot(xs: newSeq[float32](n), ys: newSeq[float32](n))
-  for i in 0 ..< n:
-    let t = i.float32 / 100
-    result.xs[i] = t
-    result.ys[i] = exp(-t / 2) * sin(2 * PI * t)
+      ## environment variable.
+    themeName*: string
+      ## a theme file to use: a name from the theme folders or a path; "" for
+      ## the choice above
+    assetDirs*: Option[seq[string]]
+      ## where `fonts/` and `themes/` are looked up; default `paths.assetDirs()`
+    userThemeDir*: Option[string]
+      ## the user's own themes, searched first; default `<config>/themes`
 
 proc readPixel*(frame: FrameInfo; x, y: int): Rgba =
   ## The colour at (`x`, `y`) of the frame being drawn, in framebuffer pixels
@@ -70,8 +81,96 @@ proc readPixel*(frame: FrameInfo; x, y: int): Rgba =
     addr px)
   Rgba(r: px[0], g: px[1], b: px[2], a: px[3])
 
+proc readFrame*(frame: FrameInfo): seq[Rgba] =
+  ## The whole frame, row by row from the top, opaque. Only valid inside a
+  ## frame hook.
+  var raw = newSeq[uint8](frame.width * frame.height * 4)
+  glPixelStorei(GL_PACK_ALIGNMENT, 1)
+  glReadPixels(0, 0, frame.width.GLint, frame.height.GLint, GL_RGBA, GL_UNSIGNED_BYTE,
+    addr raw[0])
+  result = newSeq[Rgba](frame.width * frame.height)
+  for y in 0 ..< frame.height:
+    let src = (frame.height - 1 - y) * frame.width * 4 # GL rows start at the bottom
+    for x in 0 ..< frame.width:
+      let i = src + 4 * x
+      result[y * frame.width + x] = Rgba(r: raw[i], g: raw[i + 1], b: raw[i + 2], a: 255)
+
+proc savePng*(frame: FrameInfo; path: string): bool =
+  ## Writes the frame being drawn to `path` as a PNG (SDL's own encoder).
+  ## Only valid inside a frame hook. False, with SDL's error on stderr, when
+  ## it cannot be written.
+  var pixels = frame.readFrame()
+  let surface = SDL_CreateSurfaceFrom(frame.width.cint, frame.height.cint,
+    SDL_PIXELFORMAT_RGBA32, addr pixels[0], cint(frame.width * 4))
+  result = not surface.isNil and SDL_SavePNG(surface, path.cstring)
+  if not surface.isNil:
+    SDL_DestroySurface(surface)
+  if not result:
+    stderr.writeLine "viewSEG: cannot write ", path, ": ", SDL_GetError()
+
+proc markOf*(frame: FrameInfo; name: string): Rect =
+  ## Where the named part (`"toolbar"`, `"statusbar"`, `"plot"`,
+  ## `"tool.Open file"`, `"tool.Wiggle"` ...) was drawn in this frame, in
+  ## framebuffer pixels; an empty rectangle when it was not.
+  result = Rect()
+  for (n, r) in frame.ui.marks:
+    if n == name: result = r
+
+proc chooseTheme*(frame: FrameInfo; name: string) =
+  ## Picks theme file `name` ("" follows the system) as View > Theme does;
+  ## it applies after this frame.
+  frame.ui.pendingTheme = some(name)
+
+proc messages*(frame: FrameInfo): lent Messages =
+  ## The Messages window's contents so far.
+  frame.ui.messages
+
+# ------------------------------------------------------------------ themes --
+
+proc themeDirs(userDir: string; assetDirs: openArray[string]): seq[string] =
+  result = @[userDir]
+  for d in assetDirs:
+    result.add d / "themes"
+
+proc pickTheme(ui: var Ui): Theme =
+  ## The theme to draw with now: the selected file, else the default file for
+  ## the system's (or the forced) mode, else the built-in theme.
+  let mode = resolveTheme(ui.choice, ui.system)
+  let wanted = if ui.selected.len > 0: ui.selected else: DefaultThemeNames[mode]
+  var path = ""
+  for f in ui.themes:
+    if f.name == wanted: path = f.path
+  if path.len == 0 and fileExists(wanted):
+    path = wanted
+  if path.len == 0:
+    result = builtinTheme(mode)
+    if ui.selected.len > 0:
+      ui.messages.add "Theme `" & ui.selected & "` not found; using the built-in " &
+        result.name & ".", mlWarning
+  else:
+    var problems: seq[string]
+    result = loadTheme(path, mode, problems)
+    for p in problems:
+      ui.messages.add p, mlWarning
+  ui.messages.add "Theme: " & result.name & " (" &
+    (if path.len > 0: path else: "built in") & ")"
+
 proc restyle(ui: var Ui) =
   applyStyle(ui.theme, ui.scale)
+
+proc setTheme(ui: var Ui) =
+  ## Loads the theme `pickTheme` names, with its fonts, and restyles.
+  ui.theme = ui.pickTheme()
+  ui.fonts.load(ui.theme, ui.fontDirs, ui.messages)
+  ui.restyle()
+
+proc toggleTheme(ui: var Ui) =
+  ## Switches to the default theme of the other mode.
+  let other = if ui.theme.mode == tmDark: tmLight else: tmDark
+  ui.selected = DefaultThemeNames[other]
+  ui.setTheme()
+
+# ------------------------------------------------------------------ events --
 
 proc onShellEvent(ui: var Ui; ev: ShellEvent) =
   case ev.kind
@@ -84,15 +183,15 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     const hint = when defined(linux):
         " (Linux needs xdg-desktop-portal with a GTK or KDE backend, or zenity.)"
       else: ""
-    ui.messages.add($ev.dialog & ": the dialog could not be shown: " & ev.error & hint)
+    ui.messages.add($ev.dialog & ": the dialog could not be shown: " & ev.error & hint,
+      mlError)
   of seThemeChanged:
     ui.messages.add("System theme: " & $ev.theme)
-    let theme = resolveTheme(ui.choice, ev.theme)
-    if theme != ui.theme:
-      ui.theme = theme
-      ui.restyle()
+    ui.system = ev.theme
+    if ui.selected.len == 0 and resolveTheme(ui.choice, ev.theme) != ui.theme.mode:
+      ui.setTheme()
 
-proc onMenu(ui: var Ui; actions: set[MenuAction]) =
+proc onActions(ui: var Ui; actions: set[MenuAction]) =
   let parent = SDL_GetWindowID(ui.window)
   for a in actions:
     case a
@@ -100,35 +199,67 @@ proc onMenu(ui: var Ui; actions: set[MenuAction]) =
     of maOpenFiles: showOpenDialog(dkOpenFiles, parent)
     of maOpenFolder: showOpenDialog(dkOpenFolder, parent)
     of maQuit: ui.running = false
+    of maToggleTheme: ui.toggleTheme()
 
-proc drawUi(ui: var Ui; plot: Plot) =
-  ui.onMenu(drawMainMenu())
-  let
-    vp = igGetMainViewport()
-    s = ui.scale
-    margin = 40 * s
-    messagesHeight = 180 * s
-    # First placement: plot at the top left, messages along the bottom, both
-    # inside the main window at any scale.
-    plotHeight = max(min(380 * s, vp.WorkSize.y - messagesHeight - 3 * margin), 100 * s)
-  discard igDockSpaceOverViewport(0, vp, ImGui_DockNodeFlags_PassthruCentralNode.cint, nil)
-  igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + margin, y: vp.WorkPos.y + margin),
-    ImGui_Cond_FirstUseEver.cint, ImVec2_c(x: 0, y: 0))
-  igSetNextWindowSize(ImVec2_c(x: 560 * s, y: plotHeight), ImGui_Cond_FirstUseEver.cint)
-  if igBegin("Plot", nil, 0):
-    if ImPlot_BeginPlot("Damped sine", ImVec2_c(x: -1, y: -1), 0):
-      ImPlot_SetupAxes("t (s)", "amplitude", 0, 0)
-      ImPlot_PlotLine_FloatPtrFloatPtr("signal", addr plot.xs[0], addr plot.ys[0],
-        plot.xs.len.cint, 0, 0, sizeof(float32).cint)
-      ImPlot_EndPlot()
+# ------------------------------------------------------------------- frame --
+
+proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
+  ## The first layout: the plot top left, the messages under it, the header
+  ## table on the right.
+  igDockBuilderRemoveNode(dockId)
+  discard igDockBuilderAddNode(dockId, ImGui_DockNodeFlags_DockSpace.cint)
+  igDockBuilderSetNodeSize(dockId, size)
+  var left, right, top, bottom: ImGuiID
+  discard igDockBuilderSplitNode(dockId, ImGuiDir_Right, 0.36, addr right, addr left)
+  discard igDockBuilderSplitNode(left, ImGui_Dir_Down, 0.3, addr bottom, addr top)
+  igDockBuilderDockWindow(plotTitle, top)
+  igDockBuilderDockWindow(tableTitle, right)
+  igDockBuilderDockWindow(messagesTitle, bottom)
+  igDockBuilderFinish(dockId)
+  ui.layoutDone = true
+
+proc drawDockSpace(ui: var Ui) =
+  ## The dockspace over the rest of the main window, on the backdrop colour,
+  ## with a gap around and between the panels (the splitters).
+  let vp = igGetMainViewport()
+  let backdrop = vec4(ui.theme.roles[rlBackdrop])
+  let gap = igGetStyle().DockingSeparatorSize
+  igSetNextWindowPos(vp.WorkPos, 0, ImVec2_c(x: 0, y: 0))
+  igSetNextWindowSize(vp.WorkSize, 0)
+  igSetNextWindowViewport(vp.ID)
+  igPushStyleVar_Vec2(ImGui_StyleVar_WindowPadding.cint, ImVec2_c(x: gap, y: gap))
+  igPushStyleVar_Float(ImGui_StyleVar_WindowBorderSize.cint, 0)
+  igPushStyleColor_Vec4(ImGui_Col_WindowBg.cint, backdrop)
+  const hostFlags = ImGui_WindowFlags_NoDecoration.cint or ImGui_WindowFlags_NoDocking.cint or
+    ImGui_WindowFlags_NoBringToFrontOnFocus.cint or ImGui_WindowFlags_NoNavFocus.cint or
+    ImGui_WindowFlags_NoSavedSettings.cint or ImGui_WindowFlags_NoMove.cint
+  discard igBegin("##dockhost", nil, hostFlags)
+  igPopStyleColor(1)
+  igPopStyleVar(2)
+  let dockId = igGetID_Str("viewSEG.dockspace")
+  if not ui.layoutDone:
+    ui.buildLayout(dockId, igGetContentRegionAvail())
+  igPushStyleColor_Vec4(ImGui_Col_Border.cint, backdrop) # ImGui draws splitters in it
+  discard igDockSpace(dockId, ImVec2_c(x: 0, y: 0), 0, nil)
+  igPopStyleColor(1)
   igEnd()
-  igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + margin,
-    y: vp.WorkPos.y + vp.WorkSize.y - messagesHeight - margin),
-    ImGui_Cond_FirstUseEver.cint, ImVec2_c(x: 0, y: 0))
-  igSetNextWindowSize(ImVec2_c(x: 560 * s, y: messagesHeight), ImGui_Cond_FirstUseEver.cint)
-  ui.messages.draw()
+
+proc drawUi(ui: var Ui; plot: SamplePlot): set[MenuAction] =
+  ui.marks.setLen 0
+  let menu = drawMainMenu(ui.themes, ui.selected)
+  result = menu.actions
+  if menu.pickedTheme and menu.theme != ui.selected:
+    ui.pendingTheme = some(menu.theme) # fonts and styles change between frames
+  result.incl drawToolbar(ui.tool, ui.theme, ui.marks)
+  drawStatusBar(ui.fonts, ui.theme,
+    ChromeInfo(themeName: ui.theme.name, scale: ui.scale), ui.marks)
+  ui.drawDockSpace()
+  drawSamplePlot(plotTitle, plot, ui.marks)
+  drawSampleTable(tableTitle, ui.fonts, ui.theme, ui.marks)
+  ui.messages.draw(messagesTitle, ui.theme)
   when defined(imguiDemo):
     igShowDemoWindow(nil)
+    ImPlot_ShowDemoWindow(nil)
 
 proc fail(what: string): int =
   stderr.writeLine "viewSEG: ", what, ": ", SDL_GetError()
@@ -142,6 +273,30 @@ proc createMainWindow(): ptr SDL_Window =
   let (w, h) = scaledWindowSize(defaultSize, primaryDisplayScale(), (usable.w.int, usable.h.int))
   SDL_CreateWindow("viewSEG", w.cint, h.cint,
     SDL_WINDOW_OPENGL or SDL_WINDOW_RESIZABLE or SDL_WINDOW_HIGH_PIXEL_DENSITY)
+
+proc initUi(window: ptr SDL_Window; opts: RunOptions): Ui =
+  ## The frontend's state: where its assets are, which theme, the fonts.
+  let ctx = currentContext()
+  let assets = if opts.assetDirs.isSome: opts.assetDirs.get else: ctx.assetDirs
+  let userThemes = if opts.userThemeDir.isSome: opts.userThemeDir.get
+                   else: ctx.configDir / "themes"
+  let env = getEnv(ThemeEnvVar).strip
+  var choice = opts.theme
+  var selected = opts.themeName
+  if choice == followSystem and selected.len == 0:
+    choice = parseThemeChoice(env)
+    if choice == followSystem and env.len > 0:
+      selected = env # a theme name or path
+  if selected.endsWith(ThemeExt) and not fileExists(selected):
+    selected.setLen selected.len - ThemeExt.len
+  result = Ui(window: window, choice: choice, system: systemTheme(), selected: selected,
+    themes: themeFiles(themeDirs(userThemes, assets)), scale: windowScale(window),
+    running: true)
+  for d in assets:
+    result.fontDirs.add d / "fonts"
+  if assets.len == 0:
+    result.messages.add "No assets folder found next to the program; using the " &
+      "built-in theme and font.", mlWarning
 
 proc run*(opts = RunOptions()): int =
   ## Opens the main window and runs the event loop until the window closes, the
@@ -192,12 +347,9 @@ proc run*(opts = RunOptions()): int =
   defer: ImGui_Impl_OpenGL3_Shutdown()
   installDpiScaling(window)
 
-  let choice = if opts.theme != followSystem: opts.theme
-               else: parseThemeChoice(getEnv(ThemeEnvVar))
-  var ui = Ui(window: window, choice: choice, theme: resolveTheme(choice, systemTheme()),
-    scale: windowScale(window), running: true)
-  ui.restyle()
-  let plot = dampedSine(1000)
+  var ui = initUi(window, opts)
+  ui.setTheme()
+  let plot = samplePlot(1000)
   var
     frame = 0
     event: SDL_Event
@@ -215,7 +367,7 @@ proc run*(opts = RunOptions()): int =
         if scale != ui.scale:
           ui.scale = scale
           ui.restyle()
-          ui.messages.add("Display scale: " & formatFloat(scale * 100, ffDecimal, 0) & " %")
+          ui.messages.add("Display scale: " & $int(round(scale * 100)) & " %")
     for ev in pollShellEvents():
       ui.onShellEvent(ev)
     if (SDL_GetWindowFlags(window) and SDL_WINDOW_MINIMIZED) != 0:
@@ -224,20 +376,19 @@ proc run*(opts = RunOptions()): int =
       ImGui_Impl_OpenGL3_NewFrame()
       ImGui_ImplSDL3_NewFrame()
       igNewFrame()
-      ui.drawUi(plot)
+      let actions = ui.drawUi(plot)
       igRender()
 
       var w, h: cint
       discard SDL_GetWindowSizeInPixels(window, addr w, addr h)
       glViewport(0, 0, w, h)
-      let bg = clearColor(ui.theme)
-      glClearColor(bg.r.float32 / 255, bg.g.float32 / 255, bg.b.float32 / 255,
-        bg.a.float32 / 255)
+      let bg = ui.theme.roles[rlBackdrop]
+      glClearColor(bg.r.float32 / 255, bg.g.float32 / 255, bg.b.float32 / 255, 1)
       glClear(GL_COLOR_BUFFER_BIT)
       ImGui_Impl_OpenGL3_RenderDrawData(igGetDrawData())
       if opts.onFrame != nil:
         opts.onFrame(FrameInfo(index: frame, width: w.int, height: h.int, theme: ui.theme,
-          scale: ui.scale))
+          scale: ui.scale, ui: addr ui))
       if (io.ConfigFlags and ImGui_ConfigFlags_ViewportsEnable.cint) != 0:
         # Viewport windows switch the GL context; restore the main one.
         let (backupWindow, backupContext) = (SDL_GL_GetCurrentWindow(),
@@ -246,6 +397,12 @@ proc run*(opts = RunOptions()): int =
         igRenderPlatformWindowsDefault(nil, nil)
         discard SDL_GL_MakeCurrent(backupWindow, backupContext)
       discard SDL_GL_SwapWindow(window)
+      # Actions change fonts and styles, which ImGui allows only between frames.
+      ui.onActions(actions)
+      if ui.pendingTheme.isSome:
+        ui.selected = ui.pendingTheme.get
+        ui.pendingTheme = none(string)
+        ui.setTheme()
 
       inc frame
       if opts.maxFrames > 0 and frame >= opts.maxFrames:
