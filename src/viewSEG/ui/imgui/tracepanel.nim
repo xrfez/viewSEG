@@ -13,7 +13,10 @@
 ## Esc to cancel a drag, and the scroll bars (`plotbars`) beside the plot
 ## when part of the data is out of view. No view ever shows anything past
 ## the data, and a new plot size keeps the scale from the top-left corner
-## (`core/zoom`). Each new view goes to `core` (`ckView`), which
+## (`core/zoom`). In the wiggle modes no view is zoomed out past one pixel a
+## trace (`viewLimits`), so every trace in view is drawn as a wiggle;
+## density, which shows a whole large record at once, is drawn only in the
+## modes that name it. Each new view goes to `core` (`ckView`), which
 ## decides what to read; the first view of a gesture is sent with
 ## `remember`, so back returns to the view before it.
 ##
@@ -25,9 +28,8 @@
 ##
 ## The image comes from `gpu/plotimage`: the panel's tiles, uploaded once
 ## each, drawn into an image the size of the plot as density, wiggles or
-## wiggles over density, shown with ImPlot's image item. Where traces are
-## closer than `WiggleMinPixels`, the wiggle modes draw density, and the
-## strip says so. Until a tile for the new view arrives, the plot keeps
+## wiggles over density, shown with ImPlot's image item. Until a tile for
+## the new view arrives, the plot keeps
 ## drawing the tiles it has, stretched. What lies under the mouse
 ## (`core/pick`) goes back to the caller for the status bar.
 ##
@@ -78,7 +80,6 @@ export PaperBackground, PaperInk
 const
   modeSymbols: array[DisplayMode, Symbol] = [syDensity, syWiggle, syWiggleDensity]
   fillSymbols: array[WiggleFill, Symbol] = [syWigglePositive, syWiggleNegative]
-  densityNote = "density: traces under 4 px"
   menuId = "##plotmenu"
   headerMenuId = "##headermenu"
   gotoId = "Go to record##goto"
@@ -397,8 +398,6 @@ proc drawWiggleSettings(p: Panel; res: var PanelOutput) =
     "amplitudes drawn full black in density swing this far, and none further.")
   igSameLine(0, -1)
   igTextUnformatted("trace spacings", nil)
-  igTextUnformatted(("Where traces are closer than " & $int(WiggleMinPixels) &
-    " pixels, density is drawn instead.").cstring, nil)
 
 proc fill(box: var ScaleBox; text: string) =
   let n = min(text.len, box.text.len - 1)
@@ -650,23 +649,6 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
       var s = st.settings
       s.cursorLine = not on
       res.commands.add Command(kind: ckSettings, settings: s)
-    if d.mode != dmDensity:
-      # Room for the note is kept in the wiggle modes, so that the strip does
-      # not wrap anew when zooming crosses the limit.
-      igSameLine(0, 8)
-      let at = igGetCursorPos()
-      let w = igCalcTextSize(densityNote, nil, false, -1).x
-      igSetCursorPosY(at.y + round((size - igGetTextLineHeight()) / 2))
-      if d.drawsWiggles(tp.cur) or tp.cur.columns == 0:
-        igDummy(ImVec2_c(x: w, y: igGetTextLineHeight()))
-      else:
-        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-        igTextUnformatted(densityNote, nil)
-        igPopStyleColor(1)
-        marks.mark("plot.density note")
-        tip("Traces are closer than " & $int(WiggleMinPixels) & " pixels here, too close " &
-          "for wiggles, so density is drawn. Zoom in on the traces (Shift + wheel, " &
-          "Ctrl + Right) to see wiggles.")
   tp.stripGroup(1, right, 12, lift):
     drawGainControls(p, t, marks, res.commands, res.notes)
   # the scales
@@ -1135,7 +1117,7 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
     after = after.stepped(fx, fy, lim)
     if tp.burst(gsKeyPan): remember = true
   if once(ctrl or ImGui_Key_0.cint) or once(ctrl or ImGui_Key_Keypad0.cint):
-    after = fitAll(p.layout, after.columns, after.rows)
+    after = fitted(lim, after.columns, after.rows)
     remember = true
     tp.gesture = gsNone
   if once(ImGui_Key_Backspace.cint) or once(alt or ImGui_Key_LeftArrow.cint):
@@ -1166,7 +1148,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   template p: untyped = st.panels[k]
   template layer: untyped = st.panels[k].layers[0]
   template tiles: untyped = st.tiles(k)
-  let lim = limitsOf(p.layout)
+  # The limits on the plot's size last frame; `limNow` on this frame's.
+  let lim = p.viewLimits(tp.cur.columns)
   let fields = p.shownFields
   let paper = layer.display.isPaper
   let ink = plotInk(t, layer.display)
@@ -1194,7 +1177,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   let units = st.settings.scale
   case ask.kind
   of vaNone: discard
-  of vaFit: next = fitAll(p.layout, next.columns, next.rows)
+  of vaFit: next = fitted(lim, next.columns, next.rows)
   of vaZoomIn: next = next.zoomed(KeyStep, next.centre, BothAxes, lim)
   of vaZoomOut: next = next.zoomed(1 / KeyStep, next.centre, BothAxes, lim)
   of vaTraceScale: next = withTraceScale(next, ask.value, ppi, units, lim)
@@ -1246,7 +1229,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       # one pixel of line at 100 %, two for a hovered or selected trace
       let width = max(1.0, round(float64(fb.x)))
       let tex = tp.renderer.render(PlotFrame(view: shown, background: ink.background,
-        density: d.drawsDensity(shown), wiggles: d.drawsWiggles(shown), scale: scale,
+        density: d.drawsDensity, wiggles: d.drawsWiggles, scale: scale,
         style: d.styleFor(shown, scale, width, 2 * width), ink: ink.wiggle,
         tint: DensityTint, marks: tp.marks), tiles, tp.textures)
       tp.drawn = shown
@@ -1291,20 +1274,22 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     discard igInvisibleButton("##plotinput", size, ImGui_ButtonFlags_MouseButtonLeft.cint or
       ImGui_ButtonFlags_MouseButtonRight.cint or ImGui_ButtonFlags_MouseButtonMiddle.cint)
     let hovered = igIsItemHovered(0)
-    # A new plot size keeps the scale (or the whole data) from the top left.
+    # A new plot size keeps the scale (or the whole data) from the top left,
+    # within the limits on the new size.
+    let limNow = p.viewLimits(view.columns)
     var after = if view.columns != next.columns or view.rows != next.rows:
-        next.resized(view.columns, view.rows, lim)
+        next.resized(view.columns, view.rows, limNow)
       else: view
     var click = clNone
-    tp.handleMouse(after, view, plot, lim, hovered, t, remember, menu, click)
-    case tp.bars.drawScrollBars(after, view, pos, size, lim, t, marks)
+    tp.handleMouse(after, view, plot, limNow, hovered, t, remember, menu, click)
+    case tp.bars.drawScrollBars(after, view, pos, size, limNow, t, marks)
     of beNone, beDrag: discard
     of beGrab:
       remember = true
       tp.gesture = gsNone
     of bePage: (if tp.burst(gsPage): remember = true)
     of beWheel: (if tp.burst(gsBarWheel): remember = true)
-    tp.handleKeys(after, view, plot, lim, hovered, p, st.selection.selected.len > 0,
+    tp.handleKeys(after, view, plot, limNow, hovered, p, st.selection.selected.len > 0,
       recordOf(st, p), remember, res)
     tp.cursorText = ""
     if hovered:

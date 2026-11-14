@@ -36,7 +36,8 @@
 - **Never past the data:** every way of moving the view (wheel, keys, drags, box zoom,
   typed scales, the scroll bars, back, a new window size) stops at the first and last
   trace and at the record's start and end. Zoomed out as far as it goes, the record
-  fills the plot exactly.
+  fills the plot exactly (in the wiggle modes, as many of its traces as the plot has
+  pixel columns: see the display mode below).
 - **The time axis shows tick values only**, no title: the unit is in the ms/in box and
   in the status bar. Every label is as wide as the longest the record can have (its
   first or last time, with the decimals of the finest step a view of it can show), so
@@ -87,10 +88,17 @@
     density, and two toggles for the wiggles' fills (◢ ◣): the **positive fill** (the
     lobes right of the trace) and the **negative fill** (left of it), either, both or
     none. The default is **wiggles with the positive fill**, black on white paper.
-    Where traces are closer together than 4 pixels, the wiggle modes draw density
-    instead, and the strip says so ("density: traces under 4 px") until the traces are
-    zoomed in far enough; room for that note is kept in the wiggle modes, so the strip
-    does not wrap anew when a zoom crosses the limit. The mode a user picks becomes the
+    **Density is drawn only when it is chosen:** in the density mode, and under the
+    wiggles in wiggles over density; the wiggle modes draw wiggles at every zoom. In
+    them, **zooming out stops at one pixel a trace**, so every trace in view is drawn
+    and none is skipped: a record of more traces than the plot has pixel columns opens
+    at that limit from its first trace, with the scroll bar along the traces, and fit
+    goes as far as the limit. Every gesture, the typed traces per inch, back and a new
+    window size keep to it; the time axis has no such limit (each pixel row keeps its
+    samples' peaks). Seeing a whole large record at once is what the density mode is
+    for: it zooms out until the record fills the plot. Changing from density to a
+    wiggle mode in a wider view narrows the view to the limit, keeping its left edge.
+    The mode a user picks becomes the
     default for new plot windows and is remembered between runs, as are the fills, the
     overlap, the colours, the gain type, amount and settings, the order and the display
     header's fields (`Settings.plot`: a new plot starts as the user left the last one;
@@ -99,7 +107,9 @@
     Typing a value and pressing Enter sets the zoom, keeping the top-left corner where it
     is (a plot grows from where it starts, as on paper); zooming any other way updates the
     boxes. A value past what the record allows (wider than the record, narrower than four
-    traces or eight samples) stops there, and the box shows the scale reached; a value that
+    traces or eight samples, or in a wiggle mode more traces than the plot has pixel
+    columns) stops there, keeping the top-left corner, and the box shows the scale
+    reached; a value that
     is not a positive number is refused with a message in the log. Units are a setting
     (per inch or per cm; time also as inches or cm per second). Physical size uses 96 dpi
     times the display scale unless the monitor is calibrated: in the window's "more"
@@ -169,6 +179,9 @@
 
 ## Wiggles
 
+- **At every zoom** the wiggle modes draw wiggles, never density in their place: the
+  view stops at one pixel a trace (above), where each trace has a pixel column of its
+  own.
 - **The line** runs through each trace's samples, straight between them. Zoomed out in
   time, where a pixel row holds more samples than one, it runs through each column's
   smallest and largest sample, in the order they occur, so no peak or trough is lost.
@@ -388,7 +401,7 @@ sometimes a laptop with integrated graphics; plan for 16 GB of RAM and files ove
 | Frame time while panning or zooming | under 16 ms on a GPU; under 33 ms on software OpenGL |
 | Frame watchdog | a frame whose UI-thread work passes 50 ms is logged as a stall |
 | Response to a zoom or pan | the view moves at once with what is already drawn; new data replaces it as it arrives |
-| Work per view | only the traces and samples on screen (plus a small read-ahead and the filter margin); zoomed out past a trace per pixel, only the traces drawn |
+| Work per view | only the traces and samples on screen (plus a small read-ahead and the filter margin); in density zoomed out past a trace per pixel, only the traces drawn; in the wiggle modes at most a trace per pixel column, every one of them read |
 | Open | progress and Cancel at once; a second open of an unchanged file reads its index cache |
 
 ## Open choices
@@ -447,9 +460,12 @@ Defaults taken in this draft, for the user to confirm or change:
     every format alike), not raw header words; sorting by any raw header field comes with
     the gather domains. No key has a shortcut yet (open choice 4's single keys come
     first).
-19. **The plot opens in wiggles with the positive fill**, black on white paper, where
-    traces are at least 4 pixels apart, and in greyscale density where they are closer
-    (a whole shot of thousands of traces opens as density).
+19. **Decided by the user:** the plot opens in wiggles with the positive fill, black on
+    white paper, and **density is drawn only in the modes that name it** ("it should
+    only be on if the user is asking for it"); there is no hand-over to density where
+    traces are close. In the wiggle modes zooming out stops at one pixel a trace (the
+    user: "maybe dont allow a zoom out that far?"), so a whole shot of thousands of
+    traces opens at that limit from its first trace; the density mode shows it whole.
 20. **The trace overlap is 1** (the strongest amplitudes reach the next trace's
     baseline), from 0.1 to 10, and the wiggles' clip is the same reference as density's
     full black, so the gain amount moves both alike.

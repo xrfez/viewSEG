@@ -113,6 +113,9 @@ block zoomedOut:
     st.apply openCmd(fx.surveySegy())
     doAssert st.settle(st.main.layout.traces > 0)
     st.setGain(dgNone)
+    var d = st.main.layers[0].display
+    d.mode = dmDensity # 4 traces a pixel: only density zooms out that far
+    st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
     st.look(columns = 6, rows = 100)
     doAssert st.settle(st.shown.len == 1)
     let t = st.shown[0]

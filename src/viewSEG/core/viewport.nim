@@ -12,17 +12,19 @@
 ##
 ## - the visible positions, plus a read-ahead of half the visible count on
 ##   each side, so a pan of up to half a view needs nothing new;
-## - zoomed out past one position per pixel column, every `stride`-th
-##   position only (a power of two, positions that are multiples of it),
-##   never more than the panel has columns, read-ahead included;
+## - zoomed out past one position per pixel column (in density only: the
+##   wiggle modes stop at one pixel a trace, `MinTracePixels`), every
+##   `stride`-th position only (a power of two, positions that are multiples
+##   of it), never more than the panel has columns, read-ahead included; a
+##   view no wider than the plot's columns reads every position it shows;
 ## - the visible samples, plus the same read-ahead in time; zoomed out past
 ##   one sample per pixel row, the tile keeps one column per `decimation`
 ##   samples (a power of two; `decimatePeakInto`), at most two per row;
 ## - `margin` more samples on each side for processing (a filter's edge, an
 ##   AGC window), decoded but not kept (`decodeWindow`);
-## - when traces are wide enough for wiggles (`WiggleMinPixels`) and the
-##   samples are decimated, each column's extremes as well (`envelope`), so
-##   a wiggle keeps its peaks (`core/wiggle`).
+## - when the layer draws wiggles and the samples are decimated, each
+##   column's extremes as well (`envelope`), so a wiggle keeps its peaks
+##   (`core/wiggle`).
 ##
 ## Powers of two keep a request the same under small zooms, and aligned
 ## positions and samples keep it the same under small pans. `covers` says
@@ -39,9 +41,10 @@ const
   ReadAhead* = 0.5
     ## positions (and samples) read beyond the view on each side, as a
     ## fraction of the visible count
-  WiggleMinPixels* = 4.0
-    ## the narrowest trace spacing, in pixels, wiggles are drawn at; density
-    ## takes over below it
+  MinTracePixels* = 1.0
+    ## the narrowest trace spacing, in pixels, of a view in a wiggle mode:
+    ## zoomed out as far as it goes, every trace in view has a pixel column
+    ## of its own, and none is skipped (density has no such limit)
 
 type
   Span* = object
@@ -147,15 +150,19 @@ func spread(lo, hi, top, ahead: int): (int, int) =
   (max(0, lo - ahead), min(top, hi + ahead))
 
 func requestFor*(layout: PanelLayout; view: Viewport; margin = 0;
-    readAhead = ReadAhead): ReadRequest =
-  ## What to read for `view`: see the module documentation. Empty (`count`
-  ## 0) when the panel has no traces or no size. `gen` is left 0.
+    readAhead = ReadAhead; wiggles = false): ReadRequest =
+  ## What to read for `view` of a layer that draws wiggles (`wiggles`) or
+  ## not: see the module documentation. Empty (`count` 0) when the panel has
+  ## no traces or no size. `gen` is left 0.
   let vis = visiblePositions(layout, view)
   let vs = visibleSamples(layout, view)
   if vis.len == 0 or vs.len == 0 or view.columns <= 0 or view.rows <= 0:
     return ReadRequest(stride: 1, decimation: 1)
-  # Positions: multiples of the stride.
-  let stride = strideFor(vis.len, view.columns)
+  # Positions: multiples of the stride. A view no wider than the plot's
+  # columns may touch one more position than it is wide (both edges cut
+  # through one), and still reads every one of them.
+  let stride = if view.traces.width <= float64(view.columns) * (1 + 1e-9): 1
+               else: strideFor(vis.len, view.columns)
   let kLo = (vis.a + stride - 1) div stride
   let kHi = max(kLo, vis.b div stride)
   let shown = kHi - kLo + 1
@@ -175,13 +182,13 @@ func requestFor*(layout: PanelLayout; view: Viewport; margin = 0;
   let firstSample = j0 * dec
   ReadRequest(first: k0 * stride, count: k1 - k0 + 1, stride: stride,
     firstSample: firstSample, samples: min(layout.samples, (j1 + 1) * dec) - firstSample,
-    decimation: dec, margin: max(margin, 0),
-    envelope: dec > 1 and pixelsPerTrace(view) >= WiggleMinPixels)
+    decimation: dec, margin: max(margin, 0), envelope: dec > 1 and wiggles)
 
-func covers*(r: ReadRequest; layout: PanelLayout; view: Viewport; margin = 0): bool =
-  ## Whether `r` holds what `view` shows, at the resolution it needs: then
-  ## nothing new is read.
-  let need = requestFor(layout, view, margin, readAhead = 0)
+func covers*(r: ReadRequest; layout: PanelLayout; view: Viewport; margin = 0;
+    wiggles = false): bool =
+  ## Whether `r` holds what `view` shows, at the resolution it needs (with
+  ## the extremes wiggles need, for `wiggles`): then nothing new is read.
+  let need = requestFor(layout, view, margin, readAhead = 0, wiggles = wiggles)
   not r.isEmpty and not need.isEmpty and r.stride == need.stride and
     r.decimation == need.decimation and r.margin == need.margin and
     (r.envelope or not need.envelope) and

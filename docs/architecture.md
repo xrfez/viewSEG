@@ -375,7 +375,10 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 3. **Request** (UI). The frontend moves the view itself, with `core/zoom` (zoom about
    the pointer along one axis or both, pan, drag, box zoom, a new plot size, the scroll
    bars, all kept within the data: never past the first and last trace or the record's
-   start and end; `core` keeps any view it is sent inside too) and `core/scales` (traces
+   start and end, and in the wiggle modes never more traces across than the plot has
+   pixel columns, `Panel.viewLimits`; `core` keeps any view it is sent inside too, and a
+   record is first shown as wide as those limits allow, from its first trace:
+   `fitted`) and `core/scales` (traces
    and ms per inch or cm, at the monitor's
    pixels per inch), and reports what its plot shows (`ckView`: the x range in
    positions, the y range in ms, the size in pixels). The first view of a gesture comes
@@ -384,7 +387,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    bumps the panel's `jumps` and the frontend follows. When the request
    sent last does not cover it (`covers`), `core/viewport.requestFor` makes a new one:
    the visible positions plus half a view of read-ahead on each side, every `stride`-th
-   position when zoomed out (never more than the pixel columns), the visible samples plus
+   position when zoomed out past a trace per pixel column (density only; never more
+   than the pixel columns), the visible samples plus
    read-ahead, kept at `decimation` samples per column (at most two columns per pixel
    row), and the display pipeline's margin (`requiredMargin`, `decodeWindow`). The
    request carries the new `requestGen`. The reader acts only on the newest note.
@@ -397,7 +401,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    cut to the kept samples and peak-decimated into the tile; when the request asks for
    it (traces wide enough for wiggles, samples decimated), each column's smallest and
    largest sample are kept too, in the order they occur (`core/wiggle.minMaxInto`), so a
-   wiggle keeps its peaks. Before the pipeline, rows
+   wiggle keeps its peaks (the request asks for them when the layer draws wiggles).
+   Before the pipeline, rows
    marked dead are blanked and samples that are not numbers set to 0: processSEG leaves
    such a row as it is, and it would be drawn at its raw amplitude among processed ones.
    The file's **edits** come with each request (`core/edits`: the gather's killed and
@@ -433,9 +438,12 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    reference, `displayScale`; a colour-map texture) or as the plot's background, then
    its wiggles, one instanced quad per trace whose fragment shader computes the line's
    and the fills' coverage of each pixel, then its hovered and selected traces again,
-   on top. The wiggle shader gets positions and times relative to the view's top-left
-   corner (taken in float64), since float32 loses whole traces at position 10 000 000. Which of density and wiggles a layer shows depends on its mode and on the
-   trace spacing on screen (`drawsDensity`, `drawsWiggles`: wiggles need 4 pixels).
+   on top. A tile that a newer one covers in view is not drawn at all (`hidden`): it
+   would be painted over (four tiles drawn in full cost llvmpipe 52 ms a frame at the
+   wiggle limit, one 33 ms). The wiggle shader gets positions and times relative to the
+   view's top-left corner (taken in float64), since float32 loses whole traces at
+   position 10 000 000. Which of density and wiggles a layer shows depends on its mode
+   alone (`drawsDensity`, `drawsWiggles`), never on the trace spacing.
    Everything but the tiles is a uniform, so a change of gain amount, of a type that is
    a scale alone, of the mode, the fills, the overlap or the colours, and a hover, draws
    again at once and reads nothing; a click uploads one byte per trace of each tile. An

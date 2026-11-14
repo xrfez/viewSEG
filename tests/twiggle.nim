@@ -1,21 +1,26 @@
 ## The wiggle kernels of `core/wiggle` and what feeds them: the min/max
 ## decimation keeps every peak and trough in the order they occur; a
-## request keeps the columns' extremes exactly when traces are wide enough
-## for wiggles and the samples are decimated, and one without them does not
-## cover a view that needs them; the panel's reader fills them from the
+## request keeps the columns' extremes exactly when the layer draws wiggles
+## (at any trace spacing) and the samples are decimated, and one without
+## them does not cover a view that needs them; a view as wide as the plot
+## has pixel columns reads every trace it shows, also when its edges cut
+## through two; the panel's reader fills the extremes from the
 ## file's own samples; the wiggle's line and fills cover a pixel as the
 ## shader is to (straight between vertices, clipped at the overlap,
 ## the other way for a negative scale); a style's overlap is in its range, whatever
-## the settings hold; density takes over below four pixels a
-## trace; the hovered and selected rows of a tile are found from
+## the settings hold; density is drawn only in the modes that name it, at
+## any trace spacing; the hovered and selected rows of a tile are found from
 ## survey-wide trace ids; and a hover on a trace no open file has clears
 ## the hover without a warning.
 ##
 ## Seen to fail: with `minMaxInto` keeping the extremes smallest first
 ## whatever their order, `minMaxKeepsOrder` found (-1, 5) for a bin that
-## peaks at 5 before it falls to -1; with the envelope asked for at any
-## trace width, `envelopeOnlyForWiggles` found it on a view of 2 pixels a
-## trace; with `covers` ignoring the envelope, `envelopeIsCovered` found a
+## peaks at 5 before it falls to -1; with the envelope asked for whatever
+## the mode, `envelopeOnlyForWiggles` found it on a density view; with the
+## stride taken from the positions the view touches (as it was),
+## `wigglesReadEveryTrace` found stride 2 on a view 640 positions wide on
+## 640 columns; with `drawsWiggles` true in the wiggle mode only,
+## `densityOnlyWhenAsked` found no wiggles over density; with `covers` ignoring the envelope, `envelopeIsCovered` found a
 ## request without it covering a view that needs it; with the reader never
 ## filling the envelope, `readerFillsTheEnvelope` found row 0 all zeros;
 ## with the swing not clipped, `swingIsClipped` found 4.5 trace spacings at
@@ -77,27 +82,44 @@ block envelopeOnlyForWiggles:
   let layout = PanelLayout(traces: 100, samples: 4000, dtMs: 2)
   var v = fitAll(layout, 800, 500) # 8 px a trace, 8 samples a row
   doAssert pixelsPerTrace(v) == 8
-  var r = requestFor(layout, v)
+  var r = requestFor(layout, v, wiggles = true)
   doAssert r.decimation > 1 and r.envelope, $r
-  v.columns = 200 # 2 px a trace: density, no envelope
-  r = requestFor(layout, v)
+  v.columns = 100 # 1 px a trace: still wiggles, still the extremes
+  r = requestFor(layout, v, wiggles = true)
+  doAssert r.decimation > 1 and r.envelope, $r
+  r = requestFor(layout, v, wiggles = false) # density: no extremes
   doAssert r.decimation > 1 and not r.envelope, $r
   v.columns = 800
   v.timeMs = Span(lo: 0, hi: 400) # 200 samples on 500 rows: not decimated
-  r = requestFor(layout, v)
+  r = requestFor(layout, v, wiggles = true)
   doAssert r.decimation == 1 and not r.envelope, $r
+
+block wigglesReadEveryTrace:
+  # a wiggle mode's widest view, as many positions as columns, read at
+  # stride 1, wherever its edges fall
+  let layout = PanelLayout(traces: 4000, samples: 1000, dtMs: 2)
+  for lo in [-0.5, 0.0, 0.3, 1999.7]:
+    let v = Viewport(traces: Span(lo: lo, hi: lo + 640), timeMs: Span(lo: 0, hi: 1998),
+      columns: 640, rows: 400)
+    let r = requestFor(layout, v, wiggles = true)
+    doAssert r.stride == 1, $lo & ": " & $r
+    let vis = visiblePositions(layout, v)
+    doAssert r.first <= vis.a and r.last >= vis.b, $lo & ": " & $r
+  # a little wider than the columns (density): every other one
+  let wider = Viewport(traces: Span(lo: 0, hi: 641), timeMs: Span(lo: 0, hi: 1998),
+    columns: 640, rows: 400)
+  doAssert requestFor(layout, wider).stride == 2
 
 block envelopeIsCovered:
   let layout = PanelLayout(traces: 100, samples: 4000, dtMs: 2)
-  var wide = fitAll(layout, 800, 500)
-  var narrow = wide
-  narrow.columns = 396 # 3.96 px a trace, the same decimation and stride
-  let withIt = requestFor(layout, wide)
-  let without = requestFor(layout, narrow)
+  let v = fitAll(layout, 800, 500)
+  let withIt = requestFor(layout, v, wiggles = true)
+  let without = requestFor(layout, v, wiggles = false)
   doAssert withIt.envelope and not without.envelope
   doAssert withIt.stride == without.stride and withIt.decimation == without.decimation
-  doAssert not without.covers(layout, wide), "no envelope covers a view that needs one"
-  doAssert withIt.covers(layout, narrow)
+  doAssert not without.covers(layout, v, wiggles = true),
+    "no envelope covers a view that needs one"
+  doAssert withIt.covers(layout, v, wiggles = false) and withIt.covers(layout, v, wiggles = true)
 
 block seriesAndValues:
   # one trace, columns at 0, 2, 4, 6 ms (dt 2, no decimation)
@@ -167,19 +189,16 @@ block lineAndFillCoverage:
   let edge = t.traceInk(s, 0, 20.5, 1, st, ink)
   doAssert abs(edge.a - 0.5) < 1e-9, $edge
 
-block densityBelowFourPixels:
+block densityOnlyWhenAsked:
+  # the mode alone decides; the trace spacing never does (the wiggle modes
+  # never zoom out past a pixel a trace instead: tzoom, wiggleLimit)
   var d = DisplaySettings()
   doAssert d.mode == dmWiggle and d.fills == {wfPositive}, "wiggles first, positive fill"
-  let layout = PanelLayout(traces: 100, samples: 100, dtMs: 2)
-  var v = fitAll(layout, 400, 300) # 4 px a trace
-  doAssert d.drawsWiggles(v) and not d.drawsDensity(v)
-  v.columns = 399
-  doAssert not d.drawsWiggles(v) and d.drawsDensity(v), "density takes over"
+  doAssert d.drawsWiggles and not d.drawsDensity
   d.mode = dmWiggleDensity
-  v.columns = 800
-  doAssert d.drawsWiggles(v) and d.drawsDensity(v)
+  doAssert d.drawsWiggles and d.drawsDensity
   d.mode = dmDensity
-  doAssert not d.drawsWiggles(v) and d.drawsDensity(v)
+  doAssert not d.drawsWiggles and d.drawsDensity
 
 block marksFromTraceIds:
   let t = tileOf([0'f32, 0, 0, 0, 0, 0], 3) # traces 10, 11, 12 of their file

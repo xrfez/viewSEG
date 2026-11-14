@@ -25,9 +25,6 @@
 ##   reference says, with nothing read again; reversed polarity, an
 ##   operation on the data, reads the view again with every value negated
 ##   and swings the wiggles the other way;
-## - where traces are closer than four pixels (a 400-trace record in a
-##   small window), density is drawn and the strip says so, and
-##   zoomed in on the traces, wiggles are drawn and the note goes;
 ## - the file is never changed.
 ##
 ## Seen to fail: with the shader's swing not clipped (`clamp` left out),
@@ -40,9 +37,7 @@
 ## found nothing selected; with the density shader not tinting,
 ## `densityTint` found 2610 pixels of the hovered column off; with the
 ## renderer drawing every frame, `idleDrawsNothing` counted 7 images while
-## nothing changed; with wiggles drawn at any trace spacing,
-## `densityTakesOver` found wiggles at 1.24 pixels a trace and no note;
-## with the wiggles drawn at the reference's scale, without the gain
+## nothing changed; with the wiggles drawn at the reference's scale, without the gain
 ## amount, `gainAmountUnderEveryType` found 969 pixels off
 ## under Automatic at +6 dB; with the tiles uploaded again whenever the
 ## selection changed, `hoverHighlights` counted 1 tile uploaded for a
@@ -92,8 +87,8 @@ proc capture(f: FrameInfo): Shot =
   let v = f.tracePanel.drawnView
   let scale = displayScale(p.reference, d.gainDb)
   result = Shot(image: img, w: w, h: h, view: v, display: d, ink: plotInk(f.theme, d),
-    style: d.styleFor(v, scale, 1, 2), scale: scale, density: d.drawsDensity(v),
-    wiggles: d.drawsWiggles(v), hover: f.core.selection.hover,
+    style: d.styleFor(v, scale, 1, 2), scale: scale, density: d.mode != dmWiggle,
+    wiggles: d.mode != dmDensity, hover: f.core.selection.hover,
     selection: f.core.selection, gen: p.requestGen, uploads: f.tracePanel.tilesUploaded,
     screen: f.readFrame, width: f.width, plot: f.markOf("plot.data"))
   for t in f.core.tiles(k):
@@ -116,33 +111,35 @@ func row(s: Shot; tMs: float64): int =
   int(floor((tMs - s.view.timeMs.lo) / s.view.timeMs.width * float64(s.h)))
 
 proc expected(s: Shot; i, j: int): Rgba =
-  ## What image pixel (`i`, `j`) should show: the tiles oldest first, each
-  ## its area (density or the background) then its wiggles, the marked
-  ## traces again on top.
+  ## What image pixel (`i`, `j`) should show: the tiles oldest first (but
+  ## for those a newer one covers in view: `hidden`), each its area
+  ## (density or the background) then its wiggles, the marked traces again
+  ## on top.
   let (x, t) = (s.xOf(i), s.tOf(j))
   result = s.ink.background
-  for tile in s.tiles:
-    let hover = tile.hoverRow(0, s.hover)
-    var selected: seq[bool]
-    tile.selectedRowsInto(0, s.selection, selected)
-    if tile.contains(x, t):
-      result = s.ink.background
-      if s.density:
-        let c = greyLut().densityColour(tile.amplitudeAt(x, t), s.scale)
-        result = if s.wiggles: c
-                 else: densityTint(c, markOf(tile.rowAt(x), hover, selected), s.ink.wiggle,
-                   DensityTint)
-    let (_, ts) = tile.span
-    if s.wiggles and t >= ts.lo and t < ts.hi:
-      let ser = tile.series
-      for pass in 0 .. 1:
-        for r in 0 ..< tile.request.count:
-          let m = markOf(r, hover, selected)
-          let pos = float64(tile.request.position(r))
-          if (pass == 0 or m != tmNone) and abs(x - pos) <= s.style.reach:
-            let ink = tile.traceInk(ser, r, (x - pos) * s.style.pixelsPerTrace, t, s.style,
-              s.ink.wiggle, m)
-            result = ink.onto(result)
+  for k, tile in s.tiles:
+    if not s.tiles.hidden(k, s.view):
+      let hover = tile.hoverRow(0, s.hover)
+      var selected: seq[bool]
+      tile.selectedRowsInto(0, s.selection, selected)
+      if tile.contains(x, t):
+        result = s.ink.background
+        if s.density:
+          let c = greyLut().densityColour(tile.amplitudeAt(x, t), s.scale)
+          result = if s.wiggles: c
+                   else: densityTint(c, markOf(tile.rowAt(x), hover, selected), s.ink.wiggle,
+                     DensityTint)
+      let (_, ts) = tile.span
+      if s.wiggles and t >= ts.lo and t < ts.hi:
+        let ser = tile.series
+        for pass in 0 .. 1:
+          for r in 0 ..< tile.request.count:
+            let m = markOf(r, hover, selected)
+            let pos = float64(tile.request.position(r))
+            if (pass == 0 or m != tmNone) and abs(x - pos) <= s.style.reach:
+              let ink = tile.traceInk(ser, r, (x - pos) * s.style.pixelsPerTrace, t, s.style,
+                s.ink.wiggle, m)
+              result = ink.onto(result)
 
 func close(a, b: Rgba; tol = tolerance): bool = distance(a, b) <= tol
 
@@ -534,39 +531,6 @@ withFixtures fx:
     doAssert mirrored > s.image.len div 7 div 50, "only " & $mirrored & " pixels changed"
 
   doAssert snapshot(path) == before, "showing the file changed it"
-
-  block densityTakesOver:
-    # 400 traces on a plot about 500 pixels wide: under 4 px a trace
-    let demo = fx.longSpreadSegy()
-    var note, after: (bool, bool, float64) # note shown, wiggles drawn, px per trace
-    var step = 0
-    var count = 0
-    proc onDemo(f: FrameInfo) =
-      inc count
-      let p = f.core.panels[f.core.findPanel(MainPanel)]
-      if step == 0 and f.answered and count > 5:
-        let v = f.tracePanel.drawnView
-        let d = p.layers[0].display
-        note = (f.markOf("plot.density note").size.x > 0, d.drawsWiggles(v), pixelsPerTrace(v))
-        var z = p.view
-        z.traces = Span(lo: 49.5, hi: 99.5) # 50 traces: about 10 px each
-        f.showView(z)
-        step = 1
-        count = 0
-      elif step == 1 and f.answered and count > 5:
-        let v = f.tracePanel.drawnView
-        after = (f.markOf("plot.density note").size.x > 0,
-          p.layers[0].display.drawsWiggles(v), pixelsPerTrace(v))
-        step = 2
-        f.stop()
-      if f.index > 1500: f.stop()
-    let code = run(RunOptions(maxFrames: 2000, openPaths: @[demo], windowSize: (900, 600),
-      theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
-      indexCacheDir: some(fx.dir / "cache"), onFrame: onDemo))
-    doAssert code == 0 and step == 2, "the demo line never showed: step " & $step
-    doAssert note[2] < WiggleMinPixels and note[0] and not note[1],
-      "narrow traces: " & $note
-    doAssert after[2] >= WiggleMinPixels and not after[0] and after[1], "zoomed in: " & $after
 
 # ------------------------------------------------- screenshots of real data --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are

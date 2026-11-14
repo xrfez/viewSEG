@@ -129,6 +129,7 @@ block fixtureAtThreeZooms:
     doAssert st.settle(st.main.layout.traces > 0)
     var d = st.main.layers[0].display
     d.gain = dgNone # the samples as they are
+    d.mode = dmDensity # zoomed out past a pixel a trace: only density goes that far
     st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
     let lay = st.main.layout
     let whole = fitAll(lay, 800, 600)

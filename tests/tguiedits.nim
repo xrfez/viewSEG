@@ -41,12 +41,10 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
 import std/[algorithm, math, monotimes, options, os, sequtils, strutils, tables, times]
-import viewSEG/core/[geometry, state, wiggle]
-import viewSEG/view/[plotink, theme]
+import viewSEG/core/[geometry, state]
+import viewSEG/view/plotink
 import viewSEG/ui/imgui/app
-import utils/fixtures
-
-const tolerance = 6 ## per channel: float rounding and 8-bit blending on the GPU
+import utils/[fixtures, plotref]
 
 type
   Step = object
@@ -54,90 +52,7 @@ type
     act: proc (f: FrameInfo)
     done: proc (f: FrameInfo): bool
 
-  Shot = object
-    ## A plot image and what it was drawn from.
-    image: seq[Rgba]
-    w, h: int
-    view: Viewport
-    tiles: seq[Tile]
-    ink: PlotInk
-    style: WiggleStyle
-    scale: float32
-    density, wiggles: bool
-    hover: int
-    selection: Selection
-
 func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
-
-proc capture(f: FrameInfo): Shot =
-  let k = f.core.findPanel(MainPanel)
-  let p = f.core.panels[k]
-  let d = p.layers[0].display
-  let (img, w, h) = f.tracePanel.plotImage
-  let v = f.tracePanel.drawnView
-  let scale = displayScale(p.reference, d.gainDb)
-  result = Shot(image: img, w: w, h: h, view: v, ink: plotInk(f.theme, d),
-    style: d.styleFor(v, scale, 1, 2), scale: scale, density: d.drawsDensity(v),
-    wiggles: d.drawsWiggles(v), hover: f.core.selection.hover, selection: f.core.selection)
-  for t in f.core.tiles(k): result.tiles.add t
-
-proc at(s: Shot; i, j: int): Rgba = s.image[j * s.w + i]
-
-func xOf(s: Shot; i: int): float64 =
-  s.view.traces.lo + (float64(i) + 0.5) / float64(s.w) * s.view.traces.width
-
-func tOf(s: Shot; j: int): float64 =
-  s.view.timeMs.lo + (float64(j) + 0.5) / float64(s.h) * s.view.timeMs.width
-
-func column(s: Shot; position: float64): int =
-  ## The image column whose centre is nearest to `position`.
-  int(round((position - s.view.traces.lo) / s.view.traces.width * float64(s.w) - 0.5))
-
-func row(s: Shot; tMs: float64): int =
-  int(floor((tMs - s.view.timeMs.lo) / s.view.timeMs.width * float64(s.h)))
-
-proc expected(s: Shot; i, j: int): Rgba =
-  ## What image pixel (`i`, `j`) should show: the tiles oldest first, each
-  ## its area (density, blank on a killed trace, or the background) then its
-  ## wiggles (none for a killed trace), the marked traces again on top.
-  let (x, t) = (s.xOf(i), s.tOf(j))
-  result = s.ink.background
-  for tile in s.tiles:
-    let hover = tile.hoverRow(0, s.hover)
-    var selected: seq[bool]
-    tile.selectedRowsInto(0, s.selection, selected)
-    if tile.contains(x, t):
-      result = s.ink.background
-      if s.density:
-        let c = tile.densityAt(greyLut(), x, t, s.scale, s.ink.background)
-        result = if s.wiggles: c
-                 else: densityTint(c, markOf(tile.rowAt(x), hover, selected), s.ink.wiggle,
-                   DensityTint)
-    let (_, ts) = tile.span
-    if s.wiggles and t >= ts.lo and t < ts.hi:
-      let ser = tile.series
-      for pass in 0 .. 1:
-        for r in 0 ..< tile.request.count:
-          let m = markOf(r, hover, selected)
-          let pos = float64(tile.request.position(r))
-          if (pass == 0 or m != tmNone) and abs(x - pos) <= s.style.reach:
-            let ink = tile.traceInk(ser, r, (x - pos) * s.style.pixelsPerTrace, t, s.style,
-              s.ink.wiggle, m)
-            result = ink.onto(result)
-
-func close(a, b: Rgba; tol = tolerance): bool = distance(a, b) <= tol
-
-proc mismatches(s: Shot; step = 2): (int, int) =
-  ## Image pixels on a grid that differ from `expected`, and the pixels
-  ## looked at.
-  for j in countup(0, s.h - 1, step):
-    for i in countup(0, s.w - 1, step):
-      inc result[1]
-      let want = s.expected(i, j)
-      if not close(s.at(i, j), want):
-        if result[0] < 5:
-          echo "  pixel (", i, ", ", j, "): ", toHex(s.at(i, j)), ", expected ", toHex(want)
-        inc result[0]
 
 proc band(s: Shot; position: float64; share = 0.4): Slice[int] =
   ## The image columns within `share` of a trace spacing of `position`'s
@@ -196,7 +111,7 @@ proc greyMirrored(after, before: Shot; position: float64): (int, int) =
     let jb = before.row(after.tOf(j))
     if jb in 0 ..< before.h:
       inc result[0]
-      if abs(int(after.at(i, j).r) + int(before.at(ib, jb).r) - 255) <= tolerance:
+      if abs(int(after.at(i, j).r) + int(before.at(ib, jb).r) - 255) <= Tolerance:
         inc result[1]
 
 proc same(a, b: Shot; position: float64): int =

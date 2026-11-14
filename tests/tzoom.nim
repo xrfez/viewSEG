@@ -11,7 +11,21 @@
 ## size keeps the scale of an axis that hides part of the data; the scroll
 ## bars' thumbs show the share in view and move the view with them.
 ##
-## Seen to fail: with the limits 5 % past the data on each side, as they
+## In the wiggle modes no view is wider than the plot has pixel columns
+## (one pixel a trace), under any gesture, a new plot size included: a
+## record of more traces than that opens at the limit from its first trace,
+## a change from density to a wiggle mode narrows the view keeping its left
+## edge, and back keeps to the limit; density still zooms out to the whole
+## record.
+##
+## Seen to fail: with `viewLimits` giving the wiggle modes no widest view
+## (as before), `wiggleLimit` found the wiggle mode's widest view 10 000
+## traces on 800 columns; with `ckDisplay` not narrowing the view to the
+## new mode's limit, `wiggleLimitInTheState` found the 200 traces of the
+## density view still in view after the change to wiggles; with `keptFrom`
+## keeping the centre (as `kept` does), `wiggleLimit` found 1999.5 .. 5999.5
+## narrowed about its centre, not from its left edge.
+## Earlier: with the limits 5 % past the data on each side, as they
 ## were, `neverPastTheData` found a pan of the whole gather showing up to
 ## position 10 499.5 where the data ends at 9999.5; with `resized` keeping
 ## the spans (stretching the view), `resizeKeepsTheScale` found the trace
@@ -31,6 +45,7 @@
 import std/[math, random]
 import viewSEG/core/[geometry, scales, viewport, zoom]
 import viewSEG/core/state {.all.}
+import utils/[fixtures, waiting]
 
 const layout = PanelLayout(traces: 10_000, samples: 4001, dtMs: 1, t0Ms: 0)
 
@@ -166,7 +181,10 @@ block zoomChangesTheTracesRead:
   for _ in 0 ..< 60:
     let r = requestFor(layout, v)
     let vis = visiblePositions(layout, v)
-    if vis.len > v.columns:
+    # zoomed out past a trace per column: every `stride`-th (a view as wide
+    # as the columns touches one trace more, and reads it at stride 1:
+    # twiggle, wigglesReadEveryTrace)
+    if r.stride > 1:
       doAssert r.count <= v.columns, $r.count & " traces read on " & $v.columns & " columns"
     else:
       doAssert r.stride == 1 and r.count <= vis.len + 2 * int(ceil(vis.len.float * ReadAhead))
@@ -252,6 +270,69 @@ block neverPastTheData:
     doAssert wide.traces == l[axTraces].bounds and wide.timeMs == l[axTime].bounds, $wide
     doAssert v.resized(3000, 2000, l).traces == l[axTraces].bounds
 
+block wiggleLimit:
+  # one pixel a trace at the most, on 800 columns; density has no such limit
+  let wl = limitsOf(layout, widest = 800)
+  doAssert wl[axTraces].most == 800 and wl[axTraces].bounds == lim[axTraces].bounds
+  doAssert wl[axTime] == lim[axTime], "the time axis has no such limit"
+  doAssert limitsOf(layout, widest = NaN) == lim and limitsOf(layout, widest = 0) == lim
+  let fit = fitted(wl, 800, 600)
+  doAssert fit.traces == Span(lo: -0.5, hi: 799.5) and fit.timeMs == lim[axTime].bounds, $fit
+  doAssert fitted(lim, 800, 600) == fitAll(layout, 800, 600)
+  # the modes: density, wiggle, wiggle over density on 800 columns
+  for (mode, most) in [(dmDensity, 10_000.0), (dmWiggle, 800.0), (dmWiggleDensity, 800.0)]:
+    let vl = viewLimits(layout, DisplaySettings(mode: mode), 800)
+    doAssert vl[axTraces].most == most, $mode & ": " & $vl[axTraces]
+    doAssert viewLimits(layout, DisplaySettings(mode: mode), 0)[axTraces].most == 10_000,
+      "a plot of no known size has no limit"
+  # fewer traces than columns: all of them
+  let few = PanelLayout(traces: 300, samples: 100, dtMs: 2)
+  doAssert fitted(viewLimits(few, DisplaySettings(), 800), 800, 600) == fitAll(few, 800, 600)
+  # zooming out stops at the limit, about the pointer; a narrower view is
+  # widened from its left edge by `keptFrom`, about its centre by `kept`
+  var v = fit.zoomed(4, DataPoint(x: 5000, tMs: 100), BothAxes, wl)
+  for _ in 0 ..< 40: v = v.zoomed(1 / WheelStep, DataPoint(x: 5000, tMs: 100), BothAxes, wl)
+  doAssert near(v.traces.width, 800) and v.timeMs == lim[axTime].bounds, $v
+  let wide = Viewport(traces: Span(lo: 1999.5, hi: 5999.5), timeMs: lim[axTime].bounds,
+    columns: 800, rows: 600)
+  doAssert keptFrom(wide, wl).traces == Span(lo: 1999.5, hi: 2799.5)
+  doAssert kept(wide, wl).traces == Span(lo: 3599.5, hi: 4399.5)
+  doAssert keptFrom(Span(lo: 9900, hi: 9999.5), wl[axTraces]) == Span(lo: 9900, hi: 9999.5)
+  doAssert keptFrom(Span(lo: 9900, hi: 9901), wl[axTraces]) == Span(lo: 9900, hi: 9904)
+  doAssert keptFrom(Span(lo: 9900, hi: 12_000), wl[axTraces]) == Span(lo: 9199.5, hi: 9999.5)
+
+block wiggleLimitUnderEveryGesture:
+  # gestures of every kind, at random, on a plot whose size changes too:
+  # never more traces in view than the plot has columns, never past the
+  # data; density, on the same gestures, reaches the whole record
+  var rng = initRand(20261115)
+  let d = DisplaySettings(mode: dmWiggle)
+  let plot = Rect(pos: vec2(40, 30), size: vec2(800, 600))
+  var v = fitted(viewLimits(layout, d, 800), 800, 600)
+  for i in 0 ..< 3000:
+    let l = viewLimits(layout, d, v.columns)
+    let what = rng.rand(9)
+    let at = DataPoint(x: rng.rand(-1.0 .. 2.0) * 10_000, tMs: rng.rand(-1.0 .. 2.0) * 4000)
+    case what
+    of 0: v = v.zoomed(pow(WheelStep, rng.rand(-8.0 .. 8.0)), at, BothAxes, l)
+    of 1: v = v.zoomed(1 / KeyStep, at, {axTraces}, l)
+    of 2: v = v.panned(rng.rand(-3.0 .. 3.0) * v.traces.width, 0, l)
+    of 3: v = v.dragged(plot, vec2(float32(rng.rand(-3000 .. 3000)), 0), l)
+    of 4: v = v.boxed(at, DataPoint(x: rng.rand(-1.0 .. 2.0) * 10_000, tMs: 0), BothAxes, l)
+    of 5: v = withTraceScale(v, pow(10.0, rng.rand(-3.0 .. 6.0)), 96, ScaleUnits(), l)
+    of 6:
+      let (c, r) = (rng.rand(1 .. 3000), rng.rand(1 .. 2000))
+      v = v.resized(c, r, viewLimits(layout, d, c))
+    of 7: v = v.paged(axTraces, float64(rng.rand(-3 .. 3)), l)
+    of 8: v = v.scrolled(axTraces, l, 800, 20, float64(rng.rand(-1000 .. 1000)))
+    else: v = fitted(l, v.columns, v.rows)
+    doAssert v.traces.width <= float64(v.columns) * (1 + 1e-9),
+      "gesture " & $what & ": " & $v.traces.width & " traces on " & $v.columns & " columns"
+    doAssert v.inside(layout), "gesture " & $what & " showed " & $v
+  let dl = viewLimits(layout, DisplaySettings(mode: dmDensity), v.columns)
+  for _ in 0 ..< 60: v = v.zoomed(1 / WheelStep, v.centre, BothAxes, dl)
+  doAssert v.traces == lim[axTraces].bounds, "density: " & $v
+
 block resizeKeepsTheScale:
   let fit = fitAll(layout, 800, 600)
   let v = Viewport(traces: Span(lo: 100, hi: 300), timeMs: Span(lo: 1000, hi: 1600),
@@ -318,7 +399,15 @@ proc laidOut(st: var AppState; layout: PanelLayout) =
 proc view(st: var AppState; v: Viewport; remember = false) =
   st.apply Command(kind: ckView, panel: MainPanel, view: v, remember: remember)
 
+proc density(st: var AppState) =
+  ## Shows the main panel in density: its views may hold more traces than
+  ## the plot has columns (a wiggle mode stops at one pixel a trace).
+  var d = st.panel(MainPanel).layers[0].display
+  d.mode = dmDensity
+  st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+
 block backGoesToTheViewBeforeAGesture:
+  # the main panel shows no file (no layer), so only the data limits it
   var st = initAppState()
   st.laidOut(layout)
   let p = st.panel(MainPanel)
@@ -370,6 +459,45 @@ block nothingToRememberBeforeALayout:
   st.view(fitAll(layout, 400, 600), remember = true)
   doAssert st.panel(MainPanel).back.len == 0
   st.shutdown()
+
+block wiggleLimitInTheState:
+  # the long spread (400 traces) on a plot of 100 columns: the record opens
+  # at the limit, from the first trace, all of its time
+  withFixtures fx:
+    var st = initAppState()
+    st.view(Viewport(traces: Span(lo: 0, hi: 1), timeMs: Span(lo: 0, hi: 1), columns: 100,
+      rows: 300)) # the plot's size, before a file
+    st.apply Command(kind: ckOpen, paths: @[fx.longSpreadSegy()])
+    doAssert waitUntil((discard st.drainInbox(); st.panel(MainPanel).laidOut))
+    let ll = limitsOf(st.panel(MainPanel).layout)
+    doAssert st.panel(MainPanel).layers[0].display.mode == dmWiggle
+    var v = st.panel(MainPanel).view
+    doAssert v.traces == Span(lo: -0.5, hi: 99.5) and v.timeMs == ll[axTime].bounds, $v
+    # a view wider than the limit, from whoever sends it, is narrowed to it
+    st.view(Viewport(traces: Span(lo: 99.5, hi: 299.5), timeMs: v.timeMs, columns: 100,
+      rows: 300))
+    doAssert st.panel(MainPanel).view.traces.width == 100, $st.panel(MainPanel).view
+    # density reaches further; back to wiggles narrows it, keeping its left edge
+    st.density()
+    st.view(Viewport(traces: Span(lo: 159.5, hi: 359.5), timeMs: v.timeMs, columns: 100,
+      rows: 300), remember = true)
+    doAssert st.panel(MainPanel).view.traces.width == 200
+    let jumps = st.panel(MainPanel).jumps
+    var d = st.panel(MainPanel).layers[0].display
+    d.mode = dmWiggle
+    st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+    v = st.panel(MainPanel).view
+    doAssert v.traces == Span(lo: 159.5, hi: 259.5) and st.panel(MainPanel).jumps == jumps + 1,
+      $v
+    # back to the density view before: kept to the wiggle limit
+    st.view(v.panned(10, 0, ll), remember = true)
+    st.apply Command(kind: ckBack, panel: MainPanel)
+    doAssert st.panel(MainPanel).view.traces.width == 100
+    # density: the whole record, by fit
+    st.density()
+    st.view(fitted(st.panel(MainPanel).viewLimits(100), 100, 300))
+    doAssert st.panel(MainPanel).view.traces == ll[axTraces].bounds
+    st.shutdown()
 
 block coreKeepsViewsInside:
   # a view past the data, from whoever sends it, is kept inside

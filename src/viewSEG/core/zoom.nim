@@ -10,20 +10,26 @@
 ##   past the data is ever shown, and zoomed out as far as it goes the data
 ##   fills the plot exactly;
 ## - never narrower than `MinTraces` positions or `MinSamples` samples;
-## - never wider than the data.
+## - never wider than the data, nor than `widest` positions across (the
+##   wiggle modes: the plot's pixel columns, so every trace in view is
+##   drawn; `core/panels.viewLimits`). Zoomed out as far as it goes, such a
+##   view shows `widest` positions of a larger record, and the scroll bar
+##   the rest. The time axis has no such limit.
 ##
 ## A zoom keeps the point it is about where it is on the screen; a zoom
 ## that reaches a limit stops there. A view that is already within the
-## limits is left exactly as it is.
+## limits is left exactly as it is. `fitted` is the widest view the limits
+## allow, from the first trace.
 ##
 ## **A new plot size** (`resized`) keeps the scale along an axis that hides
 ## part of the data, so the plot shows more or less of it from the same
 ## top-left corner, as a sheet of paper would; an axis that shows all the
-## data goes on showing all of it.
+## data goes on showing all of it. A view that the limits make narrower
+## (`keptFrom`) keeps its left or top edge.
 ##
 ## **The next gather** (`carried`) is shown at the same scales: the same
 ## positions and times, or all of it along an axis that showed all of the
-## gather before.
+## gather before (as much as the limits allow, from its start).
 ##
 ## **Scroll bars.** Along an axis where part of the data is out of view
 ## (`showsAll` is false) the plot has a scroll bar. Its thumb (`thumbOf`) is
@@ -68,19 +74,29 @@ type
 
 const BothAxes* = {axTraces, axTime}
 
-func limitsOf*(layout: PanelLayout): ViewLimits =
+func limitsOf*(layout: PanelLayout; widest = Inf): ViewLimits =
   ## The limits of a panel with `layout`: the data's extent, positions
   ## `-0.5 .. traces - 0.5` and `t0Ms` to the last sample's time (what
-  ## `fitAll` shows). A panel with no traces or no sample interval gets
-  ## limits for one trace and 1 ms samples.
+  ## `fitAll` shows); a view at most `widest` positions wide (a value that
+  ## is not positive counts as no limit). A panel with no traces or no
+  ## sample interval gets limits for one trace and 1 ms samples.
   let n = float64(max(layout.traces, 1))
   let dt = if layout.dtMs > 0 and layout.dtMs < Inf: layout.dtMs else: 1.0
   let t0 = if layout.t0Ms.classify in {fcNan, fcInf, fcNegInf}: 0.0 else: layout.t0Ms
   let extent = float64(max(layout.samples - 1, 1)) * dt
-  result[axTraces] = Limits(bounds: Span(lo: -0.5, hi: n - 0.5), least: min(MinTraces, n),
-    most: n)
+  let most = if widest > 0: min(n, widest) else: n # NaN fails the test too
+  result[axTraces] = Limits(bounds: Span(lo: -0.5, hi: n - 0.5), least: min(MinTraces, most),
+    most: most)
   result[axTime] = Limits(bounds: Span(lo: t0, hi: t0 + extent),
     least: min(MinSamples * dt, extent), most: extent)
+
+func fitted*(lim: ViewLimits; columns, rows: int): Viewport =
+  ## The widest view `lim` allows on a plot of `columns` × `rows` pixels,
+  ## from the first trace and the record's start: all the data, unless a
+  ## wiggle mode's limit (`widest`) makes it narrower.
+  let b = lim[axTraces].bounds
+  Viewport(traces: Span(lo: b.lo, hi: b.lo + min(lim[axTraces].most, b.width)),
+    timeMs: lim[axTime].bounds, columns: columns, rows: rows)
 
 func span(v: Viewport; a: Axis): Span {.inline.} =
   if a == axTraces: v.traces else: v.timeMs
@@ -115,6 +131,24 @@ func kept*(v: Viewport; lim: ViewLimits): Viewport =
   result = v
   for a in Axis:
     result.setSpan(a, kept(v.span(a), lim[a]))
+
+func keptFrom*(s: Span; lim: Limits): Span =
+  ## `s` within `lim`, as `kept`, but a span too wide or too narrow keeps
+  ## its start (`lo`: the left or top edge), as a page does when its scale
+  ## changes, before it is moved inside the bounds.
+  if s.lo.isNaN or s.hi.isNaN or s.lo.classify in {fcInf, fcNegInf} or
+      s.hi.classify in {fcInf, fcNegInf}:
+    return kept(s, lim)
+  let w = clamp(s.width, lim.least, lim.most)
+  if w >= lim.bounds.width: lim.bounds # exactly, whatever the rounding of `lo + w`
+  else: kept(Span(lo: s.lo, hi: s.lo + w), lim)
+
+func keptFrom*(v: Viewport; lim: ViewLimits): Viewport =
+  ## `v` within `lim` along both axes from its top-left corner (`keptFrom`
+  ## of each span); its pixel size unchanged.
+  result = v
+  for a in Axis:
+    result.setSpan(a, keptFrom(v.span(a), lim[a]))
 
 func checkFactor(factor: float64) =
   if not (factor > 0 and factor < Inf):
@@ -206,7 +240,8 @@ func resized*(v: Viewport; columns, rows: int; lim: ViewLimits): Viewport =
   ## the data it still does; along the others it keeps its scale (data per
   ## pixel) and its left or top edge, so more or less of the data comes into
   ## view, never more than there is. Along an axis whose old or new size is
-  ## unknown (0) the span is only kept within the limits.
+  ## unknown (0) the span is only kept within the limits (`lim`: the limits
+  ## on the new size), from its left or top edge.
   result = v
   result.columns = columns
   result.rows = rows
@@ -214,20 +249,20 @@ func resized*(v: Viewport; columns, rows: int; lim: ViewLimits): Viewport =
     let (was, now) = if a == axTraces: (v.columns, columns) else: (v.rows, rows)
     let s = v.span(a)
     if was > 0 and now > 0 and now != was and not v.showsAll(a, lim):
-      result.setSpan(a, kept(Span(lo: s.lo, hi: s.lo + s.width * float64(now) / float64(was)),
-        lim[a]))
+      result.setSpan(a, keptFrom(Span(lo: s.lo, hi: s.lo + s.width * float64(now) /
+        float64(was)), lim[a]))
     else:
-      result.setSpan(a, kept(s, lim[a]))
+      result.setSpan(a, keptFrom(s, lim[a]))
 
 func carried*(v: Viewport; was, now: ViewLimits): Viewport =
   ## `v`, a view of data within `was`, on the next gather, within `now`, at
   ## the same scales: along an axis where it showed all the data it shows
-  ## all of the new; along the others the same positions or times, kept
-  ## within `now` (so they compare, record after record). Its pixel size
-  ## unchanged.
+  ## all of the new (as much as `now` allows, from its start); along the
+  ## others the same positions or times, kept within `now` (so they
+  ## compare, record after record). Its pixel size unchanged.
   result = v
   for a in Axis:
-    if v.showsAll(a, was): result.setSpan(a, now[a].bounds)
+    if v.showsAll(a, was): result.setSpan(a, keptFrom(now[a].bounds, now[a]))
     else: result.setSpan(a, kept(v.span(a), now[a]))
 
 func thumbOf*(v: Viewport; a: Axis; lim: ViewLimits; track, least: float64): Thumb =

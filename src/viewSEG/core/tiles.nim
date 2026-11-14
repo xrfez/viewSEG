@@ -99,6 +99,21 @@ func contains*(t: Tile; x, tMs: float64): bool =
   let (xs, ts) = t.span
   x >= xs.lo and x < xs.hi and tMs >= ts.lo and tMs < ts.hi
 
+func hidden*(tiles: openArray[Tile]; i: int; view: Viewport): bool =
+  ## Whether tile `i` of `tiles` (oldest first, as drawn) shows nothing in
+  ## `view`: a newer tile covers all of it that lies in view, so it paints
+  ## over the tile's area, and its own traces' lobes over the ones of the
+  ## same traces that reach out of it. Drawing it would cost the GPU a whole
+  ## pass and change nothing but where it drew a trace's lobe twice.
+  let (xs, ts) = tiles[i].span
+  let x = Span(lo: max(xs.lo, view.traces.lo), hi: min(xs.hi, view.traces.hi))
+  let t = Span(lo: max(ts.lo, view.timeMs.lo), hi: min(ts.hi, view.timeMs.hi))
+  if not (x.lo < x.hi and t.lo < t.hi): return true # nothing of it in view
+  for j in i + 1 .. tiles.high:
+    let (nx, nt) = tiles[j].span
+    if nx.lo <= x.lo and nx.hi >= x.hi and nt.lo <= t.lo and nt.hi >= t.hi: return true
+  false
+
 func rowAt*(t: Tile; x: float64): int =
   ## The row drawn at position `x` (the nearest trace the tile holds, as
   ## `amplitudeAt` takes it); -1 when `x` is off the tile's traces.

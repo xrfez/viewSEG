@@ -155,10 +155,12 @@ seconds; click it for the Jobs window.
 An opened file shows its first record in the **Seismic** window (a window is named for
 what it shows): traces across, time down, as
 black wiggles with their positive lobes filled, on white paper, with automatic gain (AGC
-on shot and receiver records). Where the traces are closer together than 4 pixels (a
-whole shot of a few thousand traces, say), the plot shows greyscale density instead, and
-says so in the strip ("density: traces under 4 px"); zoom in on the traces to see the
-wiggles. The rows of labels over the traces are the display header (receiver line and
+on shot and receiver records). Wiggles stay wiggles at every zoom: zooming out stops
+where the traces are one pixel apart, so every trace in view is drawn. A shot of more
+traces than the plot is wide (a few thousand, say) opens at that limit from its first
+trace, with a scroll bar under the plot for the rest. To see a whole large record at
+once, choose the density display (the first button in the strip), which zooms out until
+the record fills the plot. The rows of labels over the traces are the display header (receiver line and
 point by default): right-click them, or their names at the left, to choose its fields
 (automatic, or the ones you tick); the gear button has the same choice.
 
@@ -170,7 +172,7 @@ point by default): right-click them, or their names at the left, to choose its f
 | Pan | drag with the left or middle button | arrows (a tenth of the view; with Shift, a whole view) |
 | Pan with a scroll bar | drag its thumb; click the bar for a whole view; or the wheel over it | |
 | Zoom to a box | drag with the right button | |
-| Fit the whole record | the fit button | Ctrl+0 |
+| Fit the whole record (in wiggles: as far as one pixel a trace, from the first) | the fit button | Ctrl+0 |
 | Go back to the view before | the back button | Backspace, or Alt+Left |
 | Select a trace | click it | |
 | Add a trace to the selection, or take it out | Shift + click | |
@@ -182,7 +184,9 @@ point by default): right-click them, or their names at the left, to choose its f
 Keys act while the Seismic window has the focus: click in it first.
 
 **Display.** The first buttons in the strip choose how traces are drawn: greyscale
-density, wiggles, or wiggles over density. The two after them fill the wiggles' positive
+density, wiggles, or wiggles over density. Density is drawn only in the two modes that
+name it. Changing from density to wiggles while more traces are in view than the plot
+has pixels narrows the view to one pixel a trace, keeping its left edge. The two after them fill the wiggles' positive
 lobes (right of the trace) and negative lobes (left of it): either, both or none. The
 settings button (the gear) holds the **trace overlap**, how far the strongest amplitudes
 swing a trace, in trace spacings (1 reaches the next trace; anything stronger is clipped

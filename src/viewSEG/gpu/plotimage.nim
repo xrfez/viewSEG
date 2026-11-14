@@ -6,7 +6,8 @@
 ## first (density, or the plot's background under wiggles alone), then its
 ## wiggles (`gpu/wiggle`), then its hovered and selected traces once more,
 ## on top. Under density alone, a hovered or selected trace's column is
-## tinted (`gpu/density`).
+## tinted (`gpu/density`). A tile that a newer one covers in view is not
+## drawn (`hidden`): it would be painted over.
 ##
 ## Drawing is skipped when nothing it depends on changed since the last
 ## image (`PlotFrame`, the tiles and their marks): an idle plot costs the
@@ -176,16 +177,18 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
   let look = DensityLook(scale: f.scale, solid: not f.density, solidColour: bg,
     tint: (if f.wiggles: 0'f32 else: f.tint), hover: f.ink.hover, selected: f.ink.selected)
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) # premultiplied
-  for i in 0 ..< min(tiles.len, textures.len):
-    let tt = textures[i]
-    glDisable(GL_BLEND)
-    r.density.use(look)
-    r.density.draw(f.view, tiles[i], tt, tt.hoverRow)
-    if f.wiggles:
-      glEnable(GL_BLEND)
-      r.wiggle.use(f.view, f.style, f.ink)
-      r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = false)
-      r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = true)
+  let n = min(tiles.len, textures.len)
+  for i in 0 ..< n:
+    if not tiles.toOpenArray(0, n - 1).hidden(i, f.view):
+      let tt = textures[i]
+      glDisable(GL_BLEND)
+      r.density.use(look)
+      r.density.draw(f.view, tiles[i], tt, tt.hoverRow)
+      if f.wiggles:
+        glEnable(GL_BLEND)
+        r.wiggle.use(f.view, f.style, f.ink)
+        r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = false)
+        r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = true)
   r.last = f
   r.lastTiles.setLen 0
   r.lastHover.setLen 0

@@ -750,8 +750,10 @@ proc requestView(state: var AppState; k: int) =
   if p.layers.len == 0 or p.layout.traces == 0 or state.readers[k].isNil: return
   let flow = p.layers[0].displayPipeline(state.gatherKind(p.layers[0]))
   let margin = displayMargin(flow, p.layout.dtMs)
-  if p.pending.gen == p.requestGen and p.pending.covers(p.layout, p.view, margin): return
-  var req = requestFor(p.layout, p.view, margin)
+  let wiggles = p.layers[0].display.drawsWiggles
+  if p.pending.gen == p.requestGen and p.pending.covers(p.layout, p.view, margin, wiggles):
+    return
+  var req = requestFor(p.layout, p.view, margin, wiggles = wiggles)
   if req.isEmpty: return
   inc p.requestGen
   req.gen = p.requestGen
@@ -1560,7 +1562,7 @@ proc apply*(state: var AppState; cmd: Command) =
       # own views inside already).
       var v = cmd.view
       if state.panels[k].layout.traces > 0:
-        v = kept(v, limitsOf(state.panels[k].layout))
+        v = kept(v, state.panels[k].viewLimits(v.columns))
       if v != state.panels[k].view:
         if cmd.remember: state.remember(k)
         state.panels[k].view = v
@@ -1575,7 +1577,7 @@ proc apply*(state: var AppState; cmd: Command) =
       var v = p.back.pop()
       v.columns = p.view.columns # the plot's size is its own
       v.rows = p.view.rows
-      p.view = v
+      p.view = kept(v, p.viewLimits(v.columns)) # the limits of the mode drawn now
       inc p.jumps
       inc p.revision
       state.requestView(k)
@@ -1641,17 +1643,27 @@ proc apply*(state: var AppState; cmd: Command) =
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
     elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
     else:
-      let was = state.panels[k].layers[0].display
+      template p: untyped = state.panels[k]
+      let was = p.layers[0].display
       let d = cmd.display.withGainDb(cmd.display.gainDb)
-      state.panels[k].layers[0].display = d
-      inc state.panels[k].revision
+      p.layers[0].display = d
+      inc p.revision
       var s = state.settings
       s.plot.display = remembered(d)
       state.change s
+      # A wiggle mode's limit: a wider view (from density) is narrowed to it,
+      # keeping its left edge; the frontend follows.
+      if p.laidOut and p.layout.traces > 0:
+        let v = keptFrom(p.view, p.viewLimits(p.view.columns))
+        if v != p.view:
+          p.view = v
+          inc p.jumps
       # Only a change of the samples reads again: the gain amount, a Fixed
       # amplitude and a type that is a scale alone change only the drawing.
-      if not d.sameProcessing(was, state.panels[k].kind):
+      if not d.sameProcessing(was, p.kind):
         state.refetch(k, keepTiles = false)
+      else:
+        state.requestView(k) # a new view, or the extremes wiggles need
       state.settleGain(k)
   of ckHeader:
     let k = state.findPanel(cmd.panel)
@@ -1796,12 +1808,13 @@ proc drainInbox*(state: var AppState): bool =
         p.layout = m.layout
         p.laidOut = true
         p.known = m.known
-        # The next gather at the scales of the one before; a first one fits.
+        # The next gather at the scales of the one before; a first one fits
+        # (in a wiggle mode, as far as its limit, from the first trace).
         p.view = if p.carry.traces.width > 0:
             carried(Viewport(traces: p.carry.traces, timeMs: p.carry.timeMs,
-              columns: p.view.columns, rows: p.view.rows), limitsOf(p.carryLayout),
-              limitsOf(p.layout))
-          else: fitAll(p.layout, p.view.columns, p.view.rows)
+              columns: p.view.columns, rows: p.view.rows),
+              p.viewLimits(p.carryLayout, p.view.columns), p.viewLimits(p.view.columns))
+          else: fitted(p.viewLimits(p.view.columns), p.view.columns, p.view.rows)
         p.carry = Viewport()
         inc p.jumps
         inc p.revision

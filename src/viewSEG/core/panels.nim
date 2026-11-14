@@ -61,7 +61,7 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/gain/[curves, gain]
 import processSEG/vibroseis/sweep
-import geometry, session, viewport
+import geometry, session, viewport, zoom
 
 export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, GatherKind, NormScope,
   NormStat
@@ -93,9 +93,10 @@ type
     components*: set[uint8] ## components to show; empty shows all
 
   DisplayMode* = enum
-    ## How a layer's traces are drawn. Where traces are narrower than
-    ## `WiggleMinPixels`, the wiggle modes draw density instead
-    ## (`drawsWiggles`, `drawsDensity`).
+    ## How a layer's traces are drawn: density is drawn only in the modes
+    ## that name it (`drawsWiggles`, `drawsDensity`). In the wiggle modes a
+    ## view is never zoomed out past one pixel a trace (`viewLimits`), so
+    ## every trace in view is drawn as a wiggle.
     dmDensity = "density" ## greyscale density
     dmWiggle = "wiggle" ## wiggles, with the fills chosen
     dmWiggleDensity = "wiggle over density" ## wiggles over greyscale density
@@ -435,15 +436,35 @@ func withGainDb*(d: DisplaySettings; db: float64): DisplaySettings =
   result = d
   result.gainDb = if db.isNaN: 0.0 else: clamp(db, -MaxGainDb, MaxGainDb)
 
-func drawsWiggles*(d: DisplaySettings; view: Viewport): bool =
-  ## Whether a layer drawn with `d` shows wiggles in `view`: in a wiggle
-  ## mode, where traces are at least `WiggleMinPixels` apart.
-  d.mode != dmDensity and pixelsPerTrace(view) >= WiggleMinPixels
+func drawsWiggles*(d: DisplaySettings): bool {.inline.} =
+  ## Whether a layer drawn with `d` shows wiggles: in the wiggle modes, at
+  ## every zoom.
+  d.mode != dmDensity
 
-func drawsDensity*(d: DisplaySettings; view: Viewport): bool =
-  ## Whether a layer drawn with `d` shows density in `view`: in a density
-  ## mode, or where traces are too close together for wiggles.
-  d.mode != dmWiggle or not d.drawsWiggles(view)
+func drawsDensity*(d: DisplaySettings): bool {.inline.} =
+  ## Whether a layer drawn with `d` shows density: only in the modes the
+  ## user chose it with (density, and wiggles over density).
+  d.mode != dmWiggle
+
+func viewLimits*(layout: PanelLayout; d: DisplaySettings; columns: int): ViewLimits =
+  ## The limits (`core/zoom`) of a view of a layer of `layout` drawn with
+  ## `d` on a plot `columns` pixels wide: the data's, and in the wiggle
+  ## modes no more traces across than `columns / MinTracePixels`, so every
+  ## trace in view is drawn. A plot whose size is not known yet (0) has no
+  ## such limit.
+  let widest = if d.drawsWiggles and columns > 0: float64(columns) / MinTracePixels else: Inf
+  limitsOf(layout, widest)
+
+func viewLimits*(p: Panel; layout: PanelLayout; columns: int): ViewLimits =
+  ## The limits of a view of `layout` (`p.layout`, or the gather it showed
+  ## before) on a plot `columns` pixels wide, as `p`'s layer 0 is drawn; a
+  ## panel with no layer draws nothing, and only the data limits it.
+  if p.layers.len == 0: limitsOf(layout)
+  else: viewLimits(layout, p.layers[0].display, columns)
+
+func viewLimits*(p: Panel; columns: int): ViewLimits {.inline.} =
+  ## The limits of `p`'s view on a plot `columns` pixels wide.
+  p.viewLimits(p.layout, columns)
 
 func displayMargin*(flow: Pipeline; dtMs: float64): int =
   ## The samples `flow` needs beyond a window on each side; 0 when it
