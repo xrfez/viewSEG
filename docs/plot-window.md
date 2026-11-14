@@ -34,6 +34,9 @@
     Typing sets the zoom; zooming any other way updates the boxes. Units are a setting
     (per inch or per cm; inches per second for time). Physical size uses 96 dpi times
     the display scale unless the monitor is calibrated in Settings;
+  - the **display gain**: automatic (AGC on pre-stack gathers, none on stacked data),
+    none, trace balance or AGC; amplitudes past the clip percentile (99 by default) are
+    drawn full black or white;
   - fit all, back to the previous view, and a "more" popover: trace overlap (the largest
     swing of a wiggle, in trace spacings), the display header's fields, the colours.
 - **The status bar** (the main window's bottom edge) reads out the cursor: time, trace
@@ -201,3 +204,6 @@ Defaults taken in this draft, for the user to confirm or change:
    on the map, opens a source's gather), so "double-click to fit" would do two things.
 8. **Zoom along one axis from the keyboard is Ctrl + arrow keys**, not Shift + `+`: on
    many layouts `+` itself needs Shift.
+9. **The display gain starts automatic:** a pre-stack gather (a shot or receiver
+   record) opens with AGC over 500 ms, so every trace and every time is visible; stacked
+   data opens with none, so amplitudes compare. The plot window says which is in use.

@@ -31,7 +31,7 @@ src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows res
 |---|---|---|
 | `core` | `AppState` (open files, panels and their layers, the selection, the message log), `Command`s (each user intent as data), jobs in two lanes (prefetch through parseSEG's `Prefetcher`, processing through processSEG plans and its pool; results posted to a main-thread inbox), thread guards and the frame watchdog, kernels (colour maps, decimation, picking, cursor readout), map maths (tiles, projections, hit-testing) | `ui`, `gpu`, `platform`, any toolkit, SDL, OpenGL |
 | `view` | View models such as `PanelView`, `TableModel`, `TreeModel`, `PlotSeries` and `MapLayer`. Each has plain-Nim geometry (`Vec2`, `Rect`, `Rgba`) and a `revision` counter that bumps on change | `ui`, `gpu`, `platform`, any toolkit |
-| `gpu` | OpenGL 3 objects behind small procs: upload a sample tile as an `R32F` texture, the colour-map LUT texture and shader, line buffers | `ui`, any toolkit (OpenGL itself is allowed) |
+| `gpu` | OpenGL 3 objects behind small procs: upload a sample tile as `R32F` textures, the colour-map LUT texture and shader, line buffers. It loads the GL functions it needs itself (`gpu/gl`), through a loader the frontend passes in (`SDL_GL_GetProcAddress`), so it imports no GL binding package | `ui`, any toolkit (OpenGL itself is allowed) |
 | `platform` | `winres` (compile-time manifest, icon, version info), window chrome (DWM attributes on a native window handle), config paths, and whatever else needs raw OS APIs. Services the windowing library already has (SDL3: file dialogs, system theme, tray) are wrapped in `ui/<toolkit>/shell` instead, because only `ui` may import SDL | `ui`, `core`, any toolkit |
 | `ui/imgui` | The frame loop, docking layout and viewports, widgets that draw view models, input → `Command`, and `shell` (SDL3's file dialog, system theme and tray; results come back as inbox messages) | (top layer) |
 
@@ -100,7 +100,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), reads one trace's headers, hex bytes or textual header, closes files, and makes every OpenGL call |
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, `ensureKeys`, survey joins, sorts |
 | Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes, folder scans, brute stack, conversions, exports and patches, queued workflows |
-| Panel | `core`, one per trace panel | Owns that panel's `Prefetcher`, raw chunk cache and plans; processes chunks and posts tiles |
+| Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher`; applies the trace filter, runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
 | Pool workers | processSEG: one `ProcessPool`, made by `core` at start-up | The rows of `pool.apply`, `pool.pickInto` and `pool.traceAmplitudeInto`; destroyed at shutdown, once every caller has stopped |
 
@@ -169,7 +169,9 @@ cache marks it used.
 marks each listed object with its place in that list. An object listed by one thread and
 released by another corrupts the second thread's list. So a worker empties its list
 (`clearCycleRoots`) after making what it hands over and before posting it, the runners do
-it after every job, and files are closed on the UI thread, never on a worker.
+it after every job, a panel reader does it after closing a prefetcher (before it ends its
+hold on the file) and before it ends, and files are closed on the UI thread, never on a
+worker. Tiles hold no `ref`, so they may be freed on either side.
 
 **Guards.** `assertUiThread` and `assertWorkerThread` (`core/threads`) begin every proc
 that belongs to one side; they are checked in debug builds (`-d:threadGuards` keeps them
@@ -184,30 +186,45 @@ frame over budget (50 ms) with its parts, longest first.
    gathers, moves the file into a `Session` and posts the session. The progress hook is a
    `gcsafe` closure on the job thread that calls `JobContext.progress`. Not yet: reading
    `summary`, `channelSets` and `crsText` on the job.
-2. **Request** (UI). A scroll or zoom is a `Command`. `core` bumps the panel's `requestGen`
-   and sends the panel thread the trace range or selection, the sample window, the
-   `Pipeline` and the gain. The panel thread acts only on the newest request.
-3. **Prefetch** (panel). One range-mode prefetcher per panel (`uniform = true`,
-   `quickFirst = true`) follows every scroll through `seek`. The sample window
-   (`firstSample`, `cols`) and a selection (a gather, a sort order) are fixed when a
-   prefetcher is made, so changing either means making a new one. A zoom decodes
-   `decodeWindow(shown, flow.requiredMargin(dtMs), traceLen)`. The raw cache keeps the
-   chunks, so a slider change reprocesses them without decoding again.
-4. **Process** (panel, optional). The panel thread compiles one plan per sample interval,
-   row width and record length (`flow.compile(float32, dtMs, cols, recordSamples)`) and
-   runs `pool.apply(plan, raw, processed, chunkMeta(c))`. Each processed buffer is tagged
-   with `plan.generation` and `f.keysRevision`, and is redone when either changes.
-5. **Tile** (panel). The visible block is copied into a `Tile` (float32, on the shared heap,
-   moved and never shared), with its gain statistics (`traceStatsInto`, `panelStats`).
-6. **Upload** (UI). A tile whose `gen` is not the panel's `requestGen` is dropped. Any
-   other tile goes into the panel's `R32F` texture (`gpu`, `glTexSubImage2D`). Fixed or
-   normalized gain is a shader uniform. The tile then goes back to the panel's free list.
+2. **Show** (UI). Pointing a panel at a gather bumps its `requestGen` (and `sourceGen`),
+   holds the file (`Jobs.hold`) and hands the panel's reader the file, the gather and
+   the trace filter. The reader lets go of what it showed (closes its prefetcher, ends
+   its hold) and posts the panel's `PanelLayout` (`mkLayout`: positions, samples, interval)
+   with the header fields the traces have values for. `AppState` takes it in only if its
+   `sourceGen` is still the panel's, and fits the view to it.
+3. **Request** (UI). The frontend reports what its plot shows each frame (`ckView`:
+   the x range in positions, the y range in ms, the size in pixels). When the request
+   sent last does not cover it (`covers`), `core/viewport.requestFor` makes a new one:
+   the visible positions plus half a view of read-ahead on each side, every `stride`-th
+   position when zoomed out (never more than the pixel columns), the visible samples plus
+   read-ahead, kept at `decimation` samples per column (at most two columns per pixel
+   row), and the display pipeline's margin (`requiredMargin`, `decodeWindow`). The
+   request carries the new `requestGen`. The reader acts only on the newest note.
+4. **Prefetch and process** (reader). A selection-mode prefetcher over the request's
+   traces (`uniform = true`, `quickFirst = true`) with the decode window as its sample
+   window; per chunk, the display pipeline (the layer's pipeline, then the display gain:
+   AGC by default on pre-stack gathers) runs in place (`chunkMeta(c)`), and each row is
+   cut to the kept samples and peak-decimated into the tile. A newer note stops the
+   read between chunks.
+5. **Tile** (reader). A `Tile` (plain seqs, moved through the inbox, never shared)
+   holds the values, the display header's values per trace and the clip percentile of
+   |x| (`panelStats`).
+6. **Take in** (UI). A tile whose `request.gen` is not the panel's `requestGen` is
+   dropped. `AppState` keeps the newest four per panel; the first tile after a change of
+   gather or gain sets the panel's clip, so the brightness holds while the user pans.
+7. **Draw** (UI, `gpu/density`). Each kept tile is uploaded once, as `R32F` textures
+   cut to the GPU's size limit (`splitBlocks`). Each frame the tiles are drawn, oldest
+   first, into an RGBA image the size of the plot, with one shader (nearest trace,
+   linear in time, the gain and clip as a uniform, a colour-map texture); the frontend
+   shows the image in its plot. The CPU twins (`amplitudeAt`, `densityColour`) are what
+   the shader is tested against.
 
 | Work | Cancelled or dropped by |
 |---|---|
 | Open, `ensureKeys`, `bruteStack`, exports | The progress hook returning false: `SegCancelledError` (a cancelled open leaves nothing mapped); a queued job is cancelled before it starts |
 | Prefetch | `seek`, which drops the old chunks; a worker drops a stale chunk within 8 traces |
 | `pool.apply` | Nothing: a call takes a few ms per panel. The panel thread checks `requestGen` between chunks |
+| A panel's tile | A newer note to its reader (between chunks); `AppState` drops a tile whose `request.gen` is not the panel's `requestGen` |
 
 ### Calls by thread
 
@@ -217,7 +234,8 @@ frame over budget (50 ms) with its parts, longest first.
 | `close` | UI, once a job holding the file exclusively has ended | Unmaps the file |
 | `ensureKeys`, `applySurvey`, `applyGeometry` | job, exclusive | Bump `keysRevision` |
 | `readSps`, `addSps`, `readP1` | job | `SurveyGeometry`, moved to the session |
-| `newPrefetcher`, `seek`, `tryNextInto`, `recycle`, `close` | panel (the thread that made it) | `PrefetchChunk.samples` is the caller's until recycled |
+| `newPrefetcher`, `seek`, `nextInto`, `tryNextInto`, `recycle`, `close` | panel reader (the thread that made it) | `PrefetchChunk.samples` is the caller's until recycled |
+| `rowsOf`, `traceKeys`, `maxSamples`, `isSeismic` (the index in memory) | panel reader, while it holds the file | Views and copies of keys; nothing changes the index while the file is held |
 | `chunkMeta(c)`, `flow.compile`, `requiredMargin` | panel | A view of `c.rows` (no copy); a plan owned by the panel |
 | `pool.apply(plan, raw, processed, meta)` | panel (blocks) | Writes the caller's `processed` |
 | `traceStatsInto`, `panelStats`, `moveoutColumnsInto`, `checkGeometryInto` | panel | Fill the caller's seqs; ticks and flags tagged with `keysRevision` |
@@ -281,7 +299,13 @@ type
   Panel = object             # core/panels
     id: PanelId
     layers: seq[Layer]       # drawn in order; layer 0 is the one gather navigation moves
+    header: HeaderChoice     # the display header's rows: automatic, or the user's fields
     requestGen: uint64       # bumped whenever the panel needs new data; tiles carry it
+    sourceGen: uint64        # requestGen when layer 0's source last changed; layouts carry it
+    layout: PanelLayout      # from the reader: positions, samples, interval, t0
+    view: Viewport           # what the plot showed last (ckView)
+    pending: ReadRequest     # the request sent last
+    clip: float64            # the display clip, from the first tile after a change
     revision: int
 
   Layer = object             # one is the usual case; more are overlays
@@ -289,11 +313,12 @@ type
     filter: TraceFilter      # seismic / auxiliary, channel sets, channels, components
     pipeline: Pipeline       # processSEG operations; empty shows raw samples
     display: DisplaySettings # density or wiggle (positive / negative fill), "paper" colours,
-                             # clip percentile, overlap, reversed polarity
+                             # display gain (auto, none, trace balance, AGC), clip
+                             # percentile, overlap, reversed polarity
 
   CommandKind = enum         # core/state: every user intent, the only way state changes
-    ckOpen, ckClose, ckCancelJob, ckReorderJob, ckRemoveJob, ckGather, ckHover, ckSelect,
-    ckClearSelection
+    ckOpen, ckClose, ckCancelJob, ckReorderJob, ckRemoveJob, ckGather, ckView, ckDisplay,
+    ckHeader, ckHover, ckSelect, ckClearSelection
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
@@ -310,7 +335,9 @@ type
     case kind: MsgKind
     of mkOpened: session: Session  # moved, never shared
     of mkLog: entry: LogEntry      # time, severity, source, text, location, offset
-    # to come: mkTile (a panel's Tile), mkResult (FoldMap, StackResult, QC rows ...)
+    of mkLayout: panel, sourceGen, layout, known   # from a panel's reader
+    of mkTile: tile: Tile          # moved, never shared
+    # to come: mkResult (FoldMap, StackResult, QC rows ...)
 
   AppState = object          # move-only; owned by the UI thread
     log: MessageLog          # core/log: bounded (10 000 by default), oldest dropped, serials
@@ -319,13 +346,20 @@ type
     sessions: seq[Session]
     inbox: Inbox             # Poster handles for workers; freed with the last handle
     indexCache: string       # the folder of parseSEG's index caches; "" for none
-    jobs: Jobs               # declared last: destroyed first, so the runners stop first
+    tiles: seq[seq[Tile]]    # per panel: the newest four, oldest first
+    jobs: Jobs               # destroyed after the readers, before the sessions
+    readers: seq[PanelReader] # per panel; declared last: they stop (and end their holds) first
 
-  Tile = object              # not built yet: [traces, samples] float32, moved, never shared
+  Tile = object              # core/tiles: one request's samples, moved, never shared
+    id: uint64               # given when taken in; the GPU keys its textures on it
     panel: PanelId
-    gen: uint64              # the requestGen it answers
-    data: ptr UncheckedArray[float32]
-    firstTrace, traces, firstSample, samples: int
+    request: ReadRequest     # first, count, stride, firstSample, samples, decimation, gen
+    dtMs, t0Ms: float64
+    columns: int             # values per trace
+    data: seq[float32]       # count × columns, trace by trace
+    fields: seq[HeaderField]
+    header: seq[seq[float64]] # per field, one value per trace
+    clip: float64            # the clip percentile of |x| over the live traces
 ```
 
 **No undo history.** Edits to traces (kill, reverse polarity) are lists kept beside an

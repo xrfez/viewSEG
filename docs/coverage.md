@@ -10,6 +10,7 @@ Status values:
 
 | Status | Meaning |
 |---|---|
+| `built` | The viewer feature exists (it may grow later) |
 | `planned` | The viewer feature is designed and scheduled |
 | `to plan` | A sensible feature exists but is not scheduled yet |
 | `internal` | Plumbing the user never sees directly; the feature column says what uses it |
@@ -194,11 +195,11 @@ Status values:
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Fixed gain in dB | `scaleDb`, `gainDbOp`, `dbToFactor` | Display controls: gain in dB | planned |
-| Normalisation per trace or panel (max, RMS, percentile) | `initNormalizePlan`, `normalize`, `normalizeOp`, `panelFactor` | Display controls: trace normalisation | planned |
-| AGC (RMS, mean absolute) | `initAgcPlan`, `agc`, `agcOp` | Processing window: AGC | planned |
+| Normalisation per trace or panel (max, RMS, percentile) | `initNormalizePlan`, `normalize`, `normalizeOp`, `panelFactor` | Plot window: gain "trace balance" (`normalizeOp(normRms, perTrace)`); more display controls | built |
+| AGC (RMS, mean absolute) | `initAgcPlan`, `agc`, `agcOp` | Plot window: gain "AGC" (the default on pre-stack gathers); processing window: AGC | built |
 | AGC gain kept and removed | `agc(..., gains)`, `removeGain` | Show the AGC gain function; undo AGC on export | planned |
 | Time-variant gain (knots, tᵖ, exponential) | `knotGain`, `powerGain`, `exponentialGain`, `gainCurveOp`, `initGainCurvePlan`, `applyGainCurve` | Processing window: gain curve editor | planned |
-| Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats` | Display controls: clip by percentile (GPU uniforms) | planned |
+| Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats` | Plot window: clip at a percentile (`panelStats`, a shader uniform); per-trace statistics later | built |
 
 ### Pipelines and threads
 

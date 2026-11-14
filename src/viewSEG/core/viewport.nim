@@ -30,6 +30,7 @@
 ## GPU's size limit: `splitBlocks` cuts a tile into blocks that fit.
 
 import std/math
+from processSEG/pipeline import decodeWindow
 
 const ReadAhead* = 0.5
   ## positions (and samples) read beyond the view on each side, as a
@@ -174,8 +175,8 @@ func covers*(r: ReadRequest; layout: PanelLayout; view: Viewport; margin = 0): b
 
 func decodeSpan*(r: ReadRequest; traceSamples: int): Slice[int] =
   ## The samples to decode for `r`: the kept ones and `margin` more on each
-  ## side, within `0 ..< traceSamples`.
-  max(0, r.firstSample - r.margin) .. min(traceSamples, r.firstSample + r.samples + r.margin) - 1
+  ## side, within `0 ..< traceSamples` (processSEG's `decodeWindow`).
+  decodeWindow(r.firstSample ..< r.firstSample + r.samples, r.margin, traceSamples)
 
 func decimatePeakInto*(src: openArray[float32]; n: int; dst: var openArray[float32]) =
   ## Each `n` samples of `src` into one of `dst`: the sample of largest

@@ -3,9 +3,8 @@
 ## and its Cancel button), and tool buttons (a Nerd Font icon or
 ## a seismic `Symbol`) with tooltips that name their shortcut. The toolbar holds
 ## application-level actions only; display and gather controls belong to the
-## plot windows, which use `symbolButton`. Also the two
-## sample panels (a plot and a table) that show the look until the real trace
-## panel and header table exist.
+## plot windows, which use `symbolButton`. Also the sample header table that
+## shows the look until the real header table exists.
 ##
 ## Each piece records where it drew its named parts in `Marks`, so tests can
 ## look at the right pixels.
@@ -31,7 +30,7 @@ type
 func toRect(a, b: ImVec2_c): Rect =
   Rect(pos: vec2(a.x, a.y), size: vec2(b.x - a.x, b.y - a.y))
 
-proc markRect(marks: var Marks; name: string; a, b: ImVec2_c) =
+proc markRect*(marks: var Marks; name: string; a, b: ImVec2_c) =
   ## Records the screen rectangle `a`..`b` as `name`, in framebuffer pixels of
   ## the main window (ImGui's coordinates are the desktop's, with viewports).
   let s = igGetIO_Nil().DisplayFramebufferScale
@@ -89,10 +88,11 @@ proc iconButton*(icon, text, shortcut: string; size: float32; t: Theme;
   clicked
 
 proc symbolButton*(sym: Symbol; size: float32; t: Theme; marks: var Marks;
-    selected = false; note = ""): bool =
-  ## A tool button showing a seismic symbol, for a plot window's own controls.
+    selected = false; note = ""; markPrefix = "tool."): bool =
+  ## A tool button showing a seismic symbol, for a plot window's own controls;
+  ## its mark is `markPrefix` and the symbol's name.
   let (clicked, pos) = toolButton("##" & $sym, size, selected, t)
-  marks.mark("tool." & $sym)
+  marks.mark(markPrefix & $sym)
   let inset = round(size * 0.17)
   drawSymbol(igGetWindowDrawList(), sym, ImVec2_c(x: pos.x + inset, y: pos.y + inset),
     size - 2 * inset, symbolColours(t, selected))
@@ -226,32 +226,6 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
   igEnd()
 
 # ------------------------------------------------------------- samples --
-
-type
-  SamplePlot* = object
-    xs*, z*, n*: seq[float32]
-
-func samplePlot*(count: int): SamplePlot =
-  ## Two damped wavelets, as two components of one trace.
-  result = SamplePlot(xs: newSeq[float32](count), z: newSeq[float32](count),
-    n: newSeq[float32](count))
-  for i in 0 ..< count:
-    let ti = i.float32 / 100
-    result.xs[i] = ti
-    result.z[i] = exp(-ti / 2) * sin(2 * PI * ti)
-    result.n[i] = 0.6 * exp(-ti / 3) * sin(2 * PI * ti * 1.3 + 0.8)
-
-proc drawSamplePlot*(title: string; plot: SamplePlot; marks: var Marks) =
-  if igBegin(title.cstring, nil, 0):
-    if ImPlot_BeginPlot("##sample", ImVec2_c(x: -1, y: -1), ImPlot_Flags_NoTitle.cint):
-      ImPlot_SetupAxes("t (s)", "amplitude", 0, 0)
-      ImPlot_SetupLegend(ImPlot_Location_NorthEast.cint, 0)
-      for (name, ys) in [("Z", plot.z), ("N", plot.n)]:
-        ImPlot_PlotLine_FloatPtrFloatPtr(name.cstring, unsafeAddr plot.xs[0],
-          unsafeAddr ys[0], plot.xs.len.cint, 0, 0, sizeof(float32).cint)
-      ImPlot_EndPlot()
-      marks.mark("plot")
-  igEnd()
 
 proc rightAlign(text: string) =
   ## Moves the cursor so that `text` ends at the right of the space left.

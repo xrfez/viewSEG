@@ -129,6 +129,8 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   if rd.src.file == nil: return
   let f = rd.src.file
   let g = rd.src.traces
+  if not f[].hasKeys: # files are opened with their keys; without them nothing here works
+    raise newException(ValueError, "it was opened without its trace keys")
   let rows = f[].rowsOf(g)
   var list: seq[int]
   var all = true

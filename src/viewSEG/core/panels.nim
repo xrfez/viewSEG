@@ -21,7 +21,7 @@ import processSEG/gain/gain
 import processSEG/vibroseis/sweep
 import session, viewport
 
-export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport
+export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, GatherKind
 
 type
   PanelId* = distinct int

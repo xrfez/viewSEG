@@ -2,10 +2,10 @@
 ## plus ImPlot) on SDL3 and OpenGL 3. Only `ui/imgui/` may import imguin, ImPlot
 ## or SDL (docs/architecture.md).
 ##
-## The window holds a menu bar, an icon toolbar, a dockspace with a sample plot,
-## a sample table and the Messages window, and a status bar with the running
-## job's progress and its Cancel button; `-d:imguiDemo` adds the Dear ImGui
-## demo window. The look comes from a theme file
+## The window holds a menu bar, an icon toolbar, a dockspace with the trace
+## panel (`tracepanel`), a sample header table and the Messages window, and a
+## status bar with the running job's progress and its Cancel button;
+## `-d:imguiDemo` adds the Dear ImGui demo window. The look comes from a theme file
 ## (`view/theme`, `style`, `fonts`); the shell services (dialogs, system theme,
 ## icon) are in `shell`, DPI handling in `dpi`, the chrome in `chrome`.
 ##
@@ -31,9 +31,9 @@ import imguin/glad/gl
 import ../../core/[geometry, state, watchdog]
 import ../../platform/paths
 import ../../view/jobstatus
-import chrome, dpi, fonts, icons, menus, messages, shell, style
+import chrome, dpi, fonts, icons, menus, messages, shell, style, tracepanel
 
-export ThemeChoice, theme, messages, ImguiCheck
+export ThemeChoice, theme, messages, ImguiCheck, tracepanel
 
 const
   glslVersion = "#version 330"
@@ -57,6 +57,7 @@ type
     fonts: Fonts
     messages: Messages           ## the frontend's messages, on their way to the log
     core: AppState               ## the application state
+    trace: TracePanelUi          ## the main panel's plot window
     logView: LogView
     echoed: int                  ## the core log's entries echoed to stdout so far
     dog: FrameWatchdog
@@ -116,6 +117,11 @@ type
       ## seismic files to open once the window is up (the command line's)
     indexCacheDir*: Option[string]
       ## where parseSEG's index caches go; default `<cache>/index`
+    windowSize*: (int, int)
+      ## the main window's size in pixels at 100 %; (0, 0) for the default
+    maxTextureSize*: int
+      ## the largest texture side the plot uses; 0 for the GPU's limit
+      ## (tests set a small one, so that tiles are cut into blocks)
     simulate: set[StartupStep] ## tests: these steps fail without being tried
 
 proc readPixel*(frame: FrameInfo; x, y: int): Rgba =
@@ -208,6 +214,19 @@ proc pressMouse*(frame: FrameInfo; at: Vec2; down: bool) =
 proc core*(frame: FrameInfo): lent AppState =
   ## The application state as this frame drew it.
   frame.ui.core
+
+proc tracePanel*(frame: FrameInfo): lent TracePanelUi =
+  ## The main plot window's state as this frame drew it: `drawnView`,
+  ## `densityImage`.
+  frame.ui.trace
+
+proc showView*(frame: FrameInfo; v: Viewport) =
+  ## Pans and zooms the main plot to `v` next frame, as the user would.
+  frame.ui.trace.show(v)
+
+proc apply*(frame: FrameInfo; cmd: Command) =
+  ## Applies `cmd` as a control of the window would (for tests).
+  frame.ui.core.apply cmd
 
 # ------------------------------------------------------------------ themes --
 
@@ -363,7 +382,7 @@ proc drawDockSpace(ui: var Ui) =
   igPopStyleColor(1)
   igEnd()
 
-proc drawUi(ui: var Ui; plot: SamplePlot): set[MenuAction] =
+proc drawUi(ui: var Ui): set[MenuAction] =
   ui.marks.setLen 0
   let menu = drawMainMenu(ui.themes, ui.selected)
   result = menu.actions
@@ -376,7 +395,11 @@ proc drawUi(ui: var Ui; plot: SamplePlot): set[MenuAction] =
   if cancel != NoJob:
     ui.core.apply Command(kind: ckCancelJob, job: cancel)
   ui.drawDockSpace()
-  drawSamplePlot(plotTitle, plot, ui.marks)
+  let plot = ui.trace.drawTracePanel(plotTitle, ui.core, MainPanel, ui.theme, ui.fonts,
+    ui.marks)
+  result.incl plot.actions
+  for c in plot.commands:
+    ui.core.apply c
   drawSampleTable(tableTitle, ui.fonts, ui.theme, ui.marks)
   ui.logView.draw(ui.core.log, messagesTitle, ui.theme)
   when defined(imguiDemo):
@@ -442,18 +465,23 @@ proc fail(opts: RunOptions; step: StartupStep; reason: string): int =
 
 proc sdlError(): string = $SDL_GetError()
 
+proc glProc(name: cstring): pointer {.cdecl, gcsafe, raises: [].} =
+  ## The GL loader the GPU layer uses.
+  cast[pointer](SDL_GL_GetProcAddress(name))
+
 func simulating(opts: RunOptions; steps: set[StartupStep]): RunOptions =
   ## `opts` with `steps` failing without being tried (tests import this module
   ## with `{.all.}`).
   result = opts
   result.simulate = steps
 
-proc createMainWindow(): ptr SDL_Window =
+proc createMainWindow(size: (int, int)): ptr SDL_Window =
   ## The main window, sized for the primary display's scale.
   var usable: SDL_Rect
   if not SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), addr usable):
     usable = SDL_Rect()
-  let (w, h) = scaledWindowSize(defaultSize, primaryDisplayScale(), (usable.w.int, usable.h.int))
+  let wanted = if size[0] > 0 and size[1] > 0: size else: defaultSize
+  let (w, h) = scaledWindowSize(wanted, primaryDisplayScale(), (usable.w.int, usable.h.int))
   SDL_CreateWindow("viewSEG", w.cint, h.cint,
     SDL_WINDOW_OPENGL or SDL_WINDOW_RESIZABLE or SDL_WINDOW_HIGH_PIXEL_DENSITY)
 
@@ -504,7 +532,7 @@ proc run*(opts = RunOptions()): int =
   discard SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
   discard SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
   discard SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)
-  let window = if ssWindow in opts.simulate: nil else: createMainWindow()
+  let window = if ssWindow in opts.simulate: nil else: createMainWindow(opts.windowSize)
   if window.isNil:
     return opts.fail(ssWindow, sdlError())
   defer: SDL_DestroyWindow(window)
@@ -524,6 +552,9 @@ proc run*(opts = RunOptions()): int =
   defer: igDestroyContext(imgui)
   let implot = ImPlot_CreateContext()
   defer: ImPlot_DestroyContext(implot)
+  # No double-click fit: a plot's first click already means something
+  # (docs/plot-window.md); "fit all" is a control. Button 4 is never pressed.
+  ImPlot_GetInputMap().Fit = 4
   let io = igGetIO_Nil()
   io.ConfigFlags = io.ConfigFlags or ImGui_ConfigFlags_NavEnableKeyboard.cint or
     ImGui_ConfigFlags_DockingEnable.cint or ImGui_ConfigFlags_ViewportsEnable.cint
@@ -543,9 +574,11 @@ proc run*(opts = RunOptions()): int =
 
   var ui = initUi(window, opts)
   ui.setTheme()
+  let gpuError = ui.trace.startGpu(glProc, opts.maxTextureSize)
+  if gpuError.len > 0:
+    ui.say("The plot cannot be drawn: " & gpuError, mlError)
   if opts.openPaths.len > 0:
     ui.core.apply Command(kind: ckOpen, paths: opts.openPaths)
-  let plot = samplePlot(1000)
   var
     frame = 0
     event: SDL_Event
@@ -579,7 +612,7 @@ proc run*(opts = RunOptions()): int =
       ImGui_Impl_OpenGL3_NewFrame()
       ImGui_ImplSDL3_NewFrame()
       igNewFrame()
-      let actions = ui.drawUi(plot)
+      let actions = ui.drawUi()
       ui.mark "render"
       igRender()
       for c in newImguiChecks():
@@ -625,4 +658,6 @@ proc run*(opts = RunOptions()): int =
       if report.isSome:
         ui.core.report(sevWarning, "frame", report.get)
     ui.echoNewLog()
+  ui.trace.stopGpu() # while the GL context is current
+  ui.core.shutdown()
   0
