@@ -43,18 +43,28 @@
 ## ids in the `Selection`, so the plot and the map show the same ones. A
 ## change of either only recolours traces: nothing is read again.
 ##
+## **Settings.** The settings (`core/settings`) change only through
+## commands: `ckSettings`, and the plot's display, order and display header,
+## which a new plot window then starts with; opening a file adds it to the
+## recent files. Given a folder (`keepSettingsIn`), they are saved there by
+## the disk thread a moment after they last changed (`SaveDelay`, `persist`)
+## and at `shutdown`; `ckExportSettings` and `ckImportSettings` write and
+## read a file of the user's, and `ckResetSettings` goes back to the
+## defaults, keeping a copy.
+##
 ## **No undo history.** Edits to traces (kill, reverse polarity) are kept as
 ## lists beside an untouched file, so each one is undone by its inverse;
 ## header edits are a patch, undone by removing an entry; views have "back".
 ## None of these needs a general history of commands.
 
-import std/[math, os, sequtils]
+import std/[math, monotimes, os, sequtils, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 import diskio, filejobs, inbox, jobs, log, panels, persist, pick, reader, selection, session,
   settings, threads, tiles, zoom
 
-export inbox, jobs, log, panels, pick, selection, session, settings, threads, tiles, zoom
+export inbox, jobs, log, panels, persist, pick, selection, session, settings, threads, tiles,
+  zoom
 
 const
   MainPanel* = PanelId(1)
@@ -64,20 +74,23 @@ const
 
 type
   CommandKind* = enum
-    ckOpen = "open"             ## open files (one interactive job each)
-    ckClose = "close"           ## close an open file
+    ckOpen = "open"                      ## open files (one interactive job each)
+    ckClose = "close"                    ## close an open file
     ckCancelJob = "cancel job"
     ckReorderJob = "reorder job"
     ckRemoveJob = "remove job"
-    ckGather = "go to gather"   ## show another gather of the file a panel shows
-    ckView = "view"             ## what a panel's plot shows (zoom, pan, size)
-    ckDisplay = "display"       ## how a panel's layer 0 is drawn
-    ckHeader = "display header" ## the rows of a panel's display header
-    ckSort = "sort"             ## the order of a panel's traces
-    ckBack = "back"             ## a panel's view before the last gesture
-    ckSettings = "settings"     ## scale units, monitor calibrations, the readout's fields
-    ckHover = "hover"           ## the trace under the cursor
-    ckSelect = "select"         ## change the selected traces
+    ckGather = "go to gather"            ## show another gather of the file a panel shows
+    ckView = "view"                      ## what a panel's plot shows (zoom, pan, size)
+    ckDisplay = "display"                ## how a panel's layer 0 is drawn
+    ckHeader = "display header"          ## the rows of a panel's display header
+    ckSort = "sort"                      ## the order of a panel's traces
+    ckBack = "back"                      ## a panel's view before the last gesture
+    ckSettings = "settings"              ## replace the settings
+    ckExportSettings = "export settings" ## write the settings to a file of the user's
+    ckImportSettings = "import settings" ## take settings in from such a file
+    ckResetSettings = "reset settings"   ## back to the defaults
+    ckHover = "hover"                    ## the trace under the cursor
+    ckSelect = "select"                  ## change the selected traces
     ckClearSelection = "clear selection"
 
   Command* = object
@@ -103,8 +116,10 @@ type
     of ckSelect:
       traces*: seq[int]         ## survey-wide trace ids
       mode*: SelectMode
-    of ckClearSelection: discard
+    of ckClearSelection, ckResetSettings: discard
     of ckSettings: settings*: Settings
+    of ckExportSettings, ckImportSettings:
+      docPath*: string          ## the file written or read
 
   Pending = object
     ## An open or close job the state waits for.
@@ -127,9 +142,14 @@ type
     nextTile: uint64
     scratch: Workspace    ## for the Float gain's level, on this thread
     inbox: Inbox
-    disk: DiskIo          ## writes the session log; none until `logTo`
+    disk: DiskIo          ## writes the session log and the settings; none until needed
     logFile: string       ## the session log; "" for none
     logged: int           ## the log's serial the session log has reached
+    configDir: string     ## where the settings are saved; "" for nowhere
+    defaults: Settings    ## what a reset goes back to
+    settingsRev: int      ## bumped on every change of `settings`
+    savedRev: int         ## the revision saved last
+    changedAt: MonoTime   ## when `settings` last changed
     jobs: Jobs
       ## Fields are destroyed last to first: the runners stop before
       ## anything a running job uses is freed.
@@ -153,12 +173,20 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
 
+const SaveDelay* = initDuration(seconds = 1)
+  ## settings are saved this long after their last change (and at shutdown)
+
+proc diskIo(state: var AppState): lent DiskIo =
+  ## The disk thread, started when first needed.
+  if state.disk.isNil: state.disk = newDiskIo(state.inbox.poster)
+  state.disk
+
 proc logTo*(state: var AppState; dir: string) =
   ## From now on, writes the log to a new file in `dir`, this run's session
   ## log (`sessionLogPath`), off this thread, entries logged so far first;
   ## removes the oldest session logs there, keeping `KeptSessionLogs`.
   assertUiThread()
-  if state.disk.isNil: state.disk = newDiskIo(state.inbox.poster)
+  discard state.diskIo
   state.logFile = sessionLogPath(dir)
   state.logged = state.log.nextSerial - state.log.len
   state.disk.prune(dir, SessionLogPrefix, SessionLogSuffix, KeptSessionLogs - 1,
@@ -181,17 +209,51 @@ proc writeLog(state: var AppState) =
   state.logged = state.log.nextSerial
   state.disk.append(state.logFile, text, "the session log")
 
-proc persist*(state: var AppState) =
+proc settingsFile*(state: AppState): string =
+  ## Where the settings are saved; "" when they are not.
+  if state.configDir.len == 0: "" else: state.configDir / SettingsFileName
+
+proc keepSettingsIn*(state: var AppState; dir: string; loaded: LoadedSettings) =
+  ## Takes the settings `loadSettings` read from `dir` and logs what it
+  ## said; from now on, saves them in `dir`'s `SettingsFileName`, off this
+  ## thread, `SaveDelay` after they last changed and at `shutdown` (unless
+  ## `loaded` says they must not be: the file is left as it is).
+  assertUiThread()
+  for (severity, text) in loaded.notes:
+    state.log.add(severity, "settings", text)
+  state.settings = cleaned(loaded.settings)[0]
+  state.defaults = cleaned(loaded.defaults)[0]
+  state.configDir = if loaded.saveable: dir else: ""
+  inc state.settingsRev
+  state.savedRev = if loaded.rewrite: state.settingsRev - 1 else: state.settingsRev
+  state.changedAt = getMonoTime()
+  discard state.diskIo
+
+func settingsRevision*(state: AppState): int {.inline.} =
+  ## Bumped on every change of the settings.
+  state.settingsRev
+
+proc saveSettings(state: var AppState) =
+  if state.configDir.len > 0:
+    state.disk.replace(state.settingsFile, settingsDocument(state.settings), "the settings")
+  state.savedRev = state.settingsRev
+
+proc persist*(state: var AppState; now = getMonoTime()) =
   ## Hands what is due to the disk thread: what was logged since the last
-  ## call. Call it once per frame, after the frame's commands; it never
+  ## call, and the settings once `SaveDelay` has passed since they last
+  ## changed. Call it once per frame, after the frame's commands; it never
   ## waits.
   assertUiThread()
   state.writeLog()
+  if state.savedRev != state.settingsRev and now - state.changedAt >= SaveDelay:
+    state.saveSettings()
 
 proc flushFiles*(state: var AppState) =
-  ## Waits until the disk thread has written everything handed to it (tests).
+  ## Saves what is due now, without waiting for `SaveDelay`, and waits
+  ## until the disk thread has written everything handed to it (tests).
   assertUiThread()
-  state.persist()
+  state.writeLog()
+  if state.savedRev != state.settingsRev: state.saveSettings()
   state.disk.flush()
 
 proc shutdown*(state: var AppState) =
@@ -202,7 +264,8 @@ proc shutdown*(state: var AppState) =
   for r in state.readers:
     r.stop()
   state.jobs.stop()
-  state.persist()
+  if state.savedRev != state.settingsRev: state.saveSettings()
+  state.writeLog()
   state.disk.stop()
 
 # --------------------------------------------------------------- reading --
@@ -232,8 +295,12 @@ func indexCache*(state: AppState): lent string {.inline.} =
   state.indexCache
 
 func settings*(state: AppState): lent Settings {.inline.} =
-  ## The user's settings: scale units, monitor calibrations, readout fields.
+  ## The user's settings (`core/settings`).
   state.settings
+
+func defaultSettings*(state: AppState): lent Settings {.inline.} =
+  ## What a reset of the settings goes back to.
+  state.defaults
 
 func tiles*(state: AppState; panelIndex: int): lent seq[Tile] {.inline.} =
   ## The tiles kept for `panels[panelIndex]`, oldest first: draw them in
@@ -310,6 +377,14 @@ proc canonical(path: string): string =
 proc ignore(state: var AppState; cmd: Command; why: string) =
   state.log.add(sevWarning, "commands", "Ignored \"" & $cmd.kind & "\": " & why & ".")
 
+proc change(state: var AppState; s: sink Settings) =
+  ## Makes `s` the settings, noting a change when it is one (as saved:
+  ## a value that is not a number equals itself).
+  if settingsDocument(s) != settingsDocument(state.settings):
+    state.settings = s
+    inc state.settingsRev
+    state.changedAt = getMonoTime()
+
 proc reader(state: var AppState; k: int): lent PanelReader =
   ## The reader of `panels[k]`, started when first needed.
   if state.readers[k].isNil:
@@ -358,8 +433,12 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
   ## pipeline and display; makes the layer when the panel has none.
   let k = state.findPanel(panel)
   if k < 0: return
-  if state.panels[k].layers.len == 0:
-    state.panels[k].layers.add recordLayer(file, gather)
+  if state.panels[k].layers.len == 0: # a new plot: as the user last had one
+    var layer = recordLayer(file, gather)
+    layer.display = state.settings.plot.display
+    layer.order = state.settings.plot.order
+    state.panels[k].layers.add layer
+    state.panels[k].header = state.settings.plot.header
   else:
     state.panels[k].layers[0].source = LayerSource(kind: lsRecord, file: file, gather: gather)
   state.newSource(k)
@@ -470,6 +549,10 @@ proc adopt(state: var AppState; s: sink Session) =
     " in " & plural(s.gathers.len, "gather") &
     (if s.file.fromCache: " (index from the cache)." else: "."))
   let gather = if s.gathers.len > 0: 0 else: -1
+  var st = state.settings
+  st.recentFiles.addRecent(s.path, MaxRecent)
+  st.recentFolders.addRecent(s.path.parentDir, MaxRecent)
+  state.change st
   state.sessions.add s
   state.show(MainPanel, id, gather)
 
@@ -627,9 +710,31 @@ proc apply*(state: var AppState; cmd: Command) =
     let (s, dropped) = cleaned(cmd.settings)
     if dropped > 0:
       state.log.add(sevWarning, "settings", $dropped & " of the settings given could not " &
-        "be used (a calibration that is not a positive number, or an entry given twice) " &
-        "and were left out.")
-    state.settings = s
+        "be used (a calibration that is not a positive number, an entry given twice, a " &
+        "sort preset without a name or keys) and were left out.")
+    state.change s
+  of ckExportSettings:
+    if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
+    else:
+      state.diskIo.replace(cmd.docPath, settingsDocument(state.settings),
+        "the exported settings", done = "Settings exported to " & cmd.docPath & ".")
+  of ckImportSettings:
+    if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
+    else: state.diskIo.read(cmd.docPath, rpImportSettings, MaxNifBytes)
+  of ckResetSettings:
+    var s = state.defaults
+    s.recentFiles = state.settings.recentFiles # memory, not preferences
+    s.recentFolders = state.settings.recentFolders
+    s.window = state.settings.window
+    let file = state.settingsFile
+    if file.len > 0:
+      let backup = backupPath(file)
+      state.diskIo.replace(backup, settingsDocument(state.settings), "a copy of the settings")
+      state.log.add(sevInfo, "settings", "Settings reset to their defaults; the settings " &
+        "before are kept in " & backup & ".")
+    else:
+      state.log.add(sevInfo, "settings", "Settings reset to their defaults.")
+    state.change s
   of ckDisplay:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
@@ -639,6 +744,9 @@ proc apply*(state: var AppState; cmd: Command) =
       let d = cmd.display.withGainDb(cmd.display.gainDb)
       state.panels[k].layers[0].display = d
       inc state.panels[k].revision
+      var s = state.settings
+      s.plot.display = remembered(d)
+      state.change s
       # Only a change of the samples reads again: the gain amount, a Fixed
       # amplitude and a type that is a scale alone change only the drawing.
       if not d.sameProcessing(was, state.panels[k].kind):
@@ -651,6 +759,9 @@ proc apply*(state: var AppState; cmd: Command) =
       state.ignore(cmd, "a display header needs at least one field")
     else:
       state.panels[k].header = cmd.header
+      var s = state.settings
+      s.plot.header = cmd.header
+      state.change s
       state.refetch(k, keepTiles = true)
   of ckSort:
     let k = state.findPanel(cmd.panel)
@@ -658,6 +769,11 @@ proc apply*(state: var AppState; cmd: Command) =
     elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
     elif cmd.order != state.panels[k].layers[0].order:
       state.panels[k].layers[0].order = cmd.order
+      var s = state.settings
+      s.plot.order = cmd.order
+      if cmd.order.len > 0 and presetOf(cmd.order, s.sortPresets) < 0:
+        s.customOrder = cmd.order # the user's own keys, offered again
+      state.change s
       state.reorder(k)
   of ckHover:
     # The UI sends a hover on every move, so one on a trace of a file closed
@@ -677,6 +793,26 @@ proc apply*(state: var AppState; cmd: Command) =
   of ckClearSelection:
     state.selection.clear()
 
+proc takeIn(state: var AppState; m: Msg) =
+  ## A document the disk thread read: settings to import.
+  let name = m.readPath.extractFilename
+  case m.purpose
+  of rpImportSettings:
+    if m.readError.len > 0:
+      state.log.add(sevError, "settings", "Cannot import the settings in " & m.readPath &
+        ": " & m.readError & ".")
+    else:
+      var problems: seq[string]
+      try:
+        let s = readSettings(m.content, name, state.settings, problems)
+        for p in problems: state.log.add(sevWarning, "settings", p)
+        state.change cleaned(s)[0]
+        state.log.add(sevInfo, "settings", "Settings imported from " & m.readPath &
+          (if problems.len > 0: ", except what is said above." else: "."))
+      except NifError as e:
+        state.log.add(sevError, "settings", "Cannot import the settings: " & e.msg &
+          ". Nothing was changed.")
+
 proc drainInbox*(state: var AppState): bool =
   ## Takes in what the workers posted and how the jobs ended, in that order
   ## per job. Call it once per frame; it never waits. True when anything
@@ -691,6 +827,7 @@ proc drainInbox*(state: var AppState): bool =
     case m.kind
     of mkOpened: state.adopt(move m.session)
     of mkLog: state.log.add(move m.entry)
+    of mkRead: state.takeIn(m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:

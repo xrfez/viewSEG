@@ -69,6 +69,8 @@ type
     slow: SlowFrameDigest
     marks: Marks
     pendingTheme: Option[string] ## picked in the menu, applied after the frame
+    appliedTheme: string         ## the settings' theme last followed
+    placed: bool                 ## the main window moved or changed size this frame
     layoutDone: bool
     running: bool
 
@@ -131,8 +133,11 @@ type
     indexCacheDir*: Option[string]
       ## where parseSEG's index caches go; default `<cache>/index`
     persist*: bool
-      ## write this run's session log in `logDir` (the program does; tests
-      ## choose)
+      ## read the settings from `configDir` at start and save them there as
+      ## they change, and write this run's session log in `logDir` (the
+      ## program does; tests choose)
+    configDir*: Option[string]
+      ## where the settings are kept; default `paths.configDir()`
     version*: string
       ## the program's version, logged first ("" for none)
     windowSize*: (int, int)
@@ -192,7 +197,9 @@ proc markOf*(frame: FrameInfo; name: string): Rect =
 proc chooseTheme*(frame: FrameInfo; name: string) =
   ## Picks theme file `name` ("" follows the system) as View > Theme does;
   ## it applies after this frame.
-  frame.ui.pendingTheme = some(name)
+  var s = frame.ui.core.settings
+  s.theme = name
+  frame.ui.core.apply Command(kind: ckSettings, settings: s)
 
 proc messages*(frame: FrameInfo): seq[Message] =
   ## What the Messages window holds: the log's entries, oldest first, each
@@ -260,6 +267,17 @@ proc pressKey*(frame: FrameInfo; key: SimKey; down: bool; mods: set[SimMod] = {}
     key: SDL_GetKeyFromScancode(scancodes[key], SDL_Keymod(m), true), mod_field: SDL_Keymod(m),
     down: down)
   discard SDL_PushEvent(addr ev)
+
+proc resizeWindow*(frame: FrameInfo; width, height: int) =
+  ## Gives the main window a new size in window coordinates, as the user
+  ## would by its edge. For tests.
+  discard SDL_SetWindowSize(frame.ui.window, cint(width), cint(height))
+
+proc windowSize*(frame: FrameInfo): (int, int) =
+  ## The main window's size in window coordinates (for tests).
+  var w, h: cint
+  discard SDL_GetWindowSize(frame.ui.window, addr w, addr h)
+  (w.int, h.int)
 
 proc typeText*(frame: FrameInfo; text: string) =
   ## Types `text` into the item that has the keyboard, as text input
@@ -347,11 +365,25 @@ proc setTheme(ui: var Ui) =
   ui.flushMessages()
   ui.restyle()
 
+proc chooseTheme(ui: var Ui; name: string) =
+  ## Makes theme file `name` ("" follows the system) the settings' theme;
+  ## `followSettings` applies it after the frame.
+  var s = ui.core.settings
+  s.theme = name
+  ui.core.apply Command(kind: ckSettings, settings: s)
+
 proc toggleTheme(ui: var Ui) =
   ## Switches to the default theme of the other mode.
   let other = if ui.theme.mode == tmDark: tmLight else: tmDark
-  ui.selected = DefaultThemeNames[other]
-  ui.setTheme()
+  ui.chooseTheme(DefaultThemeNames[other])
+
+proc followSettings(ui: var Ui) =
+  ## A theme the settings name now (the menu, an import, a reset) is
+  ## applied after this frame.
+  let wanted = ui.core.settings.theme
+  if wanted != ui.appliedTheme:
+    ui.appliedTheme = wanted
+    if wanted != ui.selected: ui.pendingTheme = some(wanted)
 
 # ------------------------------------------------------------------ events --
 
@@ -364,6 +396,12 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     of dkOpenFolder:
       ui.say("Opening a whole folder is not available yet: File > Open files... opens " &
         "the files in " & ev.paths[0] & ".", mlWarning)
+    of dkExportSettings:
+      # Not every desktop adds the extension the filter names.
+      let path = if ev.paths[0].splitFile.ext.len == 0: ev.paths[0] & ".nif" else: ev.paths[0]
+      ui.core.apply Command(kind: ckExportSettings, docPath: path)
+    of dkImportSettings:
+      ui.core.apply Command(kind: ckImportSettings, docPath: ev.paths[0])
   of seCancelled:
     discard # the user closed the dialog: nothing to say
   of seDialogFailed:
@@ -379,13 +417,21 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
 
 proc onActions(ui: var Ui; actions: set[MenuAction]) =
   let parent = SDL_GetWindowID(ui.window)
+  let recent = ui.core.settings.recentFolders
+  let folder = if recent.len > 0: recent[0] & DirSep else: ""
   for a in actions:
     case a
-    of maOpenFile: showOpenDialog(dkOpenFile, parent)
-    of maOpenFiles: showOpenDialog(dkOpenFiles, parent)
-    of maOpenFolder: showOpenDialog(dkOpenFolder, parent)
+    of maOpenFile: showDialog(dkOpenFile, parent, folder)
+    of maOpenFiles: showDialog(dkOpenFiles, parent, folder)
+    of maOpenFolder: showDialog(dkOpenFolder, parent, folder)
     of maQuit: ui.running = false
     of maToggleTheme: ui.toggleTheme()
+    of maExportSettings:
+      let dir = ui.core.settingsFile.parentDir
+      showDialog(dkExportSettings, parent,
+        (if dir.len > 0: dir / "viewSEG-settings.nif" else: "viewSEG-settings.nif"))
+    of maImportSettings: showDialog(dkImportSettings, parent)
+    of maResetSettings: ui.core.apply Command(kind: ckResetSettings)
 
 # ------------------------------------------------------------------- frame --
 
@@ -456,10 +502,18 @@ proc drawDockSpace(ui: var Ui) =
 
 proc drawUi(ui: var Ui): set[MenuAction] =
   ui.marks.setLen 0
-  let menu = drawMainMenu(ui.themes, ui.selected)
+  let menu = drawMainMenu(MenuInput(themes: ui.themes, theme: ui.selected,
+    recent: ui.core.settings.recentFiles))
   result = menu.actions
   if menu.pickedTheme and menu.theme != ui.selected:
-    ui.pendingTheme = some(menu.theme) # fonts and styles change between frames
+    ui.chooseTheme(menu.theme) # applied between frames: fonts and styles change
+  if menu.openRecent.len > 0:
+    ui.core.apply Command(kind: ckOpen, paths: @[menu.openRecent])
+  if menu.clearRecent:
+    var s = ui.core.settings
+    s.recentFiles.setLen 0
+    s.recentFolders.setLen 0
+    ui.core.apply Command(kind: ckSettings, settings: s)
   result.incl drawToolbar(ui.theme, ui.marks)
   let job = jobStatus(ui.core.jobs.active, getMonoTime())
   # The readout is last frame's pick: the bar is drawn before the plot.
@@ -556,18 +610,73 @@ func simulating(opts: RunOptions; steps: set[StartupStep]): RunOptions =
   result = opts
   result.simulate = steps
 
-proc createMainWindow(size: (int, int)): ptr SDL_Window =
-  ## The main window, sized for the primary display's scale.
-  var usable: SDL_Rect
-  if not SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), addr usable):
-    usable = SDL_Rect()
-  let wanted = if size[0] > 0 and size[1] > 0: size else: defaultSize
-  let (w, h) = scaledWindowSize(wanted, primaryDisplayScale(), (usable.w.int, usable.h.int))
-  SDL_CreateWindow("viewSEG", w.cint, h.cint,
-    SDL_WINDOW_OPENGL or SDL_WINDOW_RESIZABLE or SDL_WINDOW_HIGH_PIXEL_DENSITY)
+proc displayUnder(x, y, w: int): SDL_Rect =
+  ## The usable area of the display that holds most of the top of a window
+  ## at (`x`, `y`), `w` wide: at least 100 x 20 of its title bar; an empty
+  ## rectangle when none does (the display it was on has gone).
+  result = SDL_Rect()
+  var count: cint
+  let displays = SDL_GetDisplays(addr count)
+  if displays != nil:
+    let list = cast[ptr UncheckedArray[SDL_DisplayID]](displays)
+    var best = 0
+    for i in 0 ..< count.int:
+      var b: SDL_Rect
+      if SDL_GetDisplayUsableBounds(list[i], addr b):
+        let across = min(x + w, b.x.int + b.w.int) - max(x, b.x.int)
+        let down = min(y + 40, b.y.int + b.h.int) - max(y, b.y.int)
+        if across >= 100 and down >= 20 and across * down > best:
+          best = across * down
+          result = b
+    SDL_free(displays)
 
-proc initUi(window: ptr SDL_Window; opts: RunOptions): Ui =
-  ## The frontend's state: where its assets are, which theme, the fonts.
+proc createMainWindow(size: (int, int); placed: WindowPlacement): ptr SDL_Window =
+  ## The main window: `size` (pixels at 100 %) when given, else where and as
+  ## large as it was (`placed`) when that is still on a display, else at the
+  ## default size for the primary display's scale.
+  const flags = SDL_WINDOW_OPENGL or SDL_WINDOW_RESIZABLE or SDL_WINDOW_HIGH_PIXEL_DENSITY
+  let back = if size[0] > 0 or placed.width <= 0: SDL_Rect()
+             else: displayUnder(placed.x, placed.y, placed.width)
+  if back.w > 0:
+    # Hidden until it is in place, so it does not jump.
+    result = SDL_CreateWindow("viewSEG", cint(min(placed.width, back.w)),
+      cint(min(placed.height, back.h)), flags or SDL_WINDOW_HIDDEN)
+    if result != nil:
+      discard SDL_SetWindowPosition(result, cint(placed.x), cint(placed.y))
+      if placed.maximized: discard SDL_MaximizeWindow(result)
+      discard SDL_ShowWindow(result)
+  else:
+    var usable: SDL_Rect
+    if not SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), addr usable):
+      usable = SDL_Rect()
+    let wanted = if size[0] > 0 and size[1] > 0: size else: defaultSize
+    let (w, h) = scaledWindowSize(wanted, primaryDisplayScale(), (usable.w.int, usable.h.int))
+    result = SDL_CreateWindow("viewSEG", w.cint, h.cint, flags)
+
+proc placement(ui: Ui): WindowPlacement =
+  ## Where the main window is now: its place and size, kept from before
+  ## while it is maximized or full screen.
+  let flags = SDL_GetWindowFlags(ui.window)
+  result = ui.core.settings.window
+  result.maximized = (flags and SDL_WINDOW_MAXIMIZED) != 0
+  if (flags and (SDL_WINDOW_MAXIMIZED or SDL_WINDOW_FULLSCREEN or SDL_WINDOW_MINIMIZED)) == 0:
+    var x, y, w, h: cint
+    if SDL_GetWindowPosition(ui.window, addr x, addr y) and
+        SDL_GetWindowSize(ui.window, addr w, addr h) and w > 0 and h > 0:
+      (result.x, result.y, result.width, result.height) = (x.int, y.int, w.int, h.int)
+
+proc notePlacement(ui: var Ui) =
+  ## Puts where the main window is now in the settings, if it moved.
+  let p = ui.placement
+  if p != ui.core.settings.window:
+    var s = ui.core.settings
+    s.window = p
+    ui.core.apply Command(kind: ckSettings, settings: s)
+
+proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
+    configDir: string): Ui =
+  ## The frontend's state: where its assets are, which theme, the fonts; the
+  ## settings `loaded` (from `configDir`, saved there when `opts.persist`).
   let ctx = currentContext()
   let assets = if opts.assetDirs.isSome: opts.assetDirs.get else: ctx.assetDirs
   let userThemes = if opts.userThemeDir.isSome: opts.userThemeDir.get
@@ -579,6 +688,8 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions): Ui =
     choice = parseThemeChoice(env)
     if choice == followSystem and env.len > 0:
       selected = env # a theme name or path
+  if choice == followSystem and selected.len == 0:
+    selected = loaded.settings.theme # neither the caller nor the environment chose
   if selected.endsWith(ThemeExt) and not fileExists(selected):
     selected.setLen selected.len - ThemeExt.len
   let indexCache = if opts.indexCacheDir.isSome: opts.indexCacheDir.get
@@ -592,6 +703,8 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions): Ui =
   if opts.persist:
     result.core.logTo(if opts.logDir.isSome: opts.logDir.get else: ctx.logDir)
     result.say("Session log: " & result.core.logFile)
+    result.core.keepSettingsIn(configDir, loaded)
+  result.appliedTheme = result.core.settings.theme
   for d in assets:
     result.fontDirs.add d / "fonts"
   if assets.len == 0:
@@ -618,7 +731,17 @@ proc run*(opts = RunOptions()): int =
   discard SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3)
   discard SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3)
   discard SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)
-  let window = if ssWindow in opts.simulate: nil else: createMainWindow(opts.windowSize)
+  # The settings come first: where the window opens is one of them.
+  var loaded = LoadedSettings(saveable: true)
+  var configDir = ""
+  if opts.persist:
+    let ctx = currentContext()
+    configDir = if opts.configDir.isSome: opts.configDir.get else: ctx.configDir
+    # A release that is not portable may carry site defaults in its config/.
+    let site = if ctx.isPortable: "" else: ctx.appDir / "config" / SettingsFileName
+    loaded = loadSettings(configDir / SettingsFileName, site)
+  let window = if ssWindow in opts.simulate: nil
+               else: createMainWindow(opts.windowSize, loaded.settings.window)
   if window.isNil:
     return opts.fail(ssWindow, sdlError())
   defer: SDL_DestroyWindow(window)
@@ -658,7 +781,7 @@ proc run*(opts = RunOptions()): int =
   defer: ImGui_Impl_OpenGL3_Shutdown()
   installDpiScaling(window)
 
-  var ui = initUi(window, opts)
+  var ui = initUi(window, opts, loaded, configDir)
   ui.setTheme()
   let gpuError = ui.trace.startGpu(glProc, opts.maxTextureSize)
   if gpuError.len > 0:
@@ -679,6 +802,10 @@ proc run*(opts = RunOptions()): int =
       if event.type_field == SDL_EVENT_QUIT.uint32 or
           (event.type_field == SDL_EVENT_WINDOW_CLOSE_REQUESTED.uint32 and mainWindowEvent):
         ui.running = false
+      elif mainWindowEvent and event.type_field in [SDL_EVENT_WINDOW_MOVED.uint32,
+          SDL_EVENT_WINDOW_RESIZED.uint32, SDL_EVENT_WINDOW_MAXIMIZED.uint32,
+          SDL_EVENT_WINDOW_RESTORED.uint32]:
+        ui.placed = true
       elif event.type_field == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED.uint32 and
           mainWindowEvent:
         let scale = windowScale(window)
@@ -728,6 +855,10 @@ proc run*(opts = RunOptions()): int =
       # Actions change fonts and styles, which ImGui allows only between frames.
       ui.mark "actions"
       ui.onActions(actions)
+      if ui.placed:
+        ui.notePlacement()
+        ui.placed = false
+      ui.followSettings()
       if ui.pendingTheme.isSome:
         ui.selected = ui.pendingTheme.get
         ui.pendingTheme = none(string)
@@ -746,5 +877,6 @@ proc run*(opts = RunOptions()): int =
     ui.echoNewLog()
     ui.core.persist()
   ui.trace.stopGpu() # while the GL context is current
-  ui.core.shutdown()
+  ui.notePlacement()
+  ui.core.shutdown() # saves the settings
   0

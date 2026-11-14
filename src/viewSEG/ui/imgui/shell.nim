@@ -1,4 +1,4 @@
-## SDL3-backed shell services, behind plain Nim types: native open dialogs, the
+## SDL3-backed shell services, behind plain Nim types: native file dialogs, the
 ## system light/dark theme, and the window icon. Only `ui/` may import SDL
 ## (docs/architecture.md), so these live here rather than in `platform/`.
 ##
@@ -23,9 +23,11 @@ type
     stUnknown = "unknown", stLight = "light", stDark = "dark"
 
   DialogKind* = enum
-    dkOpenFile = "Open file",    ## one seismic file
-    dkOpenFiles = "Open files",  ## several seismic files
-    dkOpenFolder = "Open folder" ## one folder
+    dkOpenFile = "Open file",             ## one seismic file
+    dkOpenFiles = "Open files",           ## several seismic files
+    dkOpenFolder = "Open folder",         ## one folder
+    dkExportSettings = "Export settings", ## a NIF file to write (a save dialog)
+    dkImportSettings = "Import settings"  ## a NIF file to read
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -185,6 +187,13 @@ let seismicFilters = [
   ## Module-lifetime storage: SDL reads the filters until the callback runs.
   ## Patterns match case-insensitively on every platform SDL supports.
 
+let nifFilters = [
+  SDL_DialogFileFilter(name: "viewSEG settings and layouts (*.nif)", pattern: "nif"),
+  SDL_DialogFileFilter(name: "All files", pattern: "*")]
+
+var startAt: string
+  ## where the last dialog started: SDL may read it until the dialog is shown
+
 const DialogParentEnvVar* = "VIEWSEG_DIALOG_PARENT"
   ## `none` opens dialogs without a parent window and `window` always gives them
   ## one. Unset, the desktop decides: see `wantsParent`.
@@ -199,11 +208,12 @@ func wantsParent(setting, videoDriver: string; waylandSession: bool): bool =
   of "window": true
   else: not (waylandSession and videoDriver == "x11")
 
-proc showOpenDialog*(kind: DialogKind; parentWindowId = 0'u32) =
+proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   ## Opens the native dialog for `kind` and returns at once; the outcome arrives
   ## later from `pollShellEvents`. The dialog is modal to the window with SDL id
-  ## `parentWindowId` (0 for none), where the desktop can attach it (`wantsParent`).
-  ## Main thread only.
+  ## `parentWindowId` (0 for none), where the desktop can attach it (`wantsParent`),
+  ## and starts in the folder or at the file `location` ("" for the desktop's
+  ## choice; not every desktop honours it). Main thread only.
   let
     waylandSession = getEnv("WAYLAND_DISPLAY").len > 0 or
       getEnv("XDG_SESSION_TYPE") == "wayland"
@@ -211,12 +221,20 @@ proc showOpenDialog*(kind: DialogKind; parentWindowId = 0'u32) =
       $SDL_GetCurrentVideoDriver(), waylandSession)
     parent = if attach: SDL_GetWindowFromID(parentWindowId) else: nil
     userdata = cast[pointer](kind.int)
+  startAt = location
+  let at = if startAt.len > 0: startAt.cstring else: nil
   case kind
   of dkOpenFile, dkOpenFiles:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr seismicFilters[0],
-      seismicFilters.len.cint, nil, kind == dkOpenFiles)
+      seismicFilters.len.cint, at, kind == dkOpenFiles)
   of dkOpenFolder:
-    SDL_ShowOpenFolderDialog(onDialogResult, userdata, parent, nil, false)
+    SDL_ShowOpenFolderDialog(onDialogResult, userdata, parent, at, false)
+  of dkImportSettings:
+    SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],
+      nifFilters.len.cint, at, false)
+  of dkExportSettings:
+    SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],
+      nifFilters.len.cint, at)
 
 # ------------------------------------------------------------------ theme --
 

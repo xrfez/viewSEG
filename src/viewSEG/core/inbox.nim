@@ -18,6 +18,11 @@ type
     mkLog    ## a message for the log
     mkLayout ## what a panel's traces span, from its reader
     mkTile   ## samples a panel asked for, from its reader
+    mkRead   ## a document the disk thread read
+
+  ReadPurpose* = enum
+    ## What a document is read for.
+    rpImportSettings ## settings to take in (File > Settings > Import)
 
   Msg* = object
     ## One message for the UI thread.
@@ -31,6 +36,11 @@ type
       layout*: PanelLayout
       known*: set[HeaderField] ## the header fields the traces have values for
     of mkTile: tile*: Tile
+    of mkRead:
+      purpose*: ReadPurpose
+      readPath*: string
+      content*: string
+      readError*: string       ## why it could not be read; "" when it was
 
   InboxObj = object
     lock: Lock

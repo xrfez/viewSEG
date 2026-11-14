@@ -1,0 +1,384 @@
+## The settings and `settings.nif`: every field survives a round trip; a
+## document's missing settings keep the base's (the defaults, or the site's),
+## unknown ones are skipped and unusable values keep theirs, each with a
+## line in plain words; a damaged, truncated or hostile file gives the
+## defaults, a backup with its bytes and a message, and a file with problems
+## gives the rest, a copy and a message; a file written with Windows paths and
+## line endings reads the same as one with Linux ones. `AppState` saves the
+## settings a moment after they change and at shutdown, never at once;
+## exports, imports and resets them; remembers the recent files; and gives a
+## new plot what the user last chose, also in the next run.
+##
+## Seen to fail: with the `(fills ...)` writer dropped, `everyField` found the
+## fills at their default; with `loadSettings` reading a damaged file as
+## defaults without moving it, `damaged` found no backup; with `persist`
+## saving at once, `debounce` found the file before the delay; with `show`
+## making a new layer with the built-in display, `newPlotsFollow` drew the
+## second file as wiggles.
+
+import std/[math, monotimes, os, random, strutils, times]
+import viewSEG/core/[geometry, state]
+import utils/[fixtures, waiting]
+
+let tmp = getTempDir() / ("viewseg_tsettings_" & $getCurrentProcessId())
+removeDir(tmp)
+createDir(tmp)
+
+template settle(st: var AppState; cond: untyped): bool =
+  waitUntil((discard st.drainInbox(); cond))
+
+func has(log: MessageLog; part: string; severity = sevInfo): bool =
+  for e in log:
+    if part in e.text and e.severity == severity: return true
+  false
+
+proc everyFieldSet(): Settings =
+  ## Settings with every field away from its default.
+  result = Settings(theme: "everforest-light",
+    window: WindowPlacement(x: -1200, y: 35, width: 1700, height: 950, maximized: true),
+    recentFiles: @[r"C:\Data\shot (1).sgd", "/data/two.segy", "/données/trois.sgd"],
+    recentFolders: @[r"\\server\share\line 7", "/data"],
+    scale: ScaleUnits(length: luCm, speed: true),
+    calibrations: @[Calibration(monitor: "DELL U2720Q 3840x2160", ppi: 163.25),
+      Calibration(monitor: "eDP-1 1920x1080", ppi: 141)],
+    readout: @[rfAmplitude, rfTime, rfMidpointXY, rfStatus],
+    sortPresets: @[SortPreset(name: "Mine", keys: @[SortKey(field: hfOffset, descending: true)]),
+      SortPreset(name: "Channels", keys: @[SortKey(field: hfChannel)])],
+    customOrder: @[SortKey(field: hfSrcPoint), SortKey(field: hfTrace, descending: true)])
+  result.plot = PlotDefaults(
+    display: DisplaySettings(mode: dmWiggleDensity, fills: {wfNegative}, colours: pcCustom,
+      custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),
+        line: Rgba(r: 250, g: 128, b: 0, a: 255), positive: Rgba(r: 9, g: 8, b: 7, a: 128),
+        negative: Rgba(r: 200, a: 255), hover: Rgba(g: 200, a: 255),
+        selected: Rgba(b: 200, a: 255)),
+      gain: dgExponential, gainDb: -7.5, agcWindowMs: 250, fixedClip: 0.125,
+      normScope: perPanel, normStat: normRms, timeGain: tgPower, dbPerS: 12, power: 1.5,
+      clipPercentile: 98.5, overlap: 2.5),
+    order: @[SortKey(field: hfComponent), SortKey(field: hfOffset, descending: true)],
+    header: HeaderChoice(auto: false, fields: @[hfSrcLine, hfCrossline]))
+
+proc roundTrip(s: Settings; base = Settings()): (Settings, seq[string]) =
+  var problems: seq[string]
+  result = (readSettings(settingsDocument(s), "settings.nif", base, problems), problems)
+
+block everyField:
+  let s = everyFieldSet()
+  # Every field is away from its default, so a field the writer forgets
+  # reads back as the default and the comparison below fails.
+  let d = Settings()
+  for name, a, b in fieldPairs(s, d):
+    doAssert a != b, "field " & name & " is at its default"
+  for name, a, b in fieldPairs(s.plot.display, d.plot.display):
+    when name notin ["visible", "reversed"]: # not kept: `remembered`
+      doAssert a != b, "display field " & name & " is at its default"
+  for name, a, b in fieldPairs(s.window, d.window):
+    doAssert a != b, "window field " & name & " is at its default"
+  let (back, problems) = roundTrip(s)
+  doAssert problems.len == 0, $problems
+  doAssert back == s, $back
+  doAssert settingsDocument(back) == settingsDocument(s)
+
+block defaultsRoundTrip:
+  let (back, problems) = roundTrip(Settings())
+  doAssert problems.len == 0, $problems
+  doAssert settingsDocument(back) == settingsDocument(Settings())
+  doAssert back.sortPresets == @SortPresets and back.readout == @DefaultReadout
+  doAssert back.plot.display.fixedClip.isNaN, "no Fixed amplitude yet stays none"
+  doAssert back.window.width == 0
+
+block names:
+  for table in persistedNames():
+    for i, n in table:
+      doAssert isNifIdent(n), n
+      doAssert n notin table[0 ..< i], "twice: " & n
+
+block missingKeepTheBase:
+  let base = everyFieldSet()
+  var problems: seq[string]
+  let s = readSettings("(settings (version 1) (theme \"x\"))", "settings.nif", base, problems)
+  doAssert problems.len == 0, $problems
+  doAssert s.theme == "x"
+  var want = base
+  want.theme = "x"
+  doAssert s == want
+
+block unknownAndUnusable:
+  var problems: seq[string]
+  let text = """(.nif27)
+(settings
+ (version 1)
+ (colourScheme dark)
+ (window (x 10) (y "far") (width 800) (height 600) (depth 3))
+ (plot (mode sideways) (overlap 50) (gainDb 6.0) (fills positive up) (zoom 3))
+ (readout time nonsense amplitude)
+ (scale (length mile) (speed true))
+ (calibrations (monitor "A" -5) (monitor "B" 120))
+ (sortPresets (preset "" (key line)) (preset "Ok" (key offset) (key sideways)))
+ (recentFiles "/a" 5 "/b" "/a"))
+(extra)"""
+  let s = readSettings(text, "settings.nif", Settings(), problems)
+  let all = problems.join("\n")
+  for part in ["line 4: (colourScheme) in (settings) is not a setting",
+      "line 5: (y) needs a whole number", "line 5: (depth) in (window)",
+      "line 6: (mode) needs one of density, wiggle, wiggleDensity",
+      "(overlap) needs a number from 0.1 to 10", "(fills) needs one of positive, negative",
+      "line 6: (zoom) in (plot)", "line 7: (readout) needs one of",
+      "line 8: (length) needs one of inch, cm", "(monitor) needs pixels per inch",
+      "line 10: (sortPresets) needs", "(key) needs one of rcvLine", "(recentFiles) needs strings",
+      "line 12: (extra) in (the document)"]:
+    doAssert part in all, part & " not in:\n" & all
+  doAssert s.window == WindowPlacement(x: 10, y: 0, width: 800, height: 600)
+  doAssert s.plot.display.mode == dmWiggle and s.plot.display.overlap == 1.0
+  doAssert s.plot.display.gainDb == 6.0 and s.plot.display.fills == {wfPositive}
+  doAssert s.readout == @[rfTime, rfAmplitude]
+  doAssert s.scale == ScaleUnits(length: luInch, speed: true)
+  doAssert s.calibrations == @[Calibration(monitor: "B", ppi: 120)]
+  doAssert s.sortPresets == @[SortPreset(name: "Ok", keys: @[SortKey(field: hfOffset)])]
+  doAssert s.recentFiles == @["/a", "/b"]
+
+block versions:
+  var problems: seq[string]
+  discard readSettings("(settings (theme \"a\"))", "settings.nif", Settings(), problems)
+  doAssert problems.len == 1 and "gives no (version)" in problems[0], $problems
+  problems.setLen 0
+  let s = readSettings("(settings (version 7) (theme \"a\") (hologram on))", "settings.nif",
+    Settings(), problems)
+  doAssert s.theme == "a"
+  doAssert problems.len == 2 and "written by a newer viewSEG (settings version 7" in
+    problems[1], $problems
+  for notSettings in ["", "(layout)", "(.nif27)", "5"]:
+    try:
+      discard readSettings(notSettings, "settings.nif", Settings(), problems)
+      doAssert false, "read " & notSettings
+    except NifError as e:
+      doAssert "holds no (settings ...)" in e.msg, e.msg
+
+block windowsAndLinux:
+  # Written on Windows (CR LF, backslashes) or on Linux (LF), it reads the
+  # same anywhere: the reader does not depend on the system.
+  let s = everyFieldSet()
+  let lf = settingsDocument(s)
+  doAssert "\r" notin lf
+  for text in [lf, lf.replace("\n", "\r\n"), lf.replace("\n", "\r\n").replace("\r\n", "\n")]:
+    var problems: seq[string]
+    let back = readSettings(text, "settings.nif", Settings(), problems)
+    doAssert problems.len == 0, $problems
+    doAssert back == s
+    doAssert back.recentFiles[0] == r"C:\Data\shot (1).sgd"
+    doAssert back.recentFolders[0] == r"\\server\share\line 7"
+  # A hand-written Windows file, with its own line breaks and an editor's BOM.
+  let hand = "\xEF\xBB\xBF(.nif27)\r\n(settings\r\n (version 1)\r\n" &
+    " (recentFiles \"C:\\5CData\\5Cx.sgy\" \"D:/y.segy\")\r\n)\r\n"
+  var problems: seq[string]
+  doAssert readSettings(hand, "settings.nif", Settings(), problems).recentFiles ==
+    @[r"C:\Data\x.sgy", "D:/y.segy"]
+  doAssert problems.len == 0
+
+# ------------------------------------------------------------------ files --
+
+proc backups(dir: string): seq[string] =
+  for kind, f in walkDir(dir):
+    if f.endsWith(BackupSuffix): result.add f
+
+block noFile:
+  let dir = tmp / "none"
+  let got = loadSettings(dir / SettingsFileName)
+  doAssert got.notes.len == 0 and got.saveable and not got.rewrite
+  doAssert settingsDocument(got.settings) == settingsDocument(Settings())
+
+block damaged:
+  let good = settingsDocument(everyFieldSet())
+  var rng = initRand(11)
+  var cases = @[good[0 ..< good.len div 2], good[0 ..< 30], "\x00\x01\x02 not NIF at all",
+    "(settings (theme \"x\\G1\"))", repeat("(a ", 1000) & repeat(")", 1000),
+    "(settings (version 1) (window (x 1)", ""]
+  var noise = newString(3000)
+  for c in noise.mitems: c = char(rng.rand(255))
+  cases.add noise
+  for i, text in cases:
+    let dir = tmp / ("damaged" & $i)
+    createDir(dir)
+    let file = dir / SettingsFileName
+    writeFile(file, text)
+    let got = loadSettings(file)
+    doAssert settingsDocument(got.settings) == settingsDocument(Settings()), "case " & $i
+    doAssert got.saveable and got.rewrite
+    doAssert not fileExists(file), "the damaged file is moved aside"
+    let b = backups(dir)
+    doAssert b.len == 1 and readFile(b[0]) == text, "case " & $i & ": " & $b
+    doAssert got.notes.len == 1 and got.notes[0].severity == sevWarning
+    doAssert "could not be read" in got.notes[0].text and b[0] in got.notes[0].text,
+      got.notes[0].text
+
+block tooLarge:
+  let dir = tmp / "large"
+  createDir(dir)
+  let file = dir / SettingsFileName
+  writeFile(file, "(settings (theme \"" & repeat("x", MaxNifBytes) & "\"))")
+  let got = loadSettings(file)
+  doAssert "larger than 4 MB" in got.notes[0].text, got.notes[0].text
+  doAssert backups(dir).len == 1
+
+block someProblems:
+  let dir = tmp / "some"
+  createDir(dir)
+  let file = dir / SettingsFileName
+  let text = "(settings (version 1) (theme \"everforest-light\") (gadget 1))"
+  writeFile(file, text)
+  let got = loadSettings(file)
+  doAssert got.settings.theme == "everforest-light"
+  doAssert got.rewrite and fileExists(file)
+  let b = backups(dir)
+  doAssert b.len == 1 and readFile(b[0]) == text
+  doAssert got.notes.len == 2 and b[0] in got.notes[0].text and "(gadget)" in got.notes[1].text
+
+block backupsArePruned:
+  let dir = tmp / "pruned"
+  createDir(dir)
+  let file = dir / SettingsFileName
+  for i in 0 ..< KeptBackups + 3:
+    writeFile(file & ".2020010" & $i & "-000000" & BackupSuffix, "old")
+  writeFile(file, "(")
+  discard loadSettings(file)
+  let b = backups(dir)
+  doAssert b.len == KeptBackups, $b
+  var newest = false
+  for f in b:
+    if readFile(f) == "(": newest = true
+  doAssert newest, "the new backup is kept"
+
+block siteDefaults:
+  let dir = tmp / "site"
+  createDir(dir)
+  let site = dir / "site.nif"
+  writeFile(site, "(settings (version 1) (theme \"site-theme\") (readout time ffid))")
+  let user = dir / SettingsFileName
+  writeFile(user, "(settings (version 1) (readout amplitude))")
+  let got = loadSettings(user, site)
+  doAssert got.notes.len == 0, $got.notes
+  doAssert got.settings.theme == "site-theme", "the site's value where the user's has none"
+  doAssert got.settings.readout == @[rfAmplitude]
+  doAssert got.defaults.theme == "site-theme" and got.defaults.readout == @[rfTime, rfRecord]
+  writeFile(site, "(settings")
+  let broken = loadSettings(user, site)
+  doAssert broken.settings.theme == "" and broken.settings.readout == @[rfAmplitude]
+  doAssert "site's default settings could not be read" in broken.notes[0].text
+  doAssert fileExists(site), "a site file is never moved"
+
+# --------------------------------------------------------------- AppState --
+
+proc appIn(dir: string): AppState =
+  result = initAppState()
+  result.keepSettingsIn(dir, loadSettings(dir / SettingsFileName))
+
+block debounce:
+  let dir = tmp / "app2"
+  var st = appIn(dir)
+  var s = st.settings
+  s.theme = "a"
+  st.apply Command(kind: ckSettings, settings: s)
+  let at = getMonoTime()
+  st.persist(at)
+  st.persist(at + SaveDelay div 2)
+  sleep 200 # time for a write handed over too early
+  doAssert not fileExists(dir / SettingsFileName), "saved before the delay"
+  st.persist(at + SaveDelay * 2)
+  doAssert waitUntil(fileExists(dir / SettingsFileName))
+  doAssert "(theme \"a\")" in readFile(dir / SettingsFileName)
+  s.theme = "b"
+  st.apply Command(kind: ckSettings, settings: s)
+  st.shutdown() # saves what is left
+  doAssert "(theme \"b\")" in readFile(dir / SettingsFileName)
+  var problems: seq[string]
+  doAssert readSettings(readFile(dir / SettingsFileName), "x", Settings(), problems).theme == "b"
+
+block noChangeNoSave:
+  let dir = tmp / "app3"
+  var st = appIn(dir)
+  st.apply Command(kind: ckSettings, settings: st.settings) # the same: no change
+  st.shutdown()
+  doAssert not fileExists(dir / SettingsFileName)
+
+block rewrittenWhenItHadProblems:
+  let dir = tmp / "app4"
+  createDir(dir)
+  writeFile(dir / SettingsFileName, "(settings (version 1) (theme \"t\") (gadget 1))")
+  var st = appIn(dir)
+  doAssert st.log.has("(gadget)", sevWarning)
+  st.flushFiles()
+  let text = readFile(dir / SettingsFileName)
+  doAssert "gadget" notin text and "(theme \"t\")" in text
+  st.shutdown()
+
+block exportImportReset:
+  let dir = tmp / "app5"
+  var st = appIn(dir)
+  var s = everyFieldSet()
+  st.apply Command(kind: ckSettings, settings: s)
+  let exported = tmp / "exported" / "mine.nif"
+  st.apply Command(kind: ckExportSettings, docPath: exported)
+  st.flushFiles()
+  doAssert st.settle(st.log.has("Settings exported to " & exported & "."))
+  st.apply Command(kind: ckResetSettings)
+  doAssert st.settings.theme == "" and st.settings.readout == @DefaultReadout
+  doAssert st.settings.recentFiles == s.recentFiles and st.settings.window == s.window,
+    "a reset keeps the recent files and the window's place"
+  doAssert st.log.has("Settings reset to their defaults")
+  st.flushFiles()
+  doAssert backups(dir).len == 1 and readFile(backups(dir)[0]) == settingsDocument(s)
+  st.apply Command(kind: ckImportSettings, docPath: exported)
+  doAssert st.settle(st.log.has("Settings imported from " & exported & "."))
+  doAssert st.settings == s
+  writeFile(tmp / "broken.nif", "(settings (theme")
+  st.apply Command(kind: ckImportSettings, docPath: tmp / "broken.nif")
+  doAssert st.settle(st.log.has("Cannot import the settings", sevError))
+  doAssert st.settings == s, "a broken import changes nothing"
+  st.apply Command(kind: ckImportSettings, docPath: tmp / "missing.nif")
+  doAssert st.settle(st.log.has("Cannot import the settings in " & tmp / "missing.nif",
+    sevError))
+  st.shutdown()
+
+block newPlotsFollow:
+  withFixtures(fx):
+    let a = fx.surveySegy()
+    let b = fx.longSpreadSegy()
+    let dir = tmp / "app6"
+    block firstRun:
+      var st = appIn(dir)
+      st.apply Command(kind: ckOpen, paths: @[a])
+      doAssert st.settle(st.sessions.len == 1)
+      doAssert st.settings.recentFiles == @[a] and st.settings.recentFolders == @[fx.dir]
+      var d = st.panel(MainPanel).layers[0].display
+      doAssert d.mode == dmWiggle
+      d.mode = dmDensity
+      d.gain = dgNone
+      d.gainDb = 6
+      d.reversed = true
+      st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      let order = @[SortKey(field: hfOffset, descending: true)]
+      st.apply Command(kind: ckSort, panel: MainPanel, order: order)
+      st.apply Command(kind: ckHeader, panel: MainPanel,
+        header: HeaderChoice(auto: false, fields: @[hfChannel]))
+      doAssert st.settings.customOrder == order, "the user's own keys are kept"
+      st.apply Command(kind: ckClose, file: st.sessions[0].id)
+      doAssert st.settle(st.log.has("Closed "))
+      st.apply Command(kind: ckOpen, paths: @[b])
+      doAssert st.settle(st.sessions.len == 1)
+      let p = st.panel(MainPanel)
+      doAssert p.layers[0].display.mode == dmDensity and p.layers[0].display.gainDb == 6
+      doAssert not p.layers[0].display.reversed, "polarity is not a display default"
+      doAssert p.layers[0].order == order and p.header.fields == @[hfChannel]
+      doAssert st.settings.recentFiles == @[b, a]
+      st.shutdown()
+    block secondRun:
+      var st = appIn(dir)
+      doAssert st.settings.recentFiles == @[b, a]
+      st.apply Command(kind: ckOpen, paths: @[a])
+      doAssert st.settle(st.sessions.len == 1)
+      let p = st.panel(MainPanel)
+      doAssert p.layers[0].display.mode == dmDensity and p.layers[0].display.gain == dgNone
+      doAssert p.layers[0].order == @[SortKey(field: hfOffset, descending: true)]
+      doAssert st.settings.recentFiles == @[a, b]
+      st.shutdown()
+
+removeDir(tmp)

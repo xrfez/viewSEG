@@ -1,10 +1,12 @@
-## The thread that writes the program's own files, so the UI thread never
-## waits for a disk: the session log, appended to as the log grows, and
-## documents (the settings, layouts) replaced whole.
+## The thread that reads and writes the program's own files, so the UI
+## thread never waits for a disk: the session log, appended to as the log
+## grows; documents (the settings, layouts) replaced whole; and documents
+## the user imports, read.
 ##
 ## The UI thread only leaves work under a lock (`append`, `replace`,
-## `prune`) and goes on; the thread does it in order. What it could not do
-## comes back as a warning through the inbox, in plain words.
+## `prune`, `read`) and goes on; the thread does it in order. What it could
+## not do comes back as a warning through the inbox, in plain words, and a
+## document read comes back as an `mkRead` message.
 ##
 ## - **Replace** writes a document atomically: to a temporary file next to
 ##   it, flushed to the disk, then renamed over it, so a crash or a full
@@ -16,6 +18,8 @@
 ##   file cannot be written, that is said once, and nothing more is tried
 ##   for it until an append to another file.
 ## - **Prune** keeps the newest files of a folder whose names match.
+## - **Read** reads a whole file up to a size, and posts it (or why it could
+##   not be read) for the UI thread.
 ##
 ## `flush` waits until everything left so far is done; `stop` (and
 ## destroying the `DiskIo`) does what is left, then ends the thread.
@@ -28,16 +32,19 @@ when not defined(windows):
 
 type
   TaskKind = enum
-    tkAppend, tkReplace, tkPrune
+    tkAppend, tkReplace, tkPrune, tkRead
 
   Task = object
     kind: TaskKind
-    path: string   ## the file; for a prune, the folder
-    text: string   ## what to write; for a prune, the names' start
-    what: string   ## what the file is, for a message: "the settings"
-    keep: int      ## a prune: how many to keep
-    suffix: string ## a prune: the names' end
-    spare: string  ## a prune: a file never removed
+    path: string         ## the file; for a prune, the folder
+    text: string         ## what to write; for a prune, the names' start
+    what: string         ## what the file is, for a message: "the settings"
+    keep: int            ## a prune: how many to keep
+    suffix: string       ## a prune: the names' end
+    spare: string        ## a prune: a file never removed
+    done: string         ## a replace: what to say once it is written ("" for nothing)
+    purpose: ReadPurpose ## a read: what for
+    limit: int           ## a read: the largest file read, in bytes
 
   DiskObj = object
     lock: Lock
@@ -71,9 +78,11 @@ func isNil*(x: DiskIo): bool {.inline.} =
 
 # ------------------------------------------------------------ the thread --
 
-proc warn(w: Writer; text: string) =
+proc say(w: Writer; severity: Severity; text: string) =
   w.d.poster.post Msg(job: NoJob, kind: mkLog, entry: LogEntry(time: getTime(),
-    severity: sevWarning, source: "files", text: text))
+    severity: severity, source: "files", text: text))
+
+proc warn(w: Writer; text: string) = w.say(sevWarning, text)
 
 proc syncToDisk(f: File) =
   ## Asks the OS to put what was written on the disk (POSIX; on Windows the
@@ -95,6 +104,7 @@ proc replaceFile(w: var Writer; t: Task) =
     finally:
       f.close()
     moveFile(tmp, t.path)
+    if t.done.len > 0: w.say(sevInfo, t.done)
   except IOError, OSError:
     let why = getCurrentExceptionMsg()
     try:
@@ -152,6 +162,19 @@ proc pruneDir(w: var Writer; t: Task) =
     except OSError:
       w.warn("Could not remove the old file " & names[i] & ": " & getCurrentExceptionMsg())
 
+proc readFor(w: var Writer; t: Task) =
+  var msg = Msg(job: NoJob, kind: mkRead, purpose: t.purpose, readPath: t.path)
+  try:
+    let size = getFileSize(t.path)
+    if size > t.limit:
+      msg.readError = "it is larger than " & $(t.limit shr 20) & " MB"
+    else:
+      msg.content = readFile(t.path)
+  except IOError, OSError:
+    msg.readError = getCurrentExceptionMsg()
+    if msg.readError.len == 0: msg.readError = "it cannot be read"
+  w.d.poster.post msg
+
 proc run(d: ptr DiskObj) {.thread.} =
   markWorkerThread()
   var w = Writer(d: d)
@@ -169,6 +192,7 @@ proc run(d: ptr DiskObj) {.thread.} =
       of tkAppend: w.appendTo(t)
       of tkReplace: w.replaceFile(t)
       of tkPrune: w.pruneDir(t)
+      of tkRead: w.readFor(t)
     work.setLen 0
     withLock d.lock:
       d.busy = false
@@ -222,14 +246,22 @@ proc leave(x: DiskIo; t: sink Task) =
           x.p.tasks[^1].path == t.path:
         x.p.tasks[^1].text.add t.text
         return
-    of tkPrune: discard
+    of tkPrune, tkRead: discard
     x.p.tasks.add t
     signal(x.p.changed)
 
-proc replace*(x: DiskIo; path: string; text: sink string; what: string) =
+proc replace*(x: DiskIo; path: string; text: sink string; what: string; done = "") =
   ## Writes `text` to `path` atomically, soon (the module documentation);
-  ## `what` names the document in a message ("the settings").
-  if x.p != nil: x.leave Task(kind: tkReplace, path: path, text: text, what: what)
+  ## `what` names the document in a message ("the settings"), and `done`,
+  ## when not "", is logged once it is written.
+  if x.p != nil:
+    x.leave Task(kind: tkReplace, path: path, text: text, what: what, done: done)
+
+proc read*(x: DiskIo; path: string; purpose: ReadPurpose; limit: int) =
+  ## Reads `path`, soon, and posts it as an `mkRead` message for `purpose`;
+  ## a file larger than `limit` bytes is not read (the message says so).
+  if x.p != nil:
+    x.leave Task(kind: tkRead, path: path, purpose: purpose, limit: limit)
 
 proc append*(x: DiskIo; path: string; text: sink string; what: string) =
   ## Adds `text` to the end of `path`, soon; `what` names the file in a

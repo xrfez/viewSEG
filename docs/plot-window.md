@@ -64,7 +64,10 @@
     instead, and the strip says so ("density: traces under 4 px") until the traces are
     zoomed in far enough; room for that note is kept in the wiggle modes, so the strip
     does not wrap anew when a zoom crosses the limit. The mode a user picks becomes the
-    default for new plot windows and is remembered (with the settings, still to come);
+    default for new plot windows and is remembered between runs, as are the fills, the
+    overlap, the colours, the gain type, amount and settings, the order and the display
+    header's fields (`Settings.plot`: a new plot starts as the user left the last one;
+    polarity is not kept, reversing it being an operation on the data);
   - **scale boxes: traces per inch and ms per inch**, each a box to type a value into.
     Typing a value and pressing Enter sets the zoom, keeping the top-left corner where it
     is (a plot grows from where it starts, as on paper); zooming any other way updates the
@@ -115,7 +118,9 @@
     component, channel, FFID, source line and point, offset, CDP, inline, crossline,
     trace number) and each ascending or descending; "Sort" applies them, "File order"
     goes back. Traces equal in every key keep the file's order, and unknown values come
-    last either way;
+    last either way. The keys sorted by last are remembered and offered again; the
+    buttons themselves are data in the settings (`sortPresets` in `settings.nif`), so a
+    site can rename them or add its own;
   - zoom out, zoom in, fit all, back to the view before the last gesture, and a "more"
     popover: the colours, the **trace overlap** (the largest swing of a wiggle, in trace
     spacings), the display header's fields, the scale units and the screen

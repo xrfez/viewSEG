@@ -281,10 +281,10 @@ func shownFields*(p: Panel): seq[HeaderField] =
   ## The rows of `p`'s display header, top first.
   if p.header.auto: defaultFields(p.known, p.kind) else: p.header.fields
 
-func presetOf*(order: openArray[SortKey]): int =
-  ## The index in `SortPresets` of the preset whose keys are `order`; -1 for
+func presetOf*(order: openArray[SortKey]; presets: openArray[SortPreset] = SortPresets): int =
+  ## The index in `presets` of the preset whose keys are `order`; -1 for
   ## none (the file's order, or keys of the user's own).
-  for i, s in SortPresets:
+  for i, s in presets:
     if s.keys == @order: return i
   -1
 

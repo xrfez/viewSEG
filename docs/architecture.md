@@ -192,6 +192,22 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   (`MessageLog.since`), and `shutdown` the rest. The frontend echoes the log to stdout
   only when it is a terminal. Tests do not write one unless they ask
   (`RunOptions.persist`).
+- **Settings.** One typed `Settings` object (`core/settings`), a default for every field:
+  the theme, the main window's place and size, the recent files and folders, what a new
+  plot window starts with (display mode, fills, overlap, colours, gain type, amount and
+  settings, order, display header: whatever the user chose last; polarity is not kept),
+  scale units, per-monitor calibrations, the status bar's fields, the sort presets and the
+  user's own sort keys. Changed only by commands: `ckSettings`, and the plot window's
+  `ckDisplay`, `ckSort` and `ckHeader`, which the plot defaults follow; `ckExportSettings`,
+  `ckImportSettings` (read on the disk thread, taken in as an `mkRead` message) and
+  `ckResetSettings`. Kept as NIF in `<config>/settings.nif` (`core/settingsnif`, through
+  the small reader and writer `core/nif`), read at start before the window opens
+  (`persist.loadSettings`), and saved atomically by the disk thread a second after the
+  last change (`SaveDelay`) and at shutdown (`AppState.keepSettingsIn`, `persist`). A file
+  that cannot be read is moved aside as `settings.nif.<time>.bak` and the defaults are
+  used; one with settings that cannot be used gives the others, and a copy is kept; the log
+  says which, with the line. A release that is not portable may carry site defaults in its
+  `config/settings.nif`.
 
 ### From file to pixels
 
@@ -390,7 +406,8 @@ type
 
   CommandKind = enum         # core/state: every user intent, the only way state changes
     ckOpen, ckClose, ckCancelJob, ckReorderJob, ckRemoveJob, ckGather, ckView, ckDisplay,
-    ckHeader, ckSort, ckBack, ckHover, ckSelect, ckClearSelection, ckSettings
+    ckHeader, ckSort, ckBack, ckHover, ckSelect, ckClearSelection, ckSettings,
+    ckExportSettings, ckImportSettings, ckResetSettings
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
@@ -409,6 +426,7 @@ type
     of mkLog: entry: LogEntry      # time, severity, source, text, location, offset
     of mkLayout: panel, sourceGen, layout, known   # from a panel's reader
     of mkTile: tile: Tile          # moved, never shared
+    of mkRead: purpose, readPath, content, readError # a document the disk thread read
     # to come: mkResult (FoldMap, StackResult, QC rows ...)
 
   AppState = object          # move-only; owned by the UI thread
@@ -419,15 +437,21 @@ type
     inbox: Inbox             # Poster handles for workers; freed with the last handle
     disk: DiskIo             # core/diskio: the session log, settings and layouts, off this thread
     indexCache: string       # the folder of parseSEG's index caches; "" for none
-    settings: Settings       # scale units, monitor calibrations, the readout's fields
+    settings: Settings       # what is remembered between runs; saved by `persist`
     tiles: seq[seq[Tile]]    # per panel: the newest four, oldest first
     jobs: Jobs               # destroyed after the readers, before the sessions
     readers: seq[PanelReader] # per panel; declared last: they stop (and end their holds) first
 
-  Settings = object          # core/settings: changed only by ckSettings
+  Settings = object          # core/settings: changed only by commands; settings.nif
+    theme: string            # the theme file; "" follows the system
+    window: WindowPlacement  # x, y, width, height (0: never saved), maximized
+    recentFiles, recentFolders: seq[string] # newest first
+    plot: PlotDefaults       # display, order, display header for a new plot window
     scale: ScaleUnits        # per inch or per cm; time as ms per length or as speed
     calibrations: seq[Calibration] # per monitor (its name and size): pixels per inch
     readout: seq[ReadoutField]     # the status bar's fields, in order
+    sortPresets: seq[SortPreset]   # the sort buttons
+    customOrder: seq[SortKey]      # the user's own keys, used last
 
   Pick = object              # core/pick: what lies under the pointer
     inside, found: bool      # over the plot; a tile holds the trace there

@@ -32,6 +32,9 @@ folder (`viewSEG --paths` shows where it is).
 | Open a folder | Ctrl+Alt+O |
 | Quit | Ctrl+Q |
 
+**File > Open recent** lists the files opened last (the start screen shows the newest
+five); the file dialogs start in the folder of the last file opened.
+
 ## Look at a record
 
 An opened file shows its first record in the Plot window: traces across, time down, as
@@ -106,6 +109,28 @@ monitor's diagonal or make a bar on the screen as long as a ruler held to it say
 time, the trace and channel, receiver and source line and point, FFID, offset, the
 amplitude as displayed, and the record's UTC time. Right-click the status bar to choose
 the fields and their order.
+
+## What viewSEG remembers
+
+Everything you set is kept for the next run, in `settings.nif` in the settings folder
+(`config/` next to the program, or the folder `viewSEG --paths` names): the theme, where
+the window was and its size, the recent files, how the plot looks (display mode, fills,
+overlap, colours, gain type and amount, the sort order and the display header: a new plot
+starts as you left the last one; polarity is not kept), scale units and screen
+calibrations, the status bar's fields, the sort buttons and your own sort keys. It is
+saved a second after a change and when you quit.
+
+**File > Settings** exports them to a file of your choice (to keep, or to take to another
+computer), imports such a file (what it does not hold stays as it is), or resets them to
+the defaults (the recent files and the window's place stay; the settings before are kept
+in a copy).
+
+`settings.nif` is a text file (NIF) you can read and edit while viewSEG is closed. If it
+is damaged, viewSEG says so in the Messages window, moves it aside as
+`settings.nif.<date-time>.bak` and starts from the defaults; a setting it cannot use (a
+typing mistake, say) keeps its default, with the line it is on, and a copy of the file as
+it was is kept the same way. A release folder may carry a `config/settings.nif` of site
+defaults: settings a user has not set come from it.
 
 ## The folders next to the program
 

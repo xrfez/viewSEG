@@ -47,7 +47,7 @@
 ## strip (which wraps in a narrow window) and in the plot's context menu
 ## (right click).
 
-import std/[math, strutils, tables]
+import std/[math, os, strutils, tables]
 import imguin/cimgui
 import ../../core/[geometry, state, wiggle]
 import ../../gpu/[plotimage, textures]
@@ -584,7 +584,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
       igTextUnformatted("Back to the view before (Backspace, Alt+Left)", nil)
       igEndTooltip()
   tp.stripGroup(4, right, 14, lift):
-    drawSortButtons(p, t, marks, res.commands)
+    drawSortButtons(p, st.settings.sortPresets, t, marks, res.commands)
   tp.stripGroup(5, right, 8, lift):
     if button(IconSettings & "##more", t, marks, "plot.more"):
       igOpenPopup_Str(moreId, 0)
@@ -600,8 +600,10 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     tp.drawScaleSettings(st, res, ppi, mon)
     igEndPopup()
 
-proc drawStartScreen(t: Theme; marks: var Marks; res: var PanelOutput) =
-  ## What the window shows with no file: the ways to open one.
+proc drawStartScreen(t: Theme; recent: openArray[string]; marks: var Marks;
+    res: var PanelOutput) =
+  ## What the window shows with no file: the ways to open one, and the
+  ## files opened last.
   let avail = igGetContentRegionAvail()
   let big = ImVec2_c(x: round(igGetFontSize() * 14), y: round(igGetFontSize() * 2.6))
   let top = igGetCursorPos()
@@ -620,6 +622,19 @@ proc drawStartScreen(t: Theme; marks: var Marks; res: var PanelOutput) =
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextUnformatted(hint.cstring, nil)
   igPopStyleColor(1)
+  if recent.len > 0:
+    igDummy(ImVec2_c(x: 0, y: igGetFontSize()))
+    igSetCursorPosX(top.x + max(0, (avail.x - big.x) / 2))
+    igTextDisabled("Recent files")
+    for i in 0 ..< min(recent.len, 5):
+      igSetCursorPosX(top.x + max(0, (avail.x - big.x) / 2))
+      igPushID_Int(cint(i))
+      if igSelectable_Bool((IconOpenFile & "  " & recent[i].extractFilename).cstring, false,
+          0, ImVec2_c(x: big.x, y: 0)):
+        res.commands.add Command(kind: ckOpen, paths: @[recent[i]])
+      marks.mark("plot.recent " & $i)
+      tip(recent[i])
+      igPopID()
 
 proc centredText(text: string; colour: Rgba) =
   let avail = igGetContentRegionAvail()
@@ -965,7 +980,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       res.commands.add Command(kind: ckBack, panel: p.id)
     igSeparatorText("Sort")
     let order = layer.order
-    if igMenuItem_Bool("Sort by keys...", nil, order.len > 0 and presetOf(order) < 0, true):
+    if igMenuItem_Bool("Sort by keys...", nil, order.len > 0 and
+        presetOf(order, st.settings.sortPresets) < 0, true):
       sortKeys = true
     marks.mark("plot.menu.sort keys")
     if igMenuItem_Bool("File order", nil, order.len == 0, true) and order.len > 0:
@@ -977,7 +993,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     drawHeaderChoice(p, res)
     igEndPopup()
   # Opened here, not in the menu, so that it has the window's ID, as below.
-  if sortKeys: tp.sortKeys.openSortKeys(p)
+  if sortKeys: tp.sortKeys.openSortKeys(p, st.settings)
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
 
 proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: PanelId;
@@ -998,7 +1014,7 @@ proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: P
     marks.markWindow("plot")
     let k = st.findPanel(panel)
     if k < 0 or st.panels[k].layers.len == 0:
-      drawStartScreen(t, marks, result)
+      drawStartScreen(t, st.settings.recentFiles, marks, result)
     else:
       template p: untyped = st.panels[k]
       let mon = monitorOf(igGetWindowViewport())

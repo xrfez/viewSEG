@@ -1,7 +1,8 @@
-## The plot window's trace order: three sort buttons in its strip, one per
-## preset (`SortPresets`: Line/Station, By Flag, By Component), and the
-## popover of the user's own keys, opened from the plot's menu ("Sort by
-## keys...").
+## The plot window's trace order: a sort button in its strip per preset
+## of the settings (`Settings.sortPresets`, by default `SortPresets`:
+## Line/Station, By Flag, By Component), and the popover of the user's own
+## keys, opened from the plot's menu ("Sort by keys..."), which starts from
+## the keys used last (`Settings.customOrder`).
 ##
 ## The button of the order in use is drawn selected; clicking it again goes
 ## back to the file's order. A button whose keys the traces have none of is
@@ -37,11 +38,13 @@ proc toggle(label: string; selected: bool; t: Theme): bool =
   result = igButton(label.cstring, ImVec2_c(x: 0, y: 0))
   if selected: igPopStyleColor(2)
 
-proc drawSortButtons*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Command]) =
-  ## The strip's sort buttons, the one of the order in use selected.
+proc drawSortButtons*(p: Panel; presets: openArray[SortPreset]; t: Theme; marks: var Marks;
+    cmds: var seq[Command]) =
+  ## The strip's sort buttons, one per preset, the one of the order in use
+  ## selected.
   let order = p.layers[0].order
-  let current = presetOf(order)
-  for i, s in SortPresets:
+  let current = presetOf(order, presets)
+  for i, s in presets:
     if i > 0: igSameLine(0, 2)
     # A button whose keys the traces have none of would change nothing.
     var usable = i == current
@@ -60,11 +63,16 @@ proc drawSortButtons*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Comman
       igTextUnformatted(text.cstring, nil)
       igEndTooltip()
 
-proc openSortKeys*(ks: var SortKeysUi; p: Panel) =
-  ## Opens the popover with the order in use (Line/Station's keys when the
-  ## traces are in the file's order), at the mouse.
+proc openSortKeys*(ks: var SortKeysUi; p: Panel; s: Settings) =
+  ## Opens the popover at the mouse with the order in use when it is the
+  ## user's own, else the keys the user sorted by last, else the order in
+  ## use, else Line/Station's keys.
   let order = p.layers[0].order
-  ks.draft = if order.len > 0: order else: SortPresets[0].keys
+  let own = order.len > 0 and presetOf(order, s.sortPresets) < 0
+  ks.draft = if own: order
+             elif s.customOrder.len > 0: s.customOrder
+             elif order.len > 0: order
+             else: SortPresets[0].keys
   igOpenPopup_Str(sortKeysId, 0)
 
 proc fieldName(f: HeaderField; known: set[HeaderField]): string =
