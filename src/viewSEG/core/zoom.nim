@@ -24,11 +24,12 @@
 ## limits is left exactly as it is. `fitted` is the widest view the limits
 ## allow, from the first trace.
 ##
-## **A new plot size** (`resized`) keeps the scale along an axis that hides
-## part of the data, so the plot shows more or less of it from the same
-## top-left corner, as a sheet of paper would; an axis that shows all the
-## data goes on showing all of it. A view that the limits make narrower
-## (`keptFrom`) keeps its left or top edge.
+## **A new plot size** (`resized`) always keeps the scale (data per pixel)
+## and the top-left corner: a smaller plot shows less, with scroll bars, a
+## larger one more, as a sheet of paper would. Only where the plot becomes
+## larger than all the data at that scale does the scale grow, as far as
+## fills the plot. A view that the limits make narrower (`keptFrom`) keeps
+## its left or top edge.
 ##
 ## **The next gather** (`carried`) is shown at the same scales: the same
 ## positions and times, or all of it along an axis that showed all of the
@@ -242,10 +243,10 @@ func showsAll*(v: Viewport; a: Axis; lim: ViewLimits): bool =
   s.lo <= b.lo + eps and s.hi >= b.hi - eps
 
 func resized*(v: Viewport; columns, rows: int; lim: ViewLimits): Viewport =
-  ## `v` on a plot of `columns` × `rows` pixels: along an axis that shows all
-  ## the data it still does; along the others it keeps its scale (data per
-  ## pixel) and its left or top edge, so more or less of the data comes into
-  ## view, never more than there is. Along an axis whose old or new size is
+  ## `v` on a plot of `columns` × `rows` pixels: along each axis it keeps
+  ## its scale (data per pixel) and its left or top edge, so more or less of
+  ## the data comes into view, never more than there is (then the scale
+  ## grows as far as fills the plot). Along an axis whose old or new size is
   ## unknown (0) the span is only kept within the limits (`lim`: the limits
   ## on the new size), from its left or top edge.
   result = v
@@ -254,7 +255,7 @@ func resized*(v: Viewport; columns, rows: int; lim: ViewLimits): Viewport =
   for a in Axis:
     let (was, now) = if a == axTraces: (v.columns, columns) else: (v.rows, rows)
     let s = v.span(a)
-    if was > 0 and now > 0 and now != was and not v.showsAll(a, lim):
+    if was > 0 and now > 0 and now != was:
       result.setSpan(a, keptFrom(Span(lo: s.lo, hi: s.lo + s.width * float64(now) /
         float64(was)), lim[a]))
     else:

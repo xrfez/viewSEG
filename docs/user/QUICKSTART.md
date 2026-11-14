@@ -185,6 +185,11 @@ point by default): right-click them, or their names at the left, to choose its f
 
 Keys act while the Seismic window has the focus: click in it first.
 
+A new size of the Seismic window (its edge, the windows beside it, the main window) keeps
+the scales and the top-left corner: what no longer fits is reached with the scroll bars,
+and a larger window shows more. Only a window larger than the whole record at that scale
+shows it larger, filling the plot.
+
 **Display.** The first buttons in the strip choose how traces are drawn: greyscale
 density, wiggles, or wiggles over density. Density is drawn only in the two modes that
 name it. Changing from density to wiggles while more traces are in view than the plot

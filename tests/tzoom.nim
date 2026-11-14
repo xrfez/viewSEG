@@ -8,8 +8,9 @@
 ## drags, box zooms, typed scales, a new plot size and the scroll bars all
 ## stop at the first and last trace and at the record's start and end, and
 ## zoomed out as far as it goes the data fills the plot exactly. A new plot
-## size keeps the scale of an axis that hides part of the data; the scroll
-## bars' thumbs show the share in view and move the view with them.
+## size always keeps the scale and the top-left corner (the scale grows only
+## where the plot becomes larger than all the data); the scroll bars'
+## thumbs show the share in view and move the view with them.
 ##
 ## In the wiggle modes no view is wider than the plot has pixel columns
 ## (one pixel a trace), under any gesture, a new plot size included: a
@@ -23,7 +24,9 @@
 ## one trace too); density has no such margin; a new mode or overlap keeps
 ## the view, or shows the whole record again where it did.
 ##
-## Seen to fail: with no margin (`traceMargin` 0, as before), `wiggleMargin`
+## Seen to fail: with `resized` keeping the whole record along an axis that
+## showed it (as it did), `resizeKeepsTheScale` found 0 .. 4000 ms on a plot
+## half as tall. With no margin (`traceMargin` 0, as before), `wiggleMargin`
 ## found 0 for overlap 1; with `relimited` keeping every span where it was,
 ## `relimitedKeepsTheView` found the fit at overlap 1 kept at overlap 2.
 ## With `viewLimits` giving the wiggle modes no widest view
@@ -403,15 +406,24 @@ block resizeKeepsTheScale:
   doAssert big.columns == 1000 and big.rows == 900
   doAssert big.traces == Span(lo: 100, hi: 350) and big.timeMs == Span(lo: 1000, hi: 1900), $big
   # smaller: less of it
-  let small = v.resized(400, 300, lim)
-  doAssert small.traces == Span(lo: 100, hi: 200) and small.timeMs == Span(lo: 1000, hi: 1300)
-  # an axis that shows all the data goes on showing all of it
+  let less = v.resized(400, 300, lim)
+  doAssert less.traces == Span(lo: 100, hi: 200) and less.timeMs == Span(lo: 1000, hi: 1300)
+  # an axis that shows all the data keeps its scale too (the user: "i would
+  # rather the plot scale stays the same and scroll bars apear"): smaller,
+  # it shows part of it, from its start; larger than all the data at that
+  # scale, it shows all of it, the scale grown as far as fills the plot
   var oneAxis = fit
   oneAxis.traces = v.traces
   let r = oneAxis.resized(1200, 300, lim)
-  doAssert r.timeMs == fit.timeMs and r.traces == Span(lo: 100, hi: 400), $r
+  doAssert r.timeMs == Span(lo: 0, hi: 2000) and r.traces == Span(lo: 100, hi: 400), $r
+  doAssert not r.showsAll(axTime, lim) and r.showsAll(axTraces, lim) == false
   doAssert fit.resized(1600, 1200, lim).traces == fit.traces
-  doAssert fit.resized(200, 100, lim).timeMs == fit.timeMs
+  doAssert fit.resized(1600, 1200, lim).timeMs == fit.timeMs
+  let small = fit.resized(200, 100, lim)
+  doAssert small.timeMs == Span(lo: 0, hi: 4000 / 6) and small.traces == Span(lo: -0.5,
+    hi: 2499.5), $small
+  # and back: all of it again, at the same scale
+  doAssert small.resized(800, 600, lim) == fit
   # growing past the data: it stops there, moved back inside
   let late = Viewport(traces: Span(lo: 9900, hi: 9999.5), timeMs: v.timeMs, columns: 800,
     rows: 600)

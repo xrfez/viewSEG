@@ -10,7 +10,9 @@
 ##   density;
 ## - zooming out with the wheel, with `-`, with Ctrl + Left, typing a huge
 ##   traces-per-inch value, the fit button, Ctrl + 0 and a larger window
-##   all stop at one pixel a trace, so every trace in view is drawn;
+##   all stop at one pixel a trace, so every trace in view is drawn; a
+##   window larger than the record shows all of it, and smaller again keeps
+##   that scale;
 ## - zoomed in to two and three pixels a trace (where density took over
 ##   before), wiggles are drawn and no density;
 ## - in the density mode the wheel zooms out until the whole record fills
@@ -243,10 +245,18 @@ proc main() =
           doAssert v.traces == f.bounds, $v
           let (bad, seen) = f.capture.mismatches(step = 3)
           doAssert bad == 0, "larger: " & $bad & " of " & $seen & " pixels off the reference")
-    step("and back", proc (f: FrameInfo) =
+    var larger: Viewport
+    step("and back: the scale kept", proc (f: FrameInfo) =
+      larger = f.tracePanel.drawnView
       let (w, h) = f.windowSize
       f.resizeWindow(w - 240, h), proc (f: FrameInfo): bool =
-        result = f.tracePanel.drawnView.columns == columns and f.atLimit("smaller window"))
+        let v = f.tracePanel.drawnView
+        result = v.columns == columns and f.answered and quiet >= 2
+        if result: # a new size keeps the scale, from the same left edge
+          doAssert near(f.pixels, pixelsPerTrace(larger)) and v.traces.lo == larger.traces.lo,
+            $v & " after " & $larger
+          let (bad, seen) = f.capture.mismatches(step = 3)
+          doAssert bad == 0, "smaller: " & $bad & " of " & $seen & " pixels off the reference")
 
     step("density zooms out to the whole record", proc (f: FrameInfo) =
       f.display(dmDensity)

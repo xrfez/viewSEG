@@ -1403,8 +1403,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     discard igInvisibleButton("##plotinput", size, ImGui_ButtonFlags_MouseButtonLeft.cint or
       ImGui_ButtonFlags_MouseButtonRight.cint or ImGui_ButtonFlags_MouseButtonMiddle.cint)
     let hovered = igIsItemHovered(0)
-    # A new plot size keeps the scale (or the whole data) from the top left,
-    # within the limits on the new size.
+    # A new plot size keeps the scale from the top left (the whole data where
+    # the plot becomes larger than it), within the limits on the new size.
     let limNow = p.viewLimits(view.columns)
     var after = if view.columns != next.columns or view.rows != next.rows:
         next.resized(view.columns, view.rows, limNow)

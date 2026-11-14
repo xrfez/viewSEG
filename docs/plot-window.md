@@ -70,9 +70,13 @@
   their own gutters right of and below the plot, never over the data, and the gutters
   are always kept, so the plot does not move or change size (and the scales do not
   jump) when a bar comes or goes.
-- **A new window size keeps the scale:** along an axis that shows part of the data the
-  plot shows more or less of it from the same top-left corner, as a sheet of paper
-  would; an axis that shows the whole record goes on showing all of it.
+- **A new window size always keeps the scale** (traces and ms per inch) **and the
+  top-left corner**, whatever changed the size (the window's own edge, a neighbour such
+  as the Files window, the main window, a layout): a smaller plot shows less of the
+  record, from the same corner, with scroll bars for the rest; a larger one shows more,
+  as a sheet of paper would. Only when the plot becomes larger than the whole record
+  at that scale does the scale grow, as far as fills the plot (never a view past the
+  data).
 - **Display header along the top:** rows of trace header values over the traces, thinned
   so labels never overlap. Any trace header field can be a row (among them the component
   of a multi-component station), and there can be several; the default is receiver
@@ -465,10 +469,11 @@ Defaults taken in this draft, for the user to confirm or change:
     time) can be added.
 13. **The amplitude read out is the displayed value** (after processing and gain), not
     the raw sample in the file.
-14. **A new window size keeps the scale** (traces and ms per pixel) and the top-left
-    corner, so the scale boxes keep what was typed; an axis that showed the whole record
-    goes on showing all of it. The alternative stretches the same data over the new
-    size.
+14. **Decided by the user:** a new window size always keeps the scale (traces and ms
+    per pixel) and the top-left corner, so the scale boxes keep what was typed, also
+    along an axis that showed the whole record ("i would rather the plot scale stays the
+    same and scroll bars apear if ti cannot be shown"); the scale grows only where the
+    plot becomes larger than the whole record.
 15. **A click on a scroll bar's track pans by a whole view** towards the click (as on
     Windows), rather than jumping the thumb to the pointer.
 16. **Line/Station and By Flag differ only within a station:** Line/Station keeps a
