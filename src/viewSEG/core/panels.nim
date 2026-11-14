@@ -47,7 +47,7 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/gain/[curves, gain]
 import processSEG/vibroseis/sweep
-import session, viewport
+import geometry, session, viewport
 
 export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, GatherKind, NormScope,
   NormStat
@@ -79,15 +79,27 @@ type
     components*: set[uint8] ## components to show; empty shows all
 
   DisplayMode* = enum
-    dmDensity = "density" ## greyscale or colour density
-    dmWiggle = "wiggle"   ## lines only
-    dmWigglePositive = "wiggle, positive fill"
-    dmWiggleNegative = "wiggle, negative fill"
+    ## How a layer's traces are drawn. Where traces are narrower than
+    ## `WiggleMinPixels`, the wiggle modes draw density instead
+    ## (`drawsWiggles`, `drawsDensity`).
+    dmDensity = "density" ## greyscale density
+    dmWiggle = "wiggle" ## wiggles, with the fills chosen
+    dmWiggleDensity = "wiggle over density" ## wiggles over greyscale density
+
+  WiggleFill* = enum
+    ## The lobes of a wiggle that are filled.
+    wfPositive = "positive fill" ## right of the baseline
+    wfNegative = "negative fill" ## left of it
 
   PlotColours* = enum
     pcPaper = "paper" ## white background, black traces, whatever the theme
     pcTheme = "follow theme"
     pcCustom = "custom"
+
+  CustomColours* = object
+    ## The plot's colours when the user picks them (`pcCustom`).
+    background*, line*, positive*, negative*: Rgba
+    hover*, selected*: Rgba ## a hovered or selected trace: line and fills
 
   DisplayGain* = enum
     ## The gain type a layer is shown with, after its pipeline (the module
@@ -116,20 +128,25 @@ type
   DisplaySettings* = object
     ## How a layer is drawn.
     visible*: bool = true
-    mode*: DisplayMode = dmDensity
+    mode*: DisplayMode = dmWiggle
+    fills*: set[WiggleFill] = {wfPositive} ## the wiggles' fills: either, both or none
     colours*: PlotColours = pcPaper
+    custom*: CustomColours                 ## the colours under `pcCustom`
     gain*: DisplayGain = dgAuto
-    gainDb*: float64                     ## the gain amount on top of any type: + brighter
-    agcWindowMs*: float64 = 500.0        ## the AGC window
-    fixedClip*: float64 = NaN            ## Fixed: |x| drawn full black at 0 dB; NaN: none yet
-    normScope*: NormScope = perTrace     ## Normalized: each trace, or the whole gather
-    normStat*: NormStat = normPercentile ## Normalized: the level brought to full black
-    timeGain*: TimeGain = tgDbPerSecond  ## Exponential: its shape
-    dbPerS*: float64 = 6.0               ## Exponential: dB per second
-    power*: float64 = 2.0                ## Exponential: the power of time
-    clipPercentile*: float64 = 99.0      ## amplitudes above this percentile are clipped
-    overlap*: float64 = 1.0              ## a wiggle's largest swing, in trace spacings
-    reversed*: bool                      ## polarity reversed for display
+    gainDb*: float64                       ## the gain amount on top of any type: + brighter
+    agcWindowMs*: float64 = 500.0          ## the AGC window
+    fixedClip*: float64 = NaN              ## Fixed: |x| drawn full black at 0 dB; NaN: none yet
+    normScope*: NormScope = perTrace       ## Normalized: each trace, or the whole gather
+    normStat*: NormStat = normPercentile   ## Normalized: the level brought to full black
+    timeGain*: TimeGain = tgDbPerSecond    ## Exponential: its shape
+    dbPerS*: float64 = 6.0                 ## Exponential: dB per second
+    power*: float64 = 2.0                  ## Exponential: the power of time
+    clipPercentile*: float64 = 99.0        ## amplitudes above this percentile are clipped
+    overlap*: float64 = 1.0
+      ## a wiggle's largest swing, in trace spacings (1 reaches the next
+      ## trace's baseline): the reference amplitude swings this far, and
+      ## nothing further
+    reversed*: bool ## polarity reversed for display
 
   Layer* = object
     source*: LayerSource
@@ -354,6 +371,16 @@ func withGainDb*(d: DisplaySettings; db: float64): DisplaySettings =
   ## is not a number).
   result = d
   result.gainDb = if db.isNaN: 0.0 else: clamp(db, -MaxGainDb, MaxGainDb)
+
+func drawsWiggles*(d: DisplaySettings; view: Viewport): bool =
+  ## Whether a layer drawn with `d` shows wiggles in `view`: in a wiggle
+  ## mode, where traces are at least `WiggleMinPixels` apart.
+  d.mode != dmDensity and pixelsPerTrace(view) >= WiggleMinPixels
+
+func drawsDensity*(d: DisplaySettings; view: Viewport): bool =
+  ## Whether a layer drawn with `d` shows density in `view`: in a density
+  ## mode, or where traces are too close together for wiggles.
+  d.mode != dmWiggle or not d.drawsWiggles(view)
 
 func displayMargin*(flow: Pipeline; dtMs: float64): int =
   ## The samples `flow` needs beyond a window on each side; 0 when it

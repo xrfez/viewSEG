@@ -15,7 +15,7 @@ src/viewSEG/ui/imgui/         THE ONLY CODE THAT KNOWS IMGUI, IMPLOT OR SDL
         │  (a future ui/<toolkit>/ replaces this directory)
         ▼
 src/viewSEG/gpu/              GPU resources for OpenGL frontends: float32 textures,
-        │                     colour-map shaders, wiggle vertex buffers
+        │                     the density and wiggle shaders, the plot's image
         ▼
 src/viewSEG/view/             view models: what each panel shows, toolkit-neutral
         ▼
@@ -31,7 +31,7 @@ src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows res
 |---|---|---|
 | `core` | `AppState` (open files, panels and their layers, the selection, the message log), `Command`s (each user intent as data), jobs in two lanes (prefetch through parseSEG's `Prefetcher`, processing through processSEG plans and its pool; results posted to a main-thread inbox), thread guards and the frame watchdog, kernels (colour maps, decimation, picking, cursor readout), map maths (tiles, projections, hit-testing) | `ui`, `gpu`, `platform`, any toolkit, SDL, OpenGL |
 | `view` | View models such as `PanelView`, `TableModel`, `TreeModel`, `PlotSeries` and `MapLayer`. Each has plain-Nim geometry (`Vec2`, `Rect`, `Rgba`) and a `revision` counter that bumps on change | `ui`, `gpu`, `platform`, any toolkit |
-| `gpu` | OpenGL 3 objects behind small procs: upload a sample tile as `R32F` textures, the colour-map LUT texture and shader, line buffers. It loads the GL functions it needs itself (`gpu/gl`), through a loader the frontend passes in (`SDL_GL_GetProcAddress`), so it imports no GL binding package | `ui`, any toolkit (OpenGL itself is allowed) |
+| `gpu` | OpenGL 3 objects behind small procs: upload a sample tile as `R32F` textures (`textures`), the density shader and its colour-map LUT (`density`), the wiggle shader (`wiggle`), and the plot's image that draws a panel's tiles with them (`plotimage`). It loads the GL functions it needs itself (`gpu/gl`), through a loader the frontend passes in (`SDL_GL_GetProcAddress`), so it imports no GL binding package | `ui`, any toolkit (OpenGL itself is allowed) |
 | `platform` | `winres` (compile-time manifest, icon, version info), window chrome (DWM attributes on a native window handle), config paths, and whatever else needs raw OS APIs. Services the windowing library already has (SDL3: file dialogs, system theme, tray) are wrapped in `ui/<toolkit>/shell` instead, because only `ui` may import SDL | `ui`, `core`, any toolkit |
 | `ui/imgui` | The frame loop, docking layout and viewports, widgets that draw view models, input → `Command`, and `shell` (SDL3's file dialog, system theme and tray; results come back as inbox messages) | (top layer) |
 
@@ -223,13 +223,17 @@ frame over budget (50 ms) with its parts, longest first.
    window; per chunk, the display pipeline (the layer's pipeline, then the part of the
    display gain that changes the samples: AGC, by default on pre-stack gathers,
    Exponential, Normalized per trace) runs in place (`chunkMeta(c)`), and each row is
-   cut to the kept samples and peak-decimated into the tile. Before the pipeline, rows
+   cut to the kept samples and peak-decimated into the tile; when the request asks for
+   it (traces wide enough for wiggles, samples decimated), each column's smallest and
+   largest sample are kept too, in the order they occur (`core/wiggle.minMaxInto`), so a
+   wiggle keeps its peaks. Before the pipeline, rows
    marked dead are blanked and samples that are not numbers set to 0: processSEG leaves
    such a row as it is, and it would be drawn at its raw amplitude among processed ones.
    A newer note stops the read between chunks.
 5. **Tile** (reader). A `Tile` (plain seqs, moved through the inbox, never shared)
-   holds the values, the display header's values per trace and its `Level`: the RMS,
-   peak and clip percentile of |x| over its live traces (`panelStats`).
+   holds the values (and, for wiggles zoomed out in time, the columns' extremes), the
+   display header's values per trace and its `Level`: the RMS, peak and clip percentile
+   of |x| over its live traces (`panelStats`).
 6. **Take in** (UI). A tile whose `request.gen` is not the panel's `requestGen` is
    dropped. `AppState` keeps the newest four per panel; the first tile after a change of
    gather or processing sets the panel's level, so the brightness holds while the user
@@ -237,14 +241,22 @@ frame over budget (50 ms) with its parts, longest first.
    that level, a Fixed amplitude kept across gathers and files, 1 for traces normalized
    on the CPU, or, for Float, the level of the data in view, taken on the UI thread from
    at most 32 768 of the kept values whenever the view or the tiles change.
-7. **Draw** (UI, `gpu/density`). Each kept tile is uploaded once, as `R32F` textures
-   cut to the GPU's size limit (`splitBlocks`). Each frame the tiles are drawn, oldest
-   first, into an RGBA image the size of the plot, with one shader (nearest trace,
-   linear in time, the scale as a uniform: the gain amount in dB over the reference,
-   `displayScale`; a colour-map texture), so a change of gain amount, or of a type that
-   is a scale alone, draws again at once and reads nothing; the frontend
-   shows the image in its plot. The CPU twins (`amplitudeAt`, `densityColour`) are what
-   the shader is tested against.
+7. **Draw** (UI, `gpu/plotimage`). Each kept tile is uploaded once, as `R32F` textures
+   cut to the GPU's size limit (`splitBlocks`), with its columns' extremes when it has
+   them and a small texture marking its selected traces. The tiles are drawn, oldest
+   first, into an RGBA image the size of the plot: each tile's area as density (nearest
+   trace, linear in time, the scale as a uniform: the gain amount in dB over the
+   reference, `displayScale`; a colour-map texture) or as the plot's background, then
+   its wiggles, one instanced quad per trace whose fragment shader computes the line's
+   and the fills' coverage of each pixel, then its hovered and selected traces again,
+   on top. Which of density and wiggles a layer shows depends on its mode and on the
+   trace spacing on screen (`drawsDensity`, `drawsWiggles`: wiggles need 4 pixels).
+   Everything but the tiles is a uniform, so a change of gain amount, of a type that is
+   a scale alone, of the mode, the fills, the overlap or the colours, and a hover, draws
+   again at once and reads nothing; a click uploads one byte per trace of each tile. An
+   image whose inputs did not change is not drawn again. The frontend shows the image
+   in its plot. The CPU twins (`amplitudeAt`, `densityColour`, `traceInk`,
+   `densityTint`) are what the shaders are tested against.
 8. **Read out** (UI, `core/pick` and `core/readout`). The pointer's screen point goes
    to the data point under it, then to the trace drawn there (the newest tile holding
    it), the nearest sample and the value drawn for it, and the trace's keys, which each
@@ -322,6 +334,7 @@ type
     selected: IntSet         # survey-wide trace ids: the file's base + the trace's index
     activeGather: GatherRef  # (file: SessionId, gather: int = -1)
     revision: int            # bumped on every change
+    selectedRevision: int    # bumped when `selected` changes (a hover does not)
 
   Session = ref object       # core/session: an open file; workers may hold a ptr SeismicFile
     id: SessionId
@@ -352,7 +365,8 @@ type
     order: seq[SortKey]      # display header fields, each ascending or descending; empty:
                              # the file's order (SortPresets: the plot window's buttons)
     pipeline: Pipeline       # processSEG operations; empty shows raw samples
-    display: DisplaySettings # density or wiggle (positive / negative fill), "paper" colours,
+    display: DisplaySettings # density, wiggle or wiggle over density, the fills (positive,
+                             # negative), the trace overlap, "paper", theme or own colours,
                              # gain type (automatic, none, fixed, normalized, exponential,
                              # float, AGC) and its settings, gain amount in dB, clip
                              # percentile, overlap, reversed polarity
@@ -412,6 +426,7 @@ type
     dtMs, t0Ms: float64
     columns: int             # values per trace
     data: seq[float32]       # count × columns, trace by trace
+    envelope: seq[float32]   # with request.envelope: each column's extremes, 2 per column
     traces: seq[int]         # per row: the trace's index in its file
     keys: seq[TraceKeys]     # per row: its keys, for the readout
     fields: seq[HeaderField]

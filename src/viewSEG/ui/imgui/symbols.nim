@@ -1,6 +1,7 @@
 ## Seismic symbols that no icon font has, drawn as vector shapes with the
 ## window's draw list, so they are crisp at any size and take any theme colour:
-## the display modes (wiggle, positive fill, negative fill, greyscale density),
+## the display modes (wiggle, positive fill, negative fill, greyscale density,
+## wiggle over density),
 ## the gather domains (shot, receiver) and the map markers (source, receiver).
 ##
 ## Traces run downwards (time increases down the screen), as in the trace
@@ -16,9 +17,10 @@ import style
 type
   Symbol* = enum
     syWiggle = "Wiggle"
-    syWigglePositive = "Wiggle, positive fill"
-    syWiggleNegative = "Wiggle, negative fill"
+    syWigglePositive = "Positive fill"
+    syWiggleNegative = "Negative fill"
     syDensity = "Greyscale density"
+    syWiggleDensity = "Wiggle over density"
     syShotGather = "Shot gather"
     syReceiverGather = "Receiver gather"
     sySource = "Source"
@@ -94,9 +96,9 @@ proc drawSymbol*(dl: ptr ImDrawList; sym: Symbol; topLeft: ImVec2_c; size: float
       else: 0
     for cx in [0.3'f32, 0.7]:
       wiggle(dl, x0, y0, s, cx, c, sign, thick)
-  of syDensity:
+  of syDensity, syWiggleDensity:
     # a small greyscale section: the wavelet in each column, dipping to the
-    # right, framed
+    # right, framed; with a wiggle over its middle
     const (cols, rows) = (5, 12)
     let (left, top, w, h) = (x0 + s * 0.1, y0 + s * 0.1, s * 0.8, s * 0.8)
     for c in 0 ..< cols:
@@ -108,6 +110,8 @@ proc drawSymbol*(dl: ptr ImDrawList; sym: Symbol; topLeft: ImVec2_c; size: float
           p(left + w * (c + 1).float32 / cols.float32, top + h * (r + 1).float32 / rows.float32),
           u32(Rgba(r: g, g: g, b: g, a: 255)), 0, 0)
     ImDrawList_AddRect(dl, p(left, top), p(left + w, top + h), line, 0, thick, 0)
+    if sym == syWiggleDensity:
+      wiggle(dl, x0, y0, s, 0.5, c, 0, thick * 1.5)
   of syShotGather, syReceiverGather:
     hyperbola(dl, x0, y0, s, 0.38, line, thick)
     hyperbola(dl, x0, y0, s, 0.62, line, thick)

@@ -9,7 +9,7 @@
 
 ```
 ┌ Plot ──────────────────────────────────────────────────────┐
-│ [▒|∿|◢|◣] [gain▾] [-][+0.0][+] dB [12.5] tr/in [200] ms/in │  controls (they
+│ [▒|∿|▒∿][◢|◣] [gain▾] [-][+0.0][+] dB [12.5] tr/in [200] ms/in│  controls (they
 │ [-][+][fit][<] [Line/Station|By Flag|By Component] [⋯]     │  wrap when narrow)
 ├────────────────────────────────────────────────────────────┤
 │ line    100  100  100  100  100  100  100  100  100        │  display header
@@ -56,9 +56,15 @@
 - **The window's own controls**, in a slim strip at its top (nothing about a plot sits in
   the main toolbar). In a narrow window the strip wraps onto more lines; the window
   itself never scrolls, so no window scroll bar ever covers the plot:
-  - display mode (▒ ∿ ◢ ◣ above): density (greyscale), wiggle, wiggle with positive
-    fill, wiggle with negative fill; wiggle can be drawn over density. The mode a user picks becomes the
-    default for new plot windows and is remembered;
+  - **display mode** (▒ ∿ ▒∿ above): greyscale density, wiggles, or wiggles over
+    density, and two toggles for the wiggles' fills (◢ ◣): the **positive fill** (the
+    lobes right of the trace) and the **negative fill** (left of it), either, both or
+    none. The default is **wiggles with the positive fill**, black on white paper.
+    Where traces are closer together than 4 pixels, the wiggle modes draw density
+    instead, and the strip says so ("density: traces under 4 px") until the traces are
+    zoomed in far enough; room for that note is kept in the wiggle modes, so the strip
+    does not wrap anew when a zoom crosses the limit. The mode a user picks becomes the
+    default for new plot windows and is remembered (with the settings, still to come);
   - **scale boxes: traces per inch and ms per inch**, each a box to type a value into.
     Typing a value and pressing Enter sets the zoom, keeping the top-left corner where it
     is (a plot grows from where it starts, as on paper); zooming any other way updates the
@@ -111,9 +117,9 @@
     goes back. Traces equal in every key keep the file's order, and unknown values come
     last either way;
   - zoom out, zoom in, fit all, back to the view before the last gesture, and a "more"
-    popover: the colours, the display header's fields, the scale units and the screen
-    calibration, later the trace overlap (the largest swing of a wiggle, in trace
-    spacings).
+    popover: the colours, the **trace overlap** (the largest swing of a wiggle, in trace
+    spacings), the display header's fields, the scale units and the screen
+    calibration.
 - **The status bar** (the main window's bottom edge) reads out what lies under the
   pointer in the plot: the time at the cursor, trace (its number in the file) and
   channel, receiver line / point, source line / point, FFID, offset, amplitude and the
@@ -124,15 +130,38 @@
   crossline, source, receiver and midpoint coordinates, elevations, component, trace
   status). Unknown values are left blank.
 
+## Wiggles
+
+- **The line** runs through each trace's samples, straight between them. Zoomed out in
+  time, where a pixel row holds more samples than one, it runs through each column's
+  smallest and largest sample, in the order they occur, so no peak or trough is lost.
+- **The swing.** The amplitude the gain draws full black in density swings a trace the
+  **trace overlap** (1 by default: to the next trace's baseline), in trace spacings;
+  stronger amplitudes are clipped there, flat. The gain amount, every gain type and
+  reversed polarity act on wiggles as on density, and none of them reads anything again.
+- **The fills** cover the area between the trace's baseline and its line, on the side
+  chosen, edge to edge with the line.
+- **Order:** each trace is drawn over the one before it; the hovered and selected traces
+  once more, on top, so a neighbour's fill never hides a highlight. The line is one pixel
+  wide (at 100 %), two for a hovered or selected trace.
+
 ## Colours
 
-- **"Paper", the default:** white background, black wiggles and black fill, whatever the
-  UI theme. Density uses its own grey colour map. Alternatives: **"Follow theme"** (the
-  plot takes the theme's window and text colours) and **custom** colours.
+- **"Paper", the default:** white background, black wiggles and black positive fill, the
+  theme's red (darkened to read on white) for the negative fill, whatever the UI theme.
+  Density uses its own grey colour map. Alternatives: **"Follow the theme"** (the plot
+  takes the theme's plot background, trace and fill colours) and **custom** colours:
+  background, line, positive and negative fill, hovered and selected trace, each picked
+  in the "more" popover, starting from the colours shown.
 - **Highlighting recolours the traces themselves:** the hovered trace and the selected
   traces are redrawn in their colours (line and fill), never marked with a band behind
-  them. Hover is orange; the selection uses the theme's selection colour, so the two
-  never look alike.
+  them; under density alone, their columns are tinted. Hover is the theme's highlight
+  colour (orange); the selection is the theme's accent colour (the colour of a selected
+  button), so the two never look alike. The theme's own "selection" colour is a
+  background tint, which would not show as a line on paper. Each is darkened or
+  lightened just enough to read on the plot's background. A trace both hovered and
+  selected shows the hover. Hover and selection are survey-wide trace ids, shared with
+  the map.
 - **Components** of multi-component units each have a colour and can be shown or
   hidden one by one.
 - **Killed traces** are drawn blank (or hidden: a setting).
@@ -237,7 +266,8 @@ its inverse, Ctrl + Z reverts the last one, and "Clear all edits for this file" 
 the file as it is on disk.
 
 Right-clicking an empty part of the plot opens the plot's own menu: fit all, back, the
-order ("Sort by keys...", "File order"), display mode, colours, display header fields.
+order ("Sort by keys...", "File order"), colours, display header fields. The display
+modes are in the strip only.
 
 ## Empty and first-run state
 
@@ -282,7 +312,10 @@ Defaults taken in this draft, for the user to confirm or change:
    whether the mouse moved).
 4. **Single keys** (`K`, `R`, `F`, `H`, `M`, Space) act on the hovered trace or the
    selection when the plot has focus.
-5. **Hover orange, selection in the theme's selection colour.**
+5. **Hover orange (the theme's highlight), selection in the theme's accent colour**
+   (not its "selection" colour, a background tint that does not show as a line on
+   paper), each made readable on the plot's background; a trace both hovered and
+   selected shows the hover.
 6. **Fit all is Ctrl + `0` (and a button); back is Backspace or Alt + Left**, since
    Home and End step to the first and last gather.
 7. **A double-click does nothing extra.** Its first click already selects a trace (or,
@@ -322,3 +355,10 @@ Defaults taken in this draft, for the user to confirm or change:
     every format alike), not raw header words; sorting by any raw header field comes with
     the gather domains. No key has a shortcut yet (open choice 4's single keys come
     first).
+19. **The plot opens in wiggles with the positive fill**, black on white paper, where
+    traces are at least 4 pixels apart, and in greyscale density where they are closer
+    (a whole shot of thousands of traces opens as density).
+20. **The trace overlap is 1** (the strongest amplitudes reach the next trace's
+    baseline), from 0.1 to 10, and the wiggles' clip is the same reference as density's
+    full black, so the gain amount moves both alike.
+21. **The negative fill is the theme's red** on paper and on the theme's plot.

@@ -1,6 +1,7 @@
 ## The trace panel: the plot window that shows a record, traces across and
-## time down, as greyscale density on white "paper", with the display header
-## along the top and the window's own controls in a strip above it.
+## time down, as wiggles (with a positive fill by default) or greyscale
+## density on white "paper", with the display header along the top and the
+## window's own controls in a strip above it.
 ##
 ## The window reads the panel from `core` and issues `Command`s; it never
 ## changes the state itself. ImPlot only draws the axes: the window handles
@@ -22,11 +23,18 @@
 ## calibrated, in the "more" popover). Typing a value sets the zoom; every
 ## other zoom updates them.
 ##
-## The density image comes from `gpu/density`: the panel's tiles, uploaded
-## once each, drawn into an image the size of the plot, shown with ImPlot's
-## image item. Until a tile for the new view arrives, the plot keeps drawing
-## the tiles it has, stretched. What lies under the mouse (`core/pick`) goes
-## back to the caller for the status bar.
+## The image comes from `gpu/plotimage`: the panel's tiles, uploaded once
+## each, drawn into an image the size of the plot as density, wiggles or
+## wiggles over density, shown with ImPlot's image item. Where traces are
+## closer than `WiggleMinPixels`, the wiggle modes draw density, and the
+## strip says so. Until a tile for the new view arrives, the plot keeps
+## drawing the tiles it has, stretched. What lies under the mouse
+## (`core/pick`) goes back to the caller for the status bar.
+##
+## **Highlighting.** The trace the selection's hover names is drawn in the
+## highlight colour and the selected ones in the selection colour, line and
+## fill (under density alone, their columns are tinted): a uniform and a
+## small texture of marks per tile, so a hover reads and uploads nothing.
 ##
 ## Nothing about a plot sits in the main toolbar: the display mode, the
 ## gain (`plotgain`: the type and the amount in dB), the scales, zoom, fit,
@@ -37,16 +45,17 @@
 
 import std/[math, strutils, tables]
 import imguin/cimgui
-import ../../core/[geometry, state]
-import ../../gpu/density
-import ../../view/[displayheader, theme]
+import ../../core/[geometry, state, wiggle]
+import ../../gpu/[plotimage, textures]
+import ../../view/[displayheader, plotink, theme]
 import chrome, dpi, fonts, icons, menus, plotbars, plotgain, plotsort, style, symbols
 
+export PaperBackground, PaperInk
+
 const
-  PaperBackground* = Rgba(r: 255, g: 255, b: 255, a: 255)
-  PaperInk* = Rgba(r: 0, g: 0, b: 0, a: 255)
-  modeSymbols: array[DisplayMode, Symbol] = [syDensity, syWiggle, syWigglePositive,
-    syWiggleNegative]
+  modeSymbols: array[DisplayMode, Symbol] = [syDensity, syWiggle, syWiggleDensity]
+  fillSymbols: array[WiggleFill, Symbol] = [syWigglePositive, syWiggleNegative]
+  densityNote = "density: traces under 4 px"
   menuId = "##plotmenu"
   moreId = "##plotmore"
   burstSeconds = 0.6   ## wheel turns or key presses closer than this are one gesture
@@ -89,8 +98,10 @@ type
   TracePanelUi* = object
     ## The plot window's own state between frames: its GPU objects, the
     ## view it shows, the gesture in progress and what it drew last.
-    renderer: DensityRenderer
+    renderer: PlotRenderer
     textures: seq[TileTextures] ## the GPU copies of the panel's tiles, in their order
+    marks: int ## bumped whenever a tile's marks of selected traces change
+    selected: seq[bool] ## scratch: a tile's selected rows
     gpuError: string ## why it cannot draw; "" when it can
     started: bool
     maxTexture: int ## 0: the GPU's limit (tests set a small one)
@@ -139,7 +150,7 @@ proc startGpu*(tp: var TracePanelUi; getProc: GetProcAddress; maxTexture = 0): s
   if missing.len > 0:
     tp.gpuError = "OpenGL functions missing: " & missing
     return tp.gpuError
-  let (r, err) = newDensityRenderer(greyLut(), maxTexture)
+  let (r, err) = newPlotRenderer(greyLut(), maxTexture)
   tp.renderer = r
   tp.gpuError = err
   err
@@ -157,13 +168,17 @@ proc show*(tp: var TracePanelUi; v: Viewport) =
   tp.want = true
 
 func drawnView*(tp: TracePanelUi): Viewport {.inline.} = tp.drawn
-  ## The view of the last density image (for tests).
+  ## The view of the last plot image (for tests).
 
-proc densityImage*(tp: TracePanelUi): (seq[Rgba], int, int) =
-  ## The last density image, row by row from the top, and its size (for
-  ## tests; with the GL context current).
+proc plotImage*(tp: TracePanelUi): (seq[Rgba], int, int) =
+  ## The last plot image, row by row from the top, and its size (for tests;
+  ## with the GL context current).
   let (w, h) = tp.renderer.imageSize
   (tp.renderer.readImage, w, h)
+
+func imagesDrawn*(tp: TracePanelUi): int {.inline.} = tp.renderer.imagesDrawn
+  ## How many plot images were drawn: a frame in which nothing changed draws
+  ## none (for tests).
 
 func textureLimit*(tp: TracePanelUi): int {.inline.} = tp.renderer.maxSize
   ## The largest texture side the renderer uses.
@@ -179,9 +194,11 @@ func scaleTexts*(tp: TracePanelUi): (string, string) =
     b.add c
   (a, b)
 
-proc sync(tp: var TracePanelUi; tiles: openArray[Tile]) =
+proc sync(tp: var TracePanelUi; tiles: openArray[Tile]; base: int; sel: Selection) =
   ## Uploads the tiles the GPU does not have and frees the ones `core` no
-  ## longer keeps, so `textures[i]` is the copy of `tiles[i]`.
+  ## longer keeps, so `textures[i]` is the copy of `tiles[i]`; marks each
+  ## one's hovered and selected traces (`base`: the survey-wide id of the
+  ## file's first trace) when the selection has changed since.
   var kept: seq[TileTextures]
   for t in tiles:
     var found = -1
@@ -194,6 +211,16 @@ proc sync(tp: var TracePanelUi; tiles: openArray[Tile]) =
       kept.add tp.renderer.upload(t)
   for tt in tp.textures.mitems: tt.free()
   tp.textures = move kept
+  for i, t in tiles:
+    template tt: untyped = tp.textures[i]
+    if tt.hoverRevision != sel.revision:
+      tt.hoverRow = t.hoverRow(base, sel.hover)
+      tt.hoverRevision = sel.revision
+    if tt.selectionRevision != sel.selectedRevision:
+      t.selectedRowsInto(base, sel, tp.selected)
+      tt.setSelected(tp.selected)
+      tt.selectionRevision = sel.selectedRevision
+      inc tp.marks
   var gone: seq[uint64]
   for id in tp.labelChars.keys:
     var live = false
@@ -247,13 +274,43 @@ proc drawHeaderChoice(p: Panel; res: var PanelOutput) =
           header: HeaderChoice(auto: false, fields: fields))
   igEndDisabled()
 
-proc drawColours(p: Panel; res: var PanelOutput) =
+proc colourBox(label: string; c: Rgba; changed: var Rgba): bool =
+  ## A colour swatch that opens a colour picker; true when the user changed
+  ## it, the new colour in `changed`.
+  var col: array[3, cfloat] = [cfloat(c.r) / 255, cfloat(c.g) / 255, cfloat(c.b) / 255]
+  result = igColorEdit3(label.cstring, col, ImGui_ColorEditFlags_NoInputs.ImGuiColorEditFlags)
+  if result:
+    func byte(v: cfloat): uint8 = uint8(clamp(round(v * 255), 0, 255))
+    changed = Rgba(r: byte(col[0]), g: byte(col[1]), b: byte(col[2]), a: 255)
+
+proc drawColours(p: Panel; t: Theme; res: var PanelOutput) =
+  ## The plot's colour scheme (paper, the theme's, or the user's own
+  ## colours) and the polarity.
   let d = p.layers[0].display
-  for c in [pcPaper, pcTheme]:
-    let text = if c == pcPaper: "Paper: white, black traces" else: "Follow the theme"
+  for c in PlotColours:
+    let text = case c
+      of pcPaper: "Paper: white, black traces"
+      of pcTheme: "Follow the theme"
+      of pcCustom: "My own colours"
     if igRadioButton_Bool(text.cstring, d.colours == c) and d.colours != c:
       var nd = d
+      if c == pcCustom: nd.custom = customOf(plotInk(t, d)) # start from what is shown
       nd.colours = c
+      res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+  if d.colours == pcCustom:
+    let ink = plotInk(t, d)
+    var c = customOf(ink)
+    var changed = false
+    var picked: Rgba
+    for (field, label) in [(addr c.background, "Background"), (addr c.line, "Line"),
+        (addr c.positive, "Positive fill"), (addr c.negative, "Negative fill"),
+        (addr c.hover, "Trace under the pointer"), (addr c.selected, "Selected traces")]:
+      if colourBox(label, field[], picked):
+        field[] = picked
+        changed = true
+    if changed:
+      var nd = d
+      nd.custom = c
       res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
   var reversed = d.reversed
   if igCheckbox("Reverse polarity", addr reversed):
@@ -266,6 +323,30 @@ proc tip(text: string) =
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
+
+proc drawWiggleSettings(p: Panel; res: var PanelOutput) =
+  ## The trace overlap: how far the reference amplitude swings a trace.
+  let d = p.layers[0].display
+  igTextUnformatted("Trace overlap", nil)
+  igSameLine(0, -1)
+  var v = cdouble(d.overlap)
+  igSetNextItemWidth(round(igCalcTextSize("000.00", nil, false, -1).x +
+    2 * igGetStyle().FramePadding.x))
+  discard igInputDouble("##overlap", addr v, 0, 0, "%.2f", 0)
+  if igIsItemDeactivatedAfterEdit():
+    if v >= MinOverlap and v <= MaxOverlap:
+      var nd = d
+      nd.overlap = float64(v)
+      res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+    else:
+      res.notes.add "The trace overlap needs " & significant(MinOverlap) & " to " &
+        significant(MaxOverlap) & " trace spacings, not " & significant(float64(v)) & "."
+  tip("The largest swing of a wiggle, in trace spacings (1 reaches the next trace):\n" &
+    "amplitudes drawn full black in density swing this far, and none further.")
+  igSameLine(0, -1)
+  igTextUnformatted("trace spacings", nil)
+  igTextUnformatted(("Where traces are closer than " & $int(WiggleMinPixels) &
+    " pixels, density is drawn instead.").cstring, nil)
 
 proc fill(box: var ScaleBox; text: string) =
   let n = min(text.len, box.text.len - 1)
@@ -417,19 +498,44 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
   let size = round(igGetFontSize() * IconScale + 2 * igGetStyle().FramePadding.y)
   let lift = round((size - igGetFrameHeight()) / 2) # centres a text control on the symbols
   let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
-  let mode = p.layers[0].display.mode
+  let d = p.layers[0].display
   tp.stripGroup(0, right, 0, 0):
     for m in DisplayMode:
-      let ready = m == dmDensity
-      igBeginDisabled(not ready)
-      if symbolButton(modeSymbols[m], size, t, marks, selected = m == mode,
-          note = (if ready: "" else: " (not available yet)"), markPrefix = "plot.") and
-          m != mode:
-        var d = p.layers[0].display
-        d.mode = m
-        res.commands.add Command(kind: ckDisplay, panel: p.id, display: d)
-      igEndDisabled()
-      if m != DisplayMode.high: igSameLine(0, 2)
+      if symbolButton(modeSymbols[m], size, t, marks, selected = m == d.mode,
+          markPrefix = "plot.") and m != d.mode:
+        var nd = d
+        nd.mode = m
+        res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+      igSameLine(0, 2)
+    # the fills belong to the wiggles: either, both or none
+    igSameLine(0, 6)
+    igBeginDisabled(d.mode == dmDensity)
+    for f in WiggleFill:
+      if symbolButton(fillSymbols[f], size, t, marks, selected = f in d.fills and
+          d.mode != dmDensity, note = (if d.mode == dmDensity: " (with wiggles)" else: ""),
+          markPrefix = "plot."):
+        var nd = d
+        if f in nd.fills: nd.fills.excl f else: nd.fills.incl f
+        res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+      if f != WiggleFill.high: igSameLine(0, 2)
+    igEndDisabled()
+    if d.mode != dmDensity:
+      # Room for the note is kept in the wiggle modes, so that the strip does
+      # not wrap anew when zooming crosses the limit.
+      igSameLine(0, 8)
+      let at = igGetCursorPos()
+      let w = igCalcTextSize(densityNote, nil, false, -1).x
+      igSetCursorPosY(at.y + round((size - igGetTextLineHeight()) / 2))
+      if d.drawsWiggles(tp.cur) or tp.cur.columns == 0:
+        igDummy(ImVec2_c(x: w, y: igGetTextLineHeight()))
+      else:
+        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+        igTextUnformatted(densityNote, nil)
+        igPopStyleColor(1)
+        marks.mark("plot.density note")
+        tip("Traces are closer than " & $int(WiggleMinPixels) & " pixels here, too close " &
+          "for wiggles, so density is drawn. Zoom in on the traces (Shift + wheel, " &
+          "Ctrl + Right) to see wiggles.")
   tp.stripGroup(1, right, 12, lift):
     drawGainControls(p, t, marks, res.commands, res.notes)
   # the scales
@@ -472,7 +578,9 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     tip("Colours, display header, scale units and screen calibration")
   if igBeginPopup(moreId, 0):
     igSeparatorText("Colours")
-    drawColours(p, res)
+    drawColours(p, t, res)
+    igSeparatorText("Wiggles")
+    drawWiggleSettings(p, res)
     igSeparatorText("Display header")
     drawHeaderChoice(p, res)
     igSeparatorText("Scales")
@@ -690,6 +798,9 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   let lim = limitsOf(p.layout)
   let fields = p.shownFields
   let paper = layer.display.isPaper
+  let ink = plotInk(t, layer.display)
+  let source = st.findSession(layer.source.file)
+  let base = if source >= 0: st.sessions[source].base else: -1
   let lineH = igGetTextLineHeight()
   let headerTop = igGetCursorScreenPos()
   igDummy(ImVec2_c(x: 1, y: float32(fields.len) * lineH + 2))
@@ -722,8 +833,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     remember = true
     tp.gesture = gsNone
   next = kept(next, lim)
-  if paper:
-    ImPlot_PushStyleColor_Vec4(ImPlot_Col_PlotBg.cint, vec4(PaperBackground))
+  ImPlot_PushStyleColor_Vec4(ImPlot_Col_PlotBg.cint, vec4(ink.background))
   # ImPlot only draws: the mouse and keys are handled below.
   const flags = ImPlot_Flags_NoTitle.cint or ImPlot_Flags_NoLegend.cint or
     ImPlot_Flags_NoMenus.cint or ImPlot_Flags_NoMouseText.cint or ImPlot_Flags_NoInputs.cint
@@ -752,16 +862,20 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     view.rows = int(round(size.y * fb.y))
     marks.markRect("plot.data", pos, ImVec2_c(x: pos.x + size.x, y: pos.y + size.y))
     if tp.gpuError.len == 0 and tp.started:
-      tp.sync(tiles)
-      let bg = if paper: PaperBackground else: t.roles[rlPlotBackground]
-      let scale = displayScale(p.reference, layer.display.gainDb, layer.display.reversed)
+      tp.sync(tiles, base, st.selection)
+      let d = layer.display
+      let scale = displayScale(p.reference, d.gainDb, d.reversed)
       let shown = Viewport(traces: Span(lo: lim2.X.Min, hi: lim2.X.Max),
         timeMs: Span(lo: lim2.Y.Min, hi: lim2.Y.Max), columns: view.columns, rows: view.rows)
-      let tex = tp.renderer.render(shown, shown.columns, shown.rows, bg, scale, tiles,
-        tp.textures)
+      # one pixel of line at 100 %, two for a hovered or selected trace
+      let width = max(1.0, round(float64(fb.x)))
+      let tex = tp.renderer.render(PlotFrame(view: shown, background: ink.background,
+        density: d.drawsDensity(shown), wiggles: d.drawsWiggles(shown), scale: scale,
+        style: d.styleFor(shown, scale, width, 2 * width), ink: ink.wiggle,
+        tint: DensityTint, marks: tp.marks), tiles, tp.textures)
       tp.drawn = shown
       if tex != 0:
-        ImPlot_PlotImage("##density", ImTextureRef_c(internal_TexID: ImTextureID(tex)),
+        ImPlot_PlotImage("##traces", ImTextureRef_c(internal_TexID: ImTextureID(tex)),
           ImPlotPoint_c(x: lim2.X.Min, y: lim2.Y.Min),
           ImPlotPoint_c(x: lim2.X.Max, y: lim2.Y.Max),
           # ImPlot puts uv0 at (x min, y max): the bottom, the image's first row
@@ -808,8 +922,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     tp.cur = after
     if after != p.view:
       res.commands.add Command(kind: ckView, panel: p.id, view: after, remember: remember)
-  if paper:
-    ImPlot_PopStyleColor(1)
+  ImPlot_PopStyleColor(1)
   var sortKeys = false
   if menu:
     igOpenPopup_Str(menuId, 0)
@@ -826,15 +939,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     if igMenuItem_Bool("File order", nil, order.len == 0, true) and order.len > 0:
       res.commands.add Command(kind: ckSort, panel: p.id)
     marks.mark("plot.menu.file order")
-    igSeparatorText("Display")
-    for m in DisplayMode:
-      if igMenuItem_Bool(($m).cstring, nil, m == layer.display.mode, m == dmDensity) and
-          m != layer.display.mode:
-        var d = layer.display
-        d.mode = m
-        res.commands.add Command(kind: ckDisplay, panel: p.id, display: d)
     igSeparatorText("Colours")
-    drawColours(p, res)
+    drawColours(p, t, res)
     igSeparatorText("Display header")
     drawHeaderChoice(p, res)
     igEndPopup()

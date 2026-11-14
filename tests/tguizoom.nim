@@ -503,7 +503,7 @@ proc main() =
         doAssert h.pos.y >= p.pos.y + p.size.y and v.pos.x >= p.pos.x + p.size.x,
           "a bar over the data: " & $h & ", " & $v & " on " & $p
         # the image's last column and last row are on screen as drawn
-        let (img, w, hgt) = f.tracePanel.densityImage
+        let (img, w, hgt) = f.tracePanel.plotImage
         doAssert w == int(round(p.size.x)) and hgt == int(round(p.size.y)), $w & "x" & $hgt
         let (x0, y0) = (int(round(p.pos.x)), int(round(p.pos.y)))
         var off = 0

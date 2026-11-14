@@ -1,5 +1,6 @@
-## The trace panel in the running frontend, headless: a fixture gather opens
-## in the plot window as greyscale density on white paper, and the pixels
+## The trace panel in the running frontend, headless: a fixture gather shown
+## in the plot window as greyscale density on white paper (`tguiwiggle` has
+## the wiggles, the default), and the pixels
 ## read back from the window match a CPU reference of the same colour map
 ## (`amplitudeAt`, `densityColour`), with tiles cut into blocks of a small
 ## texture limit, for the whole gather and for a zoom in which each sample
@@ -130,11 +131,15 @@ withFixtures fx:
     inc waited
     let k = f.core.findPanel(MainPanel)
     let p = f.core.panels[k]
+    # xvfb starts the pointer at the screen's centre, over the plot: a
+    # hovered trace's column would be tinted
+    if f.index == 0: f.moveMouse(vec2(4, 4))
     case stage
-    of 0: # the file opens; show the samples as they are, for exact values
+    of 0: # the file opens; show the samples as they are, as density, for exact values
       if p.laidOut:
         var d = p.layers[0].display
         d.gain = dgNone
+        d.mode = dmDensity
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
         stage = 1
     of 1:
@@ -325,6 +330,7 @@ proc recordShot(path, file: string; traces = Span(); timeMs = Span(); light = fa
   var saved = false
   proc onFrame(f: FrameInfo) =
     let p = f.core.panels[f.core.findPanel(MainPanel)]
+    if f.index == 0: f.moveMouse(vec2(4, 4)) # no trace hovered
     if stage == 0 and p.laidOut and f.answered:
       if traces.hi > traces.lo:
         var v = p.view

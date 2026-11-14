@@ -4,8 +4,8 @@ viewSEG is a viewer for SEG-Y and SEG-D seismic data with quality-control tools.
 no installation and no internet connection.
 
 **Status:** early development. The window, the File menu, the folders below, and one
-record on screen as greyscale density, with zoom, pan, gain, sorting and a cursor readout,
-work.
+record on screen as wiggles or greyscale density, with zoom, pan, gain, sorting and a
+cursor readout, work.
 
 ## Start it
 
@@ -34,9 +34,13 @@ folder (`viewSEG --paths` shows where it is).
 
 ## Look at a record
 
-An opened file shows its first record in the Plot window: traces across, time down, on
-white paper, with automatic gain (AGC on shot and receiver records). The row of labels
-over the traces is the display header (receiver line and point by default).
+An opened file shows its first record in the Plot window: traces across, time down, as
+black wiggles with their positive lobes filled, on white paper, with automatic gain (AGC
+on shot and receiver records). Where the traces are closer together than 4 pixels (a
+whole shot of a few thousand traces, say), the plot shows greyscale density instead, and
+says so in the strip ("density: traces under 4 px"); zoom in on the traces to see the
+wiggles. The row of labels over the traces is the display header (receiver line and point
+by default).
 
 | To | Mouse | Keys |
 |---|---|---|
@@ -51,6 +55,15 @@ over the traces is the display header (receiver line and point by default).
 | Cancel a drag | | Esc |
 
 Keys act while the Plot window has the focus: click in it first.
+
+**Display.** The first buttons in the strip choose how traces are drawn: greyscale
+density, wiggles, or wiggles over density. The two after them fill the wiggles' positive
+lobes (right of the trace) and negative lobes (left of it): either, both or none. The
+settings button (the gear) holds the **trace overlap**, how far the strongest amplitudes
+swing a trace, in trace spacings (1 reaches the next trace; anything stronger is clipped
+there), and the colours: paper (black on white; negative fills red), the theme's colours,
+or your own.
+
 
 **Gain.** The drop-down in the strip picks the gain type, and its settings are in the
 same list: Automatic (AGC on shot and receiver records, none on stacked data), None,

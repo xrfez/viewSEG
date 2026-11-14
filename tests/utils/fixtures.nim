@@ -29,6 +29,9 @@
 ##   components of receiver lines 100 and 101, a channel set each, in a
 ##   scrambled order (`MixedSets`), for sorting.
 ## - `pilotSegy()`: SEG-Y, one sweep trace (trace code 6, auxiliary).
+## - `longSpreadSegy()`: SEG-Y, one shot record of `LongSpread` channels of
+##   `LongSamples` samples (a 25 Hz sine), more traces than a plot has room
+##   for as wiggles.
 ## - `demoFile(name)`: parseSEG's demo files (`demoFileNames`: a post-stack
 ##   line, a SEG-D shot with three auxiliaries, a Rev 2 record, a SEG-2 line).
 ##
@@ -199,6 +202,27 @@ proc surveySegy*(fx: Fixtures; planted = pdNone): string =
       w.writeTrace(k, buf)
       if planted == pdDuplicateStation and shot == 0 and channel == 12:
         w.writeTrace(k, buf)
+  w.checkClose()
+
+const
+  LongSpread* = 400  ## channels of `longSpreadSegy`
+  LongSamples* = 200 ## its samples per trace, at `DtMs`
+
+proc longSpreadSegy*(fx: Fixtures): string =
+  ## One shot record of `LongSpread` traces, channel 1 .. `LongSpread`, each
+  ## a 25 Hz sine.
+  result = fx.dir / "long-spread.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: one shot of " & $LongSpread & " channels"]))
+  var buf = newSeq[float32](LongSamples)
+  for i in 0 ..< LongSamples:
+    buf[i] = float32(sin(2 * PI * WaveHz * float64(i) * DtMs / 1000))
+  for channel in 1 .. LongSpread:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(channel), 0.0,
+      DtMs * 1000, tsLive)
+    w.writeTrace(k, buf)
   w.checkClose()
 
 proc pilotSegy*(fx: Fixtures): string =

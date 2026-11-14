@@ -30,6 +30,9 @@
 ##   that order, so every request, and the tile's traces, keys and display
 ##   header values, follow it. A newer note stops a sort between runs of
 ##   traces; until a sort is done, no request is served.
+## - **The tile.** Each row is cut to the kept samples and peak-decimated
+##   (`decimatePeakInto`); with `envelope`, its columns' extremes are kept
+##   too (`minMaxInto`), so a wiggle zoomed out in time keeps its peaks.
 ## - **Before processing** (`readyForProcessing`), a trace marked dead in the
 ##   file is blanked and a sample that is not a number (NaN, ±Inf) is set
 ##   to 0, as the tile draws it anyway: processSEG leaves such a trace as it
@@ -44,7 +47,7 @@ import parseSEG
 import processSEG/[adapters, pipeline]
 import processSEG/core/[rows, types, workspace]
 import processSEG/gain/stats
-import inbox, jobs, log, panels, sorting, threads, tiles, viewport
+import inbox, jobs, log, panels, sorting, threads, tiles, viewport, wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
@@ -274,6 +277,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
   var tile = Tile(panel: rd.r.panel, request: q, dtMs: rd.layout.dtMs, t0Ms: rd.layout.t0Ms,
     columns: q.columns, fields: req.fields)
   tile.data = newSeq[float32](q.count * tile.columns)
+  if q.envelope: tile.envelope = newSeq[float32](q.count * 2 * tile.columns)
   tile.traces = list
   tile.keys = newSeq[TraceKeys](q.count)
   tile.header = newSeq[seq[float64]](req.fields.len)
@@ -299,6 +303,10 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       let at = row * tile.columns
       decimatePeakInto(src.toOpenArray(skip, skip + q.samples - 1), q.decimation,
         tile.data.toOpenArray(at, at + tile.columns - 1))
+      if q.envelope: # the wiggles' peaks, zoomed out in time
+        let e = 2 * at
+        minMaxInto(src.toOpenArray(skip, skip + q.samples - 1), q.decimation,
+          tile.envelope.toOpenArray(e, e + 2 * tile.columns - 1))
       let keys = c.rows.keysAt(k)
       tile.keys[row] = keys
       for i, field in req.fields:

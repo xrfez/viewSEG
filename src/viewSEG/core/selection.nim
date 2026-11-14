@@ -18,14 +18,15 @@ type
 
   SelectMode* = enum
     smReplace = "replace" ## the traces become the selection
-    smAdd = "add"         ## the traces join the selection (Shift)
-    smToggle = "toggle"   ## each trace is selected unless it was, then not (Ctrl)
+    smAdd = "add"         ## the traces join the selection
+    smToggle = "toggle"   ## each trace is selected unless it was, then not (Shift + click)
 
   Selection* = object
-    hover*: int = -1  ## the trace under the cursor; -1 for none
-    selected*: IntSet ## the selected traces
+    hover*: int = -1       ## the trace under the cursor; -1 for none
+    selected*: IntSet      ## the selected traces
     activeGather*: GatherRef
-    revision*: int    ## bumped on every change
+    revision*: int         ## bumped on every change
+    selectedRevision*: int ## bumped when `selected` changes
 
 proc setHover*(s: var Selection; trace: int): bool =
   ## Puts the cursor on `trace` (-1: none); false when it already was.
@@ -41,12 +42,14 @@ proc select*(s: var Selection; traces: openArray[int]; mode: SelectMode) =
     if mode == smToggle and t in s.selected: s.selected.excl t
     else: s.selected.incl t
   inc s.revision
+  inc s.selectedRevision
 
 proc clear*(s: var Selection) =
   ## Selects nothing.
   if s.selected.len > 0:
     s.selected.clear()
     inc s.revision
+    inc s.selectedRevision
 
 proc forget*(s: var Selection; file: SessionId; traces: Slice[int]) =
   ## Drops every mention of a closed file: its traces, its gather.
@@ -58,6 +61,7 @@ proc forget*(s: var Selection; file: SessionId; traces: Slice[int]) =
   for t in s.selected:
     if t in traces: gone.add t
   for t in gone: s.selected.excl t
+  if gone.len > 0: inc s.selectedRevision
   if s.activeGather.file == file:
     s.activeGather = GatherRef()
     changed = true

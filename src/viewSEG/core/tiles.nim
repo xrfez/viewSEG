@@ -8,6 +8,8 @@
 ## its live traces (its `Level`). It is made on the reader's thread, moved
 ## through the inbox and
 ## kept by `AppState`; it holds no `ref`, so it may be freed on any thread.
+## Zoomed out in time with traces wide enough for wiggles, it also keeps
+## each column's extremes (`envelope`), which the wiggles are drawn through.
 ##
 ## The pixels come from these procs (docs/architecture.md, rule 4): the GPU
 ## draws a tile as `quad`s, one per `TileBlock`, with a shader that does
@@ -23,19 +25,20 @@ import geometry, panels, viewport
 type
   Tile* = object
     ## The samples of one request, ready to draw.
-    id*: uint64           ## given by `AppState` when it takes the tile in; 0 before
+    id*: uint64             ## given by `AppState` when it takes the tile in; 0 before
     panel*: PanelId
-    request*: ReadRequest ## what it answers (`request.gen`: the panel's request)
-    dtMs*, t0Ms*: float64 ## the panel's time axis
-    columns*: int         ## values per trace: `request.columns`
-    data*: seq[float32]   ## `request.count` traces of `columns` values, trace by trace
-    traces*: seq[int]     ## per row: the trace's index in its file
-    keys*: seq[TraceKeys] ## per row: the trace's keys
+    request*: ReadRequest   ## what it answers (`request.gen`: the panel's request)
+    dtMs*, t0Ms*: float64   ## the panel's time axis
+    columns*: int           ## values per trace: `request.columns`
+    data*: seq[float32]     ## `request.count` traces of `columns` values, trace by trace
+    envelope*: seq[float32] ## with `request.envelope`: the columns' extremes (`core/wiggle`)
+    traces*: seq[int]       ## per row: the trace's index in its file
+    keys*: seq[TraceKeys]   ## per row: the trace's keys
     fields*: seq[HeaderField]
     header*: seq[seq[float64]]
       ## per field, one value per trace (NaN when unknown)
-    level*: Level         ## RMS, peak and clip percentile of |x| over the live traces
-    failed*: int          ## traces that could not be decoded (zero rows)
+    level*: Level           ## RMS, peak and clip percentile of |x| over the live traces
+    failed*: int            ## traces that could not be decoded (zero rows)
 
   Quad* = object
     ## Where a block of a tile is drawn, in data coordinates (positions and

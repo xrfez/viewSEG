@@ -19,7 +19,10 @@
 ##   one sample per pixel row, the tile keeps one column per `decimation`
 ##   samples (a power of two; `decimatePeakInto`), at most two per row;
 ## - `margin` more samples on each side for processing (a filter's edge, an
-##   AGC window), decoded but not kept (`decodeWindow`).
+##   AGC window), decoded but not kept (`decodeWindow`);
+## - when traces are wide enough for wiggles (`WiggleMinPixels`) and the
+##   samples are decimated, each column's extremes as well (`envelope`), so
+##   a wiggle keeps its peaks (`core/wiggle`).
 ##
 ## Powers of two keep a request the same under small zooms, and aligned
 ## positions and samples keep it the same under small pans. `covers` says
@@ -32,9 +35,13 @@
 import std/math
 from processSEG/pipeline import decodeWindow
 
-const ReadAhead* = 0.5
-  ## positions (and samples) read beyond the view on each side, as a
-  ## fraction of the visible count
+const
+  ReadAhead* = 0.5
+    ## positions (and samples) read beyond the view on each side, as a
+    ## fraction of the visible count
+  WiggleMinPixels* = 4.0
+    ## the narrowest trace spacing, in pixels, wiggles are drawn at; density
+    ## takes over below it
 
 type
   Span* = object
@@ -65,6 +72,7 @@ type
     samples*: int     ## samples kept, from `firstSample`
     decimation*: int  ## samples per tile column: 1, or a power of two
     margin*: int      ## samples decoded on each side and dropped after processing
+    envelope*: bool   ## the tile also keeps each column's extremes, for wiggles
 
   TileBlock* = object
     ## Part of a tile that fits one texture: rows (positions) `row ..< row +
@@ -88,6 +96,11 @@ func columns*(r: ReadRequest): int {.inline.} =
 func position*(r: ReadRequest; row: int): int {.inline.} =
   ## The position of the tile's row `row`.
   r.first + row * r.stride
+
+func pixelsPerTrace*(view: Viewport): float64 =
+  ## The trace spacing of `view` on screen, in pixels; 0 for an empty view.
+  if view.traces.width > 0 and view.columns > 0: float64(view.columns) / view.traces.width
+  else: 0.0
 
 func covered(s: Span; n: int): Slice[int] =
   ## The cells `0 ..< n` (cell `k` covering `k - 0.5 .. k + 0.5`) that `s`
@@ -162,7 +175,8 @@ func requestFor*(layout: PanelLayout; view: Viewport; margin = 0;
   let firstSample = j0 * dec
   ReadRequest(first: k0 * stride, count: k1 - k0 + 1, stride: stride,
     firstSample: firstSample, samples: min(layout.samples, (j1 + 1) * dec) - firstSample,
-    decimation: dec, margin: max(margin, 0))
+    decimation: dec, margin: max(margin, 0),
+    envelope: dec > 1 and pixelsPerTrace(view) >= WiggleMinPixels)
 
 func covers*(r: ReadRequest; layout: PanelLayout; view: Viewport; margin = 0): bool =
   ## Whether `r` holds what `view` shows, at the resolution it needs: then
@@ -170,6 +184,7 @@ func covers*(r: ReadRequest; layout: PanelLayout; view: Viewport; margin = 0): b
   let need = requestFor(layout, view, margin, readAhead = 0)
   not r.isEmpty and not need.isEmpty and r.stride == need.stride and
     r.decimation == need.decimation and r.margin == need.margin and
+    (r.envelope or not need.envelope) and
     r.first <= need.first and r.last >= need.last and r.firstSample <= need.firstSample and
     r.firstSample + r.samples >= need.firstSample + need.samples
 

@@ -23,6 +23,9 @@ type
 const
   GL_NO_ERROR* = 0'u32
   GL_TRIANGLES* = 0x0004'u32
+  GL_TRIANGLE_STRIP* = 0x0005'u32
+  GL_ONE* = 1'u32
+  GL_ONE_MINUS_SRC_ALPHA* = 0x0303'u32
   GL_COLOR_BUFFER_BIT* = 0x4000'u32
   GL_CULL_FACE* = 0x0B44'u32
   GL_DEPTH_TEST* = 0x0B71'u32
@@ -48,6 +51,7 @@ const
   GL_RGBA8* = 0x8058'u32
   GL_TEXTURE_BINDING_2D* = 0x8069'u32
   GL_CLAMP_TO_EDGE* = 0x812F'u32
+  GL_R8* = 0x8229'u32
   GL_R32F* = 0x822E'u32
   GL_TEXTURE0* = 0x84C0'u32
   GL_ACTIVE_TEXTURE* = 0x84E0'u32
@@ -114,6 +118,9 @@ var
   glGetUniformLocation*: proc (program: GLuint; name: cstring): GLint {.glcall.}
   glUniform1i*: proc (location, v: GLint) {.glcall.}
   glUniform1f*: proc (location: GLint; v: float32) {.glcall.}
+  glUniform2f*: proc (location: GLint; v0, v1: float32) {.glcall.}
+  glUniform4f*: proc (location: GLint; v0, v1, v2, v3: float32) {.glcall.}
+  glBlendFunc*: proc (sfactor, dfactor: GLenum) {.glcall.}
   glGenVertexArrays*: proc (n: GLsizei; ids: ptr GLuint) {.glcall.}
   glDeleteVertexArrays*: proc (n: GLsizei; ids: ptr GLuint) {.glcall.}
   glBindVertexArray*: proc (id: GLuint) {.glcall.}
@@ -126,6 +133,8 @@ var
     normalized: GLboolean; stride: GLsizei; offset: pointer) {.glcall.}
   glEnableVertexAttribArray*: proc (index: GLuint) {.glcall.}
   glDrawArrays*: proc (mode: GLenum; first: GLint; count: GLsizei) {.glcall.}
+  glDrawArraysInstanced*: proc (mode: GLenum; first: GLint; count,
+    instances: GLsizei) {.glcall.}
 
 proc loadGl*(getProc: GetProcAddress): seq[string] =
   ## Loads the functions above; returns the names the driver did not give.
@@ -171,6 +180,9 @@ proc loadGl*(getProc: GetProcAddress): seq[string] =
   load glGetUniformLocation
   load glUniform1i
   load glUniform1f
+  load glUniform2f
+  load glUniform4f
+  load glBlendFunc
   load glGenVertexArrays
   load glDeleteVertexArrays
   load glBindVertexArray
@@ -181,3 +193,4 @@ proc loadGl*(getProc: GetProcAddress): seq[string] =
   load glVertexAttribPointer
   load glEnableVertexAttribArray
   load glDrawArrays
+  load glDrawArraysInstanced

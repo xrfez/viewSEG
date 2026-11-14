@@ -67,7 +67,8 @@ block openShowsTheFirstGather:
     doAssert p.layers.len == 1
     doAssert p.layers[0].source.kind == lsRecord
     doAssert p.layers[0].source.file == s.id and p.layers[0].source.gather == 0
-    doAssert p.layers[0].display.mode == dmDensity and p.layers[0].display.colours == pcPaper
+    doAssert p.layers[0].display.mode == dmWiggle and p.layers[0].display.fills == {wfPositive} and
+      p.layers[0].display.colours == pcPaper
     doAssert p.layers[0].filter.seismic and not p.layers[0].filter.auxiliary
     doAssert p.layers[0].pipeline.len == 0
     doAssert p.requestGen > 0
