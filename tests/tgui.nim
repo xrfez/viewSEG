@@ -48,7 +48,7 @@ proc render(opts: RunOptions; save = ""): Shot =
     inc seen
     if f.index == frames - 1:
       shot = Shot(width: f.width, height: f.height, theme: f.theme, scale: f.scale,
-        pixels: f.readFrame(), messages: f.messages.items)
+        pixels: f.readFrame(), messages: f.messages)
       for n in @["toolbar", "statusbar", "plot", "table"] & @appTools:
         shot.marks.add (n, f.markOf(n))
       for sym in Symbol:

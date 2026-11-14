@@ -73,6 +73,7 @@ type
     sessions: seq[Session]
     opening, closing: seq[Pending]
     mail: seq[Msg]
+    indexCache: string ## the index cache folder; "" for none
     nextFile, nextPanel, nextBase: int
     inbox: Inbox
     jobs: Jobs
@@ -80,13 +81,16 @@ type
       ## stop before anything a running job uses is freed.
 
 proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
-    jobHistory: Natural = DefaultJobHistory): AppState =
+    jobHistory: Natural = DefaultJobHistory; indexCache = ""): AppState =
   ## The state of a program with no file open and one empty panel
   ## (`MainPanel`), with both job lanes running. Marks the calling thread as
-  ## the UI thread.
+  ## the UI thread. `indexCache` is the folder for parseSEG's index caches
+  ## (the frontend passes one under the cache directory; it is created when
+  ## first needed); "" opens every file without one.
   markUiThread()
   result = AppState(log: initMessageLog(logCapacity), inbox: initInbox(),
-    jobs: initJobs(jobHistory), nextFile: 1, nextPanel: int(MainPanel) + 1)
+    jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
+    nextPanel: int(MainPanel) + 1)
   result.panels.add Panel(id: MainPanel)
 
 proc shutdown*(state: var AppState) =
@@ -116,6 +120,10 @@ func sessions*(state: AppState): lent seq[Session] {.inline.} =
 func jobs*(state: AppState): lent Jobs {.inline.} =
   ## The jobs, for the Jobs window and the status bar (`list`, `info`).
   state.jobs
+
+func indexCache*(state: AppState): lent string {.inline.} =
+  ## The folder of parseSEG's index caches; "" for none.
+  state.indexCache
 
 func findPanel*(state: AppState; id: PanelId): int =
   ## The index of panel `id` in `panels`; -1 when there is none.
@@ -201,7 +209,8 @@ proc adopt(state: var AppState; s: sink Session) =
   state.nextBase += s.len
   state.log.add(s.file.log, s.name)
   state.log.add(sevInfo, "open", "Opened " & s.name & ": " & plural(s.len, "trace") &
-    " in " & plural(s.gathers.len, "gather") & ".")
+    " in " & plural(s.gathers.len, "gather") &
+    (if s.file.fromCache: " (index from the cache)." else: "."))
   let gather = if s.gathers.len > 0: 0 else: -1
   state.sessions.add s
   state.show(MainPanel, id, gather)
@@ -296,7 +305,8 @@ proc apply*(state: var AppState; cmd: Command) =
         state.log.add(sevInfo, name, name & " is already being opened.")
       else:
         let job = state.jobs.submit(JobSpec(title: "Open " & name, lane: jlInteractive,
-          reads: @[path]), openWork(path, state.inbox.poster))
+          reads: @[path]), openWork(path, state.inbox.poster,
+          indexCacheFile(state.indexCache, path)))
         state.opening.add Pending(job: job, path: path)
   of ckClose:
     let i = state.findSession(cmd.file)

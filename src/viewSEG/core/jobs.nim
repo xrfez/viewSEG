@@ -21,6 +21,11 @@
 ##   A job that cannot start yet does not hold up the jobs behind it that
 ##   can. Files are compared as given: pass the path the file was opened
 ##   with.
+## - **Holds.** A reader that is not a job (a trace panel's thread) holds
+##   the file instead (`hold`, then `release`): a job that needs the file to
+##   itself does not start while it is held. A hold is refused while a job
+##   that needs the file to itself is queued or running, so a stream of
+##   readers never keeps such a job waiting.
 ## - **Progress and cancel.** The work gets a `JobContext`: it reports
 ##   progress (`progress`, `setPhase`) and checks `cancelled`, or calls
 ##   `checkCancelled`, which raises `JobCancelledError`. `progress` returns
@@ -41,7 +46,7 @@
 ## runner calls it after every job (`core/threads`, "Handing objects to
 ## another thread").
 
-import std/[locks, monotimes, options]
+import std/[locks, monotimes, options, sequtils]
 import threads
 
 export monotimes, options
@@ -78,6 +83,7 @@ type
     ## part it is in. `total` 0 means unknown.
     done*, total*: int64
     phase*: string
+    since*: MonoTime ## when the job, or its phase, started; zero while queued
 
   JobInfo* = object
     ## What the Jobs window and the status bar show about a job.
@@ -117,6 +123,7 @@ type
     recs: seq[JobRec]                 ## every job not removed, in submission order
     queue: array[JobLane, seq[JobId]] ## the queued jobs of each lane, in run order
     finished: seq[JobInfo]            ## finished since the last `takeFinished`
+    holds: seq[string]                ## one entry per `hold` not yet released
     nextId: int
     revision: int
     historyLimit: int
@@ -151,6 +158,8 @@ proc pick(q: ptr JobsObj; lane: JobLane): int =
   for k in 0 ..< q.queue[lane].len:
     let spec = q.recs[q.find(q.queue[lane][k])].info.spec.addr
     var free = true
+    for p in spec.exclusive:
+      if p in q.holds: free = false
     for r in q.recs:
       if r.info.state == jsRunning and conflicts(spec[], r.info.spec):
         free = false
@@ -208,6 +217,7 @@ proc runner(arg: RunnerArg) {.thread.} =
     let i = q.find(id)
     q.recs[i].info.state = jsRunning
     q.recs[i].info.startedAt = getMonoTime()
+    q.recs[i].info.progress.since = q.recs[i].info.startedAt
     inc q.revision
     var work = move q.recs[i].work
     release q.lock
@@ -374,6 +384,38 @@ proc stop*(jobs: Jobs) =
   ## them. Later submissions never run. Idempotent; destroying `jobs` does it.
   shutdown(jobs.obj)
 
+proc hold*(jobs: Jobs; path: string): bool {.raises: [].} =
+  ## Marks `path` as read by something that is not a job, such as a trace
+  ## panel's thread: a job that needs it to itself does not start until
+  ## `release`. False, and nothing held, while such a job is queued or
+  ## running. Any thread; take the hold before handing the file to the
+  ## reader, so that a close issued later waits for it.
+  let q = jobs.obj
+  withLock q.lock:
+    for r in q.recs:
+      if r.info.state in {jsQueued, jsRunning} and path in r.info.spec.exclusive:
+        return false
+    q.holds.add path
+    result = true
+
+proc release*(jobs: Jobs; path: string): bool {.raises: [].} =
+  ## Ends one `hold` of `path`, from any thread, once the reader no longer
+  ## touches the file (its prefetchers closed). False when `path` was not
+  ## held.
+  let q = jobs.obj
+  withLock q.lock:
+    let i = q.holds.find(path)
+    if i >= 0:
+      q.holds.delete(i)
+      broadcast(q.changed) # a job that needs the file to itself may start
+      result = true
+
+proc held*(jobs: Jobs; path: string): int =
+  ## How many holds `path` has.
+  let q = jobs.obj
+  withLock q.lock:
+    result = q.holds.count(path)
+
 proc list*(jobs: Jobs): seq[JobInfo] =
   ## Every job listed, oldest first.
   let q = jobs.obj
@@ -392,6 +434,17 @@ proc queued*(jobs: Jobs; lane: JobLane): seq[JobId] =
   let q = jobs.obj
   withLock q.lock:
     result = q.queue[lane]
+
+proc active*(jobs: Jobs): seq[JobInfo] =
+  ## The running jobs, oldest first, then the queued ones in the order they
+  ## will run, the interactive lane's first: what the status bar shows each
+  ## frame, without copying the finished ones.
+  let q = jobs.obj
+  withLock q.lock:
+    for r in q.recs:
+      if r.info.state == jsRunning: result.add r.info
+    for lane in JobLane:
+      for id in q.queue[lane]: result.add q.recs[q.find(id)].info
 
 proc takeFinished*(jobs: Jobs): seq[JobInfo] =
   ## The jobs that finished since the last call, in the order they finished.
@@ -440,5 +493,5 @@ proc setPhase*(ctx: JobContext; phase: string) {.raises: [].} =
   withLock ctx.q.lock:
     let i = ctx.q.find(ctx.id)
     if i >= 0:
-      ctx.q.recs[i].info.progress = JobProgress(phase: phase)
+      ctx.q.recs[i].info.progress = JobProgress(phase: phase, since: getMonoTime())
       inc ctx.q.revision

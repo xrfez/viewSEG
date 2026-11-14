@@ -5,8 +5,11 @@
 ## Seen to fail: with `endFrame` not closing the last part, `slowFrame`
 ## lost "render"; with the over-budget test turned into `>=`, `atBudget`
 ## reported a frame of exactly 50 ms; with waiting parts counted as work,
-## `waitsDoNotCount` reported a frame that mostly waited for the display.
+## `waitsDoNotCount` reported a frame that mostly waited for the display;
+## with `take` reporting every time, `digestReportsOncePerSecond` got "two
+## reports within a second".
 
+import std/strutils
 import viewSEG/core/watchdog
 
 let t0 = getMonoTime()
@@ -82,3 +85,23 @@ block underAMillisecond:
   dog.phase("tiny", t0 + initDuration(microseconds = 1))
   let s = dog.endFrame(t0 + initDuration(microseconds = 1500)).get
   doAssert describe(s) == "Frame 0 took 1 ms (budget 0 ms): tiny 1 ms, start < 1 ms.", describe(s)
+
+block digestReportsOncePerSecond:
+  # A loop that stalls every frame tells the log once a second, with a
+  # count and the slowest frame, not once a frame.
+  proc slow(frame, ms: int): SlowFrame =
+    SlowFrame(frame: frame, took: initDuration(milliseconds = ms),
+      budget: DefaultFrameBudget)
+  var d = initSlowFrameDigest()
+  doAssert d.take(at(0)).isNone, "a report with nothing slow"
+  d.note slow(3, 80)
+  let first = d.take(at(10))
+  doAssert first.isSome and first.get.startsWith("Frame 3 took 80 ms"), $first
+  for i in 4 .. 9:
+    d.note slow(i, if i == 6: 300 else: 60)
+    doAssert d.take(at(10 + 100 * (i - 3))).isNone, "two reports within a second"
+  let digest = d.take(at(1010))
+  doAssert digest.isSome, "no report after a second"
+  doAssert digest.get.startsWith("6 slow frames since the last report; the slowest: " &
+    "Frame 6 took 300 ms"), digest.get
+  doAssert d.take(at(5000)).isNone, "a report with nothing new"

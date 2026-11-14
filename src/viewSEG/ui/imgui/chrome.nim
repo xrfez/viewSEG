@@ -1,5 +1,6 @@
 ## The shell's chrome around the docked panels: the icon toolbar under the menu
-## bar, the status bar along the bottom, and tool buttons (a Nerd Font icon or
+## bar, the status bar along the bottom (with the running job's progress bar
+## and its Cancel button), and tool buttons (a Nerd Font icon or
 ## a seismic `Symbol`) with tooltips that name their shortcut. The toolbar holds
 ## application-level actions only; display and gather controls belong to the
 ## plot windows, which use `symbolButton`. Also the two
@@ -11,8 +12,8 @@
 
 import std/[math, strutils]
 import imguin/cimgui
-import ../../core/geometry
-import ../../view/theme
+import ../../core/[geometry, jobs]
+import ../../view/[jobstatus, theme]
 import fonts, icons, menus, style, symbols
 
 const IconScale* = 1.3'f32
@@ -154,15 +155,60 @@ proc field(fonts: Fonts; icon, label, value: string; t: Theme) =
     igTextUnformatted(value.cstring, nil)
   igSameLine(0, 18)
 
-proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; marks: var Marks) =
-  ## The status strip along the bottom of the main window. The cursor fields
-  ## are placeholders until the trace panel exists.
+proc jobField(job: JobStatus; t: Theme; marks: var Marks): JobId =
+  ## The running job: a progress bar labelled with what it does and how far
+  ## it is, Cancel, and what else runs or waits. Returns the job to cancel,
+  ## or `NoJob`.
+  result = NoJob
+  igSameLine(0, -1)
+  if job.job != NoJob:
+    let style = igGetStyle()
+    let width = round(igGetFontSize() * 22)
+    let height = igGetFontSize() + 2 * round(style.FramePadding.y / 2)
+    # A negative fraction draws ImGui's moving "busy" bar: progress unknown.
+    let fraction = if job.fraction >= 0: job.fraction else: -float32(igGetTime())
+    igPushStyleVar_Vec2(ImGui_StyleVar_FramePadding.cint,
+      ImVec2_c(x: style.FramePadding.x, y: round(style.FramePadding.y / 2)))
+    igProgressBar(fraction, ImVec2_c(x: width, y: height), "")
+    marks.mark("status.progress")
+    if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+      igTextUnformatted(job.text.cstring, nil)
+      igEndTooltip()
+    # The label beside the bar, so a long title never hides the bar itself.
+    igSameLine(0, 6)
+    igTextUnformatted(job.text.cstring, nil)
+    marks.mark("status.job")
+    if job.cancellable:
+      igSameLine(0, 8)
+      igBeginDisabled(job.cancelling)
+      if igSmallButton((IconClose & " Cancel##job").cstring):
+        result = job.job
+      igEndDisabled()
+      marks.mark("status.cancel")
+    igPopStyleVar(1)
+  let others = job.others
+  if others.len > 0:
+    igSameLine(0, 12)
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    igTextUnformatted(others.cstring, nil)
+    igPopStyleColor(1)
+    marks.mark("status.others")
+  igSameLine(0, 18)
+
+proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
+    marks: var Marks): JobId =
+  ## The status strip along the bottom of the main window; returns the job
+  ## the user asked to cancel, or `NoJob`. The cursor fields are
+  ## placeholders until the trace panel exists.
+  result = NoJob
   let style = igGetStyle()
   let height = round(igGetFontSize() + 2 * style.FramePadding.y + 2)
   if beginBar("##statusbar", ImGui_Dir_Down, height, t):
     marks.markWindow("statusbar")
     igSetCursorPosY(round((height - igGetFontSize()) / 2))
     igDummy(ImVec2_c(x: 0, y: 0))
+    if job.shown:
+      result = jobField(job, t, marks)
     field(fonts, IconPulse, "t", "1.284 s", t)
     field(fonts, "", "trace", "128 / 480", t)
     field(fonts, "", "FFID", "1001", t)

@@ -17,7 +17,10 @@
 ## run; with `shutdown` no longer marking running jobs as cancelled, or no
 ## longer joining the runners, `destroyStopsRunningJobs` found that the job
 ## had not seen its cancel (its earlier form, which only checked that the
-## job never finished its work, passed both ways).
+## job never finished its work, passed both ways); with `pick` not looking
+## at holds, `holdsKeepExclusiveJobsWaiting` found the close run while the
+## file was held ("a job had a held file to itself"), and with `release` not
+## broadcasting, it timed out ("the last release left the runner asleep").
 
 import std/[atomics, os, strutils, times]
 import viewSEG/core/[jobs, threads]
@@ -272,6 +275,37 @@ block notCancellable:
   let queued = jobs.submit(barrier, fake(3))
   jobs.stop()
   doAssert jobs.state(queued) == jsCancelled and ran[3].load == 0
+
+block holdsKeepExclusiveJobsWaiting:
+  # A reader that is not a job (a trace panel's thread) holds the file: a
+  # job that needs it to itself (closing it) waits until the hold ends, while
+  # the jobs behind it that need not wait run. A hold is refused while such a
+  # job is queued or running, so readers cannot keep it waiting for ever.
+  reset()
+  let jobs = initJobs()
+  doAssert jobs.hold("x.sgy") and jobs.hold("x.sgy") # two panels show it
+  doAssert jobs.held("x.sgy") == 2
+  let close = jobs.submit(spec("Close x.sgy", exclusive = @["x.sgy"]), fake(0))
+  let other = jobs.submit(spec("Open y.sgy", reads = @["y.sgy"]), fake(1))
+  let reader = jobs.submit(spec("QC pass", jlBackground, reads = @["x.sgy"]), fake(2))
+  doAssert waitUntil(jobs.state(other) == jsDone and jobs.state(reader) == jsDone)
+  doAssert jobs.state(close) == jsQueued, "a job had a held file to itself"
+  doAssert not jobs.hold("x.sgy"), "a hold was taken while a close waited"
+  doAssert jobs.hold("y.sgy"), "a hold of another file was refused"
+  doAssert jobs.release("x.sgy")
+  sleep 5
+  doAssert jobs.state(close) == jsQueued, "the close ran while a hold was left"
+  doAssert jobs.release("x.sgy")
+  doAssert waitUntil(jobs.state(close) == jsDone), "the last release left the runner asleep"
+  doAssert not jobs.release("x.sgy"), "a file that was not held was released"
+  doAssert jobs.held("x.sgy") == 0 and jobs.held("y.sgy") == 1
+  # A running job that has the file to itself refuses holds too.
+  let edit = jobs.submit(spec("Edit y.sgy", exclusive = @["z.sgy"]), fake(3, gate = 1))
+  doAssert waitUntil(jobs.state(edit) == jsRunning)
+  doAssert not jobs.hold("z.sgy")
+  gates[1].open()
+  doAssert waitUntil(jobs.state(edit) == jsDone)
+  doAssert jobs.hold("z.sgy"), "a hold was refused after the job ended"
 
 var sawCancel: Atomic[bool]
 

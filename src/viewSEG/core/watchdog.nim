@@ -132,3 +132,34 @@ func describe*(s: SlowFrame): string =
   if named.len > 0:
     result.add ": " & named.join(", ")
   result.add "."
+
+type
+  SlowFrameDigest* = object
+    ## Slow frames gathered so that the log hears of them at most once per
+    ## interval: a frame loop that stalls again and again would otherwise add
+    ## a line per frame, and every line makes the log window longer.
+    interval: Duration
+    told: MonoTime ## when the log was last told; zero before that
+    count: int ## slow frames since then
+    worst: SlowFrame
+
+func initSlowFrameDigest*(interval = initDuration(seconds = 1)): SlowFrameDigest =
+  ## A digest that reports at most once per `interval`.
+  SlowFrameDigest(interval: interval)
+
+proc note*(d: var SlowFrameDigest; s: sink SlowFrame) =
+  ## Counts slow frame `s`, keeping the slowest one.
+  if d.count == 0 or s.took > d.worst.took:
+    d.worst = s
+  inc d.count
+
+proc take*(d: var SlowFrameDigest; now = getMonoTime()): Option[string] =
+  ## The line for the log, once per interval when frames were slow: the
+  ## first slow frame at once, then the count since the last line and the
+  ## slowest of them. Call it every frame.
+  if d.count > 0 and (d.told == MonoTime() or now - d.told >= d.interval):
+    result = some(if d.count == 1: describe(d.worst)
+      else: $d.count & " slow frames since the last report; the slowest: " &
+        describe(d.worst))
+    d.count = 0
+    d.told = now

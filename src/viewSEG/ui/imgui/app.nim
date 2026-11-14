@@ -3,16 +3,19 @@
 ## or SDL (docs/architecture.md).
 ##
 ## The window holds a menu bar, an icon toolbar, a dockspace with a sample plot,
-## a sample table and the Messages window, and a status bar; `-d:imguiDemo`
-## adds the Dear ImGui demo window. The look comes from a theme file
+## a sample table and the Messages window, and a status bar with the running
+## job's progress and its Cancel button; `-d:imguiDemo` adds the Dear ImGui
+## demo window. The look comes from a theme file
 ## (`view/theme`, `style`, `fonts`); the shell services (dialogs, system theme,
 ## icon) are in `shell`, DPI handling in `dpi`, the chrome in `chrome`.
 ##
 ## The application state (`core/state`) lives here, on the UI thread: each
-## frame drains its inbox, and what it logs is shown in the Messages window
-## until the log window replaces it. Debug builds time every frame
-## (`core/watchdog`) and log the frames whose work is over budget, with what
-## the frame was doing.
+## frame drains its inbox, and the Messages window shows its log, where the
+## frontend's own messages go too. File > Open file and the files named on the
+## command line (`RunOptions.openPaths`) are opened by `core`'s open job, with
+## parseSEG's index cache in `RunOptions.indexCacheDir`. Debug builds time
+## every frame (`core/watchdog`) and log the frames whose work is over budget,
+## with what the frame was doing, at most once a second.
 ##
 ## A start-up step that fails (SDL, the window, OpenGL 3.3, either ImGui
 ## backend) is reported in a message box, on stderr and in
@@ -27,6 +30,7 @@ import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
 import ../../core/[geometry, state, watchdog]
 import ../../platform/paths
+import ../../view/jobstatus
 import chrome, dpi, fonts, icons, menus, messages, shell, style
 
 export ThemeChoice, theme, messages, ImguiCheck
@@ -51,10 +55,12 @@ type
     scale: float32
     fontDirs: seq[string]
     fonts: Fonts
-    messages: Messages
+    messages: Messages           ## the frontend's messages, on their way to the log
     core: AppState               ## the application state
-    logSeen: int                 ## the core log's entries shown in `messages` so far
+    logView: LogView
+    echoed: int                  ## the core log's entries echoed to stdout so far
     dog: FrameWatchdog
+    slow: SlowFrameDigest
     marks: Marks
     pendingTheme: Option[string] ## picked in the menu, applied after the frame
     layoutDone: bool
@@ -106,6 +112,10 @@ type
       ## where a start-up failure is written; default `paths.logDir()`
     onFailure*: FailureHook
       ## called when start-up fails; nil shows a message box
+    openPaths*: seq[string]
+      ## seismic files to open once the window is up (the command line's)
+    indexCacheDir*: Option[string]
+      ## where parseSEG's index caches go; default `<cache>/index`
     simulate: set[StartupStep] ## tests: these steps fail without being tried
 
 proc readPixel*(frame: FrameInfo; x, y: int): Rgba =
@@ -160,9 +170,40 @@ proc chooseTheme*(frame: FrameInfo; name: string) =
   ## it applies after this frame.
   frame.ui.pendingTheme = some(name)
 
-proc messages*(frame: FrameInfo): lent Messages =
-  ## The Messages window's contents so far.
-  frame.ui.messages
+proc messages*(frame: FrameInfo): seq[Message] =
+  ## What the Messages window holds: the log's entries, oldest first, each
+  ## as one line.
+  for e in frame.ui.core.log:
+    result.add Message(level: levelOf(e.severity), text: line(e))
+
+proc stop*(frame: FrameInfo) =
+  ## Ends the run after this frame, as closing the window does.
+  frame.ui.running = false
+
+proc moveMouse*(frame: FrameInfo; at: Vec2) =
+  ## Moves the mouse pointer to `at` (framebuffer pixels from the window's
+  ## top-left corner), as the user would; the UI sees it from the next frame.
+  ## For tests: press with `pressMouse` a frame or two later.
+  let w = frame.ui.window
+  let density = SDL_GetWindowPixelDensity(w)
+  let (x, y) = (at.x / density, at.y / density)
+  SDL_WarpMouseInWindow(w, x, y) # gives the window the mouse focus
+  var ev: SDL_Event
+  ev.motion = SDL_MouseMotionEvent(type_field: SDL_EVENT_MOUSE_MOTION,
+    windowID: SDL_GetWindowID(w), x: x, y: y)
+  discard SDL_PushEvent(addr ev)
+
+proc pressMouse*(frame: FrameInfo; at: Vec2; down: bool) =
+  ## Presses (`down`) or releases the left mouse button at `at`, where
+  ## `moveMouse` put the pointer. For tests.
+  let w = frame.ui.window
+  let density = SDL_GetWindowPixelDensity(w)
+  let (x, y) = (at.x / density, at.y / density)
+  var ev: SDL_Event
+  ev.button = SDL_MouseButtonEvent(type_field: (if down: SDL_EVENT_MOUSE_BUTTON_DOWN
+    else: SDL_EVENT_MOUSE_BUTTON_UP), windowID: SDL_GetWindowID(w), button: 1, down: down,
+    clicks: 1, x: x, y: y)
+  discard SDL_PushEvent(addr ev)
 
 proc core*(frame: FrameInfo): lent AppState =
   ## The application state as this frame drew it.
@@ -201,10 +242,21 @@ proc pickTheme(ui: var Ui): Theme =
 proc restyle(ui: var Ui) =
   applyStyle(ui.theme, ui.scale)
 
+proc say(ui: var Ui; text: string; level = mlInfo) =
+  ## Puts one of the frontend's own messages in the log.
+  ui.core.report(severityOf(level), "", text)
+
+proc flushMessages(ui: var Ui) =
+  ## Moves what the theme and the fonts said into the log.
+  for m in ui.messages.items:
+    ui.say(m.text, m.level)
+  ui.messages.items.setLen 0
+
 proc setTheme(ui: var Ui) =
   ## Loads the theme `pickTheme` names, with its fonts, and restyles.
   ui.theme = ui.pickTheme()
   ui.fonts.load(ui.theme, ui.fontDirs, ui.messages)
+  ui.flushMessages()
   ui.restyle()
 
 proc toggleTheme(ui: var Ui) =
@@ -218,18 +270,21 @@ proc toggleTheme(ui: var Ui) =
 proc onShellEvent(ui: var Ui; ev: ShellEvent) =
   case ev.kind
   of sePathsChosen:
-    for p in ev.paths:
-      ui.messages.add($ev.dialog & ": " & p)
+    case ev.dialog
+    of dkOpenFile, dkOpenFiles:
+      ui.core.apply Command(kind: ckOpen, paths: ev.paths)
+    of dkOpenFolder:
+      ui.say("Opening a whole folder is not available yet: File > Open files... opens " &
+        "the files in " & ev.paths[0] & ".", mlWarning)
   of seCancelled:
-    ui.messages.add($ev.dialog & ": cancelled")
+    discard # the user closed the dialog: nothing to say
   of seDialogFailed:
     const hint = when defined(linux):
         " (Linux needs xdg-desktop-portal with a GTK or KDE backend, or zenity.)"
       else: ""
-    ui.messages.add($ev.dialog & ": the dialog could not be shown: " & ev.error & hint,
-      mlError)
+    ui.say($ev.dialog & ": the dialog could not be shown: " & ev.error & hint, mlError)
   of seThemeChanged:
-    ui.messages.add("System theme: " & $ev.theme)
+    ui.say("System theme: " & $ev.theme)
     ui.system = ev.theme
     if ui.selected.len == 0 and resolveTheme(ui.choice, ev.theme) != ui.theme.mode:
       ui.setTheme()
@@ -252,12 +307,20 @@ template mark(ui: var Ui; part: string; idle = false) =
   when FrameWatchdogOn:
     ui.dog.phase(part, waiting = idle)
 
-proc showNewLog(ui: var Ui) =
-  ## Shows what the core logged since the last call in the Messages window.
-  const level: array[Severity, MessageLevel] = [mlInfo, mlWarning, mlError, mlError]
-  for e in ui.core.log.since(ui.logSeen):
-    ui.messages.add(e.text, level[e.severity])
-  ui.logSeen = ui.core.log.nextSerial
+proc echoNewLog(ui: var Ui) =
+  ## Echoes what was logged since the last call to stdout, until the log has
+  ## its own file.
+  for e in ui.core.log.since(ui.echoed):
+    try:
+      stdout.writeLine (if e.severity == sevInfo: "" else: $levelOf(e.severity) & ": "), line(e)
+    except IOError:
+      discard # no usable stdout (a desktop start on Windows): the window has it all
+  if ui.core.log.nextSerial != ui.echoed:
+    try:
+      stdout.flushFile()
+    except IOError:
+      discard
+  ui.echoed = ui.core.log.nextSerial
 
 proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   ## The first layout: the plot top left, the messages under it, the header
@@ -307,12 +370,15 @@ proc drawUi(ui: var Ui; plot: SamplePlot): set[MenuAction] =
   if menu.pickedTheme and menu.theme != ui.selected:
     ui.pendingTheme = some(menu.theme) # fonts and styles change between frames
   result.incl drawToolbar(ui.theme, ui.marks)
-  drawStatusBar(ui.fonts, ui.theme,
-    ChromeInfo(themeName: ui.theme.name, scale: ui.scale), ui.marks)
+  let job = jobStatus(ui.core.jobs.active, getMonoTime())
+  let cancel = drawStatusBar(ui.fonts, ui.theme,
+    ChromeInfo(themeName: ui.theme.name, scale: ui.scale), job, ui.marks)
+  if cancel != NoJob:
+    ui.core.apply Command(kind: ckCancelJob, job: cancel)
   ui.drawDockSpace()
   drawSamplePlot(plotTitle, plot, ui.marks)
   drawSampleTable(tableTitle, ui.fonts, ui.theme, ui.marks)
-  ui.messages.draw(messagesTitle, ui.theme)
+  ui.logView.draw(ui.core.log, messagesTitle, ui.theme)
   when defined(imguiDemo):
     igShowDemoWindow(nil)
     ImPlot_ShowDemoWindow(nil)
@@ -406,14 +472,17 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions): Ui =
       selected = env # a theme name or path
   if selected.endsWith(ThemeExt) and not fileExists(selected):
     selected.setLen selected.len - ThemeExt.len
+  let indexCache = if opts.indexCacheDir.isSome: opts.indexCacheDir.get
+                   else: ctx.cacheDir / "index"
   result = Ui(window: window, choice: choice, system: systemTheme(), selected: selected,
     themes: themeFiles(themeDirs(userThemes, assets)), scale: windowScale(window),
-    core: initAppState(), dog: initFrameWatchdog(), running: true)
+    core: initAppState(indexCache = indexCache), dog: initFrameWatchdog(),
+    slow: initSlowFrameDigest(), running: true)
   for d in assets:
     result.fontDirs.add d / "fonts"
   if assets.len == 0:
-    result.messages.add "No assets folder found next to the program; using the " &
-      "built-in theme and font.", mlWarning
+    result.say("No assets folder found next to the program; using the built-in theme " &
+      "and font.", mlWarning)
 
 proc run*(opts = RunOptions()): int =
   ## Opens the main window and runs the event loop until the window closes, the
@@ -474,6 +543,8 @@ proc run*(opts = RunOptions()): int =
 
   var ui = initUi(window, opts)
   ui.setTheme()
+  if opts.openPaths.len > 0:
+    ui.core.apply Command(kind: ckOpen, paths: opts.openPaths)
   let plot = samplePlot(1000)
   var
     frame = 0
@@ -495,12 +566,11 @@ proc run*(opts = RunOptions()): int =
         if scale != ui.scale:
           ui.scale = scale
           ui.restyle()
-          ui.messages.add("Display scale: " & $int(round(scale * 100)) & " %")
+          ui.say("Display scale: " & $int(round(scale * 100)) & " %")
     for ev in pollShellEvents():
       ui.onShellEvent(ev)
     ui.mark "inbox"
     discard ui.core.drainInbox()
-    ui.showNewLog()
     if (SDL_GetWindowFlags(window) and SDL_WINDOW_MINIMIZED) != 0:
       ui.mark("minimized", idle = true)
       SDL_Delay(10)
@@ -513,7 +583,7 @@ proc run*(opts = RunOptions()): int =
       ui.mark "render"
       igRender()
       for c in newImguiChecks():
-        ui.messages.add c.describe, mlError
+        ui.say(c.describe, mlError)
 
       var w, h: cint
       discard SDL_GetWindowSizeInPixels(window, addr w, addr h)
@@ -550,5 +620,9 @@ proc run*(opts = RunOptions()): int =
     when FrameWatchdogOn:
       let slow = ui.dog.endFrame()
       if slow.isSome:
-        ui.core.report(sevWarning, "frame", describe(slow.get))
+        ui.slow.note slow.get
+      let report = ui.slow.take()
+      if report.isSome:
+        ui.core.report(sevWarning, "frame", report.get)
+    ui.echoNewLog()
   0

@@ -122,6 +122,11 @@ the wait the user notices is never behind a long job.
 - **Files.** A job does not start while a running job, or a job queued ahead of it in its
   lane, uses one of its files in a conflicting way: reading is shared, exclusive use is
   not. A job that must wait does not hold up the jobs behind it that need not.
+- **Holds.** A reader that is not a job, such as a trace panel's thread, holds the file
+  instead: the UI thread calls `hold(path)` before it hands the reader the file, and the
+  reader calls `release(path)` once its prefetchers are closed. A job that needs the file
+  to itself (a close, a join) does not start while the file is held, and `hold` is
+  refused while such a job is queued or running, so readers cannot keep it waiting.
 - **Progress and cancel.** The work gets a `JobContext`: `progress(done, total)` returns
   false once a cancel is asked for, so it serves as parseSEG's `Progress` callback;
   `checkCancelled` raises `JobCancelledError`. Work that returns is done; work that raises
@@ -138,11 +143,27 @@ the wait the user notices is never behind a long job.
 **Open and close.** An open is an interactive job that reads the file; its session comes
 back as an `mkOpened` message, and `AppState` gives it a `SessionId` and the survey-wide id
 of its first trace, logs parseSEG's diagnostics, and shows its first gather in the main
-panel. A close takes the file out of every view at once, cancels the jobs that use it, and
-queues a close job that needs the file exclusively; when that job ends, the UI thread
-closes the file. The close job cannot be cancelled or removed: until it has run, a job
-may still be reading the file. Paths are made absolute and normalized when a file is
-opened, so every job names a file the same way and one file is never opened twice.
+panel. The job reports progress ("indexing", or "reading the index cache") and stops at
+its cancel: parseSEG's walk stops at the next progress call, and a cancel that comes
+after the walk still closes the file on the job's thread and posts nothing. A close
+takes the file out of every view at once, cancels the jobs that use it, and queues a
+close job that needs the file exclusively; when that job ends (after every job that read
+the file, and every hold on it), the UI thread closes the file. The close job cannot be
+cancelled or removed: until it has run, a job may still be reading the file. Paths are
+made absolute and normalized when a file is opened, so every job names a file the same
+way and one file is never opened twice.
+
+**The index cache.** `initAppState(indexCache = dir)` names the folder for parseSEG's
+index caches; the frontend passes `<cache>/index` from `platform/paths`, since `core`
+does not import `platform`. One cache per file, named after the file plus a hash of its
+full path (`filejobs.indexCacheFile`). The open job reads a cache when one exists
+(parseSEG checks it against the file and walks the file instead when it is stale, saying
+why in the log); after a walk it saves the index ("saving the index cache") before
+posting the session, because a `SeismicFile` is used by one thread at a time. A file
+whose index cannot be cached (a multiplexed SEG-D file's demultiplexed copy, a file that
+changed while it was opened) opens all the same. The folder is kept under a budget
+(4 GiB by default): after a save, the caches used longest ago are deleted; reading a
+cache marks it used.
 
 **ORC across threads.** ORC keeps a per-thread list of objects that may be in a cycle, and
 marks each listed object with its place in that list. An object listed by one thread and
@@ -158,10 +179,10 @@ frame over budget (50 ms) with its parts, longest first.
 
 ### From file to pixels
 
-1. **Open** (interactive job). `openSeismic(path, keys = true, progress)`; the job reads
-   the gathers, moves the file into a `Session` and posts the session. The progress hook is
-   a `gcsafe` closure on the job thread that calls `JobContext.progress`. Not yet: the index
-   cache (`OpenOptions(cache: path)`, then `saveIndex` if `not f.fromCache`) and reading
+1. **Open** (interactive job). `openSeismic(path, keys = true, progress,
+   OpenOptions(cache: path))`, then `saveIndex` if `not f.fromCache`; the job reads the
+   gathers, moves the file into a `Session` and posts the session. The progress hook is a
+   `gcsafe` closure on the job thread that calls `JobContext.progress`. Not yet: reading
    `summary`, `channelSets` and `crsText` on the job.
 2. **Request** (UI). A scroll or zoom is a `Command`. `core` bumps the panel's `requestGen`
    and sends the panel thread the trace range or selection, the sample window, the
@@ -220,7 +241,8 @@ frame over budget (50 ms) with its parts, longest first.
 - **Exclusive:** `ensureKeys`, `applySurvey`, `applyGeometry`, `openEditor` and `close`.
   The session first cancels its jobs, closes its prefetchers and waits, without blocking
   the UI thread: the call runs in (or, for `close`, after) a job that names the file in
-  `JobSpec.exclusive`, which starts only once no job reads the file. Afterwards it
+  `JobSpec.exclusive`, which starts only once no job reads the file and no reader holds
+  it (`hold` / `release`). Afterwards it
   makes new `rowsOf` views and prefetchers (a prefetcher made before `ensureKeys` never
   gets keys) and marks processed buffers and overlays stale. Raw samples stay valid.
 - **Views.** `TraceRows` and `ChunkMeta` hold raw pointers into the index. They may be
@@ -278,7 +300,7 @@ type
     spec: JobSpec            # title, lane (jlInteractive, jlBackground), reads, exclusive,
                              # cancellable
     state: JobState          # jsQueued, jsRunning, jsDone, jsFailed, jsCancelled
-    progress: JobProgress    # done, total, phase
+    progress: JobProgress    # done, total, phase, since (the phase's start)
     error: string
     cancelRequested: bool
     queuedAt, startedAt, finishedAt: MonoTime
@@ -296,6 +318,7 @@ type
     panels: seq[Panel]       # MainPanel first
     sessions: seq[Session]
     inbox: Inbox             # Poster handles for workers; freed with the last handle
+    indexCache: string       # the folder of parseSEG's index caches; "" for none
     jobs: Jobs               # declared last: destroyed first, so the runners stop first
 
   Tile = object              # not built yet: [traces, samples] float32, moved, never shared
