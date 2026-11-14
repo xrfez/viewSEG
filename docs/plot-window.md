@@ -9,9 +9,9 @@
 
 ```
 ┌ Seismic ───────────────────────────────────────────────────┐
-│ [▒|∿|▒∿][◢|◣][⊢] [gain▾] [-][+0.0][+] dB [12.5] tr/in [200]│  controls (they
-│ ms/in [-][+][fit][<] [Line/Station|By Flag|By Component]   │  wrap when narrow)
-│ [Custom...] [⋯]                                            │
+│ [▒|∿|▒∿][◢|◣][⊢] [-][1.00][+] overlap [gain▾] [-][+0.0][+] dB│  controls (they
+│ [12.5] tr/in [200] ms/in [-][+][fit][<] [◂ 1 / 1 ▸]        │  wrap when narrow)
+│ [Line/Station|By Flag|By Component] [Custom...] [⋯]        │
 ├────────────────────────────────────────────────────────────┤
 │ line    100  100  100  100  100  100  100  100  100        │  display header
 │ point   101  103  105  107  109  111  113  115  117        │  (thinned to fit)
@@ -97,6 +97,10 @@
     density, and two toggles for the wiggles' fills (◢ ◣): the **positive fill** (the
     lobes right of the trace) and the **negative fill** (left of it), either, both or
     none. The default is **wiggles with the positive fill**, black on white paper.
+    Beside them, the **trace overlap** (the largest swing of a wiggle, in trace spacings:
+    see [Wiggles](#wiggles)), as the gain amount is shown: a box to type into, and - and
+    + stepping through 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8 and 10;
+    greyed in the density mode, so the strip keeps its shape when the mode changes.
     **Density is drawn only when it is chosen:** in the density mode, and under the
     wiggles in wiggles over density; the wiggle modes draw wiggles at every zoom. In
     them, **zooming out stops at one pixel a trace**, so every trace in view is drawn
@@ -172,9 +176,10 @@
     the same scales as the one before (the same positions and times; the whole record
     along an axis that showed the whole record), with the same display, gain and order;
   - zoom out, zoom in, fit all, back to the view before the last gesture, and a "more"
-    popover: the colours, the **trace overlap** (the largest swing of a wiggle, in trace
-    spacings), the display header's fields, the scale units and the screen
-    calibration.
+    popover: the colours, the trace overlap again, the display header's fields, the
+    scale units and the screen calibration.
+  - The strip's groups wrap as the window narrows: two lines in the default layout on a
+    1920-pixel screen, three on a 1366-pixel laptop screen.
 - **The status bar** (the main window's bottom edge) reads out what lies under the
   pointer in the plot: the time at the cursor, trace (its number in the file) and
   channel, receiver line / point, source line / point, FFID, offset, amplitude and the
@@ -482,9 +487,11 @@ Defaults taken in this draft, for the user to confirm or change:
     traces are close. In the wiggle modes zooming out stops at one pixel a trace (the
     user: "maybe dont allow a zoom out that far?"), so a whole shot of thousands of
     traces opens at that limit from its first trace; the density mode shows it whole.
-20. **The trace overlap is 1** (the strongest amplitudes reach the next trace's
-    baseline), from 0.1 to 10, and the wiggles' clip is the same reference as density's
-    full black, so the gain amount moves both alike.
+20. **Decided by the user:** the trace overlap is 1 by default (the strongest
+    amplitudes reach the next trace's baseline), from 0.1 to 10, the wiggles' clip the
+    same reference as density's full black, so the gain amount moves both alike; it is
+    the user's to set, in plain sight in the strip ("Trace overlap should be
+    configurable").
 21. **Shift + click adds a trace to the selection or takes it out**; a plain click
     replaces the selection; a click is a press and release without moving (a drag still
     pans).

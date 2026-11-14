@@ -49,13 +49,14 @@
 ## (`view/timeaxis`), so the plot's left edge stays put as they change.
 ## Ctrl + click does nothing: it is the mute editor's.
 ##
-## Nothing about a plot sits in the main toolbar: the display mode, the
+## Nothing about a plot sits in the main toolbar: the display mode and the
+## fills, the trace overlap (a box, - and +, greyed in density), the
 ## gain (`plotgain`: the type and the amount in dB), the scales, zoom, fit,
 ## back, the record shown (previous, next, and "Go to record" by place or
 ## FFID; Page Up / Page Down, Home / End and Ctrl + G) and the trace order
 ## (`plotsort`: the sort buttons and Custom...) are in the strip, which
 ## wraps in a narrow window; the colours (a swatch for each of the six,
-## always shown), the trace overlap, the display
+## always shown), the trace overlap again, the display
 ## header's fields and the scales in its gear popover, the display header's
 ## fields also in the header's own menu (a right click on it). The plot's
 ## own menu (right click) holds only functions on the data: the trace
@@ -157,7 +158,7 @@ type
     traceBox, timeBox: ScaleBox
     calib: CalibrationUi
     sortKeys: SortKeysUi
-    stripWidths: array[8, float32] ## the strip's groups as drawn last frame
+    stripWidths: array[9, float32] ## the strip's groups as drawn last frame
     goto: GoToUi
     menuTarget: string ## what the plot's menu acts on, said when it opened
     menuUnder: int = -1 ## the trace under the pointer when it opened (survey-wide); -1 for none
@@ -341,6 +342,13 @@ proc tip(text: string) =
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
 
+proc tipAlways(text: string) =
+  ## A tooltip that shows on a disabled item too.
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+    igTextUnformatted(text.cstring, nil)
+    igEndTooltip()
+
 const
   colourKeys = ["background", "line", "positive", "negative", "hover", "selected"]
     ## each of the plot's colours, as its swatch is marked
@@ -451,6 +459,57 @@ proc drawColours(tp: var TracePanelUi; p: Panel; t: Theme; marks: var Marks;
       res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
     if not typing and not hexActive: tp.fillHex(if changed: picked else: was)
     igEndPopup()
+
+const OverlapSteps = [0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0,
+  10.0] ## the values the overlap's - and + step through
+
+func overlapStep(now: float64; up: bool): float64 =
+  ## The next of `OverlapSteps` above (`up`) or below `now`; `now` at the end.
+  result = now
+  if up:
+    for v in OverlapSteps:
+      if v > now + 1e-9: return v
+  else:
+    for i in countdown(OverlapSteps.high, 0):
+      if OverlapSteps[i] < now - 1e-9: return OverlapSteps[i]
+
+proc drawOverlapControls(p: Panel; t: Theme; marks: var Marks; res: var PanelOutput) =
+  ## The trace overlap in the strip, as the gain amount is: -, a box, +.
+  ## Greyed in the density mode, so that the strip keeps its shape.
+  let d = p.layers[0].display
+  let o = d.effectiveOverlap
+  const help = "Trace overlap: how far the strongest amplitudes swing a wiggle, in " &
+    "trace spacings (1 reaches the next trace; anything stronger is clipped there)"
+  template send(o: float64) =
+    var nd = d
+    nd.overlap = o
+    res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+  igBeginDisabled(d.mode == dmDensity)
+  if igButton("-##overlapless", ImVec2_c(x: 0, y: 0)) and o > MinOverlap:
+    send(overlapStep(o, up = false))
+  marks.mark("plot.overlap less")
+  tipAlways("Less overlap: " & significant(overlapStep(o, up = false)) & " trace spacings")
+  igSameLine(0, 2)
+  var v = cdouble(o)
+  igSetNextItemWidth(round(igCalcTextSize("00.00", nil, false, -1).x +
+    2 * igGetStyle().FramePadding.x))
+  discard igInputDouble("##overlap", addr v, 0, 0, "%.2f", 0)
+  if igIsItemDeactivatedAfterEdit() and float64(v) != o:
+    if v >= MinOverlap and v <= MaxOverlap: send(float64(v))
+    else:
+      res.notes.add "The trace overlap needs " & significant(MinOverlap) & " to " &
+        significant(MaxOverlap) & " trace spacings, not " & significant(float64(v)) & "."
+  marks.mark("plot.overlap")
+  tipAlways(help & (if d.mode == dmDensity: " (with wiggles)" else: ""))
+  igSameLine(0, 2)
+  if igButton("+##overlapmore", ImVec2_c(x: 0, y: 0)) and o < MaxOverlap:
+    send(overlapStep(o, up = true))
+  marks.mark("plot.overlap more")
+  tipAlways("More overlap: " & significant(overlapStep(o, up = true)) & " trace spacings")
+  igSameLine(0, 4)
+  igTextUnformatted("overlap", nil)
+  tipAlways(help)
+  igEndDisabled()
 
 proc drawWiggleSettings(p: Panel; res: var PanelOutput) =
   ## The trace overlap: how far the reference amplitude swings a trace.
@@ -625,13 +684,6 @@ func recordOf(st: AppState; p: Panel): (int, int) =
     let i = st.findSession(p.layers[0].source.file)
     if i >= 0: result = (max(p.layers[0].source.gather, 0), st.sessions[i].gathers.len)
 
-proc tipAlways(text: string) =
-  ## A tooltip that shows on a disabled item too.
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
-      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
-    igTextUnformatted(text.cstring, nil)
-    igEndTooltip()
-
 proc drawGoTo(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
     res: var PanelOutput) =
   ## The "Go to record" popup: a place in the file, or a field record
@@ -724,12 +776,14 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
       var s = st.settings
       s.cursorLine = not on
       res.commands.add Command(kind: ckSettings, settings: s)
-  tp.stripGroup(1, right, 12, lift):
+  tp.stripGroup(1, right, 6, lift):
+    drawOverlapControls(p, t, marks, res)
+  tp.stripGroup(2, right, 12, lift):
     drawGainControls(p, t, marks, res.commands, res.notes)
   # the scales
   let u = st.settings.scale
   let per = lengthName(u.length)
-  tp.stripGroup(2, right, 14, lift):
+  tp.stripGroup(3, right, 14, lift):
     if tp.traceBox.scaleBox("##tracescale", traceLabel(u), "Traces per " & per &
         ": type a value and press Enter", traceScale(tp.cur, ppi, u), marks, "plot.trace scale"):
       askScale(tp.traceBox, vaTraceScale, "trace scale", ask, res)
@@ -739,7 +793,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         "press Enter", timeScale(tp.cur, ppi, u), marks, "plot.time scale"):
       askScale(tp.timeBox, vaTimeScale, "time scale", ask, res)
   # zoom, fit, back
-  tp.stripGroup(3, right, 14, lift):
+  tp.stripGroup(4, right, 14, lift):
     if button(IconZoomOut & "##zoomout", t, marks, "plot.zoom out"):
       ask = ViewAsk(kind: vaZoomOut)
     tip("Zoom out (-, or the wheel)")
@@ -760,7 +814,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
       igEndTooltip()
   # the record shown, the one before and after
   let (current, count) = recordOf(st, p)
-  tp.stripGroup(4, right, 14, lift):
+  tp.stripGroup(5, right, 14, lift):
     igBeginDisabled(current <= 0)
     if button(IconRecordBack & "##prevrecord", t, marks, "plot.previous record"):
       res.commands.add Command(kind: ckGather, panel: p.id, gather: current - 1)
@@ -777,12 +831,12 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
       res.commands.add Command(kind: ckGather, panel: p.id, gather: current + 1)
     igEndDisabled()
     tipAlways("Next record (Page Down; End: the last)")
-  tp.stripGroup(5, right, 14, lift):
+  tp.stripGroup(6, right, 14, lift):
     drawSortButtons(p, st.settings.sortPresets, t, marks, res.commands)
-  tp.stripGroup(6, right, 2, lift): # on a line of its own in a narrow window
+  tp.stripGroup(7, right, 2, lift): # on a line of its own in a narrow window
     if drawCustomSort(p, st.settings.sortPresets, t, marks):
       tp.sortKeys.openSortKeys(p, st.settings) # in the window's ID scope, as it is drawn
-  tp.stripGroup(7, right, 8, lift):
+  tp.stripGroup(8, right, 8, lift):
     if button(IconSettings & "##more", t, marks, "plot.more"):
       igOpenPopup_Str(moreId, 0)
     tip("Colours, display header, scale units and screen calibration")

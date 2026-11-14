@@ -189,10 +189,11 @@ Keys act while the Seismic window has the focus: click in it first.
 density, wiggles, or wiggles over density. Density is drawn only in the two modes that
 name it. Changing from density to wiggles while more traces are in view than the plot
 has pixels narrows the view to one pixel a trace, keeping its left edge. The two after them fill the wiggles' positive
-lobes (right of the trace) and negative lobes (left of it): either, both or none. The
-settings button (the gear) holds the **trace overlap**, how far the strongest amplitudes
-swing a trace, in trace spacings (1 reaches the next trace; anything stronger is clipped
-there), and the **colours**: a swatch for each of the plot's six colours (background,
+lobes (right of the trace) and negative lobes (left of it): either, both or none. Beside
+them, **overlap** sets how far the strongest amplitudes swing a trace, in trace spacings
+(1 reaches the next trace; anything stronger is clipped there): type a value, or step it
+with - and +. The settings button (the gear) holds the overlap too, and the
+**colours**: a swatch for each of the plot's six colours (background,
 wiggle line, positive fill, negative fill, the trace under the pointer, selected traces),
 always shown. Click one to pick a colour, or type it as `#rrggbb` and press Enter: the
 plot becomes "My own" colours. **Paper** (black on white; negative fills red) and

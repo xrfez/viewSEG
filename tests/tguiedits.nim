@@ -103,15 +103,21 @@ proc mirrored(after, before: Shot; position: float64): (int, int) =
 
 proc greyMirrored(after, before: Shot; position: float64): (int, int) =
   ## Rows of `after` at `position`'s column centre, and those whose grey is
-  ## the one of `before` at the same time turned over (black where it was
-  ## white), within the tolerance.
+  ## the one `before`'s tiles give at the same time turned over (black where
+  ## it was white), within the tolerance. (From the tiles, not `before`'s
+  ## pixels: the two plots may differ in height, the edits row of the
+  ## display header coming and going, and a pixel row's time with them.)
   let i = after.column(position)
-  let ib = before.column(position)
   for j in 0 ..< after.h:
-    let jb = before.row(after.tOf(j))
-    if jb in 0 ..< before.h:
+    let t = after.tOf(j)
+    var grey = -1
+    for k in countdown(before.tiles.high, 0):
+      if grey < 0 and before.tiles[k].contains(position, t):
+        grey = int(before.tiles[k].densityAt(greyLut(), position, t, before.scale,
+          before.ink.background).r)
+    if grey >= 0:
       inc result[0]
-      if abs(int(after.at(i, j).r) + int(before.at(ib, jb).r) - 255) <= Tolerance:
+      if abs(int(after.at(i, j).r) + grey - 255) <= Tolerance:
         inc result[1]
 
 proc same(a, b: Shot; position: float64): int =

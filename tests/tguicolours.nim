@@ -95,6 +95,10 @@ withFixtures fx:
       done(f))
   proc noop(f: FrameInfo) = discard
   proc click(f: FrameInfo; at: Vec2) =
+    ## A click at `at`, the pointer moved there first (the place may have
+    ## moved since the step before pointed at it: the strip re-wraps when a
+    ## label changes).
+    f.moveMouse(at)
     f.pressMouse(at, true)
     f.pressMouse(at, false)
   proc chord(f: FrameInfo; key: SimKey) =
