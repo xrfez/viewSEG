@@ -34,7 +34,7 @@
 ## module's own, not the program's labels, so a label can change without
 ## making old files unreadable.
 
-import std/[math, strutils]
+import std/strutils
 import geometry, nif, panels, readout, scales, settings, wiggle
 
 export nif
