@@ -121,6 +121,10 @@
     last either way. The keys sorted by last are remembered and offered again; the
     buttons themselves are data in the settings (`sortPresets` in `settings.nif`), so a
     site can rename them or add its own;
+  - the **record** shown: the previous and next record, and its place ("2 / 120"), which
+    opens **Go to record** (a place in the file or an FFID). The next record is shown at
+    the same scales as the one before (the same positions and times; the whole record
+    along an axis that showed the whole record), with the same display, gain and order;
   - zoom out, zoom in, fit all, back to the view before the last gesture, and a "more"
     popover: the colours, the **trace overlap** (the largest swing of a wiggle, in trace
     spacings), the display header's fields, the scale units and the screen
@@ -256,6 +260,8 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Up / Down, Tab / Shift + Tab (file list focused) | Step to the next / previous file and show it in the same plot, keeping the display settings and the scales |
 | Page Down / Page Up, Home / End (file list focused) | Ten files on / back; the first / last file |
 | Click a file in the file list | Show it in the plot, in place of the one shown |
+| Up / Down, Page Up / Page Down, Home / End (record list focused) | The next / previous record, a page on / back, the first / last record, shown in the plot |
+| Click a record in the record list | Show it in the plot |
 
 ## The trace context menu
 

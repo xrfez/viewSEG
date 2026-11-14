@@ -162,7 +162,8 @@ block shippedPresets:
     doAssert problems.len == 0, $problems
     doAssert l.name == e.name, l.name & " in " & e.path
     doAssert "[Docking][Data]" in l.imgui and "DockSpace" in l.imgui, e.path
-    for id in ["[Window][plot]", "[Window][headers]", "[Window][Messages]"]:
+    for id in ["[Window][plot]", "[Window][headers]", "[Window][Messages]",
+        "[Window][files]", "[Window][records]", "[Window][jobs]"]:
       doAssert id in l.imgui, id & " not in " & e.path
     names.add e.name
   doAssert names == @["Side by side", "Wide plot"], $names

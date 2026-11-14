@@ -63,6 +63,25 @@ Coming back to it is quick: its index is kept in the index cache (`viewSEG --pat
 shows where), so it is not read through again. The folder listed last is listed again at
 the next start.
 
+## Step through the records of a file
+
+A file often holds several records (shots, receiver gathers, CDPs). The plot window shows
+one at a time; the **Records** window, under the file list, lists them all, one row each,
+with what tells them apart (a shot's FFID and source station, a receiver gather's
+receiver, a CDP) and how many traces each holds. The record shown is highlighted.
+
+- **Click a record** to show it. With the Records window focused, **Up / Down** step to
+  the next or previous one, **Page Up / Page Down** by a page, **Home / End** to the first
+  and last. A file of a hundred thousand records scrolls as lightly as one of ten.
+- **In the plot window:** **Page Down / Page Up** show the next or previous record,
+  **Home / End** the first and last; the arrows in the strip do the same, and the number
+  between them ("2 / 120") opens **Go to record** (also **Ctrl+G**): type a place in the
+  file or a field record number (FFID) and press Enter.
+
+The next record is shown at the same scales (the same traces and times in view, or the
+whole record if the whole one was in view before), with the same gain and trace order,
+so records compare one after the other.
+
 ## Jobs
 
 Anything that takes a while (opening a large file, listing a folder) runs while you go

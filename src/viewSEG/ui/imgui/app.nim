@@ -2,10 +2,12 @@
 ## plus ImPlot) on SDL3 and OpenGL 3. Only `ui/imgui/` may import imguin, ImPlot
 ## or SDL (docs/architecture.md).
 ##
-## The window holds a menu bar, an icon toolbar, a dockspace with the trace
-## panel (`tracepanel`), a sample header table and the Messages window, and a
-## status bar with the running job's progress and its Cancel button, and the
-## readout of what lies under the mouse in the plot;
+## The window holds a menu bar, an icon toolbar, a dockspace with the file
+## list (`filelist`), the record list (`recordlist`), the trace panel
+## (`tracepanel`), a sample header table, the Jobs window (`jobswindow`) and
+## the Messages window, and a status bar with the running job's progress and
+## its Cancel button, and the readout of what lies under the mouse in the
+## plot; files and folders dropped on the window are opened;
 ## `-d:imguiDemo` adds the Dear ImGui demo window. The look comes from a theme file
 ## (`view/theme`, `style`, `fonts`); the shell services (dialogs, system theme,
 ## icon) are in `shell`, DPI handling in `dpi`, the chrome in `chrome`.
@@ -33,8 +35,8 @@ import imguin/glad/gl
 import ../../core/[geometry, state, watchdog]
 import ../../platform/paths
 import ../../view/jobstatus
-import chrome, dpi, filelist, fonts, icons, jobswindow, menus, messages, shell, style,
-  tracepanel
+import chrome, dpi, filelist, fonts, icons, jobswindow, menus, messages, recordlist, shell,
+  style, tracepanel
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel
 
@@ -46,6 +48,7 @@ const
   messagesTitle = IconLog & "  Messages###Messages"
   filesTitle = IconList & "  Files###files"
   jobsTitle = IconTasks & "  Jobs###jobs"
+  recordsTitle = IconRecords & "  Records###records"
   noticeSeconds = 5.0                     ## how long a notice stays on screen
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
 
@@ -65,6 +68,7 @@ type
     core: AppState                             ## the application state
     trace: TracePanelUi                        ## the main panel's plot window
     files: FileListUi                          ## the file list's window
+    records: RecordListUi                      ## the record list's window
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
     dropAt: float64                            ## when a drag was last seen over the window
     focus: set[MenuAction]                     ## windows to bring forward next frame (maShow...)
@@ -499,7 +503,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       showDialog(dkExportLayout, parent,
         (if dir.len > 0: dir / "viewSEG-layout.nif" else: "viewSEG-layout.nif"))
     of maImportLayout: showDialog(dkImportLayout, parent)
-    of maShowFiles, maShowJobs, maShowMessages: ui.focus.incl a
+    of maShowFiles, maShowRecords, maShowJobs, maShowMessages: ui.focus.incl a
     of maExportLog:
       let dir = ui.core.settingsFile.parentDir
       showDialog(dkExportLog, parent, (if dir.len > 0: dir / "viewSEG-messages.log"
@@ -532,16 +536,19 @@ proc echoNewLog(ui: var Ui) =
   ui.echoed = ui.core.log.nextSerial
 
 proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
-  ## The first layout: the file list at the left, the plot beside it with
-  ## the messages under it, the header table on the right.
+  ## The first layout: the file list at the left over the record list, the
+  ## plot beside them with the messages (and the jobs) under it, the header
+  ## table on the right.
   igDockBuilderRemoveNode(dockId)
   discard igDockBuilderAddNode(dockId, ImGui_DockNodeFlags_DockSpace.cint)
   igDockBuilderSetNodeSize(dockId, size)
-  var side, rest, left, right, top, bottom: ImGuiID
+  var side, files, records, rest, left, right, top, bottom: ImGuiID
   discard igDockBuilderSplitNode(dockId, ImGuiDir_Left, 0.22, addr side, addr rest)
+  discard igDockBuilderSplitNode(side, ImGui_Dir_Down, 0.4, addr records, addr files)
   discard igDockBuilderSplitNode(rest, ImGuiDir_Right, 0.3, addr right, addr left)
   discard igDockBuilderSplitNode(left, ImGui_Dir_Down, 0.3, addr bottom, addr top)
-  igDockBuilderDockWindow(filesTitle, side)
+  igDockBuilderDockWindow(filesTitle, files)
+  igDockBuilderDockWindow(recordsTitle, records)
   igDockBuilderDockWindow(plotTitle, top)
   igDockBuilderDockWindow(tableTitle, right)
   igDockBuilderDockWindow(jobsTitle, bottom)
@@ -732,6 +739,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   var files = ui.files.drawFileList(filesTitle, ui.core, ui.theme, ui.marks)
   result.incl files.actions
   for c in files.commands.mitems:
+    ui.core.apply move c
+  if maShowRecords in ui.focus: bringForward(recordsTitle)
+  var records = ui.records.drawRecordList(recordsTitle, ui.core, MainPanel, ui.theme, ui.marks)
+  for c in records.commands.mitems:
     ui.core.apply move c
   drawSampleTable(tableTitle, ui.fonts, ui.theme, ui.marks)
   ui.drawSaveLayout()

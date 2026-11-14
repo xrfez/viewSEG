@@ -4,10 +4,10 @@ A layout is how the windows are arranged: where each is docked and how large, wh
 and where. Each `.nif` file here is a preset that ships with viewSEG; *View > Layout >
 Load* lists them under "Presets":
 
-- **Wide plot:** the plot across the whole width, the Headers and Messages windows as tabs
-  under it.
-- **Side by side:** the plot at full height, the Headers window over the Messages window
-  right of it.
+- **Wide plot:** the Files window over the Records window at the left; the plot across the
+  rest of the width, the Headers, Jobs and Messages windows as tabs under it.
+- **Side by side:** the Files window over the Records window at the left, the plot at full
+  height beside them, the Headers window over the Jobs and Messages windows at the right.
 
 *View > Layout > Save as...* keeps the arrangement on screen under a name of your own, in
 `<config>/layouts/<name>.nif` (`viewSEG --paths` prints `<config>`); a layout of yours with

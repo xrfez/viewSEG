@@ -51,13 +51,17 @@ const
   IconGoTo* = ""       ## nf-cod-go_to_file
   IconExport* = ""     ## nf-cod-export
   IconHistory* = ""    ## nf-cod-history
+  IconRecordBack* = "" ## nf-cod-triangle_left
+  IconRecordNext* = "" ## nf-cod-triangle_right
+  IconRecords* = ""    ## nf-cod-list_ordered
 
   AllIcons* = [IconOpenFile, IconOpenFiles, IconOpenFolder, IconFolder, IconSave,
     IconSettings, IconLog, IconMap, IconFilter, IconEye, IconEyeOff, IconZoomIn,
     IconZoomOut, IconFit, IconPlay, IconStep, IconPrevious, IconNext, IconWarning,
     IconError, IconInfo, IconClose, IconCheck, IconTheme, IconTable, IconPlot, IconPulse,
     IconLayers, IconTarget, IconLocation, IconRefresh, IconArrowUp, IconArrowDown, IconTrash,
-    IconCopy, IconClearAll, IconTasks, IconList, IconGoTo, IconExport, IconHistory]
+    IconCopy, IconClearAll, IconTasks, IconList, IconGoTo, IconExport, IconHistory,
+    IconRecordBack, IconRecordNext, IconRecords]
     ## for tests: every glyph above must be in the UI font
 
 func codepoint*(icon: string): int =

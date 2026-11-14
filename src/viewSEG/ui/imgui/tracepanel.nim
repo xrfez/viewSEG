@@ -42,10 +42,11 @@
 ##
 ## Nothing about a plot sits in the main toolbar: the display mode, the
 ## gain (`plotgain`: the type and the amount in dB), the scales, zoom, fit,
-## back, the trace order (`plotsort`: the sort buttons, and the user's own
-## keys from the menu) and the display header's fields are here, in the
-## strip (which wraps in a narrow window) and in the plot's context menu
-## (right click).
+## back, the record shown (previous, next, and "Go to record" by place or
+## FFID; Page Up / Page Down, Home / End and Ctrl + G), the trace order
+## (`plotsort`: the sort buttons, and the user's own keys from the menu)
+## and the display header's fields are here, in the strip (which wraps in a
+## narrow window) and in the plot's context menu (right click).
 
 import std/[math, os, strutils, tables]
 import imguin/cimgui
@@ -61,6 +62,7 @@ const
   fillSymbols: array[WiggleFill, Symbol] = [syWigglePositive, syWiggleNegative]
   densityNote = "density: traces under 4 px"
   menuId = "##plotmenu"
+  gotoId = "Go to record##goto"
   moreId = "##plotmore"
   burstSeconds = 0.6   ## wheel turns or key presses closer than this are one gesture
   boxMinPixels = 4'f32 ## a box zoom narrower than this zooms the other axis only
@@ -102,6 +104,13 @@ type
     rulerLength: cdouble = 10 ## what the bar measures on a ruler
     rulerUnit: LengthUnit = luCm
 
+  GoToUi = object
+    ## The "Go to record" popup.
+    open: bool                ## open it this frame (Ctrl+G, or the record's number clicked)
+    position: array[16, char] ## a place in the file, from 1
+    ffid: array[16, char]     ## a field record number
+    problem: string           ## why the last number typed went nowhere
+
   TracePanelUi* = object
     ## The plot window's own state between frames: its GPU objects, the
     ## view it shows, the gesture in progress and what it drew last.
@@ -127,7 +136,8 @@ type
     traceBox, timeBox: ScaleBox
     calib: CalibrationUi
     sortKeys: SortKeysUi
-    stripWidths: array[6, float32] ## the strip's groups as drawn last frame
+    stripWidths: array[7, float32] ## the strip's groups as drawn last frame
+    goto: GoToUi
 
   PanelOutput* = object
     ## What the plot window asks for.
@@ -504,6 +514,75 @@ template stripGroup(tp: var TracePanelUi; i: int; right, spacing, lift: float32;
   igEndGroup()
   tp.stripWidths[i] = igGetItemRectSize().x
 
+func recordOf(st: AppState; p: Panel): (int, int) =
+  ## The record (gather) `p` shows and how many its file has; (0, 0) for
+  ## none.
+  result = (0, 0)
+  if p.layers.len > 0 and p.layers[0].source.kind == lsRecord:
+    let i = st.findSession(p.layers[0].source.file)
+    if i >= 0: result = (max(p.layers[0].source.gather, 0), st.sessions[i].gathers.len)
+
+proc tipAlways(text: string) =
+  ## A tooltip that shows on a disabled item too.
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+    igTextUnformatted(text.cstring, nil)
+    igEndTooltip()
+
+proc drawGoTo(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
+    res: var PanelOutput) =
+  ## The "Go to record" popup: a place in the file, or a field record
+  ## number (FFID); Enter or Go shows it.
+  let (current, count) = recordOf(st, p)
+  if tp.goto.open:
+    igOpenPopup_Str(gotoId, 0)
+    tp.goto.open = false
+    tp.goto.problem = ""
+    let text = $(current + 1)
+    zeroMem(addr tp.goto.position[0], tp.goto.position.len)
+    copyMem(addr tp.goto.position[0], text.cstring, min(text.len, tp.goto.position.len - 1))
+  if igBeginPopup(gotoId, 0):
+    marks.markWindow("goto")
+    igTextUnformatted(("Go to a record of " & $count).cstring, nil)
+    const flags = ImGui_InputTextFlags_EnterReturnsTrue.cint or
+      ImGui_InputTextFlags_CharsDecimal.cint or ImGui_InputTextFlags_AutoSelectAll.cint
+    if igIsWindowAppearing(): igSetKeyboardFocusHere(0)
+    igSetNextItemWidth(igGetFontSize() * 8)
+    var go = igInputText("Place in the file##gotoposition", cast[cstring](
+      addr tp.goto.position[0]), csize_t(tp.goto.position.len), flags, nil, nil)
+    var byFfid = false
+    marks.mark("goto.position")
+    igSetNextItemWidth(igGetFontSize() * 8)
+    if igInputText("or FFID##gotoffid", cast[cstring](addr tp.goto.ffid[0]),
+        csize_t(tp.goto.ffid.len), flags, nil, nil):
+      (go, byFfid) = (true, true)
+    marks.mark("goto.ffid")
+    if igButton("Go", ImVec2_c(x: 0, y: 0)): go = true
+    marks.mark("goto.go")
+    igSameLine(0, -1)
+    if igButton("Cancel", ImVec2_c(x: 0, y: 0)): igCloseCurrentPopup()
+    if go:
+      let i = st.findSession(p.layers[0].source.file)
+      let typed = if byFfid: strip($cast[cstring](addr tp.goto.ffid[0]))
+                  else: strip($cast[cstring](addr tp.goto.position[0]))
+      var to = -1
+      try:
+        if byFfid:
+          if i >= 0: to = findRecord(st.sessions[i].records, parseFloat(typed))
+          if to < 0: tp.goto.problem = "No record has FFID " & typed & "."
+        else:
+          let n = parseInt(typed)
+          if n in 1 .. count: to = n - 1
+          else: tp.goto.problem = "Type a place from 1 to " & $count & "."
+      except ValueError:
+        tp.goto.problem = "Type a number."
+      if to >= 0:
+        if to != current: res.commands.add Command(kind: ckGather, panel: p.id, gather: to)
+        igCloseCurrentPopup()
+    if tp.goto.problem.len > 0:
+      igTextDisabled("%s", tp.goto.problem.cstring)
+    igEndPopup()
+
 proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks: var Marks;
     res: var PanelOutput; ask: var ViewAsk; ppi: float64; mon: MonitorInfo) =
   ## The strip at the top of the window, in groups that wrap onto more lines
@@ -583,9 +662,28 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
       igTextUnformatted("Back to the view before (Backspace, Alt+Left)", nil)
       igEndTooltip()
+  # the record shown, the one before and after
+  let (current, count) = recordOf(st, p)
   tp.stripGroup(4, right, 14, lift):
+    igBeginDisabled(current <= 0)
+    if button(IconRecordBack & "##prevrecord", t, marks, "plot.previous record"):
+      res.commands.add Command(kind: ckGather, panel: p.id, gather: current - 1)
+    igEndDisabled()
+    tipAlways("Previous record (Page Up; Home: the first)")
+    igSameLine(0, 2)
+    if button($(current + 1) & " / " & $count & "##record", t, marks, "plot.record"):
+      tp.goto.open = true
+    tip("Record " & $(current + 1) & " of " & $count & " in the file: click to go to " &
+      "another (Ctrl+G)")
+    igSameLine(0, 2)
+    igBeginDisabled(current >= count - 1)
+    if button(IconRecordNext & "##nextrecord", t, marks, "plot.next record"):
+      res.commands.add Command(kind: ckGather, panel: p.id, gather: current + 1)
+    igEndDisabled()
+    tipAlways("Next record (Page Down; End: the last)")
+  tp.stripGroup(5, right, 14, lift):
     drawSortButtons(p, st.settings.sortPresets, t, marks, res.commands)
-  tp.stripGroup(5, right, 8, lift):
+  tp.stripGroup(6, right, 8, lift):
     if button(IconSettings & "##more", t, marks, "plot.more"):
       igOpenPopup_Str(moreId, 0)
     tip("Colours, display header, scale units and screen calibration")
@@ -782,8 +880,8 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
       tp.drag = Drag()
 
 proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot: Rect;
-    lim: ViewLimits; hovered: bool; p: Panel; selected: bool; remember: var bool;
-    res: var PanelOutput) =
+    lim: ViewLimits; hovered: bool; p: Panel; selected: bool; record: (int, int);
+    remember: var bool; res: var PanelOutput) =
   ## The plot's keys, while its window has the focus (docs/plot-window.md).
   let io = igGetIO_Nil()
   if io.WantTextInput: return # typing into a box
@@ -829,6 +927,16 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
     tp.gesture = gsNone
   if once(ImGui_Key_Backspace.cint) or once(alt or ImGui_Key_LeftArrow.cint):
     res.commands.add Command(kind: ckBack, panel: p.id)
+  # Records: Page Down / Up, Home / End, Ctrl+G.
+  let (current, count) = record
+  var to = current
+  if held(ImGui_Key_PageDown.cint): to = current + 1
+  if held(ImGui_Key_PageUp.cint): to = current - 1
+  if once(ImGui_Key_Home.cint): to = 0
+  if once(ImGui_Key_End.cint): to = count - 1
+  if count > 0 and clamp(to, 0, count - 1) != current:
+    res.commands.add Command(kind: ckGather, panel: p.id, gather: clamp(to, 0, count - 1))
+  if once(ctrl or ImGui_Key_G.cint): tp.goto.open = true
   gainKeys(p, res.commands)
   if once(ImGui_Key_Escape.cint): # innermost first: a drag, a thumb, the selection
     if tp.drag.kind != dkNone:
@@ -966,8 +1074,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       tp.gesture = gsNone
     of bePage: (if tp.burst(gsPage): remember = true)
     of beWheel: (if tp.burst(gsBarWheel): remember = true)
-    tp.handleKeys(after, view, plot, lim, hovered, p, st.selection.selected.len > 0, remember,
-      res)
+    tp.handleKeys(after, view, plot, lim, hovered, p, st.selection.selected.len > 0,
+      recordOf(st, p), remember, res)
     if hovered:
       let m = igGetIO_Nil().MousePos
       res.pick = pick(tiles, p.layout, view, plot, vec2(m.x, m.y))
@@ -1012,6 +1120,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   # Opened here, not in the menu, so that it has the window's ID, as below.
   if sortKeys: tp.sortKeys.openSortKeys(p, st.settings)
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
+  tp.drawGoTo(st, p, marks, res)
 
 proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: PanelId;
     t: Theme; fonts: Fonts; marks: var Marks): PanelOutput =

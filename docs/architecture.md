@@ -251,7 +251,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 
 1. **Open** (interactive job). `openSeismic(path, keys = true, progress,
    OpenOptions(cache: path))`, then `saveIndex` if `not f.fromCache`; the job reads the
-   gathers, moves the file into a `Session` and posts the session. The progress hook is a
+   gathers and makes the record list's rows (`core/records`: each gather's FFID, CDP,
+   source and receiver from its first seismic trace), moves the file into a `Session` and
+   posts the session. The progress hook is a
    `gcsafe` closure on the job thread that calls `JobContext.progress`. Not yet: reading
    `summary`, `channelSets` and `crsText` on the job.
 2. **Show** (UI). Pointing a panel at a gather bumps its `requestGen` (and `sourceGen`),
@@ -413,6 +415,7 @@ type
     path: string
     file: SeismicFile        # parseSEG, move-only
     gathers: seq[Gather]
+    records: seq[RecordRow]  # core/records: one row per gather for the record list
 
   FileList = object          # core/filelist: what the Files window lists
     title, folder: string    # the folder listed ("" for files chosen one by one)
@@ -437,6 +440,8 @@ type
     level: Level             # RMS, peak, clip percentile: the first tile's after a change
     viewLevel: Level         # Float: the data in view
     orderGen: uint64         # requestGen when layer 0's order last changed
+    carry: Viewport          # the view of the gather before, until the next is laid out
+                             # and shown at the same scales (zoom.carried)
     revision: int
 
   Layer = object             # one is the usual case; more are overlays

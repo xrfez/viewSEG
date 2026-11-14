@@ -225,6 +225,27 @@ proc longSpreadSegy*(fx: Fixtures): string =
     w.writeTrace(k, buf)
   w.checkClose()
 
+const
+  ManyRecords* = 100_000 ## records of `manyRecordsSegy`
+  ManySamples* = 8       ## its samples per trace
+
+proc manyRecordsSegy*(fx: Fixtures): string =
+  ## `ManyRecords` one-trace shot records of `ManySamples` samples: record k
+  ## (from 0) has FFID 1001 + k and source point 5001 + k, and its sample i
+  ## is k + i / 10. About 27 MB, written once per fixture folder.
+  result = fx.dir / "many-records.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: " & $ManyRecords & " one-trace records"]))
+  var buf = newSeq[float32](ManySamples)
+  for r in 0 ..< ManyRecords:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.srcPoint, k.t0Ms, k.intervalUs, k.status) = (
+      float64(1001 + r), 1.0, float64(5001 + r), 0.0, DtMs * 1000, tsLive)
+    for i in 0 ..< ManySamples: buf[i] = float32(r) + float32(i) / 10
+    w.writeTrace(k, buf)
+  w.checkClose()
+
 proc pilotSegy*(fx: Fixtures): string =
   ## One sweep trace (`pilotSample`), trace identification code 6 (sweep).
   result = fx.dir / "pilot.sgy"

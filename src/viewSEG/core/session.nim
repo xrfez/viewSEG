@@ -10,6 +10,9 @@
 
 import std/os
 import parseSEG
+import records
+
+export records
 
 type
   SessionId* = distinct int
@@ -24,6 +27,8 @@ type
     path: string
     file: SeismicFile
     gathers: seq[Gather]
+    records: seq[RecordRow]
+    columns: set[RecordColumn]
 
 const NoSession* = SessionId(0)
 
@@ -31,9 +36,12 @@ func `==`*(a, b: SessionId): bool {.borrow.}
 func `$`*(id: SessionId): string = "file " & $int(id)
 
 proc newSession*(path: string; file: sink SeismicFile): Session =
-  ## A session for `file`, opened from `path`, with its gathers.
+  ## A session for `file`, opened from `path`, with its gathers and the
+  ## record list's rows. On the thread that opened the file.
   result = Session(path: path, file: file)
   result.gathers = result.file.gathers
+  result.records = recordRows(result.file, result.gathers)
+  result.columns = columnsOf(result.records)
 
 proc register*(s: Session; id: SessionId; base: int) =
   ## Gives `s` its id and the survey-wide id of its first trace (`AppState`
@@ -49,6 +57,10 @@ func name*(s: Session): string = s.path.extractFilename
   ## The file's name, for messages and titles.
 func file*(s: Session): lent SeismicFile {.inline.} = s.file
 func gathers*(s: Session): lent seq[Gather] {.inline.} = s.gathers
+func records*(s: Session): lent seq[RecordRow] {.inline.} = s.records
+  ## One row per gather, for the record list.
+func recordColumns*(s: Session): set[RecordColumn] {.inline.} = s.columns
+  ## The record list's columns some row has a value for.
 func len*(s: Session): int {.inline.} = s.file.len
   ## The number of traces.
 
