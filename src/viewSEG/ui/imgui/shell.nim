@@ -186,21 +186,30 @@ let seismicFilters = [
   ## Patterns match case-insensitively on every platform SDL supports.
 
 const DialogParentEnvVar* = "VIEWSEG_DIALOG_PARENT"
-  ## Set to `none` to open dialogs without a parent window. On a Wayland desktop an
-  ## X11 window (the app under Xwayland) is a parent the portal's dialog cannot attach to.
+  ## `none` opens dialogs without a parent window and `window` always gives them
+  ## one. Unset, the desktop decides: see `wantsParent`.
 
-func wantsParent(setting: string): bool =
-  ## Whether dialogs get a parent window, given the value of `DialogParentEnvVar`.
-  setting.strip.toLowerAscii != "none"
+func wantsParent(setting, videoDriver: string; waylandSession: bool): bool =
+  ## Whether dialogs get a parent window. `setting` is the value of
+  ## `DialogParentEnvVar`. Left to the desktop, an X11 window on a Wayland desktop
+  ## (the app under Xwayland) gets none: the portal's dialog cannot attach to it and
+  ## is then drawn with an outline larger than its box.
+  case setting.strip.toLowerAscii
+  of "none": false
+  of "window": true
+  else: not (waylandSession and videoDriver == "x11")
 
 proc showOpenDialog*(kind: DialogKind; parentWindowId = 0'u32) =
   ## Opens the native dialog for `kind` and returns at once; the outcome arrives
   ## later from `pollShellEvents`. The dialog is modal to the window with SDL id
-  ## `parentWindowId` (0 for none, as is `DialogParentEnvVar=none`). Main thread only.
+  ## `parentWindowId` (0 for none), where the desktop can attach it (`wantsParent`).
+  ## Main thread only.
   let
-    parent =
-      if parentWindowId == 0 or not wantsParent(getEnv(DialogParentEnvVar)): nil
-      else: SDL_GetWindowFromID(parentWindowId)
+    waylandSession = getEnv("WAYLAND_DISPLAY").len > 0 or
+      getEnv("XDG_SESSION_TYPE") == "wayland"
+    attach = parentWindowId != 0 and wantsParent(getEnv(DialogParentEnvVar),
+      $SDL_GetCurrentVideoDriver(), waylandSession)
+    parent = if attach: SDL_GetWindowFromID(parentWindowId) else: nil
     userdata = cast[pointer](kind.int)
   case kind
   of dkOpenFile, dkOpenFiles:

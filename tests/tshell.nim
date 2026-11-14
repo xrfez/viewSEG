@@ -61,7 +61,11 @@ block dialogResultsFromAnotherThread:
   doAssert pollShellEvents().len == 0
 
 block dialogParentSetting:
-  doAssert wantsParent("")
-  doAssert wantsParent("window")
-  doAssert not wantsParent("none")
-  doAssert not wantsParent(" None ")
+  # Left to the desktop: only an X11 window on a Wayland desktop goes without.
+  doAssert wantsParent("", "wayland", true)
+  doAssert wantsParent("", "x11", false)
+  doAssert wantsParent("", "windows", false)
+  doAssert not wantsParent("", "x11", true)
+  # The setting overrides the desktop either way.
+  doAssert not wantsParent(" None ", "wayland", true)
+  doAssert wantsParent("window", "x11", true)
