@@ -2,9 +2,11 @@
 ## planted defects, the SPS files, the three SEG-D records, the pilot,
 ## parseSEG's demo files, and two damaged files) is opened, shown gather by
 ## gather, zoomed, panned, box-zoomed, sent back, given every display gain,
-## reversed polarity and other header rows, sorted by each sort button and
-## by keys of the user's own, read to the newest tile, closed, and then
-## opened again from the index cache. Each file's bytes and modification
+## reversed polarity and other header rows, given an edited panel (traces
+## killed and reversed, one change undone; the panel then sorted with them,
+## and the edits cleared after, so that the second round starts with none),
+## sorted by each sort button and by keys of the user's own, read to the
+## newest tile, closed, and then opened again from the index cache. Each file's bytes and modification
 ## time are then as they were, and its folder holds the same files, of the
 ## same sizes, and nothing else.
 ##
@@ -43,8 +45,9 @@ proc view(st: var AppState; v: Viewport; remember = false) =
 proc display(st: var AppState; d: DisplaySettings) =
   st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
 
-var driven, tiled, sorted = 0
-  # gathers worked with; of them, the ones with samples to show; sorted panels read
+var driven, tiled, sorted, edited = 0
+  # gathers worked with; of them, the ones with samples to show; sorted panels
+  # read; edited panels read
 
 proc drive(st: var AppState) =
   ## What a user does with a record in the plot, through the commands the
@@ -86,6 +89,20 @@ proc drive(st: var AppState) =
   st.view(fitAll(lay, 640, 480), remember = true)
   doAssert st.settle(st.answered)
   st.apply Command(kind: ckHeader, panel: MainPanel, header: HeaderChoice(auto: true))
+  # edits: the first trace killed, the last and a middle one reversed, the
+  # last put back, and that undone
+  let s = st.sessions[0]
+  let g = s.gathers[st.main.layers[0].source.gather].traces
+  if g.len > 0:
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[s.base + g.a],
+      on: true)
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed,
+      edited: @[s.base + g.b, s.base + (g.a + g.b) div 2], on: true)
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed,
+      edited: @[s.base + g.b], on: false)
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+    doAssert st.settle(st.answered)
+    if lay.traces > 0 and lay.samples > 0: inc edited
   # every sort button, keys of the user's own, then the file's order; each
   # sorted panel read to its newest tile
   var orders: seq[seq[SortKey]]
@@ -96,6 +113,8 @@ proc drive(st: var AppState) =
     st.apply Command(kind: ckSort, panel: MainPanel, order: order)
     doAssert st.settle(st.answered)
     if lay.traces > 0 and lay.samples > 0: inc sorted
+  st.apply Command(kind: ckClearEdits, panel: MainPanel)
+  doAssert st.settle(st.answered)
 
 proc showAll(st: var AppState; path: string) =
   ## Opens `path`, shows each of its gathers and works with it, then closes it.
@@ -154,7 +173,8 @@ withFixtures fx:
     if "(index from the cache)" in e.text: inc cached
   doAssert cached > 0, "the second round read no index cache"
   echo "tunchanged: ", files.len, " files, ", driven, " gathers worked with, ", tiled,
-    " of them read, ", sorted, " sorted panels read"
+    " of them read, ", sorted, " sorted panels read, ", edited, " edited panels read"
   doAssert tiled >= 2 * (PlantedDefect.high.ord + 1) * Shots, $tiled
   doAssert sorted == tiled * (SortPresets.len + 2), $sorted
+  doAssert edited == tiled, $edited
   st.shutdown()

@@ -8,11 +8,12 @@
 ## drawn on top; zoomed out, the trace is the one drawn there (every
 ## `stride`-th), and the value is the one drawn for the sample's bin (the
 ## largest of `binned` samples). Values are as displayed: after the
-## display's processing and gain.
+## trace's edits (a killed trace reads 0) and the display's processing and
+## gain.
 
 import std/math
 import parseSEG
-import geometry, tiles, viewport, zoom
+import edits, geometry, tiles, viewport, zoom
 
 type
   Pick* = object
@@ -26,6 +27,7 @@ type
     keys*: TraceKeys          ## its keys; every field unknown when not `found`
     amplitude*: float32 = NaN ## the value drawn at the nearest sample; NaN when not held
     binned*: int = 1          ## samples behind `amplitude`: more than 1 zoomed out
+    edits*: set[TraceEdit]    ## the trace's edits, as drawn: killed, reversed
 
 func noPick*(): Pick =
   ## A point over nothing.
@@ -55,6 +57,7 @@ func pickAt*(tiles: openArray[Tile]; layout: PanelLayout; at: DataPoint): Pick =
   result.position = t.request.position(row)
   if row < t.traces.len: result.trace = t.traces[row]
   if row < t.keys.len: result.keys = t.keys[row]
+  result.edits = t.editsAt(row)
   if full and t.columns > 0:
     let r = t.request
     let c = clamp(int(round((at.tMs - t.timeOf(0)) / (float64(r.decimation) * t.dtMs))), 0,

@@ -101,7 +101,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, `ensureKeys`, survey joins, sorts across files |
 | Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes, folder scans, brute stack, conversions, exports and patches, queued workflows |
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log, replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; failures come back as log messages |
-| Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher`; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
+| Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
 | Pool workers | processSEG: one `ProcessPool`, made by `core` at start-up | The rows of `pool.apply`, `pool.pickInto` and `pool.traceAmplitudeInto`; destroyed at shutdown, once every caller has stopped |
 
@@ -306,23 +306,34 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    wiggle keeps its peaks. Before the pipeline, rows
    marked dead are blanked and samples that are not numbers set to 0: processSEG leaves
    such a row as it is, and it would be drawn at its raw amplitude among processed ones.
+   The file's **edits** come with each request (`core/edits`: the gather's killed and
+   reversed traces): a killed row is blanked and passed to the pipeline and the level as
+   a failed row, so neither sees it; a reversed row's live samples are negated
+   (`reversePolarity`, as `polarityOp` does). The samples as decoded are kept
+   (`RawCache`, up to 128 MiB): a request for the same traces whose samples lie among
+   them (an edit, a gain change, a slightly shorter view) is served from them, with no
+   prefetcher and no read of the file; the tile says so (`Tile.cached`).
    A newer note stops the read between chunks.
 5. **Tile** (reader). A `Tile` (plain seqs, moved through the inbox, never shared)
    holds the values (and, for wiggles zoomed out in time, the columns' extremes), the
-   display header's values per trace and its `Level`: the RMS, peak and clip percentile
-   of |x| over its live traces (`panelStats`).
+   display header's values per trace, the edits each row was made with, and its
+   `Level`: the RMS, peak and clip percentile of |x| over its live traces that are not
+   killed (`panelStats`).
 6. **Take in** (UI). A tile whose `request.gen` is not the panel's `requestGen` is
    dropped. `AppState` keeps the newest four per panel (after a new order, or the
    polarity of every trace reversed, the tiles from before are drawn until the first
-   one after the change comes, then dropped: `orderGen`, `samplesGen`); the first tile after a change of
-   gather or processing sets the panel's level, so the brightness holds while the user
-   pans. The gain type picks the *reference* drawn full black from it (`reference`):
+   one after the change comes, then dropped: `orderGen`, `samplesGen`; an edit of a
+   trace in view is such a change); the first tile after a change of gather or processing
+   sets the panel's level, so the brightness holds while the user pans, and so does the
+   first after a kill or a restore (`relevel`). The gain type picks the *reference* drawn full black from it (`reference`):
    that level, a Fixed amplitude kept across gathers and files, 1 for traces normalized
    on the CPU, or, for Float, the level of the data in view, taken on the UI thread from
-   at most 32 768 of the kept values whenever the view or the tiles change.
+   at most 32 768 of the kept values (killed traces left out) whenever the view or the
+   tiles change.
 7. **Draw** (UI, `gpu/plotimage`). Each kept tile is uploaded once, as `R32F` textures
    cut to the GPU's size limit (`splitBlocks`), with its columns' extremes when it has
-   them and a small texture marking its selected traces. The tiles are drawn, oldest
+   them and a small texture marking its selected traces and those it was made with
+   killed (drawn blank: the background, no wiggle). The tiles are drawn, oldest
    first, into an RGBA image the size of the plot: each tile's area as density (nearest
    trace, linear in time, the scale as a uniform: the gain amount in dB over the
    reference, `displayScale`; a colour-map texture) or as the plot's background, then
@@ -340,9 +351,10 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 8. **Read out** (UI, `core/pick` and `core/readout`). The pointer's screen point goes
    to the data point under it, then to the trace drawn there (the newest tile holding
    it), the nearest sample and the value drawn for it, and the trace's keys, which each
-   tile carries per row. Nothing is read from the file. The status bar formats the
-   fields the user chose (`Settings.readout`) from that `Pick`, blank where a value is
-   not known. The trace under the pointer becomes the selection's hover (`ckHover`, a
+   tile carries per row, and the edits the trace was drawn with. Nothing is read from
+   the file. The status bar formats the fields the user chose (`Settings.readout`) from
+   that `Pick`, blank where a value is not known, and says whether the trace is killed or
+   reversed (`editNote`). The trace under the pointer becomes the selection's hover (`ckHover`, a
    survey-wide id: the file's `base` plus the trace's index), and a click selects it
    (`ckSelect`).
 
@@ -451,6 +463,8 @@ type
     level: Level             # RMS, peak, clip percentile: the first tile's after a change
     viewLevel: Level         # Float: the data in view
     orderGen: uint64         # requestGen when layer 0's order last changed
+    samplesGen: uint64       # requestGen when its samples last changed (polarity, edits)
+    relevel: bool            # the next tile sets `level` again (a kill or a restore)
     carry: Viewport          # the view of the gather before, until the next is laid out
                              # and shown at the same scales (zoom.carried)
     revision: int
@@ -471,7 +485,7 @@ type
   CommandKind = enum         # core/state: every user intent, the only way state changes
     ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
     ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack,
-    ckHover, ckSelect,
+    ckEdit, ckUndoEdit, ckClearEdits, ckHover, ckSelect,
     ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
     ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog
 
@@ -502,6 +516,8 @@ type
     panels: seq[Panel]       # MainPanel first
     sessions: seq[Session]
     files: FileList          # the file list
+    edits: Table[string, FileEdits] # core/edits, per file's path: the traces killed and
+                             # reversed, and the last change for the undo
     inbox: Inbox             # Poster handles for workers; freed with the last handle
     disk: DiskIo             # core/diskio: the session log, settings and layouts, off this thread
     indexCache: string       # the folder of parseSEG's index caches; "" for none
@@ -530,6 +546,7 @@ type
     keys: TraceKeys          # NaN where not known
     amplitude: float32       # as drawn; NaN when not held
     binned: int              # samples behind it, zoomed out
+    edits: set[TraceEdit]    # the trace's edits, as drawn: killed, reversed
 
   Tile = object              # core/tiles: one request's samples, moved, never shared
     id: uint64               # given when taken in; the GPU keys its textures on it
@@ -543,9 +560,16 @@ type
     keys: seq[TraceKeys]     # per row: its keys, for the readout
     fields: seq[HeaderField]
     header: seq[seq[float64]] # per field, one value per trace
+    edits: seq[set[TraceEdit]] # per row: the edits it was made with; empty for none
     level: Level             # RMS, peak, clip percentile of |x| over the live traces
+                             # that are not killed
+    cached: bool             # made from the samples the reader held, not read
 ```
 
 **No undo history.** Edits to traces (kill, reverse polarity) are lists kept beside an
-untouched file, so each is undone by its inverse; header edits are a patch, undone by
-removing an entry; views have "back". None of them needs a history of commands.
+untouched file (`core/edits`, `AppState.edits`, by the file's path and the trace's index
+in it, so they outlive the file's session when the user steps away and back), so each is
+undone by its inverse: a file keeps only its last change, which `ckUndoEdit` reverts;
+`ckClearEdits` empties the lists and is undone the same way. Header edits are a patch,
+undone by removing an entry; views have "back". None of them needs a history of
+commands.

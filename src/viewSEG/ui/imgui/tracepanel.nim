@@ -56,8 +56,15 @@
 ## header's fields and the scales in its gear popover, the display header's
 ## fields also in the header's own menu (a right click on it). The plot's
 ## own menu (right click) holds only functions on the data: the trace
-## operations, on the trace under the pointer or the selection, and the
-## polarity of every trace.
+## operations, on the trace under the pointer or the selection, the
+## polarity of every trace, and the undo of the file's last edit and the
+## clearing of all its edits.
+##
+## **Trace operations.** Reverse polarity (`R`) and Kill / Restore (`K`)
+## act on the trace under the pointer, or on the whole selection when that
+## trace is in it (`ckEdit`); Ctrl + Z undoes the file's last edit. The
+## edited traces are marked in a row of the display header that is there
+## only while the gather has an edit: "K" killed, "R" reversed.
 
 import std/[math, os, strutils, tables]
 import imguin/cimgui
@@ -151,6 +158,7 @@ type
     stripWidths: array[8, float32] ## the strip's groups as drawn last frame
     goto: GoToUi
     menuTarget: string ## what the plot's menu acts on, said when it opened
+    menuUnder: int = -1 ## the trace under the pointer when it opened (survey-wide); -1 for none
     cursorText: string ## the time the cursor's time line showed last; "" for none
 
   PanelOutput* = object
@@ -263,7 +271,7 @@ proc sync(tp: var TracePanelUi; tiles: openArray[Tile]; base: int; sel: Selectio
       tt.hoverRevision = sel.revision
     if tt.selectionRevision != sel.selectedRevision:
       t.selectedRowsInto(base, sel, tp.selected)
-      tt.setSelected(tp.selected)
+      tt.setMarks(t, tp.selected)
       tt.selectionRevision = sel.selectedRevision
       inc tp.marks
   var gone: seq[uint64]
@@ -841,28 +849,126 @@ func targetOf(under: int; pick: Pick; sel: Selection): string =
     if n == 1: "1 selected trace" else: $n & " selected traces"
   else: "Trace " & $(pick.trace + 1)
 
-proc drawTraceMenu(tp: var TracePanelUi; p: Panel; marks: var Marks; res: var PanelOutput) =
+func editCommand(st: AppState; p: Panel; under: int; edit: TraceEdit): Command =
+  ## Edit `edit` of what a trace operation acts on with the pointer over
+  ## trace `under` (survey-wide; the selection when `under` is in it): given
+  ## when `under` lacks it, taken away when `under` has it.
+  Command(kind: ckEdit, panel: p.id, edit: edit, edited: st.selection.targets(under),
+    on: edit notin st.traceEdits(under))
+
+proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
+    res: var PanelOutput) =
   ## The plot's right-click menu: functions on the data only. Its first
   ## line says what the trace operations act on; then the operations on
-  ## that trace or the selection (not built yet: shown disabled, so the
-  ## menu has its final shape), then those on every trace.
+  ## that trace or the selection (FFT not built yet: shown disabled), those
+  ## on every trace, and the undo and clearing of the file's edits.
+  template p: untyped = st.panels[k]
   if not igBeginPopup(menuId, 0): return
   marks.markWindow("plot.menu")
   igTextDisabled("%s", tp.menuTarget.cstring)
   marks.mark("plot.menu.target")
   igSeparator()
-  for (label, key, mark) in [("Reverse polarity", "R", "reverse"), ("Kill", "K", "kill"),
-      ("FFT in a new window", "F", "fft")]:
-    discard igMenuItem_Bool((label & "  (not available yet)").cstring, key.cstring, false,
-      false)
-    marks.mark("plot.menu." & mark)
+  let under = tp.menuUnder
+  let has = st.traceEdits(under)
+  # Ticked while the trace under the pointer is reversed: a click puts it back.
+  if igMenuItem_Bool("Reverse polarity", "R", teReversed in has, under >= 0):
+    res.commands.add editCommand(st, p, under, teReversed)
+  marks.mark("plot.menu.reverse")
+  if igMenuItem_Bool((if teKilled in has: "Restore" else: "Kill").cstring, "K", false,
+      under >= 0):
+    res.commands.add editCommand(st, p, under, teKilled)
+  marks.mark("plot.menu.kill")
+  discard igMenuItem_Bool("FFT in a new window  (not available yet)", "F", false, false)
+  marks.mark("plot.menu.fft")
   igSeparator()
   # An operation on the samples (processSEG's polarityOp), not a colour.
   let reversed = p.layers[0].reversed
   if igMenuItem_Bool("Reverse polarity of all traces", nil, reversed, true):
     res.commands.add Command(kind: ckReverseAll, panel: p.id, reverse: not reversed)
   marks.mark("plot.menu.reverse all")
+  igSeparator()
+  let e = st.editsOf(k)
+  let undo = if e.canUndo: "Undo last edit (" & describe(e.last) & ")" else: "Undo last edit"
+  if igMenuItem_Bool(undo.cstring, "Ctrl+Z", false, e.canUndo):
+    res.commands.add Command(kind: ckUndoEdit, panel: p.id)
+  marks.mark("plot.menu.undo")
+  if igMenuItem_Bool("Clear all edits for this file", nil, false, not e.isEmpty):
+    res.commands.add Command(kind: ckClearEdits, panel: p.id)
+  marks.mark("plot.menu.clear")
+  tipAlways("Kills and polarity reversals are kept beside the file, never written into " &
+    "it;\nclearing them shows the traces as the file has them (Ctrl+Z brings them back).")
   igEndPopup()
+
+proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
+  ## The trace operations' keys, while the plot has the focus: `R` reverses
+  ## the polarity of the trace under the pointer (or of the selection that
+  ## holds it) or puts it back, `K` kills or restores it, Ctrl + Z undoes
+  ## the last edit of the file shown.
+  if igGetIO_Nil().WantTextInput: return
+  template p: untyped = st.panels[k]
+  if under >= 0:
+    if igShortcut_Nil(ImGui_Key_R.cint, 0):
+      res.commands.add editCommand(st, p, under, teReversed)
+    if igShortcut_Nil(ImGui_Key_K.cint, 0):
+      res.commands.add editCommand(st, p, under, teKilled)
+  if igShortcut_Nil(ImGui_Mod_Ctrl.cint or ImGui_Key_Z.cint, 0) and st.editsOf(k).canUndo:
+    res.commands.add Command(kind: ckUndoEdit, panel: p.id)
+
+func holds(t: Tile; position: int): bool {.inline.} =
+  ## Whether `t` has a row at `position`.
+  let r = t.request
+  r.count > 0 and position >= r.first and position <= r.last and
+    (position - r.first) mod r.stride == 0
+
+proc drawEditRow(st: AppState; k: int; tiles: openArray[Tile]; view: Viewport;
+    layout: PanelLayout; y: float32; plotPos, plotSize: ImVec2_c; t: Theme; marks: var Marks) =
+  ## The display header's row of edits, at `y` under its other rows: over
+  ## each edited trace in view, as the file's edits are now, "K" (killed, in
+  ## the theme's error colour) or "R" (reversed, in its accent colour), "KR"
+  ## for both; a thin bar where traces are too close for the letters.
+  let dl = igGetWindowDrawList()
+  let lineH = igGetTextLineHeight()
+  let name = "edits"
+  let nw = igCalcTextSize(name.cstring, nil, false, -1).x
+  ImDrawList_AddText_Vec2(dl, ImVec2_c(x: plotPos.x - nw - 6, y: y), u32(t.roles[rlTextDim]),
+    name.cstring, nil)
+  marks.markRect("plot.header.edits", ImVec2_c(x: plotPos.x - nw - 6, y: y),
+    ImVec2_c(x: plotPos.x, y: y + lineH))
+  let e = st.editsOf(k)
+  let perPos = plotSize.x / max(view.traces.width, 1e-9)
+  ImDrawList_PushClipRect(dl, ImVec2_c(x: plotPos.x, y: y),
+    ImVec2_c(x: plotPos.x + plotSize.x, y: y + lineH), true)
+  var marked = 0
+  let vis = visiblePositions(layout, view)
+  # Each tile's rows in view that no newer tile has (as drawn): bounded by
+  # the rows the tiles hold, not by the traces of the gather.
+  for i in countdown(tiles.high, 0):
+    for row in 0 ..< min(tiles[i].request.count, tiles[i].traces.len):
+      let pos = tiles[i].request.position(row)
+      var newer = false
+      for j in i + 1 .. tiles.high:
+        if tiles[j].holds(pos): newer = true
+      let trace = tiles[i].traces[row]
+      let has = if pos in vis and not newer: e.editsOf(trace) else: {}
+      if has != {}:
+        let text = (if teKilled in has: "K" else: "") & (if teReversed in has: "R" else: "")
+        let colour = u32(t.roles[if teKilled in has: rlError else: rlAccent])
+        let x = plotPos.x + float32((float64(pos) - view.traces.lo) * perPos)
+        let w = igCalcTextSize(text.cstring, nil, false, -1).x
+        var lo, hi: ImVec2_c
+        if perPos >= w + 2:
+          lo = ImVec2_c(x: round(x - w / 2), y: y)
+          hi = ImVec2_c(x: lo.x + w, y: y + lineH)
+          ImDrawList_AddText_Vec2(dl, lo, colour, text.cstring, nil)
+        else:
+          let half = max(0.5'f32, perPos / 2 - 0.5'f32)
+          lo = ImVec2_c(x: x - half, y: y + round(lineH * 0.2))
+          hi = ImVec2_c(x: x + half, y: y + round(lineH * 0.8))
+          ImDrawList_AddRectFilled(dl, lo, hi, colour, 0, 0)
+        if marked < 200: # for tests
+          marks.markRect("plot.header.edit " & $(trace + 1), lo, hi)
+          inc marked
+  ImDrawList_PopClipRect(dl)
 
 proc drawHeaderMenu(p: Panel; marks: var Marks; res: var PanelOutput) =
   ## The display header's own menu (a right click on its rows or their
@@ -1068,7 +1174,9 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   let base = if source >= 0: st.sessions[source].base else: -1
   let lineH = igGetTextLineHeight()
   let headerTop = igGetCursorScreenPos()
-  igDummy(ImVec2_c(x: 1, y: float32(fields.len) * lineH + 2))
+  # a row for the edits, while the gather has one
+  let edited = st.gatherEdited(k)
+  igDummy(ImVec2_c(x: 1, y: float32(fields.len + ord(edited)) * lineH + 2))
   # This frame's view: what `core` set itself (back, a new gather), else
   # what a control or a test asked for, else last frame's.
   var remember = false
@@ -1151,6 +1259,9 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
           ImPlot_ItemFlags_NoFit.cint)
     let stride = if p.pending.isEmpty: 1 else: p.pending.stride
     tp.drawHeader(tiles, fields, stride, view, p.layout, headerTop, pos, size, t, paper)
+    if edited:
+      drawEditRow(st, k, tiles, view, p.layout, headerTop.y + float32(fields.len) * lineH, pos,
+        size, t, marks)
     ImPlot_EndPlot()
     if st.sorting(k): # the old order stays drawn until the new one comes
       let dl = igGetWindowDrawList()
@@ -1213,13 +1324,16 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     if click != clNone and under >= 0:
       res.commands.add Command(kind: ckSelect, traces: @[under],
         mode: (if click == clShiftClick: smToggle else: smReplace))
-    if menu: tp.menuTarget = targetOf(under, res.pick, st.selection)
+    editKeys(st, k, if hovered: under else: -1, res)
+    if menu:
+      tp.menuTarget = targetOf(under, res.pick, st.selection)
+      tp.menuUnder = under
     tp.cur = after
     if after != p.view:
       res.commands.add Command(kind: ckView, panel: p.id, view: after, remember: remember)
   ImPlot_PopStyleColor(1)
   if menu: igOpenPopup_Str(menuId, 0)
-  tp.drawTraceMenu(p, marks, res)
+  tp.drawTraceMenu(st, k, marks, res)
   drawHeaderMenu(p, marks, res)
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)

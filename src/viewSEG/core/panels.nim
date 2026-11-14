@@ -46,7 +46,9 @@
 ## (`Layer.reversed`) is an operation on its data, not a way of drawing it:
 ## processSEG's `polarityOp` runs first in the display pipeline, so the
 ## tiles, the readout's amplitude, the gain's statistics and anything
-## computed from the layer later hold the reversed samples.
+## computed from the layer later hold the reversed samples. Single traces
+## are reversed, or killed, by the file's edits (`core/edits`), which the
+## reader applies before the pipeline.
 ##
 ## **Names.** A panel's window is named for what it shows (`windowTitle`):
 ## "Seismic" for seismic traces, "Aux" for auxiliary ones, "FFT" for
@@ -229,8 +231,11 @@ type
       ## it are kept until the first tile in the new order comes
     samplesGen*: uint64
       ## `requestGen` when what layer 0's samples hold last changed (the
-      ## polarity): tiles from before it are drawn until the first tile
-      ## after it comes, then dropped
+      ## polarity, an edit of its traces): tiles from before it are drawn
+      ## until the first tile after it comes, then dropped
+    relevel*: bool
+      ## the first tile to come sets `level` again: a trace was killed or
+      ## restored, so the level held from before counts it wrongly
     jumps*: int
       ## bumped when `core` sets the view itself (the whole gather when it
       ## is first laid out, back): the UI follows

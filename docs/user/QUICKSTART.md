@@ -5,7 +5,7 @@ no installation and no internet connection.
 
 **Status:** early development. The window, the File menu, the file list, the folders
 below, and one record on screen as wiggles or greyscale density, with zoom, pan, gain,
-sorting, trace highlighting and a cursor readout, work.
+sorting, trace highlighting, killing and reversing traces, and a cursor readout, work.
 
 ## Start it
 
@@ -124,6 +124,9 @@ point by default): right-click them, or their names at the left, to choose its f
 | Select a trace | click it | |
 | Add a trace to the selection, or take it out | Shift + click | |
 | Cancel a drag, else clear the selection | | Esc |
+| Kill or restore the trace under the pointer (the selection, if it is in it) | right-click: Kill / Restore | `K` |
+| Reverse its polarity, or put it back | right-click: Reverse polarity | `R` |
+| Undo the last kill, restore or polarity change | right-click: Undo last edit | Ctrl+Z |
 
 Keys act while the Seismic window has the focus: click in it first.
 
@@ -137,8 +140,31 @@ or your own.
 
 **The plot's menu** (right-click the plot) holds what acts on the data, and nothing about
 how it looks. Its first line names what it acts on: the trace under the pointer, or the
-selection when that trace is selected. Reverse polarity, Kill and FFT in a new window are
-listed, greyed out: they are not available yet.
+selection when that trace is selected. Then:
+
+- **Reverse polarity** (`R`): the trace's samples turned 180 degrees out of phase, before
+  the gain, so the picture, the gain and the status bar's amplitude all see the reversed
+  data. Ticked while the trace under the pointer is reversed; choose it again to put it
+  back.
+- **Kill** (`K`): the trace is drawn blank (the plot's background, in every display mode)
+  and left out of whatever the gain computes over the record (Float, Normalized for the
+  whole record, the automatic level), so a noisy trace stops setting the brightness. Over
+  a killed trace the item reads **Restore**.
+- **FFT in a new window** is listed, greyed out: it is not available yet.
+- **Reverse polarity of all traces** (below).
+- **Undo last edit** (Ctrl+Z) reverts the last kill, restore or polarity change (it names
+  it); there is no deeper history, since each change is its own inverse. **Clear all
+  edits for this file** shows the traces as the file has them (Undo brings the edits
+  back).
+
+Edited traces are marked in a row of the display header, **edits**, that is there only
+while the record has an edit: a red **K** over a killed trace, an **R** over a reversed
+one. The status bar says "killed" or "polarity reversed" for the trace under the
+pointer, and Messages lists each change. Edits are lists kept beside the file, never
+written into it: they hold while viewSEG runs, through another record, a sort, a gain
+change, and stepping to another file and back, but they are not kept for the next run
+yet. An edit shows at once: viewSEG makes the picture again from the samples it already
+holds, without reading the file.
 
 **Polarity.** Right-click the plot and choose **Reverse polarity of all traces** to see
 every trace 180 degrees out of phase; the item is ticked while it is on, and choosing it
@@ -189,8 +215,9 @@ monitor's diagonal or make a bar on the screen as long as a ruler held to it say
 
 **Readout.** The status bar along the bottom reads out what lies under the pointer: the
 time, the trace and channel, receiver and source line and point, FFID, offset, the
-amplitude as displayed, and the record's UTC time. Right-click the status bar to choose
-the fields and their order.
+amplitude as displayed, and the record's UTC time; and, whatever the fields, "killed" or
+"polarity reversed" for an edited trace. Right-click the status bar to choose the fields
+and their order.
 
 ## Messages
 

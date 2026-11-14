@@ -4,9 +4,10 @@
 ## A `Tile` answers one `ReadRequest`: `count` traces of `columns` values,
 ## trace by trace, processed for display, with each trace's index in its
 ## file and its keys (what the cursor readout shows), the values of the
-## display header's fields for each trace and the amplitude statistics of
-## its live traces (its `Level`). It is made on the reader's thread, moved
-## through the inbox and
+## display header's fields for each trace, the edits it was made with (a
+## trace killed or reversed: `core/edits`) and the amplitude statistics of
+## its live traces that are not killed (its `Level`). It is made on the
+## reader's thread, moved through the inbox and
 ## kept by `AppState`; it holds no `ref`, so it may be freed on any thread.
 ## Zoomed out in time with traces wide enough for wiggles, it also keeps
 ## each column's extremes (`envelope`), which the wiggles are drawn through.
@@ -20,7 +21,9 @@ import std/[fenv, math]
 from parseSEG import TraceKeys
 from processSEG/gain/stats import percentileAbs, percentileWorkspace
 from processSEG/core/workspace import Workspace, reserve
-import geometry, panels, viewport
+import edits, geometry, panels, viewport
+
+export TraceEdit
 
 type
   Tile* = object
@@ -37,8 +40,11 @@ type
     fields*: seq[HeaderField]
     header*: seq[seq[float64]]
       ## per field, one value per trace (NaN when unknown)
+    edits*: seq[set[TraceEdit]]
+      ## per row: the edits its samples were made with; empty when none has any
     level*: Level           ## RMS, peak and clip percentile of |x| over the live traces
     failed*: int            ## traces that could not be decoded (zero rows)
+    cached*: bool           ## the reader made it from samples it held, not from the file
 
   Quad* = object
     ## Where a block of a tile is drawn, in data coordinates (positions and
@@ -50,6 +56,15 @@ type
   Lut* = array[256, Rgba]
     ## A colour map: index 0 for the most negative amplitude, 255 for the
     ## most positive.
+
+func editsAt*(t: Tile; row: int): set[TraceEdit] {.inline.} =
+  ## The edits row `row`'s samples were made with.
+  if row in 0 ..< t.edits.len: t.edits[row] else: {}
+
+func isKilled*(t: Tile; row: int): bool {.inline.} =
+  ## Whether row `row`'s trace was killed when `t` was made: it is drawn
+  ## blank (the plot's background), and left out of the levels.
+  teKilled in t.editsAt(row)
 
 func timeOf*(t: Tile; column: float64): float64 {.inline.} =
   ## The time of column `column`'s centre.
@@ -122,8 +137,8 @@ func cellsIn(s: Span; first, step: float64; n: int): Slice[int] =
 proc valuesInView*(t: Tile; view: Viewport; most: int; dst: var seq[float32]) =
   ## Adds to `dst` the values of `t` whose trace and time lie in `view`, on
   ## an even grid of at most about `most` of them (all of them when they are
-  ## fewer): what the Float gain takes its level from. Nothing when the tile
-  ## and the view do not meet.
+  ## fewer): what the Float gain takes its level from. Killed traces are left
+  ## out. Nothing when the tile and the view do not meet.
   let r = t.request
   if r.count <= 0 or t.columns <= 0 or most <= 0: return
   let (xs, ts) = t.span
@@ -135,10 +150,11 @@ proc valuesInView*(t: Tile; view: Viewport; most: int; dst: var seq[float32]) =
   let thin = max(1, int(ceil(sqrt(float64(rows.len) * float64(cols.len) / float64(most)))))
   var row = rows.a
   while row <= rows.b:
-    var c = cols.a
-    while c <= cols.b:
-      dst.add t.data[row * t.columns + c]
-      c += thin
+    if not t.isKilled(row):
+      var c = cols.a
+      while c <= cols.b:
+        dst.add t.data[row * t.columns + c]
+        c += thin
     row += thin
 
 proc levelOf*(values: openArray[float32]; percentile: float64; ws: var Workspace): Level =
@@ -170,6 +186,12 @@ func lutIndex*(scaled: float32): int {.inline.} =
 func densityColour*(lut: Lut; amplitude, scale: float32): Rgba {.inline.} =
   ## The colour of `amplitude` at display gain `scale` (1 / the clip).
   lut[lutIndex(amplitude * scale)]
+
+func densityAt*(t: Tile; lut: Lut; x, tMs: float64; scale: float32; background: Rgba): Rgba =
+  ## The density colour drawn at (`x`, `tMs`): the colour of `amplitudeAt`
+  ## at display gain `scale`, or `background` on a killed trace (drawn
+  ## blank). What the density shader computes.
+  if t.isKilled(t.rowAt(x)): background else: lut.densityColour(t.amplitudeAt(x, tMs), scale)
 
 func greyLut*(): Lut =
   ## The grey density map of seismic plots: positive amplitudes black,

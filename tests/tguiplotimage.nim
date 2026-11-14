@@ -79,7 +79,7 @@ proc offReference(t: Tile; v: Viewport; maxSize = 0; hover = -1;
   doAssert err.len == 0, err
   var tt = r.upload(t)
   tt.hoverRow = hover
-  if selected.len > 0: tt.setSelected(selected)
+  if selected.len > 0: tt.setMarks(t, selected)
   var d = DisplaySettings()
   d.fills = {wfPositive, wfNegative}
   let st = d.styleFor(v, 1, 1, 2)

@@ -161,10 +161,10 @@ Status values:
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Chunk metadata from parseSEG reads | `initChunkMeta`, `chunkMeta`, `intervalMs`, `ChunkMeta` (`isLive`, `sampleTimeMs`) | internal: every processing call | internal |
+| Chunk metadata from parseSEG reads | `initChunkMeta`, `chunkMeta`, `intervalMs`, `ChunkMeta` (`isLive`, `sampleTimeMs`) | internal: every processing call; killed traces are passed as failed rows, so the processing and the levels pass them by | internal |
 | Row views and scratch | `rowBlock`, `RowBlock`, `Workspace`, `reserve`, `WorkspaceSize` | internal: allocation-free processing | internal |
 | Remove mean or trend | `demean`, `detrend`, `demeanOp`, `detrendOp` | Processing window: remove DC / trend | planned |
-| Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Seismic window: "Reverse polarity of all traces" in the plot's menu, `polarityOp` first in the window's display pipeline; processing window: scale and clip; the wiggles' clip at the trace overlap is the shader's own | built (polarity of all traces); planned (the rest) |
+| Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Seismic window: "Reverse polarity" of a trace or the selection (`R`, the plot's menu: `reversePolarity` on its live samples where the reader prepares them, before the pipeline, as `polarityOp` would) and "Reverse polarity of all traces" (`polarityOp` first in the window's display pipeline); processing window: scale and clip; the wiggles' clip at the trace overlap is the shader's own | built (polarity of a trace, of the selection, of all traces); planned (the rest) |
 | Top and bottom mutes (time, table, LMO) | `timeMute`, `tableMute`, `lmoMute`, `muteTop`, `muteBottom`, `muteTopOp`, `muteBottomOp`, `muteTimeMs` | Processing window: mutes, drawn as a line on the panel, table picked by clicking | planned |
 | Pad tapers | `cosTaperInto`, `taperPads` | internal: filters and padded kernels | internal |
 | Fractional shifts | `shiftSamples`, `ShiftInterp` | internal: statics, LMO, NMO | internal |
@@ -199,7 +199,7 @@ Status values:
 | AGC (RMS, mean absolute) | `initAgcPlan`, `agc`, `agcOp` | Seismic window: gain "AGC" (the default on pre-stack gathers); processing window: AGC | built |
 | AGC gain kept and removed | `agc(..., gains)`, `removeGain` | Show the AGC gain function; undo AGC on export | planned |
 | Time-variant gain (knots, tᵖ, exponential) | `knotGain`, `powerGain`, `exponentialGain`, `gainCurveOp`, `initGainCurvePlan`, `applyGainCurve` | Seismic window: gain "Exponential" (`exponentialGain`, `powerGain`); processing window: gain curve editor (knots) | built (display); planned (knots) |
-| Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats` | Seismic window: clip at a percentile and the Normalized levels (`panelStats`, a shader uniform), Float's level of the data in view (`percentileAbs`); the same reference is full black in density and the full swing (the trace overlap) of a wiggle; per-trace statistics later | built |
+| Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats` | Seismic window: clip at a percentile and the Normalized levels (`panelStats`, a shader uniform), Float's level of the data in view (`percentileAbs`); the same reference is full black in density and the full swing (the trace overlap) of a wiggle; killed traces left out of each; per-trace statistics later | built |
 
 ### Pipelines and threads
 

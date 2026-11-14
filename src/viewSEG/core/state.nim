@@ -52,19 +52,31 @@
 ## read a file of the user's, and `ckResetSettings` goes back to the
 ## defaults, keeping a copy.
 ##
-## **No undo history.** Edits to traces (kill, reverse polarity) are kept as
-## lists beside an untouched file, so each one is undone by its inverse;
-## header edits are a patch, undone by removing an entry; views have "back".
-## None of these needs a general history of commands.
+## **Edits to traces.** Killing a trace and reversing its polarity
+## (`ckEdit`) change lists kept per file (`core/edits`), by the trace's
+## index in the file, never the file: they hold for the session, through
+## another record, a sort, a gain change, and a step to another file and
+## back (the file is opened again under a new id, the lists are its path's).
+## Each change has the panels that show the file make their view's tiles
+## again (the reader does it from the samples it holds when it can); the
+## tiles from before are drawn until then. A kill, or a restore, also has
+## the next tile set the panel's level again, as the level leaves killed
+## traces out.
+##
+## **No undo history.** Each change to the edits is its own inverse, so
+## `ckUndoEdit` reverts a file's last one and `ckClearEdits` takes every
+## edit away (and is undone the same way); header edits are a patch, undone
+## by removing an entry; views have "back". None of these needs a general
+## history of commands.
 
-import std/[math, monotimes, os, sequtils, strutils, times]
+import std/[math, monotimes, os, sequtils, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
-import diskio, filejobs, filelist, inbox, jobs, layouts, log, panels, persist, pick, reader,
-  selection, session, settings, threads, tiles, zoom
+import diskio, edits, filejobs, filelist, inbox, jobs, layouts, log, panels, persist, pick,
+  reader, selection, session, settings, threads, tiles, zoom
 
-export filelist, inbox, jobs, layouts, log, panels, persist, pick, selection, session, settings,
-  threads, tiles, zoom
+export edits, filelist, inbox, jobs, layouts, log, panels, persist, pick, selection, session,
+  settings, threads, tiles, zoom
 
 const
   MainPanel* = PanelId(1)
@@ -100,6 +112,9 @@ type
     ckExportLayout = "export layout"     ## write the arrangement to a file of the user's
     ckImportLayout = "import layout"     ## load such a file and keep it among the layouts
     ckExportLog = "export messages"      ## write the messages to a file of the user's
+    ckEdit = "edit traces"               ## kill or restore traces, reverse their polarity or not
+    ckUndoEdit = "undo edit"             ## revert the last change to the edits of a panel's file
+    ckClearEdits = "clear edits"         ## take every edit of a panel's file away
     ckHover = "hover"                    ## the trace under the cursor
     ckSelect = "select"                  ## change the selected traces
     ckClearSelection = "clear selection"
@@ -117,7 +132,7 @@ type
       reordered*: JobId
       position*: int                  ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
-        ckShowTrace:
+        ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits:
       panel*: PanelId
       gather*: int                    ## ckGather: index into the file's gathers
       path*: string                   ## ckShowFile, ckShowTrace: the file to show
@@ -130,6 +145,9 @@ type
       header*: HeaderChoice           ## ckHeader: the display header's rows
       order*: seq[SortKey]            ## ckSort: layer 0's keys, the first first; empty: the file's order
       reverse*: bool                  ## ckReverseAll: every trace of layer 0 reversed, or none
+      edit*: TraceEdit                ## ckEdit: killed, or reversed
+      edited*: seq[int]               ## ckEdit: survey-wide ids of traces of the panel's file
+      on*: bool                       ## ckEdit: the edit given (true) or taken away
     of ckHover: trace*: int           ## survey-wide trace id; -1 for none
     of ckSelect:
       traces*: seq[int]               ## survey-wide trace ids
@@ -166,6 +184,8 @@ type
     sessions: seq[Session]
     opening, closing: seq[Pending]
     files: FileList       ## the file list
+    edits: Table[string, FileEdits]
+      ## per file (its canonical path): the traces killed and reversed
     showFound: PanelId    ## show the first file the listing finds here; NoPanel for none
     jump: tuple[path: string; trace, record: int]
       ## a trace to show once its file is open (`ckShowTrace`); "" for none
@@ -452,6 +472,36 @@ func findTrace*(state: AppState; trace: int): int =
     if trace in s: return i
   -1
 
+func traceEdits*(state: AppState; trace: int): set[TraceEdit] =
+  ## The edits of survey-wide trace `trace` now; none for a trace no open
+  ## file has.
+  let i = state.findTrace(trace)
+  if i >= 0 and state.sessions[i].path in state.edits:
+    result = state.edits[state.sessions[i].path].editsOf(trace - state.sessions[i].base)
+
+func editsOf*(state: AppState; panelIndex: int): FileEdits =
+  ## The edits of the file `panels[panelIndex]` shows (a copy); none when it
+  ## shows none or the file has none.
+  let i = state.shownFile(panelIndex)
+  if i >= 0: state.edits.getOrDefault(state.sessions[i].path) else: FileEdits()
+
+func shownTraces(state: AppState; panelIndex: int): (int, Slice[int]) =
+  ## The index in `sessions` of the file `panels[panelIndex]` shows, and the
+  ## traces of the gather it shows; -1 for none.
+  result = (-1, 0 .. -1)
+  let i = state.shownFile(panelIndex)
+  if i >= 0:
+    let g = state.panels[panelIndex].layers[0].source.gather
+    if g in 0 ..< state.sessions[i].gathers.len:
+      result = (i, state.sessions[i].gathers[g].traces)
+
+func gatherEdited*(state: AppState; panelIndex: int): bool =
+  ## Whether a trace of the gather `panels[panelIndex]` shows has an edit:
+  ## then the display header has a row for them.
+  let (i, traces) = state.shownTraces(panelIndex)
+  i >= 0 and state.sessions[i].path in state.edits and
+    state.edits[state.sessions[i].path].anyIn(traces)
+
 proc missing(what: string) {.noinline, noreturn.} =
   raise newException(KeyError, what)
 
@@ -554,6 +604,7 @@ proc newSource(state: var AppState; k: int) =
   p.pending = ReadRequest()
   p.level = Level()
   p.viewLevel = Level()
+  p.relevel = false
   p.back.setLen 0
   inc p.revision
   state.tiles[k].setLen 0
@@ -616,8 +667,14 @@ proc requestView(state: var AppState; k: int) =
   inc p.requestGen
   req.gen = p.requestGen
   p.pending = req
+  var reversed, killed: seq[int]
+  let (i, traces) = state.shownTraces(k)
+  if i >= 0 and state.sessions[i].path in state.edits:
+    template e: untyped = state.edits[state.sessions[i].path]
+    reversed = e.listIn(teReversed, traces)
+    killed = e.listIn(teKilled, traces)
   state.readers[k].request ReaderRequest(read: req, fields: p.shownFields, flow: flow,
-    clipPercentile: p.layers[0].display.clipPercentile)
+    clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed)
 
 proc remember(state: var AppState; k: int) =
   ## Keeps `panels[k]`'s view for back, unless it is the one kept last or
@@ -641,13 +698,15 @@ proc refetch(state: var AppState; k: int; keepTiles: bool) =
   inc p.revision
   state.requestView(k)
 
-proc resample(state: var AppState; k: int) =
+proc resample(state: var AppState; k: int; relevel = false) =
   ## Asks again for `panels[k]`'s view: what its samples hold has changed
-  ## (the polarity). The tiles from before are drawn until the first one
-  ## after the change comes (`drainInbox`), so the plot never goes blank.
+  ## (the polarity, an edit). The tiles from before are drawn until the
+  ## first one after the change comes (`drainInbox`), so the plot never goes
+  ## blank; with `relevel`, that tile sets the panel's level again.
   template p: untyped = state.panels[k]
   inc p.requestGen
   p.samplesGen = p.requestGen
+  if relevel: p.relevel = true
   p.pending = ReadRequest()
   inc p.revision
   state.requestView(k)
@@ -970,6 +1029,53 @@ proc goToGather(state: var AppState; cmd: Command) =
   elif cmd.gather != shown.gather:
     state.show(cmd.panel, shown.file, cmd.gather)
 
+proc editTraces(state: var AppState; cmd: Command) =
+  ## `ckEdit`, `ckUndoEdit`, `ckClearEdits` on the file `cmd.panel` shows;
+  ## the panels that show a gather the change touches make their view's
+  ## tiles again.
+  let k = state.findPanel(cmd.panel)
+  let i = if k >= 0: state.shownFile(k) else: -1
+  if k < 0:
+    state.ignore(cmd, $cmd.panel & " does not exist")
+    return
+  if i < 0:
+    state.ignore(cmd, $cmd.panel & " shows no file")
+    return
+  let s = state.sessions[i]
+  var changed = LastEdit()
+  var said = ""
+  case cmd.kind
+  of ckEdit:
+    var traces: seq[int]
+    for t in cmd.edited:
+      if t in s: traces.add t - s.base
+    if cmd.edited.len == 0: state.ignore(cmd, "no trace was named")
+    elif traces.len < cmd.edited.len:
+      state.ignore(cmd, plural(cmd.edited.len - traces.len, "trace") & " of " &
+        $cmd.edited.len & " are not in " & s.name)
+    if traces.len > 0:
+      template e: untyped = state.edits.mgetOrPut(s.path, FileEdits())
+      if e.change(cmd.edit, traces, cmd.on) > 0:
+        changed = e.last
+        said = describe(changed).capitalizeAscii & "."
+  of ckUndoEdit:
+    if s.path in state.edits: changed = state.edits[s.path].undo()
+    said = if changed.kind == lkNone: "Nothing to undo."
+           else: "Undone: " & describe(changed) & "."
+  of ckClearEdits:
+    if s.path in state.edits and state.edits[s.path].clearAll():
+      changed = state.edits[s.path].last
+      said = "All edits cleared: the traces are shown as the file has them (Ctrl+Z " &
+        "brings the edits back)."
+    else: said = "No edits to clear."
+  else: discard
+  if said.len > 0: state.log.add(sevInfo, s.name, said)
+  if changed.kind == lkNone: return
+  for j in 0 ..< state.panels.len:
+    let (shown, traces) = state.shownTraces(j)
+    if shown == i and changed.changedIn(traces):
+      state.resample(j, relevel = changed.touches(teKilled))
+
 # ---------------------------------------------------------------- changes --
 
 proc apply*(state: var AppState; cmd: Command) =
@@ -1197,6 +1303,8 @@ proc apply*(state: var AppState; cmd: Command) =
       # An operation on the data, so not a setting: a new plot starts as recorded.
       state.panels[k].layers[0].reversed = cmd.reverse
       state.resample(k)
+  of ckEdit, ckUndoEdit, ckClearEdits:
+    state.editTraces(cmd)
   of ckHover:
     # The UI sends a hover on every move, so one on a trace of a file closed
     # in the same frame is no mistake the user could act on: it clears the
@@ -1303,7 +1411,9 @@ proc drainInbox*(state: var AppState): bool =
       if k >= 0 and m.tile.request.gen == state.panels[k].requestGen:
         m.tile.id = state.nextTile
         inc state.nextTile
-        if state.panels[k].level.clip.isNaN: state.panels[k].level = m.tile.level
+        if state.panels[k].level.clip.isNaN or state.panels[k].relevel:
+          state.panels[k].level = m.tile.level
+          state.panels[k].relevel = false
         # The first tile in a new order, or after the samples changed,
         # replaces every tile from before.
         let since = max(state.panels[k].orderGen, state.panels[k].samplesGen)

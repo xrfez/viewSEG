@@ -125,7 +125,7 @@ type
     ## Keys a test can press (`pressKey`).
     skEquals, skMinus, skKeypadPlus, skKeypadMinus, skLeft, skRight, skUp, skDown,
     skBackspace, skZero, skEscape, skEnter, skCtrl, skShift, skAlt, skTab, skHome, skEnd,
-    skPageUp, skPageDown, skW, skG
+    skPageUp, skPageDown, skW, skG, skR, skK, skZ
 
   SimMod* = enum
     smCtrl, smShift, smAlt
@@ -294,7 +294,8 @@ proc pressKey*(frame: FrameInfo; key: SimKey; down: bool; mods: set[SimMod] = {}
     SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, SDL_SCANCODE_BACKSPACE, SDL_SCANCODE_0,
     SDL_SCANCODE_ESCAPE, SDL_SCANCODE_RETURN, SDL_SCANCODE_LCTRL, SDL_SCANCODE_LSHIFT,
     SDL_SCANCODE_LALT, SDL_SCANCODE_TAB, SDL_SCANCODE_HOME, SDL_SCANCODE_END,
-    SDL_SCANCODE_PAGEUP, SDL_SCANCODE_PAGEDOWN, SDL_SCANCODE_W, SDL_SCANCODE_G]
+    SDL_SCANCODE_PAGEUP, SDL_SCANCODE_PAGEDOWN, SDL_SCANCODE_W, SDL_SCANCODE_G, SDL_SCANCODE_R,
+    SDL_SCANCODE_K, SDL_SCANCODE_Z]
   var m = 0'u16
   if smCtrl in mods: m = m or uint16(SDL_KMOD_LCTRL)
   if smShift in mods: m = m or uint16(SDL_KMOD_LSHIFT)

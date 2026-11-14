@@ -15,6 +15,7 @@
 ├────────────────────────────────────────────────────────────┤
 │ line    100  100  100  100  100  100  100  100  100        │  display header
 │ point   101  103  105  107  109  111  113  115  117        │  (thinned to fit)
+│ edits             K              R                         │  (while edited)
 ├────────────────────────────────────────────────────────────┤
 │    0   ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏   ┃ │  time: values only
 │ [1234]──────────────┼ traces across, time down           ┃ │  the cursor's time
@@ -65,9 +66,13 @@
 - **Display header along the top:** rows of trace header values over the traces, thinned
   so labels never overlap. Any trace header field can be a row (among them the component
   of a multi-component station), and there can be several; the default is receiver
-  **line** and **point**. Reversed traces are marked there. A right click on the header
-  (its rows of values, or their names left of the plot) opens its own menu: automatic
-  fields, or the fields ticked; the gear popover has the same.
+  **line** and **point**. While the record has an edited trace, a last row, **edits**,
+  marks each one over its trace, as the edits are now: **K** (killed, in the theme's
+  error colour), **R** (reversed, in its accent colour), **KR** for both, a thin bar where
+  traces are too close for the letters; the row goes when the record has no edit left.
+  A right click on the header (its rows of values, or their names left of the plot)
+  opens its own menu: automatic fields, or the fields ticked; the gear popover has the
+  same.
 - **The traces' order** is the file's until a sort is chosen, and belongs to the plot
   window: two windows on the same record can show it in two orders. Sorting never
   changes the file, and it happens off the screen's thread, so a large gather never
@@ -159,7 +164,8 @@
   pixel ("peak of 4"). Right-click the bar to choose the fields and their order; any of
   the trace's keys can be added (sample number, UTC at the cursor, CDP, inline,
   crossline, source, receiver and midpoint coordinates, elevations, component, trace
-  status). Unknown values are left blank.
+  status). Unknown values are left blank. Whatever the fields, the bar says "killed",
+  "polarity reversed" or both, in the theme's warning colour, over an edited trace.
 
 ## Wiggles
 
@@ -195,7 +201,10 @@
   the map.
 - **Components** of multi-component units each have a colour and can be shown or
   hidden one by one.
-- **Killed traces** are drawn blank (or hidden: a setting).
+- **Killed traces** are drawn blank: the plot's background shows where the trace was, in
+  every mode (no line and no fill among wiggles, no grey under density), with only the
+  hover's tint under density alone. Hiding them instead (the traces closing up) is a
+  setting to come.
 
 ## Polarity
 
@@ -207,7 +216,13 @@ bar's amplitude and whatever is later computed from the window (a spectrum, an o
 comparison, an export) see the reversed data. Turning it on or off reads the view again;
 the picture before stays until the reversed one is drawn. It holds for the next record and
 file shown in the window, and is never kept as a setting: a new plot shows the data as
-recorded. Single traces, or the selection, are to be reversed from the same menu (`R`).
+recorded.
+
+**Reverse polarity** of a single trace, or of the selection that holds it (`R`, or the
+plot's menu), is an edit of the file's traces (see [Edits](#edits-to-traces)): those
+traces' samples are negated (processSEG's `reversePolarity` on their live samples, as
+`polarityOp` does) where the window's reader prepares them, before the pipeline and the
+gain. A trace reversed both ways is as recorded.
 
 ## Mouse and keys
 
@@ -249,12 +264,12 @@ its shortcut shown there.
 | Home / End | First / last gather |
 | Ctrl + G | Go to a record number |
 | Space | Raw ↔ processed |
-| `K` | Kill or restore the hovered trace (or the selection) |
-| `R` | Reverse the polarity of the hovered trace (or the selection) |
+| `K` | Kill or restore the hovered trace (or the selection, when it holds that trace) |
+| `R` | Reverse the polarity of the hovered trace, or put it back (or the selection, when it holds that trace) |
 | `F` | Amplitude spectrum (FFT) of the hovered trace (or the selection) in a new window |
 | `H` | Show the trace's headers |
 | `M` | Select the trace's station on the map |
-| Ctrl + Z | Undo the last kill, restore or polarity change |
+| Ctrl + Z | Undo the last kill, restore or polarity change of the file shown (or its clearing) |
 | Esc | Cancel, innermost first: the drag in progress, else the ruler, else the selection |
 
 ### The map
@@ -312,18 +327,37 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 
 | Item | Key | |
 |---|---|---|
-| Reverse polarity | `R` | that trace or the selection, 180 degrees out of phase; marked in the display header; remembered for the file |
-| Kill / Restore | `K` | drawn blank, left out of processing, spectra and statistics; remembered for the file |
-| FFT in a new window | `F` | amplitude spectrum, raw and processed; several can be open |
+| Reverse polarity | `R` | that trace or the selection, 180 degrees out of phase; ticked while the trace under the pointer is reversed, and then it puts the polarity back |
+| Kill / Restore | `K` | drawn blank, left out of the processing and of the levels the gain computes over the record; "Restore" over a killed trace |
+| FFT in a new window | `F` | amplitude spectrum, raw and processed; several can be open (greyed out, "not available yet") |
 | Reverse polarity of all traces | | every trace of the window, ticked while on ([Polarity](#polarity)) |
+| Undo last edit (*what it was*) | Ctrl + Z | reverts the file's last kill, restore, polarity change or clearing |
+| Clear all edits for this file | | the traces as the file has them; Undo brings the edits back |
 
-The first three are listed, greyed out with "(not available yet)", until they are built;
-later: show headers (`H`), select its station on the map (`M`), and, perhaps, a filter on
-one trace.
+On a selection, a trace operation does to every selected trace what it does to the one
+under the pointer: Kill kills them all (Restore, over a killed trace, restores them all),
+Reverse polarity reverses them all, or puts them all back when that trace is reversed.
+Later: show headers (`H`), select its station on the map (`M`), and, perhaps, a filter on
+one trace (as a layer of its own, with the overlays).
 
-Edits to traces are lists kept beside the file, never written into it: each is undone by
-its inverse, Ctrl + Z reverts the last one, and "Clear all edits for this file" returns to
-the file as it is on disk.
+### Edits to traces
+
+Killing a trace and reversing its polarity are edits: lists kept per file, by the trace's
+index in the file, beside the file and never in it (the file is opened read-only). They
+hold while viewSEG runs, through another record, a sort, a gain change, and stepping to
+another file and back; keeping them across a restart, with the rest of what is
+remembered about a file, is still to come. Each change is its own inverse (kill and
+restore, reverse and reverse again), so Ctrl + Z reverts the last change and no deeper
+history is kept; "Clear all edits for this file" takes them all away, and is undone the
+same way. Messages lists every change.
+
+An edit must show at once. The window's reader keeps the samples it last read from the
+file (as decoded, up to 128 MiB), so an edit of traces in view, a gain change, or a
+slightly shorter view, makes the picture again from them, off the screen's thread, with
+nothing read from the file; the picture before stays until the new one is drawn (on the
+Morgantown record, zoomed in on 40 traces, about 30 ms from the key under software
+OpenGL). Otherwise only the view's tiles are made again. A kill, or a restore, also has
+the record's level taken again, so that the gain leaves the killed trace out.
 
 ## Empty and first-run state
 

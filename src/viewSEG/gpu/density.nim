@@ -6,8 +6,9 @@
 ## the colour up in a 256-entry colour map: what `amplitudeAt` and
 ## `densityColour` do on the CPU, which is what the tests compare it with.
 ## A hovered or selected trace's column is tinted towards its colour
-## (`densityTint` on the CPU). Drawn `solid`, the quad is painted in one
-## colour instead: the paper under a tile's wiggles.
+## (`densityTint` on the CPU). A killed trace's column is the plot's
+## background (`solidColour`), tinted as well. Drawn `solid`, the quad is
+## painted in one colour instead: the paper under a tile's wiggles.
 
 import ../core/[geometry, tiles, viewport]
 import gl, textures
@@ -58,16 +59,19 @@ void main() {
   int j0 = clamp(int(j), 0, size.x - 1);
   int j1 = clamp(int(j) + 1, 0, size.x - 1);
   float f = clamp(texel.y - j, 0.0, 1.0);
-  float a0 = texelFetch(amps, ivec2(j0, row), 0).r;
-  float a1 = texelFetch(amps, ivec2(j1, row), 0).r;
-  float a = a0 * (1.0 - f) + a1 * f;
-  float u = clamp(a * scale, -1.0, 1.0);
-  int i = int(floor((u + 1.0) * 127.5 + 0.5));
-  colour = texelFetch(lut, ivec2(i, 0), 0);
+  int m = int(texelFetch(marks, ivec2(row, 0), 0).r * 255.0 + 0.5);
+  if ((m & 2) != 0) colour = solidColour; // killed: blank
+  else {
+    float a0 = texelFetch(amps, ivec2(j0, row), 0).r;
+    float a1 = texelFetch(amps, ivec2(j1, row), 0).r;
+    float a = a0 * (1.0 - f) + a1 * f;
+    float u = clamp(a * scale, -1.0, 1.0);
+    int i = int(floor((u + 1.0) * 127.5 + 0.5));
+    colour = texelFetch(lut, ivec2(i, 0), 0);
+  }
   if (tint > 0.0) {
     if (row == hoverRow) colour = mix(colour, hoverColour, tint);
-    else if (texelFetch(marks, ivec2(row, 0), 0).r > 0.5)
-      colour = mix(colour, selectedColour, tint);
+    else if ((m & 1) != 0) colour = mix(colour, selectedColour, tint);
   }
 }
 """

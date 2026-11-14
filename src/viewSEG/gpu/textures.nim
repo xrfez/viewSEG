@@ -8,9 +8,10 @@
 ##   when the samples are not decimated);
 ## - with the tile's envelope (`core/wiggle`), each column's extremes, two
 ##   texels a column, what zoomed-out wiggles are drawn through;
-## - its marks, `R8`, one texel per trace: whether the trace is selected,
-##   replaced (`setSelected`) when the selection changes, so a click never
-##   uploads samples again.
+## - its marks, `R8`, one texel per trace: whether the trace is selected
+##   (`SelectedMark`) and whether it was killed when the tile was made
+##   (`KilledMark`: drawn blank), replaced (`setMarks`) when the selection
+##   changes, so a click never uploads samples again.
 ##
 ## Everything here runs on the UI thread with the frontend's GL context
 ## current. Objects are freed explicitly (`free`), never by a destructor.
@@ -19,6 +20,10 @@ import std/strutils
 import ../core/[tiles, viewport, wiggle]
 import gl
 
+const
+  SelectedMark* = 1'u8 ## a mark's bit: the trace is selected
+  KilledMark* = 2'u8   ## a mark's bit: the trace is killed (drawn blank)
+
 type
   TileTextures* = object
     ## The GPU's copy of one tile.
@@ -26,7 +31,7 @@ type
     blocks*: seq[TileBlock]
     data*: seq[GLuint]      ## per block: the values
     envelope*: seq[GLuint]  ## per block: the columns' extremes; empty when the tile has none
-    marks*: seq[GLuint]     ## per block: 255 where the trace is selected
+    marks*: seq[GLuint]     ## per block: each trace's `SelectedMark` and `KilledMark` bits
     bytes*: int             ## GPU memory they take
     selectionRevision*: int ## the selection the marks show; -1 for none yet
     hoverRevision*: int     ## the selection `hoverRow` was found for; -1 for none yet
@@ -81,10 +86,19 @@ proc buildProgram*(vertex, fragment, what: string): (GLuint, string) =
     return (0'u32, "the " & what & " shader: " & log.strip(chars = {'\0', ' ', '\n'}))
   (program, "")
 
+func marksOf(t: Tile; b: TileBlock; selected: openArray[bool]): seq[uint8] =
+  ## The marks of block `b`'s rows: selected (`selected[row]`; a row past
+  ## its end is not), killed.
+  result = newSeq[uint8](b.rows)
+  for i in 0 ..< b.rows:
+    let row = b.row + i
+    if row < selected.len and selected[row]: result[i] = result[i] or SelectedMark
+    if t.isKilled(row): result[i] = result[i] or KilledMark
+
 proc upload*(t: Tile; maxSize: int): TileTextures =
   ## The GPU's copy of `t`, in blocks of at most `maxSize` texels a side
   ## (half that in time when the tile has an envelope, which takes two
-  ## texels a column). Nothing is selected.
+  ## texels a column). Nothing is selected; its killed traces are marked.
   result = TileTextures(id: t.id, selectionRevision: -1, hoverRevision: -1, hoverRow: -1)
   if t.request.count == 0 or t.columns == 0: return
   let envelope = t.hasEnvelope
@@ -105,25 +119,23 @@ proc upload*(t: Tile; maxSize: int): TileTextures =
       result.bytes += 2 * b.rows * b.cols * sizeof(float32)
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0)
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-    var none = newSeq[uint8](b.rows)
+    var marks = t.marksOf(b, [])
     result.marks.add newTexture()
     glTexImage2D(GL_TEXTURE_2D, 0, GLint(GL_R8), GLsizei(b.rows), 1, 0, GL_RED,
-      GL_UNSIGNED_BYTE, addr none[0])
+      GL_UNSIGNED_BYTE, addr marks[0])
     result.bytes += b.rows
     result.blocks.add b
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4)
   glBindTexture(GL_TEXTURE_2D, GLuint(last))
 
-proc setSelected*(tt: TileTextures; selected: openArray[bool]) =
-  ## Marks the rows of the tile that are selected (`selected[row]`); a row
-  ## past its end is not.
+proc setMarks*(tt: TileTextures; t: Tile; selected: openArray[bool]) =
+  ## Marks the rows of tile `t` (whose GPU copy `tt` is) that are selected
+  ## (`selected[row]`; a row past its end is not), and those killed.
   var last: GLint
   glGetIntegerv(GL_TEXTURE_BINDING_2D, addr last)
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
   for k, b in tt.blocks:
-    var marks = newSeq[uint8](b.rows)
-    for i in 0 ..< b.rows:
-      if b.row + i < selected.len and selected[b.row + i]: marks[i] = 255
+    var marks = t.marksOf(b, selected)
     glBindTexture(GL_TEXTURE_2D, tt.marks[k])
     glTexImage2D(GL_TEXTURE_2D, 0, GLint(GL_R8), GLsizei(b.rows), 1, 0, GL_RED,
       GL_UNSIGNED_BYTE, addr marks[0])

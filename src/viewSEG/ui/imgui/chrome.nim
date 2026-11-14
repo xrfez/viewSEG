@@ -1,7 +1,8 @@
 ## The shell's chrome around the docked panels: the icon toolbar under the menu
 ## bar, the status bar along the bottom (the running job's progress bar and
 ## its Cancel button, then the cursor readout: the fields the user chose,
-## from `core/readout`; a right click on the bar chooses them and their
+## from `core/readout`, and whether the trace under the pointer is killed or
+## its polarity reversed; a right click on the bar chooses them and their
 ## order), and tool buttons (a Nerd Font icon or
 ## a seismic `Symbol`) with tooltips that name their shortcut. The toolbar holds
 ## application-level actions only; display and gather controls belong to the
@@ -277,6 +278,14 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
       jobField(job, t, marks, result)
     for f in fields:
       readoutField(fonts, f, at.text(f), t, marks)
+    let note = at.editNote # whatever the fields: the trace's edits
+    if note.len > 0:
+      igSameLine(0, -1)
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+      igTextUnformatted(note.cstring, nil)
+      igPopStyleColor(1)
+      marks.mark("status.edits")
+      igSameLine(0, 16)
     let right = info.themeName & "   " & $int(round(info.scale * 100)) & " %"
     let w = igCalcTextSize(right.cstring, nil, false, -1).x
     let avail = igGetContentRegionAvail().x

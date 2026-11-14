@@ -38,21 +38,33 @@
 ##   to 0, as the tile draws it anyway: processSEG leaves such a trace as it
 ##   is, so under AGC or a per-trace normalization it would be drawn at its
 ##   raw amplitude among gained traces, saturated.
+## - **Edits** (`core/edits`, with each request): a killed trace is blanked
+##   and passed by, like a trace that could not be decoded, so neither the
+##   processing nor the tile's level sees it; a reversed trace's samples are
+##   negated (processSEG's `reversePolarity`, on its live samples, as
+##   `polarityOp` does) before the processing and the gain.
+## - **Raw samples at hand.** The decoded samples of the last request read
+##   from the file are kept, as read (up to `MaxRawSamples`); a request for
+##   the same traces and samples among them (after an edit, or a new gain,
+##   on the same view, or on one a little shorter) is made from them, with
+##   no read from the file.
 ## - **Threads and ORC.** The reader is a worker (`core/threads`); it
 ##   empties its list of cycle roots after closing a prefetcher, before it
 ##   ends a hold, and before it exits. A tile holds no `ref`.
 
-import std/[locks, math, os, times]
+import std/[algorithm, locks, math, os, times]
 import parseSEG
-import processSEG/[adapters, pipeline]
-import processSEG/core/[rows, types, workspace]
+import processSEG/pipeline
+import processSEG/core/[basic, rows, types, workspace]
 import processSEG/gain/stats
-import inbox, jobs, log, panels, sorting, threads, tiles, viewport, wiggle
+import edits, inbox, jobs, log, panels, sorting, threads, tiles, viewport, wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
   DecodeWorkers = 2   ## prefetch threads per reader
   HeaderScan = 10_000 ## traces looked at for the header fields a gather has
+  MaxRawSamples* = 32 * 1024 * 1024
+    ## decoded samples (128 MiB) a reader keeps of its last request, at most
 
 type
   ReaderSource* = object
@@ -70,6 +82,8 @@ type
     fields*: seq[HeaderField] ## the display header's rows
     flow*: Pipeline           ## processing for display (`displayPipeline`)
     clipPercentile*: float64
+    reversed*: seq[int]       ## the gather's traces whose polarity is reversed, ascending
+    killed*: seq[int]         ## the gather's traces killed, ascending
 
   ReaderObj = object
     lock: Lock
@@ -95,6 +109,15 @@ type
     listed: bool ## `list` holds the traces shown, maybe none; else every trace of `traces`
     list: seq[int]
 
+  RawCache = object
+    ## The decoded samples of the last request read from the file, as read,
+    ## before any edit or processing.
+    valid: bool
+    list: seq[int] ## the traces, one per row
+    window: Slice[int] ## the samples decoded
+    samples: seq[float32] ## `list.len` rows of `window.len` samples
+    failed: seq[int] ## the rows that could not be decoded (left zero), ascending
+
   Reader = object
     ## The reader thread's own state.
     r: ptr ReaderObj
@@ -105,6 +128,7 @@ type
     sorted: bool         ## `positions` follow the newest order taken
     orderGen: uint64     ## requests from before the newest order are not served
     layout: PanelLayout
+    raw: RawCache
     ws: Workspace
 
 proc `=destroy`*(x: PanelReader)
@@ -150,6 +174,7 @@ proc letGo(rd: var Reader) =
   rd.positions = Positions()
   rd.sorted = false
   rd.layout = PanelLayout()
+  rd.raw = RawCache()
 
 proc arrange(rd: var Reader; order: seq[SortKey]) =
   ## Puts the positions in `order` (the traces the filter keeps, sorted),
@@ -225,15 +250,16 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   let order = rd.src.order
   rd.arrange(order)
 
-proc levelOf(rd: var Reader; tile: Tile; list: seq[int]; failed: seq[int];
+proc levelOf(rd: var Reader; tile: Tile; list: seq[int]; excluded: seq[int];
     percentile: float64): Level =
   ## The RMS, the peak and the `percentile` of |x| over the tile's live
-  ## traces; NaN when there are none.
+  ## traces, the rows `excluded` (not decoded, or killed) left out; NaN when
+  ## there are none.
   result = Level()
   if tile.request.count == 0 or tile.columns == 0: return
   try:
     let meta = initChunkMeta(rd.src.file[].rowsOf(list), rd.layout.dtMs *
-      float64(tile.request.decimation), tile.request.firstSample, failed)
+      float64(tile.request.decimation), tile.request.firstSample, excluded)
     rd.ws.reserve(panelStatsWorkspace)
     let s = panelStats(rowBlock(tile.data, tile.request.count, tile.columns), meta, rd.ws,
       percentile)
@@ -241,22 +267,58 @@ proc levelOf(rd: var Reader; tile: Tile; list: seq[int]; failed: seq[int];
   except ValueError as e:
     rd.note(sevWarning, "Cannot work out the display gain of " & rd.name & ": " & e.msg)
 
-proc readyForProcessing(c: var PrefetchChunk[float32]) =
-  ## Blanks the rows of `c` marked dead in the file and sets every sample
+proc readyForProcessing(b: RowBlock[float32]; rows: TraceRows) =
+  ## Blanks the rows of `b` marked dead in the file and sets every sample
   ## that is not a number to 0: the display processing leaves such a row as
   ## it is, and it would stand out at its raw amplitude.
-  let b = rowBlock(c.samples)
-  for k in 0 ..< c.count:
+  for k in 0 ..< b.len:
     let row = b.rowPtr(k)
-    if c.rows.keysAt(k).status == tsDead:
+    if rows.keysAt(k).status == tsDead:
       for i in 0 ..< b.cols: row[i] = 0
     else:
       for i in 0 ..< b.cols:
         if not (abs(row[i]) < Inf): row[i] = 0 # NaN fails the test too
 
+type Preparing = object
+  ## What every block of one request is readied with (`prepare`).
+  edits: seq[set[TraceEdit]] ## per row of the request; empty: none
+  processing: bool
+  plan: PipelinePlan[float32]
+  firstSample: int           ## the trace sample of column 0
+
+proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: TraceRows;
+    first: int; failedRows: openArray[int]) =
+  ## Readies rows `first ..< first + b.len` of a request, decoded into `b`
+  ## (`rows`: their traces; `failedRows`: those not decoded, 0-based in the
+  ## block, ascending) for the tile: killed rows blanked, the samples of
+  ## reversed rows negated, then the display processing, which passes by
+  ## the killed rows and those not decoded.
+  var passed: seq[int] # rows of the block not decoded or killed, ascending
+  var fi = 0
+  for k in 0 ..< b.len:
+    while fi < failedRows.len and failedRows[fi] < k: inc fi
+    let killed = pr.edits.len > 0 and teKilled in pr.edits[first + k]
+    if killed:
+      let row = b.rowPtr(k)
+      for i in 0 ..< b.cols: row[i] = 0
+    if killed or (fi < failedRows.len and failedRows[fi] == k): passed.add k
+  if pr.processing: readyForProcessing(b, rows)
+  try:
+    let meta = initChunkMeta(rows, rd.layout.dtMs, pr.firstSample, passed)
+    if pr.edits.len > 0:
+      for k in 0 ..< b.len:
+        if teReversed in pr.edits[first + k] and meta.isLive(k):
+          reversePolarity(b.row(k, meta.liveSamples(k, b.cols)))
+    if pr.processing: pr.plan.apply(b, meta, rd.ws)
+  except ValueError as e:
+    rd.note(sevError, "The display processing stopped on " & rd.name & ": " & e.msg)
+    pr.processing = false
+
 proc serve(rd: var Reader; req: sink ReaderRequest) =
   ## Reads, processes and posts the tile `req` asks for, unless a newer note
-  ## comes first.
+  ## comes first. The samples come from the file through a prefetcher, or,
+  ## when the last request read from the file had the same traces and these
+  ## samples among its own, from what it read (`RawCache`).
   let q = req.read
   let f = rd.src.file
   if q.isEmpty or q.first < 0 or q.last >= rd.positions.len: return
@@ -264,41 +326,38 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
   for row in 0 ..< q.count: list[row] = rd.positions.traceAt(q.position(row))
   let window = q.decodeSpan(rd.layout.samples)
   let skip = q.firstSample - window.a # decoded columns before the kept ones
-  var processing = req.flow.len > 0
-  var plan: PipelinePlan[float32]
-  if processing:
+  let cols = window.len
+  var pr = Preparing(processing: req.flow.len > 0, firstSample: window.a)
+  if pr.processing:
     try:
-      plan = req.flow.compile(float32, rd.layout.dtMs, window.len,
+      pr.plan = req.flow.compile(float32, rd.layout.dtMs, cols,
         recordSamples = rd.layout.samples)
-      rd.ws.reserve(plan)
+      rd.ws.reserve(pr.plan)
     except ValueError as e:
       rd.note(sevError, "The display processing cannot run on " & rd.name & ": " & e.msg)
-      processing = false
+      pr.processing = false
   var tile = Tile(panel: rd.r.panel, request: q, dtMs: rd.layout.dtMs, t0Ms: rd.layout.t0Ms,
     columns: q.columns, fields: req.fields)
   tile.data = newSeq[float32](q.count * tile.columns)
   if q.envelope: tile.envelope = newSeq[float32](q.count * 2 * tile.columns)
-  tile.traces = list
   tile.keys = newSeq[TraceKeys](q.count)
   tile.header = newSeq[seq[float64]](req.fields.len)
   for h in tile.header.mitems: h = newSeq[float64](q.count)
-  var failed: seq[int]
-  var firstError = ""
-  var pf = newPrefetcher[float32](f[], list, chunkTraces = ChunkTraces, cols = window.len,
-    firstSample = window.a, workers = DecodeWorkers, quickFirst = true, uniform = true)
-  var c: PrefetchChunk[float32]
-  var given = false
-  while pf.nextInto(c):
-    if processing:
-      c.readyForProcessing()
-      try:
-        plan.apply(c.samples, chunkMeta(c, rd.layout.dtMs), rd.ws)
-      except ValueError as e:
-        rd.note(sevError, "The display processing stopped on " & rd.name & ": " & e.msg)
-        processing = false
-    let b = rowBlock(c.samples)
-    for k in 0 ..< c.count:
-      let row = c.first + k
+  # the edits of each row
+  if req.killed.len > 0 or req.reversed.len > 0:
+    pr.edits = newSeq[set[TraceEdit]](q.count)
+    var any = false
+    for row, t in list:
+      if req.killed.binarySearch(t) >= 0: pr.edits[row].incl teKilled
+      if req.reversed.binarySearch(t) >= 0: pr.edits[row].incl teReversed
+      if pr.edits[row] != {}: any = true
+    if any: tile.edits = pr.edits
+    else: pr.edits.setLen 0
+
+  template cut(b: RowBlock[float32]; rows: TraceRows; first: int) =
+    ## Rows `first ..< first + b.len` of the tile, from the readied block `b`.
+    for k in 0 ..< b.len:
+      let row = first + k
       let src = b.rowPtr(k)
       let at = row * tile.columns
       decimatePeakInto(src.toOpenArray(skip, skip + q.samples - 1), q.decimation,
@@ -307,24 +366,88 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
         let e = 2 * at
         minMaxInto(src.toOpenArray(skip, skip + q.samples - 1), q.decimation,
           tile.envelope.toOpenArray(e, e + 2 * tile.columns - 1))
-      let keys = c.rows.keysAt(k)
+      let keys = rows.keysAt(k)
       tile.keys[row] = keys
       for i, field in req.fields:
         tile.header[i][row] = keys.value(field, list[row])
-    for fr in c.failedRows: failed.add c.first + fr
-    tile.failed += c.failed
-    if c.failed > 0 and firstError.len == 0 and c.log.len > 0:
-      firstError = c.log[0].msg
-    if rd.r.interrupted:
-      given = true
-      break
-  pf.close()
-  clearCycleRoots()
+
+  var failed: seq[int]
+  var given = false
+  if rd.raw.valid and rd.raw.list == list and window.a >= rd.raw.window.a and
+      window.b <= rd.raw.window.b:
+    # The samples are at hand: nothing is read from the file.
+    let held = rd.raw.window.len
+    let offset = window.a - rd.raw.window.a
+    tile.cached = true
+    failed = rd.raw.failed
+    tile.failed = failed.len
+    var work = newSeq[float32](min(ChunkTraces, q.count) * cols)
+    var a = 0
+    while a < q.count:
+      let n = min(ChunkTraces, q.count - a)
+      let part = list[a ..< a + n] # outlives the rows' view
+      let rows = f[].rowsOf(part)
+      work.setLen n * cols
+      if cols > 0:
+        for k in 0 ..< n:
+          copyMem(addr work[k * cols], addr rd.raw.samples[(a + k) * held + offset],
+            cols * sizeof(float32))
+      let b = rowBlock(work, n, cols)
+      var partFailed: seq[int]
+      for fr in failed:
+        if fr in a ..< a + n: partFailed.add fr - a
+      rd.prepare(pr, b, rows, a, partFailed)
+      cut(b, rows, a)
+      a += n
+      if rd.r.interrupted:
+        given = true
+        break
+  else:
+    let keep = q.count * cols <= MaxRawSamples
+    if keep: # its buffer reused
+      rd.raw.valid = false
+      rd.raw.list = list
+      rd.raw.window = window
+      rd.raw.samples.setLen q.count * cols
+      rd.raw.failed.setLen 0
+    else: rd.raw = RawCache() # too large to keep: the one before goes too
+    var firstError = ""
+    var pf = newPrefetcher[float32](f[], list, chunkTraces = ChunkTraces, cols = cols,
+      firstSample = window.a, workers = DecodeWorkers, quickFirst = true, uniform = true)
+    var c: PrefetchChunk[float32]
+    while pf.nextInto(c):
+      let b = rowBlock(c.samples)
+      if keep and c.count * cols > 0: # as read, before anything changes them
+        copyMem(addr rd.raw.samples[c.first * cols], b.rowPtr(0), c.count * cols *
+          sizeof(float32))
+      rd.prepare(pr, b, c.rows, c.first, c.failedRows)
+      cut(b, c.rows, c.first)
+      for fr in c.failedRows: failed.add c.first + fr
+      tile.failed += c.failed
+      if c.failed > 0 and firstError.len == 0 and c.log.len > 0:
+        firstError = c.log[0].msg
+      if rd.r.interrupted:
+        given = true
+        break
+    pf.close()
+    clearCycleRoots()
+    if keep and not given:
+      rd.raw.failed = failed
+      rd.raw.valid = true
+    if not given and tile.failed > 0:
+      rd.note(sevWarning, $tile.failed & " of the " & $q.count & " traces shown could not " &
+        "be read and are drawn blank" & (if firstError.len > 0: ": " & firstError else: "") &
+        ".")
   if given: return
-  tile.level = rd.levelOf(tile, list, failed, req.clipPercentile)
-  if tile.failed > 0:
-    rd.note(sevWarning, $tile.failed & " of the " & $q.count & " traces shown could not be " &
-      "read and are drawn blank" & (if firstError.len > 0: ": " & firstError else: "") & ".")
+  tile.traces = list
+  var excluded = failed # rows left out of the level: not decoded, or killed
+  for row in 0 ..< tile.edits.len:
+    if teKilled in tile.edits[row]: excluded.add row
+  excluded.sort()
+  var unique: seq[int]
+  for row in excluded:
+    if unique.len == 0 or unique[^1] != row: unique.add row
+  tile.level = rd.levelOf(tile, list, unique, req.clipPercentile)
   rd.r.poster.post Msg(job: NoJob, kind: mkTile, tile: move tile)
 
 proc run(r: ptr ReaderObj) {.thread.} =

@@ -5,7 +5,7 @@
 ## Trace ids are survey-wide (`Session.base` + the trace's index), so the
 ## views treat one file and a survey of many files alike.
 
-import std/intsets
+import std/[algorithm, intsets]
 import session
 
 export intsets
@@ -27,6 +27,16 @@ type
     activeGather*: GatherRef
     revision*: int         ## bumped on every change
     selectedRevision*: int ## bumped when `selected` changes
+
+func targets*(s: Selection; under: int): seq[int] =
+  ## What a trace operation (kill, reverse polarity) acts on with the
+  ## pointer over trace `under`: every selected trace when `under` is one of
+  ## them, else `under` alone, ascending; none for -1.
+  if under < 0: return
+  if under in s.selected:
+    for t in s.selected: result.add t
+    result.sort()
+  else: result = @[under]
 
 proc setHover*(s: var Selection; trace: int): bool =
   ## Puts the cursor on `trace` (-1: none); false when it already was.

@@ -13,7 +13,8 @@
 ## them draws again at once, and reads and uploads nothing.
 ##
 ## A second pass draws the hovered and selected traces again, on top: the
-## quads of the other traces are collapsed in the vertex shader.
+## quads of the other traces are collapsed in the vertex shader. A killed
+## trace's quad is always collapsed: it is drawn blank.
 ##
 ## Positions and times reach the shaders relative to the view's top-left
 ## corner, taken in float64 here: in float32, position 10 000 000 is a
@@ -58,14 +59,16 @@ out float xOff;          // trace spacings from the baseline
 out float tMs;
 void main() {
   row = gl_InstanceID;
-  bool selected = texelFetch(marks, ivec2(row, 0), 0).r > 0.5;
+  int m = int(texelFetch(marks, ivec2(row, 0), 0).r * 255.0 + 0.5);
+  bool selected = (m & 1) != 0;
+  bool killed = (m & 2) != 0;
   marked = row == hoverRow ? 2 : (selected ? 1 : 0);
   int corner = gl_VertexID;
   xOff = ((corner & 1) == 0 ? -1.0 : 1.0) * reach;
   tMs = (corner & 2) == 0 ? tSpan.x : tSpan.y;
   float x = firstPos + float(row) * stride + xOff;
   vec2 p = vec2(x * xMap.x + xMap.y, tMs * tMap.x + tMap.y);
-  if (markedOnly == 1 && marked == 0) p = vec2(-2.0, -2.0); // collapsed: nothing drawn
+  if (killed || (markedOnly == 1 && marked == 0)) p = vec2(-2.0, -2.0); // collapsed: nothing drawn
   gl_Position = vec4(p, 0.0, 1.0);
 }
 """

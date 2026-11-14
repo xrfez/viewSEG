@@ -27,6 +27,8 @@
 ## chosen (`WiggleFill`). Fill and line are drawn with that coverage, the
 ## line over the fill, so their edges are smooth.
 ##
+## **Killed traces** put no ink at all: they are drawn blank.
+##
 ## **Order.** Traces are drawn in their order, each over the ones before
 ## it; then the hovered and selected traces once more, on top, in their
 ## colours (`TraceMark`), so a highlighted trace is never hidden by its
@@ -193,7 +195,9 @@ func traceInk*(t: Tile; s: Series; row: int; xPx, tMs: float64; st: WiggleStyle;
     ink: WiggleInk; mark = tmNone): Ink =
   ## What row `row`'s trace puts on the pixel whose centre lies `xPx` pixels
   ## right of the trace's baseline at time `tMs`: its fill, then its line
-  ## over it, in the colours of `mark`.
+  ## over it, in the colours of `mark`; nothing for a killed trace, which is
+  ## drawn blank.
+  if t.isKilled(row): return Ink()
   let (line, positive, negative, width) = case mark
     of tmHovered: (ink.hover, ink.hover, ink.hover, st.markedWidth)
     of tmSelected: (ink.selected, ink.selected, ink.selected, st.markedWidth)
