@@ -52,7 +52,9 @@
 - **Display header along the top:** rows of trace header values over the traces, thinned
   so labels never overlap. Any trace header field can be a row (among them the component
   of a multi-component station), and there can be several; the default is receiver
-  **line** and **point**. Reversed traces are marked there.
+  **line** and **point**. Reversed traces are marked there. A right click on the header
+  (its rows of values, or their names left of the plot) opens its own menu: automatic
+  fields, or the fields ticked; the gear popover has the same.
 - **The traces' order** is the file's until a sort is chosen, and belongs to the plot
   window: two windows on the same record can show it in two orders. Sorting never
   changes the file, and it happens off the screen's thread, so a large gather never
@@ -214,6 +216,8 @@ its shortcut shown there.
 | Ctrl + left click | Add a point to the mute being edited (only while the mute editor is open; otherwise nothing) |
 | Right drag | **Box zoom** to the dragged rectangle |
 | Right click | **The plot's menu:** the trace operations, on the trace under the cursor or the selection (see below) |
+| Right click on the display header (its values, or their names at the left) | **The display header's menu:** automatic fields, or the fields ticked |
+| Left click or drag on the display header | Nothing |
 | Middle drag | Pan (always, also while a ruler or mute is being drawn) |
 | Drag a scroll bar's thumb | Pan along that bar |
 | Click a scroll bar's track | Pan by a whole view towards the click; held, it repeats |
@@ -286,7 +290,8 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 
 Right-click the plot. The menu holds only what acts on the data; how the plot looks is in
 the strip (display modes, gain, sort, zoom, fit, back) and in the gear popover (colours,
-trace overlap, display header, scales).
+trace overlap, display header, scales), and the display header has its own menu (a right
+click on it).
 
 Its first line says what the trace operations act on: the trace under the pointer
 ("Trace 37"), or, when that trace is in the selection, the whole selection ("12 selected

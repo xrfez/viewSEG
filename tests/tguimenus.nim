@@ -8,14 +8,21 @@
 ## selected traces" when that trace is one of three selected (Shift + click
 ## adds them); "Reverse polarity of all traces" reverses every trace (read
 ## again, the trace under the pointer reads out the negated amplitude) and
-## is shown ticked when the menu opens again; and the file is never changed.
+## is shown ticked when the menu opens again. A right click on the display
+## header (its values above the plot, or their names at the left) opens the
+## header's own menu, not the plot's: Automatic fields turned off (the
+## survey's FFID and channel stay) and offset ticked there change the rows;
+## a left click there does nothing; the gear popover keeps the header's
+## fields too. The file is never changed.
 ##
 ## Seen to fail: with the old menu's display entries put back after the
 ## trace operations (Fit all, Back, Colours, the display header), "the menu
 ## goes on 599.0 pixels below its last item"; with the target always the
 ## trace under the pointer (the selection ignored in `targetOf`), "the menu
 ## acts on Trace 9, not 3 selected traces"; with the all-traces item never
-## ticked, "the tick: 0 pixels".
+## ticked, "the tick: 0 pixels"; with the header's right click opening
+## nothing (no `igOpenPopup` on its button), "the header's values: the
+## header's menu opens did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -159,6 +166,65 @@ withFixtures fx:
       doAssert f.pick.amplitude == -amplitude, "the readout says " & $f.pick.amplitude &
         " after " & $amplitude)
   rightClickStep("reversed", 15, "Trace 16")
+  # The display header's own menu: a right click on its values, or on their
+  # names left of the plot, opens it (and not the plot's menu)
+  var h: Vec2
+  proc headerStep(name: string; where: proc (f: FrameInfo): Vec2) =
+    step(name & ": point", proc (f: FrameInfo) =
+      h = where(f)
+      f.moveMouse(h), proc (f: FrameInfo): bool = wait > 3)
+    step(name & ": the header's menu opens", proc (f: FrameInfo) = f.click(h, button = 3),
+      proc (f: FrameInfo): bool =
+      result = f.markOf("plot.header menu").size.x > 0 and wait > 3
+      if result:
+        doAssert f.markOf("plot.menu").size.x == 0, "the plot's menu opened too"
+        for n in ["plot.header menu.auto", "plot.header menu.line", "plot.header menu.offset"]:
+          doAssert f.markOf(n).size.x > 0, "no " & n)
+  proc headerRow(f: FrameInfo): Vec2 =
+    ## Over the display header's first row, in the middle.
+    let (r, data) = (f.markOf("plot.header"), f.markOf("plot.data"))
+    doAssert r.size.y > 0 and r.pos.y + r.size.y <= data.pos.y + 1, "no header area above the plot"
+    vec2(round(data.pos.x + data.size.x / 2), round(r.pos.y + 5))
+  headerStep("the header's values", headerRow)
+  var box: Vec2
+  step("point at Automatic fields", proc (f: FrameInfo) =
+    box = f.markOf("plot.header menu.auto").centre
+    f.moveMouse(box), proc (f: FrameInfo): bool = wait > 2)
+  step("click it off", proc (f: FrameInfo) = f.click(box), proc (f: FrameInfo): bool =
+    not f.panel.header.auto)
+  step("point at offset", proc (f: FrameInfo) =
+    doAssert f.panel.header.fields == @[hfRecord, hfChannel], $f.panel.header
+    box = f.markOf("plot.header menu.offset").centre
+    f.moveMouse(box), proc (f: FrameInfo): bool = wait > 2)
+  step("tick offset", proc (f: FrameInfo) = f.click(box), proc (f: FrameInfo): bool =
+    hfOffset in f.panel.header.fields and f.panel.header.fields.len == 3)
+  step("Esc closes the header's menu", proc (f: FrameInfo) =
+    f.pressKey(skEscape, true)
+    f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
+    f.markOf("plot.header menu").size.x == 0 and f.answered)
+  headerStep("the header's names", proc (f: FrameInfo): Vec2 =
+    vec2(f.markOf("plot.data").pos.x - 12, f.headerRow.y))
+  step("Esc again", proc (f: FrameInfo) =
+    f.pressKey(skEscape, true)
+    f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
+    f.markOf("plot.header menu").size.x == 0)
+  # a left click on the header does nothing: no selection, no menu
+  var selected: int
+  step("left click on the header", proc (f: FrameInfo) =
+    selected = f.core.selection.selected.len
+    h = f.headerRow
+    f.moveMouse(h), proc (f: FrameInfo): bool = wait > 3)
+  step("nothing happens", proc (f: FrameInfo) = f.click(h), proc (f: FrameInfo): bool =
+    result = wait > 6
+    if result:
+      doAssert f.core.selection.selected.len == selected, "a click on the header selected"
+      doAssert f.markOf("plot.header menu").size.x == 0 and f.markOf("plot.menu").size.x == 0)
+  # the gear popover keeps the display header's fields
+  step("point at the gear", proc (f: FrameInfo) =
+    h = f.markOf("plot.more").centre
+    f.moveMouse(h), proc (f: FrameInfo): bool = wait > 2)
+  step("the gear's popover", proc (f: FrameInfo) = f.click(h), proc (f: FrameInfo): bool =
+    f.markOf("plot.more.header.auto").size.x > 0 and f.markOf("plot.more.header.offset").size.x > 0)
 
   # ------------------------------------------------------------ driver --
   proc onFrame(f: FrameInfo) =

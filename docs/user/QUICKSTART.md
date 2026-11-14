@@ -107,8 +107,9 @@ black wiggles with their positive lobes filled, on white paper, with automatic g
 on shot and receiver records). Where the traces are closer together than 4 pixels (a
 whole shot of a few thousand traces, say), the plot shows greyscale density instead, and
 says so in the strip ("density: traces under 4 px"); zoom in on the traces to see the
-wiggles. The row of labels over the traces is the display header (receiver line and point
-by default).
+wiggles. The rows of labels over the traces are the display header (receiver line and
+point by default): right-click them, or their names at the left, to choose its fields
+(automatic, or the ones you tick); the gear button has the same choice.
 
 | To | Mouse | Keys |
 |---|---|---|

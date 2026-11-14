@@ -46,10 +46,11 @@
 ## FFID; Page Up / Page Down, Home / End and Ctrl + G) and the trace order
 ## (`plotsort`: the sort buttons and Custom...) are in the strip, which
 ## wraps in a narrow window; the colours, the trace overlap, the display
-## header's fields and the scales in its gear popover. The plot's own menu
-## (right click) holds only functions on the data: the trace operations,
-## on the trace under the pointer or the selection, and the polarity of
-## every trace.
+## header's fields and the scales in its gear popover, the display header's
+## fields also in the header's own menu (a right click on it). The plot's
+## own menu (right click) holds only functions on the data: the trace
+## operations, on the trace under the pointer or the selection, and the
+## polarity of every trace.
 
 import std/[math, os, strutils, tables]
 import imguin/cimgui
@@ -65,6 +66,7 @@ const
   fillSymbols: array[WiggleFill, Symbol] = [syWigglePositive, syWiggleNegative]
   densityNote = "density: traces under 4 px"
   menuId = "##plotmenu"
+  headerMenuId = "##headermenu"
   gotoId = "Go to record##goto"
   moreId = "##plotmore"
   burstSeconds = 0.6   ## wheel turns or key presses closer than this are one gesture
@@ -284,19 +286,23 @@ proc button(label: string; t: Theme; marks: var Marks; mark: string): bool =
   result = igButton(label.cstring, ImVec2_c(x: 0, y: 0))
   marks.mark(mark)
 
-proc drawHeaderChoice(p: Panel; res: var PanelOutput) =
-  ## The display header's fields: automatic, or the ones ticked.
+proc drawHeaderChoice(p: Panel; marks: var Marks; prefix: string; res: var PanelOutput) =
+  ## The display header's fields: automatic, or the ones ticked; each box
+  ## marked `prefix` and "auto" or the field's name.
   var auto = p.header.auto
   if igCheckbox("Automatic fields", addr auto):
     res.commands.add Command(kind: ckHeader, panel: p.id,
       header: HeaderChoice(auto: auto, fields: p.shownFields))
+  marks.mark(prefix & "auto")
   igBeginDisabled(p.header.auto)
   let shown = p.shownFields
   for f in HeaderField:
     var on = f in shown
     let have = f in p.known
     let label = $f & (if have: "" else: "  (not in this file)")
-    if igCheckbox(label.cstring, addr on):
+    let clicked = igCheckbox(label.cstring, addr on)
+    marks.mark(prefix & $f)
+    if clicked:
       var fields: seq[HeaderField]
       for g in HeaderField:
         if (g == f and on) or (g != f and g in shown): fields.add g
@@ -699,7 +705,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     igSeparatorText("Wiggles")
     drawWiggleSettings(p, res)
     igSeparatorText("Display header")
-    drawHeaderChoice(p, res)
+    drawHeaderChoice(p, marks, "plot.more.header.", res)
     igSeparatorText("Scales")
     tp.drawScaleSettings(st, res, ppi, mon)
     igEndPopup()
@@ -834,6 +840,15 @@ proc drawTraceMenu(tp: var TracePanelUi; p: Panel; marks: var Marks; res: var Pa
   if igMenuItem_Bool("Reverse polarity of all traces", nil, reversed, true):
     res.commands.add Command(kind: ckReverseAll, panel: p.id, reverse: not reversed)
   marks.mark("plot.menu.reverse all")
+  igEndPopup()
+
+proc drawHeaderMenu(p: Panel; marks: var Marks; res: var PanelOutput) =
+  ## The display header's own menu (a right click on its rows or their
+  ## names): its fields, automatic or the ones ticked.
+  if not igBeginPopup(headerMenuId, 0): return
+  marks.markWindow("plot.header menu")
+  igSeparatorText("Display header")
+  drawHeaderChoice(p, marks, "plot.header menu.", res)
   igEndPopup()
 
 proc burst(tp: var TracePanelUi; g: Gesture): bool =
@@ -1093,6 +1108,15 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
         u32(t.roles[rlText]), text.cstring, nil)
       marks.markRect("plot.sorting", at, ImVec2_c(x: at.x + ts.x + 2 * pad.x,
         y: at.y + ts.y + 2 * pad.y))
+    # The display header's own menu: a right click on its rows of values or
+    # on their names left of the plot (nothing else happens there).
+    let headerSize = ImVec2_c(x: pos.x + size.x - headerTop.x, y: pos.y - headerTop.y)
+    if headerSize.x >= 1 and headerSize.y >= 1:
+      igSetCursorScreenPos(headerTop)
+      if igInvisibleButton("##headerinput", headerSize,
+          ImGui_ButtonFlags_MouseButtonRight.cint):
+        igOpenPopup_Str(headerMenuId, 0)
+      marks.mark("plot.header")
     # The mouse and keys, over the plot's data area.
     let plot = Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y))
     igSetCursorScreenPos(pos)
@@ -1136,6 +1160,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   ImPlot_PopStyleColor(1)
   if menu: igOpenPopup_Str(menuId, 0)
   tp.drawTraceMenu(p, marks, res)
+  drawHeaderMenu(p, marks, res)
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)
 
