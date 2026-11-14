@@ -13,6 +13,8 @@
 ##   all stop at one pixel a trace, so every trace in view is drawn; a
 ##   window larger than the record shows all of it, and smaller again keeps
 ##   that scale;
+## - at the limit the wiggle line is thin (a quarter of the trace spacing),
+##   so the sine's troughs are light, not a band of lines;
 ## - zoomed in to two and three pixels a trace (where density took over
 ##   before), wiggles are drawn and no density;
 ## - in the density mode the wheel zooms out until the whole record fills
@@ -42,7 +44,9 @@
 ## density); with `viewLimits` giving the wiggle modes no widest view,
 ## "opens at the limit did not happen" (the whole record, 0.84 pixels a
 ## trace); with Ctrl + 0 fitting the whole record (`fitAll`, as it did),
-## "Ctrl + 0 did not happen"; with a typed scale kept about its centre (as
+## "Ctrl + 0 did not happen"; with the line drawn a full pixel wide at one
+## pixel a trace (as it was), "opens at the limit: 134 of 104208 pixels
+## light"; with a typed scale kept about its centre (as
 ## it was), "Enter did not happen" (the left edge moved). With no margin
 ## (`traceMargin` 0, as before), "opens with the margins" found the fit at
 ## -0.5 .. 23.5; with `relimited` keeping the view at a new overlap whatever
@@ -142,6 +146,13 @@ proc main() =
         doAssert s.wiggles and not s.density
         let (bad, seen) = s.mismatches(step = 3)
         doAssert bad == 0, what & ": " & $bad & " of " & $seen & " pixels off the reference"
+        # a thin line where the traces are close: the troughs of the sine are
+        # paper with a little line, not a band of lines (every column a line)
+        var light = 0
+        for c in s.image:
+          if c.r > 160: inc light
+        doAssert light * 10 > s.image.len, what & ": " & $light & " of " & $s.image.len &
+          " pixels light (a band of lines)"
 
     proc wiggles(f: FrameInfo; px: float64; what: string): bool =
       ## Zoomed in to `px` pixels a trace: wiggles, no density.

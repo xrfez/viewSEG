@@ -219,15 +219,29 @@ func reach*(st: WiggleStyle): float64 =
   ## overlap, the line's half width and a pixel of smoothing.
   st.overlap + (max(st.lineWidth, st.markedWidth) / 2 + 1) / max(st.pixelsPerTrace, 1e-9)
 
+const LineShare* = 0.25
+  ## the most of a trace spacing a wiggle's line takes: where traces are a
+  ## few pixels apart, a full-width line would cover the fills, and at one
+  ## pixel a trace every column would be line (a black plot)
+
+func lineWidthFor*(width, pixelsPerTrace: float64): float64 {.inline.} =
+  ## The line width drawn for a line `width` pixels wide where traces are
+  ## `pixelsPerTrace` apart: at most `LineShare` of a trace spacing (a
+  ## coverage below a pixel, so a close record shows its fills, not a band
+  ## of lines).
+  min(width, LineShare * pixelsPerTrace)
+
 func styleFor*(d: DisplaySettings; view: Viewport; scale: float32; lineWidth,
     markedWidth: float64): WiggleStyle =
   ## The wiggle style of a layer drawn with `d` in `view` at display gain
   ## `scale`, lines `lineWidth` pixels wide (`markedWidth` when hovered or
-  ## selected), at its `effectiveOverlap`.
-  WiggleStyle(scale: scale, overlap: d.effectiveOverlap,
-    pixelsPerTrace: pixelsPerTrace(view),
+  ## selected), at its `effectiveOverlap`. The plain line is never wider
+  ## than `LineShare` of a trace spacing (`lineWidthFor`); a hovered or
+  ## selected trace keeps `markedWidth`, so it stands out.
+  let ppt = pixelsPerTrace(view)
+  WiggleStyle(scale: scale, overlap: d.effectiveOverlap, pixelsPerTrace: ppt,
     msPerPixel: view.timeMs.width / float64(max(view.rows, 1)),
-    lineWidth: lineWidth, markedWidth: markedWidth, fills: d.fills)
+    lineWidth: lineWidthFor(lineWidth, ppt), markedWidth: markedWidth, fills: d.fills)
 
 func hoverRow*(t: Tile; base, hover: int): int =
   ## The row of `t` that holds survey-wide trace `hover` (`Selection.hover`)

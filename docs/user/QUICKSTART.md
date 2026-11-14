@@ -160,7 +160,9 @@ where the traces are one pixel apart, so every trace in view is drawn. A shot of
 traces than the plot is wide (a few thousand, say) opens at that limit from its first
 trace, with a scroll bar under the plot for the rest. To see a whole large record at
 once, choose the density display (the first button in the strip), which zooms out until
-the record fills the plot. In wiggles the plot reaches a little past the first and the
+the record fills the plot. Where the traces are only a few pixels apart, the wiggle line
+is drawn thinner than a pixel (light grey), so the fills show the record as a
+variable-area section rather than a band of lines. In wiggles the plot reaches a little past the first and the
 last trace, as far as their swing goes (the trace overlap), so their whole wave shows; a
 record of a single trace shows whole. The rows of labels over the traces are the display header (receiver line and
 point by default): right-click them, or their names at the left, to choose its fields
@@ -257,12 +259,13 @@ gain amount in dB works with every type: type a value, click - or +, or press `]
 `[` (keypad `*` and `/`); the picture brightens or darkens at once.
 
 The view never goes past the data: panning and zooming stop at the first and last trace
-and at the record's start and end, and zoomed out as far as it goes the record fills the
-plot. Whenever part of the record is out of view, a scroll bar shows how much and where:
-under the plot for the traces, right of it for the time. The time axis shows the times
-only; its unit is in the ms/in box and in the status bar. Making the window larger or
-smaller keeps the scale and shows more or less of the record, from the same top-left
-corner (an axis that showed the whole record goes on showing all of it).
+(in wiggles, past them by their swing) and at the record's start and end, and zoomed out
+as far as it goes the record fills the plot (in wiggles, as many traces as the plot has
+pixels). Whenever part of the record is out of view, a scroll bar shows how much and
+where: under the plot for the traces, right of it for the time. The time axis shows the
+times only; its unit is in the ms/in box and in the status bar. Making the window larger
+or smaller keeps the scale and shows more or less of the record, from the same top-left
+corner, also when the whole record was in view.
 
 **Sort.** Three buttons in the strip put the traces in another order: **Line/Station**
 (receiver line, then station), **By Flag** (the same, with each station's components side

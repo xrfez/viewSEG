@@ -9,7 +9,9 @@
 ## shader is to (straight between vertices, clipped at the overlap,
 ## the other way for a negative scale); a style's overlap is in its range, whatever
 ## the settings hold; density is drawn only in the modes that name it, at
-## any trace spacing; the hovered and selected rows of a tile are found from
+## any trace spacing; the line takes at most a quarter of a trace spacing
+## (a hovered or selected trace keeps its width); the hovered and selected
+## rows of a tile are found from
 ## survey-wide trace ids; a Shift + click's range is the traces from the
 ## anchor (the trace clicked last) to the one clicked, in the order shown; and a hover on a trace no open file has clears
 ## the hover without a warning.
@@ -29,6 +31,8 @@
 ## `staleHoverIsQuiet` found "Ignored "hover": no open file has trace 7.";
 ## with `styleFor` only clamping the overlap (as it did), `overlapInRange`
 ## found an overlap that is not a number drawn as one (nothing drawn); with
+## the line at its full width at any spacing (as it was),
+## `lineThinWhereTracesAreClose` found 1 pixel at 2 pixels a trace; with
 ## `rangeOf` giving the clicked trace alone, `rangesInTheOrderShown` found no
 ## range.
 
@@ -156,6 +160,16 @@ block overlapInRange:
     d.overlap = given
     let st = d.styleFor(v, 1, 1, 2)
     doAssert st.overlap == want, "overlap " & $given & " drawn as " & $st.overlap
+
+block lineThinWhereTracesAreClose:
+  # the line takes at most a quarter of a trace spacing; a marked trace keeps
+  # its width
+  let lay = PanelLayout(traces: 1000, samples: 100, dtMs: 2)
+  for (columns, want) in [(8000, 1.0), (4000, 1.0), (2000, 0.5), (1000, 0.25)]:
+    let st = DisplaySettings().styleFor(fitAll(lay, columns, 300), 1, 1, 2)
+    doAssert abs(st.lineWidth - want) < 1e-9 and st.markedWidth == 2,
+      $columns & " columns: " & $st.lineWidth
+  doAssert lineWidthFor(2, 40) == 2 and lineWidthFor(2, 2) == 0.5
 
 block lineAndFillCoverage:
   # one trace: a positive lobe then a negative one, 1 ms samples

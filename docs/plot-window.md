@@ -217,7 +217,10 @@
   chosen, edge to edge with the line.
 - **Order:** each trace is drawn over the one before it; the hovered and selected traces
   once more, on top, so a neighbour's fill never hides a highlight. The line is one pixel
-  wide (at 100 %), two for a hovered or selected trace.
+  wide (at 100 %), two for a hovered or selected trace, and never wider than a quarter of
+  the trace spacing: where traces are a few pixels apart a full line would cover the
+  fills, and at one pixel a trace every column would be line, a black plot; a thinner
+  line shows as a light grey, so a whole shot reads as a variable-area section.
 
 ## Colours
 

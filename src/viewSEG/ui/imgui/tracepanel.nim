@@ -1396,7 +1396,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       let scale = displayScale(p.reference, d.gainDb)
       let shown = Viewport(traces: Span(lo: lim2.X.Min, hi: lim2.X.Max),
         timeMs: Span(lo: lim2.Y.Min, hi: lim2.Y.Max), columns: view.columns, rows: view.rows)
-      # one pixel of line at 100 %, two for a hovered or selected trace
+      # one pixel of line at 100 % (no more than a quarter of a trace spacing:
+      # `styleFor`), two for a hovered or selected trace
       let width = max(1.0, round(float64(fb.x)))
       let tex = tp.renderer.render(PlotFrame(view: shown, background: ink.background,
         density: d.drawsDensity, wiggles: d.drawsWiggles, scale: scale,
