@@ -1,0 +1,194 @@
+## The plot window's gain controls, in its strip: the gain type, with its
+## own settings in the same drop-down, and the gain amount in dB, which
+## every type has (a box, - and + buttons, and keys).
+##
+## The amount only scales the drawing (`displayScale`), so it acts at once
+## and reads nothing again; so does a change between the types that are a
+## scale alone. A type whose gain runs on the samples (AGC, Exponential,
+## Normalized per trace) reads the view again when it or its settings
+## change (`core/panels`, "Display gain").
+
+import std/math
+import imguin/cimgui
+import ../../core/[readout, state]
+import ../../view/theme
+import chrome
+
+const
+  gainTypes = [dgAuto, dgNone, dgFixed, dgNormalized, dgExponential, dgFloat, dgAgc]
+  dbKeysTip = "] or keypad * for more, [ or keypad / for less"
+
+proc label(d: DisplaySettings; kind: GatherKind): string =
+  ## What the type control says: the type in use and its main setting.
+  result = case d.effectiveGain(kind)
+    of dgAgc: "AGC " & $int(round(d.agcWindowMs)) & " ms"
+    of dgNone: "none"
+    of dgFixed: "fixed"
+    of dgNormalized: "normalized, " & (if d.normScope == perTrace: "each trace" else: "record")
+    of dgExponential:
+      if d.timeGain == tgDbPerSecond: "exponential, " & significant(d.dbPerS, 3) & " dB/s"
+      else: "exponential, t^" & significant(d.power, 3)
+    of dgFloat: "float"
+    of dgAuto: "automatic"
+  if d.gain == dgAuto: result.add " (auto)"
+
+func describe(g: DisplayGain; d: DisplaySettings): string =
+  ## A type as the drop-down lists it.
+  case g
+  of dgAuto: "Automatic: AGC on shot and receiver records, none on stacked data"
+  of dgNone: "None: the samples as recorded, one scale for the record"
+  of dgFixed: "Fixed: one scale for every record and file, so they compare"
+  of dgNormalized: "Normalized: every trace, or the record, to the same level"
+  of dgExponential: "Exponential: more gain later in the record"
+  of dgFloat: "Float: the scale follows the data in view"
+  of dgAgc: "AGC: automatic gain control, " & $int(round(d.agcWindowMs)) & " ms window"
+
+proc tip(text: string) =
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igTextUnformatted(text.cstring, nil)
+    igEndTooltip()
+
+proc send(p: Panel; d: DisplaySettings; cmds: var seq[Command]) =
+  cmds.add Command(kind: ckDisplay, panel: p.id, display: d)
+
+proc numberBox(id: string; value: float64; format: string; width: float32;
+    typed: var float64): bool =
+  ## A box for a number: true once the user has finished typing into it
+  ## (Enter, or clicking away), the value in `typed`.
+  var v = cdouble(value)
+  igSetNextItemWidth(width)
+  discard igInputDouble(id.cstring, addr v, 0, 0, format.cstring, 0)
+  typed = float64(v)
+  igIsItemDeactivatedAfterEdit()
+
+proc settings(p: Panel; d: DisplaySettings; cmds: var seq[Command]; notes: var seq[string]) =
+  ## The settings of the type in use, under the list of types.
+  let w = round(igCalcTextSize("000000.00", nil, false, -1).x + 2 * igGetStyle().FramePadding.x)
+  let pct = significant(d.clipPercentile, 3) & "th percentile"
+  var typed = 0.0
+  var nd = d
+  case d.effectiveGain(p.kind)
+  of dgAgc:
+    igTextUnformatted("Window", nil)
+    igSameLine(0, -1)
+    if numberBox("##agcwindow", d.agcWindowMs, "%.0f", w, typed):
+      if typed >= 10 and typed <= 20_000:
+        nd.agcWindowMs = typed
+        p.send(nd, cmds)
+      else: notes.add "The AGC window needs 10 to 20 000 ms, not " & significant(typed) & "."
+    igSameLine(0, -1)
+    igTextUnformatted("ms", nil)
+    if d.gain == dgAuto:
+      igTextUnformatted("Stacked data is shown with no gain.", nil)
+  of dgNone:
+    igTextUnformatted(("Amplitudes past the record's " & pct & " of |x|\n" &
+      "are drawn full black or white.").cstring, nil)
+  of dgFixed:
+    igTextUnformatted("Full black at |x| =", nil)
+    igSameLine(0, -1)
+    if numberBox("##fixedclip", d.fixedClip, "%.4g", w, typed):
+      if typed > 0 and typed < Inf:
+        nd.fixedClip = typed
+        p.send(nd, cmds)
+      else: notes.add "The fixed gain needs a positive amplitude, not " & significant(typed) & "."
+    igSameLine(0, -1)
+    if igButton("From this record", ImVec2_c(x: 0, y: 0)):
+      nd.fixedClip = NaN # core takes it from the record shown
+      p.send(nd, cmds)
+    tip("Takes the " & pct & " of |x| of the record shown")
+    igTextUnformatted("Kept for every record and file until changed.", nil)
+  of dgNormalized:
+    for (scope, text) in [(perTrace, "Each trace"), (perPanel, "The whole record")]:
+      if igRadioButton_Bool(text.cstring, d.normScope == scope) and d.normScope != scope:
+        nd.normScope = scope
+        p.send(nd, cmds)
+      if scope == perTrace: igSameLine(0, -1)
+    igTextUnformatted("to its", nil)
+    for (stat, text) in [(normRms, "RMS"), (normMax, "peak"), (normPercentile, pct)]:
+      igSameLine(0, -1)
+      if igRadioButton_Bool(text.cstring, d.normStat == stat) and d.normStat != stat:
+        nd.normStat = stat
+        p.send(nd, cmds)
+    igTextUnformatted("drawn full black.", nil)
+  of dgExponential:
+    if igRadioButton_Bool("dB per second", d.timeGain == tgDbPerSecond) and
+        d.timeGain != tgDbPerSecond:
+      nd.timeGain = tgDbPerSecond
+      p.send(nd, cmds)
+    igSameLine(0, -1)
+    if numberBox("##dbpers", d.dbPerS, "%.1f", w, typed):
+      if abs(typed) <= 60:
+        nd.dbPerS = typed
+        nd.timeGain = tgDbPerSecond
+        p.send(nd, cmds)
+      else: notes.add "The exponential gain needs -60 to 60 dB/s, not " & significant(typed) & "."
+    if igRadioButton_Bool("Power of time, t^", d.timeGain == tgPower) and d.timeGain != tgPower:
+      nd.timeGain = tgPower
+      p.send(nd, cmds)
+    igSameLine(0, -1)
+    if numberBox("##power", d.power, "%.2f", w, typed):
+      if abs(typed) <= 5:
+        nd.power = typed
+        nd.timeGain = tgPower
+        p.send(nd, cmds)
+      else: notes.add "The power of time needs -5 to 5, not " & significant(typed) & "."
+  of dgFloat:
+    igTextUnformatted(("Amplitudes past the " & pct & " of |x| of the data in view\n" &
+      "are drawn full black or white, so the scale changes as you pan and zoom.").cstring, nil)
+  of dgAuto: discard # effectiveGain never gives it
+
+proc drawGainControls*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Command];
+    notes: var seq[string]) =
+  ## The gain type's drop-down (its settings in it), then the gain amount:
+  ## -, a box in dB, +.
+  let d = p.layers[0].display
+  let text = "Gain: " & label(d, p.kind)
+  let style = igGetStyle()
+  igSetNextItemWidth(round(igCalcTextSize(text.cstring, nil, false, -1).x +
+    igGetFrameHeight() + 3 * style.FramePadding.x))
+  if igBeginCombo("##gain", text.cstring, ImGui_ComboFlags_HeightLargest.cint):
+    for gt in gainTypes:
+      # the drop-down stays open, so the type's settings can be set at once
+      if igSelectable_Bool(describe(gt, d).cstring, d.gain == gt,
+          ImGui_SelectableFlags_NoAutoClosePopups.cint, ImVec2_c(x: 0, y: 0)) and d.gain != gt:
+        var nd = d
+        nd.gain = gt
+        p.send(nd, cmds)
+    igSeparatorText("Settings")
+    settings(p, d, cmds, notes)
+    igEndCombo()
+  marks.mark("plot.gain")
+  tip("Gain type: how amplitudes are scaled for display. Its settings are in this list.")
+  # the amount
+  igSameLine(0, 8)
+  if igButton("-##gainless", ImVec2_c(x: 0, y: 0)):
+    p.send(d.withGainDb(d.gainDb - GainStepDb), cmds)
+  marks.mark("plot.gain less")
+  tip("Less gain, " & significant(GainStepDb, 2) & " dB (" & dbKeysTip & ")")
+  igSameLine(0, 2)
+  var db = cdouble(d.gainDb)
+  igSetNextItemWidth(round(igCalcTextSize("+00.0", nil, false, -1).x + 2 * style.FramePadding.x))
+  if igInputDouble("##gaindb", addr db, 0, 0, "%+.1f", 0) and float64(db) != d.gainDb:
+    p.send(d.withGainDb(float64(db)), cmds) # live: a scale only, nothing is read
+  marks.mark("plot.gain dB")
+  tip("Gain amount in dB, on top of any gain type: it rescales the display at once (" &
+    dbKeysTip & ")")
+  igSameLine(0, 2)
+  if igButton("+##gainmore", ImVec2_c(x: 0, y: 0)):
+    p.send(d.withGainDb(d.gainDb + GainStepDb), cmds)
+  marks.mark("plot.gain more")
+  tip("More gain, " & significant(GainStepDb, 2) & " dB (" & dbKeysTip & ")")
+  igSameLine(0, 4)
+  igTextUnformatted("dB", nil)
+
+proc gainKeys*(p: Panel; cmds: var seq[Command]) =
+  ## The gain amount's keys, while the plot window has the focus: `]` or
+  ## keypad `*` for more, `[` or keypad `/` for less.
+  template pressed(key: untyped): bool =
+    igShortcut_Nil(key.cint, ImGui_InputFlags_Repeat.cint)
+  let d = p.layers[0].display
+  var steps = 0.0
+  if pressed(ImGui_Key_RightBracket) or pressed(ImGui_Key_KeypadMultiply): steps += 1
+  if pressed(ImGui_Key_LeftBracket) or pressed(ImGui_Key_KeypadDivide): steps -= 1
+  if steps != 0:
+    p.send(d.withGainDb(d.gainDb + steps * GainStepDb), cmds)

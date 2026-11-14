@@ -14,7 +14,7 @@
 ## appears or goes.
 
 import imguin/cimgui
-import ../../core/[geometry, state]
+import ../../core/state
 import ../../view/theme
 import chrome, style
 

@@ -51,6 +51,14 @@ over the traces is the display header (receiver line and point by default).
 
 Keys act while the Plot window has the focus: click in it first.
 
+**Gain.** The drop-down in the strip picks the gain type, and its settings are in the
+same list: Automatic (AGC on shot and receiver records, none on stacked data), None,
+Fixed (one scale for every record, so records compare), Normalized (every trace, or the
+record, to the same level), Exponential (more gain later in the record: dB per second,
+or a power of time), Float (the scale follows what is in view) and AGC. Beside it, the
+gain amount in dB works with every type: type a value, click - or +, or press `]` and
+`[` (keypad `*` and `/`); the picture brightens or darkens at once.
+
 The view never goes past the data: panning and zooming stop at the first and last trace
 and at the record's start and end, and zoomed out as far as it goes the record fills the
 plot. Whenever part of the record is out of view, a scroll bar shows how much and where:

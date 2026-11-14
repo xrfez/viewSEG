@@ -98,8 +98,8 @@ block rawSamplesOnScreen:
     for row in 0 ..< Channels:
       doAssert t.header[0][row] == float64(FirstRecord) and t.header[1][row] == float64(row + 1)
     let want = t.percentile99
-    doAssert abs(t.clip - want) <= 0.01 * want, "clip " & $t.clip & ", want " & $want
-    doAssert st.main.clip == t.clip
+    doAssert abs(t.level.clip - want) <= 0.01 * want, "clip " & $t.level.clip & ", want " & $want
+    doAssert st.main.level == t.level and st.main.reference == t.level.clip
     doAssert t.id > 0
     doAssert st.log.count(sevWarning) == 0 and st.log.count(sevError) == 0
     st.shutdown()
@@ -146,7 +146,7 @@ block agcOnShotsByDefault:
       doAssert v.classify in {fcNormal, fcSubnormal, fcZero, fcNegZero}
       peak = max(peak, abs(v))
     # the raw peak is 1; AGC lifts the events well above the window's RMS
-    doAssert peak > 1.5 and t.clip > 0, "peak " & $peak & ", clip " & $t.clip
+    doAssert peak > 1.5 and t.level.clip > 0, "peak " & $peak & ", clip " & $t.level.clip
     st.shutdown()
 
 block auxiliaryTracesLeftOut:

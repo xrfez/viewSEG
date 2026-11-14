@@ -38,6 +38,7 @@
 
 import std/[math, os, sequtils]
 import parseSEG
+from processSEG/core/workspace import Workspace, initWorkspace
 import filejobs, inbox, jobs, log, panels, pick, reader, selection, session, settings,
   threads, tiles, zoom
 
@@ -46,7 +47,8 @@ export inbox, jobs, log, panels, pick, selection, session, settings, threads, ti
 const
   MainPanel* = PanelId(1)
     ## The panel `initAppState` makes; opened files appear in it.
-  MaxTiles* = 4 ## tiles kept per panel, newest last
+  MaxTiles* = 4         ## tiles kept per panel, newest last
+  FloatValues* = 32_768 ## values in view the Float gain takes its level from, at most
 
 type
   CommandKind* = enum
@@ -109,6 +111,7 @@ type
     nextFile, nextPanel, nextBase: int
     tiles: seq[seq[Tile]] ## per panel, as `panels`: the newest last
     nextTile: uint64
+    scratch: Workspace    ## for the Float gain's level, on this thread
     inbox: Inbox
     jobs: Jobs
       ## Fields are destroyed last to first: the runners stop before
@@ -128,7 +131,7 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   markUiThread()
   result = AppState(log: initMessageLog(logCapacity), inbox: initInbox(),
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
-    nextPanel: int(MainPanel) + 1, nextTile: 1)
+    nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace())
   result.panels.add Panel(id: MainPanel)
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
@@ -255,7 +258,8 @@ proc newSource(state: var AppState; k: int) =
   p.known = {}
   p.kind = gkUnknown
   p.pending = ReadRequest()
-  p.clip = NaN
+  p.level = Level()
+  p.viewLevel = Level()
   p.back.setLen 0
   inc p.revision
   state.tiles[k].setLen 0
@@ -334,9 +338,37 @@ proc refetch(state: var AppState; k: int; keepTiles: bool) =
   p.pending = ReadRequest()
   if not keepTiles:
     state.tiles[k].setLen 0
-    p.clip = NaN
+    p.level = Level()
+    p.viewLevel = Level()
   inc p.revision
   state.requestView(k)
+
+func usable(x: float64): bool {.inline.} = x > 0 and x < Inf
+
+proc settleGain(state: var AppState; k: int) =
+  ## After a change of display, view or tiles of `panels[k]`: Fixed takes
+  ## its amplitude from the data shown when it has none yet, and Float
+  ## takes its level from the data now in view (keeping the one before
+  ## when no tile holds any of it yet).
+  template p: untyped = state.panels[k]
+  if p.layers.len == 0: return
+  template d: untyped = state.panels[k].layers[0].display
+  case d.effectiveGain(p.kind)
+  of dgFixed:
+    if not usable(d.fixedClip) and usable(p.level.clip):
+      d.fixedClip = p.level.clip
+      inc p.revision
+  of dgFloat:
+    var values: seq[float32]
+    for i in countdown(state.tiles[k].high, 0): # the newest tile that meets the view
+      if values.len == 0:
+        state.tiles[k][i].valuesInView(p.view, FloatValues, values)
+    if values.len > 0:
+      let level = levelOf(values, d.clipPercentile, state.scratch)
+      if usable(level.clip):
+        p.viewLevel = level
+        inc p.revision
+  else: discard
 
 proc adopt(state: var AppState; s: sink Session) =
   ## Takes in a file an open job opened, and shows its first gather.
@@ -492,6 +524,7 @@ proc apply*(state: var AppState; cmd: Command) =
         if cmd.remember: state.remember(k)
         state.panels[k].view = v
         state.requestView(k)
+        state.settleGain(k)
   of ckBack:
     # Nothing to go back to is not a mistake: the control is only disabled.
     let k = state.findPanel(cmd.panel)
@@ -505,6 +538,7 @@ proc apply*(state: var AppState; cmd: Command) =
       inc p.jumps
       inc p.revision
       state.requestView(k)
+      state.settleGain(k)
   of ckSettings:
     let (s, dropped) = cleaned(cmd.settings)
     if dropped > 0:
@@ -518,12 +552,14 @@ proc apply*(state: var AppState; cmd: Command) =
     elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
     else:
       let was = state.panels[k].layers[0].display
-      let d = cmd.display
+      let d = cmd.display.withGainDb(cmd.display.gainDb)
       state.panels[k].layers[0].display = d
       inc state.panels[k].revision
-      if d.gain != was.gain or d.agcWindowMs != was.agcWindowMs or
-          d.clipPercentile != was.clipPercentile:
+      # Only a change of the samples reads again: the gain amount, a Fixed
+      # amplitude and a type that is a scale alone change only the drawing.
+      if not d.sameProcessing(was, state.panels[k].kind):
         state.refetch(k, keepTiles = false)
+      state.settleGain(k)
   of ckHeader:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
@@ -579,10 +615,11 @@ proc drainInbox*(state: var AppState): bool =
       if k >= 0 and m.tile.request.gen == state.panels[k].requestGen:
         m.tile.id = state.nextTile
         inc state.nextTile
-        if state.panels[k].clip.isNaN: state.panels[k].clip = m.tile.clip
+        if state.panels[k].level.clip.isNaN: state.panels[k].level = m.tile.level
         state.tiles[k].add move m.tile
         if state.tiles[k].len > MaxTiles: state.tiles[k].delete(0)
         inc state.panels[k].revision
+        state.settleGain(k)
   state.mail.setLen 0
   for job in finished:
     state.onFinished(job)

@@ -9,15 +9,16 @@
 
 ```
 ┌ Plot ──────────────────────────────────────────────────────┐
-│ [▒|∿|◢|◣] [gain] [12.5] tr/in [200] ms/in [-][+][fit][<][⋯]│  controls
+│ [▒|∿|◢|◣] [gain▾] [-][+0.0][+] dB [12.5] tr/in [200] ms/in │  controls (they
+│ [-][+][fit][<][⋯]                                          │  wrap when narrow)
 ├────────────────────────────────────────────────────────────┤
 │ line    100  100  100  100  100  100  100  100  100        │  display header
 │ point   101  103  105  107  109  111  113  115  117        │  (thinned to fit)
 ├────────────────────────────────────────────────────────────┤
 │    0   ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏ ▏   ┃ │  time: values only
-│        traces across, time down                        ┃ │  scroll bars when
-│ 4000                                                   ┃ │  data is out of view
-│        ━━━━━━━━━━                                        │
+│        traces across, time down                          ┃ │  scroll bars when
+│ 4000                                                     ┃ │  data is out of view
+│        ━━━━━━━━━━                                          │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -61,9 +62,26 @@
     popover, from the monitor's diagonal, or by making a bar on the screen as long as a
     ruler held to it says. A calibration is kept per monitor (its name and size in
     pixels);
-  - the **display gain**: automatic (AGC on pre-stack gathers, none on stacked data),
-    none, trace balance or AGC; amplitudes past the clip percentile (99 by default) are
-    drawn full black or white;
+  - the **display gain**: a gain type, with its own settings in the same drop-down,
+    and a **gain amount in dB** that every type has: a box, - and + buttons (3 dB a
+    step) and keys (`]` or keypad `*` for more, `[` or keypad `/` for less), from -60 to
+    +60 dB. The amount rescales the drawing at once and never reads or processes again.
+    A *reference* amplitude is drawn full black (or white) at 0 dB; the types differ
+    in what they do to the samples and in where the reference comes from:
+
+    | Type | On the samples | Reference (full black at 0 dB) | Settings |
+    |---|---|---|---|
+    | Automatic (default) | AGC on shot and receiver records, nothing on stacked data | as AGC or None | the AGC window |
+    | None | nothing | the record's clip percentile of \|x\| (99 by default), held while panning | |
+    | Fixed | nothing | one amplitude, the same for every record and file until changed, so records compare; taken from the record shown when Fixed is chosen | the amplitude; "From this record" |
+    | Normalized | each trace to the same level (per trace), or nothing (whole record) | that level: RMS, peak or clip percentile, of each trace or of the record | per trace or the whole record; the level |
+    | Exponential | `10^(dB/s · t / 20)`, or `(t / 1 s)^n` | the record's clip percentile after the gain | dB per second (6 by default), or the power of time |
+    | Float | nothing | the clip percentile of the data in view, again whenever the view changes | |
+    | AGC | AGC | the record's clip percentile after AGC | the window (500 ms) |
+
+    Changing the amount, a Fixed amplitude, or between types that do nothing to the
+    samples (None, Fixed, Float, Normalized for the whole record) reads nothing again;
+    the others read the view again with the new processing;
   - zoom out, zoom in, fit all, back to the view before the last gesture, and a "more"
     popover: the colours, the display header's fields, the scale units and the screen
     calibration, later the trace overlap (the largest swing of a wiggle, in trace
@@ -123,6 +141,7 @@ its shortcut shown there.
 | Ctrl + Right / Ctrl + Left | Zoom in / out in traces only |
 | Arrow keys | Pan by a tenth of the view; with Shift, by a whole view |
 | Ctrl + `0` | Fit all (also a button in the controls) |
+| `]` or keypad `*` / `[` or keypad `/` | More / less gain amount, 3 dB a step |
 | Backspace, or Alt + Left | Back to the previous view |
 | Page Down / Page Up | Next / previous gather |
 | Home / End | First / last gather |
@@ -245,6 +264,10 @@ Defaults taken in this draft, for the user to confirm or change:
 9. **The display gain starts automatic:** a pre-stack gather (a shot or receiver
    record) opens with AGC over 500 ms, so every trace and every time is visible; stacked
    data opens with none, so amplitudes compare. The plot window says which is in use.
+   **Float** is read as "the scale follows the data in view"; **Exponential** is the
+   dB-per-second gain (6 dB/s offered), with a power of time beside it. Normalized
+   draws the chosen level full black and defaults to each trace's clip percentile.
+   The gain amount steps by 3 dB and its keys are `]` / `[` (keypad `*` / `/`).
 10. **A typed scale keeps the top-left corner** of the view, not its centre, so the
     record's start stays in place as on a paper plot.
 11. **One wheel notch zooms by 1.25, a key press or button by 1.5**; wheel turns or key

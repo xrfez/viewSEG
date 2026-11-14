@@ -4,8 +4,9 @@
 ## A `Tile` answers one `ReadRequest`: `count` traces of `columns` values,
 ## trace by trace, processed for display, with each trace's index in its
 ## file and its keys (what the cursor readout shows), the values of the
-## display header's fields for each trace and the amplitude the display
-## clips at. It is made on the reader's thread, moved through the inbox and
+## display header's fields for each trace and the amplitude statistics of
+## its live traces (its `Level`). It is made on the reader's thread, moved
+## through the inbox and
 ## kept by `AppState`; it holds no `ref`, so it may be freed on any thread.
 ##
 ## The pixels come from these procs (docs/architecture.md, rule 4): the GPU
@@ -13,8 +14,10 @@
 ## what `amplitudeAt` and `densityColour` do here. The CPU forms are the
 ## reference the GPU is tested against, and what an export draws with.
 
-import std/math
+import std/[fenv, math]
 from parseSEG import TraceKeys
+from processSEG/gain/stats import percentileAbs, percentileWorkspace
+from processSEG/core/workspace import Workspace, reserve
 import geometry, panels, viewport
 
 type
@@ -31,7 +34,7 @@ type
     fields*: seq[HeaderField]
     header*: seq[seq[float64]]
       ## per field, one value per trace (NaN when unknown)
-    clip*: float64        ## the clip percentile of |x| over the live traces; NaN for none
+    level*: Level         ## RMS, peak and clip percentile of |x| over the live traces
     failed*: int          ## traces that could not be decoded (zero rows)
 
   Quad* = object
@@ -103,6 +106,58 @@ func amplitudeAt*(t: Tile; x, tMs: float64): float32 =
   let base = row * t.columns
   t.data[base + j0] * (1 - f) + t.data[base + j1] * f
 
+func cellsIn(s: Span; first, step: float64; n: int): Slice[int] =
+  ## The cells `0 ..< n`, centred at `first + k * step`, whose centres lie
+  ## in `s`; the one nearest its middle when none does.
+  let a = max(0, int(ceil((s.lo - first) / step)))
+  let b = min(n - 1, int(floor((s.hi - first) / step)))
+  if a <= b: a .. b
+  else:
+    let c = clamp(int(round(((s.lo + s.hi) / 2 - first) / step)), 0, n - 1)
+    c .. c
+
+proc valuesInView*(t: Tile; view: Viewport; most: int; dst: var seq[float32]) =
+  ## Adds to `dst` the values of `t` whose trace and time lie in `view`, on
+  ## an even grid of at most about `most` of them (all of them when they are
+  ## fewer): what the Float gain takes its level from. Nothing when the tile
+  ## and the view do not meet.
+  let r = t.request
+  if r.count <= 0 or t.columns <= 0 or most <= 0: return
+  let (xs, ts) = t.span
+  if view.traces.hi <= xs.lo or view.traces.lo >= xs.hi or view.timeMs.hi <= ts.lo or
+      view.timeMs.lo >= ts.hi:
+    return
+  let rows = cellsIn(view.traces, float64(r.first), float64(r.stride), r.count)
+  let cols = cellsIn(view.timeMs, t.timeOf(0), float64(r.decimation) * t.dtMs, t.columns)
+  let thin = max(1, int(ceil(sqrt(float64(rows.len) * float64(cols.len) / float64(most)))))
+  var row = rows.a
+  while row <= rows.b:
+    var c = cols.a
+    while c <= cols.b:
+      dst.add t.data[row * t.columns + c]
+      c += thin
+    row += thin
+
+proc levelOf*(values: openArray[float32]; percentile: float64; ws: var Workspace): Level =
+  ## The RMS, the peak and the `percentile` of |x| of the finite `values`;
+  ## NaN when there are none. `ws` grows to what it needs.
+  var sum = 0.0
+  var peak = 0.0
+  var n = 0
+  for v in values:
+    if abs(v) < Inf: # NaN fails too
+      sum += float64(v) * float64(v)
+      peak = max(peak, abs(float64(v)))
+      inc n
+  if n == 0: return Level()
+  var finite = newSeqOfCap[float32](n)
+  for v in values:
+    if abs(v) < Inf: finite.add v
+  ws.reserve(percentileWorkspace(n))
+  Level(rms: sqrt(sum / float64(n)), peak: peak,
+    clip: percentileAbs(finite, (if percentile.isNaN: 99.0 else: clamp(percentile, 0.0, 100.0)),
+    ws))
+
 func lutIndex*(scaled: float32): int {.inline.} =
   ## The colour-map entry of an amplitude times the display gain: -1 and
   ## below give 0, +1 and above give 255. NaN gives the middle.
@@ -121,8 +176,14 @@ func greyLut*(): Lut =
     let g = uint8(255 - i)
     result[i] = Rgba(r: g, g: g, b: g, a: 255)
 
-func displayScale*(clip: float64; reversed: bool): float32 =
-  ## The display gain for a clip amplitude: the clip maps to full black or
-  ## white. 0 when the clip is unknown or 0 (everything mid grey).
-  result = if clip > 0 and clip < Inf: float32(1 / clip) else: 0'f32
+func gainFactor*(db: float64): float64 {.inline.} =
+  ## The amplitude factor of a gain of `db` decibels.
+  pow(10.0, db / 20)
+
+func displayScale*(reference: float64; gainDb = 0.0; reversed = false): float32 =
+  ## The display gain: `reference` (`Panel.reference`), raised or lowered by
+  ## `gainDb`, maps to full black or white. 0 when the reference is unknown
+  ## or 0, or the scale is past what a float32 holds (everything mid grey).
+  let f = if reference > 0 and reference < Inf: gainFactor(gainDb) / reference else: 0.0
+  result = if f < maximumPositiveValue(float32): float32(f) else: 0'f32 # high() is Inf
   if reversed: result = -result

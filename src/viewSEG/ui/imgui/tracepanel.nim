@@ -29,22 +29,22 @@
 ## back to the caller for the status bar.
 ##
 ## Nothing about a plot sits in the main toolbar: the display mode, the
-## gain, the scales, zoom, fit, back and the display header's fields are
-## here, in the strip and in the plot's context menu (right click).
+## gain (`plotgain`: the type and the amount in dB), the scales, zoom, fit,
+## back and the display header's fields are here, in the strip (which
+## wraps in a narrow window) and in the plot's context menu (right click).
 
 import std/[math, strutils, tables]
 import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../gpu/density
 import ../../view/[displayheader, theme]
-import chrome, dpi, fonts, icons, menus, plotbars, style, symbols
+import chrome, dpi, fonts, icons, menus, plotbars, plotgain, style, symbols
 
 const
   PaperBackground* = Rgba(r: 255, g: 255, b: 255, a: 255)
   PaperInk* = Rgba(r: 0, g: 0, b: 0, a: 255)
   modeSymbols: array[DisplayMode, Symbol] = [syDensity, syWiggle, syWigglePositive,
     syWiggleNegative]
-  gainChoices = [dgAuto, dgNone, dgTraceBalance, dgAgc]
   menuId = "##plotmenu"
   moreId = "##plotmore"
   burstSeconds = 0.6   ## wheel turns or key presses closer than this are one gesture
@@ -222,37 +222,6 @@ proc button(label: string; t: Theme; marks: var Marks; mark: string): bool =
   result = igButton(label.cstring, ImVec2_c(x: 0, y: 0))
   marks.mark(mark)
 
-proc gainLabel(d: DisplaySettings; kind: GatherKind): string =
-  let g = d.effectiveGain(kind)
-  result = case g
-    of dgAgc: "AGC " & $int(round(d.agcWindowMs)) & " ms"
-    of dgTraceBalance: "trace balance"
-    else: "none"
-  if d.gain == dgAuto: result.add " (auto)"
-
-proc drawGainCombo(p: Panel; t: Theme; res: var PanelOutput) =
-  let d = p.layers[0].display
-  let label = "Gain: " & gainLabel(d, p.kind)
-  igSetNextItemWidth(round(igCalcTextSize(label.cstring, nil, false, -1).x +
-    igGetFrameHeight() + 3 * igGetStyle().FramePadding.x))
-  if igBeginCombo("##gain", label.cstring, 0):
-    for g in gainChoices:
-      let text = case g
-        of dgAuto: "Automatic: AGC on pre-stack gathers, none on stacked data"
-        of dgNone: "None: the samples as they are"
-        of dgTraceBalance: "Trace balance: every trace to the same RMS"
-        of dgAgc: "AGC, " & $int(round(d.agcWindowMs)) & " ms window"
-      if igSelectable_Bool(text.cstring, d.gain == g, 0, ImVec2_c(x: 0, y: 0)) and
-          d.gain != g:
-        var nd = d
-        nd.gain = g
-        res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
-    igEndCombo()
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
-    igTextUnformatted(("Display gain, after any processing; amplitudes past the " &
-      formatFloat(d.clipPercentile, ffDecimal, 1) & "th percentile are clipped").cstring, nil)
-    igEndTooltip()
-
 proc drawHeaderChoice(p: Panel; res: var PanelOutput) =
   ## The display header's fields: automatic, or the ones ticked.
   var auto = p.header.auto
@@ -419,13 +388,20 @@ proc drawScaleSettings(tp: var TracePanelUi; st: AppState; res: var PanelOutput;
       tp.calib.rulerPx = 0
       res.commands.add Command(kind: ckSettings, settings: s)
 
-template stripGroup(tp: var TracePanelUi; i: int; right, spacing: float32; body: untyped) =
-  ## Group `i` of the strip, on the line of the group before it when it fits
-  ## left of `right` (its width as drawn last frame), else on a new line: the
-  ## strip wraps, so the window never needs to scroll.
+template stripGroup(tp: var TracePanelUi; i: int; right, spacing, lift: float32;
+    body: untyped) =
+  ## Group `i` of the strip, its controls `lift` below the top of its line,
+  ## on the line of the group before it when it fits left of `right` (its
+  ## width as drawn last frame), else on a new line: the strip wraps, so the
+  ## window never needs to scroll.
   if i > 0 and igGetItemRectMax().x + spacing + tp.stripWidths[i] <= right:
     igSameLine(0, spacing)
   igBeginGroup()
+  if lift > 0: # a gap item, so every control of the group starts below it
+    igPushStyleVar_Vec2(ImGui_StyleVar_ItemSpacing.cint,
+      ImVec2_c(x: igGetStyle().ItemSpacing.x, y: 0))
+    igDummy(ImVec2_c(x: 0, y: lift))
+    igPopStyleVar(1)
   body
   igEndGroup()
   tp.stripWidths[i] = igGetItemRectSize().x
@@ -438,7 +414,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
   let lift = round((size - igGetFrameHeight()) / 2) # centres a text control on the symbols
   let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
   let mode = p.layers[0].display.mode
-  tp.stripGroup(0, right, 0):
+  tp.stripGroup(0, right, 0, 0):
     for m in DisplayMode:
       let ready = m == dmDensity
       igBeginDisabled(not ready)
@@ -450,14 +426,12 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         res.commands.add Command(kind: ckDisplay, panel: p.id, display: d)
       igEndDisabled()
       if m != DisplayMode.high: igSameLine(0, 2)
-  tp.stripGroup(1, right, 12):
-    igSetCursorPosY(igGetCursorPosY() + lift)
-    drawGainCombo(p, t, res)
+  tp.stripGroup(1, right, 12, lift):
+    drawGainControls(p, t, marks, res.commands, res.notes)
   # the scales
   let u = st.settings.scale
   let per = lengthName(u.length)
-  tp.stripGroup(2, right, 14):
-    igSetCursorPosY(igGetCursorPosY() + lift)
+  tp.stripGroup(2, right, 14, lift):
     if tp.traceBox.scaleBox("##tracescale", traceLabel(u), "Traces per " & per &
         ": type a value and press Enter", traceScale(tp.cur, ppi, u), marks, "plot.trace scale"):
       askScale(tp.traceBox, vaTraceScale, "trace scale", ask, res)
@@ -467,8 +441,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         "press Enter", timeScale(tp.cur, ppi, u), marks, "plot.time scale"):
       askScale(tp.timeBox, vaTimeScale, "time scale", ask, res)
   # zoom, fit, back
-  tp.stripGroup(3, right, 14):
-    igSetCursorPosY(igGetCursorPosY() + lift)
+  tp.stripGroup(3, right, 14, lift):
     if button(IconZoomOut & "##zoomout", t, marks, "plot.zoom out"):
       ask = ViewAsk(kind: vaZoomOut)
     tip("Zoom out (-, or the wheel)")
@@ -487,8 +460,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
       igTextUnformatted("Back to the view before (Backspace, Alt+Left)", nil)
       igEndTooltip()
-  tp.stripGroup(4, right, 8):
-    igSetCursorPosY(igGetCursorPosY() + lift)
+  tp.stripGroup(4, right, 8, lift):
     if button(IconSettings & "##more", t, marks, "plot.more"):
       igOpenPopup_Str(moreId, 0)
     tip("Colours, display header, scale units and screen calibration")
@@ -693,6 +665,7 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
     tp.gesture = gsNone
   if once(ImGui_Key_Backspace.cint) or once(alt or ImGui_Key_LeftArrow.cint):
     res.commands.add Command(kind: ckBack, panel: p.id)
+  gainKeys(p, res.commands)
   if once(ImGui_Key_Escape.cint):
     if tp.drag.kind != dkNone:
       if tp.drag.kind == dkPan and tp.drag.moved: after = tp.drag.start
@@ -774,7 +747,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     if tp.gpuError.len == 0 and tp.started:
       tp.sync(tiles)
       let bg = if paper: PaperBackground else: t.roles[rlPlotBackground]
-      let scale = displayScale(p.clip, layer.display.reversed)
+      let scale = displayScale(p.reference, layer.display.gainDb, layer.display.reversed)
       let shown = Viewport(traces: Span(lo: lim2.X.Min, hi: lim2.X.Max),
         timeMs: Span(lo: lim2.Y.Min, hi: lim2.Y.Max), columns: view.columns, rows: view.rows)
       let tex = tp.renderer.render(shown, shown.columns, shown.rows, bg, scale, tiles,

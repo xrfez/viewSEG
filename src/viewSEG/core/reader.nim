@@ -170,10 +170,11 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   rd.r.poster.post Msg(job: NoJob, kind: mkLayout, panel: rd.r.panel,
     sourceGen: rd.src.gen, layout: layout, known: known)
 
-proc clipOf(rd: var Reader; tile: Tile; list: seq[int]; failed: seq[int];
-    percentile: float64): float64 =
-  ## The `percentile` of |x| over the tile's live traces; NaN when none.
-  result = NaN
+proc levelOf(rd: var Reader; tile: Tile; list: seq[int]; failed: seq[int];
+    percentile: float64): Level =
+  ## The RMS, the peak and the `percentile` of |x| over the tile's live
+  ## traces; NaN when there are none.
+  result = Level()
   if tile.request.count == 0 or tile.columns == 0: return
   try:
     let meta = initChunkMeta(rd.src.file[].rowsOf(list), rd.layout.dtMs *
@@ -181,7 +182,7 @@ proc clipOf(rd: var Reader; tile: Tile; list: seq[int]; failed: seq[int];
     rd.ws.reserve(panelStatsWorkspace)
     let s = panelStats(rowBlock(tile.data, tile.request.count, tile.columns), meta, rd.ws,
       percentile)
-    if s.rows > 0: result = s.clip
+    if s.rows > 0: result = Level(rms: s.rms, peak: s.maxAbs, clip: s.clip)
   except ValueError as e:
     rd.note(sevWarning, "Cannot work out the display gain of " & rd.name & ": " & e.msg)
 
@@ -246,7 +247,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
   pf.close()
   clearCycleRoots()
   if given: return
-  tile.clip = rd.clipOf(tile, list, failed, req.clipPercentile)
+  tile.level = rd.levelOf(tile, list, failed, req.clipPercentile)
   if tile.failed > 0:
     rd.note(sevWarning, $tile.failed & " of the " & $q.count & " traces shown could not be " &
       "read and are drawn blank" & (if firstError.len > 0: ": " & firstError else: "") & ".")

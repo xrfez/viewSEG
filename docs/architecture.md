@@ -210,20 +210,27 @@ frame over budget (50 ms) with its parts, longest first.
    request carries the new `requestGen`. The reader acts only on the newest note.
 4. **Prefetch and process** (reader). A selection-mode prefetcher over the request's
    traces (`uniform = true`, `quickFirst = true`) with the decode window as its sample
-   window; per chunk, the display pipeline (the layer's pipeline, then the display gain:
-   AGC by default on pre-stack gathers) runs in place (`chunkMeta(c)`), and each row is
+   window; per chunk, the display pipeline (the layer's pipeline, then the part of the
+   display gain that changes the samples: AGC, by default on pre-stack gathers,
+   Exponential, Normalized per trace) runs in place (`chunkMeta(c)`), and each row is
    cut to the kept samples and peak-decimated into the tile. A newer note stops the
    read between chunks.
 5. **Tile** (reader). A `Tile` (plain seqs, moved through the inbox, never shared)
-   holds the values, the display header's values per trace and the clip percentile of
-   |x| (`panelStats`).
+   holds the values, the display header's values per trace and its `Level`: the RMS,
+   peak and clip percentile of |x| over its live traces (`panelStats`).
 6. **Take in** (UI). A tile whose `request.gen` is not the panel's `requestGen` is
    dropped. `AppState` keeps the newest four per panel; the first tile after a change of
-   gather or gain sets the panel's clip, so the brightness holds while the user pans.
+   gather or processing sets the panel's level, so the brightness holds while the user
+   pans. The gain type picks the *reference* drawn full black from it (`reference`):
+   that level, a Fixed amplitude kept across gathers and files, 1 for traces normalized
+   on the CPU, or, for Float, the level of the data in view, taken on the UI thread from
+   at most 32 768 of the kept values whenever the view or the tiles change.
 7. **Draw** (UI, `gpu/density`). Each kept tile is uploaded once, as `R32F` textures
    cut to the GPU's size limit (`splitBlocks`). Each frame the tiles are drawn, oldest
    first, into an RGBA image the size of the plot, with one shader (nearest trace,
-   linear in time, the gain and clip as a uniform, a colour-map texture); the frontend
+   linear in time, the scale as a uniform: the gain amount in dB over the reference,
+   `displayScale`; a colour-map texture), so a change of gain amount, or of a type that
+   is a scale alone, draws again at once and reads nothing; the frontend
    shows the image in its plot. The CPU twins (`amplitudeAt`, `densityColour`) are what
    the shader is tested against.
 8. **Read out** (UI, `core/pick` and `core/readout`). The pointer's screen point goes
@@ -321,7 +328,8 @@ type
     back: seq[Viewport]      # the views before the last gestures, for ckBack (at most 50)
     jumps: int               # bumped when core sets the view (back, a new gather): the UI follows
     pending: ReadRequest     # the request sent last
-    clip: float64            # the display clip, from the first tile after a change
+    level: Level             # RMS, peak, clip percentile: the first tile's after a change
+    viewLevel: Level         # Float: the data in view
     revision: int
 
   Layer = object             # one is the usual case; more are overlays
@@ -329,7 +337,8 @@ type
     filter: TraceFilter      # seismic / auxiliary, channel sets, channels, components
     pipeline: Pipeline       # processSEG operations; empty shows raw samples
     display: DisplaySettings # density or wiggle (positive / negative fill), "paper" colours,
-                             # display gain (auto, none, trace balance, AGC), clip
+                             # gain type (automatic, none, fixed, normalized, exponential,
+                             # float, AGC) and its settings, gain amount in dB, clip
                              # percentile, overlap, reversed polarity
 
   CommandKind = enum         # core/state: every user intent, the only way state changes
@@ -391,7 +400,7 @@ type
     keys: seq[TraceKeys]     # per row: its keys, for the readout
     fields: seq[HeaderField]
     header: seq[seq[float64]] # per field, one value per trace
-    clip: float64            # the clip percentile of |x| over the live traces
+    level: Level             # RMS, peak, clip percentile of |x| over the live traces
 ```
 
 **No undo history.** Edits to traces (kill, reverse polarity) are lists kept beside an

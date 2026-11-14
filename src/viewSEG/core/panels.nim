@@ -14,15 +14,36 @@
 ##
 ## Panels and layers are plain data, read by the views and changed only by
 ## `AppState` when it applies a `Command` or takes in what a reader posted.
+##
+## **Display gain.** A layer is drawn after its pipeline, then its gain
+## type's processing on the CPU (`displayPipeline`: AGC, per-trace
+## normalization, an exponential gain; none for the other types), then a
+## scale on the GPU: a *reference* amplitude is drawn full black (or white),
+## raised or lowered by the gain amount in dB (`DisplaySettings.gainDb`),
+## which every type has. The amount changes only the scale, so it never
+## reads or processes anything again. The reference (`reference`) is:
+##
+## - None, AGC, Exponential, Automatic: the clip percentile of |x| of the
+##   gather's first tile after a change of gather or processing, so the
+##   brightness holds while panning;
+## - Fixed: one amplitude kept with the display settings (`fixedClip`), so
+##   it is the same for every gather and file until changed; taken from the
+##   data shown when Fixed is chosen;
+## - Normalized: each trace (`perTrace`, on the CPU) or the whole gather
+##   (`perPanel`, by the scale alone) brought to the same level, its RMS,
+##   peak or clip percentile, which is drawn full black;
+## - Float: the clip percentile of the data in view, recomputed whenever the
+##   view changes (`viewLevel`).
 
 import std/math
 import parseSEG
 import processSEG/pipeline
-import processSEG/gain/gain
+import processSEG/gain/[curves, gain]
 import processSEG/vibroseis/sweep
 import session, viewport
 
-export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, GatherKind
+export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, GatherKind, NormScope,
+  NormStat
 
 type
   PanelId* = distinct int
@@ -62,11 +83,28 @@ type
     pcCustom = "custom"
 
   DisplayGain* = enum
-    ## The gain a layer is shown with, after its pipeline.
-    dgAuto = "automatic"             ## AGC for a pre-stack gather, none for stacked data
-    dgNone = "none"                  ## the samples as they are, clipped
-    dgTraceBalance = "trace balance" ## every trace brought to the same RMS
-    dgAgc = "AGC"                    ## automatic gain control over `agcWindowMs`
+    ## The gain type a layer is shown with, after its pipeline (the module
+    ## documentation says what each does).
+    dgAuto = "automatic" ## AGC for a pre-stack gather, none for stacked data
+    dgNone = "none" ## the samples as they are, one scale per gather
+    dgFixed = "fixed" ## one scale for every gather and file, until changed
+    dgNormalized = "normalized" ## each trace, or the gather, brought to the same level
+    dgExponential = "exponential" ## a gain rising with time
+    dgFloat = "float" ## the scale follows the data in view
+    dgAgc = "AGC" ## automatic gain control over `agcWindowMs`
+
+  TimeGain* = enum
+    ## The shape of the exponential gain.
+    tgDbPerSecond = "dB per second" ## `dbPerS` dB per second of time
+    tgPower = "power of time"       ## `(t / 1 s)^power`, as spherical divergence
+
+  Level* = object
+    ## Amplitude statistics of the live traces of some data (processSEG's
+    ## `panelStats`): RMS, largest |x|, and the clip percentile of |x|. NaN
+    ## when unknown.
+    rms*: float64 = NaN
+    peak*: float64 = NaN
+    clip*: float64 = NaN
 
   DisplaySettings* = object
     ## How a layer is drawn.
@@ -74,10 +112,17 @@ type
     mode*: DisplayMode = dmDensity
     colours*: PlotColours = pcPaper
     gain*: DisplayGain = dgAuto
-    agcWindowMs*: float64 = 500.0   ## the AGC window
-    clipPercentile*: float64 = 99.0 ## amplitudes above this percentile are clipped
-    overlap*: float64 = 1.0         ## how far a wiggle may swing over its neighbours, in trace spacings
-    reversed*: bool                 ## polarity reversed for display
+    gainDb*: float64                     ## the gain amount on top of any type: + brighter
+    agcWindowMs*: float64 = 500.0        ## the AGC window
+    fixedClip*: float64 = NaN            ## Fixed: |x| drawn full black at 0 dB; NaN: none yet
+    normScope*: NormScope = perTrace     ## Normalized: each trace, or the whole gather
+    normStat*: NormStat = normPercentile ## Normalized: the level brought to full black
+    timeGain*: TimeGain = tgDbPerSecond  ## Exponential: its shape
+    dbPerS*: float64 = 6.0               ## Exponential: dB per second
+    power*: float64 = 2.0                ## Exponential: the power of time
+    clipPercentile*: float64 = 99.0      ## amplitudes above this percentile are clipped
+    overlap*: float64 = 1.0              ## a wiggle's largest swing, in trace spacings
+    reversed*: bool                      ## polarity reversed for display
 
   Layer* = object
     source*: LayerSource
@@ -117,7 +162,8 @@ type
     view*: Viewport          ## what the plot shows
     back*: seq[Viewport]     ## earlier views, newest last, for "back"; at most `MaxBack`
     pending*: ReadRequest    ## the request sent last; empty for none
-    clip*: float64 = NaN     ## the display clip: the first tile's since the source or gain changed
+    level*: Level            ## the first tile's since the source or the processing changed
+    viewLevel*: Level        ## Float: the data in view, since the view last changed
     jumps*: int
       ## bumped when `core` sets the view itself (the whole gather when it
       ## is first laid out, back): the UI follows
@@ -125,7 +171,9 @@ type
 
 const
   NoPanel* = PanelId(0)
-  MaxBack* = 50 ## earlier views a panel remembers
+  MaxBack* = 50     ## earlier views a panel remembers
+  GainStepDb* = 3.0 ## the gain amount's - and + buttons and keys
+  MaxGainDb* = 60.0 ## the gain amount stays within ± this
 
 func `==`*(a, b: PanelId): bool {.borrow.}
 func `$`*(id: PanelId): string = "panel " & $int(id)
@@ -187,14 +235,72 @@ func effectiveGain*(d: DisplaySettings; kind: GatherKind): DisplayGain =
   elif kind in {gkShot, gkReceiver, gkOffset, gkOther}: dgAgc
   else: dgNone
 
+func cpuGain(d: DisplaySettings; kind: GatherKind): DisplayGain =
+  ## The part of the gain that runs on the CPU, in the reader: `dgNone`
+  ## for the types that are a scale alone.
+  case d.effectiveGain(kind)
+  of dgAgc: dgAgc
+  of dgExponential: dgExponential
+  of dgNormalized: (if d.normScope == perTrace: dgNormalized else: dgNone)
+  of dgAuto, dgNone, dgFixed, dgFloat: dgNone
+
 func displayPipeline*(layer: Layer; kind: GatherKind): Pipeline =
   ## What the reader runs on layer `layer`'s samples: its pipeline, then
-  ## its display gain.
+  ## the CPU part of its display gain.
   result = layer.pipeline
-  case layer.display.effectiveGain(kind)
-  of dgAgc: result.add agcOp(windowMs = layer.display.agcWindowMs)
-  of dgTraceBalance: result.add normalizeOp(normRms, perTrace)
-  of dgNone, dgAuto: discard
+  let d = layer.display
+  case d.cpuGain(kind)
+  of dgAgc: result.add agcOp(windowMs = d.agcWindowMs)
+  of dgNormalized: result.add normalizeOp(d.normStat, perTrace, percentile = d.clipPercentile)
+  of dgExponential:
+    try:
+      result.add gainCurveOp(if d.timeGain == tgDbPerSecond: exponentialGain(d.dbPerS)
+                             else: powerGain(d.power))
+    except ValueError:
+      discard # a value that is not finite: no curve (the control refuses one)
+  else: discard
+
+func sameProcessing*(a, b: DisplaySettings; kind: GatherKind): bool =
+  ## Whether `a` and `b` give a gather of `kind` the same samples: then a
+  ## change from one to the other reads nothing again (the gain amount, a
+  ## Fixed amplitude, the colours and the type among those that are a scale
+  ## alone change only how they are drawn).
+  let g = a.cpuGain(kind)
+  result = g == b.cpuGain(kind) and a.clipPercentile == b.clipPercentile
+  if result:
+    case g
+    of dgAgc: result = a.agcWindowMs == b.agcWindowMs
+    of dgNormalized: result = a.normStat == b.normStat
+    of dgExponential:
+      result = a.timeGain == b.timeGain and (if a.timeGain == tgDbPerSecond:
+        a.dbPerS == b.dbPerS else: a.power == b.power)
+    else: discard
+
+func usable(x: float64): bool {.inline.} = x > 0 and x < Inf
+
+func reference*(p: Panel): float64 =
+  ## The amplitude `p`'s layer 0 draws full black at a gain amount of 0 dB
+  ## (the module documentation): NaN when it is not known yet.
+  result = NaN
+  if p.layers.len > 0:
+    let d = p.layers[0].display
+    case d.effectiveGain(p.kind)
+    of dgFixed: result = if usable(d.fixedClip): d.fixedClip else: p.level.clip
+    of dgFloat: result = p.viewLevel.clip
+    of dgNormalized:
+      if d.normScope == perTrace: result = 1 # each trace brought to 1
+      else:
+        result = case d.normStat
+          of normRms: p.level.rms
+          of normMax: p.level.peak
+          of normPercentile: p.level.clip
+    else: result = p.level.clip
+
+func withGainDb*(d: DisplaySettings; db: float64): DisplaySettings =
+  ## `d` with the gain amount `db`, within ± `MaxGainDb` (0 for a value that
+  ## is not a number).
+  result = d
+  result.gainDb = if db.isNaN: 0.0 else: clamp(db, -MaxGainDb, MaxGainDb)
 
 func displayMargin*(flow: Pipeline; dtMs: float64): int =
   ## The samples `flow` needs beyond a window on each side; 0 when it

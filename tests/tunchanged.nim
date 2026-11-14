@@ -64,9 +64,18 @@ proc drive(st: var AppState) =
   st.view(v, remember = true)
   st.apply Command(kind: ckBack, panel: MainPanel)
   var d = st.main.layers[0].display
-  for g in [dgNone, dgTraceBalance, dgAgc, dgAuto]:
+  for g in DisplayGain:
     d.gain = g
     st.display(d)
+  d.normScope = perPanel
+  d.gain = dgNormalized
+  st.display(d)
+  d.timeGain = tgPower
+  d.gain = dgExponential
+  st.display(d)
+  d = d.withGainDb(9)
+  d.gain = dgAuto
+  st.display(d)
   d.reversed = not d.reversed
   st.display(d)
   st.apply Command(kind: ckHeader, panel: MainPanel, header: HeaderChoice(auto: false,

@@ -164,9 +164,13 @@ block greyDensity:
   doAssert lut[255] == Rgba(r: 0, g: 0, b: 0, a: 255) # most positive: black
   doAssert lutIndex(-1) == 0 and lutIndex(-7) == 0 and lutIndex(1) == 255 and lutIndex(3) == 255
   doAssert lutIndex(0) == 128 and lutIndex(NaN) == 128
-  let scale = displayScale(2.0, reversed = false)
+  let scale = displayScale(2.0)
   doAssert scale == 0.5 and displayScale(2.0, reversed = true) == -0.5
-  doAssert displayScale(NaN, false) == 0 and displayScale(0, false) == 0
+  doAssert displayScale(NaN) == 0 and displayScale(0) == 0
+  # the gain amount: +6.02 dB doubles the scale, -20 dB is a tenth
+  doAssert abs(displayScale(2.0, 20 * log10(2.0)) - 1) < 1e-6
+  doAssert abs(displayScale(2.0, -20) - 0.05) < 1e-7
+  doAssert displayScale(1e-300, 60) == 0 # past a float32: drawn mid grey, not Inf
   doAssert lut.densityColour(2, scale) == lut[255] and lut.densityColour(-1, scale) == lut[64]
 
 block headerDefaults:

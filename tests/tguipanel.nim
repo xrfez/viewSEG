@@ -8,7 +8,9 @@
 ## the data to the plot's edges, no paper beside it; the window's own
 ## controls are drawn in it (the selected display mode on the selection
 ## colour), not on the main toolbar, and wrap onto more lines in a narrow
-## window instead of running past it; and the file is never changed.
+## window instead of running past it; under every gain type, +6.02 dB of
+## gain amount doubles the scale the pixels are drawn with, with nothing
+## read again, and the + button adds 3 dB; and the file is never changed.
 ##
 ## Seen to fail: with the shader taking the nearest sample instead of
 ## interpolating, `wholeGather` found 1619 of 24960 pixels off the
@@ -17,11 +19,13 @@
 ## the view limits 5 % past the data, as they were, `noPaperPastTheData`
 ## found the view starting at -1.5, a trace's width of paper on the left;
 ## with the strip never wrapping, `narrowWindowWrapsTheStrip` found the
-## trace scale box past the window's right edge.
+## trace scale box past the window's right edge; with the plot drawn
+## without the gain amount, `gainAmountUnderEveryType` found 2701 of 22295
+## pixels off the reference under Automatic.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[options, os, times]
+import std/[math, options, os, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
@@ -98,7 +102,8 @@ proc capture(f: FrameInfo): Shot =
   let k = f.core.findPanel(MainPanel)
   let p = f.core.panels[k]
   result = Shot(pixels: f.readFrame, width: f.width, plot: f.markOf("plot.data"),
-    view: f.tracePanel.drawnView, scale: displayScale(p.clip, p.layers[0].display.reversed))
+    view: f.tracePanel.drawnView, scale: displayScale(p.reference, p.layers[0].display.gainDb,
+    p.layers[0].display.reversed))
   for t in f.core.tiles(k): result.tiles.add t
   for name in ["plot.Greyscale density", "plot.Wiggle", "tool.Greyscale density", "toolbar"]:
     result.marks.add (name, f.markOf(name))
@@ -111,6 +116,16 @@ withFixtures fx:
   var waited = 0
   var whole, zoomed, wider: Shot
   var theme: Theme
+  type Amount = object
+    ## A gain type's picture before and after +6.02 dB, and whether that read.
+    gain: DisplayGain
+    before, after: Shot
+    gens: (uint64, uint64)
+    ids: (seq[uint64], seq[uint64])
+  var amounts: seq[Amount]
+  var button: (float64, uint64, Vec2) # gain before the + button, the request then, its centre
+  proc ids(f: FrameInfo): seq[uint64] =
+    for t in f.core.tiles(f.core.findPanel(MainPanel)): result.add t.id
   proc onFrame(f: FrameInfo) =
     inc waited
     let k = f.core.findPanel(MainPanel)
@@ -144,6 +159,47 @@ withFixtures fx:
       if f.answered and f.tracePanel.drawnView.traces.hi > 20:
         wider = f.capture
         stage = 4
+    of 4: # each gain type, then +6.02 dB on top of it
+      if amounts.len == ord(DisplayGain.high) + 1:
+        let b = f.markOf("plot.gain more")
+        button[2] = vec2(round(b.pos.x + b.size.x / 2), round(b.pos.y + b.size.y / 2))
+        f.moveMouse(button[2])
+        stage = 7
+      else:
+        var d = p.layers[0].display.withGainDb(0)
+        d.gain = DisplayGain(amounts.len)
+        f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+        amounts.add Amount(gain: d.gain)
+        waited = 0
+        stage = 5
+    of 5:
+      if f.answered and not p.reference.isNaN and waited > 2:
+        amounts[^1].before = f.capture
+        amounts[^1].gens[0] = p.requestGen
+        amounts[^1].ids[0] = f.ids
+        f.apply Command(kind: ckDisplay, panel: MainPanel,
+          display: p.layers[0].display.withGainDb(20 * log10(2.0)))
+        waited = 0
+        stage = 6
+    of 6:
+      if waited > 1: # drawn with the new amount
+        amounts[^1].after = f.capture
+        amounts[^1].gens[1] = p.requestGen
+        amounts[^1].ids[1] = f.ids
+        stage = 4
+    of 7: # the + button, clicked
+      if waited > 2:
+        button[0] = p.layers[0].display.gainDb
+        button[1] = p.requestGen
+        f.pressMouse(button[2], true)
+        f.pressMouse(button[2], false)
+        waited = 0
+        stage = 8
+    of 8:
+      if p.layers[0].display.gainDb != button[0]:
+        doAssert p.layers[0].display.gainDb == button[0] + GainStepDb, $p.layers[0].display.gainDb
+        doAssert p.requestGen == button[1], "the + button read again"
+        stage = 9
         f.stop()
     else: discard
     if waited > 1500: f.stop() # given up: the checks below say what is missing
@@ -151,7 +207,7 @@ withFixtures fx:
     maxTextureSize: textureLimit, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
-  doAssert stage == 4, "stopped at stage " & $stage
+  doAssert stage == 9, "stopped at stage " & $stage & " (gain " & $amounts.len & ")"
 
   block wholeGather:
     let s = whole
@@ -185,6 +241,25 @@ withFixtures fx:
     for y in int(s.plot.pos.y) + 3 ..< int(s.plot.pos.y + s.plot.size.y) - 3:
       if s.pixels[y * s.width + x] == PaperBackground: inc paper
     doAssert paper < int(s.plot.size.y / 4), $paper & " paper pixels down the left edge"
+
+  block gainAmountUnderEveryType:
+    # +6.02 dB doubles the shader's scale: the pixels match the CPU
+    # reference at the new scale, many change, and nothing is read again.
+    for a in amounts:
+      doAssert a.gens[0] == a.gens[1] and a.ids[0] == a.ids[1], $a.gain & ": the amount read again"
+      doAssert abs(a.after.scale - 2 * a.before.scale) <= 1e-5 * abs(a.after.scale),
+        $a.gain & ": scale " & $a.before.scale & " became " & $a.after.scale
+      let (bad, seen) = a.after.mismatches()
+      doAssert bad == 0, $a.gain & ": " & $bad & " of " & $seen & " pixels off the reference"
+      var changed = 0
+      let p = a.after.plot
+      for y in countup(int(p.pos.y) + 3, int(p.pos.y + p.size.y) - 4, 3):
+        for x in countup(int(p.pos.x) + 3, int(p.pos.x + p.size.x) - 4, 3):
+          if distance(a.before.pixels[y * a.before.width + x],
+              a.after.pixels[y * a.after.width + x]) > 6:
+            inc changed
+      doAssert changed > seen div 10, $a.gain & ": only " & $changed & " pixels changed"
+      echo "tguipanel: ", a.gain, " +6 dB, ", changed, " of ", seen, " pixels changed"
 
   block controlsInTheWindow:
     let s = whole
@@ -271,6 +346,54 @@ proc recordShot(path, file: string; traces = Span(); timeMs = Span(); light = fa
   doAssert code == 0 and saved, "no screenshot of " & path
   echo "tguipanel: saved ", dir / file
 
+proc gainShot(path, file: string; gain: DisplayGain; gainDb: float64; traces, timeMs: Span) =
+  ## Opens `path` in a 1600 × 1000 window at `traces` and `timeMs` with
+  ## `gain` and `gainDb`, opens the gain drop-down and saves the frame.
+  let dir = getEnv("VIEWSEG_SCREENSHOTS")
+  var stage = 0
+  var wait = 0
+  var saved = false
+  var at: Vec2
+  proc onFrame(f: FrameInfo) =
+    let p = f.core.panels[f.core.findPanel(MainPanel)]
+    inc wait
+    case stage
+    of 0:
+      if p.laidOut and f.answered:
+        var v = p.view
+        v.traces = traces
+        v.timeMs = timeMs
+        f.showView(v)
+        var d = p.layers[0].display.withGainDb(gainDb)
+        d.gain = gain
+        f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+        stage = 1
+    of 1:
+      if f.answered and f.tracePanel.drawnView.traces == traces:
+        let b = f.markOf("plot.gain")
+        at = vec2(round(b.pos.x + b.size.x / 2), round(b.pos.y + b.size.y / 2))
+        f.moveMouse(at)
+        wait = 0
+        stage = 2
+    of 2:
+      if wait == 3:
+        f.pressMouse(at, true)
+        f.pressMouse(at, false)
+      if wait == 12:
+        f.moveMouse(vec2(at.x + 600, at.y + 500)) # off the list, no hover
+      if wait > 16:
+        saved = f.savePng(dir / file)
+        f.stop()
+    else: discard
+    if f.index > 1500: f.stop()
+  let tmp = getTempDir() / ("viewseg-gainshot-" & $getCurrentProcessId())
+  let code = run(RunOptions(maxFrames: 2000, openPaths: @[path], windowSize: (1600, 1000),
+    theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
+    onFrame: onFrame))
+  removeDir(tmp)
+  doAssert code == 0 and saved, "no screenshot of " & path
+  echo "tguipanel: saved ", dir / file
+
 if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
   let morgantown = examples / "00000151_12900_11300.sgd"
   let inglewood = examples / "BO_3D-Inglewood_rev21_v7.sgy"
@@ -278,6 +401,8 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
     createDir(getEnv("VIEWSEG_SCREENSHOTS"))
     recordShot(morgantown, "record-morgantown.png")
     recordShot(morgantown, "record-morgantown-lines.png", Span(lo: -0.5, hi: 450.5),
+      Span(lo: 0, hi: 2000))
+    gainShot(morgantown, "gain-morgantown.png", dgExponential, 6, Span(lo: -0.5, hi: 450.5),
       Span(lo: 0, hi: 2000))
   if fileExists(inglewood):
     recordShot(inglewood, "record-inglewood.png", light = true)

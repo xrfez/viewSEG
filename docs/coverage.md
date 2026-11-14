@@ -194,12 +194,12 @@ Status values:
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Fixed gain in dB | `scaleDb`, `gainDbOp`, `dbToFactor` | Display controls: gain in dB | planned |
-| Normalisation per trace or panel (max, RMS, percentile) | `initNormalizePlan`, `normalize`, `normalizeOp`, `panelFactor` | Plot window: gain "trace balance" (`normalizeOp(normRms, perTrace)`); more display controls | built |
+| Fixed gain in dB | `scaleDb`, `gainDbOp`, `dbToFactor` | Plot window: the gain amount in dB and the Fixed gain, both as the shader's scale; `gainDbOp` in the processing window | built (display); planned (processing) |
+| Normalisation per trace or panel (max, RMS, percentile) | `initNormalizePlan`, `normalize`, `normalizeOp`, `panelFactor` | Plot window: gain "Normalized" (`normalizeOp(stat, perTrace)` per trace; per panel the scale alone, from `panelStats`) | built |
 | AGC (RMS, mean absolute) | `initAgcPlan`, `agc`, `agcOp` | Plot window: gain "AGC" (the default on pre-stack gathers); processing window: AGC | built |
 | AGC gain kept and removed | `agc(..., gains)`, `removeGain` | Show the AGC gain function; undo AGC on export | planned |
-| Time-variant gain (knots, tᵖ, exponential) | `knotGain`, `powerGain`, `exponentialGain`, `gainCurveOp`, `initGainCurvePlan`, `applyGainCurve` | Processing window: gain curve editor | planned |
-| Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats` | Plot window: clip at a percentile (`panelStats`, a shader uniform); per-trace statistics later | built |
+| Time-variant gain (knots, tᵖ, exponential) | `knotGain`, `powerGain`, `exponentialGain`, `gainCurveOp`, `initGainCurvePlan`, `applyGainCurve` | Plot window: gain "Exponential" (`exponentialGain`, `powerGain`); processing window: gain curve editor (knots) | built (display); planned (knots) |
+| Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats` | Plot window: clip at a percentile and the Normalized levels (`panelStats`, a shader uniform), Float's level of the data in view (`percentileAbs`); per-trace statistics later | built |
 
 ### Pipelines and threads
 
