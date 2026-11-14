@@ -27,7 +27,7 @@ export ThemeChoice, theme, messages, ImguiCheck
 
 const
   glslVersion = "#version 330"
-  defaultSize = (1280, 800) ## the first window size at 100 %
+  defaultSize = (1280, 800)               ## the first window size at 100 %
   plotTitle = IconPlot & "  Plot###plot"
   tableTitle = IconTable & "  Headers###headers"
   messagesTitle = IconLog & "  Messages###Messages"
@@ -81,8 +81,8 @@ type
   FailureHook* = proc (failure: StartupFailure) {.closure.}
 
   RunOptions* = object
-    maxFrames*: int     ## stop after this many frames; 0 runs until the window closes
-    onFrame*: FrameHook ## called once per frame, nil for none
+    maxFrames*: int            ## stop after this many frames; 0 runs until the window closes
+    onFrame*: FrameHook        ## called once per frame, nil for none
     theme*: ThemeChoice
       ## `followSystem` (the default) also honours the VIEWSEG_THEME
       ## environment variable.

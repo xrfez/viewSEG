@@ -9,13 +9,16 @@ import viewSEG/ui/imgui/app # first, as in the program: see app.nim's imports
 import imguin/cimgui
 
 var logged: seq[string]
+
+proc probe(f: FrameInfo) =
+  if f.index == 1:
+    discard igGetStyleColorName(-1) # an unknown colour: IM_ASSERT(0)
+    igPopStyleColor(1) # nothing pushed: IM_ASSERT_USER_ERROR
+  if f.index == 3:
+    for m in f.messages.items:
+      if "Dear ImGui's check" in m.text: logged.add m.text
+
 let code = run(RunOptions(maxFrames: 4, userThemeDir: some(getTempDir() / "no-user-themes"),
-  onFrame: proc (f: FrameInfo) =
-    if f.index == 1:
-      discard igGetStyleColorName(-1) # an unknown colour: IM_ASSERT(0)
-      igPopStyleColor(1)              # nothing pushed: IM_ASSERT_USER_ERROR
-    if f.index == 3:
-      for m in f.messages.items:
-        if "Dear ImGui's check" in m.text: logged.add m.text))
+  onFrame: probe))
 echo "assertprobe: ", logged.len, " checks logged"
 quit(if code == 0 and logged.len == 2 and "PopStyleColor" in logged.join: 0 else: 2)
