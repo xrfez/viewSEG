@@ -160,7 +160,7 @@ type
     traceBox, timeBox: ScaleBox
     calib: CalibrationUi
     sortKeys: SortKeysUi
-    stripWidths: array[9, float32] ## the strip's groups as drawn last frame
+    stripWidths: array[10, float32] ## the strip's groups as drawn last frame
     goto: GoToUi
     menuTarget: string ## what the plot's menu acts on, said when it opened
     menuUnder: int = -1 ## the trace under the pointer when it opened (survey-wide); -1 for none
@@ -685,6 +685,15 @@ template stripGroup(tp: var TracePanelUi; i: int; right, spacing, lift: float32;
   igEndGroup()
   tp.stripWidths[i] = igGetItemRectSize().x
 
+func hasAux(st: AppState; p: Panel): bool =
+  ## Whether the record `p` shows holds auxiliary traces (the record list's
+  ## count, from the index).
+  if p.layers.len > 0 and p.layers[0].source.kind == lsRecord:
+    let i = st.findSession(p.layers[0].source.file)
+    let g = p.layers[0].source.gather
+    result = i >= 0 and g in 0 ..< st.sessions[i].records.len and
+      st.sessions[i].records[g].aux > 0
+
 func recordOf(st: AppState; p: Panel): (int, int) =
   ## The record (gather) `p` shows and how many its file has; (0, 0) for
   ## none.
@@ -785,6 +794,22 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
       var s = st.settings
       s.cursorLine = not on
       res.commands.add Command(kind: ckSettings, settings: s)
+  # which traces: seismic, auxiliary or both, for a record that has auxiliary traces
+  let f = p.layers[0].filter
+  if hasAux(st, p) or not f.seismic or f.auxiliary:
+    tp.stripGroup(9, right, 6, lift):
+      for (aux, name, what) in [(false, "Seismic", "seismic"), (true, "Aux", "auxiliary")]:
+        let on = if aux: f.auxiliary else: f.seismic
+        let other = if aux: f.seismic else: f.auxiliary
+        if toggle(name & "##traces", on, t) and (not on or other):
+          var nf = f
+          if aux: nf.auxiliary = not on else: nf.seismic = not on
+          res.commands.add Command(kind: ckFilter, panel: p.id, filter: nf)
+        marks.mark("plot.traces." & name)
+        tip("Show the record's " & what & " traces" & (if on: " (on)" else: " (off)") &
+          (if on and not other: ": the plot shows them alone, so this one stays on" else: "") &
+          ". With both, the auxiliary traces stand in the file's order among the seismic ones.")
+        if not aux: igSameLine(0, 2)
   tp.stripGroup(1, right, 6, lift):
     drawOverlapControls(p, t, marks, res)
   tp.stripGroup(2, right, 12, lift):

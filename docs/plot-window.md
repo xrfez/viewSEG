@@ -126,6 +126,17 @@
     overlap, the colours, the gain type, amount and settings, the order and the display
     header's fields (`Settings.plot`: a new plot starts as the user left the last one;
     polarity is not kept, reversing it being an operation on the data);
+  - **Seismic and Aux** (the user, asked whether auxiliary traces should wait for an
+    Aux window: "filter toggle"), two toggles shown when the record holds auxiliary
+    traces (a time break, a pilot, an uphole): Seismic is on at first; with Aux on too,
+    the auxiliary traces are drawn in the same plot, in the file's order among the
+    seismic ones (`TraceFilter`, `ckFilter`), at the same scales, and the window is
+    titled "Seismic + Aux"; with Seismic off, "Aux" shows them alone. At least one stays
+    on. Shorter traces are drawn as long as they are; an auxiliary trace whose sample
+    interval differs from the seismic traces' is drawn at theirs, and the log says so
+    (their times are then not to scale). Sorts, gain, edits, the display header and the
+    readout work on them as on the others. The Aux window of its own, with its own
+    filters, is still to come;
   - **scale boxes: traces per inch and ms per inch**, each a box to type a value into.
     Typing a value and pressing Enter sets the zoom, keeping the top-left corner where it
     is (a plot grows from where it starts, as on paper); zooming any other way updates the

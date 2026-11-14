@@ -224,6 +224,13 @@ plot becomes "My own" colours. **Paper** (black on white; negative fills red) an
 **Follow the theme** put ready-made colours back; **My own** brings yours back. They are
 remembered when you quit.
 
+**Auxiliary traces.** When the record holds auxiliary traces (a time break, a pilot, an
+uphole), two toggles in the strip choose what the plot shows: **Seismic** (on at first)
+and **Aux**. With both on, the auxiliary traces stand in the file's order among the
+seismic ones and the window is called **Seismic + Aux**; with Seismic off it shows the
+auxiliary traces alone (**Aux**). One of them always stays on. The gain, the sorts, the
+edits, the display header and the status bar work on them too.
+
 **The plot's menu** (right-click the plot) holds what acts on the data, and nothing about
 how it looks. Its first line names what it acts on: the trace under the pointer, or the
 selection when that trace is selected. Then:

@@ -237,9 +237,23 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   var layout = PanelLayout(traces: n, dtMs: 1, t0Ms: 0)
   if n > 0:
     layout.samples = if all: f[].maxSamples(g) else: f[].maxSamples(list)
-    let k0 = f[].traceKeys(rd.positions.traceAt(0))
+    # The time axis is the first seismic trace's (auxiliary traces shown
+    # among them are drawn at its interval: said when theirs differs).
+    var first = 0
+    while first < n - 1 and not f[].traceKeys(rd.positions.traceAt(first)).isSeismic:
+      inc first
+    let k0 = f[].traceKeys(rd.positions.traceAt(first))
     if k0.intervalUs > 0 and k0.intervalUs < Inf:
       layout.dtMs = k0.intervalUs / 1000
+      if rd.src.filter.auxiliary and rd.src.filter.seismic:
+        var other = 0
+        for k in 0 ..< n:
+          let keys = f[].traceKeys(rd.positions.traceAt(k))
+          if not keys.isSeismic and keys.intervalUs != k0.intervalUs: inc other
+        if other > 0:
+          rd.note(sevWarning, $other & " auxiliary traces of " & rd.name & " have another " &
+            "sample interval than the seismic traces, and are drawn at theirs (" &
+            $(k0.intervalUs / 1000) & " ms): their times are not to scale.")
     else:
       rd.note(sevWarning, "The sample interval of " & rd.name & " is not known: the time " &
         "axis counts samples (1 ms each).")

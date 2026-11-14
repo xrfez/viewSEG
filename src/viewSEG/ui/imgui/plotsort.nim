@@ -30,7 +30,7 @@ proc tip(text: string) =
 proc send(p: Panel; order: seq[SortKey]; cmds: var seq[Command]) =
   cmds.add Command(kind: ckSort, panel: p.id, order: order)
 
-proc toggle(label: string; selected: bool; t: Theme): bool =
+proc toggle*(label: string; selected: bool; t: Theme): bool =
   ## A text button drawn on the selection colour, its text in the accent
   ## colour, when `selected` (as the display mode buttons are).
   if selected:

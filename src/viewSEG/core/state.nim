@@ -109,6 +109,7 @@ type
     ckDisplay = "display"                ## how a panel's layer 0 is drawn
     ckHeader = "display header"          ## the rows of a panel's display header
     ckSort = "sort"                      ## the order of a panel's traces
+    ckFilter = "trace filter"            ## which of the record's traces a panel shows
     ckReverseAll = "reverse all"         ## reverse the polarity of every trace of a panel, or not
     ckBack = "back"                      ## a panel's view before the last gesture
     ckSettings = "settings"              ## replace the settings
@@ -143,7 +144,7 @@ type
       reordered*: JobId
       position*: int                  ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
-        ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits:
+        ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits, ckFilter:
       panel*: PanelId
       gather*: int                    ## ckGather: index into the file's gathers
       path*: string                   ## ckShowFile, ckShowTrace: the file to show
@@ -159,6 +160,7 @@ type
       edit*: TraceEdit                ## ckEdit: killed, or reversed
       edited*: seq[int]               ## ckEdit: survey-wide ids of traces of the panel's file
       on*: bool                       ## ckEdit: the edit given (true) or taken away
+      filter*: TraceFilter            ## ckFilter: layer 0's traces (seismic, auxiliary)
     of ckHover: trace*: int           ## survey-wide trace id; -1 for none
     of ckSelect:
       traces*: seq[int]               ## survey-wide trace ids
@@ -1598,6 +1600,16 @@ proc apply*(state: var AppState; cmd: Command) =
     else: state.ignore(cmd, $cmd.job & " is running; cancel it first")
   of ckGather:
     state.goToGather(cmd)
+  of ckFilter:
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
+    elif not (cmd.filter.seismic or cmd.filter.auxiliary):
+      state.ignore(cmd, "a plot shows seismic or auxiliary traces, or both")
+    elif cmd.filter != state.panels[k].layers[0].filter:
+      # The record's traces again, through the new filter, at the same scales.
+      state.panels[k].layers[0].filter = cmd.filter
+      state.newSource(k)
   of ckView:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
