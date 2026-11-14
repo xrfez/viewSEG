@@ -51,8 +51,8 @@ Status values:
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Sort by header fields (shot, receiver, CMP, offset, any) | `sortTraces(by[, traces])` | "Sort by…" and gather domains | planned |
-| Sort by the viewer's own columns | `sortOrder(columns)` | Sort a gather by a QC attribute (RMS, pick time, SNR) | planned |
+| Sort by header fields (shot, receiver, CMP, offset, any) | `sortTraces(by[, traces])` | Sort by any raw header field, and gather domains | planned |
+| Sort by the viewer's own columns | `sortOrder(columns)` | Plot window: the sort buttons (Line/Station, By Flag, By Component) and "Sort by keys…" over the trace keys (`TraceKeys`, among them `component`), each ascending or descending, sorted by the panel's reader; later a gather by a QC attribute (RMS, pick time, SNR) | built (keys); planned (QC attributes) |
 
 ### Headers
 

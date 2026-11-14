@@ -10,7 +10,7 @@
 ```
 ┌ Plot ──────────────────────────────────────────────────────┐
 │ [▒|∿|◢|◣] [gain▾] [-][+0.0][+] dB [12.5] tr/in [200] ms/in │  controls (they
-│ [-][+][fit][<][⋯]                                          │  wrap when narrow)
+│ [-][+][fit][<] [Line/Station|By Flag|By Component] [⋯]     │  wrap when narrow)
 ├────────────────────────────────────────────────────────────┤
 │ line    100  100  100  100  100  100  100  100  100        │  display header
 │ point   101  103  105  107  109  111  113  115  117        │  (thinned to fit)
@@ -43,8 +43,16 @@
   plot shows more or less of it from the same top-left corner, as a sheet of paper
   would; an axis that shows the whole record goes on showing all of it.
 - **Display header along the top:** rows of trace header values over the traces, thinned
-  so labels never overlap. Any trace header field can be a row, and there can be several;
-  the default is receiver **line** and **point**. Reversed traces are marked there.
+  so labels never overlap. Any trace header field can be a row (among them the component
+  of a multi-component station), and there can be several; the default is receiver
+  **line** and **point**. Reversed traces are marked there.
+- **The traces' order** is the file's until a sort is chosen, and belongs to the plot
+  window: two windows on the same record can show it in two orders. Sorting never
+  changes the file, and it happens off the screen's thread, so a large gather never
+  holds up the window: the plot goes on showing the old order (with "Sorting by ..." in
+  its top-left corner) until the new one is read, and the view stays where it was. The
+  display header, the status bar's readout, the scroll bars and every read follow the
+  order shown, and a new gather is shown in the same order.
 - **The window's own controls**, in a slim strip at its top (nothing about a plot sits in
   the main toolbar). In a narrow window the strip wraps onto more lines; the window
   itself never scrolls, so no window scroll bar ever covers the plot:
@@ -82,6 +90,23 @@
     Changing the amount, a Fixed amplitude, or between types that do nothing to the
     samples (None, Fixed, Float, Normalized for the whole record) reads nothing again;
     the others read the view again with the new processing;
+  - **three sort buttons**, the button of the order in use drawn selected:
+
+    | Button | Order |
+    |---|---|
+    | Line/Station | receiver line, then station (point), as the headers give them; a station's traces stay in the file's order |
+    | By Flag | receiver line, then station, then component: a station's components side by side, in order |
+    | By Component | the traces grouped by component, each group by line, then station |
+
+    Clicking the selected button again goes back to the file's order. A button whose
+    keys the traces have none of (post-stack data has no receiver line, point or
+    component) is greyed out, as it would change nothing. Other orders are
+    keys of the user's own, from the plot's menu ("Sort by keys..."): a small popover
+    lists the keys, the first first, each a display header field (line, point,
+    component, channel, FFID, source line and point, offset, CDP, inline, crossline,
+    trace number) and each ascending or descending; "Sort" applies them, "File order"
+    goes back. Traces equal in every key keep the file's order, and unknown values come
+    last either way;
   - zoom out, zoom in, fit all, back to the view before the last gesture, and a "more"
     popover: the colours, the display header's fields, the scale units and the screen
     calibration, later the trace overlap (the largest swing of a wiggle, in trace
@@ -208,8 +233,8 @@ Edits to traces are lists kept beside the file, never written into it: each is u
 its inverse, Ctrl + Z reverts the last one, and "Clear all edits for this file" returns to
 the file as it is on disk.
 
-Right-clicking an empty part of the plot opens the plot's own menu: display mode,
-colours, display header fields, fit all.
+Right-clicking an empty part of the plot opens the plot's own menu: fit all, back, the
+order ("Sort by keys...", "File order"), display mode, colours, display header fields.
 
 ## Empty and first-run state
 
@@ -284,3 +309,13 @@ Defaults taken in this draft, for the user to confirm or change:
     size.
 15. **A click on a scroll bar's track pans by a whole view** towards the click (as on
     Windows), rather than jumping the thumb to the pointer.
+16. **Line/Station and By Flag differ only within a station:** Line/Station keeps a
+    station's traces in the file's order, By Flag puts its components in order. Clicking
+    the selected sort button goes back to the file's order (there is no fourth button
+    for it; the plot's menu also has "File order").
+17. **A sort keeps the view** (the same positions and times, so the scale boxes keep
+    their values) rather than fitting the whole gather; "back" is not changed by a sort.
+18. **Sort keys are the display header's fields** (the trace keys parseSEG reads for
+    every format alike), not raw header words; sorting by any raw header field comes with
+    the gather domains. No key has a shortcut yet (open choice 4's single keys come
+    first).

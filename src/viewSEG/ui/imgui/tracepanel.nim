@@ -30,15 +30,17 @@
 ##
 ## Nothing about a plot sits in the main toolbar: the display mode, the
 ## gain (`plotgain`: the type and the amount in dB), the scales, zoom, fit,
-## back and the display header's fields are here, in the strip (which
-## wraps in a narrow window) and in the plot's context menu (right click).
+## back, the trace order (`plotsort`: the sort buttons, and the user's own
+## keys from the menu) and the display header's fields are here, in the
+## strip (which wraps in a narrow window) and in the plot's context menu
+## (right click).
 
 import std/[math, strutils, tables]
 import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../gpu/density
 import ../../view/[displayheader, theme]
-import chrome, dpi, fonts, icons, menus, plotbars, plotgain, style, symbols
+import chrome, dpi, fonts, icons, menus, plotbars, plotgain, plotsort, style, symbols
 
 const
   PaperBackground* = Rgba(r: 255, g: 255, b: 255, a: 255)
@@ -104,7 +106,8 @@ type
     want: bool
     traceBox, timeBox: ScaleBox
     calib: CalibrationUi
-    stripWidths: array[5, float32] ## the strip's groups as drawn last frame
+    sortKeys: SortKeysUi
+    stripWidths: array[6, float32] ## the strip's groups as drawn last frame
 
   PanelOutput* = object
     ## What the plot window asks for.
@@ -119,6 +122,7 @@ func caption(f: HeaderField): string =
   ## A header row's name as it stands left of the plot: short, so it fits
   ## beside the time axis.
   case f
+  of hfComponent: "comp"
   of hfChannel: "chan"
   of hfSrcLine: "S line"
   of hfSrcPoint: "S point"
@@ -460,7 +464,9 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
       igTextUnformatted("Back to the view before (Backspace, Alt+Left)", nil)
       igEndTooltip()
-  tp.stripGroup(4, right, 8, lift):
+  tp.stripGroup(4, right, 14, lift):
+    drawSortButtons(p, t, marks, res.commands)
+  tp.stripGroup(5, right, 8, lift):
     if button(IconSettings & "##more", t, marks, "plot.more"):
       igOpenPopup_Str(moreId, 0)
     tip("Colours, display header, scale units and screen calibration")
@@ -763,6 +769,19 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     let stride = if p.pending.isEmpty: 1 else: p.pending.stride
     tp.drawHeader(tiles, fields, stride, view, p.layout, headerTop, pos, size, t, paper)
     ImPlot_EndPlot()
+    if st.sorting(k): # the old order stays drawn until the new one comes
+      let dl = igGetWindowDrawList()
+      let text = if layer.order.len == 0: "Back to the file's order..."
+                 else: "Sorting by " & describe(layer.order) & "..."
+      let ts = igCalcTextSize(text.cstring, nil, false, -1)
+      let pad = igGetStyle().FramePadding
+      let at = ImVec2_c(x: pos.x + 6, y: pos.y + 6)
+      ImDrawList_AddRectFilled(dl, at, ImVec2_c(x: at.x + ts.x + 2 * pad.x,
+        y: at.y + ts.y + 2 * pad.y), u32(t.roles[rlPopup]), igGetStyle().FrameRounding, 0)
+      ImDrawList_AddText_Vec2(dl, ImVec2_c(x: at.x + pad.x, y: at.y + pad.y),
+        u32(t.roles[rlText]), text.cstring, nil)
+      marks.markRect("plot.sorting", at, ImVec2_c(x: at.x + ts.x + 2 * pad.x,
+        y: at.y + ts.y + 2 * pad.y))
     # The mouse and keys, over the plot's data area.
     let plot = Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y))
     igSetCursorScreenPos(pos)
@@ -790,6 +809,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       res.commands.add Command(kind: ckView, panel: p.id, view: after, remember: remember)
   if paper:
     ImPlot_PopStyleColor(1)
+  var sortKeys = false
   if menu:
     igOpenPopup_Str(menuId, 0)
   if igBeginPopup(menuId, 0):
@@ -797,6 +817,14 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       tp.show(fitAll(p.layout, p.view.columns, p.view.rows))
     if igMenuItem_Bool((IconPrevious & "  Back").cstring, "Backspace", false, p.back.len > 0):
       res.commands.add Command(kind: ckBack, panel: p.id)
+    igSeparatorText("Sort")
+    let order = layer.order
+    if igMenuItem_Bool("Sort by keys...", nil, order.len > 0 and presetOf(order) < 0, true):
+      sortKeys = true
+    marks.mark("plot.menu.sort keys")
+    if igMenuItem_Bool("File order", nil, order.len == 0, true) and order.len > 0:
+      res.commands.add Command(kind: ckSort, panel: p.id)
+    marks.mark("plot.menu.file order")
     igSeparatorText("Display")
     for m in DisplayMode:
       if igMenuItem_Bool(($m).cstring, nil, m == layer.display.mode, m == dmDensity) and
@@ -809,6 +837,9 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     igSeparatorText("Display header")
     drawHeaderChoice(p, res)
     igEndPopup()
+  # Opened here, not in the menu, so that it has the window's ID, as below.
+  if sortKeys: tp.sortKeys.openSortKeys(p)
+  tp.sortKeys.drawSortKeys(p, marks, res.commands)
 
 proc drawTracePanel*(tp: var TracePanelUi; title: string; st: AppState; panel: PanelId;
     t: Theme; fonts: Fonts; marks: var Marks): PanelOutput =

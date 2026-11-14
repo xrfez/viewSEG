@@ -204,6 +204,22 @@ withFixtures fx:
     doAssert f.componentGroupIds(1 ..< f.len).deduplicate.len == SegdChannels
     f.close()
 
+  block mixedOrder:
+    var f = openClean(fx.mixedOrderSegd())
+    doAssert f.len == 1 + MixedSets.len * SegdChannels
+    let k = f.keysOf
+    let x = f.readTraces(0 ..< f.len)
+    for s, (line, component) in MixedSets:
+      for n in 0 ..< SegdChannels:
+        let row = 1 + s * SegdChannels + n
+        doAssert k[row].component == uint8(component), $k[row].component
+        doAssert k[row].rcvLine == line and k[row].rcvPoint == FirstRcvPoint + float64(n)
+        for i in countup(0, SegdSamples - 1, 7):
+          doAssert x[row, i] == segdSample(ComponentScale[component - 1], line,
+            float64(n + 1), i)
+    doAssert not k[0].isSeismic
+    f.close()
+
   block pilot:
     var f = openClean(fx.pilotSegy())
     doAssert f.len == 1 and f.summary.samplesPerTrace == PilotSamples
@@ -244,4 +260,4 @@ block removedOnError:
   doAssert kept.len > 0 and not dirExists(kept)
 
 echo "tfixtures: ", SurveyTraces, " survey traces, ", PlantedDefect.high.ord,
-  " planted defects, SPS, two SEG-D records, a pilot, ", demoFileNames.len, " demo files"
+  " planted defects, SPS, three SEG-D records, a pilot, ", demoFileNames.len, " demo files"

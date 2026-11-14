@@ -4,7 +4,8 @@ viewSEG is a viewer for SEG-Y and SEG-D seismic data with quality-control tools.
 no installation and no internet connection.
 
 **Status:** early development. The window, the File menu, the folders below, and one
-record on screen as greyscale density, with zoom, pan and a cursor readout, work.
+record on screen as greyscale density, with zoom, pan, gain, sorting and a cursor readout,
+work.
 
 ## Start it
 
@@ -66,6 +67,15 @@ under the plot for the traces, right of it for the time. The time axis shows the
 only; its unit is in the ms/in box and in the status bar. Making the window larger or
 smaller keeps the scale and shows more or less of the record, from the same top-left
 corner (an axis that showed the whole record goes on showing all of it).
+
+**Sort.** Three buttons in the strip put the traces in another order: **Line/Station**
+(receiver line, then station), **By Flag** (the same, with each station's components side
+by side, in order) and **By Component** (the traces grouped by component, each group by
+line, then station). The button of the order in use is highlighted; click it again for
+the file's order. For an order of your own, right-click the plot and choose **Sort by
+keys...**: pick the header fields to sort by, the first first, each ascending or
+descending, and click Sort. Sorting never changes the file, and the display header and
+the status bar follow the order shown.
 
 **Scales.** The two boxes over the plot state the zoom as traces per inch and ms per inch.
 Type a value and press Enter to set it; zooming any other way updates them. The settings

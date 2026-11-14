@@ -34,6 +34,13 @@
 ##   peak or clip percentile, which is drawn full black;
 ## - Float: the clip percentile of the data in view, recomputed whenever the
 ##   view changes (`viewLevel`).
+##
+## **Trace order.** A layer shows its traces in the file's order, or sorted
+## by keys (`Layer.order`: header fields, each ascending or descending, the
+## first key first); `SortPresets` are the orders the plot window has
+## buttons for. The panel's reader sorts (`core/sorting`), so each panel
+## has its own order; the order is a list of trace numbers, and nothing in
+## the file moves.
 
 import std/math
 import parseSEG
@@ -127,27 +134,41 @@ type
   Layer* = object
     source*: LayerSource
     filter*: TraceFilter
-    pipeline*: Pipeline ## processSEG operations; empty shows the raw samples
+    order*: seq[SortKey] ## the traces' order, the first key first; empty: the file's order
+    pipeline*: Pipeline  ## processSEG operations; empty shows the raw samples
     display*: DisplaySettings
 
   HeaderField* = enum
-    ## A value the display header can show above each trace.
-    hfRcvLine = "line"   ## receiver line
-    hfRcvPoint = "point" ## receiver point
+    ## A value the display header can show above each trace, and a key the
+    ## traces can be sorted by.
+    hfRcvLine = "line" ## receiver line
+    hfRcvPoint = "point" ## receiver point (the station)
+    hfComponent = "component" ## of a multi-component station (parseSEG's `TraceKeys.component`)
     hfChannel = "channel"
-    hfRecord = "FFID"    ## field record
+    hfRecord = "FFID" ## field record
     hfSrcLine = "source line"
     hfSrcPoint = "source point"
     hfOffset = "offset"
     hfEnsemble = "CDP"
     hfInline = "inline"
     hfCrossline = "crossline"
-    hfTrace = "trace"    ## the trace's number in the file, from 1
+    hfTrace = "trace" ## the trace's number in the file, from 1
 
   HeaderChoice* = object
     ## The rows of a panel's display header.
     auto*: bool = true        ## from what the file has (`defaultFields`)
     fields*: seq[HeaderField] ## the user's choice, top row first, when not `auto`
+
+  SortKey* = object
+    ## One key of a trace order: a header field, smallest first unless
+    ## `descending`.
+    field*: HeaderField
+    descending*: bool
+
+  SortPreset* = object
+    ## A named trace order, as the plot window's sort buttons offer it.
+    name*: string
+    keys*: seq[SortKey] ## the first key first
 
   Panel* = object
     id*: PanelId
@@ -164,6 +185,9 @@ type
     pending*: ReadRequest    ## the request sent last; empty for none
     level*: Level            ## the first tile's since the source or the processing changed
     viewLevel*: Level        ## Float: the data in view, since the view last changed
+    orderGen*: uint64
+      ## `requestGen` when layer 0's order last changed: tiles from before
+      ## it are kept until the first tile in the new order comes
     jumps*: int
       ## bumped when `core` sets the view itself (the whole gather when it
       ## is first laid out, back): the UI follows
@@ -174,6 +198,18 @@ const
   MaxBack* = 50     ## earlier views a panel remembers
   GainStepDb* = 3.0 ## the gain amount's - and + buttons and keys
   MaxGainDb* = 60.0 ## the gain amount stays within ± this
+  SortPresets* = [
+    SortPreset(name: "Line/Station",
+      keys: @[SortKey(field: hfRcvLine), SortKey(field: hfRcvPoint)]),
+    SortPreset(name: "By Flag",
+      keys: @[SortKey(field: hfRcvLine), SortKey(field: hfRcvPoint), SortKey(field: hfComponent)]),
+    SortPreset(name: "By Component",
+      keys: @[SortKey(field: hfComponent), SortKey(field: hfRcvLine), SortKey(field: hfRcvPoint)])]
+    ## The plot window's sort buttons, in order. Line/Station: receiver line,
+    ## then point, a station's traces in the file's order; By Flag: the same,
+    ## then component, so a station's components lie side by side in order;
+    ## By Component: the traces grouped by component, each group by line,
+    ## then point.
 
 func `==`*(a, b: PanelId): bool {.borrow.}
 func `$`*(id: PanelId): string = "panel " & $int(id)
@@ -192,6 +228,7 @@ func value*(k: TraceKeys; field: HeaderField; trace: int): float64 =
   case field
   of hfRcvLine: k.rcvLine
   of hfRcvPoint: k.rcvPoint
+  of hfComponent: (if k.component == 0: NaN else: float64(k.component))
   of hfChannel: k.channel
   of hfRecord: k.record
   of hfSrcLine: k.srcLine
@@ -226,6 +263,22 @@ func defaultFields*(known: set[HeaderField]; kind = gkUnknown): seq[HeaderField]
 func shownFields*(p: Panel): seq[HeaderField] =
   ## The rows of `p`'s display header, top first.
   if p.header.auto: defaultFields(p.known, p.kind) else: p.header.fields
+
+func presetOf*(order: openArray[SortKey]): int =
+  ## The index in `SortPresets` of the preset whose keys are `order`; -1 for
+  ## none (the file's order, or keys of the user's own).
+  for i, s in SortPresets:
+    if s.keys == @order: return i
+  -1
+
+func describe*(order: openArray[SortKey]): string =
+  ## `order` in words: "line, then point (descending)"; "the file's order"
+  ## for none.
+  if order.len == 0: return "the file's order"
+  for i, k in order:
+    if i > 0: result.add ", then "
+    result.add $k.field
+    if k.descending: result.add " (descending)"
 
 func effectiveGain*(d: DisplaySettings; kind: GatherKind): DisplayGain =
   ## The gain `d` shows a gather of `kind` with: `dgAuto` is AGC for a

@@ -1,11 +1,12 @@
 ## A loaded file is never changed: every fixture (the survey and each of its
-## planted defects, the SPS files, both SEG-D records, the pilot, parseSEG's
-## demo files, and two damaged files) is opened, shown gather by gather,
-## zoomed, panned, box-zoomed, sent back, given every display gain, reversed
-## polarity and other header rows, read to the newest tile, closed, and then
-## opened again from the index cache. Each file's bytes and modification time
-## are then as they were, and its folder holds the same files, of the same
-## sizes, and nothing else.
+## planted defects, the SPS files, the three SEG-D records, the pilot,
+## parseSEG's demo files, and two damaged files) is opened, shown gather by
+## gather, zoomed, panned, box-zoomed, sent back, given every display gain,
+## reversed polarity and other header rows, sorted by each sort button and
+## by keys of the user's own, read to the newest tile, closed, and then
+## opened again from the index cache. Each file's bytes and modification
+## time are then as they were, and its folder holds the same files, of the
+## same sizes, and nothing else.
 ##
 ## Seen to fail: with the open job marking the seismic file used instead of
 ## its index cache (`setLastModificationTime(path, ...)` in `openWork`), the
@@ -42,7 +43,8 @@ proc view(st: var AppState; v: Viewport; remember = false) =
 proc display(st: var AppState; d: DisplaySettings) =
   st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
 
-var driven, tiled = 0 # gathers worked with; of them, the ones with samples to show
+var driven, tiled, sorted = 0
+  # gathers worked with; of them, the ones with samples to show; sorted panels read
 
 proc drive(st: var AppState) =
   ## What a user does with a record in the plot, through the commands the
@@ -83,6 +85,16 @@ proc drive(st: var AppState) =
   st.view(fitAll(lay, 640, 480), remember = true)
   doAssert st.settle(st.answered)
   st.apply Command(kind: ckHeader, panel: MainPanel, header: HeaderChoice(auto: true))
+  # every sort button, keys of the user's own, then the file's order; each
+  # sorted panel read to its newest tile
+  var orders: seq[seq[SortKey]]
+  for s in SortPresets: orders.add s.keys
+  orders.add @[SortKey(field: hfOffset, descending: true), SortKey(field: hfChannel)]
+  orders.add @[]
+  for order in orders:
+    st.apply Command(kind: ckSort, panel: MainPanel, order: order)
+    doAssert st.settle(st.answered)
+    if lay.traces > 0 and lay.samples > 0: inc sorted
 
 proc showAll(st: var AppState; path: string) =
   ## Opens `path`, shows each of its gathers and works with it, then closes it.
@@ -106,7 +118,7 @@ withFixtures fx:
     files.add fx.surveySegy(d)
   let sps = fx.surveySps()
   files.add [sps.s, sps.r, sps.x]
-  files.add [fx.twoSetSegd(), fx.threeComponentSegd(), fx.pilotSegy()]
+  files.add [fx.twoSetSegd(), fx.threeComponentSegd(), fx.mixedOrderSegd(), fx.pilotSegy()]
   for name in demoFileNames:
     files.add fx.demoFile(name)
   let cut = fx.dir / "cut.sgy"
@@ -141,6 +153,7 @@ withFixtures fx:
     if "(index from the cache)" in e.text: inc cached
   doAssert cached > 0, "the second round read no index cache"
   echo "tunchanged: ", files.len, " files, ", driven, " gathers worked with, ", tiled,
-    " of them read"
+    " of them read, ", sorted, " sorted panels read"
   doAssert tiled >= 2 * (PlantedDefect.high.ord + 1) * Shots, $tiled
+  doAssert sorted == tiled * (SortPresets.len + 2), $sorted
   st.shutdown()

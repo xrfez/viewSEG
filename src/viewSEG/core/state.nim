@@ -26,6 +26,11 @@
 ## When `core` sets a view itself (back, or the whole gather once it is laid
 ## out) it bumps the panel's `jumps`, and the frontend follows.
 ##
+## **Order.** `ckSort` gives layer 0 an order (keys, or the file's order):
+## the panel's reader sorts, off this thread, and the view stays where it
+## is. The plot goes on drawing the tiles in the old order until the first
+## tile in the new one comes (`sorting` says so meanwhile), then drops them.
+##
 ## A command that does not fit the state (a file that is no longer open, a
 ## gather out of range) changes nothing and says why in the log, as a
 ## warning: the UI may issue a command in the same frame as the change that
@@ -61,6 +66,7 @@ type
     ckView = "view"             ## what a panel's plot shows (zoom, pan, size)
     ckDisplay = "display"       ## how a panel's layer 0 is drawn
     ckHeader = "display header" ## the rows of a panel's display header
+    ckSort = "sort"             ## the order of a panel's traces
     ckBack = "back"             ## a panel's view before the last gesture
     ckSettings = "settings"     ## scale units, monitor calibrations, the readout's fields
     ckHover = "hover"           ## the trace under the cursor
@@ -78,13 +84,14 @@ type
     of ckReorderJob:
       reordered*: JobId
       position*: int            ## 0 runs next
-    of ckGather, ckView, ckDisplay, ckHeader, ckBack:
+    of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckBack:
       panel*: PanelId
       gather*: int              ## ckGather: index into the file's gathers
       view*: Viewport           ## ckView: what the panel's plot shows now
       remember*: bool           ## ckView: a gesture starts; keep the view it replaces for back
       display*: DisplaySettings ## ckDisplay: how layer 0 is drawn
       header*: HeaderChoice     ## ckHeader: the display header's rows
+      order*: seq[SortKey]      ## ckSort: layer 0's keys, the first first; empty: the file's order
     of ckHover: trace*: int     ## survey-wide trace id; -1 for none
     of ckSelect:
       traces*: seq[int]         ## survey-wide trace ids
@@ -178,6 +185,14 @@ func tiles*(state: AppState; panelIndex: int): lent seq[Tile] {.inline.} =
   ## The tiles kept for `panels[panelIndex]`, oldest first: draw them in
   ## that order. Each has its own `id`, never reused.
   state.tiles[panelIndex]
+
+func sorting*(state: AppState; panelIndex: int): bool =
+  ## Whether `panels[panelIndex]`'s traces were given a new order since it
+  ## was shown and no tile in that order has come yet: the plot still shows
+  ## the old order.
+  template p: untyped = state.panels[panelIndex]
+  template t: untyped = state.tiles[panelIndex]
+  p.orderGen > p.sourceGen and (t.len == 0 or t[^1].request.gen < p.orderGen)
 
 func findPanel*(state: AppState; id: PanelId): int =
   ## The index of panel `id` in `panels`; -1 when there is none.
@@ -273,7 +288,7 @@ proc newSource(state: var AppState; k: int) =
       p.kind = s.gathers[g].kind
       if state.jobs.hold(s.path):
         src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path,
-          traces: s.gathers[g].traces, filter: p.layers[0].filter)
+          traces: s.gathers[g].traces, filter: p.layers[0].filter, order: p.layers[0].order)
       else:
         busy = true
         state.log.add(sevWarning, s.name, s.name & " is busy (a job needs it to itself), " &
@@ -341,6 +356,21 @@ proc refetch(state: var AppState; k: int; keepTiles: bool) =
     p.level = Level()
     p.viewLevel = Level()
   inc p.revision
+  state.requestView(k)
+
+proc reorder(state: var AppState; k: int) =
+  ## Tells `panels[k]`'s reader its layer 0's new order and asks again for
+  ## the view, which stays as it is. The tiles in the old order are drawn
+  ## until the first one in the new order comes (`drainInbox`), so the plot
+  ## never goes blank; each tile names its own traces, so what the pick and
+  ## the display header say always matches what is drawn.
+  template p: untyped = state.panels[k]
+  inc p.requestGen
+  p.orderGen = p.requestGen
+  p.pending = ReadRequest()
+  inc p.revision
+  if not state.readers[k].isNil:
+    state.readers[k].sortBy(p.orderGen, p.layers[0].order)
   state.requestView(k)
 
 func usable(x: float64): bool {.inline.} = x > 0 and x < Inf
@@ -568,6 +598,13 @@ proc apply*(state: var AppState; cmd: Command) =
     else:
       state.panels[k].header = cmd.header
       state.refetch(k, keepTiles = true)
+  of ckSort:
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
+    elif cmd.order != state.panels[k].layers[0].order:
+      state.panels[k].layers[0].order = cmd.order
+      state.reorder(k)
   of ckHover:
     if cmd.trace != -1 and state.findTrace(cmd.trace) < 0:
       state.ignore(cmd, "no open file has trace " & $cmd.trace)
@@ -616,6 +653,9 @@ proc drainInbox*(state: var AppState): bool =
         m.tile.id = state.nextTile
         inc state.nextTile
         if state.panels[k].level.clip.isNaN: state.panels[k].level = m.tile.level
+        # The first tile in a new order replaces every tile in the old one.
+        let orderGen = state.panels[k].orderGen
+        state.tiles[k].keepItIf(it.request.gen >= orderGen)
         state.tiles[k].add move m.tile
         if state.tiles[k].len > MaxTiles: state.tiles[k].delete(0)
         inc state.panels[k].revision

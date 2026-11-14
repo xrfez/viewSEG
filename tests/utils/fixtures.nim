@@ -25,6 +25,9 @@
 ## - `threeComponentSegd()`: SEG-D Rev 3.0, one record: a time break and three
 ##   seismic channel sets, one per component (group index 1, 2, 3) at the same
 ##   stations.
+## - `mixedOrderSegd()`: SEG-D Rev 3.0, one record: a time break and the three
+##   components of receiver lines 100 and 101, a channel set each, in a
+##   scrambled order (`MixedSets`), for sorting.
 ## - `pilotSegy()`: SEG-Y, one sweep trace (trace code 6, auxiliary).
 ## - `demoFile(name)`: parseSEG's demo files (`demoFileNames`: a post-stack
 ##   line, a SEG-D shot with three auxiliaries, a Rev 2 record, a SEG-2 line).
@@ -72,7 +75,11 @@ const
   SegdSamples* = 500
   ComponentScale*: array[3, float64] = [1.0, 0.5, -0.25]
     ## the three-component record's components: the plane wave times these
-  PilotSamples* = 1001    ## the pilot: 2 s at `DtMs`, 8 to 80 Hz
+  MixedSets*: array[6, (float64, int)] = [(RcvLine + 1, 2), (RcvLine, 3), (RcvLine, 1),
+    (RcvLine + 1, 1), (RcvLine, 2), (RcvLine + 1, 3)]
+    ## the mixed-order record's seismic channel sets, in the file's order:
+    ## (receiver line, component)
+  PilotSamples* = 1001 ## the pilot: 2 s at `DtMs`, 8 to 80 Hz
   PilotHz* = (8.0, 80.0)
 
 type
@@ -355,6 +362,21 @@ proc threeComponentSegd*(fx: Fixtures): string =
     for c in 0 ..< 3:
       sets.add SetSpec(channelType: 0x10, line: RcvLine, y: OriginY, group: uint8(c + 1),
         scale: ComponentScale[c])
+    writeSegdRecord(result, sets)
+
+proc mixedOrderSegd*(fx: Fixtures): string =
+  ## A record with a time break (set 1), then the three components of
+  ## receiver lines 100 and 101 (50 m north), points 101 .. 112, one channel
+  ## set each, in the scrambled order of `MixedSets`: so every way of sorting
+  ## them gives another order, and a station's components come neither in
+  ## order nor side by side in the file. Trace `1 + s * SegdChannels + n` is
+  ## set `MixedSets[s]`'s point `FirstRcvPoint + n`.
+  result = fx.dir / "mixed-order.sgd"
+  if not fileExists(result):
+    var sets = @[SetSpec(channelType: 0x20)]
+    for (line, component) in MixedSets:
+      sets.add SetSpec(channelType: 0x10, line: line, y: OriginY + 50 * (line - RcvLine),
+        group: uint8(component), scale: ComponentScale[component - 1])
     writeSegdRecord(result, sets)
 
 # ------------------------------------------------------------------ demo --

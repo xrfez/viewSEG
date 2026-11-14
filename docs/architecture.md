@@ -98,9 +98,9 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | Thread | Created and owned by | Runs |
 |---|---|---|
 | UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), reads one trace's headers, hex bytes or textual header, closes files, and makes every OpenGL call |
-| Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, `ensureKeys`, survey joins, sorts |
+| Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, `ensureKeys`, survey joins, sorts across files |
 | Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes, folder scans, brute stack, conversions, exports and patches, queued workflows |
-| Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher`; applies the trace filter, runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
+| Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher`; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
 | Pool workers | processSEG: one `ProcessPool`, made by `core` at start-up | The rows of `pool.apply`, `pool.pickInto` and `pool.traceAmplitudeInto`; destroyed at shutdown, once every caller has stopped |
 
@@ -191,7 +191,17 @@ frame over budget (50 ms) with its parts, longest first.
    the trace filter. The reader lets go of what it showed (closes its prefetcher, ends
    its hold) and posts the panel's `PanelLayout` (`mkLayout`: positions, samples, interval)
    with the header fields the traces have values for. `AppState` takes it in only if its
-   `sourceGen` is still the panel's, and fits the view to it.
+   `sourceGen` is still the panel's, and fits the view to it. The reader then sorts the
+   traces in layer 0's order (`Layer.order`: display header fields, each ascending or
+   descending; none for the file's order) with parseSEG's `sortOrder` over the keys in
+   the index, one key at a time, the last first (`core/sorting`), stopping between runs
+   of traces when a newer source or order comes. A position is then the place of a trace
+   in that order, so every request, and each tile's traces, keys and header values,
+   follow it; no request is served until the sort is done. **A new order** (`ckSort`)
+   keeps the file and the view: `AppState` bumps the panel's `requestGen` (its
+   `orderGen`), tells the reader (`sortBy`) and asks for the view again; the tiles in the
+   old order stay drawn until the first tile in the new one comes, then are dropped, so
+   the plot never goes blank (`sorting` says it is waiting).
 3. **Request** (UI). The frontend moves the view itself, with `core/zoom` (zoom about
    the pointer along one axis or both, pan, drag, box zoom, a new plot size, the scroll
    bars, all kept within the data: never past the first and last trace or the record's
@@ -263,6 +273,7 @@ frame over budget (50 ms) with its parts, longest first.
 | `readTracesInto`, `traceKeysInto`, `traceFieldColumnInto` | any | Fill the caller's buffer |
 | `traceHeaders`, `recordHeaders`, `fileHeaders`, `copyBytes`, `textHeader`, `traceField` | UI | Owned copies |
 | `traceFieldColumnInto`, then `sortOrder` (a sorted view) | job | A `seq[int]` selection |
+| `rowsOf(list)` keys, then `sortOrder` (a panel's order, `core/sorting`) | panel reader, while it holds the file | Positions: a `seq[int]` of trace numbers |
 | `pool.pickInto`, `fitShot`, `traceAmplitudeInto`, `recordAmplitude`, `windowSnrInto`, `recordCompleteness`, `addFold`, `preplotFold` | job | The caller's seqs; a `FoldMap` (moved, never copied) |
 | `initSpectrumPlan`, `averageAmplitudeInto` | panel or job | The caller's `amp` |
 | `bruteStack(f, T, binning, velocity, opts, progress)` | job (blocks) | A `StackResult`, moved to the UI through the inbox |
@@ -330,11 +341,14 @@ type
     pending: ReadRequest     # the request sent last
     level: Level             # RMS, peak, clip percentile: the first tile's after a change
     viewLevel: Level         # Float: the data in view
+    orderGen: uint64         # requestGen when layer 0's order last changed
     revision: int
 
   Layer = object             # one is the usual case; more are overlays
     source: LayerSource      # lsRecord (file, gather) or lsGenerated (a processSEG SweepSpec)
     filter: TraceFilter      # seismic / auxiliary, channel sets, channels, components
+    order: seq[SortKey]      # display header fields, each ascending or descending; empty:
+                             # the file's order (SortPresets: the plot window's buttons)
     pipeline: Pipeline       # processSEG operations; empty shows raw samples
     display: DisplaySettings # density or wiggle (positive / negative fill), "paper" colours,
                              # gain type (automatic, none, fixed, normalized, exponential,
@@ -343,7 +357,7 @@ type
 
   CommandKind = enum         # core/state: every user intent, the only way state changes
     ckOpen, ckClose, ckCancelJob, ckReorderJob, ckRemoveJob, ckGather, ckView, ckDisplay,
-    ckHeader, ckBack, ckHover, ckSelect, ckClearSelection, ckSettings
+    ckHeader, ckSort, ckBack, ckHover, ckSelect, ckClearSelection, ckSettings
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId

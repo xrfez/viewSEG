@@ -24,6 +24,12 @@
 ##   trace filter (seismic or auxiliary traces) and posts the panel's
 ##   `PanelLayout` (`mkLayout`), with the header fields the traces have
 ##   values for. Requests come after that.
+## - **Order.** Then it sorts the traces by the layer's keys
+##   (`core/sorting`), and again whenever it is given a new order (`sortBy`),
+##   without letting go of the file: a position is the place of a trace in
+##   that order, so every request, and the tile's traces, keys and display
+##   header values, follow it. A newer note stops a sort between runs of
+##   traces; until a sort is done, no request is served.
 ## - **Threads and ORC.** The reader is a worker (`core/threads`); it
 ##   empties its list of cycle roots after closing a prefetcher, before it
 ##   ends a hold, and before it exits. A tile holds no `ref`.
@@ -33,7 +39,7 @@ import parseSEG
 import processSEG/[adapters, pipeline]
 import processSEG/core/[rows, types, workspace]
 import processSEG/gain/stats
-import inbox, jobs, log, panels, threads, tiles, viewport
+import inbox, jobs, log, panels, sorting, threads, tiles, viewport
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
@@ -48,6 +54,7 @@ type
     path*: string          ## the file's path, as held
     traces*: Slice[int]    ## the gather
     filter*: TraceFilter
+    order*: seq[SortKey]   ## the layer's order; empty: the file's
 
   ReaderRequest* = object
     ## What a panel asks its reader for.
@@ -60,8 +67,10 @@ type
     lock: Lock
     changed: Cond
     panel: PanelId
-    hasSource, hasRequest, quit: bool ## notes not taken yet
+    hasSource, hasOrder, hasRequest, quit: bool ## notes not taken yet
     source: ReaderSource
+    order: seq[SortKey]
+    orderGen: uint64
     request: ReaderRequest
     poster: Poster
     holds: HoldRelease
@@ -75,7 +84,7 @@ type
   Positions = object
     ## The traces of a panel's positions: `traces.a + k`, or `list[k]`.
     traces: Slice[int]
-    filtered: bool ## `list` holds the traces shown, maybe none; else every trace of `traces`
+    listed: bool ## `list` holds the traces shown, maybe none; else every trace of `traces`
     list: seq[int]
 
   Reader = object
@@ -83,7 +92,10 @@ type
     r: ptr ReaderObj
     src: ReaderSource
     name: string
-    positions: Positions
+    shown: Positions     ## the traces the filter keeps, in the file's order
+    positions: Positions ## the same, in the order shown
+    sorted: bool         ## `positions` follow the newest order taken
+    orderGen: uint64     ## requests from before the newest order are not served
     layout: PanelLayout
     ws: Workspace
 
@@ -97,10 +109,10 @@ func isNil*(x: PanelReader): bool {.inline.} =
   x.p == nil
 
 func len(p: Positions): int =
-  if p.filtered: p.list.len else: p.traces.len
+  if p.listed: p.list.len else: p.traces.len
 
 func traceAt(p: Positions; k: int): int {.inline.} =
-  if p.filtered: p.list[k] else: p.traces.a + k
+  if p.listed: p.list[k] else: p.traces.a + k
 
 # ------------------------------------------------------------ the thread --
 
@@ -112,7 +124,13 @@ proc note(rd: Reader; severity: Severity; text: string) =
 proc interrupted(r: ptr ReaderObj): bool =
   ## Whether a newer note is waiting: then the current work is given up.
   withLock r.lock:
-    result = r.quit or r.hasSource or r.hasRequest
+    result = r.quit or r.hasSource or r.hasOrder or r.hasRequest
+
+proc superseded(r: ptr ReaderObj): bool {.raises: [].} =
+  ## Whether a newer source or order is waiting, or the reader must stop: a
+  ## sort gives up then (a newer request alone does not stop it).
+  withLock r.lock:
+    result = r.quit or r.hasSource or r.hasOrder
 
 proc letGo(rd: var Reader) =
   ## Stops touching the file and ends its hold.
@@ -120,11 +138,35 @@ proc letGo(rd: var Reader) =
     clearCycleRoots()
     discard rd.r.holds.release(rd.src.path)
   rd.src = ReaderSource()
+  rd.shown = Positions()
   rd.positions = Positions()
+  rd.sorted = false
   rd.layout = PanelLayout()
 
+proc arrange(rd: var Reader; order: seq[SortKey]) =
+  ## Puts the positions in `order` (the traces the filter keeps, sorted),
+  ## unless a newer note comes first: then they stay as they were and
+  ## `sorted` is false until the next order is taken.
+  rd.src.order = order
+  rd.sorted = false
+  if order.len == 0:
+    rd.positions = rd.shown
+    rd.sorted = true
+  else:
+    let f = rd.src.file
+    template base: untyped = rd.shown # not copied: `rows` points into its list
+    let rows = if base.listed: f[].rowsOf(base.list) else: f[].rowsOf(base.traces)
+    var perm: seq[int]
+    let r = rd.r
+    if sortRowsInto(rows, order, perm, proc (): bool = r.superseded):
+      var list = newSeq[int](perm.len)
+      for k, row in perm: list[k] = base.traceAt(row)
+      rd.positions = Positions(traces: base.traces, listed: true, list: list)
+      rd.sorted = true
+
 proc adopt(rd: var Reader; src: sink ReaderSource) =
-  ## Starts showing `src`: its positions, its layout, posted.
+  ## Starts showing `src`: its positions, its layout, posted; then the
+  ## positions are sorted in its order.
   rd.src = src
   rd.name = rd.src.path.extractFilename
   if rd.src.file == nil: return
@@ -141,9 +183,10 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
       list.add g.a + k
     else:
       all = false
-  rd.positions = if all: Positions(traces: g)
-                 else: Positions(traces: g, filtered: true, list: list)
-  let n = rd.positions.len
+  rd.shown = if all: Positions(traces: g)
+             else: Positions(traces: g, listed: true, list: list)
+  rd.positions = rd.shown
+  let n = rd.shown.len
   var known: set[HeaderField]
   var layout = PanelLayout(traces: n, dtMs: 1, t0Ms: 0)
   if n > 0:
@@ -169,6 +212,10 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   rd.layout = layout
   rd.r.poster.post Msg(job: NoJob, kind: mkLayout, panel: rd.r.panel,
     sourceGen: rd.src.gen, layout: layout, known: known)
+  # The layout does not depend on the order, so it goes first: the panel can
+  # ask for its view while the traces are sorted.
+  let order = rd.src.order
+  rd.arrange(order)
 
 proc levelOf(rd: var Reader; tile: Tile; list: seq[int]; failed: seq[int];
     percentile: float64): Level =
@@ -259,16 +306,22 @@ proc run(r: ptr ReaderObj) {.thread.} =
   while true:
     var src: ReaderSource
     var req: ReaderRequest
-    var gotSource, gotRequest, quit = false
+    var order: seq[SortKey]
+    var gotSource, gotOrder, gotRequest, quit = false
     withLock r.lock:
-      while not (r.quit or r.hasSource or r.hasRequest):
+      while not (r.quit or r.hasSource or r.hasOrder or r.hasRequest):
         wait(r.changed, r.lock)
       quit = r.quit
       gotSource = r.hasSource
+      gotOrder = r.hasOrder
       gotRequest = r.hasRequest
       if gotSource: src = move r.source
+      if gotOrder:
+        order = move r.order
+        rd.orderGen = r.orderGen
       if gotRequest: req = move r.request
       r.hasSource = false
+      r.hasOrder = false
       r.hasRequest = false
     if gotSource or quit:
       rd.letGo()
@@ -277,7 +330,9 @@ proc run(r: ptr ReaderObj) {.thread.} =
       break
     try:
       if gotSource: rd.adopt(src)
-      if gotRequest and rd.src.file != nil and req.read.gen >= rd.src.gen:
+      if gotOrder and rd.src.file != nil: rd.arrange(order)
+      if gotRequest and rd.src.file != nil and rd.sorted and
+          req.read.gen >= max(rd.src.gen, rd.orderGen):
         rd.serve(req)
     except CatchableError as e:
       rd.note(sevError, "Cannot read " & rd.name & ": " & e.msg)
@@ -323,9 +378,21 @@ proc show*(x: PanelReader; source: sink ReaderSource) =
       dropped = move x.p.source.path
     x.p.source = source
     x.p.hasSource = true
+    x.p.hasOrder = false # the source carries the layer's order
     x.p.hasRequest = false
     signal(x.p.changed)
   if dropped.len > 0: discard x.p.holds.release(dropped)
+
+proc sortBy*(x: PanelReader; gen: uint64; order: sink seq[SortKey]) =
+  ## Puts the traces shown in `order` (empty: the file's order), keeping the
+  ## file; requests made before `gen` are not served after it. Replaces an
+  ## order not yet taken.
+  assert x.p != nil
+  withLock x.p.lock:
+    x.p.order = order
+    x.p.orderGen = gen
+    x.p.hasOrder = true
+    signal(x.p.changed)
 
 proc request*(x: PanelReader; req: sink ReaderRequest) =
   ## Asks for a tile; replaces a request not yet taken.
