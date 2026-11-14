@@ -366,3 +366,85 @@ proc main() =
     doAssert snapshot(path) == before, "showing the file changed it"
 
 main()
+
+# ------------------------------------------------- screenshots of real data --
+# With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
+# local only), the plot window is saved on a real record at two zoom levels
+# as zoom-*.png, with the pointer on a trace so the status bar reads it out:
+# docs/screenshots/ holds the committed ones.
+
+const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
+
+proc zoomShots(path, name: string; tracesPerInch, msPerInch: float64; centre: DataPoint;
+    notches: float32; hover1, hover2: DataPoint) =
+  ## Opens `path` in a 1600 x 1000 window, sets the scales from the
+  ## record's start (as typed into the boxes), saves `name`-1.png with the
+  ## pointer on `hover1`, turns the wheel `notches` about `centre` and saves
+  ## `name`-2.png with the pointer on `hover2`.
+  let dir = getEnv("VIEWSEG_SCREENSHOTS")
+  var stage = 0
+  var wait = 0
+  var saved = 0
+  var was: Viewport
+  proc onFrame(f: FrameInfo) =
+    let p = f.core.panels[f.core.findPanel(MainPanel)]
+    let tiles = f.core.tiles(f.core.findPanel(MainPanel))
+    let answered = tiles.len > 0 and tiles[^1].request == p.pending and
+      f.tracePanel.drawnView.sameSpans(p.view)
+    let plot = f.markOf("plot.data")
+    proc at(d: DataPoint): Vec2 =
+      let v = p.view.screenAt(plot, d)
+      vec2(round(v.x), round(v.y))
+    inc wait
+    case stage
+    of 0:
+      if p.laidOut and answered and plot.size.x > 0:
+        let lim = limitsOf(p.layout)
+        var v = p.view
+        v.traces = Span(lo: -0.5, hi: 99.5)
+        v.timeMs = Span(lo: p.layout.t0Ms, hi: p.layout.t0Ms + 1000)
+        v = withTimeScale(withTraceScale(v, tracesPerInch, DefaultDpi, ScaleUnits(), lim),
+          msPerInch, DefaultDpi, ScaleUnits(), lim)
+        f.showView(v)
+        stage = 1
+    of 1:
+      if answered and p.back.len > 0:
+        f.moveMouse(at(hover1))
+        wait = 0
+        stage = 2
+    of 2:
+      if wait > 4 and f.pick.found:
+        if f.savePng(dir / (name & "-1.png")): inc saved
+        was = p.view
+        f.moveMouse(at(centre))
+        wait = 0
+        stage = 3
+    of 3:
+      if wait == 3: f.scrollWheel(at(centre), notches)
+      if wait > 3 and answered and not p.view.sameSpans(was):
+        f.moveMouse(at(hover2))
+        wait = 0
+        stage = 4
+    of 4:
+      if wait > 4 and answered and f.pick.found:
+        if f.savePng(dir / (name & "-2.png")): inc saved
+        echo "tguizoom: ", name, " at ", significant(traceScale(was, DefaultDpi, ScaleUnits())),
+          " and ", significant(traceScale(p.view, DefaultDpi, ScaleUnits())), " traces/in; ",
+          "read ", p.pending.count, " traces at the second"
+        f.stop()
+    else: discard
+    if f.index > 3000: f.stop()
+  let tmp = getTempDir() / ("viewseg-zoomshots-" & $getCurrentProcessId())
+  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
+    theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
+    onFrame: onFrame))
+  removeDir(tmp)
+  doAssert code == 0 and saved == 2, "no screenshots of " & path & " (stage " & $stage & ")"
+  echo "tguizoom: saved ", dir / (name & "-1.png"), " and -2.png"
+
+if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
+  let morgantown = examples / "00000151_12900_11300.sgd"
+  if fileExists(morgantown):
+    createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+    zoomShots(morgantown, "zoom-morgantown", 50, 400, DataPoint(x: 240, tMs: 250), 6,
+      DataPoint(x: 120, tMs: 700), DataPoint(x: 232, tMs: 330))

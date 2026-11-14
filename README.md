@@ -4,7 +4,9 @@ A high-performance viewer for SEG-Y and SEG-D seismic data, written in Nim on to
 [parseSEG](https://github.com/xrfez/parseSEG) (reading, indexing, headers) and
 [processSEG](https://github.com/xrfez/processSEG) (filtering, gain, spectra, stacking).
 
-**Status:** early development; nothing usable yet.
+**Status:** early development. A file opens and its first record shows as greyscale
+density, with zoom, pan, scales in traces and ms per inch, and a cursor readout
+(`docs/user/QUICKSTART.md`).
 
 ## Building
 

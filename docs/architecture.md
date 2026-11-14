@@ -192,8 +192,14 @@ frame over budget (50 ms) with its parts, longest first.
    its hold) and posts the panel's `PanelLayout` (`mkLayout`: positions, samples, interval)
    with the header fields the traces have values for. `AppState` takes it in only if its
    `sourceGen` is still the panel's, and fits the view to it.
-3. **Request** (UI). The frontend reports what its plot shows each frame (`ckView`:
-   the x range in positions, the y range in ms, the size in pixels). When the request
+3. **Request** (UI). The frontend moves the view itself, with `core/zoom` (zoom about
+   the pointer along one axis or both, pan, drag, box zoom, all kept within limits the
+   panel's traces set) and `core/scales` (traces and ms per inch or cm, at the monitor's
+   pixels per inch), and reports what its plot shows (`ckView`: the x range in
+   positions, the y range in ms, the size in pixels). The first view of a gesture comes
+   with `remember`, and the panel keeps the view it replaces (at most 50) for `ckBack`;
+   when `core` sets the view itself (back, the whole gather once it is laid out) it
+   bumps the panel's `jumps` and the frontend follows. When the request
    sent last does not cover it (`covers`), `core/viewport.requestFor` makes a new one:
    the visible positions plus half a view of read-ahead on each side, every `stride`-th
    position when zoomed out (never more than the pixel columns), the visible samples plus
@@ -218,6 +224,12 @@ frame over budget (50 ms) with its parts, longest first.
    linear in time, the gain and clip as a uniform, a colour-map texture); the frontend
    shows the image in its plot. The CPU twins (`amplitudeAt`, `densityColour`) are what
    the shader is tested against.
+8. **Read out** (UI, `core/pick` and `core/readout`). The pointer's screen point goes
+   to the data point under it, then to the trace drawn there (the newest tile holding
+   it), the nearest sample and the value drawn for it, and the trace's keys, which each
+   tile carries per row. Nothing is read from the file. The status bar formats the
+   fields the user chose (`Settings.readout`) from that `Pick`, blank where a value is
+   not known.
 
 | Work | Cancelled or dropped by |
 |---|---|
@@ -303,7 +315,9 @@ type
     requestGen: uint64       # bumped whenever the panel needs new data; tiles carry it
     sourceGen: uint64        # requestGen when layer 0's source last changed; layouts carry it
     layout: PanelLayout      # from the reader: positions, samples, interval, t0
-    view: Viewport           # what the plot showed last (ckView)
+    view: Viewport           # what the plot shows (ckView)
+    back: seq[Viewport]      # the views before the last gestures, for ckBack (at most 50)
+    jumps: int               # bumped when core sets the view (back, a new gather): the UI follows
     pending: ReadRequest     # the request sent last
     clip: float64            # the display clip, from the first tile after a change
     revision: int
@@ -318,7 +332,7 @@ type
 
   CommandKind = enum         # core/state: every user intent, the only way state changes
     ckOpen, ckClose, ckCancelJob, ckReorderJob, ckRemoveJob, ckGather, ckView, ckDisplay,
-    ckHeader, ckHover, ckSelect, ckClearSelection
+    ckHeader, ckBack, ckHover, ckSelect, ckClearSelection, ckSettings
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
@@ -346,9 +360,23 @@ type
     sessions: seq[Session]
     inbox: Inbox             # Poster handles for workers; freed with the last handle
     indexCache: string       # the folder of parseSEG's index caches; "" for none
+    settings: Settings       # scale units, monitor calibrations, the readout's fields
     tiles: seq[seq[Tile]]    # per panel: the newest four, oldest first
     jobs: Jobs               # destroyed after the readers, before the sessions
     readers: seq[PanelReader] # per panel; declared last: they stop (and end their holds) first
+
+  Settings = object          # core/settings: changed only by ckSettings
+    scale: ScaleUnits        # per inch or per cm; time as ms per length or as speed
+    calibrations: seq[Calibration] # per monitor (its name and size): pixels per inch
+    readout: seq[ReadoutField]     # the status bar's fields, in order
+
+  Pick = object              # core/pick: what lies under the pointer
+    inside, found: bool      # over the plot; a tile holds the trace there
+    at: DataPoint            # positions and ms
+    sample, position, trace: int   # -1 when not known
+    keys: TraceKeys          # NaN where not known
+    amplitude: float32       # as drawn; NaN when not held
+    binned: int              # samples behind it, zoomed out
 
   Tile = object              # core/tiles: one request's samples, moved, never shared
     id: uint64               # given when taken in; the GPU keys its textures on it
@@ -357,6 +385,8 @@ type
     dtMs, t0Ms: float64
     columns: int             # values per trace
     data: seq[float32]       # count × columns, trace by trace
+    traces: seq[int]         # per row: the trace's index in its file
+    keys: seq[TraceKeys]     # per row: its keys, for the readout
     fields: seq[HeaderField]
     header: seq[seq[float64]] # per field, one value per trace
     clip: float64            # the clip percentile of |x| over the live traces

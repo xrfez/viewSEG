@@ -220,15 +220,13 @@ proc drawReadoutMenu(fields: openArray[ReadoutField]; res: var StatusOutput) =
     igSameLine(0, -1)
     igTextUnformatted(($f).cstring, nil)
     igPopID()
-  for f in ReadoutField:
-    if f notin fields:
-      igPushID_Int(cint(ord(f)))
-      var on = false
-      if igCheckbox(($f).cstring, addr on):
+  igSeparator()
+  if igBeginMenu("Add a field", fields.len < ReadoutField.high.ord + 1):
+    for f in ReadoutField:
+      if f notin fields and igMenuItem_Bool(($f).cstring, nil, false, true):
         chosen.add f
         changed = true
-      igPopID()
-  igSeparator()
+    igEndMenu()
   if igButton("Restore the defaults", ImVec2_c(x: 0, y: 0)):
     chosen = @DefaultReadout
     changed = true
@@ -303,6 +301,10 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
       igPopStyleColor(1)
     if igIsWindowHovered(0) and igIsMouseReleased_Nil(ImGui_MouseButton_Right.cint):
       igOpenPopup_Str(readoutMenu, 0)
+    # Above the bar, inside the window: placed against the monitor, a menu
+    # opened from the bottom edge would become a window of its own below it.
+    igSetNextWindowPos(ImVec2_c(x: igGetIO_Nil().MousePos.x, y: igGetWindowPos().y),
+      ImGui_Cond_Appearing.cint, ImVec2_c(x: 0, y: 1))
     if igBeginPopup(readoutMenu, 0):
       drawReadoutMenu(fields, result)
       igEndPopup()

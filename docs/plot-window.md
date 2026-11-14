@@ -9,7 +9,7 @@
 
 ```
 ┌ Plot ──────────────────────────────────────────────────────┐
-│ [▒|∿|◢|◣]  [12.5 tr/in]  [200 ms/in]  [fit][back] [⋯]      │  controls
+│ [▒|∿|◢|◣] [gain] [12.5] tr/in [200] ms/in [-][+][fit][<][⋯]│  controls
 ├────────────────────────────────────────────────────────────┤
 │ line    100  100  100  100  100  100  100  100  100        │  display header
 │ point   101  103  105  107  109  111  113  115  117        │  (thinned to fit)
@@ -31,17 +31,32 @@
     fill, wiggle with negative fill; wiggle can be drawn over density. The mode a user picks becomes the
     default for new plot windows and is remembered;
   - **scale boxes: traces per inch and ms per inch**, each a box to type a value into.
-    Typing sets the zoom; zooming any other way updates the boxes. Units are a setting
-    (per inch or per cm; inches per second for time). Physical size uses 96 dpi times
-    the display scale unless the monitor is calibrated in Settings;
+    Typing a value and pressing Enter sets the zoom, keeping the top-left corner where it
+    is (a plot grows from where it starts, as on paper); zooming any other way updates the
+    boxes. A value past what the record allows (wider than the record, narrower than four
+    traces or eight samples) stops there, and the box shows the scale reached; a value that
+    is not a positive number is refused with a message in the log. Units are a setting
+    (per inch or per cm; time also as inches or cm per second). Physical size uses 96 dpi
+    times the display scale unless the monitor is calibrated: in the window's "more"
+    popover, from the monitor's diagonal, or by making a bar on the screen as long as a
+    ruler held to it says. A calibration is kept per monitor (its name and size in
+    pixels);
   - the **display gain**: automatic (AGC on pre-stack gathers, none on stacked data),
     none, trace balance or AGC; amplitudes past the clip percentile (99 by default) are
     drawn full black or white;
-  - fit all, back to the previous view, and a "more" popover: trace overlap (the largest
-    swing of a wiggle, in trace spacings), the display header's fields, the colours.
-- **The status bar** (the main window's bottom edge) reads out the cursor: time, trace
-  and channel, receiver point, source point, FFID, offset, amplitude and the shot time.
-  The fields and their order are the user's choice. Unknown values are left blank.
+  - zoom out, zoom in, fit all, back to the view before the last gesture, and a "more"
+    popover: the colours, the display header's fields, the scale units and the screen
+    calibration, later the trace overlap (the largest swing of a wiggle, in trace
+    spacings).
+- **The status bar** (the main window's bottom edge) reads out what lies under the
+  pointer in the plot: the time at the cursor, trace (its number in the file) and
+  channel, receiver line / point, source line / point, FFID, offset, amplitude and the
+  shot time (the record's UTC time). The amplitude is the value drawn there: after the
+  display's processing and gain, and zoomed out the largest of the samples drawn at that
+  pixel ("peak of 4"). Right-click the bar to choose the fields and their order; any of
+  the trace's keys can be added (sample number, UTC at the cursor, CDP, inline,
+  crossline, source, receiver and midpoint coordinates, elevations, component, trace
+  status). Unknown values are left blank.
 
 ## Colours
 
@@ -207,3 +222,13 @@ Defaults taken in this draft, for the user to confirm or change:
 9. **The display gain starts automatic:** a pre-stack gather (a shot or receiver
    record) opens with AGC over 500 ms, so every trace and every time is visible; stacked
    data opens with none, so amplitudes compare. The plot window says which is in use.
+10. **A typed scale keeps the top-left corner** of the view, not its centre, so the
+    record's start stays in place as on a paper plot.
+11. **One wheel notch zooms by 1.25, a key press or button by 1.5**; wheel turns or key
+    presses less than 0.6 s apart count as one gesture for "back". The sideways wheel
+    zooms in traces when tilted left (or Shift + wheel up), out when tilted right.
+12. **The status bar's shot time is the record's UTC time**; the cursor's time within
+    the record is its first field. "UTC at the cursor" (the shot time plus the cursor's
+    time) can be added.
+13. **The amplitude read out is the displayed value** (after processing and gain), not
+    the raw sample in the file.

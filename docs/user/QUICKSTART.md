@@ -3,8 +3,8 @@
 viewSEG is a viewer for SEG-Y and SEG-D seismic data with quality-control tools. It needs
 no installation and no internet connection.
 
-**Status:** early development. The window, the File menu and the folders below work; the
-seismic display is not there yet.
+**Status:** early development. The window, the File menu, the folders below, and one
+record on screen as greyscale density, with zoom, pan and a cursor readout, work.
 
 ## Start it
 
@@ -30,6 +30,36 @@ folder (`viewSEG --paths` shows where it is).
 | Open several files | Ctrl+Shift+O |
 | Open a folder | Ctrl+Alt+O |
 | Quit | Ctrl+Q |
+
+## Look at a record
+
+An opened file shows its first record in the Plot window: traces across, time down, on
+white paper, with automatic gain (AGC on shot and receiver records). The row of labels
+over the traces is the display header (receiver line and point by default).
+
+| To | Mouse | Keys |
+|---|---|---|
+| Zoom in or out about the pointer | wheel | `+` / `-` |
+| Zoom in time only | Ctrl + wheel | Ctrl + Up / Down |
+| Zoom across the traces only | Shift + wheel, or the sideways wheel | Ctrl + Right / Left |
+| Pan | drag with the left or middle button | arrows (a tenth of the view; with Shift, a whole view) |
+| Zoom to a box | drag with the right button | |
+| Fit the whole record | the fit button | Ctrl+0 |
+| Go back to the view before | the back button | Backspace, or Alt+Left |
+| Cancel a drag | | Esc |
+
+Keys act while the Plot window has the focus: click in it first.
+
+**Scales.** The two boxes over the plot state the zoom as traces per inch and ms per inch.
+Type a value and press Enter to set it; zooming any other way updates them. The settings
+button (the gear) switches to per cm, or time as inches per second, and calibrates the
+screen: the scales assume 96 pixels per inch times the display scale until you enter the
+monitor's diagonal or make a bar on the screen as long as a ruler held to it says.
+
+**Readout.** The status bar along the bottom reads out what lies under the pointer: the
+time, the trace and channel, receiver and source line and point, FFID, offset, the
+amplitude as displayed, and the record's UTC time. Right-click the status bar to choose
+the fields and their order.
 
 ## The folders next to the program
 
