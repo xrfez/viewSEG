@@ -160,7 +160,9 @@ where the traces are one pixel apart, so every trace in view is drawn. A shot of
 traces than the plot is wide (a few thousand, say) opens at that limit from its first
 trace, with a scroll bar under the plot for the rest. To see a whole large record at
 once, choose the density display (the first button in the strip), which zooms out until
-the record fills the plot. The rows of labels over the traces are the display header (receiver line and
+the record fills the plot. In wiggles the plot reaches a little past the first and the
+last trace, as far as their swing goes (the trace overlap), so their whole wave shows; a
+record of a single trace shows whole. The rows of labels over the traces are the display header (receiver line and
 point by default): right-click them, or their names at the left, to choose its fields
 (automatic, or the ones you tick); the gear button has the same choice.
 

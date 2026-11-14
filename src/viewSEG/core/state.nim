@@ -1645,16 +1645,19 @@ proc apply*(state: var AppState; cmd: Command) =
     else:
       template p: untyped = state.panels[k]
       let was = p.layers[0].display
+      let wasLimits = p.viewLimits(p.view.columns)
       let d = cmd.display.withGainDb(cmd.display.gainDb)
       p.layers[0].display = d
       inc p.revision
       var s = state.settings
       s.plot.display = remembered(d)
       state.change s
-      # A wiggle mode's limit: a wider view (from density) is narrowed to it,
-      # keeping its left edge; the frontend follows.
+      # New limits (a wiggle mode's widest view, the margin of the overlap):
+      # the view stays where it is, a wider one (from density) narrowed
+      # keeping its left edge, and one that showed the whole record shows
+      # the whole of it again; the frontend follows.
       if p.laidOut and p.layout.traces > 0:
-        let v = keptFrom(p.view, p.viewLimits(p.view.columns))
+        let v = relimited(p.view, wasLimits, p.viewLimits(p.view.columns))
         if v != p.view:
           p.view = v
           inc p.jumps

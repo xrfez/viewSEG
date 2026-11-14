@@ -248,6 +248,8 @@ type
 
 const
   NoPanel* = PanelId(0)
+  MinOverlap* = 0.1 ## the trace overlap's range, in trace spacings
+  MaxOverlap* = 10.0
   MaxBack* = 50     ## earlier views a panel remembers
   GainStepDb* = 3.0 ## the gain amount's - and + buttons and keys
   MaxGainDb* = 60.0 ## the gain amount stays within ± this
@@ -446,14 +448,28 @@ func drawsDensity*(d: DisplaySettings): bool {.inline.} =
   ## user chose it with (density, and wiggles over density).
   d.mode != dmWiggle
 
+func effectiveOverlap*(d: DisplaySettings): float64 =
+  ## The trace overlap `d` draws with: within `MinOverlap .. MaxOverlap`, 1
+  ## for one that is not a number (`clamp` would keep it, and nothing would
+  ## be drawn).
+  if d.overlap.isNaN: 1.0 else: clamp(d.overlap, MinOverlap, MaxOverlap)
+
+func traceMargin*(d: DisplaySettings): float64 =
+  ## How far a view of a layer drawn with `d` reaches past the first and
+  ## last trace's cells, in trace spacings: in the wiggle modes, the swing
+  ## the trace overlap allows beyond them (`overlap - 0.5`), so those
+  ## traces' outer lobes are shown whole; none in the density mode, or for
+  ## an overlap that keeps every lobe within its trace's cell.
+  if d.drawsWiggles: max(0.0, d.effectiveOverlap - 0.5) else: 0.0
+
 func viewLimits*(layout: PanelLayout; d: DisplaySettings; columns: int): ViewLimits =
   ## The limits (`core/zoom`) of a view of a layer of `layout` drawn with
-  ## `d` on a plot `columns` pixels wide: the data's, and in the wiggle
-  ## modes no more traces across than `columns / MinTracePixels`, so every
-  ## trace in view is drawn. A plot whose size is not known yet (0) has no
-  ## such limit.
+  ## `d` on a plot `columns` pixels wide: the data's, reaching `traceMargin`
+  ## past the first and last trace, and in the wiggle modes no more traces
+  ## across than `columns / MinTracePixels`, so every trace in view is
+  ## drawn. A plot whose size is not known yet (0) has no such limit.
   let widest = if d.drawsWiggles and columns > 0: float64(columns) / MinTracePixels else: Inf
-  limitsOf(layout, widest)
+  limitsOf(layout, widest, d.traceMargin)
 
 func viewLimits*(p: Panel; layout: PanelLayout; columns: int): ViewLimits =
   ## The limits of a view of `layout` (`p.layout`, or the gather it showed

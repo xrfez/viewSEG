@@ -18,7 +18,15 @@
 ## edge, and back keeps to the limit; density still zooms out to the whole
 ## record.
 ##
-## Seen to fail: with `viewLimits` giving the wiggle modes no widest view
+## The wiggle modes reach past the first and last trace by the swing the
+## overlap allows beyond their cells, so their lobes show whole (a record of
+## one trace too); density has no such margin; a new mode or overlap keeps
+## the view, or shows the whole record again where it did.
+##
+## Seen to fail: with no margin (`traceMargin` 0, as before), `wiggleMargin`
+## found 0 for overlap 1; with `relimited` keeping every span where it was,
+## `relimitedKeepsTheView` found the fit at overlap 1 kept at overlap 2.
+## With `viewLimits` giving the wiggle modes no widest view
 ## (as before), `wiggleLimit` found the wiggle mode's widest view 10 000
 ## traces on 800 columns; with `ckDisplay` not narrowing the view to the
 ## new mode's limit, `wiggleLimitInTheState` found the 200 traces of the
@@ -283,11 +291,12 @@ block wiggleLimit:
   for (mode, most) in [(dmDensity, 10_000.0), (dmWiggle, 800.0), (dmWiggleDensity, 800.0)]:
     let vl = viewLimits(layout, DisplaySettings(mode: mode), 800)
     doAssert vl[axTraces].most == most, $mode & ": " & $vl[axTraces]
-    doAssert viewLimits(layout, DisplaySettings(mode: mode), 0)[axTraces].most == 10_000,
-      "a plot of no known size has no limit"
+    let unsized = viewLimits(layout, DisplaySettings(mode: mode), 0)[axTraces]
+    doAssert unsized.most == unsized.bounds.width, "a plot of no known size has no limit"
   # fewer traces than columns: all of them
   let few = PanelLayout(traces: 300, samples: 100, dtMs: 2)
-  doAssert fitted(viewLimits(few, DisplaySettings(), 800), 800, 600) == fitAll(few, 800, 600)
+  let fewLimits = viewLimits(few, DisplaySettings(), 800)
+  doAssert fitted(fewLimits, 800, 600).traces == fewLimits[axTraces].bounds # margins: below
   # zooming out stops at the limit, about the pointer; a narrower view is
   # widened from its left edge by `keptFrom`, about its centre by `kept`
   var v = fit.zoomed(4, DataPoint(x: 5000, tMs: 100), BothAxes, wl)
@@ -300,6 +309,54 @@ block wiggleLimit:
   doAssert keptFrom(Span(lo: 9900, hi: 9999.5), wl[axTraces]) == Span(lo: 9900, hi: 9999.5)
   doAssert keptFrom(Span(lo: 9900, hi: 9901), wl[axTraces]) == Span(lo: 9900, hi: 9904)
   doAssert keptFrom(Span(lo: 9900, hi: 12_000), wl[axTraces]) == Span(lo: 9199.5, hi: 9999.5)
+
+block wiggleMargin:
+  # the wiggle modes reach past the first and last trace by the swing the
+  # overlap allows beyond their cells (overlap - 0.5), so their outer lobes
+  # show whole; density does not, nor an overlap that stays in the cells
+  for (mode, overlap, m) in [(dmWiggle, 1.0, 0.5), (dmWiggleDensity, 3.0, 2.5),
+      (dmWiggle, 0.3, 0.0), (dmWiggle, 0.5, 0.0), (dmDensity, 3.0, 0.0), (dmWiggle, NaN, 0.5),
+      (dmWiggle, 100.0, 9.5)]:
+    let d = DisplaySettings(mode: mode, overlap: overlap)
+    doAssert d.traceMargin == m, $mode & " " & $overlap & ": " & $d.traceMargin
+    let vl = viewLimits(layout, d, 0)
+    doAssert vl[axTraces].bounds == Span(lo: -0.5 - m, hi: 9999.5 + m), $vl[axTraces]
+    doAssert vl[axTraces].most == 10_000 + 2 * m and vl[axTime] == lim[axTime]
+    # fit shows it all, margins included
+    doAssert fitted(vl, 800, 600).traces == vl[axTraces].bounds
+  # a one-trace record shows whole: its trace swings to both edges of the plot
+  let one = PanelLayout(traces: 1, samples: 200, dtMs: 2)
+  let ol = viewLimits(one, DisplaySettings(), 800)
+  doAssert fitted(ol, 800, 600).traces == Span(lo: -1, hi: 1)
+  doAssert ol[axTraces].least == 2, "the narrowest view is the whole of it: " & $ol[axTraces]
+  # the margin counts towards the widest view (the plot's columns)
+  let wide = viewLimits(layout, DisplaySettings(overlap: 2), 800)
+  doAssert wide[axTraces].bounds.lo == -2 and wide[axTraces].most == 800
+  doAssert fitted(wide, 800, 600).traces == Span(lo: -2, hi: 798)
+
+block relimitedKeepsTheView:
+  # a new mode or overlap: the view stays where it is, unless it showed the
+  # whole record (then all of it, margins included), or the new limits
+  # leave it no room
+  let few = PanelLayout(traces: 48, samples: 500, dtMs: 2)
+  let w1 = viewLimits(few, DisplaySettings(overlap: 1), 800)
+  let w2 = viewLimits(few, DisplaySettings(overlap: 2), 800)
+  let dn = viewLimits(few, DisplaySettings(mode: dmDensity), 800)
+  let fit = fitted(w1, 800, 600)
+  doAssert relimited(fit, w1, w2).traces == Span(lo: -2, hi: 49)
+  doAssert relimited(fit, w1, dn).traces == Span(lo: -0.5, hi: 47.5)
+  doAssert relimited(fitted(dn, 800, 600), dn, w1).traces == Span(lo: -1, hi: 48)
+  let zoomed = Viewport(traces: Span(lo: 9.5, hi: 19.5), timeMs: Span(lo: 100, hi: 300),
+    columns: 800, rows: 600)
+  for (a, b) in [(w1, w2), (w2, w1), (w1, dn), (dn, w1)]:
+    doAssert relimited(zoomed, a, b) == zoomed
+  # at the first trace's margin, a smaller one moves the view inside
+  let edge = Viewport(traces: Span(lo: -2, hi: 8), timeMs: zoomed.timeMs, columns: 800, rows: 600)
+  doAssert relimited(edge, w2, w1).traces == Span(lo: -1, hi: 9)
+  # the time axis showed all of the record: it still does
+  var t = zoomed
+  t.timeMs = w1[axTime].bounds
+  doAssert relimited(t, w1, w2).timeMs == w1[axTime].bounds
 
 block wiggleLimitUnderEveryGesture:
   # gestures of every kind, at random, on a plot whose size changes too:
@@ -328,7 +385,11 @@ block wiggleLimitUnderEveryGesture:
     else: v = fitted(l, v.columns, v.rows)
     doAssert v.traces.width <= float64(v.columns) * (1 + 1e-9),
       "gesture " & $what & ": " & $v.traces.width & " traces on " & $v.columns & " columns"
-    doAssert v.inside(layout), "gesture " & $what & " showed " & $v
+    # nothing past the data but the margin of the edge traces' lobes
+    let b = viewLimits(layout, d, v.columns)
+    doAssert v.traces.lo >= b[axTraces].bounds.lo and v.traces.hi <= b[axTraces].bounds.hi and
+      v.timeMs.lo >= b[axTime].bounds.lo and v.timeMs.hi <= b[axTime].bounds.hi,
+      "gesture " & $what & " showed " & $v
   let dl = viewLimits(layout, DisplaySettings(mode: dmDensity), v.columns)
   for _ in 0 ..< 60: v = v.zoomed(1 / WheelStep, v.centre, BothAxes, dl)
   doAssert v.traces == lim[axTraces].bounds, "density: " & $v
@@ -472,7 +533,8 @@ block wiggleLimitInTheState:
     let ll = limitsOf(st.panel(MainPanel).layout)
     doAssert st.panel(MainPanel).layers[0].display.mode == dmWiggle
     var v = st.panel(MainPanel).view
-    doAssert v.traces == Span(lo: -0.5, hi: 99.5) and v.timeMs == ll[axTime].bounds, $v
+    # (from the first trace's margin: half a spacing at overlap 1, wiggleMargin)
+    doAssert v.traces == Span(lo: -1, hi: 99) and v.timeMs == ll[axTime].bounds, $v
     # a view wider than the limit, from whoever sends it, is narrowed to it
     st.view(Viewport(traces: Span(lo: 99.5, hi: 299.5), timeMs: v.timeMs, columns: 100,
       rows: 300))

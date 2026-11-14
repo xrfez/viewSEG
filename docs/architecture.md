@@ -375,8 +375,10 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 3. **Request** (UI). The frontend moves the view itself, with `core/zoom` (zoom about
    the pointer along one axis or both, pan, drag, box zoom, a new plot size, the scroll
    bars, all kept within the data: never past the first and last trace or the record's
-   start and end, and in the wiggle modes never more traces across than the plot has
-   pixel columns, `Panel.viewLimits`; `core` keeps any view it is sent inside too, and a
+   start and end (but for the wiggle modes' margin of the edge traces' lobes, the
+   overlap's swing past them: `traceMargin`), and in the wiggle modes never more traces
+   across than the plot has pixel columns, `Panel.viewLimits`; a new display mode or
+   overlap keeps the view where it is (`relimited`); `core` keeps any view it is sent inside too, and a
    record is first shown as wide as those limits allow, from its first trace:
    `fitted`) and `core/scales` (traces
    and ms per inch or cm, at the monitor's

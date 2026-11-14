@@ -39,6 +39,9 @@
 ## - `longSpreadSegy()`: SEG-Y, one shot record of `LongSpread` channels of
 ##   `LongSamples` samples (a 25 Hz sine), more traces than a plot has room
 ##   for as wiggles.
+## - `oneTraceSegy()`: SEG-Y, one record of a single trace of `LongSamples`
+##   samples (the same sine), whose lobes swing as far as the overlap lets
+##   them on both sides.
 ## - `longRecordSegy()`: SEG-Y, one shot record of `Channels` traces of
 ##   `LongRecordSamples` samples (6 s at `DtMs`), whose times run from one to
 ##   four digits.
@@ -245,6 +248,21 @@ proc longSpreadSegy*(fx: Fixtures): string =
     (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(channel), 0.0,
       DtMs * 1000, tsLive)
     w.writeTrace(k, buf)
+  w.checkClose()
+
+proc oneTraceSegy*(fx: Fixtures): string =
+  ## One record of one trace, channel 1, a 25 Hz sine of `LongSamples`
+  ## samples.
+  result = fx.dir / "one-trace.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: one trace"]))
+  var buf = newSeq[float32](LongSamples)
+  for i in 0 ..< LongSamples:
+    buf[i] = float32(sin(2 * PI * WaveHz * float64(i) * DtMs / 1000))
+  var k = initTraceKeys()
+  (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, 1.0, 0.0, DtMs * 1000, tsLive)
+  w.writeTrace(k, buf)
   w.checkClose()
 
 const LongRecordSamples* = 3000 ## samples per trace of `longRecordSegy`: 6 s at `DtMs`

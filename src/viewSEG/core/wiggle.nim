@@ -74,8 +74,6 @@ const
   MaxRowVertices* = 32
     ## vertices inside one pixel row that a line's extent looks at, at most
     ## (a tile has at most four per row; an older, finer one may have more)
-  MinOverlap* = 0.1 ## the trace overlap's range, in trace spacings
-  MaxOverlap* = 10.0
 
 func finite(v: float32): float32 {.inline.} =
   if abs(v) < Inf: v else: 0'f32 # NaN fails the test too
@@ -225,10 +223,8 @@ func styleFor*(d: DisplaySettings; view: Viewport; scale: float32; lineWidth,
     markedWidth: float64): WiggleStyle =
   ## The wiggle style of a layer drawn with `d` in `view` at display gain
   ## `scale`, lines `lineWidth` pixels wide (`markedWidth` when hovered or
-  ## selected). An overlap that is not a number counts as 1 (`clamp` would
-  ## keep it, and nothing would be drawn).
-  let overlap = if d.overlap.isNaN: 1.0 else: clamp(d.overlap, MinOverlap, MaxOverlap)
-  WiggleStyle(scale: scale, overlap: overlap,
+  ## selected), at its `effectiveOverlap`.
+  WiggleStyle(scale: scale, overlap: d.effectiveOverlap,
     pixelsPerTrace: pixelsPerTrace(view),
     msPerPixel: view.timeMs.width / float64(max(view.rows, 1)),
     lineWidth: lineWidth, markedWidth: markedWidth, fills: d.fills)

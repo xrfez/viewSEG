@@ -80,6 +80,12 @@ proc main() =
       let tiles = f.core.tiles(f.core.findPanel(MainPanel))
       tiles.len > 0 and tiles[^1].request == f.panel.pending
 
+    proc whole(f: FrameInfo): Viewport =
+      ## All the panel's view may show: the record, and in the wiggle modes
+      ## the swing of its first and last trace past it.
+      let l = f.panel.viewLimits(f.panel.view.columns)
+      Viewport(traces: l[axTraces].bounds, timeMs: l[axTime].bounds)
+
     proc changed(f: FrameInfo): bool =
       not f.panel.view.sameSpans(was) and f.tracePanel.drawnView.sameSpans(f.panel.view)
 
@@ -116,7 +122,7 @@ proc main() =
         # whole pixels: the pointer is warped to one
         q = vec2(round(plot.pos.x + plot.size.x * 0.3), round(plot.pos.y + plot.size.y * 0.4))
         r = vec2(round(plot.pos.x + plot.size.x * 0.7), round(plot.pos.y + plot.size.y * 0.75))
-        lim = limitsOf(f.panel.layout)
+        lim = f.panel.viewLimits(f.panel.view.columns) # the margin of the edge traces
         counts.add f.panel.pending.count)
 
     step("readout", proc (f: FrameInfo) = f.moveMouse(q), proc (f: FrameInfo): bool =
@@ -277,7 +283,7 @@ proc main() =
       f.chord(skZero, {smCtrl}), proc (f: FrameInfo): bool =
       result = f.changed
       if result:
-        let fit = fitAll(f.panel.layout, 0, 0)
+        let fit = f.whole
         doAssert f.panel.view.sameSpans(fit), $f.panel.view)
 
     step("zoomButton", proc (f: FrameInfo) =
@@ -373,7 +379,7 @@ proc main() =
         doAssert h.pos.y >= plot.pos.y + plot.size.y and v.pos.x >= plot.pos.x + plot.size.x,
           "a bar over the data"
         # the thumbs are the share of the data in view
-        let all = fitAll(f.panel.layout, 0, 0)
+        let all = f.whole
         let th = f.markOf("plot.thumb.traces")
         let tv = f.markOf("plot.thumb.time")
         doAssert abs(th.size.x - h.size.x * f.panel.view.traces.width / all.traces.width) < 1,
@@ -395,7 +401,7 @@ proc main() =
       let h = f.markOf("plot.bar.traces")
       let th = f.markOf("plot.thumb.traces")
       let room = float64(h.size.x - th.size.x)
-      let free = fitAll(f.panel.layout, 0, 0).traces.width - was.traces.width
+      let free = f.whole.traces.width - was.traces.width
       result = f.changed and near(f.panel.view.traces.lo, was.traces.lo + 40 / room * free, 1e-3)
       if result:
         f.pressMouse(vec2(grab.x + 40, grab.y), false)
@@ -459,7 +465,7 @@ proc main() =
       f.click(grab), proc (f: FrameInfo): bool =
       result = f.changed
       if result:
-        let all = fitAll(f.panel.layout, 0, 0).timeMs
+        let all = f.whole.timeMs
         let w = was.timeMs.width
         let want = if pageDown: min(was.timeMs.lo + w, all.hi - w)
                    else: max(was.timeMs.lo - w, all.lo)
@@ -483,7 +489,7 @@ proc main() =
         f.pressMouse(grab, true)
         f.moveMouse(vec2((grab.x + far.x) / 2, (grab.y + far.y) / 2))
         f.moveMouse(far), proc (f: FrameInfo): bool =
-        let all = fitAll(f.panel.layout, 0, 0)
+        let all = f.whole
         let atEnd = if axis == axTraces: f.panel.view.traces.hi == all.traces.hi
                     else: f.panel.view.timeMs.hi == all.timeMs.hi
         result = atEnd and f.tracePanel.drawnView.sameSpans(f.panel.view)
@@ -492,7 +498,7 @@ proc main() =
     toTheEnd(axTraces)
     toTheEnd(axTime)
     step("lastTraceAndSampleVisible", noop, proc (f: FrameInfo): bool =
-      let all = fitAll(f.panel.layout, 0, 0)
+      let all = f.whole
       result = f.answered and f.tracePanel.drawnView.sameSpans(f.panel.view)
       if result:
         doAssert f.panel.view.traces.hi == all.traces.hi and
@@ -582,7 +588,7 @@ proc zoomShots(path, name: string; tracesPerInch, msPerInch: float64; centre: Da
     case stage
     of 0:
       if p.laidOut and answered and plot.size.x > 0:
-        let lim = limitsOf(p.layout)
+        let lim = p.viewLimits(p.view.columns)
         var v = p.view
         v.traces = Span(lo: -0.5, hi: 99.5)
         v.timeMs = Span(lo: p.layout.t0Ms, hi: p.layout.t0Ms + 1000)

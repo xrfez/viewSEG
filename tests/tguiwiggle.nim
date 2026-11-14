@@ -353,7 +353,10 @@ withFixtures fx:
   block everyModeAsTheReferenceSays:
     for k, s in shots:
       doAssert s.w > 300 and s.h > 200, $s.w & "x" & $s.h
-      doAssert s.view.traces == Span(lo: -0.5, hi: float64(Channels) - 0.5), $s.view
+      # the whole record, and in the wiggle modes the swing of the edge traces
+      # past it (half a spacing at overlap 1, none at 0.5 or in density)
+      let m = s.display.traceMargin
+      doAssert s.view.traces == Span(lo: -0.5 - m, hi: float64(Channels) - 0.5 + m), $s.view
       doAssert s.style.pixelsPerTrace > 20, "too narrow for wiggles: " & $s.style.pixelsPerTrace
       doAssert s.wiggles == (looks[k].mode != dmDensity) and
         s.density == (looks[k].mode != dmWiggle), $looks[k]

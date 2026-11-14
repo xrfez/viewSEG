@@ -8,7 +8,10 @@
 ## - its edges inside the data: from the first trace's left edge to the last
 ##   trace's right edge, from the record's start to its last sample. Nothing
 ##   past the data is ever shown, and zoomed out as far as it goes the data
-##   fills the plot exactly;
+##   fills the plot exactly. The one exception is `margin`: the wiggle modes
+##   reach past the first and last trace by the swing the trace overlap
+##   allows (`core/panels.viewLimits`), so those traces' outer lobes are
+##   shown whole, and nothing else is drawn there;
 ## - never narrower than `MinTraces` positions or `MinSamples` samples;
 ## - never wider than the data, nor than `widest` positions across (the
 ##   wiggle modes: the plot's pixel columns, so every trace in view is
@@ -74,19 +77,22 @@ type
 
 const BothAxes* = {axTraces, axTime}
 
-func limitsOf*(layout: PanelLayout; widest = Inf): ViewLimits =
+func limitsOf*(layout: PanelLayout; widest = Inf; margin = 0.0): ViewLimits =
   ## The limits of a panel with `layout`: the data's extent, positions
   ## `-0.5 .. traces - 0.5` and `t0Ms` to the last sample's time (what
-  ## `fitAll` shows); a view at most `widest` positions wide (a value that
-  ## is not positive counts as no limit). A panel with no traces or no
-  ## sample interval gets limits for one trace and 1 ms samples.
+  ## `fitAll` shows), the positions reaching `margin` further on each side;
+  ## a view at most `widest` positions wide (a value that is not positive
+  ## counts as no limit). A panel with no traces or no sample interval gets
+  ## limits for one trace and 1 ms samples.
   let n = float64(max(layout.traces, 1))
   let dt = if layout.dtMs > 0 and layout.dtMs < Inf: layout.dtMs else: 1.0
   let t0 = if layout.t0Ms.classify in {fcNan, fcInf, fcNegInf}: 0.0 else: layout.t0Ms
   let extent = float64(max(layout.samples - 1, 1)) * dt
-  let most = if widest > 0: min(n, widest) else: n # NaN fails the test too
-  result[axTraces] = Limits(bounds: Span(lo: -0.5, hi: n - 0.5), least: min(MinTraces, most),
-    most: most)
+  let m = if margin > 0 and margin < Inf: margin else: 0.0
+  let across = n + 2 * m
+  let most = if widest > 0: min(across, widest) else: across # NaN fails the test too
+  result[axTraces] = Limits(bounds: Span(lo: -0.5 - m, hi: n - 0.5 + m),
+    least: min(MinTraces, most), most: most)
   result[axTime] = Limits(bounds: Span(lo: t0, hi: t0 + extent),
     least: min(MinSamples * dt, extent), most: extent)
 
@@ -253,6 +259,17 @@ func resized*(v: Viewport; columns, rows: int; lim: ViewLimits): Viewport =
         float64(was)), lim[a]))
     else:
       result.setSpan(a, keptFrom(s, lim[a]))
+
+func relimited*(v: Viewport; was, now: ViewLimits): Viewport =
+  ## `v`, a view within `was`, within new limits `now` of the same data (the
+  ## display mode or the trace overlap changed): along an axis where it
+  ## showed all the data it shows all of it again (as much as `now` allows,
+  ## from its start); along the others it stays where it is, narrowed from
+  ## its left or top edge, or moved inside, only where `now` makes it.
+  result = v
+  for a in Axis:
+    if v.showsAll(a, was): result.setSpan(a, keptFrom(now[a].bounds, now[a]))
+    else: result.setSpan(a, keptFrom(v.span(a), now[a]))
 
 func carried*(v: Viewport; was, now: ViewLimits): Viewport =
   ## `v`, a view of data within `was`, on the next gather, within `now`, at

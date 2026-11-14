@@ -37,7 +37,16 @@
   typed scales, the scroll bars, back, a new window size) stops at the first and last
   trace and at the record's start and end. Zoomed out as far as it goes, the record
   fills the plot exactly (in the wiggle modes, as many of its traces as the plot has
-  pixel columns: see the display mode below).
+  pixel columns: see the display mode below). **The one exception: the edge traces'
+  whole wave.** In the wiggle modes the trace axis reaches past the first and the last
+  trace by the swing the trace overlap allows beyond their own spacing (overlap 1: half
+  a trace spacing on each side; an overlap of a half or less: none), so their outer
+  lobes are never cut, and a record of one trace shows whole; fit shows it all.
+  Nothing but those lobes is drawn there: no density, no header value, no pick. In the
+  density mode there is no such margin. Changing the mode or the overlap keeps the
+  view where it is and only moves the limits (a view that showed the whole record
+  shows the whole of it again, margins included); the scroll bars, the scale boxes,
+  the display header, the pick and the cursor line stay on the traces.
 - **The time axis shows tick values only**, no title: the unit is in the ms/in box and
   in the status bar. Every label is as wide as the longest the record can have (its
   first or last time, with the decimals of the finest step a view of it can show), so
