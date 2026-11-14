@@ -1,15 +1,21 @@
 ## The Files window in the running frontend, headless, with real pointer and
 ## key events: a folder named on the command line is listed and its first
 ## file shown; a click on a row shows that file; with the window focused,
-## Up, Tab, Shift + Tab, Home and End step through the files and show each
-## in the same plot window; the same keys in the plot window do not; a
+## Up, Down, Home and End step through the files and show each in the same
+## plot window, wherever the focus is in the window but in the filter box,
+## where Down is the box's; Tab and Shift + Tab move the focus between the
+## window's controls (from the list to the folder, back to the list at the
+## file shown, on to the filter in four Tabs, out of it to "Latest"),
+## showing no other file; the same keys in the plot window do not step; a
 ## folder dropped on the window is listed and its first file shown, a file
 ## dropped is shown with its folder listed; Ctrl + W closes the file shown;
 ## the filter box hides the rows that do not match; each file stepped away
 ## from is closed; the files are never changed.
 ##
 ## Seen to fail: with the window's keys handled only while the window
-## itself (not its table) has the focus, it "stopped before up"; with
+## itself (not its table) has the focus, it "stopped before up"; with the
+## window drawn with `NoNavInputs` again (no navigation by Tab in it), "Tab
+## did not reach the filter"; with
 ## SDL_EVENT_DROP_COMPLETE ignored, "stopped before drop folder"; with a
 ## row's click acted on only when the row is the file shown already,
 ## "stopped before click".
@@ -66,6 +72,7 @@ withFixtures fx:
     lines: seq[Message]
     filtered = false
     plotKeysStepped = false
+    tabs = 0
     maxOpen = 0
     closedToStart = false
   proc key(f: FrameInfo; k: SimKey; mods: set[SimMod] = {}) =
@@ -107,19 +114,60 @@ withFixtures fx:
     of 2:
       f.key(skUp)
       if wait > 4 and shown == dir / "shot2.sgd" and f.laidOut: f.next "up"
-    of 3:
-      f.key(skTab)
-      if wait > 4 and shown == dir / "shot10.sgy" and f.laidOut: f.next "tab"
-    of 4:
-      f.key(skTab, {smShift})
-      if wait > 4 and shown == dir / "shot2.sgd" and f.laidOut: f.next "shift tab"
-    of 5:
+    of 3: # Tab moves the focus to the next control, not to another file: from
+      # the list (the row clicked) to the folder, the window's first control
+      if wait == 2: f.pressKey(skTab, true)
+      if wait == 3: f.pressKey(skTab, false)
+      if wait == 9:
+        for n in ["files.folder", "files.open folder", "files.refresh", "files.filter",
+            "files.follow", "files.row shot2.sgd"]:
+          if f.markOf("files.focused") == f.markOf(n): echo "tguifiles: Tab reached ", n
+        doAssert shown == dir / "shot2.sgd", "Tab showed " & shown
+        doAssert f.markOf("files.focused") == f.markOf("files.folder"),
+          "Tab did not move to the folder: " & $f.markOf("files.focused")
+        f.next "tab"
+    of 4: # Shift + Tab back to the list, at the file shown
+      if wait == 1: f.pressKey(skShift, true, {smShift})
+      if wait == 2: f.pressKey(skTab, true, {smShift})
+      if wait == 3: f.pressKey(skTab, false, {smShift})
+      if wait == 4: f.pressKey(skShift, false)
+      if wait == 10:
+        doAssert shown == dir / "shot2.sgd", "Shift + Tab showed " & shown
+        doAssert f.markOf("files.focused") == f.markOf("files.row shot2.sgd"),
+          "Shift + Tab did not move back to the list: " & $f.markOf("files.focused")
+        tabs = 0
+      if wait > 10:
+        # Tab on to the filter (the folder, its two buttons, the filter)
+        if wait mod 6 == 0 and not f.typing:
+          f.pressKey(skTab, true)
+          inc tabs
+        if wait mod 6 == 1: f.pressKey(skTab, false)
+        if f.typing:
+          doAssert tabs == 4, $tabs & " Tabs to the filter"
+          f.next "shift tab"
+        doAssert wait < 100, "Tab did not reach the filter"
+    of 5: # in the filter Down is the box's; out of it (Tab on), Down steps
+      if wait == 2: f.pressKey(skDown, true)
+      if wait == 3: f.pressKey(skDown, false)
+      if wait == 9:
+        doAssert shown == dir / "shot2.sgd", "Down in the filter showed " & shown
+        doAssert f.typing, "Down took the keyboard from the filter"
+        f.pressKey(skTab, true)
+      if wait == 10: f.pressKey(skTab, false)
+      if wait == 14:
+        doAssert not f.typing and f.markOf("files.focused") == f.markOf("files.follow"),
+          "Tab did not leave the filter for Latest"
+        f.pressKey(skDown, true)
+      if wait == 15: f.pressKey(skDown, false)
+      if wait > 15 and shown == dir / "shot10.sgy" and f.laidOut: f.next "down"
+      doAssert wait < 200, "Down did not step from Latest"
+    of 6:
       f.key(skHome)
       if wait > 4 and shown == dir / "Shot1.sgd" and f.laidOut: f.next "home"
-    of 6:
+    of 7:
       f.key(skEnd)
       if wait > 4 and shown == dir / "shot10.sgy" and f.laidOut: f.next "end"
-    of 7: # keys in the plot window are the plot's
+    of 8: # keys in the plot window are the plot's
       if wait == 1:
         at = f.markOf("plot.data").centre
         f.moveMouse(at)
@@ -131,15 +179,15 @@ withFixtures fx:
         plotKeysStepped = shown != dir / "shot10.sgy"
         f.dropPaths([other])
         f.next "plot keys"
-    of 8: # a folder dropped
+    of 9: # a folder dropped
       if f.core.fileList.folder == other and shown == other / "a.sgy" and f.laidOut:
         f.dropPaths([dir / "shot2.sgd"])
         f.next "drop folder"
-    of 9: # a file dropped
+    of 10: # a file dropped
       if f.core.fileList.folder == dir and not f.core.fileList.scanning and
           shown == dir / "shot2.sgd" and f.laidOut:
         f.next "drop file"
-    of 10: # Ctrl + W
+    of 11: # Ctrl + W
       f.key(skW, {smCtrl})
       if wait > 4 and f.core.panels[0].layers.len == 0 and
           f.markOf("plot.open folder").size.x > 0:
@@ -147,7 +195,7 @@ withFixtures fx:
         at = f.markOf("files.filter").centre
         f.moveMouse(at)
         f.next "close"
-    of 11: # the filter
+    of 12: # the filter
       if wait == 3: f.pressMouse(at, true)
       if wait == 5: f.pressMouse(at, false)
       if wait == 7: f.typeText("shot1")
@@ -166,8 +214,8 @@ withFixtures fx:
     indexCacheDir: some(fx.dir / "cache"), theme: forceDark,
     userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
-  const order = ["listed", "click", "up", "tab", "shift tab", "home", "end", "plot keys",
-    "drop folder", "drop file", "close"]
+  const order = ["listed", "click", "up", "tab", "shift tab", "down", "home", "end",
+    "plot keys", "drop folder", "drop file", "close"]
   for i, s in order:
     doAssert reached.len > i, "stopped before \"" & s & "\": reached " & $reached &
       "; Messages: " & $lines

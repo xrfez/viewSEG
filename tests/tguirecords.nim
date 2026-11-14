@@ -1,14 +1,18 @@
 ## Record navigation in the running frontend, headless, with real pointer
 ## and key events: the Records window lists the file's records and marks the
 ## one shown; a click on a row shows that record; with the window focused,
-## Up, Home and End step through them; in the plot window, Page Up / Page
+## Tab steps no record and puts the keyboard's focus on the record shown,
+## Up, Home and End step through them, the focus going along; in the plot
+## window, Page Up / Page
 ## Down, Home and End do, and so do the strip's arrows; Ctrl + G opens "Go
 ## to record", where a place or an FFID typed and Enter shows that record.
 ## A file of 100 000 records: End shows the last record and scrolls the list
 ## to it, and turning the wheel over the list costs a frame no more than a
 ## short list does (only the rows in view are drawn).
 ##
-## Seen to fail: with the record list's rows all drawn (no clipper), every
+## Seen to fail: with the keyboard's focus left on the row it was on
+## (`ListFocus.stepped` not called), "the focus stayed on the record
+## before"; with the record list's rows all drawn (no clipper), every
 ## frame with 100 000 records took about 184 ms (5 ms with it), "the list
 ## lags"; with Page Down not handled in the plot, "stopped before page
 ## down"; with the "Go to record" popup reading the FFID box as a place,
@@ -80,9 +84,20 @@ withFixtures fx:
       f.click("records.row 2", focusing = true)
       if wait == 7: doAssert f.gatherShown != 2, "a focusing click showed record 3"
       reach("click", 2)
-    of 2:
-      f.key(skUp)
-      reach("up", 1)
+    of 2: # Tab steps no record (the list is the window's one stop of Tab); Up
+      # does, and the keyboard's focus goes along to the record shown
+      if wait == 2: f.pressKey(skTab, true)
+      if wait == 3: f.pressKey(skTab, false)
+      if wait == 9:
+        doAssert f.gatherShown == 2, "Tab showed record " & $(f.gatherShown + 1)
+        doAssert f.markOf("records.focused") == f.markOf("records.current"),
+          "Tab did not put the focus on the record shown: " & $f.markOf("records.focused")
+      if wait == 10: f.pressKey(skUp, true)
+      if wait == 11: f.pressKey(skUp, false)
+      if wait > 18 and f.gatherShown == 1 and f.laidOut:
+        doAssert f.markOf("records.focused") == f.markOf("records.current"),
+          "the focus stayed on the record before: " & $f.markOf("records.focused")
+        next "up"
     of 3:
       f.key(skHome)
       reach("home", 0)

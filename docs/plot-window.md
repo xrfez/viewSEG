@@ -392,7 +392,8 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Ctrl + W | Close the file the plot shows |
 | Ctrl + Q | Quit |
 | Drop files or a folder on the window | A folder: list it and show its first file; one file: show it and list its folder; several files: list them and show the first |
-| Up / Down, Tab / Shift + Tab (file list focused) | Step to the next / previous file and show it in the same plot, keeping the display settings and the scales |
+| Up / Down (file list focused) | Step to the next / previous file and show it in the same plot, keeping the display settings and the scales (wherever the focus is in the window, but in the filter box) |
+| Tab / Shift + Tab | Move between the controls of the window that has the focus, as in every window (the user: "tab should move between options in the window not files"): in the file list the folder's drop-down, its buttons, the filter, "Latest" and the list (one stop, at the file shown); Space or Enter acts on the control reached |
 | Page Down / Page Up, Home / End (file list focused) | Ten files on / back; the first / last file |
 | Click a file in the file list (focused) | Show it in the plot, in place of the one shown |
 | Up / Down, Page Up / Page Down, Home / End (record list focused) | The next / previous record, a page on / back, the first / last record, shown in the plot |

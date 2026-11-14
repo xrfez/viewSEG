@@ -5,14 +5,16 @@
 ## marked; clicking a row shows that record (not the click that only brings
 ## the window forward: `focus`). While the window has the
 ## focus, Up / Down step to the next or previous record, Page Up / Page Down
-## by a page, Home / End to the first and last. Only the rows in view are
+## by a page, Home / End to the first and last; Tab and Shift + Tab move
+## between the window's controls, as in every window (`listkeys`). Only the
+## rows in view are
 ## drawn (ImGui's list clipper), so a file of 100 000 records scrolls as
 ## lightly as one of ten.
 
 import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../view/theme
-import chrome, focus, style
+import chrome, focus, listkeys, style
 
 type
   RecordListUi* = object
@@ -20,6 +22,7 @@ type
     shown: (SessionId, int) ## the record on show last frame: a new one is scrolled into view
     follow: bool
     focus: FocusClicks      ## a click on a row acts only in a window that had the focus
+    keys: ListFocus         ## the navigation's cursor follows the record shown
 
   RecordListOutput* = object
     commands*: seq[Command]
@@ -40,7 +43,7 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
     t: Theme; marks: var Marks): RecordListOutput =
   ## The window, docked or floating like any other, titled `title`, for the
   ## file `panel` shows.
-  if igBegin(title.cstring, nil, ImGui_WindowFlags_NoNavInputs.cint):
+  if igBegin(title.cstring, nil, 0):
     ui.focus.watch()
     marks.markWindow("records")
     let k = st.findPanel(panel)
@@ -85,7 +88,10 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
                 station(b.rcvLine, b.rcvPoint)])
             igTableSetupColumn(cstring($c), ImGui_TableColumnFlags_WidthFixed.cint, w, 0)
         igTableSetupColumn("Traces", ImGui_TableColumnFlags_WidthStretch.cint, 1, 0)
+        igPushItemFlag(ImGui_ItemFlags_NoTabStop.cint, true) # the list is one stop of Tab
         igTableHeadersRow()
+        igPopItemFlag()
+        ui.keys.beforeRows(bridged = false) # the list is the window's only stop
         let clipper = ImGuiListClipper_ImGuiListClipper()
         ImGuiListClipper_Begin(clipper, cint(rows.len), -1)
         if ui.follow and current in 0 ..< rows.len:
@@ -96,10 +102,15 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
             igTableNextRow(0, 0)
             discard igTableNextColumn()
             igPushID_Int(cint(i))
+            if i == current: ui.keys.beforeShownRow()
+            pushRowTabStop(i == current)
             if igSelectable_Bool(cstring($(i + 1)), i == current,
                 ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and
                 i != current and ui.focus.acts:
               result.commands.add Command(kind: ckGather, panel: panel, gather: i)
+            popRowTabStop()
+            ui.keys.afterRow()
+            if igIsItemFocused(): marks.mark("records.focused")
             igPopID()
             if i == current:
               marks.mark("records.current")
@@ -130,17 +141,18 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
       igTextUnformatted(text.cstring, nil)
       igPopStyleColor(1)
       marks.mark("records.footer")
-      if igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint) and
-          not igGetIO_Nil().WantTextInput and rows.len > 0:
-        template held(chord: cint): bool = igShortcut_Nil(chord, ImGui_InputFlags_Repeat.cint)
+      if rows.len > 0:
         let page = max(1, int(igGetWindowHeight() / igGetTextLineHeightWithSpacing()) - 3)
-        var to = current
-        if held(ImGui_Key_DownArrow.cint): to = current + 1
-        if held(ImGui_Key_UpArrow.cint): to = current - 1
-        if held(ImGui_Key_PageDown.cint): to = current + page
-        if held(ImGui_Key_PageUp.cint): to = current - page
-        if igShortcut_Nil(ImGui_Key_Home.cint, 0): to = 0
-        if igShortcut_Nil(ImGui_Key_End.cint, 0): to = rows.high
+        let step = stepOf("records keys")
+        ui.keys.stepped(step)
+        var to = case step
+          of lsNone: current
+          of lsNext: current + 1
+          of lsPrevious: current - 1
+          of lsPageDown: current + page
+          of lsPageUp: current - page
+          of lsFirst: 0
+          of lsLast: rows.high
         to = clamp(to, 0, rows.high)
         if to != current:
           result.commands.add Command(kind: ckGather, panel: panel, gather: to)

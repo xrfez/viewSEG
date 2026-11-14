@@ -63,9 +63,13 @@ background, so a folder of thousands of files lists without opening any of them.
   (mode, gain, sort order, display header) and the scales stay as they were, so records
   compare one after the other. **Click a survey file** to load it into the survey: a pin
   marks it once loaded (its tooltip says what it holds); the Seismic window stays as it is.
-- **With the Files window focused** (click in it), **Up / Down** or **Tab / Shift+Tab**
-  step to the next or previous seismic file and show it (survey files are passed by);
-  **Page Up / Page Down** skip ten, **Home / End** go to the first and last.
+- **With the Files window focused** (click in it), **Up / Down** step to the next or
+  previous seismic file and show it (survey files are passed by); **Page Up / Page Down**
+  skip ten, **Home / End** go to the first and last. They do so wherever the focus is in
+  the window, but in the filter box, which keeps its keys.
+- **Tab / Shift+Tab** move between the window's controls, as in any window: the folder's
+  drop-down, its two buttons, the filter, **Latest** and the list (one stop, at the file
+  shown); **Space** or **Enter** acts on the control reached.
 - **Filter by name:** type in the box over the table; only the files whose names hold
   every word typed are shown.
 - **Sort** by any column: click its header (click again to reverse).
@@ -123,7 +127,8 @@ receiver, a CDP) and how many traces each holds. The record shown is highlighted
 
 - **Click a record** to show it. With the Records window focused, **Up / Down** step to
   the next or previous one, **Page Up / Page Down** by a page, **Home / End** to the first
-  and last. A file of a hundred thousand records scrolls as lightly as one of ten.
+  and last. A file of a hundred thousand records scrolls as lightly as one of ten. Tab
+  steps no record (the list is the window's one control).
 - **In the Seismic window:** **Page Down / Page Up** show the next or previous record,
   **Home / End** the first and last; the arrows in the strip do the same, and the number
   between them ("2 / 120") opens **Go to record** (also **Ctrl+G**): type a place in the

@@ -3,13 +3,19 @@
 ## size and date; a filter box; the folders opened before, one click away; a
 ## refresh. Clicking a seismic file's row shows that file in the plot window
 ## in place of the one it shows, keeping the display settings; while the
-## window has the focus, the arrow keys, Tab and Shift + Tab step to the next
-## or previous seismic file and show it, Home and End to the first and last.
+## window has the focus, the arrow keys step to the next or previous seismic
+## file and show it, Home and End to the first and last.
 ## Clicking a survey file's row (SPS, P1) loads it into the survey instead:
 ## a pin marks it once loaded. The click that only brings the window forward
 ## does neither (`focus`). Only the rows in view are drawn (ImGui's list
 ## clipper), so a folder of thousands of files costs a frame no more than a
 ## few.
+##
+## **Keys.** Tab and Shift + Tab move between the window's controls (the
+## folder's drop-down, its buttons, the filter, "Latest", the list), as in
+## every window; Space or Enter acts on the one Tab reached. The arrow keys,
+## Page Up and Page Down (ten files) and Home and End step through the files
+## wherever the focus is in the window, but in the filter box (`listkeys`).
 ##
 ## The folder is watched (`core/watch`): a file that appears is listed and
 ## marked new (a dot in the accent colour) until it is shown; one whose size
@@ -22,7 +28,7 @@ import std/[os, times]
 import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../view/[filetable, theme]
-import chrome, focus, icons, menus, style
+import chrome, focus, icons, listkeys, menus, style
 
 type
   FileListUi* = object
@@ -33,6 +39,7 @@ type
     chosen: string     ## the chosen file last frame: a new one is scrolled into view
     follow: bool
     focus: FocusClicks ## a click on a row acts only in a window that had the focus
+    keys: ListFocus    ## the navigation's cursor follows the file shown
 
   FileListOutput* = object
     ## What the window asks for.
@@ -76,6 +83,11 @@ proc surveyText(e: FileEntry; st: AppState): string =
   elif st.surveyLoading(e.path): "\nBeing loaded into the survey."
   else: "\nA survey file: click to load it into the survey."
 
+proc focused(marks: var Marks) =
+  ## Marks the item just drawn "files.focused" while the navigation's cursor
+  ## is on it (Tab moved it there), for tests.
+  if igIsItemFocused(): marks.mark("files.focused")
+
 func folderLabel(f: FileList): string =
   if f.folder.len > 0: f.folder.extractFilename
   elif f.title.len > 0: f.title
@@ -89,6 +101,7 @@ proc drawFolderRow(ui: var FileListUi; f: FileList; recent: openArray[string]; t
   let button = igGetFrameHeight()
   igSetNextItemWidth(max(button, igGetContentRegionAvail().x - 2 * (button + style.ItemSpacing.x)))
   let label = IconFolder & "  " & folderLabel(f)
+  ui.keys.beforeFirst()
   if igBeginCombo("##folder", label.cstring, 0):
     if recent.len == 0: igTextDisabled("No folder opened yet")
     for i, d in recent:
@@ -97,13 +110,16 @@ proc drawFolderRow(ui: var FileListUi; f: FileList; recent: openArray[string]; t
         res.commands.add Command(kind: ckBrowse, paths: @[d])
       igPopID()
     igEndCombo()
+  ui.keys.afterFirst()
   marks.mark("files.folder")
+  focused(marks)
   tip(if f.title.len > 0: f.title & "\nThe folders opened before are in this list."
       else: "The folders opened before are in this list.")
   igSameLine(0, -1)
   if igButton((IconOpenFolder & "##openfolder").cstring, ImVec2_c(x: button, y: button)):
     res.actions.incl maOpenFolder
   marks.mark("files.open folder")
+  focused(marks)
   tip("Open a folder (" & shortcutName(maOpenFolder) & ")")
   igSameLine(0, -1)
   let asked = if f.folder.len > 0: @[f.folder] else: f.asked
@@ -112,6 +128,7 @@ proc drawFolderRow(ui: var FileListUi; f: FileList; recent: openArray[string]; t
     res.commands.add Command(kind: ckBrowse, paths: asked)
   igEndDisabled()
   marks.mark("files.refresh")
+  focused(marks)
   tip("List the folder again")
 
 proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: var Marks;
@@ -131,7 +148,9 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   igTableSetupColumn("Type", 0, 0, 1)
   igTableSetupColumn("Size", ImGui_TableColumnFlags_PreferSortDescending.cint, 0, 2)
   igTableSetupColumn("Modified", ImGui_TableColumnFlags_PreferSortDescending.cint, 0, 3)
+  igPushItemFlag(ImGui_ItemFlags_NoTabStop.cint, true) # the list is one stop of Tab
   igTableHeadersRow()
+  igPopItemFlag()
   let specs = igTableGetSortSpecs()
   if specs != nil and specs.SpecsCount > 0:
     let s = specs.Specs[]
@@ -141,6 +160,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   ui.table.update(f, ui.filterText, ui.order)
   let chosenRow = ui.table.chosenRow(f, f.chosen)
   let today = getTime()
+  ui.keys.beforeRows()
   let clipper = ImGuiListClipper_ImGuiListClipper()
   ImGuiListClipper_Begin(clipper, cint(ui.table.rows.len), -1)
   if ui.follow and chosenRow >= 0:
@@ -154,13 +174,19 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
       let x = igGetCursorPosX()
       igPushID_Int(cint(r))
       let survey = e.kind.isSurvey
+      let shown = r == chosenRow
+      if shown: ui.keys.beforeShownRow()
+      pushRowTabStop(shown)
       if igSelectable_Bool("##row", e.path == f.chosen,
           ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and
           e.path != f.chosen and ui.focus.acts:
         res.commands.add(if survey: Command(kind: ckLoadSurvey, paths: @[e.path])
           else: Command(kind: ckShowFile, panel: MainPanel, path: e.path))
+      popRowTabStop()
+      ui.keys.afterRow()
       igPopID()
       marks.mark("files.row " & e.name)
+      focused(marks)
       if r == chosenRow and ui.follow:
         if not igIsItemVisible(): igSetScrollHereY(0.5)
         ui.follow = false
@@ -237,19 +263,19 @@ proc footer(f: FileList; shown: int; t: Theme) =
   igTextUnformatted(text.cstring, nil)
   igPopStyleColor(1)
 
-proc handleKeys(ui: FileListUi; f: FileList; res: var FileListOutput) =
-  ## Up / Down, Tab / Shift + Tab, Home / End while the window has the
-  ## focus and no text box has the keyboard: the next file is shown.
-  if igGetIO_Nil().WantTextInput: return
-  template held(chord: cint): bool = igShortcut_Nil(chord, ImGui_InputFlags_Repeat.cint)
-  let shift = ImGui_Mod_Shift.cint
-  var delta = 0
-  if held(ImGui_Key_DownArrow.cint) or held(ImGui_Key_Tab.cint): delta = 1
-  if held(ImGui_Key_UpArrow.cint) or held(shift or ImGui_Key_Tab.cint): delta = -1
-  if held(ImGui_Key_PageDown.cint): delta = 10
-  if held(ImGui_Key_PageUp.cint): delta = -10
-  if igShortcut_Nil(ImGui_Key_Home.cint, 0): delta = -high(int32)
-  if igShortcut_Nil(ImGui_Key_End.cint, 0): delta = high(int32)
+proc handleKeys(ui: var FileListUi; f: FileList; res: var FileListOutput) =
+  ## Up / Down, Page Up / Down, Home / End while the window has the focus
+  ## and no text box has the keyboard: the next file is shown.
+  let step = stepOf("files keys")
+  ui.keys.stepped(step)
+  let delta = case step
+    of lsNone: 0
+    of lsNext: 1
+    of lsPrevious: -1
+    of lsPageDown: 10
+    of lsPageUp: -10
+    of lsFirst: -high(int32)
+    of lsLast: high(int32)
   if delta != 0:
     let next = ui.table.stepped(f, f.chosen, delta)
     if next.len > 0 and next != f.chosen:
@@ -259,9 +285,9 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
     marks: var Marks): FileListOutput =
   ## The window, docked or floating like any other, titled `title`. Returns
   ## the commands and actions it asks for.
-  # The arrow keys and Tab step through the files, so ImGui's keyboard
-  # navigation does not move between the rows here.
-  if igBegin(title.cstring, nil, ImGui_WindowFlags_NoNavInputs.cint):
+  # Tab moves between the controls (Dear ImGui's navigation); the arrow keys
+  # step through the files (`listkeys`).
+  if igBegin(title.cstring, nil, 0):
     ui.focus.watch()
     marks.markWindow("files")
     template f: untyped = st.fileList # a view: a copy would take every entry each frame
@@ -279,19 +305,22 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
     discard igInputTextWithHint("##filter", (IconFilter & "  Filter by name").cstring,
       cast[cstring](addr ui.filter[0]), csize_t(ui.filter.len), 0, nil, nil)
     marks.mark("files.filter")
+    focused(marks)
     tip("Show only the files whose names hold every word typed here")
     igSameLine(0, -1)
     if following: # drawn selected, as the plot's toggles are
       igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(t.roles[rlSelection]))
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
+    ui.keys.beforeLast()
     if igButton(label.cstring, ImVec2_c(x: 0, y: 0)): result.toggleFollow = true
+    ui.keys.afterLast()
     if following: igPopStyleColor(2)
     marks.mark("files.follow")
+    focused(marks)
     tip("Follow the latest file: " & (if following: "on" else: "off") & ".\n" & FollowHelp)
     ui.drawRows(st, f, t, marks, result)
     footer(f, ui.table.rows.len, t)
     marks.mark("files.footer")
-    if igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint):
-      ui.handleKeys(f, result)
+    ui.handleKeys(f, result)
   ui.focus.settle()
   igEnd()
