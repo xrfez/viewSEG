@@ -12,16 +12,21 @@
 ##   sort, a display given in part, a selection, a kill of the selected
 ##   trace); `state` and `headers` answer with what the state holds; `busy`
 ##   (what `wait` waits for) empties once the picture is complete; the other
-##   tools refuse bad arguments.
+##   tools refuse bad arguments;
+## - screenshots: the frontend's pixels are scaled down (each pixel the mean
+##   of those it covers) and encoded off the UI thread; a picture too large,
+##   an encoder that fails or none is an error.
 ##
 ## Seen to fail: with `prefill` not taking the panel's display, the check
 ## that a display given in part keeps the gain amount; with `kindOf` letting
 ## the kinds that write a file through, "export messages was not refused";
 ## with `nestingDepth` returning 0, the depth checks; with the docs read from
 ## the wrong block of `core/state`, "no description of \"paths\"".
+## With the scaling taking each block's first pixel instead of its mean, the
+## pictures check (a pixel of the scaled picture is not the grey).
 
-import std/[json, os, sets, strutils, tables]
-import viewSEG/core/state
+import std/[base64, json, os, sets, strutils, tables]
+import viewSEG/core/[geometry, state]
 import viewSEG/remote/[protocol, schema, tools]
 import utils/[fixtures, waiting]
 
@@ -169,6 +174,34 @@ block schemaFromCommand:
   decode(parseJson("""{"fixedClip":null,"gainDb":-6}"""), d, "display", problems)
   doAssert problems.len == 0 and d.fixedClip != d.fixedClip and d.gainDb == -6
 
+block pictures:
+  # the frontend only reads pixels back; scaling and encoding are pure work
+  let grey = Rgba(r: 100, g: 100, b: 100, a: 255)
+  var shot = Shot(pixels: newSeq[Rgba](160 * 40), width: 160, height: 40)
+  for i in 0 ..< shot.pixels.len:
+    shot.pixels[i] = if i mod 2 == 0: Rgba(a: 255) else: Rgba(r: 200, g: 200, b: 200, a: 255)
+  let fe = Frontend(shoot: proc (target: string): Shot =
+    if target == "plot": shot else: Shot(error: "not on screen"))
+  var picture: Picture
+  doAssert screenshot(fe, """{"window":"plot","maxSize":80}""", picture) == ""
+  doAssert picture.shot.width == 160 and picture.maxSide == 80 and picture.target == "plot"
+  let (small, w, h) = scaledDown(picture.shot.pixels, 160, 40, 80)
+  doAssert (w, h) == (80, 20) and small.len == 1600 and small[7] == grey, $small[7]
+  doAssert scaledDown(shot.pixels, 160, 40, 160)[1] == 160, "as it is when it fits"
+  doAssert screenshot(fe, """{"window":"files"}""", picture).isError
+  proc fake(pixels: openArray[Rgba]; w, h: int): (string, string) {.nimcall, gcsafe.} =
+    ("PNG " & $w & "x" & $h & " " & $pixels.len, "")
+  proc huge(pixels: openArray[Rgba]; w, h: int): (string, string) {.nimcall, gcsafe.} =
+    (newString(MaxShotBytes + 1), "")
+  proc broken(pixels: openArray[Rgba]; w, h: int): (string, string) {.nimcall, gcsafe.} =
+    ("", "out of memory")
+  let answer = parseJson(pictureAnswer(picture, fake))
+  doAssert not answer["isError"].getBool and answer["content"][0]["type"].getStr == "image"
+  doAssert decode(answer["content"][0]["data"].getStr) == "PNG 80x20 1600"
+  doAssert answer["content"][1]["text"].getStr == "plot: 80 x 20 pixels"
+  doAssert pictureAnswer(picture, huge).isError and pictureAnswer(picture, broken).isError
+  doAssert pictureAnswer(picture, nil).isError
+
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
 
@@ -279,9 +312,10 @@ withFixtures fx:
       "Ignored" in ignored.body["messages"][0]["text"].getStr, ignored
 
   block otherToolsRefuse:
-    doAssert screenshot(fe, "{}").isError, "no window: no picture"
+    var picture: Picture
+    doAssert screenshot(fe, "{}", picture).isError, "no window: no picture"
     for bad in ["""{"window":"desktop"}""", """{"maxSize":10}""", """{"x":1}""", "3"]:
-      doAssert screenshot(fe, bad).isError, bad
+      doAssert screenshot(fe, bad, picture).isError, bad
     var seconds = 0.0
     doAssert waitArgs("""{"timeout":2.5}""", seconds) == "" and seconds == 2.5
     doAssert waitArgs("{}", seconds) == "" and seconds == DefaultWaitSeconds

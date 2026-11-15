@@ -1,7 +1,7 @@
 ## Pictures for agent control (`remote/tools`, the `screenshot` tool): a
-## part of the frame just drawn, read back from the GL back buffer, scaled
-## down to a size an agent asked for, and encoded as PNG in memory with
-## SDL's encoder. Nothing is written to a file.
+## part of the frame just drawn, read back from the GL back buffer on the UI
+## thread, and the PNG encoder (SDL's, in memory) agent control's server
+## thread runs on it. Nothing is written to a file.
 
 import sdl3_nim
 import imguin/glad/gl
@@ -23,38 +23,15 @@ proc readRegion*(frameHeight: int; x, y, w, h: int): seq[Rgba] =
       let i = src + 4 * col
       result[row * w + col] = Rgba(r: raw[i], g: raw[i + 1], b: raw[i + 2], a: 255)
 
-func scaledDown*(pixels: seq[Rgba]; w, h, maxSide: int): (seq[Rgba], int, int) =
-  ## `pixels` (`w` by `h`) made at most `maxSide` on its longer side, each
-  ## pixel the mean of the pixels it covers; as they are when they fit.
-  if max(w, h) <= maxSide or w <= 0 or h <= 0:
-    return (pixels, w, h)
-  let s = maxSide / max(w, h)
-  let (nw, nh) = (max(1, int(float(w) * s)), max(1, int(float(h) * s)))
-  var res = newSeq[Rgba](nw * nh)
-  for j in 0 ..< nh:
-    let (y0, y1) = (j * h div nh, max(j * h div nh + 1, (j + 1) * h div nh))
-    for i in 0 ..< nw:
-      let (x0, x1) = (i * w div nw, max(i * w div nw + 1, (i + 1) * w div nw))
-      var r, g, b, n = 0
-      for y in y0 ..< y1:
-        for x in x0 ..< x1:
-          let p = pixels[y * w + x]
-          r += p.r.int
-          g += p.g.int
-          b += p.b.int
-          inc n
-      res[j * nw + i] = Rgba(r: uint8(r div n), g: uint8(g div n), b: uint8(b div n), a: 255)
-  (res, nw, nh)
-
-proc encodePng*(pixels: seq[Rgba]; w, h: int): (string, string) =
+proc encodePng*(pixels: openArray[Rgba]; w, h: int): (string, string) {.nimcall, gcsafe.} =
   ## `pixels` (`w` by `h`, rows from the top) as PNG bytes, in memory; or ""
-  ## and why not.
+  ## and why not. Any thread may call it (SDL: "can be called on different
+  ## threads with different surfaces"); the surface only reads `pixels`.
   result = ("", "")
   if w <= 0 or h <= 0 or pixels.len != w * h:
     return ("", "the picture is empty")
-  var data = pixels
-  let surface = SDL_CreateSurfaceFrom(w.cint, h.cint, SDL_PIXELFORMAT_RGBA32, addr data[0],
-    cint(w * 4))
+  let surface = SDL_CreateSurfaceFrom(w.cint, h.cint, SDL_PIXELFORMAT_RGBA32,
+    addr pixels[0], cint(w * 4))
   if surface.isNil: return ("", "SDL cannot make a surface: " & $SDL_GetError())
   let io = SDL_IOFromDynamicMem()
   if io.isNil:

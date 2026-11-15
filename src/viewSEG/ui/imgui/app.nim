@@ -405,7 +405,7 @@ proc toggleAgent(ui: var Ui) =
     ui.agent.stop(ui.core)
   else:
     if ui.agentSocket.len == 0: ui.agentSocket = agentSocket()
-    discard ui.agent.start(ui.core, ui.agentSocket, ui.version)
+    discard ui.agent.start(ui.core, ui.agentSocket, ui.version, encodePng)
 
 proc setAgentControl*(frame: FrameInfo; on: bool) =
   ## Turns agent control on or off, as File > Agent control does.
@@ -897,9 +897,10 @@ proc fail(opts: RunOptions; step: StartupStep; reason: string): int =
 
 proc sdlError(): string = $SDL_GetError()
 
-proc shoot(ui: var Ui; target: string; maxSide: int): Shot =
-  ## A PNG of `target` (`ShotTargets`) as this frame drew it, for agent
+proc shoot(ui: var Ui; target: string): Shot =
+  ## The pixels of `target` (`ShotTargets`) as this frame drew it, for agent
   ## control: the plot's own image, or a part of the frame's back buffer.
+  ## Read back only: agent control's thread scales and encodes them.
   var pixels: seq[Rgba]
   var w, h = 0
   if target == "plot":
@@ -926,9 +927,7 @@ proc shoot(ui: var Ui; target: string; maxSide: int): Shot =
     if w <= 0 or h <= 0:
       return Shot(error: "the " & target & " window is outside the main window")
     pixels = readRegion(fh.int, x0, y0, w, h)
-  let (small, sw, sh) = scaledDown(pixels, w, h, maxSide)
-  let (png, why) = encodePng(small, sw, sh)
-  Shot(png: png, width: sw, height: sh, error: why)
+  Shot(pixels: move pixels, width: w, height: h)
 
 proc frontendOf(ui: ptr Ui; minimized: bool): Frontend =
   ## What agent control may ask of this frontend: the main window's
@@ -941,10 +940,10 @@ proc frontendOf(ui: ptr Ui; minimized: bool): Frontend =
     result = panel == MainPanel
     if result: ui.trace.show(view)
   if minimized:
-    result.shoot = proc (target: string; maxSide: int): Shot =
+    result.shoot = proc (target: string): Shot =
       Shot(error: "the window is minimized")
   else:
-    result.shoot = proc (target: string; maxSide: int): Shot = ui[].shoot(target, maxSide)
+    result.shoot = proc (target: string): Shot = ui[].shoot(target)
 
 proc glProc(name: cstring): pointer {.cdecl, gcsafe, raises: [].} =
   ## The GL loader the GPU layer uses.

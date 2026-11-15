@@ -16,7 +16,7 @@ import std/[json, monotimes, strutils, tables, times]
 import ../core/state
 import protocol, server, tools
 
-export Frontend, Shot, ShotTargets, ToolNames
+export Frontend, PngEncoder, Shot, ShotTargets, ToolNames
 
 const
   CallsPerFrame* = 8
@@ -55,11 +55,13 @@ proc clientNames*(c: AgentControl): seq[string] =
   for n in c.names.values:
     if n.len > 0: result.add n
 
-proc start*(c: var AgentControl; state: var AppState; path, version: string): bool =
+proc start*(c: var AgentControl; state: var AppState; path, version: string;
+    encode: PngEncoder = nil): bool =
   ## Turns agent control on at socket `path`, saying so in the log; false,
-  ## with the reason logged, when it cannot.
+  ## with the reason logged, when it cannot. Screenshots are encoded with
+  ## `encode` (on the server thread); none without it.
   if c.running: return true
-  let (s, why) = startServer(path, toolList(), version, @ToolNames)
+  let (s, why) = startServer(path, toolList(), version, @ToolNames, encode)
   if why.len > 0:
     state.report(sevError, LogSource, "Agent control could not be turned on: " & why & ".")
     false
@@ -142,7 +144,10 @@ proc serve*(c: var AgentControl; state: var AppState; fe: Frontend; now = getMon
     of "headers": c.respond(state, call, state.traceHeaderReport(call.arguments))
     of "screenshot":
       shot = true
-      c.respond(state, call, screenshot(fe, call.arguments))
+      var picture: Picture
+      let refusal = screenshot(fe, call.arguments, picture)
+      if refusal.len > 0: c.respond(state, call, refusal)
+      else: c.server.answerPicture(call.serial, move picture)
     of "wait":
       var seconds: float
       let refusal = waitArgs(call.arguments, seconds)

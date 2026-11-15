@@ -836,8 +836,10 @@ above it; `tests/tlayers.nim` checks that, and that nothing below imports it.
 
 The frontend owns an `AgentControl` beside its `AppState`. It calls `serve` once per frame,
 after the frame is rendered and before the buffers swap, with two hooks only a toolkit can
-give (`Frontend`): `shoot`, a PNG of a part of that frame, and `drawnView`, the view the
-plot image was last drawn for.
+give (`Frontend`): `shoot`, the pixels of a part of that frame, `drawnView`, the view the
+plot image was last drawn for, and `showView`, a view shown in the plot as the user's pan
+or zoom would (the plot owns its view: a view set in `core` alone is undone by the plot's
+next report). It also gives `start` a PNG encoder, which runs on the server thread.
 
 ### A call, from the socket to the frame
 
@@ -850,7 +852,9 @@ plot image was last drawn for.
 2. **Frame boundary** (`remote/control`, UI thread). `serve` takes what was queued (a
    swap under the lock, as `drainInbox` does) and answers the calls in turn, at most 8
    a frame: `command` is decoded and given to `apply`, as a window's command is; `state`
-   and `headers` read the accessors; `screenshot` asks the hook; `wait` is kept and
+   and `headers` read the accessors; `screenshot` has the frontend read the pixels
+   back (a few milliseconds), and the server thread scales them down and encodes the
+   PNG (`pictureAnswer`, with the frontend's `PngEncoder`); `wait` is kept and
    looked at every frame until it holds on two frames in a row (a job that ended
    between a frame's inbox and its answers has what it posted taken in by the next
    frame's) or its time is up. Once a call has applied a

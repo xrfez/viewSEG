@@ -23,7 +23,7 @@
 
 import std/[json, monotimes, strutils, times]
 import ../core/threads
-import protocol
+import protocol, tools
 
 const
   MaxClients* = 4
@@ -60,6 +60,7 @@ when not defined(windows):
     Answer = object
       serial: int
       text: string
+      picture: Picture ## a screenshot to scale and encode here, off the UI thread
 
     HubObj = object
       lock: Lock
@@ -77,6 +78,7 @@ when not defined(windows):
       listener, wakeRead: cint
       toolList, version: string
       toolNames: seq[string]
+      encode: PngEncoder
 
     InFlight = object
       serial: int
@@ -243,6 +245,7 @@ when not defined(windows):
         swap(answers, arg.hub.answers)
       if stopping: break
       for a in answers.mitems:
+        if a.picture.shot.width > 0: a.text = pictureAnswer(a.picture, arg.encode)
         for c in clients.mitems:
           for i in countdown(c.inFlight.high, 0):
             if c.inFlight[i].serial == a.serial:
@@ -376,10 +379,11 @@ when not defined(windows):
     discard posix.close(fd.cint)
     r == 0 or e == EAGAIN or e == EINPROGRESS
 
-proc startServer*(path, toolList, version: string; toolNames: seq[string]): (Server, string) =
+proc startServer*(path, toolList, version: string; toolNames: seq[string];
+    encode: PngEncoder = nil): (Server, string) =
   ## A server listening on a socket at `path`, answering with `toolList` (the
-  ## JSON text `tools/list` returns) for `toolNames`; "" when it started,
-  ## else why not, in plain words.
+  ## JSON text `tools/list` returns) for `toolNames`, encoding screenshots
+  ## with `encode`; "" when it started, else why not, in plain words.
   result = (Server(path: path), "")
   when defined(windows):
     result[1] = "agent control is not available on Windows in this version"
@@ -440,7 +444,8 @@ proc startServer*(path, toolList, version: string; toolNames: seq[string]): (Ser
     result[0].device = uint64(st.st_dev)
     result[0].inode = uint64(st.st_ino)
     createThread(hub.thread, serve, ServerArg(hub: hub, listener: fd.cint,
-      wakeRead: wake[0], toolList: toolList, version: version, toolNames: toolNames))
+      wakeRead: wake[0], toolList: toolList, version: version, toolNames: toolNames,
+      encode: encode))
 
 proc takeCalls*(s: Server; calls: var seq[Call]; events: var seq[Event]) =
   ## Moves the calls and events queued since the last call into `calls` and
@@ -464,6 +469,16 @@ proc answer*(s: Server; serial: int; result: sink string) =
     if s.hub == nil: return
     withLock s.hub.lock:
       s.hub.answers.add Answer(serial: serial, text: result)
+    var b = 'a'
+    discard write(s.hub.wakeWrite, addr b, 1)
+
+proc answerPicture*(s: Server; serial: int; picture: sink Picture) =
+  ## Answers call `serial` with `picture`, which the server thread scales
+  ## down and encodes (`pictureAnswer`).
+  when not defined(windows):
+    if s.hub == nil: return
+    withLock s.hub.lock:
+      s.hub.answers.add Answer(serial: serial, picture: picture)
     var b = 'a'
     discard write(s.hub.wakeWrite, addr b, 1)
 

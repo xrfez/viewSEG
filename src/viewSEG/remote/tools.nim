@@ -7,8 +7,10 @@
 ##   order, the traces at each position, the edits), the selection, the jobs,
 ##   the newest messages, the survey;
 ## - `headers`: one trace's keys and header fields;
-## - `screenshot`: a PNG of the window or a part of it, through the hook the
-##   frontend gives (`Frontend.shoot`);
+## - `screenshot`: a PNG of the window or a part of it: the frontend reads
+##   the pixels back (`Frontend.shoot`, the only part on the UI thread);
+##   `pictureAnswer` scales them down and encodes them on the server thread,
+##   with the encoder the frontend gave (`PngEncoder`);
 ## - `wait`: until no job runs and every panel's picture is complete
 ##   (`remote/control` keeps it across frames; `busy` says what is left).
 ##
@@ -18,7 +20,7 @@
 
 import std/[algorithm, base64, json, math, monotimes, sets, strutils, times]
 import parseSEG
-import ../core/state
+import ../core/[geometry, state]
 import protocol, schema
 
 const
@@ -42,17 +44,27 @@ const
 
 type
   Shot* = object
-    ## A picture the frontend took.
-    png*: string   ## PNG bytes; "" when there is none
+    ## A picture the frontend took, as it took it.
+    pixels*: seq[Rgba] ## rows from the top; empty when there is none
     width*, height*: int
-    error*: string ## why there is none, in plain words
+    error*: string     ## why there is none, in plain words
+
+  Picture* = object
+    ## A picture to answer with, for the server thread to scale and encode.
+    shot*: Shot
+    maxSide*: int ## its longest side, at most
+    target*: string
+
+  PngEncoder* = proc (pixels: openArray[Rgba]; w, h: int): (string, string) {.nimcall, gcsafe.}
+    ## PNG bytes of `pixels` (`w` by `h`, rows from the top), or "" and why
+    ## not; called on the server thread
 
   Frontend* = object
     ## What only the frontend can do. A nil hook: that part is not available
     ## (a test without a window).
-    shoot*: proc (target: string; maxSide: int): Shot {.closure.}
-      ## a PNG of `target` (one of `ShotTargets`) as the last frame drew it,
-      ## scaled down to `maxSide` pixels on its longer side
+    shoot*: proc (target: string): Shot {.closure.}
+      ## the pixels of `target` (one of `ShotTargets`) as the last frame drew
+      ## them
     drawnView*: proc (panel: PanelId; view: var Viewport): bool {.closure.}
       ## the view `panel`'s picture was last drawn for; false when the
       ## frontend draws no picture of that panel
@@ -420,8 +432,10 @@ proc traceHeaderReport*(state: AppState; arguments: string): string =
 
 # ---------------------------------------------------------- screenshot --
 
-proc screenshot*(fe: Frontend; arguments: string): string =
-  ## The `screenshot` tool.
+proc screenshot*(fe: Frontend; arguments: string; picture: var Picture): string =
+  ## The `screenshot` tool, on the UI thread: "" when `picture` holds what
+  ## the frontend took, to be answered with `pictureAnswer`; else the answer
+  ## (a refusal, or why there is no picture).
   var n: JsonNode
   let why = args(arguments, n)
   if why.len > 0: return refused([why])
@@ -438,16 +452,55 @@ proc screenshot*(fe: Frontend; arguments: string): string =
   if problems.len > 0: return refused(problems)
   if fe.shoot == nil:
     return textResult("there is no window to take a picture of", isError = true)
-  let shot = fe.shoot(target, side)
+  var shot = fe.shoot(target)
   if shot.error.len > 0:
     return textResult("no picture: " & shot.error, isError = true)
-  if shot.png.len > MaxShotBytes:
-    return textResult("the picture is larger than " & $(MaxShotBytes div (1024 * 1024)) &
+  if shot.width <= 0 or shot.height <= 0 or shot.pixels.len != shot.width * shot.height:
+    return textResult("no picture: the frontend gave none", isError = true)
+  picture = Picture(shot: move shot, maxSide: side, target: target)
+  ""
+
+func scaledDown*(pixels: openArray[Rgba]; w, h, maxSide: int): (seq[Rgba], int, int) =
+  ## `pixels` (`w` by `h`) made at most `maxSide` on its longer side, each
+  ## pixel the mean of the pixels it covers; a copy when they fit.
+  if max(w, h) <= maxSide or w <= 0 or h <= 0:
+    return (@pixels, w, h)
+  let s = maxSide / max(w, h)
+  let (nw, nh) = (max(1, int(float(w) * s)), max(1, int(float(h) * s)))
+  var res = newSeq[Rgba](nw * nh)
+  for j in 0 ..< nh:
+    let (y0, y1) = (j * h div nh, max(j * h div nh + 1, (j + 1) * h div nh))
+    for i in 0 ..< nw:
+      let (x0, x1) = (i * w div nw, max(i * w div nw + 1, (i + 1) * w div nw))
+      var r, g, b, n = 0
+      for y in y0 ..< y1:
+        for x in x0 ..< x1:
+          let p = pixels[y * w + x]
+          r += p.r.int
+          g += p.g.int
+          b += p.b.int
+          inc n
+      res[j * nw + i] = Rgba(r: uint8(r div n), g: uint8(g div n), b: uint8(b div n), a: 255)
+  (res, nw, nh)
+
+proc pictureAnswer*(p: Picture; encode: PngEncoder): string =
+  ## The answer to a `screenshot` call: `p` scaled down, encoded as PNG and
+  ## wrapped as an image result. Pure work on plain data, for the server
+  ## thread: the UI thread only read the pixels back.
+  if encode == nil:
+    return textResult("no picture: this viewSEG has no PNG encoder", isError = true)
+  let (small, w, h) = scaledDown(p.shot.pixels, p.shot.width, p.shot.height, p.maxSide)
+  let (png, why) = encode(small, w, h)
+  if why.len > 0:
+    textResult("no picture: " & why, isError = true)
+  elif png.len > MaxShotBytes:
+    textResult("the picture is larger than " & $(MaxShotBytes div (1024 * 1024)) &
       " MiB; ask for a smaller maxSize", isError = true)
-  $(%*{"content": [
-    {"type": "image", "data": encode(shot.png), "mimeType": "image/png"},
-    {"type": "text", "text": target & ": " & $shot.width & " x " & $shot.height & " pixels"}],
-    "isError": false})
+  else:
+    $(%*{"content": [
+      {"type": "image", "data": base64.encode(png), "mimeType": "image/png"},
+      {"type": "text", "text": p.target & ": " & $w & " x " & $h & " pixels"}],
+      "isError": false})
 
 # ---------------------------------------------------------------- wait --
 
