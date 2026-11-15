@@ -932,13 +932,16 @@ proc shoot(ui: var Ui; target: string): Shot =
 proc frontendOf(ui: ptr Ui; minimized: bool): Frontend =
   ## What agent control may ask of this frontend: the main window's
   ## pictures (none while minimized), the main plot's drawn view, and views
-  ## shown in it as the user's pan or zoom would.
+  ## shown in the plot and the map as the user's pan or zoom would.
   result.drawnView = proc (panel: PanelId; view: var Viewport): bool =
     result = panel == MainPanel
     if result: view = ui.trace.drawnView
   result.showView = proc (panel: PanelId; view: Viewport): bool =
     result = panel == MainPanel
     if result: ui.trace.show(view)
+  result.showMapView = proc (view: MapView): bool =
+    ui.map.show(view)
+    true
   if minimized:
     result.shoot = proc (target: string): Shot =
       Shot(error: "the window is minimized")

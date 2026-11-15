@@ -18,15 +18,16 @@
 ## from an agent: every problem with it is a result with `isError`, never an
 ## exception.
 
-import std/[algorithm, base64, json, math, monotimes, sets, strutils, times]
+import std/[algorithm, base64, json, math, monotimes, os, sets, strutils, times]
 import parseSEG
 import ../core/[geometry, state]
 import protocol, schema
 
 const
   ToolNames* = ["command", "state", "headers", "screenshot", "wait"]
-  StateParts* = ["fileList", "files", "panels", "selection", "jobs", "messages", "survey"]
-  ShotTargets* = ["window", "plot", "seismic", "files", "records", "messages", "jobs",
+  StateParts* = ["program", "fileList", "files", "panels", "selection", "map", "jobs",
+    "messages", "survey"]
+  ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "messages", "jobs",
     "toolbar", "statusbar"]
     ## what `screenshot` takes a picture of: the whole window, the Seismic
     ## window's picture of the traces alone, or one window
@@ -71,6 +72,9 @@ type
     showView*: proc (panel: PanelId; view: Viewport): bool {.closure.}
       ## shows `view` in `panel`'s plot, as a pan or zoom of the user's would;
       ## false when the frontend has no plot for it
+    showMapView*: proc (view: MapView): bool {.closure.}
+      ## shows `view` in the map, as a pan or zoom of the user's would; false
+      ## when the frontend has no map
 
 # ---------------------------------------------------------- the list --
 
@@ -85,23 +89,29 @@ proc toolList*(): string =
      "description": "Do one thing the windows do: open or list files, show a file, a " &
        "record or a trace, change a panel's view, display, gain, display header, sort " &
        "or trace filter, kill or reverse traces (kept beside the file, which is never " &
-       "changed), select traces, load survey files. The arguments are the command: " &
+       "changed), select traces, load survey files, move the map, show or hide its " &
+       "layers, select or hover points on it, show a point's record. The arguments are " &
+       "the command: " &
        "its \"kind\" and the fields that kind takes. A panel (1 is the Seismic window) " &
        "keeps what is not given: {\"kind\": \"display\", \"display\": {\"mode\": " &
        "\"density\"}} changes the mode only. \"panel\" defaults to 1; \"edit traces\" " &
        "without \"edited\" edits the selected traces of the panel's file, and \"on\" " &
-       "defaults to true. Paths are best absolute. Trace ids are survey-wide: " &
+       "defaults to true; \"map layer\" without \"shown\" shows it. A relative path is " &
+       "read against the program's folder (`state`'s program.folder): the program may " &
+       "run on another machine than you, with other paths. Trace ids are survey-wide: " &
        "`state` gives each file's firstTrace and each panel's positions (the trace " &
        "index in its file at each position, in the order shown). Returns at once with " &
        "what the program said; what reads data finishes later: call `wait`. Refused: " &
        "whatever writes a file, and the user's preferences and window layout.",
      "inputSchema": commandSchema()},
     {"name": "state",
-     "description": "What viewSEG holds now: the file list (fileList), the open files " &
-       "(files), the panels (panels: the file, record, layout, view, display and gain, " &
-       "display header, order, trace filter, polarity, the traces at each position, " &
-       "the edits, whether the picture is complete), the selection, the jobs, the " &
-       "newest messages and the survey. All parts unless some are named.",
+     "description": "What viewSEG holds now: its own folder and working folder " &
+       "(program), the file list (fileList), the open files (files), the panels " &
+       "(panels: the file, record, layout, view, display and gain, display header, " &
+       "order, trace filter, polarity, the traces at each position, the edits, whether " &
+       "the picture is complete), the selection, the map (its view, its layers, shown " &
+       "or hidden, with their points, and the points selected and hovered), the jobs, " &
+       "the newest messages and the survey. All parts unless some are named.",
      "inputSchema": {"type": "object", "properties": {
        "parts": {"type": "array", "items": {"type": "string", "enum": parts},
          "description": "the parts to give; all when not given"},
@@ -111,7 +121,7 @@ proc toolList*(): string =
          "description": "only the messages from this serial on"},
        "limit": {"type": "integer", "minimum": 1, "maximum": MaxListed,
          "description": "the longest list given: files listed, positions, selected " &
-           "traces, edits (default " & $DefaultListed & ")"}},
+           "traces and points, edits (default " & $DefaultListed & ")"}},
        "additionalProperties": false}},
     {"name": "headers",
      "description": "One trace's keys (geometry, stations, offset, status) and every " &
@@ -129,7 +139,8 @@ proc toolList*(): string =
     {"name": "screenshot",
      "description": "A PNG of what the user sees now: the whole window, the Seismic " &
        "window's picture of the traces alone (\"plot\": its pixels are the data, at " &
-       "the panel's view), or one window. Call `wait` first after a command that " &
+       "the panel's view), or one window (\"map\" is the Map window). Call `wait` first " &
+       "after a command that " &
        "reads data.",
      "inputSchema": {"type": "object", "properties": {
        "window": {"type": "string", "enum": shotEnum,
@@ -189,8 +200,16 @@ proc prefill(state: AppState; given: Command; c: var Command) =
         c.filter = p.layers[0].filter
         c.order = p.layers[0].order
         c.reverse = p.layers[0].reversed
-  if c.kind == ckEdit:
-    c.on = true
+  case c.kind
+  of ckEdit: c.on = true
+  of ckMapView: c.mapView = state.map.view
+  of ckMapLayer: c.shown = true
+  else: discard
+
+proc fromProgram(path: string): string =
+  ## `path` made absolute against the program's folder, when it is relative.
+  if path.len == 0 or path.isAbsolute: path
+  else: normalizedPath(getAppDir() / path)
 
 proc selectedIn(state: AppState; panel: PanelId): seq[int] =
   ## The selected traces of the file `panel` shows, survey-wide ids, ascending.
@@ -223,9 +242,16 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
   if problems.len > 0: return refused(problems)
   if kind == ckEdit and not n.hasKey("edited"):
     c.edited = state.selectedIn(c.panel)
+  case kind
+  of ckOpen, ckBrowse, ckLoadSurvey:
+    for p in c.paths.mitems: p = fromProgram(p)
+  of ckShowFile, ckShowTrace: c.path = fromProgram(c.path)
+  else: discard
   let before = state.log.nextSerial
   if kind == ckView and fe.showView != nil and fe.showView(c.panel, c.view):
     discard # the frontend moves its plot next frame and reports the view (ckView)
+  elif kind == ckMapView and fe.showMapView != nil and fe.showMapView(c.mapView):
+    discard # likewise the map
   else:
     state.apply c
   applied = true
@@ -305,6 +331,39 @@ proc fileListJson(state: AppState; limit: int): JsonNode =
       "status": $e.status, "new": e.isNew}
   result["entries"] = entries
 
+proc pointJson(state: AppState; p: PointRef): JsonNode =
+  ## A map point: its layer, role and index, and where it is.
+  result = %*{"layer": int(p.layer), "role": $p.role, "point": p.point}
+  let i = state.survey.find(p.layer)
+  if i >= 0 and p.point in 0 ..< state.survey.layers[i].points[p.role].len:
+    template ps: untyped = state.survey.layers[i].points[p.role]
+    result["x"] = toJson(ps.index.x(p.point))
+    result["y"] = toJson(ps.index.y(p.point))
+    if p.point < ps.station.len: result["station"] = toJson(ps.station[p.point])
+
+proc mapJson(state: AppState; limit: int): JsonNode =
+  ## The map: its view, its layers (each role of each survey layer, shown or
+  ## hidden, with its points), the points selected and hovered.
+  let m = state.map
+  result = %*{"view": toJson(m.view), "canGoBack": m.back.len > 0,
+    "highlightShown": m.shown(HighlightKey)}
+  var layers = newJArray()
+  for l in state.survey.layers:
+    for role in PointRole:
+      if l.points[role].len > 0:
+        let key = l.keyOf(role)
+        layers.add %*{"layer": int(l.id), "name": l.name, "kind": $l.kind,
+          "mapLayer": toJson(key), "points": l.points[role].len, "shown": m.shown(key)}
+  result["layers"] = layers
+  var selected = newJArray()
+  for i in 0 ..< min(state.selection.points.len, limit):
+    selected.add state.pointJson(state.selection.points[i])
+  result["selectedCount"] = %state.selection.points.len
+  result["selected"] = selected
+  var hovered = newJArray()
+  for p in state.selection.hoverPoints: hovered.add state.pointJson(p)
+  result["hovered"] = hovered
+
 proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
   ## The `state` tool.
   var n: JsonNode
@@ -362,6 +421,14 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
       messages.add %*{"serial": e.serial, "severity": $e.severity, "source": e.source,
         "text": e.text, "where": e.loc.where}
     r["messages"] = messages
+  if "program" in wanted:
+    var working = ""
+    try:
+      working = getCurrentDir()
+    except OSError:
+      discard
+    r["program"] = %*{"folder": getAppDir(), "workingFolder": working}
+  if "map" in wanted: r["map"] = state.mapJson(limit)
   if "survey" in wanted:
     var layers = newJArray()
     for l in state.survey.layers:

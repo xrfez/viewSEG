@@ -837,9 +837,9 @@ above it; `tests/tlayers.nim` checks that, and that nothing below imports it.
 The frontend owns an `AgentControl` beside its `AppState`. It calls `serve` once per frame,
 after the frame is rendered and before the buffers swap, with two hooks only a toolkit can
 give (`Frontend`): `shoot`, the pixels of a part of that frame, `drawnView`, the view the
-plot image was last drawn for, and `showView`, a view shown in the plot as the user's pan
-or zoom would (the plot owns its view: a view set in `core` alone is undone by the plot's
-next report). It also gives `start` a PNG encoder, which runs on the server thread.
+plot image was last drawn for, and `showView` and `showMapView`, a view shown in the plot
+or the map as the user's pan or zoom would (each window owns its view: a view set in
+`core` alone is undone by the window's next report). It also gives `start` a PNG encoder, which runs on the server thread.
 
 ### A call, from the socket to the frame
 
@@ -918,7 +918,10 @@ over a **Unix-domain socket**.
   of the thread.
 - **What an agent may do.** The commands that change what is shown: open, browse, show a
   file or a trace, close, the jobs, gathers, the view, display, display header, sort,
-  trace filter, polarity, back, the trace edits, hover and selection, survey files.
+  trace filter, polarity, back, the trace edits, hover and selection, survey files, and
+  the map's view, layers, points selected and hovered (what a user does in a window).
+  A relative path in a command is read against the program's own folder, which an agent
+  elsewhere (a container) can name, unlike the program's absolute paths.
   **Refused:** whatever writes a file (the exports, saving or importing a layout, a
   settings reset, which keeps a backup) and the user's preferences and window
   arrangement (`ckSettings`, `ckImportSettings`, `ckLayout`, `ckLoadLayout`). Trace

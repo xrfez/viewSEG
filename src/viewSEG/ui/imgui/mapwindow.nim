@@ -129,6 +129,8 @@ type
     rulerText, scaleText: string
     plot: Rect
       ## the plot's area last frame, framebuffer pixels
+    wanted: MapView ## a view to give the map next frame (`show`)
+    want: bool
 
   MapOutput* = object
     ## What the map window asks for.
@@ -147,6 +149,12 @@ proc startGpu*(mu: var MapUi): string =
 proc stopGpu*(mu: var MapUi) =
   ## Frees the GPU objects, with the GL context still current.
   if mu.renderer.ready: mu.renderer.free()
+
+proc show*(mu: var MapUi; v: MapView) =
+  ## Gives the map the centre and scale of `v` next frame, as a pan or zoom
+  ## of the user's would (its pixel size is the map's own).
+  mu.wanted = v
+  mu.want = true
 
 func mapShown*(mu: MapUi): MapView {.inline.} = mu.cur
   ## The view the map showed last frame (for tests).
@@ -614,6 +622,12 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     mu.jumps = st.map.jumps
     mu.drag = MapDrag()
   var next = mu.cur
+  if mu.want: # a view asked for from outside the window (agent control)
+    next.centre = mu.wanted.centre
+    if mu.wanted.perPixel > 0: next.perPixel = mu.wanted.perPixel
+    next = keptMap(next, lim)
+    mu.want = false
+    remember = true
   case ask
   of maNone: discard
   of maFit:

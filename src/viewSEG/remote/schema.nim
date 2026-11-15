@@ -191,8 +191,8 @@ type
     fields*: Table[string, string] ## a field's name -> its doc comment
     fieldKinds*: Table[string, seq[string]]
       ## a field's name -> the names of the kinds its doc comment says use it
-      ## ("ckShowFile, ckShowTrace: the file to show"); none: every kind of
-      ## its branch
+      ## ("ckShowFile, ckShowTrace: the file to show", "ckA: ...; ckB: ...");
+      ## none: every kind of its branch
 
 func identBefore(line: string; at: int): string =
   ## The identifier that ends just before `at` in `line`.
@@ -250,13 +250,18 @@ func commandDocs*(source: string): CommandDocs =
         last = identBefore(line, star)
         let doc = line.find("##")
         result.fields[last] = if doc > 0: line.substr(doc + 2).strip else: ""
-        let colon = result.fields[last].find(':')
-        if colon > 0:
-          var users: seq[string]
-          for word in result.fields[last].substr(0, colon - 1).split(','):
-            if word.strip in result.names: users.add result.names[word.strip]
-          if users.len > 0 and users.len == result.fields[last].substr(0, colon - 1).count(',') + 1:
-            result.fieldKinds[last] = users
+  # "ckA, ckB: ...; ckC: ...": the kinds that use the field
+  for field, doc in result.fields:
+    var users: seq[string]
+    for segment in doc.split(';'):
+      let colon = segment.find(':')
+      if colon > 0:
+        let words = segment.substr(0, colon - 1).split(',')
+        var named: seq[string]
+        for w in words:
+          if w.strip in result.names: named.add result.names[w.strip]
+        if named.len == words.len: users.add named
+    if users.len > 0: result.fieldKinds[field] = users
   result.kinds.renameKinds(result.names)
   result.fields.renameKinds(result.names)
 
@@ -423,5 +428,13 @@ proc commandSchema*(): JsonNode =
     s["description"] = newJString((if doc.len > 0: doc & " " else: "") & "Used by " &
       used.join(", ") & "." & (if s.hasKey("description"): " " & s["description"].str else: ""))
     props[f.name] = s
+  # what `core` keeps a value within, stated
+  if props.hasKey("display"):
+    template bound(field: string; lo, hi: float64) =
+      props["display"]["properties"][field]["minimum"] = newJFloat(lo)
+      props["display"]["properties"][field]["maximum"] = newJFloat(hi)
+    bound("gainDb", -MaxGainDb, MaxGainDb)
+    bound("overlap", MinOverlap, MaxOverlap)
+    bound("untilMs", MinUntilMs, MaxUntilMs)
   %*{"type": "object", "properties": props, "required": ["kind"],
     "additionalProperties": false}

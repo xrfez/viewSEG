@@ -99,9 +99,9 @@ it was refused or failed, 2 when no viewSEG listens.
 | Tool | Arguments | Answers with |
 |---|---|---|
 | `command` | One command: its `kind` and the fields that kind takes (below) | What the program said while carrying it out; an error when the command was refused, or did not fit the state (a gather out of range) |
-| `state` | `parts` (any of `fileList`, `files`, `panels`, `selection`, `jobs`, `messages`, `survey`; all when not given), `messages` (how many of the newest, 20), `since` (a message serial), `limit` (the longest list, 200) | The file list, the open files (each with `firstTrace`, the survey-wide id of its first trace), the panels (file, record, layout, view, display and gain, display header, order, trace filter, polarity, `positions`: the trace index in its file at each position in the order shown, the killed and reversed traces, and whether the picture is `complete`), the selection, the jobs, the newest messages, the survey's layers |
+| `state` | `parts` (any of `program`, `fileList`, `files`, `panels`, `selection`, `map`, `jobs`, `messages`, `survey`; all when not given), `messages` (how many of the newest, 20), `since` (a message serial), `limit` (the longest list, 200) | The program's own folder and working folder (`program`: see "Paths" below), the file list, the open files (each with `firstTrace`, the survey-wide id of its first trace), the panels (file, record, layout, view, display and gain, display header, order, trace filter, polarity, `positions`: the trace index in its file at each position in the order shown, the killed and reversed traces, and whether the picture is `complete`), the selection, the map (its view, each layer with its points and whether it is shown, the points selected and hovered with where they are and their stations), the jobs, the newest messages, the survey's layers |
 | `headers` | A trace: `trace` (its survey-wide id), or `panel` and `position` (0 is the leftmost), or `file` (an open file's id) and `index` | The trace's keys (stations, coordinates, offset, channel, status) and every field of its headers: block, field, value, byte offset |
-| `screenshot` | `window`: `window` (the whole window, default), `plot` (the Seismic window's picture of the traces alone), `seismic`, `files`, `records`, `messages`, `jobs`, `toolbar`, `statusbar`; `maxSize`, the longest side in pixels (1600; larger pictures are scaled down) | A PNG |
+| `screenshot` | `window`: `window` (the whole window, default), `plot` (the Seismic window's picture of the traces alone), `seismic`, `map` (the Map window), `files`, `records`, `messages`, `jobs`, `toolbar`, `statusbar`; `maxSize`, the longest side in pixels (1600; larger pictures are scaled down) | A PNG |
 | `wait` | `timeout` in seconds (30; at most 300) | Whether everything is done: no job running or waiting and every panel's picture read, sorted and drawn; else what is still going. Call it after a command that reads data, before `state` or `screenshot` |
 
 ### Commands
@@ -121,13 +121,31 @@ schema (in the tool list) gives every field and value; the most used:
 | `trace filter` | `filter` (`seismic`, `auxiliary`) | Which traces are shown |
 | `select` | `traces` (survey-wide ids), `mode` (`replace`, `add`, `toggle`, `range`) | The selection |
 | `edit traces` | `edit` (`killed`, `reversed`), `edited`, `on` | Kills or reverses traces, beside the file |
-| `undo edit`, `clear edits`, `reverse all`, `back`, `hover`, `clear selection`, `close`, `load survey`, `unload survey`, `cancel job`, ... | | As in the windows |
+| `map view` | `mapView` (`centre`: `x`, `y`; `perPixel`: survey units a pixel) | Pans and zooms the map, as you would |
+| `map layer` | `mapLayer` (as `state` names it), `shown` | Shows or hides a layer of the map (`shown` defaults to true) |
+| `select points` | `points` (`layer`, `role`, `point`), `pointMode` | Selects points on the map, and their traces |
+| `hover points`, `show points' record` | `points` | Lights up the points' traces as the map's pointer does; shows the record of their traces |
+| `undo edit`, `clear edits`, `reverse all`, `back`, `map back`, `hover`, `clear selection`, `close`, `load survey`, `unload survey`, `cancel job`, ... | | As in the windows |
 
 `panel` defaults to 1 (the Seismic window). A panel keeps whatever is not given:
 `{"kind": "display", "display": {"mode": "density"}}` changes the mode alone. `edit
 traces` without `edited` edits the selected traces of the panel's file, and `on` defaults
-to true. Give paths whole: a relative one is read against the folder the program was
-started in.
+to true.
+
+### Paths
+
+The paths in commands are the program's, on the computer it runs on, which is not always
+the agent's: a program on the desktop and an agent in a container see the same repository
+under different paths (`/home/you/src/viewSEG` and `/workspaces/viewSEG`, say). So a
+**relative path is read against the program's own folder**, the folder of the viewSEG it
+runs (`state`'s `program.folder`; `bin/` of the repository for a build there). Name a file
+by its place relative to that folder, and it is found on either side:
+
+| The agent sees | The program sees | Give |
+|---|---|---|
+| `/workspaces/viewSEG/exampleFiles/shot.sgd` | `/home/you/src/viewSEG/exampleFiles/shot.sgd` | `../exampleFiles/shot.sgd` |
+
+An absolute path is taken as it is. The paths `state` reports are the program's.
 
 ## What an agent cannot do
 

@@ -12,6 +12,9 @@
 ##   nothing but the paper, and it held ink before; `state` says it is
 ##   killed, `headers` gives its channel; a command that writes a file is
 ##   refused, and the whole window can be taken;
+## - the agent names the fixture relative to the program's folder; it hides
+##   the map's receivers (the Map window's picture changes) and halves the
+##   map's scale (the map takes the view, as a zoom of the user's);
 ## - while it is connected the status bar shows "agent connected", and
 ##   Messages holds a line for each of its calls; the file is not changed.
 ##
@@ -20,7 +23,9 @@
 ## band: 1153 pixels of ink"; with no trace named to the kill (the
 ## selection not taken), "kill: ... ignored"; with the status bar's sign
 ## left out, "no sign while on"; with File > Agent control's way not
-## starting the server, "no listening socket after turning it on".
+## starting the server, "no listening socket after turning it on"; with the
+## map's view applied in `core` alone (no `showMapView`), "the map's view was
+## not taken".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -128,6 +133,30 @@ proc agent(s: Scenario) {.thread.} =
   r = c.call("screenshot")
   check(r, "screenshot of the window")
   results.send(("window", r["content"][1]["text"].getStr))
+  # the map: its state, a layer hidden, a view shown, in pictures of the Map window
+  r = c.call("state", %*{"parts": ["map", "program"]})
+  check(r, "state of the map")
+  let st = parseJson(r.text)
+  results.send(("program", st["program"]["folder"].getStr))
+  var key = newJNull()
+  for l in st["map"]["layers"]:
+    if l["mapLayer"]["role"].getStr == "receiver": key = l["mapLayer"]
+  if key.kind != JObject: fail("no receivers on the map: " & $st["map"])
+  r = c.call("screenshot", %*{"window": "map", "maxSize": 4096})
+  check(r, "screenshot of the map")
+  results.send(("map shown", r["content"][0]["data"].getStr))
+  check(c.call("command", %*{"kind": "map layer", "mapLayer": key, "shown": false}), "hide")
+  check(c.call("wait"), "wait after hiding")
+  r = c.call("screenshot", %*{"window": "map", "maxSize": 4096})
+  check(r, "screenshot of the map without its receivers")
+  results.send(("map hidden", r["content"][0]["data"].getStr))
+  let asked = st["map"]["view"]["perPixel"].getFloat / 2
+  check(c.call("command", %*{"kind": "map view", "mapView": {"perPixel": asked}}), "map view")
+  check(c.call("wait"), "wait after the map view")
+  r = c.call("state", %*{"parts": ["map"]})
+  check(r, "state of the map after its view")
+  results.send(("perPixel", $parseJson(r.text)["map"]["view"]["perPixel"].getFloat & " " &
+    $asked))
   c.close()
   results.send(("done", ""))
 
@@ -186,7 +215,7 @@ withFixtures fx:
     proc onFrame(f: FrameInfo) =
       inc frame
       if not started:
-        createThread(thread, agent, (socket, path))
+        createThread(thread, agent, (socket, relativePath(path, getAppDir())))
         started = true
       var more = true
       while more:
@@ -211,6 +240,10 @@ withFixtures fx:
       if getMonoTime() - since > initDuration(seconds = 120): # frames are fast under Xvfb
         problem = "the agent did not finish"
         f.stop()
+    # the agent names the fixture relative to the program's folder, as one in a
+    # container must (it cannot know the program's own paths)
+    let relative = relativePath(path, getAppDir())
+    doAssert not relative.isAbsolute
     let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
       userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
       agent: true, agentSocket: socket, onFrame: onFrame))
@@ -246,6 +279,18 @@ withFixtures fx:
     doAssert parseJson(killed[0]) == %*[parseInt(killed[1])], found["killed"]
     doAssert parseFloat(found["channel"]) == float(Channels - 3), found["channel"]
     doAssert "window: " in found["window"], found["window"]
+    doAssert found["program"] == getAppDir(), found["program"]
+    let (shownMap, sw, sh) = decodedPng(decode(found["map shown"]))
+    let (hiddenMap, hw, hh) = decodedPng(decode(found["map hidden"]))
+    doAssert (sw, sh) == (hw, hh) and sw > 100 and sh > 100, $(sw, sh, hw, hh)
+    var gone = 0
+    for i in 0 ..< shownMap.len:
+      if not close(shownMap[i], hiddenMap[i]): inc gone
+    echo "tguiagent: the map's receivers hidden: ", gone, " pixels changed"
+    doAssert gone > 20, "hiding the receivers changed " & $gone & " pixels of the map"
+    let pp = found["perPixel"].splitWhitespace
+    doAssert abs(parseFloat(pp[0]) / parseFloat(pp[1]) - 1) < 1e-6,
+      "the map's view was not taken: " & found["perPixel"]
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
   doAssert not fileExists(path & ".txt"), "the export was written"
   echo "tguiagent: ok"

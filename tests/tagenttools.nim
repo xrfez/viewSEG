@@ -13,6 +13,9 @@
 ##   trace); `state` and `headers` answer with what the state holds; `busy`
 ##   (what `wait` waits for) empties once the picture is complete; the other
 ##   tools refuse bad arguments;
+## - the program's folders and the map in `state`; the map's commands
+##   (a layer hidden and shown again, a point selected with its traces, a
+##   point hovered); a path relative to the program's folder;
 ## - screenshots: the frontend's pixels are scaled down (each pixel the mean
 ##   of those it covers) and encoded off the UI thread; a picture too large,
 ##   an encoder that fails or none is an error.
@@ -24,8 +27,13 @@
 ## the wrong block of `core/state`, "no description of \"paths\"".
 ## With the scaling taking each block's first pixel instead of its mean, the
 ## pictures check (a pixel of the scaled picture is not the grey).
+## With relative paths read against the working folder, "a path relative to
+## the program's folder was not found"; with the field users read from a
+## doc comment's first segment only, the check of `takes(ckHoverPoints)`;
+## with `prefill` not defaulting `shown`, "\"shown\" did not default to
+## true".
 
-import std/[base64, json, os, sets, strutils, tables]
+import std/[base64, json, os, sequtils, sets, strutils, tables]
 import viewSEG/core/[geometry, state]
 import viewSEG/remote/[protocol, schema, tools]
 import utils/[fixtures, waiting]
@@ -142,6 +150,17 @@ block schemaFromCommand:
   doAssert takes(ckSort) == @["panel", "order"], $takes(ckSort)
   doAssert takes(ckShowFile) == @["panel", "path", "listFolder"], $takes(ckShowFile)
   doAssert takes(ckClearSelection).len == 0
+  # the map's commands are a user's in a window: offered, each with its own fields
+  for k in [ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints, ckShowPoints]:
+    doAssert k in Offered and $k in kinds and Docs.kinds.getOrDefault($k).len > 0, $k
+  doAssert takes(ckMapView) == @["mapView", "mapRemember"], $takes(ckMapView)
+  doAssert takes(ckMapLayer) == @["mapLayer", "shown"], $takes(ckMapLayer)
+  doAssert takes(ckSelectPoints) == @["points", "pointMode"], $takes(ckSelectPoints)
+  doAssert takes(ckHoverPoints) == @["points"] and takes(ckShowPoints) == @["points"],
+    $takes(ckHoverPoints)
+  # core's bounds, stated
+  let gainDb = s["properties"]["display"]["properties"]["gainDb"]
+  doAssert gainDb["maximum"].getFloat == MaxGainDb and gainDb["minimum"].getFloat == -MaxGainDb
   doAssert s["properties"]["display"]["properties"]["mode"]["enum"] ==
     %*["density", "wiggle", "wiggle over density"]
   # decoded as given, refused where it is wrong
@@ -295,6 +314,49 @@ withFixtures fx:
         """{"panel":1,"position":24}""", """{"file":5,"index":0}""", """{"file":1,"index":72}""",
         """{"trace":-1}""", """{"trace":"5"}""", """{"color":1}"""]:
       doAssert st.traceHeaderReport(bad).isError, bad
+
+  block theProgramAndTheMap:
+    let s = st.stateReport(fe, """{"parts":["program","map"]}""").body
+    doAssert s["program"]["folder"].getStr == getAppDir() and
+      s["program"]["workingFolder"].getStr == getCurrentDir(), $s["program"]
+    let layers = s["map"]["layers"]
+    doAssert layers.len == 2, $layers # the file's sources and receivers
+    var receivers = newJNull()
+    for l in layers:
+      doAssert l["shown"].getBool and l["points"].getInt > 0, $l
+      if l["mapLayer"]["role"].getStr == "receiver": receivers = l
+    doAssert receivers.kind == JObject, $layers
+    let key = receivers["mapLayer"]
+    doAssert not st.run(%*{"kind": "map layer", "mapLayer": key, "shown": false}).isError
+    let hidden = st.stateReport(fe, """{"parts":["map"]}""").body["map"]["layers"]
+    doAssert hidden.len == 2 and (hidden[0]["shown"].getBool != hidden[1]["shown"].getBool),
+      "the receivers were not hidden: " & $hidden
+    doAssert not st.run(%*{"kind": "map layer", "mapLayer": key}).isError # shown again
+    for l in st.stateReport(fe, """{"parts":["map"]}""").body["map"]["layers"]:
+      doAssert l["shown"].getBool, "\"shown\" did not default to true"
+    let point = %*{"layer": receivers["layer"], "role": "receiver", "point": 0}
+    doAssert not st.run(%*{"kind": "select points", "points": [point]}).isError
+    let m = st.stateReport(fe, """{"parts":["map","selection"]}""").body
+    doAssert m["map"]["selectedCount"].getInt == 1, $m["map"]
+    let selected = m["map"]["selected"][0]
+    doAssert selected["point"].getInt == 0 and selected["x"].kind == JFloat and
+      selected.hasKey("station"), $selected
+    doAssert m["selection"]["count"].getInt >= 1, "the point's traces were not selected"
+    doAssert not st.run(%*{"kind": "hover points", "points": [point]}).isError
+    doAssert st.stateReport(fe, """{"parts":["map"]}""").body["map"]["hovered"].len == 1
+    doAssert not st.run(%*{"kind": "hover points", "points": []}).isError
+    doAssert not st.run(%*{"kind": "clear selection"}).isError
+
+  block pathsFromTheProgramsFolder:
+    # an agent elsewhere (a container) knows the program's folder, not its paths
+    let other = fx.twoSetSegd()
+    let relative = relativePath(other, getAppDir())
+    doAssert not relative.isAbsolute
+    doAssert not st.run(%*{"kind": "show file", "path": relative}).isError
+    doAssert st.settle(st.sessions.anyIt(it.path == other) and busy(st, fe).len == 0),
+      "a path relative to the program's folder was not found: " & relative
+    doAssert not st.run(%*{"kind": "show file", "path": path}).isError
+    doAssert st.settle(st.fileList.chosen == path and busy(st, fe).len == 0)
 
   block selectAndKill:
     let id = st.sessions[0].base + 4
