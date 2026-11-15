@@ -9,6 +9,9 @@
 ##   more traces than the plot has pixels, a zoomed one fewer still;
 ## - a parameter moved reads nothing from the file (the tile is made from
 ##   the samples at hand), even while the drive does not answer;
+## - changed every few ms (a slider dragged), the plot follows: tiles of
+##   changes already replaced are drawn as they come, each after the first
+##   of the view alone (no read-ahead), which the next view brings back;
 ## - raw shows the samples as recorded, and processed again the filtered
 ##   ones; the corners are kept in order and within Nyquist;
 ## - the auxiliary traces are left as recorded unless the layer asks for
@@ -25,7 +28,9 @@
 ## rows not made live (`auxLiveRows` not used), "the time break is not
 ## filtered with Aux on"; with `levelOf` not taking the auxiliary traces of
 ## a plot that has no other, "no level for the auxiliary trace alone: (rms:
-## nan, peak: nan, clip: nan)".
+## nan, peak: nan, clip: nan)"; with `drainInbox` taking only the newest
+## request's tile, "0 tiles drawn while the filters changed"; with the run's
+## requests reading ahead, "a tile of the run: 405 traces, ...".
 
 import std/[os, strutils, times]
 import parseSEG
@@ -226,6 +231,32 @@ withFixtures fx:
       zoomed.filtered <= 101 * 4 + 1, $zoomed.filtered & " traces filtered for 100 in view"
     echo "tprocessing: traces filtered: ", whole.filtered, " for the whole record, ",
       zoomed.filtered, " zoomed to 100"
+    # A slider dragged: a change every few ms, nothing else between. The plot
+    # follows (tiles of changes already replaced are drawn as they come),
+    # and after the first change each asks for the view alone.
+    var f2 = 8.0
+    var seen = zoomed.id
+    var drawn: seq[Tile]
+    let until = getTime() + initDuration(seconds = 3)
+    while getTime() < until:
+      f2 += 0.05
+      st.process(Processing(band: pbBandPass, f1: 4, f2: f2, f3: 60, f4: 80))
+      discard st.drainInbox()
+      if st.tiles(0).len > 0 and st.tiles(0)[^1].id != seen:
+        seen = st.tiles(0)[^1].id
+        drawn.add st.tiles(0)[^1]
+      sleep 2
+    doAssert drawn.len >= 3, $drawn.len & " tiles drawn while the filters changed"
+    for t in drawn[1 .. ^1]:
+      doAssert t.request.count <= 102 and t.filtered == t.request.count and t.cached,
+        "a tile of the run: " & $t.request.count & " traces, " & $t.filtered & " filtered"
+    doAssert st.settle(st.answered)
+    # the next view brings the read-ahead back
+    v.traces = Span(lo: 1010, hi: 1110)
+    st.apply Command(kind: ckView, panel: MainPanel, view: v)
+    doAssert st.settle(st.answered)
+    doAssert st.tiles(0)[^1].request.count > 300, $st.tiles(0)[^1].request.count
+    echo "tprocessing: ", drawn.len, " tiles drawn in 3 s of changes"
     st.shutdown()
 
   block aux:

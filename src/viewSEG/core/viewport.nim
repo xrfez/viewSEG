@@ -264,7 +264,7 @@ func covers*(r: ReadRequest; layout: PanelLayout; view: Viewport; margin = 0;
       visibleSamples(layout, view).len == 0 or view.columns <= 0 or view.rows <= 0:
     return false
   let n = reachFor(layout, view, readAhead, wiggles, maxValues)
-  let share = clamp(keep / readAhead, 0.0, 1.0)
+  let share = if readAhead > 0: clamp(keep / readAhead, 0.0, 1.0) else: 0.0 # (none read ahead)
   let (k0, k1) = spread(n.kLo, n.kHi, n.kTop, int(float64(n.aheadK) * share))
   let (j0, j1) = spread(n.jLo, n.jHi, n.jTop, int(float64(n.aheadJ) * share))
   r.stride == n.stride and r.decimation == n.dec and r.margin == max(margin, 0) and

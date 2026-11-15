@@ -1437,14 +1437,19 @@ proc timeRead(state: var AppState; t: Tile) =
       return
   state.speeds.add (t.panel, ms)
 
-proc requestView(state: var AppState; k: int) =
+proc requestView(state: var AppState; k: int; readAhead = true) =
   ## Asks `panels[k]`'s reader for its view, unless the request sent last
   ## already covers it. On a slow drive (`slowDrive`) it reads further
-  ## ahead, in larger reads.
+  ## ahead, in larger reads. Without `readAhead`, and while the filters
+  ## change one after another (`filterRun`), the view alone: each change
+  ## filters what is on screen, a quarter of the work, and the read-ahead
+  ## comes back with the next view.
   template p: untyped = state.panels[k]
   if p.layers.len == 0 or p.layout.traces == 0 or state.readers[k].isNil: return
   let slow = state.slowDrive(p.id)
-  let (ahead, kept, most) = if slow: (SlowReadAhead, SlowKeepAhead, SlowMaxAheadValues)
+  let sliding = not readAhead or (p.filterRun > 0 and p.requestGen == p.filterGen)
+  let (ahead, kept, most) = if sliding: (0.0, 0.0, MaxAheadValues)
+                            elif slow: (SlowReadAhead, SlowKeepAhead, SlowMaxAheadValues)
                             else: (ReadAhead, KeepAhead, MaxAheadValues)
   let flow = p.layers[0].displayPipeline(state.gatherKind(p.layers[0]))
   let filters = p.layers[0].processing.filterPipeline(p.layout.dtMs)
@@ -1502,18 +1507,19 @@ proc refetch(state: var AppState; k: int; keepTiles: bool) =
   inc p.revision
   state.requestView(k)
 
-proc resample(state: var AppState; k: int; relevel = false) =
+proc resample(state: var AppState; k: int; relevel = false; readAhead = true) =
   ## Asks again for `panels[k]`'s view: what its samples hold has changed
-  ## (the polarity, an edit). The tiles from before are drawn until the
-  ## first one after the change comes (`drainInbox`), so the plot never goes
-  ## blank; with `relevel`, that tile sets the panel's level again.
+  ## (the polarity, an edit, the filters). The tiles from before are drawn
+  ## until the first one after the change comes (`drainInbox`), so the plot
+  ## never goes blank; with `relevel`, that tile sets the panel's level
+  ## again; without `readAhead`, the view alone is asked for.
   template p: untyped = state.panels[k]
   inc p.requestGen
   p.samplesGen = p.requestGen
   if relevel: p.relevel = true
   p.pending = ReadRequest()
   inc p.revision
-  state.requestView(k)
+  state.requestView(k, readAhead)
 
 proc reorder(state: var AppState; k: int) =
   ## Tells `panels[k]`'s reader its layer 0's new order and asks again for
@@ -4085,7 +4091,12 @@ proc applyCommand(state: var AppState; cmd: Command) =
         let dt = p.layout.dtMs
         if pr.filterPipeline(dt).stepsText != was.filterPipeline(dt).stepsText or
             (pr.aux != was.aux and pr.filtering):
-          state.resample(k, relevel = true)
+          let first = p.requestGen != p.filterGen or p.filterRun == 0
+          if first: p.filterRun = p.requestGen + 1 # the first of a run of filter changes
+          # The first change keeps the read-ahead (one change, a click): the
+          # next ones of a run (a slider dragged) ask for the view alone.
+          state.resample(k, relevel = true, readAhead = first)
+          p.filterGen = p.requestGen
   of ckEdit, ckReverseAll, ckUndoEdit, ckRedoEdit, ckClearEdits:
     # Reversing every trace is an edit of the file, so not a setting: kept with it.
     state.editTraces(cmd)
@@ -4351,7 +4362,16 @@ proc drainInbox*(state: var AppState): bool =
       if state.traceReads.len > MaxTraceReads: state.traceReads.delete(0) # never taken
     of mkTile:
       let k = state.findPanel(m.tile.panel)
-      if k >= 0 and m.tile.request.gen == state.panels[k].requestGen:
+      # The newest request's tile; or, while the filters change frame after
+      # frame with nothing else between (a slider dragged), one asked for
+      # since they began, newer than those held: the plot follows the
+      # slider rather than wait for it to stop.
+      let following = k >= 0 and state.panels[k].filterRun > 0 and
+        state.panels[k].requestGen == state.panels[k].filterGen and
+        m.tile.request.gen >= state.panels[k].filterRun and
+        m.tile.request.gen < state.panels[k].requestGen and
+        state.tiles[k].allIt(it.request.gen < m.tile.request.gen)
+      if k >= 0 and (m.tile.request.gen == state.panels[k].requestGen or following):
         state.unread.keepItIf(it.panel != m.tile.panel) # read again
         state.timeRead(m.tile)
         m.tile.id = state.nextTile
@@ -4361,7 +4381,8 @@ proc drainInbox*(state: var AppState): bool =
           state.panels[k].relevel = false
         # The first tile in a new order, or after the samples changed,
         # replaces every tile from before.
-        let since = max(state.panels[k].orderGen, state.panels[k].samplesGen)
+        let since = if following: m.tile.request.gen
+                    else: max(state.panels[k].orderGen, state.panels[k].samplesGen)
         state.tiles[k].keepItIf(it.request.gen >= since)
         state.tiles[k].add move m.tile
         if state.tiles[k].len > MaxTiles: state.tiles[k].delete(0)

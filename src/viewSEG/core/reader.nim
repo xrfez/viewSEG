@@ -9,9 +9,12 @@
 ## lock and wake the thread.
 ##
 ## - **Newest wins.** A note replaces the one before it if the reader has
-##   not taken it yet, and a reader serving a request gives it up as soon as
-##   a newer note arrives (between chunks; a prefetcher gives up a chunk
-##   within 8 traces), so a burst of pans costs one read, not one per frame.
+##   not taken it yet, and a reader reading a request from the file gives it
+##   up as soon as a newer note arrives (between chunks; a prefetcher gives
+##   up a chunk within 8 traces), so a burst of pans costs one read, not one
+##   per frame. A tile made from the samples at hand is finished first (only
+##   a new source, order or a stop ends it): a slider dragged asks for a new
+##   one every frame, and the plot must follow it while it moves.
 ## - **Holds.** The caller takes a hold on the file (`Jobs.hold`) before it
 ##   names the file in `show`. The reader ends it (`HoldRelease`) once it no
 ##   longer touches the file: when it is shown something else or nothing,
@@ -592,7 +595,12 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       rd.prepare(pr, b, rows, a, partFailed)
       cut(b, rows, a)
       a += n
-      if rd.r.interrupted:
+      # Finished even when a newer request waits (it is taken next): work on
+      # samples at hand is bounded, and a slider dragged sends a request
+      # every frame, which would otherwise stop every tile before its end
+      # and draw none until the slider stops. A new source or order, or a
+      # stop, still ends it.
+      if rd.r.interrupted and rd.r.superseded:
         given = true
         break
   elif rd.cutShort: return
