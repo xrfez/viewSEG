@@ -103,11 +103,11 @@ import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, ti
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 import closer, diskio, edits, filejobs, filelist, filesystem, inbox, inspector, jobs, join, layouts,
-  log, mapstate, panels, persist, pick, reader, selection, session, settings, shots, spread, survey,
-  surveyjobs, threads, tiles, watch, zoom
+  log, mapstate, panels, persist, pick, reader, recordqc, selection, session, settings, shots,
+  spread, survey, surveyjobs, threads, tiles, watch, zoom
 
-export edits, filelist, inbox, jobs, join, layouts, log, mapstate, panels, persist, pick, selection,
-  session, settings, shots, spread, survey, threads, tiles, zoom
+export edits, filelist, inbox, jobs, join, layouts, log, mapstate, panels, persist, pick, recordqc,
+  selection, session, settings, shots, spread, survey, threads, tiles, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues
 export WatchInterval
 
@@ -431,6 +431,10 @@ type
       ## relation records made for the map's planned spreads (`core/spread`)
     shots: ShotIndex
       ## the folder listed's shots, matched to the survey's sources (`core/shots`)
+    recordQc: RecordQc
+      ## what the map's filters find in the record shown (`core/recordqc`)
+    qcHeld: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
+      ## the relation records each filters' job reads in place, kept until it ends
     loadNamed: seq[string]
       ## the files the listing was asked for: loaded when it finds them survey files
     saidPositions: HashSet[string]
@@ -827,6 +831,11 @@ func shots*(state: AppState): lent ShotIndex {.inline.} =
   ## The shots of the folder listed: each listed file's records, matched to
   ## the survey files' sources (`core/shots`).
   state.shots
+
+func recordQc*(state: AppState): lent RecordQc {.inline.} =
+  ## What the map's filters found in the record shown, as its job read it
+  ## (`core/recordqc`); `filterHits` gives every filter.
+  state.recordQc
 
 func joinReport*(state: AppState): lent JoinReport {.inline.} =
   ## How the last join ended (its `serial` goes up with each).
@@ -2221,11 +2230,15 @@ func spreadAt*(state: AppState; p: PointRef): PlannedSpread =
   if has: result = state.survey.plannedSpread(state.spreads, domain, NaN, key, true)
 
 func wantedSpreads(state: AppState): SpreadInputs =
-  ## The relation records the map's template box needs made: none while it
-  ## is off or the loaded survey files have them; X records from the
-  ## template when no X records are loaded (S and R files are); O records
-  ## from the X records for a receiver gather when no O records are loaded.
-  if not state.settings.map.templateBox: return
+  ## The relation records the map's template box and its filter "missing
+  ## from the template" need made: none while both are off or the loaded
+  ## survey files have them; X records from the template when no X records
+  ## are loaded (S and R files are); O records from the X records for a
+  ## receiver gather when no O records are loaded. With the filter "spread
+  ## not the template" on, the X records loaded compared with theirs.
+  let planned = state.settings.map.templateBox or mfMissing in state.settings.map.filters
+  let compare = mfSpreadDiffers in state.settings.map.filters
+  if not (planned or compare): return
   var (sources, receivers, xs, os) = (false, false, false, false)
   var files: seq[tuple[path: string; size: int64; modified: Time]]
   for i in 0 ..< state.survey.layers.len:
@@ -2236,11 +2249,14 @@ func wantedSpreads(state: AppState): SpreadInputs =
       receivers = receivers or l.points[prReceiver].len > 0
       xs = xs or l.xRuns > 0
       os = os or l.relationRuns > l.xRuns
-  if not xs and sources and receivers:
+  if planned and not xs and sources and receivers:
     result = SpreadInputs(files: files, spec: state.settings.map.spreadTemplate,
       needs: {snGenerate})
-  elif xs and not os and state.shownDomain == rdReceiver:
+  elif planned and xs and not os and state.shownDomain == rdReceiver:
     result = SpreadInputs(files: files, needs: {snReceivers})
+  if compare and xs:
+    result.files = files
+    result.needs.incl snCompare
 
 proc followSpreads(state: var AppState) =
   ## Makes the relation records the map needs on a job when what they are
@@ -2255,9 +2271,11 @@ proc followSpreads(state: var AppState) =
   sp.job = NoJob
   sp.inputs = want
   if want.needs == {}:
-    if not sp.relations.isNil or sp.words.len > 0:
+    if not sp.relations.isNil or sp.words.len > 0 or sp.differing.len > 0:
       sp.relations = nil
       sp.words.setLen 0
+      sp.differing.setLen 0
+      sp.compared = 0
       inc sp.revision
   else:
     var paths: seq[string]
@@ -2271,6 +2289,8 @@ proc takeSpreads(state: var AppState; m: sink Msg) =
   if m.job == state.spreads.job:
     state.spreads.relations = move m.spreads
     state.spreads.words = move m.spreadWords
+    state.spreads.differing = move m.differing
+    state.spreads.compared = m.compared
     inc state.spreads.revision
 
 func wantsShots(state: AppState): bool =
@@ -2356,15 +2376,128 @@ proc takeShots(state: var AppState; m: sink Msg) =
     x.take(state.survey, move m.shots)
     if x.pending.len == 0 and x.jobPaths.len == 0 and x.later.len == 0: x.finished = fs.now()
 
+func qcRelations(state: AppState; domain: RelationDomain): (ref SurveyGeometry, string) =
+  ## The relation records the record shown is checked against: the first
+  ## loaded survey file's of `domain`, else those made from the template.
+  let i = state.survey.listedLayer(domain)
+  if i >= 0: (state.survey.layers[i].relations, state.survey.layers[i].name)
+  elif not state.spreads.relations.isNil and state.spreads.relations[].relationCount(domain) > 0:
+    (state.spreads.relations, "the template generated")
+  else: (nil, "")
+
+proc followRecordQc(state: var AppState) =
+  ## Reads the record shown on a job for the map's filters when one of
+  ## `TraceFilters` is on and the record (its file, its keys, the relation
+  ## records it is checked against) changed; what it found before goes.
+  template q: untyped = state.recordQc
+  let g = state.selection.activeGather
+  let i = state.findSession(g.file)
+  let shown = i >= 0 and g.gather in 0 ..< state.sessions[i].gathers.len
+  if state.settings.map.filters * TraceFilters == {} or not shown:
+    if q.job != NoJob:
+      discard state.jobs.cancel(q.job)
+      q.replaced.add q.job
+    if q.job != NoJob or q.key.file != NoSession:
+      q = RecordQc(replaced: move q.replaced, revision: q.revision + 1)
+    return
+  let s = state.sessions[i]
+  let domain = state.shownDomain
+  let (rel, against) = state.qcRelations(domain)
+  let key = (s.id, g.gather, s.file.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
+    domain)
+  if key == q.key: return
+  if q.job != NoJob:
+    discard state.jobs.cancel(q.job)
+    q.replaced.add q.job
+  q.key = key
+  for m in TraceFilters: q.hits[m] = FilterHits(state: fsComputing)
+  inc q.revision
+  q.job = state.jobs.submit(JobSpec(title: "Check the record shown for the map's filters",
+    lane: jlBackground, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
+    g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
+    state.settings.join.recordMatch, state.settings.join.traceMatch, state.inbox.poster))
+  if not rel.isNil: state.qcHeld.add (q.job, rel)
+
+proc takeRecordQc(state: var AppState; m: sink Msg) =
+  ## What the filters' job found in the record it read, while that record,
+  ## as it is now, is the one shown.
+  template q: untyped = state.recordQc
+  if m.job == q.job and m.qcSession == q.key.file and m.qcGather == q.key.gather and
+      m.qcKeys == q.key.keys:
+    for f in TraceFilters: q.hits[f] = move m.qcHits[f]
+    inc q.revision
+
+func filterHits*(state: AppState): array[MapFilter, FilterHits] =
+  ## What each filter the settings show marks now (the others `fsOff`): in
+  ## the record shown, its job's findings (`TraceFilters`), its traces
+  ## killed or reversed, its seismic traces the map cannot place (no point
+  ## of the role its traces differ in: their receiver, in a receiver gather
+  ## their source); and the shots whose listed spread is not the template's.
+  let on = state.settings.map.filters
+  for f in TraceFilters * on: result[f] = state.recordQc.hits[f]
+  let g = state.selection.activeGather
+  let i = state.findSession(g.file)
+  if i >= 0 and g.gather in 0 ..< state.sessions[i].gathers.len:
+    let s = state.sessions[i]
+    let traces = s.gathers[g.gather].traces
+    for (f, edit) in [(mfKilled, teKilled), (mfReversed, teReversed)]:
+      if f in on:
+        result[f] = FilterHits(state: fsDone, note: "traces")
+        if s.path in state.edits:
+          for t in state.edits[s.path].listIn(edit, traces): result[f].traces.add s.base + t
+        result[f].count = result[f].traces.len
+    if mfNoPosition in on:
+      let role = if state.shownDomain == rdReceiver: prSource else: prReceiver
+      result[mfNoPosition] = FilterHits(state: fsDone, note: "seismic traces whose " & $role &
+        " the map cannot place")
+      if state.survey.findTraces(s.id) < 0:
+        (result[mfNoPosition].state, result[mfNoPosition].note) = (fsComputing, "")
+      else:
+        for t in traces:
+          if s.file.index.isSeismic(t):
+            var placed = false
+            for p in state.survey.tracePointsOf(s.base + t):
+              if p.role == role: placed = true
+            if not placed: result[mfNoPosition].traces.add s.base + t
+        result[mfNoPosition].count = result[mfNoPosition].traces.len
+  else:
+    for f in [mfKilled, mfReversed, mfNoPosition]:
+      if f in on: result[f] = FilterHits(state: fsNotChecked, note: "no record is shown")
+  if mfSpreadDiffers in on:
+    template sp: untyped = state.spreads
+    result[mfSpreadDiffers] = if snCompare notin sp.inputs.needs:
+        FilterHits(state: fsNotChecked, note: "no relation (X) file is loaded")
+      elif sp.job != NoJob: FilterHits(state: fsComputing)
+      else: FilterHits(state: fsDone, count: sp.differing.len, note: "shots of the " &
+        $sp.compared & " X records")
+    if sp.job == NoJob:
+      for d in sp.differing: result[mfSpreadDiffers].sources.add d.source
+
 proc followMapWork(state: var AppState) =
   ## After every command and drained inbox: the map's jobs follow what they
   ## depend on.
   state.followSpreads()
   state.followShots()
+  state.followRecordQc()
 
 proc endMapWork(state: var AppState; job: JobInfo): bool =
   ## A job of the map's ended: forgotten, a failure said; false when `job`
   ## is none of them.
+  state.qcHeld.keepItIf(it.job != job.id) # the relations it read
+  template q: untyped = state.recordQc
+  let gone = q.replaced.find(job.id)
+  if gone >= 0:
+    q.replaced.delete(gone)
+    return true
+  if job.id == q.job:
+    q.job = NoJob
+    if job.state in {jsFailed, jsCancelled}:
+      for f in TraceFilters:
+        if q.hits[f].state == fsComputing:
+          q.hits[f] = FilterHits(state: fsNotChecked, note: (if job.state == jsFailed:
+            "the record could not be read: " & job.error else: "the check was cancelled"))
+      inc q.revision
+    return true
   template x: untyped = state.shots
   let given = x.replaced.find(job.id)
   if given >= 0:
@@ -3367,6 +3500,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkInspected: state.takeInspected(move m)
     of mkSpreads: state.takeSpreads(move m)
     of mkShots: state.takeShots(move m)
+    of mkRecordQc: state.takeRecordQc(move m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:

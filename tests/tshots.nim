@@ -14,7 +14,8 @@
 ##   after `StallAfter`, the rest read by the next one, the file tried again
 ##   after `RetryAfter` and read then.
 ## - A file gone from the folder takes its shot off the map.
-## - Nothing of it touches the file system on the UI thread.
+## - Nothing of it touches the file system on the UI thread, and every file
+##   is as it was (bytes and time).
 ##
 ## Seen to fail: with the stalled job waited for (no give-up), "the rest
 ## read" timed out with 2 of 5 files read; with the shot cache not read,
@@ -51,6 +52,9 @@ withFixtures fx:
     paths.add fx.mapShotSegy(line, k, name = "shots" / "shot-" & $mapRecord(line, k) & ".sgy")
   let cache = fx.dir / "cache"
 
+  var before: seq[(string, Time)]
+  for p in paths: before.add (readFile(p), getLastModificationTime(p))
+
   block listedAndMatched:
     var st = initAppState(indexCache = cache)
     st.apply Command(kind: ckBrowse, paths: @[folder])
@@ -73,6 +77,8 @@ withFixtures fx:
     doAssert st.settle(st.sessions.len == 1 and st.selection.activeGather.file ==
       st.sessions[0].id), "the click showed no file"
     doAssert st.sessions[0].path == want and st.fileList.chosen == want
+    for i, p in paths: # read, never written
+      doAssert readFile(p) == before[i][0] and getLastModificationTime(p) == before[i][1], p
     # A file gone from the folder: its source no longer has a file.
     removeFile(paths[0])
     st.apply Command(kind: ckBrowse, paths: @[folder])

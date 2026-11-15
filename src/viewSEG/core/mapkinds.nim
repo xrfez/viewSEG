@@ -1,7 +1,8 @@
 ## What the map's Layers list is made of, as the settings keep it: the
-## groups its layers are in. A module of its own, without dependencies, so
-## that the settings (`core/settings`) and the map's state (`core/mapstate`)
-## both name them.
+## groups its layers are in, the template, the filters. A module of its own,
+## with no dependency but parseSEG's station keys, so that the settings
+## (`core/settings`), the inbox and the map's state (`core/mapstate`) all
+## name them.
 ##
 ## **Groups.** The survey files (SPS, SEG P1) are the **Preplot**: the
 ## sources and receivers the survey planned. What the seismic files say of
@@ -9,13 +10,28 @@
 ## as a join with the survey files made them) is **Recorded**. Planned
 ## against recorded reads at a glance; each group is shown or hidden as
 ## one, and each of its layers on its own.
-
 ##
 ## **The template** (`TemplateSpec`): the spread planned for each shot is
 ## read from the relation records (SPS X, and O for receiver gathers); when
 ## no relation file is loaded, the map has it generated from a template the
 ## user gives, a patch of lines × channels or a distance box (processSEG's
 ## `generateRelations`).
+##
+## **Filters** (`MapFilter`): what the map can mark on the record shown, each
+## its own toggle with its count: traces that failed (dead in the headers,
+## not decodable, killed by the user), the amplitude flags of processSEG's
+## `qc/amplitude` (noisy, clipped, spiky, constant, weak, DC offset, all
+## zero, not a number), the stations the template plans that the record
+## lacks, its traces at stations the template does not list and stations
+## recorded twice (processSEG's `recordCompleteness`), auxiliary traces,
+## traces without a position, reversed traces, and the shots whose listed
+## spread differs from the template (processSEG's `compareRelations`). What
+## each finds is a `FilterHits`: today for the record shown (and the
+## survey-wide spread check); the survey-wide QC passes fill the same.
+
+import parseSEG
+
+export StationKey
 
 type
   MapGroup* = enum
@@ -42,7 +58,48 @@ type
     crosslineHalf*: float64 = 500.0
       ## a box's half-width across the receiver lines
 
+  MapFilter* = enum
+    ## What the map's filters mark.
+    mfDead = "dead in the headers"          ## seismic traces the file marks dead
+    mfUndecodable = "not decodable"         ## traces whose samples could not be decoded
+    mfKilled = "killed"                     ## traces the user killed
+    mfNoisy = "noisy"                       ## RMS far above the record's
+    mfClipped = "clipped"                   ## runs of samples at the maximum
+    mfSpiky = "spiky"                       ## samples far above their neighbours
+    mfConstant = "constant"                 ## every sample the same, not zero
+    mfWeak = "weak"                         ## RMS far below the record's
+    mfDcOffset = "DC offset"                ## a mean large against the deviation
+    mfAllZero = "all zero"                  ## every sample 0, whatever the header says
+    mfNotANumber = "not a number"           ## a NaN or infinite sample
+    mfMissing = "missing from the template" ## stations planned that the record lacks
+    mfUnlisted = "not in the template"      ## traces at stations the plan does not list
+    mfDuplicate = "recorded twice"          ## stations with two traces of one component
+    mfAuxiliary = "auxiliary"               ## traces that are not seismic
+    mfNoPosition = "without a position"     ## seismic traces the map cannot place
+    mfReversed = "reversed"                 ## traces whose polarity the user reversed
+    mfSpreadDiffers = "spread not the template"
+      ## shots whose listed receivers differ from those the template plans
+
+  FilterState* = enum
+    ## How far a filter's finding is.
+    fsOff = "off"                ## not asked for
+    fsComputing = "computing"    ## its job runs
+    fsDone = "done"
+    fsNotChecked = "not checked" ## it cannot be found here (`FilterHits.note` says why)
+
+  FilterHits* = object
+    ## What one filter finds.
+    state*: FilterState
+    traces*: seq[int]          ## the survey-wide ids of the traces it marks
+    stations*: seq[StationKey] ## stations it marks that have no trace (planned, missing)
+    sources*: seq[StationKey]  ## sources it marks (shots whose spread differs)
+    count*: int                ## what its label counts (traces, stations or shots)
+    note*: string              ## what it counts, or why it is not checked
+
 const
+  TraceFilters* = {mfDead, mfUndecodable, mfNoisy, mfClipped, mfSpiky, mfConstant, mfWeak,
+    mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted, mfDuplicate, mfAuxiliary}
+    ## the filters found by reading the record shown on a job (`core/recordqc`)
   MaxTemplateLines* = 1000       ## a patch's lines, at most
   MaxTemplateChannels* = 100_000 ## a patch's stations on a line, at most
 

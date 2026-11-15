@@ -66,6 +66,9 @@ const
     ## its source
   selectedSize = 8'f32
   shotRing = 6'f32
+  filterRing = 8'f32
+    ## how much wider than the receivers drawn the ring round a point a filter
+    ## marks is, pixels at 100 %
     ## how much wider than its source's disc the ring round a source with a
     ## file in the folder is, pixels at 100 %
   hoveredSize = 12'f32
@@ -110,7 +113,7 @@ type
     focus: FocusClicks
     hovered: seq[PointRef] ## under the pointer: the nearest point, and others on its spot
     info: seq[PointInfo]   ## what the map says of them
-    infoFor: tuple[survey, shots, files: int]
+    infoFor: tuple[survey, shots, files, marks: int]
       ## what `info` was made from, besides the points
     sentHover: seq[PointRef]
       ## the hover last sent to `core` (`ckHoverPoints`)
@@ -136,8 +139,13 @@ type
     boxes: seq[tuple[name: string; corners: array[4, Vec2]]]
       ## the template boxes drawn last frame, ImGui's coordinates (for tests)
     marksFor: tuple[shots, survey: int; on: bool; hidden: seq[MapLayerKey];
-      groups: set[MapGroup]]
+      groups: set[MapGroup]; filters: set[MapFilter]; qc, spreads, edits: int;
+      gather: GatherRef]
       ## what the marked points were found from
+    hits: array[MapFilter, FilterHits]
+      ## what each filter found, as the marks show it
+    hitIndex: FilterIndex
+      ## `hits`' traces as sets
     marked: seq[seq[MapPoint]]
       ## the marked points: the sources with a file in the folder listed
     marksRev: int
@@ -410,8 +418,57 @@ proc drawShotsRow(st: AppState; marks: var Marks; res: var MapOutput) =
         " not answer: tried again in a minute.")
     igUnindent(0)
 
-proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
+const filterTips: array[MapFilter, string] = [
+  "Traces the file marks dead in their headers",
+  "Traces whose samples could not be decoded",
+  "Traces you killed (the plot's menu, K)",
+  "Traces whose RMS is far above the record's (robust z over 3.5)",
+  "Traces with runs of samples at their maximum: a recorder or a conversion that saturated",
+  "Traces with samples far above their neighbours (spikes)",
+  "Traces whose every sample is the same value, not zero",
+  "Traces whose RMS is far below the record's (robust z under -3.5)",
+  "Traces whose mean is large against their deviation",
+  "Traces whose every sample is 0, whatever the header says",
+  "Traces with a sample that is not a number, or infinite",
+  "Stations the template (the relation records) plans for the record that it has no trace of",
+  "Traces at stations the template does not list for the record",
+  "Stations recorded twice in one component",
+  "Traces that are not seismic (time breaks, pilots): counted, they have no place on the map",
+  "Seismic traces the map cannot place (no coordinates, and no survey file has their station)",
+  "Traces whose polarity you reversed (the plot's menu, R)",
+  "Shots whose listed receivers are not those of the template the relation records describe"]
+
+proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; marks: var Marks;
     res: var MapOutput) =
+  ## The map's filters on the record shown: each with its colour, its tick
+  ## and what it found (a count, "..." while its job runs, "not checked"
+  ## with the reason in its tooltip), and Select for those that found
+  ## traces (they are selected in the plot).
+  igSeparatorText("Filters: the record shown")
+  let ink = mapInk(t, st.settings.plot.display.colours, st.settings.plot.display.custom)
+  for f in MapFilter:
+    igPushID_Int(cint(ord(f) + 1000))
+    swatch(filterInk(t, f, ink.background), "##colour")
+    igSameLine(0, -1)
+    var on = f in st.settings.map.filters
+    let h = if on: hits[f] else: FilterHits()
+    if igCheckbox(filterLabel(f, h).cstring, addr on):
+      var s = st.settings
+      if on: s.map.filters.incl f else: s.map.filters.excl f
+      res.commands.add Command(kind: ckSettings, settings: s)
+    marks.mark("map.filter " & $f)
+    tip(filterTips[f] & (if h.note.len > 0 and h.state == fsNotChecked: ".\nNot checked: " &
+      h.note & "." elif h.note.len > 0 and h.state == fsDone: " (" & h.note & ")." else: "."))
+    if on and h.traces.len > 0:
+      igSameLine(0, -1)
+      if igSmallButton("Select"):
+        res.commands.add Command(kind: ckSelect, traces: h.traces, mode: smReplace)
+      marks.mark("map.filter select " & $f)
+      tip("Select these " & $h.traces.len & " traces in the plot")
+    igPopID()
+
+proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
+    res: var MapOutput; hits: array[MapFilter, FilterHits]; t: Theme) =
   ## The layers popover, in groups: the Preplot (the survey files), then the
   ## Recorded (the open files' own positions), each with its own toggle and
   ## its layers under it (each with its colour and toggle; greyed out while
@@ -440,6 +497,7 @@ proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     if g == mgPreplot: drawTemplateRow(st, marks, res)
     else: drawShotsRow(st, marks, res)
     igUnindent(0)
+  drawFilters(st, hits, t, marks, res)
   igSeparator()
   for i, l in layers:
     if l.key.kind == mlHighlight: layerRow(l, i, marks, res)
@@ -456,18 +514,22 @@ proc placePopover(at: ImVec2_c; width: float32) =
   let room = width + 2 * igGetStyle().WindowPadding.x + 3 * igGetFrameHeight()
   let x = max(vp.WorkPos.x, min(at.x, vp.WorkPos.x + vp.WorkSize.x - room))
   igSetNextWindowPos(ImVec2_c(x: x, y: at.y), ImGui_Cond_Always.cint, ImVec2_c(x: 0, y: 0))
+  # Never past the main window's bottom either: a longer one scrolls.
+  igSetNextWindowSizeConstraints(ImVec2_c(x: 0, y: 0), ImVec2_c(x: vp.WorkSize.x,
+    y: max(igGetFrameHeight() * 4, vp.WorkPos.y + vp.WorkSize.y - at.y - 8)), nil, nil)
 
 proc layersWidth(layers: openArray[MapLayerView]): float32 =
   ## The widest line of the Layers popover.
   var lines = @[$mgPreplot & ": the survey files", TemplateLabel,
     "Shots in the folder: 10000 of 10000 sources have a file",
+    "Missing from the template  (not checked)  Select",
     "No survey file loaded (open SPS or SEG P1 files)",
     "No seismic file whose traces carry positions is open"]
   for l in layers: lines.add l.name & "  (" & $l.points & ")"
   widest(lines) + igGetStyle().IndentSpacing
 
 proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
-    res: var MapOutput; ask: var MapAskKind) =
+    res: var MapOutput; ask: var MapAskKind; t: Theme) =
   ## The strip at the top of the window, in groups that wrap.
   let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
   var under: array[2, ImVec2_c] # below the Layers button and below the gear
@@ -499,7 +561,7 @@ proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; mar
     tip("Where the map describes the point under the pointer, and the unit of its lengths")
   placePopover(under[0], layersWidth(layers))
   if igBeginPopup(layersId, 0):
-    drawLayers(st, layers, marks, res)
+    drawLayers(st, layers, marks, res, mu.hits, t)
     igEndPopup()
   placePopover(under[1], widest(["In US survey feet (ftUS: 1200/3937 m)",
     "As the survey gives them (US survey feet, ftUS)", "In a strip along the map's bottom"]))
@@ -740,17 +802,25 @@ proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
 proc followMarks(mu: var MapUi; st: AppState) =
   ## The marked points on the GPU: the survey's sources whose record is in a
   ## file of the folder listed (while the Recorded group and its tick are
-  ## on, and the source's layer is drawn); found again and uploaded only when
-  ## what they come from changes.
+  ## on, and the source's layer is drawn), then what each filter shown
+  ## found (`filterHits`, in `MapFilter`'s order); found again and uploaded
+  ## only when what they come from changes.
   let on = st.settings.map.folderShots and mgRecorded notin st.settings.map.hiddenGroups
+  let k = st.findPanel(MainPanel)
+  let edits = if k >= 0: st.editsOf(k).revision else: 0
   let now = (st.shots.revision, st.survey.revision, on, st.map.hidden,
-    st.settings.map.hiddenGroups)
+    st.settings.map.hiddenGroups, st.settings.map.filters, st.recordQc.revision,
+    st.spreads.revision, edits, st.selection.activeGather)
   if now == mu.marksFor and mu.marksRev > 0: return
   mu.marksFor = now
   mu.marked.setLen 1
   mu.marked[0].setLen 0
   if on:
     for p in st.shots.pointRefs: mu.marked[0].add st.shownAt(p)
+  mu.hits = st.filterHits
+  mu.hitIndex = filterIndex(mu.hits)
+  for f in MapFilter:
+    if f in st.settings.map.filters: mu.marked.add st.filterPlaces(f, mu.hits[f])
   let b = st.survey.bounds
   mu.renderer.setMarks(if b.isEmpty: mapPoint(0, 0) else: mapPoint(b.minX, b.minY), mu.marked)
   inc mu.marksRev
@@ -1070,6 +1140,15 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
           sources = max(sources, markerSize(l.spacing, pixel))
       frame.marks = @[MapStyle(colour: ink.outline, edge: ink.outline,
         size: (sources + shotRing) * s, edgeWidth: 1.5 * s, shape: skRing)]
+      # A point a filter marks: ringed in the filter's colour; where the
+      # points crowd (smaller than the largest marker), a disc a little larger
+      # than theirs instead, as rings so close would merge into a mass.
+      for f in MapFilter: # (in the order `followMarks` gives their sets)
+        if f in st.settings.map.filters:
+          let c = filterInk(t, f, ink.background)
+          frame.marks.add(if receivers >= MaxMarker: MapStyle(colour: c, edge: c,
+              size: (receivers + filterRing) * s, edgeWidth: 2 * s, shape: skRing)
+            else: MapStyle(colour: c, size: (receivers + 1) * s))
       frame.marked = mu.marksRev
       for l in layers:
         if l.shown and l.key.kind != mlHighlight:
@@ -1117,12 +1196,14 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     elif hovered:
       res.cursor = coordinatesText(view.mapAt(plot, v2(igGetIO_Nil().MousePos)),
         view.perPixel, units)
-    let infoFor = (st.survey.revision, st.shots.revision, st.sessions.len)
+    let infoFor = (st.survey.revision, st.shots.revision, st.sessions.len, mu.marksRev)
     if under != mu.hovered or infoFor != mu.infoFor: # (what it says may have changed too)
       mu.hovered = under
       mu.infoFor = infoFor
       mu.info.setLen 0
-      for i in 0 ..< min(under.len, 3): mu.info.add st.pointInfo(under[i], units)
+      for i in 0 ..< min(under.len, 3):
+        mu.info.add st.pointInfo(under[i], units)
+        mu.info[^1].lines.add st.filterLines(under[i], mu.hits, mu.hitIndex)
     mu.sendHover(res)
     # A click on a source shows its record (on a receiver in a file of
     # receiver gathers, its gather); on any other point it selects the
@@ -1204,7 +1285,7 @@ proc drawMap*(mu: var MapUi; id: string; st: AppState; t: Theme; marks: var Mark
     var points = 0
     for l in layers: points += l.points
     var ask = maNone
-    mu.drawStrip(st, layers, marks, result, ask)
+    mu.drawStrip(st, layers, marks, result, ask, t)
     if mu.gpuError.len > 0:
       centred("The map cannot be drawn: " & mu.gpuError, t.roles[rlError])
     elif points == 0:

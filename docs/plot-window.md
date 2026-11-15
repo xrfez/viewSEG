@@ -480,7 +480,25 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   when they give neither); a source whose record a listed file holds is **ringed**, its
   description names the file ("Shot in the folder: shot-14.sgy (FFID 1014)"), and a click
   on it shows that file at that record. The Layers list says how many of the survey's
-  sources have a file, and how far the reading is. A layer's points get smaller as they crowd on the screen (from 5
+  sources have a file, and how far the reading is. **Filters** (the user: "filters for
+  failed traces, missing traces from template, any other relevent items", and "perhaps
+  noisy as well, clipped"), under "Filters: the record shown" in the Layers list, each a
+  tick with its count and its colour, none on by default: traces dead in the headers, not
+  decodable, killed; the amplitude flags of processSEG's `qc/amplitude` with its default
+  thresholds (noisy, clipped, spiky, constant, weak, DC offset, all zero, not a number);
+  missing from the template (the stations the X record plans that the record has no trace
+  of: `recordCompleteness`'s `missingStations`), not in the template (its traces at
+  stations the X record does not list), recorded twice; auxiliary; without a position;
+  reversed; and, survey-wide, **spread not the template**: the shots whose X record agrees
+  with the template the X records describe far less than the survey's shots typically do
+  (`compareRelations`' Jaccard index under the median less three robust deviations). A
+  filter's points are ringed in its colour (where points crowd, a disc a little larger than
+  theirs); its tooltip says what it counts or why it is not checked; Select selects its
+  traces in the plot; the point under the pointer says which filters mark it ("Marked:
+  noisy"). The record is read on a background job when one of the filters that need it is
+  on and the record shown changes (a chunk of 512 traces at a time); the rest come from the
+  state at once. For a file of receiver gathers the template is the O record of the
+  receiver, and the filters mark the gather's sources. A layer's points get smaller as they crowd on the screen (from 5
   pixels across down to 2, from how far apart its points typically are), so lines of
   stations stay lines when zoomed out; a ring that small is drawn as a disc.
 - **Colours:** the plot's background (the plot window's colour scheme: paper by default);
@@ -578,6 +596,17 @@ what it was instead of):
    file is ringed in the outline colour; one without keeps its plain disc. A click on a
    ringed source shows the file in place of the one the plot shows, as a click in Files
    does.
+10. **The filters** are none on by default; they are kept in the settings. The amplitude
+   flags take processSEG's default thresholds (thresholds the user sets, and flags for
+   every record of a survey, are the QC phase's; they fill the same filters). Dead in the
+   headers and all zero are two filters (the header's word and the samples' fact). "Not in
+   the template" counts stations, as `recordCompleteness` does, and marks their traces;
+   without receiver stations in the headers (traces matched by channel) the counts are
+   given and nothing is placed. "Spread not the template" marks only the shots that stand
+   out from the survey's own agreement with its template: on Morgantown, whose records are
+   irregular (a median Jaccard index of 0.78 against the 23 × 129 template its X records
+   describe), 26 of 5519; on a regular survey, every shot that is not its template. A
+   filter's colour is one of the theme's palette, made readable on the map.
 
 ## Linking the plot and the map
 

@@ -30,7 +30,7 @@
 ## north is not drawn larger than it is. Stations no loaded survey file
 ## places are counted (`PlannedSpread.unplaced`), not drawn.
 
-import std/[math, sets, strutils, times]
+import std/[algorithm, math, sets, strutils, times]
 import parseSEG
 import processSEG/survey/patch
 import inbox, jobs, mapkinds, mapview, survey, surveyjobs, threads
@@ -44,6 +44,9 @@ type
       ## no X records loaded: X records generated from the template, O from them
     snReceivers = "receivers"
       ## X records loaded but no O records: O records made from the X records
+    snCompare = "compare"
+      ## X records loaded: each against the template they describe (the
+      ## filter "spread not the template")
 
   SpreadInputs* = object
     ## What relation records are made from.
@@ -60,6 +63,9 @@ type
     relations*: ref SurveyGeometry ## the records made; nil for none
     words*: seq[string] ## what was made, or why not, in plain words
     revision*: int ## bumped when `relations` or `words` change
+    differing*: seq[tuple[record: int64; source: StationKey]]
+      ## `snCompare`: the X records whose receivers are not those of the template
+    compared*: int ## `snCompare`: the X records compared
     replaced*: seq[JobId] ## jobs cancelled for newer inputs: they end quietly
 
   SpreadBox* = object
@@ -237,6 +243,65 @@ func patchOf(t: TemplateSpec): PatchTemplate =
   of tsPatch: initPatchTemplate(t.lines, t.channels)
   of tsBox: initDistancePatch(t.inlineHalf, t.crosslineHalf)
 
+func outlierBelow(xs: openArray[float64]): float64 =
+  ## Where an agreement is far below the survey's typical one: the median
+  ## less 3 robust deviations (1.4826 × the median absolute deviation); the
+  ## median itself when they all agree as well (a regular survey: any less
+  ## stands out).
+  if xs.len == 0: return 0
+  var v = @xs
+  v.sort()
+  let median = v[v.high div 2]
+  var dev = newSeq[float64](v.len)
+  for i, x in v: dev[i] = abs(x - median)
+  dev.sort()
+  let mad = dev[dev.high div 2]
+  if mad > 0: median - 3 * 1.4826 * mad else: median
+
+proc compareWithTemplate(g: SurveyGeometry; differing: var seq[tuple[record: int64;
+    source: StationKey]]; words: var seq[string]): int =
+  ## Each X record of `g` against the receivers the template its records
+  ## describe (`describePatches`: lines × stations, from the records that
+  ## reach the full patch) plans for its source (`generateRelations`, the
+  ## patch rolled at the survey's edges), with processSEG's
+  ## `compareRelations`: the records whose receivers agree with the
+  ## template's (their Jaccard index) far less than the survey's records
+  ## typically do (`outlierBelow`; on a regular survey, any that is not the
+  ## template's) go to `differing`; the records compared.
+  let d = g.describePatches()
+  if not (d.templateLines > 0 and d.templateChannels > 0):
+    words.add "The X records describe no template (lines × stations) to compare them with."
+    return
+  var shots: seq[PatchShot]
+  for r in g.records(rdSource):
+    for run in g.relationRuns(r, rdSource):
+      if shots.len == 0 or shots[^1].record != r:
+        shots.add PatchShot(record: r, source: run.fixed)
+  var gen = initSurveyGeometry()
+  gen.addSps(SpsFile(relations: g.generateRelations(d.layout, shots,
+    initPatchTemplate(d.templateLines, d.templateChannels))), rdSource)
+  var agreements: seq[RecordAgreement]
+  var j: seq[float64]
+  for a in compareRelations(g, gen):
+    if a.listed > 0:
+      agreements.add a
+      j.add a.jaccard
+  let below = outlierBelow(j)
+  for a in agreements:
+    if a.jaccard < below and a.jaccard < 1:
+      for run in g.relationRuns(a.record, rdSource):
+        if differing.len == 0 or differing[^1].record != a.record:
+          differing.add (a.record, run.fixed)
+  result = agreements.len
+  var sorted = j
+  sorted.sort()
+  let median = if sorted.len > 0: sorted[sorted.high div 2] else: 1.0
+  words.add $differing.len & " of " & $agreements.len & " X records list receivers that " &
+    "agree with their template (" & $d.templateLines & " lines × " & $d.templateChannels &
+    " stations, " & (if d.regular: "as the records give it" else: "the records' median") &
+    ") far less than the survey's typically do (a Jaccard index under " &
+    formatFloat(below, ffDecimal, 2) & "; the median " & formatFloat(median, ffDecimal, 2) & ")."
+
 proc spreadWork*(paths: seq[string]; spec: TemplateSpec; needs: set[SpreadNeed];
     to: Poster): JobWork =
   ## The work of a job that makes the relation records the map's planned
@@ -250,6 +315,8 @@ proc spreadWork*(paths: seq[string]; spec: TemplateSpec; needs: set[SpreadNeed];
   result = proc (ctx: JobContext) {.gcsafe.} =
     var made: ref SurveyGeometry
     var words: seq[string]
+    var differing: seq[tuple[record: int64; source: StationKey]]
+    var compared = 0
     {.cast(gcsafe).}:
       var g = readGeometry(paths, ctx, to)
       ctx.checkCancelled()
@@ -283,6 +350,13 @@ proc spreadWork*(paths: seq[string]; spec: TemplateSpec; needs: set[SpreadNeed];
           made = m
       except ValueError as e:
         words.add "No spread can be generated from the template: " & e.msg & "."
+      if snCompare in needs:
+        ctx.setPhase "comparing the X records with their template"
+        try:
+          compared = g.compareWithTemplate(differing, words)
+        except ValueError as e:
+          words.add "The X records cannot be compared with a template: " & e.msg & "."
     discard ctx.progress(1, 1)
     clearCycleRoots()
-    to.post Msg(job: ctx.id, kind: mkSpreads, spreads: move made, spreadWords: move words)
+    to.post Msg(job: ctx.id, kind: mkSpreads, spreads: move made, spreadWords: move words,
+      differing: move differing, compared: compared)

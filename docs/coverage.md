@@ -244,12 +244,12 @@ Status values:
 | Refraction fit per shot (swapped receivers, misplaced source) | `fitShot`, `ShotFitParams`, `ShotFit` (`suspect`, `asymmetryMs`, `v1`, `v2`) | Survey QC issue list; fitted model drawn over the picks | planned |
 | Windowed SNR per trace | `windowSnrInto`, `WindowSnrParams`, `powerSnrDb`, `windowSnrDb`, `meanPower` | SNR attribute: table column, map colour, flag threshold | planned |
 | Coherence SNR of a flattened gather | `coherenceSnrInto`, `coherenceSnrWorkspace` | SNR-against-time plot for an NMO or LMO flattened gather | planned |
-| Amplitude flags per trace (dead, clipped, spiky, DC, weak, noisy) | `traceAmplitudeInto` (also on the pool), `AmplitudeParams`, `AmplitudeFlag`, `TraceAmplitude` | Trace flags with thresholds on a histogram | planned |
-| Record-level amplitude outliers | `recordAmplitude`, `RecordAmplitude` (`robustZ`) | Trace flags (weak, noisy) | planned |
+| Amplitude flags per trace (dead, clipped, spiky, DC, weak, noisy) | `traceAmplitudeInto` (also on the pool), `AmplitudeParams`, `AmplitudeFlag`, `TraceAmplitude` | The map's filters on the record shown (each flag a filter, default thresholds, a job per record shown); trace flags with thresholds on a histogram | built (the map's filters); planned (thresholds, the survey) |
+| Record-level amplitude outliers | `recordAmplitude`, `RecordAmplitude` (`robustZ`) | The map's filters weak and noisy on the record shown; trace flags (weak, noisy) survey-wide | built (the map's filters); planned (the survey) |
 | Automatic bin grid of a survey | `surveyGrid` | Fold map: grid proposed from the SPS | planned |
 | Pre-plot, actual and difference fold | `preplotFold`, `initFoldMap`, `addFold`, `foldDifference`, `FoldMap` | Fold map layers and their difference | planned |
 | Fold by offset class and azimuth sector, offset range | `FoldOptions`, `offsetFold`, `azimuthFold`, `offsetMin`, `offsetMax` | Fold map: offset-class and azimuth layers, min / max offset maps | planned |
-| Field records against the XPS | `recordCompleteness`, `RecordCompleteness`, `RecordMatch`, `TraceMatch` | Records window: each record's stations missing against the loaded relation file, or the relation records joined (`expected`, `missing`, `unlisted`, `duplicates` in the cell's tooltip; a job per open file; the record and trace match chosen in Join geometry's options); survey QC issue list: missing, unlisted, duplicate stations | built (Records); planned (the issue list) |
+| Field records against the XPS | `recordCompleteness`, `RecordCompleteness`, `RecordMatch`, `TraceMatch` | Records window: each record's stations missing against the loaded relation file, or the relation records joined (`expected`, `missing`, `unlisted`, `duplicates` in the cell's tooltip; a job per open file; the record and trace match chosen in Join geometry's options); the map's filters missing from the template (`missingStations`), not in the template, recorded twice, on the record shown; survey QC issue list: missing, unlisted, duplicate stations | built (Records, the map's filters); planned (the issue list) |
 | Missing stations of a record | `RecordCompleteness.missingStations`, `missingRanges`, `lines` | Missing-stations map layer | planned |
 | Completeness over many records | `summarize`, `CompletenessSummary` | QC report section | planned |
 
@@ -283,7 +283,7 @@ Status values:
 | Receiver layout (azimuth, interval, line spacing) | `receiverLayout`, `inlineOf`, `crosslineOf` | Survey summary in File properties; map in the layout frame | planned |
 | Patch description (template, clipped records) | `describePatches`, `PatchDescription`, `RecordPatch`, `spreadOf` | Patch QC: template, clipped records on the map | planned |
 | X records generated from a template or distance box | `PatchTemplate`, `initPatchTemplate`, `initDistancePatch`, `patchShots`, `generateRelations`, `receiverLayout` | The map's template box when no relation file is loaded: the spreads generated on a job from the user's template (lines × stations, or a distance box), said to be generated; writing them as an XPS file | built (the map); planned (the export) |
-| Listed against generated relations | `compareRelations`, `RecordAgreement`, `jaccard`, `listedFraction` | Compare the XPS with the patch: receivers dropped in the field | planned |
+| Listed against generated relations | `compareRelations`, `RecordAgreement`, `jaccard`, `listedFraction`, `describePatches` | The map's filter "spread not the template": the shots whose X record agrees with the template the records describe far less than the survey's do; receivers dropped in the field, per shot | built (the filter); planned (per shot) |
 
 ## Not exposed
 

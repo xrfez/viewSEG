@@ -427,3 +427,82 @@ proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
         names.join(", ") & (if records.len > names.len: ", ... (" & $records.len & ")"
         else: "") & " in the relation file"
   result.lines.add st.shotLines(p)
+
+# ------------------------------------------------------------- filters --
+
+const FilterInks: array[MapFilter, BaseColor] = [bcDarkForeground, bcRed, bcBrown,
+  bcOrange, bcYellow, bcBrightMagenta, bcBrightCyan, bcBlue, bcBrightYellow, bcLightForeground,
+  bcBrightRed, bcMagenta, bcCyan, bcBrightGreen, bcMuted, bcDarkForeground, bcGreen, bcBrightBlue]
+  ## each filter's colour in the theme's palette (made readable on the map)
+
+func filterInk*(t: Theme; f: MapFilter; background: Rgba): Rgba =
+  ## The colour the map marks filter `f`'s points in: its own in the
+  ## theme's palette, readable on `background`.
+  readableOn(t.palette[FilterInks[f]], background)
+
+func filterRole*(st: AppState): PointRole =
+  ## The role a filter's traces are marked at on the map: where the record
+  ## shown's traces differ, their receivers (their sources in a receiver
+  ## gather).
+  if st.shownDomain == rdReceiver: prSource else: prReceiver
+
+proc filterPlaces*(st: AppState; f: MapFilter; h: FilterHits): seq[MapPoint] =
+  ## Where the map marks what filter `f` found (`h`): its traces at their
+  ## points of `filterRole` (their file's own and the survey files' of
+  ## their station), its stations at the survey files' points of them, its
+  ## sources at the survey files' sources. A trace the map cannot place
+  ## (an auxiliary trace, one without a position) is counted, not marked.
+  let role = st.filterRole
+  for t in h.traces:
+    for p in st.survey.tracePointsOf(t):
+      if p.role == role: result.add st.positionOf(p)
+  template station(r: PointRole; k: StationKey) =
+    for i in 0 ..< st.survey.layers.len:
+      template l: untyped = st.survey.layers[i]
+      if l.origin == loSurveyFile:
+        let p = l.stationPoint(r, Station(line: k.line, point: k.point, index: k.index))
+        if p >= 0: result.add st.positionOf(PointRef(layer: l.id, role: r, point: p))
+  for k in h.stations: station(plannedRole(st.shownDomain), k)
+  for k in h.sources: station(prSource, k)
+
+func filterLabel*(f: MapFilter; h: FilterHits): string =
+  ## A filter's line in the Layers list: its name and what it found,
+  ## "noisy  (3)", "missing from the template  (...)".
+  let name = ($f)[0 .. 0].toUpperAscii & ($f)[1 .. ^1]
+  name & (case h.state
+    of fsOff: ""
+    of fsComputing: "  (...)"
+    of fsDone: "  (" & $h.count & ")"
+    of fsNotChecked: "  (not checked)")
+
+type FilterIndex* = array[MapFilter, IntSet]
+  ## each filter's traces as a set, for `filterLines`
+
+func filterIndex*(hits: array[MapFilter, FilterHits]): FilterIndex =
+  ## The traces each filter found, as sets (made once each time the filters'
+  ## findings change, so a hover asks a set, not a list).
+  for f in MapFilter:
+    for t in hits[f].traces: result[f].incl t
+
+func filterLines*(st: AppState; p: PointRef; hits: array[MapFilter, FilterHits];
+    index: FilterIndex): seq[string] =
+  ## What the filters shown mark at point `p`: "Marked: noisy, clipped";
+  ## none when they mark nothing there.
+  let i = st.survey.find(p.layer)
+  if i < 0 or p.point notin 0 ..< st.survey.layers[i].points[p.role].len: return
+  let traces = st.survey.tracesAt(p)
+  let station = st.survey.layers[i].points[p.role].station[p.point]
+  var named: seq[string]
+  for f in st.settings.map.filters:
+    var marked = false
+    for t in traces:
+      if t in index[f]: marked = true
+    if station.known:
+      for k in hits[f].stations:
+        if p.role == plannedRole(st.shownDomain) and k.line == station.line and
+            k.point == station.point: marked = true
+      for k in hits[f].sources:
+        if p.role == prSource and k.line == station.line and k.point == station.point:
+          marked = true
+    if marked: named.add $f
+  if named.len > 0: result.add "Marked: " & named.join(", ")

@@ -420,6 +420,18 @@ sources is loaded): point at one and its description names the file; click it an
 shows that file at that record. The list says how many of the survey's sources have a file;
 a folder listed again is not read again (what was found is kept with the index cache).
 
+Under **Filters: the record shown**, tick what to mark on the map in the record shown, each
+in its own colour, with its count beside it: traces **dead** in the headers, **not
+decodable**, **killed**; **noisy**, **clipped**, spiky, constant, weak, DC offset, all zero,
+not a number (processSEG's amplitude checks, default thresholds); stations **missing from
+the template** (planned in the X file, no trace in the record), traces **not in the
+template**, stations **recorded twice**; auxiliary traces, traces **without a position**,
+**reversed** ones; and the shots whose X record stands out from its template (**spread not
+the template**). Hover a filter for what it counts; **Select** selects its traces in the
+plot; point at a ringed receiver and its description says which filters mark it.
+
+![Morgantown with its survey: the template box of record 151 (X record 77), every filter on](../screenshots/map-morgantown-filters.png)
+
 Untick a group to hide all of it (its layers keep their own ticks, greyed out, for when it
 comes back), or a layer to hide that layer alone; the highlight (the record on show, the
 selection, and the source and receiver of the trace under the pointer in the plot) has its

@@ -86,6 +86,8 @@ type
       ## what planned spreads are generated from when no relation file is loaded
     folderShots*: bool = true
       ## the survey's sources whose record is in a file of the folder listed are marked
+    filters*: set[MapFilter]
+      ## the filters the map marks (none by default)
 
   HeadersTab* = enum
     ## The Headers window's tabs.

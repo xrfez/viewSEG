@@ -11,7 +11,8 @@
 
 import std/locks
 import parseSEG
-import filelist, join, jobs, layouts, log, nif, panels, session, shotfiles, survey, tiles
+import filelist, join, jobs, layouts, log, mapkinds, nif, panels, session, shotfiles, survey,
+  tiles
 
 type
   MsgKind* = enum
@@ -32,6 +33,8 @@ type
       ## what the Headers window shows of a record and of traces, from its reader
     mkSpreads ## relation records made for the map's planned spreads (`core/spread`)
     mkShots   ## a listed file's shots, for the map (`core/shots`)
+    mkRecordQc
+      ## what the map's filters find in the record shown (`core/recordqc`)
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -136,11 +139,24 @@ type
         ## X); moved, never shared; nil when none could be made
       spreadWords*: seq[string]
         ## what was made, or why nothing was, in plain words
+      differing*: seq[tuple[record: int64; source: StationKey]]
+        ## the X records whose receivers are not those of their template
+      compared*: int
+        ## the X records compared with their template
     of mkShots:
       shotsGen*: uint64
         ## the file list's `gen` the file was listed by
       shots*: FileShots
         ## its records' shots; moved, never shared
+    of mkRecordQc:
+      qcSession*: SessionId
+        ## the open file the record is of
+      qcGather*: int
+        ## its gather
+      qcKeys*: int
+        ## the file's `keysRevision` it was read with
+      qcHits*: array[MapFilter, FilterHits]
+        ## what each filter of `TraceFilters` found
 
   InboxObj = object
     lock: Lock

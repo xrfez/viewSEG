@@ -104,7 +104,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 |---|---|---|
 | UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), closes files, and makes every OpenGL call; it reads no header and no sample from a file |
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, an open file's positions, survey files read, `ensureKeys`, survey joins, sorts across files |
-| Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, the listed files' shots (`shotsWork`), the map's planned spreads (`spreadWork`), brute stack, conversions, exports and patches, queued workflows |
+| Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, the listed files' shots (`shotsWork`), the map's planned spreads (`spreadWork`), the record shown for the map's filters (`recordQcWork`), brute stack, conversions, exports and patches, queued workflows |
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; lists the layouts; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
 | Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
@@ -536,6 +536,20 @@ cancelled (`Jobs.tend` abandons it), the file it was on tried again after `Retry
 rest given to the next job; a new listing starts again (its jobs replaced end quietly).
 The map rings the matched sources and a click on one shows its file (`ckShowPoints` falls
 back to `showListedShot`, with the click's origin).
+
+**The map's filters** (`core/recordqc`, `core/mapkinds`' `MapFilter`, `filterHits`). What
+each filter shown marks: those of `TraceFilters` from a background job that reads the
+record shown (`recordQcWork`: a chunk of 512 traces at a time, processSEG's
+`traceAmplitudeInto`, then `recordAmplitude` over the seismic traces; the headers' dead and
+auxiliary traces; the traces parseSEG could not decode; with the relation records of the
+domain shown, the loaded file's or those made from the template, kept alive while the job
+reads them in place (`AppState.qcHeld`), `recordCompleteness` and the same rules for the
+traces), submitted again only when the record, its keys or those relation records change;
+killed and reversed traces from the edits, traces without a position from the survey, and
+the shots whose spread is not their template from the spreads job (`snCompare`), at once.
+Each finding is a `FilterHits` (traces, stations, sources, a count, a note), so the
+survey-wide QC passes can fill the same filters. The map marks them in the marked-points
+buffer, a set per filter, made again only when what they come from changes.
 
 **The index cache.** `initAppState(indexCache = dir)` names the folder for parseSEG's
 index caches; the frontend passes `<cache>/index` from `platform/paths`, since `core`

@@ -25,6 +25,7 @@
 ##  (cursorLine false)
 ##  (files (followLatest false) (prepareNext true))
 ##  (map (info popup) (lengths survey) (hide recorded) (templateBox false) (folderShots true)
+##   (filters noisy clipped)
 ##   (template (shape patch) (lines 8) (channels 120) (inline 1500.0) (crossline 500.0)))
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
 ##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960)))
@@ -67,6 +68,9 @@ const
   MapLengthNames: array[MapLengths, string] = ["survey", "metres", "feet", "usFeet"]
   MapGroupNames: array[MapGroup, string] = ["preplot", "recorded"]
   TemplateShapeNames: array[TemplateShape, string] = ["patch", "box"]
+  MapFilterNames: array[MapFilter, string] = ["dead", "undecodable", "killed", "noisy",
+    "clipped", "spiky", "constant", "weak", "dcOffset", "allZero", "notANumber", "missing",
+    "unlisted", "duplicate", "auxiliary", "noPosition", "reversed", "spreadDiffers"]
   CoordinateNames: array[HeaderCoordinates, string] = ["fill", "replace"]
   RecordMatchNames: array[RecordMatch, string] = ["auto", "source", "ffid"]
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
@@ -236,6 +240,9 @@ proc settingsDocument*(s: Settings): string =
   w.close()
   w.value("templateBox", s.map.templateBox)
   w.value("folderShots", s.map.folderShots)
+  w.open("filters")
+  for f in s.map.filters: w.ident MapFilterNames[f]
+  w.close()
   w.open("template")
   w.choice("shape", TemplateShapeNames[s.map.spreadTemplate.shape])
   w.value("lines", s.map.spreadTemplate.lines)
@@ -597,6 +604,12 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
             result.map.hiddenGroups = hidden
           elif k.isTree("templateBox"): r.flag(k, result.map.templateBox)
           elif k.isTree("folderShots"): r.flag(k, result.map.folderShots)
+          elif k.isTree("filters"):
+            var on: set[MapFilter]
+            for v in k.kids:
+              var f = mfDead
+              if r.pick(v, MapFilterNames, "filters", f): on.incl f
+            result.map.filters = on
           elif k.isTree("template"):
             template t: untyped = result.map.spreadTemplate
             for v in k.kids:

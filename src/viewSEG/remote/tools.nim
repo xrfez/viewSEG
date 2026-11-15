@@ -116,7 +116,8 @@ proc toolList*(): string =
        "positions), shown or hidden by its own toggle and drawn or not, the groups " &
        "hidden, the template box: the spread planned for the record on show, its X or O " &
        "record and stations, read or generated, the folder's shots: its files read and the " &
-       "survey's sources that have one, the points selected and hovered), the jobs, " &
+       "survey's sources that have one, the filters shown on the record shown with what " &
+       "each found, the points selected and hovered), the jobs, " &
        "the newest messages, the survey, and the Headers window (headers: the tab shown, " &
        "what it has on screen, the traces its Trace tab is about and what its reader read " &
        "of them, and the facts its Summary gives of the file the plot shows). All parts " &
@@ -399,6 +400,14 @@ proc mapJson(state: AppState; limit: int): JsonNode =
   result["folderShots"] = %*{"shown": state.settings.map.folderShots, "filesRead": x.shotFiles,
     "toRead": x.pending.len + x.jobPaths.len, "notAnswering": x.later.len,
     "sourcesWithFile": x.pointRefs.len}
+  # The filters shown, on the record shown: what each found.
+  if state.settings.map.filters != {}:
+    let hits = state.filterHits
+    var filters = newJObject()
+    for f in state.settings.map.filters:
+      filters[$f] = %*{"state": $hits[f].state, "count": hits[f].count, "note": hits[f].note,
+        "traces": clipped(hits[f].traces, limit)}
+    result["filters"] = filters
   var selected = newJArray()
   for i in 0 ..< min(state.selection.points.len, limit):
     selected.add state.pointJson(state.selection.points[i])

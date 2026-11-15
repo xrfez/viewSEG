@@ -569,10 +569,14 @@ func mapPlannedFirst*(line: int): int =
   ## source of source line `line` (0-based); `MapPlanned` from there.
   line * MapPlanned
 
+const MapOddSpread* = (line: 1, k: 7)
+  ## the source whose X record in `mapXps` lists its receivers one point
+  ## further on than its template plans (points 112 .. 121)
+
 proc mapXps*(fx: Fixtures): string =
   ## The X file of `mapSps`: one X record per source (`mapRecord`), its
   ## channels 1 .. 30 at receivers `mapPlannedFirst` .. + `MapPlanned` - 1 of
-  ## lines 100, 102, 104.
+  ## lines 100, 102, 104 (but `MapOddSpread`'s, one further on).
   result = fx.dir / "map.x"
   if fileExists(result): return
   var x = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
@@ -580,7 +584,8 @@ proc mapXps*(fx: Fixtures): string =
   for i, sl in MapSrcLines:
     for k in 0 ..< MapSrcPoints:
       for j, rl in MapRcvLines:
-        let first = 101 + float64(mapPlannedFirst(i))
+        let odd = i == MapOddSpread.line and k == MapOddSpread.k
+        let first = 101 + float64(mapPlannedFirst(i)) + (if odd: 1.0 else: 0.0)
         x.relations.add SpsRelation(fieldRecord: mapRecord(i, k), recordIncrement: 1,
           instrumentCode: '1', srcLine: sl, srcPoint: 1001 + float64(k), srcIndex: 1,
           fromChannel: int64(1 + j * MapPlanned), toChannel: int64((j + 1) * MapPlanned),
@@ -893,6 +898,122 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stat
   computeRev3Sizes(r, traces)
   r.traceCount = traces.len
   let sink = openDiskSink(path)
+  try:
+    let log = writeSegd(sink, SegdData(records: @[SegdRecordData(record: r, traces: traces)]))
+    doAssert log.len == 0, $log
+  finally:
+    sink.close()
+
+type MapDefect* = enum
+  ## A problem planted in `mapShotSegd`'s record, at the receiver
+  ## `MapDefectAt` names.
+  mdDead = "dead" ## its trace marked dead (trace edit 2), its samples as recorded
+  mdClipped = "clipped" ## its samples cut at a third of its largest: long runs at the maximum
+  mdNoisy = "noisy" ## its samples 100 times larger
+  mdMissing = "missing" ## not recorded: no trace of it
+  mdDuplicate = "duplicate" ## recorded twice (one more trace at the end of its line's set)
+  mdUnplaced = "unplaced"
+    ## its trace at (0, 0) and named receiver point `MapUnplacedPoint`, which
+    ## no survey file has: the map cannot place it
+
+const
+  MapDefectAt*: array[MapDefect, tuple[line, k: int]] = [(1, 2), (0, 4), (2, 6), (1, 5),
+    (0, 8), (2, 1)]
+    ## each planted problem's receiver: line (0-based) and receiver (0-based along it),
+    ## all among the ten `mapXps` plans for source line 1 (`mapPlannedFirst(0)`)
+  MapUnplacedPoint* = 199 ## the receiver point `mdUnplaced` names
+
+proc mapShotSegd*(fx: Fixtures; line, k: int; defects: set[MapDefect] = {}; name = ""): string =
+  ## The shot record of `mapSps`'s source `k` of source line `line` (0-based) as
+  ## a SEG-D Rev 3.0 file (format 8058), its file number its X record's
+  ## (`mapRecord`): a time break (trace 0), then a channel set per receiver
+  ## line, a trace for each of its 21 receivers, with the stations and
+  ## positions of source and receivers in the headers; with `defects`
+  ## planted (`MapDefectAt`).
+  result = fx.dir / (if name.len > 0: name else: "shot-" & $mapRecord(line, k) & ".sgd")
+  if fileExists(result): return
+  let fmt = sd8058
+  let (sx, sy) = mapSrc(line, k)
+  let record = int(mapRecord(line, k))
+  var r = SegdRecord(layout: slRev3, format: some(fmt), revision: SegdRevision(major: 3, minor: 0))
+  r.generalBlocks.add blk(0x11, "viewSEG map test record")
+  let src = SegdSourceDescription(extFileNumber: uint32(record),
+    sourceLineNumber: MapSrcLines[line], sourcePointNumber: float64(1001 + k),
+    sourcePointIndex: 1, sourceSetNumber: 1, blockType: 0x16)
+  r.generalBlocks.add @(src.encoded)
+  r.generalBlocks.add @(position(sx, sy, Elevation).encoded)
+  let nOpt = r.generalBlocks.len div 32
+  # the receivers of each set: (k, a duplicate)
+  var sets: seq[seq[int]]
+  for rl in 0 ..< MapRcvLines.len:
+    var ks: seq[int]
+    for rk in 0 ..< MapRcvPoints:
+      if not (mdMissing in defects and MapDefectAt[mdMissing] == (rl, rk)): ks.add rk
+    if mdDuplicate in defects and MapDefectAt[mdDuplicate].line == rl:
+      ks.add MapDefectAt[mdDuplicate].k
+    sets.add ks
+  r.gh1 = SegdGeneralHeader1(fileNumber: record, formatCode: ord(fmt), year: 26,
+    additionalGhBlocks: uint8(2 + nOpt), julianDay: 313, hour: 9, minute: 41, second: 7,
+    manufacturerCode: 20, baseScanInterval16: 32, recordType: 8, recordLength: BcdAllF,
+    scanTypesPerRecord: 1, channelSetsPerScanType: 1 + sets.len, skewBlocks: 0,
+    extendedHeaderBlocks: 0, externalHeaderBlocks: 0)
+  let endUs = int32(DtMs * 1000 * float64(SegdSamples - 1))
+  r.gh2Rev3 = SegdGeneralHeader2Rev3(extFileNumber: uint32(record), revisionMajor: 3,
+    extRecordLength: uint32(endUs), blockType: 2)
+  r.gh3 = SegdGeneralHeader3(timeZero: 1_478_000_000_000_000, blockType: 3)
+  var descs = @[SegdChannelSetDescriptorRev3(scanTypeNumber: 1, channelSetNumber: 1,
+    channelType: 0x20, endTime: endUs, numSamples: SegdSamples, descaleMultiplier: 1.0,
+    channelsInSet: 1, samplingInterval: uint32(DtMs * 1000), traceHeaderExtensions: 1,
+    verticalStack: 1, blockType1: 0x30, blockType2: 0x31, blockType3: 0x32)]
+  for n, ks in sets:
+    descs.add SegdChannelSetDescriptorRev3(scanTypeNumber: 1, channelSetNumber: uint16(n + 2),
+      channelType: 0x10, endTime: endUs, numSamples: SegdSamples, descaleMultiplier: 1.0,
+      channelsInSet: uint32(ks.len), samplingInterval: uint32(DtMs * 1000),
+      traceHeaderExtensions: 4, verticalStack: 1, blockType1: 0x30, blockType2: 0x31,
+      blockType3: 0x32)
+  r.scanTypes = @[SegdScanType(layout: slRev3, descriptorsRev3: descs)]
+  var traces: seq[SegdTrace]
+  block: # the time break
+    var t = SegdTrace(layout: slRev3, index: 0, numSamples: SegdSamples)
+    t.header = SegdTraceHeader(fileNumber: record, scanTypeNumber: 1, channelSetNumber: 1,
+      traceNumber: 1, traceHeaderExtensions: 1)
+    t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(receiverPointIndex: 1, numSamples: SegdSamples,
+      blockType: 0x40)
+    var v = newSeq[float32](SegdSamples)
+    v[0] = 1
+    t.samples = newSeq[byte](dataBytes(fmt, SegdSamples))
+    encodeSamples(fmt, v, t.samples)
+    traces.add t
+  for n, ks in sets:
+    for tn, rk in ks:
+      let rl = n
+      let (rx, ry) = mapRcv(rl, rk)
+      var t = SegdTrace(layout: slRev3, index: traces.len, numSamples: SegdSamples)
+      let dead = mdDead in defects and MapDefectAt[mdDead] == (rl, rk)
+      t.header = SegdTraceHeader(fileNumber: record, scanTypeNumber: 1,
+        channelSetNumber: n + 2, traceNumber: tn + 1,
+        traceHeaderExtensions: 4, traceEdit: (if dead: 2'u8 else: 0'u8))
+      let unplaced = mdUnplaced in defects and MapDefectAt[mdUnplaced] == (rl, rk)
+      t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(receiverLineNumber: int32(MapRcvLines[rl]),
+        receiverPointNumber: int32(if unplaced: MapUnplacedPoint else: 101 + rk),
+        receiverPointIndex: 1, numSamples: SegdSamples, sensorType: 2, blockType: 0x40)
+      t.extensions = @((if unplaced: position(0, 0, 0) else: position(rx, ry,
+        Elevation)).encoded)
+      let offset = hypot(rx - sx, ry - sy)
+      var v = newSeq[float32](SegdSamples)
+      for i in 0 ..< SegdSamples: v[i] = mapWave(offset, i)
+      if mdNoisy in defects and MapDefectAt[mdNoisy] == (rl, rk):
+        for x in v.mitems: x *= 100
+      if mdClipped in defects and MapDefectAt[mdClipped] == (rl, rk):
+        var top = 0'f32
+        for x in v: top = max(top, abs(x))
+        for x in v.mitems: x = clamp(x, -top / 3, top / 3)
+      t.samples = newSeq[byte](dataBytes(fmt, SegdSamples))
+      encodeSamples(fmt, v, t.samples)
+      traces.add t
+  computeRev3Sizes(r, traces)
+  r.traceCount = traces.len
+  let sink = openDiskSink(result)
   try:
     let log = writeSegd(sink, SegdData(records: @[SegdRecordData(record: r, traces: traces)]))
     doAssert log.len == 0, $log
