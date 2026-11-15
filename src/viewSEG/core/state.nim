@@ -710,11 +710,13 @@ const
 
 proc keepForStragglers(state: var AppState) =
   ## A thread left running at the quit (held by a drive that does not
-  ## answer) may still read an open file's map or a relation file: they
-  ## stay, to the end of the process, instead of being released under it.
+  ## answer, or a join's step of millions of traces) may still read an open
+  ## file's map, a relation file or the survey a join applies: they stay, to
+  ## the end of the process, instead of being released under it.
   for s in state.sessions: GC_ref(s)
   for p in state.closing: GC_ref(p.session)
   for c in state.checking: GC_ref(c.relations)
+  if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
 
 proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   ## Asks every thread to end at once (the panels' readers, the watch, the

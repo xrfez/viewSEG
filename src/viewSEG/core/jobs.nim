@@ -61,7 +61,7 @@
 ## runner calls it after every job (`core/threads`, "Handing objects to
 ## another thread").
 
-import std/[locks, monotimes, options, os, sequtils, times]
+import std/[atomics, locks, monotimes, options, os, sequtils, times]
 import filesystem, threads
 
 export monotimes, options
@@ -135,6 +135,12 @@ type
   JobWork* = proc (ctx: JobContext) {.closure, gcsafe.}
     ## The work of a job, run on its lane's thread.
 
+  JobHook* = proc (id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].}
+    ## Tests (`setJobHook`): called on the job's thread each time its work
+    ## names a phase (`setPhase`, after the phase is listed; `back` false),
+    ## and once its work has returned (`back` true). It may block, as a long
+    ## step would hold the thread there.
+
   JobRec = object
     info: JobInfo
     work: JobWork ## nil once taken by the runner, or once the job finished
@@ -175,6 +181,19 @@ func `==`*(a, b: JobId): bool {.borrow.}
 func `$`*(id: JobId): string = "job " & $int(id)
 
 const NoJob* = JobId(-1) ## names no job
+
+var jobHook: Atomic[pointer] # a `JobHook`; nil for none (the program)
+
+proc setJobHook*(h: JobHook) =
+  ## Calls `h` at each phase a job's work names, and when its work has
+  ## returned, from now on; nil for none. Tests: a step that takes long (a
+  ## join's, which reads no file) is held there, so what happens meanwhile
+  ## (a cancel, the quit) is tested without a long job.
+  jobHook.store(cast[pointer](h))
+
+template callHook(id: JobId; phase: string; back: bool) =
+  let h = cast[JobHook](jobHook.load(moRelaxed))
+  if h != nil: h(id, phase, back)
 
 # ------------------------------------------------- shared state, lock held --
 
@@ -294,6 +313,7 @@ proc runner(arg: RunnerArg) {.thread.} =
       error = if e.msg.len > 0: e.msg else: $e.name
     work = nil # what the work holds is released here, outside the lock
     clearCycleRoots() # e.g. a caught exception; nothing this thread listed outlives the job
+    callHook(id, "", back = true)
 
     acquire q.lock
     me.job = JobId(-1)
@@ -688,3 +708,4 @@ proc setPhase*(ctx: JobContext; phase: string) {.raises: [].} =
       ctx.q.recs[i].info.progress = JobProgress(phase: phase, since: getMonoTime())
       ctx.q.recs[i].info.beat = fs.now()
       inc ctx.q.revision
+  callHook(ctx.id, phase, back = false)

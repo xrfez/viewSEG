@@ -239,7 +239,10 @@ for, let the user go on, and quit.
   hook (`tests/utils/faultyfs`) that makes chosen paths slow (it moves `fs.now` on), hang
   (it blocks until released), fail (EIO) or wait for a round trip the test grants, and
   that keeps every call made on the UI thread; `tfilesystem` checks that no module of
-  `core` calls the file system past the seam. Outside it, by design: the program's own
+  `core` calls the file system past the seam. A step that reads no file but takes long
+  (a join's) is held the same way by `core/jobs`'s job hook (`setJobHook`, called at each
+  phase a job names; `tests/utils/steps`), and `tstragglers` runs the quit with such a
+  thread left, under AddressSanitizer. Outside it, by design: the program's own
   assets (themes, fonts), `platform/paths`' probe of its folders at start, and the
   settings and the window layout, read once before the main thread becomes the UI thread.
 - **The UI thread never touches a drive.** Paths are made canonical without the disk;
