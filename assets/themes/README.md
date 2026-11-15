@@ -48,7 +48,9 @@ limits, and leaves it alone where it does not:
 
 Text and status colours are lightened on a dark theme and darkened on a light one;
 secondary text that is brighter than the text is dimmed; a selection that does not
-show is moved toward the text colour. The marks (`selected`, `highlight`, `source`,
+show is moved toward the text colour; a bar or popup of the other kind than the window
+(a dark bar in a light theme) is moved toward the window, and frames (an unticked
+checkbox) are kept apart from windows and popups, also in a theme of one colour. The marks (`selected`, `highlight`, `source`,
 `receiver`) are taken from the theme's other colours when its own are too close, and
 from Everforest's (or a set of strong colours) when none of its colours will do, as
 in the grey themes (Vantablack, White). Each file says in its header which roles

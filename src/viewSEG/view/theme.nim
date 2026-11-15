@@ -415,9 +415,44 @@ func pick(first: Rgba; keys: openArray[BaseColor]; p, builtin: Palette;
       if m > best:
         (result, best) = (c, m)
 
+func toward(c, goal, text: Rgba; ratio: float64): Rgba =
+  ## Surface `c` moved toward `goal` (the window) until `text` reads on it
+  ## by `ratio`: a dark bar in a light theme, drawn with the same text.
+  result = c
+  var t = 0.0
+  while contrast(text, result) < ratio and t < 1:
+    t += 0.05
+    result = mix(c, goal, t)
+
+func apartFrom(c, toward: Rgba; on: openArray[Rgba]; least: int): Rgba =
+  ## `c` moved toward `toward` until its `distance` from each of `on` is
+  ## `least` at least.
+  result = c
+  var t = 0.0
+  var near = false
+  for b in on: near = near or distance(result, b) < least
+  while near and t < 1:
+    t += 0.02
+    result = mix(c, toward, t)
+    near = false
+    for b in on: near = near or distance(result, b) < least
+
 func legible(r: var array[Role, Rgba]; p, builtin: Palette) =
   ## The roles moved where they must be to read and to tell apart, by the
   ## limits above; a palette that meets them is left as it is.
+  # Text reads on the window; the other surfaces it is drawn on are of the
+  # window's kind (a dark bar in a light theme moves toward the window).
+  r[rlText] = lift(r[rlText], [r[rlWindow]], TextContrast)
+  for role in [rlPopup, rlBar, rlFrame]:
+    r[role] = toward(r[role], r[rlWindow], r[rlText], TextContrast)
+  # Frames show on windows and popups (a theme of one colour has none):
+  # toward the text, or away from it where the text would no longer read.
+  let frame = apartFrom(r[rlFrame], r[rlText], [r[rlWindow], r[rlPopup]], MinFrameStep)
+  let away = if luminance(r[rlText]) < luminance(r[rlWindow]): White else: Black
+  r[rlFrame] =
+    if contrast(lift(r[rlText], [r[rlWindow], frame], TextContrast), frame) >= TextContrast:
+      frame
+    else: apartFrom(r[rlFrame], away, [r[rlWindow], r[rlPopup]], MinFrameStep)
   let surfaces = [r[rlWindow], r[rlPopup], r[rlBar], r[rlFrame]]
   # A hovered or selected item shows on what it is on, and text on it reads.
   r[rlSelection] = stepFrom(r[rlSelection], r[rlText], [r[rlWindow], r[rlPopup], r[rlFrame]])
@@ -471,7 +506,9 @@ func deriveRoles*(p: Palette; mode: ThemeMode): array[Role, Rgba] =
   ## Then each role that would be hard to read or to tell apart is moved
   ## (`adjustedRoles` says which), by the limits `TextContrast` ..
   ## `MarksApart`: text and status colours lightened on a dark theme or
-  ## darkened on a light one, a selection that does not show moved toward the
+  ## darkened on a light one, a bar or popup of the other kind (a dark bar
+  ## in a light theme) moved toward the window, a frame that does not show
+  ## moved `MinFrameStep` off the window and popup, a selection that does not show moved toward the
   ## text, secondary text dimmer than text, and the marks (`selected`,
   ## `highlight`, `source`, `receiver`) taken from the palette's other colours,
   ## or from the built-in theme's, when the palette's own are too close to the

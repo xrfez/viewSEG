@@ -17,7 +17,11 @@
 ##   the hovered and the selected points 3 against the background; sources
 ##   40 from receivers; both 20 from the hovered and the selected points,
 ##   those 20 from each other; the record's receivers 12 from the others;
-## - each file names, in its comment, the roles viewSEG moved to meet them.
+## - each file names, in its comment, the roles viewSEG moved to meet them;
+## - a frame (an unticked checkbox) 12 (largest channel difference) from the
+##   window and the popup;
+## - the same of themes a user may drop in: all one colour (grey, black,
+##   white; dark and light), and a light theme with a dark bar.
 ##
 ## The limits are written here, not taken from `view/theme`, so that lowering
 ## one there fails here. Seen to fail: with `legible` not called in
@@ -26,7 +30,10 @@
 ## record receivers always moved toward the outline, "Lumon, follow theme:
 ## the record's receivers from the receivers 1.90 < 12.0"; with `text` added
 ## by hand to white.toml's list, "white.toml says it moves text, text_dim,
-## ..., viewSEG moves ...".
+## ..., viewSEG moves ..."; with the user themes as `legible` took them
+## before, 49 problems ("one grey dark: frame from window 0.00 < 12.0",
+## selection 1.00 against window ...); with bars of the other kind left as
+## they are, "light, dark bar: text on bar 1.29 < 4.5".
 
 import std/[os, sequtils, strformat, strutils]
 import viewSEG/core/[geometry, panels, survey]
@@ -94,6 +101,8 @@ proc checkUi(t: Theme) =
   for role in [rlSelection, rlHover]:
     for where in [rlWindow, rlPopup, rlFrame]:
       atLeast(t.name & ": " & $role & " against " & $where, contrast(r[role], r[where]), 1.08)
+  for where in [rlWindow, rlPopup]: # an unticked checkbox is its frame alone
+    atLeast(t.name & ": frame from " & $where, float64(distance(r[rlFrame], r[where])), 12)
 
 proc checkPlot(t: Theme) =
   for colours in [pcPaper, pcTheme]:
@@ -161,3 +170,22 @@ block repairs:
   checkMap(g)
   doAssert problems.len == 0, problems.join("\n")
   doAssert g.roles[rlHighlight] != rgb(0x808080)
+
+block userThemes:
+  # Themes a user may drop in, which the derivation must still make usable:
+  # every colour the same (grey, black, white), and a light theme with a
+  # dark bar (the menu bar's text drawn in the one text colour).
+  problems.setLen 0
+  for (name, c) in [("one grey", 0x808080), ("all black", 0x000000), ("all white", 0xffffff)]:
+    var p: Palette
+    for k in BaseColor: p[k] = rgb(c.uint32)
+    for mode in ThemeMode:
+      let t = makeTheme(name & " " & $mode, mode, p)
+      checkUi(t)
+      checkPlot(t)
+      checkMap(t)
+  var p = EverforestLight.palette
+  p[bcDarkBackground] = rgb(0x202020)
+  let bar = makeTheme("light, dark bar", tmLight, p)
+  checkUi(bar)
+  doAssert problems.len == 0, $problems.len & " problems:\n" & problems.join("\n")
