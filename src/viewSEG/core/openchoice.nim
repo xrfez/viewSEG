@@ -72,14 +72,18 @@ func kindOf*(s: StandardChoice): SeismicKind =
 
 func accessOf*(a: AccessChoice): FileAccess =
   case a
-  of acAuto: faAuto
+  of acAuto: DefaultAccess # (`faAuto`, unless built to read every file unmapped)
   of acMapped: faMapped
   of acUnmapped: faUnmapped
+
+func verifyOf*(c: OpenChoice): VerifyMode =
+  ## How much of the file's headers the open checks.
+  if c.verifyAll: vfFull else: vfSampled
 
 func openOptions*(c: OpenChoice; cache = ""): OpenOptions =
   ## What parseSEG's `openSeismic` is given for `c`, with the index cache
   ## file `cache` when `c` may use it (`usesCache`).
-  OpenOptions(kind: kindOf(c.standard), verify: (if c.verifyAll: vfFull else: vfSampled),
+  OpenOptions(kind: kindOf(c.standard), verify: verifyOf(c),
     twosComplement8015: c.twosComplement, access: accessOf(c.access), demuxDir: c.demuxDir,
     cache: (if c.usesCache: cache else: ""))
 

@@ -18,7 +18,7 @@
 ## the primary screen at its default size; every other setting is as saved.
 ##
 ## Options that print and exit without opening a window:
-## - `--version`: the version of viewSEG and parseSEG;
+## - `--version`: the versions of viewSEG, parseSEG and processSEG;
 ## - `--paths` (or `--where`): the directories in use, one `name: path` per line.
 ##
 ## Options that talk to a running viewSEG's agent control, without a window:
@@ -27,20 +27,13 @@
 ##   call, its answer printed (an image written to `--png`'s file).
 
 import std/[os, strutils]
-import parseSEG
+import viewSEG/core/versions
 import viewSEG/platform/[paths, winres] # winres: Windows manifest, icon, version, subsystem
 import viewSEG/remote/client
 
 const frontend {.strdefine.} = "imgui"
 
-proc nimbleVersion(): string {.compileTime.} =
-  result = "0.0.0"
-  for line in staticRead("../viewSEG.nimble").splitLines:
-    if line.startsWith("version"):
-      result = line.split('=', 1)[1].strip.strip(chars = {'"'})
-
 const
-  ViewSEGVersion* = nimbleVersion() ## from viewSEG.nimble
   Usage = "usage: viewSEG [--version] [--paths | --where] [--help] [--reset-windows] " &
     "[--mcp[=<socket>]] [--] [file ...]\n" &
     "       viewSEG --mcp-stdio[=<socket>]\n" &
@@ -58,7 +51,7 @@ Options:
   --mcp[=<socket>]    Turn agent control on for this run: an MCP client can
                       operate viewSEG through the socket (--paths names the
                       default one).
-  --version, -v       Print the versions of viewSEG and parseSEG.
+  --version, -v       Print the versions of viewSEG, parseSEG and processSEG.
   --paths, --where    Print the folders in use (settings, logs, cache, assets).
   --help, -h          Print this.
   --                  End the options: what follows names files.
@@ -144,7 +137,8 @@ func parseCommandLine*(args: openArray[string]): CommandLine =
     result = CommandLine(action: caError, error: "--mcp= needs a socket path")
 
 proc versionLine(): string =
-  "viewSEG " & ViewSEGVersion & " (parseSEG " & parseSEG.PackageVersion & ")"
+  "viewSEG " & ViewSEGVersion & " (parseSEG " & ParseSEGVersion & ", processSEG " &
+    ProcessSEGVersion & ")"
 
 proc pathsReport*(c: PathContext): string =
   ## The directories `c` resolves to, one `name: path` line each; the search lists
@@ -183,6 +177,7 @@ when isMainModule:
   of caRun:
     echo versionLine()
     quit run(RunOptions(openPaths: cmd.files, persist: true,
-      version: ViewSEGVersion & " (parseSEG " & parseSEG.PackageVersion & ")",
+      version: ViewSEGVersion & " (parseSEG " & ParseSEGVersion & ", processSEG " &
+        ProcessSEGVersion & ")",
       agent: cmd.agent, agentSocket: if cmd.socket.len > 0: absolutePath(cmd.socket) else: "",
       resetWindows: cmd.resetWindows, tray: true))

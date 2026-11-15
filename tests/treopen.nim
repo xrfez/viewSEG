@@ -88,7 +88,7 @@ block everyHeaderChecked:
     let cachedAt = getLastModificationTime(cache)
     sleep 20
     st.reopen(path, OpenChoice(standard: scSegy, verifyAll: true))
-    doAssert st.log.has(name & " is opened again with read as SEG-Y, not detected; every " &
+    doAssert st.log.has(name & " is opened again: read as SEG-Y, not detected; every " &
       "trace header checked.")
     doAssert st.settle(not st.shownSession.isNil and
       st.shownSession.facts.opened.choice.verifyAll), "not reopened with every header checked"

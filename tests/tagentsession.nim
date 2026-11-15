@@ -349,6 +349,9 @@ withFixtures fx:
     doAssert shown.gain == dgFixed and shown.fixedClip > 0, "no amplitude from the data"
     doAssert shown.mode == Everything.mode and shown.overlap == Everything.overlap,
       "what is shown is the agent's"
+    st.agent(%*{"kind": "reopen", "reopenPath": third, "openChoice": {"verifyAll": true}})
+    doAssert st.settle(st.sessions.anyIt(it.path == third and
+      it.facts.opened.choice.verifyAll)), "not reopened"
     st.agent(%*{"kind": "close", "file": int(st.sessions[0].id)})
     st.agent(%*{"kind": "new project", "projectPath": fx.dir / "the agent's job",
       "dataFolders": [agentDir]})

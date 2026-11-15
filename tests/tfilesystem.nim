@@ -94,6 +94,7 @@ const
     ("platform/paths.nim", "dirExists writeFile removeFile createDir",
       "the program's own folders, probed at start"),
     ("platform/winres.nim", "writeFile", "at compile time"),
+    ("core/versions.nim", "fileExists", "the libraries' nimble files, at compile time"),
     ("platform/trayhost.nim", "getFileInfo",
       "the session bus's socket in $XDG_RUNTIME_DIR, a local in-memory folder")]
     ## every call past the seam the program makes, and why it may: each on

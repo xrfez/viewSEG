@@ -44,12 +44,9 @@ import ../../core/[filesystem, geometry, screens, state, watchdog]
 import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import ../../view/jobstatus
-import agentshot, chrome, dpi, filelist, fonts, frames, headerswindow, icons, jobswindow,
-  joindialog,
-  mapwindow, memorywindow, menus, messages, plotwindows, projectwindow, recordlist, shell,
-  spectrumwindow,
-  style,
-  tracepanel, windows
+import aboutbox, agentshot, chrome, dpi, filelist, fonts, frames, headerswindow, icons,
+  jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows, projectwindow,
+  recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow, DialogKind,
   SpectraUi, readoutOf
@@ -98,6 +95,8 @@ type
     memory: MemoryUi                           ## the "File memory" window
     project: ProjectUi                         ## the "Project" and "New project" windows
     titled: string                             ## the main window's title, as set last
+    reopen: ReopenUi                           ## the "Reopen with options" dialog
+    about: AboutUi                             ## Help > About viewSEG
     spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
     plotWins: PlotWindowsUi                    ## the analysis windows (New plot)
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
@@ -528,6 +527,10 @@ proc spectraWindows*(frame: FrameInfo): lent SpectraUi =
   ## The spectrum windows' frontend state (tests: what each read under the pointer).
   frame.ui.spectra
 
+proc reopenDialog*(frame: FrameInfo): lent ReopenUi =
+  ## The "Reopen with options" dialog's state (`shown`).
+  frame.ui.reopen
+
 proc headersWindow*(frame: FrameInfo): lent HeadersUi =
   ## The Headers window's state as this frame drew it: `summaryPicked`.
   frame.ui.headers
@@ -937,6 +940,13 @@ proc followTitle(ui: var Ui) =
   if title != ui.titled:
     ui.titled = title
     discard SDL_SetWindowTitle(ui.window, title.cstring)
+proc openReopen(ui: var Ui) =
+  ## "Reopen with options" for the file the Seismic window shows.
+  let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
+  if i < 0: ui.say("Reopen with options: no file is shown.", mlWarning)
+  else:
+    let s = ui.core.sessions[i]
+    ui.reopen.open(s.path, ui.core.openChoiceOf(s.path), s.facts.opened)
 
 proc onActions(ui: var Ui; actions: set[MenuAction]) =
   let recent = ui.core.settings.recentFolders
@@ -950,6 +960,8 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
       if i >= 0: ui.core.apply Command(kind: ckClose, file: ui.core.sessions[i].id)
     of maImportSurvey: ui.join.open()
+    of maReopen: ui.openReopen()
+    of maAbout: ui.about.open()
     of maUndo: ui.core.apply Command(kind: ckUndoEdit, panel: MainPanel)
     of maRedo: ui.core.apply Command(kind: ckRedoEdit, panel: MainPanel)
     of maClearEdits: ui.core.apply Command(kind: ckClearEdits, panel: MainPanel)
@@ -1296,6 +1308,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
       ui.marks)
     for c in headers.commands.mitems:
       ui.core.apply move c
+    if headers.reopen: ui.openReopen()
   ui.mapCursor = ""
   if ui.windows.shows(awMap):
     # A layout saved before the map came names no map: it joins the Headers
@@ -1336,6 +1349,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
     let folder = if i >= 0: ui.core.sessions[i].path.parentDir & DirSep else: ""
     ui.ask(dkJoinFiles, folder)
+  var reopen = ui.reopen.drawReopen(ui.theme, ui.marks)
+  for c in reopen.mitems:
+    ui.core.apply move c
+  ui.about.drawAbout(ui.theme, ui.marks)
   ui.drawSaveLayout()
   ui.drawDropHint()
   if ui.windows.shows(awJobs):

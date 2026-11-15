@@ -691,7 +691,21 @@ stations, coordinates, offset, midpoint) above the header's fields, marked per t
 the window draws them in the join's accent colour; the reader is asked again when a join
 ends (`joinReport.serial`). The Summary's coordinates are the session's (`Session.crs`,
 read with the open, as the join window shows them) and, once joined, the units confirmed
-for the join (`AppState.joins`).
+for the join (`AppState.joins`). The Summary's lines are made in `core/properties`
+(`summaryLines`), so that agent control's `properties` gives the same words; they include
+how the file was opened (`OpenFacts`, read on the open job: the standard read as and what
+detection says of the first bytes, the index from the cache, a sample or every header,
+mapped or unmapped, `prefersFloat64`).
+
+**Reopen with options** (`core/openchoice`, `ui/imgui/reopendialog`). `ckReopen` names a
+file and an `OpenChoice` (the standard, `vfFull`, two's-complement mantissas, the
+access, the demultiplexed copy's folder), kept per file for the run
+(`AppState.openChoices`) and given to every open job of that file (`openFileWork`,
+`openWork`: `openOptions`). The file is let go of and opened again in the panels that show
+it, as a file changed on disk is (`reopen`, `showAgain`), so it goes through the one open
+job. A choice that changes how the index is made neither reads nor writes the index
+cache (the cache is the default reading's), and a file with a choice is never prepared
+in the background with the defaults.
 
 **Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
 severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`

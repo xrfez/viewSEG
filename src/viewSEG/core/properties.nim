@@ -88,10 +88,10 @@ proc openedLines(lines: var seq[SummaryLine]; o: OpenFacts; standard: SeismicKin
   ## options changed.
   lines.heading "How it was opened"
   lines.add "Read as", (if o.choice.standard == scDetect:
-      standardName(standard) & (if standard == skUnknown: "" else: ", detected")
-    else:
-      $o.choice.standard & ", as chosen" & (if o.detected != o.kind:
-        " (detection says " & standardName(o.detected) & ")" else: ""))
+    standardName(standard) & (if standard == skUnknown: "" else: ", detected")
+  else:
+    $o.choice.standard & ", as chosen" & (if o.detected != o.kind:
+      " (detection says " & standardName(o.detected) & ")" else: ""))
   lines.add "Index", (if o.fromCache: "read from the index cache (made at an earlier open)"
     elif o.sampled: "made from the file's size; 64 trace headers checked against the " &
       "binary header (a fixed-length file)"
@@ -172,7 +172,7 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = [];
     if hand >= 0:
       result.add "Units", $units.files[hand].unit & " (chosen by hand for the survey import" &
         (if $units.files[hand].unit != $unitOf(s.crs.units): "; the headers say " & said
-         else: "") & ")"
+          else: "") & ")"
     else:
       result.add "Units", said
   result.add "Coordinate reference", (if s.crs.format == ctNone or s.crs.text.len == 0:

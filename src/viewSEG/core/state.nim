@@ -1558,6 +1558,11 @@ func surveyHead*(state: AppState; path: string): int =
     if state.heads[i].file.path == path: return i
   -1
 
+func openChoiceOf*(state: AppState; path: string): OpenChoice =
+  ## The options file `path` (canonical) opens with this run: those
+  ## "Reopen with options" gave it, else the defaults.
+  state.openChoices.getOrDefault(path)
+
 func unitChoices*(state: AppState): lent ImportUnits {.inline.} =
   ## The units the user chose by hand (`ckChooseUnit`): per survey (its
   ## files) and per seismic file; what the headers say never replaces them.
@@ -5558,7 +5563,8 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
   if choice.isDefault: state.openChoices.del path
   else: state.openChoices[path] = choice
   let name = path.extractFilename
-  state.log.add(sevInfo, name, name & " is opened again with " & choiceText(choice) & ".")
+  state.log.add(sevInfo, name, name & " is opened again" & (if choice.isDefault:
+    " with the defaults." else: ": " & choiceText(choice) & "."))
   for o in state.opening.mitems:
     if o.path == path and not o.unwanted:
       o.unwanted = true

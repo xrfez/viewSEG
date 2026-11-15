@@ -2,7 +2,8 @@
 ## ways, and its shortcut is shown in the menu and in the toolbar's tooltips.
 ## Drawing returns what the user asked for; the caller acts on it.
 ##
-## File opens, follows and closes files, holds every import (File >
+## File opens, opens again with other options, follows and closes files,
+## holds every import (File >
 ## Import: a survey, settings, a layout, trace edits) and every export (File
 ## > Export: the messages, the settings, the layout, trace edits), each in
 ## that one place, and opens the File memory window (what is remembered
@@ -13,7 +14,8 @@
 ## own undo); View holds the theme; Window puts the windows right (Reset the
 ## windows, Bring all windows onto this screen), says whether the program's
 ## icon is in the tray and whether minimizing hides it there, shows, hides
-## and brings forward each window, and loads and saves layouts.
+## and brings forward each window, and loads and saves layouts; Help says
+## what viewSEG is (About: its version and its libraries').
 
 import std/os
 import imguin/cimgui
@@ -28,6 +30,7 @@ type
     ## submenu (`shownAs` in one).
     maOpenFile = "Open file...", maOpenFiles = "Open files...",
     maOpenFolder = "Open folder...", maClose = "Close",
+    maReopen = "Reopen with options...",
     maImportSurvey = "Import survey...", maImportSettings = "Import settings...",
     maImportLayout = "Import layout...", maImportEdits = "Import trace edits...",
     maExportLog = "Export messages...", maExportSettings = "Export settings...",
@@ -43,7 +46,8 @@ type
     maBringWindows = "Bring all windows onto this screen",
     maSaveLayout = "Save layout as...",
     maShowFiles = "Files", maShowRecords = "Records", maShowMap = "Map",
-    maShowHeaders = "Headers", maShowJobs = "Jobs", maShowMessages = "Messages"
+    maShowHeaders = "Headers", maShowJobs = "Jobs", maShowMessages = "Messages",
+    maAbout = "About viewSEG"
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
@@ -107,6 +111,7 @@ const
     maOpenFiles: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_O.cint,
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
+    maReopen: 0,
     maImportSurvey: 0, maImportSettings: 0, maImportLayout: 0, maImportEdits: 0,
     maExportLog: 0, maExportSettings: 0, maExportLayout: 0, maExportEdits: 0,
     maFileMemory: 0, maNewProject: 0, maOpenProject: 0, maProject: 0, maCloseProject: 0,
@@ -119,10 +124,11 @@ const
     maResetWindows: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_R.cint,
     maBringWindows: 0, maSaveLayout: 0,
     maShowFiles: 0, maShowRecords: 0, maShowMap: 0, maShowHeaders: 0, maShowJobs: 0,
-    maShowMessages: 0]
+    maShowMessages: 0, maAbout: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
+    maReopen: IconRefresh,
     maImportSurvey: IconMap, maImportSettings: IconSettings, maImportLayout: IconLayers,
     maImportEdits: IconWriting, maExportLog: IconLog, maExportSettings: IconSettings,
     maExportLayout: IconLayers, maExportEdits: IconWriting, maFileMemory: IconHistory,
@@ -132,7 +138,8 @@ const
     maClearEdits: IconClearAll, maToggleTheme: IconTheme,
     maResetWindows: IconRefresh, maBringWindows: IconFit, maSaveLayout: IconSave,
     maShowFiles: IconList, maShowRecords: IconRecords, maShowMap: IconMap,
-    maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog]
+    maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog,
+    maAbout: IconInfo]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog, awSpectrum: IconPulse]
@@ -387,8 +394,9 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
 proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
   ## The menu bar over the main window, plus the shortcuts, which work whether
   ## or not a menu is open. Its menus are marked "menu.File", "menu.Edit",
-  ## "menu.View" and "menu.Window", its items "menu." and their names, the windows' entries
-  ## "menu.window." and their IDs, the presets "menu.layout." and their names.
+  ## "menu.View", "menu.Window" and "menu.Help", its items "menu." and their
+  ## names, the windows' entries "menu.window." and their IDs, the presets
+  ## "menu.layout." and their names.
   result = MenuResult()
   marked = addr marks
   let typing = igGetIO_Nil().WantTextInput # a text field keeps its own Ctrl+Z
@@ -416,6 +424,12 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       item(maClose, result)
       igEndDisabled()
       tip("Close the file the plot window shows")
+      igBeginDisabled(not input.canClose)
+      item(maReopen, result)
+      igEndDisabled()
+      tip("Open the file the plot window shows again, with other options: its standard " &
+        "when it is read as the wrong one, every trace header checked, two's-complement " &
+        "mantissas, mapped or not. Its kills and polarity reversals stay")
       if igMenuItem_Bool((IconFollow & "  Follow the latest file").cstring, nil,
           input.followLatest, true):
         result.toggleFollow = true
@@ -466,6 +480,12 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
     marks.mark("menu.Window")
     if window:
       drawWindowMenu(input, result)
+      igEndMenu()
+    let help = igBeginMenu("Help", true)
+    marks.mark("menu.Help")
+    if help:
+      item(maAbout, result)
+      tip("viewSEG's version, and those of the libraries it is built on")
       igEndMenu()
     igEndMainMenuBar()
   marked = nil

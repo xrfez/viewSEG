@@ -1,9 +1,10 @@
 ## The "Headers" window: what the file shown is and what its headers hold,
 ## in three tabs (`HeadersTab`), read-only.
 ##
-## - **Summary:** what the file is (its standard, sample format, counts,
-##   timing, coordinates) and the record shown with its counts, in plain
-##   words (`view/headerviews.summaryLines`).
+## - **Summary:** the file's properties: what it is (its standard, sample
+##   format, counts, timing, coordinates), how it was opened, and the record
+##   shown with its counts, in plain words (`core/properties.summaryLines`),
+##   with "Reopen with options..." above them.
 ## - **File headers:** a tab per header block, as the format has them. SEG-Y:
 ##   Text (the textual header's 40 lines of 80 characters, in the fixed-width
 ##   font), Binary (its fields), Extended (the extended textual headers, when
@@ -74,6 +75,7 @@ type
 
   HeadersOutput* = object
     commands*: seq[Command]
+    reopen*: bool ## the Summary's "Reopen with options..." was clicked
 
 const JoinedTip = "From the survey, not the trace header"
   ## what a value a geometry join gave says when pointed at, as in the plot
@@ -110,13 +112,28 @@ proc copyMenu(id: string; value: string; lines: openArray[SummaryLine]) =
       igSetClipboardText(summaryText(lines).cstring)
     igEndPopup()
 
-proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks: var Marks) =
-  ## The Summary tab: a line per fact, headings between.
+proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks: var Marks;
+    output: var HeadersOutput) =
+  ## The Summary tab: "Reopen with options..." (and, for a file not
+  ## recognised, why it is wanted), then a line per fact, headings between.
   let (s, gather) = st.shownSession
   if s < 0:
     igTextDisabled("No file is shown.")
     return
   let ses = st.sessions[s]
+  if ses.facts.summary.standard == skUnknown:
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+    igPushTextWrapPos(0)
+    igTextUnformatted("viewSEG does not recognise this file as SEG-Y, SEG-D or SEG-2. If " &
+      "you know which it is, Reopen with options names its standard.", nil)
+    igPopTextWrapPos()
+    igPopStyleColor(1)
+    marks.mark("headers.summary unknown")
+  if igButton("Reopen with options...##summary", ImVec2_c(x: 0, y: 0)): output.reopen = true
+  marks.mark("headers.summary reopen")
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
+    igSetTooltip("%s", ("Open the file again as another standard, with every trace header " &
+      "checked, with two's-complement mantissas, mapped or not").cstring)
   # Made again when the file, its gather, its keys or the joins change, and
   # twice a second (the record's counts, a relation file loaded): not every
   # frame.
@@ -780,7 +797,7 @@ proc drawHeaders*(ui: var HeadersUi; title: string; st: AppState; cursorMs: floa
       if ui.tabItem(htSummary, view.tab):
         shown = htSummary
         marks.mark("headers.tab summary")
-        ui.drawSummary(st, fonts, t, marks)
+        ui.drawSummary(st, fonts, t, marks, result)
         igEndTabItem()
       else: marks.mark("headers.tab summary")
       if ui.tabItem(htFile, view.tab):

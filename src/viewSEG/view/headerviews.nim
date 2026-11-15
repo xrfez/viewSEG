@@ -1,6 +1,7 @@
 ## What the Headers window shows, as plain lines and tables: the Summary
-## tab's lines (`core/properties`, exported here), the header tables (`fieldTable`: a row per field, a column
-## of values per header, the values that differ between columns marked),
+## tab's lines (`core/properties`, exported here), the header tables
+## (`fieldTable`: a row per field, a column of values per header, the values
+## that differ between columns marked),
 ## and the lines of a block's bytes (`dumpLine`). Made from `core` (a
 ## session's `facts`, its records, the inspector's answers), never from the
 ## toolkit, so that any frontend shows the same words.

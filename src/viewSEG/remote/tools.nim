@@ -24,13 +24,14 @@
 
 import std/[algorithm, base64, json, math, monotimes, os, sets, strutils, times]
 import parseSEG
-import ../core/[geometry, state]
+import ../core/[geometry, properties, state, versions]
 import protocol, schema
 
 const
   ToolNames* = ["command", "state", "headers", "screenshot", "wait"]
   StateParts* = ["program", "fileList", "files", "panels", "selection", "map", "jobs",
-    "messages", "survey", "headers", "memory", "spectra", "displayPresets", "plots", "project"]
+    "messages", "survey", "headers", "memory", "spectra", "displayPresets", "plots", "project",
+    "properties"]
   ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "headers", "messages",
     "jobs", "toolbar", "statusbar", "spectrum", "fft"]
     ## what `screenshot` takes a picture of: the whole window, the Seismic
@@ -708,6 +709,27 @@ proc projectJson(state: AppState; limit: int): JsonNode =
     "filters": p.doc.hasProcessing, "opening": state.projectOpening,
     "earlierOutputs": earlier}
 
+proc propertiesJson(state: AppState): JsonNode =
+  ## The properties of the file the Seismic window shows, as its Headers
+  ## window's Summary gives them (sections of lines: what it is, how it was
+  ## opened, its coordinates, the record shown), with the options it opens
+  ## with and what its open did, as values; null when no file is shown.
+  let k = state.findPanel(MainPanel)
+  let i = if k >= 0: state.shownFile(k) else: -1
+  if i < 0: return newJNull()
+  let s = state.sessions[i]
+  let gather = state.panels[k].layers[0].source.gather
+  var sections = newJArray()
+  var section: JsonNode = nil
+  for l in summaryLines(s, gather, state.joins, state.unitChoices):
+    if l.heading:
+      section = %*{"title": l.label, "lines": newJArray()}
+      sections.add section
+    elif section != nil:
+      section["lines"].add %*{"label": l.label, "value": l.value}
+  result = %*{"file": int(s.id), "path": s.path, "sections": sections,
+    "openChoice": toJson(state.openChoiceOf(s.path)), "opened": toJson(s.facts.opened)}
+
 proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
   ## The `state` tool.
   var n: JsonNode
@@ -771,8 +793,10 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
       working = getCurrentDir()
     except OSError:
       discard
+    var versions = newJObject()
+    for l in aboutLines(): versions[l.name] = %l.version
     r["program"] = %*{"folder": getAppDir(), "workingFolder": working,
-      "theme": state.settings.theme, "themes": state.themeNames}
+      "theme": state.settings.theme, "themes": state.themeNames, "versions": versions}
   if "map" in wanted: r["map"] = state.mapJson(limit)
   if "survey" in wanted:
     var layers = newJArray()
@@ -783,6 +807,7 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
           "sources": toJson(l.counts[prSource]), "receivers": toJson(l.counts[prReceiver])}}
     r["survey"] = layers
   if "headers" in wanted: r["headers"] = state.headersJson(limit)
+  if "properties" in wanted: r["properties"] = state.propertiesJson()
   if "displayPresets" in wanted:
     var list = newJArray()
     for p in state.settings.displayPresets:

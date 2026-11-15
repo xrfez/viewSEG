@@ -654,8 +654,15 @@ holds, read-only, in three tabs:
   record numbers, samples per trace, sample interval and record length, the coordinate
   units and reference (as File > Import > Survey shows them; after an import, the units
   you confirmed there, and the import: its files, how many traces matched, what it did);
-  then the record shown (what tells it apart: FFID, source, receiver) with its counts (traces, seismic, auxiliary, dead, missing: the Records
-  window's), and for SEG-D that record's channel sets.
+  **How it was opened**: the standard read as (detected, or as you chose, with what
+  detection says), whether its index came from the cache, from a sample of 64 headers (a
+  fixed-length SEG-Y file) or from every header, whether it is read mapped or unmapped
+  (a file on a network share is read unmapped, so a drive that fails fails only that
+  read), and the options it was reopened with; a **Precision** line when its samples hold
+  more digits than viewSEG shows; then the record shown (what tells it apart: FFID,
+  source, receiver) with its counts (traces, seismic, auxiliary, dead, missing: the
+  Records window's), and for SEG-D that record's channel sets. A unit you chose by hand
+  in File > Import > Survey is said as such.
 - **File headers:** a tab per header block, as the format has them. SEG-Y: **Text** (the
   textual header's 40 lines of 80 characters), **Binary** (the binary header's fields) and
   **Extended** (the extended textual headers, when the file has them), and a tape label or
@@ -691,6 +698,23 @@ summary. The tab shown, the toggles and the columns are remembered. Headers and 
 are read in the background, only for the tab on screen, so the window never holds up the
 rest; the file is never written (changing header values will be a separate, explicit
 action).
+
+### Reopen with options
+
+When a file is read wrongly (not recognised, or taken for another standard; a 20-bit
+SEG-D or SEG-2 file whose traces look like noise with spikes), **File > Reopen with
+options...** (or the button at the top of the Summary, which also says when a file is not
+recognised) opens it again with other options: its **Standard** (Detect, SEG-Y, SEG-D,
+SEG-2), **Check every trace header** (slower; reports headers that disagree with the
+binary header), **Two's-complement mantissas** (SEG-D format 8015, SEG-2 format 3), how
+it is **Read** (Automatic: a network share unmapped; Mapped; Unmapped) and the folder of a
+multiplexed SEG-D file's demultiplexed copy. Point at each for what it does. **Reopen**
+reads the file again in the windows that show it, at the record they show; its kills and
+polarity reversals stay; the options hold for that file until viewSEG quits. **Defaults**
+puts every option back. The file is only read, never changed.
+
+**Help > About viewSEG** gives viewSEG's version and those of parseSEG, processSEG, Dear
+ImGui, SDL, the OpenGL driver and the compiler, with **Copy** for a bug report.
 
 ## Messages
 
