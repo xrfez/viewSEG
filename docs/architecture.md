@@ -549,6 +549,73 @@ line numbering, text line names, record numbers not in the relation file) and ch
 nothing. Units are labels: the dialog starts each at what the headers say and shows the
 file's CRS text as read; datum and projection as values are a parseSEG request.
 
+**Survey scale.** A real 3D land survey's files are not small: R files of 200 000
+points, S files of 2 000 000, X files of tens of millions of records (2.5 GB for 10 to 20
+X records a shot). `tests/utils/bigsurvey` writes such surveys (at scale 1: R 200 000,
+S 2 000 000, X 30 million records, SPS 2.1 with a contractor's header records, US survey
+feet; a scale `f` takes `f` of the points and of the X records), and a SEG-Y file of four
+of its shots (record and channel only: the join goes through the X file);
+`tools/surveybench.nim` (`nim surveyBench` for 0.01 and 0.1) measures what follows, each
+measurement in a process of its own, and `tools/mapbench.nim` the frames of the running
+program. How a read is made fast and small:
+
+- **One read of each file.** The import with a file open reads every survey file once
+  (above); the relation file's records are the X layer's, shared with the join
+  (`SharedRelations`, parseSEG's join of two geometries). The code before read the X
+  file twice and kept two copies of it.
+- **Parsed in parallel, taken in in order.** An SPS file's 4 MiB chunks after the first
+  are parsed by one fewer workers than there are cores, at most eight (`eachSpsPart`,
+  `ParseAtOnce`), each worker its own records' owner (freed by the thread that made
+  them: Nim's allocator kept memory freed by another thread, and the program held three
+  times what it read), while the chunks before are added to the layer and the geometry,
+  in the file's order (what parseSEG's "the later station is kept" and "the earlier
+  relation wins" need).
+- **No per-record strings.** parseSEG leaves out the text of line and point fields that
+  read as numbers (`SpsOptions.keepNames`), reads card numbers without `parseFloat`, and
+  keeps a relation run in 56 bytes in one list per domain (`reserveRelations` makes room
+  for an X file's records from its size) where it took 154 in a list per record.
+- **Nothing large copied on the UI thread or per trace:** the import's end took the
+  geometry through an `if` (a copy of the survey on the UI thread); the plan copied the
+  station table for each end of each trace; a box selection selected its points twice.
+  `tests/tsurveygrowth.nim` bounds this: ten times the records cost at most about twelve
+  times the time, a drain stays under 20 ms, and a trace's plan costs against a survey ten
+  times larger what it costs against the smaller.
+
+Measured 2026-11-15 on the 32-core development machine (shared: the load average is
+given), release builds, before (`7e06d59`, parseSEG 0.12.0) and after (with parseSEG's
+branch for these changes); "held" is the process's resident memory after the read, "UI"
+the longest the UI thread took to take in a job's results (`drainInbox`), "quiet" the
+longest a job went without a word of progress (the Jobs window's bar standing still):
+
+| Survey (R / S / X records, X file) | 20 000 / 200 000 / 3.0 M, 243 MB | 60 000 / 600 000 / 9.0 M, 729 MB | 200 000 / 2 000 000 / 30 M, 2.43 GB |
+|---|---|---|---|
+| parseSEG `readSps` of the X file, whole (names kept) | 3.6 s, 1.9 GB -> 2.9 s, 1.9 GB | 11.6 s, 5.4 GB -> 10.6 s, 5.4 GB | not run (about 18 GB) |
+| parseSEG `addSps(path)` of S, R and X | 6.7 s -> 3.5 s, peak 1.9 GB | 19.3 s -> 11.2 s, peak 5.5 GB | not run |
+| viewSEG: S, R, X loaded onto the map (no file open) | 6.3 s, 678 MB -> 1.4 s, 757 MB | 18.9 s, 1.9 GB -> 3.8 s, 1.3 GB | 12.5 s, 3.5 GB (8.4 s at load 10) |
+| viewSEG: the import for a file of 8 000 to 12 000 traces | 58.5 s (31.4 s at load 11), UI 568 ms, quiet 44.8 s, 1.7 GB -> 1.5 s (0.9 s), UI 2.7 ms, quiet 107 ms, 754 MB | 125 s, UI 2.1 s, quiet 85 s, 4.8 GB -> 4.2 s, UI 3.1 ms, quiet 161 ms, 1.3 GB | before: not run (about 17 GB; the plan alone about 30 min); after: 14.3 s at load 55, 8.1 s at load 10, UI 7 ms, quiet 0.5 s, 3.5 GB |
+
+Load average 60 to 80 for the first two columns unless said. Cancel, at full scale: in
+each phase of the import's read (S, R, X, their layers, the plan) the import ended within
+37 to 72 ms of the cancel, 267 ms in the plan's last step, with the map and the file's
+keys as they were; the join's step that changes the keys is not cancelled (by design,
+above). MAPBENCH
+
+**What is left.** parseSEG's `readSps` and `addSps(path)` hold a whole file's records
+before anything is done with them (5.4 GB for the 0.3 X file): a reader of large files
+streams as `eachSpsPart` does (a streaming `addSps(path)` is a parseSEG request). At full
+scale the import holds 3.5 GB: the relation runs 1.7 GB, parseSEG's tables of records and
+of their source stations (hash tables, with their room to grow) about 0.8 GB, the S layer
+and the station table about 0.6 GB; sorted arrays for those tables, and runs that share
+their record's source, would take a gigabyte off. Built with `-d:useMalloc` the program
+held 304 MB where Nim's allocator held 830 for the same X file (before
+`reserveRelations`): worth measuring for the whole program. The taking in of an X file's
+records is now what a read waits for (about 800 instructions a record, in order, on one
+thread). The plan's end (`surveyOf`, the record numbers sorted) goes 0.4 s without
+progress at full scale. The map's planned spreads (`spreadWork`: a template with no relation
+file, or receiver gathers with an X file only) read the survey files once more
+(`readGeometry`) and, for receiver gathers, make O records of every X record
+(`receiverRelations`): seconds and gigabytes at full scale, not measured here.
+
 **The import's units** (`core/join`, "the import's units"). A survey file chosen in the
 window (added, dropped, or loaded with no unit known) has its headers read at once, from
 its first `HeadBytes` (64 KiB) only, on a job of its own on the lane of peeks
