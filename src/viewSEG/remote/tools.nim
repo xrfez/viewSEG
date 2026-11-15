@@ -780,7 +780,8 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
   if "plots" in wanted:
     var list = newJArray()
     for w in state.plots: list.add plotJson(w, limit)
-    r["plots", "project"] = list
+    r["plots"] = list
+  if "project" in wanted: r["project"] = state.projectJson(limit)
   if "memory" in wanted:
     let m = state.memoryList
     var files = newJArray()
