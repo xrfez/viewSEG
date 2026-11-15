@@ -8,11 +8,18 @@
 ## `removeTrayIcons` is the cleanup for icons added through a hidden window
 ## of a known class (SDL's tray, class `SDL_TRAY`).
 ##
-## The cleanup runs inside a signal handler: it must not allocate or take a
-## lock. `removeTrayIcons` looks up what it calls beforehand
-## (`prepareTrayRemoval`) and then calls only the Shell and window functions.
-## Elsewhere than Windows there is nothing to remove: a tray icon there
-## belongs to the program's D-Bus or X connection, which ends with it.
+## The cleanup runs inside a signal handler. On POSIX systems only
+## async-signal-safe calls are allowed there: the handler itself calls only
+## `signal` and `raise`, and the cleanup does nothing, for there is nothing to
+## remove: a tray icon there belongs to the program's D-Bus or X connection,
+## which ends with it. On Windows the C runtime runs the handler of an
+## access violation, a bad instruction or a division fault on the faulting
+## thread, from its exception filter, and an abort's from `abort`: not
+## asynchronously, but still in a program that may be broken. So everything is
+## found beforehand (`prepareTrayRemoval`: the functions, this process's tray
+## windows, the ids), and `removeTrayIcons` makes only `Shell_NotifyIconW`
+## calls, a message to Explorer each: no allocation, no lock of the
+## program's, no window search.
 
 type
   FatalCleanup* = proc () {.nimcall, gcsafe, raises: [].}
@@ -110,8 +117,9 @@ when defined(windows):
     getWindowThreadProcessId: GetWindowThreadProcessIdFn
     getCurrentProcessId: GetCurrentProcessIdFn
     shellNotifyIcon: ShellNotifyIconWFn
-    trayClass: array[64, uint16]
-    idBound = 0'u32 ## the highest icon id to remove (`prepareTrayRemoval`)
+    idBound = 0'u32         ## the highest icon id to remove (`prepareTrayRemoval`)
+    targets: array[8, Hwnd] ## this process's tray windows, found beforehand
+    targetCount = 0
 
 func trayIdBound*(trays, entries: int): int =
   ## The highest icon id SDL can have given the last of `trays` trays made in
@@ -137,32 +145,42 @@ proc prepareTrayRemoval*(windowClass: string; maxId: int) =
       getCurrentProcessId = cast[GetCurrentProcessIdFn](kernel32.symAddr("GetCurrentProcessId"))
     if shell32 != nil:
       shellNotifyIcon = cast[ShellNotifyIconWFn](shell32.symAddr("Shell_NotifyIconW"))
+    var trayClass: array[64, uint16]
     let n = min(windowClass.len, trayClass.len - 1)
     for i in 0 ..< n: trayClass[i] = uint16(windowClass[i]) # an ASCII class name
-    trayClass[n] = 0
+    targetCount = 0
+    if findWindowEx != nil and getWindowThreadProcessId != nil and getCurrentProcessId != nil:
+      let me = getCurrentProcessId()
+      var hwnd: Hwnd = nil
+      while targetCount < targets.len:
+        hwnd = findWindowEx(nil, hwnd, addr trayClass[0], nil)
+        if hwnd == nil: break
+        var pid = 0'u32
+        discard getWindowThreadProcessId(hwnd, addr pid)
+        if pid == me:
+          targets[targetCount] = hwnd
+          inc targetCount
   else:
     discard windowClass
     discard maxId
 
+proc forgetTrayRemoval*() =
+  ## The tray is gone: nothing to remove any more (until the next
+  ## `prepareTrayRemoval`).
+  when defined(windows):
+    targetCount = 0
+
 proc removeTrayIcons*(): int {.gcsafe, raises: [].} =
-  ## Removes the tray icons this process added through windows of the class
-  ## `prepareTrayRemoval` named; returns how many windows of it were found.
-  ## Safe in a signal handler. 0 elsewhere than Windows.
+  ## Removes the tray icons of the windows `prepareTrayRemoval` found, ids 1
+  ## to its bound; returns how many windows that was. Only `Shell_NotifyIconW`
+  ## calls (the module doc). 0 elsewhere than Windows.
   result = 0
   when defined(windows):
     {.cast(gcsafe).}:
-      if findWindowEx != nil and getWindowThreadProcessId != nil and
-          getCurrentProcessId != nil and shellNotifyIcon != nil and trayClass[0] != 0:
-        let me = getCurrentProcessId()
-        var hwnd: Hwnd = nil
-        while true:
-          hwnd = findWindowEx(nil, hwnd, addr trayClass[0], nil)
-          if hwnd == nil: break
-          var pid = 0'u32
-          discard getWindowThreadProcessId(hwnd, addr pid)
-          if pid == me:
-            inc result
-            for id in 1'u32 .. idBound:
-              var data = NotifyIconDataV1(size: uint32(sizeof(NotifyIconDataV1)),
-                hwnd: hwnd, id: id)
-              discard shellNotifyIcon(NimDelete, addr data)
+      if shellNotifyIcon != nil:
+        for t in 0 ..< targetCount:
+          inc result
+          for id in 1'u32 .. idBound:
+            var data = NotifyIconDataV1(size: uint32(sizeof(NotifyIconDataV1)),
+              hwnd: targets[t], id: id)
+            discard shellNotifyIcon(NimDelete, addr data)

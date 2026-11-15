@@ -429,6 +429,7 @@ proc hideTray*() =
   ## Takes the icon out of the tray; nothing when it is not there. Main
   ## thread. (`SDL_Quit` does it too.)
   if not tray.isNil:
+    forgetTrayRemoval() # before its window goes
     SDL_DestroyTray(tray)
     tray = nil
     for a in TrayAction: trayEntries[a] = nil

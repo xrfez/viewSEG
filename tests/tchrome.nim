@@ -21,7 +21,9 @@
 ## "1809 takes attribute 19"; with red and blue swapped in `colorRef`,
 ## "0x003b352d"; with `guardFatalSignals` not calling the cleanup, "the
 ## cleanup did not run before Nim's handler"; with the ids to remove fixed
-## at 1 to 64, "13 trays: ids up to 64, the last tray's is 61"; with
+## at 1 to 64, "13 trays: ids up to 64, the last tray's is 61"; with the
+## tray's windows still searched for in the handler, "the signal handler's
+## cleanup calls findWindowEx"; with
 ## `guardUnhandled` not
 ## installing its hook, "the cleanup did not run for a worker's Defect".
 
@@ -157,6 +159,21 @@ block fatalSignalCleanup:
     doAssert cleaned >= 0, "the cleanup did not run before Nim's handler:\n" & output
     let nims = output.find("SIGSEGV")
     doAssert nims > cleaned, "Nim's handler did not run after the cleanup:\n" & output
+
+block cleanupInAHandler:
+  # What the signal handler runs on Windows makes only Shell_NotifyIconW
+  # calls: windows, ids and functions are found beforehand (read from the
+  # source: there is no Windows here to run it).
+  let text = readFile(currentSourcePath().parentDir.parentDir / "src" / "viewSEG" /
+    "platform" / "trayguard.nim")
+  let start = text.find("proc removeTrayIcons*")
+  doAssert start >= 0
+  var body = text[start .. ^1]
+  let next = body.find("\nproc ", 1)
+  if next > 0: body = body[0 ..< next]
+  for call in ["findWindowEx", "getWindowThreadProcessId", "getCurrentProcessId", "loadLib",
+      "symAddr", ".add", " & ", "newSeq", "$"]:
+    doAssert call notin body, "the signal handler's cleanup calls " & call
 
 block workerDefectCleanup:
   # A Defect no thread handles ends the program from the worker (Nim's
