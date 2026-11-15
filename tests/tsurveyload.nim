@@ -9,7 +9,10 @@
 ## hostile survey files (cut short, a huge line, binary junk, a junk tail,
 ## empty, a named pipe, a binary card among cards) are refused or read as
 ## far as they go, and nothing raises or hangs; a file of several chunks
-## loads whole; a cancel stops a load; the files are never changed.
+## loads whole; a cancel stops a load; the files are never changed; a P1
+## file's text line names ("CLT4960") are the import's numbers on the map
+## (the trailing digits, a line name mapped), also for a file the import
+## finds loaded with other options.
 ## With `exampleFiles/sps/` present, the Morgantown S, R and X files load,
 ## and its record's traces find their receivers there by station.
 ##
@@ -24,7 +27,8 @@
 ## `positionsOfOpenFiles` found it after the close, and with the hint said for
 ## every file, it found it for the second file of a folder; with binary
 ## cards blanked as one line (the whole chunk), `fixedCardsWithABinaryCard`
-## found no receiver.
+## found no receiver; with a P1 line name read as a number only
+## (`parseFloat`, as before), `textLineNames` found @[nan, nan, nan], not 4960.
 ##
 ## Runs alone: it measures the time the Morgantown survey takes to load, and
 ## bounds the frame that takes in an opened file (20 ms).
@@ -399,6 +403,40 @@ block bigFileInChunks:
     doAssert st.settle(st.log.has("Loading big.rps was cancelled.") or
       st.survey.findFile(path) >= 0)
     doAssert st.survey.findFile(path) < 0, "the cancel did not stop the load"
+    st.shutdown()
+
+block textLineNames:
+  withFixtures fx:
+    let path = fx.dir / "text-lines.p1"
+    var lf = PLogicalFile(format: pfP1, header: @["H SEG P1 viewSEG test fixture: line CLT4960",
+      " PROJECTION UTM 30N, GRID UNITS METRES"])
+    for point in 1 .. 3:
+      var r = initP1Record()
+      (r.lineName, r.pointName, r.point) = ("CLT4960", $point, float64(point))
+      (r.latitude, r.longitude) = (55.0 + float64(point) / 1000, -2.0)
+      (r.easting, r.northing, r.depthOrElevation) = (p1X(float64(point)), P1Y, 12.0)
+      lf.records.add r
+    doAssert writeP1(P1File(files: @[lf]), path).len == 0
+    func lines(l: SurveyLayer): seq[float64] =
+      for s in l.points[prSource].station: result.add s.line
+    var st = initAppState()
+    st.load(path)
+    doAssert st.idle and st.survey.findFile(path) >= 0, st.log.lastLines
+    for line in st.fileLayer(path).lines: doAssert line.isNaN, "no rule: no line"
+    # The import's trailing digits: loaded again by the import, line 4960.
+    var opts = st.settings.join
+    opts.trailingDigits = true
+    st.apply Command(kind: ckJoin, joinFiles: @[JoinFile(path: path, kind: jkP1)],
+      joinOptions: opts)
+    doAssert st.idle
+    doAssert st.fileLayer(path).lines == @[4960.0, 4960.0, 4960.0], $st.fileLayer(path).lines
+    # A line name mapped (the import's options, kept in the settings) wins.
+    var s = st.settings
+    s.join.lineNames = @[LineName(name: "CLT4960", line: 12)]
+    st.apply Command(kind: ckSettings, settings: s)
+    st.load(path)
+    doAssert st.idle
+    doAssert st.fileLayer(path).lines == @[12.0, 12.0, 12.0], $st.fileLayer(path).lines
     st.shutdown()
 
 block morgantown:

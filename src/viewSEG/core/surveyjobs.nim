@@ -21,11 +21,16 @@
 ## grid coordinates are taken with no implied decimals (parseSEG's
 ## default); the join's own options come with it.
 ##
+## **Text line names** (SPS 1.0, P1: "CLT4960") are made numbers as the
+## import's join makes them (parseSEG's `resolveLine`): the line names the
+## import maps, else, with its trailing digits on, the digits a name ends
+## in; so the map's layer has the stations the join finds.
+##
 ## **Never raises on data:** a file that is not SPS or P1 (`filekinds`), one
 ## that cannot be read, a named pipe, are refused with a message (the job
 ## fails); everything else is read as far as it goes.
 
-import std/[os, strutils, times]
+import std/[options, os, strutils, times]
 import parseSEG
 import processSEG/qc/record
 import filejobs, filekinds, filesystem, inbox, jobs, join, log, session, survey, threads
@@ -182,15 +187,25 @@ proc eachSpsPart(path: string; f: File; size: int64; ctx: JobContext; p: var Pro
       $(JunkChunks * SurveyChunk div (1024 * 1024)) & " MiB with no SPS records), so it " &
       "was read up to byte " & $stopped & " only.")
 
-proc readSpsLayer(path: string; kind: FileKind; ctx: JobContext; p: var Problems): SurveyLayer =
+func lineNaming*(opts: JoinOptions): seq[(string, float64)] =
+  ## The import's line names, as a survey file's layer is read with them.
+  for ln in opts.lineNames: result.add (ln.name, ln.line)
+
+proc builderFor(path: string; kind: FileKind; info: FileInfo;
+    lines: JoinOptions): SurveyFileBuilder =
+  initSurveyFileBuilder(path, kind, info.size, info.lastWriteTime, lines.lineNaming,
+    lines.trailingDigits)
+
+proc readSpsLayer(path: string; kind: FileKind; ctx: JobContext; p: var Problems;
+    lines: JoinOptions): SurveyLayer =
   var f: File
   let info = checkedOpen(path, f)
-  var b = initSurveyFileBuilder(path, kind, info.size, info.lastWriteTime)
+  var b = builderFor(path, kind, info, lines)
   try:
     eachSpsPart(path, f, info.size, ctx, p, proc (part: SpsFile) =
       for q in part.points:
-        b.addPoint(roleOf(q.kind), q.line, q.point, pointIndex(q.index), q.easting,
-          q.northing, q.elevation)
+        b.addPoint(roleOf(q.kind), b.lineOf(q.lineName, q.line), q.point,
+          pointIndex(q.index), q.easting, q.northing, q.elevation)
       b.addRelations(part))
   finally:
     close(f)
@@ -220,29 +235,39 @@ proc readWhole(path: string; ctx: JobContext; what: string): (FileInfo, string) 
     close(f)
   (info, text)
 
-proc readP1Layer(path: string; kind: FileKind; ctx: JobContext; p: var Problems): SurveyLayer =
+func p1Number(lineName: string): float64 =
+  ## A P1 record's line field as a number; NaN for a text name.
+  result = NaN
+  if lineName.strip.len > 0:
+    try: result = parseFloat(lineName.strip)
+    except ValueError: discard
+
+proc readP1Layer(path: string; kind: FileKind; ctx: JobContext; p: var Problems;
+    lines: JoinOptions): SurveyLayer =
   let (info, text) = readWhole(path, ctx, "SEG P1 files")
   let file = parseP1(text, path)
   p.take(file.log, 0)
-  var b = initSurveyFileBuilder(path, kind, info.size, info.lastWriteTime)
+  var b = builderFor(path, kind, info, lines)
   for lf in file.files:
     if lf.format == pfP1:
       for r in lf.records:
         if r.lineName.len > 0 or not r.point.isNaN: # (else a record kept raw)
-          var line = NaN
-          try: line = parseFloat(r.lineName.strip)
-          except ValueError: discard
+          # As parseSEG's join: a text line name mapped, or its trailing digits.
+          let line = b.lineOf(r.lineName, p1Number(r.lineName))
           # As parseSEG's join: a reshoot code is the point index (blank: any).
           let index = if r.reshoot in {'A' .. 'Z'}: int16(ord(r.reshoot) - ord('A') + 2)
                       else: 0'i16
           b.addPoint(prSource, line, r.point, index, r.easting, r.northing, NaN)
   result = b.finish()
 
-proc readSurveyFile*(path: string; ctx: JobContext; to: Poster): SurveyLayer =
+proc readSurveyFile*(path: string; ctx: JobContext; to: Poster;
+    lines = JoinOptions()): SurveyLayer =
   ## The layer of survey file `path` (SPS or SEG P1, told from its first
-  ## bytes), read on a job; its problems are posted to the log as they
-  ## come. Raises `IOError` for a file that is not a survey file or cannot
-  ## be read, `JobCancelledError` at a cancel. Worker-only.
+  ## bytes), read on a job, its text line names made numbers with `lines`'
+  ## line names and trailing digits (as the import's join makes them); its
+  ## problems are posted to the log as they come. Raises `IOError` for a
+  ## file that is not a survey file or cannot be read, `JobCancelledError`
+  ## at a cancel. Worker-only.
   assertWorkerThread()
   var info: FileInfo
   try: info = fs.getFileInfo(path)
@@ -255,15 +280,15 @@ proc readSurveyFile*(path: string; ctx: JobContext; to: Poster): SurveyLayer =
   var p = Problems(to: to, job: ctx.id, name: path.extractFilename)
   ctx.setPhase "reading the survey file"
   {.cast(gcsafe).}:
-    result = if kind == fkP1: readP1Layer(path, kind, ctx, p)
-             else: readSpsLayer(path, kind, ctx, p)
+    result = if kind == fkP1: readP1Layer(path, kind, ctx, p, lines)
+             else: readSpsLayer(path, kind, ctx, p, lines)
   p.finish()
 
-proc surveyWork*(path: string; to: Poster): JobWork =
-  ## The work of a job that loads survey file `path` (`readSurveyFile`) and
-  ## posts its layer (`mkSurvey`).
+proc surveyWork*(path: string; to: Poster; lines = JoinOptions()): JobWork =
+  ## The work of a job that loads survey file `path` (`readSurveyFile`, its
+  ## line names as `lines` says) and posts its layer (`mkSurvey`).
   result = proc (ctx: JobContext) {.gcsafe.} =
-    var layer = readSurveyFile(path, ctx, to)
+    var layer = readSurveyFile(path, ctx, to, lines)
     ctx.setPhase "preparing the map"
     layer.withLevels()
     discard ctx.progress(1, 1)
@@ -271,12 +296,12 @@ proc surveyWork*(path: string; to: Poster): JobWork =
     to.post Msg(job: ctx.id, kind: mkSurvey, layer: move layer)
 
 proc openFileWork*(path: string; to: Poster; cache = "";
-    cacheBudget = DefaultIndexCacheBudget; whole = false): JobWork =
+    cacheBudget = DefaultIndexCacheBudget; whole = false; lines = JoinOptions()): JobWork =
   ## The work of a job that opens what the user named: a survey file is
-  ## loaded into the survey (`mkSurvey`), anything else opened as a seismic
-  ## file (`openWork`, `mkOpened`).
+  ## loaded into the survey (`mkSurvey`, its line names as `lines` says),
+  ## anything else opened as a seismic file (`openWork`, `mkOpened`).
   let open = openWork(path, to, cache, cacheBudget, whole)
-  let load = surveyWork(path, to)
+  let load = surveyWork(path, to, lines)
   result = proc (ctx: JobContext) {.gcsafe.} =
     if sniff(path).isSurvey: load(ctx) else: open(ctx)
 
@@ -427,9 +452,7 @@ proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFil
           p.take(pf.log, 0)
           for lf in pf.files:
             for r in lf.records:
-              var numeric = NaN
-              try: numeric = parseFloat(r.lineName.strip)
-              except ValueError: discard
+              let numeric = p1Number(r.lineName)
               if r.lineName.strip.len > 0 and numeric.isNaN and
                   g[].resolveLine(r.lineName, NaN).isNone:
                 inc unresolvedRecords

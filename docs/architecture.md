@@ -335,7 +335,10 @@ model, two sources of positions, each a `SurveyLayer`:
   any size is read in bounded memory, with progress and a cancel between chunks; lines
   that hold binary bytes are passed by, and a file that turns into other data (16 MiB in
   a row of binary lines or of lines that are no record) is read no further. A P1 file is
-  read whole, up to 64 MiB. A file's problems go to the log by line, the first 20 one by
+  read whole, up to 64 MiB. Text line names (SPS 1.0, P1) become numbers as the import's
+  join makes them (`resolveLine` with its line names and trailing digits, the import's
+  options in the settings), so the layer has the stations the join finds. A file's
+  problems go to the log by line, the first 20 one by
   one, then a count. A file that is not a survey file, or not a regular file (a named
   pipe is never opened), is refused with a message.
 
@@ -445,8 +448,9 @@ million points), each time.
 
 **The survey import** (`core/join`, `ckJoin`, File > Import > Survey...; `ui/imgui/joindialog`,
 the "Import survey" window). The user imports a survey; the code keeps parseSEG's word for
-what it does, a join. Its SPS and P1 files not on the map yet are loaded onto it as File >
-Open loads them (`loadSurvey`, each a layer; their loads are `Joining.loads`), while the
+what it does, a join. Its SPS and P1 files not on the map yet, or read with other line
+names than the import's options, are loaded onto it as File > Open loads them
+(`loadSurvey` with those options, each a layer; their loads are `Joining.loads`), while the
 join below runs; the import ends, and its report and log line are made (`finishImport`:
 the points on the map, then the join's words), when both are done. With no file open
 (`joinFile` none) it is the loads alone (`joMapOnly`). A cancel or a failure cancels the

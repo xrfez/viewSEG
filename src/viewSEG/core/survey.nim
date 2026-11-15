@@ -41,7 +41,7 @@
 ## The map's levels of detail (`core/maplod`) are made with the layer, on the
 ## same worker (`withLevels`).
 
-import std/[algorithm, intsets, math, os, strutils, times]
+import std/[algorithm, intsets, math, options, os, strutils, tables, times]
 import parseSEG
 import filekinds, maplod, session, spatial
 
@@ -395,13 +395,38 @@ type
     pending: array[PointRole, FilePending]
 
 proc initSurveyFileBuilder*(path: string; kind: FileKind; size: int64;
-    modified: Time): SurveyFileBuilder =
+    modified: Time; lineNames: openArray[(string, float64)] = [];
+    trailingDigits = false): SurveyFileBuilder =
   ## A builder for the survey file at `path`, of `kind`, read at `size`
-  ## bytes and `modified`.
+  ## bytes and `modified`, whose text line names (SPS 1.0, P1) are numbers
+  ## as parseSEG's join makes them: `lineNames` mapped, else with
+  ## `trailingDigits` the digits they end in (`lineOf`).
   let relations = new SurveyGeometry
   relations[] = initSurveyGeometry()
+  relations.trailingDigits = trailingDigits
+  for (name, line) in lineNames:
+    if name.strip.len > 0 and not line.isNaN: relations[].mapLine(name, line)
   SurveyFileBuilder(layer: SurveyLayer(origin: loSurveyFile, kind: kind, path: path,
     name: path.extractFilename, size: size, modified: modified, relations: relations))
+
+func lineOf*(b: SurveyFileBuilder; name: string; numeric: float64): float64 =
+  ## The line number of a record whose line field reads `name` (`numeric`
+  ## when it is a number), as parseSEG's join resolves it (`resolveLine`,
+  ## with the builder's line names and trailing digits); NaN for none.
+  b.layer.relations[].resolveLine(name, numeric).get(NaN)
+
+func sameLineNames*(l: SurveyLayer; lineNames: openArray[(string, float64)];
+    trailingDigits: bool): bool =
+  ## Whether survey file layer `l` was read with these line names and
+  ## trailing digits (a text line name may be read otherwise with others).
+  if l.relations.isNil: return true
+  template g: untyped = l.relations[]
+  var n = 0
+  for (name, line) in lineNames:
+    if name.strip.len > 0 and not line.isNaN:
+      inc n
+      if g.lineNames.getOrDefault(name.strip, NaN) != line: return false
+  g.trailingDigits == trailingDigits and g.lineNames.len == n
 
 proc addPoint*(b: var SurveyFileBuilder; r: PointRole; line, point: float64; index: int16;
     x, y, z: float64) =

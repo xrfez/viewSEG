@@ -1919,21 +1919,29 @@ proc takeChecked(state: var AppState; m: sink Msg) =
     state.sessions[i].setChecks(m.against, m.planned, m.plannedMissing, m.unlisted,
       m.duplicates)
 
-proc loadSurvey(state: var AppState; path: string; quiet = false) =
-  ## Loads survey file `path` (canonical) on a job, unless it is being
-  ## loaded already, or is loaded as the file list says it is now; `quiet`
-  ## says nothing then.
+func readAs(l: SurveyLayer; lines: JoinOptions): bool =
+  ## Whether survey file layer `l` was read with `lines`' line names and
+  ## trailing digits.
+  l.sameLineNames(lines.lineNaming, lines.trailingDigits)
+
+proc loadSurvey(state: var AppState; path: string; quiet = false;
+    lines = state.settings.join) =
+  ## Loads survey file `path` (canonical) on a job, its text line names made
+  ## numbers as the import's options `lines` say, unless it is being loaded
+  ## already, or is loaded as the file list says it is now with those
+  ## options; `quiet` says nothing then.
   let name = path.extractFilename
   let i = state.survey.findFile(path)
   let e = state.files.find(path)
   if state.surveyLoading(path):
     if not quiet: state.log.add(sevInfo, name, name & " is already being loaded.")
   elif i >= 0 and e >= 0 and state.files.entries[e].size == state.survey.layers[i].size and
-      state.files.entries[e].modified == state.survey.layers[i].modified:
+      state.files.entries[e].modified == state.survey.layers[i].modified and
+      state.survey.layers[i].readAs(lines):
     if not quiet: state.log.add(sevInfo, name, name & " is loaded already, as it is now.")
   else:
     let job = state.jobs.submit(JobSpec(title: "Load " & name, lane: jlInteractive,
-      reads: @[path]), surveyWork(path, state.inbox.poster))
+      reads: @[path]), surveyWork(path, state.inbox.poster, lines))
     state.loading.add Loading(job: job, path: path)
 
 proc loaded(state: var AppState; job: JobId; layer: SurveyLayerId)
@@ -2114,9 +2122,11 @@ proc startJoin(state: var AppState; i: int; cmd: Command) =
     return
   var loads: seq[JobId]
   for f in files:
-    if f.kind != jkCsv and state.survey.findFile(f.path) < 0 and
+    # Not on the map yet, or read with other line names than the import's.
+    let i = state.survey.findFile(f.path)
+    if f.kind != jkCsv and (i < 0 or not state.survey.layers[i].readAs(cmd.joinOptions)) and
         not state.surveyLoading(f.path):
-      state.loadSurvey(f.path, quiet = true)
+      state.loadSurvey(f.path, quiet = true, lines = cmd.joinOptions)
       if state.loading.len > 0 and state.loading[^1].path == f.path:
         loads.add state.loading[^1].job
   if i < 0:
@@ -2869,7 +2879,7 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
         state.prepared = (NoJob, nil)
       let job = state.jobs.submit(JobSpec(title: "Open " & path.extractFilename,
         lane: jlInteractive, reads: @[path]), openFileWork(path, state.inbox.poster,
-        indexCacheFile(state.indexCache, path), whole = follow))
+        indexCacheFile(state.indexCache, path), whole = follow, lines = state.settings.join))
       state.opening.add Pending(job: job, path: path, panel: panel, gather: gather,
         follow: follow, by: by)
 
@@ -3254,7 +3264,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       else:
         let job = state.jobs.submit(JobSpec(title: "Open " & name, lane: jlInteractive,
           reads: @[path]), openFileWork(path, state.inbox.poster,
-          indexCacheFile(state.indexCache, path)))
+          indexCacheFile(state.indexCache, path), lines = state.settings.join))
         state.opening.add Pending(job: job, path: path, by: cmd.origin)
   of ckBrowse:
     var paths: seq[string]
