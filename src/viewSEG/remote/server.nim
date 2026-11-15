@@ -111,8 +111,9 @@ when not defined(windows):
       header: "<unistd.h>".}
     const SendFlags = 0.cint
 
-  proc peerUid(fd: cint): int =
-    ## The user id of the process at the other end of `fd`; -1 when unknown.
+  proc peerUid*(fd: cint): int =
+    ## The user id of the process at the other end of `fd`, a connected
+    ## Unix-domain socket; -1 when unknown.
     result = -1
     when defined(linux):
       var cred: array[3, int32] # struct ucred: pid, uid, gid

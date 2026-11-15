@@ -278,6 +278,13 @@ const
     ## the Exponential gain's cutoff time (`DisplaySettings.untilMs`) stays
     ## within this and `MaxUntilMs`
   MaxUntilMs* = 60_000.0
+  MinAgcWindowMs* = 10.0 ## the AGC window's range, as the gain's controls take it
+  MaxAgcWindowMs* = 20_000.0
+  MaxDbPerS* = 60.0 ## the Exponential gain's dB per second stays within ± this
+  MaxPower* = 5.0 ## the power of time stays within ± this
+  MinClipPercentile* = 50.0 ## the percentile amplitudes are clipped at, from this to 100
+  MinFixedClip* = 1e-30 ## a Fixed gain's amplitude, from this to `MaxFixedClip`
+  MaxFixedClip* = 1e30
 
 func `==`*(a, b: PanelId): bool {.borrow.}
 func `$`*(id: PanelId): string = "panel " & $int(id)
@@ -476,6 +483,28 @@ func withGainDb*(d: DisplaySettings; db: float64): DisplaySettings =
   ## is not a number).
   result = d
   result.gainDb = if db.isNaN: 0.0 else: clamp(db, -MaxGainDb, MaxGainDb)
+
+func bounded*(d: DisplaySettings): DisplaySettings =
+  ## `d` with each number within the range the gain's controls and the
+  ## settings file take (a command from elsewhere, an agent's, can give any
+  ## number): clamped, and one that is not a number set to its default.
+  ## A Fixed gain's amplitude that is not positive and finite is none yet
+  ## (NaN), as the "From this record" button gives.
+  template within(x: float64; lo, hi, default: float64): float64 =
+    if x.isNaN: default else: clamp(x, lo, hi)
+  const defaults = DisplaySettings()
+  result = d.withGainDb(d.gainDb)
+  result.overlap = within(d.overlap, MinOverlap, MaxOverlap, defaults.overlap)
+  result.agcWindowMs = within(d.agcWindowMs, MinAgcWindowMs, MaxAgcWindowMs,
+    defaults.agcWindowMs)
+  result.fixedClip = if d.fixedClip > 0 and d.fixedClip < Inf:
+                       clamp(d.fixedClip, MinFixedClip, MaxFixedClip)
+                     else: NaN
+  result.dbPerS = within(d.dbPerS, -MaxDbPerS, MaxDbPerS, defaults.dbPerS)
+  result.power = within(d.power, -MaxPower, MaxPower, defaults.power)
+  result.untilMs = within(d.untilMs, MinUntilMs, MaxUntilMs, defaults.untilMs)
+  result.clipPercentile = within(d.clipPercentile, MinClipPercentile, 100.0,
+    defaults.clipPercentile)
 
 func drawsWiggles*(d: DisplaySettings): bool {.inline.} =
   ## Whether a layer drawn with `d` shows wiggles: in the wiggle modes, at

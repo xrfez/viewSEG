@@ -1,16 +1,20 @@
 ## Agent control without a window and without a socket:
 ##
 ## - the protocol's framing and parsing, bounded: lines cut and limited,
-##   JSON nested too deep refused before it is parsed, garbage, batches,
+##   JSON nested too deep refused before it is parsed (a comment, which
+##   could hide brackets from the count, refused too), garbage, batches,
 ##   wrong ids and versions answered with JSON-RPC errors;
 ## - the handshake, `ping`, `tools/list`, unknown methods and tools;
 ## - the `command` tool's schema, made from `Command`: every kind offered is
 ##   there and described (from `core/state`'s doc comments) with the fields
-##   it takes, and no refused kind is;
+##   it takes, and no refused kind is; every kind is decided on (offered,
+##   or refused as writing a file or as a preference);
 ## - the tools answered from an `AppState`: bad commands are refused and
 ##   change nothing; a command changes the state (a file shown, a view, a
 ##   sort, a display given in part, a selection, a kill of the selected
-##   trace); `state` and `headers` answer with what the state holds; `busy`
+##   trace); numbers no control gives (null, infinite, huge, negative) are
+##   brought within core's bounds, and a header field or sort key given
+##   twice is taken once; `state` and `headers` answer with what the state holds; `busy`
 ##   (what `wait` waits for) empties once the picture is complete; the other
 ##   tools refuse bad arguments;
 ## - the program's folders and the map in `state`; the map's commands
@@ -31,10 +35,16 @@
 ## the program's folder was not found"; with the field users read from a
 ## doc comment's first segment only, the check of `takes(ckHoverPoints)`;
 ## with `prefill` not defaulting `shown`, "\"shown\" did not default to
-## true".
+## true". With the display taken as given (`withGainDb` alone, not
+## `bounded`), the numbers' check: the program ended, "NIF has no literal for
+## nan" (AssertionDefect); with the header's fields and the sort's keys
+## taken as given, "5001" fields and "@[(field: FFID ...), (field: FFID
+## ...)]"; with `hasComment` not checked, "a comment hid 900 levels"; with
+## `ckShowPoints` left out of `Offered`, "\"show points' record\" is not
+## decided on".
 
-import std/[base64, json, os, sequtils, sets, strutils, tables]
-import viewSEG/core/[geometry, state]
+import std/[base64, json, math, os, sequtils, sets, strutils, tables]
+import viewSEG/core/[geometry, settingsnif, state]
 import viewSEG/remote/[protocol, schema, tools]
 import utils/[fixtures, waiting]
 
@@ -85,6 +95,15 @@ block parse:
   doAssert parseRequest("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"x\",\"params\":{\"a\":" &
     repeat("[", 70) & repeat("]", 70) & "}}", r).code == InvalidRequest
   doAssert nestingDepth("""{"a": "[[[[[[", "b": "\"[["}""") == 1, "brackets in strings"
+  # a comment (std/json skips them) with a quote in it would hide the
+  # brackets after it from the count: refused, JSON has no comments
+  let hidden = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"x\",\"params\":{\"a\":/*\"*/" &
+    repeat("[", 900) & repeat("]", 900) & "}}"
+  doAssert parseRequest(hidden, r).code == ParseError, "a comment hid 900 levels: " &
+    $parseRequest(hidden, r)
+  doAssert parseRequest("""{"jsonrpc":"2.0","id":1,"method":"x"} // c""", r).code == ParseError
+  doAssert parseRequest("""{"jsonrpc":"2.0","id":1,"method":"a/b"}""", r).code == 0,
+    "a slash in a string"
   # odd but harmless: a huge number, bytes that are not UTF-8, a NUL
   for text in ["{\"jsonrpc\":\"2.0\",\"id\":123456789012345678901234567890,\"method\":\"x\"}",
       "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\xff\xfe\"}",
@@ -139,6 +158,10 @@ block schemaFromCommand:
   for k in s["properties"]["kind"]["enum"]: kinds.incl k.getStr
   for k in CommandKind:
     doAssert (k in Offered) == ($k in kinds), $k
+    # each kind decided on: offered, or refused as writing a file or as a
+    # preference; one that is neither (a kind added later) is refused
+    doAssert ord(k in Offered) + ord(k in WritesAFile) + ord(k in Preferences) == 1,
+      "\"" & $k & "\" is not decided on: offer it to agents in remote/schema, or refuse it"
   doAssert "export messages" notin kinds and "settings" notin kinds and "sort" in kinds
   for k in Offered:
     doAssert Docs.kinds.getOrDefault($k).len > 0, "no description of the command \"" & $k & "\""
@@ -298,6 +321,41 @@ withFixtures fx:
       st.panel(MainPanel).layers[0].display.gainDb == 6
     doAssert st.panel(MainPanel).layers[0].display.gain == gain,
       "a display given in part kept the gain: " & $st.panel(MainPanel).layers[0].display.gain
+
+  block numbersAnyCommandMayGive:
+    # null (NaN) and numbers no control gives: taken within core's bounds,
+    # never a crash (the settings file has no literal for NaN or infinity)
+    for (field, given) in [("agcWindowMs", "null"), ("agcWindowMs", "1e999"),
+        ("agcWindowMs", "-5"), ("clipPercentile", "null"), ("clipPercentile", "1e9"),
+        ("dbPerS", "null"), ("dbPerS", "1e308"), ("power", "-1e308"), ("untilMs", "null"),
+        ("overlap", "1e999"), ("gainDb", "null"), ("fixedClip", "-1"), ("fixedClip", "1e999")]:
+      let answer = st.runCommand(fe, "{\"kind\":\"display\",\"display\":{\"" & field & "\":" &
+        given & "}}", applied)
+      doAssert applied and not answer.isError, field & " " & given & ": " & answer
+      let d = st.panel(MainPanel).layers[0].display
+      doAssert d.agcWindowMs in MinAgcWindowMs .. MaxAgcWindowMs and
+        d.clipPercentile in MinClipPercentile .. 100.0 and abs(d.dbPerS) <= MaxDbPerS and
+        abs(d.power) <= MaxPower and d.untilMs in MinUntilMs .. MaxUntilMs and
+        d.overlap in MinOverlap .. MaxOverlap and abs(d.gainDb) <= MaxGainDb and
+        (d.fixedClip.isNaN or d.fixedClip in MinFixedClip .. MaxFixedClip),
+        field & " " & given & ": " & $d
+      doAssert settingsDocument(st.settings).len > 0
+    doAssert st.panel(MainPanel).layers[0].display.agcWindowMs == MinAgcWindowMs
+    doAssert st.panel(MainPanel).layers[0].display.fixedClip.isNaN
+    # a field given twice is taken once, as the menus give it
+    doAssert not st.run(%*{"kind": "display header", "header": {"auto": false,
+      "fields": newSeqWith(5000, "channel") & @["FFID"]}}).isError
+    doAssert st.panel(MainPanel).header.fields == @[hfChannel, hfRecord],
+      $st.panel(MainPanel).header.fields.len
+    doAssert not st.run(%*{"kind": "display header", "header": {"auto": true}}).isError
+    doAssert not st.run(%*{"kind": "sort", "order": [{"field": "FFID"}, {"field": "FFID"}]}).isError
+    doAssert st.panel(MainPanel).layers[0].order == @[SortKey(field: hfRecord)],
+      $st.panel(MainPanel).layers[0].order
+    doAssert not st.run(%*{"kind": "sort", "order": [{"field": "channel",
+      "descending": true}, {"field": "channel"}, {"field": "channel"}]}).isError
+    doAssert st.panel(MainPanel).layers[0].order == @[SortKey(field: hfChannel,
+      descending: true)], $st.panel(MainPanel).layers[0].order
+    doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
 
   block headersAnswer:
     let h = st.traceHeaderReport("""{"panel":1,"position":0}""").body

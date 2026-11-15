@@ -17,10 +17,14 @@ program you run, on your own computer, that connects to a socket file.
 - Or, in a running program: **File > Agent control**. Click it again to turn it off.
 
 It stays on for that run only; the next start has it off again. While it is on, the status
-bar shows **agents: on**, and **agent connected** (in the warning colour) while an agent
-is connected; hover over it for the socket's path and the agents' names. Messages says when
-it was turned on, which agent connected, each of its calls with its arguments, and what was
-refused.
+bar shows **agents: on** first, at its left end, and **agent connected** (in the warning
+colour) while an agent is connected; hover over it for the socket's path and the agents'
+names. Messages says when it was turned on, which agent connected, each command it gave
+with its arguments and what the program said, and what was refused. So that an agent that
+asks over and over does not bury your own messages, a call that changes nothing (`state`,
+`headers`, `screenshot`, `wait`), a connection or a disconnection like one written in the
+last 10 seconds is counted instead, and the count is written ("12 more "state" calls in the
+last 10 s").
 
 The socket is, unless you name one:
 
@@ -91,8 +95,9 @@ bin/viewSEG --mcp-call wait
 bin/viewSEG --mcp-call screenshot '{"window": "plot"}' --png=plot.png
 ```
 
-`--mcp-call=<socket>` names the socket. The exit code is 0 when the call succeeded, 1 when
-it was refused or failed, 2 when no viewSEG listens.
+`--mcp-call=<socket>` names the socket. The arguments are one JSON object. The exit code is
+0 when the call succeeded, 1 when it was refused or failed (arguments that are not a JSON
+object are refused at once), 2 when no viewSEG of yours listens.
 
 ## The tools
 
@@ -147,20 +152,38 @@ by its place relative to that folder, and it is found on either side:
 
 An absolute path is taken as it is. The paths `state` reports are the program's.
 
+## What an agent can see and change
+
+Turn agent control on for agents you would let do what you can do in the windows:
+
+- **It reads what you can read.** It can list any folder and open any seismic or survey
+  file your user can read, as File > Open can, and read their trace headers. `state`
+  gives the paths of what is listed and open, the program's folder and working folder
+  (your user name is often in them) and the newest messages; `screenshot` gives pictures
+  of viewSEG's own window, nothing else on your screen.
+- **It changes the plot as you would,** and the program keeps it as it keeps yours: the
+  display, gain, display header and sort it sets become the defaults for new plots, the
+  files it opens are added to File > Open recent, and opening a file writes its index
+  cache. Numbers no control would take are brought within the controls' ranges.
+
 ## What an agent cannot do
 
-- **Write a file.** Exporting the settings, a layout or the messages, saving or importing a
-  layout and resetting the settings (which keeps a backup) are refused. Killing and
-  reversing traces never changes the file: the edits are kept beside it, as when you make
-  them.
-- **Change your preferences** or the windows' arrangement: the settings as a whole,
-  importing settings, loading a layout.
+- **Write a file of yours.** Exporting the settings, a layout or the messages, saving or
+  importing a layout and resetting the settings (which keeps a backup) are refused. Killing
+  and reversing traces never changes the file: the edits are kept beside it, as when you
+  make them. A loaded file is never changed.
+- **Change the rest of your preferences** or the windows' arrangement: the settings as a
+  whole (units, readout fields, calibration, theme), importing settings, loading a layout.
 - **Reach anything but this viewSEG.** The socket is a file only you can use (mode 0600);
-  on Linux a client must run as your user. Nothing listens on the network.
+  on Linux and macOS a client must run as your user, and `--mcp-stdio` and `--mcp-call`
+  talk only to a viewSEG of your user. Nothing listens on the network. Every program that
+  runs as your user can connect while agent control is on: in a devcontainer that shares
+  the socket's folder, that is every program run in the container as your user id.
 
-Limits: four agents at once, a message of 1 MiB at most, sixteen calls waiting per agent; a
-call is answered within a minute or refused (a `wait`, within its own time). Bad input is
-answered with an error and never stops the program.
+Limits: four agents at once, a message of 1 MiB at most (one JSON object, without
+comments), sixteen calls waiting per agent; a call is answered within a minute or refused
+(a `wait`, within its own time). Bad input is answered with an error and never stops the
+program.
 
 ## When it does not connect
 
@@ -171,5 +194,8 @@ answered with an error and never stops the program.
   give this one `--mcp=<another socket>`.
 - *the socket path ... is longer than the 107 bytes*: give a shorter `--mcp=<socket>`.
 - *... is not a socket*: a file of that name is in the way; viewSEG leaves it alone.
+- *the program listening on ... runs as another user*: the socket is not your viewSEG's
+  (another user's program listens there); give your own `--mcp=<socket>` on both sides, in
+  a folder only you can write.
 
 **Windows:** not available yet; the options say so.

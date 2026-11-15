@@ -16,7 +16,10 @@
 ##   the map's receivers (the Map window's picture changes) and halves the
 ##   map's scale (the map takes the view, as a zoom of the user's);
 ## - while it is connected the status bar shows "agent connected", and
-##   Messages holds a line for each of its calls; the file is not changed.
+##   Messages holds a line for each of its commands and for its first call
+##   of each other tool; the file is not changed;
+## - the sign comes first in the status bar: in view at 1280 pixels with
+##   every readout field chosen.
 ##
 ## Seen to fail: with `serve` not called in the frame loop, "the agent did
 ## not finish"; with the kill applied as a reversal, "the killed trace's
@@ -25,7 +28,8 @@
 ## left out, "no sign while on"; with File > Agent control's way not
 ## starting the server, "no listening socket after turning it on"; with the
 ## map's view applied in `core` alone (no `showMapView`), "the map's view was
-## not taken".
+## not taken"; with the sign drawn after the readout, "the sign is out of
+## view: it spans 2632.0 to 2715.0 in a bar 1280.0 wide".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -202,6 +206,33 @@ withFixtures fx:
     doAssert code == 0 and problem.len == 0, problem
     echo "tguiagent: off by default, on and off from the menu's way"
 
+  block theSignInView:
+    # a full status bar at 1280 pixels: every readout field (wider than the
+    # window); the sign comes first, so it is in view
+    var frame = 0
+    var problem = ""
+    proc onFrame(f: FrameInfo) =
+      inc frame
+      if frame == 3:
+        var s = f.core.settings
+        s.readout.setLen 0
+        for x in ReadoutField: s.readout.add x
+        f.apply Command(kind: ckSettings, settings: s)
+      elif frame == 10:
+        let sign = f.markOf("status.agent")
+        let bar = f.markOf("statusbar")
+        if sign.size.x <= 0: problem = "no sign"
+        elif bar.size.x <= 0: problem = "no status bar"
+        elif sign.pos.x < bar.pos.x or sign.pos.x + sign.size.x > bar.pos.x + bar.size.x:
+          problem = "the sign is out of view: it spans " & $sign.pos.x & " to " &
+            $(sign.pos.x + sign.size.x) & " in a bar " & $bar.size.x & " wide"
+        f.stop()
+    let code = run(RunOptions(maxFrames: 100, windowSize: (1280, 800), theme: forceDark,
+      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+      agent: true, agentSocket: socket, onFrame: onFrame))
+    doAssert code == 0 and problem.len == 0, problem
+    echo "tguiagent: the sign in view in a full status bar at 1280 pixels"
+
   block anAgentKillsATrace:
     results.open()
     var thread: Thread[Scenario]
@@ -211,7 +242,7 @@ withFixtures fx:
     var problem = ""
     var got: seq[(string, string)]
     var ink: PlotInk
-    var lines = 0
+    var lines, commands = 0
     proc onFrame(f: FrameInfo) =
       inc frame
       if not started:
@@ -232,6 +263,7 @@ withFixtures fx:
             done = true
             for m in f.messages:
               if "test agent 1 (agent " in m.text: inc lines
+              if "test agent 1 (agent 1): command {" in m.text: inc commands
             ink = plotInk(f.theme, f.core.panels[0].layers[0].display)
             f.stop()
           else: discard
@@ -253,7 +285,10 @@ withFixtures fx:
     doAssert problem.len == 0, problem
     doAssert done, "the agent did not finish"
     doAssert signSeen, "no sign of the agent in the status bar"
-    doAssert lines >= 14, "Messages holds " & $lines & " lines of the agent's calls"
+    # every command; the calls that change nothing once each (the rest so
+    # soon after are counted, not written)
+    doAssert commands == 8, "Messages holds " & $commands & " of the agent's 8 commands"
+    doAssert lines >= 12, "Messages holds " & $lines & " lines of the agent's calls"
     var found: Table[string, string]
     for (k, v) in got: found[k] = v
     let view = parseJson(found["view"])

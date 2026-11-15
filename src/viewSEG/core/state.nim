@@ -1988,7 +1988,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       template p: untyped = state.panels[k]
       let was = p.layers[0].display
       let wasLimits = p.viewLimits(p.view.columns)
-      let d = cmd.display.withGainDb(cmd.display.gainDb)
+      let d = cmd.display.bounded # whoever sent it: the settings file takes it as it is
       p.layers[0].display = d
       inc p.revision
       var s = state.settings
@@ -2016,21 +2016,25 @@ proc applyCommand(state: var AppState; cmd: Command) =
     elif not cmd.header.auto and cmd.header.fields.len == 0:
       state.ignore(cmd, "a display header needs at least one field")
     else:
-      state.panels[k].header = cmd.header
+      var header = HeaderChoice(auto: cmd.header.auto) # each field once, as its menu gives
+      for f in cmd.header.fields:
+        if f notin header.fields: header.fields.add f
+      state.panels[k].header = header
       var s = state.settings
-      s.plot.header = cmd.header
+      s.plot.header = header
       state.change s
       state.refetch(k, keepTiles = true)
   of ckSort:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
     elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
-    elif cmd.order != state.panels[k].layers[0].order:
-      state.panels[k].layers[0].order = cmd.order
+    elif uniqueKeys(cmd.order) != state.panels[k].layers[0].order:
+      let order = uniqueKeys(cmd.order) # each field once, as the sort dialog gives
+      state.panels[k].layers[0].order = order
       var s = state.settings
-      s.plot.order = cmd.order
-      if cmd.order.len > 0 and presetOf(cmd.order, s.sortPresets) < 0:
-        s.customOrder = cmd.order # the user's own keys, offered again
+      s.plot.order = order
+      if order.len > 0 and presetOf(order, s.sortPresets) < 0:
+        s.customOrder = order # the user's own keys, offered again
       state.change s
       state.reorder(k)
   of ckReverseAll:

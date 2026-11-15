@@ -863,12 +863,19 @@ or the map as the user's pan or zoom would (each window owns its view: a view se
    lock, and a byte on the wake pipe has the server thread write it out.
 3. **Only strings cross.** Each side parses what it reads itself; no `JsonNode` (a `ref`)
    leaves the thread that made it (ORC, "ORC across threads" above).
-4. **Nobody waits for the other.** The UI thread only swaps queues. The server thread
+4. **Nobody waits for the other.** The UI thread only swaps queues (the wake pipe and the
+   stop are modelled in `docs/models/agentwake.nif`: no wakeup is lost, even with the pipe
+   full and poll's timeout left out). The server thread
    gives each call a deadline (60 s; a wait's own time plus 10 s) and answers an error
    when it passes; an answer that comes later is dropped, by its serial.
-5. **What the user sees.** Every tool call, connection and disconnection is written to
-   Messages (source `agent`) by the UI thread, and the status bar shows a sign while the
-   server listens and another while a client is connected.
+5. **What the user sees.** What agents do is written to Messages (source `agent`) by the
+   UI thread: every command, with what the program said, and every failure; a call that
+   changes nothing (`state`, `headers`, `screenshot`, `wait`), a connection, a
+   disconnection or a refused message like one written less than `QuietFor` (10 s) before,
+   by the same agent's name, is counted, and the count written when that time has passed,
+   so an agent that polls does not bury the user's messages. The status bar shows a sign,
+   first in the bar so nothing pushes it out of view, while the server listens, and
+   another while a client is connected.
 
 ### Transport: a socket, and the program as its own stdio bridge
 
@@ -905,14 +912,18 @@ over a **Unix-domain socket**.
   it on, for that run only (it is not a setting); turned off, its clients are disconnected
   and the socket removed.
 - **Local only.** The socket's mode is 0600 (its owner only), in a folder made 0700 when
-  the program makes it; on Linux the client's user id must be the program's
-  (`SO_PEERCRED`). Never a network port.
+  the program makes it; the client's user id must be the program's (`SO_PEERCRED` on
+  Linux, `getpeereid` elsewhere), and the bridge and `--mcp-call` take only a server of
+  their own user (one another user listens with could feed an agent what it likes).
+  Never a network port. Any program of the user's can connect while it is on: in a
+  container sharing the socket's folder, any program running there as the user's id.
 - **The path.** A socket left by a run that crashed (nobody listens on it) is replaced;
   one another program listens on is left alone and the start refused; anything that is
   not a socket is never removed. The socket is removed at shutdown.
 - **Bounded.** 4 clients; a message of 1 MiB at most (a longer one is answered with an
   error and its client disconnected); JSON nested 64 deep at most, checked before
-  it is parsed; 16 calls in flight per client; 64 MiB of answers
+  it is parsed, and no comments (`std/json` skips them, and one could hide brackets from
+  the check); 16 calls in flight per client; 64 MiB of answers
   waiting for a client to read them (one that does not read is disconnected); a
   screenshot of 16 MiB at most. Bad input gets a JSON-RPC error, never an exception out
   of the thread.
@@ -926,6 +937,11 @@ over a **Unix-domain socket**.
   settings reset, which keeps a backup) and the user's preferences and window
   arrangement (`ckSettings`, `ckImportSettings`, `ckLayout`, `ckLoadLayout`). Trace
   edits are the lists beside the file (`core/edits`): a loaded file is never changed.
+  As for the windows' commands, `core` keeps what a panel's display, display header and
+  sort become as the defaults for new plots (the settings file), and an open adds to the
+  recent files; it brings a display's numbers within the ranges the controls and the
+  settings file take (`bounded`: a NaN or an infinity, which the settings file has no
+  literal for, ended the program) and takes a header field or sort key given twice once.
 - No AI code, key or network access is in viewSEG itself.
 
 ### The command tool's schema
@@ -935,8 +951,11 @@ property per field of the variant (Nim keeps field names unique across its branc
 `kind` an enum of the names of the kinds offered, each property's description naming the
 kinds that take it. A field's schema comes from its type through generic procs: integers
 (the ids too), numbers, booleans, strings, enums by their names, sets and seqs as arrays,
-objects as their fields. The decoder is made the same way, so a new command or field is
-offered with no glue, and a field of a type those procs do not know fails the build.
+objects as their fields. The decoder is made the same way, so a new field, or a new
+command once it is put in `Offered`, needs no glue, and a field of a type those procs do
+not know fails the build. `Offered` names the kinds one by one: a kind added to `Command`
+(an export, editing headers in place) is refused to agents until it is offered, or listed
+among those refused, on purpose (`tagenttools` fails until then).
 An object given in part changes only the fields given: a panel's display, display header,
 view and trace filter are first taken from the panel, so `{"kind": "display", "panel": 1,
 "display": {"mode": "density"}}` changes the mode alone. An unknown field, a wrong type or

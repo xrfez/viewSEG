@@ -1,0 +1,91 @@
+(stmts#Hypothesis: an answer queued by the UI thread, or the stop, can be missed by the
+ server thread, which then waits in poll with work pending (a lost wakeup), when the
+ wake pipe is full and a write is dropped (EAGAIN, discarded).
+ Source: src/viewSEG/remote/server.nim: the UI's `answer` (lock: answers.add; then
+ write a byte) and `shutDown` (lock: stopping = true; write a byte; join); the server's
+ `serve` loop: poll (wakes on the pipe; its 1 s timeout is off in the base: the
+ protocol alone), drain the pipe, lock (read stopping, swap the answers), break,
+ deliver.
+ Variables: pipe bytes (Cap 1 models a full pipe: a write beyond it is dropped); q answers
+ in the hub; uw UI answer write pending; ui 0 running, 1 stopping set, 2 byte written,
+ 3 joined; srv 0 in poll, 1 woken, 2 drained, 3 exited; made, delivered.
+ Switches: Mut 1 = stop writes its byte before it sets stopping; 2 = the server takes the
+ lock before it drains the pipe; 3 = an answer writes its byte before it is queued.
+ Timeout (true) = poll also returns with nothing to read (the real 1 s timeout).
+ Run: tlacheck.py docs/models/agentwake.nif --expect:pass (85 states), then Witness=(true)
+ and Mut=1, 2, 3 with --expect:fail.
+ Expected: base passes; Witness fails; each Mut fails; Mut with Timeout passes (the
+ timeout hides the bug as a 1 s delay).#
+  (variables :pipe.0. :stopping.0. :q.0. :uw.0. :ui.0. :srv.0. :made.0. :delivered.0.)
+  (assign Mut.0. 0)
+  (assign Witness.0. (false))
+  (assign Timeout.0. (false))
+  (assign Cap.0. 1)
+  (assign N.0. 2)
+
+  (def :Init.0.
+    (and (prime pipe.0. 0) (prime stopping.0. (false)) (prime q.0. 0) (prime uw.0. 0)
+      (prime ui.0. 0) (prime srv.0. 0) (prime made.0. 0) (prime delivered.0. 0)))
+
+  (def :Wrote.0. (if (lt pipe.0. Cap.0.) (plus pipe.0. 1) pipe.0.))
+
+  (def :UiAdd.0.#answer: the lock, add; Mut 3: the byte first.#
+    (and (eq ui.0. 0) (eq uw.0. 0) (lt made.0. N.0.)
+      (if (eq Mut.0. 3)
+        (and (prime pipe.0. Wrote.0.) (prime uw.0. 1) (prime made.0. (plus made.0. 1)))
+        (and (prime q.0. (plus q.0. 1)) (prime uw.0. 1) (prime made.0. (plus made.0. 1))))))
+
+  (def :UiWrite.0.#answer: write, EAGAIN dropped; Mut 3: the queue second.#
+    (and (eq uw.0. 1)
+      (if (eq Mut.0. 3)
+        (and (prime q.0. (plus q.0. 1)) (prime uw.0. 0))
+        (and (prime pipe.0. Wrote.0.) (prime uw.0. 0)))))
+
+  (def :UiStopSet.0.#shutDown: the lock, stopping; Mut 1: the byte first.#
+    (and (eq ui.0. 0) (eq uw.0. 0)
+      (if (eq Mut.0. 1)
+        (and (prime pipe.0. Wrote.0.) (prime ui.0. 1))
+        (and (prime stopping.0. (true)) (prime ui.0. 1)))))
+
+  (def :UiStopWrite.0.#shutDown: write; Mut 1: stopping second.#
+    (and (eq ui.0. 1)
+      (if (eq Mut.0. 1)
+        (and (prime stopping.0. (true)) (prime ui.0. 2))
+        (and (prime pipe.0. Wrote.0.) (prime ui.0. 2)))))
+
+  (def :UiJoin.0.#shutDown: joinThread returns once the thread ended.#
+    (and (eq ui.0. 2) (eq srv.0. 3) (prime ui.0. 3)))
+
+  (def :SrvPoll.0.#serve, poll: woken by a byte (or, with Timeout, by nothing).#
+    (and (eq srv.0. 0) (or (gt pipe.0. 0) Timeout.0.) (prime srv.0. 1)))
+
+  (def :Drain.0. (and (prime pipe.0. 0) (prime srv.0. 2)))
+
+  (def :Lock.0.#serve: stopping read under the lock; else the answers swapped out, delivered.#
+    (if stopping.0.
+      (prime srv.0. 3)
+      (and (prime delivered.0. (plus delivered.0. q.0.)) (prime q.0. 0)
+        (prime srv.0. (if (eq Mut.0. 2) 2 0)))))
+
+  (def :SrvStep1.0.#serve: drain the pipe; Mut 2: the lock first.#
+    (and (eq srv.0. 1) (if (eq Mut.0. 2) Lock.0. Drain.0.)))
+
+  (def :SrvStep2.0.#serve: the lock; Mut 2: then the drain, back to poll.#
+    (and (eq srv.0. 2)
+      (if (eq Mut.0. 2) (and (prime pipe.0. 0) (prime srv.0. 0)) Lock.0.)))
+
+  (def :Next.0. (or UiAdd.0. UiWrite.0. UiStopSet.0. UiStopWrite.0. UiJoin.0. SrvPoll.0.
+    SrvStep1.0. SrvStep2.0.))
+
+  (def :Stuck.0.#the server in poll with nothing to wake it, while an answer or the stop waits#
+    (and (eq srv.0. 0) (eq pipe.0. 0) (eq uw.0. 0) (not (eq ui.0. 1)) (not Timeout.0.)
+      (or (gt q.0. 0) stopping.0.)))
+
+  (def :Safe.0. (not Stuck.0.))
+
+  (def :Reached.0.#a whole run: every answer delivered, then stopped and joined#
+    (and (eq ui.0. 3) (eq delivered.0. N.0.)))
+
+  (spec (always-stutter Init.0. Next.0. (tuple pipe.0. stopping.0. q.0. uw.0. ui.0. srv.0.
+    made.0. delivered.0.)))
+  (check (if Witness.0. (not Reached.0.) Safe.0.)))

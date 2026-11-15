@@ -8,9 +8,14 @@
 ## next frame, so they see it drawn; one screenshot a frame. A `wait` is
 ## kept and looked at every frame until it holds on two frames in a row
 ## (what a job that ended meanwhile posted is then taken in) or its time is
-## up. Every
-## call, connection and disconnection goes to the log (source `agent`), and
-## so does what was refused.
+## up.
+##
+## What agents do goes to the log (source `agent`) without burying the
+## user's own messages: every command, with what it said, and every
+## failure; a call that changes nothing (`state`, `headers`, `screenshot`,
+## `wait`), a connection, a disconnection or a refused message like one
+## written less than `QuietFor` before is counted instead, and the count is
+## written once `QuietFor` has passed (`said`).
 
 import std/[json, monotimes, strutils, tables, times]
 import ../core/state
@@ -22,12 +27,21 @@ const
   CallsPerFrame* = 8
   LogSource* = "agent"
   ShownArguments = 300 ## characters of a call's arguments the log shows
+  QuietFor* = initDuration(seconds = 10)
+    ## a line like one written less than this before is counted, not written
 
 type
   Waiting = object
     call: Call
     deadline: MonoTime
     quiet: int ## frames in a row that found nothing busy
+
+  Quiet = object
+    ## Lines of one kind from one agent: when one was written last, and how
+    ## many like it were counted since.
+    since: MonoTime
+    held: int
+    who, what: string ## for the count's line: "probe 1", "\"state\" calls"
 
   AgentControl* = object
     ## Owned by the UI thread, beside the application state. Off until
@@ -40,6 +54,8 @@ type
     frame: int ## `serve` calls so far
     commandFrame: int ## the frame a command was last applied in
     names: Table[int, string] ## what each client said it is
+    announced: Table[int, bool] ## whether its connection was written
+    quiet: Table[string, Quiet] ## by agent and kind of line: see `said`
 
 proc running*(c: AgentControl): bool {.inline.} = c.server.running
   ## Whether agent control is on: the server listens.
@@ -72,6 +88,22 @@ proc start*(c: var AgentControl; state: var AppState; path, version: string;
       "written here.")
     true
 
+proc countsDue(c: var AgentControl; state: var AppState; now: MonoTime; all = false) =
+  ## Writes the counts of the lines held back for `QuietFor` (all of them
+  ## with `all`), and forgets the kinds of line that have been quiet as long.
+  var gone: seq[string]
+  for key, q in c.quiet.mpairs:
+    if all or now - q.since >= QuietFor:
+      if q.held > 0:
+        let secs = max(1, int((now - q.since).inSeconds))
+        state.report(sevInfo, LogSource, q.who & ": " & $q.held & " more " & q.what &
+          " in the last " & $secs & " s, not written one by one.")
+        q.held = 0
+        q.since = now
+      else:
+        gone.add key
+  for key in gone: c.quiet.del key
+
 proc stop*(c: var AgentControl; state: var AppState) =
   ## Turns agent control off: the agents are disconnected, the socket removed.
   if c.running:
@@ -80,37 +112,77 @@ proc stop*(c: var AgentControl; state: var AppState) =
     c.queue.setLen 0
     c.waits.setLen 0
     c.names.clear()
+    c.announced.clear()
+    c.countsDue(state, getMonoTime(), all = true)
+    c.quiet.clear()
     state.report(sevInfo, LogSource, "Agent control is off; " & path & " is removed.")
 
 proc who(c: AgentControl; client: int): string =
   let name = c.names.getOrDefault(client)
   if name.len > 0: name & " (agent " & $client & ")" else: "Agent " & $client
 
+proc said(c: var AgentControl; state: var AppState; client: int; what, line: string;
+    now: MonoTime; severity = sevInfo): bool =
+  ## Writes `line`, unless a line of the same kind (`what`) from the same
+  ## agent (by its name: a shell's `--mcp-call` connects for each call) was
+  ## written less than `QuietFor` before: then it is counted, for
+  ## `countsDue`. Whether it was written.
+  let name = c.names.getOrDefault(client)
+  let who = if name.len > 0: name else: "Agent " & $client
+  let key = who & "\t" & what
+  if key in c.quiet:
+    inc c.quiet[key].held
+    false
+  else:
+    c.quiet[key] = Quiet(since: now, who: who, what: what)
+    state.report(severity, LogSource, line)
+    true
+
+proc announce(c: var AgentControl; state: var AppState; client: int; now: MonoTime) =
+  ## Writes that `client` connected, once: when it says who it is, or else
+  ## at its first call or when it goes.
+  if not c.announced.getOrDefault(client, true):
+    c.announced[client] = true
+    let name = c.names.getOrDefault(client)
+    discard c.said(state, client, "connections", "Agent " & $client & " connected" &
+      (if name.len > 0: ": " & name else: "") & ".", now)
+
 func shown(arguments: string): string =
   if arguments.len <= ShownArguments: arguments
   else: arguments.substr(0, ShownArguments - 1) & "..."
 
-proc note(c: var AgentControl; state: var AppState; e: Event) =
+proc note(c: var AgentControl; state: var AppState; e: Event; now: MonoTime) =
   case e.kind
   of ekConnected:
     c.names[e.client] = ""
-    state.report(sevInfo, LogSource, "Agent " & $e.client & " connected.")
+    c.announced[e.client] = false
   of ekIdentified:
-    if e.text.len > 0:
+    if e.text.len > 0 and e.client in c.names:
       c.names[e.client] = e.text
-      state.report(sevInfo, LogSource, "Agent " & $e.client & " is " & e.text & ".")
+    c.announce(state, e.client, now)
   of ekDisconnected:
-    state.report(sevInfo, LogSource, c.who(e.client) & " disconnected" &
-      (if e.text.len > 0: ": " & e.text else: "") & ".")
+    c.announce(state, e.client, now)
+    let line = c.who(e.client) & " disconnected" & (if e.text.len > 0: ": " & e.text
+      else: "") & "."
+    if e.text.len > 0: state.report(sevInfo, LogSource, line) # it failed: always said
+    else: discard c.said(state, e.client, "disconnections", line, now)
     c.names.del e.client
+    c.announced.del e.client
   of ekRefused:
-    state.report(sevWarning, LogSource, (if e.client > 0: c.who(e.client) & ": " else: "") &
-      "refused: " & e.text & ".")
+    if e.client in c.names: # a message of a connected agent
+      c.announce(state, e.client, now)
+      discard c.said(state, e.client, "refused messages", c.who(e.client) & ": refused: " &
+        e.text & ".", now, sevWarning)
+    else: # a connection refused, or events not kept: always said
+      state.report(sevWarning, LogSource, (if e.client > 0: "Agent " & $e.client & ": "
+        else: "") & "refused: " & e.text & ".")
 
-proc respond(c: var AgentControl; state: var AppState; call: Call; answer: string) =
+proc respond(c: var AgentControl; state: var AppState; call: Call; answer: string;
+    written = true) =
   ## Sends `answer` (a tool result made by `remote/tools`); one that is an
-  ## error is logged as a warning with the reason it gives first.
-  if answer.contains("\"isError\":true"):
+  ## error is logged as a warning with the reason it gives first, when its
+  ## call was (`written`).
+  if written and answer.contains("\"isError\":true"):
     let why = parseJson(answer)["content"][0]["text"].getStr
     state.report(sevWarning, LogSource, c.who(call.client) & ": " & call.tool & ": " &
       shown(why))
@@ -123,7 +195,7 @@ proc serve*(c: var AgentControl; state: var AppState; fe: Frontend; now = getMon
   inc c.frame
   if not c.running: return
   c.server.takeCalls(c.calls, c.events)
-  for e in c.events: c.note(state, e)
+  for e in c.events: c.note(state, e, now)
   for call in c.calls.mitems: c.queue.add move call
   var done = 0
   var shot = false
@@ -133,30 +205,35 @@ proc serve*(c: var AgentControl; state: var AppState; fe: Frontend; now = getMon
     let call = c.queue[0]
     c.queue.delete 0
     inc done
-    state.report(sevInfo, LogSource, c.who(call.client) & ": " & call.tool & " " &
-      shown(call.arguments))
+    c.announce(state, call.client, now)
+    let line = c.who(call.client) & ": " & call.tool & " " & shown(call.arguments)
+    # A command is always written (it changes what the user sees); a call
+    # that changes nothing, like one just written, is counted.
+    let written = if call.tool == "command": (state.report(sevInfo, LogSource, line); true)
+                  else: c.said(state, call.client, "\"" & call.tool & "\" calls", line, now)
     case call.tool
     of "command":
       let answer = state.runCommand(fe, call.arguments, applied)
       if applied: c.commandFrame = c.frame
       c.respond(state, call, answer)
-    of "state": c.respond(state, call, state.stateReport(fe, call.arguments))
-    of "headers": c.respond(state, call, state.traceHeaderReport(call.arguments))
+    of "state": c.respond(state, call, state.stateReport(fe, call.arguments), written)
+    of "headers": c.respond(state, call, state.traceHeaderReport(call.arguments), written)
     of "screenshot":
       shot = true
       var picture: Picture
       let refusal = screenshot(fe, call.arguments, picture)
-      if refusal.len > 0: c.respond(state, call, refusal)
+      if refusal.len > 0: c.respond(state, call, refusal, written)
       else: c.server.answerPicture(call.serial, move picture)
     of "wait":
       var seconds: float
       let refusal = waitArgs(call.arguments, seconds)
-      if refusal.len > 0: c.respond(state, call, refusal)
+      if refusal.len > 0: c.respond(state, call, refusal, written)
       else:
         c.waits.add Waiting(call: call, deadline: call.received +
           initDuration(milliseconds = int(seconds * 1000)))
     else:
-      c.respond(state, call, textResult("no tool " & call.tool, isError = true))
+      c.respond(state, call, textResult("no tool " & call.tool, isError = true), written)
+  c.countsDue(state, now)
   # Idle on two frames in a row: a job that ended between this frame's
   # inbox and now has what it posted taken in by the next frame's.
   let reasons = if c.frame > c.commandFrame: state.busy(fe)

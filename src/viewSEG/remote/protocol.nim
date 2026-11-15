@@ -107,11 +107,28 @@ func nestingDepth*(text: string): int =
       of ']', '}': dec depth
       else: discard
 
+func hasComment*(text: string): bool =
+  ## Whether `text` has a `/` outside its strings: the start of a comment,
+  ## which JSON does not have. `parseJson` skips comments, and a quote in
+  ## one would hide brackets from `nestingDepth`, so they are refused.
+  var inString = false
+  var escaped = false
+  for c in text:
+    if inString:
+      if escaped: escaped = false
+      elif c == '\\': escaped = true
+      elif c == '"': inString = false
+    elif c == '"': inString = true
+    elif c == '/': return true
+  false
+
 proc parseBounded*(text: string; node: var JsonNode): string =
   ## Parses JSON `text` into `node`; "" when it is JSON nested at most
   ## `MaxDepth` deep, else why not.
   result = ""
-  if text.nestingDepth > MaxDepth:
+  if text.hasComment:
+    result = "not JSON: a comment (/)"
+  elif text.nestingDepth > MaxDepth:
     result = "nested deeper than " & $MaxDepth & " levels"
   else:
     try:

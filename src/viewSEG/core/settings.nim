@@ -112,7 +112,7 @@ proc addRecent*(list: var seq[string]; item: string; most: Positive) =
     if x != item and kept.len < most: kept.add x
   list = kept
 
-func uniqueKeys(order: openArray[SortKey]): seq[SortKey] =
+func uniqueKeys*(order: openArray[SortKey]): seq[SortKey] =
   ## `order` with each field once, at its first place.
   for k in order:
     var seen = false

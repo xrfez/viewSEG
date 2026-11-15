@@ -12,7 +12,8 @@
 ##   names are unique across a Nim variant's branches), and `kind` an enum of
 ##   the kinds offered. Their descriptions are the doc comments of `Command`
 ##   and `CommandKind` in `core/state`, read from its source at compile time,
-##   so a new command or field needs no glue here.
+##   so a new field, or a new command once it is in `Offered`, needs no glue
+##   here.
 
 import std/[json, macros, math, strutils, tables, typetraits]
 import ../core/state
@@ -23,8 +24,14 @@ const
     ## refused: each writes a file (a reset keeps a backup of the settings)
   Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout}
     ## refused: the user's preferences and the windows' arrangement
-  Offered* = {low(CommandKind) .. high(CommandKind)} - WritesAFile - Preferences
-    ## what the `command` tool carries out
+  Offered* = {ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
+    ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckReverseAll, ckBack,
+    ckEdit, ckUndoEdit, ckClearEdits, ckHover, ckSelect, ckClearSelection, ckLoadSurvey,
+    ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
+    ckShowPoints}
+    ## what the `command` tool carries out: named one by one, so that a kind
+    ## added to `Command` (an export, editing headers in place) is refused
+    ## until it is put here, or among those refused, on purpose
 
 # ------------------------------------------------------------ to JSON --
 
@@ -400,6 +407,8 @@ proc kindOf*(n: JsonNode; kind: var CommandKind): string =
       if v in Preferences:
         return "\"" & $v & "\" changes the user's preferences or the windows' " &
           "arrangement, which an agent may not do"
+      if v notin Offered:
+        return "\"" & $v & "\" is not offered to agents"
       return ""
   var names: seq[string]
   for v in Offered: names.add escapeJson($v)
@@ -436,5 +445,9 @@ proc commandSchema*(): JsonNode =
     bound("gainDb", -MaxGainDb, MaxGainDb)
     bound("overlap", MinOverlap, MaxOverlap)
     bound("untilMs", MinUntilMs, MaxUntilMs)
+    bound("agcWindowMs", MinAgcWindowMs, MaxAgcWindowMs)
+    bound("dbPerS", -MaxDbPerS, MaxDbPerS)
+    bound("power", -MaxPower, MaxPower)
+    bound("clipPercentile", MinClipPercentile, 100.0)
   %*{"type": "object", "properties": props, "required": ["kind"],
     "additionalProperties": false}

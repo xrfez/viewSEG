@@ -294,8 +294,9 @@ proc agentField(a: AgentSign; t: Theme; marks: var Marks) =
 proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     fields: openArray[ReadoutField]; at: Pick; marks: var Marks;
     mapCursor = ""; linkNote = ""): StatusOutput =
-  ## The status strip along the bottom of the main window: the running job,
-  ## then the readout of `fields` at `at` (blank where a value is not known),
+  ## The status strip along the bottom of the main window: the sign that
+  ## agent control is on (`info.agent`), the running job, then the readout
+  ## of `fields` at `at` (blank where a value is not known),
   ## or, with the pointer over the map, its coordinates (`mapCursor`); why
   ## the hover lights nothing up in the other view (`linkNote`); the theme
   ## and the scale on the right. A right click on it opens the menu that
@@ -307,6 +308,10 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     marks.markWindow("statusbar")
     igSetCursorPosY(round((height - igGetFontSize()) / 2))
     igDummy(ImVec2_c(x: 0, y: 0))
+    # First: whatever else the bar holds (a job, the readout, a long note),
+    # the sign that agents may act is in view.
+    if info.agent.on:
+      agentField(info.agent, t, marks)
     if job.shown:
       jobField(job, t, marks, result)
     if mapCursor.len > 0:
@@ -330,8 +335,6 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
       igPopStyleColor(1)
       marks.mark("status.link")
       igSameLine(0, 16)
-    if info.agent.on:
-      agentField(info.agent, t, marks)
     let right = info.themeName & "   " & $int(round(info.scale * 100)) & " %"
     let w = igCalcTextSize(right.cstring, nil, false, -1).x
     let avail = igGetContentRegionAvail().x

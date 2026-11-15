@@ -9,10 +9,12 @@
 ## - `callOnce` (`viewSEG --mcp-call`): one tool call from a shell; its text
 ##   goes to stdout, an image to the file asked for.
 ##
-## Neither opens a window or touches the application state.
+## Neither opens a window or touches the application state, and both talk
+## only to a program of their own user: what answers on a socket another
+## user made could put words in an agent's mouth.
 
 import std/[base64, json, monotimes, strutils, times]
-import protocol, tools
+import protocol, server, tools
 
 const
   MaxAnswerBytes* = 32 * 1024 * 1024 ## the longest answer read from the program
@@ -22,19 +24,28 @@ const
 when not defined(windows):
   import std/posix
 
-  proc connectTo(path: string): cint =
-    ## A socket connected to `path`; -1 when nothing listens there.
+  proc connectTo*(path: string; why: var string; owner = int(getuid())): cint =
+    ## A socket connected to `path`; -1 when nothing listens there, or when
+    ## what listens runs as another user than `owner` (`why` says so).
     result = -1
-    if path.len > 0 and path.len < 108:
+    why = ""
+    if path.len > 0 and path.len <= SocketNameLimit:
       let fd = socket(AF_UNIX, SOCK_STREAM, 0)
       if fd.cint >= 0:
         var a: Sockaddr_un
         a.sun_family = TSa_Family(AF_UNIX)
         copyMem(addr a.sun_path[0], path.cstring, path.len)
-        if connect(fd, cast[ptr SockAddr](addr a), SockLen(sizeof(a))) == 0:
-          result = fd.cint
-        else:
+        if connect(fd, cast[ptr SockAddr](addr a), SockLen(sizeof(a))) != 0:
           discard posix.close(fd.cint)
+        else:
+          let uid = peerUid(fd.cint)
+          if uid == owner:
+            result = fd.cint
+          else:
+            discard posix.close(fd.cint)
+            why = "the program listening on " & path & " runs as " & (if uid < 0:
+              "a user that cannot be told" else: "another user (id " & $uid & ")") &
+              "; agent control talks to a viewSEG of your own user only"
 
   proc writeAll(fd: cint; text: string): bool =
     ## Writes all of `text` to `fd`; false when the other end is gone.
@@ -71,27 +82,29 @@ proc notRunning(path: string): string =
     "`viewSEG --mcp` (with the same socket: `--mcp=" & path & "`), or turn on File > " &
     "Agent control in the running program, then call again."
 
-proc bridge*(path, version: string): int =
-  ## Serves an MCP client on stdin and stdout until stdin ends (see the
-  ## module's documentation). Returns the exit code.
+proc bridge*(path, version: string; input: cint = 0; output = stdout): int =
+  ## Serves an MCP client on `input` and `output` (stdin and stdout) until
+  ## `input` ends and the calls it made are answered (see the module's
+  ## documentation). Returns the exit code.
   when defined(windows):
     stderr.writeLine "viewSEG: agent control is not available on Windows in this version"
     result = 1
   else:
     signal(SIGPIPE, SIG_IGN)
     let toolList = toolList()
-    var input = initLineBuffer(MaxMessageBytes)
+    var asked = initLineBuffer(MaxMessageBytes)
     var answers = initLineBuffer(MaxAnswerBytes)
     var sock: cint = -1
     var initParams = "{}"
     var inFlight: seq[string]
     var line: string
-    var open = true
+    var open = true # `input` has not ended
+    var until: MonoTime # once it has: how long the calls in flight are waited for
 
     proc toClient(text: string) =
-      stdout.write text
-      stdout.write '\n'
-      stdout.flushFile()
+      output.write text
+      output.write '\n'
+      output.flushFile()
 
     proc lost(why: string) =
       if sock >= 0: discard posix.close(sock)
@@ -101,21 +114,28 @@ proc bridge*(path, version: string): int =
         toClient response(id, textResult(why, isError = true))
       inFlight.setLen 0
 
+    var refusal = "" # why the program on the socket was not taken
+
     proc connected(): bool =
       if sock < 0:
-        sock = connectTo(path)
+        sock = connectTo(path, refusal)
         if sock >= 0 and not sock.writeAll("{\"jsonrpc\":\"2.0\",\"id\":" & BridgeId &
             ",\"method\":\"initialize\",\"params\":" & initParams & "}\n" &
             "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n"):
           lost("viewSEG closed the connection")
       sock >= 0
 
-    while open:
-      var fds = @[TPollfd(fd: 0, events: POLLIN)]
+    # A client may send its calls and close its end at once (`echo ... |`):
+    # their answers are still relayed, for `CallTimeout` at most.
+    while open or (sock >= 0 and inFlight.len > 0 and getMonoTime() < until):
+      var fds: seq[TPollfd]
+      if open: fds.add TPollfd(fd: input, events: POLLIN)
+      let at = fds.len # the socket's place
       if sock >= 0: fds.add TPollfd(fd: sock, events: POLLIN)
-      if poll(addr fds[0], Tnfds(fds.len), -1) < 0 and errno != EINTR:
-        open = false
-      if fds.len > 1 and (fds[1].revents and (POLLIN or POLLHUP or POLLERR)) != 0:
+      let wait = if open: -1 else: int(max(0, (until - getMonoTime()).inMilliseconds))
+      if poll(addr fds[0], Tnfds(fds.len), cint(wait)) < 0 and errno != EINTR:
+        break
+      if sock >= 0 and (fds[at].revents and (POLLIN or POLLHUP or POLLERR)) != 0:
         if not readSome(sock, answers):
           lost("viewSEG closed the connection (it was closed, or agent control was " &
             "turned off); call again once it runs")
@@ -132,16 +152,19 @@ proc bridge*(path, version: string): int =
               let k = inFlight.find(id)
               if k >= 0: inFlight.delete k
               toClient line
-      if (fds[0].revents and (POLLIN or POLLHUP or POLLERR)) != 0:
-        if not readSome(0, input): open = false
+      if open and (fds[0].revents and (POLLIN or POLLHUP or POLLERR)) != 0:
+        if not readSome(input, asked):
+          open = false
+          until = getMonoTime() + CallTimeout
         var more = true
         while more:
-          case input.next(line)
+          case asked.next(line)
           of lsWaiting: more = false
           of lsTooLong:
             toClient errorResponse("", InvalidRequest, "a message is longer than " &
               $MaxMessageBytes & " bytes")
             open = false
+            until = getMonoTime() # the stream cannot go on: nothing more is relayed
             more = false
           of lsLine:
             if line.strip.len > 0:
@@ -159,7 +182,8 @@ proc bridge*(path, version: string): int =
                   toClient answer
                 of maToolCall:
                   if not connected():
-                    toClient response(req.id, textResult(notRunning(path), isError = true))
+                    toClient response(req.id, textResult(if refusal.len > 0: refusal
+                      else: notRunning(path), isError = true))
                   elif sock.writeAll(line & "\n"):
                     inFlight.add req.id
                   else:
@@ -177,9 +201,22 @@ proc callOnce*(path, tool, arguments, pngPath: string): int =
     stderr.writeLine "viewSEG: agent control is not available on Windows in this version"
     result = 2
   else:
-    let sock = connectTo(path)
+    # The arguments are checked here: sent as they are, text that is not one
+    # JSON object would be a message the program cannot answer by its id.
+    var given = "{}"
+    if arguments.strip.len > 0:
+      var n: JsonNode
+      let why = parseBounded(arguments, n)
+      if why.len > 0 or n.kind != JObject:
+        stderr.writeLine "viewSEG: the arguments are not a JSON object (",
+          (if why.len > 0: why else: "a " & $n.kind), "): ",
+          arguments.substr(0, 79).replace("\n", "\\n")
+        return 1
+      given = $n
+    var refusal = ""
+    let sock = connectTo(path, refusal)
     if sock < 0:
-      stderr.writeLine "viewSEG: ", notRunning(path)
+      stderr.writeLine "viewSEG: ", (if refusal.len > 0: refusal else: notRunning(path))
       return 2
     defer: discard posix.close(sock)
     let request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":" &
@@ -187,8 +224,7 @@ proc callOnce*(path, tool, arguments, pngPath: string): int =
       "\"clientInfo\":{\"name\":\"viewSEG --mcp-call\",\"version\":\"1\"}}}\n" &
       "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n" &
       "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":" &
-      escapeJson(tool) & ",\"arguments\":" & (if arguments.strip.len == 0: "{}"
-      else: arguments) & "}}\n"
+      escapeJson(tool) & ",\"arguments\":" & given & "}}\n"
     if not sock.writeAll(request):
       stderr.writeLine "viewSEG: the connection to ", path, " failed"
       return 2
@@ -198,7 +234,7 @@ proc callOnce*(path, tool, arguments, pngPath: string): int =
     let deadline = getMonoTime() + CallTimeout
     while not got:
       case answers.next(line)
-      of lsLine: got = idOf(line) == "2"
+      of lsLine: got = idOf(line) in ["2", "null"] # null: the program refused the connection
       of lsTooLong:
         stderr.writeLine "viewSEG: the answer is longer than ", MaxAnswerBytes, " bytes"
         return 1
