@@ -555,12 +555,15 @@ iterator stationTraces*(l: SurveyLayer; r: PointRole; s: Station): int =
   ## (0), and one for any index (0) takes every index.
   if l.origin == loTraces and s.known:
     let ss = addr l.stations[r]
-    var indices: seq[int16]
+    # (an array, not a seq: a box of half a million points asks this for each)
+    var indices: array[10, int16]
+    var n = 0
     if s.index == 0:
-      for i in 0'i16 .. 9'i16: indices.add i
-    elif s.index == 1: indices = @[1'i16, 0'i16]
-    else: indices = @[s.index]
-    for index in indices:
+      for i in 0'i16 .. 9'i16: indices[i] = i
+      n = 10
+    elif s.index == 1: (indices[0], indices[1], n) = (1'i16, 0'i16, 2)
+    else: (indices[0], n) = (s.index, 1)
+    for index in indices.toOpenArray(0, n - 1):
       let key = stationKey(s.line, s.point, index)
       let at = ss.ids.find(stationHash(key), same(ss.keys[id], key))
       if at >= 0:
@@ -750,9 +753,26 @@ func tracesAt*(s: Survey; points: openArray[PointRef]): seq[int] =
   ## point and a file's own position on one spot have the same), in the
   ## order found: what selecting the points selects.
   var seen = initIntSet()
+  var traceLayers = false # (without one, no point has a trace: nothing is looked up)
+  for l in s.layers.toOpenArray(0, s.layers.high):
+    if l.origin == loTraces: traceLayers = true
+  if not traceLayers: return
+  var last = (NoSurveyLayer, -1)
   for p in points:
-    for t in s.tracesAt(p):
-      if not seen.containsOrIncl(t): result.add t
+    if p.layer != last[0]: last = (p.layer, s.find(p.layer))
+    let i = last[1]
+    if i >= 0 and p.point in 0 ..< s.layers[i].points[p.role].len:
+      template l: untyped = s.layers[i]
+      case l.origin
+      of loTraces:
+        for t in l.tracesAt(p.role, p.point):
+          if not seen.containsOrIncl(l.base + t): result.add l.base + t
+      of loSurveyFile:
+        let st = l.points[p.role].station[p.point]
+        for m in s.layers.toOpenArray(0, s.layers.high):
+          if m.origin == loTraces:
+            for t in m.stationTraces(p.role, st):
+              if not seen.containsOrIncl(m.base + t): result.add m.base + t
 
 # -------------------------------------------------------------- in words --
 

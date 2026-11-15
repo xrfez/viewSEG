@@ -155,16 +155,19 @@ func highlightOf*(st: AppState): MapHighlight =
   template sel: untyped = st.selection # an alias: a `let` copies the selection
   for p in sel.hoverAt:
     if st.survey.find(p.layer) >= 0: result.hovered.add p
+  # The points selected are each once already (`pointKeys`); those of the
+  # selected traces are told from them by that set, not one made again (a
+  # box of half a million points took a frame).
   var seen: IntSet
+  var last = (NoSurveyLayer, false)
+  result.selected = newSeqOfCap[PointRef](sel.points.len)
   for p in sel.points:
-    if p.key notin seen and st.survey.find(p.layer) >= 0:
-      seen.incl p.key
-      result.selected.add p
+    if p.layer != last[0]: last = (p.layer, st.survey.find(p.layer) >= 0)
+    if last[1]: result.selected.add p
   for t in sel.selected:
     if result.selected.len >= MaxHighlighted: break
     for p in st.survey.tracePointsOf(t):
-      if p.key notin seen:
-        seen.incl p.key
+      if p.key notin sel.pointKeys and not seen.containsOrIncl(p.key):
         result.selected.add p
 
 proc activePoints*(st: AppState): array[PointRole, seq[PointRef]] =

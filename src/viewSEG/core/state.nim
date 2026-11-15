@@ -5227,17 +5227,21 @@ proc applyCommand(state: var AppState; cmd: Command) =
                  elif state.survey.find(anchor.layer) < 0: @[cmd.points[0]]
                  else: state.survey.lineRange(anchor, cmd.points[0])
     let traces = state.survey.tracesAt(points)
-    state.selection.selectPoints(points, cmd.pointMode)
     case cmd.pointMode
     of smReplace, smRange: # the points' own traces replace those selected
-      var keep = state.selection.points
+      # (the traces first: a replace of them takes the points out too; the
+      # points once, not kept and selected again: half a million of them
+      # took a frame each time)
       state.selection.select(traces, smReplace)
-      state.selection.selectPoints(keep, smReplace)
+      state.selection.selectPoints(points, smReplace)
       # a range starts where the one before did
       if cmd.pointMode == smRange and state.survey.find(anchor.layer) >= 0:
         state.selection.pointAnchor = anchor
-    of smAdd, smRemove: state.selection.select(traces, cmd.pointMode)
+    of smAdd, smRemove:
+      state.selection.selectPoints(points, cmd.pointMode)
+      state.selection.select(traces, cmd.pointMode)
     of smToggle:
+      state.selection.selectPoints(points, cmd.pointMode)
       let added = points.len > 0 and points[0].key in state.selection.pointKeys
       state.selection.select(traces, if added: smAdd else: smRemove)
   of ckHoverPoints:

@@ -781,6 +781,25 @@ func shownAt(st: AppState; p: PointRef): MapPoint =
   if i >= 0 and st.layerShown(st.survey.layers[i], p.role): st.positionOf(p)
   else: mapPoint(NaN, NaN)
 
+proc addShownAt(dst: var seq[MapPoint]; st: AppState; points: openArray[PointRef]) =
+  ## `shownAt` of each of `points`, its layer looked up once for a run of
+  ## points of one layer (a box of half a million points looked each up
+  ## twice).
+  dst.setLen 0
+  if dst.capacity < points.len: dst = newSeqOfCap[MapPoint](points.len)
+  var last = (NoSurveyLayer, -1)
+  var shown: array[PointRole, bool]
+  for p in points:
+    if p.layer != last[0]:
+      last = (p.layer, st.survey.find(p.layer))
+      if last[1] >= 0:
+        for r in PointRole: shown[r] = st.layerShown(st.survey.layers[last[1]], r)
+    let i = last[1]
+    if i >= 0 and shown[p.role] and p.point in 0 ..< st.survey.layers[i].points[p.role].len:
+      let ix = addr st.survey.layers[i].points[p.role].index
+      dst.add mapPoint(ix[].x(p.point), ix[].y(p.point))
+    else: dst.add mapPoint(NaN, NaN)
+
 proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
   ## The highlighted points on the GPU: the gather on show's, the
   ## selection's, the plot's hovered trace's and the map's own hover, each
@@ -796,8 +815,7 @@ proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
   let selected = (st.selection.selectedRevision, st.survey.revision)
   if selected != mu.selectedFor:
     mu.highlight = st.highlightOf
-    mu.selectedAt.setLen 0
-    for p in mu.highlight.selected: mu.selectedAt.add st.shownAt(p)
+    mu.selectedAt.addShownAt(st, mu.highlight.selected)
     mu.selectedFor = selected
     changed = true
   let active = (st.selection.activeGather, st.survey.revision)
