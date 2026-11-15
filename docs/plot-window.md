@@ -315,7 +315,15 @@ signals can start time across.
   narrowed from its first trace); a view of the whole record shows it whole again.
   Nothing is read for a turn: the tiles on hand are drawn the other way round at once.
   Only where the plot's other shape needs another resolution (zoomed out past a trace or
-  a sample a pixel, as a new window size can) is a new view asked for, as for any view.
+  a sample a pixel, as a new window size can) is a new view asked for, as for any view,
+  and it is made from the samples the reader holds (the last view read from the file:
+  fewer of its traces, every second or fourth of them, at any decimation), without
+  reading the file again; the picture on hand is drawn stretched until it comes. On
+  Morgantown (an optimised build, llvmpipe, the machine at a load of about 12), at the
+  widest wiggle view of the default layout, the sharp picture comes 70 to 90 ms after the
+  turn, and 20 to 60 ms in density: the processing and drawing of the new view; before,
+  the turned view was read from the file again (on a local drive, from memory, as fast;
+  on a network drive, a read of the view like any pan).
 - **The first trace at the top** when time is across is the default taken (the traces
   then read down the plot as a table's rows and a chart recorder's channels do); whether the user would rather have it at the bottom (the
   time-down picture turned a quarter turn anticlockwise, "-90 degrees" taken literally)

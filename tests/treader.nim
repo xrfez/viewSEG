@@ -2,6 +2,7 @@
 ## files: showing a gather holds the file and posts its layout; a view gets
 ## a tile with the file's exact samples and the display header's values; a
 ## zoomed-out view reads every n-th trace and keeps peak-decimated samples; a
+## view of some of the traces just read is made from the samples at hand; a
 ## pre-stack gather is shown with AGC by default, decoded with its margin;
 ## auxiliary traces are left out, and a gather of auxiliary traces only shows
 ## nothing; a file with no traces lays the panel out empty at once, and
@@ -21,6 +22,9 @@
 ## waiting for a layout when it has nothing to read, as it did,
 ## `nothingToRead` found it never laid out (the window said "Reading..."
 ## forever); with no warning for traces without samples, it found none.
+## With the samples at hand served only for the same traces (`heldRows`
+## asking `list == rd.raw.list`, as it did), `partOfWhatIsHeld` found
+## every 4th trace "cached false".
 
 import std/[algorithm, math, os, sequtils, strutils, times]
 import parseSEG
@@ -131,6 +135,49 @@ block zoomedOut:
         for v in bin:
           if abs(v) > abs(peak): peak = v
         doAssert t.data[row * t.columns + c] == peak, "row " & $row & " column " & $c
+    st.shutdown()
+
+block partOfWhatIsHeld:
+  # A view of some of the traces just read (every 4th, every 2nd, as a
+  # zoom out to a coarser stride or a turn's narrower plot asks), at another
+  # decimation, is made from the samples at hand, without a read; sorted,
+  # other traces stand at the positions, and the file is read again.
+  withFixtures fx:
+    var st = initAppState()
+    st.apply openCmd(fx.surveySegy())
+    doAssert st.settle(st.main.layout.traces > 0)
+    st.setGain(dgNone)
+    var d = st.main.layers[0].display
+    d.mode = dmDensity
+    st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+    st.look()
+    doAssert st.settle(st.shown.len >= 1 and st.shown[^1].request == st.main.pending)
+    doAssert not st.shown[^1].cached, "the first view was not read from the file"
+    proc check(st: var AppState; what: string; cached: bool) =
+      doAssert st.settle(st.shown[^1].request == st.main.pending), what
+      let t = st.shown[^1]
+      let r = t.request
+      doAssert t.cached == cached, what & ": cached " & $t.cached & ", " & $r
+      for row in 0 ..< r.count:
+        let channel = r.position(row) + 1
+        for c in 0 ..< t.columns:
+          var peak = 0'f32
+          for k in 0 ..< r.decimation:
+            let v = surveySample(0, channel, r.firstSample + r.decimation * c + k)
+            if abs(v) > abs(peak): peak = v
+          doAssert t.data[row * t.columns + c] == peak, what & ": row " & $row & " column " & $c
+    st.look(columns = 6, rows = 100) # every 4th trace, peaks of 4 samples
+    doAssert st.settle(st.main.pending.stride == 4)
+    doAssert st.main.pending.decimation == 4, $st.main.pending
+    st.check("every 4th", cached = true)
+    st.look(columns = 12, rows = 250) # every 2nd, peaks of 2
+    doAssert st.settle(st.main.pending.stride == 2)
+    st.check("every 2nd", cached = true)
+    # the channels backwards: the same positions are other traces
+    st.apply Command(kind: ckSort, panel: MainPanel,
+      order: @[SortKey(field: hfChannel, descending: true)])
+    doAssert st.settle(st.shown[^1].traces[0] == Channels - 1)
+    doAssert not st.shown[^1].cached, "other traces at the positions, and none read"
     st.shutdown()
 
 block agcOnShotsByDefault:

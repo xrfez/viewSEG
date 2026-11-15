@@ -47,9 +47,10 @@
 ##   `polarityOp` does) before the processing and the gain.
 ## - **Raw samples at hand.** The decoded samples of the last request read
 ##   from the file are kept, as read (up to `MaxRawSamples`); a request for
-##   the same traces and samples among them (after an edit, or a new gain,
-##   on the same view, or on one a little shorter) is made from them, with
-##   no read from the file.
+##   traces and samples among them (after an edit, or a new gain, on the
+##   same view, or on one a little shorter; fewer of its traces, or every
+##   second or fourth of them, as a turn or a coarser stride asks; at any
+##   decimation) is made from them, with no read from the file.
 ## - **A drive that does not answer.** The reader *beats* (`fs.now`) as it
 ##   takes each chunk; one that is busy and has not beaten for a while is
 ##   stuck in the file system (`silentFor`), where no note reaches it. The
@@ -130,6 +131,7 @@ type
     ## The decoded samples of the last request read from the file, as read,
     ## before any edit or processing.
     valid: bool
+    first, stride: int ## the positions of its rows: `first + row * stride`
     list: seq[int] ## the traces, one per row
     window: Slice[int] ## the samples decoded
     samples: seq[float32] ## `list.len` rows of `window.len` samples
@@ -407,6 +409,23 @@ proc cutShort(rd: var Reader): bool =
     rd.toldShort = true
     rd.note(sevWarning, why)
 
+func heldRows(rd: Reader; q: ReadRequest; list: seq[int]; window: Slice[int]): seq[int] =
+  ## Where each row of request `q` (its traces `list`, its samples `window`)
+  ## is in the raw samples at hand: when they hold every one of its traces
+  ## (the same view, or a part of it: fewer traces, every second one, ...,
+  ## as a turn or a zoom out to a coarser stride asks) and its samples;
+  ## none otherwise.
+  if not rd.raw.valid or rd.raw.stride <= 0 or window.a < rd.raw.window.a or
+      window.b > rd.raw.window.b:
+    return
+  result = newSeq[int](q.count)
+  for row in 0 ..< q.count:
+    let d = q.position(row) - rd.raw.first
+    let i = d div rd.raw.stride
+    if d < 0 or d mod rd.raw.stride != 0 or i >= rd.raw.list.len or rd.raw.list[i] != list[row]:
+      return @[] # not held, or another trace there now (a sort)
+    result[row] = i
+
 proc serve(rd: var Reader; req: sink ReaderRequest) =
   ## Reads, processes and posts the tile `req` asks for, unless a newer note
   ## comes first. The samples come from the file through a prefetcher, or,
@@ -483,13 +502,16 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
 
   var failed: seq[int]
   var given = false
-  if rd.raw.valid and rd.raw.list == list and window.a >= rd.raw.window.a and
-      window.b <= rd.raw.window.b:
+  let at = rd.heldRows(q, list, window)
+  if at.len > 0:
     # The samples are at hand: nothing is read from the file.
     let held = rd.raw.window.len
     let offset = window.a - rd.raw.window.a
     tile.cached = true
-    failed = rd.raw.failed
+    var heldFailed = newSeq[bool](rd.raw.list.len)
+    for r in rd.raw.failed: heldFailed[r] = true
+    for row in 0 ..< q.count:
+      if heldFailed[at[row]]: failed.add row
     tile.failed = failed.len
     var work = newSeq[float32](min(ChunkTraces, q.count) * cols)
     var a = 0
@@ -500,7 +522,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       work.setLen n * cols
       if cols > 0:
         for k in 0 ..< n:
-          copyMem(addr work[k * cols], addr rd.raw.samples[(a + k) * held + offset],
+          copyMem(addr work[k * cols], addr rd.raw.samples[at[a + k] * held + offset],
             cols * sizeof(float32))
       let b = rowBlock(work, n, cols)
       var partFailed: seq[int]
@@ -518,6 +540,8 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
     let keep = q.count * cols <= MaxRawSamples
     if keep: # its buffer reused
       rd.raw.valid = false
+      rd.raw.first = q.first
+      rd.raw.stride = q.stride
       rd.raw.list = list
       rd.raw.window = window
       rd.raw.samples.setLen q.count * cols
