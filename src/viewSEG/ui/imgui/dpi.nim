@@ -48,10 +48,19 @@ proc windowScale*(window: ptr SDL_Window): float32 =
   ## The UI scale of `window` (`uiScale` of its SDL scales).
   uiScale(SDL_GetWindowDisplayScale(window), SDL_GetWindowPixelDensity(window))
 
+func firstWindowScale*(contentScale: float32; videoDriver: string): float32 =
+  ## The UI scale of a window not made yet on a display of `contentScale`:
+  ## that scale where windows are sized in pixels (Windows, X11), 1 where
+  ## they are sized in points and the framebuffer takes the scale (Wayland,
+  ## macOS: the pixel density is the content scale there).
+  let pointBased = videoDriver in ["wayland", "cocoa"]
+  uiScale(contentScale, if pointBased: contentScale else: 1)
+
 proc primaryDisplayScale*(): float32 =
-  ## The UI scale of the primary display, before any window exists. Its pixel
-  ## density is unknown then: assume 1 (true on Windows and X11).
-  uiScale(SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay()), 1)
+  ## The UI scale of the primary display, before any window exists
+  ## (`firstWindowScale`).
+  firstWindowScale(SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay()),
+    $SDL_GetCurrentVideoDriver())
 
 var mainWindowId: SDL_WindowID
 

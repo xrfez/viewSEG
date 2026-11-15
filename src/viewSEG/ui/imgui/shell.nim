@@ -29,7 +29,7 @@
 import std/[atomics, locks, options, strutils, typedthreads]
 from std/os import getEnv
 import sdl3_nim
-import ../../platform/[trayguard, trayhost]
+import ../../platform/[chrome, trayguard, trayhost]
 
 export TrayHost
 
@@ -315,7 +315,9 @@ proc noteSdlEvent*(eventType: uint32) =
 
 # ------------------------------------------------------------------ icons --
 
-const iconPng = staticRead("../../../../res/viewSEG-64.png")
+const
+  iconPng = staticRead("../../../../res/viewSEG-64.png")
+  iconFile = staticRead("../../../../res/viewSEG.ico") ## the executable's icon, every size
 
 proc setIconHints*() =
   ## Windows: SDL takes the window and taskbar icons from the executable's
@@ -399,11 +401,13 @@ proc showTray*(): string =
   ## tray on Linux whether or not anything will show it.
   result = ""
   if tray.isNil:
-    # Windows takes the icon from the executable (`setIconHints`); elsewhere
-    # SDL writes the image to a file for AppIndicator.
+    # Windows: the icon file's own image at the notification area's size
+    # (SDL's default is the 32-pixel icon, scaled down by the shell); elsewhere
+    # SDL writes the image to a file for AppIndicator, which scales it.
     var icon: ptr SDL_Surface = nil
-    when not defined(windows):
-      let io = SDL_IOFromConstMem(iconPng.cstring, iconPng.len.csize_t)
+    let png = when defined(windows): iconImage(iconFile, trayIconSize()) else: iconPng
+    if png.len > 0:
+      let io = SDL_IOFromConstMem(png.cstring, png.len.csize_t)
       if not io.isNil: icon = SDL_LoadPNG_IO(io, true)
     tray = SDL_CreateTray(icon, TrayTooltip)
     if not icon.isNil: SDL_DestroySurface(icon)

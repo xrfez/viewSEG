@@ -19,7 +19,9 @@
 ##
 ## Seen to fail: with the dark mode attribute 20 given from build 17763,
 ## "1809 takes attribute 19"; with red and blue swapped in `colorRef`,
-## "0x003b352d"; with `guardFatalSignals` not calling the cleanup, "the
+## "0x003b352d"; with the active flag ignored, "inactive title:
+## 0x00aac6d3"; with the first image taken whatever its size, "24: 16";
+## with `guardFatalSignals` not calling the cleanup, "the
 ## cleanup did not run before Nim's handler"; with the ids to remove fixed
 ## at 1 to 64, "13 trays: ids up to 64, the last tray's is 61"; with the
 ## tray's windows still searched for in the handler, "the signal handler's
@@ -65,7 +67,8 @@ func attrs(s: seq[DwmSetting]): seq[uint32] =
 
 let look = ChromeLook(dark: true, caption: ChromeRgb(r: 0x2d, g: 0x35, b: 0x3b),
   captionText: ChromeRgb(r: 0xd3, g: 0xc6, b: 0xaa), border: ChromeRgb(r: 0x47, g: 0x52,
-  b: 0x58))
+  b: 0x58), inactiveText: ChromeRgb(r: 0x9d, g: 0xa9, b: 0xa0),
+  inactiveBorder: ChromeRgb(r: 0x34, g: 0x3c, b: 0x42))
 
 block colours:
   doAssert colorRef(ChromeRgb(r: 0x2d, g: 0x35, b: 0x3b)) == 0x003b352d'u32,
@@ -90,6 +93,13 @@ block versions:
   doAssert framed[0].value == 1 and framed[0].fallback == 0
   doAssert framed[1].value == 0x003b352d'u32 and framed[2].value == 0x00aac6d3'u32
   doAssert framed[3].value == 0x00585247'u32 and framed[4].value == DwmwcpRound
+  # Inactive: the title and the border as the look says for that (Windows
+  # leaves it to the program once it sets them).
+  let inactive = dwmSettings(look, fkFramed, win11, active = false)
+  doAssert attrs(inactive) == attrs(framed)
+  doAssert inactive[2].value == 0x00a0a99d'u32, "inactive title: 0x" & toHex(inactive[2].value, 8)
+  doAssert inactive[3].value == 0x00423c34'u32, "inactive border"
+  doAssert inactive[1].value == framed[1].value, "the bar keeps its colour"
   let frameless = dwmSettings(look, fkFrameless, win11)
   doAssert attrs(frameless) == @[DwmwaUseImmersiveDarkMode, DwmwaWindowCornerPreference]
   doAssert frameless[1].value == DwmwcpDoNotRound
@@ -121,12 +131,32 @@ block iconSizesForDpi:
   doAssert iconSizes(192) == (64, 32)
   doAssert iconSizes(0) == (32, 16)
 
+block trayIconImage:
+  # The notification area's icon is the icon file's own image of its size
+  # (16 at 100 %, 24 at 150 %), not the 32-pixel one scaled by the shell.
+  let ico = readFile(currentSourcePath().parentDir.parentDir / "res" / "viewSEG.ico")
+  proc width(png: string): int =
+    doAssert png.len > 24 and png[1 .. 3] == "PNG", "not a PNG"
+    (png[16].int shl 24) or (png[17].int shl 16) or (png[18].int shl 8) or png[19].int
+  doAssert width(iconImage(ico, 16)) == 16
+  doAssert width(iconImage(ico, 24)) == 24, "24: " & $width(iconImage(ico, 24))
+  doAssert width(iconImage(ico, 20)) == 24, "the next larger"
+  doAssert width(iconImage(ico, 32)) == 32
+  doAssert width(iconImage(ico, 300)) == 256, "the largest"
+  doAssert iconImage("not an icon", 16) == ""
+  doAssert iconImage(ico[0 .. 40], 16) == "", "cut short"
+  when not defined(windows):
+    doAssert trayIconSize() == 0
+
 block lookOfTheme:
   let dark = lookOf(EverforestDark)
   doAssert dark.dark
   doAssert dark.caption == ChromeRgb(r: 0x21, g: 0x27, b: 0x2c), "the menu bar's colour"
   doAssert dark.captionText == ChromeRgb(r: 0xd3, g: 0xc6, b: 0xaa)
   doAssert dark.border == ChromeRgb(r: 0x47, g: 0x52, b: 0x58)
+  doAssert dark.inactiveText == ChromeRgb(r: 0x9d, g: 0xa9, b: 0xa0), "text_dim"
+  doAssert dark.inactiveBorder != dark.border and dark.inactiveBorder != dark.caption,
+    "the inactive border is between the border and the bar: " & $dark.inactiveBorder
   let light = lookOf(EverforestLight)
   doAssert not light.dark
   doAssert light.caption == ChromeRgb(r: 0xf4, g: 0xf0, b: 0xd9)

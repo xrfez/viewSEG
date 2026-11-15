@@ -20,9 +20,14 @@ func chromeRgb(c: Rgba): ChromeRgb = ChromeRgb(r: c.r, g: c.g, b: c.b)
 func lookOf*(t: Theme): ChromeLook =
   ## The frame for theme `t`: dark when it is dark; the title bar in the
   ## colour of the menu bar just under it (`bar`), so the two read as one
-  ## band; the title in the text colour; the border in the theme's.
+  ## band; the title in the text colour; the border in the theme's. While
+  ## another window is active, as Windows does with its own colours: the
+  ## title in the secondary text colour (`text_dim`) and the border halfway
+  ## to the bar.
   ChromeLook(dark: t.mode == tmDark, caption: chromeRgb(t.roles[rlBar]),
-    captionText: chromeRgb(t.roles[rlText]), border: chromeRgb(t.roles[rlBorder]))
+    captionText: chromeRgb(t.roles[rlText]), border: chromeRgb(t.roles[rlBorder]),
+    inactiveText: chromeRgb(t.roles[rlTextDim]),
+    inactiveBorder: chromeRgb(mix(t.roles[rlBorder], t.roles[rlBar], 0.5)))
 
 var
   look: ChromeLook
@@ -52,7 +57,8 @@ proc dress(window: ptr SDL_Window; kind: FrameKind; redraw: bool) =
   if window.isNil: return
   inc dressed
   let hwnd = hwndOf(window)
-  discard applyChrome(hwnd, look, kind, version, redraw)
+  let active = (SDL_GetWindowFlags(window) and SDL_WINDOW_INPUT_FOCUS) != 0
+  discard applyChrome(hwnd, look, kind, version, redraw, active)
   if kind == fkFramed:
     discard setWindowIcons(hwnd)
 
@@ -90,6 +96,22 @@ proc dressWindows*(l: ChromeLook) =
         let w = windowOf(vp)
         if w != nil and w != main:
           dress(w, kindOf(vp), redraw = true)
+
+proc followFocus*(windowId: uint32; active: bool) =
+  ## A framed window became active or inactive (`SDL_EVENT_WINDOW_FOCUS_GAINED`
+  ## and `..._LOST`): its title and border as Windows would show them.
+  if not haveLook: return
+  let window = SDL_GetWindowFromID(SDL_WindowID(windowId))
+  if window.isNil: return
+  var kind = fkFrameless
+  if SDL_WindowID(windowId) == mainWindowId:
+    kind = fkFramed
+  else:
+    let vp = igFindViewportByPlatformHandle(cast[pointer](uint(windowId)))
+    if vp != nil: kind = kindOf(vp)
+  if kind == fkFramed:
+    inc dressed
+    discard applyChrome(hwndOf(window), look, kind, version, active = active)
 
 proc refreshIcons*() =
   ## The main window's icons again at its screen's size (after a DPI change).

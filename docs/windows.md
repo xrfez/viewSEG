@@ -18,8 +18,8 @@ attributes on its `HWND`:
 |---|---|---|---|
 | Dark or light title bar, as the theme's `mode` | attribute 19 | attribute 20 | attribute 20 |
 | Title bar colour: the theme's `bar` (the menu bar's colour, so the two read as one band) | | | `DWMWA_CAPTION_COLOR` |
-| Title colour: the theme's `text` | | | `DWMWA_TEXT_COLOR` |
-| Border colour: the theme's `border` | | | `DWMWA_BORDER_COLOR` |
+| Title colour: the theme's `text`; `text_dim` while another window is active | | | `DWMWA_TEXT_COLOR` |
+| Border colour: the theme's `border`; halfway to `bar` while inactive | | | `DWMWA_BORDER_COLOR` |
 | Corners | | | round |
 
 - The version comes from `RtlGetVersion`. When it cannot be read, every
@@ -60,7 +60,9 @@ now gives each framed window both icons at the sizes its screen wants (16 and
 32 pixels at 100 %, 24 and 48 at 150 %), taken from the icon file's own images,
 and again when the window moves to a screen of another scale. The taskbar,
 Alt+Tab and Explorer read the same resource (`res/viewSEG.ico`: 16, 24, 32,
-48, 64 and 256 pixels).
+48, 64 and 256 pixels). The tray icon is the icon file's own image at the
+notification area's size (16 pixels at 100 %, 24 at 150 %), not SDL's
+default of the 32-pixel image scaled down by the shell.
 
 ### The tray (`ui/imgui/shell`, Window menu)
 
@@ -95,7 +97,9 @@ Alt+Tab and Explorer read the same resource (`res/viewSEG.ico`: 16, 24, 32,
 On a screen too small for the default window (1280 x 800 at the screen's
 scale, in 90 % of the work area), the first window opens **maximized**: on a
 1080p laptop at 150 % (1280 x 688 usable at that scale) and on a 1366 x 768
-screen at 100 %. Restored, it is 90 % of the work area, centred. On a 4K
+screen at 100 %. Restored, it is 90 % of the work area, centred. (Where
+windows are sized in points, Wayland and macOS, the display's scale is the
+framebuffer's and is not counted twice.) On a 4K
 laptop at 150 % it opens at 1920 x 1200 pixels, centred. A window placed
 before opens where it was (as before).
 
@@ -130,9 +134,6 @@ before opens where it was (as before).
 - **Icons at 125 %**: the icon file has no 20 and 40 pixel images, so Windows
   scales the 24 and 48 pixel ones there. Hand-drawn 20 and 40 pixel images
   would be sharper; add them to `res/viewSEG.ico`.
-- **The tray icon's size**: SDL loads it with `LoadIcon` (32 pixels, scaled
-  by the shell to 16 or 24). Sharp enough; `LoadIconMetric` in SDL would be
-  exact (an upstream change).
 - **The first frame**: the main window is shown before the theme is loaded,
   so for a moment its title bar is SDL's (the system's light or dark), then
   the theme's. Showing the window only after its first frame would hide
@@ -152,6 +153,8 @@ executable) or `viewSEG.exe --reset-windows`.
    (Everforest Dark: bar `#21272c`, title `#d3c6aa`, border `#475258`) and
    round corners on Windows 11; dark on Windows 10 with a dark theme.
    Messages says "Window frames: Windows 11 (build ...)" or "Windows 10".
+   Click another program: viewSEG's title dims and its border fades; click
+   back: both return. The tray icon is sharp (not a blurred 32-pixel image).
 2. **View > Theme**: a light theme, then a dark one: the title bar changes at
    once, without clicking elsewhere or resizing (Windows 10 especially).
 3. **Windows' light/dark switch** (Settings > Personalization > Colors), with

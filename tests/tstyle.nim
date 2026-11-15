@@ -1,6 +1,9 @@
 ## The theme and DPI rules of the ImGui frontend: the pure procs, and
 ## `applyStyle` on a real ImGui context (no window or GL needed): every ImGui
 ## and ImPlot colour comes from the theme, none is left at the stock value.
+##
+## Seen to fail: with the first window's scale taken as the display's on
+## every system (pixel density 1), `firstWindowScale(2, "wayland") == 1`.
 
 import std/math
 import viewSEG/core/geometry
@@ -48,6 +51,16 @@ block windowSize:
   doAssert not startsMaximized((1280, 800), 1, (1920, 1040)) # 1080p at 100 %
   doAssert startsMaximized((1280, 800), 1, (1366, 728)) # a 1366 x 768 screen
   doAssert not startsMaximized((1280, 800), 2, (0, 0)) # unknown display
+  # The scale of the first window: where windows are sized in points
+  # (Wayland, macOS) the display's 200 % is the framebuffer's, not the
+  # window's, so a 1512 x 982 point laptop screen takes 1280 x 800 as it is.
+  doAssert firstWindowScale(2, "wayland") == 1
+  doAssert firstWindowScale(2, "cocoa") == 1
+  doAssert firstWindowScale(1.5, "windows") == 1.5
+  doAssert firstWindowScale(1.5, "x11") == 1.5
+  doAssert not startsMaximized((1280, 800), firstWindowScale(2, "cocoa"), (1512, 950)),
+    "a 2x screen of 1512 x 982 points opens maximized"
+  doAssert startsMaximized((1280, 800), firstWindowScale(1.5, "windows"), (1920, 1032))
 
 block colourPacking:
   doAssert u32(Rgba(r: 1, g: 2, b: 3, a: 4)) == 0x04030201'u32

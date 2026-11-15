@@ -45,10 +45,12 @@ type
 
   ChromeLook* = object
     ## What a window's frame looks like.
-    dark*: bool             ## dark title bar (Windows 10's only colour choice)
-    caption*: ChromeRgb     ## the title bar (Windows 11)
-    captionText*: ChromeRgb ## the title on it
-    border*: ChromeRgb      ## the one-pixel border of a framed window
+    dark*: bool                ## dark title bar (Windows 10's only colour choice)
+    caption*: ChromeRgb        ## the title bar (Windows 11)
+    captionText*: ChromeRgb    ## the title on it, while the window is active
+    border*: ChromeRgb         ## the one-pixel border of a framed window, active
+    inactiveText*: ChromeRgb   ## the title while another window is active
+    inactiveBorder*: ChromeRgb ## the border then
 
   FrameKind* = enum
     ## Whether Windows draws the window's title bar.
@@ -100,16 +102,21 @@ func darkModeSetting*(v: WindowsVersion; dark: bool): seq[DwmSetting] =
   else:
     @[]
 
-func dwmSettings*(look: ChromeLook; kind: FrameKind; v: WindowsVersion): seq[DwmSetting] =
+func dwmSettings*(look: ChromeLook; kind: FrameKind; v: WindowsVersion;
+    active = true): seq[DwmSetting] =
   ## Every attribute to set on a window of `kind` for `look` on Windows `v`,
-  ## in order (the table in the module doc).
+  ## in order (the table in the module doc); the title and the border as
+  ## the window is `active` or not (Windows leaves that to the program once
+  ## it sets the colours).
   result = darkModeSetting(v, look.dark)
   if not v.known or v.build >= Windows11Build:
     case kind
     of fkFramed:
       result.add DwmSetting(attribute: DwmwaCaptionColor, value: colorRef(look.caption))
-      result.add DwmSetting(attribute: DwmwaTextColor, value: colorRef(look.captionText))
-      result.add DwmSetting(attribute: DwmwaBorderColor, value: colorRef(look.border))
+      result.add DwmSetting(attribute: DwmwaTextColor, value: colorRef(
+        if active: look.captionText else: look.inactiveText))
+      result.add DwmSetting(attribute: DwmwaBorderColor, value: colorRef(
+        if active: look.border else: look.inactiveBorder))
       result.add DwmSetting(attribute: DwmwaWindowCornerPreference, value: DwmwcpRound)
     of fkFrameless:
       result.add DwmSetting(attribute: DwmwaWindowCornerPreference, value: DwmwcpDoNotRound)
@@ -120,6 +127,33 @@ func iconSizes*(dpi: int): tuple[big, small: int] =
   ## 32 and 16 pixels at 100 %, scaled and rounded down.
   let d = if dpi <= 0: 96 else: dpi
   (32 * d div 96, 16 * d div 96)
+
+func iconImage*(ico: string; size: int): string =
+  ## The image of `size` pixels in the icon file `ico` (its bytes), as the
+  ## PNG it holds: that size, else the smallest larger one, else the largest;
+  ## "" for a file that is not an icon or an image that is not a PNG.
+  result = ""
+  proc u16(at: int): int = ico[at].int or (ico[at + 1].int shl 8)
+  proc u32(at: int): int = u16(at) or (u16(at + 2) shl 16)
+  if ico.len < 6 or u16(0) != 0 or u16(2) != 1: return
+  let n = u16(4)
+  if ico.len < 6 + 16 * n: return
+  var best = -1
+  var bestSize = 0
+  for i in 0 ..< n:
+    let at = 6 + 16 * i
+    let w = if ico[at].int == 0: 256 else: ico[at].int
+    let better =
+      if best < 0: true
+      elif bestSize < size: w > bestSize # still too small: take larger
+      else: w >= size and w < bestSize   # large enough: take the smallest such
+    if better: (best, bestSize) = (i, w)
+  if best >= 0:
+    let at = 6 + 16 * best
+    let (length, offset) = (u32(at + 8), u32(at + 12))
+    if offset >= 0 and length > 8 and offset + length <= ico.len and
+        ico[offset ..< offset + 8] == "\x89PNG\r\n\x1a\n":
+      result = ico[offset ..< offset + length]
 
 const
   WmSettingChange* = 0x001A'u32
@@ -161,6 +195,8 @@ when defined(windows):
       stdcall, gcsafe, raises: [].}
     DefSubclassProcFn = proc (hwnd: Hwnd; msg: uint32; wParam: uint; lParam: int): int {.
       stdcall, gcsafe, raises: [].}
+    GetForegroundWindowFn = proc (): Hwnd {.stdcall, gcsafe, raises: [].}
+    GetDpiForSystemFn = proc (): uint32 {.stdcall, gcsafe, raises: [].}
 
   static: doAssert sizeof(OsVersionInfoW) == 276
 
@@ -191,6 +227,8 @@ when defined(windows):
     setWindowSubclass: SetWindowSubclassFn
     removeWindowSubclass: RemoveWindowSubclassFn
     defSubclassProc: DefSubclassProcFn
+    getForegroundWindow: GetForegroundWindowFn
+    getDpiForSystem: GetDpiForSystemFn
     keptLook: ChromeLook       ## the look the windows keep (`applyChrome`'s last)
     keptVersion: WindowsVersion
 
@@ -210,6 +248,8 @@ when defined(windows):
     getDpiForWindow = cast[GetDpiForWindowFn](find(user32, "GetDpiForWindow")) # 10 1607+
     loadImage = cast[LoadImageWFn](find(user32, "LoadImageW"))
     sendMessage = cast[SendMessageWFn](find(user32, "SendMessageW"))
+    getForegroundWindow = cast[GetForegroundWindowFn](find(user32, "GetForegroundWindow"))
+    getDpiForSystem = cast[GetDpiForSystemFn](find(user32, "GetDpiForSystem")) # 10 1607+
     getModuleHandle = cast[GetModuleHandleWFn](find(kernel32, "GetModuleHandleW"))
     let comctl32 = loadLib("comctl32.dll") # version 6, as the manifest asks
     setWindowSubclass = cast[SetWindowSubclassFn](find(comctl32, "SetWindowSubclass"))
@@ -231,10 +271,10 @@ proc windowsVersion*(): WindowsVersion =
 
 when defined(windows):
   proc setAttributes(hwnd: pointer; look: ChromeLook; kind: FrameKind; version: WindowsVersion;
-      redraw: bool): int {.gcsafe, raises: [].} =
+      redraw, active: bool): int {.gcsafe, raises: [].} =
     result = 0
     {.cast(gcsafe).}:
-      for s in dwmSettings(look, kind, version):
+      for s in dwmSettings(look, kind, version, active):
         var value = s.value
         if dwmSet(hwnd, s.attribute, addr value, 4) >= 0:
           inc result
@@ -259,12 +299,14 @@ when defined(windows):
           setting.add char(wide[i] and 0x7f)
           inc i
         if resetsDarkMode(msg, setting):
-          discard setAttributes(hwnd, keptLook, FrameKind(refData), keptVersion, redraw = true)
+          let active = getForegroundWindow != nil and getForegroundWindow() == hwnd
+          discard setAttributes(hwnd, keptLook, FrameKind(refData), keptVersion, redraw = true,
+            active)
       elif msg == WmNcDestroy:
         discard removeWindowSubclass(hwnd, keepLook, SubclassId)
 
 proc applyChrome*(hwnd: pointer; look: ChromeLook; kind = fkFramed;
-    version = windowsVersion(); redraw = false): int =
+    version = windowsVersion(); redraw = false; active = true): int =
   ## Sets `look` on window `hwnd` (`dwmSettings`); with `redraw`, has
   ## Windows draw the frame again at once (for a window already shown: Windows
   ## 10 repaints a changed title bar only then). The window keeps the look:
@@ -280,7 +322,7 @@ proc applyChrome*(hwnd: pointer; look: ChromeLook; kind = fkFramed;
       (keptLook, keptVersion) = (look, version)
       if setWindowSubclass != nil and defSubclassProc != nil and removeWindowSubclass != nil:
         discard setWindowSubclass(hwnd, keepLook, SubclassId, uint(ord(kind)))
-      result = setAttributes(hwnd, look, kind, version, redraw)
+      result = setAttributes(hwnd, look, kind, version, redraw, active)
 
 proc setWindowIcons*(hwnd: pointer; resourceId = 1): bool =
   ## Gives window `hwnd` the executable's icon `resourceId` (`platform/winres`)
@@ -304,3 +346,12 @@ proc setWindowIcons*(hwnd: pointer; resourceId = 1): bool =
       if b != nil: discard sendMessage(hwnd, WmSetIcon, IconBig, cast[int](b))
       if s != nil: discard sendMessage(hwnd, WmSetIcon, IconSmall, cast[int](s))
       result = b != nil or s != nil
+
+proc trayIconSize*(): int =
+  ## The size of a notification-area icon on Windows (the small icon's at the
+  ## system's DPI: 16 pixels at 100 %, 24 at 150 %); 0 elsewhere.
+  result = 0
+  when defined(windows):
+    lookUp()
+    let dpi = if getDpiForSystem != nil: getDpiForSystem().int else: 96
+    result = iconSizes(dpi).small

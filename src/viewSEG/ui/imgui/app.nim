@@ -1706,6 +1706,10 @@ proc run*(opts = RunOptions()): int =
       if event.type_field == SDL_EVENT_QUIT.uint32 or
           (event.type_field == SDL_EVENT_WINDOW_CLOSE_REQUESTED.uint32 and mainWindowEvent):
         ui.running = false
+      elif event.type_field in [SDL_EVENT_WINDOW_FOCUS_GAINED.uint32,
+          SDL_EVENT_WINDOW_FOCUS_LOST.uint32]:
+        followFocus(event.window.windowID.uint32,
+          event.type_field == SDL_EVENT_WINDOW_FOCUS_GAINED.uint32)
       elif mainWindowEvent and event.type_field == SDL_EVENT_WINDOW_MINIMIZED.uint32:
         ui.hideInTray()
       elif mainWindowEvent and event.type_field in [SDL_EVENT_WINDOW_MOVED.uint32,
