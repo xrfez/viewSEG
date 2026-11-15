@@ -24,7 +24,7 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[base64, json, math, options, os, posix, sequtils, strutils, tables]
+import std/[base64, json, math, monotimes, options, os, posix, sequtils, strutils, tables, times]
 import sdl3_nim
 import viewSEG/core/[geometry, state]
 import viewSEG/view/plotink
@@ -177,6 +177,7 @@ withFixtures fx:
     results.open()
     var thread: Thread[Scenario]
     var frame = 0
+    let since = getMonoTime()
     var started, connected, signSeen, done = false
     var problem = ""
     var got: seq[(string, string)]
@@ -207,10 +208,10 @@ withFixtures fx:
           else: discard
       if connected and not done and f.markOf("status.agent connected").size.x > 0:
         signSeen = true
-      if frame > 5000:
+      if getMonoTime() - since > initDuration(seconds = 120): # frames are fast under Xvfb
         problem = "the agent did not finish"
         f.stop()
-    let code = run(RunOptions(maxFrames: 6000, windowSize: (1600, 1000), theme: forceDark,
+    let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
       userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
       agent: true, agentSocket: socket, onFrame: onFrame))
     joinThread(thread)
