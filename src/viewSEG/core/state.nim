@@ -543,34 +543,34 @@ type
 
   ProjectState* = object
     ## The project open (`core/project`): none while `dir` is "".
-    dir*: string ## the project folder
-    doc*: ProjectDoc ## its document as this run has it
-    readOnly*: bool ## another program has it open, or it is of a newer version: nothing is written
+    dir*: string                    ## the project folder
+    doc*: ProjectDoc                ## its document as this run has it
+    readOnly*: bool                 ## another program has it open, or it is of a newer version: nothing is written
     whyReadOnly*: string
-    owner*: Owner ## who holds its lock, when this program does not
-    folders*: seq[PlaceLook] ## where each data folder was found
-    originals*: seq[OriginalLook] ## each survey file's original against its copy
+    owner*: Owner                   ## who holds its lock, when this program does not
+    folders*: seq[PlaceLook]        ## where each data folder was found
+    originals*: seq[OriginalLook]   ## each survey file's original against its copy
     offer*: bool ## originals changed since they were copied: "Update from the original" is offered
     survey*: SurveyRestore
-    surveyNote*: string ## why the survey failed
-    restoreMs*: float64 ## how long its survey took to be made from `survey.bin` last
-    revision*: int ## bumped on every change
+    surveyNote*: string             ## why the survey failed
+    restoreMs*: float64             ## how long its survey took to be made from `survey.bin` last
+    revision*: int                  ## bumped on every change
     lock: FileLock
-    job: JobId = NoJob ## the open (or the making) of a project under way; `NoJob` for none
+    job: JobId = NoJob              ## the open (or the making) of a project under way; `NoJob` for none
     jobDir: string
     jobBy: CommandOrigin
-    useSurvey: bool ## the project being made takes the session's survey once open
-    surveyJob: JobId = NoJob ## its survey's job (made, kept, updated)
+    useSurvey: bool                 ## the project being made takes the session's survey once open
+    surveyJob: JobId = NoJob        ## its survey's job (made, kept, updated)
     lookJob: JobId = NoJob
-    geometry: ref SurveyGeometry ## its survey, as the joins read it; nil until made
+    geometry: ref SurveyGeometry    ## its survey, as the joins read it; nil until made
     joinSurvey: JoinSurvey
-    queue: seq[SessionId] ## files opened, to be matched to its survey
+    queue: seq[SessionId]           ## files opened, to be matched to its survey
     docRev, savedRev: int
     changedAt: MonoTime
-    userArrangement: string ## the user's own window arrangement, back when the project closes
+    userArrangement: string         ## the user's own window arrangement, back when the project closes
     userPresets: seq[DisplayPreset] ## the presets in effect before it opened, back when it closes
-    userProcessing: Processing ## the plot's filters in effect before it opened, back when it closes
-    by: CommandOrigin ## who opened it
+    userProcessing: Processing      ## the plot's filters in effect before it opened, back when it closes
+    by: CommandOrigin               ## who opened it
 
   JoinOutcome* = enum
     joNone = "none"

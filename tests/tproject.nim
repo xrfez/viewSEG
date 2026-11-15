@@ -78,7 +78,8 @@ block places:
   doAssert "/jobs/Morgantown 2026/x".isInside("/jobs/Morgantown 2026") and
     not "/jobs/Morgantown 20267".isInside("/jobs/Morgantown 2026")
   doAssert projectDirOf("/a/b/project.nif") == "/a/b" and projectDirOf("/a/b") == "/a/b"
-  doAssert projectNameProblem("").len > 0 and projectNameProblem("a/b").len > 0 and projectNameProblem("Job 1") == ""
+  doAssert projectNameProblem("").len > 0 and projectNameProblem("a/b").len > 0 and
+      projectNameProblem("Job 1") == ""
   doAssert copyName("a.sps", ["a.sps", "a-2.sps"]) == "a-3.sps"
 
 proc state(jobs: Jobs; id: JobId): JobState = jobs.info(id).get.state

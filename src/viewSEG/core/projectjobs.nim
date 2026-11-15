@@ -29,7 +29,7 @@ import displaypresets, filekinds, filememory, filesystem, identity, inbox, jobs,
 type NewProject* = object
   ## What File > New project makes.
   name*: string
-  data*: seq[string]    ## the data folders, absolute
+  data*: seq[string] ## the data folders, absolute
   bringFrom*: string
     ## the program's own store of what is remembered: its documents of files
     ## last seen in the data folders are copied in; "" for none
@@ -91,7 +91,7 @@ proc hostName(): string =
   result = getEnv("HOSTNAME")
   if result.len == 0: result = getEnv("COMPUTERNAME")
   if result.len == 0:
-    try: result = readFile("/etc/hostname").strip
+    try: result = fs.readFile("/etc/hostname").strip
     except IOError, OSError: discard
 
 proc makeProject(dir: string; np: NewProject; brought: var int): ProjectDoc =
@@ -310,36 +310,36 @@ proc restoreWork*(dir: string; doc: ProjectDoc; layers: bool; to: Poster): JobWo
         var problems: seq[string] = @[]
         readStore(dir.partOf(SurveyStoreName), ctx, StoreReader(
           onFile: proc (f: StoredFile) =
-            names.add f.name
-            if layers and f.kind != jkCsv:
-              b = initSurveyFileBuilder(dir.partOf(f.copy), f.fileKind, f.size, f.modified,
-                naming, opts.trailingDigits)
-              building = true,
+          names.add f.name
+          if layers and f.kind != jkCsv:
+            b = initSurveyFileBuilder(dir.partOf(f.copy), f.fileKind, f.size, f.modified,
+              naming, opts.trailingDigits)
+            building = true,
           onSps: proc (f: StoredFile; part: SpsFile) =
-            if building:
-              for q in part.points:
-                b.addPoint(roleOf(q.kind), b.lineOf(q.lineName, q.line), q.point,
-                  pointIndex(q.index), q.easting, q.northing, q.elevation)
-              b.addRelations(part)
-            g[].addSps(part, relationDomainOf(f.copy)),
+          if building:
+            for q in part.points:
+              b.addPoint(roleOf(q.kind), b.lineOf(q.lineName, q.line), q.point,
+                pointIndex(q.index), q.easting, q.northing, q.elevation)
+            b.addRelations(part)
+          g[].addSps(part, relationDomainOf(f.copy)),
           onP1: proc (f: StoredFile; pf: P1File) =
-            if building:
-              for lf in pf.files:
-                if lf.format == pfP1:
-                  for r in lf.records:
-                    let line = b.lineOf(r.lineName, p1Number(r.lineName))
-                    let index = if r.reshoot in {'A' .. 'Z'}: int16(ord(r.reshoot) - ord('A') + 2)
-                                else: 0'i16
-                    b.addPoint(prSource, line, r.point, index, r.easting, r.northing, NaN)
-            g[].addP1(pf),
+          if building:
+            for lf in pf.files:
+              if lf.format == pfP1:
+                for r in lf.records:
+                  let line = b.lineOf(r.lineName, p1Number(r.lineName))
+                  let index = if r.reshoot in {'A' .. 'Z'}: int16(ord(r.reshoot) - ord('A') + 2)
+                              else: 0'i16
+                  b.addPoint(prSource, line, r.point, index, r.easting, r.northing, NaN)
+          g[].addP1(pf),
           onCsv: proc (f: StoredFile; text: string) =
-            rows += g[].addCsv(text, f.name, f.role, problems, skipped),
+          rows += g[].addCsv(text, f.name, f.role, problems, skipped),
           onEnd: proc (f: StoredFile) =
-            if building:
-              var l = b.finish()
-              l.withLevels()
-              built.add l
-              building = false))
+          if building:
+            var l = b.finish()
+            l.withLevels()
+            built.add l
+            building = false))
         news.survey = surveyOf(g[], names)
         news.survey.notes = doc.notes
         (news.survey.csvRows, news.survey.csvSkipped) = (rows, skipped)

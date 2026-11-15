@@ -39,20 +39,20 @@ type
     stUnknown = "unknown", stLight = "light", stDark = "dark"
 
   DialogKind* = enum
-    dkOpenFile = "Open file",             ## one seismic file
-    dkOpenFiles = "Open files",           ## several seismic files
-    dkOpenFolder = "Open folder",         ## one folder
-    dkExportSettings = "Export settings", ## a NIF file to write (a save dialog)
-    dkImportSettings = "Import settings", ## a NIF file to read
-    dkExportLayout = "Export layout",     ## a NIF file to write (a save dialog)
-    dkImportLayout = "Import layout",     ## a NIF file to read
-    dkExportLog = "Export messages"       ## a text file to write (a save dialog)
-    dkJoinFiles = "Add survey files"      ## survey files to import: SPS, SEG P1, CSV tables
-    dkExportEdits = "Export trace edits"  ## a NIF or CSV file to write (a save dialog)
-    dkImportEdits = "Import trace edits"  ## a NIF or CSV file of trace edits to read
-    dkOpenProject = "Open project"        ## a project's folder
+    dkOpenFile = "Open file",               ## one seismic file
+    dkOpenFiles = "Open files",             ## several seismic files
+    dkOpenFolder = "Open folder",           ## one folder
+    dkExportSettings = "Export settings",   ## a NIF file to write (a save dialog)
+    dkImportSettings = "Import settings",   ## a NIF file to read
+    dkExportLayout = "Export layout",       ## a NIF file to write (a save dialog)
+    dkImportLayout = "Import layout",       ## a NIF file to read
+    dkExportLog = "Export messages"         ## a text file to write (a save dialog)
+    dkJoinFiles = "Add survey files"        ## survey files to import: SPS, SEG P1, CSV tables
+    dkExportEdits = "Export trace edits"    ## a NIF or CSV file to write (a save dialog)
+    dkImportEdits = "Import trace edits"    ## a NIF or CSV file of trace edits to read
+    dkOpenProject = "Open project"          ## a project's folder
     dkProjectPlace = "Place of the project" ## the folder a new project is made in
-    dkProjectData = "Add a data folder"   ## a data folder of a project
+    dkProjectData = "Add a data folder"     ## a data folder of a project
     dkLocateFolder = "Locate a data folder" ## where a project's missing data folder is now
 
   ShellEventKind* = enum

@@ -45,12 +45,12 @@ type
 
   StoredFile* = object
     ## One survey file as the store keeps it.
-    copy*: string        ## the copy's path, relative to the project folder
-    name*: string        ## its file name
+    copy*: string       ## the copy's path, relative to the project folder
+    name*: string       ## its file name
     kind*: JoinFileKind
-    fileKind*: FileKind  ## as told from its first bytes
+    fileKind*: FileKind ## as told from its first bytes
     role*: CsvRole
-    size*: int64         ## the copy's size and modification time when read
+    size*: int64        ## the copy's size and modification time when read
     modified*: Time
 
   StoreReader* = object

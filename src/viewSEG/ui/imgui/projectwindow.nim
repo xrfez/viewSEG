@@ -20,26 +20,26 @@ type
 
   ProjectUi* = object
     ## The windows' own state between frames.
-    shown*: bool         ## the Project window
-    making*: bool        ## the New project window
+    shown*: bool              ## the Project window
+    making*: bool             ## the New project window
     bringUp: bool
     placeAgain: bool
     name: array[128, char]
-    place*: string       ## where the project folder is made (its parent)
-    data*: seq[string]   ## its data folders
+    place*: string            ## where the project folder is made (its parent)
+    data*: seq[string]        ## its data folders
     useSurvey*: bool = true
     bringMemory*: bool = true
     takePresets*: bool = true
-    locating*: string    ## the missing folder a Locate... is for
-    wasOffered: bool     ## the project offered an update at the frame before
-    earlierSeen: int     ## earlier outputs of the file shown, at the frame before
-    focus: FocusClicks   ## the New project window's
+    locating*: string         ## the missing folder a Locate... is for
+    wasOffered: bool          ## the project offered an update at the frame before
+    earlierSeen: int          ## earlier outputs of the file shown, at the frame before
+    focus: FocusClicks        ## the New project window's
     focusProject: FocusClicks ## the Project window's
 
   ProjectOutput* = object
     commands*: seq[Command]
-    ask*: ProjectAsk     ## a folder dialog to show
-    askAt*: string       ## where it starts
+    ask*: ProjectAsk ## a folder dialog to show
+    askAt*: string   ## where it starts
 
 proc open*(ui: var ProjectUi) =
   ## Shows the Project window, in front.

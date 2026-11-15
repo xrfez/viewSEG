@@ -21,42 +21,42 @@ import parseSEG
 import displaypresets, filesystem, join, nif, processing
 
 const
-  ProjectFileName* = "project.nif"   ## the project document, in the project folder
-  ProjectVersion* = 1                ## the document's format
-  ProjectLayoutName* = "layout.nif"  ## the windows' arrangement in the project
-  ProjectStoreFolder* = "files"      ## the store of what is remembered about files
+  ProjectFileName* = "project.nif"       ## the project document, in the project folder
+  ProjectVersion* = 1                    ## the document's format
+  ProjectLayoutName* = "layout.nif"      ## the windows' arrangement in the project
+  ProjectStoreFolder* = "files"          ## the store of what is remembered about files
   SurveyFolder* = "survey"
-  SurveyCopies* = "survey/files"     ## the survey files copied into the project
+  SurveyCopies* = "survey/files"         ## the survey files copied into the project
   SurveyStoreName* = "survey/survey.bin" ## the survey as imported
   CacheFolder* = "cache"
-  LockName* = ".lock"                ## the lock between programs
-  OwnerName* = "owner.nif"           ## who holds the lock
-  MaxProjectData* = 64               ## data folders a project keeps, at most
+  LockName* = ".lock"                    ## the lock between programs
+  OwnerName* = "owner.nif"               ## who holds the lock
+  MaxProjectData* = 64                   ## data folders a project keeps, at most
 
 type
   ProjectPath* = object
     ## A folder or file a project names: relative to the project folder, and
     ## where it was last found.
-    path*: string     ## relative to the project folder ("/" between parts); "" when there is none
+    path*: string ## relative to the project folder ("/" between parts); "" when there is none
     absolute*: string ## where it was last found
 
   SurveyCopy* = object
     ## A survey file imported into the project: its copy, and the original
     ## as it was when copied.
     kind*: JoinFileKind
-    role*: CsvRole        ## CSV: which stations its rows are
-    copy*: string         ## the copy, relative to the project folder ("survey/files/a.sps")
+    role*: CsvRole ## CSV: which stations its rows are
+    copy*: string ## the copy, relative to the project folder ("survey/files/a.sps")
     original*: ProjectPath
-    size*: int64          ## the original's size, when copied
-    modified*: Time       ## its modification time then
-    quick*: uint64        ## its first and last 64 KiB's hash then (`quickIdentity`)
-    full*: uint64         ## the hash of every byte of its copy (`fullHash`); 0 when not known
+    size*: int64 ## the original's size, when copied
+    modified*: Time ## its modification time then
+    quick*: uint64 ## its first and last 64 KiB's hash then (`quickIdentity`)
+    full*: uint64 ## the hash of every byte of its copy (`fullHash`); 0 when not known
 
   StoreInfo* = object
     ## `survey.bin` as written: none while `bytes` is 0.
     format*: int
     bytes*: int64
-    hash*: uint64  ## XXH64 of the whole file
+    hash*: uint64 ## XXH64 of the whole file
     sources*, receivers*, relations*: int
 
   ProjectDoc* = object
@@ -87,22 +87,22 @@ type
 
   PlaceState* = enum
     ## Where a folder or file a project names stands.
-    psLooking = "looking"            ## not looked at yet
+    psLooking = "looking"           ## not looked at yet
     psFound = "found"
-    psMissing = "missing"            ## at none of its places
-    psNotAnswering = "notAnswering"  ## its drive did not answer
+    psMissing = "missing"           ## at none of its places
+    psNotAnswering = "notAnswering" ## its drive did not answer
 
   OriginalState* = enum
     ## A survey file's original against its copy in the project.
     osLooking = "looking"
-    osAsCopied = "asCopied"   ## its size, modification time and hash are as when copied
-    osChanged = "changed"     ## it changed since it was copied
-    osNotFound = "notFound"   ## it is not where it was: the copy stands for it
+    osAsCopied = "asCopied" ## its size, modification time and hash are as when copied
+    osChanged = "changed"   ## it changed since it was copied
+    osNotFound = "notFound" ## it is not where it was: the copy stands for it
 
   OriginalLook* = object
     ## What a look at an original found.
     state*: OriginalState
-    path*: string    ## where it was found ("" when it was not)
+    path*: string ## where it was found ("" when it was not)
     size*: int64
     modified*: Time
 
@@ -127,20 +127,20 @@ type
 
   ProjectNews* = object
     ## A project's job's result, for the UI thread.
-    dir*: string ## the project folder
-    folders*: seq[PlaceLook]       ## pnOpened, pnLooked: each data folder
-    originals*: seq[OriginalLook]  ## pnOpened, pnLooked: each survey file's original
+    dir*: string                    ## the project folder
+    folders*: seq[PlaceLook]        ## pnOpened, pnLooked: each data folder
+    originals*: seq[OriginalLook]   ## pnOpened, pnLooked: each survey file's original
     case kind*: NewsKind
     of pnOpened:
       doc*: ProjectDoc
-      failure*: string        ## why it could not be opened or made; "" when it was
-      problems*: seq[string]  ## what in its document could not be used
-      lock*: FileLock         ## taken: this program writes the project
-      owner*: Owner           ## who holds the lock, when it was not taken
-      layout*: string         ## the project's window arrangement; "" for none
-      created*: bool          ## made by New project
-      brought*: int           ## documents of what is remembered copied into it
-      storeThere*: bool       ## `survey.bin` is there, of the size the document says
+      failure*: string              ## why it could not be opened or made; "" when it was
+      problems*: seq[string]        ## what in its document could not be used
+      lock*: FileLock               ## taken: this program writes the project
+      owner*: Owner                 ## who holds the lock, when it was not taken
+      layout*: string               ## the project's window arrangement; "" for none
+      created*: bool                ## made by New project
+      brought*: int                 ## documents of what is remembered copied into it
+      storeThere*: bool             ## `survey.bin` is there, of the size the document says
     of pnSurvey:
       geometry*: ref SurveyGeometry ## moved, never shared; nil when it failed
       survey*: JoinSurvey
