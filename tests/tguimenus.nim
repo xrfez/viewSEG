@@ -226,6 +226,11 @@ withFixtures fx:
     h = f.markOf("plot.more").centre
     f.moveMouse(h), proc (f: FrameInfo): bool = wait > 2)
   step("the gear's popover", proc (f: FrameInfo) = f.click(h), proc (f: FrameInfo): bool =
+    f.markOf("plot.more tab traces").size.x > 0)
+  step("point at its Traces tab", proc (f: FrameInfo) =
+    h = f.markOf("plot.more tab traces").centre
+    f.moveMouse(h), proc (f: FrameInfo): bool = wait > 2)
+  step("its Traces tab", proc (f: FrameInfo) = f.click(h), proc (f: FrameInfo): bool =
     f.markOf("plot.more.header.auto").size.x > 0 and f.markOf("plot.more.header.offset").size.x > 0)
 
   # ------------------------------------------------------------ driver --

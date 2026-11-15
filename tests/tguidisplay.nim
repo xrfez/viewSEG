@@ -257,8 +257,12 @@ withFixtures fx:
   # ----------------------------------------------------------- second run --
   steps.setLen 0
   var steady = 0
-  step("second run", noop, proc (f: FrameInfo): bool =
-    steady = if f.complete: steady + 1 else: 0
+  # the pointer off the plot: where the first run left it, it could hover
+  # the trace whose edge a pixel's centre falls on, where the CPU reference
+  # and the GPU may each take the other trace
+  proc away(f: FrameInfo) = f.moveMouse(vec2(2, 2))
+  step("second run", away, proc (f: FrameInfo): bool =
+    steady = if f.complete and f.core.selection.hover < 0: steady + 1 else: 0
     result = steady > 5
     if result:
       doAssert f.core.settings.displayPresets.len == 1, "second run: no preset"

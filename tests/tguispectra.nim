@@ -159,6 +159,7 @@ withFixtures fx:
   key("K", skK)
   step("killed", noop, proc (f: FrameInfo): bool = teKilled in f.core.traceEdits(1))
   click("plot.more")
+  click("plot.more tab traces")
   click("plot.more.hide killed")
   step("hidden", noop, proc (f: FrameInfo): bool =
     f.core.settings.hideKilled and f.answered and f.panel.layout.traces == SpectrumTraces - 1)
