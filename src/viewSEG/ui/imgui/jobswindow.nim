@@ -40,14 +40,15 @@ proc laneTag(lane: JobLane; t: Theme) =
   igPopStyleColor(1)
   tip(if lane == jlInteractive: "Work you are waiting on: it runs at once, beside the " &
         "background work"
+      elif lane == jlHashes: "A file read whole to confirm what it holds: beside the other " &
+        "background work, which never waits for it"
       else: "Long work that runs in the background while you go on")
 
 proc drawJobs*(title: string; st: AppState; t: Theme; marks: var Marks): JobsOutput =
   ## The window, docked or floating like any other, titled `title`.
   if igBegin(title.cstring, nil, 0):
     marks.markWindow("jobs")
-    let rows = jobRows(st.jobs.list, [st.jobs.queued(jlInteractive),
-      st.jobs.queued(jlBackground)], getMonoTime())
+    let rows = jobRows(st.jobs.list, st.jobs.queues, getMonoTime())
     let style = igGetStyle()
     igSeparatorText("Running")
     if rows.running.len == 0: igTextDisabled("Nothing is running.")

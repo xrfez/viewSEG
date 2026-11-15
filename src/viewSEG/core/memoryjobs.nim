@@ -3,7 +3,7 @@
 ##
 ## - `identifyWork` (interactive lane, a few milliseconds): an opened
 ##   file's quick identity, and the store's documents of that identity.
-## - `fullHashWork` (background lane): the hash of every byte of the file,
+## - `fullHashWork` (the lane of hashes): the hash of every byte of the file,
 ##   which confirms the identity or tells the files apart.
 ## - `listMemoryWork`: every document of the store, for the File memory
 ##   window.

@@ -28,6 +28,7 @@
 ## - a user's edit while the hash is under way, on a file taken at once for
 ##   one remembered, is not left in that file's document when the hash says
 ##   it was another;
+## - a file's hash under way holds no background job (a lane of its own);
 ## - a file rewritten in the middle while its hash runs is not confirmed;
 ## - the data file's bytes and modification time are as they were through
 ##   all of it, what is remembered of it forgotten (File memory) included.
@@ -48,10 +49,11 @@
 ## file had no document yet, "what is remembered for the file did not come
 ## to its copy edited before the hash"; with the hash's after-check on the
 ## size and the ends only, "a file changed in the middle while it was
-## hashed was confirmed".
+## hashed was confirmed"; with the hash on the background lane, "a
+## background job waits behind a file's hash".
 
-import std/[os, strutils, times]
-import viewSEG/core/state
+import std/[atomics, os, strutils, times]
+import viewSEG/core/[jobs, state]
 import utils/[faultyfs, fixtures, steps, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
@@ -98,6 +100,8 @@ proc quiet(st: AppState): bool =
   for e in st.log:
     if e.source == "jobs": return false
   true
+
+var backgroundRan: Atomic[bool]
 
 install()
 installSteps()
@@ -312,6 +316,23 @@ withFixtures fx:
     doAssert st.editsOf(0).isEmpty
     st.flushFiles()
     doAssert not fileExists(config / StoreFolder / doc)
+    st.shutdown()
+  block hashBesideBackground:
+    # a file's hash under way (a large file, or one on a share) holds no
+    # background work: a QC check queued after it runs at once
+    var st = start(config)
+    holdStep("reading every byte")
+    st.showFile(b)
+    doAssert st.settle(st.remembering(b).known)
+    st.edit(teKilled, 2) # the user's: the file is hashed whole
+    doAssert waitUntil((discard st.drainInbox(); inStep("reading every byte").len == 1))
+    backgroundRan.store(false)
+    discard st.jobs.submit(JobSpec(title: "Check the records", lane: jlBackground),
+      proc (ctx: JobContext) {.gcsafe.} = backgroundRan.store(true))
+    doAssert waitUntil(backgroundRan.load, initDuration(seconds = 2)),
+      "a background job waits behind a file's hash"
+    releaseStep("reading every byte")
+    doAssert st.settle(st.remembering(b).confirmed)
     st.shutdown()
   block changedWhileHashed:
     # a file rewritten in place while its hash runs, a byte in the middle

@@ -863,7 +863,8 @@ not.
 **What is remembered about a file.** The edits are kept with the file's identity, not its
 name (`core/identity`, `core/filememory`): its size and a hash of its first and last
 64 KiB, read when it is opened (a few milliseconds, off the screen's thread), confirmed
-by a hash of every byte on the background lane. A file renamed or moved keeps its edits:
+by a hash of every byte on a lane of its own, beside the background work (one changed while
+it is read is not confirmed). A file renamed or moved keeps its edits:
 opened again, under any name, it shows them at once (the size, the ends and the
 modification time match what is remembered), and Messages says so; a copy with one byte
 changed is another file and shows none (when even its time is the same, what came at

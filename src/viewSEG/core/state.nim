@@ -819,13 +819,14 @@ func recordOf(state: AppState; i: int): FileRecord =
   if r.doc in state.knownDocs: result.later = state.knownDocs[r.doc].later # a later version's
 
 proc hashFile(state: var AppState; i: int) =
-  ## Hashes every byte of `remembered[i]`'s file, on the background lane,
-  ## unless that is known or under way.
+  ## Hashes every byte of `remembered[i]`'s file, on the lane of hashes (a
+  ## large file's hash never holds the background work), unless that is
+  ## known or under way.
   template r: untyped = state.remembered[i]
   if r.known and not r.hashed and r.hashJob == NoJob:
     let name = r.path.extractFilename
     r.hashJob = state.jobs.submit(JobSpec(title: "Confirm what " & name & " holds",
-      lane: jlBackground), fullHashWork(r.path, FileIdentity(size: r.identity.size,
+      lane: jlHashes), fullHashWork(r.path, FileIdentity(size: r.identity.size,
       quick: r.identity.quick), r.modified, state.inbox.poster))
     state.memoryWork.add r.hashJob
 

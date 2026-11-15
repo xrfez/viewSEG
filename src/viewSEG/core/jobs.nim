@@ -1,11 +1,14 @@
-## Jobs: work that would block the UI thread, run in the background in two
-## lanes, visibly, while the user keeps working.
+## Jobs: work that would block the UI thread, run in the background in
+## three lanes, visibly, while the user keeps working.
 ##
 ## - **Lanes.** The *interactive* lane runs short work the user is waiting on
 ##   (open, sort, join); the *background* lane runs long work (whole-file QC,
-##   conversion, stack, export, workflows). Each lane has its own runner
-##   thread and its own queue, so a long background job never delays an
-##   interactive one. Within a lane, jobs run one at a time, in queue order.
+##   conversion, stack, export, workflows); the *hashes* lane reads files
+##   whole for their identity (a hash of every byte), seconds for a large
+##   file and minutes on a share, so that the background work never waits
+##   behind it. Each lane has its own runner thread and its own queue, so a
+##   long job of one lane never delays another lane's. Within a lane, jobs
+##   run one at a time, in queue order.
 ## - **States.** A job is queued, then running, then done, failed or
 ##   cancelled. A queued job can be moved in its queue (`reorder`), removed
 ##   (`remove`) or cancelled (`cancel`); a running job can be asked to stop
@@ -83,6 +86,9 @@ type
   JobLane* = enum
     jlInteractive = "interactive" ## short work the user is waiting on
     jlBackground = "background"   ## long work the user does not wait on
+    jlHashes = "hashes"
+      ## files read whole for their identity: a lane of their own, so that a
+      ## large file's hash never holds the background work
 
   JobState* = enum
     jsQueued = "queued"
@@ -669,6 +675,12 @@ proc queued*(jobs: Jobs; lane: JobLane): seq[JobId] =
   let q = jobs.obj
   withLock q.lock:
     result = q.queue[lane]
+
+proc queues*(jobs: Jobs): array[JobLane, seq[JobId]] =
+  ## The queued jobs of every lane, each in the order they will run.
+  let q = jobs.obj
+  withLock q.lock:
+    result = q.queue
 
 proc active*(jobs: Jobs): seq[JobInfo] =
   ## The running jobs, oldest first, then the queued ones in the order they

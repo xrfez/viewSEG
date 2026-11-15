@@ -33,7 +33,7 @@ src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows res
 
 | Layer | Owns | Must not import |
 |---|---|---|
-| `core` | `AppState` (open files, panels and their layers, the selection, the message log, the survey: where sources and receivers are, with a spatial index), `Command`s (each user intent as data), jobs in two lanes (prefetch through parseSEG's `Prefetcher`, processing through processSEG plans and its pool; results posted to a main-thread inbox), thread guards and the frame watchdog, kernels (colour maps, decimation, picking, cursor readout), map maths (tiles, projections, hit-testing) | `ui`, `gpu`, `platform`, any toolkit, SDL, OpenGL |
+| `core` | `AppState` (open files, panels and their layers, the selection, the message log, the survey: where sources and receivers are, with a spatial index), `Command`s (each user intent as data), jobs in three lanes (prefetch through parseSEG's `Prefetcher`, processing through processSEG plans and its pool; results posted to a main-thread inbox), thread guards and the frame watchdog, kernels (colour maps, decimation, picking, cursor readout), map maths (tiles, projections, hit-testing) | `ui`, `gpu`, `platform`, any toolkit, SDL, OpenGL |
 | `view` | View models such as `PanelView`, `TableModel`, `TreeModel`, `PlotSeries` and the map's `MapLayerView`. Each has plain-Nim geometry (`Vec2`, `Rect`, `Rgba`) and a `revision` counter that bumps on change | `ui`, `gpu`, `platform`, any toolkit |
 | `gpu` | OpenGL 3 objects behind small procs: upload a sample tile as `R32F` textures (`textures`), the density shader and its colour-map LUT (`density`), the wiggle shader (`wiggle`), the plot's image that draws a panel's tiles with them (`plotimage`), and the map's image of the survey's points (`mappoints`). It loads the GL functions it needs itself (`gpu/gl`), through a loader the frontend passes in (`SDL_GL_GetProcAddress`), so it imports no GL binding package | `ui`, any toolkit (OpenGL itself is allowed) |
 | `platform` | `winres` (compile-time manifest, icon, version info), window chrome (DWM attributes on a native window handle), config paths, and whatever else needs raw OS APIs. Services the windowing library already has (SDL3: file dialogs, system theme, tray) are wrapped in `ui/<toolkit>/shell` instead, because only `ui` may import SDL | `ui`, `core`, any toolkit |
@@ -115,12 +115,15 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 
 ### Jobs
 
-`core/jobs` runs everything that blocks, apart from a panel's own reads, in two lanes, so
-the wait the user notices is never behind a long job.
+`core/jobs` runs everything that blocks, apart from a panel's own reads, in three lanes,
+so the wait the user notices is never behind a long job.
 
 - **Lanes.** Each lane has a runner thread and a queue; within a lane jobs run one at a
   time, in queue order. The interactive lane is for what the user waits on; the
-  background lane for the rest. Background work uses its own processSEG workspaces, not
+  background lane for the rest; the lane of hashes (`jlHashes`) for files read whole to
+  confirm their identity (`fullHashWork`), which take seconds locally and minutes on a
+  share, so that QC checks, shot lists and spreads never wait behind one (the Jobs
+  window calls it background too). Background work uses its own processSEG workspaces, not
   the shared pool, so it cannot stall a panel.
 - **A job** (`JobSpec`, `JobInfo`) has a title in plain words, a lane, a state (queued,
   running, done, failed, cancelled), progress (done of total, a phase label), and the
@@ -141,7 +144,7 @@ the wait the user notices is never behind a long job.
   `checkCancelled` raises `JobCancelledError`. Work that returns is done; work that raises
   is failed, or cancelled if a cancel was asked for first.
 - **Wake-ups.** Every change that can let a queued job start (a submission, a job
-  finishing, a removal, a move, a cancel) wakes both runners.
+  finishing, a removal, a move, a cancel) wakes every runner.
 - **Results** go to the UI thread through the inbox (`core/inbox`): `post` from any
   thread, `drainInto` once per frame, which only swaps two buffers under a lock.
   `drainInbox` takes the finished jobs first and then the messages, so a job's messages
@@ -677,7 +680,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   covers the header blocks), read when it is opened by a job on the interactive lane
   (`identifyWork`, a few ms; never on the UI thread: a drive that does not answer holds
   the job, the plot opens as always and the edits come once it answers), and a hash of
-  every byte (`fullHash`) on the background lane, which confirms it. **The store**
+  every byte (`fullHash`) on the lane of hashes, which confirms it (and is not taken when
+  the file's size, ends or modification time moved before or after the read). **The store**
   (`Store`) has one home at a time: `<config>/files/` (`rememberFilesIn`, which the
   frontend calls with the settings' folder; tests that do not call it remember nothing),
   later a project's folder (3.0), through the same procs. It holds one NIF document per
@@ -1105,7 +1109,7 @@ type
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
-    spec: JobSpec            # title, lane (jlInteractive, jlBackground), reads, exclusive,
+    spec: JobSpec            # title, lane (jlInteractive, jlBackground, jlHashes), reads, exclusive,
                              # cancellable
     state: JobState          # jsQueued, jsRunning, jsDone, jsFailed, jsCancelled
     progress: JobProgress    # done, total, phase, since (the phase's start)

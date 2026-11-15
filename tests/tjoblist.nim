@@ -34,7 +34,7 @@ block rowsOfEachKind:
     info(5, "Open b.sgy", jsFailed, jlInteractive, 2.0, 2.5, "there is no such file"),
     info(6, "Close b.sgy", jsQueued, jlInteractive, cancellable = false),
     info(7, "QC 4", jsCancelled)]
-  let rows = jobRows(list, [@[JobId(6)], @[JobId(4), JobId(3)]], t0 + secs(3))
+  let rows = jobRows(list, [@[JobId(6)], @[JobId(4), JobId(3)], @[]], t0 + secs(3))
   doAssert rows.running.len == 1 and rows.running[0].title == "QC 1"
   doAssert rows.running[0].progress == "reading 25 %, about 9 s left", rows.running[0].progress
   doAssert abs(rows.running[0].fraction - 0.25) < 1e-6 and rows.running[0].canCancel
@@ -57,7 +57,8 @@ block rowsOfEachKind:
     rows.finished[1].detail
   doAssert rows.finished[0].detail == "cancelled before it started", rows.finished[0].detail
   for r in rows.finished: doAssert r.canRemove and not r.canCancel
-  doAssert laneName(jlInteractive) == "foreground" and laneName(jlBackground) == "background"
+  doAssert laneName(jlInteractive) == "foreground" and laneName(jlBackground) == "background" and
+    laneName(jlHashes) == "background"
 
 var gates: array[3, Gate]
 
@@ -75,8 +76,7 @@ block queuedInTheirOrder:
   let a = st.jobs.submit(JobSpec(title: "QC 1", lane: jlBackground), gated(0))
   discard st.jobs.submit(JobSpec(title: "QC 2", lane: jlBackground), gated(0))
   st.apply Command(kind: ckReorderJob, reordered: a, position: 1)
-  let rows = jobRows(st.jobs.list, [st.jobs.queued(jlInteractive),
-    st.jobs.queued(jlBackground)], getMonoTime())
+  let rows = jobRows(st.jobs.list, st.jobs.queues, getMonoTime())
   doAssert rows.queued.len == 2 and rows.queued[0].title == "QC 2", $rows.queued
   doAssert rows.running.len == 1 and rows.running[0].title == "Hold"
   gates[0].open()
