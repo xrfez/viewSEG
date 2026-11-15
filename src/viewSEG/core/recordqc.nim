@@ -38,7 +38,8 @@ type
   RecordQc* = object
     ## The record shown's filters, as its job found them.
     job*: JobId = NoJob                 ## the job reading it; `NoJob` for none
-    key*: tuple[file: SessionId; gather, keys: int; relations: pointer; domain: RelationDomain]
+    key*: tuple[file: SessionId; gather, keys: int; relations: pointer; domain: RelationDomain;
+        recordMatch: RecordMatch; traceMatch: TraceMatch]
       ## what the job, or `hits`, were made from
     hits*: array[MapFilter, FilterHits] ## of the filters in `TraceFilters`
     revision*: int                      ## bumped when `hits` change
@@ -67,6 +68,58 @@ proc plannedOf(g: SurveyGeometry; record: int64; domain: RelationDomain): Plan =
     for i in 0 ..< run.stations:
       let st = run.station(i)
       result.mgetOrPut((st.line, st.point), {}).incl st.index
+
+proc placeTraces*(hits: var array[MapFilter, FilterHits]; keys: openArray[TraceKeys];
+    base: int; traces: Slice[int]; g: SurveyGeometry; record: int64; domain: RelationDomain) =
+  ## The record's (`traces` of `keys`; trace 0 survey-wide `base`) traces at
+  ## stations relation record `record` of `domain` does not plan
+  ## (`mfUnlisted`) and recorded twice (`mfDuplicate`), placed by their
+  ## receiver (a shot) or source (a receiver gather) station, keyed as
+  ## parseSEG keys stations (to 1/100: a SEG-D station decoded from a binary
+  ## fraction is the survey file's). For a receiver gather also the counts,
+  ## and the stations planned it lacks (`mfMissing`); a shot's are
+  ## `recordCompleteness`'s, set before.
+  let plan = g.plannedOf(record, domain)
+  var seen: Table[(StationKey, uint8), int]  # station (index 0 for none) and component: first trace
+  var have: HashSet[(float64, float64)]
+  var dupStations: HashSet[(float64, float64)]
+  var firsts: HashSet[int] # the first trace of each key recorded twice, listed
+  for t in traces:
+    let k = keys[t]
+    if k.isSeismic:
+      let (line, point, index) = if domain == rdSource: (k.rcvLine, k.rcvPoint, k.rcvIndex)
+                                 else: (k.srcLine, k.srcPoint, k.srcIndex)
+      if hasStation(line, point):
+        let st = stationKey(line, point, max(index, 0'i16))
+        have.incl (st.line, st.point)
+        if not plan.planned(st.line, st.point, index) and k.status != tsDead:
+          hits[mfUnlisted].traces.add base + t
+        let key = (st, k.component)
+        if key in seen:
+          dupStations.incl (st.line, st.point)
+          if not firsts.containsOrIncl(seen[key]):
+            hits[mfDuplicate].traces.add base + seen[key]
+          hits[mfDuplicate].traces.add base + t
+        else: seen[key] = t
+  if domain == rdReceiver:
+    # Counted here: the O record's stations the gather lacks (as stations).
+    var counted: HashSet[(float64, float64)]
+    var unlisted: HashSet[(float64, float64)]
+    for run in g.relationRuns(record, domain):
+      for i in 0 ..< run.stations:
+        let st = run.station(i)
+        if (st.line, st.point) notin have and not counted.containsOrIncl((st.line, st.point)):
+          hits[mfMissing].stations.add st
+    for t in hits[mfUnlisted].traces:
+      let k = keys[t - base]
+      let st = stationKey(k.srcLine, k.srcPoint, 0)
+      unlisted.incl (st.line, st.point)
+    hits[mfMissing].count = hits[mfMissing].stations.len
+    hits[mfMissing].note = "shots of the " & $plan.len & " O record " & $record & " plans"
+    hits[mfUnlisted].count = unlisted.len
+    hits[mfUnlisted].note = "sources of its traces that O record " & $record & " does not list"
+    hits[mfDuplicate].count = dupStations.len
+    hits[mfDuplicate].note = "sources with two traces of one component"
 
 proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: int;
     traces: Slice[int]; g: SurveyGeometry; against: string; domain: RelationDomain;
@@ -115,46 +168,7 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
     for m in [mfMissing, mfUnlisted, mfDuplicate]:
       hits[m].note.add " (matched by channel: not placed)"
     return
-  # The traces, placed: by their receiver (a shot) or source (a receiver gather) station.
-  let plan = g.plannedOf(record, domain)
-  var seen: Table[(float64, float64, int16, uint8), int]       # station and component: first trace
-  var have: HashSet[(float64, float64)]
-  var dup: HashSet[int]
-  for t in traces:
-    let k = f.index.keys[t]
-    if k.isSeismic:
-      let (line, point, index) = if domain == rdSource: (k.rcvLine, k.rcvPoint, k.rcvIndex)
-                                 else: (k.srcLine, k.srcPoint, k.srcIndex)
-      if hasStation(line, point):
-        have.incl (line, point)
-        if not plan.planned(line, point, index) and k.status != tsDead:
-          hits[mfUnlisted].traces.add base + t
-        let key = (line, point, max(index, 0'i16), k.component)
-        if key in seen:
-          if seen[key] notin dup:
-            dup.incl seen[key]
-            hits[mfDuplicate].traces.add base + seen[key]
-          hits[mfDuplicate].traces.add base + t
-        else: seen[key] = t
-  if domain == rdReceiver:
-    # Counted here: the O record's stations the gather lacks (as stations).
-    var planned: seq[StationKey]
-    for run in g.relationRuns(record, domain):
-      for i in 0 ..< run.stations: planned.add run.station(i)
-    var counted: HashSet[(float64, float64)]
-    var unlisted: HashSet[(float64, float64)]
-    for st in planned:
-      if (st.line, st.point) notin have and not counted.containsOrIncl((st.line, st.point)):
-        hits[mfMissing].stations.add st
-    for t in hits[mfUnlisted].traces:
-      let k = f.index.keys[t - base]
-      unlisted.incl (k.srcLine, k.srcPoint)
-    hits[mfMissing].count = hits[mfMissing].stations.len
-    hits[mfMissing].note = "shots of the " & $plan.len & " O record " & $record & " plans"
-    hits[mfUnlisted].count = unlisted.len
-    hits[mfUnlisted].note = "sources of its traces that O record " & $record & " does not list"
-    hits[mfDuplicate].count = dup.len div 2
-    hits[mfDuplicate].note = "sources with two traces of one component"
+  hits.placeTraces(f.index.keys, base, traces, g, record, domain)
 
 proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base, gather: int;
     traces: Slice[int]; domain: RelationDomain; relations: ptr SurveyGeometry;

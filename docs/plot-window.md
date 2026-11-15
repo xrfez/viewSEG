@@ -671,10 +671,11 @@ what it was instead of):
    has one, but a walk writes none (a folder of thousands would push out the caches of
    the files the user opens); what was found is kept beside the index cache (a small file
    per seismic file), so the folder listed again opens none of its files. A file that
-   does not answer for 3 s is passed by and tried again a minute later. A source with a
-   file is ringed in the outline colour; one without keeps its plain disc. A click on a
-   ringed source shows the file in place of the one the plot shows, as a click in Files
-   does.
+   does not answer for 3 s is passed by and tried again a minute later, once that first
+   try has come back (each try that hangs holds a thread until the drive answers). A
+   source with a file is ringed in the outline colour; one without keeps its plain disc.
+   A click on a ringed source shows the file in place of the one the plot shows, as a
+   click in Files does.
 10. **The filters** are none on by default; they are kept in the settings. The amplitude
    flags take processSEG's default thresholds (thresholds the user sets, and flags for
    every record of a survey, are the QC phase's; they fill the same filters). Dead in the

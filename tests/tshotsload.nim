@@ -6,11 +6,13 @@
 ## the first time and again from the shot cache; the listing is not held
 ## up (it is done before the first shot is read, and a new listing while
 ## shots are read is done as quickly as the first); and the UI thread's
-## work per drained inbox stays small (no frame stalls), the longest said.
+## work per drained inbox stays small (no frame stalls), the longest said,
+## also when half the files are taken out of the folder at once.
 ##
 ## Seen to fail: with every file's shots matched to the survey again for
 ## each file read (`match` in place of `matchOne`), "the UI thread's work"
-## found a drain of 212 ms.
+## found a drain of 212 ms; with the shots matched again for each file
+## taken out, "files taken out: a drain of 3288 ms" (a debug build).
 
 import std/[monotimes, os, strutils, times]
 import parseSEG
@@ -103,4 +105,19 @@ withFixtures fx:
   doAssert first.drain < initDuration(milliseconds = 50) and
     cached.drain < initDuration(milliseconds = 50), "the UI thread's work: a drain of " &
     max(first.drain, cached.drain).ms
+  # Half the files taken out of the folder at once: their shots go, in one
+  # small piece of the UI thread's work.
+  for i in countup(0, Files - 1, 2): removeFile(folder / ("shot" & align($i, 5, '0') & ".sgy"))
+  var gone = Duration()
+  let t2 = getMonoTime()
+  doAssert waitUntil((
+    let d0 = getMonoTime()
+    discard later.drainInbox()
+    gone = max(gone, getMonoTime() - d0)
+    later.shots.shotFiles == Files div 2), initDuration(seconds = 60)),
+    $later.shots.shotFiles & " files' shots left"
+  doAssert later.shots.pointRefs.len == Files div 2
+  echo "tshotsload: ", Files div 2, " files taken out: their shots gone in ",
+    (getMonoTime() - t2).ms, "; the longest drain ", gone.ms
+  doAssert gone < initDuration(milliseconds = 50), "files taken out: a drain of " & gone.ms
   later.shutdown()

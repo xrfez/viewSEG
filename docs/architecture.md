@@ -551,8 +551,10 @@ job's thread; each file posted as it is done (`mkShots`), and kept beside the in
 The UI thread takes each file in and matches its records to the survey files' sources
 (`ShotIndex.matchOne`: by station, by place, by FFID through the relation files), all
 again only when the survey changes; a job that has not answered for `StallAfter` is
-cancelled (`Jobs.tend` abandons it), the file it was on tried again after `RetryAfter`, the
-rest given to the next job; a new listing starts again (its jobs replaced end quietly).
+cancelled (`Jobs.tend` abandons it), the file it was on tried again after `RetryAfter` and
+not before that job's work is back (`ShotIndex.stuck`: a try that hangs holds a thread), the
+rest given to the next job; a new listing starts again (its jobs replaced end quietly); files
+taken out of the folder are forgotten together, with one match again.
 The map rings the matched sources and a click on one shows its file (`ckShowPoints` falls
 back to `showListedShot`, with the click's origin).
 

@@ -13,15 +13,18 @@
 ##   reversed by the user; the shots whose X record agrees with their
 ##   template far less than the survey's typically do (processSEG's
 ##   `compareRelations`, as the test makes it too);
-## - another record shown: read again (computing meanwhile); no filter on:
-##   what was found goes;
+## - another record shown: read again (computing meanwhile); another way of
+##   matching its traces to the X record (the import's options): read again;
+##   no filter on: what was found goes;
 ## - a receiver gather whose headers name no receiver station: the
 ##   template's filters say they are not checked, and why;
 ## - the record read is as it was (bytes and time).
 ##
 ## Seen to fail: with the record's statistics left out (`recordAmplitude`),
 ## "noisy" found none; with the duplicate's first trace left out, "recorded
-## twice" found 1 trace, not 2.
+## twice" found 1 trace, not 2; with the record match and the trace match
+## left out of what the check was made from, "not checked again with the
+## traces matched by channel".
 
 import std/[algorithm, os, sets, strutils]
 import parseSEG
@@ -157,6 +160,17 @@ withFixtures fx:
     doAssert h[mfDead].count == 0 and h[mfClipped].count == 0 and h[mfMissing].count == 0 and
       h[mfDuplicate].count == 0, "a clean record"
     doAssert h[mfUnlisted].count == 33
+    # Another way of matching its traces to the X record: checked again.
+    var s = st.settings
+    s.join.traceMatch = tmChannel
+    st.apply Command(kind: ckSettings, settings: s)
+    doAssert st.recordQc.job != NoJob, "not checked again with the traces matched by channel"
+    doAssert st.settle(st.done)
+    doAssert "matched by channel" in st.filterHits[mfUnlisted].note,
+      st.filterHits[mfUnlisted].note
+    s.join.traceMatch = tmAuto
+    st.apply Command(kind: ckSettings, settings: s)
+    doAssert st.settle(st.done) and st.filterHits[mfUnlisted].count == 33
     st.on({})
     doAssert st.recordQc.key.file == NoSession and st.filterHits[mfDead].state == fsOff
 

@@ -2361,7 +2361,8 @@ func shownSpread*(state: AppState): PlannedSpread =
       (has, fixed) = state.survey.stationNear(role, l.points[role].index.x(placed),
         l.points[role].index.y(placed))
   let ffid = if domain == rdSource: s.records[g.gather].record else: NaN
-  result = state.survey.plannedSpread(state.spreads, domain, ffid, fixed, has)
+  result = state.survey.plannedSpread(state.spreads, domain, ffid, fixed, has,
+    state.settings.join.recordMatch)
 
 func spreadAt*(state: AppState; p: PointRef): PlannedSpread =
   ## The spread planned at map point `p` when records of the domain shown
@@ -2452,10 +2453,18 @@ func wantsShots(state: AppState): bool =
     if l.origin == loSurveyFile and l.points[prSource].len > 0: return true
   false
 
+proc stillHangs(state: AppState; path: string): bool =
+  ## Whether a shots job given up on file `path` (it did not answer) still
+  ## runs: the file is not tried again meanwhile, as each try that hangs
+  ## holds a thread until the drive answers.
+  for s in state.shots.stuck:
+    if s.path == path and state.jobs.workingOn(s.job): return true
+
 proc queueShots(state: var AppState) =
   ## The listed files whose shots are to be read: seismic, steady, not read
-  ## as they are now and not waiting already; and those no longer listed
-  ## forgotten. Once per change of the list's entries.
+  ## as they are now and not waiting already (later, for one a try given up
+  ## on still hangs); and those no longer listed forgotten. Once per change
+  ## of the list's entries.
   template x: untyped = state.shots
   if x.listedRev == state.files.entriesRev: return
   x.listedRev = state.files.entriesRev
@@ -2468,12 +2477,13 @@ proc queueShots(state: var AppState) =
         let now = e.path in x.files and x.files[e.path].size == e.size and
           x.files[e.path].modified == e.modified
         if not now:
-          x.pending.add e.path
+          if state.stillHangs(e.path): x.later.add (e.path, fs.now() + RetryAfter)
+          else: x.pending.add e.path
           x.queued.incl e.path
   var gone: seq[string]
   for path in x.files.keys:
     if path notin listed: gone.add path
-  for path in gone: x.forget(state.survey, path)
+  x.forget(state.survey, gone)
   if x.started == MonoTime() and x.pending.len > 0: x.started = fs.now()
 
 proc followShots(state: var AppState) =
@@ -2486,8 +2496,8 @@ proc followShots(state: var AppState) =
     if x.job != NoJob:
       discard state.jobs.cancel(x.job)
       x.replaced.add x.job
-    x = ShotIndex(gen: state.files.gen, replaced: move x.replaced, revision: x.revision + 1,
-      listedRev: -1, surveyRev: state.survey.revision)
+    x = ShotIndex(gen: state.files.gen, replaced: move x.replaced, stuck: move x.stuck,
+      revision: x.revision + 1, listedRev: -1, surveyRev: state.survey.revision)
   if x.surveyRev != state.survey.revision: x.match(state.survey)
   if not state.wantsShots: return
   state.queueShots()
@@ -2495,9 +2505,13 @@ proc followShots(state: var AppState) =
   var i = 0
   while i < x.later.len:
     if now >= x.later[i].at:
-      x.pending.add x.later[i].path
-      x.later.delete(i)
-    else: inc i
+      let path = x.later[i].path
+      if not state.stillHangs(path): # (else once that try is back)
+        x.stuck.keepItIf(it.path != path)
+        x.pending.add path
+        x.later.delete(i)
+        continue
+    inc i
   if x.job != NoJob:
     let info = state.jobs.info(x.job)
     if info.isSome and info.get.state == jsRunning and
@@ -2505,10 +2519,11 @@ proc followShots(state: var AppState) =
       # The file it is on does not answer: tried again later, the rest now.
       discard state.jobs.cancel(x.job)
       x.replaced.add x.job
-      x.job = NoJob
       if x.jobPaths.len > 0:
+        x.stuck.add (x.jobPaths[0], x.job)
         x.later.add (x.jobPaths[0], now + RetryAfter)
         x.pending.insert(x.jobPaths[1 .. ^1], 0)
+      x.job = NoJob
       x.jobPaths.setLen 0
   if x.job == NoJob and x.pending.len > 0:
     let n = min(ShotBatch, x.pending.len)
@@ -2539,7 +2554,8 @@ func qcRelations(state: AppState; domain: RelationDomain): (ref SurveyGeometry, 
 proc followRecordQc(state: var AppState) =
   ## Reads the record shown on a job for the map's filters when one of
   ## `TraceFilters` is on and the record (its file, its keys, the relation
-  ## records it is checked against) changed; what it found before goes.
+  ## records it is checked against, how its traces are matched to them)
+  ## changed; what it found before goes.
   template q: untyped = state.recordQc
   let g = state.selection.activeGather
   let i = state.findSession(g.file)
@@ -2555,7 +2571,7 @@ proc followRecordQc(state: var AppState) =
   let domain = state.shownDomain
   let (rel, against) = state.qcRelations(domain)
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
-    domain)
+    domain, state.settings.join.recordMatch, state.settings.join.traceMatch)
   if key == q.key: return
   if q.job != NoJob:
     discard state.jobs.cancel(q.job)

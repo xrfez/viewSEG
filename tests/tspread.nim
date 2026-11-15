@@ -14,7 +14,9 @@
 ##   `generateRelations` gives that shot with the same template; a new
 ##   template makes them again; the box off, or a relation file loaded,
 ##   drops what was made;
-## - the box of a patch turned off north lies along its lines.
+## - the box of a patch turned off north lies along its lines;
+## - the record's X record is found with the record match the user chose
+##   (by default, by source station, by FFID), as the filters find it.
 ##
 ## The shots are SEG-Y files with coordinates and no stations (SEG-Y keeps
 ## none without a header layout), so their source is the S file's station
@@ -23,7 +25,8 @@
 ## Seen to fail: with the X record found by the FFID alone (the source
 ## station passed by), "the record shown" found X record -1; with the
 ## template's lines and channels swapped in the job, "generated from the
-## template" found 6 stations planned, not 8.
+## template" found 6 stations planned, not 8; with the record match left
+## out of the template's X record (`xRecordOf`), "by its FFID: X record 3".
 
 import std/[math, os, strutils]
 import parseSEG
@@ -79,6 +82,23 @@ proc receiverPoint(st: AppState; line, k: int): PointRef =
         float64(k), index: 1))
       if p >= 0: return PointRef(layer: l.id, role: prReceiver, point: p)
   doAssert false, "no receiver " & $line & "/" & $k
+
+block recordMatched:
+  # The template box's X record as the filters' (`recordCompleteness`) with
+  # the record match the user chose: X record 3 of source 10/5, 4 of 11/6;
+  # a record of source 10/5 whose FFID is 4.
+  var g = initSurveyGeometry()
+  for (record, line, point) in [(3'i64, 10.0, 5.0), (4'i64, 11.0, 6.0)]:
+    g.addSps(SpsFile(relations: @[SpsRelation(fieldRecord: record, srcLine: line,
+      srcPoint: point, srcIndex: 1, fromChannel: 1, toChannel: 3, channelIncrement: 1,
+      rcvLine: 30, fromReceiver: 101, toReceiver: 103, rcvIndex: 1)]), rdSource)
+  let source = stationKey(10, 5, 1)
+  doAssert g.xRecordOf(4, source, true) == 3 and g.xRecordOf(4, source, true, rmAuto) == 3
+  doAssert g.xRecordOf(4, source, true, rmSourceStation) == 3
+  doAssert g.xRecordOf(4, source, true, rmFieldRecord) == 4, "by its FFID: X record " &
+    $g.xRecordOf(4, source, true, rmFieldRecord)
+  doAssert g.xRecordOf(4, source, false, rmSourceStation) == -1, "no source station: none"
+  doAssert g.xRecordOf(NaN, source, true, rmFieldRecord) == -1, "no FFID: none"
 
 block listed:
   withFixtures fx:

@@ -16,10 +16,14 @@
 ## - A file gone from the folder takes its shot off the map.
 ## - Nothing of it touches the file system on the UI thread, and every file
 ##   is as it was (bytes and time).
+## - A file that does not answer is not tried again while its first try
+##   still hangs: each try that hangs holds a thread until the drive answers.
 ##
 ## Seen to fail: with the stalled job waited for (no give-up), "the rest
 ## read" timed out with 2 of 5 files read; with the shot cache not read,
-## "listed again" found 3 mapped reads of shot-2.sgy.
+## "listed again" found 3 mapped reads of shot-2.sgy; with a file tried again
+## after `RetryAfter` whatever its first try was doing, "2 tries of the file
+## hang".
 
 import std/[os, sets, tables, times]
 import viewSEG/core/state
@@ -114,6 +118,13 @@ withFixtures fx:
     doAssert st.settle(st.shots.shotFiles == 4 and st.shots.later.len == 1 and
       st.shots.job == NoJob), "the rest read: " & $st.shots.shotFiles & " of 5"
     doAssert stuck notin st.shots.files and st.shots.later[0].path == stuck
+    # Not tried again while the first try still hangs (each try that hangs
+    # holds a thread until the drive answers: one a minute, for ever).
+    for _ in 1 .. 2:
+      advanceFsClock(RetryAfter + initDuration(seconds = 1))
+      discard waitUntil((discard st.drainInbox(); hung() > 1), initDuration(seconds = 2))
+      doAssert hung() == 1, $hung() & " tries of the file hang"
+      doAssert st.shots.later.len == 1 and st.shots.later[0].path == stuck
     release(stuck)
     doAssert waitUntil(hung() == 0)
     advanceFsClock(RetryAfter)

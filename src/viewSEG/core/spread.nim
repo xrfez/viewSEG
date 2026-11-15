@@ -33,6 +33,7 @@
 import std/[algorithm, math, sets, strutils, times]
 import parseSEG
 import processSEG/survey/patch
+from processSEG/qc/record import RecordMatch, rmAuto, rmSourceStation, rmFieldRecord
 import inbox, jobs, mapkinds, mapview, survey, surveyjobs, threads
 
 export RelationDomain, StationKey
@@ -93,20 +94,23 @@ func hasRecord(g: SurveyGeometry; record: int64; domain: RelationDomain): bool =
   false
 
 func xRecordOf*(g: SurveyGeometry; ffid: float64; source: StationKey;
-    hasSource: bool): int64 =
+    hasSource: bool; match = rmAuto): int64 =
   ## The X record of a field record whose headers give FFID `ffid` (NaN: none)
   ## and, with `hasSource`, source station `source`, as processSEG's
-  ## `recordCompleteness` finds it by default: the source station's X record,
-  ## the one numbered as the FFID when it has several (none when no FFID
-  ## chooses); else, when the station has none, the X record numbered as the
-  ## FFID. -1 for none.
+  ## `recordCompleteness` finds it with `match` (the user's choice where
+  ## the survey is imported): by default the source station's X record, the
+  ## one numbered as the FFID when it has several (none when no FFID
+  ## chooses), else, when the station has none, the X record numbered as
+  ## the FFID; `rmSourceStation` the source station's only; `rmFieldRecord`
+  ## the FFID's only. -1 for none.
   result = -1
   var candidates: seq[int64]
-  if hasSource:
+  if hasSource and match != rmFieldRecord:
     candidates = g.recordsAt(source)
     if candidates.len == 1: return candidates[0]
     if wholeNumber(ffid) and int64(ffid) in candidates: return int64(ffid)
-  if candidates.len == 0 and wholeNumber(ffid) and g.hasRecord(int64(ffid), rdSource):
+  if (match == rmFieldRecord or (match == rmAuto and candidates.len == 0)) and
+      wholeNumber(ffid) and g.hasRecord(int64(ffid), rdSource):
     result = int64(ffid)
 
 proc firstRecord(g: SurveyGeometry; station: StationKey; domain: RelationDomain): int64 =
@@ -206,17 +210,18 @@ proc spreadOf*(s: Survey; g: SurveyGeometry; record: int64; domain: RelationDoma
   result.box = boxOf(result.places, along)
 
 proc plannedSpread*(s: Survey; made: Spreads; domain: RelationDomain; ffid: float64;
-    fixed: StationKey; hasFixed: bool): PlannedSpread =
+    fixed: StationKey; hasFixed: bool; match = rmAuto): PlannedSpread =
   ## The spread planned for a field record whose headers give FFID `ffid`
-  ## and (with `hasFixed`) source station `fixed` (`rdSource`), or for the
-  ## receiver gather of receiver station `fixed` (`rdReceiver`; `ffid` NaN):
-  ## from the first loaded survey file with relation records of `domain`,
-  ## else from the records made (`made`). `record` is -1 when none plans it.
+  ## and (with `hasFixed`) source station `fixed` (`rdSource`; its X record
+  ## found by `match`, as the map's filters find it), or for the receiver
+  ## gather of receiver station `fixed` (`rdReceiver`; `ffid` NaN): from the
+  ## first loaded survey file with relation records of `domain`, else from
+  ## the records made (`made`). `record` is -1 when none plans it.
   result = PlannedSpread(domain: domain, fixed: fixed)
   let i = s.listedLayer(domain)
   if i >= 0:
     template g: untyped = s.layers[i].relations[]
-    let record = if domain == rdSource: g.xRecordOf(ffid, fixed, hasFixed)
+    let record = if domain == rdSource: g.xRecordOf(ffid, fixed, hasFixed, match)
                  elif hasFixed: g.firstRecord(fixed, domain)
                  else: -1'i64
     if record >= 0:

@@ -47,7 +47,7 @@ func cacheText*(f: FileShots): string =
 
 func parseCache*(text, path: string): (bool, FileShots) =
   ## The shots a shot cache file's `text` holds for `path`; false when it is
-  ## not one (another version, damaged).
+  ## not one (another version, damaged: a number out of its range too).
   result[1] = FileShots(path: path)
   var lines = text.splitLines
   if lines.len < 2 or lines[0] != ShotCacheHeader: return
@@ -55,15 +55,19 @@ func parseCache*(text, path: string): (bool, FileShots) =
     let head = lines[1].splitWhitespace
     if head.len != 3: return
     result[1].size = parseBiggestInt(head[0])
-    result[1].modified = initTime(parseBiggestInt(head[1]), parseInt(head[2]))
+    let ns = parseInt(head[2])
+    if ns notin 0 .. 999_999_999: return # (a range check would end the program)
+    result[1].modified = initTime(parseBiggestInt(head[1]), ns)
     for line in lines[2 .. ^1]:
       let p = line.splitWhitespace
       if p.len == 7:
         let (l, pt) = (parseNum(p[2]), parseNum(p[3]))
         var s = ShotOf(gather: parseInt(p[0]), record: parseNum(p[1]), x: parseNum(p[5]),
           y: parseNum(p[6]))
+        let index = parseInt(p[4])
+        if index notin int16.low .. int16.high: return
         if not (l.isNaN or pt.isNaN):
-          (s.source, s.hasStation) = (stationKey(l, pt, int16(parseInt(p[4]))), true)
+          (s.source, s.hasStation) = (stationKey(l, pt, int16(index)), true)
         result[1].shots.add s
       elif line.len > 0: return
     result[0] = true

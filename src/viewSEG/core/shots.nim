@@ -50,6 +50,10 @@ type
     pending*: seq[string]            ## files to read, in the list's order
     later*: seq[tuple[path: string; at: MonoTime]]
       ## files that did not answer, tried again from `at` (`fs.now`)
+    stuck*: seq[tuple[path: string; job: JobId]]
+      ## files that did not answer, with the job given up on them: not
+      ## tried again while that job's work still runs (each try that hangs
+      ## holds a thread until the drive answers)
     job*: JobId = NoJob              ## the job reading files now
     jobPaths*: seq[string]           ## its files not yet answered, in its order
     queued*: HashSet[string]         ## the files in `pending`, `later` and `jobPaths`
@@ -203,11 +207,16 @@ proc match*(x: var ShotIndex; s: Survey) =
     for shot in f.shots: x.matchOne(s, path, shot)
   inc x.revision
 
-proc forget*(x: var ShotIndex; s: Survey; path: string) =
-  ## Takes file `path`'s records out (it changed, or is no longer listed).
-  if path in x.files:
-    x.files.del path
-    x.match(s)
+proc forget*(x: var ShotIndex; s: Survey; paths: openArray[string]) =
+  ## Takes the records of files `paths` out (no longer listed), matching
+  ## the others again once (not once a file: a folder emptied at once held
+  ## the window for seconds).
+  var any = false
+  for path in paths:
+    if path in x.files:
+      x.files.del path
+      any = true
+  if any: x.match(s)
 
 proc take*(x: var ShotIndex; s: Survey; f: sink FileShots) =
   ## The shots a job read of one file.
