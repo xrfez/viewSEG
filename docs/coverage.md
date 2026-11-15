@@ -32,6 +32,8 @@ next part's.
 
 <!-- summary: written by `nim coverage` from the tables below -->
 
+Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
+
 | Status | parseSEG 0.11.0: capabilities | names | processSEG 0.4.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 37 (21 in part) | 94 | 6 (4 in part) | 27 |
@@ -43,7 +45,7 @@ next part's.
 
 In the next library release (below): parseSEG: 5 capabilities (5 planned); processSEG: 8 capabilities (4 planned, 4 to plan).
 
-**Still to plan, most useful first** (each a row below whose status says `to plan`; "in part" above: built, with a part still planned or to plan):
+**Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
 1. **Traces by join outcome (conflict, ambiguous, unmatched)** (parseSEG, Survey files and geometry): a selection per outcome
 2. **Read SEG P1** (parseSEG, Survey files and geometry): the implied decimals as an option

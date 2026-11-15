@@ -813,7 +813,10 @@ proc summary*(page: Page, libs: openArray[Library], cov: Coverage): string =
     for s in Status: capTotal[li] += caps[li][s]
   t.add "| all | " & $capTotal[0] & " | " & $total[0] & " | " & $capTotal[1] & " | " &
     $total[1] & " |\n"
-  result = SummaryStart & "\n\n" & t & "\n"
+  result = SummaryStart & "\n\nCapabilities are the rows below, each counted by the first part " &
+    "of its status (\"in part\": built, with a part still planned or to plan). Names are the " &
+    "names each library exports, enum values not counted, each at the most advanced status " &
+    "of the rows that name it.\n\n" & t & "\n"
   var nextLine = ""
   for li in 0 .. 1:
     var all = 0
@@ -831,8 +834,8 @@ proc summary*(page: Page, libs: openArray[Library], cov: Coverage): string =
     if stToPlan in row.statuses: todo.add row
   todo.sort(proc (a, b: Row): int =
     cmp((a.priority == 0, a.priority, a.line), (b.priority == 0, b.priority, b.line)))
-  result.add "**Still to plan, most useful first** (each a row below whose status says " &
-    "`to plan`; \"in part\" above: built, with a part still planned or to plan):\n\n"
+  result.add "**Still to plan, most useful to field QC first** (the rows whose status says " &
+    "`to plan`, by their priority):\n\n"
   var i = 0
   for row in todo:
     inc i
