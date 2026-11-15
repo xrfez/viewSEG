@@ -43,6 +43,9 @@ type
     mkMemoryList ## every file the store remembers, for the File memory window
     mkMemoryLooked
       ## whether the files remembered in one folder are where they were seen
+    mkMemoryMerged
+      ## a document of what is remembered that another program (a second
+      ## viewSEG) changed since this run read or wrote it: written merged
     mkEditsList  ## a file's list of edits, as the text of the file it is exported to
     mkEditsRead  ## a file's list of edits the user imports, read
 
@@ -197,6 +200,11 @@ type
     of mkMemoryList:
       records*: seq[FileRecord]      ## every document of the store, the newest opened first
       listProblems*: seq[string]     ## documents that could not be read
+    of mkMemoryMerged:
+      mergedDoc*: string             ## the document's name in the store
+      mergedEdits*: EditLists        ## what it holds now: both programs' edits
+      mergedSent*: EditLists         ## what this run had asked to write
+      mergedRemoved*: bool           ## this run had asked to remove it
     of mkMemoryLooked:
       lookedFolder*: string          ## the folder looked in
       looked*: seq[tuple[doc: string; gone, unreached: bool]]

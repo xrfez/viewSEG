@@ -25,6 +25,14 @@
 ## - **Remove** deletes one of the program's own files (a document of what
 ##   is remembered about a file), and takes the place of a replace of it
 ##   waiting to be written.
+## - **Two programs, one document.** A document of what is remembered may
+##   be written by a second viewSEG at the same time (the same file open in
+##   both). Before it replaces (or removes) one, the thread compares the
+##   document's size and modification time with those this run read or
+##   wrote last; when they moved, it reads the other's and writes both
+##   programs' edits (`merged`, from what this run had last), and posts the
+##   result (`mkMemoryMerged`) so the screen shows them too. The window
+##   between that look and the rename is a few milliseconds.
 ## - **Read** reads a whole file up to a size, and posts it (or why it could
 ##   not be read) for the UI thread, with its NIF tree (`parseNif`) or why
 ##   it is not NIF, so the UI thread only takes in a tree.
@@ -41,8 +49,8 @@
 ## that does not answer must not hold the quit (the thread is then left to
 ## end on its own, with its memory, and what it had left is not written).
 
-import std/[algorithm, locks, monotimes, os, strutils, times]
-import filememory, filesystem, inbox, jobs, layouts, log, nif, threads
+import std/[algorithm, locks, monotimes, os, strutils, tables, times]
+import edits, filememory, filesystem, inbox, jobs, layouts, log, nif, threads
 
 when not defined(windows):
   import std/posix
@@ -68,6 +76,11 @@ type
     memory: FileRecord     ## a replace with `render`: the document's record
     render: bool           ## a replace: the text is `memoryDocument(memory)`, made here
     before: times.Time     ## a sweep: the files last written before this are removed
+    merging: bool
+      ## a replace with `render`, or a remove: a document of the store,
+      ## merged with another program's change (`base`, `expect`)
+    base: EditLists        ## `merging`: the edits the document held as this run read or wrote it
+    expect: DocStamp       ## `merging`: its stamp then; size -1 for no document
 
   DiskObj = object
     lock: Lock
@@ -89,6 +102,9 @@ type
     log: File      ## the file appended to last; nil for none
     logPath: string
     failed: string ## the file an append failed on last; "" for none
+    written: Table[string, tuple[stamp: DocStamp; edits: EditLists]]
+      ## the documents of the store written (or removed) here: their stamp
+      ## after it, and the edits they held
 
 proc `=destroy`*(x: DiskIo)
 proc `=wasMoved`*(x: var DiskIo) = x.p = nil
@@ -129,9 +145,57 @@ proc freshName(path: string): string =
     result = dir / name & "-" & $n & ext
     inc n
 
+proc stampOf(path: string): DocStamp =
+  ## The size and modification time of `path`; size -1 when there is none.
+  try:
+    let info = fs.getFileInfo(path)
+    (info.size, info.lastWriteTime)
+  except OSError:
+    (-1'i64, times.Time())
+
+proc mergeOthers(w: var Writer; t: var Task; removing: bool): bool =
+  ## For a document of the store (`t.merging`): when another program
+  ## changed it since this run read or wrote it, its edits and those of
+  ## `t` merged into `t.memory`, and posted. False when it changed and
+  ## cannot be read: nothing is written then.
+  result = true
+  var (expect, base) = (t.expect, t.base)
+  if t.path in w.written: (expect, base) = w.written[t.path]
+  let now = stampOf(t.path)
+  if now == expect: return
+  var theirs = FileRecord()
+  if now.size >= 0:
+    try:
+      var problems: seq[string]
+      theirs = readMemoryFile(t.path, problems)
+      if theirs.damaged:
+        raise newException(NifError, "it has parts this version cannot read")
+      template a: untyped = theirs.identity
+      template b: untyped = t.memory.identity
+      if a.size != b.size or a.quick != b.quick or (a.fullKnown and b.fullKnown and a.full != b.full):
+        raise newException(NifError, "it is about another file (its bytes differ)")
+    except NifError, IOError, OSError:
+      w.warn("Could not save " & t.what & " in " & t.path & ": another program changed it " &
+        "meanwhile, and it cannot be read (" & getCurrentExceptionMsg() & "); it is left as " &
+        "that program wrote it.")
+      return false
+  let sent = if removing: EditLists() else: t.memory.edits
+  let both = merged(base, sent, theirs.edits)
+  if both == theirs.edits and now.size >= 0 and not removing and both == sent: return
+  if not t.memory.identity.fullKnown and theirs.identity.fullKnown and
+      theirs.identity.size == t.memory.identity.size and
+      theirs.identity.quick == t.memory.identity.quick:
+    (t.memory.identity.full, t.memory.identity.fullKnown) = (theirs.identity.full, true)
+  if t.memory.later.len == 0: t.memory.later = theirs.later
+  if removing: t.memory = theirs
+  t.memory.edits = both
+  w.d.poster.post Msg(job: NoJob, kind: mkMemoryMerged, mergedDoc: t.path.extractFilename,
+    mergedEdits: both, mergedSent: sent, mergedRemoved: removing)
+
 proc replaceFile(w: var Writer; t: Task) =
   var t = t
   if t.fresh: t.path = freshName(t.path)
+  if t.merging and not w.mergeOthers(t, removing = false): return
   let tmp = t.path & "." & $getCurrentProcessId() & ".tmp"
   try:
     fs.createDir(t.path.parentDir)
@@ -145,6 +209,7 @@ proc replaceFile(w: var Writer; t: Task) =
     finally:
       f.close()
     fs.moveFile(tmp, t.path)
+    if t.merging: w.written[t.path] = (stampOf(t.path), t.memory.edits)
     if t.done.len > 0: w.say(sevInfo, if t.fresh: t.done & t.path & "." else: t.done)
   except IOError, OSError:
     let why = getCurrentExceptionMsg()
@@ -204,6 +269,15 @@ proc pruneDir(w: var Writer; t: Task) =
       w.warn("Could not remove the old file " & names[i] & ": " & getCurrentExceptionMsg())
 
 proc removeFor(w: var Writer; t: Task) =
+  if t.merging:
+    var t = t
+    if not w.mergeOthers(t, removing = true): return
+    if not t.memory.edits.isEmpty: # another program's edits: kept, not removed
+      (t.render, t.merging) = (true, false) # merged already
+      w.replaceFile(t)
+      w.written[t.path] = (stampOf(t.path), t.memory.edits)
+      return
+    w.written[t.path] = ((-1'i64, times.Time()), EditLists())
   try:
     if fs.fileExists(t.path): fs.removeFile(t.path)
     if t.done.len > 0: w.say(sevInfo, t.done)
@@ -357,6 +431,8 @@ proc leave(x: DiskIo; t: sink Task) =
         for i in countdown(x.p.tasks.high, 0):
           if x.p.tasks[i].kind in {tkReplace, tkRemove} and not x.p.tasks[i].fresh and
               x.p.tasks[i].path == t.path:
+            if x.p.tasks[i].merging and t.merging: # never written: what was there before it
+              (t.base, t.expect) = (x.p.tasks[i].base, x.p.tasks[i].expect)
             x.p.tasks.delete(i)
     of tkAppend: # one write for a run of appends to one file
       if x.p.tasks.len > 0 and x.p.tasks[^1].kind == tkAppend and
@@ -391,6 +467,25 @@ proc replace*(x: DiskIo; path: string; record: sink FileRecord; what: string) =
   ## `replace` writes a text.
   if x.p != nil:
     x.leave Task(kind: tkReplace, path: path, memory: record, render: true, what: what)
+
+proc replace*(x: DiskIo; path: string; record: sink FileRecord; what: string;
+    base: EditLists; expect: DocStamp) =
+  ## `replace` of a document of the store that another program may write
+  ## too: when its stamp is no longer `expect` (or what this thread wrote
+  ## last), the other's edits are merged in (the module documentation);
+  ## `base` is what it held then.
+  if x.p != nil:
+    x.leave Task(kind: tkReplace, path: path, memory: record, render: true, what: what,
+      merging: true, base: base, expect: expect)
+
+proc removeMerging*(x: DiskIo; path: string; record: sink FileRecord; what: string;
+    base: EditLists; expect: DocStamp) =
+  ## `remove` of a document of the store whose file keeps nothing now: when
+  ## another program changed it since (`replace`'s `expect`), what that one
+  ## added is kept instead (`record` names the file).
+  if x.p != nil:
+    x.leave Task(kind: tkRemove, path: path, memory: record, what: what, merging: true,
+      base: base, expect: expect)
 
 proc read*(x: DiskIo; path: string; purpose: ReadPurpose; limit: int) =
   ## Reads `path`, soon, and posts it as an `mkRead` message for `purpose`,

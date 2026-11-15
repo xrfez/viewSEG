@@ -99,6 +99,12 @@ type
     later*: seq[NifNode]
       ## what the document holds that this version does not know (a later
       ## version's), written back as it was
+    stamp*: DocStamp
+      ## the document file's size and modification time when it was read
+      ## (`readMemoryFile`): another program's write since moves it
+
+  DocStamp* = tuple[size: int64; modified: Time]
+    ## A document file's size and modification time; size -1 for no file.
 
 func isNowhere*(s: Store): bool {.inline.} = s.home.len == 0
   ## Whether nothing is remembered (tests, a run without settings).
@@ -418,10 +424,12 @@ proc readMemoryFile*(path: string; problems: var seq[string]): FileRecord =
   if size > MaxMemoryBytes:
     raise newException(NifError, path.extractFilename & " is larger than " &
       $(MaxMemoryBytes shr 20) & " MB")
+  let info = fs.getFileInfo(path)
   text = fs.readFile(path)
   result = readMemory(parseNif(text, path.extractFilename, MaxMemoryBytes), path.extractFilename,
     problems)
   result.bytes = text.len
+  result.stamp = (info.size, info.lastWriteTime)
 
 # ----------------------------------------------------------------- CSV --
 
@@ -657,6 +665,17 @@ proc listRecords*(s: Store; problems: var seq[string];
     except NifError, IOError, OSError:
       problems.add path.extractFilename & ": " & getCurrentExceptionMsg()
   result.sort(proc (a, b: FileRecord): int = cmp(b.opened, a.opened))
+
+func merged*(base, ours, theirs: EditLists): EditLists =
+  ## The edits of a document two programs changed from `base`: `ours` and
+  ## `theirs`, each change of either kept (a trace one gave and the other
+  ## took away from `base` is the giver's, as is all reversed when only
+  ## one changed it).
+  result = theirs.minus(base.minus(ours))
+  for edit in TraceEdit:
+    result.lists[edit] = sortedTraces(result.lists[edit] & ours.minus(base).lists[edit])
+  result.allReversed = if ours.allReversed != base.allReversed: ours.allReversed
+                       else: theirs.allReversed
 
 func keptWords*(l: EditLists): string =
   ## What `l` keeps, in words: "3 killed, 1 reversed, all reversed";

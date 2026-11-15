@@ -392,6 +392,21 @@ proc merge*(e: var FileEdits; other: sink FileEdits) =
     inc drop
   if drop > 0: e.undos = e.undos[drop .. ^1]
 
+proc adopt*(e: var FileEdits; l: EditLists) =
+  ## What is kept becomes `l` (the file's memory as another program changed
+  ## it, merged with this one's), as no step: what it gained and lost is
+  ## shown so too.
+  let was = e.shown
+  for edit in TraceEdit:
+    let gained = difference(l.lists[edit], e.kept.lists[edit])
+    let lost = difference(e.kept.lists[edit], l.lists[edit])
+    e.shown.lists[edit] = union(difference(e.shown.lists[edit], lost), gained)
+  if l.allReversed != e.kept.allReversed: e.shown.allReversed = l.allReversed
+  if l != e.kept:
+    e.kept = l
+    inc e.keptRevision
+  if e.shown != was: inc e.revision
+
 proc forget*(e: var FileEdits) =
   ## Takes away what is kept and what is shown, and the history: the file
   ## is shown as it is on disk, and nothing is remembered.

@@ -708,7 +708,14 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   (`DiskIo.remove`). Edits made before the identity is known are kept by the path
   instead (`pendingName`: the path, size and modification time; `writePending`), taken
   in when that file is next identified unchanged (`takePending`) and the pending
-  document removed after its own is written. **One file under two paths** (a copy, a
+  document removed after its own is written. **Two programs, one document**: a write of
+  a document (and the removal of one that keeps nothing) carries what the document held
+  and its stamp (size, modification time) as this run read or wrote it
+  (`FileRecord.stamp`); the disk thread, finding the stamp moved, reads the other
+  program's document and writes `merged(base, ours, theirs)`, then posts it
+  (`mkMemoryMerged`): the UI takes the other's edits in as kept (`FileEdits.adopt`, no
+  step) and writes again if it changed meanwhile. A document of another file, or one it
+  cannot read, is not written over (said). **One file under two paths** (a copy, a
   hard or symbolic link, opened in one run): `edits` is keyed by `keyOf(path)`, the path
   itself or, once two paths are known to hold the same bytes (`linkSame`: the same size,
   ends and modification time at once, else equal full hashes), the first path's

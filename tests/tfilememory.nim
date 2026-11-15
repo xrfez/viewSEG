@@ -197,6 +197,14 @@ try:
     readRuns("1-30 41-50 20-35", t, problems, "killed", bound = 25)
     doAssert t.len == 25 and t[^1] == 24, $t
     doAssert problems.len == 1 and "left out" in problems[0], $problems
+  block mergedFromTwo:
+    # a document two programs changed from one base: each change kept
+    let base = lists([1, 2, 3], [7])
+    let ours = lists([1, 3, 4], [7], all = true) # 2 restored, 4 killed, all reversed
+    let theirs = lists([1, 2, 3, 9], []) # 9 killed, 7 put back
+    let m = merged(base, ours, theirs)
+    doAssert m.lists[teKilled] == @[1, 3, 4, 9] and m.lists[teReversed].len == 0 and
+      m.allReversed, $m
   block words:
     doAssert keptWords(lists([1, 2], [], all = true)) == "2 killed, all reversed"
     doAssert keptWords(EditLists()) == "nothing"

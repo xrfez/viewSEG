@@ -37,6 +37,8 @@
 ##   "not answering" and never gone;
 ## - a file rewritten in the middle while its hash runs is not confirmed;
 ## - an export leaves out an agent's kill (for the session only), and says so;
+## - two programs writing one file's document: neither drops the other's
+##   edits, and each shows the other's;
 ## - one file opened under three paths (itself, a symbolic link, a copy)
 ##   has one set of edits, the kills made under each kept, in one document;
 ## - the data file's bytes and modification time are as they were through
@@ -69,7 +71,8 @@
 ## the listing's job, "the listing waits for a drive that does not answer";
 ## with the edits shown exported, "the export holds the agent's kill"; with
 ## the edits kept by path (`keyOf` the path itself), "the link does not share
-## the edits".
+## the edits"; with the disk thread writing over another program's change
+## (no `mergeOthers`), "a write dropped the other's edit".
 
 import std/[atomics, os, strutils, times]
 import viewSEG/core/[jobs, state]
@@ -578,5 +581,44 @@ withFixtures fx:
     st.shutdown()
     removeFile(l)
     removeFile(c)
+  block twoPrograms:
+    # two viewSEG at once (two states on one store), the same file open in
+    # both: neither write drops the other's edits; each shows the other's
+    # once it writes; a clearing in one stays cleared, what the other adds
+    # after it is kept
+    var one = start(config)
+    var two = start(config)
+    one.showFile(b)
+    two.showFile(b)
+    doAssert one.settle(one.remembering(b).known) and two.settle(two.remembering(b).known)
+    one.edit(teKilled, 2)
+    one.flushFiles()
+    two.edit(teKilled, 5)
+    two.flushFiles()
+    var t: Time
+    let doc = config / StoreFolder / docName(quickIdentity(b, t), 1)
+    doAssert "(killed \"3 6\")" in readFile(doc), "a write dropped the other's edit: " &
+      readFile(doc)
+    doAssert two.settle(two.editsOf(0).has(teKilled, 2)), "the other's edit is not shown"
+    var told = false
+    for e in two.log:
+      if "Another viewSEG changed the edits" in e.text: told = true
+    doAssert told, "the other's change is not said"
+    one.edit(teKilled, 7)
+    one.flushFiles()
+    doAssert "(killed \"3 6 8\")" in readFile(doc), readFile(doc)
+    doAssert one.settle(one.editsOf(0).has(teKilled, 5))
+    one.apply Command(kind: ckClearEdits, panel: MainPanel)
+    one.flushFiles()
+    doAssert not fileExists(doc), "the clearing did not remove the document"
+    two.edit(teKilled, 9)
+    two.flushFiles()
+    doAssert "(killed \"10\")" in readFile(doc), "the clearing in the other came back, or " &
+      "the new edit is lost: " & readFile(doc)
+    doAssert two.settle(not two.editsOf(0).has(teKilled, 2) and two.editsOf(0).has(teKilled, 9))
+    two.apply Command(kind: ckClearEdits, panel: MainPanel)
+    one.shutdown()
+    two.shutdown()
+    doAssert not fileExists(doc)
   doAssert (readFile(b), getLastModificationTime(b)) == kept, "the data file changed"
 echo "tmemory: ok"

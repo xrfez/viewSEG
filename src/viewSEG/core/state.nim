@@ -890,9 +890,15 @@ proc writeMemoryDoc(state: var AppState; i: int) =
   if r.seenAside: # the document is written whole now: its own time
     state.diskIo.remove(state.store.docPath(r.doc).seenName, "when " & name & " was opened")
     r.seenAside = false
+  # What the document held as this run last read or wrote it: another
+  # viewSEG's change since is merged in by the disk thread.
+  let (base, expect) = block:
+    let was = state.knownDocs.getOrDefault(r.doc)
+    (was.edits, if was.stamp.modified == Time(): (-1'i64, Time()) else: was.stamp)
   if rec.edits.isEmpty:
     if r.doc.len > 0:
-      state.diskIo.remove(state.store.docPath(r.doc), "what is remembered about " & name)
+      state.diskIo.removeMerging(state.store.docPath(r.doc), move rec, "what is remembered about " &
+        name, base, expect)
       state.knownDocs.del r.doc
     state.dropPending(i)
     return
@@ -909,7 +915,8 @@ proc writeMemoryDoc(state: var AppState; i: int) =
     r.ownDoc = true
     rec.doc = r.doc
   state.knownDocs[r.doc] = rec
-  state.diskIo.replace(state.store.docPath(r.doc), move rec, "what is remembered about " & name)
+  state.diskIo.replace(state.store.docPath(r.doc), move rec, "what is remembered about " & name,
+    base, expect)
   state.dropPending(i) # written after the document: the edits are never on neither
   for x in state.remembered.mitems: # the other paths of the file: written with it
     if x.doc == r.doc: x.savedRev = r.savedRev
@@ -2575,6 +2582,30 @@ proc lookAt(state: var AppState; folders: sink seq[LookFolder]) =
     state.memoryLooks.add state.jobs.submit(JobSpec(title: "Look for the files File memory " &
       "lists", lane: jlInteractive), lookWork(folders, state.inbox.poster))
     state.lookGiven = folders
+
+proc takeMerged(state: var AppState; m: sink Msg) =
+  ## A document another viewSEG changed since this run read or wrote it,
+  ## written with the edits of both: the file's paths show what the other
+  ## kept too (with what was changed here since the write was asked for).
+  let doc = m.mergedDoc
+  if doc in state.knownDocs: state.knownDocs[doc].edits = m.mergedEdits
+  var done: seq[string]
+  for i in 0 ..< state.remembered.len:
+    template r: untyped = state.remembered[i]
+    let key = state.keyOf(r.path)
+    if r.doc == doc and key notin done:
+      done.add key
+      template e: untyped = state.edits.mgetOrPut(key, FileEdits())
+      let now = merged(m.mergedSent, e.kept, m.mergedEdits)
+      e.adopt(now)
+      # written as it is, unless changed here since the write was asked for
+      r.savedRev = if now == m.mergedEdits: e.keptRevision else: -1
+      if m.mergedRemoved and now == m.mergedEdits: state.knownDocs[doc] = FileRecord(
+        identity: r.identity, name: r.path.extractFilename, path: r.path, edits: now, doc: doc)
+      let name = r.path.extractFilename
+      state.log.add(sevInfo, name, "Another viewSEG changed the edits remembered for " & name &
+        " meanwhile; both are kept: " & keptWords(e.kept) & " now.")
+      state.editsChanged(r.path)
 
 proc takeLooked(state: var AppState; m: sink Msg) =
   ## Where the files remembered in one folder stand.
@@ -4681,6 +4712,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkHashed: state.takeHashed(move m)
     of mkMemoryList: state.takeMemoryList(move m)
     of mkMemoryLooked: state.takeLooked(move m)
+    of mkMemoryMerged: state.takeMerged(move m)
     of mkEditsList: state.takeEditsList(move m)
     of mkEditsRead: state.takeImported(move m)
     of mkLayout:

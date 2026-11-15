@@ -880,7 +880,11 @@ the data file's bytes and modification time are never touched. A file whose driv
 come when its identity can be read, and edits you make before that are kept by the file's
 path, size and modification time (`pending-<hash of the path>.nif`) until it is: quit
 before, and the next run that opens the file unchanged shows them and remembers them with
-its identity (a file changed since does not take them: Messages lists them). One file opened under two
+its identity (a file changed since does not take them: Messages lists them). Two viewSEG at once with
+the same file open (two windows) lose none of each other's edits: before a write, the
+entry's time is compared with the one read or written last, and another's change is
+merged in (what either added or took away is kept), Messages says so, and the plot shows
+the other's edits too. One file opened under two
 paths in a run (a copy, a hard or a symbolic link) has one set of edits, those made under
 each path kept, and one entry: at once when the two paths' size, ends and modification
 time agree, otherwise once both are hashed whole; Messages says so, and a file taken so at
