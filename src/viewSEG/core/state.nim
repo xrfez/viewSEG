@@ -1110,6 +1110,11 @@ func findSpectrum*(state: AppState; id: int): int =
     if w.id == id: return i
   -1
 
+proc spectrumSamplesHeld*(state: AppState): int =
+  ## The samples of traces the spectrum reader keeps at hand (none once no
+  ## spectrum window needs them).
+  state.spectrumReader.held
+
 func spectraWaiting*(state: AppState): bool =
   ## Whether a spectrum window waits for its spectrum.
   for w in state.spectra:
@@ -2185,6 +2190,12 @@ func recordText(s: Session; trace: int): string =
   elif abs(s.records[g].record) < 1e15: "FFID " & $int64(s.records[g].record)
   else: "record " & $(g + 1)
 
+func killedOf(e: FileEdits; traces: openArray[int]): seq[int] =
+  ## Those of `traces` killed in `e`, in their order. `e` comes from
+  ## `editsAt`, which finds a file's edits under any of its paths.
+  for t in traces:
+    if e.has(teKilled, t): result.add t
+
 proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
     window: (float64, float64); filters: Pipeline; filtersText: string; aux: bool): bool =
   ## Asks the spectrum reader for window `spectra[w]`'s spectrum of
@@ -2193,12 +2204,8 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   ## be held (a job needs it to itself).
   let s = state.sessions[i]
   if not state.jobs.hold(s.path): return false
-  var killed: seq[int]
-  if s.path in state.edits:
-    template e: untyped = state.edits[s.path]
-    for t in traces:
-      if teKilled in e.editsOf(t): killed.add t
-    killed.sort()
+  var killed = killedOf(state.editsAt(s.path), traces) # (under its key: `keyOf`)
+  killed.sort()
   inc state.spectrumGen
   template sw: untyped = state.spectra[w]
   sw.asked = state.spectrumGen
@@ -2268,10 +2275,7 @@ proc followSpectrum(state: var AppState) =
                  else: (NaN, NaN)
     (filters, filtersText, key.filterAux) = spectrumFilters(p)
     key.filters = stepsText(filters)
-    let path = state.sessions[i].path
-    if path in state.edits:
-      for t in key.traces:
-        if teKilled in state.edits[path].editsOf(t): key.killed.add t
+    key.killed = killedOf(state.editsAt(state.sessions[i].path), key.traces)
   template was: untyped = state.liveKey
   if key.session == was.session and key.traces == was.traces and key.filters == was.filters and
       key.filterAux == was.filterAux and key.killed == was.killed and
@@ -2409,6 +2413,8 @@ proc closeSpectrum(state: var AppState; cmd: Command) =
     return
   if not state.spectrumReader.isNil: state.spectrumReader.cancel(cmd.spectrum)
   state.spectra.delete w
+  if state.spectra.len == 1 and not state.spectra[0].shown:
+    state.spectrumReader.forget() # no window needs the traces at hand
 
 proc takeSpectrum(state: var AppState; m: sink Msg) =
   ## A spectrum for a window still open, newer than the one it shows (an
@@ -4998,6 +5004,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
         if not state.spectrumReader.isNil: state.spectrumReader.cancel(LiveSpectrum)
         live.waiting = false
         state.liveKey = LiveKey(session: NoSession)
+        if state.spectra.len == 1: state.spectrumReader.forget() # no window needs them
     if cmd.onScreen and cmd.origin == coAgent: inc live.front # the window brought forward
   of ckUnloadSurvey:
     let i = state.survey.find(cmd.layer)

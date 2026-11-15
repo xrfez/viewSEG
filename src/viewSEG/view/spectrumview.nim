@@ -84,6 +84,14 @@ func summaryText*(w: SpectrumWindow): string =
       (if w.chosen == soVisible: "in view" else: "selected")
   result.add " · " & timeText(sp)
   result.add " · " & valueText(sp.dtMs) & " ms, Nyquist " & valueText(500 / sp.dtMs) & " Hz"
+  if w.display.scale == ssDb:
+    # Each window has a 0 dB of its own: which amplitude it is, so that two
+    # windows (two records, two times) compare.
+    let (raw, processed) = (sp.raw.peakOf, sp.processed.peakOf)
+    if max(raw, processed) > 0:
+      result.add " · 0 dB = amplitude " & valueText(max(raw, processed)) &
+        (if processed > raw: " (processed peak)" else: " (raw peak)")
+    else: result.add " · every amplitude is 0"
   if w.waiting: result.add " · updating..."
 
 func filterText*(w: SpectrumWindow): string =

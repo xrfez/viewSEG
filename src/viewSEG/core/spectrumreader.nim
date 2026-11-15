@@ -11,9 +11,12 @@
 ## - **One request per window, newest wins.** A request replaces the one of
 ##   the same window that waits, and one being served is given up between
 ##   blocks of traces when a newer one of its window comes, or the window
-##   closes (`cancel`). Requests of different windows are served in turn.
+##   closes (`cancel`); one read and computed whole is posted all the same
+##   (the window shows it while the newer one is served). Requests of
+##   different windows are served in turn.
 ## - **Samples at hand.** The samples of the traces read last are kept, as
-##   decoded, whole (up to `MaxSpectrumSamples`, of the file read last):
+##   decoded, whole (up to `MaxSpectrumSamples`, of the file read last;
+##   let go when no window needs them, `forget`):
 ##   another time window, other filters, or the same traces asked again by
 ##   another window read nothing from the file, and a pan reads only the
 ##   traces it brings into view. The answer counts the traces read
@@ -74,6 +77,8 @@ type
     started, busy, ended, abandoned: bool
     beat: MonoTime
     reading: string
+    held: int         ## samples kept at hand
+    forget: bool      ## no window needs them: let them go once the queue is empty
     thread: Thread[ptr ReaderObj]
 
   SpectrumReader* = object
@@ -157,7 +162,8 @@ proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Ca
       cache.values += n
       cache.traces[missing[c.first + k]] = move h
     inc result, c.count
-    if p.interrupted(a.id):
+    # given up between chunks only: what is read whole is served
+    if result < missing.len and p.interrupted(a.id):
       given = true
       break
     p.beat(a.path)
@@ -226,7 +232,9 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
       discard processed.add(b, initChunkMeta(live, dtMs, 0, failed), window.a)
       answer.processedPhase = processed.phaseOf()
     at += n
-    if p.interrupted(a.id): return false
+    # given up between blocks only: a spectrum computed whole is posted, so
+    # the live panel moves on while a pan sends newer requests
+    if at < list.len and p.interrupted(a.id): return false
   answer.binHz = raw.binHz
   answer.nfft = raw.nfft
   answer.raw = raw.amplitudes
@@ -295,10 +303,12 @@ proc run(p: ptr ReaderObj) {.thread.} =
   var cache = Cache()
   while true:
     var a: SpectrumAsk
-    var got, quit = false
+    var got, quit, forget = false
     withLock p.lock:
-      while not (p.quit or p.queue.len > 0):
+      while not (p.quit or p.queue.len > 0 or p.forget):
         wait(p.changed, p.lock)
+      forget = p.forget and p.queue.len == 0 # a window that asks needs them
+      p.forget = false
       quit = p.quit
       got = p.queue.len > 0 and not quit
       if got:
@@ -317,10 +327,14 @@ proc run(p: ptr ReaderObj) {.thread.} =
           "computed: " & e.msg))
       clearCycleRoots()
       discard p.holds.release(a.path)
+    if forget:
+      cache = Cache()
+      clearCycleRoots()
     withLock p.lock:
       p.busy = false
       p.serving = -1
       p.reading = ""
+      p.held = cache.values
     if quit: break
   cache = Cache()
   clearCycleRoots()
@@ -395,6 +409,14 @@ proc cancel*(x: SpectrumReader; id: int) =
     if x.p.serving == id: x.p.dropServed = true
   for path in dropped: discard x.p.holds.release(path)
 
+proc forget*(x: SpectrumReader) =
+  ## No window needs the samples at hand any more: they are let go (unless
+  ## a request comes first).
+  if x.p != nil:
+    withLock x.p.lock:
+      x.p.forget = true
+      signal(x.p.changed)
+
 proc askStop*(x: SpectrumReader) =
   if x.p != nil:
     withLock x.p.lock:
@@ -440,6 +462,12 @@ proc silentFor*(x: SpectrumReader; now = fs.now()): Duration =
   if x.p != nil:
     withLock x.p.lock:
       if x.p.busy: result = now - x.p.beat
+
+proc held*(x: SpectrumReader): int =
+  ## The samples the reader keeps at hand; 0 for none.
+  if x.p != nil:
+    withLock x.p.lock:
+      result = x.p.held
 
 proc readingPath*(x: SpectrumReader): string =
   ## The file the reader reads now; "" when it is idle or none.

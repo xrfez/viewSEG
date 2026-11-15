@@ -599,7 +599,8 @@ over a selected trace, the selection's, averaged ("FFT 2: 12 traces ..."). Open 
 as you like and dock them anywhere; each keeps what it was opened on while you move on.
 Two curves: **raw**, the samples as recorded, and **processed**, through the filters of
 the strip (a band-pass shows as the processed curve falling away outside its corners, a
-notch as a dip at its frequency). In dB both are on one scale (0 dB at the larger peak);
+notch as a dip at its frequency). In dB both are on one scale (0 dB at the larger peak,
+whose amplitude the window's line of words gives, so that two windows compare);
 **Linear** shows the amplitude itself (a sine of amplitude A reads A). **Log frequency**
 spreads the low frequencies out. **Visible time** takes the spectrum over the time the
 plot showed when the window opened, instead of the whole trace. For one trace, **Phase**

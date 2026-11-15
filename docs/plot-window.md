@@ -984,7 +984,9 @@ interval than the first. Auxiliary traces count as seismic ones do (a pilot's sp
 one the same samples through the plot's filters (Filters in the strip), run on whole
 traces before the window is cut, also when the plot is shown raw, so the two compare. In
 dB both are on one scale, 0 dB at the larger peak of the two (a filter's cut shows as
-the gap between them); linear, in the file's sample units. The frequency axis can be
+the gap between them), and the line of words says which amplitude that is ("0 dB =
+amplitude 0.000142 (raw peak)"): each window has a 0 dB of its own, so two windows
+compare by it; linear, in the file's sample units. The frequency axis can be
 logarithmic (0 Hz is then left out). A spectrum of one trace has its phase too (Phase:
 degrees, from the window's first sample, drawn under the amplitude).
 
@@ -1003,8 +1005,10 @@ goes past the data. A click on a curve's name in the legend hides it.
 **Off the screen's thread.** The spectra are computed by a reader of their own (`core/
 spectrumreader`), which reads only the traces it does not already hold (as decoded, up
 to 128 MiB: a pan reads the traces it brings into view; a filter, a time window or
-another window of the same traces reads nothing), and gives up a request between blocks
-of traces when a newer one of its window comes or the window closes.
+another window of the same traces reads nothing; let go once no spectrum window is open
+and the live panel is off the screen), and gives up a request between blocks of traces
+when a newer one of its window comes or the window closes; a request read and computed
+whole is answered all the same, so the live panel moves on while a pan sends newer ones.
 
 **The plot itself** (`view/curveplot`, drawn by `ui/imgui/curveplot`) is a plot of named
 curves over one axis, each in its colour with a legend, that can be drawn turned (the

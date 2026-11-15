@@ -27,6 +27,12 @@
 ## - killed traces hidden (a setting): the panel's layout and positions
 ##   leave them out, and take them back when shown again or restored;
 ## - the settings round trip through the settings file;
+## - in dB, the words say which amplitude 0 dB is (each window has its own);
+## - the samples at hand are let go once no spectrum window needs them;
+## - a file opened under two paths (a link): a kill made under one is left
+##   out of the spectra of the other's traces;
+## - a request read and computed whole is answered even when a newer one of
+##   its window came meanwhile (the reader held in its read by the seam);
 ## - the file is never changed.
 ##
 ## Seen to fail: with the killed traces not left out of the request
@@ -35,14 +41,21 @@
 ## power), "two blocks' sum differs from one block's"; with the samples
 ## never kept at hand, "trace 1 was at hand: 8"; with `followSpectrum`
 ## asking while hidden, the first FFT window found its trace read already
-## (`sp.read == 1` failed: the hidden panel had read the view).
+## (`sp.read == 1` failed: the hidden panel had read the view). With the
+## words as before, the summary without "0 dB = amplitude 1 (raw peak)";
+## with no `forget` when the last window closed, "the reader keeps 18432
+## samples"; with the kills looked up by the link's own path (not
+## `editsAt`), "the link's kill was taken into its spectrum: 0 killed, 9
+## averaged"; with the reader giving up after its last chunk and block,
+## "the first answer ... was dropped for the newer request (1 answer
+## taken)".
 
 import std/[math, os, sequtils, strutils]
 import parseSEG
 import processSEG/core/[rows, types]
 import viewSEG/core/[settingsnif, state]
 import viewSEG/view/[curveplot, spectrumview, theme]
-import utils/[fixtures, waiting]
+import utils/[faultyfs, fixtures, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
@@ -77,7 +90,23 @@ block helpers:
   var many = SpectrumWindow(id: 3, chosen: soSelection, traces: @[0, 5], chosenCount: 10,
     spectrum: Spectrum(raw: @[1.0, 0.5], averaged: 2, binHz: 1, dtMs: 2, fromMs: 0, toMs: 6))
   doAssert many.summaryText == "2 traces averaged, spread evenly over the 10 selected · " &
-    "0 to 6 ms · 2 ms, Nyquist 250 Hz", many.summaryText
+    "0 to 6 ms · 2 ms, Nyquist 250 Hz · 0 dB = amplitude 1 (raw peak)", many.summaryText
+  # In dB each window has its own 0 dB (the larger peak of its curves): it
+  # says which amplitude that is, so that two windows compare; in linear
+  # the amplitudes speak for themselves. Curves of zeros have no peak.
+  many.spectrum.processed = @[0.0, 2.5e-5]
+  doAssert many.summaryText.endsWith(" · 0 dB = amplitude 1 (raw peak)"), many.summaryText
+  many.spectrum.processed = @[0.0, 25.0]
+  doAssert many.summaryText.endsWith(" · 0 dB = amplitude 25 (processed peak)"),
+    many.summaryText
+  many.display.scale = ssLinear
+  doAssert "0 dB" notin many.summaryText, many.summaryText
+  many.display.scale = ssDb
+  many.spectrum.raw = @[0.0, 0.0]
+  many.spectrum.processed = @[0.0, 0.0]
+  doAssert many.summaryText.endsWith(" · every amplitude is 0"), many.summaryText
+  many.spectrum.raw = @[1.0, 0.5]
+  many.spectrum.processed.setLen 0
   # the curve plot
   var p = CurvePlot(xs: @[0.0, 1, 2, 3, 4], xUnit: "Hz", yUnit: "dB",
     curves: @[Curve(name: "raw", ys: @[-10.0, -20, NaN, -5, -120]),
@@ -398,6 +427,88 @@ withFixtures fx:
     doAssert Settings().spectrum.live.time == stVisible and
       Settings().spectrum.window.time == stWhole and not Settings().hideKilled
 
+  block released:
+    # The samples kept at hand go once no spectrum window needs them: the
+    # last FFT window closed while the live panel is hidden, or the panel
+    # hidden with no FFT window open.
+    while st.spectra.len > 1: # the windows still open
+      st.apply Command(kind: ckCloseSpectrum, spectrum: st.spectra[^1].id)
+    let w = st.fft(toSeq(base ..< base + 4))
+    doAssert st.answered(w) and st.settle(st.spectrumSamplesHeld > 0)
+    st.apply Command(kind: ckCloseSpectrum, spectrum: st.spectra[w].id)
+    doAssert st.settle(st.spectrumSamplesHeld == 0),
+      "the last FFT window closed, the reader keeps " & $st.spectrumSamplesHeld & " samples"
+    discard st.fft(@[base])
+    st.apply Command(kind: ckSpectrumPanel, onScreen: true)
+    doAssert st.answered(0) and st.answered(st.spectra.high)
+    st.apply Command(kind: ckCloseSpectrum, spectrum: st.spectra[^1].id)
+    doAssert st.settle(st.spectrumSamplesHeld > 0), "dropped while the live panel is shown"
+    st.apply Command(kind: ckSpectrumPanel, onScreen: false)
+    doAssert st.settle(st.spectrumSamplesHeld == 0),
+      "the live panel hidden, the reader keeps " & $st.spectrumSamplesHeld & " samples"
+
   st.shutdown()
+
+  block twoPaths:
+    # One file opened under two paths (a symbolic link): one set of edits,
+    # kept under the first path. A kill made with the link on show is left
+    # out of the link's spectra too, in an FFT window and in the live panel.
+    let link = fx.dir / "spectrum-link.sgy"
+    createSymlink(path, link)
+    var two = initAppState()
+    two.rememberFilesIn(fx.dir / "config")
+    template ready(cond: untyped): bool =
+      waitUntil((discard two.drainInbox(); two.persist(); cond))
+    for p in [path, link]:
+      two.apply Command(kind: ckShowFile, panel: MainPanel, path: p)
+      doAssert ready(two.sessions.len >= 1 and two.sessions[^1].path == p and
+        two.panel(MainPanel).laidOut and two.remembering(p).known), "not shown: " & p
+    let b = two.sessions[^1].base
+    two.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[b + 8], on: true)
+    doAssert teKilled in two.traceEdits(b + 8), "the kill was not made"
+    two.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
+      spectrumTraces: toSeq(b ..< b + SpectrumTraces))
+    let w = two.spectra.high
+    doAssert ready(not two.spectra[w].waiting and two.spectra[w].spectrum.raw.len > 0)
+    doAssert two.spectra[w].spectrum.killed == 1 and two.spectra[w].spectrum.averaged == 8,
+      "the link's kill was taken into its spectrum: " & $two.spectra[w].spectrum.killed &
+      " killed, " & $two.spectra[w].spectrum.averaged & " averaged"
+    two.apply Command(kind: ckSpectrumPanel, onScreen: true)
+    doAssert ready(not two.spectra[0].waiting and two.spectra[0].spectrum.raw.len > 0)
+    doAssert two.spectra[0].spectrum.killed == 1,
+      "the live panel took in the link's kill: " & $two.spectra[0].spectrum.killed & " killed"
+    two.shutdown()
+
+  block finishedNotDropped:
+    # An answer read and computed whole is posted even when a newer request
+    # of its window came meanwhile (the window shows it while it waits for
+    # the newer one), and work on it is given up only between blocks. The
+    # reader is held in its read (the seam, `faultyfs`) while the newer
+    # request comes.
+    var three = initAppState()
+    three.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert three.settle(three.sessions.len == 1 and three.panel(MainPanel).laidOut and
+      three.panel(MainPanel).shown.len == SpectrumTraces)
+    three.apply Command(kind: ckView, panel: MainPanel,
+      view: fitAll(three.panel(MainPanel).layout, 640, 512))
+    doAssert three.settle(three.tiles(0).len > 0)
+    let b = three.sessions[0].base
+    install()
+    fault(path, fkHang, {foMapped})
+    three.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
+      spectrumTraces: toSeq(b + 3 .. b + 6))
+    let w = three.spectra.high
+    doAssert waitUntil(hung() == 1), "the spectrum's read was not held"
+    three.apply Command(kind: ckSpectrumDisplay, spectrum: three.spectra[w].id,
+      spectrumShow: SpectrumDisplay(time: stVisible)) # a newer request of the window
+    let (first, revision) = (three.spectra[w].asked - 1, three.spectra[w].revision)
+    release(path)
+    doAssert three.settle(not three.spectra[w].waiting and
+      three.spectra[w].spectrum.gen == three.spectra[w].asked)
+    doAssert three.spectra[w].revision == revision + 2,
+      "the first answer, read and computed whole, was dropped for the newer request (" &
+      $(three.spectra[w].revision - revision) & " answer taken; request " & $first & ")"
+    doAssert uiCalls().len == 0, "the file system was called on the UI thread: " & $uiCalls()
+    three.shutdown()
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
 echo "tspectra: ok"
