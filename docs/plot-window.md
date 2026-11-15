@@ -1270,7 +1270,13 @@ Right move the cursor one frequency bin, Home / End to the first and last, Up / 
 another curve; the keys then hold it, and it stays where they put it when the pointer
 leaves the plot, so they can step it across a notch; the line under the plot starts
 "Held ·" (its tooltip says which keys move it and how to let it go), and moving the
-pointer over the plot, or Esc, lets it go.
+pointer over the plot, or Esc, lets it go. Held, it keeps its frequency and its curve:
+when the bins change (a narrow notch makes them finer, "Visible time" another length,
+the live panel another view) it moves to the bin nearest the frequency it was held at,
+and when curves appear or go (the filters' response, the processed curve) it stays on
+its own (on the top curve while its own is not drawn, and back on it when it is again).
+Alt + arrows through the record keep it too, so a level at one frequency can be read
+trace after trace.
 The cursor is `core/plotcursor`'s, made for an f-k plot too (Up / Down there step its
 second axis). The wheel zooms about the pointer, a drag pans, a right drag zooms to a
 box, a double click shows everything again; no view goes past the data. A click on a

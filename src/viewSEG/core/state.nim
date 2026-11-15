@@ -353,9 +353,10 @@ type
         ## -1 the previous one (traces the trace filter hides are skipped,
         ## killed ones shown are not)
       cursor*: PlotCursor
-        ## ckSpectrumCursor: `held` true holds the cursor at `at`: [the
-        ## frequency bin (`state`'s spectra give `binHz`), the curve as drawn
-        ## (0 the first in the legend)]; false lets it go to the pointer
+        ## ckSpectrumCursor: `held` true holds the cursor at bin `x`'s
+        ## frequency (`state`'s spectra give `binHz`) and on curve `y` as
+        ## drawn (0 the first in the legend), which it then keeps when the
+        ## bins or the curves drawn change; false lets it go to the pointer
       spectrumTraces*: seq[int]
         ## ckSpectrum: survey-wide ids of traces of the panel's file; none:
         ## its selected traces there
@@ -2628,13 +2629,11 @@ proc followFfts(state: var AppState) =
         elif revision != sw.editsSeen:
           sw.editsSeen = revision # other traces' edits: nothing to ask
 
-proc followSpectrum(state: var AppState) =
-  ## After every change: the FFT windows follow the plot's filters
-  ## (`followFfts`); the live panel, while on screen and not frozen,
-  ## asked again when what it is of changed (the traces in view or
-  ## selected, the record, the file, the time in view, the filters, a
-  ## kill). Nothing is asked while it is hidden.
-  state.followFfts()
+proc followLive(state: var AppState) =
+  ## The live panel, while on screen and not frozen, asked again when what
+  ## it is of changed (the traces in view or selected, the record, the
+  ## file, the time in view, the filters, a kill). Nothing is asked while
+  ## it is hidden.
   template live: untyped = state.spectra[0]
   if live.display != state.settings.spectrum.live:
     live.display = state.settings.spectrum.live
@@ -2741,6 +2740,17 @@ proc openSpectrum(state: var AppState; cmd: Command) =
   if outside > 0:
     state.log.add(sevWarning, s.name, $outside & " of the traces given are not in " & s.name &
       ": left out of the spectrum.")
+
+proc followSpectrum(state: var AppState) =
+  ## After every change: the FFT windows follow the plot's filters
+  ## (`followFfts`), the live panel what it is of (`followLive`), and each
+  ## window's held cursor stays at its frequency and on its curve when the
+  ## spectrum changes (another FFT length: finer bins for a notch, another
+  ## time) or the curves drawn do (`followCursor`).
+  state.followFfts()
+  state.followLive()
+  for sw in state.spectra.mitems:
+    if sw.followCursor(): inc sw.revision
 
 proc showSpectrum(state: var AppState; cmd: Command) =
   ## `ckSpectrumDisplay`: how a window shows its spectrum, and whether it is
@@ -5600,23 +5610,19 @@ proc displayPreset(state: var AppState; cmd: Command) =
       else: state.change(by, s): s.displayPresets = deleted(s.displayPresets, name, why)
 
 proc holdCursor(state: var AppState; cmd: Command) =
-  ## `ckSpectrumCursor`: a spectrum window's cursor held at a bin (within
-  ## its spectrum's) and a curve, or let go.
+  ## `ckSpectrumCursor`: a spectrum window's cursor held at a bin's
+  ## frequency and on a curve (within those its plot shows), or let go.
   let w = state.findSpectrum(cmd.spectrum)
   if w < 0:
     state.ignore(cmd, "there is no spectrum window " & $cmd.spectrum)
     return
   template sw: untyped = state.spectra[w]
-  var c = cmd.cursor
-  if c.held:
-    if sw.spectrum.raw.len == 0:
-      state.ignore(cmd, sw.title & " has no spectrum to put its cursor on")
-      return
-    c = c.clamped([sw.spectrum.raw.len, max(c.y + 1, 1)])
-  else: c = PlotCursor()
-  if c != sw.cursor:
-    sw.cursor = c
-    inc sw.revision
+  if cmd.cursor.held and sw.spectrum.raw.len == 0:
+    state.ignore(cmd, sw.title & " has no spectrum to put its cursor on")
+    return
+  let was = (sw.cursor, sw.cursorHz, sw.cursorCurve)
+  sw.holdAt(cmd.cursor) # a frequency and a curve, kept so by `followSpectrum`
+  if (sw.cursor, sw.cursorHz, sw.cursorCurve) != was: inc sw.revision
 
 proc stepTrace(state: var AppState; cmd: Command) =
   ## `ckStepTrace`: the next (or previous) trace of the record, in the

@@ -76,6 +76,12 @@ type
     response*: bool = true    ## the filters' own response is drawn (when there are some)
     phase*: bool              ## a one-trace spectrum's phase is drawn under its amplitude
 
+  SpectrumCurve* = enum
+    ## A curve of a spectrum window's plot, in the order drawn (`drawnCurves`).
+    scResponse = "response"   ## the filters' response, under the data
+    scRaw = "raw"             ## the samples as recorded
+    scProcessed = "processed" ## through the plot's filters
+
   SpectrumOf* = enum
     ## What chose a spectrum's traces.
     soNothing = "nothing"
@@ -148,8 +154,14 @@ type
     filters*: string          ## the plot's filters, in words, when asked; "" for none
     processing*: Processing   ## them, as asked last (shown raw or not, alike)
     cursor*: PlotCursor
-      ## its cursor when held by the keys or an agent: a bin along the
-      ## frequency axis, and the curve (as drawn) it reads (`core/plotcursor`)
+      ## its cursor when held by the keys or an agent, as drawn: the bin
+      ## along the frequency axis nearest `cursorHz` (among those the axis
+      ## shows), and the place of `cursorCurve` among the curves drawn
+      ## (`drawnCurves`; the top one while it is not drawn). Kept so by
+      ## `followCursor` whenever the spectrum or the display changes
+      ## (`core/plotcursor`)
+    cursorHz*: float64           ## the frequency the cursor is held at
+    cursorCurve*: SpectrumCurve  ## and the curve it reads
     killed*: seq[int]         ## its traces killed when it asked last (indices in the file)
     editsSeen*: int           ## its file's edits' revision then
     spectrum*: Spectrum       ## the newest answer taken in
@@ -197,6 +209,58 @@ func title*(w: SpectrumWindow): string =
   if w.id == LiveSpectrum: "Spectrum"
   elif w.id == 1: "FFT: " & w.label
   else: "FFT " & $w.id & ": " & w.label
+
+func hasResponse*(sp: Spectrum): bool {.inline.} =
+  ## Whether `sp` has a filter response to draw: the filters have a pass
+  ## band or a notch and reached some of its traces (one they reached none
+  ## of is not drawn: the spectrum would seem filtered).
+  sp.response.len > 0 and sp.response.len == sp.responseHz.len and sp.filtered > 0
+
+func drawnCurves*(w: SpectrumWindow): seq[SpectrumCurve] =
+  ## The curves `w`'s plot draws, in the legend's order: the response first
+  ## (shown, and there is one), so the data is drawn over it, then the raw
+  ## curve and the processed one, each when shown and there.
+  if w.display.response and w.spectrum.hasResponse: result.add scResponse
+  if w.display.raw: result.add scRaw
+  if w.display.processed and w.spectrum.processed.len > 0: result.add scProcessed
+
+func shownBins*(w: SpectrumWindow): Slice[int] =
+  ## The bins `w`'s frequency axis shows (`0 .. -1` for none).
+  0 .. w.spectrum.raw.len - 1
+
+func cursorAt*(w: SpectrumWindow): PlotCursor =
+  ## Where `w`'s held cursor is drawn: the bin nearest the frequency it is
+  ## held at among those the axis shows, on its curve's place among those
+  ## drawn (the top one while it is not drawn); `PlotCursor()` when not held.
+  if not w.cursor.held: return PlotCursor()
+  let bins = w.shownBins
+  let curves = w.drawnCurves
+  let y = curves.find(w.cursorCurve)
+  PlotCursor(held: true, x: nearestSample(w.cursorHz, w.spectrum.binHz, bins.b + 1, bins.a),
+    y: (if y >= 0: y else: max(curves.high, 0)))
+
+func followCursor*(w: var SpectrumWindow): bool =
+  ## After the spectrum or the display changed: `w`'s held cursor drawn at
+  ## the frequency and on the curve it is held at (`cursorAt`); whether
+  ## that moved it.
+  let c = w.cursorAt
+  result = c != w.cursor
+  if result: w.cursor = c
+
+func holdAt*(w: var SpectrumWindow; at: PlotCursor) =
+  ## `w`'s cursor held at bin `at.x` (its frequency) and on the curve drawn
+  ## `at.y` (0 the first in the legend), each within those the plot shows
+  ## (`shownBins`, `drawnCurves`); let go when `at.held` is false.
+  if not at.held:
+    w.cursor = PlotCursor()
+    return
+  let bins = w.shownBins
+  let x = clamp(at.x, bins.a, max(bins.b, bins.a))
+  let curves = w.drawnCurves
+  if curves.len > 0: w.cursorCurve = curves[clamp(at.y, 0, curves.high)]
+  w.cursorHz = float64(x) * w.spectrum.binHz
+  w.cursor.held = true
+  discard w.followCursor()
 
 func auxText(n: int): string =
   if n == 1: "the auxiliary trace is" else: "the " & $n & " auxiliary traces are"

@@ -10,6 +10,8 @@
 ## agent can move it too); following the pointer, it is the frontend's
 ## alone.
 
+import std/math
+
 type
   CursorMove* = enum
     ## A key's move of a cursor.
@@ -50,3 +52,17 @@ func moved*(c: PlotCursor; m: CursorMove; counts: array[2, int]): PlotCursor =
   of cmUp: dec result.y
   of cmDown: inc result.y
   result = result.clamped(counts)
+
+func nearestSample*(at, step: float64; count: int; first = 0): int =
+  ## The sample nearest `at` on an axis of `count` samples `step` apart
+  ## from 0 (a spectrum's bins: `at` a frequency, `step` their spacing),
+  ## within `first` ..< `count`: so a cursor held at a value stays there
+  ## when the samples change (finer bins), at its nearest. 0 when there
+  ## are none; `first` when `at` is not a number or `step` not positive.
+  if count <= 0: return 0
+  let lo = clamp(first, 0, count - 1)
+  if at.isNaN or not (step > 0) or step == Inf: return lo
+  let k = at / step
+  if k <= float64(lo): lo
+  elif k >= float64(count - 1): count - 1
+  else: clamp(int(round(k)), lo, count - 1)

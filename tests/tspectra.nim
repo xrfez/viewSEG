@@ -30,7 +30,8 @@
 ##   previous trace in the order shown, killed ones too, not past its ends
 ##   (said), the plot scrolled to keep it in view, an FFT window of one
 ##   trace moved to the next; a window's cursor held within its bins and let
-##   go (`ckSpectrumCursor`);
+##   go (`ckSpectrumCursor`), at its frequency and on its curve when a
+##   notch's finer bins come and curves appear or go;
 ## - several windows at once, each its own; one closed while it computes
 ##   takes no answer; another of the same traces reads nothing again;
 ## - the live panel works only while on screen and not frozen; follows the
@@ -114,6 +115,12 @@ block helpers:
     spectrumTraces(0) == MaxSpectrumTraces and spectrumTraces(high(int)) == 1,
     "a spectrum's traces are bounded by their samples"
   doAssert evenly(10, 5) == @[0, 2, 4, 6, 8]
+  # a held cursor's bin, nearest its frequency
+  doAssert nearestSample(24.41, 0.244140625, 1025) == 100 and
+    nearestSample(24.41, 0.1220703125, 2049) == 200 and
+    nearestSample(300, 0.25, 1001) == 1000 and nearestSample(-3, 0.25, 1001, 1) == 1 and
+    nearestSample(NaN, 0.25, 10, 1) == 1 and nearestSample(5, 0, 10) == 0 and
+    nearestSample(5, 1, 0) == 0
   # finer bins for a narrow filter: a bin at most half its narrowest feature
   doAssert spectrumNfft(1001, 1, Inf) == 1024 and spectrumNfft(1001, 1, 1) == 2048 and
     spectrumNfft(4001, 1, 1) == 4096 and spectrumNfft(100, 1, 1e-6) == 8 * 128 and
@@ -525,6 +532,49 @@ withFixtures fx:
     st.filters Processing()
     st.apply Command(kind: ckCloseSpectrum, spectrum: st.spectra[w].id)
     st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 640, 512))
+
+  block heldCursor:
+    # A cursor held is a frequency and a curve, not a bin and a place in the
+    # legend: a narrow notch's finer bins keep it at its frequency, curves
+    # that appear or go keep it on its own. (Seen to fail with
+    # `followSpectrum` no longer calling `followCursor`: held at bin 100,
+    # 24.41 Hz, it read bin 100 of the finer bins, 12.21 Hz, on the response.)
+    let w = st.fft(@[base])
+    doAssert st.answered(w)
+    template sw: untyped = st.spectra[w]
+    let hz = 100 * sw.spectrum.binHz
+    st.apply Command(kind: ckSpectrumCursor, spectrum: sw.id,
+      cursor: PlotCursor(held: true, x: 100, y: 0))
+    doAssert sw.cursor == PlotCursor(held: true, x: 100, y: 0) and sw.cursorHz == hz and
+      sw.cursorCurve == scRaw, $(sw.cursor, sw.cursorHz, sw.cursorCurve)
+    st.filters Processing(notches: @[NotchFilter(hz: 60, widthHz: 0.5)])
+    doAssert st.answered(w) and st.settle(sw.spectrum.filters == "notch 60 Hz" and
+      not sw.waiting)
+    doAssert sw.spectrum.nfft == 2 * SpectrumSamples, "no finer bins: " & $sw.spectrum.nfft
+    doAssert sw.drawnCurves == @[scResponse, scRaw, scProcessed], $sw.drawnCurves
+    doAssert sw.cursor == PlotCursor(held: true, x: 200, y: 1) and
+      abs(float64(sw.cursor.x) * sw.spectrum.binHz - hz) < 1e-9,
+      "the held cursor left its frequency or its curve: " & $sw.cursor & " at " &
+      $(float64(sw.cursor.x) * sw.spectrum.binHz) & " Hz"
+    # the response hidden: still on the raw curve, now the first drawn
+    var show = sw.display
+    show.response = false
+    st.apply Command(kind: ckSpectrumDisplay, spectrum: sw.id, spectrumShow: show)
+    doAssert sw.cursor == PlotCursor(held: true, x: 200, y: 0), $sw.cursor
+    # held on the processed curve, which goes with the filters: on the top
+    # curve meanwhile, back on its own when it comes back
+    st.apply Command(kind: ckSpectrumCursor, spectrum: sw.id,
+      cursor: PlotCursor(held: true, x: 200, y: 1))
+    doAssert sw.cursorCurve == scProcessed
+    st.filters Processing()
+    doAssert st.settle(sw.spectrum.processed.len == 0 and not sw.waiting)
+    doAssert sw.cursor == PlotCursor(held: true, x: 100, y: 0) and sw.cursorCurve == scProcessed,
+      $(sw.cursor, sw.cursorCurve)
+    st.filters Processing(notches: @[NotchFilter(hz: 60, widthHz: 0.5)])
+    doAssert st.settle(sw.spectrum.processed.len > 0 and not sw.waiting)
+    doAssert sw.cursor == PlotCursor(held: true, x: 200, y: 1), $sw.cursor
+    st.filters Processing()
+    st.apply Command(kind: ckCloseSpectrum, spectrum: sw.id)
 
   block closedWhileComputing:
     let w = st.fft(toSeq(base ..< base + 9))

@@ -12,7 +12,7 @@
 ## `ckSpectrumPanel` when the live panel comes on screen or leaves it (it
 ## works only while on screen).
 
-import std/[math, tables]
+import std/[math, sequtils, tables]
 import imguin/cimgui
 import ../../core/state
 import ../../view/[curveplot, spectrumview, theme]
@@ -225,7 +225,8 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
     let q = w.phasePlot(t)
     let po = ui.phases.mgetOrPut(w.id, CurvePlotUi()).drawCurvePlot(name & ".phase", q, t,
       ImVec2_c(x: avail.x, y: max(60'f32, h - round(h * 0.6) - igGetStyle().ItemSpacing.y)),
-      key, marks, (if w.cursor.held: PlotCursor(held: true, x: w.cursor.x, y: 0)
+      key, marks, (if w.cursor.held: PlotCursor(held: true, x: w.cursor.x,
+                     y: max(q.curves.mapIt(it.name).find($w.cursorCurve), 0))
                    else: PlotCursor()))
     if po.hovered: text = q.readoutText(po.reading)
   if w.cursor.held and text.len > 0: text = HeldNote & text

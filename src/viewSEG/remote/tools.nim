@@ -598,7 +598,8 @@ proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
   let k = w.cursor.x
   let cursor = if not w.cursor.held: %*{"held": false}
                else: %*{"held": true, "bin": k, "hz": toJson(float64(k) * sp.binHz),
-                 "curve": w.cursor.y, "raw": sp.raw.atBin(k),
+                 "heldHz": toJson(w.cursorHz), "curve": w.cursor.y,
+                 "curveName": $w.cursorCurve, "raw": sp.raw.atBin(k),
                  "processed": sp.processed.atBin(k)}
   result = %*{"id": w.id, "title": w.title, "live": w.id == LiveSpectrum,
     "onScreen": (if w.id == LiveSpectrum: w.shown else: true), "frozen": w.frozen,

@@ -22,12 +22,6 @@ func curveColours*(t: Theme): array[3, Rgba] =
   ## runs along.
   [t.roles[rlTextDim], t.roles[rlAccent], t.series[1]]
 
-func hasResponse*(sp: Spectrum): bool {.inline.} =
-  ## Whether `sp` has a filter response to draw: the filters have a pass
-  ## band or a notch and reached some of its traces (one they reached none
-  ## of is not drawn: the spectrum would seem filtered).
-  sp.response.len > 0 and sp.response.len == sp.responseHz.len and sp.filtered > 0
-
 func responseCurve(sp: Spectrum; db: bool; reference: float64; ink: Rgba): Curve =
   ## The response, under the data: a thin faint line in the response
   ## colour over a fainter shade down to the floor (its pass band reads as
@@ -67,19 +61,22 @@ func spectrumPlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
   for k in 0 ..< sp.raw.len: result.xs[k] = float64(k) * sp.binHz
   let reference = max(sp.raw.peakOf, sp.processed.peakOf)
   let colours = curveColours(t)
-  # The response first, so the data is drawn over it.
-  if w.display.response and sp.hasResponse:
-    result.curves.add sp.responseCurve(db, reference, colours[2])
   template add(called: string; amps: seq[float64]; ink: Rgba) =
     result.curves.add Curve(name: called, colour: ink,
       ys: (if db: dbOf(amps, reference, FloorDb) else: amps))
-  if w.display.raw: add("raw", sp.raw, colours[0])
-  if w.display.processed and sp.processed.len > 0:
-    # Of fewer traces than the raw curve when the filters passed some by:
-    # the legend says so, as the two then differ by those traces too.
-    let called = if sp.passedBy > 0: "processed (" & $sp.filtered & " of " & $sp.averaged & ")"
-                 else: "processed"
-    add(called, sp.processed, colours[1])
+  # In `drawnCurves`' order (the response first, so the data is drawn over
+  # it), which the held cursor's curve counts in.
+  for c in w.drawnCurves:
+    case c
+    of scResponse: result.curves.add sp.responseCurve(db, reference, colours[2])
+    of scRaw: add("raw", sp.raw, colours[0])
+    of scProcessed:
+      # Of fewer traces than the raw curve when the filters passed some by:
+      # the legend says so, as the two then differ by those traces too.
+      let called = if sp.passedBy > 0: "processed (" & $sp.filtered & " of " & $sp.averaged &
+                     ")"
+                   else: "processed"
+      add(called, sp.processed, colours[1])
   if result.curves.len == 0: result.note = "The curves are hidden: tick Raw, Processed or Response."
 
 func hasPhase*(w: SpectrumWindow): bool {.inline.} =
