@@ -477,7 +477,14 @@ proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
   ## The layers popover, in groups: the Preplot (the survey files), then the
   ## Recorded (the open files' own positions), each with its own toggle and
   ## its layers under it (each with its colour and toggle; greyed out while
-  ## the group is hidden), then the highlight.
+  ## the group is hidden), then the highlight. Units the files disagree on
+  ## are said first.
+  let disagree = st.unitsDisagree
+  if disagree.len > 0:
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+    wrapped(disagree & ".")
+    igPopStyleColor(1)
+    marks.mark("map.units disagree")
   for g in MapGroup:
     var on = g notin st.settings.map.hiddenGroups
     let label = $g & (if g == mgPreplot: ": the survey files" else: ": the seismic files")

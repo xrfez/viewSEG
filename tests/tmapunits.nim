@@ -14,14 +14,17 @@
 ##
 ## - H201's factor rounded as files write it (0.3048006, 0.304801): the
 ##   foot it is nearest, US survey or international.
+## - files that name different units: said once in the messages and by
+##   `unitsDisagree` (the Layers list), the map keeping the first.
 ##
 ## Seen to fail: with "US ft" as the abbreviation of US survey feet, the
 ## US survey feet case failed; with lengths converted by 0.3048 for US
 ## survey feet too, "metres from US survey feet" failed; with the factor
 ## matched to 1e-9 (as it was), `factorsAsWritten` took 0.3048006 for
-## international feet.
+## international feet; with the disagreement not followed (`followUnits`
+## left out), "said in the messages" found none.
 
-import std/math
+import std/[math, strutils]
 import parseSEG/survey/sps
 import viewSEG/core/[mapview, state]
 import viewSEG/view/maplayers
@@ -109,5 +112,26 @@ withFixtures fx:
     doAssert st.settle(st.sessions.len == 1)
     doAssert st.surveyUnit == unitOf(st.sessions[0].crs.units)
     echo "tmapunits: the survey SEG-Y's headers say ", st.sessions[0].crs.units
+
+  block mixedUnits:
+    # A survey file in feet, another in metres: said, once; the map keeps feet.
+    var st = fx.loaded("feet2", "Feet", "0.3048")
+    doAssert st.unitsDisagree == ""
+    let m = fx.mapSpsIn("metres2", "Metres", "1.0")
+    st.apply Command(kind: ckLoadSurvey, paths: @[m.s])
+    doAssert st.settle(st.survey.layers.len == 3)
+    let words = st.unitsDisagree
+    doAssert "feet" in words and "metres" in words and "the map uses feet" in words, words
+    doAssert st.surveyUnit == suFeet
+    var said = 0
+    for e in st.log:
+      if e.severity == sevWarning and "units disagree" in e.text: inc said
+    doAssert said == 1, "said in the messages: " & $said
+    st.apply Command(kind: ckLoadSurvey, paths: @[m.s]) # nothing new: not said again
+    discard st.settle(st.jobs.active.len == 0)
+    said = 0
+    for e in st.log:
+      if e.severity == sevWarning and "units disagree" in e.text: inc said
+    doAssert said == 1, "said again: " & $said
 
 echo "tmapunits: done"

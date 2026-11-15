@@ -614,7 +614,10 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   correct ft/survey ft/ meters"): `m`, `ft` (international feet, 0.3048 m) or `ftUS` (US
   survey feet, 1200/3937 m) in the status bar's coordinates, the scale bar and the ruler,
   from the units confirmed with a join, else the survey file's header (`H20`, `H201`), else
-  the seismic file's headers; "units" where nothing says, never a guess. The gear's
+  the seismic file's headers; "units" where nothing says, never a guess. **Files that name
+  different units** (a second survey file, the open file's headers) are said once in
+  Messages and at the top of the Layers list ("The coordinates' units disagree (...): the
+  map uses US survey feet, the first, and converts nothing"). The gear's
   Lengths shows lengths in another of the three instead, converted exactly.
 - **A scale bar** (1, 2 or 5 times a power of ten, at most 150 pixels long) in the plot's
   bottom-left corner and a **north arrow** (grid north) in its top-right one.

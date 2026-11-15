@@ -265,19 +265,10 @@ func surveyUnit*(st: AppState): SurveyUnit =
   ## else the first survey file's that says (SPS H20 and H201: `feet` with
   ## 0.3048006096 m a unit is US survey feet), else the first open seismic
   ## file's headers' (SEG-Y's measurement system, a CRS); not given when
-  ## nothing says.
-  for i in 0 ..< st.joins.len:
-    let u = st.joins[i].units.survey
-    if u != suNotGiven: return u
-  for i in 0 ..< st.survey.layers.len:
-    template l: untyped = st.survey.layers[i]
-    if l.origin == loSurveyFile and l.gridUnit.known:
-      let u = unitOf(l.gridUnit)
-      if u != suNotGiven: return u
-  for s in st.sessions:
-    let u = unitOf(s.crs.units)
-    if u != suNotGiven: return u
-  suNotGiven
+  ## nothing says (`unitSources`; when they disagree, `unitsDisagree` says
+  ## so in the Layers list and the messages).
+  let all = st.unitSources
+  if all.len > 0: all[0].unit else: suNotGiven
 
 func unitsOf*(st: AppState): string =
   ## The survey's unit as the status bar writes coordinates: "m", "ft" or

@@ -469,6 +469,9 @@ type
       ## what the map's filters find in the record shown (`core/recordqc`)
     qcHeld: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relation records each filters' job reads in place, kept until it ends
+    unitsWarned: string
+      ## the disagreement of the units the loaded files name said last
+      ## (`unitsDisagree`); "" while they agree
     loadNamed: seq[string]
       ## the files the listing was asked for: loaded when it finds them survey files
     saidPositions: HashSet[string]
@@ -2366,6 +2369,49 @@ proc selectUnmatched(state: var AppState; cmd: Command) =
 # follows what it depends on (`followMapWork`, after every command and
 # drained inbox): the relation records the planned spreads need.
 
+func unitSources*(state: AppState): seq[tuple[what: string; unit: SurveyUnit]] =
+  ## Each unit the data name for the survey's coordinates, in the order the
+  ## map takes them (the first is the map's): the units confirmed with an
+  ## import, then each survey file's (SPS H20, H201), then each open seismic
+  ## file's headers' (SEG-Y's measurement system, a CRS).
+  for j in state.joins:
+    if j.units.survey != suNotGiven:
+      let i = state.findSession(j.session)
+      result.add ("the units confirmed for " & (if i >= 0: state.sessions[i].name
+        else: "an import"), j.units.survey)
+  for i in 0 ..< state.survey.layers.len:
+    template l: untyped = state.survey.layers[i]
+    if l.origin == loSurveyFile and l.gridUnit.known and unitOf(l.gridUnit) != suNotGiven:
+      result.add (l.name, unitOf(l.gridUnit))
+  for s in state.sessions:
+    let u = unitOf(s.crs.units)
+    if u != suNotGiven: result.add (s.name & "'s headers", u)
+
+func unitsDisagree*(state: AppState): string =
+  ## When the loaded files name different units: what each says and which
+  ## the map uses, "map.s says US survey feet, shot.sgy's headers metres:
+  ## the map uses US survey feet"; "" when they agree (or none says).
+  let all = state.unitSources
+  var units: seq[SurveyUnit]
+  for (_, u) in all:
+    if u notin units: units.add u
+  if units.len < 2: return
+  var parts: seq[string]
+  for u in units:
+    var names: seq[string]
+    for (what, v) in all:
+      if v == u and names.len < 3: names.add what
+    parts.add names.join(", ") & " " & $u
+  "The coordinates' units disagree (" & parts.join("; ") & "): the map uses " & $units[0] &
+    ", the first, and converts nothing"
+
+proc followUnits(state: var AppState) =
+  ## Says once in the log when the loaded files' units come to disagree.
+  let words = state.unitsDisagree
+  if words != state.unitsWarned:
+    state.unitsWarned = words
+    if words.len > 0: state.log.add(sevWarning, "map", words & ".")
+
 func shownDomain*(state: AppState): RelationDomain =
   ## The domain of the record on show in the main panel: `rdReceiver` for a
   ## receiver gather, else `rdSource` (a shot, or no record).
@@ -2710,6 +2756,7 @@ proc followMapWork(state: var AppState) =
   state.followSpreads()
   state.followShots()
   state.followRecordQc()
+  state.followUnits()
 
 proc endMapWork(state: var AppState; job: JobInfo): bool =
   ## A job of the map's ended: forgotten, a failure said; false when `job`

@@ -398,6 +398,10 @@ proc mapJson(state: AppState; limit: int): JsonNode =
     spread["from"] = %sp.source
     spread["made"] = %state.spreads.words
   result["template"] = spread
+  # The units the files name, and whether they disagree.
+  var units = newJArray()
+  for (what, u) in state.unitSources: units.add %*{"from": what, "unit": $u}
+  result["units"] = %*{"named": units, "disagree": state.unitsDisagree}
   # The folder's shots: its files read, and the survey's sources that have one.
   template x: untyped = state.shots
   result["folderShots"] = %*{"shown": state.settings.map.folderShots, "filesRead": x.shotFiles,
