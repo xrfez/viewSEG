@@ -11,7 +11,12 @@ the versions this repository pins, is named in a row's "Library calls" cell (an 
 type, its values where they are options). `nim coverage` (`tools/coverage.nim`) checks it
 and writes the summary below; the test suite runs the same check (`tests/tcoverage.nim`).
 It fails when a library exports a name no row names, when a row says `built` or `internal`
-for a name the viewer's source never calls, and when the summary is not the tables'. The
+for a name the viewer's source never calls, or for a distinctive name (camelCase, 8
+characters or more) the viewer declares one of its own of, when such a row names a window
+or a menu item the viewer does not have, when a distinctive name the viewer calls has rows
+that say only `planned`, `to plan` or `not applicable` (the viewer's own uses of library
+names, checked by hand, are listed in `tools/coverage.nim`'s `KnownHomonyms`), and when the
+summary is not the tables'. The
 tensor API that parseSEG re-exports is Arraymancer's, and is not listed.
 
 Status values:
@@ -149,7 +154,7 @@ In the next library release (below): parseSEG: 5 capabilities (5 planned); proce
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Read SPS 1.0 / 2.1 (S, R, X, O) | `parseSps` (a file a 4 MiB chunk at a time, the revision and layout of the first kept: `SpsOptions`), `detectLayout`, `addSps` (the relations), `relationDomainOf`; `readSps`, `looksLikeSps` not used (the file list tells SPS also from a head of header records only) | File → Open, drag and drop, a click in Files: survey files are loaded into the survey on a job, with progress, and listed as SPS S / R / X; drawn on the map, a layer per file's sources or receivers; File → Import → Survey… reads them again with `addSps` a chunk at a time, with the join's options | built; planned (`readSps` and `looksLikeSps` when parseSEG's next release reads with progress and cancel, below) |
+| Read SPS 1.0 / 2.1 (S, R, X, O) | `parseSps` (a file a 4 MiB chunk at a time, the revision and layout of the first kept: `SpsOptions`), `detectLayout`, `addSps` (the relations), `relationDomainOf`; `readSps`, `looksLikeSps` not used (the file list tells SPS also from a head of header records only) | File → Open file..., drag and drop, a click in Files: survey files are loaded into the survey on a job, with progress, and listed as SPS S / R / X; drawn on the map, a layer per file's sources or receivers; File → Import → Survey… reads them again with `addSps` a chunk at a time, with the join's options | built; planned (`readSps` and `looksLikeSps` when parseSEG's next release reads with progress and cancel, below) |
 | Read SEG P1 | `parseP1` (whole, up to 64 MiB), `addP1`, `P1Options` (`angleUnit`) | Loaded into the survey as SPS files are (sources; a reshoot is a station of its own); File → Import → Survey joins P1 files (`addP1`, no implied decimals); the implied decimals as an option, to come | built (loading, join); to plan (priority 2: the implied decimals as an option) |
 | Survey-file problems | `SurveyGeometry.log`, `SpsFile.log`, `P1File.log` | Messages: each file's first 20 problems by line, then a count; what was left off the map (no coordinates, at (0, 0)) and stations given twice | built; not applicable (`P1File`: the type `parseP1` gives, never named) |
 | Station tables | `table`, `sourceCount`, `receiverCount`, `relationCount`, `records` | The survey's own layers (stations found by key as `lookup` finds them); `relationCount` and `records` give a relation file's counts; the map's layers, a point's station in what the map says of it | built; not applicable (`sourceCount`, `receiverCount`: the survey counts its own layers) |
@@ -216,7 +221,7 @@ In the next library release (below): parseSEG: 5 capabilities (5 planned); proce
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Problems as data with severity, code and location | `DiagLog`, `Diagnostic`, `Severity`, `DiagCode`, `Location`, `f.log` | Log window, filtered by severity: Messages shows each file's diagnostics with their severity, and filters them by severity | built (Messages); not applicable (`Diagnostic`: an entry of a `DiagLog`, never named) |
+| Problems as data with severity, code and location | `DiagLog`, `Diagnostic`, `Severity`, `DiagCode`, `Location`, `f.log` | The Messages window shows each file's diagnostics with their severity, and filters them by severity | built (Messages); not applicable (`Diagnostic`: an entry of a `DiagLog`, never named) |
 | Location of each problem | `Diagnostic.loc` (record, trace, field), `offset` | Click a log entry to go to its trace or header field: a click on a line of Messages that names a trace shows it | built (a trace); to plan (priority 9: a header field) |
 | Logs as files | `toNif`, `writeNif`, `readDiagnostics`, `parseDiagnostics` | Log window: save and open; attached to the QC report (Messages exports its own text, File → Export messages...) | to plan (priority 8: a file's problems saved as NIF and opened again, attached to the QC report) |
 | Exceptions turned into entries | `recordException`, `tryRecord`, `tryRecordFatal` | internal: jobs report failures to the log | not applicable (a job's failure goes to Messages in the viewer's own words) |

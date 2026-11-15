@@ -51,6 +51,21 @@
 ##   its name is, and operators (`$`, `[]`) always, since a text search cannot
 ##   tell. The search is by name, so it cannot tell a library's `len` or
 ##   `classify` from another's: what a row claims stays the row's to make true;
+## - a row says `built` or `internal` for a distinctive name (below) the
+##   viewer's source also declares itself (a proc, a type: processSEG's
+##   `spreadOf` beside a `spreadOf` of the viewer's), as the search cannot
+##   tell whose src/ calls: rename the viewer's, or list it in `KnownHomonyms`
+##   with why (common names, `len`, `add`, stay the row's to make true);
+## - a row that says `built` or `internal` (also in part) names a window
+##   ("the Headers window") or a menu item ("File → Import → Survey") that the
+##   toolkit code's string literals do not name (each item a label, or the
+##   submenu's word and the item's together, "Import survey..."), but for a
+##   window its status names in a later part ("planned (the processing
+##   window)");
+## - a distinctive name (8 characters or more, camelCase: `recordCompleteness`)
+##   that src/ names has only rows that say `planned`, `to plan` or `not
+##   applicable`, unless `KnownHomonyms` says what src/ names by it (shorter
+##   and common names, `record`, `merge`, stay an advisory list);
 ## - a row names no name of its library, or its status cannot be read;
 ## - the summary between the page's summary marks is not the one the tables give.
 ##
@@ -102,6 +117,24 @@ const
   SummaryStart* = "<!-- summary: written by `nim coverage` from the tables below -->"
   SummaryEnd* = "<!-- end of summary -->"
   NextHeading = "## In the next library release"
+  KnownHomonyms* = {
+    "endTimeMs": "a field of parseSEG's channel-set summary the Headers window reads, " &
+      "not the exported func of a channel set descriptor",
+    "recordLengthMs": "a field of parseSEG's file summary the Headers window reads, not " &
+      "the exported func of the general headers",
+    "fieldTable": "the Headers window's own table of fields (ui/imgui/headerswindow)",
+    "readSamples": "the Headers window's reader's own (core/inspector), not SEG-2's",
+    "recordIndex": "a field of the viewer's `Command` (the SEG-D record a trace counts in)",
+    "tracesAt": "the viewer's own `Survey.tracesAt` (core/survey)",
+    "SweepSpec": "the type of a layer kind kept for the planned generated pilot " &
+      "(core/panels); nothing makes one yet",
+    "keysRevision": "parseSEG's is called (`file[].keysRevision`, core/surveyjobs and " &
+      "core/recordqc); the viewer's `Session.keysRevision` holds what it gave",
+    "isSeismic": "parseSEG's is called (`f.index.isSeismic(t)`, core/shots, core/state); " &
+      "the viewer's own is `FileKind.isSeismic` (core/filekinds)"}
+    ## Library names `src/` names for something of its own too (a field, its
+    ## own proc), each checked by hand, with what src/ does with them: a text
+    ## search cannot tell them from the library's (`check`)
 
 # ------------------------------------------------------------------ names --
 
@@ -221,6 +254,160 @@ proc sourceNames*(dir: string): HashSet[string] =
   result = initHashSet[string]()
   for path in walkDirRec(dir):
     if path.endsWith(".nim"): result.incl codeNames(readFile(path))
+
+func codeOnly(line: string): string =
+  ## `line` up to its comment (a `#` outside a string literal).
+  var inString = false
+  for i, c in line:
+    if c == '"': inString = not inString
+    elif c == '#' and not inString: return line[0 ..< i]
+  line
+
+func declaredNames*(s: string): HashSet[string] =
+  ## The names the Nim code `s` declares itself, normalized: its procs,
+  ## funcs, iterators, templates, macros, methods and converters, and the
+  ## types of its type sections (fields, variables and enum values are not
+  ## looked for).
+  result = initHashSet[string]()
+  var inType = false
+  for raw in s.splitLines:
+    let line = raw.codeOnly
+    let t = line.strip
+    if t.len > 0:
+      if line[0] != ' ': inType = t == "type" or t.startsWith("type ")
+      var rest = t
+      if rest.startsWith("type "): rest = rest[5 .. ^1].strip
+      var routine = false
+      for kw in ["proc ", "func ", "iterator ", "template ", "macro ", "method ", "converter "]:
+        if rest.startsWith(kw):
+          rest = rest[kw.len .. ^1].strip
+          routine = true
+      let typed = inType and rest.len > 0 and rest[0] in {'A' .. 'Z'} and
+        (" = " in rest or "* =" in rest or rest.endsWith("="))
+      if routine or typed:
+        if rest.startsWith("`"):
+          let e = rest.find('`', 1)
+          if e > 1: result.incl normName(rest[1 ..< e])
+        else:
+          var i = 0
+          while i < rest.len and rest[i] in IdentChars: inc i
+          if i > 0 and rest[0] in IdentStartChars: result.incl normName(rest[0 ..< i])
+
+proc sourceDeclared*(dir: string): HashSet[string] =
+  ## `declaredNames` of every `.nim` file under `dir`.
+  result = initHashSet[string]()
+  for path in walkDirRec(dir):
+    if path.endsWith(".nim"): result.incl declaredNames(readFile(path))
+
+func stringLiterals*(s: string): seq[string] =
+  ## The contents of the ordinary string literals of the Nim code `s`
+  ## (escapes left as written), comments left out.
+  var i = 0
+  while i < s.len:
+    let c = s[i]
+    if c == '#':
+      while i < s.len and s[i] != '\n': inc i
+    elif s.continuesWith("\"\"\"", i):
+      let e = s.find("\"\"\"", i + 3)
+      if e < 0: break
+      result.add s[i + 3 ..< e]
+      i = e + 3
+    elif c == '"':
+      var j = i + 1
+      while j < s.len and s[j] != '"' and s[j] != '\n':
+        if s[j] == '\\': inc j
+        inc j
+      result.add s[i + 1 ..< min(j, s.len)]
+      i = j + 1
+    elif c == '\'' and not (i > 0 and s[i - 1] in IdentChars):
+      i += (if i + 1 < s.len and s[i + 1] == '\\': 4 else: 3)
+    else: inc i
+
+type UiNames* = object
+  ## What the viewer's windows and menus are called, from the string
+  ## literals of its toolkit code (`src/viewSEG/ui`).
+  windows*: HashSet[string] ## window titles ("Headers" of "  Headers###headers") and names
+  labels*: HashSet[string]  ## every literal, trimmed and without a closing "..."
+
+func trimmedLabel(s: string): string =
+  result = s.strip
+  for tail in ["...", "…"]:
+    if result.endsWith(tail): result = result[0 ..< result.len - tail.len].strip
+
+proc uiNames*(dir: string): UiNames =
+  ## The window and menu names of the toolkit code under `dir`.
+  result = UiNames(windows: initHashSet[string](), labels: initHashSet[string]())
+  for path in walkDirRec(dir):
+    if path.endsWith(".nim"):
+      for l in stringLiterals(readFile(path)):
+        let label = trimmedLabel(l)
+        if label.len > 0:
+          result.labels.incl label
+          result.windows.incl label
+        let k = l.find("###")
+        if k > 0 and l[0 ..< k].strip.len > 0: result.windows.incl l[0 ..< k].strip
+
+func windowsNamed*(feature: string): seq[string] =
+  ## The windows a "Viewer feature" cell names: "Headers" of "the Headers
+  ## window", "Import survey" of "the Import survey window" (a name starts
+  ## with a capital; "the processing window" names none).
+  var words: seq[string]
+  for w in feature.splitWhitespace: words.add w.strip(chars = {',', ';', ':', '(', ')', '"'})
+  for i in 1 ..< words.len:
+    if words[i] in ["window", "window's", "windows"]:
+      let w1 = words[i - 1]
+      if w1.len > 0 and w1[0] in {'A' .. 'Z'} and w1.allCharsInSet(Letters):
+        result.add w1
+      elif i >= 2 and w1.len > 0 and w1.allCharsInSet({'a' .. 'z'}) and
+          words[i - 2].len > 0 and words[i - 2][0] in {'A' .. 'Z'} and
+          words[i - 2].allCharsInSet(Letters):
+        result.add words[i - 2] & " " & w1
+
+func menuPaths*(feature: string): seq[seq[string]] =
+  ## The menu paths a "Viewer feature" cell names: "File → Import → Survey"
+  ## as its items, the first the word before the first arrow, the last the
+  ## text after the last up to a comma, a semicolon, a colon or a bracket.
+  let parts = feature.split("→")
+  var i = 0
+  while i < parts.len - 1:
+    var path: seq[string]
+    let before = parts[i].strip.splitWhitespace
+    if before.len > 0: path.add before[^1]
+    var j = i + 1
+    while true:
+      # An item ends the path where its text stops, or at the last arrow.
+      let part = parts[j]
+      var cut = part.len
+      for stop in [',', ';', ':', '(', ')']:
+        let k = part.find(stop)
+        if k >= 0: cut = min(cut, k)
+      if cut < part.len or j == parts.high:
+        path.add part[0 ..< cut].strip
+        break
+      path.add part.strip
+      inc j
+    result.add path
+    i = j
+
+func menuPathKnown(path: openArray[string]; ui: UiNames): string =
+  ## "" when each item of `path` is a label of the viewer's menus (or the
+  ## submenu's word and the item's make one, "Import" and "Survey" of
+  ## "Import survey..."); else the first item that is not.
+  func isLabel(it, before: string; first: bool): bool =
+    let it = trimmedLabel(it)
+    result = it in ui.labels
+    if not result and not first and it.len > 0:
+      result = trimmedLabel(before) & " " & it[0].toLowerAscii & it[1 .. ^1] in ui.labels
+  for k, item in path:
+    var known = false
+    if k == path.high:
+      # The last runs on into the cell's words: its leading words that name one.
+      let words = item.splitWhitespace
+      for n in countdown(words.len, 1):
+        if not known: known = isLabel(words[0 ..< n].join(" "), path[max(k - 1, 0)], k == 0)
+    else: known = isLabel(item, path[max(k - 1, 0)], k == 0)
+    if not known: return item
+  ""
 
 # --------------------------------------------------------------- exports --
 
@@ -679,11 +866,23 @@ func rowNameStatus(row: Row, name: string, src: HashSet[string]): Status =
   if shown.len > 0 and (usedBySource(name, src) or rest.len == 0): shown[0]
   else: rest[0]
 
-proc check*(page: Page, libs, next: openArray[Library], src: HashSet[string]): Coverage =
+func distinctive*(name: string): bool =
+  ## A name no common word is: 8 characters or more, a capital after its
+  ## first (`recordCompleteness`, `SweepSpec`; not `record`, `merge`).
+  if name.len < 8 or isOperator(name): return false
+  for c in name.toOpenArray(1, name.high):
+    if c in {'A' .. 'Z'}: return true
+  false
+
+proc check*(page: Page, libs, next: openArray[Library], src: HashSet[string];
+    declared = initHashSet[string](); ui = UiNames()): Coverage =
   ## Holds `page` against the libraries' exports (`libs`: the locked
-  ## releases; `next`: the next ones found, maybe none) and the viewer's source
-  ## names `src` (normalized).
+  ## releases; `next`: the next ones found, maybe none), the viewer's source
+  ## names `src` and the names it declares itself `declared` (normalized),
+  ## and its windows' and menus' names `ui` (none: not checked).
   result.problems = page.problems
+  var known = initHashSet[string]()
+  for (name, _) in KnownHomonyms: known.incl normName(name)
   for lib in libs:
     let li = libIndex(lib.name)
     var norm: Table[string, string]
@@ -734,11 +933,37 @@ proc check*(page: Page, libs, next: openArray[Library], src: HashSet[string]): C
             if not any:
               result.problems.add where & ": says " & $claims[0] &
                 " in part, but src/ names none of " & names.join(", ")
+          if claims.len > 0:
+            # A name src/ declares too: the search cannot tell whose it calls.
+            for n in names:
+              if distinctive(n) and usedBySource(n, used) and normName(n) in declared and
+                  normName(n) notin known:
+                result.problems.add where & ": says " & $claims[0] & " for `" & n &
+                  "`, but src/ declares a `" & n & "` of its own, so a text search cannot " &
+                  "tell which src/ calls (rename the viewer's, or say why in KnownHomonyms)"
+          if claims.len > 0 and not row.next and ui.labels.len > 0:
+            # The windows and menu items a built row names exist (but for
+            # those its status says are planned, "planned (the processing window)").
+            for w in windowsNamed(row.feature):
+              if w notin ui.windows and (w & " window").toLowerAscii notin
+                  row.status.toLowerAscii:
+                result.problems.add where & ": says " & row.status & " and names the " & w &
+                  " window, which src/ has not"
+            for path in menuPaths(row.feature):
+              let bad = menuPathKnown(path, ui)
+              if bad.len > 0:
+                result.problems.add where & ": says " & row.status & " and names the menu " &
+                  "item \"" & path.join(" → ") & "\", but src/ has no \"" & bad & "\""
           if not row.next:
             for n in names:
               let s = rowNameStatus(row, n, used)
               if n notin result.nameStatus[li] or s < result.nameStatus[li][n]:
                 result.nameStatus[li][n] = s
+    # A distinctive name src/ calls whose rows say it is not built.
+    for n, st in result.nameStatus[li]:
+      if st > stInternal and distinctive(n) and normName(n) in src and normName(n) notin known:
+        result.problems.add lib.name & ": `" & n & "` is named in src/, but its rows say " &
+          $st & " (make a row built or internal, or say in KnownHomonyms what src/ names by it)"
     var missing: seq[string]
     for e in lib.exports:
       let covered = e.name in named or e.kind == "enum value" and e.owner in named
@@ -884,7 +1109,12 @@ proc run*(root: string, work = ""): Result =
       if s.next: result.next.add libs[i] else: result.libs.add libs[i]
     result.page = parsePage(readFile(root / PageFile))
     let src = sourceNames(root / "src")
-    result.coverage = check(result.page, result.libs, result.next, src)
+    result.coverage = check(result.page, result.libs, result.next, src,
+      sourceDeclared(root / "src"), uiNames(root / "src" / "viewSEG" / "ui"))
+    for (name, _) in KnownHomonyms:
+      if normName(name) notin src:
+        result.coverage.problems.add "tools/coverage.nim: KnownHomonyms lists `" & name &
+          "`, which src/ no longer names"
     for lib in result.libs:
       for name, st in result.coverage.nameStatus[libIndex(lib.name)]:
         if st > stInternal and not isOperator(name) and normName(name) in src:
