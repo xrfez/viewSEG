@@ -2,6 +2,8 @@
 ## window of 1152 x 720 pixels (what a 1280 x 800 laptop screen opens), driven
 ## by real clicks and typing:
 ##
+## - the strip, six lines at this size, scrolls above the plot, which keeps
+##   its room (`tguismall`): the gear is scrolled to;
 ## - it is in tabs (Look, Traces, Scales), and each tab is inside the
 ##   window: past its edge the popover would be a window of the desktop's
 ##   own, cut at the screen's edge;
@@ -110,6 +112,15 @@ withFixtures fx:
     if result:
       doAssert abs(f.scale - 1.25) < 0.01, "the scale is " & $f.scale
       doAssert f.width >= 1150 and f.width <= 1154, "the window is " & $f.width & " wide")
+  # at this size the strip's six lines scroll above the plot (which keeps
+  # its room): the gear, on the last one, is scrolled to with the wheel
+  step("the gear in view", noop, proc (f: FrameInfo): bool =
+    let (strip, gear) = (f.markOf("plot.strip scrolls"), f.markOf("plot.more"))
+    result = gear.size.y > 0 and (strip.size.y == 0 or (gear.pos.y >= strip.pos.y and
+      gear.pos.y + gear.size.y <= strip.pos.y + strip.size.y))
+    if not result and strip.size.y > 0:
+      f.moveMouse(strip.centre)
+      f.scrollWheel(strip.centre, -1))
   click("plot.more")
   step("Look", noop, inside("Look"))
   click("plot.more tab traces")

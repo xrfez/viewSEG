@@ -1337,6 +1337,9 @@ proc shoot(ui: var Ui; target: string): Shot =
     # The image is the plot's last: not what the window shows when it shows
     # no plot now (every trace hidden, a gather being read, behind a tab).
     if ui.trace.plotShown: (pixels, w, h) = ui.trace.plotImage
+    if ui.trace.plotShown and (w <= 1 or h <= 1):
+      return Shot(error: "the Seismic window leaves its plot no room (" & $w & " x " & $h &
+        " pixels): make the window larger")
     if w <= 0 or h <= 0:
       let why = ui.trace.instead
       return Shot(error: "the Seismic window shows no picture of traces now" &

@@ -32,7 +32,9 @@
 ## with `nestingDepth` returning 0, the depth checks; with the docs read from
 ## the wrong block of `core/state`, "no description of \"paths\"".
 ## With the scaling taking each block's first pixel instead of its mean, the
-## pictures check (a pixel of the scaled picture is not the grey).
+## pictures check (a pixel of the scaled picture is not the grey). A plot
+## squeezed to no pixels has "no room to draw" and `wait` settles (seen to
+## fail as "not drawn yet" for the whole wait).
 ## With relative paths read against the working folder, "a path relative to
 ## the program's folder was not found"; with the field users read from a
 ## doc comment's first segment only, the check of `takes(ckHoverPoints)`;
@@ -334,6 +336,24 @@ withFixtures fx:
       let i = st.survey.findFile(path)
       doAssert i >= 0 and not st.run(%*{"kind": "unload survey",
         "layer": int(st.survey.layers[i].id)}).isError
+
+  block noRoomToDraw:
+    # The plot squeezed to nothing (a window too small for it): `wait`
+    # settles, the picture has no room, rather than "not drawn yet" for
+    # ever while the window draws no plot.
+    let drawnNone = Frontend(drawnView: proc (panel: PanelId; view: var Viewport): bool =
+      view = Viewport() # what a window that drew no plot reports
+      true)
+    let was = st.panel(MainPanel).view
+    var squeezed = was
+    (squeezed.columns, squeezed.rows) = (0, 0)
+    st.apply Command(kind: ckView, panel: MainPanel, view: squeezed)
+    doAssert st.panel(MainPanel).view.columns == 0, $st.panel(MainPanel).view
+    doAssert st.settle(busy(st, drawnNone).len == 0), $busy(st, drawnNone)
+    let p = st.stateReport(drawnNone, """{"parts":["panels"]}""").body["panels"][0]
+    doAssert p["picture"].getStr == "no room to draw", $p["picture"]
+    st.apply Command(kind: ckView, panel: MainPanel, view: was)
+    doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
 
   block stateAnswers:
     let s = st.stateReport(fe, "{}").body

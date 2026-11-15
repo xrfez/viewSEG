@@ -349,6 +349,8 @@ proc pictureOf(state: AppState; k: int; fe: Frontend): string =
       tiles[^1].request != p.pending):
     result = "reading"
   elif p.relevel and p.levelAsked: result = "taking the record's level"
+  elif p.view.columns <= 0 or p.view.rows <= 0:
+    result = "no room to draw" # the window leaves the plot no pixels: nothing to wait for
   else:
     var drawn: Viewport
     if fe.drawnView != nil and fe.drawnView(p.id, drawn) and not drawn.sameSpans(p.view):
@@ -871,7 +873,7 @@ proc busy*(state: AppState; fe: Frontend): seq[string] =
     if w.waiting: result.add w.title & ": its spectrum"
   for k in 0 ..< state.panels.len:
     let picture = state.pictureOf(k, fe)
-    if picture notin ["complete", "nothing shown", "nothing to draw"]:
+    if picture notin ["complete", "nothing shown", "nothing to draw", "no room to draw"]:
       result.add state.windowTitle(state.panels[k].id) & " (" & $state.panels[k].id &
         "): " & picture
 

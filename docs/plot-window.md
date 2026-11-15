@@ -275,7 +275,11 @@
     popover: the display presets, the colours, density's colour map, the trace overlap
     again, the display header's fields, the scale units and the screen calibration.
   - The strip's groups wrap as the window narrows: two lines in the default layout on a
-    1920-pixel screen, three on a 1366-pixel laptop screen.
+    1920-pixel screen, three on a 1366-pixel laptop screen. Where its lines would leave
+    the plot less than ten lines of text (a 1152 x 720 screen at 125 %: six lines),
+    they scroll in a region of their own above the plot (the wheel scrolls them), so
+    the plot keeps its room; agent control's `wait` never waits for a plot that has no
+    pixels ("no room to draw"), and its screenshot is refused in words.
 - **The status bar** (the main window's bottom edge) reads out what lies under the
   pointer in the plot: the time at the cursor, trace (its number in the file) and
   channel, receiver line / point, source line / point, FFID, offset, amplitude and the

@@ -102,6 +102,9 @@ const
   menuId = "##plotmenu"
   headerMenuId = "##headermenu"
   gotoId = "Go to record##goto"
+  MinPlotLines = 10.0
+    ## the plot's least height, in lines of text: the strip scrolls rather
+    ## than take it
   moreId = "##plotmore"
   burstSeconds = 0.6   ## wheel turns or key presses closer than this are one gesture
   boxMinPixels = 4'f32 ## a box zoom narrower than this zooms the other axis only
@@ -179,6 +182,7 @@ type
     calib: CalibrationUi
     sortKeys: SortKeysUi
     stripWidths: array[11, float32] ## the strip's groups as drawn last frame
+    stripHeight: float32 ## the strip's height as drawn last frame, all its lines
     goto: GoToUi
     menuTarget: string ## what the plot's menu acts on, said when it opened
     menuUnder: int = -1 ## the trace under the pointer when it opened (survey-wide); -1 for none
@@ -2097,7 +2101,21 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
       let mon = monitorOf(igGetWindowViewport())
       let ppi = st.settings.ppiFor(mon.name, mon.displayScale)
       var ask = ViewAsk()
+      # The strip wraps onto more lines as the window narrows; where they
+      # would leave the plot less than `MinPlotLines`, they scroll in a
+      # region of their own instead, so the plot keeps its room.
+      let keep = round(igGetFontSize() * MinPlotLines)
+      let room = igGetContentRegionAvail().y - keep
+      let cramped = tp.stripHeight > room
+      if cramped:
+        discard igBeginChild_Str("##strip", ImVec2_c(x: 0,
+          y: max(igGetFrameHeightWithSpacing(), room)), 0.ImGuiChildFlags, 0.ImGuiWindowFlags)
+      let top = igGetCursorPosY()
       tp.drawControls(st, p, t, marks, result, ask, ppi, mon)
+      tp.stripHeight = igGetCursorPosY() - top
+      if cramped:
+        igEndChild()
+        marks.mark("plot.strip scrolls")
       let source = p.layers[0].source
       let s = if source.kind == lsRecord: st.findSession(source.file) else: -1
       let name = if s >= 0: st.sessions[s].name else: "the file"
