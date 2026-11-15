@@ -91,7 +91,7 @@ func withTraceScale*(v: Viewport; value, ppi: float64; u: ScaleUnits;
   if usable(value) and usable(ppi) and v.columns > 0:
     let along = float64(v.columns) / ppi
     let w = value * (if u.length == luInch: along else: along * CmPerInch)
-    result.traces = keptFrom(Span(lo: v.traces.lo, hi: v.traces.lo + w), lim[axTraces])
+    result.traces = keptFrom(v.traces.lo, w, lim[axTraces])
 
 func withTimeScale*(v: Viewport; value, ppi: float64; u: ScaleUnits;
     lim: ViewLimits): Viewport =
@@ -103,4 +103,4 @@ func withTimeScale*(v: Viewport; value, ppi: float64; u: ScaleUnits;
     let down = float64(v.rows) / ppi
     let length = if u.length == luInch: down else: down * CmPerInch
     let w = if u.speed: length / value * 1000 else: value * length
-    result.timeMs = keptFrom(Span(lo: v.timeMs.lo, hi: v.timeMs.lo + w), lim[axTime])
+    result.timeMs = keptFrom(v.timeMs.lo, w, lim[axTime])

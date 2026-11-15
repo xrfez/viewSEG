@@ -282,6 +282,32 @@ block neverPastTheData:
     doAssert wide.traces == l[axTraces].bounds and wide.timeMs == l[axTime].bounds, $wide
     doAssert v.resized(3000, 2000, l).traces == l[axTraces].bounds
 
+block widestIsTheBoundsExactly:
+  # Zoomed out as far as it goes from anywhere, about any point, the view is
+  # the data's extent to the last bit, and a pan, a page or a scroll of it
+  # leaves it so, in debug, release and danger builds alike. Seen to fail:
+  # with the zoom's span made as `lo .. lo + w` and its width taken back
+  # from it (the old code), 493 of these 10 000 zooms stopped about 1e-13
+  # short of the record's start in a debug build (618 in release, where a
+  # fused multiply-add rounds otherwise; `neverPastTheData` caught it there).
+  var rng = initRand(7)
+  let lay = PanelLayout(traces: 10000, samples: 2001, dtMs: 2, t0Ms: 0)
+  let l = limitsOf(lay)
+  let whole = Viewport(traces: l[axTraces].bounds, timeMs: l[axTime].bounds, columns: 800,
+    rows: 600)
+  for i in 0 ..< 10_000:
+    let a = rng.rand(0.0 .. 3000.0)
+    let s = Span(lo: a, hi: a + rng.rand(10.0 .. 900.0))
+    doAssert zoomed(s, 1 / 1000, rng.rand(-100.0 .. 4100.0), l[axTime]) == l[axTime].bounds,
+      $s
+    let t = Span(lo: a, hi: a + rng.rand(4.0 .. 900.0))
+    doAssert zoomed(t, 1e-6, rng.rand(-100.0 .. 11000.0), l[axTraces]) ==
+      l[axTraces].bounds, $t
+    let p = whole.panned(rng.rand(-50.0 .. 50.0), rng.rand(-50.0 .. 50.0), l)
+    doAssert p.sameSpans(whole), $p
+    doAssert whole.paged(axTime, float64(rng.rand(-3 .. 3)), l).sameSpans(whole)
+    doAssert keptFrom(rng.rand(-10.0 .. 10.0), 1e9, l[axTime]) == l[axTime].bounds
+
 block wiggleLimit:
   # one pixel a trace at the most, on 800 columns; density has no such limit
   let wl = limitsOf(layout, widest = 800)

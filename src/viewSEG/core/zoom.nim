@@ -114,24 +114,33 @@ proc setSpan(v: var Viewport; a: Axis; s: Span) {.inline.} =
 func coord(p: DataPoint; a: Axis): float64 {.inline.} =
   if a == axTraces: p.x else: p.tMs
 
+func placed(lo, w: float64; b: Span): Span =
+  ## A span `w` wide from `lo`, moved inside `b` where it is not; `b` itself,
+  ## exactly, when `w` is as wide as `b` or wider. The width is the one
+  ## given, never taken back from a span made with it (`(lo + w) - lo` is
+  ## not always `w`, and an optimised build that fuses `a - f * w` rounds
+  ## differently again), so the widest view is the bounds in every build.
+  if not (w < b.width): b
+  elif lo <= b.lo: Span(lo: b.lo, hi: min(b.lo + w, b.hi))
+  elif lo + w >= b.hi: Span(lo: max(b.hi - w, b.lo), hi: b.hi)
+  else: Span(lo: lo, hi: lo + w)
+
+func notFinite(s: Span): bool {.inline.} =
+  s.lo.classify in {fcNan, fcInf, fcNegInf} or s.hi.classify in {fcNan, fcInf, fcNegInf}
+
 func kept*(s: Span; lim: Limits): Span =
   ## `s` within `lim`: its width clamped about its centre, then moved inside
   ## the bounds. Unchanged when it is within them already; a span that is
   ## not a number becomes the widest one, centred.
   let b = lim.bounds
-  if s.lo.isNaN or s.hi.isNaN or s.lo.classify in {fcInf, fcNegInf} or
-      s.hi.classify in {fcInf, fcNegInf}:
+  if s.notFinite:
     let c = (b.lo + b.hi) / 2
     return Span(lo: c - lim.most / 2, hi: c + lim.most / 2)
   let w = clamp(s.width, lim.least, lim.most)
-  result = s
-  if w != s.width:
-    let c = (s.lo + s.hi) / 2
-    result = Span(lo: c - w / 2, hi: c + w / 2)
-  if result.lo < b.lo:
-    result = Span(lo: b.lo, hi: b.lo + w)
-  elif result.hi > b.hi:
-    result = Span(lo: b.hi - w, hi: b.hi)
+  if w == s.width and s.lo >= b.lo and s.hi <= b.hi:
+    return s
+  let lo = if w != s.width: (s.lo + s.hi) / 2 - w / 2 else: s.lo
+  placed(lo, w, b)
 
 func kept*(v: Viewport; lim: ViewLimits): Viewport =
   ## `v` within `lim` along both axes; its pixel size unchanged.
@@ -139,16 +148,24 @@ func kept*(v: Viewport; lim: ViewLimits): Viewport =
   for a in Axis:
     result.setSpan(a, kept(v.span(a), lim[a]))
 
+func keptFrom*(lo, width: float64; lim: Limits): Span =
+  ## A span `width` wide from `lo` within `lim`: the width clamped, keeping
+  ## `lo`, then moved inside the bounds; the bounds exactly when it is as
+  ## wide as they are. `width` is taken as given (see `placed`).
+  if lo.classify in {fcNan, fcInf, fcNegInf} or width.classify in {fcNan, fcInf, fcNegInf}:
+    return kept(Span(lo: lo, hi: lo + width), lim)
+  placed(lo, clamp(width, lim.least, lim.most), lim.bounds)
+
 func keptFrom*(s: Span; lim: Limits): Span =
   ## `s` within `lim`, as `kept`, but a span too wide or too narrow keeps
   ## its start (`lo`: the left or top edge), as a page does when its scale
   ## changes, before it is moved inside the bounds.
-  if s.lo.isNaN or s.hi.isNaN or s.lo.classify in {fcInf, fcNegInf} or
-      s.hi.classify in {fcInf, fcNegInf}:
+  if s.notFinite:
     return kept(s, lim)
+  let b = lim.bounds
   let w = clamp(s.width, lim.least, lim.most)
-  if w >= lim.bounds.width: lim.bounds # exactly, whatever the rounding of `lo + w`
-  else: kept(Span(lo: s.lo, hi: s.lo + w), lim)
+  if w == s.width and w < b.width and s.lo >= b.lo and s.hi <= b.hi: s
+  else: placed(s.lo, w, b)
 
 func keptFrom*(v: Viewport; lim: ViewLimits): Viewport =
   ## `v` within `lim` along both axes from its top-left corner (`keptFrom`
@@ -172,8 +189,7 @@ func zoomed*(s: Span; factor, at: float64; lim: Limits): Span =
   let anchor = if at.isNaN or at.classify in {fcInf, fcNegInf}: (s.lo + s.hi) / 2 else: at
   let w = clamp(s.width / factor, lim.least, lim.most)
   let f = (anchor - s.lo) / s.width # the anchor's place in the span, 0 to 1 on screen
-  let lo = anchor - f * w
-  kept(Span(lo: lo, hi: lo + w), lim)
+  placed(anchor - f * w, w, lim.bounds)
 
 func zoomed*(v: Viewport; factor: float64; at: DataPoint; axes: set[Axis];
     lim: ViewLimits): Viewport =
@@ -188,12 +204,19 @@ func centre*(v: Viewport): DataPoint =
   ## The middle of the view.
   DataPoint(x: (v.traces.lo + v.traces.hi) / 2, tMs: (v.timeMs.lo + v.timeMs.hi) / 2)
 
+func moved(s: Span; d: float64; lim: Limits): Span =
+  ## `s` moved by `d` and kept within `lim`, as wide as `s` (`placed`).
+  if d == 0 or s.notFinite or d.classify in {fcNan, fcInf, fcNegInf}:
+    kept(Span(lo: s.lo + d, hi: s.hi + d), lim)
+  else:
+    placed(s.lo + d, clamp(s.width, lim.least, lim.most), lim.bounds)
+
 func panned*(v: Viewport; dx, dtMs: float64; lim: ViewLimits): Viewport =
   ## `v` moved by `dx` positions and `dtMs` ms (positive: later traces and
   ## later times come into view), stopping at the bounds.
   result = v
-  result.traces = kept(Span(lo: v.traces.lo + dx, hi: v.traces.hi + dx), lim[axTraces])
-  result.timeMs = kept(Span(lo: v.timeMs.lo + dtMs, hi: v.timeMs.hi + dtMs), lim[axTime])
+  result.traces = moved(v.traces, dx, lim[axTraces])
+  result.timeMs = moved(v.timeMs, dtMs, lim[axTime])
 
 func stepped*(v: Viewport; fx, fy: float64; lim: ViewLimits): Viewport =
   ## `v` moved by `fx` of its width and `fy` of its height (the arrow keys:
@@ -256,8 +279,7 @@ func resized*(v: Viewport; columns, rows: int; lim: ViewLimits): Viewport =
     let (was, now) = if a == axTraces: (v.columns, columns) else: (v.rows, rows)
     let s = v.span(a)
     if was > 0 and now > 0 and now != was:
-      result.setSpan(a, keptFrom(Span(lo: s.lo, hi: s.lo + s.width * float64(now) /
-        float64(was)), lim[a]))
+      result.setSpan(a, keptFrom(s.lo, s.width * float64(now) / float64(was), lim[a]))
     else:
       result.setSpan(a, keptFrom(s, lim[a]))
 
