@@ -9,7 +9,8 @@
 ## - the start of an SPS file (H20, H201: 0.3048006096 m a unit is the US
 ##   survey foot, 0.3048 the international, 1 the metre; a rounded factor;
 ##   80-byte cards without line ends; a last line without a line end when
-##   the whole file was read), a SEG P1 file's H2000, a CSV table's
+##   the whole file was read; an H20 and an H201 that contradict each other:
+##   the factor taken, and a warning that names both), a SEG P1 file's H2000, a CSV table's
 ##   comment or its first row's x or y column ("x (m)", which the table is
 ##   then read with; not an elevation's unit); P1's H2000 with or without
 ##   a factor, and OGP P1/11's projection parameters' unit;
@@ -29,7 +30,8 @@
 ##   window's (`importUnits`, an agent's import); after an import the units
 ##   confirmed for the file label it.
 ##
-## Seen to fail: with a P1 unit code taken for the factor, "1 FEET: (unit:
+## Seen to fail: with an H20 and H201 that contradict each other passed
+## over, "no warning for Metres + 0.3048006096"; with a P1 unit code taken for the factor, "1 FEET: (unit:
 ## metres, ...)"; with P1/11 not read, "P1/11: (unit: not given, ...)"; with
 ## a CSV unit taken from any column, "an elevation's
 ## unit taken: (unit: metres, ...)"; with the last line without a line end left out of a whole
@@ -98,6 +100,17 @@ block spsHeaders:
   doAssert headUnitOf(sps("", "0.304801"), jkSps).unit == suUsFeet # rounded
   doAssert headUnitOf(sps("US survey feet", ""), jkSps).unit == suUsFeet
   doAssert headUnitOf(sps("feet", ""), jkSps).unit == suFeet
+  # H20 and H201 that contradict each other: the factor is taken, and said.
+  for (grid, factor, unit, says) in [("Metres", "0.3048006096", suUsFeet, "metres"),
+      ("US survey feet", "0.3048", suFeet, "US survey feet"), ("feet", "1.0", suMetres, "feet"),
+      ("metres", "0.5", suMetres, "metres")]:
+    let h = headUnitOf(sps(grid, factor), jkSps)
+    doAssert h.unit == unit, grid & " + " & factor & ": " & $h
+    doAssert h.warning.startsWith("its H20 says " & says & " and its H201 " & factor &
+      " m a unit"), "no warning for " & grid & " + " & factor & ": " & $h
+  for (grid, factor) in [("feet", "0.3048006096"), ("feet", "0.3048"), ("Metres", "1.0"),
+      ("US survey feet", "0.3048006096"), ("", "0.3048"), ("feet", "")]:
+    doAssert headUnitOf(sps(grid, factor), jkSps).warning == "", grid & " + " & factor
   let none = headUnitOf(sps("", ""), jkSps)
   doAssert none.unit == suNotGiven and none.said == "", $none
   doAssert headUnitOf("", jkSps).unit == suNotGiven
@@ -179,6 +192,9 @@ block surveyUnits:
   doAssert mixed.disagree == "The survey files disagree: a.sps, a.rps say US survey feet; " &
     "b.rps says metres. The first is taken; choose the unit that is right.", mixed.disagree
   doAssert mixed.words.len == 2, $mixed.words
+  let torn = surveyUnitsSaid([SurveyHead(file: JoinFile(path: "/d/t.sps", kind: jkSps),
+    done: true, head: HeadUnit(unit: suUsFeet, said: "x", warning: "its H20 says metres"))])
+  doAssert torn.warnings == @["t.sps: its H20 says metres."], $torn.warnings
 
 block fileUnits:
   # What the headers say, followed by the survey's where they say less.

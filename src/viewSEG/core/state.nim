@@ -1531,7 +1531,7 @@ proc importUnits*(state: AppState; session: SessionId; files: openArray[JoinFile
     let l = state.survey.findFile(canonical(f.path))
     if l >= 0 and state.survey.layers[l].gridUnit.known:
       let g = state.survey.layers[l].gridUnit
-      heads.add SurveyHead(file: f, done: true, head: HeadUnit(unit: unitOf(g), said: describe(g)))
+      heads.add SurveyHead(file: f, done: true, head: headUnitOf(g))
     else:
       let h = state.surveyHead(f.path)
       if h >= 0: heads.add state.heads[h]

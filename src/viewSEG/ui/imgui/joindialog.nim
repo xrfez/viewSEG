@@ -283,8 +283,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
           let f = JoinFile(path: l.path, kind: (if l.kind == fkP1: jkP1 else: jkSps))
           files.add f
           if l.kind != fkP1 and l.gridUnit.known: # read with the file
-            heads.add SurveyHead(file: f, done: true, head: HeadUnit(unit: unitOf(l.gridUnit),
-              said: describe(l.gridUnit)))
+            heads.add SurveyHead(file: f, done: true, head: headUnitOf(l.gridUnit))
           else: headOf(f)
     # A file added that is on the map now (Import loaded it) is listed with
     # the loaded ones, ticked: not twice.
@@ -355,6 +354,9 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     if said.disagree.len > 0:
       wrapped(said.disagree, t.roles[rlWarning])
       marks.marked("join.survey disagree")
+    for w in said.warnings:
+      wrapped(w, t.roles[rlWarning])
+      marks.marked("join.survey warning")
     var units = JoinUnits(survey: surveyUnit, file: suNotGiven)
     ui.drawnNote = ""
     # -- the seismic file

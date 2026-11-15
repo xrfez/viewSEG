@@ -296,6 +296,9 @@ type
     said*: string
       ## what they say, as written: "\"feet\" (H20), 0.3048006096 m a unit
       ## (H201)"; "" when they say nothing of it
+    warning*: string
+      ## what in them contradicts itself (H20's name against H201's factor),
+      ## in words; "" when nothing does
 
   SurveyHead* = object
     ## What one survey file's headers say, as read for the import's window.
@@ -312,6 +315,8 @@ type
       ## what they say, a sentence a kind of file: "The SPS headers say ..."
     disagree*: string
       ## the files that give other units, named, with theirs; "" when they agree
+    warnings*: seq[string]
+      ## each file whose headers contradict themselves, named, with how
 
   FileUnit* = object
     ## The unit of a seismic file's coordinates, as the import takes it.
@@ -329,6 +334,25 @@ type
     survey*: SurveyUnit
     surveyChosen*: bool
     files*: seq[tuple[path: string; unit: SurveyUnit]]
+
+func gridConflict(g: GridUnit; nameAt, factorAt: string): string =
+  ## When a grid unit's name and its factor to metres name different units:
+  ## what each says, and that the factor is taken (or, a factor of no unit
+  ## known, the name); "" when they agree, or one says nothing. "Feet" with
+  ## the US survey foot's factor agrees: the factor only says which foot.
+  if g.name.strip.len == 0 or not (g.metres > 0): return
+  let named = unitNamed(g.name)
+  let factored = unitOf(GridUnit(metres: g.metres))
+  if named != suNotGiven and named != factored and
+      not (named == suFeet and factored == suUsFeet):
+    result = "its " & nameAt & " says " & $named & " and its " & factorAt & " " & $g.metres &
+      " m a unit" & (if factored == suNotGiven: ", which is no unit known: the " & nameAt &
+        " is taken" else: " (" & $factored & "): the " & factorAt & " is taken")
+
+func headUnitOf*(g: GridUnit): HeadUnit =
+  ## What an SPS file's grid unit (H20, H201) says, in words, with a
+  ## warning when the two contradict each other.
+  HeadUnit(unit: unitOf(g), said: describe(g), warning: gridConflict(g, "H20", "H201"))
 
 func headLines(head: string; whole: bool): seq[string] =
   ## The lines of the start of a file: cut at its line ends (the last,
@@ -360,7 +384,7 @@ proc spsHeadUnit(lines: openArray[string]): HeadUnit =
   var g = GridUnit()
   try: g = parseSps(text).gridUnit
   except CatchableError: discard # (header text never raises; an odd file says nothing)
-  HeadUnit(unit: unitOf(g), said: describe(g))
+  headUnitOf(g)
 
 func p1HeadUnit(lines: openArray[string]): HeadUnit =
   ## A UKOOA P1/90 file's grid units: its H2000 record (a unit code, the
@@ -387,7 +411,8 @@ func p1HeadUnit(lines: openArray[string]): HeadUnit =
       var said: seq[string] = @[]
       if g.name.len > 0: said.add "\"" & g.name & "\""
       if g.metres > 0: said.add $g.metres & " m a unit"
-      return HeadUnit(unit: unitOf(g), said: said.join(", ") & " (H2000)")
+      return HeadUnit(unit: unitOf(g), said: said.join(", ") & " (H2000)",
+        warning: gridConflict(g, "H2000 name", "H2000 factor"))
     if line.len > 0 and line[0] != 'H': return
 
 proc p111HeadUnit(lines: openArray[string]): HeadUnit =
@@ -493,6 +518,8 @@ func surveyUnitsSaid*(heads: openArray[SurveyHead]): SurveyUnitsSaid =
         units.add h.head.unit
         names.add @[h.file.path.extractFilename]
       else: names[k].add h.file.path.extractFilename
+      if h.head.warning.len > 0 and result.warnings.len < 4:
+        result.warnings.add h.file.path.extractFilename & ": " & h.head.warning & "."
       if (h.file.kind, h.head.said) notin told and told.len < 4:
         told.add (h.file.kind, h.head.said)
         let kind = case h.file.kind
