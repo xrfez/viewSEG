@@ -17,9 +17,12 @@ program you run, on your own computer, that connects to a socket file.
 - Or, in a running program: **File > Agent control**. Click it again to turn it off.
 
 It stays on for that run only; the next start has it off again. While it is on, the status
-bar shows **agents: on** first, at its left end, and **agent connected** (in the warning
-colour) while an agent is connected; hover over it for the socket's path and the agents'
-names. Messages says when it was turned on, which agent connected, each command it gave
+bar shows **agents: on** first, at its left end, dim. While an agent is connected it says
+what the agent asked last, in the warning colour: **agent: state**, **agent: screenshot**,
+**agent: command show file** (**agent connected** before its first call); after its last
+call it stays for 5 seconds, halfway to dim, so that an agent calling from a shell
+(`--mcp-call` connects, calls and disconnects within milliseconds) is seen too. Hover over
+it for the socket's path and the agents' names. Messages says when it was turned on, which agent connected, each command it gave
 with its arguments and what the program said, and what was refused. So that an agent that
 asks over and over does not bury your own messages, a call that changes nothing (`state`,
 `headers`, `screenshot`, `wait`), a connection or a disconnection like one written in the

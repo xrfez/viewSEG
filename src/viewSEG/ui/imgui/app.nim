@@ -986,8 +986,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   let status = drawStatusBar(ui.fonts, ui.theme,
     ChromeInfo(themeName: ui.theme.name, scale: ui.scale, agent: AgentSign(
       on: ui.agent.running, clients: ui.agent.clients, names: ui.agent.clientNames,
-      socket: ui.agent.path)), job, ui.core.settings.readout, ui.pick, ui.marks,
-    ui.mapCursor, ui.core.hoverNote)
+      socket: ui.agent.path, lastCall: ui.agent.lastCall,
+      lingering: ui.agent.clients == 0 and ui.agent.lingers(getMonoTime()))), job,
+    ui.core.settings.readout, ui.pick, ui.marks, ui.mapCursor, ui.core.hoverNote)
   if status.cancel != NoJob:
     ui.core.apply Command(kind: ckCancelJob, job: status.cancel)
   if status.showJobs: ui.windows.bringForward(awJobs)

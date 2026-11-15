@@ -30,6 +30,8 @@ type
     clients*: int       ## agents connected
     names*: seq[string] ## what they said they are
     socket*: string     ## where they connect
+    lastCall*: string   ## what an agent asked last, in words ("state"); "" for nothing yet
+    lingering*: bool    ## none connected, its last call a few seconds ago
 
   ChromeInfo* = object
     ## Facts the status bar shows.
@@ -274,19 +276,32 @@ proc jobField(job: JobStatus; t: Theme; marks: var Marks; res: var StatusOutput)
     if igIsItemClicked(0): res.showJobs = true
   igSameLine(0, 18)
 
+func signText*(a: AgentSign): string =
+  ## The sign's words: what an agent asked last while one is connected and
+  ## a few seconds after ("agent: state"), else that agent control is on.
+  let who = if a.clients > 1: $a.clients & " agents" else: "agent"
+  let words = if (a.clients > 0 or a.lingering) and a.lastCall.len > 0: who & ": " & a.lastCall
+              elif a.clients > 0: who & " connected"
+              else: "agents: on"
+  IconAgent & " " & words
+
+func signColour*(a: AgentSign; t: Theme): Rgba =
+  ## The sign's colour: the warning colour while an agent is connected (it
+  ## may change what is shown), halfway to dim while its last call lingers,
+  ## dim else.
+  if a.clients > 0: t.roles[rlWarning]
+  elif a.lingering: mix(t.roles[rlWarning], t.roles[rlTextDim], 0.5)
+  else: t.roles[rlTextDim]
+
 proc agentField(a: AgentSign; t: Theme; marks: var Marks) =
-  ## The sign that agent control is on: dim while no agent is connected, in
-  ## the warning colour while one is (it may change what is shown).
-  let text = if a.clients == 0: IconAgent & " agents: on"
-             elif a.clients == 1: IconAgent & " agent connected"
-             else: IconAgent & " " & $a.clients & " agents connected"
+  ## The sign that agent control is on (`signText`, `signColour`).
   igSameLine(0, -1)
-  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[if a.clients > 0: rlWarning
-    else: rlTextDim]))
-  igTextUnformatted(text.cstring, nil)
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(a.signColour(t)))
+  igTextUnformatted(a.signText.cstring, nil)
   igPopStyleColor(1)
   marks.mark("status.agent")
   if a.clients > 0: marks.mark("status.agent connected")
+  elif a.lingering: marks.mark("status.agent lingering")
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
     igTextUnformatted(("Agent control is on: MCP clients connect through\n" & a.socket).cstring,
       nil)

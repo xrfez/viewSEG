@@ -23,7 +23,11 @@
 ##   Messages holds a line for each of its commands and for its first call
 ##   of each other tool; the file is not changed;
 ## - the sign comes first in the status bar: in view at 1280 pixels with
-##   every readout field chosen.
+##   every readout field chosen;
+## - the sign names an agent's last call: "agent: command show file" in the
+##   warning colour while it is connected; once it has gone (as a shell's
+##   `--mcp-call` does at once), "agent: state" stays, halfway to dim, for
+##   `SignLinger` after the call, then "agents: on" again, dim.
 ##
 ## Seen to fail: with `serve` not called in the frame loop, "the agent did
 ## not finish"; with the kill applied as a reversal, "the killed trace's
@@ -37,14 +41,15 @@
 ## left out of the screenshot's targets, "screenshot of the Headers window:
 ## ... window: one of window, plot, ...". With the plot's image drawn time
 ## down after the agent turned it, "turned: the killed trace's row 776"
-## (pixels of ink).
+## (pixels of ink). With the sign not lingering (`lingering` never set),
+## "no lingering sign after the agent went".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
 import std/[base64, json, math, monotimes, options, os, posix, sequtils, strutils, tables, times]
 import sdl3_nim
 import viewSEG/core/[geometry, state]
-import viewSEG/view/plotink
+import viewSEG/view/[plotink, theme]
 import viewSEG/ui/imgui/app
 import viewSEG/remote/control
 import utils/[agentclient, fixtures, waiting]
@@ -201,6 +206,29 @@ proc agent(s: Scenario) {.thread.} =
   c.close()
   results.send(("done", ""))
 
+var calls: Channel[string] ## the short-lived agent's steps, for the main thread
+var seen: Channel[bool] ## the main thread's word to it
+
+proc shortLived(s: Scenario) {.thread.} =
+  ## An agent that connects, gives a command, and while still connected says
+  ## so and waits for the main thread's word; then a `state` call, and it
+  ## disconnects at once, as `--mcp-call` does.
+  var c = connectAgent(s.socket)
+  if not waitUntil(c.connected(s.socket)):
+    calls.send("problem: cannot connect")
+    return
+  if c.initialize("short agent") == nil or
+      c.call("command", %*{"kind": "show file", "path": s.fixture}).failed:
+    calls.send("problem: the command failed")
+    return
+  calls.send("connected")
+  discard seen.recv() # the main thread saw the sign
+  if c.call("state", %*{"parts": ["program"]}).failed:
+    calls.send("problem: state failed")
+    return
+  c.close()
+  calls.send("gone")
+
 withFixtures fx:
   let path = fx.surveySegy()
   let before = (readFile(path), getLastModificationTime(path))
@@ -282,6 +310,93 @@ withFixtures fx:
       agent: true, agentSocket: socket, onFrame: onFrame))
     doAssert code == 0 and problem.len == 0, problem
     echo "tguiagent: the sign in view in a full status bar at 1280 pixels"
+
+  block theSignLingers:
+    calls.open()
+    seen.open()
+    var thread: Thread[Scenario]
+    var started = false
+    var stage = 0 # 0 connecting, 1 connected, 2 gone: lingering, 3 back to "agents: on"
+    var problem = ""
+    let since = getMonoTime()
+    var gone, back: MonoTime # when the agent went, and when the sign said so
+    proc ink(f: FrameInfo): Rgba =
+      ## The sign's colour: of its pixels, the one farthest from its
+      ## background (the commonest), the core of a stroke.
+      let shot = f.readFrame()
+      let r = f.markOf("status.agent")
+      var counts: CountTable[uint32]
+      template key(c: Rgba): uint32 = (c.r.uint32 shl 16) or (c.g.uint32 shl 8) or c.b.uint32
+      for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
+        for x in int(r.pos.x) ..< int(r.pos.x + r.size.x):
+          counts.inc key(shot[y * f.width + x])
+      let bg = counts.largest[0]
+      let back = Rgba(r: uint8(bg shr 16), g: uint8((bg shr 8) and 255), b: uint8(bg and 255))
+      var far = -1
+      for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
+        for x in int(r.pos.x) ..< int(r.pos.x + r.size.x):
+          let c = shot[y * f.width + x]
+          if distance(c, back) > far: (result, far) = (c, distance(c, back))
+    proc nearest(c: Rgba; choices: openArray[Rgba]): int =
+      for i, x in choices:
+        if distance(c, x) < distance(c, choices[result]): result = i
+    proc onFrame(f: FrameInfo) =
+      template fail(why: string) =
+        problem = why
+        if stage < 2: seen.send(false) # (the agent waits for it)
+        stage = 3
+        f.stop()
+      if not started:
+        createThread(thread, shortLived, (socket, path))
+        started = true
+      let (ok, msg) = calls.tryRecv()
+      if ok and msg.startsWith("problem"): fail(msg)
+      let warning = f.theme.roles[rlWarning]
+      let dim = f.theme.roles[rlTextDim]
+      let halfway = mix(warning, dim, 0.5)
+      let colours = [warning, halfway, dim]
+      case stage
+      of 0:
+        if ok and msg == "connected": stage = 1
+      of 1:
+        # (the command's answer came before the agent said it is connected)
+        if f.markOf("status.agent connected").size.x > 0 and
+            f.agentControl.lastCall == "command show file" and
+            f.ink.nearest(colours) == 0:
+          seen.send(true)
+          stage = 2
+      of 2:
+        if ok and msg == "gone": gone = getMonoTime()
+        if gone != MonoTime() and f.agentControl.clients == 0:
+          if f.markOf("status.agent lingering").size.x > 0:
+            if f.agentControl.lastCall != "state": fail("the last call: " &
+              f.agentControl.lastCall)
+            elif f.markOf("status.agent connected").size.x > 0: fail("connected, and lingering")
+            elif f.ink.nearest(colours) != 1:
+              fail("the lingering sign is not halfway to dim: " & $f.ink)
+          elif getMonoTime() - gone < initDuration(seconds = 1):
+            fail("no lingering sign after the agent went")
+          else:
+            back = getMonoTime()
+            if f.ink.nearest(colours) != 2: fail("the sign is not dim again: " & $f.ink)
+            else: stage = 3
+      else: f.stop()
+      if stage < 3 and getMonoTime() - since > Patience:
+        fail("stopped at stage " & $stage & ": the last call " & f.agentControl.lastCall &
+          ", " & $f.agentControl.clients & " connected, the sign " & $f.ink & " (warning " &
+          $warning & ", dim " & $dim & ")")
+    let code = run(RunOptions(windowSize: (1280, 800), theme: forceDark,
+      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+      agent: true, agentSocket: socket, onFrame: onFrame))
+    joinThread(thread)
+    calls.close()
+    seen.close()
+    doAssert code == 0 and problem.len == 0, problem
+    let lingered = (back - gone).inMilliseconds
+    # (the call was answered before the agent said it had gone)
+    doAssert lingered >= SignLinger.inMilliseconds - 1000, "it lingered " & $lingered & " ms"
+    echo "tguiagent: the sign said the agent's last call for ", lingered,
+      " ms after it went"
 
   block anAgentKillsATrace:
     results.open()

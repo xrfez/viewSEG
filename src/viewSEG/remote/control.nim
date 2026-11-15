@@ -17,6 +17,11 @@
 ## `wait`), a connection, a disconnection or a refused message like one
 ## written less than `QuietFor` before is counted instead, and the count is
 ## written once `QuietFor` has passed (`said`).
+##
+## The status bar's sign says what an agent last asked (`lastCall`: "state",
+## "command show file") while it is connected and for `SignLinger` after its
+## last call: a shell's `--mcp-call` connects, calls and disconnects within
+## milliseconds, and the sign would show it for one frame.
 
 import std/[json, monotimes, os, strutils, tables, times]
 import ../core/state
@@ -30,6 +35,8 @@ const
   ShownArguments = 300 ## characters of a call's arguments the log shows
   QuietFor* = initDuration(seconds = 10)
     ## a line like one written less than this before is counted, not written
+  SignLinger* = initDuration(seconds = 5)
+    ## how long the status bar's sign names an agent's last call after it
 
 type
   Waiting = object
@@ -61,6 +68,8 @@ type
     names: Table[int, string] ## what each client said it is
     announced: Table[int, bool] ## whether its connection was written
     quiet: Table[string, Quiet] ## by agent and kind of line: see `said`
+    lastCall: string ## what an agent asked last, in words; "" for nothing yet
+    lastCallAt: MonoTime ## when
 
 proc running*(c: AgentControl): bool {.inline.} = c.server.running
   ## Whether agent control is on: the server listens.
@@ -70,6 +79,26 @@ proc path*(c: AgentControl): string = c.server.path
 
 proc clients*(c: AgentControl): int = c.server.clients
   ## How many agents are connected.
+
+func lastCall*(c: AgentControl): lent string {.inline.} = c.lastCall
+  ## What an agent asked last, in words: the tool, and a command's kind
+  ## ("state", "command show file"); "" when none has asked anything.
+
+func lingers*(c: AgentControl; now: MonoTime): bool =
+  ## Whether an agent's last call was less than `SignLinger` before `now`.
+  c.lastCall.len > 0 and now - c.lastCallAt < SignLinger
+
+proc callWords*(tool, arguments: string): string =
+  ## A call in words, for the status bar's sign: the tool, and a command's
+  ## kind ("command show file").
+  result = tool
+  if tool == "command":
+    try:
+      let kind = parseJson(arguments){"kind"}
+      if kind != nil and kind.kind == JString and kind.getStr.len > 0:
+        result.add " " & kind.getStr
+    except CatchableError:
+      discard # (the command's answer says what is wrong with it)
 
 proc clientNames*(c: AgentControl): seq[string] =
   ## What the connected agents said they are, as far as they did.
@@ -145,6 +174,7 @@ proc stop*(c: var AgentControl; state: var AppState; deadline = getMonoTime() + 
     c.announced.clear()
     c.countsDue(state, getMonoTime(), all = true)
     c.quiet.clear()
+    c.lastCall = ""
     state.report(sevInfo, LogSource, "Agent control is off; " & path & " is removed.")
 
 proc who(c: AgentControl; client: int): string =
@@ -236,6 +266,8 @@ proc serve*(c: var AgentControl; state: var AppState; fe: Frontend; now = getMon
     let call = c.queue[0]
     c.queue.delete 0
     inc done
+    c.lastCall = callWords(call.tool, call.arguments)
+    c.lastCallAt = now
     c.announce(state, call.client, now)
     let line = c.who(call.client) & ": " & call.tool & " " & shown(call.arguments)
     # A command is always written (it changes what the user sees); a call
