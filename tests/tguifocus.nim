@@ -92,8 +92,13 @@ withFixtures fx:
       f.shownFile == "long-spread.sgy")
   # the Files window has the focus: the Messages window does not
   step("a message naming a trace", proc (f: FrameInfo) =
+    # errors alone shown, so that no other line (a slow frame's warning, in a
+    # debug build under load) becomes the last
+    var s = f.core.settings
+    s.messages.hidden = {sevInfo, sevWarning}
+    f.apply Command(kind: ckSettings, settings: s)
     f.core.mailbox.post(Msg(kind: mkLog, entry: LogEntry(time: getTime(),
-      severity: sevWarning, source: "test", text: "A warning about trace 7",
+      severity: sevError, source: "test", text: "An error about trace 7",
       loc: Location(file: path, trace: 7)))), proc (f: FrameInfo): bool =
       f.markOf("messages.last").size.x > 0 and wait > 3)
   clickSteps("a focusing click in Messages", "messages.last", proc (f: FrameInfo): bool =

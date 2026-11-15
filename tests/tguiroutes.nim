@@ -184,8 +184,13 @@ withFixtures fx:
     s.files.followLatest = false
     f.apply(Command(kind: ckSettings, settings: s)), after(2))
   step("a message naming a trace", proc (f: FrameInfo) =
-    f.core.mailbox.post(Msg(kind: mkLog, entry: LogEntry(time: getTime(), severity: sevWarning,
-      source: "test", text: "A warning about trace 5 of Shot1",
+    # errors alone shown, so that no other line (a slow frame's warning, in a
+    # debug build under load) becomes the last
+    var s = f.core.settings
+    s.messages.hidden = {sevInfo, sevWarning}
+    f.apply Command(kind: ckSettings, settings: s)
+    f.core.mailbox.post(Msg(kind: mkLog, entry: LogEntry(time: getTime(), severity: sevError,
+      source: "test", text: "An error about trace 5 of Shot1",
       loc: Location(file: a / "Shot1.sgd", trace: 5)))), after(4))
   click("messages.last")
   step("a click on a message", noop, proc (f: FrameInfo): bool =
