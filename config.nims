@@ -251,6 +251,15 @@ task depsSync, "Check out every unmounted dependency at its locked commit":
 task depsCheck, "Verify atlas.lock, nim.cfg and deps/ agree":
   selfExec depsTool & "check"
 
+# ---------------------------------------------------------------- coverage --
+task coverage, "Rewrite docs/coverage.md's summary, then check the page against the libraries":
+  ## tools/coverage.nim: every name parseSEG and processSEG export (at the
+  ## locked commits; the next releases when linked at deps/next/<library>) is
+  ## named on the page, a `built` or `internal` row's names are named in src/,
+  ## and the summary is the tables'. `nim r tools/coverage.nim check` only
+  ## checks; tests/tcoverage.nim does that.
+  selfExec "r --hints:off --warnings:off tools/coverage.nim write"
+
 # --------------------------------------------------------------- libraries --
 # deps/parseSEG and deps/processSEG are the real repositories (bind mounts).
 # Use `git -C deps/<lib>` for them. Their suites run from their own directory
