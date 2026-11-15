@@ -297,8 +297,12 @@ const
     ## the keys a join may give, by the group parseSEG marks them in
 
 func keyText(k: TraceKeys; name: string): string =
-  ## Key `name` of `k` as text; "" when not known.
-  func number(x: float64): string = (if x.isNaN: "" else: exactText(x))
+  ## Key `name` of `k` as text, to the thousandth (a millimetre, or a
+  ## thousandth of a foot); "" when not known.
+  func number(x: float64): string =
+    if x.isNaN: ""
+    elif x == round(x): exactText(x)
+    else: formatFloat(x, ffDecimal, 3).strip(leading = false, chars = {'0'})
   case name
   of "srcLine": number(k.srcLine)
   of "srcPoint": number(k.srcPoint)

@@ -52,13 +52,17 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves headers-*.png there, and, with the
 ## example files present (local only), each tab of a SEG-Y and a SEG-D
-## example (headers-inglewood-*.png, headers-morgantown-*.png), the Headers
-## window made larger by dragging its splitters.
+## example (headers-inglewood-*.png, headers-morgantown-*.png: the pictures
+## in docs/screenshots), the Headers window made larger by dragging its
+## splitters and taken alone, the files shown from a folder of the
+## fixtures (linked), so that no picture names the computer's folders;
+## Morgantown also joined with its survey files, the headers' coordinates
+## replaced (its Trace > Header and Summary then).
 
 import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
-import viewSEG/ui/imgui/app
+import viewSEG/ui/imgui/[agentshot, app]
 import utils/[faultyfs, fixtures]
 
 func centre(r: Rect): Vec2 =
@@ -81,9 +85,9 @@ proc shoot(f: FrameInfo; name: string) =
 type Step = proc (f: FrameInfo; wait: int): bool {.closure.}
   ## One step of a run: true once it is done; it asserts what must hold.
 
-proc runSteps(path: string; steps: openArray[(string, Step)]; cache: string) =
-  ## Shows `path` and takes `steps` one after another, each given up to 400
-  ## frames.
+proc runSteps(path: string; steps: openArray[(string, Step)]; cache: string; limit = 400) =
+  ## Shows `path` and takes `steps` one after another, each given up to
+  ## `limit` frames.
   var stage = 0
   var wait = 0
   var reached: seq[string]
@@ -96,7 +100,7 @@ proc runSteps(path: string; steps: openArray[(string, Step)]; cache: string) =
         reached.add all[stage][0]
         inc stage
         wait = 0
-      else: doAssert wait < 400, "stopped at \"" & all[stage][0] & "\" after " & $reached
+      else: doAssert wait < limit, "stopped at \"" & all[stage][0] & "\" after " & $reached
     else: f.stop()
   let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
     indexCacheDir: some(cache), theme: forceDark, onFrame: onFrame))
@@ -376,13 +380,30 @@ proc enlarge(): seq[(string, Step)] =
     f.drag(wait, at, vec2(-420, 0))
     wait > 16))
 
+proc shootWindow(f: FrameInfo; name: string) =
+  ## The Headers window alone, saved as `name` (the rest of the frame names
+  ## the computer's folders).
+  if shots.len > 0:
+    let r = f.markOf("headers")
+    let (x0, y0) = (max(0, int(r.pos.x)), max(0, int(r.pos.y)))
+    let (x1, y1) = (min(f.width, int(r.pos.x + r.size.x)), min(f.height, int(r.pos.y + r.size.y)))
+    doAssert x1 > x0 and y1 > y0, "the Headers window is not on screen: " & $r
+    let all = f.readFrame()
+    var part = newSeq[Rgba]((x1 - x0) * (y1 - y0))
+    for y in y0 ..< y1:
+      for x in x0 ..< x1: part[(y - y0) * (x1 - x0) + x - x0] = all[y * f.width + x]
+    let (png, why) = encodePng(part, x1 - x0, y1 - y0)
+    doAssert why.len == 0, why
+    writeFile(shots / name, png)
+    echo "tguiheaders: saved ", shots / name
+
 proc tabShot(name, mark, file: string): (string, Step) =
-  ## A click on the tab `mark`, then a screenshot as `file` once `name`'s
-  ## content shows.
+  ## A click on the tab `mark`, then a screenshot of the Headers window as
+  ## `file` once `name`'s content shows.
   (name, Step(proc (f: FrameInfo; wait: int): bool =
     f.click(wait, mark)
     result = wait > 20 and not f.core.inspection.waiting
-    if result: f.shoot(file)))
+    if result: f.shootWindow(file)))
 
 proc inked(f: FrameInfo; mark: string; ink: Rgba): int =
   ## The pixels of `mark` near `ink` (a glyph's stems, antialiased: within
@@ -434,10 +455,18 @@ block theJoinedValues:
 
 if shots.len > 0 and dirExists(examples):
   withFixtures fx:
+    # Shown from a folder of the fixtures, linked: the Summary names that
+    # folder, not the computer's.
+    createDir(fx.dir / "examples")
+    let sps = examples / "sps" / "PGI_NNE_West_Morgantown_3D_Post261019_NAD27_SPCS_WV_N_USFeet"
+    var survey: seq[JoinFile]
+    for ext in [".sps", ".rps", ".xps"]:
+      if fileExists(sps & ext): survey.add JoinFile(path: sps & ext, kind: jkSps)
     for (example, name, segd) in [("BO_3D-Inglewood_rev21_v7.sgy", "inglewood", false),
         ("00000151_12900_11300.sgd", "morgantown", true)]:
-      let path = examples / example
-      if fileExists(path):
+      let path = fx.dir / "examples" / example
+      if fileExists(examples / example):
+        createSymlink(examples / example, path)
         var steps = @[("shown", Step(proc (f: FrameInfo; wait: int): bool =
           f.laidOut and wait > 10))]
         steps.add enlarge()
@@ -457,4 +486,24 @@ if shots.len > 0 and dirExists(examples):
         steps.add tabShot("header", "headers.trace tab header",
           "headers-" & name & "-trace-header.png")
         steps.add tabShot("data", "headers.trace tab data", "headers-" & name & "-trace-data.png")
-        runSteps(path, steps, fx.dir / "cache")
+        if segd and survey.len == 3:
+          # joined with its survey, the headers' coordinates replaced: the
+          # values the join gave, marked
+          steps.add ("join", Step(proc (f: FrameInfo; wait: int): bool =
+            if wait == 1:
+              f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: survey,
+                joinOptions: JoinOptions(coordinates: hcReplace),
+                joinUnits: JoinUnits(survey: suUsFeet, file: suUsFeet))
+            result = f.core.joinReport.serial > 0 and f.core.joinUnderWay.job == NoJob and
+              not f.core.inspection.waiting and f.core.inspection.answer.traces.len == 2 and
+              f.core.inspection.answer.traces[0].joined != {}
+            if result: doAssert f.core.joinReport.outcome == joJoined))
+          var since = MonoTime()
+          steps.add ("its notice gone", Step(proc (f: FrameInfo; wait: int): bool =
+            if wait == 1: since = getMonoTime()
+            getMonoTime() - since > initDuration(seconds = 6))) # (a notice stays 5 s)
+          steps.add tabShot("joined", "headers.trace tab header",
+            "headers-" & name & "-trace-joined.png")
+          steps.add tabShot("summary joined", "headers.tab summary",
+            "headers-" & name & "-summary-joined.png")
+        runSteps(path, steps, fx.dir / "cache", limit = 3000)
