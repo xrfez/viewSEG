@@ -5,8 +5,9 @@
 ## the sort presets, the user's own sort keys, the Messages window's
 ## toggles, the plot's cursor time line, whether the Files window follows
 ## the latest file, where the map shows the point under the pointer, the
-## survey import's options (File > Import > Survey), and the Headers window's
-## tabs, toggles and columns.
+## survey import's options (File > Import > Survey), the Headers window's
+## tabs, toggles and columns, whether killed traces are hidden, and how the
+## spectrum windows show their spectra.
 ## Every field has a default.
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
@@ -18,9 +19,9 @@
 ## change from one to the other).
 
 import std/math
-import join, log, mapkinds, panels, readout, scales
+import join, log, mapkinds, panels, readout, scales, spectra
 
-export join, mapkinds, readout, scales
+export join, mapkinds, readout, scales, spectra
 
 type
   Calibration* = object
@@ -121,6 +122,13 @@ type
       ## display gain's processing; off: as recorded
     columns*: set[HeaderColumn] = {hcDescription, hcBytes} ## the columns shown
 
+  SpectrumOptions* = object
+    ## How the spectrum windows show their spectra: each new FFT window as
+    ## the last one changed, the live panel as it was left.
+    window*: SpectrumDisplay ## a new FFT window's (the whole trace by default)
+    live*: SpectrumDisplay = SpectrumDisplay(time: stVisible)
+      ## the live panel's (the visible time by default: it follows the view)
+
   Settings* = object
     theme*: string                                ## the theme file's name; "" follows the system
     window*: WindowPlacement
@@ -138,6 +146,10 @@ type
     map*: MapOptions                              ## the map's own settings
     join*: JoinOptions                            ## the geometry join's options, as set last
     headers*: HeadersView                         ## the Headers window's tabs and toggles
+    hideKilled*: bool
+      ## killed traces are left out of the plot (the traces beside them close
+      ## up); off: drawn blank
+    spectrum*: SpectrumOptions                    ## the spectrum windows' display
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not

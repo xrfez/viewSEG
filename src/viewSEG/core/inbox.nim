@@ -12,7 +12,7 @@
 import std/[locks, times]
 import parseSEG
 import edits, filelist, filememory, identity, join, jobs, layouts, log, mapkinds, nif, panels, session,
-  shotfiles, survey, tiles
+  shotfiles, spectra, survey, tiles
 
 type
   MsgKind* = enum
@@ -48,6 +48,7 @@ type
       ## viewSEG) changed since this run read or wrote it: written merged
     mkEditsList  ## a file's list of edits, as the text of the file it is exported to
     mkEditsRead  ## a file's list of edits the user imports, read
+    mkSpectrum   ## a spectrum window's spectrum, from the spectrum reader
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -221,6 +222,8 @@ type
       importIdentity*: FileIdentity  ## the identity of the file it was made on (NIF)
       importHasIdentity*: bool       ## it names one
       importOutside*: int            ## its traces past the file's last, left out
+    of mkSpectrum:
+      spectrum*: Spectrum            ## moved, never shared
 
   InboxObj = object
     lock: Lock

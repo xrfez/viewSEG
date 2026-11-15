@@ -65,7 +65,11 @@ proc everyFieldSet(): Settings =
       recordMatch: rmFieldRecord, traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
       line: 4960), LineName(name: "A line", line: 12.5)]),
     headers: HeadersView(tab: htTrace, traceTab: ttData, followPointer: false,
-      asDisplayed: true, columns: {hcName, hcOffset}))
+      asDisplayed: true, columns: {hcName, hcOffset}), hideKilled: true,
+    spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
+      time: stVisible, raw: false, processed: false, phase: true), live: SpectrumDisplay(
+      scale: ssLinear, logFrequency: true, time: stWhole, raw: false, processed: false,
+      phase: true)))
   result.plot = PlotDefaults(
     display: DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
       fills: {wfNegative}, colours: pcCustom,
@@ -101,6 +105,8 @@ block savedByAnOlderBuild:
   doAssert s.headers == HeadersView(), "the Headers window's settings take their defaults"
   doAssert s.headers.followPointer and s.headers.columns == {hcDescription, hcBytes}
   doAssert s.plot.display.untilMs == 2000, "the Exponential gain's cutoff takes its default"
+  doAssert not s.hideKilled and s.spectrum == SpectrumOptions(),
+    "the spectrum windows' settings take their defaults"
   doAssert cleaned(s)[1] == 0
 
 block joinOptions:
@@ -162,6 +168,10 @@ block everyField:
     doAssert a != b, "window field " & name & " is at its default"
   for name, a, b in fieldPairs(s.headers, d.headers):
     doAssert a != b, "headers field " & name & " is at its default"
+  for name, a, b in fieldPairs(s.spectrum.window, d.spectrum.window):
+    doAssert a != b, "spectrum window field " & name & " is at its default"
+  for name, a, b in fieldPairs(s.spectrum.live, d.spectrum.live):
+    doAssert a != b, "spectrum live field " & name & " is at its default"
   let (back, problems) = roundTrip(s)
   doAssert problems.len == 0, $problems
   doAssert back == s, $back

@@ -33,7 +33,13 @@
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
 ##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960)))
 ##  (headers (tab summary) (traceTab header) (followPointer true) (asDisplayed false)
-##   (columns description bytes)))
+##   (columns description bytes))
+##  (hideKilled false)
+##  (spectrum
+##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
+##    (phase false))
+##   (live (scale db) (logFrequency false) (time visible) (raw true) (processed true)
+##    (phase false))))
 ## ```
 ##
 ## Reading is forgiving where it can be and says what it did: a setting that
@@ -87,6 +93,8 @@ const
   HeadersTabNames: array[HeadersTab, string] = ["summary", "fileHeaders", "trace"]
   TraceTabNames: array[TraceTab, string] = ["header", "data"]
   HeaderColumnNames: array[HeaderColumn, string] = ["description", "name", "bytes", "offset"]
+  SpectrumScaleNames: array[SpectrumScale, string] = ["db", "linear"]
+  SpectrumTimeNames: array[SpectrumTime, string] = ["whole", "visible"]
   ReadoutNames: array[ReadoutField, string] = ["time", "trace", "channel", "receiver",
     "source", "ffid", "offset", "amplitude", "shotTime", "cursorUtc", "sample", "cdp",
     "inline", "crossline", "sourceXY", "receiverXY", "midpointXY", "sourceZ", "receiverZ",
@@ -103,7 +111,7 @@ func persistedNames*(): seq[seq[string]] =
   ## NIF identifier and unique in its table).
   @[@ModeNames, @BandNames, @DcNames, @FillNames, @ColourNames, @GainNames, @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
-    @TraceTabNames, @HeaderColumnNames]
+    @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames]
 
 # ----------------------------------------------------------------- writing --
 
@@ -188,6 +196,16 @@ proc writeProcessing*(w: var NifWriter; p: Processing) =
     w.value("harmonics", n.harmonics)
     w.close()
   w.value("aux", p.aux)
+  w.close()
+
+proc spectrumDisplay(w: var NifWriter; tag: string; d: SpectrumDisplay) =
+  w.open(tag)
+  w.choice("scale", SpectrumScaleNames[d.scale])
+  w.value("logFrequency", d.logFrequency)
+  w.choice("time", SpectrumTimeNames[d.time])
+  w.value("raw", d.raw)
+  w.value("processed", d.processed)
+  w.value("phase", d.phase)
   w.close()
 
 proc settingsDocument*(s: Settings): string =
@@ -300,6 +318,11 @@ proc settingsDocument*(s: Settings): string =
   w.open("columns")
   for c in s.headers.columns: w.ident HeaderColumnNames[c]
   w.close()
+  w.close()
+  w.value("hideKilled", s.hideKilled)
+  w.open("spectrum")
+  w.spectrumDisplay("window", s.spectrum.window)
+  w.spectrumDisplay("live", s.spectrum.live)
   w.close()
   w.close()
   w.finish
@@ -603,6 +626,16 @@ proc join(r: var Reading; n: NifNode; x: var JoinOptions) =
         x.lineNames = got
       else: r.unknown(k, "join")
 
+proc spectrumDisplay(r: var Reading; n: NifNode; d: var SpectrumDisplay) =
+  for k in n.kids:
+    if k.isTree("scale"): r.choice(k, SpectrumScaleNames, d.scale)
+    elif k.isTree("logFrequency"): r.flag(k, d.logFrequency)
+    elif k.isTree("time"): r.choice(k, SpectrumTimeNames, d.time)
+    elif k.isTree("raw"): r.flag(k, d.raw)
+    elif k.isTree("processed"): r.flag(k, d.processed)
+    elif k.isTree("phase"): r.flag(k, d.phase)
+    else: r.unknown(k, n.tag)
+
 proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
     problems: var seq[string]): Settings =
   ## The settings document `doc` (`parseNif`) taken over `base`: each
@@ -706,6 +739,12 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
               if r.pick(v, HeaderColumnNames, "columns", x): shown.incl x
             result.headers.columns = shown
           else: r.unknown(k, "headers")
+      of "hideKilled": r.flag(c, result.hideKilled)
+      of "spectrum":
+        for k in c.kids:
+          if k.isTree("window"): r.spectrumDisplay(k, result.spectrum.window)
+          elif k.isTree("live"): r.spectrumDisplay(k, result.spectrum.live)
+          else: r.unknown(k, "spectrum")
       else: r.unknown(c, "settings")
   if version == 0:
     r.problem(doc[root], "(settings) gives no (version); read as version " &

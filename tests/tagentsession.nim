@@ -88,7 +88,13 @@ const Reached = {
   "join.trailingDigits": "", "join.multiComponent": "", "join.lineNames": "",
   "join.coordinates": "", "join.recordMatch": "", "join.traceMatch": "",
   "headers.tab": "", "headers.traceTab": "", "headers.followPointer": "",
-  "headers.asDisplayed": "", "headers.columns": ""}.toTable
+  "headers.asDisplayed": "", "headers.columns": "", "hideKilled": "",
+  "spectrum.window.scale": "open spectrum", "spectrum.window.logFrequency": "open spectrum",
+  "spectrum.window.time": "open spectrum", "spectrum.window.raw": "open spectrum",
+  "spectrum.window.processed": "open spectrum", "spectrum.window.phase": "open spectrum",
+  "spectrum.live.phase": "spectrum display", "spectrum.live.scale": "spectrum display",
+  "spectrum.live.logFrequency": "spectrum display", "spectrum.live.time": "spectrum display",
+  "spectrum.live.raw": "spectrum display", "spectrum.live.processed": "spectrum display"}.toTable
 
 proc flatten[T](x: T; at: string; into: var OrderedTable[string, string]) =
   ## Every setting in `x` by its path ("plot.display.mode"), with its value
@@ -137,6 +143,14 @@ const Everything = DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDens
 const Keys = @[SortKey(field: hfOffset, descending: true), SortKey(field: hfChannel)]
   ## a sort that is no preset: the user's own keys (`customOrder`) too
 const Header = HeaderChoice(auto: false, fields: @[hfSrcLine, hfChannel])
+const
+  FftShown = SpectrumDisplay(scale: ssLinear, logFrequency: true, time: stVisible, raw: false,
+    processed: false, phase: true)
+    ## an FFT window shown otherwise than by default
+  LiveShown = SpectrumDisplay(scale: ssLinear, logFrequency: true, time: stWhole, raw: false,
+    processed: false, phase: true)
+    ## the live panel shown otherwise than by default
+
 const Filters = Processing(raw: true, aux: true, dc: dcTrend, band: pbBandPass, f1: 3, f2: 6,
   f3: 50, f4: 70, notches: @[NotchFilter(hz: 50, widthHz: 3, harmonics: 3)])
   ## filters with every field away from its default (raw is never kept)
@@ -241,6 +255,16 @@ withFixtures fx:
     st.agent(%*{"kind": "headers shown", "inspect": ["trace headers", "trace samples"]})
     doAssert st.inspection.answer.traces.len == 1, "the Headers window's reader read nothing"
     st.agent(%*{"kind": "headers shown", "inspect": []})
+    st.agent(%*{"kind": "open spectrum", "spectrumShow": toJson(FftShown)})
+    doAssert st.spectra.len == 2 and st.spectra[1].spectrum.averaged == 1,
+      "the agent's FFT window: " & $st.spectra.len
+    st.agent(%*{"kind": "spectrum panel"})
+    doAssert st.spectra[0].shown and st.spectra[0].spectrum.averaged > 0
+    st.agent(%*{"kind": "spectrum display", "spectrum": 0, "spectrumShow": toJson(LiveShown),
+      "frozen": true})
+    doAssert st.spectra[0].frozen
+    st.agent(%*{"kind": "close spectrum", "spectrum": st.spectra[1].id})
+    doAssert st.spectra.len == 1
     st.agent(%*{"kind": "edit traces", "edit": "killed"})
     st.agent(%*{"kind": "undo edit"})
     st.agent(%*{"kind": "redo edit"})
@@ -318,6 +342,9 @@ withFixtures fx:
     st.apply Command(kind: ckHeader, panel: MainPanel, header: Header)
     st.apply Command(kind: ckSort, panel: MainPanel, order: Keys)
     st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Filters)
+    st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
+      spectrumTraces: @[st.firstTrace], spectrumShow: FftShown)
+    st.apply Command(kind: ckSpectrumDisplay, spectrum: LiveSpectrum, spectrumShow: LiveShown)
     var d = st.panel(MainPanel).layers[0].display
     d.gain = dgFixed
     d.fixedClip = NaN

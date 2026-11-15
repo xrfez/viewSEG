@@ -102,13 +102,15 @@
 import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
-from processSEG/pipeline import Pipeline, items
+from processSEG/pipeline import Pipeline, items, initPipeline
 import closer, diskio, edits, filejobs, filelist, filememory, filesystem, identity, inbox, inspector,
   jobs, join, layouts, log, mapstate, memoryjobs, panels, persist, pick, reader, recordqc,
-  selection, session, settings, shots, spread, survey, surveyjobs, threads, tiles, watch, zoom
+  selection, session, settings, shots, spectra, spectrumreader, spread, survey, surveyjobs,
+  threads, tiles, watch, zoom
 
 export edits, filelist, filememory, identity, inbox, jobs, join, layouts, log, mapstate, panels,
-  persist, pick, recordqc, selection, session, settings, shots, spread, survey, threads, tiles, zoom
+  persist, pick, recordqc, selection, session, settings, shots, spectra, spread, survey, threads,
+  tiles, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues
 export WatchInterval
 
@@ -186,6 +188,11 @@ type
     ckStopReading = "stop reading"       ## leave a panel's read that does not answer
     ckPrepare = "prepare"                ## the file the user is likely to step to next
     ckInspect = "headers shown"          ## what the Headers window has on screen, to be read for it
+    ckSpectrum = "open spectrum"         ## an FFT window of traces: their amplitude spectrum, raw and processed
+    ckSpectrumDisplay = "spectrum display"
+      ## how a spectrum window shows its spectrum, over which time; the live panel frozen or not
+    ckCloseSpectrum = "close spectrum"   ## close an FFT window
+    ckSpectrumPanel = "spectrum panel"   ## the live spectrum panel on screen, or not
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -284,6 +291,25 @@ type
         ## the samples of the traces its Trace tab is about (the selection,
         ## else the trace under the pointer); none when the window is hidden.
         ## Changes nothing else: what was read is in `state`'s `headers`
+    of ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel:
+      spectrum*: int
+        ## ckSpectrumDisplay, ckCloseSpectrum: the window (0 the live
+        ## panel; FFT windows from 1, as `state`'s `spectra` lists them)
+      spectrumOf*: PanelId
+        ## ckSpectrum: the panel whose file, view and filters it is of (1:
+        ## the Seismic window)
+      spectrumTraces*: seq[int]
+        ## ckSpectrum: survey-wide ids of traces of the panel's file; none:
+        ## its selected traces there
+      spectrumShow*: SpectrumDisplay
+        ## ckSpectrum, ckSpectrumDisplay: dB or linear, the frequency axis
+        ## logarithmic, the whole trace or the plot's visible time, the raw
+        ## and processed curves drawn
+      frozen*: bool
+        ## ckSpectrumDisplay of the live panel: it keeps what it shows
+      onScreen*: bool
+        ## ckSpectrumPanel: the live panel is on screen (it follows the
+        ## Seismic window's view or selection, off the UI thread, only then)
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -440,6 +466,16 @@ type
       ## the geometry joins ended so far (`joinReport.serial`): a join
       ## changes the keys the Trace tab shows (read here, never the file's
       ## `keysRevision`, which a join's job writes)
+
+  LiveKey = object
+    ## What the live spectrum panel was asked for: a new request when it
+    ## changes.
+    session: SessionId
+    traces: seq[int]
+    window: (float64, float64)
+    filters: string
+    filterAux: bool
+    killed: seq[int]
 
   Remembered = object
     ## An opened file's place in what is remembered (`core/filememory`).
@@ -649,6 +685,15 @@ type
     leftInspectors: seq[Inspector]
       ## readers of the Headers window left stuck in a drive that does not
       ## answer, until they end (their holds with them)
+    spectra: seq[SpectrumWindow]
+      ## the live spectrum panel first, then the FFT windows in the order opened
+    spectrumGen: uint64 ## the newest spectrum request's
+    liveKey: LiveKey    ## what the live panel asked for last
+    spectrumReader: SpectrumReader
+      ## computes the spectra; started when first asked. Last: it stops (and
+      ## ends its holds) first.
+    leftSpectrumReaders: seq[SpectrumReader]
+      ## spectrum readers left stuck in a drive that does not answer
 
 proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     jobHistory: Natural = DefaultJobHistory; indexCache = "";
@@ -668,6 +713,8 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   result.panels.add Panel(id: MainPanel)
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
+  result.spectra.add SpectrumWindow(id: LiveSpectrum, chosen: soNothing,
+    display: result.settings.spectrum.live)
 
 let ProgramStart* = getTime()
   ## when the program started: a temporary file of the store last written
@@ -995,6 +1042,7 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   ## may read (`keepForStragglers`), so the quit never waits for a drive.
   ## Destroying the state does this too.
   assertUiThread()
+  state.spectrumReader.askStop()
   state.inspector.askStop()
   for r in state.readers: r.askStop()
   state.watch.askStop()
@@ -1016,6 +1064,9 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
     if not r.stop(deadline): result = false
   if not state.inspector.stop(deadline): result = false
   for x in state.leftInspectors:
+    if not x.stop(deadline): result = false
+  if not state.spectrumReader.stop(deadline): result = false
+  for x in state.leftSpectrumReaders:
     if not x.stop(deadline): result = false
   state.watch.stop(deadline)
   if not state.jobs.stop(deadline): result = false
@@ -1044,6 +1095,23 @@ func log*(state: AppState): lent MessageLog {.inline.} =
 func selection*(state: AppState): lent Selection {.inline.} =
   ## The trace under the cursor, the selected traces, the gather on show.
   state.selection
+
+func spectra*(state: AppState): lent seq[SpectrumWindow] {.inline.} =
+  ## The spectrum windows: the live panel first (id 0), then the FFT
+  ## windows in the order opened.
+  state.spectra
+
+func findSpectrum*(state: AppState; id: int): int =
+  ## The index in `spectra` of window `id`; -1 when there is none.
+  for i, w in state.spectra:
+    if w.id == id: return i
+  -1
+
+func spectraWaiting*(state: AppState): bool =
+  ## Whether a spectrum window waits for its spectrum.
+  for w in state.spectra:
+    if w.waiting: return true
+  false
 
 func inspection*(state: AppState): lent Inspection {.inline.} =
   ## What the Headers window shows of the files' bytes: the traces its Trace
@@ -1485,9 +1553,13 @@ proc newSource(state: var AppState; k: int) =
     if i >= 0 and g in 0 ..< state.sessions[i].gathers.len:
       let s = state.sessions[i]
       p.kind = s.gathers[g].kind
+      p.hidden = if state.settings.hideKilled:
+                   state.editsAt(s.path).listIn(teKilled, s.gathers[g].traces)
+                 else: @[]
       if state.jobs.hold(s.path):
         src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path, size: s.size,
-          traces: s.gathers[g].traces, filter: p.layers[0].filter, order: p.layers[0].order)
+          traces: s.gathers[g].traces, filter: p.layers[0].filter, order: p.layers[0].order,
+          hidden: p.hidden)
       elif s.path == state.joining.path and state.joining.step == jpJoining:
         busy = true # shown once the join is done
         if p.id notin state.joining.paused: state.joining.paused.add p.id
@@ -1500,6 +1572,19 @@ proc newSource(state: var AppState; k: int) =
   p.laidOut = src.file.isNil and not busy
   if not src.file.isNil or not state.readers[k].isNil:
     state.reader(k).show(src)
+
+proc followHidden(state: var AppState) =
+  ## After every change: a panel whose gather's killed traces, hidden (a
+  ## setting), are not those its reader leaves out (a kill, a restore, an
+  ## undo, the setting turned on or off) shows its gather again without
+  ## them (or with them), at the same scales and place.
+  for k in 0 ..< state.panels.len:
+    let (i, traces) = state.shownTraces(k)
+    if i >= 0:
+      let want = if state.settings.hideKilled:
+                   state.editsAt(state.sessions[i].path).listIn(teKilled, traces)
+                 else: @[]
+      if want != state.panels[k].hidden: state.newSource(k)
 
 proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
   ## Points layer 0 of `panel` at `gather` of `file`, keeping its filter,
@@ -2066,6 +2151,262 @@ proc takeInspected(state: var AppState; m: sink Msg) =
     state.inspect.answer = move m.inspected
     if state.answerGen >= state.inspectGen: state.inspect.waiting = false
     inc state.inspect.revision
+# ------------------------------------------------------------- spectra --
+
+proc spectrumReaderFor(state: var AppState; path: string): lent SpectrumReader =
+  ## The spectrum reader, started when first needed; one stuck in a drive
+  ## that does not answer is left to end on its own when `path` is another
+  ## file (a request of that file waits for it).
+  if not state.spectrumReader.isNil and state.spectrumReader.silentFor >= StallAfter and
+      state.spectrumReader.readingPath != path:
+    state.spectrumReader.leave()
+    state.leftSpectrumReaders.add move state.spectrumReader
+  if state.spectrumReader.isNil:
+    state.spectrumReader = newSpectrumReader(state.inbox.poster, state.jobs.holdRelease)
+  state.spectrumReader
+
+func spectrumFilters(p: Panel): (Pipeline, string, bool) =
+  ## The filters a spectrum of `p`'s traces is processed with: its layer
+  ## 0's, shown raw or not (the two curves compare); in words; and whether
+  ## its auxiliary traces go through them.
+  var pr = p.layers[0].processing
+  pr.raw = false
+  if not pr.hasFilters: (initPipeline(), "", pr.aux)
+  else: (pr.filterPipeline(p.layout.dtMs), pr.describe, pr.aux)
+
+func recordText(s: Session; trace: int): string =
+  ## The record trace `trace` (in the file) is in, as the windows name it:
+  ## "FFID 151", or "record 3" when its FFID is not known.
+  let g = s.gatherOf(trace)
+  if g < 0 or g >= s.records.len: ""
+  elif abs(s.records[g].record) < 1e15: "FFID " & $int64(s.records[g].record)
+  else: "record " & $(g + 1)
+
+proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
+    window: (float64, float64); filters: Pipeline; filtersText: string; aux: bool): bool =
+  ## Asks the spectrum reader for window `spectra[w]`'s spectrum of
+  ## `traces` (indices in open file `sessions[i]`, killed ones left out)
+  ## over `window` (ms; NaN: the whole trace); false when the file cannot
+  ## be held (a job needs it to itself).
+  let s = state.sessions[i]
+  if not state.jobs.hold(s.path): return false
+  var killed: seq[int]
+  if s.path in state.edits:
+    template e: untyped = state.edits[s.path]
+    for t in traces:
+      if teKilled in e.editsOf(t): killed.add t
+    killed.sort()
+  inc state.spectrumGen
+  template sw: untyped = state.spectra[w]
+  sw.asked = state.spectrumGen
+  sw.waiting = true
+  inc sw.asks
+  inc sw.revision
+  state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
+    session: int(s.id), file: s.filePtr, path: s.path, size: s.size, traces: traces,
+    killed: killed, fromMs: window[0], toMs: window[1], filters: filters,
+    filtersText: filtersText, filterAux: aux)
+  true
+
+func liveTraces(state: AppState; k, i: int): (seq[int], SpectrumOf) =
+  ## What the live panel is of: the selected traces of the file `panels[k]`
+  ## shows (`sessions[i]`), else the traces in its view; at most
+  ## `MaxSpectrumTraces`, spread evenly; indices in the file, ascending.
+  template p: untyped = state.panels[k]
+  let s = state.sessions[i]
+  var list: seq[int]
+  var chosen = soNothing
+  if state.selection.anySelected:
+    for t in state.selection.selected:
+      if t in s: list.add t - s.base
+    if list.len > 0: chosen = soSelection
+  if list.len == 0 and p.laidOut and p.shown.len == p.layout.traces:
+    let vis = visiblePositions(p.layout, p.view)
+    for pos in vis: list.add p.shown[pos]
+    if list.len > 0: chosen = soVisible
+  list.sort()
+  if list.len > MaxSpectrumTraces:
+    var kept = newSeq[int]()
+    for j in evenly(list.len, MaxSpectrumTraces): kept.add list[j]
+    list = kept
+  (list, chosen)
+
+proc followSpectrum(state: var AppState) =
+  ## After every change: the live panel, while on screen and not frozen,
+  ## asked again when what it is of changed (the traces in view or
+  ## selected, the record, the file, the time in view, the filters, a
+  ## kill). Nothing is asked while it is hidden.
+  template live: untyped = state.spectra[0]
+  if live.display != state.settings.spectrum.live:
+    live.display = state.settings.spectrum.live
+    inc live.revision
+  if not live.shown or live.frozen: return
+  let k = state.findPanel(MainPanel)
+  let i = if k >= 0: state.shownFile(k) else: -1
+  var key = LiveKey(session: NoSession)
+  var chosen = soNothing
+  var filters = initPipeline()
+  var filtersText = ""
+  if i >= 0 and state.panels[k].layers.len > 0:
+    template p: untyped = state.panels[k]
+    (key.traces, chosen) = state.liveTraces(k, i)
+    key.session = state.sessions[i].id
+    key.window = if live.display.time == stVisible and p.view.timeMs.hi > p.view.timeMs.lo:
+                   (p.view.timeMs.lo, p.view.timeMs.hi)
+                 else: (NaN, NaN)
+    (filters, filtersText, key.filterAux) = spectrumFilters(p)
+    key.filters = stepsText(filters)
+    let path = state.sessions[i].path
+    if path in state.edits:
+      for t in key.traces:
+        if teKilled in state.edits[path].editsOf(t): key.killed.add t
+  template was: untyped = state.liveKey
+  if key.session == was.session and key.traces == was.traces and key.filters == was.filters and
+      key.filterAux == was.filterAux and key.killed == was.killed and
+      (key.window == was.window or (key.window[0].isNaN and was.window[0].isNaN)):
+    return
+  state.liveKey = key
+  if key.traces.len == 0:
+    # Nothing to show: what is shown goes, and an answer on its way is dropped.
+    if not state.spectrumReader.isNil: state.spectrumReader.cancel(LiveSpectrum)
+    live.traces.setLen 0
+    live.chosen = soNothing
+    live.file = ""
+    live.record = ""
+    live.spectrum = Spectrum()
+    live.waiting = false
+    live.since = state.spectrumGen + 1 # nothing asked before is taken
+    inc live.revision
+    return
+  let s = state.sessions[i]
+  if state.askSpectrum(0, i, key.traces, key.window, filters, filtersText, key.filterAux):
+    live.chosen = chosen
+    live.file = s.name
+    live.record = s.recordText(key.traces[0])
+    live.traces = key.traces.mapIt(it + s.base)
+    live.first = key.traces[0]
+    live.filters = filtersText
+    live.visibleMs = state.panels[k].view.timeMs
+  else:
+    state.liveKey = LiveKey(session: NoSession) # asked again once it can be held
+
+proc openSpectrum(state: var AppState; cmd: Command) =
+  ## `ckSpectrum`: a new FFT window of `cmd.spectrumTraces` (else the
+  ## selected traces) of the panel's file, a snapshot asked for at once.
+  let k = state.findPanel(if cmd.spectrumOf == NoPanel: MainPanel else: cmd.spectrumOf)
+  let i = if k >= 0: state.shownFile(k) else: -1
+  if k < 0:
+    state.ignore(cmd, $cmd.spectrumOf & " does not exist")
+    return
+  if i < 0:
+    state.ignore(cmd, "the panel shows no file")
+    return
+  if state.spectra.len > MaxSpectrumWindows:
+    state.ignore(cmd, $MaxSpectrumWindows & " FFT windows are open; close one first")
+    return
+  let s = state.sessions[i]
+  var ids = cmd.spectrumTraces
+  var chosen = soTrace
+  if ids.len == 0:
+    for t in state.selection.selected:
+      if t in s: ids.add t
+    chosen = soSelection
+  var traces: seq[int]
+  var outside = 0
+  for t in ids:
+    if t in s: traces.add t - s.base
+    else: inc outside
+  traces.sort()
+  traces = deduplicate(traces, isSorted = true)
+  if traces.len == 0:
+    state.ignore(cmd, if ids.len == 0: "no trace is selected in " & s.name
+                             else: "none of the traces is in " & s.name)
+    return
+  if traces.len > 1 and chosen == soTrace: chosen = soSelection
+  template p: untyped = state.panels[k]
+  var w = SpectrumWindow(id: freeSpectrumId(state.spectra), display: cmd.spectrumShow,
+    chosen: chosen, file: s.name, record: s.recordText(traces[0]),
+    traces: traces.mapIt(it + s.base), first: traces[0], visibleMs: p.view.timeMs)
+  let (filters, text, aux) = spectrumFilters(p)
+  w.filters = text
+  state.spectra.add w
+  let window = if w.display.time == stVisible and p.view.timeMs.hi > p.view.timeMs.lo:
+                 (p.view.timeMs.lo, p.view.timeMs.hi)
+               else: (NaN, NaN)
+  state.spectra[^1].since = state.spectrumGen + 1 # a closed window's answers are not its
+  if not state.askSpectrum(state.spectra.high, i, traces, window, filters, text, aux):
+    state.spectra.delete state.spectra.high
+    state.ignore(cmd, s.name & " is busy (a job needs it to itself)")
+    return
+  state.change(cmd.origin, x):
+    x.spectrum.window = cmd.spectrumShow
+  if outside > 0:
+    state.log.add(sevWarning, s.name, $outside & " of the traces given are not in " & s.name &
+      ": left out of the spectrum.")
+
+proc showSpectrum(state: var AppState; cmd: Command) =
+  ## `ckSpectrumDisplay`: how a window shows its spectrum. A new time
+  ## window asks again (an FFT window over the time it was opened on); the
+  ## live panel keeps it for the next run, a new FFT window starts as the
+  ## last one changed.
+  let w = state.findSpectrum(cmd.spectrum)
+  if w < 0:
+    state.ignore(cmd, "there is no spectrum window " & $cmd.spectrum)
+    return
+  template sw: untyped = state.spectra[w]
+  let was = sw.display
+  if cmd.spectrum == LiveSpectrum:
+    if cmd.frozen != sw.frozen:
+      sw.frozen = cmd.frozen
+      inc sw.revision
+    state.change(cmd.origin, x):
+      x.spectrum.live = cmd.spectrumShow
+    return # `followSpectrum` asks again
+  sw.display = cmd.spectrumShow
+  inc sw.revision
+  state.change(cmd.origin, x):
+    x.spectrum.window = cmd.spectrumShow
+  if was.time != sw.display.time:
+    let i = state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1)
+    let k = state.findPanel(MainPanel)
+    if i < 0 or k < 0 or state.panels[k].layers.len == 0:
+      state.log.add(sevWarning, "spectrum", "The file of " & sw.title & " is not " &
+        "open any more: its spectrum stays over the time it had.")
+      return
+    let s = state.sessions[i]
+    let window = if sw.display.time == stVisible and sw.visibleMs.hi > sw.visibleMs.lo:
+                   (sw.visibleMs.lo, sw.visibleMs.hi)
+                 else: (NaN, NaN)
+    var traces: seq[int]
+    for t in sw.traces:
+      if t in s: traces.add t - s.base
+    let (filters, text, aux) = spectrumFilters(state.panels[k])
+    discard state.askSpectrum(w, i, traces, window, filters, text, aux)
+
+proc closeSpectrum(state: var AppState; cmd: Command) =
+  ## `ckCloseSpectrum`: the FFT window goes, its work with it.
+  let w = state.findSpectrum(cmd.spectrum)
+  if cmd.spectrum == LiveSpectrum:
+    state.ignore(cmd, "the live spectrum panel is hidden from the Window menu")
+    return
+  if w < 0:
+    state.ignore(cmd, "there is no FFT window " & $cmd.spectrum)
+    return
+  if not state.spectrumReader.isNil: state.spectrumReader.cancel(cmd.spectrum)
+  state.spectra.delete w
+
+proc takeSpectrum(state: var AppState; m: sink Msg) =
+  ## A spectrum for a window still open, newer than the one it shows (an
+  ## older one is stale: dropped); while the live panel follows a pan, each
+  ## answer is a request behind, and showing it beats waiting.
+  let w = state.findSpectrum(m.spectrum.id)
+  if w >= 0 and m.spectrum.gen > state.spectra[w].spectrum.gen and
+      m.spectrum.gen >= state.spectra[w].since and m.spectrum.gen <= state.spectra[w].asked:
+    template sw: untyped = state.spectra[w]
+    sw.waiting = m.spectrum.gen < sw.asked
+    sw.spectrum = move m.spectrum
+    inc sw.revision
+
 proc showListedShot(state: var AppState; cmd: Command): bool
 
 proc showPoints(state: var AppState; cmd: Command) =
@@ -4198,7 +4539,9 @@ proc apply*(state: var AppState; cmd: Command) =
   state.applyCommand(cmd)
   state.map.followed(state.survey) # a layer went (a file closed, a survey file unloaded)
   state.relink()
+  state.followHidden()
   state.followInspect()
+  state.followSpectrum()
   state.followMapWork()
 
 proc applyCommand(state: var AppState; cmd: Command) =
@@ -4607,6 +4950,20 @@ proc applyCommand(state: var AppState; cmd: Command) =
         "of " & file & ": it shows what it had read. Retry reads again.")
   of ckInspect:
     state.inspect.parts = cmd.inspect # read for by `followInspect`, after every command
+  of ckSpectrum: state.openSpectrum(cmd)
+  of ckSpectrumDisplay: state.showSpectrum(cmd)
+  of ckCloseSpectrum: state.closeSpectrum(cmd)
+  of ckSpectrumPanel:
+    template live: untyped = state.spectra[0]
+    if cmd.onScreen != live.shown:
+      live.shown = cmd.onScreen
+      inc live.revision
+      if not live.shown:
+        # Hidden: nothing more is asked, and the work under way is dropped.
+        if not state.spectrumReader.isNil: state.spectrumReader.cancel(LiveSpectrum)
+        live.waiting = false
+        state.liveKey = LiveKey(session: NoSession)
+    if cmd.onScreen and cmd.origin == coAgent: inc live.front # the window brought forward
   of ckUnloadSurvey:
     let i = state.survey.find(cmd.layer)
     if i < 0: state.ignore(cmd, $cmd.layer & " is not loaded")
@@ -4694,6 +5051,10 @@ proc drainInbox*(state: var AppState): bool =
   while k < state.leftInspectors.len:
     if state.leftInspectors[k].hasEnded: state.leftInspectors.delete(k)
     else: inc k
+  k = 0
+  while k < state.leftSpectrumReaders.len:
+    if state.leftSpectrumReaders[k].hasEnded: state.leftSpectrumReaders.delete(k)
+    else: inc k
   # Finished jobs first: a job posts before it finishes, so every message of
   # a job seen finishing here is in the mail drained next.
   let finished = state.jobs.takeFinished()
@@ -4713,6 +5074,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkJoining: state.takeJoinPlan(move m)
     of mkJoined: state.takeJoined(m)
     of mkInspected: state.takeInspected(move m)
+    of mkSpectrum: state.takeSpectrum(move m)
     of mkSpreads: state.takeSpreads(move m)
     of mkShots: state.takeShots(move m)
     of mkRecordQc: state.takeRecordQc(move m)
@@ -4802,6 +5164,8 @@ proc drainInbox*(state: var AppState): bool =
   state.prepareNext() # (once the main panel has its tile; or a prepare ended)
   state.map.followed(state.survey) # a layer came, or went with a file
   state.relink()
+  state.followHidden()
   state.followInspect()
+  state.followSpectrum()
   state.followMapWork()
   state.followMemoryLook()

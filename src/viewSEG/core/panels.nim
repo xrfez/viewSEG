@@ -267,6 +267,9 @@ type
       ## per position, the index in its file of the trace shown there (the
       ## gather after the trace filter, in the order shown), from the
       ## reader; empty until it says
+    hidden*: seq[int]
+      ## the traces of the gather its reader leaves out of the positions,
+      ## ascending: the killed ones, when killed traces are hidden (a setting)
     revision*: int ## bumped on every change
 
 const

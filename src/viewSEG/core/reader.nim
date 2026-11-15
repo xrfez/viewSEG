@@ -24,7 +24,8 @@
 ##   (the gather's trace keys, for the trace filter and the display header),
 ##   which nothing changes while the file is held.
 ## - **Layout.** When it is shown a gather, the reader applies the layer's
-##   trace filter (seismic or auxiliary traces) and posts the panel's
+##   trace filter (seismic or auxiliary traces; the killed ones left out
+##   when they are hidden, `ReaderSource.hidden`) and posts the panel's
 ##   `PanelLayout` (`mkLayout`), with the header fields the traces have
 ##   values for. Requests come after that.
 ## - **Order.** Then it sorts the traces by the layer's keys
@@ -106,6 +107,7 @@ type
     traces*: Slice[int]    ## the gather
     filter*: TraceFilter
     order*: seq[SortKey]   ## the layer's order; empty: the file's
+    hidden*: seq[int]      ## traces of the gather left out (killed, hidden), ascending
 
   ReaderRequest* = object
     ## What a panel asks its reader for.
@@ -267,7 +269,8 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   var all = true
   for k in 0 ..< rows.len:
     let seismic = rows.keysAt(k).isSeismic
-    if (seismic and rd.src.filter.seismic) or (not seismic and rd.src.filter.auxiliary):
+    if ((seismic and rd.src.filter.seismic) or (not seismic and rd.src.filter.auxiliary)) and
+        rd.src.hidden.binarySearch(g.a + k) < 0:
       list.add g.a + k
     else:
       all = false

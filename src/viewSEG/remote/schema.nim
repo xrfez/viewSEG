@@ -31,7 +31,8 @@ const
     ckReverseAll, ckBack,
     ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFileMemory, ckHover, ckSelect,
     ckClearSelection, ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
-    ckShowPoints, ckJoin, ckSelectUnmatched, ckRetry, ckStopReading, ckPrepare, ckInspect}
+    ckShowPoints, ckJoin, ckSelectUnmatched, ckRetry, ckStopReading, ckPrepare, ckInspect,
+    ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey
@@ -42,7 +43,9 @@ const
     ## reader reads, off the UI thread, for `state`'s `headers` to give.
     ## An agent's edits (kill, reverse, undo, redo, clear) are shown for the
     ## session only, never remembered with the file; listing what is
-    ## remembered (`ckFileMemory`) only reads
+    ## remembered (`ckFileMemory`) only reads. The spectrum windows (an FFT window opened, shown
+    ## otherwise, closed; the live panel on screen) read off the UI thread
+    ## and write nothing; how an agent shows them is for the session only
 
 # ------------------------------------------------------------ to JSON --
 

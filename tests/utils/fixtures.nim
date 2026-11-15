@@ -41,6 +41,10 @@
 ##   components of receiver lines 100 and 101, a channel set each, in a
 ##   scrambled order (`MixedSets`), for sorting.
 ## - `pilotSegy()`: SEG-Y, one sweep trace (trace code 6, auxiliary).
+## - `spectrumSegy()`: SEG-Y, one record of `SpectrumTraces` traces of
+##   `SpectrumSamples` samples at `DtMs`: channels 1 to 8 a sine of
+##   `SpectrumSineHz` (on a bin of the whole trace's spectrum) and white
+##   noise (`spectrumSample`), channel 9 a loud `SpectrumLoudHz` sine.
 ## - `longSpreadSegy()`: SEG-Y, one shot record of `LongSpread` channels of
 ##   `LongSamples` samples (a 25 Hz sine), more traces than a plot has room
 ##   for as wiggles.
@@ -464,6 +468,40 @@ proc noIntervalSegy*(fx: Fixtures): string =
     if traceBytes - 4 * LongSamples >= 480:
       for at in 240 + 144 .. 240 + 151: bytes[start + at] = '\0'
   writeFile(result, bytes)
+
+const
+  SpectrumTraces* = 9       ## traces of `spectrumSegy`
+  SpectrumSamples* = 2048   ## its samples per trace: the FFT's length, so bins are 1000 / 4096 Hz
+  SpectrumSineBin* = 100    ## the sine's bin: 24.4140625 Hz
+  SpectrumSineHz* = float64(SpectrumSineBin) * 1000 / (SpectrumSamples * DtMs)
+  SpectrumNoise* = 0.3      ## the noise's amplitude (uniform in ± this)
+  SpectrumLoudHz* = 100.0   ## channel 9's sine, 10 times as loud
+
+func spectrumSample*(channel, i: int): float32 =
+  ## Sample `i` of `spectrumSegy`'s channel `channel` (1 ..).
+  let t = float64(i) * DtMs / 1000
+  if channel == SpectrumTraces: return float32(10 * sin(2 * PI * SpectrumLoudHz * t))
+  var x = uint32(channel * 1_000_003 + i * 7919) # an integer hash: noise without a state
+  x = (x xor (x shr 16)) * 0x45d9f3b'u32
+  x = (x xor (x shr 16)) * 0x45d9f3b'u32
+  x = x xor (x shr 16)
+  let noise = (float64(x) / float64(high(uint32)) * 2 - 1) * SpectrumNoise
+  float32(sin(2 * PI * SpectrumSineHz * t) + noise)
+
+proc spectrumSegy*(fx: Fixtures): string =
+  ## One record of `SpectrumTraces` traces for spectra (`spectrumSample`).
+  result = fx.dir / "spectrum.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: a sine in noise, for spectra"]))
+  var buf = newSeq[float32](SpectrumSamples)
+  for c in 1 .. SpectrumTraces:
+    for i in 0 ..< SpectrumSamples: buf[i] = spectrumSample(c, i)
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (5.0, float64(c), 0.0,
+      DtMs * 1000, tsLive)
+    w.writeTrace(k, buf)
+  w.checkClose()
 
 proc pilotSegy*(fx: Fixtures): string =
   ## One sweep trace (`pilotSample`), trace identification code 6 (sweep).
