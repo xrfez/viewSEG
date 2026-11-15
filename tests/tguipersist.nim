@@ -72,7 +72,7 @@ withFixtures fx:
         if f.theme.mode == tmLight and f.windowSize == wanted and wait > 3:
           # The splitter: the gap between the plot window and the Headers window.
           let plot = f.markOf("seismic")
-          tableBefore = f.markOf("table")
+          tableBefore = f.markOf("headers")
           doAssert tableBefore.pos.x > plot.pos.x + plot.size.x, "the Headers window is not right"
           at = vec2(round((plot.pos.x + plot.size.x + tableBefore.pos.x) / 2),
             round(tableBefore.pos.y + tableBefore.size.y / 2))
@@ -84,7 +84,7 @@ withFixtures fx:
         if wait in 3..8: f.moveMouse(vec2(at.x - drag * float32(wait - 2) / 6, at.y))
         if wait == 10: f.pressMouse(vec2(at.x - drag, at.y), false)
         if wait == 14:
-          let table = f.markOf("table")
+          let table = f.markOf("headers")
           doAssert abs(table.size.x - (tableBefore.size.x + drag)) <= 2,
             "the drag did not widen the Headers window: " & $tableBefore & " -> " & $table
           arranged = (f.markOf("seismic"), table)
@@ -110,9 +110,9 @@ withFixtures fx:
         if wait == 3:
           doAssert f.theme.mode == tmLight, "the theme was not restored"
           doAssert f.windowSize == wanted, "the size was not restored: " & $f.windowSize
-          doAssert near(f.markOf("seismic"), arranged[0]) and near(f.markOf("table"), arranged[1]),
-            "the windows are not where they were: " & $f.markOf("table") & ", not " &
-            $arranged[1]
+          doAssert near(f.markOf("seismic"), arranged[0]) and
+            near(f.markOf("headers"), arranged[1]), "the windows are not where they were: " &
+            $f.markOf("headers") & ", not " & $arranged[1]
           let recent = f.markOf("plot.recent 0")
           doAssert recent.size.x > 0, "no recent file on the start screen"
           at = recent.centre
@@ -133,17 +133,17 @@ withFixtures fx:
         doAssert wait < 200, "the recent file did not open"
       of 2:
         if wait == 4:
-          reset = f.markOf("table")
+          reset = f.markOf("headers")
           doAssert abs(reset.size.x - arranged[1].size.x) > 50,
             "the reset left the Headers window as it was: " & $reset
           doAssert f.core.layouts.len >= 1 and f.core.layouts[0].name == "Mine"
           f.apply Command(kind: ckLoadLayout, docPath: f.core.layouts[0].path)
           (stage, wait) = (3, 0)
       of 3:
-        if wait > 3 and near(f.markOf("table"), arranged[1]):
+        if wait > 3 and near(f.markOf("headers"), arranged[1]):
           f.stop()
           stage = 4
-        doAssert wait < 100, "the loaded layout did not come back: " & $f.markOf("table")
+        doAssert wait < 100, "the loaded layout did not come back: " & $f.markOf("headers")
       else: discard
     doAssert run(RunOptions(maxFrames: 600, persist: true, configDir: some(config),
       logDir: some(logs), onFrame: onFrame)) == 0

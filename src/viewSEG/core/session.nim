@@ -4,16 +4,18 @@
 ## UI thread through the inbox, and kept by `AppState`, which gives it a
 ## `SessionId` and the survey-wide number of its first trace. Its fields do not
 ## change after that, apart from the file being closed and its records'
-## check against a loaded relation file (`setChecks`).
+## check against a loaded relation file (`setChecks`). What the Headers
+## window's Summary and File headers tabs show of the file (`facts`,
+## `core/headers`) is read with it, on the same thread.
 ##
 ## Trace ids are survey-wide: `base + index`. Bases are never reused, so an id
 ## kept by a view never names a trace of a file opened later.
 
 import std/[os, times]
 import parseSEG
-import records
+import headers, records
 
-export records
+export headers, records
 
 type
   SessionId* = distinct int
@@ -44,6 +46,7 @@ type
     modified: Time ## its modification time then
     checkedAgainst: string ## the relation file its records were checked against; "" none
     crs: FileCrs ## what its headers say of its coordinates
+    facts: FileFacts ## its summary and file headers, for the Headers window
 
 const NoSession* = SessionId(0)
 
@@ -65,6 +68,7 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
     if sum.crsFormat != ctNone: result.crs.text = result.file.crsText
   except CatchableError:
     discard # a file whose summary cannot be made says nothing of its coordinates
+  result.facts = fileFacts(result.file)
 
 proc register*(s: Session; id: SessionId; base: int) =
   ## Gives `s` its id and the survey-wide id of its first trace (`AppState`
@@ -86,6 +90,8 @@ func recordColumns*(s: Session): set[RecordColumn] {.inline.} = s.columns
   ## The record list's columns some row has a value for.
 func crs*(s: Session): lent FileCrs {.inline.} = s.crs
   ## What the file's headers say of its coordinates: units and CRS text.
+func facts*(s: Session): lent FileFacts {.inline.} = s.facts
+  ## What the Headers window shows of the file: its summary and file headers.
 func checkedAgainst*(s: Session): lent string {.inline.} = s.checkedAgainst
   ## The relation file the records' planned stations come from; "" for none.
 

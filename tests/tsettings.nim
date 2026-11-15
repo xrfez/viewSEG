@@ -60,7 +60,9 @@ proc everyFieldSet(): Settings =
     map: MapOptions(info: miStrip, lengths: dlUsFeet),
     join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
       recordMatch: rmFieldRecord, traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
-      line: 4960), LineName(name: "A line", line: 12.5)]))
+      line: 4960), LineName(name: "A line", line: 12.5)]),
+    headers: HeadersView(tab: htTrace, traceTab: ttData, followPointer: false,
+      asDisplayed: true, columns: {hcName, hcOffset}))
   result.plot = PlotDefaults(
     display: DisplaySettings(mode: dmWiggleDensity, fills: {wfNegative}, colours: pcCustom,
       custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),
@@ -90,6 +92,8 @@ block savedByAnOlderBuild:
   doAssert s.map.info == miPopup and s.map.lengths == dlSurvey,
     "the map's settings take their defaults"
   doAssert s.join == JoinOptions(), "the join's options take their defaults"
+  doAssert s.headers == HeadersView(), "the Headers window's settings take their defaults"
+  doAssert s.headers.followPointer and s.headers.columns == {hcDescription, hcBytes}
   doAssert s.plot.display.untilMs == 2000, "the Exponential gain's cutoff takes its default"
   doAssert cleaned(s)[1] == 0
 
@@ -136,6 +140,8 @@ block everyField:
       doAssert a != b, "display field " & name & " is at its default"
   for name, a, b in fieldPairs(s.window, d.window):
     doAssert a != b, "window field " & name & " is at its default"
+  for name, a, b in fieldPairs(s.headers, d.headers):
+    doAssert a != b, "headers field " & name & " is at its default"
   let (back, problems) = roundTrip(s)
   doAssert problems.len == 0, $problems
   doAssert back == s, $back

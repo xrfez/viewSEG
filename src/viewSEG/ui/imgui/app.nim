@@ -4,7 +4,7 @@
 ##
 ## The window holds a menu bar, an icon toolbar, a dockspace with the file
 ## list (`filelist`), the record list (`recordlist`), the trace panel
-## (`tracepanel`), the map (`mapwindow`), a sample header table, the Jobs
+## (`tracepanel`), the map (`mapwindow`), the Headers window (`headerswindow`), the Jobs
 ## window (`jobswindow`) and the Messages window, and a status bar with the
 ## running job's progress and its Cancel button, and the readout of what
 ## lies under the mouse in the plot (or its coordinates on the map); files
@@ -37,8 +37,8 @@ import ../../core/[filesystem, geometry, state, watchdog]
 import ../../platform/paths
 import ../../remote/control
 import ../../view/jobstatus
-import agentshot, chrome, dpi, filelist, fonts, icons, jobswindow, joindialog, mapwindow, menus,
-  messages, recordlist, shell, style, tracepanel
+import agentshot, chrome, dpi, filelist, fonts, headerswindow, icons, jobswindow, joindialog,
+  mapwindow, menus, messages, recordlist, shell, style, tracepanel
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow
 
@@ -47,7 +47,7 @@ const
   defaultSize = (1280, 800)               ## the first window size at 100 %
   plotId = "plot"                         ## the main plot window's ImGui ID: "###plot"
   mapId = "map"                           ## the map window's ImGui ID: "###map"
-  tableTitle = IconTable & "  Headers (example)###headers"
+  headersTitle = IconTable & "  Headers###headers"
   messagesTitle = IconLog & "  Messages###Messages"
   filesTitle = IconList & "  Files###files"
   jobsTitle = IconTasks & "  Jobs###jobs"
@@ -72,6 +72,7 @@ type
     core: AppState                             ## the application state
     trace: TracePanelUi                        ## the main panel's plot window
     map: MapUi                                 ## the map window
+    headers: HeadersUi                         ## the Headers window
     mapCursor: string                          ## the pointer's coordinates over the map last frame
     files: FileListUi                          ## the file list's window
     records: RecordListUi                      ## the record list's window
@@ -570,7 +571,8 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       showDialog(dkExportLayout, parent,
         (if dir.len > 0: dir / "viewSEG-layout.nif" else: "viewSEG-layout.nif"))
     of maImportLayout: showDialog(dkImportLayout, parent)
-    of maShowFiles, maShowRecords, maShowMap, maShowJobs, maShowMessages: ui.focus.incl a
+    of maShowFiles, maShowRecords, maShowMap, maShowHeaders, maShowJobs, maShowMessages:
+      ui.focus.incl a
     of maExportLog:
       let dir = ui.core.settingsFile.parentDir
       showDialog(dkExportLog, parent, (if dir.len > 0: dir / "viewSEG-messages.log"
@@ -619,7 +621,7 @@ proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   igDockBuilderDockWindow(recordsTitle, records)
   igDockBuilderDockWindow("###" & plotId, top)
   igDockBuilderDockWindow("###" & mapId, map)
-  igDockBuilderDockWindow(tableTitle, table)
+  igDockBuilderDockWindow(headersTitle, table)
   igDockBuilderDockWindow(jobsTitle, bottom)
   igDockBuilderDockWindow(messagesTitle, bottom) # the tab shown
   igDockBuilderFinish(dockId)
@@ -828,12 +830,15 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   var records = ui.records.drawRecordList(recordsTitle, ui.core, MainPanel, ui.theme, ui.marks)
   for c in records.commands.mitems:
     ui.core.apply move c
-  drawSampleTable(tableTitle, ui.fonts, ui.theme, ui.marks)
+  if maShowHeaders in ui.focus: bringForward(headersTitle)
+  var headers = ui.headers.drawHeaders(headersTitle, ui.core, ui.fonts, ui.theme, ui.marks)
+  for c in headers.commands.mitems:
+    ui.core.apply move c
   # A layout saved before the map came names no map: it joins the Headers
   # window's place (only when the layout says nothing of it).
-  let headers = igFindWindowByName(tableTitle)
-  if headers != nil and headers.DockNode != nil:
-    igSetNextWindowDockID(headers.DockNode.ID, ImGui_Cond_FirstUseEver.cint)
+  let headersWindow = igFindWindowByName(headersTitle)
+  if headersWindow != nil and headersWindow.DockNode != nil:
+    igSetNextWindowDockID(headersWindow.DockNode.ID, ImGui_Cond_FirstUseEver.cint)
   if maShowMap in ui.focus: bringForward("###" & mapId)
   var map = ui.map.drawMap(mapId, ui.core, ui.theme, ui.marks)
   ui.mapCursor = map.cursor

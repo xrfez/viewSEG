@@ -12,8 +12,8 @@
 ## leaves pixels where the frontend says it drew it; no pixel is Dear ImGui's
 ## stock blue. The toolbar holds application-level actions only: no display-mode
 ## or gather symbol is drawn on it (seen to fail with one symbol button put
-## back). The header table, whose rows are made up until the real one exists,
-## says so above them (seen to fail without that line, as it was).
+## back). The Headers window, with no file shown, holds its tabs and no
+## example rows (seen to fail with the example table it had before).
 ## Then: missing and unreadable fonts fall back and say so; a theme file that is
 ## not Everforest changes the background and the accent; 200 % grows the bars.
 ##
@@ -54,7 +54,8 @@ proc render(opts: RunOptions; save = ""): Shot =
     if f.index == frames - 1:
       shot = Shot(width: f.width, height: f.height, theme: f.theme, scale: f.scale,
         pixels: f.readFrame(), messages: f.messages)
-      for n in @["toolbar", "statusbar", "seismic", "table", "table.note"] & @appTools:
+      for n in @["toolbar", "statusbar", "seismic", "headers", "headers.tab summary",
+          "table.note"] & @appTools:
         shot.marks.add (n, f.markOf(n))
       for sym in Symbol:
         shot.marks.add ("tool." & $sym, f.markOf("tool." & $sym))
@@ -98,12 +99,12 @@ func has(s: Shot; part: string): bool =
 proc checkLook(s: Shot; t: Theme) =
   ## The frame is drawn in theme `t`.
   let r = t.roles
-  let table = s.mark("table")
+  let table = s.mark("headers")
   doAssert table.size.x > 50 and table.size.y > 50, $table
-  # Its rows are made up: the window says so above them.
-  let note = s.mark("table.note")
-  doAssert note.size.x > 0 and note.pos.y + note.size.y <= table.pos.y,
-    "the example table does not say its rows are made up: " & $note
+  # The Headers window shows its tabs, and no example rows any more.
+  let tab = s.mark("headers.tab summary")
+  doAssert tab.size.x > 0 and tab.pos.y >= table.pos.y, "no Summary tab: " & $tab
+  doAssert s.mark("table.note").size.x == 0, "the example rows are still shown"
   let inPanel = s.at(int(table.pos.x + table.size.x) - 6, int(table.pos.y + table.size.y) - 6)
   doAssert distance(inPanel, r[rlWindow]) <= 1,
     t.name & ": panel " & toHex(inPanel) & ", window colour " & toHex(r[rlWindow])
@@ -169,7 +170,7 @@ try:
     doAssert s.has("Fonts: `JetBrainsMonoNerdFontPropo-Regular.ttf` not found") and
       s.has("Using the built-in font"), $s.messages
     doAssert s.theme == EverforestDark
-    let r = s.mark("table")
+    let r = s.mark("headers")
     doAssert distance(s.at(int(r.pos.x + r.size.x) - 6, int(r.pos.y + r.size.y) - 6),
       EverforestDark.roles[rlWindow]) <= 1
     echo "tgui: missing fonts: ", s.warnings[0]

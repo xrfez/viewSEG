@@ -26,7 +26,9 @@
 ##  (files (followLatest false) (prepareNext true))
 ##  (map (info popup) (lengths survey))
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
-##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960))))
+##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960)))
+##  (headers (tab summary) (traceTab header) (followPointer true) (asDisplayed false)
+##   (columns description bytes)))
 ## ```
 ##
 ## Reading is forgiving where it can be and says what it did: a setting that
@@ -69,6 +71,9 @@ const
   FieldNames: array[HeaderField, string] = ["rcvLine", "rcvPoint", "component", "channel",
     "ffid", "srcLine", "srcPoint", "offset", "cdp", "inline", "crossline", "trace"]
   SeverityNames: array[Severity, string] = ["info", "warning", "error", "fatal"]
+  HeadersTabNames: array[HeadersTab, string] = ["summary", "fileHeaders", "trace"]
+  TraceTabNames: array[TraceTab, string] = ["header", "data"]
+  HeaderColumnNames: array[HeaderColumn, string] = ["description", "name", "bytes", "offset"]
   ReadoutNames: array[ReadoutField, string] = ["time", "trace", "channel", "receiver",
     "source", "ffid", "offset", "amplitude", "shotTime", "cursorUtc", "sample", "cdp",
     "inline", "crossline", "sourceXY", "receiverXY", "midpointXY", "sourceZ", "receiverZ",
@@ -84,7 +89,8 @@ func persistedNames*(): seq[seq[string]] =
   ## Every table of names written for a choice (for tests: each must be a
   ## NIF identifier and unique in its table).
   @[@ModeNames, @FillNames, @ColourNames, @GainNames, @TimeGainNames, @ScopeNames,
-    @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames]
+    @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
+    @TraceTabNames, @HeaderColumnNames]
 
 # ----------------------------------------------------------------- writing --
 
@@ -235,6 +241,15 @@ proc settingsDocument*(s: Settings): string =
     w.add n.name
     w.add n.line
     w.close()
+  w.close()
+  w.close()
+  w.open("headers")
+  w.choice("tab", HeadersTabNames[s.headers.tab])
+  w.choice("traceTab", TraceTabNames[s.headers.traceTab])
+  w.value("followPointer", s.headers.followPointer)
+  w.value("asDisplayed", s.headers.asDisplayed)
+  w.open("columns")
+  for c in s.headers.columns: w.ident HeaderColumnNames[c]
   w.close()
   w.close()
   w.close()
@@ -561,6 +576,19 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           elif k.isTree("lengths"): r.choice(k, MapLengthNames, result.map.lengths)
           else: r.unknown(k, "map")
       of "join": r.join(c, result.join)
+      of "headers":
+        for k in c.kids:
+          if k.isTree("tab"): r.choice(k, HeadersTabNames, result.headers.tab)
+          elif k.isTree("traceTab"): r.choice(k, TraceTabNames, result.headers.traceTab)
+          elif k.isTree("followPointer"): r.flag(k, result.headers.followPointer)
+          elif k.isTree("asDisplayed"): r.flag(k, result.headers.asDisplayed)
+          elif k.isTree("columns"):
+            var shown: set[HeaderColumn]
+            for v in k.kids:
+              var x = hcDescription
+              if r.pick(v, HeaderColumnNames, "columns", x): shown.incl x
+            result.headers.columns = shown
+          else: r.unknown(k, "headers")
       else: r.unknown(c, "settings")
   if version == 0:
     r.problem(doc[root], "(settings) gives no (version); read as version " &

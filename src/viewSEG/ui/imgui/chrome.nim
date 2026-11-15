@@ -358,77 +358,11 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
       igEndPopup()
   igEnd()
 
-# ------------------------------------------------------------- samples --
+# ------------------------------------------------------------- tables --
 
-proc rightAlign(text: string) =
+proc rightAlign*(text: string) =
   ## Moves the cursor so that `text` ends at the right of the space left.
   let w = igCalcTextSize(text.cstring, nil, false, -1).x
   let avail = igGetContentRegionAvail().x
   if avail > w:
     igSetCursorPosX(igGetCursorPosX() + avail - w)
-
-func sampleRow(r: int): array[6, string] =
-  ## Row `r` of the sample header table.
-  [$(r + 121), "1001", $(r + 121), formatFloat(-1187.5 + 25.0 * r.float, ffDecimal, 1),
-    formatFloat(212.4 + 1.7 * sin(r.float), ffDecimal, 1),
-    formatFloat(4.0 * cos(r.float / 3), ffDecimal, 2)]
-
-proc textWidth(fonts: Fonts; role: FontRole; text: string): float32 =
-  fonts.withFont(role, 0):
-    result = igCalcTextSize(text.cstring, nil, false, -1).x
-
-proc drawSampleTable*(title: string; fonts: Fonts; t: Theme; marks: var Marks) =
-  ## A few rows of trace headers: mono numbers, right-aligned, one selected
-  ## row and one row lit by the linked selection. The columns share the width
-  ## while it holds every number, and scroll sideways when it does not, so a
-  ## number is never clipped.
-  ##
-  ## The rows are made up, not read from any file, and the window says so
-  ## above them: it shows the table's look until the header table exists.
-  const
-    cols = ["Trace", "FFID", "Chan", "Offset m", "Elev m", "Static ms"]
-    rows = 14
-  if igBegin(title.cstring, nil, 0):
-    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-    igPushTextWrapPos(0)
-    igTextUnformatted("Example rows, not read from any file: the trace header table " &
-      "is still to come.", nil)
-    igPopTextWrapPos()
-    igPopStyleColor(1)
-    marks.mark("table.note")
-    var need = 0'f32
-    for i, c in cols:
-      var w = fonts.textWidth(frHeading, c)
-      for r in 0 ..< rows:
-        w = max(w, fonts.textWidth(frMono, sampleRow(r)[i]))
-      need += w + 2 * igGetStyle().CellPadding.x
-    let roomy = igGetContentRegionAvail().x >= need
-    let flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
-      (if roomy: ImGui_TableFlags_SizingStretchProp.cint
-        else: ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_SizingFixedFit.cint)
-    if igBeginTable("##headers", cols.len.cint, flags, ImVec2_c(x: 0, y: 0), 0):
-      igTableSetupScrollFreeze(0, 1)
-      for c in cols:
-        igTableSetupColumn(c.cstring, 0, 0, 0)
-      fonts.withFont(frHeading, 0):
-        # like igTableHeadersRow, with the labels right-aligned over the numbers
-        igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
-        for i, c in cols:
-          if igTableSetColumnIndex(i.cint):
-            rightAlign(c)
-            igTableHeader(c.cstring)
-      fonts.withFont(frMono, 0):
-        for r in 0 ..< rows:
-          igTableNextRow(0, 0)
-          if r == 4:
-            igTableSetBgColor(ImGui_TableBgTarget_RowBg1.cint, u32(t.roles[rlSelection]), -1)
-          elif r == 7:
-            igTableSetBgColor(ImGui_TableBgTarget_RowBg1.cint,
-              u32(withAlpha(t.roles[rlHighlight], 70)), -1)
-          for v in sampleRow(r):
-            discard igTableNextColumn()
-            rightAlign(v)
-            igTextUnformatted(v.cstring, nil)
-      igEndTable()
-      marks.mark("table")
-  igEnd()

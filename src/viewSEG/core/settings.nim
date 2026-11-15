@@ -4,8 +4,9 @@
 ## scales are stated, each monitor's calibration, the status bar's fields,
 ## the sort presets, the user's own sort keys, the Messages window's
 ## toggles, the plot's cursor time line, whether the Files window follows
-## the latest file, where the map shows the point under the pointer, and
-## the geometry join's options (File > Join geometry).
+## the latest file, where the map shows the point under the pointer, the
+## geometry join's options (File > Join geometry), and the Headers window's
+## tabs, toggles and columns.
 ## Every field has a default.
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
@@ -77,6 +78,36 @@ type
       ## the unit of the scale bar's and the ruler's lengths, converted from
       ## the survey's when another is chosen
 
+  HeadersTab* = enum
+    ## The Headers window's tabs.
+    htSummary = "Summary"
+    htFile = "File headers"
+    htTrace = "Trace"
+
+  TraceTab* = enum
+    ## The Trace tab's own tabs.
+    ttHeader = "Header" ## every header field of the traces
+    ttData = "Data"     ## their samples
+
+  HeaderColumn* = enum
+    ## The columns of the header tables that can be shown or hidden.
+    hcDescription = "Description" ## the field in plain words
+    hcName = "Name"               ## its name as parseSEG and the patches give it (block.field)
+    hcBytes = "Bytes"             ## the bytes it takes in its block, from 1
+    hcOffset = "Offset"           ## the file offset of its first byte
+
+  HeadersView* = object
+    ## How the Headers window shows what it shows.
+    tab*: HeadersTab                                       ## the tab shown
+    traceTab*: TraceTab                                    ## the Trace tab's own tab shown
+    followPointer*: bool = true
+      ## with no trace selected, the Trace tab shows the trace under the
+      ## pointer (in the plot, or a receiver's on the map)
+    asDisplayed*: bool
+      ## the Data tab's samples after the edits, the polarity and the
+      ## display gain's processing; off: as recorded
+    columns*: set[HeaderColumn] = {hcDescription, hcBytes} ## the columns shown
+
   Settings* = object
     theme*: string                                ## the theme file's name; "" follows the system
     window*: WindowPlacement
@@ -93,6 +124,7 @@ type
     files*: FilesView                             ## the Files window's toggles
     map*: MapOptions                              ## the map's own settings
     join*: JoinOptions                            ## the geometry join's options, as set last
+    headers*: HeadersView                         ## the Headers window's tabs and toggles
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not
