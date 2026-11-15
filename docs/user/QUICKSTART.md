@@ -126,8 +126,10 @@ receiver, a CDP), and its key information: its seismic **Traces**, its auxiliary
 (**Aux**, when the file has any), the traces the file marks **Dead**, and the traces
 **Missing** from its patch. Missing counts against what the file itself declares for the
 record (a SEG-D record's seismic channel sets, a SEG-Y file's traces per ensemble) and,
-once the survey's relation file (SPS X) is loaded, against the stations its X record
-plans for the shot; the cell's tooltip says which. A record with traces missing is drawn
+once the survey's relation file (SPS X) is loaded, or joined to the file (File > Join
+geometry, below), against the stations its X record plans for the shot; the cell's
+tooltip says which, and how many of the record's traces are at stations the plan does
+not list. A record with traces missing is drawn
 in the warning colour, and the footer counts them; where nothing says how many traces a
 record should hold, the cell is empty. The record shown is highlighted. Click a column's
 header to sort by it (again for the other way; **#** is the file's order): sorted by
@@ -381,12 +383,77 @@ stations the headers name (line and point); a trace whose headers give only its 
 and channel finds its stations through the relation (X) file. When nothing lights up, the
 **status bar says why**: a trace with no place on the map (an auxiliary trace, a station
 no survey file has), a receiver no trace of the open files was recorded at, or a source
-whose traces are all in other records. Joining the survey files to the seismic file (to
-come) will also light a trace up from a survey file's dot when its headers name no
+whose traces are all in other records. Once the survey files are **joined** to the
+seismic file (below), a survey file's dot also lights up the traces whose headers name no
 station.
 
 The **Plot and map** layout (View > Layout > Load) puts the plot and the map side by side,
 as large as each other.
+
+### Join the survey's geometry to a file
+
+Field records often carry stations, or only record and channel numbers, and no
+coordinates. **File > Join geometry...** joins the survey files to an open seismic file's
+traces, so that each trace has its source's and receiver's coordinates (and its stations,
+offset and midpoint): **in memory only, the file itself is never changed**. The window
+lists:
+
+- **Seismic file**: the one the plot shows (or another open file), the units its headers
+  give its coordinates in, and its coordinate reference system as the file gives it (SEG-Y
+  Rev 2 stanza, SEG-D Rev 3 location data), when it has one;
+- **Survey files**: those loaded, ticked (untick one to leave it out); **Add files...**
+  adds SPS files (S, R, X), SEG P1 files, or a **CSV table** of stations, with columns
+  line, point (or station), x (or easting), y (or northing), and index, elevation and a
+  kind column (S or R) where you have them; a table without a kind column is all sources
+  or all receivers, as you choose beside it. Below, the units the survey's coordinates are
+  in, as the SPS headers say (H20, H201: `feet` with 0.3048006096 m a unit is US survey
+  feet).
+
+Each units dropdown starts at what the headers say: **confirm it, or correct it** when the
+headers are wrong. Nothing is converted; the units label the map's scale bar and the
+status bar's coordinates.
+
+**Options** (remembered): **Use the trailing digits of line names** (SPS 1.0 and P1 files
+name lines with text: `CLT4960` is line 4960), **line names as numbers** (`name = number`,
+one per line, for names without digits), **several channels per station** (X records whose
+channel increment covers each station's components), **coordinates the headers give**:
+kept, filling only those the headers lack (the default), or replaced by the survey's
+(coordinates at (0, 0) count as none when every coordinate the headers give is (0, 0)),
+and how the Records window matches a record and its traces to the X records (automatic by
+default).
+
+Press **Join**. The survey files are read and the join is worked out while the plot goes
+on; only then, for the moment the keys change, the plot lets go of the file (it keeps its
+picture), and it shows the record again from the joined keys. **Cancel** (beside the
+progress, or in the Jobs window) leaves the file as it was. The window then says what the
+join did, in plain words, and Messages keeps it:
+
+- how many seismic traces **matched** the survey (their source and receiver stations are
+  in it) and how: by the stations in their headers, or by record and channel through the
+  relation file;
+- how many did **not**, and **why**: the headers' lines are not the survey's (a numbering
+  a hundred times larger, say), line names that are text (turn on the trailing digits),
+  record numbers that are not in the relation file;
+- what became of the coordinates the headers gave (kept, and how far they are from the
+  survey's; or replaced);
+- what the survey files' headers say of the datum, the projection and the units.
+
+**Select unmatched traces** selects the traces the survey has no source or receiver
+for, in the plot and on the map (and shows their record when the one on show has none).
+Values the join gave are drawn in the accent colour in the display header over the plot,
+in the box of header values at the cursor, and in the status bar (the offset, the
+stations, the coordinates); their tooltip says they came from the survey. The map shows
+the file's own sources and receivers at their joined places, and the Records window
+checks each record against the joined relation records. A file closed and opened again is
+read as it is on disk: join it again (the window keeps your files and options).
+
+```
+bin/viewSEG exampleFiles/00000151_12900_11300.sgd exampleFiles/sps/*.?ps
+```
+
+then File > Join geometry..., Join: the Morgantown record's 3954 seismic traces all
+match by their headers' stations; its headers' coordinates agree with the survey's to
+0.1 US ft (choose "replace those the headers give" to have the survey's).
 
 ## Messages
 

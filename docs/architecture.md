@@ -321,10 +321,55 @@ and words `hoverNote`, why the hover lights nothing up in the other view (no pos
 station in a loaded file, no trace, traces only in other records), which the status bar
 shows. None of it reads a trace or makes a layer again. Without the join, a survey file's
 point finds the traces whose headers name its station; one whose headers name none is
-linked one way only, from the trace (through the relation file). Code outside `core/survey` indexes the survey's layers
+linked one way only, from the trace (through the relation file), until the file is
+joined with its survey (below). Code outside `core/survey` indexes the survey's layers
 (`template l: untyped = st.survey.layers[i]`): a `for l in st.survey.layers` over the
 accessor makes ARC copy the whole seq first, every layer (a hundred megabytes for a
 million points), each time.
+
+**The geometry join** (`core/join`, `ckJoin`, File > Join geometry; `ui/imgui/joindialog`).
+Survey files (SPS S, R and X with parseSEG's `addSps`, SEG P1 with `addP1`, CSV tables of
+stations with `addCsv`) are joined to an open file's trace keys in memory: the file is
+never changed, and a file opened again is as it is on disk. Two jobs, so that the plot
+stops reading the file only for the moment its keys change:
+
+1. **Read and plan** (`joinReadWork`, interactive lane, the file and the survey files in
+   `reads`): the survey files are read into one `SurveyGeometry` with the join's options
+   (`mapLine`, `trailingDigits`, `multiComponent`), SPS a chunk at a time as the survey
+   loads them (`eachSpsPart`), each file's problems logged; then the join is worked out on
+   copies of the keys (`planJoin`, `traceKeysInto` a chunk at a time, with progress and a
+   cancel): per trace, `joinStations` and `applySurvey` on the copy, so the plan is what
+   the join will do, trace for trace: how each matched, which stations the survey has,
+   how far the headers' coordinates are from the survey's, which traces stay unmatched,
+   whether the headers' coordinates are replaced (when the user asks, or when every one
+   they give is (0, 0)). Readers go on reading the file meanwhile (shared reads). The
+   geometry and the plan come back as `mkJoining`.
+2. **Join** (`joinApplyWork`, the file in `exclusive`), only when the plan changes some
+   trace's keys: **the stop-the-readers protocol**. The UI thread tells each panel that
+   shows the file to let go of it (`pauseReaders`: its reader is shown nothing, ends its
+   hold; the panel keeps its tiles, layout and view); the job starts once no job reads
+   the file and no reader holds it, checks that no hold is left (`HoldRelease.held`;
+   it refuses to join otherwise), and runs `applySurvey(f, g, stats, overwrite)` (or
+   `applyGeometry` for CSV tables alone), which bumps `keysRevision`; a cancel that comes
+   before it joins stops it. When it ends, done or not, the panels read the file again
+   (`resumeReaders`: the same gather at the same scales; the tiles from before are drawn
+   until the first new one comes, through `samplesGen`), so new prefetchers and `rowsOf`
+   views see the joined keys. A panel shown the file meanwhile waits for the join quietly.
+
+A joined file keeps what it was joined with (`AppState.joins`: the files, options, units,
+the plan, the geometry): its positions are read again from its keys (the map), its records
+are checked against the joined relation records (`checkWork` with the join's
+`RecordMatch` and `TraceMatch`, every relation file of the join merged, as a loaded layer
+cannot), the units the user confirmed label the map and the status bar (`unitsOf`), and
+**Select unmatched traces** (`ckSelectUnmatched`) selects the traces the survey lacks a
+station for. A tile carries the groups of each row's keys a join gave
+(`Tile.joined`, parseSEG's `joinedGroups`), so the display header, the cursor's header box
+and the status bar draw joined values in the accent colour. What the join did is said in
+plain words (`planWords`), and a join that matches nothing says why (`whyUnmatched`: the
+line numbering, text line names, record numbers not in the relation file) and changes
+nothing. Units are labels: the dialog starts each at what the headers say
+(`summary.coordinateUnits`, SPS H20 and H201) and shows the file's CRS text as read;
+datum and projection as values are a parseSEG request.
 
 **Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
 severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`
@@ -559,6 +604,7 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 | `close` | UI, once a job holding the file exclusively has ended | Unmaps the file |
 | `ensureKeys`, `applySurvey`, `applyGeometry` | job, exclusive | Bump `keysRevision` |
 | `parseSps` (a chunk at a time), `addSps` (its relations), `parseP1`; `traceKeysInto` (an open file's positions, while the job reads the file) | interactive job | A `SurveyLayer`, moved to the UI thread (`mkSurvey`) |
+| `addSps` (a chunk at a time), `parseP1` and `addP1`, `addCsv`; `traceKeysInto`, then `joinStations` and `applySurvey` on copies of the keys (`planJoin`) | interactive job (a join's first) | A `SurveyGeometry` and a `JoinPlan`, moved to the UI thread (`mkJoining`) |
 | `joinStations` (a copy of a hovered trace's keys) | UI | Fills the copy's stations from a loaded relation file |
 | `newPrefetcher`, `seek`, `nextInto`, `tryNextInto`, `recycle`, `close` | panel reader (the thread that made it) | `PrefetchChunk.samples` is the caller's until recycled |
 | `rowsOf`, `traceKeys`, `maxSamples`, `isSeismic` (the index in memory) | panel reader, while it holds the file | Views and copies of keys; nothing changes the index while the file is held |
@@ -566,7 +612,7 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 | `pool.apply(plan, raw, processed, meta)` | panel (blocks) | Writes the caller's `processed` |
 | `traceStatsInto`, `panelStats`, `moveoutColumnsInto`, `checkGeometryInto` | panel | Fill the caller's seqs; ticks and flags tagged with `keysRevision` |
 | `readTracesInto`, `traceKeysInto`, `traceFieldColumnInto` | any | Fill the caller's buffer |
-| `traceHeaders`, `recordHeaders`, `fileHeaders`, `copyBytes`, `textHeader`, `traceField` | UI | Owned copies |
+| `traceHeaders`, `recordHeaders`, `fileHeaders`, `copyBytes`, `textHeader`, `traceField`; `summary` and `crsText` (the join window) | UI | Owned copies |
 | `traceFieldColumnInto`, then `sortOrder` (a sorted view) | job | A `seq[int]` selection |
 | `rowsOf(list)` keys, then `sortOrder` (a panel's order, `core/sorting`) | panel reader, while it holds the file | Positions: a `seq[int]` of trace numbers |
 | `pool.pickInto`, `fitShot`, `traceAmplitudeInto`, `recordAmplitude`, `windowSnrInto`, `recordCompleteness`, `addFold`, `preplotFold` | job | The caller's seqs; a `FoldMap` (moved, never copied) |
@@ -694,7 +740,7 @@ type
     ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
     ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog,
     ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints,
-    ckHoverPoints, ckShowPoints
+    ckHoverPoints, ckShowPoints, ckJoin, ckSelectUnmatched
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
@@ -720,7 +766,9 @@ type
     of mkWatched: watchGen, watched, watchProblem, problemChanged # what a look found changed
     of mkSurvey: layer: SurveyLayer # a survey file read, or an open file's positions; moved
     of mkChecked: checkedSession, against, againstLayer, keysRevision, planned,
-      plannedMissing             # an open file's records against a relation file (X)
+      plannedMissing, unlisted, duplicates # an open file's records against relation records
+    of mkJoining: planSession, geometry, plan, joinSurvey # survey files read for a join, its plan
+    of mkJoined: joinedSession, stats, changed, joinedRevision, heldAtJoin # a join done
     # to come: mkResult (FoldMap, StackResult, QC rows ...)
 
   AppState = object          # move-only; owned by the UI thread
@@ -732,6 +780,8 @@ type
     edits: Table[string, FileEdits] # core/edits, per file's path: the traces killed and
                              # reversed, and the last change for the undo
     survey: Survey           # core/survey: the survey files loaded, the open files' positions
+    joining: Joining         # the join under way: its jobs, plan, geometry, paused panels
+    joins: seq[Joined]       # the open files joined with survey files, and how
     map: MapState            # core/mapstate: the map's view, the views before it, the
                              # layers hidden; follows the survey
     inbox: Inbox             # Poster handles for workers; freed with the last handle
@@ -757,6 +807,7 @@ type
     cursorLine: bool               # the plot's cursor time line is on
     files: FilesView               # the Files window: followLatest
     map: MapOptions                # the map: where the point under the pointer is described
+    join: JoinOptions              # the geometry join's options, as set last
 
   Pick = object              # core/pick: what lies under the pointer
     inside, found: bool      # over the plot; a tile holds the trace there
@@ -766,6 +817,7 @@ type
     amplitude: float32       # as drawn; NaN when not held
     binned: int              # samples behind it, zoomed out
     edits: set[TraceEdit]    # the trace's edits, as drawn: killed, reversed
+    joined: set[JoinGroup]   # the groups of its keys a geometry join gave
 
   SurveyLayer = object       # core/survey: where one file's sources and receivers are
     id: SurveyLayerId        # never reused
@@ -802,6 +854,7 @@ type
     cached: bool             # made from the samples the reader held, not read
     raw: seq[float32]        # with the raw amplitude field on: the file's own samples, cut
                              # and decimated as `data` (before polarity, edits and gain)
+    joined: seq[set[JoinGroup]] # per row: what a geometry join gave its keys; empty for none
 ```
 
 **No undo history.** Edits to traces (kill, reverse polarity) are lists kept beside an

@@ -9,8 +9,10 @@
 ##   keys change** (the join's own count of holds, and the readers' holds
 ##   back after it);
 ## - a record whose headers give the record and channel numbers only, with
-##   the X file: matched by record and channel, and its records checked
-##   against the joined relation records (the Records window's "missing");
+##   the X file: matched by record and channel, the R file's receivers then
+##   linked to its traces both ways (before the join, none), and its records
+##   checked against the joined relation records (the Records window's
+##   "missing");
 ## - a CSV table of stations, with a header row and without;
 ## - a join that matches nothing says so and why (line numbers 100 times the
 ##   headers', line names that are text, which the trailing digits then
@@ -144,6 +146,16 @@ block byRecordAndChannel:
     st.opened(path)
     doAssert st.keysOf(1).rcvLine.isNaN and st.keysOf(1).rcvX.isNaN
     doAssert st.sessions[0].records[0].planned == -1
+    # The R file loaded: its receivers find no trace of a record whose headers
+    # name no station, until the join gives them their stations.
+    st.apply Command(kind: ckLoadSurvey, paths: @[survey.r])
+    doAssert st.settle(st.survey.findFile(survey.r) >= 0)
+    proc receiver(st: AppState; point: float64): PointRef =
+      let i = st.survey.findFile(survey.r)
+      PointRef(layer: st.survey.layers[i].id, role: prReceiver, point: st.survey.layers[
+        i].stationPoint(prReceiver, Station(line: RcvLine, point: point, index: 1)))
+    let base = st.sessions[0].base
+    doAssert st.survey.tracesAt(st.receiver(FirstRcvPoint)).len == 0
     st.join(sps(survey.s, survey.r, fx.segdRelation()))
     doAssert st.joinReport.outcome == joJoined, st.words
     doAssert st.joinReport.heldAtJoin == 0
@@ -155,6 +167,10 @@ block byRecordAndChannel:
       doAssert k.rcvLine == RcvLine and k.rcvPoint == FirstRcvPoint + float64(t - 1)
       doAssert k.srcLine == SrcLine and k.srcPoint == FirstSrcPoint
       doAssert near(k.rcvX, rcvX(t)) and near(k.srcX, srcX(0))
+    # The R file's receivers and the traces are linked both ways now.
+    doAssert st.settle(st.survey.layers[st.survey.findTraces(st.sessions[0].id)].keysRevision == 1)
+    doAssert st.survey.tracesAt(st.receiver(FirstRcvPoint + 4)) == @[base + 5]
+    doAssert st.receiver(FirstRcvPoint + 4) in st.survey.tracePointsOf(base + 5)
     # The records are checked against the joined relation records.
     doAssert st.settle(st.sessions[0].records[0].planned == SegdChannels), "records checked"
     doAssert st.sessions[0].records[0].plannedMissing == 0
