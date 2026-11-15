@@ -3,9 +3,16 @@
 ## its counts, a SEG-D record's channel sets), read when the file is opened
 ## (`Session.facts`, on the open job's thread), for SEG-Y, SEG-D and SEG-2.
 ##
+## The File headers tab's: a SEG-Y file's binary header fields and textual
+## header, a SEG-D record's general headers, channel sets side by side (the
+## fields that differ marked), and its extended and external headers as
+## bytes, read by the Headers window's reader (`core/inspector`) off the UI
+## thread when the tab is on screen (`ckInspect`).
+##
 ## Seen to fail: with the summary's record taken from the first gather
 ## whatever is shown (`s.records[0]`), `summaryOfASegyFile` found no FFID
-## 12 for the second record.
+## 12 for the second record; with the inspector keeping its holds,
+## `inspectorReadsTheRecordShown` found "the inspector's hold did not end".
 
 import std/[os, strutils]
 import parseSEG
@@ -132,6 +139,92 @@ block summaryOfTheDemoFiles:
         doAssert lines.valueOf("Byte order") == "little-endian", name
       of skUnknown: doAssert false, name
       st.shutdown()
+
+func rowOf(rows: openArray[FieldRow]; blockName, field: string): FieldRow =
+  for r in rows:
+    if r.blockName == blockName and r.field == field: return r
+  raise newException(KeyError, "no " & blockName & "." & field)
+
+block fileHeadersOfASegyFile:
+  # The binary header's fields with their bytes in the block, the textual
+  # header's 40 lines; a table of them with the block's title first.
+  withFixtures fx:
+    var st = initAppState()
+    let s = st.shown(fx.surveySegy())
+    let format = s.facts.rows.rowOf("binary", "formatCode")
+    doAssert format.value == "5" and format.number == 5, $format
+    doAssert (format.first, format.last) == (25, 26), $format # bytes 3225-3226
+    doAssert format.offset == 3224 and format.blockOffset == 3200 and format.blockSize == 400
+    doAssert format.description == "Data sample format code"
+    let table = fieldTable([s.facts.rows], ["Value"], skSegy)
+    doAssert table.rows[0].title.startsWith("Textual header (text, 3200 bytes at 0)"),
+      table.rows[0].title
+    var found = false
+    for row in table.rows:
+      if row.name == "binary.formatCode":
+        doAssert row.bytes == "25-26" and row.values == @["5"] and not row.differs, $row
+        found = true
+    doAssert found
+    doAssert "Data sample format code\t5\n" in tableText(table)
+    st.shutdown()
+
+block recordHeadersOfASegdRecord:
+  # A SEG-D record's general headers, channel sets, extended and external
+  # headers (their bytes), read as the inspector reads them.
+  withFixtures fx:
+    var f = openSeismic(fx.areasSegd(), keys = true)
+    doAssert not f.log.hasErrors, $f.log.len
+    let r = readRecordHeaders(f, 0)
+    doAssert r.problem.len == 0, r.problem
+    doAssert r.rows.rowOf("gh1", "formatCode").value == "8058"
+    doAssert r.rows.rowOf("gh1", "formatCode").description == "Data sample format code"
+    var sets: seq[seq[FieldRow]]
+    for x in r.rows:
+      if x.blockName.startsWith("st") and "cs" in x.blockName:
+        if sets.len == 0 or sets[^1][0].blockName != x.blockName: sets.add @[]
+        sets[^1].add x
+    doAssert sets.len == 4
+    let table = fieldTable(sets, ["1", "2", "3", "4"], skSegd, byBlock = false)
+    for row in table.rows:
+      if row.name.endsWith(".channelType"):
+        doAssert row.values == @["32", "152", "16", "16"] and row.differs, $row
+      if row.name.endsWith(".scanTypeNumber"):
+        doAssert row.values == @["1", "1", "1", "1"] and not row.differs, $row
+    var areas: seq[RawBlock] # (the record's untyped general header block is raw too)
+    for b in r.raw:
+      if b.blockName in ["extended", "external"]: areas.add b
+    doAssert areas.len == 2, $r.raw.len
+    doAssert areas[0].blockName == "extended" and areas[0].size == 32
+    doAssert areas[1].blockName == "external" and areas[1].size == 64
+    var text = ""
+    for b in areas[1].bytes: text.add char(b)
+    doAssert text.startsWith(SegdExternalText), text
+    doAssert dumpLines(areas[1].bytes) == 4
+    let line = dumpLine(areas[1].bytes, areas[1].offset, 0)
+    doAssert line.startsWith(toHex(areas[1].offset, 8) & "  76 69 65 77") and
+      line.endsWith(SegdExternalText[0 .. 15]), line
+    doAssert readRecordHeaders(openSeismic(fx.surveySegy()), 0).rows.len == 0 # not SEG-D
+    f.close()
+
+block inspectorReadsTheRecordShown:
+  # The File headers tab on screen (`ckInspect`): the record's headers are
+  # read off the UI thread and come with the next drained answer; the
+  # inspector's hold on the file ends; off screen, nothing is kept.
+  withFixtures fx:
+    var st = initAppState()
+    let path = fx.areasSegd()
+    discard st.shown(path)
+    let reader = st.jobs.held(path) # the panel's reader's
+    st.apply Command(kind: ckInspect, inspect: {ipRecord})
+    doAssert st.inspection.answer.recordPath == "", "read on the UI thread"
+    doAssert st.settle(st.inspection.answer.recordPath == path)
+    let r = st.inspection.answer.record
+    doAssert r.record == 0 and r.rows.len > 0 and r.raw.len == 3, r.problem
+    doAssert not st.inspection.waiting
+    doAssert waitUntil(st.jobs.held(path) == reader), "the inspector's hold did not end"
+    st.apply Command(kind: ckInspect, inspect: {})
+    doAssert st.inspection.answer.recordPath == "" and st.inspection.answer.traces.len == 0
+    st.shutdown()
 
 block everyFieldDescribed:
   # Every field parseSEG names has words of its own, short enough for a

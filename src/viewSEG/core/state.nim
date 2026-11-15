@@ -102,13 +102,13 @@
 import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
-import closer, diskio, edits, filejobs, filelist, filesystem, inbox, jobs, join, layouts, log,
-  mapstate, panels, persist, pick, reader, selection, session, settings, survey, surveyjobs,
-  threads, tiles, watch,
-  zoom
+import closer, diskio, edits, filejobs, filelist, filesystem, inbox, inspector, jobs, join, layouts,
+  log, mapstate, panels, persist, pick, reader, selection, session, settings, survey, surveyjobs,
+  threads, tiles, watch, zoom
 
 export edits, filelist, inbox, jobs, join, layouts, log, mapstate, panels, persist, pick,
   selection, session, settings, survey, threads, tiles, zoom
+export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues
 export WatchInterval
 
 const
@@ -176,6 +176,7 @@ type
     ckRetry = "retry"                    ## open, read or list again what does not answer
     ckStopReading = "stop reading"       ## leave a panel's read that does not answer
     ckPrepare = "prepare"                ## the file the user is likely to step to next
+    ckInspect = "headers shown"          ## what the Headers window has on screen, to be read for it
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -254,6 +255,11 @@ type
     of ckSelectUnmatched:
       unmatchedOf*: SessionId
         ## the joined file
+    of ckInspect:
+      inspect*: set[InspectPart]
+        ## the parts of the Headers window on screen: a SEG-D record's
+        ## headers (File headers), the traces' header fields or samples
+        ## (Trace); none when the window is hidden
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -369,12 +375,37 @@ type
       ## the holds on the file (readers) its keys were changed with: always
       ## none; -1 when they were not changed
 
+  Asked = object
+    ## What the Headers window's reader was asked for last.
+    parts: set[InspectPart]
+    traces: seq[int]
+      ## survey-wide ids
+    edits: seq[set[TraceEdit]]
+      ## theirs, when shown as displayed
+    displayed: bool
+    record: (SessionId, int)
+      ## a SEG-D record: its file and index; (NoSession, -1) for none
+    flow: (bool, int, GatherKind)
+      ## the plot's polarity, its pipeline's length, the gather's kind
+    display: DisplaySettings
+      ## the plot's display, compared by `sameProcessing`
+
   AppState* = object
     ## Everything the views show. Move-only.
     log: MessageLog
     selection: Selection
     hoverNote: string     ## why the hover lights nothing up; "" when it does
     linked: Linked
+    inspect: Inspection
+      ## what the Headers window shows of the files' bytes
+    chosenFrom: (int, bool)
+      ## the selection's revision and "Follow the pointer" `chosen` is of
+    asked: Asked
+      ## what its reader was asked for last
+    inspectGen: uint64
+      ## the newest request's
+    answerGen: uint64
+      ## the newest answer's taken in
     survey: Survey        ## the survey files loaded and the open files' positions
     map: MapState         ## the map's view and hidden layers
     loading: seq[Loading] ## the jobs that fill the survey
@@ -467,6 +498,9 @@ type
       ## per panel, as `panels`; started when the panel first shows a file.
       ## Declared last: the readers stop (and end their holds) before the
       ## jobs and the files go.
+    inspector: Inspector
+      ## the Headers window's reader; started when it is first asked. Last:
+      ## it stops (and ends its holds) first.
 
 proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     jobHistory: Natural = DefaultJobHistory; indexCache = "";
@@ -656,6 +690,7 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   ## may read (`keepForStragglers`), so the quit never waits for a drive.
   ## Destroying the state does this too.
   assertUiThread()
+  state.inspector.stop()
   for r in state.readers: r.askStop()
   state.watch.askStop()
   state.jobs.askStop()
@@ -690,6 +725,11 @@ func log*(state: AppState): lent MessageLog {.inline.} =
 func selection*(state: AppState): lent Selection {.inline.} =
   ## The trace under the cursor, the selected traces, the gather on show.
   state.selection
+
+func inspection*(state: AppState): lent Inspection {.inline.} =
+  ## What the Headers window shows of the files' bytes: the traces its Trace
+  ## tab is about, and the newest answer of its reader.
+  state.inspect
 
 func hoverNote*(state: AppState): lent string {.inline.} =
   ## Why the hover lights nothing up in the other view, in plain words, for
@@ -1520,6 +1560,95 @@ proc relink(state: var AppState) =
     sel.setHoverPoints(points, traces)
   state.hoverNote = if sel.hover >= 0: state.noPointNote() else: state.noTraceNote()
   state.linked = (state.survey.revision, sel.revision, state.loading.len, sel.activeGather)
+
+proc followInspect(state: var AppState) =
+  ## After every change: the traces the Headers window's Trace tab is about
+  ## found again when the selection changed, and its reader asked for what
+  ## the window has on screen when that is not what it was asked for last
+  ## (other traces, another record, their edits or the plot's processing
+  ## when they are shown as displayed). Each file it reads is held first; a
+  ## trace of a file that cannot be held (a job needs it to itself) is
+  ## answered as busy. With nothing on screen, nothing is read.
+  template ins: untyped = state.inspect
+  let view = state.settings.headers
+  let basis = (state.selection.revision, view.followPointer)
+  if basis != state.chosenFrom:
+    state.chosenFrom = basis
+    let chosen = chosenTraces(state.selection, view.followPointer)
+    if chosen != ins.chosen:
+      ins.chosen = chosen
+      inc ins.revision
+  var want = Asked(parts: ins.parts, record: (NoSession, -1))
+  let k = state.findPanel(MainPanel)
+  let shown = state.shownFile(k)
+  if ipRecord in ins.parts and shown >= 0:
+    let s = state.sessions[shown]
+    let g = state.panels[k].layers[0].source.gather
+    if g in 0 ..< s.gathers.len:
+      let r = s.file.segdRecordOf(s.gathers[g].traces.a)
+      if r >= 0: want.record = (s.id, r)
+  let traceParts = ins.parts * {ipTraceHeaders, ipTraceSamples}
+  if traceParts != {}: want.traces = ins.chosen.traces
+  want.displayed = view.asDisplayed and ipTraceSamples in ins.parts
+  if want.displayed:
+    for t in want.traces: want.edits.add state.traceEdits(t)
+    if shown >= 0:
+      let layer = state.panels[k].layers[0]
+      want.flow = (layer.reversed, layer.pipeline.len, state.gatherKind(layer))
+      want.display = layer.display
+  template was: untyped = state.asked
+  if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
+      want.displayed == was.displayed and want.record == was.record and
+      want.flow == was.flow and want.display.sameProcessing(was.display, want.flow[2]):
+    return
+  state.asked = want
+  if want.record[0] == NoSession and want.traces.len == 0:
+    if ins.answer.traces.len > 0 or ins.answer.recordPath.len > 0:
+      ins.answer = Inspected()
+      inc ins.revision
+    ins.waiting = false
+    return
+  inc state.inspectGen
+  var req = InspectRequest(gen: state.inspectGen, headers: ipTraceHeaders in ins.parts,
+    samples: ipTraceSamples in ins.parts)
+  var held: seq[SessionId] # by `req.files`' index; NoSession for a file that could not be held
+  proc fileOf(state: var AppState; req: var InspectRequest; held: var seq[SessionId];
+      i: int): int =
+    ## The index in `req.files` of open file `sessions[i]`, held on first use;
+    ## -1 when it cannot be held.
+    let s = state.sessions[i]
+    result = held.find(s.id)
+    if result < 0 and state.jobs.hold(s.path):
+      req.files.add InspectFile(file: s.filePtr, path: s.path, size: s.size)
+      held.add s.id
+      result = held.high
+  if want.record[0] != NoSession:
+    req.recordAt = state.fileOf(req, held, state.findSession(want.record[0]))
+    req.record = want.record[1]
+  if want.displayed and shown >= 0:
+    let layer = state.panels[k].layers[0]
+    req.flow = layer.displayPipeline(state.gatherKind(layer))
+  for n, t in want.traces:
+    let i = state.findTrace(t)
+    if i >= 0:
+      let s = state.sessions[i]
+      req.traces.add InspectTrace(id: t, at: state.fileOf(req, held, i), trace: t - s.base,
+        edits: (if want.displayed: want.edits[n] else: {}),
+        displayed: want.displayed and i == shown)
+  if state.inspector.isNil:
+    state.inspector = newInspector(state.inbox.poster, state.jobs.holdRelease)
+  ins.waiting = true
+  state.inspector.ask(req)
+
+proc takeInspected(state: var AppState; m: sink Msg) =
+  ## An answer of the Headers window's reader newer than the one shown (the
+  ## newest asked or not: while the pointer moves, each answer is a request
+  ## behind, and showing it beats waiting).
+  if m.inspected.gen > state.answerGen:
+    state.answerGen = m.inspected.gen
+    state.inspect.answer = move m.inspected
+    if state.answerGen >= state.inspectGen: state.inspect.waiting = false
+    inc state.inspect.revision
 
 proc showPoints(state: var AppState; cmd: Command) =
   ## `ckShowPoints`: the main panel shows the record of the traces recorded
@@ -2433,6 +2562,7 @@ proc apply*(state: var AppState; cmd: Command) =
   state.applyCommand(cmd)
   state.map.followed(state.survey) # a layer went (a file closed, a survey file unloaded)
   state.relink()
+  state.followInspect()
 
 proc applyCommand(state: var AppState; cmd: Command) =
   case cmd.kind
@@ -2810,6 +2940,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
         "waiting for its drive, and shows what it had read.")
       state.log.add(sevInfo, "files", "The " & name & " window stopped waiting for the drive " &
         "of " & file & ": it shows what it had read. Retry reads again.")
+  of ckInspect:
+    state.inspect.parts = cmd.inspect # read for by `followInspect`, after every command
   of ckUnloadSurvey:
     let i = state.survey.find(cmd.layer)
     if i < 0: state.ignore(cmd, $cmd.layer & " is not loaded")
@@ -2911,6 +3043,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkChecked: state.takeChecked(move m)
     of mkJoining: state.takeJoinPlan(move m)
     of mkJoined: state.takeJoined(m)
+    of mkInspected: state.takeInspected(move m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:
@@ -2972,3 +3105,4 @@ proc drainInbox*(state: var AppState): bool =
   state.prepareNext() # (once the main panel has its tile; or a prepare ended)
   state.map.followed(state.survey) # a layer came, or went with a file
   state.relink()
+  state.followInspect()

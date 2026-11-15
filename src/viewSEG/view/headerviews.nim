@@ -1,10 +1,12 @@
 ## What the Headers window shows, as plain lines and tables: the Summary
 ## tab's lines (what the file is and the counts of the record shown, in
-## plain words), the rows of the header tables, and the lines of a block's
-## bytes. Made from `core` (a session's `facts`, its records), never from
-## the toolkit, so that any frontend shows the same words.
+## plain words), the header tables (`fieldTable`: a row per field, a column
+## of values per header, the values that differ between columns marked),
+## and the lines of a block's bytes (`dumpLine`). Made from `core` (a
+## session's `facts`, its records, the inspector's answers), never from the
+## toolkit, so that any frontend shows the same words.
 
-import std/[math, os, strutils, times]
+import std/[math, os, strutils, tables, times]
 import parseSEG
 import ../core/state
 
@@ -153,6 +155,89 @@ proc summaryLines*(s: Session; gather: int): seq[SummaryLine] =
               exactText(c.startTimeMs) & " to " & msText(c.endTimeMs)
   for p in facts.problems:
     result.add "Not read", p
+
+type
+  TableRow* = object
+    ## One row of a header table: a field, with a value per column; or a
+    ## block's title.
+    title*: string ## a block's title: the row says only that; "" for a field
+    description*: string ## the field in plain words
+    name*: string ## its name as parseSEG gives it: block.field
+    bytes*: string ## the bytes it takes in its block, from 1: "1-4"
+    offset*: string ## the file offset of its first byte (the first column's)
+    values*: seq[string] ## per column; "" where a column has no such field
+    differs*: bool ## the columns do not all hold the same value
+
+  FieldTable* = object
+    ## A header table: fields as rows, a column of values per header shown
+    ## (a trace, a channel set; one for a file's or a record's blocks).
+    columns*: seq[string] ## each value column's label
+    rows*: seq[TableRow]
+
+func bytesOf(r: FieldRow): string =
+  if r.last <= r.first: $r.first else: $r.first & "-" & $r.last
+
+func fieldTable*(columns: openArray[seq[FieldRow]]; labels: openArray[string];
+    standard: SeismicKind; byBlock = true): FieldTable =
+  ## The rows of `columns` (each a header listing, in its order) side by
+  ## side: a row per field (per block and field with `byBlock`, else per
+  ## field whatever its block, as for channel sets), in the order the
+  ## fields first come, with a title row where the block changes (with
+  ## `byBlock`); `differs` where the columns' values are not all the same.
+  result = FieldTable(columns: @labels)
+  var place: Table[string, int]
+  var lastBlock = ""
+  for c, rows in columns:
+    for r in rows:
+      let key = (if byBlock: r.blockName else: "") & "." & r.field
+      var k = place.getOrDefault(key, -1)
+      if k < 0:
+        if byBlock and r.blockName != lastBlock:
+          result.rows.add TableRow(title: blockTitle(r.blockName, standard) & " (" &
+            r.blockName & ", " & $r.blockSize & " bytes at " & $r.blockOffset & ")")
+          lastBlock = r.blockName
+        k = result.rows.len
+        place[key] = k
+        result.rows.add TableRow(description: r.description,
+          name: (if r.field.len > 0: r.blockName & "." & r.field else: r.blockName),
+          bytes: bytesOf(r), offset: $r.offset, values: newSeq[string](columns.len))
+      result.rows[k].values[c] = r.value
+  if columns.len > 1:
+    for row in result.rows.mitems:
+      if row.title.len == 0:
+        for v in row.values:
+          if v != row.values[0]: row.differs = true
+
+func tableText*(t: FieldTable; column = -1): string =
+  ## The table as text, a line per row, tab-separated: the description and
+  ## the values (only those of `column` when it is not -1), as Copy puts it
+  ## on the clipboard.
+  for row in t.rows:
+    if row.title.len > 0: result.add row.title & '\n'
+    else:
+      result.add row.description
+      for c, v in row.values:
+        if column < 0 or c == column: result.add '\t' & v
+      result.add '\n'
+
+func dumpLines*(bytes: openArray[byte]): int =
+  ## The lines of a block's bytes, 16 a line.
+  (bytes.len + 15) div 16
+
+func dumpLine*(bytes: openArray[byte]; base: int64; line: int): string =
+  ## Line `line` of `bytes` (a block that starts at file offset `base`): its
+  ## offset in hexadecimal, its 16 bytes in hexadecimal and as text, a dot
+  ## for what is not printable ASCII.
+  let a = line * 16
+  result = toHex(base + a, 8) & "  "
+  var text = ""
+  for i in a ..< a + 16:
+    if i < bytes.len:
+      result.add toHex(bytes[i]) & ' '
+      text.add (if bytes[i] in 0x20'u8 .. 0x7E'u8: char(bytes[i]) else: '.')
+    else: result.add "   "
+    if i == a + 7: result.add ' '
+  result.add ' ' & text
 
 func summaryText*(lines: openArray[SummaryLine]): string =
   ## The lines as text, as Copy puts them on the clipboard: a heading on a

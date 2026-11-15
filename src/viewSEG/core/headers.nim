@@ -71,6 +71,27 @@ type
     raw*: seq[RawBlock]
     problem*: string     ## why they could not be read; "" when they were
 
+  TraceDetail* = object
+    ## What the Trace tab shows of one trace: its headers, its samples.
+    id*: int               ## its survey-wide id
+    trace*: int            ## its index in its file
+    file*: string          ## its file's name
+    keys*: TraceKeys       ## its keys, as the index holds them
+    rows*: seq[FieldRow]   ## every header field (when asked for)
+    samples*: seq[float32] ## its samples (when asked for)
+    displayed*: bool       ## `samples` as displayed: after the edits, the polarity and
+                           ## the display gain's processing; false: as recorded
+    cut*: int              ## samples left out of `samples` (too many at once); 0 for none
+    dtMs*, t0Ms*: float64  ## its sample interval and the time of its first sample
+    problem*: string       ## what could not be read; "" when all was
+
+  Inspected* = object
+    ## The inspector's answer to one request (`core/inspector`).
+    gen*: uint64              ## the request's
+    recordPath*: string       ## the file of `record`; "" for none
+    record*: RecordHeaders    ## a SEG-D record's headers (when asked for)
+    traces*: seq[TraceDetail] ## the traces asked for, in the order asked
+
 func latin1*(text: openArray[char]): string =
   ## `text` (Latin-1, as headers hold it) as UTF-8, control characters as
   ## dots.

@@ -28,6 +28,8 @@ type
     mkJoining ## survey files read for a join, and what joining them does
     mkJoined  ## a join done
     mkUnread  ## a panel's file cannot be read now (its drive went away, or fails), from its reader
+    mkInspected
+      ## what the Headers window shows of a record and of traces, from its reader
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -124,6 +126,8 @@ type
       unreadGen*: uint64 ## the panel's `sourceGen` it is about
       cause*: UnreadCause
       why*: string       ## in plain words
+    of mkInspected:
+      inspected*: Inspected ## moved, never shared
 
   InboxObj = object
     lock: Lock

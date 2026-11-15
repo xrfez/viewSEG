@@ -32,6 +32,8 @@
 ## - `recordOnlySegd()`: SEG-D Rev 3.0, one record whose headers give the
 ##   record and channel numbers only (no station, no position), and
 ##   `segdRelation()`, the X file that places its channels.
+## - `areasSegd()`: `twoSetSegd()`'s record with an extended header and an
+##   external header (`SegdExtendedText`, `SegdExternalText`).
 ## - `threeComponentSegd()`: SEG-D Rev 3.0, one record: a time break and three
 ##   seismic channel sets, one per component (group index 1, 2, 3) at the same
 ##   stations.
@@ -680,8 +682,19 @@ func segdSample*(scale, line, channel: float64; i: int): float32 =
   let dy = (line - RcvLine) * 50
   float32(scale * float64(sample(sqrt(dx * dx + dy * dy), float64(i) * DtMs / 1000)))
 
+const
+  SegdExtendedText* = "viewSEG test: extended header"
+    ## the start of `areasSegd`'s extended header
+  SegdExternalText* = "viewSEG test: external header, shot 1001"
+    ## the start of its external header
+
+proc areaBytes(text: string; blocks: int): seq[byte] =
+  ## `blocks` 32-byte blocks holding `text`, then spaces.
+  result = newSeq[byte](32 * blocks)
+  for i in 0 ..< result.len: result[i] = (if i < text.len: byte(text[i]) else: 0x20'u8)
+
 proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stations = true;
-    positioned = true) =
+    positioned = true; areas = false) =
   ## One Rev 3.0 record (file number `SegdRecordNo`, format 8058) with the
   ## channel sets `sets`: an auxiliary set holds one trace, a seismic set
   ## `SegdChannels`. The source is line 1, point 1001, at mid-spread; not
@@ -689,6 +702,8 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stat
   ## records often have). Without `stations`, the source and receiver
   ## stations are 0 / 0 (none: record and channel numbers only); not
   ## `positioned`, the record has no position blocks at all.
+  ## With `areas`, an extended header of one block (`SegdExtendedText`) and
+  ## an external header of two (`SegdExternalText`).
   let fmt = sd8058
   var r = SegdRecord(layout: slRev3, format: some(fmt),
     revision: SegdRevision(major: 3, minor: 0))
@@ -705,7 +720,10 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stat
     additionalGhBlocks: uint8(2 + nOpt), julianDay: 313, hour: 9, minute: 41, second: 7,
     manufacturerCode: 20, baseScanInterval16: 32, recordType: 8, recordLength: BcdAllF,
     scanTypesPerRecord: 1, channelSetsPerScanType: sets.len, skewBlocks: 0,
-    extendedHeaderBlocks: 0, externalHeaderBlocks: 0)
+    extendedHeaderBlocks: (if areas: 1 else: 0), externalHeaderBlocks: (if areas: 2 else: 0))
+  if areas:
+    r.extended = areaBytes(SegdExtendedText, 1)
+    r.external = areaBytes(SegdExternalText, 2)
   let endUs = int32(DtMs * 1000 * float64(SegdSamples - 1))
   r.gh2Rev3 = SegdGeneralHeader2Rev3(extFileNumber: SegdRecordNo, revisionMajor: 3,
     extRecordLength: uint32(endUs), blockType: 2)
@@ -766,6 +784,16 @@ proc twoSetSegd*(fx: Fixtures): string =
     writeSegdRecord(result, [SetSpec(channelType: 0x20), SetSpec(channelType: 0x98),
       SetSpec(channelType: 0x10, line: RcvLine, y: OriginY, scale: 1),
       SetSpec(channelType: 0x10, line: RcvLine + 1, y: OriginY + 50, scale: 1)])
+
+proc areasSegd*(fx: Fixtures): string =
+  ## `twoSetSegd`'s record with an extended header (one block, starting
+  ## with `SegdExtendedText`) and an external header (two blocks, starting
+  ## with `SegdExternalText`).
+  result = fx.dir / "areas.sgd"
+  if not fileExists(result):
+    writeSegdRecord(result, [SetSpec(channelType: 0x20), SetSpec(channelType: 0x98),
+      SetSpec(channelType: 0x10, line: RcvLine, y: OriginY, scale: 1),
+      SetSpec(channelType: 0x10, line: RcvLine + 1, y: OriginY + 50, scale: 1)], areas = true)
 
 proc stationsSegd*(fx: Fixtures): string =
   ## A record whose headers name stations but give no coordinates (every
