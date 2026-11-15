@@ -26,7 +26,7 @@
 ## the whole summary or table. A click that only brings the window forward
 ## does nothing else (`focus`); Tab moves between its controls.
 
-import std/[math, strutils, tables]
+import std/[math, monotimes, strutils, tables, times]
 import imguin/cimgui
 from parseSEG import SeismicKind, skSegy, skSegd, skSeg2, skUnknown
 import ../../core/state
@@ -52,8 +52,11 @@ type
     started: bool
     picked: int = -1
       ## the summary row picked (Ctrl + C copies it); -1 for none
-    pickedFile: string
-      ## the file it was picked in
+    pickedIn: string
+      ## the file and gather it was picked in
+    summary: seq[SummaryLine] ## the Summary's lines, made at most twice a second
+    summaryKey: string ## what they were made of
+    summaryAt: MonoTime ## when
     parts: set[InspectPart]
       ## what is on screen, as told to `core` last
     shownTraceTab: TraceTab
@@ -75,6 +78,10 @@ type
 const JoinedTip = "From the survey, not the trace header"
   ## what a value a geometry join gave says when pointed at, as in the plot
 
+func summaryPicked*(ui: HeadersUi): int {.inline.} =
+  ## The Summary line picked (Ctrl + C copies it); -1 for none (for tests).
+  ui.picked
+
 proc tabItem(ui: var HeadersUi; tab: HeadersTab; wanted: HeadersTab): bool =
   ## A tab of the window's tab bar; selected once when it is the settings'.
   let flags = if ui.selecting and tab == wanted: ImGui_TabItemFlags_SetSelected.cint else: 0.cint
@@ -95,11 +102,12 @@ proc shownSession(st: AppState): (int, int) =
 
 # ----------------------------------------------------------------- summary --
 
-proc copyMenu(id: string; value: string; all: proc (): string) =
-  ## The right-click menu of a row: copy its value, or everything.
+proc copyMenu(id: string; value: string; lines: openArray[SummaryLine]) =
+  ## The right-click menu of a row: copy its value, or every line.
   if igBeginPopupContextItem(id.cstring, ImGui_PopupFlags_MouseButtonRight.cint):
     if igMenuItem_Bool("Copy", "Ctrl+C", false, true): igSetClipboardText(value.cstring)
-    if igMenuItem_Bool("Copy the summary", nil, false, true): igSetClipboardText(all().cstring)
+    if igMenuItem_Bool("Copy the summary", nil, false, true):
+      igSetClipboardText(summaryText(lines).cstring)
     igEndPopup()
 
 proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks: var Marks) =
@@ -109,10 +117,20 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
     igTextDisabled("No file is shown.")
     return
   let ses = st.sessions[s]
-  let lines = summaryLines(ses, gather, st.joins)
-  if ses.path != ui.pickedFile:
+  # Made again when the file, its gather, its keys or the joins change, and
+  # twice a second (the record's counts, a relation file loaded): not every
+  # frame.
+  let key = $int(ses.id) & "." & $gather & "." & $ses.keysRevision & "." & $st.joins.len
+  let now = getMonoTime()
+  if key != ui.summaryKey or now - ui.summaryAt > initDuration(milliseconds = 500):
+    ui.summary = summaryLines(ses, gather, st.joins)
+    ui.summaryKey = key
+    ui.summaryAt = now
+  template lines: untyped = ui.summary
+  let pickedIn = ses.path & "#" & $gather # the line picked is of this record's summary
+  if pickedIn != ui.pickedIn:
     ui.picked = -1
-    ui.pickedFile = ses.path
+    ui.pickedIn = pickedIn
   var labelWidth = 0'f32
   for l in lines:
     if not l.heading:
@@ -122,7 +140,6 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
   const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_BordersInnerV.cint
   if igBeginChild_Str("##summary", ImVec2_c(x: 0, y: 0), 0, 0):
     igPushItemFlag(ImGui_ItemFlags_NoTabStop.cint, true) # the lines are no stops of Tab
-    let all = proc (): string = summaryText(lines)
     var open = false
     for i, l in lines:
       if l.heading:
@@ -147,7 +164,7 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
               ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
             ui.picked = i
           igPopStyleColor(1)
-          copyMenu("##copy", l.value, all)
+          copyMenu("##copy", l.value, lines)
           if igIsItemFocused() and igIsKeyPressed_Bool(ImGui_Key_C, false) and
               igGetIO_Nil().KeyCtrl:
             igSetClipboardText(l.value.cstring)
@@ -582,9 +599,14 @@ proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerIn
   var n = 0
   var traces: seq[int] # the answer's traces with samples
   for k in 0 ..< answer.traces.len: # (an index: nothing of the answer is copied a frame)
-    if answer.traces[k].samples.len > 0:
+    template d: untyped = answer.traces[k]
+    if d.samples.len > 0:
       traces.add k
-      n = max(n, answer.traces[k].samples.len)
+      n = max(n, d.samples.len)
+    elif ipTraceSamples in st.inspection.parts and not st.inspection.waiting and d.cut == 0 and
+        d.problem.len == 0: # (read for the samples, and none)
+      dim(t, "Trace " & $(d.trace + 1) & " of " & d.file & " has no samples.")
+      marks.mark("headers.data none")
   if traces.len == 0:
     if st.inspection.waiting: igTextDisabled("Reading the samples...")
     return
@@ -594,6 +616,10 @@ proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerIn
     if answer.traces[k].dtMs != first.dtMs or answer.traces[k].t0Ms != first.t0Ms: other = true
   if other: dim(t, "The traces have other sample intervals or start times: the times are " &
     "those of the first.")
+  if not first.intervalKnown:
+    dim(t, "The file gives no sample interval for " & traceLabel(first, false) & ": the " &
+      "times count its samples, 1 ms each.")
+    marks.mark("headers.data no interval")
   let withFile = answer.traces.manyFiles
   let cursor = if cursorMs.isNaN or first.dtMs <= 0: -1
                else: int(round((cursorMs - first.t0Ms) / first.dtMs))

@@ -83,6 +83,7 @@ type
                            ## the display gain's processing; false: as recorded
     cut*: int              ## samples left out of `samples` (too many at once); 0 for none
     dtMs*, t0Ms*: float64  ## its sample interval and the time of its first sample
+    intervalKnown*: bool   ## its file gives `dtMs`; else it is 1 (the times count samples)
     problem*: string       ## what could not be read; "" when all was
     joined*: set[JoinGroup]
       ## the groups of its keys a geometry join gave (parseSEG's

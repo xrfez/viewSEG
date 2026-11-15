@@ -29,10 +29,13 @@
 ## marks of differing values cleared (`r.differs = false` after
 ## `fieldTable` in `traceTable`), "the channel sets that differ are not
 ## marked". With `dataText` taking every row (`copiedRows` not asked),
-## `copiesAreBounded` found "50001 lines".
+## `copiesAreBounded` found "50001 lines". With the pipeline compared by its
+## length (`followInspect`'s `flow`, as it was), "not asked again for another
+## AGC window".
 
 import std/[intsets, monotimes, os, strutils, times]
 import parseSEG
+import processSEG/pipeline
 import viewSEG/core/[fielddocs, inspector, state]
 import viewSEG/view/headerviews
 import utils/[fixtures, waiting]
@@ -439,6 +442,29 @@ block asDisplayedFollowsTheFileShown:
     doAssert st.settle(st.inspection.answer.traces.len == 1 and
       st.inspection.answer.traces[0].displayed and not st.inspection.waiting),
       "not read again as displayed once its file is shown"
+    st.shutdown()
+
+block asDisplayedFollowsTheSteps:
+  # A step of the plot's pipeline given another parameter (the same number
+  # of steps) asks for the samples as displayed again.
+  withFixtures fx:
+    var st = initAppState()
+    let s = st.shown(fx.surveySegy())
+    var settings = st.settings
+    settings.headers.asDisplayed = true
+    st.apply Command(kind: ckSettings, settings: settings)
+    let k = st.findPanel(MainPanel)
+    # (no command sets a pipeline yet: the panel's own, in place)
+    let panel = cast[ptr Panel](addr st.panels[k])
+    panel.layers[0].pipeline = initPipeline([agcOp(windowMs = 300)])
+    st.apply Command(kind: ckSelect, traces: @[s.base + 2], mode: smReplace)
+    st.apply Command(kind: ckInspect, inspect: {ipTraceSamples})
+    doAssert st.settle(st.inspection.answer.traces.len == 1 and not st.inspection.waiting and
+      st.inspection.answer.traces[0].displayed)
+    panel.layers[0].pipeline[0].agc.windowMs = 500
+    discard st.drainInbox() # (which asks the reader for what changed, last)
+    doAssert st.inspection.waiting, "not asked again for another AGC window"
+    doAssert st.settle(not st.inspection.waiting)
     st.shutdown()
 
 block copiedTablesSayTheirColumns:

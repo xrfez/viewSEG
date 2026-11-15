@@ -450,6 +450,10 @@ proc addJoinFiles*(frame: FrameInfo; paths: openArray[string]) =
   ## "Add files..." dialog does (tests cannot drive the system's dialog).
   frame.ui.join.addFiles(paths)
 
+proc headersWindow*(frame: FrameInfo): lent HeadersUi =
+  ## The Headers window's state as this frame drew it: `summaryPicked`.
+  frame.ui.headers
+
 proc mapWindow*(frame: FrameInfo): lent MapUi =
   ## The map window's state as this frame drew it: `mapShown`,
   ## `hoveredPoints`, `pointTexts`, `rulerText`, `scaleText`.

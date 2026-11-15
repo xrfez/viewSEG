@@ -586,7 +586,8 @@ holds, read-only, in three tabs:
   samples: index, time in ms and a column per trace, as the file holds them, or **As
   displayed** (after kills, polarity reversals and the gain's processing: what the status
   bar's amplitude reads); the row at the time under the pointer in the plot is marked and
-  kept in view.
+  kept in view. A line says so when the file gives no sample interval (the times then
+  count samples, 1 ms each) or a trace has no samples.
 
 The header tables list each field's **Description** (cut to fit a narrow window: point at it
 to read it whole), its values and its **Bytes** (in its block, from 1, as the standards

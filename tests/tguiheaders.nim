@@ -34,6 +34,10 @@
 ## a read the drive fails says why. Nothing the UI thread calls reaches the
 ## file system.
 ##
+## The Summary's line picked goes when another record is shown; the Data tab
+## says when the file gives no sample interval, and when a trace has no
+## samples.
+##
 ## Seen to fail: with the tab chosen not put in the settings (no
 ## `ckSettings` when the tab changes), "the File headers tab was not
 ## remembered"; with the columns set up without `syncColumns` (every column
@@ -54,7 +58,9 @@
 ## ImGui's check `columns_count < 512` stopped the program at 600 sets.
 ## With the old layout of the header tables (the description 18 em wide and
 ## the values after the bytes), "the first value is out of view" (x 1603 in a
-## window ending at 1596); either change alone brings it into view.
+## window ending at 1596); either change alone brings it into view. With
+## the line picked kept by file only (as it was), "the line picked stayed";
+## with the Data tab's two lines taken out, it stopped at "data" for each.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves headers-*.png there, and, with the
@@ -69,7 +75,7 @@
 import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
-import viewSEG/ui/imgui/[agentshot, app]
+import viewSEG/ui/imgui/[agentshot, app, headerswindow]
 import utils/[faultyfs, fixtures]
 
 func centre(r: Rect): Vec2 =
@@ -242,6 +248,47 @@ withFixtures fx:
       for k in 0 ..< 8: f.click(wait - 10 * k, "headers.sets next")
       result = wait > 90 and f.shown("headers.sets st1cs577.channelType 0")))],
     fx.dir / "cache")
+
+  # The Summary's picked line goes when another record is shown (its lines
+  # are another record's).
+  runSteps(fx.surveySegy(), [
+    ("shown", Step(proc (f: FrameInfo; wait: int): bool =
+      f.laidOut and f.shown("headers.summary Standard") and wait > 3)),
+    ("a line picked", Step(proc (f: FrameInfo; wait: int): bool =
+      # (twice: the first click only brings the window forward)
+      f.clickAt(wait, f.markOf("headers.summary Standard").centre, twice = true)
+      result = wait > 12 and f.headersWindow.summaryPicked >= 0)),
+    ("another record", Step(proc (f: FrameInfo; wait: int): bool =
+      if wait == 1: f.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
+      result = wait > 8 and f.laidOut and
+        f.core.panels[f.core.findPanel(MainPanel)].layers[0].source.gather == 1
+      if result:
+        doAssert f.headersWindow.summaryPicked == -1, "the line picked stayed"))],
+    fx.dir / "cache")
+
+  # The Data tab says when the file gives no sample interval (the times
+  # count samples), and when a trace has no samples.
+  let noSamples = fx.dir / "no-samples.sgy"
+  block:
+    var bytes = readFile(fx.demoFile("survey.sgy"))
+    bytes[3220] = '\0' # samples per trace, bytes 3221-3222
+    bytes[3221] = '\0'
+    writeFile(noSamples, bytes)
+  for (path, mark) in [(fx.noIntervalSegy(), "headers.data no interval"),
+      (noSamples, "headers.data none")]:
+    runSteps(path, [
+      ("shown", Step(proc (f: FrameInfo; wait: int): bool =
+        result = f.core.panels[f.core.findPanel(MainPanel)].laidOut and wait > 3
+        if result: f.apply Command(kind: ckSelect, traces: @[f.core.sessions[0].base + 1],
+          mode: smReplace))),
+      ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.tab trace")
+        wait > 8 and f.shown("headers.trace tab data"))),
+      ("data", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.trace tab data")
+        result = wait > 8 and f.shown(mark)
+        if result: f.shoot("headers-" & mark.replace(' ', '-') & ".png")))],
+      fx.dir / "cache")
 
   # The Trace tab: empty until a trace is chosen; the trace under the
   # pointer, kept when the pointer leaves the plot; a click selects one, its

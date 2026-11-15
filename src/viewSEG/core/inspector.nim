@@ -270,10 +270,14 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
         try:
           d.keys = f.file[].traceKeys(t.trace) # (the index, in memory)
           d.joined = f.file[].index.joinedGroups(t.trace)
-          if usable(d.keys.intervalUs): d.dtMs = d.keys.intervalUs / 1000
+          if usable(d.keys.intervalUs):
+            d.dtMs = d.keys.intervalUs / 1000
+            d.intervalKnown = true
           else:
             let us = f.file[].sampleIntervalUs(t.trace)
-            if usable(us): d.dtMs = us / 1000
+            if usable(us):
+              d.dtMs = us / 1000
+              d.intervalKnown = true
           if usable(abs(d.keys.t0Ms)) or d.keys.t0Ms == 0: d.t0Ms = d.keys.t0Ms
           if req.headers:
             p.beat(f.path)

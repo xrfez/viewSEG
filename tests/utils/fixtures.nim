@@ -433,6 +433,38 @@ proc manyTracesSegy*(fx: Fixtures; traces: int; samples = 4): string =
     w.writeTrace(k, buf)
   w.checkClose()
 
+proc noIntervalSegy*(fx: Fixtures): string =
+  ## One record of 4 traces of `LongSamples` samples (a 25 Hz sine at 2 ms)
+  ## whose headers give no sample interval (0).
+  result = fx.dir / "no-interval.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: no sample interval"]))
+  var buf = newSeq[float32](LongSamples)
+  for i in 0 ..< LongSamples:
+    buf[i] = float32(sin(2 * PI * WaveHz * float64(i) * DtMs / 1000))
+  for channel in 1 .. 4:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(channel), 0.0,
+      DtMs * 1000, tsLive)
+    w.writeTrace(k, buf)
+  w.checkClose()
+  # (the writer wants an interval): the binary header's (bytes 3217-3218,
+  # and its extended one, 3273-3280) and each trace header's (bytes 117-118,
+  # and its extension's, 145-152, when it has one) set to 0
+  var bytes = readFile(result)
+  let extended = ord(bytes[3504]) * 256 + ord(bytes[3505]) # textual headers after the binary
+  let first = 3600 + 3200 * extended
+  let traceBytes = (bytes.len - first) div 4
+  for at in [3216, 3217]: bytes[at] = '\0'
+  for at in 3272 .. 3279: bytes[at] = '\0'
+  for t in 0 ..< 4:
+    let start = first + t * traceBytes
+    for at in [116, 117]: bytes[start + at] = '\0'
+    if traceBytes - 4 * LongSamples >= 480:
+      for at in 240 + 144 .. 240 + 151: bytes[start + at] = '\0'
+  writeFile(result, bytes)
+
 proc pilotSegy*(fx: Fixtures): string =
   ## One sweep trace (`pilotSample`), trace identification code 6 (sweep).
   result = fx.dir / "pilot.sgy"

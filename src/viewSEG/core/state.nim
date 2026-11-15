@@ -102,6 +102,7 @@
 import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
+from processSEG/pipeline import Pipeline, items
 import closer, diskio, edits, filejobs, filelist, filesystem, inbox, inspector, jobs, join, layouts,
   log, mapstate, panels, persist, pick, reader, recordqc, selection, session, settings, shots,
   spread, survey, surveyjobs, threads, tiles, watch, zoom
@@ -416,8 +417,9 @@ type
       ## its traces are read so); NoSession otherwise
     record: (SessionId, int)
       ## a SEG-D record: its file and index; (NoSession, -1) for none
-    flow: (bool, int, GatherKind)
-      ## the plot's polarity, its pipeline's length, the gather's kind
+    flow: (bool, string, GatherKind)
+      ## the plot's polarity, its pipeline's steps (`stepsText`), the
+      ## gather's kind
     display: DisplaySettings
       ## the plot's display, compared by `sameProcessing`
     joins: int
@@ -1664,6 +1666,11 @@ proc relink(state: var AppState) =
   state.hoverNote = if sel.hover >= 0: state.noPointNote() else: state.noTraceNote()
   state.linked = (state.survey.revision, sel.revision, state.loading.len, sel.activeGather)
 
+func stepsText(p: Pipeline): string =
+  ## A pipeline's steps and their parameters, as text, to compare (a step
+  ## has no `==`): another step or parameter is another text; "" for none.
+  for op in p: result.add $op & ";"
+
 proc followInspect(state: var AppState) =
   ## After every change: the traces the Headers window's Trace tab is about
   ## found again when the selection changed, and its reader asked for what
@@ -1707,7 +1714,7 @@ proc followInspect(state: var AppState) =
     if shown >= 0:
       let layer = state.panels[k].layers[0]
       want.shown = state.sessions[shown].id
-      want.flow = (layer.reversed, layer.pipeline.len, state.gatherKind(layer))
+      want.flow = (layer.reversed, stepsText(layer.pipeline), state.gatherKind(layer))
       want.display = layer.display
   template was: untyped = state.asked
   if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
