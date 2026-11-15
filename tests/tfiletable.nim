@@ -14,14 +14,16 @@
 ## Seen to fail: with the sort's closure naming `list` (it held a copy of
 ## every entry), `noAllocationPerFile` counted 40 013 allocations for 20 000
 ## files sorted by size; with the filter lower-casing each name, 20 012; with
-## `update` making every row again after a change, `aScanIsMerged` found an
-## update of 85 ms; with `follow` not moving the indices of the rows after
-## an inserted entry, `changesAreFollowed` found the rows differing from
-## those made from scratch at its first insertion.
+## `update` making every row again after a change, `aScanIsMerged` found "the
+## rows were made from scratch 156 times" and, with that count taken out,
+## "the median merge took 130011 us, a sort of all the rows 223950 us";
+## with `follow` not moving the indices of the rows after an inserted entry,
+## `changesAreFollowed` found the rows differing from those made from
+## scratch at its first insertion.
 ##
-## Runs alone: it bounds the time an update of the table takes (25 ms).
+## Runs alone: it compares the time of a merge with that of a sort.
 
-import std/[monotimes, random, times]
+import std/[algorithm, monotimes, random, times]
 import viewSEG/core/filelist
 import viewSEG/view/filetable
 
@@ -103,24 +105,39 @@ block noAllocationPerFile:
 
 block aScanIsMerged:
   # 100 000 files, listed in batches and shown sorted by size: each update
-  # merges the batch into the rows (it used to sort them all again).
+  # merges the batch into the rows (it used to sort them all again). The
+  # work is counted: the rows are made from scratch once, for the first
+  # batch. And the time is compared with what making them from scratch
+  # takes in the same run, under the same load (not with a fixed bound,
+  # which a busy machine passed): the median merge takes a small part of a
+  # sort of all the rows.
   var big = FileList(gen: 1, revision: 1)
   var t: FileTable
   var batch: seq[FileEntry]
-  var worst = Duration()
+  var merges: seq[Duration]
+  let order = FileOrder(column: fcSize, descending: true)
   for i in 0 ..< 100_000:
     batch.add entry("shot" & $i & ".sgd", fkSegd, int64((i * 7919) mod 100_003), i mod 97)
     if batch.len == 640:
       big.merge(batch)
       batch.setLen 0
       let t0 = getMonoTime()
-      t.update(big, "", FileOrder(column: fcSize, descending: true))
-      worst = max(worst, getMonoTime() - t0)
-  doAssert worst < initDuration(milliseconds = 25), "an update took " &
-    $worst.inMilliseconds & " ms"
-  var fresh: FileTable
-  fresh.update(big, "", FileOrder(column: fcSize, descending: true))
-  doAssert t.rows == fresh.rows
+      t.update(big, "", order)
+      merges.add getMonoTime() - t0
+  doAssert t.rebuilds == 1, "the rows were made from scratch " & $t.rebuilds & " times"
+  var sort = initDuration(days = 1)
+  for _ in 1 .. 3:
+    var fresh: FileTable
+    let t0 = getMonoTime()
+    fresh.update(big, "", order)
+    sort = min(sort, getMonoTime() - t0)
+    doAssert t.rows == fresh.rows
+  merges.sort()
+  let median = merges[merges.len div 2]
+  doAssert median.inMicroseconds * 4 < sort.inMicroseconds, "the median merge took " &
+    $median.inMicroseconds & " us, a sort of all the rows " & $sort.inMicroseconds & " us"
+  echo "tfiletable: the median merge ", median.inMicroseconds, " us, a sort of all the rows ",
+    sort.inMicroseconds, " us"
 
 block changesAreFollowed:
   # Files added, changed and taken out at random, a few at a time between

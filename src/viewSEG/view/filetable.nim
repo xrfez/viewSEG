@@ -34,6 +34,7 @@ type
     touched: seq[int] ## `follow`'s own buffer
     chosen: tuple[path: string; row, rowsRev: int]
       ## the row last found for a path
+    rebuilt: int ## how often the rows were made from scratch
 
 const kindRank = block:
   ## Each kind's place when the types are sorted by the names shown.
@@ -154,7 +155,13 @@ proc update*(t: var FileTable; list: FileList; filter: string; order: FileOrder)
   t.order = order
   t.made = true
   t.rebuild(list)
+  inc t.rebuilt
   inc t.rowsRev
+
+func rebuilds*(t: FileTable): int {.inline.} =
+  ## How often `update` made the rows from scratch (a sort of them all),
+  ## rather than following the list's changes (for tests).
+  t.rebuilt
 
 func rowOf*(t: FileTable; list: FileList; path: string): int =
   ## The row showing `path`; -1 when it is not shown.
