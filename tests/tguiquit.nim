@@ -30,7 +30,7 @@ withFixtures fx:
     elif f.index >= 10 and f.core.panels[f.core.findPanel(MainPanel)].laidOut:
       fault(config, fkDelay, {foOpen}, delay = initDuration(milliseconds = 1500))
       var s = f.core.settings
-      s.theme = "saved slowly"
+      s.theme = "nord" # a theme there is: one that is not falls back to "" at once
       f.apply Command(kind: ckSettings, settings: s)
       stopping = true
       stoppedAt = getMonoTime()
@@ -40,12 +40,13 @@ withFixtures fx:
   let code = run(RunOptions(persist: true, configDir: some(config),
     logDir: some(config / "logs"), openPaths: @[fx.surveySegy()], windowSize: (1280, 800),
     theme: forceDark, userThemeDir: some(config / "no-user-themes"),
+    assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]),
     indexCacheDir: some(config / "cache"), onFrame: onFrame))
   let took = getMonoTime() - stoppedAt
   fault(config, fkNone)
   doAssert code == 0, "run() exit code " & $code
   doAssert stopping, "the setting was never changed"
-  doAssert "saved slowly" in readFile(config / SettingsFileName),
+  doAssert "(theme \"nord\")" in readFile(config / SettingsFileName),
     "the setting is not in the settings file"
   doAssert saving > 0, "no frame said it was saving (the quit took " &
     $took.inMilliseconds & " ms)"
