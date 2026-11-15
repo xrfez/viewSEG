@@ -114,9 +114,9 @@ type
     ckShowFile = "show file"             ## show a file in a panel, in place of the one it shows
     ckShowTrace = "show trace"           ## show a trace of a file (a message names it), selected
     ckClose = "close"                    ## close an open file
-    ckCancelJob = "cancel job"
-    ckReorderJob = "reorder job"
-    ckRemoveJob = "remove job"
+    ckCancelJob = "cancel job"           ## stop a running job, or one that waits
+    ckReorderJob = "reorder job"         ## move a waiting job in its lane's queue
+    ckRemoveJob = "remove job"           ## take a waiting or finished job off the list
     ckGather = "go to gather"            ## show another gather of the file a panel shows
     ckView = "view"                      ## what a panel's plot shows (zoom, pan, size)
     ckDisplay = "display"                ## how a panel's layer 0 is drawn
@@ -140,7 +140,7 @@ type
     ckClearEdits = "clear edits"         ## take every edit of a panel's file away
     ckHover = "hover"                    ## the trace under the cursor
     ckSelect = "select"                  ## change the selected traces
-    ckClearSelection = "clear selection"
+    ckClearSelection = "clear selection" ## no trace selected
     ckLoadSurvey = "load survey"         ## read SPS or P1 files into the survey
     ckUnloadSurvey = "unload survey"     ## take a survey file's layer out of the survey
     ckMapView = "map view"               ## what the map shows (zoom, pan, size)
@@ -158,13 +158,15 @@ type
         ## relative or absolute: one file opens once, however it is named
       showFirst*: bool                ## ckBrowse: show the first file found in the main panel
     of ckClose: file*: SessionId
+      ## the open file's id
     of ckCancelJob, ckRemoveJob: job*: JobId
+      ## the job's id
     of ckReorderJob:
-      reordered*: JobId
+      reordered*: JobId               ## the job's id
       position*: int                  ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
         ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits, ckFilter:
-      panel*: PanelId
+      panel*: PanelId                 ## the panel's id (1: the Seismic window)
       gather*: int                    ## ckGather: index into the file's gathers
       path*: string                   ## ckShowFile, ckShowTrace: the file to show
       traceIndex*: int                ## ckShowTrace: the trace's index (in its record)
@@ -183,7 +185,7 @@ type
     of ckHover: trace*: int           ## survey-wide trace id; -1 for none
     of ckSelect:
       traces*: seq[int]               ## survey-wide trace ids
-      mode*: SelectMode
+      mode*: SelectMode               ## how they change the selection
     of ckClearSelection, ckResetSettings: discard
     of ckSettings: settings*: Settings
     of ckExportSettings, ckImportSettings, ckLoadLayout, ckExportLayout, ckImportLayout,
@@ -191,13 +193,15 @@ type
       docPath*: string                ## the file written or read
     of ckLayout: arrangement*: string ## the toolkit's layout text
     of ckSaveLayout: layoutName*: string
+      ## the name to keep it under
     of ckUnloadSurvey: layer*: SurveyLayerId
+      ## the survey layer's id
     of ckMapView:
       mapView*: MapView               ## what the map shows now
       mapRemember*: bool              ## a gesture starts: keep the view it replaces for back
     of ckMapBack: discard
     of ckMapLayer:
-      mapLayer*: MapLayerKey
+      mapLayer*: MapLayerKey          ## the layer: its kind, file and role
       shown*: bool                    ## drawn, or hidden
     of ckSelectPoints, ckHoverPoints, ckShowPoints:
       points*: seq[PointRef]

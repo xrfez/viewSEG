@@ -13,6 +13,9 @@ Dependencies point down only. `tests/tlayers.nim` enforces the rules by reading 
 src/viewSEG.nim               entry point: picks the frontend (-d:frontend=imgui, the default)
 src/viewSEG/ui/imgui/         THE ONLY CODE THAT KNOWS IMGUI, IMPLOT OR SDL
         │  (a future ui/<toolkit>/ replaces this directory)
+        ├──────────────────▶ src/viewSEG/remote/   agent control: an MCP server on a thread
+        │                                           of its own; posts Commands, answers from
+        │                                           the state at frame boundaries (core only)
         ▼
 src/viewSEG/gpu/              GPU resources for OpenGL frontends: float32 textures,
         │                     the density and wiggle shaders, the plot's image,
@@ -34,7 +37,8 @@ src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows res
 | `view` | View models such as `PanelView`, `TableModel`, `TreeModel`, `PlotSeries` and the map's `MapLayerView`. Each has plain-Nim geometry (`Vec2`, `Rect`, `Rgba`) and a `revision` counter that bumps on change | `ui`, `gpu`, `platform`, any toolkit |
 | `gpu` | OpenGL 3 objects behind small procs: upload a sample tile as `R32F` textures (`textures`), the density shader and its colour-map LUT (`density`), the wiggle shader (`wiggle`), the plot's image that draws a panel's tiles with them (`plotimage`), and the map's image of the survey's points (`mappoints`). It loads the GL functions it needs itself (`gpu/gl`), through a loader the frontend passes in (`SDL_GL_GetProcAddress`), so it imports no GL binding package | `ui`, any toolkit (OpenGL itself is allowed) |
 | `platform` | `winres` (compile-time manifest, icon, version info), window chrome (DWM attributes on a native window handle), config paths, and whatever else needs raw OS APIs. Services the windowing library already has (SDL3: file dialogs, system theme, tray) are wrapped in `ui/<toolkit>/shell` instead, because only `ui` may import SDL | `ui`, `core`, any toolkit |
-| `ui/imgui` | The frame loop, docking layout and viewports, widgets that draw view models, input → `Command`, and `shell` (SDL3's file dialog, system theme and tray; results come back as inbox messages) | (top layer) |
+| `remote` | Agent control (below, "Agent control"): the Model Context Protocol subset, the server thread and its socket, the tools, the command schema made from `Command`, and the stdio bridge an MCP client starts. A front end beside the windows: it reads `AppState` and posts `Command`s, on the UI thread, when the frontend calls it once per frame | `ui`, `gpu`, `view`, `platform`, any toolkit |
+| `ui/imgui` | The frame loop, docking layout and viewports, widgets that draw view models, input → `Command`, and `shell` (SDL3's file dialog, system theme and tray; results come back as inbox messages); starts agent control and gives it the screenshot and the drawn view | (top layer) |
 
 ## Rules that keep the toolkit replaceable
 
@@ -104,6 +108,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
 | Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
+| Agent server | `remote/server`, started only when agent control is turned on | Accepts MCP clients on the socket, reads and frames their messages, answers the handshake and the tool list itself, queues tool calls for the UI thread and writes the answers it is given; never reads or changes `AppState` |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
 | Pool workers | processSEG: one `ProcessPool`, made by `core` at start-up | The rows of `pool.apply`, `pool.pickInto` and `pool.traceAmplitudeInto`; destroyed at shutdown, once every caller has stopped |
 
@@ -684,7 +689,7 @@ type
 
   CommandKind = enum         # core/state: every user intent, the only way state changes
     ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
-    ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack,
+    ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckReverseAll, ckBack,
     ckEdit, ckUndoEdit, ckClearEdits, ckHover, ckSelect,
     ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
     ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog,
@@ -806,3 +811,125 @@ undone by its inverse: a file keeps only its last change, which `ckUndoEdit` rev
 `ckClearEdits` empties the lists and is undone the same way. Header edits are a patch,
 undone by removing an entry; views have "back". None of them needs a history of
 commands.
+
+## Agent control
+
+An agent (any client of the Model Context Protocol, MCP: Claude Code, Claude Desktop, an
+editor) can operate the running program while the user watches. It is a third front end
+beside the windows and the tests: it posts the same `Command`s the windows post and reads
+the same `AppState`, so what an agent does happens on screen, and `core` does not change
+for it. How to turn it on and connect a client, and the tools, are in `agent-control.md`.
+
+### Where it sits
+
+`src/viewSEG/remote/` imports `core` (and parseSEG, for a trace's header rows) and nothing
+above it; `tests/tlayers.nim` checks that, and that nothing below imports it.
+
+| Module | Holds |
+|---|---|
+| `remote/protocol` | JSON-RPC 2.0 framing (one message per line), bounded reading and parsing, the MCP handshake, the tool list |
+| `remote/schema` | JSON for core's types, the command tool's schema and decoder, made from `Command` |
+| `remote/tools` | The five tools, answered from `AppState` on the UI thread |
+| `remote/server` | The server thread: the socket, its clients, the queue of calls between the threads |
+| `remote/control` | What the frontend owns: start, stop, `serve` once per frame, the sign's state |
+| `remote/client` | The other end: `--mcp-stdio` (the bridge an MCP client starts) and `--mcp-call` |
+
+The frontend owns an `AgentControl` beside its `AppState`. It calls `serve` once per frame,
+after the frame is rendered and before the buffers swap, with two hooks only a toolkit can
+give (`Frontend`): `shoot`, a PNG of a part of that frame, and `drawnView`, the view the
+plot image was last drawn for.
+
+### A call, from the socket to the frame
+
+1. **Server thread** (`remote/server`). One thread `poll`s the listening socket, its
+   clients and a wake pipe. It reads, cuts the bytes into lines, and parses each with
+   the bounds below. It answers `initialize`, `ping`, `tools/list` and notifications
+   itself: they need no state. A `tools/call` becomes a `Call` (the client, a serial,
+   the request's id as JSON text, the tool, its arguments as JSON text), queued under
+   the queue's lock. It never touches `AppState`.
+2. **Frame boundary** (`remote/control`, UI thread). `serve` takes what was queued (a
+   swap under the lock, as `drainInbox` does) and answers the calls in turn, at most 8
+   a frame: `command` is decoded and given to `apply`, as a window's command is; `state`
+   and `headers` read the accessors; `screenshot` asks the hook; `wait` is kept and
+   looked at every frame until it holds or its time is up. Once a call has applied a
+   command, the calls after it wait for the next frame, so they see its effect drawn;
+   at most one screenshot is taken a frame. Each answer, JSON text, goes back under the
+   lock, and a byte on the wake pipe has the server thread write it out.
+3. **Only strings cross.** Each side parses what it reads itself; no `JsonNode` (a `ref`)
+   leaves the thread that made it (ORC, "ORC across threads" above).
+4. **Nobody waits for the other.** The UI thread only swaps queues. The server thread
+   gives each call a deadline (60 s; a wait's own time plus 10 s) and answers an error
+   when it passes; an answer that comes later is dropped, by its serial.
+5. **What the user sees.** Every tool call, connection and disconnection is written to
+   Messages (source `agent`) by the UI thread, and the status bar shows a sign while the
+   server listens and another while a client is connected.
+
+### Transport: a socket, and the program as its own stdio bridge
+
+Messages are JSON-RPC 2.0, one per line, which is the framing of MCP's stdio transport,
+over a **Unix-domain socket**.
+
+- **Why a socket.** The user runs the program on the desktop, and agents often run in a
+  devcontainer that shares only the repository folder with it. Loopback TCP is not
+  shared between the two (each has its own network namespace), and a port is open to
+  every program on the machine. A socket is a file: it is reachable wherever its folder
+  is (a bind mount included), and file permissions guard it.
+- **Where.** The path given (`--mcp=<path>`); else next to the executable when its folder
+  is writable (`bin/viewSEG.sock` for a build in the repository, whose `bin/` is inside
+  the shared folder, so the program on the host and a client in the container find the
+  same socket with no path given); else `$XDG_RUNTIME_DIR/viewSEG/viewSEG.sock`; else
+  the cache folder. `--paths` prints it.
+- **The bridge.** MCP clients start a server as a subprocess and talk to it on stdio:
+  `viewSEG --mcp-stdio[=<path>]`, the same binary, is that subprocess. It answers the
+  handshake and the tool list itself, from its own copy; on the first tool call it
+  connects (and again after the program restarts), sends the client's own `initialize`
+  on, then copies calls and answers. While no program listens, a call is answered with
+  an error saying how to start one, so a client started first works once the user
+  starts the program.
+- **From a shell.** `viewSEG --mcp-call[=<path>] <tool> [<arguments>]` makes one call and
+  prints its text; `--png=<file>` writes an image it returns to that file (for scripts and
+  for checking a change in the running program).
+- **Windows** is not built yet: Nim's `std/net` has no `AF_UNIX` there. What is left:
+  Windows 10's `AF_UNIX` through Winsock, or a named pipe, behind the same framing; the
+  options say it is not available.
+
+### What keeps it safe
+
+- **Off by default.** No thread and no socket until `--mcp` or File > Agent control turns
+  it on, for that run only (it is not a setting); turned off, its clients are disconnected
+  and the socket removed.
+- **Local only.** The socket's mode is 0600 (its owner only), in a folder made 0700 when
+  the program makes it; on Linux the client's user id must be the program's
+  (`SO_PEERCRED`). Never a network port.
+- **The path.** A socket left by a run that crashed (nobody listens on it) is replaced;
+  one another program listens on is left alone and the start refused; anything that is
+  not a socket is never removed. The socket is removed at shutdown.
+- **Bounded.** 4 clients; a message of 1 MiB at most (a longer one is answered with an
+  error and its client disconnected); JSON nested 64 deep at most, checked before
+  it is parsed; 16 calls in flight per client; 64 MiB of answers
+  waiting for a client to read them (one that does not read is disconnected); a
+  screenshot of 16 MiB at most. Bad input gets a JSON-RPC error, never an exception out
+  of the thread.
+- **What an agent may do.** The commands that change what is shown: open, browse, show a
+  file or a trace, close, the jobs, gathers, the view, display, display header, sort,
+  trace filter, polarity, back, the trace edits, hover and selection, survey files.
+  **Refused:** whatever writes a file (the exports, saving or importing a layout, a
+  settings reset, which keeps a backup) and the user's preferences and window
+  arrangement (`ckSettings`, `ckImportSettings`, `ckLayout`, `ckLoadLayout`). Trace
+  edits are the lists beside the file (`core/edits`): a loaded file is never changed.
+- No AI code, key or network access is in viewSEG itself.
+
+### The command tool's schema
+
+`remote/schema` makes the `command` tool's JSON Schema from `Command` at compile time: one
+property per field of the variant (Nim keeps field names unique across its branches),
+`kind` an enum of the names of the kinds offered, each property's description naming the
+kinds that take it. A field's schema comes from its type through generic procs: integers
+(the ids too), numbers, booleans, strings, enums by their names, sets and seqs as arrays,
+objects as their fields. The decoder is made the same way, so a new command or field is
+offered with no glue, and a field of a type those procs do not know fails the build.
+An object given in part changes only the fields given: a panel's display, display header,
+view and trace filter are first taken from the panel, so `{"kind": "display", "panel": 1,
+"display": {"mode": "density"}}` changes the mode alone. An unknown field, a wrong type or
+an unknown name is refused, saying where; `apply` checks the rest as it does for the
+windows. A number that is not one (NaN) is written as `null`, and `null` read as NaN.
