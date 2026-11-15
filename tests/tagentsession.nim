@@ -73,7 +73,11 @@ const Reached = {
   "plot.display.power": "display", "plot.display.untilMs": "display",
   "plot.display.clipPercentile": "display", "plot.display.overlap": "display",
   "plot.order": "sort", "plot.header.auto": "display header",
-  "plot.header.fields": "display header", "scale.length": "", "scale.speed": "",
+  "plot.header.fields": "display header", "plot.processing.raw": "",
+  "plot.processing.aux": "processing", "plot.processing.dc": "processing",
+  "plot.processing.band": "processing", "plot.processing.f1": "processing",
+  "plot.processing.f2": "processing", "plot.processing.f3": "processing",
+  "plot.processing.f4": "processing", "plot.processing.notches": "processing", "scale.length": "", "scale.speed": "",
   "calibrations": "", "readout": "", "sortPresets": "", "customOrder": "sort",
   "messages.autoScroll": "", "messages.hidden": "", "cursorLine": "",
   "files.followLatest": "", "files.prepareNext": "", "map.info": "", "map.lengths": "",
@@ -133,6 +137,9 @@ const Everything = DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDens
 const Keys = @[SortKey(field: hfOffset, descending: true), SortKey(field: hfChannel)]
   ## a sort that is no preset: the user's own keys (`customOrder`) too
 const Header = HeaderChoice(auto: false, fields: @[hfSrcLine, hfChannel])
+const Filters = Processing(raw: true, aux: true, dc: dcTrend, band: pbBandPass, f1: 3, f2: 6,
+  f3: 50, f4: 70, notches: @[NotchFilter(hz: 50, widthHz: 3, harmonics: 3)])
+  ## filters with every field away from its default (raw is never kept)
 
 block carriedFieldByField:
   var kept, before, after = Settings()
@@ -226,6 +233,8 @@ withFixtures fx:
     st.agent(%*{"kind": "sort", "order": toJson(Keys)})
     st.agent(%*{"kind": "trace filter", "filter": {"seismic": true, "auxiliary": true}})
     st.agent(%*{"kind": "reverse all", "reverse": true})
+    st.agent(%*{"kind": "processing", "processing": toJson(Filters)})
+    doAssert st.panel(MainPanel).layers[0].processing == Filters, "not what the agent asked"
     let t = st.firstTrace + 3
     st.agent(%*{"kind": "hover", "trace": t})
     st.agent(%*{"kind": "select", "traces": [t]})
@@ -308,6 +317,7 @@ withFixtures fx:
     st.apply Command(kind: ckDisplay, panel: MainPanel, display: Everything)
     st.apply Command(kind: ckHeader, panel: MainPanel, header: Header)
     st.apply Command(kind: ckSort, panel: MainPanel, order: Keys)
+    st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Filters)
     var d = st.panel(MainPanel).layers[0].display
     d.gain = dgFixed
     d.fixedClip = NaN

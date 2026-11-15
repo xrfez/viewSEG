@@ -41,11 +41,11 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.11.0: capabilities | names | processSEG 0.4.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 38 (22 in part) | 96 | 13 (11 in part) | 50 |
-| `internal` | 14 | 34 | 4 | 39 |
-| `planned` | 38 | 285 | 51 | 347 |
+| `built` | 38 (22 in part) | 96 | 18 (14 in part) | 66 |
+| `internal` | 14 | 35 | 4 | 37 |
+| `planned` | 38 | 285 | 45 | 331 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 19 | 354 | 5 | 59 |
+| `not applicable` | 19 | 353 | 6 | 61 |
 | all | 111 | 779 | 74 | 500 |
 
 In the next library release (below): parseSEG: 5 capabilities (5 planned); processSEG: 8 capabilities (4 planned, 4 to plan).
@@ -252,7 +252,7 @@ name, so these are building blocks for code that works on raw headers.
 |---|---|---|---|
 | Chunk metadata from parseSEG reads | `initChunkMeta`, `chunkMeta`, `intervalMs`, `ChunkMeta` (`isLive`, `sampleTimeMs`, `isFailed`, `liveSamples`, `len`, `rows`, `dtMs`, `firstSample`, `failedCount`, `failedRow`, `keys`, `t0Ms`, `sub`), `sameInterval`, `checkShape` | internal: every processing call; killed traces are passed as failed rows, so the processing and the levels pass them by | internal; not applicable (`chunkMeta`, `intervalMs`, `ChunkMeta`, `isLive`, `sampleTimeMs`, `failedCount`, `failedRow`, `sameInterval`, `checkShape`: the reader makes each meta with `initChunkMeta` from its chunk's rows, interval, failed and killed rows) |
 | Row views and scratch | `rowBlock`, `RowBlock` (`len`, `cols`, `row`, `rowPtr`, `sub`), `Workspace`, `initWorkspace`, `reserve`, `capacity`, `fits`, `scratch`, `WorkspaceSize` (`+`, `max`), `SampleType` | internal: allocation-free processing | internal; not applicable (`WorkspaceSize`, `fits`, `SampleType`: the reader reserves what its plan needs) |
-| Remove mean or trend | `demean`, `detrend`, `demeanOp`, `detrendOp` | Processing window: remove DC / trend | planned |
+| Remove mean or trend | `demean`, `detrend`, `demeanOp`, `detrendOp` | Seismic window: Filters in its strip, "DC removal": the mean (`demeanOp`) or the mean and trend (`detrendOp`), before the filter; `demean` and `detrend` on their own in the processing window | built (the Seismic window's Filters: `demeanOp`, `detrendOp`); planned (the processing window) |
 | Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Seismic window: "Reverse polarity" of a trace or the selection (`R`, the plot's menu: `reversePolarity` on its live samples where the reader prepares them, before the pipeline, as `polarityOp` would; the Headers window's Data tab, as displayed, the same) and "Reverse polarity of all traces" (`polarityOp` first in the window's display pipeline); processing window: scale and clip; the wiggles' clip at the trace overlap is the shader's own | built (polarity of a trace, of the selection, of all traces); planned (the rest) |
 | Top and bottom mutes (time, table, LMO) | `timeMute`, `tableMute`, `lmoMute`, `muteTop`, `muteBottom`, `muteTopOp`, `muteBottomOp`, `muteTimeMs`, `MuteKind`, `MuteCurve`, `kind` | Processing window: mutes, drawn as a line on the panel, table picked by clicking | planned |
 | Pad tapers | `cosTaperInto`, `taperPads` | processSEG's filters pad and taper with them | not applicable (inside processSEG's filters; for a caller's own padded kernels) |
@@ -270,14 +270,14 @@ name, so these are building blocks for code that works on raw headers.
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Trapezoid band-pass, low-cut, high-cut (zero phase) | `bandPass`, `lowCut`, `highCut`, `Corners`, `bandPassOp`, `filterOp`, `initFilterPlan`, `FilterPlan` (`samples`, `nfft`, `spec`, `dtMs`, `workspaceSize`), `applyFilter`, `FilterSpec`, `ResponseKind` | Processing window: band-pass | planned |
+| Trapezoid band-pass, low-cut, high-cut (zero phase) | `bandPass`, `lowCut`, `highCut`, `Corners`, `bandPassOp`, `filterOp`, `initFilterPlan`, `FilterPlan` (`samples`, `nfft`, `spec`, `dtMs`, `workspaceSize`), `applyFilter`, `FilterSpec`, `ResponseKind` | Seismic window: Filters in its strip: low-cut, high-cut or band-pass by four corners (`bandPassOp(Corners)`; with notches, `filterOp(bandPass(corners).withNotch(...))`), live as a slider moves, run by the panel's reader on the samples it holds; the filter on its own (`initFilterPlan`, `applyFilter`) for the spectrum and exports | built (the Seismic window's Filters: `bandPass`, `Corners`, `bandPassOp`, `filterOp`); planned (`lowCut`, `highCut`, the filter plan on its own) |
 | Butterworth magnitudes | `butterBandPass`, `butterLowCut`, `butterHighCut` | Processing window: Butterworth | planned |
-| Notches and zero DC | `withNotch`, `withZeroDc`, `Notch` | Processing window: notch (mains 50 / 60 Hz) | planned |
+| Notches and zero DC | `withNotch`, `withZeroDc`, `Notch` | Seismic window: Filters in its strip, notches (50 or 60 Hz in one click, any frequency and width, with harmonics: `withNotch` once for each below Nyquist); zero DC in the processing window | built (the Seismic window's Filters: `withNotch`, `Notch`); planned (`withZeroDc`) |
 | IIR, zero or minimum phase | `initIirPlan`, `iirOp`, `IirPhase`, `IirPlan` (`order`, `phase`), `iirLanes`, `causalEnergyFraction` | Processing window: IIR, phase choice | planned |
 | Trend handling at the edges | `TrendRemoval` | Processing window, advanced | planned |
 | Filter response | `response`, `responseInto`, `gainAt`, `magnitudeAt`, `narrowestRampHz` | Response curve in the processing window, over the spectrum | planned |
 | Zoom margins | `requiredMargin`, `impulseLength`, `decodeWindow`, `energyFraction` | internal: zoomed tiles decode enough samples | internal; not applicable (`impulseLength`, `energyFraction`: a plan's `requiredMargin` gives the margin) |
-| Parameter checks against Nyquist | `validate`, `nyquistHz` | The processing window's parameter ranges | planned |
+| Parameter checks against Nyquist | `validate`, `nyquistHz` | Seismic window: Filters: the sliders' range ends at Nyquist (`nyquistHz`), a corner or notch past it is cut there or left out and said; `validate` for a filter built by hand | built (the Seismic window's Filters: `nyquistHz`); not applicable (`validate`: the viewer builds each filter with `bandPass` and `withNotch`, which check it) |
 
 ### Gain
 
@@ -294,10 +294,10 @@ name, so these are building blocks for code that works on raw headers.
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Editable processing flow | `initPipeline`, `Op`, `add`, `insert`, `delete`, `compile`, `plan.apply(b, meta, ws)`, `PipelinePlan`, `generation`, `Pipeline` (`len`, `[]`, `[]=`, `items`, `pairs`, `clear`), `OpKind`, `recordSamples`, `workspaceSize` | Processing window: the flow list, live update; meanwhile each Seismic window's display pipeline (polarity, then its gain type's op), compiled and applied by its reader | internal (the display pipeline); planned (the processing window) |
-| Raw kept, processed into a second buffer | `plan.apply(src, dst, meta, ws)` | Raw / processed toggle key | planned |
+| Editable processing flow | `initPipeline`, `Op`, `add`, `insert`, `delete`, `compile`, `plan.apply(b, meta, ws)`, `PipelinePlan`, `generation`, `Pipeline` (`len`, `[]`, `[]=`, `items`, `pairs`, `clear`), `OpKind`, `recordSamples`, `workspaceSize` | Processing window: the flow list, live update; meanwhile each Seismic window's filters and display pipeline (polarity, then its gain type's op), compiled and applied by its reader | internal (the display pipeline); planned (the processing window) |
+| Raw kept, processed into a second buffer | `plan.apply(src, dst, meta, ws)` | Seismic window: Raw / processed (`P`, and the strip's Raw toggle): the reader keeps the decoded samples itself and processes a copy of them in place for each tile, so a toggle or a moved slider reads nothing | not applicable (the reader keeps the raw samples and copies the rows of each tile before processing them in place) |
 | Plan parts for own threads | `checkApply`, `partCount`, `partNeedsPanel`, `panelFactorOf`, `runPart` | internal: not needed while the pool is used | not applicable (each panel's reader applies its plan whole; a per-panel level is the shader's) |
-| Worker pool | `newProcessPool`, `pool.apply`, `ping`, `ProcessPool`, `workers` | Live processing on all cores (the processing window); each panel's reader applies its plan on its own thread meanwhile | planned |
+| Worker pool | `newProcessPool`, `pool.apply`, `ping`, `ProcessPool`, `workers` | Seismic window: each panel's reader has a pool of its own (`newProcessPool`, up to 4 workers, made when first needed), on which it applies the filters and the display pipeline to each block of the tile's rows (`pool.apply`) | built (the Seismic window's filters and gain: `newProcessPool`, `apply`, `ProcessPool`, `workers`); not applicable (`ping`: a benchmark's measure of a job's overhead) |
 | The ops' parameters, edited in place | `factor`, `dB`, `clip`, `mute`, `filter`, `iir`, `agc`, `norm`, `gainCurve`, `ClipParams`, `MuteParams`, `FilterParams`, `IirParams`, `AgcParams`, `NormalizeParams`, `GainCurveParams` | Processing window: each op's settings (windows, corners, levels) changed in place, the panel following | planned |
 
 ### Velocity and moveout

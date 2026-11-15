@@ -51,6 +51,19 @@
 ##   same view, or on one a little shorter; fewer of its traces, or every
 ##   second or fourth of them, as a turn or a coarser stride asks; at any
 ##   decimation) is made from them, with no read from the file.
+## - **Processing.** The layer's filters (`core/processing`), then its
+##   display pipeline (the polarity, the CPU part of its gain), each a
+##   compiled processSEG plan run on the reader's own `ProcessPool`, its
+##   rows shared out among the pool's workers (made when first needed, ended
+##   with the thread). Only the tile's traces and samples are processed
+##   (`Tile.filtered` counts the traces passed to the filters), so a
+##   change costs what the view holds, not what the file does; a change of
+##   the filters alone is made from the raw samples at hand, with no read
+##   from the file (the panel asks for whole traces while it filters, so
+##   the samples at hand stay enough as the filters' margin changes). The
+##   auxiliary traces go through the filters only when the layer asks
+##   (`Processing.aux`): processSEG passes them by otherwise, and the
+##   display gain never touches them.
 ## - **A drive that does not answer.** The reader *beats* (`fs.now`) as it
 ##   takes each chunk; one that is busy and has not beaten for a while is
 ##   stuck in the file system (`silentFor`), where no note reaches it. The
@@ -62,16 +75,19 @@
 ##   empties its list of cycle roots after closing a prefetcher, before it
 ##   ends a hold, and before it exits. A tile holds no `ref`.
 
-import std/[algorithm, locks, math, monotimes, os, times]
+import std/[algorithm, cpuinfo, locks, math, monotimes, os, times]
 import parseSEG
 import processSEG/pipeline
-import processSEG/core/[basic, rows, types, workspace]
+import processSEG/core/[basic, pool, rows, types, workspace]
 import processSEG/gain/stats
-import edits, filesystem, inbox, jobs, log, panels, readout, sorting, threads, tiles, viewport,
-  wiggle
+import edits, filesystem, inbox, jobs, log, panels, processing, readout, sorting, threads, tiles,
+  viewport, wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
+  HeldTraces = 256
+    ## traces processed at a time from the samples at hand: enough rows for
+    ## every worker of the pool, few enough that a newer note is seen soon
   DecodeWorkers = 2   ## prefetch threads per reader
   HeaderScan = 10_000 ## traces looked at for the header fields a gather has
   MaxRawSamples* = 32 * 1024 * 1024
@@ -93,6 +109,9 @@ type
     read*: ReadRequest
     fields*: seq[HeaderField] ## the display header's rows
     flow*: Pipeline           ## processing for display (`displayPipeline`)
+    filters*: Pipeline
+      ## the layer's filters (`filterPipeline`), run before `flow`; empty for none
+    filterAux*: bool          ## the auxiliary traces go through `filters` too
     clipPercentile*: float64
     reversed*: seq[int]       ## the gather's traces whose polarity is reversed, ascending
     killed*: seq[int]         ## the gather's traces killed, ascending
@@ -149,6 +168,7 @@ type
     layout: PanelLayout
     raw: RawCache
     ws: Workspace
+    pool: ProcessPool    ## the processing's workers; none until first needed
     toldShort: bool      ## the file was found shorter than when it was opened: said once
     toldNotNumbers: bool ## samples that are not numbers were found in the file: said once
 
@@ -341,10 +361,21 @@ proc readyForProcessing(b: RowBlock[float32]; rows: TraceRows): int =
 type Preparing = object
   ## What every block of one request is readied with (`prepare`).
   edits: seq[set[TraceEdit]] ## per row of the request; empty: none
+  filtering: bool
+  filterPlan: PipelinePlan[float32]
+  filterAux: bool
+  filtered: int              ## rows passed to the pool for the filters
   processing: bool
   plan: PipelinePlan[float32]
   firstSample: int           ## the trace sample of column 0
   notNumbers: int            ## rows that held a sample that is not a number
+
+proc poolOf(rd: var Reader): lent ProcessPool =
+  ## The reader's pool, started on first use: up to 4 workers, half the
+  ## cores (several panels' readers share the machine).
+  if rd.pool.workers == 0:
+    rd.pool = newProcessPool(clamp(countProcessors() div 2, 1, 4))
+  rd.pool
 
 proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: TraceRows;
     first: int; failedRows: openArray[int]) =
@@ -352,8 +383,9 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
   ## (`rows`: their traces; `failedRows`: those not decoded, 0-based in the
   ## block, ascending) for the tile: killed rows and rows marked dead in the
   ## file blanked, samples that are not numbers set to 0, the samples of
-  ## reversed rows negated, then the display processing, which passes by
-  ## the blank rows and those not decoded.
+  ## reversed rows negated, then the filters (the auxiliary rows too when
+  ## asked) and the display processing, on the pool, which pass by the
+  ## blank rows and those not decoded.
   pr.notNumbers += readyForProcessing(b, rows)
   var passed: seq[int] # rows of the block not decoded, killed or dead, ascending
   var fi = 0
@@ -372,7 +404,21 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
       for k in 0 ..< b.len:
         if teReversed in pr.edits[first + k] and not meta.isFailed(k):
           reversePolarity(b.row(k, meta.liveSamples(k, b.cols)))
-    if pr.processing: pr.plan.apply(b, meta, rd.ws)
+    if pr.filtering and b.len > 0:
+      try:
+        if pr.filterAux and rows.hasAuxiliary:
+          var keys: seq[TraceKeys]
+          var lengths: seq[int]
+          let live = initChunkMeta(rows.auxLiveRows(keys, lengths), rd.layout.dtMs,
+            pr.firstSample, passed)
+          rd.poolOf.apply(pr.filterPlan, b, live)
+        else:
+          rd.poolOf.apply(pr.filterPlan, b, meta)
+        pr.filtered += b.len
+      except ValueError as e:
+        rd.note(sevError, "The filters stopped on " & rd.name & ": " & e.msg)
+        pr.filtering = false
+    if pr.processing: rd.poolOf.apply(pr.plan, b, meta)
   except ValueError as e:
     rd.note(sevError, "The display processing stopped on " & rd.name & ": " & e.msg)
     pr.processing = false
@@ -439,12 +485,19 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
   let window = q.decodeSpan(rd.layout.samples)
   let skip = q.firstSample - window.a # decoded columns before the kept ones
   let cols = window.len
-  var pr = Preparing(processing: req.flow.len > 0, firstSample: window.a)
+  var pr = Preparing(processing: req.flow.len > 0, filtering: req.filters.len > 0,
+    filterAux: req.filterAux, firstSample: window.a)
+  if pr.filtering:
+    try:
+      pr.filterPlan = req.filters.compile(float32, rd.layout.dtMs, cols,
+        recordSamples = rd.layout.samples)
+    except ValueError as e:
+      rd.note(sevError, "The filters cannot run on " & rd.name & ": " & e.msg)
+      pr.filtering = false
   if pr.processing:
     try:
       pr.plan = req.flow.compile(float32, rd.layout.dtMs, cols,
         recordSamples = rd.layout.samples)
-      rd.ws.reserve(pr.plan)
     except ValueError as e:
       rd.note(sevError, "The display processing cannot run on " & rd.name & ": " & e.msg)
       pr.processing = false
@@ -513,10 +566,10 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
     for row in 0 ..< q.count:
       if heldFailed[at[row]]: failed.add row
     tile.failed = failed.len
-    var work = newSeq[float32](min(ChunkTraces, q.count) * cols)
+    var work = newSeq[float32](min(HeldTraces, q.count) * cols)
     var a = 0
     while a < q.count:
-      let n = min(ChunkTraces, q.count - a)
+      let n = min(HeldTraces, q.count - a)
       let part = list[a ..< a + n] # outlives the rows' view
       let rows = f[].rowsOf(part)
       work.setLen n * cols
@@ -582,6 +635,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
         "be read and are drawn blank" & (if firstError.len > 0: ": " & firstError else: "") &
         ".")
   if given: return
+  tile.filtered = pr.filtered
   tile.traces = list
   var excluded = failed # rows left out of the level: not decoded, killed or dead
   for row in 0 ..< q.count:

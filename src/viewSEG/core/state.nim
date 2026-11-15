@@ -147,6 +147,7 @@ type
     ckHeader = "display header"          ## the rows of a panel's display header
     ckSort = "sort"                      ## the order of a panel's traces
     ckFilter = "trace filter"            ## which of the record's traces a panel shows
+    ckProcessing = "processing"          ## the filters a panel's traces go through, raw or processed
     ckReverseAll = "reverse all"         ## reverse the polarity of every trace of a panel, or not
     ckBack = "back"                      ## a panel's view before the last gesture
     ckSettings = "settings"              ## replace the settings
@@ -207,7 +208,7 @@ type
       position*: int                  ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
         ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckExportEdits, ckImportEdits,
-        ckFilter, ckRetry, ckStopReading, ckPrepare:
+        ckFilter, ckRetry, ckStopReading, ckPrepare, ckProcessing:
       panel*: PanelId                 ## the panel's id (1: the Seismic window; 0 retries the folder)
       gather*: int                    ## ckGather: index into the file's gathers
       path*: string                   ## ckShowFile, ckShowTrace: the file to show; ckPrepare: the next
@@ -226,6 +227,9 @@ type
       filter*: TraceFilter            ## ckFilter: layer 0's traces (seismic, auxiliary)
       listPath*: string
         ## ckExportEdits, ckImportEdits: the list's file (`.nif`, or `.csv`)
+      processing*: Processing
+        ## ckProcessing: layer 0's filters (DC removal, pass band, notches),
+        ## shown raw or processed, the auxiliary traces filtered or not
     of ckHover: trace*: int           ## survey-wide trace id; -1 for none
     of ckSelect:
       traces*: seq[int]               ## survey-wide trace ids
@@ -1394,6 +1398,7 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
   if state.panels[k].layers.len == 0: # a new plot: as the user last had one
     var layer = recordLayer(file, gather)
     layer.display = state.settings.plot.display
+    layer.processing = state.settings.plot.processing
     layer.order = state.settings.plot.order
     state.panels[k].layers.add layer
     state.panels[k].header = state.settings.plot.header
@@ -1442,7 +1447,12 @@ proc requestView(state: var AppState; k: int) =
   let (ahead, kept, most) = if slow: (SlowReadAhead, SlowKeepAhead, SlowMaxAheadValues)
                             else: (ReadAhead, KeepAhead, MaxAheadValues)
   let flow = p.layers[0].displayPipeline(state.gatherKind(p.layers[0]))
-  let margin = displayMargin(flow, p.layout.dtMs)
+  let filters = p.layers[0].processing.filterPipeline(p.layout.dtMs)
+  var margin = displayMargin(flow, p.layout.dtMs) + displayMargin(filters, p.layout.dtMs)
+  # While it filters, whole traces: a filter's margin grows as its ramp
+  # narrows, and the samples the reader holds must still be enough after
+  # a slider has moved, so that it filters them again without a read.
+  if filters.len > 0: margin = max(margin, p.layout.samples)
   let wiggles = p.layers[0].display.drawsWiggles
   if p.pending.gen == p.requestGen:
     # Enough on hand on every side: nothing to ask. The view itself on hand,
@@ -1467,7 +1477,7 @@ proc requestView(state: var AppState; k: int) =
     reversed = e.listIn(teReversed, traces)
     killed = e.listIn(teKilled, traces)
   state.readers[k].request ReaderRequest(read: req, fields: p.shownFields, flow: flow,
-    clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
+    filters: filters, filterAux: p.layers[0].processing.aux, clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
     raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0)
 
 proc remember(state: var AppState; k: int) =
@@ -1863,7 +1873,9 @@ proc followInspect(state: var AppState) =
     if shown >= 0:
       let layer = state.panels[k].layers[0]
       want.shown = state.sessions[shown].id
-      want.flow = (layer.reversed, stepsText(layer.pipeline), state.gatherKind(layer))
+      let filters = layer.processing.filterPipeline(state.panels[k].layout.dtMs)
+      want.flow = (layer.reversed, stepsText(layer.pipeline) & "|" & stepsText(filters) &
+        (if layer.processing.aux: "|aux" else: ""), state.gatherKind(layer))
       want.display = layer.display
   template was: untyped = state.asked
   if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
@@ -1900,6 +1912,8 @@ proc followInspect(state: var AppState) =
   if want.displayed and shown >= 0:
     let layer = state.panels[k].layers[0]
     req.flow = layer.displayPipeline(state.gatherKind(layer))
+    req.filters = layer.processing.filterPipeline(state.panels[k].layout.dtMs)
+    req.filterAux = layer.processing.aux
   for n, t in want.traces:
     let i = state.findTrace(t)
     if i >= 0:
@@ -4052,6 +4066,26 @@ proc applyCommand(state: var AppState; cmd: Command) =
         if order.len > 0 and presetOf(order, s.sortPresets) < 0:
           s.customOrder = order # the user's own keys, offered again
       state.reorder(k)
+  of ckProcessing:
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
+    else:
+      template p: untyped = state.panels[k]
+      let pr = cmd.processing.bounded # whoever sent it
+      let was = p.layers[0].processing
+      if pr != was:
+        p.layers[0].processing = pr
+        inc p.revision
+        state.change(cmd.origin, s): s.plot.processing = remembered(pr)
+        # Only another set of filters (or of the traces they take) reads
+        # again, from the samples at hand: the plot from before stays until
+        # the first new tile, which sets the level again (a filter changes
+        # the amplitudes).
+        let dt = p.layout.dtMs
+        if pr.filterPipeline(dt).stepsText != was.filterPipeline(dt).stepsText or
+            (pr.aux != was.aux and pr.filtering):
+          state.resample(k, relevel = true)
   of ckEdit, ckReverseAll, ckUndoEdit, ckRedoEdit, ckClearEdits:
     # Reversing every trace is an edit of the file, so not a setting: kept with it.
     state.editTraces(cmd)

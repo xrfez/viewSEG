@@ -27,7 +27,8 @@ const
   Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout}
     ## refused: the user's preferences and the windows' arrangement
   Offered* = {ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
-    ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckReverseAll, ckBack,
+    ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckProcessing,
+    ckReverseAll, ckBack,
     ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFileMemory, ckHover, ckSelect,
     ckClearSelection, ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
     ckShowPoints, ckJoin, ckSelectUnmatched, ckRetry, ckStopReading, ckPrepare, ckInspect}

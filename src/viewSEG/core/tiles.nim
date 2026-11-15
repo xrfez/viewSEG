@@ -51,6 +51,9 @@ type
       ## how long its reader waited for the file's samples (`fs.now`): the
       ## drive and the decoding, not the processing; zero when cached
     chunks*: int            ## the reads (prefetch chunks) it took from the file
+    filtered*: int
+      ## the traces its reader passed to the filters (`ProcessPool.apply`):
+      ## those of its request, or none without filters
     raw*: seq[float32]
       ## when asked for (`ReaderRequest.raw`): the samples as the file has
       ## them, before polarity, edits, processing and gain, cut and

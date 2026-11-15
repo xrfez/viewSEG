@@ -16,7 +16,9 @@
 ##   (fills positive)
 ##   ...
 ##   (order (key rcvLine) (key offset descending))
-##   (header auto))
+##   (header auto)
+##   (processing (dc none) (band bandPass) (f1 4.0) (f2 8.0) (f3 60.0) (f4 80.0)
+##    (notch (on true) (hz 60.0) (width 2.0) (harmonics 3)) (aux false)))
 ##  (scale (length inch) (speed false))
 ##  (calibrations (monitor "DELL U2720Q 3840x2160" 163.2))
 ##  (readout time trace channel receiver)
@@ -58,6 +60,8 @@ const
 
   OrientationNames: array[Orientation, string] = ["timeDown", "timeAcross"]
   ModeNames: array[DisplayMode, string] = ["density", "wiggle", "wiggleDensity"]
+  BandNames: array[PassBand, string] = ["none", "lowCut", "highCut", "bandPass"]
+  DcNames: array[DcRemoval, string] = ["none", "mean", "trend"]
   FillNames: array[WiggleFill, string] = ["positive", "negative"]
   ColourNames: array[PlotColours, string] = ["paper", "theme", "custom"]
   GainNames: array[DisplayGain, string] = ["auto", "none", "fixed", "normalized",
@@ -97,7 +101,7 @@ type
 func persistedNames*(): seq[seq[string]] =
   ## Every table of names written for a choice (for tests: each must be a
   ## NIF identifier and unique in its table).
-  @[@ModeNames, @FillNames, @ColourNames, @GainNames, @TimeGainNames, @ScopeNames,
+  @[@ModeNames, @BandNames, @DcNames, @FillNames, @ColourNames, @GainNames, @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
     @TraceTabNames, @HeaderColumnNames]
 
@@ -167,6 +171,25 @@ proc display(w: var NifWriter; d: DisplaySettings) =
   w.value("untilMs", d.untilMs)
   w.value("clipPercentile", d.clipPercentile)
 
+proc writeProcessing*(w: var NifWriter; p: Processing) =
+  ## `p` as the settings file holds it, in a `(processing ...)` tree (how
+  ## a plot is shown, raw or processed, is not written). The same tree can
+  ## keep a file's own filters with what is remembered about the file
+  ## (`readProcessing` takes it back).
+  w.open("processing")
+  w.choice("dc", DcNames[p.dc])
+  w.choice("band", BandNames[p.band])
+  for (tag, x) in [("f1", p.f1), ("f2", p.f2), ("f3", p.f3), ("f4", p.f4)]: w.value(tag, x)
+  for n in p.notches:
+    w.open("notch")
+    w.value("on", n.on)
+    w.value("hz", n.hz)
+    w.value("width", n.widthHz)
+    w.value("harmonics", n.harmonics)
+    w.close()
+  w.value("aux", p.aux)
+  w.close()
+
 proc settingsDocument*(s: Settings): string =
   ## `s` as a NIF document, every setting written (a calibration or a
   ## float that is not finite is not: `cleaned` drops them first).
@@ -198,6 +221,7 @@ proc settingsDocument*(s: Settings): string =
   else:
     for f in s.plot.header.fields: w.ident FieldNames[f]
   w.close()
+  w.writeProcessing(s.plot.processing)
   w.close()
   w.open("scale")
   w.choice("length", LengthNames[s.scale.length])
@@ -445,10 +469,54 @@ proc display(r: var Reading; n: NifNode; d: var DisplaySettings) =
       of "clipPercentile": r.number(c, MinClipPercentile, 100, d.clipPercentile)
       else: r.unknown(c, "plot")
 
+proc readTree(r: var Reading; n: NifNode; p: var Processing) =
+  ## `p` from a `(processing ...)` tree, as `settings` reads it.
+  var notches: seq[NotchFilter]
+  var notched = false
+  for c in n.kids:
+    if c.kind != nkTree: r.unknown(c, "processing")
+    else:
+      case c.tag
+      of "dc": r.choice(c, DcNames, p.dc)
+      of "band": r.choice(c, BandNames, p.band)
+      of "f1": r.number(c, 0, MaxFilterHz, p.f1)
+      of "f2": r.number(c, 0, MaxFilterHz, p.f2)
+      of "f3": r.number(c, 0, MaxFilterHz, p.f3)
+      of "f4": r.number(c, 0, MaxFilterHz, p.f4)
+      of "aux": r.flag(c, p.aux)
+      of "notch":
+        notched = true
+        var x = NotchFilter()
+        for k in c.kids:
+          if k.kind != nkTree: r.unknown(k, "notch")
+          else:
+            case k.tag
+            of "on": r.flag(k, x.on)
+            of "hz": r.number(k, MinNotchHz, MaxFilterHz, x.hz)
+            of "width": r.number(k, MinNotchWidthHz, MaxNotchWidthHz, x.widthHz)
+            of "harmonics": r.integer(k, 1, MaxHarmonics, x.harmonics)
+            else: r.unknown(k, "notch")
+        if notches.len < MaxNotches: notches.add x
+        else: r.unusable(c, "notch", "at most " & $MaxNotches & " notches")
+      else: r.unknown(c, "processing")
+  if notched: p.notches = notches
+  p = remembered(bounded(p))
+
+proc readProcessing*(n: NifNode; name: string; base: Processing;
+    problems: var seq[string]): Processing =
+  ## The filters a `(processing ...)` tree written by `writeProcessing`
+  ## holds, over `base`: what is missing or cannot be used keeps `base`'s
+  ## value, and is said in `problems` (`name`: the document's, for them).
+  var r = Reading(name: name)
+  result = base
+  r.readTree(n, result)
+  problems.add r.problems
+
 proc plot(r: var Reading; n: NifNode; p: var PlotDefaults) =
   var rest = NifNode(kind: nkTree, line: n.line, tag: n.tag)
   for c in n.kids:
-    if c.isTree("order"): r.keys(c, 0, p.order)
+    if c.isTree("processing"): r.readTree(c, p.processing)
+    elif c.isTree("order"): r.keys(c, 0, p.order)
     elif c.isTree("header"):
       if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "auto":
         p.header = HeaderChoice(auto: true)

@@ -62,10 +62,10 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/gain/[curves, gain]
 import processSEG/vibroseis/sweep
-import geometry, orientation, session, viewport, zoom
+import geometry, orientation, processing, session, viewport, zoom
 
-export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, orientation, GatherKind,
-  NormScope, NormStat
+export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, orientation, processing,
+  GatherKind, NormScope, NormStat
 
 type
   PanelId* = distinct int
@@ -177,6 +177,10 @@ type
       ## samples before anything else (`displayPipeline`), so the gain, the
       ## readout and whatever is computed from the layer see reversed data
     display*: DisplaySettings
+    processing*: Processing
+      ## the filters its traces go through (`core/processing`), before the
+      ## polarity and the gain; kept with the layer, so they go with the
+      ## plot to the next record and file
 
   HeaderField* = enum
     ## A value the display header can show above each trace, and a key the

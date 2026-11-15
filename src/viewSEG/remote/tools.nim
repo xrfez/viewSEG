@@ -44,7 +44,7 @@ const
   MaxMessages = 1000
   DefaultWaitSeconds* = 30
   PanelKinds = {ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack,
-    ckShowFile, ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFilter}
+    ckShowFile, ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFilter, ckProcessing}
     ## the kinds of `Command`'s branch with `panel`, a display, a view, a filter
 
 type
@@ -91,8 +91,9 @@ proc toolList*(): string =
   let tools = %*[
     {"name": "command",
      "description": "Do one thing the windows do: open or list files, show a file, a " &
-       "record or a trace, change a panel's view, display, gain, display header, sort " &
-       "or trace filter, kill or reverse traces (kept beside the file, which is never " &
+       "record or a trace, change a panel's view, display, gain, filters (\"processing\": " &
+       "DC removal, low-cut, high-cut, band-pass, notches; raw or processed; Aux filtered " &
+       "or not), display header, sort or trace filter, kill or reverse traces (kept beside the file, which is never " &
        "changed), select traces, load survey files, move the map, show or hide its " &
        "layers, select or hover points on it, show a point's record. The arguments are " &
        "the command: " &
@@ -111,7 +112,7 @@ proc toolList*(): string =
     {"name": "state",
      "description": "What viewSEG holds now: its own folder and working folder " &
        "(program), the file list (fileList), the open files (files), the panels " &
-       "(panels: the file, record, layout, view, display and gain, display header, " &
+       "(panels: the file, record, layout, view, display and gain, filters, display header, " &
        "order, trace filter, polarity, the traces at each position, the edits, whether " &
        "the picture is complete), the selection, the map (its view, its layers, each " &
        "in its group, Preplot (the survey files) or Recorded (the seismic files' own " &
@@ -201,7 +202,7 @@ func clipped(xs: openArray[int]; limit: int): JsonNode =
 
 proc prefill(state: AppState; given: Command; c: var Command) =
   ## What a command of `c`'s kind keeps when not given: its panel's display,
-  ## display header, view, trace filter, order and polarity now (`c` is
+  ## filters, display header, view, trace filter, order and polarity now (`c` is
   ## fresh; `given` is the command as first read, for its panel).
   if c.kind in PanelKinds:
     c.panel = if given.panel == NoPanel: MainPanel else: given.panel
@@ -215,6 +216,7 @@ proc prefill(state: AppState; given: Command; c: var Command) =
         c.filter = p.layers[0].filter
         c.order = p.layers[0].order
         c.reverse = p.layers[0].reversed
+        c.processing = p.layers[0].processing
   case c.kind
   of ckEdit: c.on = true
   of ckMapView: c.mapView = state.map.view
@@ -336,6 +338,9 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
     result["filter"] = toJson(layer.filter)
     result["order"] = toJson(layer.order)
     result["reversed"] = %layer.reversed
+    result["processing"] = toJson(layer.processing)
+    let note = layer.processing.limitNote(p.layout.dtMs)
+    if note.len > 0: result["processingNote"] = %note
   result["positionCount"] = %p.shown.len
   result["positions"] = clipped(p.shown, limit)
   if i >= 0:

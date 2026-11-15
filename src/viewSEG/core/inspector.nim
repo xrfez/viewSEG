@@ -33,8 +33,8 @@
 ##   deadline only.
 ## - **Samples as displayed:** the trace's samples, not numbers set to 0, a
 ##   trace killed or marked dead blanked, a reversed one negated, then the
-##   display processing of the plot that shows it (`flow`, as the panel's
-##   reader runs it): what the status bar's amplitude reads. As recorded:
+##   filters and the display processing of the plot that shows it
+##   (`filters`, `flow`, as the panel's reader runs them): what the status bar's amplitude reads. As recorded:
 ##   the samples as the file holds them.
 ## - At most `MaxInspectedValues` samples in all are kept per answer; the
 ##   rest of a trace is left out and its `cut` says how many.
@@ -43,7 +43,7 @@ import std/[heapqueue, intsets, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
-import edits, filesystem, headers, inbox, jobs, log, selection, threads
+import edits, filesystem, headers, inbox, jobs, log, processing, selection, threads
 
 const
   MaxInspectedValues* = 32 * 1024 * 1024
@@ -105,6 +105,8 @@ type
     headers*: bool      ## read the traces' header fields
     samples*: bool      ## read their samples
     flow*: Pipeline     ## the display processing, for samples as displayed
+    filters*: Pipeline  ## the plot's filters, run before `flow`
+    filterAux*: bool    ## an auxiliary trace goes through `filters` too
 
   InspectorObj = object
     lock: Lock
@@ -208,8 +210,8 @@ proc unreadable(f: InspectFile): string =
 
 func usable(x: float64): bool {.inline.} = x > 0 and x < Inf
 
-proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace; flow: Pipeline;
-    room: int; ws: var Workspace) =
+proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
+    req: InspectRequest; room: int; ws: var Workspace) =
   ## Trace `t`'s samples into `d`: at most `room`, as recorded or as
   ## displayed.
   let n = f[].maxSamples([t.trace])
@@ -228,9 +230,17 @@ proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace; flow: 
   for x in d.samples.mitems:
     if blank or not (abs(x) < Inf): x = 0
   if not blank and teReversed in t.edits: reversePolarity(d.samples) # as the reader does
-  if not blank and flow.len > 0:
-    let list = [t.trace]
-    let plan = flow.compile(float32, d.dtMs, kept, recordSamples = n)
+  let list = [t.trace]
+  if not blank and req.filters.len > 0:
+    let plan = req.filters.compile(float32, d.dtMs, kept, recordSamples = n)
+    ws.reserve(plan)
+    var keys: seq[TraceKeys]
+    var lengths: seq[int]
+    let rows = if req.filterAux: f[].rowsOf(list).auxLiveRows(keys, lengths)
+               else: f[].rowsOf(list)
+    plan.apply(rowBlock(d.samples, 1, kept), initChunkMeta(rows, d.dtMs, 0), ws)
+  if not blank and req.flow.len > 0:
+    let plan = req.flow.compile(float32, d.dtMs, kept, recordSamples = n)
     ws.reserve(plan)
     let meta = initChunkMeta(f[].rowsOf(list), d.dtMs, 0)
     plan.apply(rowBlock(d.samples, 1, kept), meta, ws)
@@ -286,7 +296,7 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
           if req.samples:
             p.beat(f.path)
             fs.mappedRead(f.path)
-            d.readSamples(f.file, t, req.flow, room, ws)
+            d.readSamples(f.file, t, req, room, ws)
             room -= d.samples.len
         except ValueError as e:
           d.problem = e.msg

@@ -37,12 +37,14 @@ type
     maximized*: bool
 
   PlotDefaults* = object
-    ## What a new plot window starts with: the display, the order and the
-    ## display header chosen last. Polarity is not kept: reversing it is an
-    ## operation on the data, not a way of looking at it.
+    ## What a new plot window starts with: the display, the order, the
+    ## display header and the filters chosen last. Polarity is not kept:
+    ## reversing it is an operation on the data, not a way of looking at it;
+    ## nor is showing a plot raw (`Processing.raw`).
     display*: DisplaySettings
     order*: seq[SortKey]
     header*: HeaderChoice
+    processing*: Processing
 
   MessagesView* = object
     ## How the Messages window shows the log.
@@ -233,6 +235,7 @@ func cleaned*(s: Settings): (Settings, int) =
   r.customOrder = uniqueKeys(s.customOrder)
   r.plot.order = uniqueKeys(s.plot.order)
   r.plot.display = remembered(s.plot.display)
+  r.plot.processing = remembered(bounded(s.plot.processing))
   r.recentFiles = uniqueItems(s.recentFiles)
   r.recentFolders = uniqueItems(s.recentFolders)
   if not (r.window.width > 0 and r.window.height > 0):
