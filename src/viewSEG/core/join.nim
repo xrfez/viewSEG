@@ -847,8 +847,10 @@ proc planJoin*(file: ptr SeismicFile; g: SurveyGeometry; opts: JoinOptions;
           j.rcvY)]
         for (r, line, point, index, hx, hy, jx, jy) in ends:
           var c: Coordinates
-          let table = if r == prSource: g.table.sources else: g.table.receivers
-          if table.lookup(line, point, index, c):
+          # (by address: an `if` that gives the table copies it, every
+          # station of the survey, for each trace)
+          let table = if r == prSource: addr g.table.sources else: addr g.table.receivers
+          if table[].lookup(line, point, index, c):
             inc result.found[r]
             if usable(hx, hy):
               let d = hypot(hx - c.x, hy - c.y)
@@ -868,8 +870,9 @@ proc planJoin*(file: ptr SeismicFile; g: SurveyGeometry; opts: JoinOptions;
 proc surveyOf*(g: SurveyGeometry; files: openArray[string]): JoinSurvey =
   ## What geometry `g`, read from `files`, holds.
   result = JoinSurvey(files: @files, gridUnit: g.gridUnit)
-  for (r, table) in [(prSource, g.table.sources), (prReceiver, g.table.receivers)]:
-    for k, c in table:
+  # (by address: an array of the tables would copy them)
+  for (r, table) in [(prSource, addr g.table.sources), (prReceiver, addr g.table.receivers)]:
+    for k, c in table[]:
       if usable(c.x, c.y):
         inc result.stations[r]
         result.lines[r].incl k.line
@@ -883,13 +886,18 @@ proc surveyOf*(g: SurveyGeometry; files: openArray[string]): JoinSurvey =
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
-func wordsUnit*(confirmed: SurveyUnit; g: SurveyGeometry; headers: SurveyUnit): SurveyUnit =
+func wordsUnit*(confirmed: SurveyUnit; grid: GridUnit; headers: SurveyUnit): SurveyUnit =
   ## The unit an import's words give its distances in: the one the user
-  ## confirmed, else the survey files' (SPS H20, H201), else the seismic
-  ## file's headers'; not given when nothing says.
+  ## confirmed, else the survey files' grid unit (SPS H20, H201), else the
+  ## seismic file's headers'; not given when nothing says.
   if confirmed != suNotGiven: confirmed
-  elif g.gridUnit.known and unitOf(g.gridUnit) != suNotGiven: unitOf(g.gridUnit)
+  elif grid.known and unitOf(grid) != suNotGiven: unitOf(grid)
   else: headers
+
+func wordsUnit*(confirmed: SurveyUnit; g: SurveyGeometry; headers: SurveyUnit): SurveyUnit
+    {.inline.} =
+  ## `wordsUnit` with the grid unit of the survey files read into `g`.
+  wordsUnit(confirmed, g.gridUnit, headers)
 
 func distanceWords(d: float64; unit: SurveyUnit): string =
   ## "0.1 ftUS"; "0.1 units" when nothing names the unit.

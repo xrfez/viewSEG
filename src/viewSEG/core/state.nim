@@ -3697,8 +3697,10 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
   case outcome
   of joJoined, joNothing:
     # The distances in the unit confirmed, else the survey files' or the file's.
-    let unit = wordsUnit(j.units.survey, (if j.geometry.isNil: initSurveyGeometry()
-      else: j.geometry[]), (if i >= 0: headerUnitOf(state.sessions[i].crs) else: suNotGiven))
+    # (the grid unit only: an `if` that gives the geometry copies it, every
+    # relation record of a large X file, on the UI thread)
+    let unit = wordsUnit(j.units.survey, (if j.geometry.isNil: GridUnit()
+      else: j.geometry.gridUnit), (if i >= 0: headerUnitOf(state.sessions[i].crs) else: suNotGiven))
     words = planWords(j.plan, j.survey, j.options, unit)
     if i >= 0:
       let s = state.sessions[i]
