@@ -206,26 +206,49 @@ func metresPerUnit*(u: SurveyUnit): float64 =
   of suUsFeet: 1200 / 3937
   else: NaN
 
+func unitNamed*(name: string): SurveyUnit =
+  ## The unit a name says, as files and CRS texts write it: any case, its
+  ## dots and apostrophes left out ("U.S." is "US"), other punctuation and
+  ## brackets as blanks, so that "U.S. Survey Foot", "Feet (US Survey)",
+  ## "US Survey Feet (ftUS)", "Meters (m)", "Intl feet" and "foot_us" read
+  ## as they say. Its words are a metre (m, metre, meter, mtr, plurals), a
+  ## foot (ft, foot, feet), US or survey, international (intl), a degree,
+  ## and blank words such as "grid units"; a foot with US or survey is the
+  ## US survey foot, without it the international foot. A name with any
+  ## other word ("Clarke's foot", "Indian foot", "kilometre") or with words
+  ## that disagree names no unit known.
+  var text = ""
+  for c in name.toLowerAscii:
+    if c in {'.', '\''}: discard
+    elif c in {'a' .. 'z', '0' .. '9'}: text.add c
+    else: text.add ' '
+  var metre, foot, us, intl, degree, other = false
+  for w in text.splitWhitespace:
+    case w
+    of "m", "meter", "meters", "metre", "metres", "mtr", "mtrs": metre = true
+    of "ft", "foot", "feet": foot = true
+    of "ftus", "usft": (foot, us) = (true, true)
+    of "us", "usa", "survey", "american": us = true
+    of "international", "intl", "intnl", "int", "iso": intl = true
+    of "deg", "degs", "degree", "degrees": degree = true
+    of "grid", "unit", "units", "linear", "length", "in", "of", "the": discard
+    else: other = true
+  if other or metre and (foot or degree) or foot and degree or us and intl: suNotGiven
+  elif foot: (if us: suUsFeet else: suFeet)
+  elif metre and not (us or intl): suMetres
+  elif degree and not (us or intl): suDegrees
+  else: suNotGiven
+
 func unitOf*(g: GridUnit): SurveyUnit =
-  ## The unit an SPS header gives (H201's factor to metres, else H20's word).
-  ## Files round the factor (0.3048006, 0.304801): it names the foot it is
-  ## nearest, international (0.3048) or US survey (1200/3937, 2 parts in a
-  ## million more), when it is within 1e-5 of either. A word is read in any
-  ## case, its blanks, `_` and `-` alike ("US survey foot", "foot_us").
+  ## The unit an SPS header gives (H201's factor to metres, else H20's word,
+  ## `unitNamed`). Files round the factor (0.3048006, 0.304801): it names
+  ## the foot it is nearest, international (0.3048) or US survey (1200/3937,
+  ## 2 parts in a million more), when it is within 1e-5 of either.
   if g.metres > 0:
     if abs(g.metres - 1) <= 1e-6: return suMetres
     let (ft, us) = (abs(g.metres - 0.3048), abs(g.metres - 1200 / 3937))
     if min(ft, us) <= 1e-5: return (if us < ft: suUsFeet else: suFeet)
-  var n = ""
-  for c in g.name.strip.toLowerAscii:
-    n.add(if c in {'_', '-', '.'}: ' ' else: c)
-  n = n.splitWhitespace.join(" ")
-  if n in ["m", "meter", "meters", "metre", "metres"]: suMetres
-  elif n in ["ft", "foot", "feet", "international feet", "international foot"]: suFeet
-  elif n in ["us ft", "us feet", "us survey feet", "us survey foot", "survey feet",
-      "survey foot", "ftus", "usft", "ft us", "foot us", "us foot"]: suUsFeet
-  elif n in ["deg", "degree", "degrees"]: suDegrees
-  else: suNotGiven
+  unitNamed(g.name)
 
 func unitOf*(c: CoordinateUnits): SurveyUnit =
   ## The unit a seismic file's headers give its coordinates in.
@@ -250,7 +273,7 @@ func headerUnitOf*(c: FileCrs): SurveyUnit =
   ## made exact by the unit of length its CRS names (`lengthUnit`: "feet"
   ## and a CRS in US survey feet are US survey feet); the CRS's unit when
   ## nothing else says.
-  let named = unitOf(GridUnit(name: c.lengthUnit))
+  let named = unitNamed(c.lengthUnit)
   result = unitOf(c.units)
   if result == suNotGiven or result == suFeet and named == suUsFeet: result = named
 
@@ -372,14 +395,14 @@ func csvHeadUnit(lines: openArray[string]): HeadUnit =
       let sep = if at >= 0: l.find({':', '='}, at) else: -1
       if sep > 0:
         let word = l[sep + 1 .. ^1].strip.strip(chars = {'"', '\'', ';', '.'})
-        let u = unitOf(GridUnit(name: word))
+        let u = unitNamed(word)
         if u != suNotGiven: return HeadUnit(unit: u, said: "\"" & l[1 .. ^1].strip & "\"")
     elif l.len > 0:
       for cell in l.split({',', ';', '\t'}):
         let a = cell.find({'(', '['})
         let b = if a >= 0: cell.find({')', ']'}, a) else: -1
         if b > a + 1:
-          let u = unitOf(GridUnit(name: cell[a + 1 ..< b]))
+          let u = unitNamed(cell[a + 1 ..< b])
           if u != suNotGiven:
             return HeadUnit(unit: u, said: "\"" & cell.strip & "\" (its first row)")
       return

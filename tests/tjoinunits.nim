@@ -3,6 +3,9 @@
 ## and the seismic file's unit following the survey's, so that the user
 ## enters a unit once at most (File > Import > Survey):
 ##
+## - unit names in any spelling files and CRS texts use (a table: case,
+##   dots, brackets, plurals, US / U.S. / survey / intl), and names of other
+##   feet (Clarke's, Indian) read as no unit known;
 ## - the start of an SPS file (H20, H201: 0.3048006096 m a unit is the US
 ##   survey foot, 0.3048 the international, 1 the metre; a rounded factor;
 ##   80-byte cards without line ends), a SEG P1 file's H2000, a CSV table's
@@ -23,8 +26,10 @@
 ##   window's (`importUnits`, an agent's import); after an import the units
 ##   confirmed for the file label it.
 ##
-## Seen to fail: with H201's factor left out of the SPS reading (the name
-## only), "Morgantown's headers: feet" (not US survey feet); with
+## Seen to fail: with the unit words matched whole, as first written,
+## "unit words read wrong: \"Meters (m)\": not given, ..."; with H201's
+## factor left out of the SPS reading (the name only), "Morgantown's
+## headers: feet" (not US survey feet); with
 ## `fileUnitOf` taking the headers' "feet" as it is, "feet, US survey feet:
 ## feet"; with `unitsDisagree` counting SEG-Y's "feet" against US survey
 ## feet, "the units disagree: The coordinates' units disagree (...)".
@@ -49,6 +54,32 @@ func sps(grid, factor: string): string =
   "H00 SPS format version num.     SPS 2.1;\n" &
     (if grid.len > 0: "H20 Description of grid units   " & grid & ";\n" else: "") &
     (if factor.len > 0: "H201Factor to meters            " & factor & ";\n" else: "")
+
+block unitWords:
+  # Unit names as files and CRS texts write them: any case, punctuation,
+  # plurals, abbreviations, a symbol in brackets.
+  const table = [
+    ("m", suMetres), ("M", suMetres), ("metre", suMetres), ("Metres", suMetres),
+    ("meter", suMetres), ("METERS", suMetres), ("Meters (m)", suMetres), ("mtr", suMetres),
+    ("ft", suFeet), ("Feet", suFeet), ("foot", suFeet), ("ft.", suFeet),
+    ("international feet", suFeet), ("Intl feet", suFeet), ("Int'l foot", suFeet),
+    ("international foot (ft)", suFeet), ("Feet (international)", suFeet),
+    ("US survey feet", suUsFeet), ("U.S. survey feet", suUsFeet),
+    ("U.S. Survey Foot", suUsFeet), ("Feet (US Survey)", suUsFeet),
+    ("US Survey Feet (ftUS)", suUsFeet), ("survey ft", suUsFeet), ("ftUS", suUsFeet),
+    ("US-ft", suUsFeet), ("foot_us", suUsFeet), ("usft", suUsFeet), ("US feet", suUsFeet),
+    ("U.S. feet", suUsFeet), ("feet, US survey", suUsFeet), ("[ftUS]", suUsFeet),
+    ("degrees", suDegrees), ("Deg", suDegrees),
+    ("", suNotGiven), ("N/A", suNotGiven), ("Clarke's foot", suNotGiven),
+    ("Indian foot", suNotGiven), ("British foot (Sears 1922)", suNotGiven),
+    ("chains", suNotGiven), ("metres and feet", suNotGiven), ("kilometre", suNotGiven)]
+  var wrong: seq[string]
+  for (word, unit) in table:
+    let got = unitOf(GridUnit(name: word))
+    if got != unit: wrong.add "\"" & word & "\": " & $got & ", not " & $unit
+  doAssert wrong.len == 0, "unit words read wrong: " & wrong.join("; ")
+  # A CRS's unit name the same way.
+  doAssert headerUnitOf(FileCrs(units: cuFeet, lengthUnit: "U.S. Survey Foot")) == suUsFeet
 
 block spsHeaders:
   let m = headUnitOf(Morgantown, jkSps)
