@@ -31,6 +31,10 @@ type
       ## the format of `text`; `ctNone` when the file gives none
     text*: string
       ## its coordinate reference system, as stored (`crsText`)
+    lengthUnit*: string
+      ## the unit of length that CRS names for its grid (parseSEG's
+      ## `parseCrsText`: its projection's parameters, "US survey foot",
+      ## "metre"), as written; "" when it names none
 
   Session* {.acyclic.} = ref object
     ## An open seismic file. A `ref`, so that workers can hold a stable
@@ -55,6 +59,19 @@ const NoSession* = SessionId(0)
 
 func `==`*(a, b: SessionId): bool {.borrow.}
 func `$`*(id: SessionId): string = "file " & $int(id)
+
+func lengthUnitOf*(c: CoordinateReference): string =
+  ## The unit of length a CRS's projection gives its grid parameters in (the
+  ## false easting and northing, as a rule: "US survey foot", "metre"), as
+  ## written; "" when no parameter names one. Angles and scale factors are
+  ## passed by.
+  for p in c.projection.parameters:
+    let u = p.unit.strip
+    let low = u.toLowerAscii
+    if u.len > 0 and "degree" notin low and "radian" notin low and "grad" notin low and
+        "unity" notin low and "second" notin low and "minute" notin low and
+        low notin ["dms", "deg", "°", "1"]:
+      return u
 
 proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
     modified = Time()): Session =
@@ -83,7 +100,9 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   try:
     let sum = result.file.summary
     result.crs = FileCrs(units: sum.coordinateUnits, format: sum.crsFormat)
-    if readable and sum.crsFormat != ctNone: result.crs.text = result.file.crsText
+    if readable and sum.crsFormat != ctNone:
+      result.crs.text = result.file.crsText
+      result.crs.lengthUnit = lengthUnitOf(result.file.crs)
   except CatchableError:
     discard # a file whose summary cannot be made says nothing of its coordinates
   var problems = move result.facts.problems

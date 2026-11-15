@@ -218,11 +218,14 @@ proc checkClose(w: var SeismicWriter) =
   let log = w.close()
   doAssert log.len == 0, $log
 
-proc surveySegy*(fx: Fixtures; planted = pdNone): string =
-  ## The survey (see the module documentation), with `planted` in it.
-  result = fx.dir / ("survey-" & $planted & ".sgy")
+proc surveySegy*(fx: Fixtures; planted = pdNone; measurementSystem = 1'i16): string =
+  ## The survey (see the module documentation), with `planted` in it; its
+  ## binary header's measurement system 1 (metres), or as given (2: feet).
+  result = fx.dir / ("survey-" & $planted & (if measurementSystem == 1: "" else: "-" &
+    $measurementSystem) & ".sgy")
   if fileExists(result): return
-  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    measurementSystem: measurementSystem,
     text: @["C01 viewSEG test fixture: " & $Shots & " shots of " & $Channels & " channels",
       "C02 plane wave at " & $VelocityMps & " m/s and a flat event at " & $FlatS & " s",
       "C03 planted defect: " & $planted]))
@@ -550,17 +553,24 @@ proc pilotSegy*(fx: Fixtures): string =
 
 # ------------------------------------------------------------------ SPS --
 
-proc surveySps*(fx: Fixtures): SpsPaths =
-  ## The survey's source (S), receiver (R) and relation (X) files, SPS 2.1.
-  result = (fx.dir / "survey.s", fx.dir / "survey.r", fx.dir / "survey.x")
+proc surveySpsIn*(fx: Fixtures; name, gridUnits, factor: string): SpsPaths =
+  ## `surveySps`'s files named `name` (.s, .r, .x) with grid units in their
+  ## headers: H20 `gridUnits` and H201 `factor` (metres a unit), each left
+  ## out when "".
+  result = (fx.dir / (name & ".s"), fx.dir / (name & ".r"), fx.dir / (name & ".x"))
   if fileExists(result.x): return
-  let header = SpsHeader(code: "00", description: "SPS format version num.",
-    data: "SPS 2.1;")
+  var headers = @[SpsHeader(code: "00", description: "SPS format version num.",
+    data: "SPS 2.1;")]
+  if gridUnits.len > 0:
+    headers.add SpsHeader(code: "20", description: "Description of grid units",
+      data: gridUnits & ";")
+  if factor.len > 0:
+    headers.add SpsHeader(code: "201", description: "Factor to meters", data: factor & ";")
   proc point(kind: SpsPointKind; line, pt, x: float64): SpsPoint =
     SpsPoint(kind: kind, line: line, point: pt, index: 1, code: "G1", easting: x,
       northing: OriginY, elevation: Elevation, dayOfYear: -1, hour: -1, minute: -1,
       second: -1)
-  var s, r, x = SpsFile(headers: @[header])
+  var s, r, x = SpsFile(headers: headers)
   for shot in 0 ..< Shots:
     s.points.add point(pkSource, SrcLine, FirstSrcPoint + float64(shot), srcX(shot))
     x.relations.add SpsRelation(fieldRecord: FirstRecord + shot, recordIncrement: 1,
@@ -574,6 +584,12 @@ proc surveySps*(fx: Fixtures): SpsPaths =
   for (f, path) in [(s, result.s), (r, result.r), (x, result.x)]:
     let log = writeSps(f, path)
     doAssert log.len == 0, $log
+
+proc surveySps*(fx: Fixtures): SpsPaths =
+  ## The survey's source (S), receiver (R) and relation (X) files, SPS 2.1,
+  ## whose headers say nothing of their grid units.
+  result = (fx.dir / "survey.s", fx.dir / "survey.r", fx.dir / "survey.x")
+  if not fileExists(result.x): discard fx.surveySpsIn("survey", "", "")
 
 const PlantedSps* = (sourceAgain: FirstSrcPoint, sourceZero: FirstSrcPoint + 3,
     sourceMissing: FirstSrcPoint + 4, receiverAgain: FirstRcvPoint + 4,
@@ -755,14 +771,16 @@ const MapFfid* = 1000
   ## record is found by the source's station, as a recorder numbers its
   ## files its own way
 
-proc mapShotSegy*(fx: Fixtures; line, k: int; name = ""): string =
+proc mapShotSegy*(fx: Fixtures; line, k: int; name = ""; measurementSystem = 1'i16): string =
   ## The shot record of `mapSps`'s source `k` of source line `line` (0-based;
   ## FFID `MapFfid + mapRecord`): a trace for each of its 63 receivers, line
   ## by line, with coordinates in the headers (SEG-Y keeps no stations
-  ## without a header layout naming them).
+  ## without a header layout naming them); its binary header's measurement
+  ## system 1 (metres) or as given (2: feet; give it a `name` of its own).
   result = fx.dir / (if name.len > 0: name else: "shot-" & $mapRecord(line, k) & ".sgy")
   if fileExists(result): return
-  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    measurementSystem: measurementSystem,
     text: @["C01 viewSEG test fixture: a shot of the map's spread"]))
   for rl in 0 ..< MapRcvLines.len:
     for rk in 0 ..< MapRcvPoints:

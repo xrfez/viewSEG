@@ -278,6 +278,8 @@ withFixtures fx:
     st.agent(%*{"kind": "join geometry", "joinFiles": [{"path": sps.s, "kind": "SPS"},
       {"path": sps.r, "kind": "SPS"}, {"path": sps.x, "kind": "SPS"}]})
     st.agent(%*{"kind": "select unmatched"})
+    st.agent(%*{"kind": "read survey units", "unitsOf": [{"path": sps.s, "kind": "SPS"}]})
+    doAssert st.surveyHead(sps.s) >= 0 and st.heads[st.surveyHead(sps.s)].done
     st.agent(%*{"kind": "load survey", "paths": [sps.s, sps.r, sps.x]})
     doAssert st.survey.layers.len >= 3, $st.survey.layers.len
     var layer = NoSurveyLayer

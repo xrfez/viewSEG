@@ -31,7 +31,7 @@ const
     ckReverseAll, ckBack,
     ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFileMemory, ckHover, ckSelect,
     ckClearSelection, ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
-    ckShowPoints, ckJoin, ckSelectUnmatched, ckRetry, ckStopReading, ckPrepare, ckInspect,
+    ckShowPoints, ckJoin, ckSelectUnmatched, ckSurveyUnits, ckRetry, ckStopReading, ckPrepare, ckInspect,
     ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel, ckDisplayPreset}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
@@ -40,7 +40,9 @@ const
     ## it changes the keys the program holds of an open file, in memory, as
     ## loading a survey file or killing a trace changes what it holds. What
     ## the Headers window has on screen (`ckInspect`) only says what its
-    ## reader reads, off the UI thread, for `state`'s `headers` to give.
+    ## reader reads, off the UI thread, for `state`'s `headers` to give; so
+    ## does reading what survey files' headers say of their unit
+    ## (`ckSurveyUnits`), the first bytes of each, for the import's window.
     ## An agent's edits (kill, reverse, undo, redo, clear) are shown for the
     ## session only, never remembered with the file; listing what is
     ## remembered (`ckFileMemory`) only reads. The spectrum windows (an FFT window opened, shown

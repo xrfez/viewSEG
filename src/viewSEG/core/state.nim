@@ -184,6 +184,8 @@ type
     ckJoin = "join geometry"             ## import a survey: on the map, matched to a file's traces
     ckSelectUnmatched = "select unmatched"
       ## select the traces a join left unmatched
+    ckSurveyUnits = "read survey units"
+      ## read what survey files' headers say of their unit, for the import's window
     ckRetry = "retry"                    ## open, read or list again what does not answer
     ckStopReading = "stop reading"       ## leave a panel's read that does not answer
     ckPrepare = "prepare"                ## the file the user is likely to step to next
@@ -291,6 +293,11 @@ type
     of ckSelectUnmatched:
       unmatchedOf*: SessionId
         ## the joined file
+    of ckSurveyUnits:
+      unitsOf*: seq[JoinFile]
+        ## survey files whose headers are read (from their first bytes, on a
+        ## job each) for what they say of their coordinates' unit; a file
+        ## read once is not read again
     of ckInspect:
       inspect*: set[InspectPart]
         ## the parts of the Headers window on screen, which its reader reads
@@ -569,6 +576,11 @@ type
       ## the open files joined with survey files
     joinReport: JoinReport
       ## how the last join ended
+    heads: seq[SurveyHead]
+      ## what survey files' headers say of their unit, as read for the
+      ## import's window (`ckSurveyUnits`), by the path it named
+    headJobs: seq[tuple[job: JobId; path: string]]
+      ## the job reading each of `heads` that is not done
     spreads: Spreads
       ## relation records made for the map's planned spreads (`core/spread`)
     shots: ShotIndex
@@ -1217,6 +1229,18 @@ func recordQc*(state: AppState): lent RecordQc {.inline.} =
   ## (`core/recordqc`); `filterHits` gives every filter.
   state.recordQc
 
+func surveyHead*(state: AppState; path: string): int =
+  ## The index in `heads` of what survey file `path`'s headers say (as
+  ## `ckSurveyUnits` named it); -1 when it was never asked for.
+  for i in 0 ..< state.heads.len:
+    if state.heads[i].file.path == path: return i
+  -1
+
+func heads*(state: AppState): lent seq[SurveyHead] {.inline.} =
+  ## What survey files' headers say of their unit (`ckSurveyUnits`); `done`
+  ## false while a file's job runs.
+  state.heads
+
 func joinReport*(state: AppState): lent JoinReport {.inline.} =
   ## How the last join ended (its `serial` goes up with each).
   state.joinReport
@@ -1445,7 +1469,7 @@ proc report*(state: var AppState; severity: Severity; source, text: string) =
 func plural(n: int; word: string): string =
   $n & " " & word & (if n == 1: "" else: "s")
 
-proc canonical(path: string): string =
+proc canonical*(path: string): string =
   ## `path` made absolute and normalized ("./a.sgy", "data/../a.sgy" and the
   ## full path name one file), without touching the disk: jobs compare files
   ## by these strings. As given, normalized, when there is no current
@@ -1454,6 +1478,25 @@ proc canonical(path: string): string =
     absolutePath(path).normalizedPath
   except OSError, ValueError:
     path.normalizedPath
+
+proc importUnits*(state: AppState; session: SessionId; files: openArray[JoinFile]): JoinUnits =
+  ## The units an import of `files` for open file `session` is made with
+  ## when nobody chose any, as the Import survey window shows them: the
+  ## survey's as the files' headers say (read with their layers, or for the
+  ## window: `heads`), and the file's own headers' following it
+  ## (`fileUnitOf`).
+  var heads: seq[SurveyHead]
+  for f in files:
+    let l = state.survey.findFile(canonical(f.path))
+    if l >= 0 and state.survey.layers[l].gridUnit.known:
+      let g = state.survey.layers[l].gridUnit
+      heads.add SurveyHead(file: f, done: true, head: HeadUnit(unit: unitOf(g), said: describe(g)))
+    else:
+      let h = state.surveyHead(f.path)
+      if h >= 0: heads.add state.heads[h]
+  result.survey = surveyUnitsSaid(heads).unit
+  let i = state.findSession(session)
+  if i >= 0: result.file = fileUnitOf(headerUnitOf(state.sessions[i].crs), result.survey).unit
 
 proc ignore(state: var AppState; cmd: Command; why: string) =
   state.log.add(sevWarning, "commands", "Ignored \"" & $cmd.kind & "\": " & why & ".")
@@ -3688,7 +3731,8 @@ func unitSources*(state: AppState): seq[tuple[what: string; unit: SurveyUnit]] =
   ## Each unit the data name for the survey's coordinates, in the order the
   ## map takes them (the first is the map's): the units confirmed with an
   ## import, then each survey file's (SPS H20, H201), then each open seismic
-  ## file's headers' (SEG-Y's measurement system, a CRS).
+  ## file's: the unit confirmed for it with an import, else its headers'
+  ## (SEG-Y's measurement system, a CRS: `headerUnitOf`).
   for j in state.joins:
     if j.units.survey != suNotGiven:
       let i = state.findSession(j.session)
@@ -3699,8 +3743,12 @@ func unitSources*(state: AppState): seq[tuple[what: string; unit: SurveyUnit]] =
     if l.origin == loSurveyFile and l.gridUnit.known and unitOf(l.gridUnit) != suNotGiven:
       result.add (l.name, unitOf(l.gridUnit))
   for s in state.sessions:
-    let u = unitOf(s.crs.units)
-    if u != suNotGiven: result.add (s.name & "'s headers", u)
+    let j = state.joinedOf(s.id)
+    if j >= 0 and state.joins[j].units.file != suNotGiven:
+      result.add ("the units confirmed for " & s.name & "'s headers", state.joins[j].units.file)
+    else:
+      let u = headerUnitOf(s.crs)
+      if u != suNotGiven: result.add (s.name & "'s headers", u)
 
 func unitsDisagree*(state: AppState): string =
   ## When the loaded files name different units: what each says and which
@@ -3708,8 +3756,12 @@ func unitsDisagree*(state: AppState): string =
   ## the map uses US survey feet"; "" when they agree (or none says).
   let all = state.unitSources
   var units: seq[SurveyUnit]
-  for (_, u) in all:
-    if u notin units: units.add u
+  for (what, u) in all:
+    # A seismic file's headers' "feet" may be US survey feet (SEG-Y cannot
+    # tell them apart): no disagreement with a survey in US survey feet.
+    let loose = u == suFeet and what.endsWith("'s headers") and
+      not what.startsWith("the units confirmed")
+    if u notin units and not (loose and suUsFeet in all.mapIt(it.unit)): units.add u
   if units.len < 2: return
   var parts: seq[string]
   for u in units:
@@ -4127,6 +4179,16 @@ proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
   if state.endMapWork(job): return
   if state.endMemoryWork(job): return
+  for k, h in state.headJobs:
+    if h.job == job.id:
+      # Its head was posted before it finished, unless it was cancelled or failed.
+      let i = state.surveyHead(h.path)
+      if i >= 0 and not state.heads[i].done:
+        state.heads[i].done = true
+        state.heads[i].problem = if job.state == jsFailed: "its headers cannot be read (" &
+          job.error & ")" else: "its headers were not read (the reading was stopped)"
+      state.headJobs.delete(k)
+      return
   if job.id == state.joining.job:
     case job.state
     of jsDone:
@@ -5061,6 +5123,19 @@ proc applyCommand(state: var AppState; cmd: Command) =
     else: state.startJoin(i, cmd)
   of ckSelectUnmatched:
     state.selectUnmatched(cmd)
+  of ckSurveyUnits:
+    for f in cmd.unitsOf:
+      if f.path.len == 0: state.ignore(cmd, "a file name was empty")
+      elif state.surveyHead(f.path) < 0 or state.heads[state.surveyHead(f.path)].problem.len > 0:
+        # A short job each: one file on a drive that does not answer holds
+        # only its own.
+        let job = state.jobs.submit(JobSpec(title: "Read the units of " &
+          f.path.extractFilename, lane: jlInteractive, reads: @[f.path]),
+          surveyHeadWork(f, state.inbox.poster))
+        let i = state.surveyHead(f.path)
+        if i >= 0: state.heads[i] = SurveyHead(file: f)
+        else: state.heads.add SurveyHead(file: f)
+        state.headJobs.add (job, f.path)
   of ckPrepare:
     state.prepareWanted = if cmd.path.len > 0: canonical(cmd.path) else: ""
     state.prepareNext()
@@ -5216,6 +5291,9 @@ proc drainInbox*(state: var AppState): bool =
     of mkJoined: state.takeJoined(m)
     of mkInspected: state.takeInspected(move m)
     of mkSpectrum: state.takeSpectrum(move m)
+    of mkSurveyHead:
+      let i = state.surveyHead(m.surveyHead.file.path)
+      if i >= 0: state.heads[i] = move m.surveyHead
     of mkSpreads: state.takeSpreads(move m)
     of mkShots: state.takeShots(move m)
     of mkRecordQc: state.takeRecordQc(move m)

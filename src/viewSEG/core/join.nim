@@ -37,10 +37,10 @@
 ## headers give them (SPS H20 and H201, the seismic file's own) and as the
 ## user confirms them.
 
-import std/[math, strutils, tables]
+import std/[math, os, strutils, tables]
 import parseSEG
 import processSEG/qc/record
-import survey
+import session, survey
 
 export RecordMatch, TraceMatch
 
@@ -210,16 +210,21 @@ func unitOf*(g: GridUnit): SurveyUnit =
   ## The unit an SPS header gives (H201's factor to metres, else H20's word).
   ## Files round the factor (0.3048006, 0.304801): it names the foot it is
   ## nearest, international (0.3048) or US survey (1200/3937, 2 parts in a
-  ## million more), when it is within 1e-5 of either.
+  ## million more), when it is within 1e-5 of either. A word is read in any
+  ## case, its blanks, `_` and `-` alike ("US survey foot", "foot_us").
   if g.metres > 0:
     if abs(g.metres - 1) <= 1e-6: return suMetres
     let (ft, us) = (abs(g.metres - 0.3048), abs(g.metres - 1200 / 3937))
     if min(ft, us) <= 1e-5: return (if us < ft: suUsFeet else: suFeet)
-  let n = g.name.strip.toLowerAscii
+  var n = ""
+  for c in g.name.strip.toLowerAscii:
+    n.add(if c in {'_', '-', '.'}: ' ' else: c)
+  n = n.splitWhitespace.join(" ")
   if n in ["m", "meter", "meters", "metre", "metres"]: suMetres
-  elif n in ["ft", "foot", "feet", "international feet"]: suFeet
-  elif n in ["us ft", "us feet", "us survey feet", "us survey foot", "survey feet", "ftus",
-      "us-ft"]: suUsFeet
+  elif n in ["ft", "foot", "feet", "international feet", "international foot"]: suFeet
+  elif n in ["us ft", "us feet", "us survey feet", "us survey foot", "survey feet",
+      "survey foot", "ftus", "usft", "ft us", "foot us", "us foot"]: suUsFeet
+  elif n in ["deg", "degree", "degrees"]: suDegrees
   else: suNotGiven
 
 func unitOf*(c: CoordinateUnits): SurveyUnit =
@@ -238,6 +243,241 @@ func describe*(g: GridUnit): string =
   if g.name.strip.len > 0: parts.add "\"" & g.name.strip & "\" (H20)"
   if g.metres > 0: parts.add $g.metres & " m a unit (H201)"
   parts.join(", ")
+
+func headerUnitOf*(c: FileCrs): SurveyUnit =
+  ## The unit a seismic file's headers give its coordinates in: SEG-Y's
+  ## measurement system or a coordinate unit (`summary.coordinateUnits`),
+  ## made exact by the unit of length its CRS names (`lengthUnit`: "feet"
+  ## and a CRS in US survey feet are US survey feet); the CRS's unit when
+  ## nothing else says.
+  let named = unitOf(GridUnit(name: c.lengthUnit))
+  result = unitOf(c.units)
+  if result == suNotGiven or result == suFeet and named == suUsFeet: result = named
+
+# ------------------------------------------------ the import's units --
+# What each survey file's headers say of its coordinates' unit is read as
+# soon as the file is chosen, from its first `HeadBytes` only (`headUnitOf`,
+# on a job: the file may be on a network drive); the survey's unit is the
+# first file's that says (`surveyUnitsSaid`), and the seismic file's follows
+# it where its own headers say nothing or only "feet" (`fileUnitOf`). What
+# the user chooses by hand is kept apart (`ImportUnits`), and no later
+# derivation replaces it.
+
+const HeadBytes* = 64 * 1024
+  ## the bytes at the start of a survey file read for what its headers say
+
+type
+  HeadUnit* = object
+    ## What a survey file's headers say of its coordinates' unit.
+    unit*: SurveyUnit
+    said*: string
+      ## what they say, as written: "\"feet\" (H20), 0.3048006096 m a unit
+      ## (H201)"; "" when they say nothing of it
+
+  SurveyHead* = object
+    ## What one survey file's headers say, as read for the import's window.
+    file*: JoinFile
+    done*: bool      ## read (or failed); false while its job runs
+    head*: HeadUnit
+    problem*: string ## why it could not be read, in plain words; "" when it was
+
+  SurveyUnitsSaid* = object
+    ## The survey's unit as its files' headers say it.
+    unit*: SurveyUnit
+      ## the first file's that says; not given when none does
+    words*: seq[string]
+      ## what they say, a sentence a kind of file: "The SPS headers say ..."
+    disagree*: string
+      ## the files that give other units, named, with theirs; "" when they agree
+
+  FileUnit* = object
+    ## The unit of a seismic file's coordinates, as the import takes it.
+    unit*: SurveyUnit
+    note*: string
+      ## a dim line: what the headers say, when the unit was taken otherwise
+    conflict*: string
+      ## a warning: the headers and the survey give units that cannot both
+      ## be right (metres and feet); "" when they agree
+
+  ImportUnits* = object
+    ## The units the user chose by hand in the Import survey window, kept
+    ## for as long as the program runs; what the headers say never replaces
+    ## them. The survey's, and each seismic file's (by its path).
+    survey*: SurveyUnit
+    surveyChosen*: bool
+    files*: seq[tuple[path: string; unit: SurveyUnit]]
+
+func headLines(head: string): seq[string] =
+  ## The lines of the start of a file: cut at its line ends (the last,
+  ## possibly cut short, left out), else as 80-byte cards; a UTF-8 BOM
+  ## passed by.
+  var at = if head.startsWith("\xEF\xBB\xBF"): 3 else: 0
+  var ends = false
+  var lo = at
+  for i in at ..< head.len:
+    if head[i] in {'\n', '\r'}:
+      ends = true
+      if i > lo: result.add head[lo ..< i]
+      lo = i + 1
+  if not ends:
+    while at + 80 <= head.len:
+      result.add head[at ..< at + 80]
+      at += 80
+
+proc spsHeadUnit(lines: openArray[string]): HeadUnit =
+  ## H20 and H201 of the header records the file starts with (parseSEG's
+  ## `gridUnit`), up to its first point or relation record.
+  var text = ""
+  for line in lines:
+    if line.len > 0 and line[0] in {'S', 'R', 'X', 'O'}: break
+    if line.len > 0 and line[0] == 'H': text.add line & "\n"
+  var g = GridUnit()
+  try: g = parseSps(text).gridUnit
+  except CatchableError: discard # (header text never raises; an odd file says nothing)
+  HeadUnit(unit: unitOf(g), said: describe(g))
+
+func p1HeadUnit(lines: openArray[string]): HeadUnit =
+  ## A UKOOA P1/90 file's grid units: its H2000 record (a unit code, the
+  ## unit's name and its factor to metres, from column 33).
+  for line in lines:
+    if line.startsWith("H2000") and line.len > 32:
+      var names: seq[string]
+      var metres = NaN
+      for raw in line[32 .. ^1].splitWhitespace:
+        var w = raw
+        if names.len == 0 and metres.isNaN:
+          var k = 0
+          while k < w.len and w[k] in Digits: inc k
+          if k > 0 and k < w.len: w = w[k .. ^1] # "1METRES": the code, then the name
+        var v = NaN
+        try: v = parseFloat(w)
+        except ValueError: discard
+        if v.isNaN: names.add w
+        elif v > 0 and v < Inf: metres = v
+      let g = GridUnit(name: names.join(" "), metres: metres)
+      var said: seq[string]
+      if g.name.len > 0: said.add "\"" & g.name & "\""
+      if g.metres > 0: said.add $g.metres & " m a unit"
+      return HeadUnit(unit: unitOf(g), said: said.join(", ") & " (H2000)")
+    if line.len > 0 and line[0] != 'H': return
+
+func csvHeadUnit(lines: openArray[string]): HeadUnit =
+  ## A CSV table's unit: a comment before its first row that names one ("#
+  ## units: US survey feet"), or a unit in brackets in a cell of its first
+  ## row ("x (ftUS)", "Easting [m]").
+  for line in lines:
+    let l = line.strip
+    if l.startsWith('#'):
+      let at = l.toLowerAscii.find("unit")
+      let sep = if at >= 0: l.find({':', '='}, at) else: -1
+      if sep > 0:
+        let word = l[sep + 1 .. ^1].strip.strip(chars = {'"', '\'', ';', '.'})
+        let u = unitOf(GridUnit(name: word))
+        if u != suNotGiven: return HeadUnit(unit: u, said: "\"" & l[1 .. ^1].strip & "\"")
+    elif l.len > 0:
+      for cell in l.split({',', ';', '\t'}):
+        let a = cell.find({'(', '['})
+        let b = if a >= 0: cell.find({')', ']'}, a) else: -1
+        if b > a + 1:
+          let u = unitOf(GridUnit(name: cell[a + 1 ..< b]))
+          if u != suNotGiven:
+            return HeadUnit(unit: u, said: "\"" & cell.strip & "\" (its first row)")
+      return
+
+proc headUnitOf*(head: string; kind: JoinFileKind): HeadUnit =
+  ## What the start of a survey file, `head` (its first `HeadBytes` or
+  ## fewer), says of its coordinates' unit: SPS H20 and H201 (H201's factor
+  ## names the foot: 0.3048006096 is the US survey foot, 0.3048 the
+  ## international), SEG P1's H2000, or a CSV table's comment or first row.
+  ## Never raises: a file that says nothing gives `suNotGiven`.
+  let lines = headLines(head)
+  case kind
+  of jkSps: spsHeadUnit(lines)
+  of jkP1: p1HeadUnit(lines)
+  of jkCsv: csvHeadUnit(lines)
+
+func surveyUnitsSaid*(heads: openArray[SurveyHead]): SurveyUnitsSaid =
+  ## The survey's unit as the headers of `heads` (the import's survey files,
+  ## in order) say it: the first that says; what each kind of file says, in
+  ## words; and, when files say different units, which say what.
+  var units: seq[SurveyUnit]
+  var names: seq[seq[string]]
+  var told: seq[(JoinFileKind, string)]
+  for h in heads:
+    if h.done and h.head.unit != suNotGiven:
+      if result.unit == suNotGiven: result.unit = h.head.unit
+      let k = units.find(h.head.unit)
+      if k < 0:
+        units.add h.head.unit
+        names.add @[h.file.path.extractFilename]
+      else: names[k].add h.file.path.extractFilename
+      if (h.file.kind, h.head.said) notin told and told.len < 4:
+        told.add (h.file.kind, h.head.said)
+        let kind = case h.file.kind
+          of jkSps: "SPS headers say "
+          of jkP1: "SEG P1 headers say "
+          of jkCsv: "CSV table says "
+        result.words.add "The " & kind & h.head.said & "."
+  if units.len > 1:
+    var parts: seq[string]
+    for k, u in units:
+      let few = if names[k].len > 3: names[k][0 .. 2].join(", ") & " and " &
+        $(names[k].len - 3) & " more" else: names[k].join(", ")
+      parts.add few & (if names[k].len == 1: " says " else: " say ") & $u
+    result.disagree = "The survey files disagree: " & parts.join("; ") & ". The first is " &
+      "taken; choose the unit that is right."
+
+func fileUnitOf*(headers, survey: SurveyUnit; chosen = suNotGiven; byHand = false): FileUnit =
+  ## The unit an import takes a seismic file's coordinates in: `chosen` when
+  ## the user chose it (`byHand`); else what its `headers` say, but the
+  ## survey's unit where they say nothing, or say only "feet" (SEG-Y cannot
+  ## tell the international foot from the US survey foot) while the survey
+  ## says US survey feet. Units that cannot both be right (metres and feet,
+  ## a length and degrees) are a conflict, said in words; feet against US
+  ## survey feet only a note.
+  if byHand:
+    result.unit = chosen
+    if headers != suNotGiven and headers != chosen:
+      result.note = "The headers say " & $headers & "."
+  elif headers == suNotGiven:
+    result.unit = survey
+    if survey != suNotGiven:
+      result.note = "The headers do not say; taken as " & $survey & ", as the survey says."
+  elif headers == suFeet and survey == suUsFeet:
+    result.unit = suUsFeet
+    result.note = "The headers say feet; taken as US survey feet, as the survey says."
+  else:
+    result.unit = headers
+    if headers == suUsFeet and survey == suFeet:
+      result.note = "The headers say US survey feet, the survey files international feet."
+  let (a, b) = (result.unit, survey)
+  if a != suNotGiven and b != suNotGiven and a != b and
+      not ({a, b} == {suFeet, suUsFeet}):
+    result.conflict = "The headers' coordinates are in " & $a & " and the survey's in " & $b &
+      ": one of them is wrong, and the import converts nothing. Choose what each is in."
+
+func surveyUnit*(u: ImportUnits; said: SurveyUnitsSaid): SurveyUnit =
+  ## The survey's unit the window shows: the user's, else its headers'.
+  if u.surveyChosen: u.survey else: said.unit
+
+func fileUnit*(u: ImportUnits; path: string; headers, survey: SurveyUnit): FileUnit =
+  ## The unit the window shows for seismic file `path`, whose `headers` say
+  ## what they say, with the survey's unit `survey` (`fileUnitOf`).
+  for (p, unit) in u.files:
+    if p == path: return fileUnitOf(headers, survey, unit, byHand = true)
+  fileUnitOf(headers, survey)
+
+proc choose*(u: var ImportUnits; unit: SurveyUnit) =
+  ## The user chose the survey's unit.
+  (u.survey, u.surveyChosen) = (unit, true)
+
+proc choose*(u: var ImportUnits; path: string; unit: SurveyUnit) =
+  ## The user chose seismic file `path`'s unit.
+  for f in u.files.mitems:
+    if f.path == path:
+      f.unit = unit
+      return
+  u.files.add (path, unit)
 
 # ------------------------------------------------------------ line names --
 
@@ -275,9 +515,11 @@ type CsvColumn = enum
   ccKind, ccLine, ccPoint, ccIndex, ccX, ccY, ccZ
 
 func columnOf(name: string): int =
-  ## The column a header cell names (`CsvColumn`); -1 for none.
+  ## The column a header cell names (`CsvColumn`); -1 for none. A unit in
+  ## brackets after the name ("x (ftUS)", "Easting [m]") is passed by.
   var n = ""
   for c in name.toLowerAscii:
+    if c in {'(', '['}: break
     if c in {'a' .. 'z', '0' .. '9'}: n.add c
   case n
   of "kind", "type", "role", "recordtype", "pointtype", "code": ord(ccKind)

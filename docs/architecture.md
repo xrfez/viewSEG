@@ -510,9 +510,28 @@ station for. A tile carries the groups of each row's keys a join gave
 and the status bar draw joined values in the accent colour. What the join did is said in
 plain words (`planWords`), and a join that matches nothing says why (`whyUnmatched`: the
 line numbering, text line names, record numbers not in the relation file) and changes
-nothing. Units are labels: the dialog starts each at what the headers say
-(`summary.coordinateUnits`, SPS H20 and H201) and shows the file's CRS text as read;
-datum and projection as values are a parseSEG request.
+nothing. Units are labels: the dialog starts each at what the headers say and shows the
+file's CRS text as read; datum and projection as values are a parseSEG request.
+
+**The import's units** (`core/join`, "the import's units"). A survey file chosen in the
+window (added, dropped, or loaded with no unit known) has its headers read at once, from
+its first `HeadBytes` (64 KiB) only, on an interactive job of its own (`ckSurveyUnits`,
+`surveyHeadWork`, `mkSurveyHead`; a file on a drive that does not answer holds only its
+own job): `headUnitOf` reads SPS H20 and H201 (parseSEG's `gridUnit` of the header records
+alone), SEG P1's H2000, a CSV table's comment or bracketed column unit; the results are
+`AppState.heads`, by path, read once (one that failed is read again when asked again).
+`surveyUnitsSaid` takes the first file's unit, words for each kind of file, and names
+the files that disagree. A seismic file's own unit is `headerUnitOf(Session.crs)`:
+`summary.coordinateUnits` made exact by the unit of length its CRS names
+(`FileCrs.lengthUnit`, from parseSEG's `crs(SeismicFile)` on the open job). `fileUnitOf`
+makes the import's unit for the file: the survey's where the headers say nothing or say
+"feet" while the survey says US survey feet (SEG-Y's measurement system 2 cannot tell
+them apart), with a note; a conflict only for units that cannot both be right. What the
+user chooses by hand is `ImportUnits` (the survey's, each file's by path), held by the
+window and never replaced by a derivation; the units an import was made with are
+`Joined.units`, the one place they are kept. After an import, the file's confirmed unit
+stands for its headers' in `unitSources`, and a seismic file's bare "feet" beside a survey
+in US survey feet is no disagreement (`unitsDisagree`).
 
 **The Headers window** (`core/headers`, `core/fielddocs`, `core/inspector`,
 `view/headerviews`, `ui/imgui/headerswindow`). What a file is and its file-level headers

@@ -295,6 +295,35 @@ proc surveyWork*(path: string; to: Poster; lines = JoinOptions()): JobWork =
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkSurvey, layer: move layer)
 
+proc surveyHeadWork*(file: JoinFile; to: Poster): JobWork =
+  ## The work of a job that reads what survey file `file`'s headers say of
+  ## its coordinates' unit, from its first `HeadBytes` only (`headUnitOf`),
+  ## and posts it (`mkSurveyHead`): an SPS or SEG P1 file told from those
+  ## bytes, a CSV table by its kind. A file that cannot be read is posted
+  ## with the reason; nothing raises.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    var h = SurveyHead(file: file, done: true)
+    var f: File
+    try:
+      let info = checkedOpen(file.path, f)
+      var head = newString(int(min(info.size, HeadBytes)))
+      var got = 0
+      try:
+        if head.len > 0: got = fs.readBuffer(f, file.path, addr head[0], head.len)
+      finally:
+        close(f)
+      head.setLen got
+      if file.kind != jkCsv:
+        let kind = surveyKind(head, file.path.extractFilename, whole = got >= info.size)
+        if kind == fkP1: h.file.kind = jkP1
+        elif kind.isSurvey: h.file.kind = jkSps
+      {.cast(gcsafe).}:
+        h.head = headUnitOf(head, h.file.kind)
+    except CatchableError as e:
+      h.problem = "its headers cannot be read (" & e.msg.splitLines()[0] & ")"
+    discard ctx.progress(1, 1)
+    to.post Msg(job: ctx.id, kind: mkSurveyHead, surveyHead: h)
+
 proc openFileWork*(path: string; to: Poster; cache = "";
     cacheBudget = DefaultIndexCacheBudget; whole = false; lines = JoinOptions()): JobWork =
   ## The work of a job that opens what the user named: a survey file is

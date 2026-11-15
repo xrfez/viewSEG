@@ -49,6 +49,7 @@ type
     mkEditsList ## a file's list of edits, as the text of the file it is exported to
     mkEditsRead ## a file's list of edits the user imports, read
     mkSpectrum ## a spectrum window's spectrum, from the spectrum reader
+    mkSurveyHead ## what a survey file's headers say of its unit, for the import's window
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -224,6 +225,8 @@ type
       importOutside*: int ## its traces past the file's last, left out
     of mkSpectrum:
       spectrum*: Spectrum ## moved, never shared
+    of mkSurveyHead:
+      surveyHead*: SurveyHead
 
   InboxObj = object
     lock: Lock

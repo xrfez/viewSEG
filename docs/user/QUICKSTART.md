@@ -541,15 +541,27 @@ changed**. The **Import survey** window goes in the order of the work:
   line, point (or station), x (or easting), y (or northing), and index, elevation and a
   kind column (S or R) where you have them; a table without a kind column is all sources
   or all receivers, as you choose beside it. Below, the units the survey's coordinates are
-  in, as the SPS headers say (H20, H201: `feet` with 0.3048006096 m a unit is US survey
-  feet).
+  in, as the files' headers say: read as soon as a file is chosen (added, dropped on the
+  window, or loaded already), from its first 64 KiB only, so a file on a slow drive holds
+  nothing up. SPS: H20 and H201 (`feet` with 0.3048006096 m a unit is US survey feet,
+  0.3048 international feet); SEG P1: H2000; a CSV table: a comment before its first row
+  (`# units: US survey feet`) or a unit in brackets in a column's name (`x (ftUS)`,
+  `Easting [m]`). "The SPS headers say ..." is written under the box; files that say
+  different units are named in a warning, and the first is taken.
 - **Seismic file**: the file whose traces the survey is matched to, the one the plot
   shows (or another open file), the units its headers give its coordinates in, and its
   coordinate reference system as the file gives it (SEG-Y Rev 2 stanza, SEG-D Rev 3
   location data), when it has one.
 
-Each units dropdown starts at what the headers say: **confirm it, or correct it** when the
-headers are wrong. Nothing is converted; the units label the map's scale bar and the
+You enter a unit **once at most**. The survey's box starts at what its headers say; the
+seismic file's at what its own headers say, but where they say nothing, or only "feet"
+(a SEG-Y file's measurement system cannot tell international from US survey feet), it
+takes the survey's unit, and a dim line says so ("The headers say feet; taken as US
+survey feet, as the survey says"); a CRS in the file that names its unit (US survey foot)
+settles it too. Only units that cannot both be right (metres against feet) are a warning.
+**Confirm, or correct** when the headers are wrong: a unit you choose is kept for the
+session and no later reading replaces it; choosing another file in the seismic file's box
+shows that file's unit. Nothing is converted; the units label the map's scale bar and the
 status bar's coordinates.
 
 **Options** (remembered): **Use the trailing digits of line names** (SPS 1.0 and P1 files

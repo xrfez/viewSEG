@@ -302,6 +302,10 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
   of ckShowFile, ckShowTrace: c.path = fromProgram(c.path)
   of ckJoin:
     for f in c.joinFiles.mitems: f.path = fromProgram(f.path)
+    # As the window shows them when nobody chose any.
+    if not n.hasKey("joinUnits"): c.joinUnits = state.importUnits(c.joinFile, c.joinFiles)
+  of ckSurveyUnits:
+    for f in c.unitsOf.mitems: f.path = fromProgram(f.path)
   else: discard
   c.origin = coAgent # what it changes is for the session only: core decides (`keeps`)
   let before = state.log.nextSerial
@@ -446,7 +450,11 @@ proc mapJson(state: AppState; limit: int): JsonNode =
   # The units the files name, and whether they disagree.
   var units = newJArray()
   for (what, u) in state.unitSources: units.add %*{"from": what, "unit": $u}
-  result["units"] = %*{"named": units, "disagree": state.unitsDisagree}
+  var heads = newJArray() # what survey files' headers say (`read survey units`)
+  for h in state.heads:
+    heads.add %*{"path": h.file.path, "read": h.done, "unit": $h.head.unit,
+      "said": h.head.said, "problem": h.problem}
+  result["units"] = %*{"named": units, "disagree": state.unitsDisagree, "surveyFiles": heads}
   # The folder's shots: its files read, and the survey's sources that have one.
   template x: untyped = state.shots
   result["folderShots"] = %*{"shown": state.settings.map.folderShots, "filesRead": x.shotFiles,

@@ -15,14 +15,21 @@
 ## with "Select unmatched traces". **Units and the CRS come from the
 ## headers first:** each dropdown starts at what the headers say, and the
 ## user only confirms or corrects; the units the survey is imported with
-## label the map and the status bar. The options are remembered (the
-## settings); the units chosen for a file are kept while the program runs.
+## label the map and the status bar. A survey file's headers are read as soon
+## as it is chosen (its first bytes, on a job: `ckSurveyUnits`), so the
+## survey's box shows what they say, and the files that disagree are named;
+## the seismic file's box follows the survey's where its own headers say
+## nothing, or only "feet" (SEG-Y cannot tell the US survey foot from the
+## international), so the user enters a unit once at most; a metres-against-
+## feet conflict is a warning. The options are remembered (the settings); the
+## units the user chose by hand (`ImportUnits`) are kept while the program
+## runs, and nothing the headers say replaces them.
 ##
 ## A floating window like any other: Tab moves between its controls, and
 ## the click that brings it forward does only that (Import and Select act only
 ## in a window that had the focus).
 
-import std/[options, os, strutils, tables]
+import std/[options, os, strutils]
 import imguin/cimgui
 import parseSEG
 import ../../core/[filekinds, geometry, state]
@@ -32,22 +39,25 @@ import chrome, focus, icons, style
 type
   JoinUi* = object
     ## The window's own state between frames.
-    shown*: bool                    ## the window is open
-    bringUp: bool                   ## bring it forward next frame
-    placeAgain: bool                ## put it back at its first place and size next frame
+    shown*: bool                ## the window is open
+    bringUp: bool               ## bring it forward next frame
+    placeAgain: bool            ## put it back at its first place and size next frame
     focus: FocusClicks
-    session: SessionId              ## the file chosen; `NoSession`: the one the plot shows
-    added: seq[JoinFile]            ## the files added with "Add files..."
-    unticked: seq[string]           ## loaded survey files left out (their paths)
-    units: Table[string, JoinUnits] ## per seismic file (its path): the units the user chose
-    lineText: array[4096, char]     ## the line names, as typed
-    lineFrom: seq[LineName]         ## the settings' line names the text was made from
+    session: SessionId          ## the file chosen; `NoSession`: the one the plot shows
+    added: seq[JoinFile]        ## the files added with "Add files..."
+    unticked: seq[string]       ## loaded survey files left out (their paths)
+    units: ImportUnits          ## the units the user chose by hand
+    asked: seq[string]          ## survey files whose headers were asked for (`ckSurveyUnits`)
+    drawn: JoinUnits            ## the units the window showed last
+    drawnNote: string           ## and the dim line under the seismic file's
+    lineText: array[4096, char] ## the line names, as typed
+    lineFrom: seq[LineName]     ## the settings' line names the text was made from
     lineProblems: seq[string]
-    about: SessionId                ## the file `crs` and `fileUnits` are of
-    crs: seq[char]                  ## its CRS text, for a read-only box
+    about: SessionId            ## the file `crs` and `fileUnits` are of
+    crs: seq[char]              ## its CRS text, for a read-only box
     crsFormat: string
-    fileUnits: SurveyUnit           ## what its headers say
-    reported: int                   ## the join report shown last (its serial)
+    fileUnits: SurveyUnit       ## what its headers say (`headerUnitOf`)
+    reported: int               ## the join report shown last (its serial)
 
   JoinOutput* = object
     commands*: seq[Command]
@@ -67,6 +77,17 @@ proc open*(ui: var JoinUi) =
   ui.shown = true
   ui.bringUp = true
 
+func units*(ui: JoinUi): JoinUnits {.inline.} =
+  ## The units the window showed when last drawn: the survey's and the
+  ## seismic file's, as Import would send them.
+  ui.drawn
+
+func fileNote*(ui: JoinUi): lent string {.inline.} =
+  ## The dim line under the seismic file's unit when last drawn: why it is
+  ## not what the headers say ("The headers say feet; taken as US survey
+  ## feet, as the survey says"); "" for none.
+  ui.drawnNote
+
 proc placeAgain*(ui: var JoinUi) =
   ## Puts the window back at its first place and size when next drawn
   ## (Reset the windows).
@@ -74,7 +95,8 @@ proc placeAgain*(ui: var JoinUi) =
 
 proc addFiles*(ui: var JoinUi; paths: openArray[string]) =
   ## Adds `paths` (from the file dialog) to the survey files to import.
-  for p in paths:
+  for given in paths:
+    let p = canonical(given) # as the map's layers name them
     var known = false
     for f in ui.added:
       if f.path == p: known = true
@@ -140,7 +162,7 @@ proc learn(ui: var JoinUi; st: AppState; i: int) =
   ui.about = s.id
   # Read on the open job: nothing here reads the file (a network drive may hang).
   let text = s.crs.text
-  ui.fileUnits = unitOf(s.crs.units)
+  ui.fileUnits = headerUnitOf(s.crs)
   ui.crsFormat = if s.crs.format == ctNone: "" else: $s.crs.format
   ui.crs = newSeq[char](text.len + 1)
   for k, c in text: ui.crs[k] = c
@@ -227,8 +249,6 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     if target < 0 and st.sessions.len > 0: target = 0
     if target >= 0: ui.learn(st, target)
     let key = if target >= 0: st.sessions[target].path else: ""
-    var units = ui.units.getOrDefault(key, JoinUnits(
-      file: (if target >= 0: ui.fileUnits else: suNotGiven), survey: suNotGiven))
     # The window's content scrolls; Import, Close and the progress stay below
     # it, in sight. Tab goes through both (a flattened child).
     let footer = igGetFrameHeightWithSpacing() + igGetStyle().ItemSpacing.y
@@ -236,8 +256,16 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
       ImGui_ChildFlags_NavFlattened.cint, 0)
     # -- the survey files
     igSeparatorText("Survey files")
-    var derived = suNotGiven
-    var said = ""
+    var heads: seq[SurveyHead] # what each chosen file's headers say, in order
+    var ask: seq[JoinFile] # files whose headers are not read yet
+    template headOf(f: JoinFile) =
+      let h = st.surveyHead(f.path)
+      if h >= 0: heads.add st.heads[h]
+      else:
+        heads.add SurveyHead(file: f)
+        if f.path notin ui.asked:
+          ui.asked.add f.path
+          ask.add f
     var loaded = 0
     for li in 0 ..< st.survey.layers.len:
       template l: untyped = st.survey.layers[li]
@@ -252,10 +280,21 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
         tip(l.path & "\n" & l.summary)
         igPopID()
         if on:
-          files.add JoinFile(path: l.path, kind: (if l.kind == fkP1: jkP1 else: jkSps))
-          if derived == suNotGiven and l.gridUnit.known:
-            derived = unitOf(l.gridUnit)
-            said = describe(l.gridUnit)
+          let f = JoinFile(path: l.path, kind: (if l.kind == fkP1: jkP1 else: jkSps))
+          files.add f
+          if l.kind != fkP1 and l.gridUnit.known: # read with the file
+            heads.add SurveyHead(file: f, done: true, head: HeadUnit(unit: unitOf(l.gridUnit),
+              said: describe(l.gridUnit)))
+          else: headOf(f)
+    # A file added that is on the map now (Import loaded it) is listed with
+    # the loaded ones, ticked: not twice.
+    var a = 0
+    while a < ui.added.len:
+      if st.survey.findFile(ui.added[a].path) >= 0:
+        let off = ui.unticked.find(ui.added[a].path)
+        if off >= 0: ui.unticked.delete(off)
+        ui.added.delete(a)
+      else: inc a
     var drop = -1
     for a in 0 ..< ui.added.len:
       igPushID_Int(cint(10_000 + a))
@@ -264,6 +303,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
       igSameLine(0, -1)
       igTextUnformatted((ui.added[a].path.extractFilename & "  (" & $ui.added[a].kind &
         ")").cstring, nil)
+      marks.mark("join.added " & ui.added[a].path.extractFilename)
       tip(ui.added[a].path)
       if ui.added[a].kind == jkCsv:
         igSameLine(0, -1)
@@ -273,7 +313,13 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
           "sources, or all receivers")
       igPopID()
       files.add ui.added[a]
-    if drop >= 0: ui.added.delete(drop)
+      headOf(ui.added[a])
+    if drop >= 0:
+      let gone = ui.asked.find(ui.added[drop].path)
+      if gone >= 0: ui.asked.delete(gone) # (asked again when added again: one that failed)
+      ui.added.delete(drop)
+    if ask.len > 0: result.commands.add Command(kind: ckSurveyUnits, unitsOf: ask)
+    let said = surveyUnitsSaid(heads)
     if loaded == 0 and ui.added.len == 0:
       dim("Choose the survey's files: its S, R and X files (SPS), SEG P1 files or a CSV " &
         "table of stations.", t)
@@ -282,21 +328,35 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     marks.marked("join.add")
     tip("SPS (S, R, X), SEG P1 files, or a CSV table of stations: line, point, x, y " &
       "(and index, elevation, kind) columns")
-    if not ui.units.hasKey(key) or units.survey == suNotGiven and derived != suNotGiven:
-      units.survey = derived
     igAlignTextToFramePadding()
     igTextUnformatted("Their coordinates are in", nil)
     igSameLine(0, -1)
-    var surveyUnit = units.survey
+    var surveyUnit = ui.units.surveyUnit(said)
     if unitCombo("##surveyunits", surveyUnit, marks, "join.survey units"):
-      units.survey = surveyUnit
-      ui.units[key] = units
-    tip(if said.len > 0: "What the SPS headers say: " & said & ". Change it when they are " &
-          "wrong; nothing is converted: the map and the status bar label the coordinates " &
-          "with it."
+      ui.units.choose(surveyUnit)
+    tip(if ui.units.surveyChosen: "As you chose. The headers say " & (if said.unit ==
+          suNotGiven: "nothing of it" else: $said.unit) & "; nothing is converted: the map " &
+          "and the status bar label the coordinates with it."
+        elif said.unit != suNotGiven: "What the survey files' headers say. Change it when " &
+          "they are wrong; nothing is converted: the map and the status bar label the " &
+          "coordinates with it."
         else: "No survey file chosen says. Choose what its coordinates are in: the map " &
           "and the status bar label them with it; nothing is converted.")
-    if said.len > 0: dim("The SPS headers say " & said & ".", t)
+    for w in said.words: dim(w, t)
+    if said.words.len > 0: marks.marked("join.survey said")
+    var reading = 0
+    for h in heads:
+      if not h.done: inc reading
+      elif h.problem.len > 0:
+        wrapped(h.file.path.extractFilename & ": " & h.problem & ".", t.roles[rlWarning])
+    if reading > 0:
+      dim("Reading what " & (if reading == 1: "a survey file's headers say"
+        else: $reading & " survey files' headers say") & " of the unit...", t)
+    if said.disagree.len > 0:
+      wrapped(said.disagree, t.roles[rlWarning])
+      marks.marked("join.survey disagree")
+    var units = JoinUnits(survey: surveyUnit, file: suNotGiven)
+    ui.drawnNote = ""
     # -- the seismic file
     igSeparatorText("Seismic file")
     if target < 0:
@@ -312,6 +372,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
           igPushID_Int(cint(j))
           if igSelectable_Bool(name.cstring, j == target, 0, ImVec2_c(x: 0, y: 0)):
             ui.session = st.sessions[j].id
+          marks.mark("join.file " & st.sessions[j].name)
           igPopID()
         igEndCombo()
       marks.marked("join.file")
@@ -320,15 +381,25 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
       if joinedAt >= 0:
         dim("A survey was imported for it already (" & $st.joins[joinedAt].files.len &
           " files): importing again starts from its keys as they are now.", t)
+      let fu = ui.units.fileUnit(key, ui.fileUnits, surveyUnit)
       igAlignTextToFramePadding()
       igTextUnformatted("Its headers' coordinates are in", nil)
       igSameLine(0, -1)
-      var fileUnit = units.file
+      var fileUnit = fu.unit
       if unitCombo("##fileunits", fileUnit, marks, "join.file units"):
-        units.file = fileUnit
-        ui.units[key] = units
-      tip("What the file's headers say: " & $ui.fileUnits & ". Change it when the headers " &
-        "are wrong; nothing is converted.")
+        ui.units.choose(key, fileUnit)
+      units.file = fileUnit
+      ui.drawnNote = fu.note
+      tip("What the file's headers say: " & $ui.fileUnits & (if fu.note.len > 0: ". " &
+        fu.note else: ".") & " Change it when it is wrong; nothing is converted.")
+      if fu.note.len > 0:
+        dim(fu.note, t)
+        marks.marked("join.file note")
+      if fu.conflict.len > 0:
+        wrapped(fu.conflict & (if opts.coordinates == hcFill: " Or choose \"" & $hcReplace &
+          "\" (Options) to have the survey's coordinates everywhere." else: ""),
+          t.roles[rlWarning])
+        marks.marked("join.file conflict")
       if ui.crs.len > 1:
         igTextUnformatted(("Its coordinate reference system, as the file gives it (" &
           ui.crsFormat & "):").cstring, nil)
@@ -339,11 +410,6 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
       else:
         dim("The file gives no coordinate reference system: the survey files' headers say " &
           "what the coordinates are (above).", t)
-      if units.file != suNotGiven and units.survey != suNotGiven and
-          units.file != units.survey and opts.coordinates == hcFill:
-        wrapped("The headers' coordinates are in " & $units.file & " and the survey's in " &
-          $units.survey & ": the import does not convert them. Choose \"" & $hcReplace &
-          "\" to have the survey's everywhere.", t.roles[rlWarning])
     # -- options
     if igCollapsingHeader_TreeNodeFlags("Options", 0):
       marks.marked("join.options")
@@ -375,6 +441,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
         marks.marked("join.unmatched")
         tip("Select the traces the survey has no source or receiver station for, in the " &
           "plot and on the map")
+    ui.drawn = units
     igEndChild()
     # -- import
     igSeparator()
@@ -385,7 +452,6 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
       result.commands.add Command(kind: ckJoin, joinFile: (if target >= 0:
         st.sessions[target].id else: NoSession), joinFiles: files, joinOptions: opts,
         joinUnits: units)
-      ui.units[key] = units
     igEndDisabled()
     marks.marked("join.run")
     tip(if busy: "An import is under way" elif files.len == 0: "Choose the survey's files first"
