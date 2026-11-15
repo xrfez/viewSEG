@@ -15,7 +15,9 @@
 ## Skipped without zig (CI's test job; its release job builds the program
 ## with zig). Nothing here runs the program: there is no Windows here.
 ##
-## Seen to fail: with `winres` linking `-mwindows` only (zig ignores it),
+## Seen to fail: with the windows not subclassed to keep their look after
+## a settings change, "SetWindowSubclass is not looked up"; with `winres`
+## linking `-mwindows` only (zig ignores it),
 ## "subsystem 3, not GUI (2)"; with `RtlGetVersion`'s struct declared one
 ## field short, the `static` size check stops the compile.
 
@@ -72,7 +74,8 @@ else:
     doAssert subsystem(gui) == 2, "subsystem " & $subsystem(gui) & ", not GUI (2)"
     doAssert "PerMonitorV2" in gui, "no manifest with per-monitor DPI v2"
     for name in ["DwmSetWindowAttribute", "RtlGetVersion", "GetDpiForWindow", "LoadImageW",
-        "Shell_NotifyIconW", "FindWindowExW"]:
+        "Shell_NotifyIconW", "FindWindowExW", "SetWindowSubclass", "DefSubclassProc",
+        "RemoveWindowSubclass"]:
       doAssert name in gui, name & " is not looked up"
     let console = build("probe-console.exe", ["-d:console"])
     doAssert subsystem(console) == 3, "-d:console: subsystem " & $subsystem(console)

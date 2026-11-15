@@ -86,6 +86,15 @@ block versions:
     for k in FrameKind:
       doAssert DwmwaSystemBackdropType notin attrs(dwmSettings(look, k, v)), "no Mica"
 
+block settingChanges:
+  # After these SDL sets the system's dark mode on each window: the look is
+  # set again.
+  doAssert resetsDarkMode(WmSettingChange, ImmersiveColorSet)
+  doAssert resetsDarkMode(0x001A, "ImmersiveColorSet")
+  doAssert not resetsDarkMode(WmSettingChange, "WindowsThemeElement")
+  doAssert not resetsDarkMode(WmSettingChange, "")
+  doAssert not resetsDarkMode(0x0080, ImmersiveColorSet)
+
 block iconSizesForDpi:
   doAssert iconSizes(96) == (32, 16)
   doAssert iconSizes(120) == (40, 20)

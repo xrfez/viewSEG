@@ -23,6 +23,12 @@
 ## frontend paints the whole client area opaque, so Mica could show only in
 ## the title bar, which the caption colour paints over.
 ##
+## SDL sets the system's dark mode on every window again after each
+## `WM_SETTINGCHANGE` "ImmersiveColorSet", which Windows sends for accent and
+## other personalisation changes too, without telling the program; each
+## window given a look is therefore subclassed (`SetWindowSubclass`, Common
+## Controls 6) and set again right after SDL has handled that message.
+##
 ## Frameless windows (the frontend's own windows dragged out of the main
 ## one, its menus and tooltips outside it) draw their own title and border:
 ## they get the dark mode and square corners only, so Windows 11 neither
@@ -115,6 +121,17 @@ func iconSizes*(dpi: int): tuple[big, small: int] =
   let d = if dpi <= 0: 96 else: dpi
   (32 * d div 96, 16 * d div 96)
 
+const
+  WmSettingChange* = 0x001A'u32
+  ImmersiveColorSet* = "ImmersiveColorSet"
+
+func resetsDarkMode*(msg: uint32; setting: string): bool =
+  ## Whether window message `msg` with the setting name `setting` (its
+  ## `lParam`) is one after which SDL sets the system's dark mode on the window
+  ## again: `WM_SETTINGCHANGE` "ImmersiveColorSet", which Windows sends for a
+  ## light/dark switch and for accent and other personalisation changes too.
+  msg == WmSettingChange and setting == ImmersiveColorSet
+
 when defined(windows):
   import std/dynlib
 
@@ -136,6 +153,14 @@ when defined(windows):
       load: uint32): pointer {.stdcall, gcsafe, raises: [].}
     SendMessageWFn = proc (hwnd: Hwnd; msg: uint32; wParam: uint; lParam: int): int {.
       stdcall, gcsafe, raises: [].}
+    SubclassProc = proc (hwnd: Hwnd; msg: uint32; wParam: uint; lParam: int; id: uint;
+      refData: uint): int {.stdcall, gcsafe, raises: [].}
+    SetWindowSubclassFn = proc (hwnd: Hwnd; subclass: SubclassProc; id: uint;
+      refData: uint): int32 {.stdcall, gcsafe, raises: [].}
+    RemoveWindowSubclassFn = proc (hwnd: Hwnd; subclass: SubclassProc; id: uint): int32 {.
+      stdcall, gcsafe, raises: [].}
+    DefSubclassProcFn = proc (hwnd: Hwnd; msg: uint32; wParam: uint; lParam: int): int {.
+      stdcall, gcsafe, raises: [].}
 
   static: doAssert sizeof(OsVersionInfoW) == 276
 
@@ -148,6 +173,8 @@ when defined(windows):
     SwpNoOwnerZOrder = 0x0200'u32
     ImageIcon = 1'u32
     WmSetIcon = 0x0080'u32
+    WmNcDestroy = 0x0082'u32
+    SubclassId = 0x56534547'u # "VSEG"
     IconSmall = 0'u
     IconBig = 1'u
 
@@ -161,6 +188,11 @@ when defined(windows):
     loadImage: LoadImageWFn
     sendMessage: SendMessageWFn
     icons: seq[(int, pointer)] ## loaded icons by size, kept for the program's life
+    setWindowSubclass: SetWindowSubclassFn
+    removeWindowSubclass: RemoveWindowSubclassFn
+    defSubclassProc: DefSubclassProcFn
+    keptLook: ChromeLook       ## the look the windows keep (`applyChrome`'s last)
+    keptVersion: WindowsVersion
 
   proc lookUp() =
     ## Finds the functions once (main thread).
@@ -179,6 +211,10 @@ when defined(windows):
     loadImage = cast[LoadImageWFn](find(user32, "LoadImageW"))
     sendMessage = cast[SendMessageWFn](find(user32, "SendMessageW"))
     getModuleHandle = cast[GetModuleHandleWFn](find(kernel32, "GetModuleHandleW"))
+    let comctl32 = loadLib("comctl32.dll") # version 6, as the manifest asks
+    setWindowSubclass = cast[SetWindowSubclassFn](find(comctl32, "SetWindowSubclass"))
+    removeWindowSubclass = cast[RemoveWindowSubclassFn](find(comctl32, "RemoveWindowSubclass"))
+    defSubclassProc = cast[DefSubclassProcFn](find(comctl32, "DefSubclassProc"))
 
 proc windowsVersion*(): WindowsVersion =
   ## The running Windows' version from `RtlGetVersion` (which, unlike
@@ -193,17 +229,11 @@ proc windowsVersion*(): WindowsVersion =
         result = WindowsVersion(major: info.major.int, minor: info.minor.int,
           build: info.build.int)
 
-proc applyChrome*(hwnd: pointer; look: ChromeLook; kind = fkFramed;
-    version = windowsVersion(); redraw = false): int =
-  ## Sets `look` on window `hwnd` (`dwmSettings`); with `redraw`, has
-  ## Windows draw the frame again at once (for a window already shown: Windows
-  ## 10 repaints a changed title bar only then). Returns how many attributes
-  ## Windows took; 0 elsewhere than Windows, for a nil handle, and without
-  ## DWM.
-  result = 0
-  when defined(windows):
-    lookUp()
-    if hwnd != nil and dwmSet != nil:
+when defined(windows):
+  proc setAttributes(hwnd: pointer; look: ChromeLook; kind: FrameKind; version: WindowsVersion;
+      redraw: bool): int {.gcsafe, raises: [].} =
+    result = 0
+    {.cast(gcsafe).}:
       for s in dwmSettings(look, kind, version):
         var value = s.value
         if dwmSet(hwnd, s.attribute, addr value, 4) >= 0:
@@ -213,6 +243,44 @@ proc applyChrome*(hwnd: pointer; look: ChromeLook; kind = fkFramed;
       if redraw and setWindowPos != nil:
         discard setWindowPos(hwnd, nil, 0, 0, 0, 0, SwpNoSize or SwpNoMove or SwpNoZOrder or
           SwpNoActivate or SwpNoOwnerZOrder or SwpFrameChanged)
+
+  proc keepLook(hwnd: Hwnd; msg: uint32; wParam: uint; lParam: int; id: uint;
+      refData: uint): int {.stdcall, gcsafe, raises: [].} =
+    ## The windows' subclass: SDL's window procedure first, then, after a
+    ## settings change SDL answers by setting the system's dark mode
+    ## (`resetsDarkMode`), the kept look again.
+    {.cast(gcsafe).}:
+      result = defSubclassProc(hwnd, msg, wParam, lParam)
+      if msg == WmSettingChange and lParam != 0:
+        var setting = ""
+        let wide = cast[ptr UncheckedArray[uint16]](lParam)
+        var i = 0
+        while i < 64 and wide[i] != 0:
+          setting.add char(wide[i] and 0x7f)
+          inc i
+        if resetsDarkMode(msg, setting):
+          discard setAttributes(hwnd, keptLook, FrameKind(refData), keptVersion, redraw = true)
+      elif msg == WmNcDestroy:
+        discard removeWindowSubclass(hwnd, keepLook, SubclassId)
+
+proc applyChrome*(hwnd: pointer; look: ChromeLook; kind = fkFramed;
+    version = windowsVersion(); redraw = false): int =
+  ## Sets `look` on window `hwnd` (`dwmSettings`); with `redraw`, has
+  ## Windows draw the frame again at once (for a window already shown: Windows
+  ## 10 repaints a changed title bar only then). The window keeps the look:
+  ## after each `WM_SETTINGCHANGE` "ImmersiveColorSet" (a light/dark or accent
+  ## change), on which SDL sets the system's dark mode on it, it is set again
+  ## (a window subclass, `SetWindowSubclass`). Returns how many attributes
+  ## Windows took; 0 elsewhere than Windows, for a nil handle, and without
+  ## DWM.
+  result = 0
+  when defined(windows):
+    lookUp()
+    if hwnd != nil and dwmSet != nil:
+      (keptLook, keptVersion) = (look, version)
+      if setWindowSubclass != nil and defSubclassProc != nil and removeWindowSubclass != nil:
+        discard setWindowSubclass(hwnd, keepLook, SubclassId, uint(ord(kind)))
+      result = setAttributes(hwnd, look, kind, version, redraw)
 
 proc setWindowIcons*(hwnd: pointer; resourceId = 1): bool =
   ## Gives window `hwnd` the executable's icon `resourceId` (`platform/winres`)

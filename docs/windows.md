@@ -36,12 +36,16 @@ attributes on its `HWND`:
   bar (viewSEG draws its own), so they get the dark mode and **square
   corners** only: Windows 11 would otherwise clip the corners viewSEG draws
   and add a second border inside its own.
-- **Again when the theme changes** (also while View > Theme previews one), and
-  when Windows switches light/dark
-  (SDL then resets every title bar to the system's mode itself; viewSEG sets
-  the theme's again right after). A shown window is told to redraw its frame
-  at once (`SWP_FRAMECHANGED`): Windows 10 repaints a changed title bar only
-  then.
+- **Again when the theme changes** (also while View > Theme previews one).
+  A shown window is told to redraw its frame at once (`SWP_FRAMECHANGED`):
+  Windows 10 repaints a changed title bar only then.
+- **Kept through Windows' own changes.** On `WM_SETTINGCHANGE`
+  "ImmersiveColorSet", which Windows sends for a light/dark switch and also
+  for an accent colour or other personalisation change, SDL sets the
+  *system's* dark mode on every window again, and tells viewSEG only when
+  the light/dark setting itself changed. Each window is therefore subclassed
+  (`SetWindowSubclass`) and gets the theme's look back right after SDL has
+  handled that message.
 - **Mica is not used.** viewSEG paints the whole of each window opaque
   (Dear ImGui and OpenGL), so the Mica backdrop could show only in the title
   bar, which the caption colour paints over. A translucent backdrop would
@@ -151,24 +155,28 @@ executable) or `viewSEG.exe --reset-windows`.
 3. **Windows' light/dark switch** (Settings > Personalization > Colors), with
    the theme on Follow system: viewSEG and its title bar follow; with a fixed
    theme the title bar keeps the theme's mode.
-4. **A panel dragged out** of the main window (the Map's tab, out past the
+4. **Windows' accent colour** (Settings > Personalization > Colors > Accent
+   color), with a light viewSEG theme on a dark Windows: the title bar stays
+   light, and its minimize, maximize and close buttons stay dark on light
+   (Windows 10: the bar must not turn dark).
+5. **A panel dragged out** of the main window (the Map's tab, out past the
    edge): its window has square corners and one border, no white flash when
    it opens. A menu or tooltip that goes past the main window's edge: square,
    no Windows border around it.
-5. **Icons**: sharp in the title bar, the taskbar and Alt+Tab at 100 %, 125 %
+6. **Icons**: sharp in the title bar, the taskbar and Alt+Tab at 100 %, 125 %
    and 150 %; still sharp after moving the window to a monitor of another
    scale.
-6. **Tray**: the icon is in the notification area (perhaps under the `^`
+7. **Tray**: the icon is in the notification area (perhaps under the `^`
    overflow); a left or right click opens the menu Show viewSEG, Open
    file..., Quit, dark when Windows is dark. Open file... opens the file
    dialog over the window.
-7. **Window > Minimize to the tray**: minimize: the window and any dragged-out
+8. **Window > Minimize to the tray**: minimize: the window and any dragged-out
    panels leave the taskbar; the tray's Show viewSEG brings them back, still
    maximized if they were.
-8. **Quit** from the tray, from File > Quit and by closing the window: the
+9. **Quit** from the tray, from File > Quit and by closing the window: the
    icon is gone at once (pass the pointer over where it was).
-9. **The first window** on a 1080p laptop at 150 %: maximized; on a 4K laptop
+10. **The first window** on a 1080p laptop at 150 %: maximized; on a 4K laptop
    at 150 %: a large window (1920 x 1200 pixels) in the middle.
-10. **File > Open file / Open folder**: the Explorer dialog with the
+11. **File > Open file / Open folder**: the Explorer dialog with the
     navigation pane, in Windows' mode.
-11. Anything that still looks like a non-Windows program: say what and where.
+12. Anything that still looks like a non-Windows program: say what and where.

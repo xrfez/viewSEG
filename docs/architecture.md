@@ -81,7 +81,8 @@ There are two parts, and both are needed. SDL and GLFW cannot supply the first.
   `platform/trayguard` for the rest, `ui/imgui/frames` joining them; details and what to
   check on a Windows machine: `windows.md`). On every window, including each ImGui
   viewport window (the backend's `Platform_CreateWindow` is wrapped), and again when the
-  theme or the system's light/dark changes, `platform/chrome` sets these DWM attributes
+  theme changes and after each settings change SDL answers with the system's dark mode
+  (each window subclassed, `SetWindowSubclass`), `platform/chrome` sets these DWM attributes
   from the theme, by Windows version (`RtlGetVersion`):
   - `DWMWA_USE_IMMERSIVE_DARK_MODE` (20; 19 before 20H1) as the theme's mode;
   - on Windows 11, caption, text and border colours (35, 36, 34) and the corners (33):
