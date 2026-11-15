@@ -5,7 +5,8 @@ viewSEG tables. Any Omarchy theme's `colors.toml` works as it is, in either of i
 (the named colours of `everforest-dark.toml`, or the terminal form with `color0` ..
 `color15`).
 
-- **Shipped:** every theme of Omarchy, and Everforest Light (below). *View > Theme* lists
+- **Shipped:** the themes of Omarchy whose licences allow a public release, and
+  Everforest Light (below; two are left out, see "Not shipped"). *View > Theme* lists
   them, dark ones first, each with a swatch of its background, text and accent colours;
   resting the pointer on one shows the program in it until the menu closes, and a click
   keeps it. *Follow system* uses `everforest-dark.toml` and `everforest-light.toml` for a
@@ -66,8 +67,8 @@ The files are Omarchy's `colors.toml`, copied from Omarchy 4.0.0.alpha (Osaka Ja
 has none there: from Omarchy's repository, `omacom/omarchy` at `master`). Omarchy is ©
 David Heinemeier Hansson under the MIT licence (`licences/themes/Omarchy-LICENSE.txt`).
 Where a palette comes from another project, that project and its licence are named
-below; its licence text is in `licences/themes/`. "Not checked" means its licence could
-not be read; nothing else is claimed for it. Where Omarchy names no source, the source
+below; its licence text is in `licences/themes/`. Every licence here was read in its
+project's own licence file. Where Omarchy names no source, the source
 given is what its theme files point to (the Neovim colour scheme it installs), not a
 statement of Omarchy's.
 
@@ -84,20 +85,34 @@ statement of Omarchy's.
 | `jade-horse.toml` | Jade Horse | dark | Omarchy | Omarchy's MIT |
 | `kanagawa.toml` | Kanagawa | dark | Kanagawa by Tommaso Laurenzi, `rebelot/kanagawa.nvim` | MIT, © 2021 Tommaso Laurenzi |
 | `last-horizon.toml` | Last Horizon | dark | Last Horizon by HANCORE, `HANCORE-linux/omarchy-lasthorizon-theme` | MIT, © 2025 HANCORE |
-| `lumon.toml` | Lumon | dark | Omarchy (`omacom/lumon.nvim`) | Omarchy's MIT |
+| `lumon.toml` | Lumon | dark | Omarchy (`omacom/lumon.nvim`) | Omarchy's MIT (its name is that of the company in a TV series: a trademark question for the user before a release, not a licence one) |
 | `lupine.toml` | Lupine | light | Omarchy | Omarchy's MIT |
 | `matte-black.toml` | Matte Black | dark | Matte Black by Taha Nejad, `tahayvr/matteblack.nvim` | MIT, © 2025 Taha Nejad |
 | `miasma.toml` | Miasma | dark | Miasma by xero, `xero/miasma.nvim` | CC0 1.0 |
 | `nord.toml` | Nord | dark | Nord by Sven Greb, `nordtheme/nord` | MIT, © 2016-present Sven Greb |
-| `osaka-jade.toml` | Osaka Jade | dark | Omarchy (its Neovim scheme is `ribru17/bamboo.nvim`, MIT) | Omarchy's MIT; the palette's own source not checked |
-| `retro-82.toml` | Retro 82 | dark | Retro 82 by OldJobobo, `OldJobobo/omarchy-retro-82-theme` | not checked (the repository has no licence file; its Neovim scheme `OldJobobo/retro-82.nvim` is CC0 1.0) |
-| `ristretto.toml` | Ristretto | dark | Monokai Pro's Ristretto filter (monokai.pro) | not checked (Monokai Pro is a commercial theme; its Neovim port `loctvl842/monokai-pro.nvim` is MIT for its code) |
+| `osaka-jade.toml` | Osaka Jade | dark | Osaka Jade by Justin Lowry, `Justikun/omarchy-osaka-jade-theme` (its `alacritty.toml`: the same background and text), now one of Omarchy's own | MIT, © 2025 Justin Lowry |
 | `rose-pine.toml` | Rosé Pine (Dawn) | light | Rosé Pine, `rose-pine/rose-pine-palette` | MIT, © mvllow |
 | `solitude.toml` | Solitude | dark | Solitude by HANCORE, `HANCORE-linux/omarchy-solitude-theme` | MIT, © 2026 HANCORE |
 | `starship.toml` | Starship | dark | Omarchy | Omarchy's MIT |
 | `tokyo-night.toml` | Tokyo Night | dark | Tokyo Night by Enkia, `enkia/tokyo-night-vscode-theme` (Omarchy's Neovim scheme is `folke/tokyonight.nvim`, Apache 2.0) | MIT, © 2018-present Enkia |
 | `vantablack.toml` | Vantablack | dark | Omarchy (by bjarneo) | Omarchy's MIT |
 | `white.toml` | White | light | Omarchy (by bjarneo) | Omarchy's MIT |
+
+## Not shipped
+
+The user's rule (2026-11-15): a theme whose licence would prevent a public release is
+not shipped. Left out:
+
+| Theme | Why |
+|---|---|
+| Retro 82 (`retro-82`) | Its palette's repository, `OldJobobo/omarchy-retro-82-theme`, has no licence, so all rights are reserved by default (only its Neovim scheme is CC0 1.0). |
+| Ristretto (`ristretto`) | Its palette is Monokai Pro's Ristretto filter: Monokai Pro is a commercial theme (monokai.pro); the MIT of `loctvl842/monokai-pro.nvim` covers that port's code, not the palette. |
+
+Both still work for you: put the theme's `colors.toml` (from your Omarchy install, for
+example) in your own themes folder (`<config>/themes/`, which `viewSEG --paths` names) as
+`retro-82.toml` or `ristretto.toml`, and it is listed under *View > Theme* as before.
+Settings that name a theme that is not there start in *Follow system* instead, with one
+message saying so.
 
 What changed in viewSEG's copies: each has a `name` and a header saying where it is
 from; Omarchy's keys for other programs are left out; Last Horizon, Solitude and White

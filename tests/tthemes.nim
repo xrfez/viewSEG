@@ -1,4 +1,5 @@
-## Every theme viewSEG ships (`assets/themes/`): all of Omarchy's, each with
+## Every theme viewSEG ships (`assets/themes/`): Omarchy's, but Retro 82 and
+## Ristretto (their licences do not allow a public release), each with
 ## its proper name and mode, loading without a message, and each readable and
 ## usable by the limits below, checked on the colours as drawn:
 ##
@@ -62,7 +63,6 @@ const
     ("lumon", "Lumon", tmDark), ("lupine", "Lupine", tmLight),
     ("matte-black", "Matte Black", tmDark), ("miasma", "Miasma", tmDark),
     ("nord", "Nord", tmDark), ("osaka-jade", "Osaka Jade", tmDark),
-    ("retro-82", "Retro 82", tmDark), ("ristretto", "Ristretto", tmDark),
     ("rose-pine", "Rosé Pine", tmLight), ("solitude", "Solitude", tmDark),
     ("starship", "Starship", tmDark), ("tokyo-night", "Tokyo Night", tmDark),
     ("vantablack", "Vantablack", tmDark), ("white", "White", tmLight)]
@@ -80,10 +80,14 @@ proc load(file: string): Theme =
   doAssert messages.len == 0, file & ": " & $messages
 
 block allShipped:
-  # every Omarchy theme, and Everforest Light, under its own name and mode
+  # the Omarchy themes that may ship, and Everforest Light, under its own
+  # name and mode; those that may not are not there
   var found: seq[string]
   for f in themeFiles([assetThemes]): found.add f.name
   doAssert found == Shipped.mapIt(it[0]), $found
+  for gone in ["retro-82", "ristretto"]:
+    doAssert gone notin found, gone & " is shipped"
+    doAssert gone in readFile(assetThemes / "README.md"), gone & ": the README says nothing"
   for (file, name, mode) in Shipped:
     let t = load(file)
     doAssert t.name == name, file & " is called " & t.name

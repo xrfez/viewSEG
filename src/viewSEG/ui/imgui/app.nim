@@ -563,19 +563,35 @@ proc themeDirs(userDir: string; assetDirs: openArray[string]): seq[string] =
 proc pickTheme(ui: var Ui): Theme =
   ## The theme to draw with now: the selected file, else the default file for
   ## the system's (or the forced) mode, else the built-in theme.
+  ## A theme named but found nowhere (one viewSEG no longer ships, such as
+  ## Retro 82 and Ristretto, or a file since removed) gives way to Follow
+  ## system, said once, and the settings follow the system from then on.
   let mode = resolveTheme(ui.choice, ui.system)
-  let wanted = if ui.selected.len > 0: ui.selected else: DefaultThemeNames[mode]
   var path = ""
   var listed = -1
-  for i, f in ui.themes:
-    if f.name == wanted: (path, listed) = (f.path, i)
-  if path.len == 0 and fileExists(wanted):
-    path = wanted
+  proc find(ui: Ui; wanted: string; path: var string; listed: var int) =
+    for i, f in ui.themes:
+      if f.name == wanted: (path, listed) = (f.path, i)
+    if path.len == 0 and fileExists(wanted):
+      path = wanted
+  if ui.selected.len > 0:
+    find(ui, ui.selected, path, listed)
+    if path.len == 0:
+      const NoLongerShipped = ["retro-82", "ristretto"] # their licences do not allow it
+      ui.messages.add "The theme `" & ui.selected & "` is not here" &
+        (if ui.selected in NoLongerShipped: " (it no longer comes with viewSEG)" else: "") &
+        ": following the system's theme instead. Its colors.toml in your themes folder " &
+        "(viewSEG --paths) brings it back.", mlInfo
+      if ui.core.settings.theme == ui.selected:
+        var s = ui.core.settings
+        s.theme = ""
+        ui.core.apply Command(kind: ckSettings, settings: s)
+        ui.appliedTheme = ""
+      ui.selected = ""
+  if ui.selected.len == 0:
+    find(ui, DefaultThemeNames[mode], path, listed)
   if path.len == 0:
     result = builtinTheme(mode)
-    if ui.selected.len > 0:
-      ui.messages.add "Theme `" & ui.selected & "` not found; using the built-in " &
-        result.name & ".", mlWarning
   elif listed >= 0 and themeStamp(path) == ui.themes[listed].stamp:
     # As read at start, so a pick parses nothing on the UI thread; a file
     # changed since (being edited) is read again below.

@@ -713,8 +713,8 @@ stepped away from it.
 
 ## Themes
 
-View > Theme lists every theme that comes with viewSEG (all of Omarchy's, and Everforest
-Light), dark ones first, each with a swatch of its background, text and accent colours.
+View > Theme lists every theme that comes with viewSEG (Omarchy's, but two whose
+licences do not allow it to be shipped, and Everforest Light), dark ones first, each with a swatch of its background, text and accent colours.
 Rest the pointer on one and the whole program is drawn in it; move to another to compare;
 close the menu (Esc, or a click elsewhere) to go back, or click one to keep it. **Follow
 system** (the default) uses Everforest Dark or Everforest Light as your desktop is dark or

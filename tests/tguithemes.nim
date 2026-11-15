@@ -13,13 +13,18 @@
 ##   and the menu then ticks it;
 ## - started in a named theme (Nord, as `VIEWSEG_THEME=nord` does) with the
 ##   settings following the system, a click on "Follow system" after a
-##   preview of Tokyo Night draws Everforest Dark, though no setting changes.
+##   preview of Tokyo Night draws Everforest Dark, though no setting changes;
+## - settings that name a theme no longer shipped (Retro 82) start in the
+##   theme Follow system picks, with one plain message, and the settings
+##   then follow the system.
 ##
 ## Seen to fail: with the preview not reverted when the submenu closes
 ## (`previewWanted` left as it was), "Escape: back to Everforest Dark did not
 ## happen"; with a pick that changes no setting left to the settings
 ## (`previewKept` set, nothing applied), "drawn in Tokyo Night after the menu
-## closed"; with the entries in file order, "Catppuccin Latte (light) is
+## closed"; with a theme the settings name and no file holds left as it was
+## (the built-in theme and a warning), "messages about retro-82" held a
+## warning and the settings kept retro-82; with the entries in file order, "Catppuccin Latte (light) is
 ## listed among the dark ones"; with no swatch drawn, "White's swatch: 0
 ## white pixels".
 ##
@@ -28,8 +33,8 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[algorithm, math, monotimes, options, os]
-import viewSEG/core/[geometry, state]
+import std/[algorithm, math, monotimes, options, os, strutils]
+import viewSEG/core/[geometry, persist, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/theme
 import utils/[fixtures, waiting]
@@ -100,7 +105,7 @@ proc themeOf(file: string): Theme =
     if t.name == file: result = t.theme
 
 withFixtures fx:
-  doAssert shipped.len >= 25, $shipped.len & " themes"
+  doAssert shipped.len >= 23, $shipped.len & " themes"
   let opts = RunOptions(windowSize: (1400, 1000), theme: forceDark,
     userThemeDir: some(fx.dir / "no-user-themes"), assetDirs: some(@[assets]),
     indexCacheDir: some(fx.dir / "cache"))
@@ -219,3 +224,29 @@ withFixtures fx:
     wait > 30)
   drive(steps, named)
   echo "tguithemes: a named theme, then Follow system"
+
+  # Settings that name a theme viewSEG no longer ships (Retro 82, taken out
+  # for its licence): the program starts in the theme Follow system picks,
+  # says so once, plainly, and the settings follow the system from then on.
+  steps.setLen 0
+  let config = fx.dir / "config"
+  createDir(config)
+  writeFile(config / SettingsFileName, "(.nif27)\n(.vendor \"viewSEG\")\n(settings\n" &
+    " (version 1)\n (theme \"retro-82\"))\n")
+  var gone = opts
+  (gone.theme, gone.persist, gone.configDir) = (followSystem, true, some(config))
+  gone.logDir = some(fx.dir / "logs")
+  step("started without Retro 82", noop, proc (f: FrameInfo): bool =
+    result = f.markOf("menu.View").size.x > 0 and wait > 5
+    if result:
+      doAssert f.theme.name in ["Everforest Dark", "Everforest Light"], f.theme.name
+      var said: seq[string] = @[]
+      for m in f.messages:
+        if "retro-82" in m.text: said.add m.text
+      doAssert said.len == 1, "messages about retro-82: " & $said
+      for m in f.messages:
+        doAssert m.level == mlInfo or "theme" notin m.text.toLowerAscii, m.text
+      doAssert f.core.settings.theme == "", "the settings say " & f.core.settings.theme
+      doAssert f.markOf("menu.View").size.x > 0)
+  drive(steps, gone)
+  echo "tguithemes: a theme no longer shipped falls back to Follow system"

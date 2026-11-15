@@ -5,8 +5,8 @@
 # master, commit f4378f0de5b4, themes/osaka-jade/colors.toml), which is in the
 # terminal form (color0 .. color15), turned into the named keys as viewSEG
 # reads that form: red color1, green color2, blue color4, magenta color5, cyan
-# color6, muted color8, the bright ones color9 .. color14. The palette: an
-# Omarchy theme (Omarchy's MIT; its Neovim theme is ribru17/bamboo.nvim, MIT).
+# color6, muted color8, the bright ones color9 .. color14. The palette: Osaka
+# Jade by Justin Lowry (Justikun/omarchy-osaka-jade-theme, MIT), now Omarchy's.
 # Where each theme comes from, and its licence: README.md in this folder; what
 # each key does: everforest-dark.toml.
 #
