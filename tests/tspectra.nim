@@ -45,6 +45,7 @@
 ##   with the toggle on, every trace;
 ## - an open FFT window follows the plot's filters and its Aux toggle (the
 ##   samples at hand, nothing read), unless frozen, and again once not;
+##   and the kills of its traces (an edit of another trace asks nothing);
 ## - the file is never changed.
 ##
 ## Seen to fail: with the killed traces not left out of the request
@@ -68,7 +69,8 @@
 ## notch's spectrum is not padded: nfft 512"; with no response in the
 ## answer, the band-pass's curves were only "raw" and "processed". With
 ## the words as before, "not processed: the plot's filters (low-cut 4-8 Hz)
-## a low cut needs ..." (no verb).
+## a low cut needs ..." (no verb). With `followFfts` blind to kills (as
+## before), "the FFT window did not take the kill in".
 
 import std/[math, os, sequtils, strutils]
 import parseSEG
@@ -283,6 +285,25 @@ withFixtures fx:
       int(round(SpectrumLoudHz / st.spectra[v].spectrum.binHz))
     st.apply Command(kind: ckCloseSpectrum, spectrum: st.spectra[v].id)
     st.apply Command(kind: ckCloseSpectrum, spectrum: st.spectra[w].id)
+
+  block followsKills:
+    # An FFT window open when one of its traces is killed asks again
+    # without it, from the samples at hand, and with it once restored; an
+    # edit of a trace it is not of asks nothing.
+    let w = st.fft(toSeq(base ..< base + 8))
+    doAssert st.answered(w) and st.spectra[w].spectrum.averaged == 8
+    template sw: untyped = st.spectra[w]
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base + 2], on: true)
+    doAssert sw.waiting, "the FFT window did not take the kill in"
+    doAssert st.answered(w) and st.settle(sw.spectrum.killed == 1)
+    doAssert sw.spectrum.averaged == 7 and sw.spectrum.read == 0
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base + 2], on: false)
+    doAssert st.answered(w) and st.settle(sw.spectrum.killed == 0 and sw.spectrum.averaged == 8)
+    let asks = sw.asks
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base + 8], on: true)
+    doAssert sw.asks == asks, "an edit of another trace asked again"
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base + 8], on: false)
+    st.apply Command(kind: ckCloseSpectrum, spectrum: sw.id)
 
   block bandPass:
     st.filters Processing(band: pbBandPass, f1: 40, f2: 50, f3: 80, f4: 90)

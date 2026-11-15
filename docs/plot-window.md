@@ -1059,8 +1059,10 @@ shot.sgd", "FFT 2: 12 traces · ..."), floating beside the middle of the main wi
 first time, dockable anywhere like every window. Several can be open; each is a snapshot
 of the traces it was opened on (and of the visible time then), and keeps them while the
 plot moves on; it follows the plot's filters, its Aux toggle too, as they change (shown
-raw or not alike: both curves are drawn), computed again from the samples at hand, so
-the file is not read again. **Freeze** (off by default) keeps the filters it went
+raw or not alike: both curves are drawn), and the kills of its traces (a killed trace
+left out, a restored one taken back), computed again from the samples at hand, so the
+file is not read again. A reversed polarity changes no amplitude, and the phase is of
+the samples as recorded, so a reversal asks nothing. **Freeze** (off by default) keeps the filters it went
 through while the plot's change, to compare one setting with the next; unticked, it
 follows the plot again. Closing one (its ×) drops its work if it is still being computed. A
 window's number is the lowest free one, so a window opened again takes the place the

@@ -137,6 +137,8 @@ type
     panel*: PanelId           ## the plot it is of (the live panel: the Seismic window)
     filters*: string          ## the plot's filters, in words, when asked; "" for none
     processing*: Processing   ## them, as asked last (shown raw or not, alike)
+    killed*: seq[int]         ## its traces killed when it asked last (indices in the file)
+    editsSeen*: int           ## its file's edits' revision then
     spectrum*: Spectrum       ## the newest answer taken in
     asked*: uint64            ## the newest request's gen; 0 for none
     since*: uint64

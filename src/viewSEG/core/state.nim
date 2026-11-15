@@ -2346,6 +2346,8 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   template sw: untyped = state.spectra[w]
   sw.asked = state.spectrumGen
   sw.waiting = true
+  sw.killed = killed
+  sw.editsSeen = state.editsAt(s.path).revision
   inc sw.asks
   inc sw.revision
   state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
@@ -2400,22 +2402,44 @@ proc askAgain(state: var AppState; w: int): bool =
     if t in s: traces.add t - s.base
   state.askSpectrum(w, i, traces, window, sw.processing)
 
+func killedNow(state: AppState; sw: SpectrumWindow): (bool, seq[int], int) =
+  ## Whether the kills among FFT window `sw`'s traces changed since it
+  ## asked (its file's edits moved on); the killed ones now, ascending, and
+  ## the edits' revision. Its file not open: unchanged.
+  result = (false, @[], sw.editsSeen)
+  let i = state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1)
+  if i >= 0:
+    let s = state.sessions[i]
+    let e = state.editsAt(s.path)
+    if e.revision != sw.editsSeen:
+      var traces: seq[int] = @[]
+      for t in sw.traces:
+        if t in s: traces.add t - s.base
+      var killed = killedOf(e, traces)
+      killed.sort()
+      result = (killed != sw.killed, killed, e.revision)
+
 proc followFfts(state: var AppState) =
   ## After every change: each FFT window not frozen follows the filters of
   ## the plot it was opened from (and its Aux toggle; shown raw or not
-  ## alike), asked again from the samples at hand when they changed. Its
-  ## traces and time stay those it was opened on.
+  ## alike), and the kills of its traces, asked again from the samples at
+  ## hand when either changed. Its traces and time stay those it was opened
+  ## on. (A reversal changes no amplitude, and the phase is of the samples
+  ## as recorded: it asks nothing.)
   for w in 0 ..< state.spectra.len:
     template sw: untyped = state.spectra[w]
     if sw.id != LiveSpectrum and not sw.frozen:
       let k = state.findPanel(sw.panel)
       if k >= 0 and state.panels[k].layers.len > 0:
         let pr = spectrumFilters(state.panels[k])
-        if pr != sw.processing:
+        let (killsMoved, _, revision) = state.killedNow(sw)
+        if pr != sw.processing or killsMoved:
           let was = sw.processing
           sw.processing = pr
           if state.askAgain(w): sw.filters = filtersText(pr)
           else: sw.processing = was # asked again once it can be
+        elif revision != sw.editsSeen:
+          sw.editsSeen = revision # other traces' edits: nothing to ask
 
 proc followSpectrum(state: var AppState) =
   ## After every change: the FFT windows follow the plot's filters
