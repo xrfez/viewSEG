@@ -1,12 +1,17 @@
 ## The main menu bar and its keyboard shortcuts. Each item is reachable both
 ## ways, and its shortcut is shown in the menu and in the toolbar's tooltips.
 ## Drawing returns what the user asked for; the caller acts on it.
+##
+## File opens, follows and closes files and holds the settings; View holds
+## the theme; Window puts the windows right (Reset the windows, Bring all
+## windows onto this screen), shows, hides and brings forward each window,
+## and loads and saves layouts.
 
 import std/os
 import imguin/cimgui
 import ../../core/layouts
 import ../../view/theme
-import icons, marks
+import icons, marks, windows
 
 type
   MenuAction* = enum
@@ -16,8 +21,10 @@ type
     maToggleTheme = "Light / dark",
     maExportSettings = "Export...", maImportSettings = "Import...",
     maResetSettings = "Reset to defaults",
-    maSaveLayout = "Save as...", maResetLayout = "Reset",
-    maExportLayout = "Export... ", maImportLayout = "Import... ",
+    maResetWindows = "Reset the windows",
+    maBringWindows = "Bring all windows onto this screen",
+    maSaveLayout = "Save layout as...",
+    maExportLayout = "Export layout...", maImportLayout = "Import layout...",
     maShowFiles = "Files", maShowRecords = "Records", maShowMap = "Map",
     maShowHeaders = "Headers", maShowJobs = "Jobs", maShowMessages = "Messages",
     maExportLog = "Export messages..."
@@ -29,12 +36,15 @@ type
     recent*: seq[string]        ## File > Open recent, newest first
     recentFolders*: seq[string] ## the folders there, newest first
     canClose*: bool             ## a file is shown, so File > Close closes it
-    layouts*: seq[SavedLayout]  ## View > Layout > Load: the user's, then the presets
+    layouts*: seq[SavedLayout]  ## Window: the presets, and the user's under Load
     keepsLayouts*: bool         ## layouts can be saved by name (the program keeps its settings)
     followLatest*: bool         ## File > Follow the latest file is checked
     agentOn*: bool              ## File > Agent control is checked
     agentSocket*: string        ## where agents connect; "" while not known yet
     prepareNext*: bool          ## File > Prepare the next file is checked
+    shown*: set[AppWindow]      ## the windows ticked under Window
+    seismicName*: string        ## what the Seismic window is called now (`windowTitle`)
+    joinShown*: bool            ## the "Join geometry" window is open
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -47,6 +57,9 @@ type
     toggleFollow*: bool   ## File > Follow the latest file was clicked
     toggleAgent*: bool    ## File > Agent control was clicked
     togglePrepare*: bool  ## File > Prepare the next file was clicked
+    pickedWindows*: set[AppWindow]
+      ## their entries under Window were clicked (`picked`)
+    toggleJoin*: bool     ## the "Join geometry" window's entry under Window was clicked
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
@@ -57,14 +70,22 @@ const
     maJoinGeometry: 0,
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
     maToggleTheme: 0, maExportSettings: 0, maImportSettings: 0, maResetSettings: 0,
-    maSaveLayout: 0, maResetLayout: 0, maExportLayout: 0, maImportLayout: 0,
+    maResetWindows: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_R.cint,
+    maBringWindows: 0, maSaveLayout: 0, maExportLayout: 0, maImportLayout: 0,
     maShowFiles: 0, maShowRecords: 0, maShowMap: 0, maShowHeaders: 0, maShowJobs: 0,
     maShowMessages: 0, maExportLog: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
-  menuIcons: array[MenuAction, string] = [IconOpenFile, IconOpenFiles, IconOpenFolder,
-    IconClose, IconMap, IconQuit, IconTheme, IconSave, IconOpenFile, IconClose, IconSave, IconClose,
-    IconSave, IconOpenFile, IconList, IconRecords, IconMap, IconTable, IconTasks, IconLog,
-    IconExport]
+  menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
+    maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
+    maJoinGeometry: IconMap, maQuit: IconQuit, maToggleTheme: IconTheme,
+    maExportSettings: IconSave, maImportSettings: IconOpenFile, maResetSettings: IconClose,
+    maResetWindows: IconRefresh, maBringWindows: IconFit, maSaveLayout: IconSave,
+    maExportLayout: IconExport, maImportLayout: IconOpenFile, maShowFiles: IconList,
+    maShowRecords: IconRecords, maShowMap: IconMap, maShowHeaders: IconTable,
+    maShowJobs: IconTasks, maShowMessages: IconLog, maExportLog: IconExport]
+  windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
+    awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
+    awMessages: IconLog]
 
 const FollowHelp* = "On: each file that appears in the folder listed is shown in the " &
   "plot once it is completely written (its size has stopped changing and it is whole). " &
@@ -116,38 +137,70 @@ proc drawRecent(recent, folders: openArray[string]; res: var MenuResult) =
         res.clearRecent = true
     igEndMenu()
 
-proc drawLayoutMenu(input: MenuInput; res: var MenuResult) =
-  ## View > Layout: how the windows are arranged.
-  if igBeginMenu((IconLayers & "  Layout").cstring, true):
-    igBeginDisabled(not input.keepsLayouts)
-    item(maSaveLayout, res)
-    tip("Keep the windows as they are now under a name, to load again")
-    igEndDisabled()
-    if igBeginMenu((IconFolder & "  Load").cstring, input.layouts.len > 0):
-      var presets = false
-      for i, e in input.layouts:
-        if e.preset and not presets:
-          if i > 0: igSeparator()
-          igTextDisabled("Presets")
-          presets = true
+proc drawLayouts(input: MenuInput; res: var MenuResult) =
+  ## Window's layouts: the presets, the user's own under Load, then saving,
+  ## exporting and importing one.
+  igSeparatorText("Layouts")
+  var mine = false
+  for i, e in input.layouts:
+    if e.preset:
+      igPushID_Int(cint(i))
+      if igMenuItem_Bool((IconLayers & "  " & e.name).cstring, nil, false, true):
+        res.loadLayout = e.path
+      if marked != nil: marked[].mark("menu.layout." & e.name)
+      tip("Arrange the windows as this layout, which comes with viewSEG, does")
+      igPopID()
+    else: mine = true
+  if igBeginMenu((IconFolder & "  Load").cstring, mine):
+    for i, e in input.layouts:
+      if not e.preset:
         igPushID_Int(cint(i))
         if igMenuItem_Bool(e.name.cstring, nil, false, true): res.loadLayout = e.path
         tip(e.path)
         igPopID()
-      igEndMenu()
-    item(maResetLayout, res)
-    tip("The windows as they are when viewSEG first starts")
-    igSeparator()
-    item(maExportLayout, res)
-    tip("Write the windows' arrangement to a file of your choice")
-    item(maImportLayout, res)
-    tip("Arrange the windows as such a file says, and keep it among the layouts")
     igEndMenu()
+  tip(if mine: "Arrange the windows as a layout you saved does"
+      else: "The layouts you save are listed here")
+  igBeginDisabled(not input.keepsLayouts)
+  item(maSaveLayout, res)
+  tip("Keep the windows as they are now under a name, to load again")
+  igEndDisabled()
+  item(maExportLayout, res)
+  tip("Write the windows' arrangement to a file of your choice")
+  item(maImportLayout, res)
+  tip("Arrange the windows as such a file says, and keep it among the layouts")
+
+proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
+  ## Window: putting the windows right first, then each window with a tick,
+  ## then the layouts.
+  item(maResetWindows, res)
+  tip("Every window shown and docked in the main window, as at a first start (the " &
+    "default layout); the main window is brought onto a screen when it is off every one")
+  item(maBringWindows, res)
+  tip("The windows dragged out of the main window, wherever they are (on another screen, " &
+    "on one that is gone, or past a screen's edge), and the main window itself, brought " &
+    "wholly onto the screen the main window is on")
+  igSeparatorText("Windows")
+  for w in AppWindow:
+    let name = if w == awSeismic and input.seismicName.len > 0: input.seismicName
+               else: WindowNames[w]
+    if igMenuItem_Bool((windowIcons[w] & "  " & name).cstring, nil, w in input.shown, true):
+      res.pickedWindows.incl w
+    if marked != nil: marked[].mark("menu.window." & $w)
+    tip(if w in AlwaysShown: "Always shown: a click brings it forward"
+        else: "Ticked while shown. A click shows it in front when it is hidden or behind " &
+          "another tab, and hides it when it is in sight")
+  if igMenuItem_Bool(label(maJoinGeometry).cstring, nil, input.joinShown, true):
+    res.toggleJoin = true
+  if marked != nil: marked[].mark("menu.window.join")
+  tip("Ticked while open: a click opens it in front, or closes it")
+  drawLayouts(input, res)
 
 proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
   ## The menu bar over the main window, plus the shortcuts, which work whether
-  ## or not a menu is open. Its menus are marked "menu.File" and "menu.View",
-  ## its items "menu." and their names.
+  ## or not a menu is open. Its menus are marked "menu.File", "menu.View" and
+  ## "menu.Window", its items "menu." and their names, the windows' entries
+  ## "menu.window." and their IDs, the presets "menu.layout." and their names.
   result = MenuResult()
   marked = addr marks
   for a in MenuAction:
@@ -216,13 +269,11 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
         igEndMenu()
       if igMenuItem_Bool(label(maToggleTheme).cstring, nil, false, true):
         result.actions.incl maToggleTheme
-      igSeparator()
-      if igBeginMenu((IconLayers & "  Windows").cstring, true):
-        for a in maShowFiles .. maShowMessages:
-          item(a, result)
-          tip("Bring the " & $a & " window forward")
-        igEndMenu()
-      drawLayoutMenu(input, result)
+      igEndMenu()
+    let window = igBeginMenu("Window", true)
+    marks.mark("menu.Window")
+    if window:
+      drawWindowMenu(input, result)
       igEndMenu()
     igEndMainMenuBar()
   marked = nil

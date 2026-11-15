@@ -33,14 +33,14 @@ import asserts # before imguin: Nim keys its cache of imguin's C++ objects on th
 import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
-import ../../core/[filesystem, geometry, state, watchdog]
+import ../../core/[filesystem, geometry, screens, state, watchdog]
 import ../../platform/paths
 import ../../remote/control
 import ../../view/jobstatus
 import agentshot, chrome, dpi, filelist, fonts, headerswindow, icons, jobswindow, joindialog,
-  mapwindow, menus, messages, recordlist, shell, style, tracepanel
+  mapwindow, menus, messages, recordlist, shell, style, tracepanel, windows
 
-export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow
+export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow
 
 const
   glslVersion = "#version 330"
@@ -54,6 +54,7 @@ const
   recordsTitle = IconRecords & "  Records###records"
   joinTitle = IconMap & "  Join geometry###join"
   noticeSeconds = 5.0                     ## how long a notice stays on screen
+  CheckFrames = 8                         ## frames after a layout's arrival to look for windows off screen
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
 
 type
@@ -79,7 +80,10 @@ type
     join: JoinUi                               ## the "Join geometry" window
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
     dropAt: float64                            ## when a drag was last seen over the window
-    focus: set[MenuAction]                     ## windows to bring forward next frame (maShow...)
+    windows: WindowsUi                         ## which windows are shown (the Window menu)
+    checkPlaces: int                           ## frames left to bring back windows off every screen
+    offScreen: seq[string]                     ## the windows brought back meanwhile
+    arrangeNext: Option[string]                ## a layout text to arrange the windows by (tests)
     noticed: int                               ## the core's notices taken so far (serials)
     shownNotices: seq[(Notice, float64)]       ## notices on screen, and since when
     pick: Pick                                 ## under the mouse in the plot last frame: the readout
@@ -257,9 +261,56 @@ proc layoutText*(frame: FrameInfo): string =
   $igSaveIniSettingsToMemory(nil)
 
 proc resetLayout*(frame: FrameInfo) =
-  ## Puts the windows back where they are at a first start, as View >
-  ## Layout > Reset does; it takes effect next frame.
+  ## Puts the windows back where they are at a first start, as Window >
+  ## Reset the windows does; it takes effect next frame.
   frame.ui.layoutDone = false
+  frame.ui.windows.showAll()
+
+proc arrangeWindows*(frame: FrameInfo; text: string) =
+  ## Arranges the windows as Dear ImGui's layout `text` says, after this
+  ## frame, as loading a layout does (for tests).
+  frame.ui.arrangeNext = some(text)
+
+type
+  WindowPlace* = object
+    ## Where one of the windows the main window docks is (`windowPlace`).
+    shown*: bool   ## drawn this frame
+    inSight*: bool ## drawn and not behind another tab
+    docked*: bool  ## docked in the main window's dockspace
+    apart*: bool   ## in a window of the desktop's own, outside the main window
+    rect*: Rect    ## where, in the desktop's coordinates
+
+proc windowPlace*(frame: FrameInfo; id: string): WindowPlace =
+  ## Where the window whose ImGui ID is `id` (`"files"`, `"plot"` ...) is in
+  ## this frame (for tests).
+  result = WindowPlace()
+  let w = igFindWindowByName(("###" & id).cstring)
+  if w != nil:
+    result.shown = w.Active
+    result.inSight = w.Active and not w.Hidden
+    result.rect = Rect(pos: vec2(w.Pos.x, w.Pos.y), size: vec2(w.Size.x, w.Size.y))
+    result.apart = cast[pointer](w.Viewport) != cast[pointer](igGetMainViewport())
+    var node = if w.DockIsActive: w.DockNode else: nil
+    while node != nil and node.ParentNode != nil: node = node.ParentNode
+    result.docked = node != nil and node.ID == frame.ui.windows.dockspace
+
+proc mainWindowRect*(frame: FrameInfo): Rect =
+  ## Where the main window is, in the desktop's coordinates (for tests).
+  let vp = igGetMainViewport()
+  Rect(pos: vec2(vp.Pos.x, vp.Pos.y), size: vec2(vp.Size.x, vp.Size.y))
+
+proc hiddenWindows*(frame: FrameInfo): set[AppWindow] =
+  ## The windows the Window menu shows unticked (for tests).
+  frame.ui.windows.hidden
+
+proc screens*(frame: FrameInfo): seq[Rect] =
+  ## The screens' usable areas, in the desktop's coordinates (for tests).
+  screensNow()[0]
+
+proc moveMainWindow*(frame: FrameInfo; x, y: int) =
+  ## Moves the main window to (`x`, `y`) in the desktop's coordinates, as
+  ## the user would by its title bar (for tests).
+  discard SDL_SetWindowPosition(frame.ui.window, cint(x), cint(y))
 
 proc stop*(frame: FrameInfo) =
   ## Ends the run after this frame, as closing the window does.
@@ -543,6 +594,81 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     if ui.selected.len == 0 and resolveTheme(ui.choice, ev.theme) != ui.theme.mode:
       ui.setTheme()
 
+func everyWindow(): seq[string] =
+  ## The ImGui IDs of the windows that can be outside the main window: the
+  ## docked ones and the "Join geometry" window.
+  for w in AppWindow: result.add $w
+  result.add "join"
+
+proc mainRect(ui: Ui): Rect =
+  ## Where the main window is, in the desktop's coordinates.
+  var x, y, w, h: cint
+  discard SDL_GetWindowPosition(ui.window, addr x, addr y)
+  discard SDL_GetWindowSize(ui.window, addr w, addr h)
+  rect(x.int, y.int, w.int, h.int)
+
+proc placeMain(ui: var Ui; wholly: bool): Rect =
+  ## Brings the main window onto a screen: onto the primary one, at its
+  ## size, when it is off every screen; with `wholly`, also wholly onto the
+  ## one it is on when it hangs over an edge. Returns where it is then.
+  ## A maximized or full-screen window is the desktop's to place.
+  result = ui.mainRect
+  let (screens, primary) = screensNow()
+  let flags = SDL_GetWindowFlags(ui.window)
+  if screens.len > 0 and (flags and (SDL_WINDOW_MAXIMIZED or SDL_WINDOW_FULLSCREEN)) == 0:
+    let was = result
+    if not result.reachable(screens):
+      result = result.size.centredOn(screens[max(primary, 0)])
+    elif wholly:
+      result = result.fitOnto(screens[result.homeScreen(screens, primary)])
+    if result != was:
+      if result.size != was.size:
+        discard SDL_SetWindowSize(ui.window, cint(result.size.x), cint(result.size.y))
+      discard SDL_SetWindowPosition(ui.window, cint(result.pos.x), cint(result.pos.y))
+      ui.placed = true
+
+proc resetWindows(ui: var Ui) =
+  ## Window > Reset the windows: the default layout next frame (every
+  ## window shown and docked in the main window), the "Join geometry" window
+  ## at its first place, and the main window brought onto a screen when it
+  ## is off every one.
+  ui.windows.showAll()
+  ui.layoutDone = false
+  ui.join.placeAgain()
+  discard ui.placeMain(wholly = false)
+  ui.say("The windows are back as at a first start.")
+
+proc bringWindows(ui: var Ui) =
+  ## Window > Bring all windows onto this screen: the main window wholly on
+  ## its screen, and every window outside it moved there.
+  let main = ui.placeMain(wholly = true)
+  let (screens, primary) = screensNow()
+  if screens.len == 0:
+    ui.say("The screens are not known: no window was moved.", mlWarning)
+  else:
+    let moved = bringOnto(screens[main.homeScreen(screens, primary)], false, screens,
+      everyWindow())
+    ui.say(if moved.len > 0: "Brought onto this screen: " & moved.join(", ") & "."
+           else: "Every window is on this screen already.")
+
+proc offScreenCheck(ui: var Ui) =
+  ## For a few frames after a layout is applied (the desktop's windows for
+  ## those outside the main window come and report where they are), the
+  ## windows it put off every screen (one left on a monitor that is gone)
+  ## are brought onto the main window's screen; then the log says which.
+  if ui.checkPlaces > 0:
+    dec ui.checkPlaces
+    let (screens, primary) = screensNow()
+    if screens.len > 0:
+      for name in bringOnto(screens[ui.mainRect.homeScreen(screens, primary)], true, screens,
+          everyWindow()):
+        if name notin ui.offScreen: ui.offScreen.add name
+    if ui.checkPlaces == 0 and ui.offScreen.len > 0:
+      ui.core.report(sevWarning, "layouts", "The layout put " & ui.offScreen.join(", ") &
+        " off every screen (on a monitor that is gone, or past a screen's edge): brought " &
+        "onto the main window's screen.")
+      ui.offScreen.setLen 0
+
 proc onActions(ui: var Ui; actions: set[MenuAction]) =
   let parent = SDL_GetWindowID(ui.window)
   let recent = ui.core.settings.recentFolders
@@ -565,14 +691,19 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maImportSettings: showDialog(dkImportSettings, parent)
     of maResetSettings: ui.core.apply Command(kind: ckResetSettings)
     of maSaveLayout: ui.askLayoutName = true
-    of maResetLayout: ui.layoutDone = false # rebuilt next frame
+    of maResetWindows: ui.resetWindows()
+    of maBringWindows: ui.bringWindows()
     of maExportLayout:
       let dir = ui.core.settingsFile.parentDir
       showDialog(dkExportLayout, parent,
         (if dir.len > 0: dir / "viewSEG-layout.nif" else: "viewSEG-layout.nif"))
     of maImportLayout: showDialog(dkImportLayout, parent)
-    of maShowFiles, maShowRecords, maShowMap, maShowHeaders, maShowJobs, maShowMessages:
-      ui.focus.incl a
+    of maShowFiles: ui.windows.bringForward(awFiles)
+    of maShowRecords: ui.windows.bringForward(awRecords)
+    of maShowMap: ui.windows.bringForward(awMap)
+    of maShowHeaders: ui.windows.bringForward(awHeaders)
+    of maShowJobs: ui.windows.bringForward(awJobs)
+    of maShowMessages: ui.windows.bringForward(awMessages)
     of maExportLog:
       let dir = ui.core.settingsFile.parentDir
       showDialog(dkExportLog, parent, (if dir.len > 0: dir / "viewSEG-messages.log"
@@ -626,6 +757,7 @@ proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   igDockBuilderDockWindow(messagesTitle, bottom) # the tab shown
   igDockBuilderFinish(dockId)
   ui.layoutDone = true
+  igMarkIniSettingsDirty_Nil() # saved as the arrangement a moment later
 
 proc drawDockSpace(ui: var Ui) =
   ## The dockspace over the rest of the main window, on the backdrop colour,
@@ -646,6 +778,7 @@ proc drawDockSpace(ui: var Ui) =
   igPopStyleColor(1)
   igPopStyleVar(2)
   let dockId = igGetID_Str("viewSEG.dockspace")
+  ui.windows.dockspace = dockId
   if not ui.layoutDone:
     ui.buildLayout(dockId, igGetContentRegionAvail())
   igPushStyleColor_Vec4(ImGui_Col_Border.cint, backdrop) # ImGui draws splitters in it
@@ -715,17 +848,6 @@ proc drawDropHint(ui: Ui) =
     u32(ui.theme.roles[rlPopup]), igGetStyle().FrameRounding, 0)
   ImDrawList_AddText_Vec2(dl, at, u32(ui.theme.roles[rlText]), text.cstring, nil)
 
-proc bringForward(title: string) =
-  ## Shows the window titled `title` in front and gives it the focus; a
-  ## window docked as a tab gets its tab selected (Dear ImGui's own way, as
-  ## a click on the tab does: focus alone shows it for one frame only, then
-  ## an older pending tab choice wins).
-  let w = igFindWindowByName(title.cstring)
-  if w != nil:
-    if w.DockNode != nil and w.DockNode.TabBar != nil:
-      w.DockNode.TabBar.NextSelectedTabId = w.TabId
-    igFocusWindow(w, 0)
-
 proc drawNotices(ui: var Ui) =
   ## The notices of background jobs that ended, each for `noticeSeconds`, in
   ## the main window's bottom-right corner over the status bar; a click
@@ -760,7 +882,7 @@ proc drawNotices(ui: var Ui) =
       igSameLine(0, -1)
       igTextUnformatted(n.text.cstring, nil)
     if igIsWindowHovered(0) and igIsMouseClicked_Bool(ImGui_MouseButton_Left.cint, false):
-      ui.focus.incl maShowJobs
+      ui.windows.bringForward(awJobs)
       ui.shownNotices.setLen 0
   igEnd()
   igPopStyleColor(1)
@@ -772,8 +894,13 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
     keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest,
     agentOn: ui.agent.running, agentSocket: ui.agentSocket,
-    prepareNext: ui.core.settings.files.prepareNext), ui.marks)
+    prepareNext: ui.core.settings.files.prepareNext,
+    shown: {AppWindow.low .. AppWindow.high} - ui.windows.hidden,
+    seismicName: ui.core.windowTitle(MainPanel), joinShown: ui.join.shown), ui.marks)
   if menu.toggleAgent: ui.toggleAgent()
+  for w in menu.pickedWindows: ui.windows.picked(w)
+  if menu.toggleJoin:
+    if ui.join.shown: ui.join.shown = false else: ui.join.open()
   if menu.loadLayout.len > 0:
     ui.core.apply Command(kind: ckLoadLayout, docPath: menu.loadLayout)
   result = menu.actions
@@ -799,12 +926,15 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.mapCursor, ui.core.hoverNote)
   if status.cancel != NoJob:
     ui.core.apply Command(kind: ckCancelJob, job: status.cancel)
-  if status.showJobs: ui.focus.incl maShowJobs
+  if status.showJobs: ui.windows.bringForward(awJobs)
   if status.chose:
     var s = ui.core.settings
     s.readout = status.fields
     ui.core.apply Command(kind: ckSettings, settings: s)
   ui.drawDockSpace()
+  # Each window is drawn when it is shown (the Window menu), after it is
+  # brought forward or placed as asked (`beforeDrawing`).
+  ui.windows.beforeDrawing(awSeismic) # always shown
   var plot = ui.trace.drawTracePanel(plotId, ui.core, MainPanel, ui.theme, ui.fonts,
     ui.marks)
   result.incl plot.actions
@@ -813,8 +943,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.say(n, mlWarning)
   for c in plot.commands.mitems:
     ui.core.apply move c
-  if maShowFiles in ui.focus: bringForward(filesTitle)
-  var files = ui.files.drawFileList(filesTitle, ui.core, ui.theme, ui.marks)
+  var files = FileListOutput()
+  if ui.windows.shows(awFiles):
+    ui.windows.beforeDrawing(awFiles)
+    files = ui.files.drawFileList(filesTitle, ui.core, ui.theme, ui.marks)
   result.incl files.actions
   if menu.togglePrepare:
     var s = ui.core.settings
@@ -826,26 +958,29 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.apply Command(kind: ckSettings, settings: s)
   for c in files.commands.mitems:
     ui.core.apply move c
-  if maShowRecords in ui.focus: bringForward(recordsTitle)
-  var records = ui.records.drawRecordList(recordsTitle, ui.core, MainPanel, ui.theme, ui.marks)
-  for c in records.commands.mitems:
-    ui.core.apply move c
-  if maShowHeaders in ui.focus: bringForward(headersTitle)
-  # The pick is this frame's: the plot is drawn first.
-  var headers = ui.headers.drawHeaders(headersTitle, ui.core,
-    (if ui.pick.inside: ui.pick.at.tMs else: NaN), ui.pick.inside, ui.fonts, ui.theme, ui.marks)
-  for c in headers.commands.mitems:
-    ui.core.apply move c
-  # A layout saved before the map came names no map: it joins the Headers
-  # window's place (only when the layout says nothing of it).
-  let headersWindow = igFindWindowByName(headersTitle)
-  if headersWindow != nil and headersWindow.DockNode != nil:
-    igSetNextWindowDockID(headersWindow.DockNode.ID, ImGui_Cond_FirstUseEver.cint)
-  if maShowMap in ui.focus: bringForward("###" & mapId)
-  var map = ui.map.drawMap(mapId, ui.core, ui.theme, ui.marks)
-  ui.mapCursor = map.cursor
-  for c in map.commands.mitems:
-    ui.core.apply move c
+  if ui.windows.shows(awRecords):
+    ui.windows.beforeDrawing(awRecords)
+    var records = ui.records.drawRecordList(recordsTitle, ui.core, MainPanel, ui.theme,
+      ui.marks)
+    for c in records.commands.mitems:
+      ui.core.apply move c
+  if ui.windows.shows(awHeaders):
+    ui.windows.beforeDrawing(awHeaders)
+    # The pick is this frame's: the plot is drawn first.
+    var headers = ui.headers.drawHeaders(headersTitle, ui.core,
+      (if ui.pick.inside: ui.pick.at.tMs else: NaN), ui.pick.inside, ui.fonts, ui.theme,
+      ui.marks)
+    for c in headers.commands.mitems:
+      ui.core.apply move c
+  ui.mapCursor = ""
+  if ui.windows.shows(awMap):
+    # A layout saved before the map came names no map: it joins the Headers
+    # window's place (`beforeDrawing`, as any window a layout does not know).
+    ui.windows.beforeDrawing(awMap)
+    var map = ui.map.drawMap(mapId, ui.core, ui.theme, ui.marks)
+    ui.mapCursor = map.cursor
+    for c in map.commands.mitems:
+      ui.core.apply move c
   var join = ui.join.drawJoin(joinTitle, ui.core, ui.theme, ui.marks)
   for c in join.commands.mitems:
     ui.core.apply move c
@@ -855,22 +990,23 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     showDialog(dkJoinFiles, SDL_GetWindowID(ui.window), folder)
   ui.drawSaveLayout()
   ui.drawDropHint()
-  if maShowJobs in ui.focus: bringForward(jobsTitle)
-  var jobs = drawJobs(jobsTitle, ui.core, ui.theme, ui.marks)
-  for c in jobs.commands.mitems:
-    ui.core.apply move c
-  if maShowMessages in ui.focus: bringForward(messagesTitle)
-  let log = ui.logView.draw(ui.core.log, messagesTitle, ui.theme, ui.core.settings.messages,
-    ui.marks)
-  if log.changed:
-    var s = ui.core.settings
-    s.messages = log.view
-    ui.core.apply Command(kind: ckSettings, settings: s)
-  if log.exportLog: result.incl maExportLog
-  if log.showPath.len > 0:
-    ui.core.apply Command(kind: ckShowTrace, panel: MainPanel, path: log.showPath,
-      traceIndex: log.showTrace, recordIndex: log.showRecord)
-  ui.focus = {}
+  if ui.windows.shows(awJobs):
+    ui.windows.beforeDrawing(awJobs)
+    var jobs = drawJobs(jobsTitle, ui.core, ui.theme, ui.marks)
+    for c in jobs.commands.mitems:
+      ui.core.apply move c
+  if ui.windows.shows(awMessages):
+    ui.windows.beforeDrawing(awMessages)
+    let log = ui.logView.draw(ui.core.log, messagesTitle, ui.theme, ui.core.settings.messages,
+      ui.marks)
+    if log.changed:
+      var s = ui.core.settings
+      s.messages = log.view
+      ui.core.apply Command(kind: ckSettings, settings: s)
+    if log.exportLog: result.incl maExportLog
+    if log.showPath.len > 0:
+      ui.core.apply Command(kind: ckShowTrace, panel: MainPanel, path: log.showPath,
+        traceIndex: log.showTrace, recordIndex: log.showRecord)
   ui.drawNotices()
   when defined(imguiDemo):
     igShowDemoWindow(nil)
@@ -1068,18 +1204,25 @@ proc noteLayout(ui: var Ui) =
     ui.core.apply Command(kind: ckLayout, arrangement: $igSaveIniSettingsToMemory(nil))
 
 proc arrange(ui: var Ui; text: string) =
-  ## Arranges the windows as Dear ImGui's layout `text` says; between
-  ## frames. Text without the dockspace's arrangement leaves the default
-  ## one to be built.
+  ## Arranges the windows as Dear ImGui's layout `text` says (which are
+  ## hidden too: `windows`); between frames. Text without the dockspace's
+  ## arrangement leaves the default one to be built; a window it does not
+  ## name is docked beside its neighbours, and after the next frame a
+  ## window it puts off every screen is brought onto the main window's.
   igClearIniSettings()
   igLoadIniSettingsFromMemory(text.cstring, csize_t(text.len))
   ui.layoutDone = "[Docking]" in text and "DockSpace" in text
+  ui.windows.arranged(text, ui.layoutDone)
+  ui.checkPlaces = CheckFrames
 
 proc followLayouts(ui: var Ui) =
-  ## A layout `core` loaded (View > Layout > Load, Import) is shown.
+  ## A layout `core` loaded (Window > a preset, Load, Import) is shown.
   if ui.core.layoutLoads != ui.layoutLoads:
     ui.layoutLoads = ui.core.layoutLoads
     ui.arrange(ui.core.loadedLayout.imgui)
+  if ui.arrangeNext.isSome:
+    ui.arrange(ui.arrangeNext.get)
+    ui.arrangeNext = none(string)
 
 proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
     configDir: string): Ui =
@@ -1198,6 +1341,7 @@ proc run*(opts = RunOptions()): int =
   # before this thread becomes the UI thread, which never reads a file.
   let last = if opts.persist: loadLayoutFile(configDir / LayoutFileName) else: LoadedLayout()
   var ui = initUi(window, opts, loaded, configDir)
+  ui.windows.installHandler() # before a layout is read: it says which windows are hidden
   for (severity, text) in last.notes: ui.core.report(severity, "layouts", text)
   if last.found: ui.arrange(last.layout.imgui)
   ui.setTheme()
@@ -1302,6 +1446,7 @@ proc run*(opts = RunOptions()): int =
         ui.notePlacement()
         ui.placed = false
       ui.followSettings()
+      ui.offScreenCheck()
       ui.noteLayout()
       ui.followLayouts()
       if ui.pendingTheme.isSome:

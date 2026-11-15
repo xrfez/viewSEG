@@ -187,7 +187,7 @@ so records compare one after the other.
 
 Anything that takes a while (opening a large file, listing a folder) runs while you go
 on working. The status bar shows the job running, how far it is and the time left, with
-**Cancel**; click it (or the toolbar's Jobs button, or **View > Windows > Jobs**) for the
+**Cancel**; click it (or the toolbar's Jobs button, or **Window > Jobs**) for the
 **Jobs** window, which lists every job:
 
 - **Running:** a progress bar for each, with Cancel.
@@ -361,7 +361,7 @@ and their order.
 
 ## The map
 
-The **Map** window (right of the plot at a first start; View > Windows > Map brings it
+The **Map** window (right of the plot at a first start; Window > Map brings it
 forward) draws the survey: each survey file's **sources** (red) and **receivers** (the
 theme's blue, or its green where the blue is the selection's colour, as in Everforest) as
 dots, the open file's own
@@ -462,7 +462,7 @@ whose traces are all in other records. Once the survey files are **joined** to t
 seismic file (below), a survey file's dot also lights up the traces whose headers name no
 station.
 
-The **Plot and map** layout (View > Layout > Load) puts the plot and the map side by side,
+The **Plot and map** layout (Window > Plot and map) puts the plot and the map side by side,
 as large as each other.
 
 ### Join the survey's geometry to a file
@@ -607,12 +607,20 @@ time line, scale units and screen calibrations, the status bar's fields, the sor
 and your own sort keys, the Messages window's toggles, and the Headers window's tabs,
 toggles and columns. It is saved a second after a change and when you quit.
 
-**Layouts.** The windows open where they were when you quit (`layout.nif` beside the
-settings). **View > Layout** saves the arrangement on screen under a name (*Save as...*),
-loads one of yours or a preset that ships with viewSEG (*Load*: "Wide plot", "Side by
-side", "Plot and map"), puts the windows back as at a first start (*Reset*), and exports or
-imports a layout file. A layout saved before the map came puts the map where the Headers
-window is.
+**Layouts.** The windows open where they were when you quit, the hidden ones hidden
+(`layout.nif` beside the settings). The **Window** menu arranges them:
+
+| Window menu | What it does |
+|---|---|
+| **Reset the windows** (Ctrl+Shift+R) | every window shown and docked in the main window, as at a first start; the main window is brought onto a screen if it is off every one |
+| **Bring all windows onto this screen** | the windows you dragged out of the main window, wherever they are (another screen, a screen that is gone, past a screen's edge), and the main window itself, wholly onto the screen the main window is on |
+| Seismic, Files, Records, Map, Headers, Jobs, Messages | ticked while shown; a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown |
+| Wide plot, Side by side, Plot and map | the presets that ship with viewSEG |
+| Load, Save layout as..., Export layout..., Import layout... | your own layouts: saved under a name, loaded again, written to a file, read from one |
+
+A layout saved before a window existed (before the map came, say) docks that window beside
+its neighbours, and shows it. A window a layout puts off every screen (left on a monitor
+that is not plugged in now) is brought onto the main window's screen, and Messages says so.
 
 **File > Settings** exports them to a file of your choice (to keep, or to take to another
 computer), imports such a file (what it does not hold stays as it is), or resets them to

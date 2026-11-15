@@ -31,6 +31,7 @@ type
     ## The window's own state between frames.
     shown*: bool                    ## the window is open
     bringUp: bool                   ## bring it forward next frame
+    placeAgain: bool                ## put it back at its first place and size next frame
     focus: FocusClicks
     session: SessionId              ## the file chosen; `NoSession`: the one the plot shows
     added: seq[JoinFile]            ## the files added with "Add files..."
@@ -61,6 +62,11 @@ proc open*(ui: var JoinUi) =
   ## Shows the window, in front.
   ui.shown = true
   ui.bringUp = true
+
+proc placeAgain*(ui: var JoinUi) =
+  ## Puts the window back at its first place and size when next drawn
+  ## (Reset the windows).
+  ui.placeAgain = true
 
 proc addFiles*(ui: var JoinUi; paths: openArray[string]) =
   ## Adds `paths` (from the file dialog) to the survey files to join.
@@ -193,10 +199,12 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
   let vp = igGetMainViewport()
   # First over the left of the main window (the file list): the plot and the
   # map, which show what the join does, stay in sight.
+  let cond = if ui.placeAgain: ImGui_Cond_Always.cint else: ImGui_Cond_FirstUseEver.cint
+  ui.placeAgain = false
   igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + igGetFontSize(), y: vp.WorkPos.y +
-    igGetFontSize() * 5), ImGui_Cond_FirstUseEver.cint, ImVec2_c(x: 0, y: 0))
+    igGetFontSize() * 5), cond, ImVec2_c(x: 0, y: 0))
   igSetNextWindowSize(ImVec2_c(x: igGetFontSize() * 34, y: min(igGetFontSize() * 40,
-    vp.WorkSize.y - igGetFontSize() * 6)), ImGui_Cond_FirstUseEver.cint)
+    vp.WorkSize.y - igGetFontSize() * 6)), cond)
   var open = true
   if igBegin(title.cstring, addr open, ImGui_WindowFlags_NoDocking.cint):
     ui.focus.watch()

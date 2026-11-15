@@ -639,7 +639,25 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   thread, and the frontend arranges its windows when `AppState.layoutLoads` goes up
   (`igClearIniSettings`, `igLoadIniSettingsFromMemory`, between frames); `ckExportLayout`
   writes one anywhere. Presets ship in `assets/layouts/`; a user's layout of the same name
-  hides a preset.
+  hides a preset. **Which windows are hidden** is in the toolkit's text too, in a section
+  of the frontend's own (`[viewSEG][Windows]`, `Hidden=` and the windows' IDs), which Dear
+  ImGui writes and reads through a settings handler (`ui/imgui/windows`): a layout without
+  it (a preset, an earlier build's), or one that does not name a window, shows it.
+- **The Window menu** (`ui/imgui/windows`, the frontend's alone: no command, so agents
+  cannot rearrange the user's windows, and what it does is saved as the user's
+  arrangement). *Reset the windows* builds the default arrangement again (every window
+  shown and docked) and brings the main window onto a screen when it is off every one;
+  *Bring all windows onto this screen* moves the main window wholly onto its screen and
+  every window outside it (a window of the desktop's own) onto the same screen; each
+  window's entry shows, hides or brings it forward. A window a layout does not name (one
+  a later build added) is docked as a tab beside its neighbours of the default layout,
+  else beside the plot; for a few frames after a layout is applied (the desktop's
+  windows for those outside the main window report where they are only then), a window
+  it puts off every screen is brought onto the main window's screen, and the log says so
+  (Dear ImGui itself keeps only 19 pixels of such a window on a screen, too little to
+  drag it by). The rules on rectangles (which screen holds a window, whether its top edge
+  can be reached, putting it wholly on a screen) are `core/screens`, tested on made-up
+  screens.
 
 ### From file to pixels
 

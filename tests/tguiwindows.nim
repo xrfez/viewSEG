@@ -1,0 +1,264 @@
+## The Window menu in the running frontend, headless, driven by real clicks
+## on the menu bar (SDL mouse events), with the settings and layouts in a
+## folder of the test's own:
+##
+## - a scrambled layout (the Files window dragged out past the screen's
+##   right edge, the map out of the main window beside it, Jobs floating
+##   inside the main window, Records and Messages hidden, and the Headers
+##   window left on a screen that is not there) is arranged as loading a
+##   layout does: the window off every screen is brought onto the main
+##   window's screen at once, with a warning that names it; the others stay
+##   as the layout says;
+## - Window > Reset the windows: every window shown, docked in the main
+##   window's dockspace, none outside the main window, none hidden;
+## - each window's entry: a click on one in sight hides it, on one hidden
+##   shows it in front, on one behind another tab brings it forward; the
+##   Seismic window is never hidden; the layout text says which are hidden;
+## - Window > Bring all windows onto this screen, with the main window
+##   hanging off the screen's left edge and two windows outside it: the
+##   main window and every window outside it lie wholly on the screen;
+## - the shortcut, Ctrl+Shift+R, resets the windows as the menu does;
+## - a second run starts with the window hidden at the first run's exit
+##   hidden, and its entry shows it.
+##
+## Under Xvfb there is one screen and no window manager: what this covers
+## of monitors is a window outside the main window (a window of the
+## desktop's of its own), one past an edge and one at a place no screen has.
+## A second monitor, one unplugged while the program runs, a window manager
+## moving windows and per-monitor scales are not covered (the rules are
+## tested on made-up screens in `tscreens`).
+##
+## Seen to fail: with `resetWindows` not showing the hidden windows, the
+## reset never showed Records ("Reset the windows did not happen"); with the Files window's entry
+## only bringing it forward (never hiding), "files is still drawn"; with the
+## settings handler not writing its section, "the layout does not say that
+## files is hidden"; with `bringWindows` not moving the windows outside the
+## main window, "files is not on the screen"; with the check after a layout
+## is arranged left out, "headers is not on the screen".
+##
+## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
+
+import std/[math, options, os, strutils]
+import viewSEG/core/[geometry, screens, state]
+import viewSEG/ui/imgui/app
+import viewSEG/view/theme
+import utils/fixtures
+
+type
+  Step = object
+    name: string
+    act: proc (f: FrameInfo)
+    done: proc (f: FrameInfo): bool
+
+const ids = ["plot", "files", "records", "map", "headers", "jobs", "Messages"]
+
+func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
+
+proc click(f: FrameInfo; at: Vec2) =
+  f.moveMouse(at)
+  f.pressMouse(at, true)
+  f.pressMouse(at, false)
+
+func blocks(text: string): seq[string] =
+  ## Dear ImGui's layout text, a section at a time.
+  var cur = ""
+  for line in text.splitLines:
+    if line.startsWith("[") and cur.len > 0:
+      result.add cur
+      cur = ""
+    if line.len > 0: cur.add line & "\n"
+  if cur.len > 0: result.add cur
+
+func rearranged(text: string; floating: openArray[(string, Rect)]; hidden: string): string =
+  ## `text` with each window of `floating` undocked, at its rectangle (given
+  ## from the main window's top-left corner, as Dear ImGui keeps a window
+  ## the main window holds), and `hidden` the windows hidden.
+  for b in text.blocks:
+    var kept = not b.startsWith("[viewSEG][Windows]")
+    for (id, _) in floating:
+      if b.startsWith("[Window][" & id & "]"): kept = false
+    if kept: result.add b & "\n"
+  for (id, r) in floating:
+    result.add "[Window][" & id & "]\nPos=" & $int(r.pos.x) & "," & $int(r.pos.y) & "\nSize=" &
+      $int(r.size.x) & "," & $int(r.size.y) & "\nCollapsed=0\n\n"
+  result.add "[viewSEG][Windows]\nHidden=" & hidden & "\n\n"
+
+var wait = 0 ## frames since the step began
+
+proc drive(steps: seq[Step]; opts: RunOptions) =
+  var at = 0
+  var started = false
+  var failed = ""
+  var o = opts
+  o.onFrame = proc (f: FrameInfo) =
+    if at >= steps.len or failed.len > 0:
+      f.stop()
+      return
+    if not started:
+      steps[at].act(f)
+      started = true
+      wait = 0
+    else:
+      inc wait
+      if wait >= 3 and steps[at].done(f):
+        inc at
+        started = false
+      elif wait > 300:
+        failed = steps[at].name & " did not happen"
+        f.stop()
+  let code = run(o)
+  doAssert code == 0, "run() exit code " & $code
+  doAssert failed.len == 0, failed
+  doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
+
+withFixtures fx:
+  let path = fx.surveySegy()
+  let config = fx.dir / "config"
+  createDir(config)
+  let opts = RunOptions(maxFrames: 6000, openPaths: @[path], windowSize: (1400, 900),
+    theme: forceDark, persist: true, configDir: some(config), logDir: some(fx.dir / "logs"),
+    indexCacheDir: some(fx.dir / "cache"), userThemeDir: some(fx.dir / "no-user-themes"),
+    assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]))
+  var steps: seq[Step]
+  proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+    steps.add Step(name: name, act: act, done: done)
+  proc noop(f: FrameInfo) = discard
+  var screen: Rect
+  var main: Rect
+
+  proc menu(name, item: string; then: proc (f: FrameInfo): bool) =
+    ## Steps: Window opened by a click on the menu bar, then a click on its
+    ## item marked `item`.
+    step(name & ": Window", proc (f: FrameInfo) = f.click(f.markOf("menu.Window").centre),
+      proc (f: FrameInfo): bool = f.markOf(item).size.x > 0)
+    step(name, proc (f: FrameInfo) = f.click(f.markOf(item).centre), then)
+
+  proc onScreen(f: FrameInfo; id: string) =
+    let p = f.windowPlace(id)
+    doAssert p.rect.inside(screen), id & " is not on the screen: " & $p.rect & " (the screen " &
+      $screen & ")"
+
+  proc allDocked(f: FrameInfo; what: string) =
+    let m = f.mainWindowRect
+    for id in ids:
+      let p = f.windowPlace(id)
+      doAssert p.shown, id & " is not shown " & what
+      doAssert p.docked, id & " is not docked " & what
+      doAssert not p.apart, id & " is outside the main window " & what
+      doAssert p.rect.inside(m), id & " is not inside the main window " & what & ": " &
+        $p.rect & " in " & $m
+    doAssert f.hiddenWindows == {}, "hidden " & what & ": " & $f.hiddenWindows
+
+  step("the file is shown", noop, proc (f: FrameInfo): bool =
+    let p = f.core.panels[f.core.findPanel(MainPanel)]
+    result = p.laidOut and f.markOf("plot.data").size.x > 0 and f.layoutText.len > 0
+    if result:
+      doAssert f.screens.len == 1, "screens: " & $f.screens
+      screen = f.screens[0]
+      main = f.mainWindowRect
+      f.allDocked("at the start"))
+  # ------------------------------------------------- scrambled, then reset --
+  step("scrambled", proc (f: FrameInfo) =
+    let m = main.pos
+    func at(x, y, w, h: float32): Rect = Rect(pos: vec2(x - m.x, y - m.y), size: vec2(w, h))
+    # Files past the screen's right edge, the map over the main window's
+    # right edge, Jobs floating inside it, Headers on no screen.
+    f.arrangeWindows(f.layoutText.rearranged([
+      ("files", at(screen.pos.x + screen.size.x - 150, 300, 400, 300)),
+      ("map", at(main.pos.x + main.size.x - 100, 500, 300, 360)),
+      ("jobs", at(m.x + 300, m.y + 300, 320, 220)),
+      ("headers", at(5000, 4000, 400, 300))], "records,Messages")),
+    proc (f: FrameInfo): bool =
+    result = wait > 10 and f.windowPlace("files").apart and f.windowPlace("map").apart
+    if result:
+      for id in ["files", "map", "jobs", "headers"]:
+        doAssert not f.windowPlace(id).docked, id & " is docked"
+      doAssert not f.windowPlace("jobs").apart, "jobs is outside the main window"
+      doAssert not f.windowPlace("files").rect.inside(screen), "files is wholly on the screen"
+      f.onScreen("map")
+      f.onScreen("headers") # brought back at once
+      var said = false
+      for e in f.core.log:
+        if e.severity == sevWarning and "Headers" in e.text and "off every screen" in e.text:
+          said = true
+      doAssert said, "nothing says that the Headers window was off every screen"
+      for id in ["records", "Messages"]:
+        doAssert not f.windowPlace(id).shown, id & " is drawn"
+      doAssert f.hiddenWindows == {awRecords, awMessages}, $f.hiddenWindows)
+  menu("Reset the windows", "menu.Reset the windows", proc (f: FrameInfo): bool =
+    result = wait > 10 and f.windowPlace("records").shown
+    if result: f.allDocked("after the reset"))
+  # ------------------------------------------------------ each window --
+  menu("Files, in sight: hidden", "menu.window.files", proc (f: FrameInfo): bool =
+    result = wait > 4
+    if result:
+      doAssert not f.windowPlace("files").shown, "files is still drawn"
+      doAssert awFiles in f.hiddenWindows
+      doAssert "Hidden=files" in f.layoutText, "the layout does not say that files is hidden")
+  menu("Files, hidden: shown", "menu.window.files", proc (f: FrameInfo): bool =
+    result = wait > 4 and f.windowPlace("files").inSight
+    if result: doAssert f.windowPlace("files").docked, "files came back undocked")
+  step("Jobs is behind Messages", noop, proc (f: FrameInfo): bool =
+    f.windowPlace("Messages").inSight and not f.windowPlace("jobs").inSight)
+  menu("Jobs, behind a tab: brought forward", "menu.window.jobs", proc (f: FrameInfo): bool =
+    result = wait > 4 and f.windowPlace("jobs").inSight
+    if result: doAssert not f.windowPlace("Messages").inSight and awJobs notin f.hiddenWindows)
+  menu("the Seismic window: never hidden", "menu.window.plot", proc (f: FrameInfo): bool =
+    result = wait > 4
+    if result: doAssert f.windowPlace("plot").inSight and f.hiddenWindows == {})
+  # ---------------------------------------------- onto this screen --
+  step("the main window off the left edge, two windows outside it", proc (f: FrameInfo) =
+    f.moveMainWindow(int(screen.pos.x) - 300, int(screen.pos.y) + 80)
+    let m = vec2(screen.pos.x - 300, screen.pos.y + 80)
+    func at(x, y, w, h: float32): Rect = Rect(pos: vec2(x - m.x, y - m.y), size: vec2(w, h))
+    f.arrangeWindows(f.layoutText.rearranged([
+      ("files", at(screen.pos.x + screen.size.x - 150, 200, 400, 300)),
+      ("map", at(screen.pos.x + screen.size.x - 500, 650, 420, 600))], "")),
+    proc (f: FrameInfo): bool =
+    result = wait > 10 and f.mainWindowRect.pos.x < screen.pos.x and
+      f.windowPlace("files").apart and f.windowPlace("map").apart
+    if result:
+      doAssert not f.windowPlace("files").rect.inside(screen)
+      doAssert not f.windowPlace("map").rect.inside(screen))
+  menu("Bring all windows onto this screen", "menu.Bring all windows onto this screen",
+    proc (f: FrameInfo): bool =
+    result = wait > 10
+    if result:
+      doAssert f.mainWindowRect.inside(screen), "the main window is not on the screen: " &
+        $f.mainWindowRect
+      f.onScreen("files")
+      f.onScreen("map"))
+  # ---------------------------------------------- the shortcut --
+  step("Ctrl+Shift+R", proc (f: FrameInfo) =
+    f.moveMouse(f.markOf("plot.data").centre)
+    f.pressKey(skCtrl, true, {smCtrl})
+    f.pressKey(skShift, true, {smCtrl, smShift}), proc (f: FrameInfo): bool =
+    if wait == 3:
+      f.pressKey(skR, true, {smCtrl, smShift})
+      f.pressKey(skR, false, {smCtrl, smShift})
+    if wait == 5:
+      f.pressKey(skShift, false, {smCtrl})
+      f.pressKey(skCtrl, false)
+    result = wait > 15 and f.windowPlace("files").docked
+    if result:
+      f.allDocked("after Ctrl+Shift+R")
+      doAssert not f.core.panels[f.core.findPanel(MainPanel)].layers[0].reversed,
+        "the shortcut reversed the polarity too")
+  menu("Jobs hidden for the next run", "menu.window.jobs", proc (f: FrameInfo): bool =
+    wait > 4 and awJobs in f.hiddenWindows)
+  step("wait for the layout to be noted", noop, proc (f: FrameInfo): bool = wait > 90)
+  drive(steps, opts)
+
+  # ------------------------------------------------------ the next run --
+  var next: seq[Step]
+  steps = @[]
+  step("Jobs starts hidden", noop, proc (f: FrameInfo): bool =
+    result = wait > 5
+    if result:
+      doAssert f.hiddenWindows == {awJobs}, "hidden at start: " & $f.hiddenWindows
+      doAssert not f.windowPlace("jobs").shown)
+  menu("Jobs shown", "menu.window.jobs", proc (f: FrameInfo): bool =
+    wait > 4 and f.windowPlace("jobs").inSight and f.hiddenWindows == {})
+  next = steps
+  drive(next, opts)
+  echo "tguiwindows: ", next.len, " steps in the second run"

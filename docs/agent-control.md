@@ -184,7 +184,10 @@ Turn agent control on for agents you would let do what you can do in the windows
   and reversing traces never changes the file: the edits are kept beside it, as when you
   make them. A loaded file is never changed.
 - **Change the rest of your preferences** or the windows' arrangement: the settings as a
-  whole (units, readout fields, calibration, theme), importing settings, loading a layout.
+  whole (units, readout fields, calibration, theme), importing settings, loading a layout,
+  and what the Window menu does (resetting the windows, bringing them onto a screen,
+  showing and hiding them). Those are not commands at all: the windows are arranged by the
+  window itself, which saves what it arranges as yours, so they stay with you.
 - **Reach anything but this viewSEG.** The socket is a file only you can use (mode 0600);
   on Linux and macOS a client must run as your user, and `--mcp-stdio` and `--mcp-call`
   talk only to a viewSEG of your user. Nothing listens on the network. Every program that
