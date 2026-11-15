@@ -31,6 +31,19 @@ func plotsWaiting*(state: AppState): seq[string] =
   for w in state.plots:
     if w.waiting: result.add w.title
 
+func plotsUse(state: AppState; file: SessionId): bool =
+  ## Whether an analysis window is of traces of open file `file`, or
+  ## correlates against one of its traces: then showing another file in
+  ## the plot keeps it open.
+  let i = state.findSession(file)
+  if i < 0: return false
+  let s = state.sessions[i]
+  for w in state.plots:
+    if (w.traces.len > 0 and w.traces[0] in s) or
+        (w.view == avCorrelation and w.params.reference >= 0 and w.params.reference in s):
+      return true
+  false
+
 proc analysisReaderFor(state: var AppState; path: string): lent AnalysisReader =
   ## The analysis reader, started when first needed; one stuck in a drive
   ## that does not answer is left to end on its own when `path` is another
@@ -198,7 +211,16 @@ proc closePlot(state: var AppState; cmd: Command) =
     state.ignore(cmd, "there is no plot window " & $cmd.plot)
     return
   if not state.analysisReader.isNil: state.analysisReader.cancel(cmd.plot)
+  var files: seq[SessionId] = @[]
+  for t in [state.plots[w].traces[0], state.plots[w].params.reference]:
+    let i = state.findTrace(t)
+    if i >= 0: files.add state.sessions[i].id
   state.plots.delete w
+  # a file kept open for it alone, which no plot shows, goes with it
+  for f in files:
+    if not state.panels.anyIt(it.layers.anyIt(it.shows(f))) and not state.plotsUse(f):
+      let i = state.findSession(f)
+      if i >= 0: state.closeSession(i, quiet = true)
 
 proc takeAnalysis(state: var AppState; m: sink Msg) =
   ## Numbers for a window still open, newer than those it shows.

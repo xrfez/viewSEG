@@ -2010,15 +2010,18 @@ proc failed(state: var AppState; path: string) =
     state.files.failed.add path
     inc state.files.revision
 
+func plotsUse(state: AppState; file: SessionId): bool
+
 proc showReplacing(state: var AppState; k: int; file: SessionId; gather: int) =
   ## Shows `gather` of `file` in `panels[k]`, in place of what it showed,
-  ## and closes the file it showed when no other panel shows it: stepping
+  ## and closes the file it showed when no other panel shows it and no
+  ## analysis window uses it (a pilot it correlates against): stepping
   ## through a folder keeps one file open, not every file seen.
   let shown = state.shownFile(k)
   let old = if shown >= 0: state.sessions[shown].id else: NoSession
   state.show(state.panels[k].id, file, gather)
   if old != NoSession and not (old == file) and
-      not state.panels.anyIt(it.layers.anyIt(it.shows(old))):
+      not state.panels.anyIt(it.layers.anyIt(it.shows(old))) and not state.plotsUse(old):
     state.closeSession(state.findSession(old), quiet = true)
 
 func gatherOf*(s: Session; trace: int): int =

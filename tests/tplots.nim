@@ -11,13 +11,17 @@
 ## - not frozen, a window follows the plot it was opened from: new filters
 ##   ask again (and the note says what they are), a kill of one of its
 ##   traces asks again and leaves it out; frozen, it asks nothing;
+## - a reference in another file (a pilot sweep's own) is taken, and that
+##   file stays open while the window uses it, when the record is shown
+##   again (showing a file closes the one shown before otherwise);
 ## - its cursor is held where a command puts it; closed, it goes; a window
 ##   with no trace to show is refused.
 ##
 ## Seen to fail: with `followPlots` not called, "the filters were not
 ## followed: 1 asks"; with the record's pilot not taken as the default
 ## reference (`firstAux`), `"pilot" in st.plots[0].reference` (the first
-## trace asked about taken instead).
+## trace asked about taken instead); with `showReplacing` not asking
+## `plotsUse`, "the pilot's file was closed under its window".
 
 import std/[math, os, strutils]
 import parseSEG
@@ -90,6 +94,30 @@ withFixtures fx:
     doAssert st.settle(st.answered(0) and st.plots[0].result.gen == st.plots[0].asked)
     doAssert abs(st.plots[0].result.peakLagMs(1) - Delay) < 1e-9,
       "the delays are from trace 2: " & $st.plots[0].result.peakLagMs(1) & " ms"
+
+  block aPilotOfAnotherFile:
+    # the reference in another file (a pilot sweep's own file): chosen while
+    # that file is shown, kept open when the record is shown again
+    let pilot = fx.pilotSegy()
+    st.apply Command(kind: ckOpen, paths: @[pilot])
+    doAssert st.settle(st.sessions.len == 2 and st.panel(MainPanel).laidOut and
+      st.sessions[st.shownFile(st.findPanel(MainPanel))].path == pilot)
+    let other = st.sessions[st.findSession(st.sessions[1].id)]
+    var p = st.plots[0].params
+    p.reference = other.base
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p)
+    doAssert st.settle(st.answered(0) and st.plots[0].result.gen == st.plots[0].asked)
+    doAssert st.plots[0].result.problem == "", st.plots[0].result.problem
+    doAssert "pilot.sgy" in st.plots[0].reference, st.plots[0].reference
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.panel(MainPanel).laidOut and
+      st.sessions[st.shownFile(st.findPanel(MainPanel))].path == path)
+    doAssert st.findTrace(other.base) >= 0, "the pilot's file was closed under its window"
+    s = st.sessions[st.findSession(s.id)]
+    # back to the record's own pilot
+    p.reference = -1
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p)
+    doAssert st.settle(st.answered(0) and st.plots[0].result.gen == st.plots[0].asked)
 
   block otherViews:
     for v in [avSpectrogram, avEnvelope, avPhase]:
