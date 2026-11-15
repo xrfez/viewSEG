@@ -6,7 +6,7 @@
 ## - the handshake and the tool list are answered on the server's own
 ##   thread, with no frame; tool calls only by `serve`, and logged;
 ## - a command changes the state, `wait` answers once the picture is
-##   complete, and with a time limit when it is not;
+##   complete (on two frames in a row), and with a time limit when it is not;
 ## - hostile input: garbage, JSON nested too deep, a batch, NUL bytes, a
 ##   line of 2 MiB (answered, then the client is disconnected), 17 calls at
 ##   once (the 17th refused), a client gone while its call is answered, a
@@ -19,7 +19,8 @@
 ## Seen to fail: with the server handling one line per read (the rest
 ## left until more comes), "no answer to this is not JSON"; with
 ## `MaxInFlight` not checked, "17 calls were all taken"; with the socket
-## left at the umask's mode, "mode 755"; with `stop` not removing the
+## left at the umask's mode, "mode 755"; with `wait` answered on the first
+## idle frame, "idle after one frame"; with `stop` not removing the
 ## socket, "the socket is still there". Under ThreadSanitizer (`-d:useMalloc
 ## -d:noSignalHandler --debugger:native --passC:-fsanitize=thread
 ## --passL:-fsanitize=thread`): no report; with the queue of calls swapped
@@ -110,6 +111,15 @@ withFixtures fx:
     let w = ctl.ask(st, fe, c, "wait", %*{"timeout": 20})
     doAssert w != nil and parseJson(w.text)["idle"].getBool, $w
     doAssert st.sessions.len == 1 and st.panel(MainPanel).laidOut
+    # idle on two frames in a row: what a job that ended between this
+    # frame's inbox and its answers posted is taken in first
+    doAssert c.sendRaw("""{"jsonrpc":"2.0","id":"w","method":"tools/call","params":""" &
+      """{"name":"wait"}}""" & "\n")
+    sleep 100 # the server thread has queued it
+    ctl.serve(st, fe)
+    doAssert c.readLine(initDuration(milliseconds = 100)) == "", "idle after one frame"
+    ctl.serve(st, fe)
+    doAssert parseJson(c.readLine())["id"].getStr == "w"
     # not complete: a frontend whose picture never shows the view
     let stale = Frontend(drawnView: proc (p: PanelId; v: var Viewport): bool =
       v = Viewport()

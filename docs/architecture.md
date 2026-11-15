@@ -851,7 +851,9 @@ plot image was last drawn for.
    swap under the lock, as `drainInbox` does) and answers the calls in turn, at most 8
    a frame: `command` is decoded and given to `apply`, as a window's command is; `state`
    and `headers` read the accessors; `screenshot` asks the hook; `wait` is kept and
-   looked at every frame until it holds or its time is up. Once a call has applied a
+   looked at every frame until it holds on two frames in a row (a job that ended
+   between a frame's inbox and its answers has what it posted taken in by the next
+   frame's) or its time is up. Once a call has applied a
    command, the calls after it wait for the next frame, so they see its effect drawn;
    at most one screenshot is taken a frame. Each answer, JSON text, goes back under the
    lock, and a byte on the wake pipe has the server thread write it out.

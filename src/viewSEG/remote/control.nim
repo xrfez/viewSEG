@@ -6,7 +6,9 @@
 ## them in turn from the application state (`remote/tools`): at most
 ## `CallsPerFrame`; once one has applied a command, the rest wait for the
 ## next frame, so they see it drawn; one screenshot a frame. A `wait` is
-## kept and looked at every frame until it holds or its time is up. Every
+## kept and looked at every frame until it holds on two frames in a row
+## (what a job that ended meanwhile posted is then taken in) or its time is
+## up. Every
 ## call, connection and disconnection goes to the log (source `agent`), and
 ## so does what was refused.
 
@@ -25,6 +27,7 @@ type
   Waiting = object
     call: Call
     deadline: MonoTime
+    quiet: int ## frames in a row that found nothing busy
 
   AgentControl* = object
     ## Owned by the UI thread, beside the application state. Off until
@@ -149,12 +152,15 @@ proc serve*(c: var AgentControl; state: var AppState; fe: Frontend; now = getMon
           initDuration(milliseconds = int(seconds * 1000)))
     else:
       c.respond(state, call, textResult("no tool " & call.tool, isError = true))
+  # Idle on two frames in a row: a job that ended between this frame's
+  # inbox and now has what it posted taken in by the next frame's.
+  let reasons = if c.frame > c.commandFrame: state.busy(fe)
+                else: @["the last command, to be drawn"]
   var k = 0
   while k < c.waits.len:
-    let w = c.waits[k]
-    let reasons = if c.frame > c.commandFrame: state.busy(fe)
-                  else: @["the last command, to be drawn"]
-    if reasons.len == 0 or now >= w.deadline:
+    template w: untyped = c.waits[k]
+    w.quiet = if reasons.len == 0: w.quiet + 1 else: 0
+    if w.quiet >= 2 or now >= w.deadline:
       c.server.answer(w.call.serial, waited(reasons.len == 0, w.call.received, now, reasons))
       c.waits.delete k
     else:
