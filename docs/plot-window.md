@@ -383,7 +383,7 @@ The map uses the same gestures wherever the meaning carries over, always at equa
 | Input | Action |
 |---|---|
 | Move the mouse | **Hover:** the point under the cursor (within 7 pixels) is drawn in the hover colour and described: source or receiver, line and point, coordinates and elevation with their units, its file, the traces of the open files recorded there and their records, and for a survey file's source the field records the loaded relation file gives it; in a box beside the pointer or in a strip along the map's bottom, as the map's settings say. Points of other layers on the same spot (an SPS receiver and the open file's own) are described together. **The traces recorded there are drawn in the hover colour in the plot** (a receiver's trace; a source's whole record); where none is in the record shown, or none was recorded there, the status bar says why. The status bar shows the cursor's coordinates with their units |
-| Left click on a source | **Show its record** in the plot (in a file of receiver gathers it is the other way round: a click on a receiver shows its gather); a source no trace of the open files was recorded at is selected instead |
+| Left click on a source | **Show its record** in the plot (in a file of receiver gathers it is the other way round: a click on a receiver shows its gather); a survey file's source no trace of the open files was recorded at, whose record a file of the folder listed holds (it is ringed), **shows that file** at its record; any other is selected |
 | Left click on any other point | **Select** it and its traces (replaces the selection) |
 | Ctrl + left click | Add the point (and its traces) to the selection, or take it out |
 | Shift + left click | **Select a range:** the stations of the line from the point clicked last to this one (of the same file and role), and their traces, in place of the selection; the point clicked last stays where the next range starts |
@@ -472,7 +472,15 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   distance box along and across the receiver lines), on a job, through processSEG's
   `generateRelations` over the S and R files, and the box says "Generated"; with X records
   but no O records, a receiver gather's planned shots are made from the X records the same
-  way. A layer's points get smaller as they crowd on the screen (from 5
+  way. **The folder's shots** (under the Recorded; the user: "clicking on a shot that
+  exists inside the folder of seg files should open that file"): each seismic file the
+  Files window lists is read in the background, without being shown, for its records'
+  FFID, source station and source coordinates, and matched to the survey files' sources
+  (by station; by place when the headers name none; by the FFID through the relation file
+  when they give neither); a source whose record a listed file holds is **ringed**, its
+  description names the file ("Shot in the folder: shot-14.sgy (FFID 1014)"), and a click
+  on it shows that file at that record. The Layers list says how many of the survey's
+  sources have a file, and how far the reading is. A layer's points get smaller as they crowd on the screen (from 5
   pixels across down to 2, from how far apart its points typically are), so lines of
   stations stay lines when zoomed out; a ring that small is drawn as a disc.
 - **Colours:** the plot's background (the plot window's colour scheme: paper by default);
@@ -560,6 +568,16 @@ what it was instead of):
    (an export, later). A trace whose headers give coordinates but no station (a SEG-Y file
    without a header layout naming them) is at the survey file's station at its place,
    within half a survey unit.
+9. **The folder's shots are read only while a survey file with sources is loaded**
+   (without one there is nothing to match them to, and reading every file of a folder
+   on a network drive is not free); each file is opened through its index cache when it
+   has one, but a walk writes none (a folder of thousands would push out the caches of
+   the files the user opens); what was found is kept beside the index cache (a small file
+   per seismic file), so the folder listed again opens none of its files. A file that
+   does not answer for 3 s is passed by and tried again a minute later. A source with a
+   file is ringed in the outline colour; one without keeps its plain disc. A click on a
+   ringed source shows the file in place of the one the plot shows, as a click in Files
+   does.
 
 ## Linking the plot and the map
 

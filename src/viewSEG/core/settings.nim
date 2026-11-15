@@ -84,6 +84,8 @@ type
       ## shot under the pointer is drawn (off by default)
     spreadTemplate*: TemplateSpec
       ## what planned spreads are generated from when no relation file is loaded
+    folderShots*: bool = true
+      ## the survey's sources whose record is in a file of the folder listed are marked
 
   HeadersTab* = enum
     ## The Headers window's tabs.

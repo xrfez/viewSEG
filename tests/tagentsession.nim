@@ -77,6 +77,7 @@ const Reached = {
   "map.hiddenGroups": "", "map.templateBox": "", "map.spreadTemplate.shape": "",
   "map.spreadTemplate.lines": "", "map.spreadTemplate.channels": "",
   "map.spreadTemplate.inlineHalf": "", "map.spreadTemplate.crosslineHalf": "",
+  "map.folderShots": "",
   "join.trailingDigits": "", "join.multiComponent": "", "join.lineNames": "",
   "join.coordinates": "", "join.recordMatch": "", "join.traceMatch": "",
   "headers.tab": "", "headers.traceTab": "", "headers.followPointer": "",

@@ -1,0 +1,106 @@
+## Runs alone: measures times.
+##
+## The shots of a folder of 2000 small shot records (SEG-Y, four traces
+## each, their sources' coordinates in the headers) with an S file of their
+## 2000 sources, in `core`, without a window: how long reading them takes,
+## the first time and again from the shot cache; the listing is not held
+## up (it is done before the first shot is read, and a new listing while
+## shots are read is done as quickly as the first); and the UI thread's
+## work per drained inbox stays small (no frame stalls), the longest said.
+##
+## Seen to fail: with every file's shots matched to the survey again for
+## each file read (`match` in place of `matchOne`), "the UI thread's work"
+## found a drain of 212 ms.
+
+import std/[monotimes, os, strutils, times]
+import parseSEG
+import viewSEG/core/state
+import utils/[fixtures, waiting]
+
+const
+  Lines = 40
+  Points = 50
+  Files = Lines * Points
+
+func place(i: int): (float64, float64) =
+  (OriginX + 50.0 * float64(i mod Points), OriginY + 100.0 * float64(i div Points))
+
+proc folderOf(fx: Fixtures): (string, string) =
+  ## The folder of `Files` shot records, and the S file of their sources.
+  let dir = fx.dir / "many"
+  createDir(dir)
+  var s = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
+    data: "SPS 2.1;")])
+  for i in 0 ..< Files:
+    let (x, y) = place(i)
+    s.points.add SpsPoint(kind: pkSource, line: float64(1 + i div Points),
+      point: float64(1 + i mod Points), index: 1, code: "E1", easting: x, northing: y,
+      elevation: Elevation, dayOfYear: -1, hour: -1, minute: -1, second: -1)
+    var w = openSeismicWriter(dir / ("shot" & align($i, 5, '0') & ".sgy"),
+      SegyOutputOptions(traceSorting: 1, measurementSystem: 1))
+    var buf = newSeq[float32](10)
+    for c in 1 .. 4:
+      var k = initTraceKeys()
+      (k.record, k.channel, k.srcX, k.srcY) = (float64(10_000 + i), float64(c), x, y)
+      (k.rcvX, k.rcvY, k.t0Ms, k.intervalUs, k.status) = (x + 25.0 * float64(c), y, 0.0,
+        2000.0, tsLive)
+      w.writeTrace(k, buf)
+    doAssert w.close().len == 0
+  let sPath = fx.dir / "many.s"
+  doAssert writeSps(s, sPath).len == 0
+  (dir, sPath)
+
+proc readAll(st: var AppState; folder: string): tuple[listed, read: Duration; drain: Duration] =
+  ## Lists `folder` and waits until every file's shots are read: how long
+  ## the listing took, how long the shots, and the longest drain.
+  let t0 = getMonoTime()
+  st.apply Command(kind: ckBrowse, paths: @[folder])
+  var listed = Duration()
+  let ok = waitUntil((
+    let d0 = getMonoTime()
+    discard st.drainInbox()
+    result.drain = max(result.drain, getMonoTime() - d0)
+    if listed == Duration() and not st.fileList.scanning: listed = getMonoTime() - t0
+    st.shots.shotFiles == Files and st.shots.pending.len == 0 and st.shots.job == NoJob),
+    initDuration(seconds = 300))
+  doAssert ok, "read " & $st.shots.shotFiles & " of " & $Files
+  (listed, getMonoTime() - t0, result.drain)
+
+func ms(d: Duration): string = $(d.inMicroseconds div 1000) & " ms"
+
+withFixtures fx:
+  let (folder, sPath) = fx.folderOf()
+  let cache = fx.dir / "cache"
+  var st = initAppState(indexCache = cache)
+  st.apply Command(kind: ckLoadSurvey, paths: @[sPath])
+  doAssert waitUntil((discard st.drainInbox(); st.survey.layers.len == 1))
+  let first = st.readAll(folder)
+  doAssert st.shots.pointRefs.len == Files, $st.shots.pointRefs.len
+  echo "tshotsload: ", Files, " files: listed in ", first.listed.ms, ", their shots read in ",
+    first.read.ms, "; the longest drain ", first.drain.ms
+  # A new listing of the folder, while the shots are read: done as soon.
+  var again = initAppState(indexCache = fx.dir / "cache2")
+  again.apply Command(kind: ckLoadSurvey, paths: @[sPath])
+  doAssert waitUntil((discard again.drainInbox(); again.survey.layers.len == 1))
+  again.apply Command(kind: ckBrowse, paths: @[folder])
+  doAssert waitUntil((discard again.drainInbox(); again.shots.shotFiles >= 100))
+  let t1 = getMonoTime()
+  again.apply Command(kind: ckBrowse, paths: @[folder])
+  doAssert waitUntil((discard again.drainInbox(); not again.fileList.scanning))
+  let relisted = getMonoTime() - t1
+  echo "tshotsload: listed again while the shots are read: ", relisted.ms
+  doAssert relisted < first.listed * 4 + initDuration(seconds = 1), "the listing waited: " &
+    relisted.ms & " against " & first.listed.ms
+  again.shutdown()
+  # Another run: every file's shots from the shot cache.
+  st.shutdown()
+  var later = initAppState(indexCache = cache)
+  later.apply Command(kind: ckLoadSurvey, paths: @[sPath])
+  doAssert waitUntil((discard later.drainInbox(); later.survey.layers.len == 1))
+  let cached = later.readAll(folder)
+  echo "tshotsload: again, from the shot cache: listed in ", cached.listed.ms,
+    ", their shots in ", cached.read.ms, "; the longest drain ", cached.drain.ms
+  doAssert first.drain < initDuration(milliseconds = 50) and
+    cached.drain < initDuration(milliseconds = 50), "the UI thread's work: a drain of " &
+    max(first.drain, cached.drain).ms
+  later.shutdown()

@@ -104,7 +104,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 |---|---|---|
 | UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), closes files, and makes every OpenGL call; it reads no header and no sample from a file |
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, an open file's positions, survey files read, `ensureKeys`, survey joins, sorts across files |
-| Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, brute stack, conversions, exports and patches, queued workflows |
+| Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, the listed files' shots (`shotsWork`), the map's planned spreads (`spreadWork`), brute stack, conversions, exports and patches, queued workflows |
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; lists the layouts; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
 | Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
@@ -522,6 +522,20 @@ a frame for a tenth of a second. The session log is written the same way. An imp
 (settings, a layout) is read and parsed on the disk thread too (`mkRead` carries the NIF
 tree), and a reader of these documents words only the first `WordedProblems` problems of
 a hostile one.
+
+**The folder's shots** (`core/shots`, `core/shotfiles`). While a survey file with sources
+is loaded, the listed seismic files that are steady are read on background jobs, 64 files
+a job (`shotsWork`): each through its index cache when that is current (a walk writes none),
+for each shot gather's FFID, source station and source coordinates, the file closed on the
+job's thread; each file posted as it is done (`mkShots`), and kept beside the index cache
+(`<name>-<hash>.shots`), so a file whose size and time are unchanged is not opened again.
+The UI thread takes each file in and matches its records to the survey files' sources
+(`ShotIndex.matchOne`: by station, by place, by FFID through the relation files), all
+again only when the survey changes; a job that has not answered for `StallAfter` is
+cancelled (`Jobs.tend` abandons it), the file it was on tried again after `RetryAfter`, the
+rest given to the next job; a new listing starts again (its jobs replaced end quietly).
+The map rings the matched sources and a click on one shows its file (`ckShowPoints` falls
+back to `showListedShot`, with the click's origin).
 
 **The index cache.** `initAppState(indexCache = dir)` names the folder for parseSEG's
 index caches; the frontend passes `<cache>/index` from `platform/paths`, since `core`

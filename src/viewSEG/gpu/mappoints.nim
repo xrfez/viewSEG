@@ -12,7 +12,9 @@
 ## shader makes it a disc or a ring, its edge smoothed over a pixel. The
 ## highlight (the points of the gather on show, the selected and the
 ## hovered ones) is a small buffer of its own, uploaded again when it
-## changes, drawn last, larger and outlined.
+## changes, drawn last, larger and outlined; the marked points (sources
+## with a file in the folder listed, the points the map's filters find)
+## another, drawn between the layers and the highlight.
 ##
 ## Drawing is skipped when nothing it depends on changed since the last
 ## image (`MapFrame`): an idle map costs the GPU nothing.
@@ -68,6 +70,11 @@ type
     selected*, hovered*: MapStyle ## the highlight's other points
     highlight*: int               ## bumped by the caller whenever the highlighted points change
     survey*: int                  ## the survey's revision
+    marks*: seq[MapStyle]
+      ## each set of marked points (`setMarks`), drawn over the layers and
+      ## under the highlight; fewer styles than sets: the rest not drawn
+    marked*: int
+      ## bumped by the caller whenever the marked points change
 
   LayerBuffer = object
     key: uint64      ## the layer's id and role
@@ -86,6 +93,10 @@ type
     hactive: array[PointRole, int]
     hselected, hhovered: int
     horigin: MapPoint
+    mvbo, mvao: GLuint
+      ## the marked points (shots with a file, filters), each set after the one before
+    mcounts: seq[int]
+    morigin: MapPoint
     fbo, target: GLuint
     width, height: int
     ready: bool
@@ -250,6 +261,32 @@ proc setHighlight*(r: var MapRenderer; origin: MapPoint; active: array[PointRole
   glBindVertexArray(GLuint(lastVao))
   glBindBuffer(GL_ARRAY_BUFFER, GLuint(lastBuf))
 
+proc setMarks*(r: var MapRenderer; origin: MapPoint; sets: openArray[seq[MapPoint]]) =
+  ## The marked points, relative to `origin` (anywhere near them): each set
+  ## drawn in its own style (`MapFrame.marks`), over the layers and under the
+  ## highlight. The vertex array and buffer bound before are bound again.
+  var lastVao, lastBuf: GLint
+  glGetIntegerv(GL_VERTEX_ARRAY_BINDING, addr lastVao)
+  glGetIntegerv(GL_ARRAY_BUFFER_BINDING, addr lastBuf)
+  if r.mvbo == 0: newArray(r.mvbo, r.mvao)
+  var total = 0
+  for s in sets: total += s.len
+  var data = newSeqOfCap[float32](2 * total)
+  r.mcounts.setLen 0
+  for s in sets:
+    let before = data.len
+    for p in s:
+      if not (p.x.isNaN or p.y.isNaN):
+        data.add float32(p.x - origin.x)
+        data.add float32(p.y - origin.y)
+    r.mcounts.add (data.len - before) div 2
+  r.morigin = origin
+  glBindBuffer(GL_ARRAY_BUFFER, r.mvbo)
+  if data.len > 0:
+    glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(data.len * 4), addr data[0], GL_STREAM_DRAW)
+  glBindVertexArray(GLuint(lastVao))
+  glBindBuffer(GL_ARRAY_BUFFER, GLuint(lastBuf))
+
 proc resize(r: var MapRenderer; width, height: int) =
   if r.target != 0 and width == r.width and height == r.height: return
   if r.target != 0: glDeleteTextures(1, addr r.target)
@@ -351,6 +388,15 @@ proc render*(r: var MapRenderer; f: MapFrame; s: Survey): GLuint =
       r.use(f, mapPoint(p.origin.x, p.origin.y), d.style)
       glBindVertexArray(r.buffers[b].vao)
       r.pointsDrawn += drawRuns(runs, r.buffers[b].starts[level + 1])
+  if r.mvao != 0:
+    glBindVertexArray(r.mvao)
+    var first = 0
+    for i, n in r.mcounts:
+      if n > 0 and i < f.marks.len:
+        r.use(f, r.morigin, f.marks[i])
+        glDrawArrays(GL_POINTS, GLint(first), GLsizei(n))
+        r.pointsDrawn += n
+      first += n
   if r.hvao != 0:
     glBindVertexArray(r.hvao)
     var first = 0
@@ -403,6 +449,8 @@ proc free*(r: var MapRenderer) =
   for b in r.buffers.mitems: b.freeBuffer()
   if r.hvbo != 0: glDeleteBuffers(1, addr r.hvbo)
   if r.hvao != 0: glDeleteVertexArrays(1, addr r.hvao)
+  if r.mvbo != 0: glDeleteBuffers(1, addr r.mvbo)
+  if r.mvao != 0: glDeleteVertexArrays(1, addr r.mvao)
   if r.target != 0: glDeleteTextures(1, addr r.target)
   if r.fbo != 0: glDeleteFramebuffers(1, addr r.fbo)
   if r.program != 0: glDeleteProgram(r.program)

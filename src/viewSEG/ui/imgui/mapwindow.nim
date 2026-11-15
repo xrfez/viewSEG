@@ -65,6 +65,9 @@ const
   activeSourceSize = 10'f32
     ## its source
   selectedSize = 8'f32
+  shotRing = 6'f32
+    ## how much wider than its source's disc the ring round a source with a
+    ## file in the folder is, pixels at 100 %
   hoveredSize = 12'f32
   scalePixels = 150'f32 ## the longest the scale bar may be, at 100 %
 
@@ -107,6 +110,8 @@ type
     focus: FocusClicks
     hovered: seq[PointRef] ## under the pointer: the nearest point, and others on its spot
     info: seq[PointInfo]   ## what the map says of them
+    infoFor: tuple[survey, shots, files: int]
+      ## what `info` was made from, besides the points
     sentHover: seq[PointRef]
       ## the hover last sent to `core` (`ckHoverPoints`)
     highlight: MapHighlight
@@ -130,6 +135,12 @@ type
       ## what `spreadHovered` was found from
     boxes: seq[tuple[name: string; corners: array[4, Vec2]]]
       ## the template boxes drawn last frame, ImGui's coordinates (for tests)
+    marksFor: tuple[shots, survey: int; on: bool; hidden: seq[MapLayerKey];
+      groups: set[MapGroup]]
+      ## what the marked points were found from
+    marked: seq[seq[MapPoint]]
+      ## the marked points: the sources with a file in the folder listed
+    marksRev: int
     highlightRev: int
     drawnHover, drawnPlotHover: seq[PointRef]
       ## the map's own hover and the plot's hovered trace's points the GPU's
@@ -366,6 +377,39 @@ proc drawTemplateRow(st: AppState; marks: var Marks; res: var MapOutput) =
       res.commands.add Command(kind: ckSettings, settings: s)
   igUnindent(0)
 
+const shotsTip = "The survey's sources whose record is in a file of the folder listed are " &
+  "ringed, and a click on one shows that file at its record. The files are read in the " &
+  "background (their shots are kept beside the index cache, so the folder listed again " &
+  "reads none), while a survey file with sources is loaded."
+
+proc drawShotsRow(st: AppState; marks: var Marks; res: var MapOutput) =
+  ## The folder's shots' tick, under the Recorded: how many of the survey's
+  ## sources have a file, and how far the files' reading is.
+  var s = st.settings
+  var on = s.map.folderShots
+  template x: untyped = st.shots
+  var sources = 0
+  for i in 0 ..< st.survey.layers.len:
+    if st.survey.layers[i].origin == loSurveyFile:
+      sources += st.survey.layers[i].points[prSource].len
+  let label = if sources == 0: "Shots in the folder (with a survey file's sources loaded)"
+              else: "Shots in the folder: " & $x.pointRefs.len & " of " & $sources &
+                " sources have a file"
+  if igCheckbox(label.cstring, addr on):
+    s.map.folderShots = on
+    res.commands.add Command(kind: ckSettings, settings: s)
+  marks.mark("map.shots")
+  tip(shotsTip)
+  if on and sources > 0:
+    igIndent(0)
+    let left = x.pending.len + x.jobPaths.len
+    if left > 0:
+      wrapped("Reading the folder's files: " & $x.shotFiles & " read, " & $left & " to go.")
+    if x.later.len > 0:
+      wrapped($x.later.len & (if x.later.len == 1: " file does" else: " files do") &
+        " not answer: tried again in a minute.")
+    igUnindent(0)
+
 proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     res: var MapOutput) =
   ## The layers popover, in groups: the Preplot (the survey files), then the
@@ -394,6 +438,7 @@ proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
                  else: "No seismic file whose traces carry positions is open"
       igTextDisabled("%s", none.cstring)
     if g == mgPreplot: drawTemplateRow(st, marks, res)
+    else: drawShotsRow(st, marks, res)
     igUnindent(0)
   igSeparator()
   for i, l in layers:
@@ -415,6 +460,7 @@ proc placePopover(at: ImVec2_c; width: float32) =
 proc layersWidth(layers: openArray[MapLayerView]): float32 =
   ## The widest line of the Layers popover.
   var lines = @[$mgPreplot & ": the survey files", TemplateLabel,
+    "Shots in the folder: 10000 of 10000 sources have a file",
     "No survey file loaded (open SPS or SEG P1 files)",
     "No seismic file whose traces carry positions is open"]
   for l in layers: lines.add l.name & "  (" & $l.points & ")"
@@ -690,6 +736,24 @@ proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
     else: mu.renderer.setHighlight(origin, mu.activeAt, mu.selectedAt, hovered)
     mu.drawnHidden = hidden
     inc mu.highlightRev
+
+proc followMarks(mu: var MapUi; st: AppState) =
+  ## The marked points on the GPU: the survey's sources whose record is in a
+  ## file of the folder listed (while the Recorded group and its tick are
+  ## on, and the source's layer is drawn); found again and uploaded only when
+  ## what they come from changes.
+  let on = st.settings.map.folderShots and mgRecorded notin st.settings.map.hiddenGroups
+  let now = (st.shots.revision, st.survey.revision, on, st.map.hidden,
+    st.settings.map.hiddenGroups)
+  if now == mu.marksFor and mu.marksRev > 0: return
+  mu.marksFor = now
+  mu.marked.setLen 1
+  mu.marked[0].setLen 0
+  if on:
+    for p in st.shots.pointRefs: mu.marked[0].add st.shownAt(p)
+  let b = st.survey.bounds
+  mu.renderer.setMarks(if b.isEmpty: mapPoint(0, 0) else: mapPoint(b.minX, b.minY), mu.marked)
+  inc mu.marksRev
 
 proc drawScaleBar(mu: var MapUi; view: MapView; pos, size: ImVec2_c; fb: float32;
     lengths: tuple[unit: SurveyUnit; factor: float64]; ink: MapInk; t: Theme;
@@ -980,6 +1044,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       size: vec2(size.x * fb.x, size.y * fb.y))
     if mu.gpuError.len == 0 and mu.started and next.isSet:
       mu.followHighlight(st, not st.map.shown(HighlightKey))
+      mu.followMarks(st)
       let s = fb.x
       var frame = MapFrame(area: Bounds(minX: limits.X.Min, minY: limits.Y.Min,
         maxX: limits.X.Max, maxY: limits.Y.Max), columns: columns, rows: rows,
@@ -998,6 +1063,14 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
         if l.shown and l.key.kind != mlHighlight and l.role == prReceiver:
           receivers = max(receivers, markerSize(l.spacing, pixel))
       frame.active[prReceiver].size = (receivers + activeReceiverRoom) * s
+      # A source with a file in the folder: ringed, a little outside its disc.
+      var sources = MinMarker
+      for l in layers:
+        if l.shown and l.key.kind == mlSurveyFile and l.role == prSource:
+          sources = max(sources, markerSize(l.spacing, pixel))
+      frame.marks = @[MapStyle(colour: ink.outline, edge: ink.outline,
+        size: (sources + shotRing) * s, edgeWidth: 1.5 * s, shape: skRing)]
+      frame.marked = mu.marksRev
       for l in layers:
         if l.shown and l.key.kind != mlHighlight:
           let disc = markerSize(l.spacing, pixel)
@@ -1044,8 +1117,10 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     elif hovered:
       res.cursor = coordinatesText(view.mapAt(plot, v2(igGetIO_Nil().MousePos)),
         view.perPixel, units)
-    if under != mu.hovered:
+    let infoFor = (st.survey.revision, st.shots.revision, st.sessions.len)
+    if under != mu.hovered or infoFor != mu.infoFor: # (what it says may have changed too)
       mu.hovered = under
+      mu.infoFor = infoFor
       mu.info.setLen 0
       for i in 0 ..< min(under.len, 3): mu.info.add st.pointInfo(under[i], units)
     mu.sendHover(res)

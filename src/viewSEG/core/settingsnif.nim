@@ -24,7 +24,7 @@
 ##  (messages (autoScroll true) (hide info))
 ##  (cursorLine false)
 ##  (files (followLatest false) (prepareNext true))
-##  (map (info popup) (lengths survey) (hide recorded) (templateBox false)
+##  (map (info popup) (lengths survey) (hide recorded) (templateBox false) (folderShots true)
 ##   (template (shape patch) (lines 8) (channels 120) (inline 1500.0) (crossline 500.0)))
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
 ##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960)))
@@ -235,6 +235,7 @@ proc settingsDocument*(s: Settings): string =
   for g in s.map.hiddenGroups: w.ident MapGroupNames[g]
   w.close()
   w.value("templateBox", s.map.templateBox)
+  w.value("folderShots", s.map.folderShots)
   w.open("template")
   w.choice("shape", TemplateShapeNames[s.map.spreadTemplate.shape])
   w.value("lines", s.map.spreadTemplate.lines)
@@ -595,6 +596,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
               if r.pick(v, MapGroupNames, "hide", g): hidden.incl g
             result.map.hiddenGroups = hidden
           elif k.isTree("templateBox"): r.flag(k, result.map.templateBox)
+          elif k.isTree("folderShots"): r.flag(k, result.map.folderShots)
           elif k.isTree("template"):
             template t: untyped = result.map.spreadTemplate
             for v in k.kids:

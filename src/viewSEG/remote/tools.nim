@@ -115,7 +115,8 @@ proc toolList*(): string =
        "in its group, Preplot (the survey files) or Recorded (the seismic files' own " &
        "positions), shown or hidden by its own toggle and drawn or not, the groups " &
        "hidden, the template box: the spread planned for the record on show, its X or O " &
-       "record and stations, read or generated, the points selected and hovered), the jobs, " &
+       "record and stations, read or generated, the folder's shots: its files read and the " &
+       "survey's sources that have one, the points selected and hovered), the jobs, " &
        "the newest messages, the survey, and the Headers window (headers: the tab shown, " &
        "what it has on screen, the traces its Trace tab is about and what its reader read " &
        "of them, and the facts its Summary gives of the file the plot shows). All parts " &
@@ -393,6 +394,11 @@ proc mapJson(state: AppState; limit: int): JsonNode =
     spread["from"] = %sp.source
     spread["made"] = %state.spreads.words
   result["template"] = spread
+  # The folder's shots: its files read, and the survey's sources that have one.
+  template x: untyped = state.shots
+  result["folderShots"] = %*{"shown": state.settings.map.folderShots, "filesRead": x.shotFiles,
+    "toRead": x.pending.len + x.jobPaths.len, "notAnswering": x.later.len,
+    "sourcesWithFile": x.pointRefs.len}
   var selected = newJArray()
   for i in 0 ..< min(state.selection.points.len, limit):
     selected.add state.pointJson(state.selection.points[i])

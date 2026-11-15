@@ -24,7 +24,7 @@
 ## accent colour, as in the plot; the receivers of the record on show in a
 ## darker shade of the receivers' colour, its source larger and outlined.
 
-import std/[intsets, math, strutils]
+import std/[intsets, math, os, strutils]
 from parseSEG import GatherKind, gkReceiver, gkUnknown, known, recordsAt, stationKey
 import ../core/[geometry, state]
 import plotink, theme
@@ -190,9 +190,11 @@ func opensRecord*(st: AppState; p: PointRef): bool =
   ## Whether a click on map point `p` shows its record (`ckShowPoints`)
   ## rather than selecting it: a source whose traces are in a record of an
   ## open file that is not a receiver gather (its shot record), or a
-  ## receiver whose traces form a receiver gather.
+  ## receiver whose traces form a receiver gather; a survey file's source
+  ## no open file's trace was recorded at whose record a file of the folder
+  ## listed holds.
   let traces = st.survey.tracesAt(p)
-  if traces.len == 0: return false
+  if traces.len == 0: return p.role == prSource and st.shots.shotsAt(p).len > 0 # a listed file's
   let (found, kind) = st.recordKind(traces[0])
   found and (if p.role == prSource: kind != gkReceiver else: kind == gkReceiver)
 
@@ -374,6 +376,20 @@ func merged*(infos: openArray[PointInfo]): seq[PointInfo] =
         seen.add l
     if m.title.len > 0 or m.lines.len > 0: result.add m
 
+func shotLines*(st: AppState; p: PointRef): seq[string] =
+  ## For a survey file's source whose record a file of the folder listed
+  ## holds: "Shot in the folder: shot-3.sgy (FFID 1003)"; none for another
+  ## point.
+  let places = st.shots.shotsAt(p)
+  if places.len == 0: return
+  var names: seq[string]
+  for (path, _, record) in places:
+    if names.len < 3:
+      names.add elided(path.extractFilename) & (if abs(record) < 1e15 and record == round(record):
+        " (FFID " & $int64(record) & ")" else: "")
+  result.add "Shot in the folder: " & names.join(", ") &
+    (if places.len > names.len: ", ... (" & $places.len & " records)" else: "")
+
 proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
   ## What the map says of point `p`: its role, station and file; its
   ## coordinates and elevation; the traces of the open files recorded there
@@ -410,3 +426,4 @@ proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
       result.lines.add "Field " & (if records.len == 1: "record " else: "records ") &
         names.join(", ") & (if records.len > names.len: ", ... (" & $records.len & ")"
         else: "") & " in the relation file"
+  result.lines.add st.shotLines(p)

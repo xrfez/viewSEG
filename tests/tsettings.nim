@@ -59,7 +59,7 @@ proc everyFieldSet(): Settings =
     files: FilesView(followLatest: true, prepareNext: false),
     map: MapOptions(info: miStrip, lengths: dlUsFeet, hiddenGroups: {mgRecorded},
       templateBox: true, spreadTemplate: TemplateSpec(shape: tsBox, lines: 12, channels: 240,
-      inlineHalf: 2500.5, crosslineHalf: 750)),
+      inlineHalf: 2500.5, crosslineHalf: 750), folderShots: false),
     join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
       recordMatch: rmFieldRecord, traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
       line: 4960), LineName(name: "A line", line: 12.5)]),
@@ -92,7 +92,7 @@ block savedByAnOlderBuild:
   doAssert not s.files.followLatest, "a new setting takes its default"
   doAssert s.files.prepareNext, "preparing the next file is on by default"
   doAssert s.map.info == miPopup and s.map.lengths == dlSurvey and s.map.hiddenGroups == {} and
-    not s.map.templateBox and s.map.spreadTemplate == TemplateSpec(),
+    not s.map.templateBox and s.map.spreadTemplate == TemplateSpec() and s.map.folderShots,
     "the map's settings take their defaults"
   doAssert s.join == JoinOptions(), "the join's options take their defaults"
   doAssert s.headers == HeadersView(), "the Headers window's settings take their defaults"

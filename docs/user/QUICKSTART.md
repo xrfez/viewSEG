@@ -383,7 +383,7 @@ The gestures are the plot's:
 | Ctrl+0, or the fit button | The whole survey |
 | Backspace, Alt+Left, or the back button | The view before |
 | Point at a dot | What it is: source or receiver, line and point, coordinates and elevation, its file, the traces of the open file recorded there and their records, and for a source, the field records the relation (X) file gives it; **its traces light up in the plot** |
-| Click a source | Show its record in the plot |
+| Click a source | Show its record in the plot; a ringed source (its record is in a file of the folder listed) shows that file |
 | Click a receiver (Ctrl+click: any dot) | Select it and its traces (Ctrl: add it, or take it out) |
 | Shift+click a dot | Select the stations of its line from the dot you clicked last to this one |
 | Shift+drag | Select every dot in the box, and their traces (Ctrl+Shift+drag adds) |
@@ -413,6 +413,12 @@ for that shot. For a file of receiver gathers it is the shots the O records plan
 receiver. With no relation file loaded, give the template there (lines × stations, or a
 distance box along and across the receiver lines): the spreads are generated from it and
 the box says **Generated**.
+
+Under the Recorded, **Shots in the folder** rings the survey's sources whose record is in a
+file of the folder listed in Files (read in the background, while a survey file with
+sources is loaded): point at one and its description names the file; click it and the plot
+shows that file at that record. The list says how many of the survey's sources have a file;
+a folder listed again is not read again (what was found is kept with the index cache).
 
 Untick a group to hide all of it (its layers keep their own ticks, greyed out, for when it
 comes back), or a layer to hide that layer alone; the highlight (the record on show, the

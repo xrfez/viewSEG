@@ -103,11 +103,11 @@ import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, ti
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 import closer, diskio, edits, filejobs, filelist, filesystem, inbox, inspector, jobs, join, layouts,
-  log, mapstate, panels, persist, pick, reader, selection, session, settings, spread, survey,
+  log, mapstate, panels, persist, pick, reader, selection, session, settings, shots, spread, survey,
   surveyjobs, threads, tiles, watch, zoom
 
 export edits, filelist, inbox, jobs, join, layouts, log, mapstate, panels, persist, pick, selection,
-  session, settings, spread, survey, threads, tiles, zoom
+  session, settings, shots, spread, survey, threads, tiles, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues
 export WatchInterval
 
@@ -429,6 +429,8 @@ type
       ## how the last join ended
     spreads: Spreads
       ## relation records made for the map's planned spreads (`core/spread`)
+    shots: ShotIndex
+      ## the folder listed's shots, matched to the survey's sources (`core/shots`)
     loadNamed: seq[string]
       ## the files the listing was asked for: loaded when it finds them survey files
     saidPositions: HashSet[string]
@@ -820,6 +822,11 @@ func spreads*(state: AppState): lent Spreads {.inline.} =
   ## The relation records made for the map's planned spreads, and what was
   ## made in words (`core/spread`).
   state.spreads
+
+func shots*(state: AppState): lent ShotIndex {.inline.} =
+  ## The shots of the folder listed: each listed file's records, matched to
+  ## the survey files' sources (`core/shots`).
+  state.shots
 
 func joinReport*(state: AppState): lent JoinReport {.inline.} =
   ## How the last join ended (its `serial` goes up with each).
@@ -1701,6 +1708,7 @@ proc takeInspected(state: var AppState; m: sink Msg) =
     state.inspect.answer = move m.inspected
     if state.answerGen >= state.inspectGen: state.inspect.waiting = false
     inc state.inspect.revision
+proc showListedShot(state: var AppState; cmd: Command): bool
 
 proc showPoints(state: var AppState; cmd: Command) =
   ## `ckShowPoints`: the main panel shows the record of the traces recorded
@@ -1711,7 +1719,8 @@ proc showPoints(state: var AppState; cmd: Command) =
   var traces: seq[int]
   for p in cmd.points: traces.add state.survey.tracesAt(p)
   if traces.len == 0:
-    state.ignore(cmd, "no trace of the open files was recorded there")
+    if not state.showListedShot(cmd):
+      state.ignore(cmd, "no trace of the open files was recorded there")
     return
   let (shown, gather) = state.shownTraces(k)
   var pick = -1
@@ -2264,14 +2273,113 @@ proc takeSpreads(state: var AppState; m: sink Msg) =
     state.spreads.words = move m.spreadWords
     inc state.spreads.revision
 
+func wantsShots(state: AppState): bool =
+  ## Whether the listed files' shots are read: while a survey file with
+  ## sources is loaded (the map has nothing to match them to otherwise).
+  for i in 0 ..< state.survey.layers.len:
+    template l: untyped = state.survey.layers[i]
+    if l.origin == loSurveyFile and l.points[prSource].len > 0: return true
+  false
+
+proc queueShots(state: var AppState) =
+  ## The listed files whose shots are to be read: seismic, steady, not read
+  ## as they are now and not waiting already; and those no longer listed
+  ## forgotten. Once per change of the list's entries.
+  template x: untyped = state.shots
+  if x.listedRev == state.files.entriesRev: return
+  x.listedRev = state.files.entriesRev
+  var listed: HashSet[string]
+  for i in 0 ..< state.files.entries.len:
+    template e: untyped = state.files.entries[i]
+    if e.kind.isSeismic:
+      listed.incl e.path
+      if e.status == fsSteady and e.path notin x.queued:
+        let now = e.path in x.files and x.files[e.path].size == e.size and
+          x.files[e.path].modified == e.modified
+        if not now:
+          x.pending.add e.path
+          x.queued.incl e.path
+  var gone: seq[string]
+  for path in x.files.keys:
+    if path notin listed: gone.add path
+  for path in gone: x.forget(state.survey, path)
+  if x.started == MonoTime() and x.pending.len > 0: x.started = fs.now()
+
+proc followShots(state: var AppState) =
+  ## Reads the listed files' shots on background jobs, a batch at a time,
+  ## while the map can use them (`wantsShots`); a new listing starts again;
+  ## a job that does not answer is given up, the file it was on tried again
+  ## later and the rest read by the next job.
+  template x: untyped = state.shots
+  if x.gen != state.files.gen: # another listing
+    if x.job != NoJob:
+      discard state.jobs.cancel(x.job)
+      x.replaced.add x.job
+    x = ShotIndex(gen: state.files.gen, replaced: move x.replaced, revision: x.revision + 1,
+      listedRev: -1, surveyRev: state.survey.revision)
+  if x.surveyRev != state.survey.revision: x.match(state.survey)
+  if not state.wantsShots: return
+  state.queueShots()
+  let now = fs.now()
+  var i = 0
+  while i < x.later.len:
+    if now >= x.later[i].at:
+      x.pending.add x.later[i].path
+      x.later.delete(i)
+    else: inc i
+  if x.job != NoJob:
+    let info = state.jobs.info(x.job)
+    if info.isSome and info.get.state == jsRunning and
+        info.get.notAnsweringFor(now) >= StallAfter:
+      # The file it is on does not answer: tried again later, the rest now.
+      discard state.jobs.cancel(x.job)
+      x.replaced.add x.job
+      x.job = NoJob
+      if x.jobPaths.len > 0:
+        x.later.add (x.jobPaths[0], now + RetryAfter)
+        x.pending.insert(x.jobPaths[1 .. ^1], 0)
+      x.jobPaths.setLen 0
+  if x.job == NoJob and x.pending.len > 0:
+    let n = min(ShotBatch, x.pending.len)
+    x.jobPaths = x.pending[0 ..< n]
+    x.pending.delete(0 ..< n)
+    x.job = state.jobs.submit(JobSpec(title: "Find the shots in the folder's files",
+      lane: jlBackground, reads: x.jobPaths), shotsWork(x.gen, x.jobPaths, state.indexCache,
+      state.inbox.poster))
+
+proc takeShots(state: var AppState; m: sink Msg) =
+  ## A listed file's shots, read by a job of this listing.
+  template x: untyped = state.shots
+  if m.shotsGen == x.gen:
+    let path = m.shots.path
+    x.queued.excl path
+    x.take(state.survey, move m.shots)
+    if x.pending.len == 0 and x.jobPaths.len == 0 and x.later.len == 0: x.finished = fs.now()
+
 proc followMapWork(state: var AppState) =
   ## After every command and drained inbox: the map's jobs follow what they
   ## depend on.
   state.followSpreads()
+  state.followShots()
 
 proc endMapWork(state: var AppState; job: JobInfo): bool =
   ## A job of the map's ended: forgotten, a failure said; false when `job`
   ## is none of them.
+  template x: untyped = state.shots
+  let given = x.replaced.find(job.id)
+  if given >= 0:
+    x.replaced.delete(given)
+    return true
+  if job.id == x.job:
+    # Its files not answered (it failed, or was cancelled in the Jobs
+    # window): tried again later.
+    x.job = NoJob
+    for path in x.jobPaths: x.later.add (path, fs.now() + RetryAfter)
+    x.jobPaths.setLen 0
+    if job.state == jsFailed:
+      state.log.add(sevWarning, "map", "The shots in the folder's files could not all be " &
+        "read: " & job.error & ". They are tried again in a minute.")
+    return true
   let replaced = state.spreads.replaced.find(job.id)
   if replaced >= 0:
     state.spreads.replaced.delete(replaced)
@@ -2414,6 +2522,28 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
         indexCacheFile(state.indexCache, path), whole = follow))
       state.opening.add Pending(job: job, path: path, panel: panel, gather: gather,
         follow: follow, by: by)
+
+proc showListedShot(state: var AppState; cmd: Command): bool =
+  ## `ckShowPoints` on a survey source no open file's trace was recorded at:
+  ## the main panel shows the record a listed file holds of its shot (opened
+  ## first, as the user's click asked); false when no listed file has one.
+  let k = state.findPanel(MainPanel)
+  for p in cmd.points:
+    let places = state.shots.shotsAt(p)
+    if places.len > 0 and k >= 0:
+      let (path, gather, _) = places[0]
+      var i = -1
+      for j, s in state.sessions:
+        if s.path == path: i = j
+      if i >= 0:
+        let g = clamp(gather, 0, max(0, state.sessions[i].gathers.high))
+        if state.shownFile(k) != i: state.showReplacing(k, state.sessions[i].id, g)
+        else: state.show(MainPanel, state.sessions[i].id, g)
+      else:
+        state.jump = ("", -1, -1)
+        state.showPath(k, path, gather, by = cmd.origin)
+      return true
+  false
 
 proc startListing(state: var AppState; paths: seq[string]; title, folder: string;
     by: CommandOrigin) =
@@ -3236,6 +3366,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkJoined: state.takeJoined(m)
     of mkInspected: state.takeInspected(move m)
     of mkSpreads: state.takeSpreads(move m)
+    of mkShots: state.takeShots(move m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:
