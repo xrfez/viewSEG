@@ -46,7 +46,7 @@
 ## making old files unreadable.
 
 import std/strutils
-import geometry, join, log, nif, panels, readout, scales, settings, wiggle
+import geometry, join, log, nif, panels, readout, scales, settings
 
 export nif
 
