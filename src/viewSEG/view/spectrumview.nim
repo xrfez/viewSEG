@@ -52,8 +52,9 @@ func spectrumPlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
   if w.display.processed and sp.processed.len > 0:
     # Of fewer traces than the raw curve when the filters passed some by:
     # the legend says so, as the two then differ by those traces too.
-    add((if sp.passedBy > 0: "processed (" & $sp.filtered & " of " & $sp.averaged & ")"
-         else: "processed"), sp.processed, colours[1])
+    let called = if sp.passedBy > 0: "processed (" & $sp.filtered & " of " & $sp.averaged & ")"
+                 else: "processed"
+    add(called, sp.processed, colours[1])
   if w.display.response and sp.response.len == sp.raw.len:
     # Its gain in dB, 0 dB at the top of the curves; linear, a gain of 1 at
     # the larger peak. The readout says the gain in dB either way.
