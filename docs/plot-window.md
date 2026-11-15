@@ -1176,8 +1176,11 @@ spectrumreader`), which reads only the traces it does not already hold (as decod
 to 128 MiB: a pan reads the traces it brings into view; a filter, a time window or
 another window of the same traces reads nothing; let go once no spectrum window is open
 and the live panel is off the screen), and gives up a request between blocks of traces
-when a newer one of its window comes or the window closes; a request read and computed
-whole is answered all the same, so the live panel moves on while a pan sends newer ones.
+when a newer one of its window comes, unless it has been at it 60 ms already (then it
+finishes: a narrow filter makes each request of a 600-trace view take about 0.2 s, and a pan
+asks every frame, so giving them all up showed nothing at all), or when the window
+closes; a request read and computed whole is answered all the same, so the live panel
+moves on while a pan sends newer ones.
 
 **The plot itself** (`view/curveplot`, drawn by `ui/imgui/curveplot`) is a plot of named
 curves over one axis, each in its colour with a legend, that can be drawn turned (the

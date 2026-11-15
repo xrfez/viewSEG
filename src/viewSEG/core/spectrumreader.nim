@@ -12,10 +12,14 @@
 ##
 ## - **One request per window, newest wins.** A request replaces the one of
 ##   the same window that waits, and one being served is given up between
-##   blocks of traces when a newer one of its window comes, or the window
-##   closes (`cancel`); one read and computed whole is posted all the same
-##   (the window shows it while the newer one is served). Requests of
-##   different windows are served in turn.
+##   blocks of traces when a newer one of its window comes, unless it has
+##   been served `KeepServing` already (`givesUp`): then it is finished and
+##   posted, so a window whose requests each take longer than the next one
+##   takes to come (the live panel following a pan, under a narrow filter)
+##   still shows answers. One is always given up when its window closes
+##   (`cancel`); one read and computed whole is posted all the same (the
+##   window shows it while the newer one is served). Requests of different
+##   windows are served in turn.
 ## - **Samples at hand.** The samples of the traces read last are kept, as
 ##   decoded, whole (up to `MaxSpectrumSamples`, of the file read last;
 ##   let go when no window needs them, `forget`):
@@ -74,6 +78,7 @@ type
     queue: seq[SpectrumAsk]
     quit: bool
     serving: int      ## the window whose request is served; -1 for none
+    servedSince: MonoTime ## when it was taken
     dropServed: bool  ## that request is given up (its window closed)
     poster: Poster
     holds: HoldRelease
@@ -107,16 +112,27 @@ func isNil*(x: SpectrumReader): bool {.inline.} =
 
 # ------------------------------------------------------------ the thread --
 
+const KeepServing* = initDuration(milliseconds = 60)
+  ## a request served this long is finished even when a newer one of its
+  ## window waits: giving it up then would leave a window that asks faster
+  ## than it is answered with no answer at all
+
+func givesUp*(servedFor: Duration; newer, closed, quitting: bool): bool =
+  ## Whether a request served for `servedFor` is given up: its window
+  ## closed or the reader stops; or a newer one of its window waits and it
+  ## is younger than `KeepServing` (cheap to start again).
+  quitting or closed or (newer and servedFor < KeepServing)
+
 proc interrupted(p: ptr ReaderObj; id: int): bool =
-  ## Whether the request of window `id` being served is to be given up: a
-  ## newer one of its window waits, its window closed, or the reader stops.
-  ## A sign of life too.
+  ## Whether the request of window `id` being served is to be given up
+  ## (`givesUp`). A sign of life too.
   let now = fs.now()
   withLock p.lock:
     p.beat = now
-    result = p.quit or p.dropServed
+    var newer = false
     for a in p.queue:
-      if a.id == id: result = true
+      if a.id == id: newer = true
+    result = givesUp(now - p.servedSince, newer, p.dropServed, p.quit)
 
 proc beat(p: ptr ReaderObj; reading: string) =
   let now = fs.now()
@@ -366,6 +382,7 @@ proc run(p: ptr ReaderObj) {.thread.} =
         a = move p.queue[0]
         p.queue.delete 0
         p.serving = a.id
+        p.servedSince = fs.now()
         p.dropServed = false
       p.busy = got
       p.beat = fs.now()

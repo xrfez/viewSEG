@@ -42,6 +42,8 @@
 ##   out of the spectra of the other's traces;
 ## - a request read and computed whole is answered even when a newer one of
 ##   its window came meanwhile (the reader held in its read by the seam);
+## - one served `KeepServing` already is finished when a newer one comes,
+##   between chunks too (the reader's clock moved on by the seam);
 ## - the processed curve is of the traces the filters reach: with the
 ##   plot's Aux toggle off, a record's auxiliary trace is left out of it
 ##   (counted as passed by, and said), a pilot alone has none (and the
@@ -83,13 +85,15 @@
 ## after the data (as before), the curves were not response, raw,
 ## processed; drawn when the filters reached no trace, "a response the
 ## filters did not apply is drawn"; with the design's response, "the stop
-## band is the design's zero".
+## band is the design's zero". With a request given up for a newer one
+## however long it was served (as before), "the request served 200 ms was
+## given up for the newer one (1 answer taken)".
 
-import std/[math, os, sequtils, strutils]
+import std/[math, os, sequtils, strutils, times]
 import parseSEG
 import processSEG/core/[rows, types]
 import processSEG/filter/design
-import viewSEG/core/[settingsnif, state]
+import viewSEG/core/[settingsnif, spectrumreader, state]
 import viewSEG/view/[curveplot, spectrumview, theme]
 import utils/[faultyfs, fixtures, waiting]
 
@@ -643,6 +647,37 @@ withFixtures fx:
       $(three.spectra[w].revision - revision) & " answer taken; request " & $first & ")"
     doAssert uiCalls().len == 0, "the file system was called on the UI thread: " & $uiCalls()
     three.shutdown()
+
+  block keptServing:
+    # A request already served `KeepServing` is finished when a newer one
+    # of its window comes, between chunks too: a window asked faster than
+    # it is answered (the live panel following a pan) still shows answers.
+    # Its first chunk's read is held, a newer request comes, then the read
+    # goes on with the reader's clock moved on 200 ms (`fkSlow`).
+    doAssert givesUp(initDuration(milliseconds = 10), true, false, false) and
+      not givesUp(KeepServing, true, false, false) and
+      givesUp(KeepServing, false, true, false) and not givesUp(initDuration(), false, false, false)
+    let long = fx.longSpreadSegy()
+    var six = initAppState()
+    six.apply Command(kind: ckShowFile, panel: MainPanel, path: long)
+    doAssert six.settle(six.sessions.len == 1 and six.panel(MainPanel).laidOut)
+    let b = six.sessions[0].base
+    fault(long, fkHang, {foMapped})
+    six.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
+      spectrumTraces: toSeq(b ..< b + LongSpread))
+    let w = six.spectra.high
+    doAssert waitUntil(hung() == 1), "the spectrum's read was not held"
+    six.apply Command(kind: ckSpectrumDisplay, spectrum: six.spectra[w].id,
+      spectrumShow: SpectrumDisplay(time: stVisible)) # a newer request of the window
+    let revision = six.spectra[w].revision
+    fault(long, fkSlow, {foMapped}, delay = initDuration(milliseconds = 200))
+    doAssert six.settle(not six.spectra[w].waiting and
+      six.spectra[w].spectrum.gen == six.spectra[w].asked)
+    doAssert six.spectra[w].revision == revision + 2,
+      "the request served 200 ms was given up for the newer one (" &
+      $(six.spectra[w].revision - revision) & " answer taken)"
+    release(long)
+    six.shutdown()
 
   block auxiliary:
     # The filters reach an auxiliary trace only with the plot's Aux toggle
