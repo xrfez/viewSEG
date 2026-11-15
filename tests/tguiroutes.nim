@@ -3,8 +3,9 @@
 ## to 300 ms), wiggles over density with an overlap of 1.5, the Exponential
 ## gain as the power of time 1.5 until 3 000 ms at +7.5 dB with every other
 ## gain type's settings away from their defaults, sorted by channel
-## (descending), and Aux on beside Seismic. Then, one after another: a click
-## on a row of the Files window; Down in it; File > Open file in the same
+## (descending), Aux on beside Seismic, and filtered (the mean and trend
+## taken off, a 3-6-50-70 Hz band-pass, a 50 Hz notch and its harmonic, the
+## Aux traces too). Then, one after another: a click on a row of the Files window; Down in it; File > Open file in the same
 ## folder and in another; File > Open folder; File > Open recent; a file
 ## dropped on the window; "Follow the latest" showing a file copied into the
 ## folder; a click on a message naming a trace of another file; and the file
@@ -12,13 +13,16 @@
 ## After each the plot shows the file it was sent to with the same first
 ## trace and time, the same scales (traces and ms per inch: the same spans on
 ## the same plot), the same sort, display mode, gain type with every
-## parameter and gain amount, and the same Seismic and Aux toggles, in `core`
-## and in what the window draws.
+## parameter and gain amount, the same Seismic and Aux toggles and the same
+## filters, in `core` and in what the window draws (its reader filtered
+## every trace of the tile).
 ##
 ## Seen to fail: with `closeSession(keepLayers = true)` dropping the layers
 ## (as a close does), "changed on disk: the view is ..." (the file opened
 ## again was fitted, in a layer made afresh: Aux off); with `show` making a
-## new layer for every file, "click in Files: Aux is off" at the first route.
+## new layer for every file, "click in Files: Aux is off" at the first route;
+## with the reader asked for no filters, "click in Files: 0 of 23 traces
+## filtered".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -41,6 +45,7 @@ type
     display: DisplaySettings
     order: seq[SortKey]
     filter: TraceFilter
+    processing: Processing
 
 func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
 
@@ -54,7 +59,7 @@ proc kept(f: FrameInfo): Kept =
   let p = f.panel
   Kept(traces: p.view.traces, timeMs: p.view.timeMs, columns: p.view.columns,
     rows: p.view.rows, display: p.layers[0].display, order: p.layers[0].order,
-    filter: p.layers[0].filter)
+    filter: p.layers[0].filter, processing: p.layers[0].processing)
 
 withFixtures fx:
   let a = fx.dir / "line 7"
@@ -107,6 +112,11 @@ withFixtures fx:
           (if now.filter.auxiliary: "on" else: "off") & ", Seismic " &
           (if now.filter.seismic: "on" else: "off")
         doAssert now.order == want.order, route & ": the sort is " & $now.order
+        doAssert now.processing == want.processing, route & ": the filters are " &
+          $now.processing & ", not " & $want.processing
+        let t = f.core.tiles(f.core.findPanel(MainPanel))[^1]
+        doAssert t.filtered == t.request.count, route & ": " & $t.filtered & " of " &
+          $t.request.count & " traces filtered"
         doAssert now.display == want.display, route & ": the display is " & $now.display &
           ", not " & $want.display
 
@@ -136,6 +146,8 @@ withFixtures fx:
     f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
     f.apply Command(kind: ckSort, panel: MainPanel, order: @[SortKey(field: hfChannel,
       descending: true)])
+    f.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing(aux: true, dc: dcTrend, band: pbBandPass, f1: 3, f2: 6, f3: 50, f4: 70,
+      notches: @[NotchFilter(hz: 50, widthHz: 3, harmonics: 2)]))
     f.apply(Command(kind: ckFilter, panel: MainPanel, filter: TraceFilter(seismic: true,
       auxiliary: true))), after(3))
   step("zoomed in", proc (f: FrameInfo) =
@@ -146,7 +158,8 @@ withFixtures fx:
       result = f.settled and f.panel.view.traces == Span(lo: 2.5, hi: 10.5)
       if result:
         want = f.kept
-        doAssert want.filter.auxiliary and want.display.gainDb == 7.5)
+        doAssert want.filter.auxiliary and want.display.gainDb == 7.5 and
+          want.processing.band == pbBandPass)
 
   # ------------------------------------------------------------ the routes --
   # a click on a row: the first may only bring the window forward

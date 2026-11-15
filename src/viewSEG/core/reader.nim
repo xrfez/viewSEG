@@ -327,16 +327,23 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
 proc levelOf(rd: var Reader; tile: Tile; list: seq[int]; excluded: seq[int];
     percentile: float64): Level =
   ## The RMS, the peak and the `percentile` of |x| over the tile's live
-  ## traces, the rows `excluded` (not decoded, or killed) left out; NaN when
-  ## there are none.
+  ## traces, the rows `excluded` (not decoded, or killed) left out; over its
+  ## auxiliary traces when it has no live one (a plot of a pilot alone); NaN
+  ## when there are none.
   result = Level()
   if tile.request.count == 0 or tile.columns == 0: return
   try:
-    let meta = initChunkMeta(rd.src.file[].rowsOf(list), rd.layout.dtMs *
-      float64(tile.request.decimation), tile.request.firstSample, excluded)
+    let rows = rd.src.file[].rowsOf(list)
+    let dt = rd.layout.dtMs * float64(tile.request.decimation)
+    let b = rowBlock(tile.data, tile.request.count, tile.columns)
     rd.ws.reserve(panelStatsWorkspace)
-    let s = panelStats(rowBlock(tile.data, tile.request.count, tile.columns), meta, rd.ws,
+    var s = panelStats(b, initChunkMeta(rows, dt, tile.request.firstSample, excluded), rd.ws,
       percentile)
+    if s.rows == 0 and rows.hasAuxiliary:
+      var keys: seq[TraceKeys]
+      var lengths: seq[int]
+      s = panelStats(b, initChunkMeta(rows.auxLiveRows(keys, lengths), dt,
+        tile.request.firstSample, excluded), rd.ws, percentile)
     if s.rows > 0: result = Level(rms: s.rms, peak: s.maxAbs, clip: s.clip)
   except ValueError as e:
     rd.note(sevWarning, "Cannot work out the display gain of " & rd.name & ": " & e.msg)

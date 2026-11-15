@@ -88,7 +88,8 @@ import imguin/cimgui
 import ../../core/[geometry, state, wiggle]
 import ../../gpu/[plotimage, textures]
 import ../../view/[displayheader, maplayers, plotink, theme, timeaxis]
-import chrome, dpi, focus, fonts, icons, menus, plotbars, plotgain, plotsort, style, symbols
+import chrome, dpi, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort, style,
+  symbols
 
 export PaperBackground, PaperInk
 
@@ -172,7 +173,7 @@ type
     traceBox, timeBox: ScaleBox
     calib: CalibrationUi
     sortKeys: SortKeysUi
-    stripWidths: array[10, float32] ## the strip's groups as drawn last frame
+    stripWidths: array[11, float32] ## the strip's groups as drawn last frame
     goto: GoToUi
     menuTarget: string ## what the plot's menu acts on, said when it opened
     menuUnder: int = -1 ## the trace under the pointer when it opened (survey-wide); -1 for none
@@ -943,6 +944,9 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         if not aux: igSameLine(0, 2)
   tp.stripGroup(1, right, 6, lift):
     drawOverlapControls(p, t, marks, res)
+  # the filters, then the gain: the order the samples go through them
+  tp.stripGroup(10, right, 12, lift):
+    drawFilterControls(p, hasAux(st, p), t, marks, res.commands)
   tp.stripGroup(2, right, 12, lift):
     drawGainControls(p, t, marks, res.commands, res.notes)
   # the scales
@@ -1530,6 +1534,7 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
     res.commands.add Command(kind: ckGather, panel: p.id, gather: clamp(to, 0, count - 1))
   if once(ctrl or ImGui_Key_G.cint): tp.goto.open = true
   gainKeys(p, res.commands)
+  filterKeys(p, res.commands)
   if once(ImGui_Key_Escape.cint): # innermost first: a drag, a thumb, the selection
     if tp.drag.kind != dkNone:
       if tp.drag.kind == dkPan and tp.drag.moved: after = tp.drag.start

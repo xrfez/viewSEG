@@ -13,7 +13,8 @@
 ##   ones; the corners are kept in order and within Nyquist;
 ## - the auxiliary traces are left as recorded unless the layer asks for
 ##   them to be filtered (`Processing.aux`), then they are filtered as the
-##   plan does with them taken for live;
+##   plan does with them taken for live; a plot of an auxiliary trace alone
+##   takes its level from it (none would draw nothing under most gains);
 ## - the filters stay on for the next record; the settings keep them for a
 ##   new plot (processed, not raw), written to the settings file and read
 ##   back as they were, and the file is never changed.
@@ -22,7 +23,9 @@
 ## of 24"; with the panel's margin not taken to whole traces, "f1 and f4
 ## moved: the tile was read from the file (2 reads)"; with the auxiliary
 ## rows not made live (`auxLiveRows` not used), "the time break is not
-## filtered with Aux on".
+## filtered with Aux on"; with `levelOf` not taking the auxiliary traces of
+## a plot that has no other, "no level for the auxiliary trace alone: (rms:
+## nan, peak: nan, clip: nan)".
 
 import std/[os, strutils, times]
 import parseSEG
@@ -253,6 +256,14 @@ withFixtures fx:
       if t.data[j] != asRecorded.data[j]: changed = true
     doAssert changed, "the time break is not filtered with Aux on"
     t.sameAs(expected(segd, t, dt, p, aux = true), "Aux on")
+    # the time break alone: its level is its own (no seismic trace to take
+    # one from), so the plot draws it
+    st.apply Command(kind: ckFilter, panel: MainPanel, filter: TraceFilter(seismic: false,
+      auxiliary: true))
+    doAssert st.settle(st.panel(MainPanel).laidOut and st.panel(MainPanel).layout.traces == 1)
+    st.showAll()
+    let lvl = st.panel(MainPanel).level
+    doAssert lvl.clip > 0 and lvl.peak > 0, "no level for the auxiliary trace alone: " & $lvl
     st.shutdown()
   block settingsFile:
     var s = Settings()
