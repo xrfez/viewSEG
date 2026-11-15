@@ -481,8 +481,7 @@ type
     session: SessionId
     traces: seq[int]
     window: (float64, float64)
-    filters: string
-    filterAux: bool
+    processing: Processing
     killed: seq[int]
 
   Remembered = object
@@ -722,7 +721,7 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
   result.spectra.add SpectrumWindow(id: LiveSpectrum, chosen: soNothing,
-    display: result.settings.spectrum.live)
+    display: result.settings.spectrum.live, panel: MainPanel)
 
 let ProgramStart* = getTime()
   ## when the program started: a temporary file of the store last written
@@ -2183,14 +2182,17 @@ proc spectrumReaderFor(state: var AppState; path: string): lent SpectrumReader =
     state.spectrumReader = newSpectrumReader(state.inbox.poster, state.jobs.holdRelease)
   state.spectrumReader
 
-func spectrumFilters(p: Panel): (Pipeline, string, bool) =
+func spectrumFilters(p: Panel): Processing =
   ## The filters a spectrum of `p`'s traces is processed with: its layer
-  ## 0's, shown raw or not (the two curves compare); in words; and whether
-  ## its auxiliary traces go through them.
-  var pr = p.layers[0].processing
-  pr.raw = false
-  if not pr.hasFilters: (initPipeline(), "", pr.aux)
-  else: (pr.filterPipeline(p.layout.dtMs), pr.describe, pr.aux)
+  ## 0's, shown raw or not (the two curves compare), with whether its
+  ## auxiliary traces go through them. The spectrum's reader makes them for
+  ## the traces' own interval.
+  result = p.layers[0].processing
+  result.raw = false
+
+func filtersText(pr: Processing): string =
+  ## `pr` in words; "" for no filter.
+  if pr.hasFilters: pr.describe else: ""
 
 func recordText(s: Session; trace: int): string =
   ## The record trace `trace` (in the file) is in, as the windows name it:
@@ -2207,7 +2209,7 @@ func killedOf(e: FileEdits; traces: openArray[int]): seq[int] =
     if e.has(teKilled, t): result.add t
 
 proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
-    window: (float64, float64); filters: Pipeline; filtersText: string; aux: bool): bool =
+    window: (float64, float64); processing: Processing): bool =
   ## Asks the spectrum reader for window `spectra[w]`'s spectrum of
   ## `traces` (indices in open file `sessions[i]`, killed ones left out)
   ## over `window` (ms; NaN: the whole trace); false when the file cannot
@@ -2224,8 +2226,7 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   inc sw.revision
   state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
     session: int(s.id), file: s.filePtr, path: s.path, size: s.size, traces: traces,
-    killed: killed, fromMs: window[0], toMs: window[1], filters: filters,
-    filtersText: filtersText, filterAux: aux)
+    killed: killed, fromMs: window[0], toMs: window[1], processing: processing)
   true
 
 func spread(list: var seq[int]; samples: int) =
@@ -2274,8 +2275,6 @@ proc followSpectrum(state: var AppState) =
   var key = LiveKey(session: NoSession)
   var chosen = soNothing
   var count = 0
-  var filters = initPipeline()
-  var filtersText = ""
   if i >= 0 and state.panels[k].layers.len > 0:
     template p: untyped = state.panels[k]
     (key.traces, chosen, count) = state.liveTraces(k, i)
@@ -2283,12 +2282,11 @@ proc followSpectrum(state: var AppState) =
     key.window = if live.display.time == stVisible and p.view.timeMs.hi > p.view.timeMs.lo:
                    (p.view.timeMs.lo, p.view.timeMs.hi)
                  else: (NaN, NaN)
-    (filters, filtersText, key.filterAux) = spectrumFilters(p)
-    key.filters = stepsText(filters)
+    key.processing = spectrumFilters(p)
     key.killed = killedOf(state.editsAt(state.sessions[i].path), key.traces)
   template was: untyped = state.liveKey
-  if key.session == was.session and key.traces == was.traces and key.filters == was.filters and
-      key.filterAux == was.filterAux and key.killed == was.killed and
+  if key.session == was.session and key.traces == was.traces and
+      key.processing == was.processing and key.killed == was.killed and
       (key.window == was.window or (key.window[0].isNaN and was.window[0].isNaN)):
     return
   state.liveKey = key
@@ -2305,14 +2303,15 @@ proc followSpectrum(state: var AppState) =
     inc live.revision
     return
   let s = state.sessions[i]
-  if state.askSpectrum(0, i, key.traces, key.window, filters, filtersText, key.filterAux):
+  if state.askSpectrum(0, i, key.traces, key.window, key.processing):
     live.chosen = chosen
     live.file = s.name
     live.record = s.recordText(key.traces[0])
     live.traces = key.traces.mapIt(it + s.base)
     live.first = key.traces[0]
     live.chosenCount = count
-    live.filters = filtersText
+    live.filters = filtersText(key.processing)
+    live.processing = key.processing
     live.visibleMs = state.panels[k].view.timeMs
   else:
     state.liveKey = LiveKey(session: NoSession) # asked again once it can be held
@@ -2356,15 +2355,14 @@ proc openSpectrum(state: var AppState; cmd: Command) =
   var w = SpectrumWindow(id: freeSpectrumId(state.spectra), display: cmd.spectrumShow,
     chosen: chosen, file: s.name, record: s.recordText(traces[0]),
     traces: traces.mapIt(it + s.base), first: traces[0], chosenCount: count,
-    visibleMs: p.view.timeMs)
-  let (filters, text, aux) = spectrumFilters(p)
-  (w.filters, w.pipeline, w.filterAux) = (text, filters, aux)
+    visibleMs: p.view.timeMs, panel: p.id, processing: spectrumFilters(p))
+  w.filters = filtersText(w.processing)
   state.spectra.add w
   let window = if w.display.time == stVisible and p.view.timeMs.hi > p.view.timeMs.lo:
                  (p.view.timeMs.lo, p.view.timeMs.hi)
                else: (NaN, NaN)
   state.spectra[^1].since = state.spectrumGen + 1 # a closed window's answers are not its
-  if not state.askSpectrum(state.spectra.high, i, traces, window, filters, text, aux):
+  if not state.askSpectrum(state.spectra.high, i, traces, window, w.processing):
     state.spectra.delete state.spectra.high
     state.ignore(cmd, s.name & " is busy (a job needs it to itself)")
     return
@@ -2410,7 +2408,7 @@ proc showSpectrum(state: var AppState; cmd: Command) =
     for t in sw.traces:
       if t in s: traces.add t - s.base
     # the filters it was opened with: a snapshot
-    discard state.askSpectrum(w, i, traces, window, sw.pipeline, sw.filters, sw.filterAux)
+    discard state.askSpectrum(w, i, traces, window, sw.processing)
 
 proc closeSpectrum(state: var AppState; cmd: Command) =
   ## `ckCloseSpectrum`: the FFT window goes, its work with it.

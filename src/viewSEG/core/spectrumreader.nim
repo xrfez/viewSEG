@@ -6,7 +6,9 @@
 ## traces, the time window, the plot's filters. The reader reads what it
 ## does not hold of those traces (a selection-mode `Prefetcher` over whole
 ## traces), keeps their samples as decoded, computes the raw and the
-## processed spectrum, and posts the answer (`mkSpectrum`).
+## processed spectrum, and posts the answer (`mkSpectrum`). The filters
+## are made here, for the traces' own sample interval, and the answer says
+## what they reached (`core/spectra`, "Raw and processed").
 ##
 ## - **One request per window, newest wins.** A request replaces the one of
 ##   the same window that waits, and one being served is given up between
@@ -56,9 +58,9 @@ type
     killed*: seq[int]      ## those of them killed, ascending: left out
     fromMs*, toMs*: float64 = NaN
       ## the time window; NaN: the whole trace
-    filters*: Pipeline     ## the plot's filters; empty for none
-    filtersText*: string   ## them in words, for the answer
-    filterAux*: bool       ## an auxiliary trace goes through them too
+    processing*: Processing
+      ## the plot's filters (shown raw or not, alike), with whether an
+      ## auxiliary trace goes through them too
 
   Held = object
     ## A trace's samples as decoded.
@@ -195,7 +197,17 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   answer.windowLen = window.len
   var raw = initSpectrumSum(dtMs, window.len)
   var processed = initSpectrumSum(dtMs, window.len)
-  let filtering = a.filters.len > 0
+  var pr = a.processing
+  pr.raw = false
+  var filtering = pr.hasFilters
+  let filters = if filtering: pr.filterPipeline(dtMs) else: initPipeline()
+  if filtering:
+    answer.filters = pr.describe
+    answer.filterAux = pr.aux
+    answer.filterNote = pr.limitNote(dtMs)
+    if filters.len == 0:
+      answer.filterProblem = "none of them is below Nyquist"
+      filtering = false
   var plan: PipelinePlan[float32]
   var planCols = -1
   var ws = initWorkspace()
@@ -227,15 +239,23 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
         window.a + n - 1))
       else: @[]
     answer.rawPhase = raw.phaseOf()
-    if filtering:
-      if cols != planCols:
-        plan = a.filters.compile(float32, dtMs, cols, recordSamples = cols)
+    if filtering and cols != planCols:
+      try:
+        plan = filters.compile(float32, dtMs, cols, recordSamples = cols)
         ws.reserve(plan)
         planCols = cols
-      let meta = if a.filterAux: initChunkMeta(live, dtMs, 0, failed)
+      except ValueError as e:
+        answer.filterProblem = "they cannot run on these traces (" & e.msg & ")"
+        filtering = false
+    if filtering:
+      # Through the filters, and in the processed curve, only the rows they
+      # reach: with the Aux toggle off processSEG passes an auxiliary row by,
+      # and the sum leaves it out (it is not live), so it is not counted as
+      # processed.
+      let meta = if pr.aux: initChunkMeta(live, dtMs, 0, failed)
                  else: initChunkMeta(rows, dtMs, 0, failed)
       plan.apply(b, meta, ws)
-      discard processed.add(b, initChunkMeta(live, dtMs, 0, failed), window.a)
+      discard processed.add(b, meta, window.a)
       answer.processedPhase = processed.phaseOf()
     at += n
     # given up between blocks only: a spectrum computed whole is posted, so
@@ -247,8 +267,10 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   answer.averaged = raw.used
   answer.failed += list.len - raw.used
   if filtering:
-    answer.processed = processed.amplitudes
-    answer.filters = a.filtersText
+    answer.filtered = processed.used
+    if not pr.aux: answer.passedBy = raw.used - processed.used
+    if processed.used > 0: answer.processed = processed.amplitudes
+  if answer.processed.len == 0: answer.processedPhase.setLen 0
   true
 
 proc serve(p: ptr ReaderObj; a: SpectrumAsk; cache: var Cache): bool =

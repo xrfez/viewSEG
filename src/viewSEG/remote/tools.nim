@@ -503,7 +503,11 @@ proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
       "binHz": toJson(sp.binHz), "bins": bins, "step": step,
       "nyquistHz": toJson(if sp.dtMs > 0: 500 / sp.dtMs else: NaN),
       "raw": curve(sp.raw, reference), "processed": curve(sp.processed, reference),
-      "processedWith": sp.filters, "problem": sp.problem}}
+      "processedWith": (if sp.processed.len > 0: sp.filters else: ""),
+      "filtersAsked": sp.filters, "filterAux": sp.filterAux, "filtered": sp.filtered,
+      "passedBy": sp.passedBy, "filterNote": sp.filterNote,
+      "filterProblem": sp.filterProblem, "problem": sp.problem},
+    "filterWords": w.filterText}
 
 proc headersJson(state: AppState; limit: int): JsonNode =
   ## The Headers window: its tab and toggles, what it has on screen (what its

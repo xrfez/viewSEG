@@ -92,6 +92,7 @@ proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var Sp
   igEndDisabled()
   marks.mark(name & ".processed")
   tip(if w.spectrum.processed.len > 0: "Through the plot's filters: " & w.spectrum.filters
+      elif w.spectrum.filters.len > 0: "No processed curve: " & w.filterText
       else: "The plot has no filters (Filters in the Seismic window's strip)")
   after("Visible time")
   var visible = d.time == stVisible

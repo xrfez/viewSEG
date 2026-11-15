@@ -45,6 +45,9 @@
 ##   `SpectrumSamples` samples at `DtMs`: channels 1 to 8 a sine of
 ##   `SpectrumSineHz` (on a bin of the whole trace's spectrum) and white
 ##   noise (`spectrumSample`), channel 9 a loud `SpectrumLoudHz` sine.
+## - `spectrumAuxSegy()`: SEG-Y, `spectrumSegy()`'s channels 1 to 4, then
+##   channel 5 as an auxiliary trace (trace code 6) of the same kind: a
+##   record whose spectrum mixes seismic and auxiliary traces.
 ## - `longSpreadSegy()`: SEG-Y, one shot record of `LongSpread` channels of
 ##   `LongSamples` samples (a 25 Hz sine), more traces than a plot has room
 ##   for as wiggles.
@@ -510,6 +513,23 @@ proc spectrumSegy*(fx: Fixtures): string =
     var k = initTraceKeys()
     (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (5.0, float64(c), 0.0,
       DtMs * 1000, tsLive)
+    w.writeTrace(k, buf)
+  w.checkClose()
+
+proc spectrumAuxSegy*(fx: Fixtures): string =
+  ## Four seismic traces and an auxiliary one, each `spectrumSample`'s.
+  result = fx.dir / "spectrum-aux.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: sines in noise, the last trace auxiliary"]))
+  var buf = newSeq[float32](SpectrumSamples)
+  for c in 1 .. 5:
+    for i in 0 ..< SpectrumSamples: buf[i] = spectrumSample(c, i)
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (5.0, float64(c), 0.0,
+      DtMs * 1000, tsLive)
+    # The writer keeps a trace code only when the status agrees with it.
+    if c == 5: (k.traceCode, k.status) = (6'i16, tsAuxiliary)
     w.writeTrace(k, buf)
   w.checkClose()
 

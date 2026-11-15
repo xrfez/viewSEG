@@ -1047,6 +1047,18 @@ compare by it; linear, in the file's sample units. The frequency axis can be
 logarithmic (0 Hz is then left out). A spectrum of one trace has its phase too (Phase:
 degrees, from the window's first sample, drawn under the amplitude).
 
+**What the processed curve went through.** The filters are made for the traces' own
+sample interval (a corner or notch past its Nyquist is cut or left out, as in the
+plot, and the words say so), and the processed curve is of the traces they reach
+only. An auxiliary trace goes through them only when "Filter the Aux traces too" is
+ticked, as in the plot: with it off, a record's auxiliary traces are in the raw curve
+and left out of the processed one ("processed: notch 60 Hz, 23 of the 24 traces (the
+auxiliary trace is not filtered: Filters > Filter the Aux traces too is off)"), and a
+pilot shown alone has no processed curve at all ("not processed: the auxiliary trace is
+not filtered: ..."); nor has a spectrum whose filters cannot run at its interval
+(every notch past Nyquist, say). The words are the answer's own: they name what its
+processed curve went through, never only what the plot has set now.
+
 **Time.** An FFT window is over the whole trace by default; "Visible time" takes the
 time the Seismic window showed when it was opened (and the whole trace again when
 unticked). The live panel is over the visible time by default. How a window shows its

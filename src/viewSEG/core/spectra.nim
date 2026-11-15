@@ -21,19 +21,26 @@
 ##
 ## **Raw and processed.** The raw curve is of the samples as the file has
 ## them; the processed one of the same samples through the plot's filters
-## (`core/processing`), run on whole traces before the window is cut, so
-## the filters' edges never fall in it. A plot shown raw still gets the
-## processed curve: the two compare.
+## (`core/processing`, made for the spectrum's own sample interval), run on
+## whole traces before the window is cut, so the filters' edges never fall
+## in it. A plot shown raw still gets the processed curve: the two compare.
+## The processed curve is of the traces the filters reach only: an
+## auxiliary trace goes through them only when the plot's Aux toggle says
+## so (`Processing.aux`), so with it off the processed curve leaves the
+## auxiliary traces out (`passedBy` counts them), and with no trace reached
+## there is none; nor is there when the filters cannot run at the traces'
+## interval (`filterProblem`). The answer says which (`filtered`,
+## `passedBy`, `filterNote`), so the words never claim a filter that was
+## not applied.
 ##
 ## The work runs on a thread of its own (`core/spectrumreader`); `AppState`
 ## keeps the windows (`SpectrumWindow`).
 
 import std/math
 import parseSEG
-import processSEG/pipeline
 import processSEG/fft/spectrum
 import processSEG/core/[rows, types, workspace]
-import viewport
+import panels, processing, viewport
 
 export DbReference
 
@@ -71,7 +78,8 @@ type
     binHz*: float64         ## the bins' spacing; bin k is at k·binHz, the last at Nyquist
     raw*: seq[float64]      ## per bin, the RMS amplitude of the samples as recorded
     processed*: seq[float64]
-      ## per bin, through the filters; empty when there are none
+      ## per bin, of the traces through the filters (`filtered`); empty when
+      ## there are none, they reach no trace, or they cannot run
     rawPhase*, processedPhase*: seq[float64]
       ## of a spectrum of one trace: per bin, its phase in degrees (-180 to
       ## 180, from the window's first sample); empty for several traces
@@ -86,7 +94,17 @@ type
     windowLen*: int         ## its samples
     nfft*: int              ## the FFT's length
     read*: int              ## traces read from the file for it (0: all at hand)
-    filters*: string        ## the filters of `processed`, in words; "" for none
+    filters*: string        ## the plot's filters asked for, in words; "" for none
+    filterAux*: bool        ## the auxiliary traces were asked to go through them
+    filtered*: int          ## of `averaged`, the traces `processed` is of
+    passedBy*: int
+      ## of `averaged`, the auxiliary traces the filters passed by (the Aux
+      ## toggle off): in `raw`, left out of `processed`
+    filterNote*: string
+      ## what the sample interval cut of the filters (`limitNote`); "" for nothing
+    filterProblem*: string
+      ## why the filters did not run on these traces; "" when they did or
+      ## there are none
     problem*: string        ## why there is no spectrum; "" when there is one
 
   SpectrumWindow* = object
@@ -108,9 +126,9 @@ type
       ## evenly when they are more than a spectrum takes (`spectrumTraces`)
     visibleMs*: Span
       ## the plot's visible time when the window was opened (FFT), or now (live)
+    panel*: PanelId           ## the plot it is of (the live panel: the Seismic window)
     filters*: string          ## the plot's filters, in words, when asked; "" for none
-    pipeline*: Pipeline       ## an FFT window's filters, as when it was opened
-    filterAux*: bool          ## with the auxiliary traces through them
+    processing*: Processing   ## them, as asked last (shown raw or not, alike)
     spectrum*: Spectrum       ## the newest answer taken in
     asked*: uint64            ## the newest request's gen; 0 for none
     since*: uint64
@@ -154,6 +172,42 @@ func title*(w: SpectrumWindow): string =
   if w.id == LiveSpectrum: "Spectrum"
   elif w.id == 1: "FFT: " & w.label
   else: "FFT " & $w.id & ": " & w.label
+
+func auxText(n: int): string =
+  if n == 1: "the auxiliary trace is" else: "the " & $n & " auxiliary traces are"
+
+const AuxOff* = "Filters > Filter the Aux traces too is off"
+  ## where the plot's Aux toggle is, as the words name it
+
+func filterText*(w: SpectrumWindow): string =
+  ## What the processed curve went through, in words, as the answer says
+  ## it (never the plot's filters of now): "processed: 4-8-60-80 Hz";
+  ## "processed: 4-8-60-80 Hz, 23 of the 24 traces (the auxiliary trace is
+  ## not filtered: Filters > Filter the Aux traces too is off)"; "not
+  ## processed: the auxiliary trace is not filtered: ... (the plot's
+  ## filters: notch 60 Hz)"; "no filters on the plot: the raw curve only";
+  ## what Nyquist cut of them after it.
+  template sp: untyped = w.spectrum
+  if sp.raw.len == 0: return ""
+  if sp.filters.len == 0: return "no filters on the plot: the raw curve only"
+  if sp.filterProblem.len > 0:
+    result = "not processed: the plot's filters (" & sp.filters & ") " & sp.filterProblem
+  elif sp.filtered == 0 and sp.passedBy > 0:
+    result = "not processed: " & auxText(sp.passedBy) & " not filtered: " & AuxOff &
+      " (the plot's filters: " & sp.filters & ")"
+  elif sp.processed.len == 0:
+    result = "not processed: no trace went through the plot's filters (" & sp.filters & ")"
+  else:
+    result = "processed: " & sp.filters
+    if sp.passedBy > 0:
+      result.add ", " & $sp.filtered & " of the " & $sp.averaged & " traces (" &
+        auxText(sp.passedBy) & " not filtered: " & AuxOff & ")"
+  if sp.filterNote.len > 0: result.add ". " & sp.filterNote
+
+func auxUnfiltered*(w: SpectrumWindow): bool {.inline.} =
+  ## Whether auxiliary traces of `w`'s spectrum were left unfiltered because
+  ## the plot's Aux toggle is off (a click can tick it).
+  w.spectrum.passedBy > 0 and w.spectrum.filterProblem.len == 0
 
 func freeSpectrumId*(windows: openArray[SpectrumWindow]): int =
   ## The lowest FFT window id not in use, from 1: a window opened again

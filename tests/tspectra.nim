@@ -33,6 +33,11 @@
 ##   out of the spectra of the other's traces;
 ## - a request read and computed whole is answered even when a newer one of
 ##   its window came meanwhile (the reader held in its read by the seam);
+## - the processed curve is of the traces the filters reach: with the
+##   plot's Aux toggle off, a record's auxiliary trace is left out of it
+##   (counted as passed by, and said), a pilot alone has none (and the
+##   words say why), and filters none of which is below Nyquist give none;
+##   with the toggle on, every trace;
 ## - the file is never changed.
 ##
 ## Seen to fail: with the killed traces not left out of the request
@@ -48,7 +53,8 @@
 ## `editsAt`), "the link's kill was taken into its spectrum: 0 killed, 9
 ## averaged"; with the reader giving up after its last chunk and block,
 ## "the first answer ... was dropped for the newer request (1 answer
-## taken)".
+## taken)". With the processed sum taking the auxiliary rows as live again
+## (as before), "the auxiliary trace counted as processed: (5, 5, 0)".
 
 import std/[math, os, sequtils, strutils]
 import parseSEG
@@ -507,5 +513,76 @@ withFixtures fx:
       $(three.spectra[w].revision - revision) & " answer taken; request " & $first & ")"
     doAssert uiCalls().len == 0, "the file system was called on the UI thread: " & $uiCalls()
     three.shutdown()
+
+  block auxiliary:
+    # The filters reach an auxiliary trace only with the plot's Aux toggle
+    # on: with it off, the processed curve is of the seismic traces alone
+    # (and there is none of a pilot alone), and the words say so.
+    let notch = Processing(notches: @[NotchFilter(hz: 60, widthHz: 4)])
+    var four = initAppState()
+    template ready(cond: untyped): bool =
+      waitUntil((discard four.drainInbox(); cond))
+    proc answer(st: var AppState; traces: seq[int]): int =
+      st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: traces)
+      result = st.spectra.high
+      let w = result
+      doAssert waitUntil((discard st.drainInbox(); not st.spectra[w].waiting and
+        st.spectra[w].spectrum.raw.len > 0))
+    four.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.spectrumAuxSegy())
+    doAssert ready(four.sessions.len == 1 and four.panel(MainPanel).laidOut)
+    let b = four.sessions[0].base
+    four.filters notch
+    let w = four.answer(toSeq(b ..< b + 5))
+    template sp: untyped = four.spectra[w].spectrum
+    doAssert sp.averaged == 5 and sp.filtered == 4 and sp.passedBy == 1,
+      "the auxiliary trace counted as processed: " & $(sp.averaged, sp.filtered, sp.passedBy)
+    doAssert four.spectra[w].filterText == "processed: notch 60 Hz, 4 of the 5 traces (the " &
+      "auxiliary trace is not filtered: Filters > Filter the Aux traces too is off)",
+      four.spectra[w].filterText
+    # its processed curve is the seismic traces' alone: an FFT window of them
+    let v = four.answer(toSeq(b ..< b + 4))
+    template seismic: untyped = four.spectra[v].spectrum
+    doAssert seismic.filtered == 4 and seismic.passedBy == 0 and
+      four.spectra[v].filterText == "processed: notch 60 Hz"
+    for k in 0 ..< sp.processed.len:
+      doAssert abs(sp.processed[k] - seismic.processed[k]) <= 1e-6 * max(1.0, seismic.raw[k]),
+        "the unfiltered auxiliary trace is in the processed curve at bin " & $k
+    # the Aux toggle on: all five
+    var withAux = notch
+    withAux.aux = true
+    four.filters withAux
+    let u = four.answer(toSeq(b ..< b + 5))
+    doAssert four.spectra[u].spectrum.filtered == 5 and four.spectra[u].spectrum.passedBy == 0 and
+      four.spectra[u].spectrum.filterAux and four.spectra[u].filterText == "processed: notch 60 Hz"
+    four.shutdown()
+    # A pilot alone with the toggle off: no processed curve, and why.
+    var five = initAppState()
+    five.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.pilotSegy())
+    doAssert waitUntil((discard five.drainInbox(); five.sessions.len == 1 and
+      five.panel(MainPanel).laidOut))
+    five.apply Command(kind: ckFilter, panel: MainPanel,
+      filter: TraceFilter(seismic: true, auxiliary: true))
+    five.filters notch
+    let p = five.answer(@[five.sessions[0].base])
+    template pilot: untyped = five.spectra[p]
+    doAssert pilot.spectrum.processed.len == 0 and pilot.spectrum.filtered == 0 and
+      pilot.spectrum.passedBy == 1 and pilot.spectrum.processedPhase.len == 0,
+      "a pilot the filters passed by has a processed curve: " & $pilot.spectrum.filtered
+    doAssert pilot.filterText == "not processed: the auxiliary trace is not filtered: " &
+      "Filters > Filter the Aux traces too is off (the plot's filters: notch 60 Hz)",
+      pilot.filterText
+    doAssert pilot.spectrumPlot(builtinTheme(tmLight)).curves.mapIt(it.name) == @["raw"]
+    doAssert pilot.auxUnfiltered
+    # A notch above Nyquist alone: no filter can run at this interval, said.
+    five.filters Processing(aux: true, notches: @[NotchFilter(hz: 300, widthHz: 4)])
+    let q = five.answer(@[five.sessions[0].base])
+    template above: untyped = five.spectra[q].spectrum
+    doAssert above.processed.len == 0 and above.filterProblem == "none of them is below Nyquist" and
+      above.filterNote == "Nyquist is 250 Hz at 2 ms: a notch is not below Nyquist and left out.",
+      above.filterNote
+    doAssert five.spectra[q].filterText == "not processed: the plot's filters (notch 300 Hz) " &
+      "none of them is below Nyquist. Nyquist is 250 Hz at 2 ms: a notch is not below Nyquist " &
+      "and left out.", five.spectra[q].filterText
+    five.shutdown()
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
 echo "tspectra: ok"

@@ -93,10 +93,3 @@ func summaryText*(w: SpectrumWindow): string =
         (if processed > raw: " (processed peak)" else: " (raw peak)")
     else: result.add " · every amplitude is 0"
   if w.waiting: result.add " · updating..."
-
-func filterText*(w: SpectrumWindow): string =
-  ## The processed curve's filters, in words: "processed: 4-8-60-80 Hz";
-  ## "no filters: raw only" when the plot has none.
-  if w.spectrum.processed.len > 0: "processed: " & w.spectrum.filters
-  elif w.spectrum.raw.len > 0: "no filters on the plot: the raw curve only"
-  else: ""
