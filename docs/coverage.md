@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.11.0: capabilities | names | processSEG 0.4.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 38 (22 in part) | 96 | 12 (10 in part) | 48 |
+| `built` | 38 (22 in part) | 96 | 13 (11 in part) | 50 |
 | `internal` | 14 | 34 | 4 | 39 |
-| `planned` | 38 | 285 | 52 | 349 |
+| `planned` | 38 | 285 | 51 | 347 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 19 | 354 | 5 | 59 |
 | all | 111 | 779 | 74 | 500 |
@@ -253,7 +253,7 @@ name, so these are building blocks for code that works on raw headers.
 | Chunk metadata from parseSEG reads | `initChunkMeta`, `chunkMeta`, `intervalMs`, `ChunkMeta` (`isLive`, `sampleTimeMs`, `isFailed`, `liveSamples`, `len`, `rows`, `dtMs`, `firstSample`, `failedCount`, `failedRow`, `keys`, `t0Ms`, `sub`), `sameInterval`, `checkShape` | internal: every processing call; killed traces are passed as failed rows, so the processing and the levels pass them by | internal; not applicable (`chunkMeta`, `intervalMs`, `ChunkMeta`, `isLive`, `sampleTimeMs`, `failedCount`, `failedRow`, `sameInterval`, `checkShape`: the reader makes each meta with `initChunkMeta` from its chunk's rows, interval, failed and killed rows) |
 | Row views and scratch | `rowBlock`, `RowBlock` (`len`, `cols`, `row`, `rowPtr`, `sub`), `Workspace`, `initWorkspace`, `reserve`, `capacity`, `fits`, `scratch`, `WorkspaceSize` (`+`, `max`), `SampleType` | internal: allocation-free processing | internal; not applicable (`WorkspaceSize`, `fits`, `SampleType`: the reader reserves what its plan needs) |
 | Remove mean or trend | `demean`, `detrend`, `demeanOp`, `detrendOp` | Processing window: remove DC / trend | planned |
-| Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Seismic window: "Reverse polarity" of a trace or the selection (`R`, the plot's menu: `reversePolarity` on its live samples where the reader prepares them, before the pipeline, as `polarityOp` would) and "Reverse polarity of all traces" (`polarityOp` first in the window's display pipeline); processing window: scale and clip; the wiggles' clip at the trace overlap is the shader's own | built (polarity of a trace, of the selection, of all traces); planned (the rest) |
+| Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Seismic window: "Reverse polarity" of a trace or the selection (`R`, the plot's menu: `reversePolarity` on its live samples where the reader prepares them, before the pipeline, as `polarityOp` would; the Headers window's Data tab, as displayed, the same) and "Reverse polarity of all traces" (`polarityOp` first in the window's display pipeline); processing window: scale and clip; the wiggles' clip at the trace overlap is the shader's own | built (polarity of a trace, of the selection, of all traces); planned (the rest) |
 | Top and bottom mutes (time, table, LMO) | `timeMute`, `tableMute`, `lmoMute`, `muteTop`, `muteBottom`, `muteTopOp`, `muteBottomOp`, `muteTimeMs`, `MuteKind`, `MuteCurve`, `kind` | Processing window: mutes, drawn as a line on the panel, table picked by clicking | planned |
 | Pad tapers | `cosTaperInto`, `taperPads` | processSEG's filters pad and taper with them | not applicable (inside processSEG's filters; for a caller's own padded kernels) |
 | Fractional shifts | `shiftSamples`, `ShiftInterp` | processSEG's statics, LMO and NMO shift with them | not applicable (inside processSEG's statics, LMO and NMO) |
@@ -283,12 +283,12 @@ name, so these are building blocks for code that works on raw headers.
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Fixed gain in dB | `scaleDb`, `gainDbOp`, `dbToFactor` | Seismic window: the gain amount in dB and the Fixed gain, both as the shader's scale (the viewer's own conversion); `gainDbOp` in the processing window | planned (the processing window's gain) |
+| Fixed gain in dB | `scaleDb`, `gainDbOp`, `dbToFactor` | Seismic window: the gain amount in dB and the Fixed gain, both as the shader's scale (`dbToFactor`); `gainDbOp` in the processing window | built (the Seismic window's gain amount: `dbToFactor`); planned (the processing window's gain) |
 | Normalisation per trace or panel (max, RMS, percentile) | `initNormalizePlan`, `normalize`, `normalizeOp`, `panelFactor`, `NormalizePlan`, `NormStat`, `NormScope` | Seismic window: gain "Normalized" (`normalizeOp(stat, perTrace)` per trace; per panel the scale alone, from `panelStats`) | built (Seismic window: gain Normalized); not applicable (`initNormalizePlan`, `normalize`, `panelFactor`, `NormalizePlan`: the display pipeline runs `normalizeOp`) |
 | AGC (RMS, mean absolute) | `initAgcPlan`, `agc`, `agcOp`, `AgcMode`, `AgcPlan` (`windowMs`, `windowSamples`, `epsilon`, `target`, `percentile`, `stat`, `scope`) | Seismic window: gain "AGC" (the default on pre-stack gathers); processing window: AGC | built (Seismic window: gain AGC); not applicable (`initAgcPlan`, `agc`, `AgcMode`, `AgcPlan`: the display pipeline runs `agcOp`) |
 | AGC gain kept and removed | `agc(..., gains)`, `removeGain` | Show the AGC gain function; undo AGC on export | planned |
 | Time-variant gain (knots, tᵖ, exponential) | `knotGain`, `powerGain`, `exponentialGain`, `gainCurveOp`, `initGainCurvePlan`, `applyGainCurve`, `GainKnot`, `GainCurve`, `GainCurveKind`, `gainDbAt`, `factorAt`, `GainCurvePlan` (`curve`, `tableLen`, `tableMs`) | Seismic window: gain "Exponential" (`exponentialGain`, `powerGain`, held after its cutoff time as a `knotGain`); processing window: gain curve editor (knots) | built (display); planned (the editor) |
-| Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats`, `TraceStats`, `PanelStats`, `panelStatsWorkspace`, `percentileWorkspace` | Seismic window: clip at a percentile and the Normalized levels (`panelStats`, a shader uniform), Float's level of the data in view (`percentileAbs`); the same reference is full black in density and the full swing (the trace overlap) of a wiggle; killed traces left out of each; per-trace statistics later | built (Seismic window: the levels of Normalized and Float, the clip); planned (per-trace statistics) |
+| Statistics for display gain and clip | `traceStatsInto`, `panelStats`, `percentileAbs`, `traceStats`, `TraceStats`, `PanelStats`, `panelStatsWorkspace`, `percentileWorkspace` | Seismic window: clip at a percentile and the Normalized levels (`panelStats`, a shader uniform), Float's level of the data in view (`traceStats` and `percentileAbs` on its finite values); the same reference is full black in density and the full swing (the trace overlap) of a wiggle; killed traces left out of each; per-trace statistics later | built (Seismic window: the levels of Normalized and Float, the clip); planned (per-trace statistics) |
 
 ### Pipelines and threads
 

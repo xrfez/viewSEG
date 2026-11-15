@@ -20,7 +20,8 @@
 
 import std/[fenv, math, times]
 from parseSEG import TraceKeys, JoinGroup
-from processSEG/gain/stats import percentileAbs, percentileWorkspace
+from processSEG/gain/gain import dbToFactor
+from processSEG/gain/stats import percentileAbs, percentileWorkspace, traceStats
 from processSEG/core/workspace import Workspace, reserve
 import edits, geometry, panels, viewport
 
@@ -202,24 +203,17 @@ proc valuesInView*(t: Tile; view: Viewport; most: int; dst: var seq[float32]) =
     row += thin
 
 proc levelOf*(values: openArray[float32]; percentile: float64; ws: var Workspace): Level =
-  ## The RMS, the peak and the `percentile` of |x| of the finite `values`;
-  ## NaN when there are none. `ws` grows to what it needs.
-  var sum = 0.0
-  var peak = 0.0
-  var n = 0
+  ## The RMS, the peak and the `percentile` of |x| of the finite `values`
+  ## (processSEG's `traceStats` and `percentileAbs` on them); NaN when there
+  ## are none. `ws` grows to what it needs.
+  var finite = newSeqOfCap[float32](values.len)
   for v in values:
-    if abs(v) < Inf: # NaN fails too
-      sum += float64(v) * float64(v)
-      peak = max(peak, abs(float64(v)))
-      inc n
-  if n == 0: return Level()
-  var finite = newSeqOfCap[float32](n)
-  for v in values:
-    if abs(v) < Inf: finite.add v
-  ws.reserve(percentileWorkspace(n))
-  Level(rms: sqrt(sum / float64(n)), peak: peak,
-    clip: percentileAbs(finite, (if percentile.isNaN: 99.0 else: clamp(percentile, 0.0, 100.0)),
-    ws))
+    if abs(v) < Inf: finite.add v # NaN fails too
+  if finite.len == 0: return Level()
+  let s = traceStats(finite)
+  ws.reserve(percentileWorkspace(finite.len))
+  Level(rms: s.rms, peak: s.maxAbs, clip: percentileAbs(finite,
+    (if percentile.isNaN: 99.0 else: clamp(percentile, 0.0, 100.0)), ws))
 
 func lutIndex*(scaled: float32): int {.inline.} =
   ## The colour-map entry of an amplitude times the display gain: -1 and
@@ -244,10 +238,6 @@ func greyLut*(): Lut =
     let g = uint8(255 - i)
     result[i] = Rgba(r: g, g: g, b: g, a: 255)
 
-func gainFactor*(db: float64): float64 {.inline.} =
-  ## The amplitude factor of a gain of `db` decibels.
-  pow(10.0, db / 20)
-
 func displayScale*(reference: float64; gainDb = 0.0): float32 =
   ## The display gain: `reference` (`Panel.reference`), raised or lowered by
   ## `gainDb`, maps to full black or white. 0 when the reference is unknown
@@ -255,7 +245,7 @@ func displayScale*(reference: float64; gainDb = 0.0): float32 =
   ## largest float32, so more gain never draws less: every sample that is not
   ## 0 is drawn full black or white (`a * scale` may then overflow to an
   ## infinity, which the clip to ±1 takes, on the GPU as here).
-  let f = if reference > 0 and reference < Inf: gainFactor(gainDb) / reference else: 0.0
+  let f = if reference > 0 and reference < Inf: dbToFactor(gainDb) / reference else: 0.0
   if f < maximumPositiveValue(float32): float32(f)
   elif f >= maximumPositiveValue(float32): maximumPositiveValue(float32) # high() is Inf
   else: 0'f32

@@ -42,7 +42,7 @@
 import std/[heapqueue, intsets, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
-import processSEG/core/[rows, types, workspace]
+import processSEG/core/[basic, rows, types, workspace]
 import edits, filesystem, headers, inbox, jobs, log, selection, threads
 
 const
@@ -227,7 +227,7 @@ proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace; flow: 
   let blank = teKilled in t.edits or d.keys.status == tsDead or failed
   for x in d.samples.mitems:
     if blank or not (abs(x) < Inf): x = 0
-    elif teReversed in t.edits: x = -x
+  if not blank and teReversed in t.edits: reversePolarity(d.samples) # as the reader does
   if not blank and flow.len > 0:
     let list = [t.trace]
     let plan = flow.compile(float32, d.dtMs, kept, recordSamples = n)
