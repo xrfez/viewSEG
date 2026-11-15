@@ -104,7 +104,7 @@ object are refused at once), 2 when no viewSEG of yours listens.
 | Tool | Arguments | Answers with |
 |---|---|---|
 | `command` | One command: its `kind` and the fields that kind takes (below) | What the program said while carrying it out; an error when the command was refused, or did not fit the state (a gather out of range) |
-| `state` | `parts` (any of `program`, `fileList`, `files`, `panels`, `selection`, `map`, `jobs`, `messages`, `survey`, `headers`; all when not given), `messages` (how many of the newest, 20), `since` (a message serial), `limit` (the longest list, 200) | The program's own folder and working folder (`program`: see "Paths" below), the file list, the open files (each with `firstTrace`, the survey-wide id of its first trace), the panels (file, record, layout, view: the traces and times shown and the plot's pixels along each, `columns` along the traces and `rows` along time whichever way it is turned; display and gain, with its `orientation`, display header, order, trace filter, polarity, `positions`: the trace index in its file at each position in the order shown, the killed and reversed traces, and whether the picture is `complete`), the selection, the map (its view, each layer with its points and whether it is shown, the points selected and hovered with where they are and their stations), the jobs, the newest messages, the survey's layers; the Headers window (`headers`: the tab shown, its toggles, what it has on screen, the traces its Trace tab is about with what its reader read of each (and the groups of its keys a geometry join gave), and the facts its Summary gives of the file the plot shows: the summary, the coordinate units and reference, the file headers, the join) |
+| `state` | `parts` (any of `program`, `fileList`, `files`, `panels`, `selection`, `map`, `jobs`, `messages`, `survey`, `headers`, `memory`; all when not given), `messages` (how many of the newest, 20), `since` (a message serial), `limit` (the longest list, 200) | The program's own folder and working folder (`program`: see "Paths" below), the file list, the open files (each with `firstTrace`, the survey-wide id of its first trace), the panels (file, record, layout, view: the traces and times shown and the plot's pixels along each, `columns` along the traces and `rows` along time whichever way it is turned; display and gain, with its `orientation`, display header, order, trace filter, polarity, `positions`: the trace index in its file at each position in the order shown, the killed and reversed traces, `allReversed`, what Undo and Redo would do (`undo`, `redo`), whether the file's identity is known and confirmed and the entry its edits are remembered in (`remembered`), and whether the picture is `complete`), the selection, the map (its view, each layer with its points and whether it is shown, the points selected and hovered with where they are and their stations), the jobs, the newest messages, the survey's layers; the Headers window (`headers`: the tab shown, its toggles, what it has on screen, the traces its Trace tab is about with what its reader read of each (and the groups of its keys a geometry join gave), and the facts its Summary gives of the file the plot shows: the summary, the coordinate units and reference, the file headers, the join); what is remembered about files (`memory`: as File memory listed it last, each file's name, path, when opened, what is kept, sizes and whether it is gone) |
 | `headers` | A trace: `trace` (its survey-wide id), or `panel` and `position` (0 is the first shown: the leftmost, or the topmost when time runs across), or `file` (an open file's id) and `index` | The trace's keys (stations, coordinates, offset, channel, status) and every field of its headers: block, field, value, byte offset. Read from the file in the background, so the answer may come a few frames later; a file whose drive has not answered for 3 s is answered with an error saying so |
 | `screenshot` | `window`: `window` (the whole window, default), `plot` (the Seismic window's picture of the traces alone, as drawn: turned when time runs across), `seismic`, `map` (the Map window), `files`, `records`, `headers` (the Headers window), `messages`, `jobs`, `toolbar`, `statusbar`; `maxSize`, the longest side in pixels (1600; larger pictures are scaled down) | A PNG |
 | `wait` | `timeout` in seconds (30; at most 300) | Whether everything is done: no job running or waiting, every panel's picture read, sorted and drawn, and what the Headers window has on screen read; else what is still going. Call it after a command that reads data, before `state` or `screenshot` |
@@ -125,7 +125,9 @@ schema (in the tool list) gives every field and value; the most used:
 | `sort` | `order` (`field`, `descending`) | The traces' order; `[]` is the file's |
 | `trace filter` | `filter` (`seismic`, `auxiliary`) | Which traces are shown |
 | `select` | `traces` (survey-wide ids), `mode` (`replace`, `add`, `toggle`, `range`) | The selection |
-| `edit traces` | `edit` (`killed`, `reversed`), `edited`, `on` | Kills or reverses traces, beside the file |
+| `edit traces` | `edit` (`killed`, `reversed`), `edited`, `on` | Kills or reverses traces, beside the file, for this session (below) |
+| `undo edit`, `redo edit` | | Takes back the last change to the edits of the panel's file, or makes it again, as Edit > Undo and Redo; `state`'s panel says what each would do (`undo`, `redo`) |
+| `list file memory` | | Reads again what is remembered about files, as File > File memory... does; `state`'s `memory` part gives it |
 | `map view` | `mapView` (`centre`: `x`, `y`; `perPixel`: survey units a pixel) | Pans and zooms the map, as you would |
 | `map layer` | `mapLayer` (as `state` names it), `shown` | Shows or hides a layer of the map (`shown` defaults to true) |
 | `select points` | `points` (`layer`, `role`, `point`), `pointMode` | Selects points on the map, and their traces |
@@ -133,7 +135,7 @@ schema (in the tool list) gives every field and value; the most used:
 | `join geometry` | `joinFiles` (each `path`, `kind`: `SPS`, `SEG P1` or `CSV table`, and a table's `role`); `joinFile` (a file's id, as `state` gives it; the plot's file when not given), `joinOptions` (the window's when not given), `joinUnits` | Imports a survey, as File > Import > Survey... does: its SPS and P1 files are put on the map (as `load survey` does; once: one already there is not loaded again) and matched to an open file's traces, in memory; with no file shown and none named, on the map only (no file is written; the kind keeps parseSEG's name for it, a join); `wait`, then `state`'s log and its map part say what it did |
 | `select unmatched` | `unmatchedOf` (the id of the file the survey was imported for; the plot's when not given) | Selects the traces the survey did not match |
 | `headers shown` | `inspect` (any of `record headers`, `trace headers`, `trace samples`) | Has the Headers window's reader read those parts (of the record the plot shows; of the selected traces, else the trace under the pointer), as the window does for what it has on screen; `wait`, then `state`'s `headers` says what was read. The window says it again when what it shows changes |
-| `undo edit`, `clear edits`, `reverse all`, `back`, `map back`, `hover`, `clear selection`, `close`, `load survey`, `unload survey`, `cancel job`, ... | | As in the windows |
+| `clear edits`, `reverse all`, `back`, `map back`, `hover`, `clear selection`, `close`, `load survey`, `unload survey`, `cancel job`, ... | | As in the windows |
 
 `panel` defaults to 1 (the Seismic window). A panel keeps whatever is not given:
 `{"kind": "display", "display": {"mode": "density"}}` changes the mode alone. `edit
@@ -176,10 +178,19 @@ Turn agent control on for agents you would let do what you can do in the windows
   the session log still list every command an agent gave. Opening a file writes its index
   cache, as when you open it. Numbers no control would take are brought within the
   controls' ranges.
+- **Its trace edits are for this session only too.** What an agent kills, reverses
+  (one trace or all of them), undoes, redoes or clears is shown as if you had done it,
+  but is never remembered with the file: the next time the file is opened, it shows the
+  edits as you last left them by hand. The rule, as built: a change keeps (is
+  remembered) when it comes from a window, and is shown only when it comes from agent
+  control; your own Undo or Redo of a step, the agent's included, is yours, and what it
+  then shows is remembered for the traces it touches. Its edits are written nowhere: no
+  entry of File memory is made, changed or removed by an agent.
 
 ## What an agent cannot do
 
-- **Write a file of yours.** Exporting the settings, a layout or the messages, saving or
+- **Write a file of yours.** Exporting the settings, a layout, the messages or a file's
+  trace edits, importing trace edits, removing entries of File memory, saving or
   importing a layout and resetting the settings (which keeps a backup) are refused. Killing
   and reversing traces never changes the file: the edits are kept beside it, as when you
   make them. A loaded file is never changed.

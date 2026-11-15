@@ -103,8 +103,8 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | Thread | Created and owned by | Runs |
 |---|---|---|
 | UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), hands the files it lets go of to the closer, and makes every OpenGL call; it reads no header and no sample from a file (a trace's headers for an agent are read on a job: Network drives, below) |
-| Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, an open file's positions, survey files read, `ensureKeys`, survey joins, sorts across files |
-| Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, the listed files' shots (`shotsWork`), the map's planned spreads (`spreadWork`), the record shown for the map's filters (`recordQcWork`), brute stack, conversions, exports and patches, queued workflows |
+| Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, an open file's positions, survey files read, `ensureKeys`, survey joins, sorts across files, an opened file's quick identity and what is remembered about it (`identifyWork`), the File memory window's listing, a file's edits exported |
+| Background jobs | `core/jobs`: a second runner and queue | Long work: an opened file's hash of every byte (`fullHashWork`), whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, the listed files' shots (`shotsWork`), the map's planned spreads (`spreadWork`), the record shown for the map's filters (`recordQcWork`), brute stack, conversions, exports and patches, queued workflows |
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; lists the layouts; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
 | Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
@@ -225,7 +225,8 @@ only: Windows does not let a mapped file be cut): a file cut short by another pr
 while a read of it is under way still ends the program; only reading the samples with
 `pread`, or a guard around decoding, in parseSEG, removes that. Edits made on a file are
 kept with its size and time; when the file is opened again changed, they are set aside
-as "Clear all edits" does, so Ctrl+Z brings them back.
+as "Clear all edits" does, so Ctrl+Z brings them back; they stay remembered for the file
+as it was (its identity, below).
 
 **Network drives** (`core/filesystem`). A drive can answer slowly, stop answering for
 minutes, or go away while a file is open; the window must stay alive, say what it waits
@@ -664,8 +665,41 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   file's open to its reopen after another program changed it, an import's to the
   settings read. A Fixed gain's amplitude taken from the data is kept only when the kept
   settings wait for one too. The arrangement an agent reports (`ckLayout`) is not saved.
+  An agent's trace edits are shown and never remembered with the file: `FileEdits` keeps
+  the lists as shown and as kept, and a step reaches what is kept when `keeps` says so.
   `tagentsession` lists every setting the settings file holds and the agent command that
   reaches each for the session, if any: a new setting fails it until it is decided on.
+- **What is remembered about a file** (`core/identity`, `core/filememory`,
+  `core/memoryjobs`; docs/plot-window.md, "Edits to traces"). A file's trace edits (the
+  user's kills, reversals and "reverse all"; later its flags, notes, the join used and
+  its filters) are kept by the file's **identity**, never in the file and never by its
+  path: its size and an XXH64 hash of its first and last 64 KiB (`quickIdentity`, which
+  covers the header blocks), read when it is opened by a job on the interactive lane
+  (`identifyWork`, a few ms; never on the UI thread: a drive that does not answer holds
+  the job, the plot opens as always and the edits come once it answers), and a hash of
+  every byte (`fullHash`) on the background lane, which confirms it. **The store**
+  (`Store`) has one home at a time: `<config>/files/` (`rememberFilesIn`, which the
+  frontend calls with the settings' folder; tests that do not call it remember nothing),
+  later a project's folder (3.0), through the same procs. It holds one NIF document per
+  identity (`<size>-<quick>-<n>.nif`, `n` telling apart files whose ends agree): the
+  identity, the name and path last seen, when last opened, the file's modification time
+  then, the lists by trace number from 1 in runs, `allReversed`; a reader skips what it
+  does not know, so later fields fit beside them. **At open**, the documents of the quick
+  identity are read with it (`recordsOf`); one whose size and modification time are the
+  file's (a file renamed or moved keeps them) is brought back at once
+  (`FileEdits.remembered`, no step of the history) and the full hash confirms it, or takes
+  it away again with a warning when the content differs; the others wait for the full
+  hash (`Remembered.waiting`). A file is hashed whole only when something is remembered
+  of its quick identity or the user edits it, so stepping through a folder reads no
+  more than its ends. **Writing**: the kept lists (`FileEdits.kept`) are handed to the
+  disk thread a second after they change (`SaveDelay`) and at the quit (`saveMemory`),
+  atomically (`replace`); a file that keeps nothing has its document removed
+  (`DiskIo.remove`). `AppState.knownDocs` holds what this run wrote, newer than the disk
+  until it is written. **The File memory window** reads every document on a job
+  (`listMemoryWork`: `memoryList`, with whether each file is gone) and removes those the
+  user confirms (`ckForgetFiles`, each said in the log). **A file's list** for processing
+  (`ckExportEdits`: CSV with each trace's record and channel from its keys, read on a job;
+  or the NIF document) and back (`ckImportEdits`, read on the disk thread, one step).
 - **Layouts** (`core/layouts`): the toolkit's own layout text (Dear ImGui's `.ini` form,
   which `core` never reads) in a NIF document. The frontend reports the arrangement when
   Dear ImGui says it changed (`ckLayout`; `io.IniFilename` is nil, so ImGui writes no file
@@ -1024,7 +1058,8 @@ type
   CommandKind = enum         # core/state: every user intent, the only way state changes
     ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
     ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckReverseAll, ckBack,
-    ckEdit, ckUndoEdit, ckClearEdits, ckHover, ckSelect,
+    ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckExportEdits, ckImportEdits,
+    ckFileMemory, ckForgetFiles, ckHover, ckSelect,
     ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
     ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog,
     ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints,
@@ -1071,7 +1106,10 @@ type
     sessions: seq[Session]
     files: FileList          # the file list
     edits: Table[string, FileEdits] # core/edits, per file's path: the traces killed and
-                             # reversed, and the last change for the undo
+                             # reversed, all reversed, as shown and as kept, and the
+                             # session's history of steps (undo, redo)
+    store: Store             # core/filememory: where what is remembered is kept
+    remembered: seq[Remembered] # per file opened: its identity and its document
     survey: Survey           # core/survey: the survey files loaded, the open files' positions
     joining: Joining         # the join under way: its jobs, plan, geometry, paused panels
     joins: seq[Joined]       # the open files joined with survey files, and how
@@ -1158,13 +1196,18 @@ type
     joined: seq[set[JoinGroup]] # per row: what a geometry join gave its keys; empty for none
 ```
 
-**No undo history.** Edits to traces (kill, reverse polarity) are lists kept beside an
-untouched file (`core/edits`, `AppState.edits`, by the file's path and the trace's index
-in it, so they outlive the file's session when the user steps away and back), so each is
-undone by its inverse: a file keeps only its last change, which `ckUndoEdit` reverts;
-`ckClearEdits` empties the lists and is undone the same way. Header edits are a patch,
-undone by removing an entry; views have "back". None of them needs a history of
-commands.
+**Undo and redo: a history of the edits' steps.** Edits to traces (kill, reverse
+polarity, reverse all) are lists kept beside an untouched file (`core/edits`,
+`AppState.edits`, by the file's path and the trace's index in it, so they outlive the
+file's session when the user steps away and back; remembered across runs by the file's
+identity, above). Each change is a step (`EditStep`: what each list gained and lost, and
+the polarity of all traces before and after); `ckUndoEdit` takes the newest back and
+keeps it for `ckRedoEdit`; a new change drops the steps undone; `ckClearEdits` and an
+import are steps too; at most `MaxSteps` (1000) a file. The history is the session's: it
+is not saved. The lists come twice, as shown and as kept: a step reaches what is kept
+only when its command `keeps` (a window's: an agent's edits are shown, not remembered),
+and an undo or a redo by the user applies the step's additions and removals to what is
+kept as well. Header edits are a patch, undone by removing an entry; views have "back".
 
 ## Agent control
 
@@ -1289,8 +1332,11 @@ over a **Unix-domain socket**.
   elsewhere (a container) can name, unlike the program's absolute paths.
   **Refused:** whatever writes a file (the exports, saving or importing a layout, a
   settings reset, which keeps a backup) and the user's preferences and window
-  arrangement (`ckSettings`, `ckImportSettings`, `ckLayout`, `ckLoadLayout`). Trace
-  edits are the lists beside the file (`core/edits`): a loaded file is never changed.
+  arrangement (`ckSettings`, `ckImportSettings`, `ckLayout`, `ckLoadLayout`); exporting
+  and importing a file's edits and forgetting files (`ckExportEdits`, `ckImportEdits`,
+  `ckForgetFiles`: the store is the user's). Trace edits are the lists beside the file
+  (`core/edits`): a loaded file is never changed, and an agent's are shown, never kept
+  with the file (`FileEdits.kept`).
   **For the session only:** the `command` tool marks each command it gives as an
   agent's (`origin: coAgent`), and `core` changes nothing saved for it (`keeps`, under
   "Settings" above): what a panel's display, display header and sort become is what new

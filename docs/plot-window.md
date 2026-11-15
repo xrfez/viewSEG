@@ -403,9 +403,10 @@ right-click menu (ticked while it is on), runs processSEG's `polarityOp` first o
 trace the window reads, before its gain, so the picture, the gain's statistics, the status
 bar's amplitude and whatever is later computed from the window (a spectrum, an overlay
 comparison, an export) see the reversed data. Turning it on or off reads the view again;
-the picture before stays until the reversed one is drawn. It holds for the next record and
-file shown in the window, and is never kept as a setting: a new plot shows the data as
-recorded.
+the picture before stays until the reversed one is drawn. It is an edit of the file, not a
+setting: it holds for every record of the file, comes back with the file when it is
+opened again (also after a restart: [Edits](#edits-to-traces)), is undone with Edit >
+Undo, and another file is shown as it was left.
 
 **Reverse polarity** of a single trace, or of the selection that holds it (`R`, or the
 plot's menu), is an edit of the file's traces (see [Edits](#edits-to-traces)): those
@@ -463,7 +464,7 @@ its shortcut shown there.
 | `F` | Amplitude spectrum (FFT) of the hovered trace (or the selection) in a new window |
 | `H` | Show the trace's headers |
 | `M` | Select the trace's station on the map, with the station's traces: its receiver (in a receiver gather, its source); over a selected trace, those of the selection |
-| Ctrl + Z | Undo the last kill, restore or polarity change of the file shown (or its clearing) |
+| Ctrl + Z, Ctrl + Shift + Z or Ctrl + Y | Undo, redo the edits of the file shown: the Edit menu's, from any window ([Everywhere](#everywhere)) |
 | Esc | Cancel, innermost first: the drag in progress, else the ruler, else the selection |
 
 ### The map
@@ -503,6 +504,8 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Ctrl + Alt + O | Open folder |
 | Ctrl + W | Close the file the plot shows |
 | Ctrl + Q | Quit |
+| Ctrl + Z | Edit > Undo: take back the last change to the edits of the file the Seismic window shows (a kill, a restore, a polarity change, reverse all, a clearing, an import), whichever window has the focus; a text field keeps its own Ctrl + Z |
+| Ctrl + Shift + Z, Ctrl + Y | Edit > Redo: make the change undone last again |
 | Drop files or a folder on the window | A folder: list it and show its first file; one file: show it and list its folder; several files: list them and show the first |
 | Up / Down (file list focused) | Step to the next / previous file and show it in the same plot, keeping the display settings and the scales (wherever the focus is in the window, but in the filter box) |
 | Tab / Shift + Tab | Move between the controls of the window that has the focus, as in every window (the user: "tab should move between options in the window not files"): in the file list the folder's drop-down, its buttons, the filter, "Latest" and the list (one stop, at the file shown); Space or Enter acts on the control reached |
@@ -790,7 +793,8 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 | FFT in a new window | `F` | amplitude spectrum, raw and processed; several can be open (greyed out, "not available yet") |
 | Select its receiver on the map | `M` | the receiver the trace was recorded at (in a receiver gather, its source), or those of the selection, with their traces; greyed out where the trace has no place on the map |
 | Reverse polarity of all traces | | every trace of the window, ticked while on ([Polarity](#polarity)) |
-| Undo last edit (*what it was*) | Ctrl + Z | reverts the file's last kill, restore, polarity change or clearing |
+| Undo *what it was* | Ctrl + Z | takes back the file's last kill, restore, polarity change or clearing, as Edit > Undo |
+| Redo *what it was* | Ctrl + Shift + Z | makes it again, as Edit > Redo |
 | Clear all edits for this file | | the traces as the file has them; Undo brings the edits back |
 
 On a selection, a trace operation does to every selected trace what it does to the one
@@ -802,13 +806,48 @@ with the overlays).
 ### Edits to traces
 
 Killing a trace and reversing its polarity are edits: lists kept per file, by the trace's
-index in the file, beside the file and never in it (the file is opened read-only). They
-hold while viewSEG runs, through another record, a sort, a gain change, and stepping to
-another file and back; keeping them across a restart, with the rest of what is
-remembered about a file, is still to come. Each change is its own inverse (kill and
-restore, reverse and reverse again), so Ctrl + Z reverts the last change and no deeper
-history is kept; "Clear all edits for this file" takes them all away, and is undone the
-same way. Messages lists every change.
+index in the file, beside the file and never in it (the file is opened read-only).
+"Reverse polarity of all traces" is an edit of the file too: each file shows its own, and
+another file opened in the same window is shown as it was left. Messages lists every
+change.
+
+**History.** Every change is a step: Edit > Undo (Ctrl + Z) takes back the last, Edit >
+Redo (Ctrl + Shift + Z, Ctrl + Y) makes it again, as far back as the session goes (a
+thousand steps a file); a new change drops what was undone. The Edit menu names the step
+("Undo trace 21 killed") and works whichever window has the focus, on the file the
+Seismic window shows; the plot's menu has the same items. "Clear all edits for this file"
+is a step too. The history is for the session: it is forgotten at the quit, the edits are
+not.
+
+**What is remembered about a file.** The edits are kept with the file's identity, not its
+name (`core/identity`, `core/filememory`): its size and a hash of its first and last
+64 KiB, read when it is opened (a few milliseconds, off the screen's thread), confirmed
+by a hash of every byte on the background lane. A file renamed or moved keeps its edits:
+opened again, under any name, it shows them at once (the size, the ends and the
+modification time match what is remembered), and Messages says so; a copy with one byte
+changed is another file and shows none (when even its time is the same, what came at
+once is taken away again when the hash tells them apart, with a warning). They are
+written beside the program's settings (`<config>/files/`, one small NIF document per
+file), a second after a change and at the quit; the data file's bytes and modification
+time are never touched. A file whose drive does not answer opens as always; its edits
+come when its identity can be read. Edits an agent makes through agent control are shown
+for the session only (docs/agent-control.md).
+
+**File > File memory...** lists what is remembered: the name a file was last seen under,
+when it was last opened, what is kept, the file's size and the entry's, and whether the
+file is gone from where it was. It removes the entry selected, those not opened for a
+number of days (90 to begin with), or those whose file is gone; each removal lists what
+it takes away and asks first, and Messages names each entry forgotten. Nothing is ever
+dropped on its own.
+
+**Handing a list over.** File > Export > Trace edits... writes the edits of the file shown
+as a CSV table (`trace,record,channel,edit`: the trace's number in the file from 1, its
+field record and channel from the headers, `killed` or `reversed`; "all" for reverse all)
+or as viewSEG's own NIF document (with the file's identity), for processing. File >
+Import > Trace edits... reads either (a CSV table needs a `trace` column; without an
+`edit` column every trace listed is killed) onto the file shown, as one step that Undo
+takes back; a list made on another file is applied by trace number all the same, with a
+warning.
 
 An edit must show at once. The window's reader keeps the samples it last read from the
 file (as decoded, up to 128 MiB), so an edit of traces in view, a gain change, or a

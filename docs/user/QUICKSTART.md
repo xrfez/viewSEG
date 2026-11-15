@@ -104,7 +104,8 @@ next new file is shown again.
 **When the file shown changes on disk** (an acquisition system writes it again, or a newer
 copy is put over it), viewSEG shows it again, as it is now, once it stops changing,
 keeping the display, the record and the scales; kills and polarity reversals made on the
-old file are set aside (Messages says so; Ctrl+Z in the Seismic window brings them back).
+old file are set aside (Messages says so; Edit > Undo, Ctrl+Z, brings them back; they
+stay remembered for the file as it was).
 If the file was **cut short**, viewSEG stops reading it at once and says so in Messages.
 On Linux and macOS one case remains: a file cut short by another program *while viewSEG is
 reading it* (in the fraction of a second a pan, zoom or new record takes) stops viewSEG
@@ -234,9 +235,11 @@ point by default): right-click them, or their names at the left, to choose its f
 | Cancel a drag, else clear the selection | | Esc |
 | Kill or restore the trace under the pointer (the selection, if it is in it) | right-click: Kill / Restore | `K` |
 | Reverse its polarity, or put it back | right-click: Reverse polarity | `R` |
-| Undo the last kill, restore or polarity change | right-click: Undo last edit | Ctrl+Z |
+| Undo the last kill, restore or polarity change | Edit > Undo (or right-click: Undo) | Ctrl+Z, in any window |
+| Redo what was undone | Edit > Redo (or right-click: Redo) | Ctrl+Shift+Z or Ctrl+Y, in any window |
 
-Keys act while the Seismic window has the focus: click in it first. The click that brings
+Keys act while the Seismic window has the focus: click in it first (undo and redo work
+from every window, but in a text field, which keeps its own Ctrl+Z). The click that brings
 a window forward does only that: it selects no trace, and in Files or Records it shows no
 other file or record; click again to do so.
 
@@ -282,25 +285,26 @@ selection when that trace is selected. Then:
   a killed trace the item reads **Restore**.
 - **FFT in a new window** is listed, greyed out: it is not available yet.
 - **Reverse polarity of all traces** (below).
-- **Undo last edit** (Ctrl+Z) reverts the last kill, restore or polarity change (it names
-  it); there is no deeper history, since each change is its own inverse. **Clear all
-  edits for this file** shows the traces as the file has them (Undo brings the edits
-  back).
+- **Undo** (Ctrl+Z) takes back the last kill, restore, polarity change or clearing (it
+  names it), and **Redo** (Ctrl+Shift+Z, Ctrl+Y) makes it again, as far back as you have
+  worked in this run; a new change drops what was undone. The same items are in the
+  **Edit** menu, which works whichever window has the focus. **Clear all edits for this
+  file** shows the traces as the file has them (Undo brings the edits back).
 
 Edited traces are marked in a row of the display header, **edits**, that is there only
 while the record has an edit: a red **K** over a killed trace, an **R** over a reversed
 one. The status bar says "killed" or "polarity reversed" for the trace under the
 pointer, and Messages lists each change. Edits are lists kept beside the file, never
-written into it: they hold while viewSEG runs, through another record, a sort, a gain
-change, and stepping to another file and back, but they are not kept for the next run
-yet. An edit shows at once: viewSEG makes the picture again from the samples it already
+written into it: they hold through another record, a sort, a gain change, stepping to
+another file and back, and the next run (see "What viewSEG remembers"). An edit shows at
+once: viewSEG makes the picture again from the samples it already
 holds, without reading the file.
 
 **Polarity.** Right-click the plot and choose **Reverse polarity of all traces** to see
 every trace 180 degrees out of phase; the item is ticked while it is on, and choosing it
 again goes back. It reverses the data itself, before the gain, so the status bar's
-amplitude is the reversed one too. It holds for the next record and file, and is not kept
-for the next run.
+amplitude is the reversed one too. It is an edit of the file: every record of it is
+reversed, it comes back with the file, and another file is shown as you left it.
 
 **Highlight.** The trace under the pointer is drawn in orange, line and fill (under
 density, its column is tinted), and the status bar reads it out. Click a trace to select
@@ -657,13 +661,31 @@ default size. Every other setting stays as it is, and the arrangement is saved a
 from then on. Ctrl+Shift+R does the same in a running viewSEG, if the main window has the
 keyboard. Deleting `layout.nif` in the settings folder also works, with viewSEG closed.
 
+**Your kills and polarity reversals are remembered with each file**, by what the file
+holds, not by its name: rename or move a file, open it again (in this run or the next),
+and its edits are back, as Messages says. A copy with one byte changed is another file
+and gets none. They are kept in `files/` in the settings folder, one small file per data
+file; the data file itself is never changed. What you undo and redo is for this run
+only: the next run starts with the edits as you left them, and nothing to undo. Edits an
+AI agent makes through agent control are not remembered.
+
+**File > File memory...** lists what is remembered: each file's name when you last saw
+it, when you last opened it, what is kept, its size, the entry's size, and whether the
+file is still where it was. Remove the entry you select, those not opened for a number of
+days, or those whose file is gone: each asks first, listing what goes, and Messages names
+each one. **File > Export > Trace edits...** writes the edits of the file shown as a CSV
+table (`trace,record,channel,edit`, for a processing system) or as viewSEG's own `.nif`;
+**File > Import > Trace edits...** takes either back in (here or on another computer;
+one step that Undo takes back).
+
 **File > Export > Settings...** writes them to a file of your choice (to keep, or to take
 to another computer), **File > Import > Settings...** takes such a file in (what it does
 not hold stays as it is), and **File > Reset the settings** puts them back to the defaults
 (the recent files and the window's place stay; the settings before are kept in a copy).
 
-Every import is under **File > Import** (a survey, settings, a layout) and every export
-under **File > Export** (the messages, the settings, the layout), each in that one place.
+Every import is under **File > Import** (a survey, settings, a layout, trace edits) and
+every export under **File > Export** (the messages, the settings, the layout, trace
+edits), each in that one place.
 
 `settings.nif` is a text file (NIF) you can read and edit while viewSEG is closed. If it
 is damaged, viewSEG says so in the Messages window, moves it aside as
