@@ -57,7 +57,9 @@
 ## folder ended before); a task whose folder has not answered is given only
 ## `stuckAfter`. The thread is then left to end on its own, with its memory,
 ## and what it had left is not written (`stuckOn` says what it was held
-## on).
+## on). While it is held so, the tasks left `first` (the settings and the
+## layout at the quit) are written by a thread of their own, so a drive that
+## held the thread before the quit does not keep them from their folder.
 
 import std/[algorithm, locks, monotimes, os, strutils, tables, times]
 import edits, filememory, filesystem, inbox, jobs, layouts, log, nif, threads
@@ -101,7 +103,13 @@ type
     since: MonoTime ## `busy`: when the task in hand was taken
     current: string ## `busy`: what it writes, and where ("the settings (/home/...)")
     answering: bool ## `busy`: the task's folder answered (`answered`, or a look just now)
+    holding: string ## `busy`: the file of the task in hand
     answered: seq[string] ## the folders a task ended in, this run
+    helper: Thread[ptr DiskObj]
+      ## writes the tasks left `first` while the thread is held (`stop`)
+    helperStarted, helperEnded, helperBusy, helperAnswering: bool
+    helperSince: MonoTime
+    helperCurrent: string
     poster: Poster
     thread: Thread[ptr DiskObj]
 
@@ -392,21 +400,38 @@ proc readFor(w: var Writer; t: Task) =
 
 func named(t: Task): string =
   ## What `t` is about, and where, for a message.
-  (if t.what.len > 0: t.what else: $t.kind) & " (" & t.path & ")"
+  let what = if t.what.len > 0: t.what
+             else:
+               case t.kind
+               of tkPrune: "the old files of a folder"
+               of tkList: "the list of the layouts"
+               of tkSweep: "the files a write cut short left"
+               of tkRead: "a file to read"
+               else: "a file"
+  what & " (" & t.path & ")"
 
 func folder(t: Task): string =
   ## The folder `t` works in.
   if t.kind in {tkPrune, tkList, tkSweep}: t.path else: t.path.parentDir
 
+proc knows(d: ptr DiskObj; t: Task): bool =
+  ## Whether a task ended in `t`'s folder before, this run.
+  withLock d.lock:
+    result = t.folder in d.answered
+
+proc look(t: Task) =
+  ## Looks at `t`'s folder: what it says does not matter, only that it came
+  ## back (a drive that does not answer holds it).
+  discard fs.dirExists(t.folder)
+
 proc take(d: ptr DiskObj; t: Task) =
   ## Before a task (the thread's): whether its folder answers, by a look at
-  ## it, unless a task ended there before. Under the lock only for the flag.
-  var known = false
+  ## it, unless a task ended there before.
+  let known = d.knows(t)
   withLock d.lock:
-    known = t.folder in d.answered
     d.answering = known
   if not known:
-    discard fs.dirExists(t.folder) # what it says does not matter: that it came back
+    look(t)
     withLock d.lock:
       d.answering = true
 
@@ -430,6 +455,7 @@ proc run(d: ptr DiskObj) {.thread.} =
       d.busy = true
       d.since = getMonoTime()
       d.current = t.named
+      d.holding = t.path
     d.take(t)
     case t.kind
     of tkAppend: w.appendTo(t)
@@ -451,6 +477,41 @@ proc run(d: ptr DiskObj) {.thread.} =
     d.ended = true
     broadcast(d.idle)
 
+proc rescue(d: ptr DiskObj) {.thread.} =
+  ## The helper: writes the tasks left `first`, one at a time, while the
+  ## thread is held on a task in a folder that does not answer (`stop`);
+  ## never the file the thread holds (its newer version waits for it).
+  markWorkerThread()
+  var w = Writer(d: d)
+  while true:
+    var t = Task()
+    var found = false
+    withLock d.lock:
+      var i = 0
+      while i < d.tasks.len and d.tasks[i].first and not found:
+        if d.tasks[i].path != d.holding or not d.busy:
+          t = move d.tasks[i]
+          d.tasks.delete i
+          found = true
+        else:
+          inc i
+      if found:
+        d.helperBusy = true
+        d.helperSince = getMonoTime()
+        d.helperCurrent = t.named
+        d.helperAnswering = false
+    if not found: break
+    if not d.knows(t): look(t)
+    withLock d.lock:
+      d.helperAnswering = true
+    w.replaceFile(t) # (only replaces are left first)
+    d.answeredIn(t)
+    withLock d.lock:
+      d.helperBusy = false
+  clearCycleRoots()
+  withLock d.lock:
+    d.helperEnded = true
+
 # ------------------------------------------------------------- the handle --
 
 const DiskStopWait* = initDuration(milliseconds = 800)
@@ -467,24 +528,36 @@ proc stop*(x: DiskIo; deadline = getMonoTime() + DiskStopWait;
     stuckAfter = DiskStopWait): bool {.discardable.} =
   ## Does what is left, then ends the thread, waiting for it until
   ## `deadline`, and no longer once a task whose folder has not answered
-  ## (the module documentation) has been in hand for `stuckAfter`: true
-  ## when it has ended; false when it is held by a drive that does not
-  ## answer (or `deadline` came first), and it is then left to end on its
-  ## own. Idempotent; destroying the `DiskIo` does it.
+  ## (the module documentation) has been in hand for `stuckAfter`, after
+  ## the tasks left `first` were given to the helper (`rescue`) and it is
+  ## done or held too: true when it has ended; false when it is held by a
+  ## drive that does not answer (or `deadline` came first), and it is then
+  ## left to end on its own. Idempotent; destroying the `DiskIo` does it.
   if x.p == nil or not x.p.started: return true
   if x.p.abandoned: return false
   x.askStop()
   var ended = false
   while true:
-    var stuck = false
+    var stuck, firsts, helped, helperDone = false
     let now = getMonoTime()
     withLock x.p.lock:
-      ended = x.p.ended
+      helped = x.p.helperStarted
+      ended = x.p.ended and (not helped or x.p.helperEnded)
       stuck = x.p.busy and not x.p.answering and now - x.p.since >= stuckAfter
-    if ended or stuck or now >= deadline: break
+      firsts = x.p.tasks.len > 0 and x.p.tasks[0].first
+      helperDone = x.p.helperEnded or (x.p.helperBusy and not x.p.helperAnswering and
+        now - x.p.helperSince >= stuckAfter)
+    if ended or now >= deadline: break
+    if stuck:
+      if not helped and firsts:
+        withLock x.p.lock:
+          x.p.helperStarted = true
+        createThread(x.p.helper, rescue, x.p)
+      elif not helped or helperDone: break
     sleep 1
   if ended:
     joinThread(x.p.thread)
+    if x.p.helperStarted: joinThread(x.p.helper)
     x.p.started = false
   else:
     x.p.abandoned = true
@@ -496,6 +569,8 @@ proc stuckOn*(x: DiskIo): string =
   if x.p != nil and x.p.abandoned:
     withLock x.p.lock:
       if x.p.busy: result = x.p.current
+      if x.p.helperBusy:
+        result.add (if result.len > 0: ", " else: "") & x.p.helperCurrent
       if x.p.tasks.len > 0:
         result.add (if result.len > 0: ", and " else: "") & $x.p.tasks.len &
           (if x.p.tasks.len == 1: " more file" else: " more files") & " to write"

@@ -287,8 +287,11 @@ for, let the user go on, and quit.
   `DiskQuitLimit` (5 s). A write to a drive that does not answer is left as before, after
   `QuitWait`: before each task the thread looks at the task's folder (unless a task ended
   there before), and a task whose folder has not answered is the one given only
-  `QuitWait`; a slow write to a folder that answers is waited for. What was not written
-  is said (the log, and standard error, as the window is gone). The thread's memory follows the same
+  `QuitWait`; a slow write to a folder that answers is waited for. While the thread is
+  held so, a helper thread of its own writes the settings and the layout, so a drive
+  that held the thread since before the quit (a session log on a share) does not keep
+  them from their folder. What was not written is said (the log, and standard error, as
+  the window is gone). The thread's memory follows the same
   rule as the others' (freed only once it has ended), so the model is unchanged. A reader left earlier (Retry, Stop, another file) is none
   of the panels' readers: the holds still taken (`Jobs.holdsLeft`) count it as left too.
 - **What the user sees.** `AppState.waiting` (a panel: an open or a read not answering,

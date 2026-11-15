@@ -30,7 +30,9 @@
 ## not handed first either, settings.nif was not there. With every write
 ## given 0.8 s whether its folder answers or not (as it was),
 ## `oneSlowWriteAtTheQuit` found "the settings were not written: the quit
-## gave up after 800 ms".
+## gave up after 800 ms". With no helper for the tasks left first while the
+## thread is held (`rescue`), `heldBeforeTheQuit` found "the settings were
+## not written behind a write held before the quit".
 
 import std/[monotimes, os, sequtils, strutils, times]
 import viewSEG/core/[diskio, filememory, identity, inbox, layouts, log, nif, persist, state]
@@ -299,6 +301,38 @@ block oneSlowWriteAtTheQuit:
     "the settings were not written: the quit gave up after " & $took.inMilliseconds & " ms"
   doAssert ended, "the disk thread was left"
   echo "tdiskio: a quit waited ", took.inMilliseconds, " ms for one slow write of the settings"
+
+block heldBeforeTheQuit:
+  # The disk thread held since well before the quit on a drive that does not
+  # answer (a session log on a share): the settings, in another folder, are
+  # still written at the quit, and the quit ends within the bound.
+  let config = tmp / "heldconfig"
+  let share = tmp / "heldshare"
+  createDir(config)
+  createDir(share)
+  var st = initAppState()
+  st.keepSettingsIn(config, LoadedSettings(saveable: true))
+  fault(share, fkHang)
+  st.logTo(share)
+  st.report(sevInfo, "test", "a line for the session log on the share")
+  st.persist()
+  doAssert waitUntil(hung() >= 1), "the session log's write does not hang"
+  sleep 1000 # (held for longer than the quit's bound before the quit)
+  var s = st.settings
+  s.theme = "held before"
+  st.apply Command(kind: ckSettings, settings: s)
+  let began = getMonoTime()
+  let ended = st.shutdown()
+  let took = getMonoTime() - began
+  doAssert not ended, "the thread held on the share has ended"
+  doAssert fileExists(config / SettingsFileName) and
+    "held before" in readFile(config / SettingsFileName),
+    "the settings were not written behind a write held before the quit"
+  doAssert took < initDuration(milliseconds = 2500), "the quit took " & $took
+  release(share)
+  doAssert waitUntil(hung() == 0)
+  echo "tdiskio: with the disk thread held on a share, the settings written; the quit took ",
+    took.inMilliseconds, " ms"
 
 block leftoverTemporaryFiles:
   # the temporary files of the store's documents that a write cut short
