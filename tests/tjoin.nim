@@ -1,6 +1,13 @@
-## The geometry join in `core`, without a window (`ckJoin`, File > Join
-## geometry), on synthetic SEG-D records and synthetic survey files:
+## The survey import in `core`, without a window (`ckJoin`, File > Import >
+## Survey; parseSEG's join), on synthetic SEG-D records and synthetic survey
+## files:
 ##
+## - the survey's SPS files are put on the map as File > Open loads them (the
+##   S file's sources and the R file's receivers, beside the file's own
+##   positions), and the words say how many points are on the map; files
+##   already on the map are not loaded twice; with no file open the survey
+##   goes on the map only, and the words say no trace was matched; a cancel
+##   leaves the map as it was;
 ## - a record whose headers name stations but give (0, 0) coordinates,
 ##   joined with the survey's S, R and X files: the coordinates are in the
 ##   keys, the traces the survey has no receiver for are unmatched and
@@ -29,7 +36,10 @@
 ## happen; with the automatic replacement of coordinates at (0, 0) left out,
 ## the join changed nothing and "no reader held the file" found it never ran;
 ## with a panel shown the file during the join not waiting for it, the log
-## said "busy".
+## said "busy"; with the import's files not loaded (`loadSurvey` left out of
+## `startJoin`), "the S file is not on the map"; with the layers of a
+## cancelled import left on the map, "the map holds 2 survey files after the
+## cancel".
 
 import std/[math, os, sequtils, strutils, tables]
 import parseSEG
@@ -65,6 +75,54 @@ proc join(st: var AppState; files: seq[JoinFile]; opts = JoinOptions(); units = 
     "the join did not end"
 
 proc words(st: AppState): string = st.joinReport.words.join(" ")
+
+proc surveyFiles(st: AppState): int =
+  ## The survey files on the map.
+  for l in st.survey.layers:
+    if l.origin == loSurveyFile: inc result
+
+block onTheMap:
+  withFixtures fx:
+    let path = fx.stationsSegd()
+    let survey = fx.surveySps()
+    var st = initAppState()
+    st.opened(path)
+    doAssert st.surveyFiles == 0
+    st.join(sps(survey.s, survey.r, survey.x))
+    doAssert st.joinReport.outcome == joJoined, st.words
+    let (s, r) = (st.survey.findFile(survey.s), st.survey.findFile(survey.r))
+    doAssert s >= 0, "the S file is not on the map"
+    doAssert st.survey.layers[s].points[prSource].len == Shots,
+      $st.survey.layers[s].points[prSource].len
+    doAssert r >= 0 and st.survey.layers[r].points[prReceiver].len == Channels
+    doAssert st.survey.findFile(survey.x) >= 0 and st.surveyFiles == 3
+    doAssert st.survey.findTraces(st.sessions[0].id) >= 0, "the file's own positions went"
+    doAssert st.words.startsWith("On the map: " & $Shots & " source points and " & $Channels &
+      " receiver points (survey.s, survey.r, survey.x). 12 of 24 seismic traces matched"),
+      st.words
+    var said = false
+    for e in st.log:
+      if e.text.startsWith("Survey imported for stations-only.sgd (survey.s, survey.r, " &
+          "survey.x): On the map:"): said = true
+    doAssert said, "the log does not say what is on the map"
+    # Again: nothing is loaded twice.
+    let layers = st.survey.layers.len
+    st.join(sps(survey.s, survey.r, survey.x))
+    doAssert st.survey.layers.len == layers and st.surveyFiles == 3, $st.survey.layers.len
+    echo "tjoin: on the map: ", st.joinReport.words[0]
+block onTheMapOnly: # no file open
+  withFixtures fx:
+    let survey = fx.surveySps()
+    var st = initAppState()
+    st.apply Command(kind: ckJoin, joinFiles: sps(survey.s, survey.r))
+    doAssert st.importing
+    doAssert st.settle(st.joinReport.serial > 0 and not st.importing), "it did not end"
+    doAssert st.joinReport.outcome == joMapOnly, $st.joinReport.outcome
+    doAssert st.surveyFiles == 2 and st.survey.layers[st.survey.findFile(survey.s)].points[
+      prSource].len == Shots
+    doAssert "No seismic file is open, so no trace was matched" in st.words, st.words
+    doAssert st.words.startsWith("On the map: " & $Shots & " source points"), st.words
+    echo "tjoin: no file open: ", st.words
 
 proc readsAgain(st: var AppState; path: string): bool =
   ## The main panel's reader holds the file again and a tile made after the
@@ -290,9 +348,12 @@ block cancelled:
     st.apply Command(kind: ckCancelJob, job: reading)
     doAssert st.settle(st.joinUnderWay.job == NoJob)
     doAssert st.joinReport.outcome == joCancelled, $st.joinReport.outcome
-    doAssert "The survey import was cancelled: stations-only.sgd is as it was." == st.words,
-      st.words
+    doAssert "The survey import was cancelled: stations-only.sgd is as it was, and so is " &
+      "the map." == st.words, st.words
     doAssert st.sessions[0].file.keysRevision == 0 and st.jobs.held(path) == 1
+    doAssert st.settle(not st.surveyLoading(big))
+    doAssert st.surveyFiles == 0, "the map holds " & $st.surveyFiles &
+      " survey files after the cancel"
     # While the join waits for the file: another job reads it.
     gate.close()
     discard st.jobs.submit(JobSpec(title: "Read it", lane: jlBackground, reads: @[path]),
@@ -316,6 +377,9 @@ block cancelled:
     doAssert st.joinReport.outcome == joCancelled
     doAssert st.sessions[0].file.keysRevision == 0
     doAssert st.keysOf(1).rcvX == 0, "the keys as they were"
+    doAssert st.settle(not st.surveyLoading(survey.s) and not st.surveyLoading(survey.r))
+    doAssert st.surveyFiles == 0, "the map holds " & $st.surveyFiles &
+      " survey files after the cancel"
     doAssert st.readsAgain(path) and st.panel(MainPanel).laidOut,
       "the panel reads the file again"
     gate.open()

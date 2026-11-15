@@ -13,16 +13,27 @@
 ##   receivers at the survey's places; what the user reads of it (the
 ##   window's title, the job's title, the messages, the words) says import
 ##   and matched, never join;
+## - the survey files, loaded before, are on the map once, not twice;
 ## - "Select unmatched traces" selects the traces the survey has no
 ##   receiver for;
-## - an option set in the window is remembered (the settings).
+## - an option set in the window is remembered (the settings);
+## - survey files not loaded before, added with "Add files..." (the dialog
+##   answered by the test), are put on the map by Import: the S file's
+##   sources and the R file's receivers beside the record's own points (its
+##   headers' coordinates are (0, 0): none), the map showing the whole
+##   survey;
+## - with no seismic file open, Import puts the survey on the map, and says
+##   that no trace was matched.
 ##
 ## Seen to fail: with `marked` not marking the focused control, "Tab moves
 ## between the controls" found no focused control; with the status bar's
 ## joined colour left out, "the offset is drawn as joined" found no pixel in
 ## the accent colour; with the window titled "Join geometry" as before, "the
 ## window is titled  Join geometry###join"; with the log's old words ("Joined
-## to"), "the log does not say the survey was imported".
+## to"), "the log does not say the survey was imported"; with the import's
+## files not loaded onto the map (`loadSurvey` left out of `startJoin`), "the
+## S file is not on the map"; with Import disabled while no file is open (as
+## before), "Import, no file open did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves join-*.png there, and with the example
@@ -61,7 +72,8 @@ proc focused(f: FrameInfo): string =
     if f.markOf("join.focused " & n).size.x > 0: return n
   ""
 
-proc drive(steps: seq[Step]; paths: seq[string]; dir: string; size = (1400, 1000)) =
+proc drive(steps: seq[Step]; paths: seq[string]; dir: string; size = (1400, 1000);
+    dialogs: DialogHook = nil) =
   var at = 0
   var started = false
   var wait = 0
@@ -85,7 +97,7 @@ proc drive(steps: seq[Step]; paths: seq[string]; dir: string; size = (1400, 1000
         f.stop()
   let code = run(RunOptions(maxFrames: 12000, openPaths: paths, windowSize: size,
     theme: forceDark, userThemeDir: some(dir / "no-user-themes"),
-    indexCacheDir: some(dir / "cache"), onFrame: onFrame))
+    indexCacheDir: some(dir / "cache"), dialogs: dialogs, onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
   doAssert failed.len == 0, failed
   doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
@@ -166,7 +178,9 @@ proc joinWindow() =
         f.markOf("join.report").size.x > 0 and f.markOf("join.unmatched").size.x > 0
       if result:
         doAssert f.core.joinReport.outcome == joJoined, $f.core.joinReport.words
-        doAssert "12 of 24 seismic traces matched the survey" in f.core.joinReport.words[0]
+        doAssert "12 of 24 seismic traces matched the survey" in f.core.joinReport.words[1]
+        doAssert f.core.survey.layers.len == 4, "a survey file is on the map twice: " &
+          $f.core.survey.layers.len
         for w in f.core.joinReport.words:
           doAssert "join" notin w.toLowerAscii, "the words say join: " & w
         var started, ended = false
@@ -213,11 +227,83 @@ proc joinWindow() =
 
 joinWindow()
 
+proc onTheMap(f: FrameInfo; sps: SpsPaths) =
+  ## The S file's sources and the R file's receivers are on the map, which
+  ## shows the whole survey.
+  let (s, r) = (f.core.survey.findFile(sps.s), f.core.survey.findFile(sps.r))
+  doAssert s >= 0, "the S file is not on the map"
+  doAssert f.core.survey.layers[s].points[prSource].len == Shots and r >= 0 and
+    f.core.survey.layers[r].points[prReceiver].len == Channels
+  doAssert f.core.map.view.showsAll(f.core.map.limits), "the map does not show the survey"
+
+proc importSteps(steps: var seq[Step]; name: string; done: proc (f: FrameInfo): bool) =
+  ## File > Import > Survey..., Add files... (the test's dialog answers),
+  ## then Import, until `done`.
+  var frames = 0
+  steps.add Step(name: "File > Import > Survey...", act: proc (f: FrameInfo) =
+    f.click(f.markOf("menu.File").centre), done: proc (f: FrameInfo): bool =
+    let item = f.markOf("menu.Import survey...")
+    if item.size.x > 0: f.click(item.centre)
+    elif f.markOf("menu.Import").size.x > 0 and f.index mod 10 == 0:
+      f.click(f.markOf("menu.Import").centre)
+    f.markOf("join.add").size.x > 0)
+  steps.add Step(name: "Add files...", act: proc (f: FrameInfo) =
+    f.click(f.markOf("join.add").centre), done: proc (f: FrameInfo): bool =
+    inc frames
+    frames > 8)
+  steps.add Step(name: name, act: proc (f: FrameInfo) = f.click(f.markOf("join.run").centre),
+    done: done)
+
+proc importAdded() =
+  ## Survey files not loaded before, added in the window and imported.
+  withFixtures fx:
+    let path = fx.stationsSegd()
+    let sps = fx.surveySps()
+    var steps: seq[Step]
+    let answer = proc (kind: DialogKind; location: string): seq[string] =
+      if kind == dkJoinFiles: @[sps.s, sps.r, sps.x] else: @[]
+    steps.add Step(name: "the record, no survey file", act: proc (f: FrameInfo) = discard,
+      done: proc (f: FrameInfo): bool =
+      f.panel.laidOut and f.core.survey.findTraces(f.core.sessions[0].id) >= 0 and
+        f.core.survey.layers.len == 1)
+    importSteps(steps, "Import", proc (f: FrameInfo): bool =
+      result = f.core.joinReport.serial > 0 and not f.core.importing and
+        f.markOf("join.report").size.x > 0
+      if result:
+        doAssert f.core.joinReport.outcome == joJoined, $f.core.joinReport.words
+        f.onTheMap(sps)
+        doAssert f.core.survey.findTraces(f.core.sessions[0].id) >= 0, "the record's points"
+        doAssert f.core.joinReport.words[0].startsWith("On the map: " & $Shots &
+          " source points and " & $Channels & " receiver points"), f.core.joinReport.words[0])
+    drive(steps, @[path], fx.dir, dialogs = answer)
+    echo "tguijoin: added and imported, ", steps.len, " steps"
+
+proc importNoFile() =
+  ## No seismic file open: the survey is put on the map only.
+  withFixtures fx:
+    let sps = fx.surveySps()
+    var steps: seq[Step]
+    let answer = proc (kind: DialogKind; location: string): seq[string] =
+      if kind == dkJoinFiles: @[sps.s, sps.r] else: @[]
+    importSteps(steps, "Import, no file open", proc (f: FrameInfo): bool =
+      result = f.core.joinReport.serial > 0 and not f.core.importing and
+        f.markOf("join.report").size.x > 0
+      if result:
+        doAssert f.core.joinReport.outcome == joMapOnly, $f.core.joinReport.outcome
+        f.onTheMap(sps)
+        doAssert "No seismic file is open, so no trace was matched" in
+          f.core.joinReport.words.join(" "), $f.core.joinReport.words)
+    drive(steps, @[], fx.dir, dialogs = answer)
+    echo "tguijoin: no file open, ", steps.len, " steps"
+
+importAdded()
+importNoFile()
+
 # ------------------------------------------------------ Morgantown: shots --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (local
-# only): the Morgantown record and its S, R and X files in the "Plot and
-# map" layout, joined (the headers' coordinates replaced by the survey's),
-# a trace hovered: its source and receiver lit on the map.
+# only): the Morgantown record in the "Plot and map" layout, its S, R and X
+# files imported (put on the map, the headers' coordinates replaced by the
+# survey's), a trace hovered: its source and receiver lit on the map.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 
@@ -237,7 +323,7 @@ proc morgantown(dir: string) =
       if f.index == 2:
         loads = f.core.layoutLoads
         f.apply Command(kind: ckLoadLayout, docPath: preset)
-      if f.core.survey.layers.len >= 4 and f.core.panels[k].laidOut and
+      if f.core.survey.layers.len >= 1 and f.core.panels[k].laidOut and
           f.core.tiles(k).len > 0 and f.core.layoutLoads > loads and wait > 30:
         var files: seq[JoinFile]
         for e in [".sps", ".rps", ".xps"]: files.add JoinFile(path: base & e, kind: jkSps)
@@ -246,7 +332,7 @@ proc morgantown(dir: string) =
           survey: suUsFeet, file: suUsFeet))
         (stage, wait) = (1, 0)
     of 1:
-      if f.core.joinReport.serial > 0 and f.core.joinUnderWay.job == NoJob and
+      if f.core.joinReport.serial > 0 and not f.core.importing and
           f.core.tiles(k).len > 0 and f.core.tiles(k)[^1].joined.len > 0 and wait > 20:
         echo "tguijoin: Morgantown: ", f.core.joinReport.words.join(" ")
         let plot = f.markOf("plot.data")
@@ -277,6 +363,7 @@ proc morgantown(dir: string) =
           f.moveMouse(item.centre)
           f.pressMouse(item.centre, true)
           f.pressMouse(item.centre, false)
+      if wait == 30: f.moveMouse(f.markOf("statusbar").centre) # no tooltip over the window
       if wait == 40:
         if f.markOf("join.report").size.x > 0 and f.savePng(dir / "join-morgantown-2.png"):
           inc saved
@@ -284,8 +371,8 @@ proc morgantown(dir: string) =
     else: discard
     if f.index > 9000: f.stop()
   let tmp = getTempDir() / ("viewseg-joinshots-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 10000, openPaths: @[record, base & ".sps", base & ".rps",
-    base & ".xps"], windowSize: (1600, 1000), theme: forceDark, indexCacheDir: some(tmp),
+  let code = run(RunOptions(maxFrames: 10000, openPaths: @[record], windowSize: (1600, 1000),
+    theme: forceDark, indexCacheDir: some(tmp),
     userThemeDir: some(tmp / "no-user-themes"), onFrame: onFrame))
   removeDir(tmp)
   doAssert code == 0 and saved == 2, "no screenshots of Morgantown (stage " & $stage &

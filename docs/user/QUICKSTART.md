@@ -468,11 +468,11 @@ as large as each other.
 ### Import a survey
 
 Field records often carry stations, or only record and channel numbers, and no
-coordinates. **File > Import > Survey...** imports the survey for an open seismic file:
-its stations are matched to the file's traces, so that each trace has its source's and
-receiver's coordinates (and its stations, offset and midpoint): **in memory only, the
-file itself is never changed**. The **Import survey** window goes in the order of the
-work:
+coordinates. **File > Import > Survey...** imports the survey: its files are put on the
+map (as File > Open puts survey files there) and its stations are matched to an open
+seismic file's traces, so that each trace has its source's and receiver's coordinates
+(and its stations, offset and midpoint): **in memory only, the file itself is never
+changed**. The **Import survey** window goes in the order of the work:
 
 - **Survey files**: those loaded, ticked (untick one to leave it out); **Add files...**
   adds SPS files (S, R, X), SEG P1 files, or a **CSV table** of stations, with columns
@@ -499,12 +499,18 @@ kept, filling only those the headers lack (the default), or replaced by the surv
 and how the Records window matches a record and its traces to the X records (automatic by
 default).
 
-Press **Import**. The survey files are read and matched to the traces while the plot goes
-on; only then, for the moment the keys change, the plot lets go of the file (it keeps its
-picture), and it shows the record again with the survey's values. **Cancel** (beside the
-progress, or in the Jobs window) leaves the file as it was. The window then says what the
-import did, in plain words, and Messages keeps it:
+Press **Import**. The SPS and P1 files not on the map yet are loaded onto it, and the
+survey files are read and matched to the traces while the plot goes on; only then, for
+the moment the keys change, the plot lets go of the file (it keeps its picture), and it
+shows the record again with the survey's values. A file already on the map is not loaded
+twice. A map that showed all it had shows the whole survey then; one you zoomed in stays
+where it is. **Cancel** (beside the progress, or in the Jobs window) leaves the file and
+the map as they were. With no seismic file open, Import puts the survey on the map only
+(open a file and import again to match its traces). A CSV table's stations are matched,
+not drawn on the map yet. The window then says what the import did, in plain words, and
+Messages keeps it:
 
+- how many **source and receiver points** are on the map, from which files;
 - how many seismic traces **matched** the survey (their source and receiver stations are
   in it) and how: by the stations in their headers, or by record and channel through the
   relation file;
@@ -529,9 +535,11 @@ options).
 bin/viewSEG exampleFiles/00000151_12900_11300.sgd exampleFiles/sps/*.?ps
 ```
 
-then File > Import > Survey..., Import: the Morgantown record's 3954 seismic traces all
-match by their headers' stations; its headers' coordinates agree with the survey's to
-0.1 ftUS (choose "replace those the headers give" to have the survey's).
+then File > Import > Survey..., Import (or open only the record, and choose the three
+files with Add files...): 5519 source points and 6385 receiver points are on the map, and
+the Morgantown record's 3954 seismic traces all match by their headers' stations; its
+headers' coordinates agree with the survey's to 0.1 ftUS (choose "replace those the
+headers give" to have the survey's).
 
 ## Headers
 

@@ -44,7 +44,9 @@
 ## ...)]"; with `hasComment` not checked, "a comment hid 900 levels"; with
 ## `ckShowPoints` left out of `Offered`, "\"show points' record\" is not
 ## decided on". With `headersJson` listing none of the traces read, "the
-## trace's header fields were not read: []".
+## trace's header fields were not read: []". With the survey import's files
+## not loaded onto the map, the map part's check after `join geometry` (no S
+## file's sources).
 
 import std/[base64, json, math, os, sequtils, sets, strutils, tables]
 import viewSEG/core/[geometry, settingsnif, state]
@@ -307,10 +309,23 @@ withFixtures fx:
     doAssert st.settle(st.joinReport.serial > 0 and st.joinUnderWay.job == NoJob)
     doAssert st.joinReport.outcome == joJoined, $st.joinReport.words
     doAssert st.joins[0].plan.matched == SurveyTraces
+    # The survey is on the map, as the map part of `state` says: the S file's
+    # sources and the R file's receivers beside the file's own points.
+    var points: Table[string, int]
+    let layers = st.stateReport(fe, """{"parts":["map"]}""").body["map"]["layers"]
+    for l in layers:
+      points[l["mapLayer"]["path"].getStr.extractFilename & " " &
+        l["mapLayer"]["role"].getStr] = l["points"].getInt
+    doAssert points.getOrDefault("survey.s source") == Shots and
+      points.getOrDefault("survey.r receiver") == Channels and layers.len == 4, $layers
     let unmatched = st.run(%*{"kind": "select unmatched"})
     doAssert applied and not unmatched.isError, unmatched
     doAssert st.selection.selected.len == 0 # none is unmatched
     doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
+    for path in [sps.s, sps.r, sps.x]: # off the map again, for the blocks below
+      let i = st.survey.findFile(path)
+      doAssert i >= 0 and not st.run(%*{"kind": "unload survey",
+        "layer": int(st.survey.layers[i].id)}).isError
 
   block stateAnswers:
     let s = st.stateReport(fe, "{}").body

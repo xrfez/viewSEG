@@ -170,7 +170,7 @@ type
     ckSelectPoints = "select points"     ## change the points selected on the map, and their traces
     ckHoverPoints = "hover points"       ## the points under the map's pointer, and their traces
     ckShowPoints = "show points' record" ## show the record of the traces recorded at map points
-    ckJoin = "join geometry"             ## join survey files to an open file's traces, in memory
+    ckJoin = "join geometry"             ## import a survey: on the map, matched to a file's traces
     ckSelectUnmatched = "select unmatched"
       ## select the traces a join left unmatched
     ckRetry = "retry"                    ## open, read or list again what does not answer
@@ -247,7 +247,8 @@ type
         ## likewise; or a range, from the point clicked last along its line
         ## to the first of `points`
     of ckJoin:
-      joinFile*: SessionId ## the open file the survey files are joined to
+      joinFile*: SessionId
+        ## the open file the survey is matched to; none: the map only
       joinFiles*: seq[JoinFile] ## SPS, SEG P1 files and CSV tables
       joinOptions*: JoinOptions
         ## the join's options: line names, components, the headers' coordinates
@@ -339,6 +340,17 @@ type
     job: JobId = NoJob           ## the job of its step; `NoJob`: none under way
     step: JoinStep
     session: SessionId
+      ## the file matched to; `NoSession`: the map only
+    loads: seq[JobId]
+      ## its files' loads onto the map, until their layers come
+    added: seq[SurveyLayerId]
+      ## the layers they gave (taken out again at a cancel)
+    waits: bool
+      ## the match is over (or none): the end waits for `loads`
+    outcome: JoinOutcome
+      ## how the match ended
+    words: seq[string]
+      ## what it did, in plain words
     path, name: string
     files: seq[JoinFile]
     options: JoinOptions
@@ -367,6 +379,8 @@ type
     joNothing = "nothing matched" ## no trace matched: nothing changed
     joCancelled = "cancelled"     ## nothing changed
     joFailed = "failed"           ## nothing changed
+    joMapOnly = "on the map"
+      ## no file was open: the survey is on the map, no trace matched
 
   JoinReport* = object
     ## How the last join ended, for the dialog.
@@ -418,6 +432,8 @@ type
     survey: Survey        ## the survey files loaded and the open files' positions
     map: MapState         ## the map's view and hidden layers
     loading: seq[Loading] ## the jobs that fill the survey
+    droppedLoads: seq[JobId]
+      ## loads a cancelled import started: a layer one still posts is not taken
     checking: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relations each record check reads in place, kept alive until it
       ## ends (destroyed after `jobs`, whose runners stop first)
@@ -845,6 +861,11 @@ func joinUnderWay*(state: AppState): tuple[job: JobId; step: JoinStep; session: 
   ## The join under way: its job (`NoJob` for none), what it does, and the
   ## file it joins to.
   (state.joining.job, state.joining.step, state.joining.session)
+
+func importing*(state: AppState): bool {.inline.} =
+  ## Whether a survey import is under way: its match, or the loads of its
+  ## files onto the map.
+  state.joining.job != NoJob or state.joining.loads.len > 0 or state.joining.waits
 
 func indexCache*(state: AppState): lent string {.inline.} =
   ## The folder of parseSEG's index caches; "" for none.
@@ -1859,6 +1880,8 @@ proc loadSurvey(state: var AppState; path: string; quiet = false) =
       reads: @[path]), surveyWork(path, state.inbox.poster))
     state.loading.add Loading(job: job, path: path)
 
+proc loaded(state: var AppState; job: JobId; layer: SurveyLayerId)
+
 proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
   ## A layer a job made: an open file's positions, kept while the file is
   ## open and its keys are as they were read; or a survey file, in place of
@@ -1893,6 +1916,10 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
       state.log.add(sevInfo, name, name & ": " & problems.join("; ") & ". They are left " &
         "off the map.")
   of loSurveyFile:
+    let dropped = state.droppedLoads.find(job)
+    if dropped >= 0: # a cancelled import's: the map stays as it was
+      state.droppedLoads.delete(dropped)
+      return
     for i, p in state.opening:
       if p.job == job: # an open that found a survey file: no file to show
         let panel = p.panel
@@ -1910,12 +1937,13 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
     for c in layer.counts: lost += c.missing + c.zero + c.moved
     let before = state.relationLayer
     let wasId = if before >= 0: state.survey.layers[before].id else: NoSurveyLayer
-    discard state.survey.add(layer)
+    let id = state.survey.add(layer)
     state.log.add(if lost > 0: sevWarning else: sevInfo, name, text)
     let now = state.relationLayer
     if now >= 0 and state.survey.layers[now].id != wasId:
       for s in state.sessions: # against the relation file now loaded
         if state.joinedRelations(s.id) < 0: state.checkRecords(s)
+    state.loaded(job, id)
 
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
   ## Takes in a file an open job opened, and shows its first gather (or the
@@ -2007,13 +2035,17 @@ proc notify(state: var AppState; severity: Severity; text: string) =
 
 # ------------------------------------------------------------------ join --
 
+proc finishImport(state: var AppState)
+
 proc startJoin(state: var AppState; i: int; cmd: Command) =
-  ## `ckJoin` on open file `sessions[i]`: the survey files are read and what
-  ## joining them does is worked out on a job (`joinReadWork`), while the
-  ## plot goes on reading the file.
-  let s = state.sessions[i]
+  ## `ckJoin`, the survey import: its SPS and P1 files not on the map yet
+  ## are loaded onto it, as File > Open loads them (`loadSurvey`); with an
+  ## open file `sessions[i]`, the files are read again and what matching
+  ## them to its traces does is worked out on a job (`joinReadWork`), while
+  ## the plot goes on reading the file. With none (`i` -1), the survey is
+  ## put on the map only.
   var files: seq[JoinFile]
-  var reads = @[s.path]
+  var reads = if i >= 0: @[state.sessions[i].path] else: @[]
   for f in cmd.joinFiles:
     if f.path.len > 0:
       var c = f
@@ -2024,13 +2056,30 @@ proc startJoin(state: var AppState; i: int; cmd: Command) =
   if files.len == 0:
     state.ignore(cmd, "no survey file was named")
     return
-  let job = state.jobs.submit(JobSpec(title: "Import the survey for " & s.name,
-    lane: jlInteractive, reads: reads), joinReadWork(s.filePtr, s.id, files, cmd.joinOptions,
-    state.inbox.poster))
-  state.joining = Joining(job: job, step: jpReading, session: s.id, path: s.path, name: s.name,
-    files: files, options: cmd.joinOptions, units: cmd.joinUnits)
-  state.log.add(sevInfo, s.name, "Importing the survey (" & fileNames(files) & ") for " &
-    s.name & ".")
+  var loads: seq[JobId]
+  for f in files:
+    if f.kind != jkCsv and state.survey.findFile(f.path) < 0 and
+        not state.surveyLoading(f.path):
+      state.loadSurvey(f.path, quiet = true)
+      if state.loading.len > 0 and state.loading[^1].path == f.path:
+        loads.add state.loading[^1].job
+  if i < 0:
+    state.joining = Joining(name: "the map", files: files, options: cmd.joinOptions,
+      units: cmd.joinUnits, loads: loads, waits: true, outcome: joMapOnly, words: @[
+      "No seismic file is open, so no trace was matched: open one and import the survey " &
+      "again to match it."])
+    state.log.add(sevInfo, "survey", "Importing the survey (" & fileNames(files) & "): no " &
+      "seismic file is open, so it is put on the map only.")
+    if loads.len == 0: state.finishImport()
+  else:
+    let s = state.sessions[i]
+    let job = state.jobs.submit(JobSpec(title: "Import the survey for " & s.name,
+      lane: jlInteractive, reads: reads), joinReadWork(s.filePtr, s.id, files, cmd.joinOptions,
+      state.inbox.poster))
+    state.joining = Joining(job: job, step: jpReading, session: s.id, path: s.path,
+      name: s.name, files: files, options: cmd.joinOptions, units: cmd.joinUnits, loads: loads)
+    state.log.add(sevInfo, s.name, "Importing the survey (" & fileNames(files) & ") for " &
+      s.name & ".")
 
 proc pauseReaders(state: var AppState; path: string) =
   ## Has the readers of the panels that show `path` let go of it, for the
@@ -2071,20 +2120,67 @@ proc resumeReaders(state: var AppState) =
         state.newSource(k)
   state.joining.paused.setLen 0
 
+proc onTheMap(state: AppState; files: openArray[JoinFile]): string =
+  ## What of the survey files `files` is on the map now, in a sentence.
+  var counts: array[PointRole, int]
+  var names, tables: seq[string]
+  for f in files:
+    if f.kind == jkCsv: tables.add f.path.extractFilename
+    else:
+      let i = state.survey.findFile(f.path)
+      if i >= 0:
+        names.add f.path.extractFilename
+        for r in PointRole: counts[r] += state.survey.layers[i].points[r].len
+  result = if names.len == 0: "No point of the survey files is on the map."
+    else: "On the map: " & plural(counts[prSource], "source point") & " and " &
+      plural(counts[prReceiver], "receiver point") & " (" & names.join(", ") & ")."
+  if tables.len > 0:
+    result.add " " & (if tables.len == 1: "The CSV table " else: "The CSV tables ") &
+      tables.join(", ") & (if tables.len == 1: " is" else: " are") & " matched to the " &
+      "traces but not drawn on the map yet."
+
+proc finishImport(state: var AppState) =
+  ## The import ends once its match is over and its files are on the map:
+  ## what it did, the points on the map and the traces matched, is said in
+  ## the log and kept for the dialog.
+  template j: untyped = state.joining
+  var words = j.words
+  if j.outcome != joCancelled and j.outcome != joFailed:
+    words.insert(state.onTheMap(j.files), 0)
+  let i = state.findSession(j.session)
+  let unmatched = if j.outcome == joJoined: j.plan.unmatched.len else: 0
+  case j.outcome
+  of joJoined, joNothing:
+    if i >= 0:
+      let s = state.sessions[i]
+      state.log.add(if j.outcome == joNothing: sevWarning else: sevInfo, s.name,
+        (if j.outcome == joNothing: "The survey matches none of the traces of " & s.name
+          else: "Survey imported for " & s.name) & " (" & fileNames(j.files) & "): " &
+        words.join(" "))
+  of joMapOnly:
+    state.log.add(sevInfo, "survey", "Survey imported (" & fileNames(j.files) & "): " &
+      words.join(" "))
+  of joCancelled: state.log.add(sevInfo, j.name, words[0])
+  of joFailed: state.log.add(sevError, j.name, words[0])
+  of joNone: discard
+  state.joinReport = JoinReport(serial: state.joinReport.serial + 1, session: j.session,
+    name: j.name, outcome: j.outcome, words: words, unmatched: unmatched, heldAtJoin: j.held)
+  state.joining = Joining()
+
 proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
-  ## The join ends: the panels it paused read their file again, and what it
-  ## did, or why it did nothing, is said in the log and kept for the dialog.
-  ## A file joined keeps what it was joined with (its records are checked
-  ## against that survey) and has its positions read again from its keys.
+  ## The match ends: the panels it paused read their file again, and what it
+  ## did, or why it did nothing, is kept for the import's end (once its files
+  ## are on the map: `finishImport`). A file joined keeps what it was joined
+  ## with (its records are checked against that survey) and has its
+  ## positions read again from its keys. A cancelled or failed import takes
+  ## off the map what it put there, and stops the loads it started.
   template j: untyped = state.joining
   state.resumeReaders()
   let i = state.findSession(j.session)
   var words: seq[string]
-  var unmatched = 0
   case outcome
   of joJoined, joNothing:
     words = planWords(j.plan, j.survey, j.options, j.units.survey)
-    unmatched = j.plan.unmatched.len
     if i >= 0:
       let s = state.sessions[i]
       let before = state.joinedOf(s.id)
@@ -2097,20 +2193,31 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
       if j.survey.notes.len > 0:
         state.log.add(sevInfo, s.name, "The survey files' headers say: " &
           j.survey.notes.join("; ") & ".")
-      state.log.add(if outcome == joNothing: sevWarning else: sevInfo, s.name,
-        (if outcome == joNothing: "The survey matches none of the traces of " & s.name
-          else: "Survey imported for " & s.name) & " (" & fileNames(j.files) & "): " &
-        words.join(" "))
   of joCancelled:
-    words = @["The survey import was cancelled: " & j.name & " is as it was."]
-    state.log.add(sevInfo, j.name, words[0])
+    words = @["The survey import was cancelled: " & j.name & " is as it was, and so is the map."]
   of joFailed:
-    words = @["The survey import failed: " & error & ". " & j.name & " is as it was."]
-    state.log.add(sevError, j.name, words[0])
-  of joNone: discard
-  state.joinReport = JoinReport(serial: state.joinReport.serial + 1, session: j.session,
-    name: j.name, outcome: outcome, words: words, unmatched: unmatched, heldAtJoin: j.held)
-  state.joining = Joining()
+    words = @["The survey import failed: " & error & ". " & j.name & " is as it was, and " &
+      "so is the map."]
+  of joNone, joMapOnly: discard
+  (j.job, j.outcome, j.words, j.waits) = (NoJob, outcome, words, true)
+  if outcome in {joCancelled, joFailed}:
+    for job in j.loads:
+      discard state.jobs.cancel(job)
+      state.droppedLoads.add job
+    for id in j.added: discard state.survey.remove(id)
+    if j.added.len > 0: state.map.followed(state.survey)
+    j.loads.setLen 0
+  if j.loads.len == 0: state.finishImport()
+
+proc loaded(state: var AppState; job: JobId; layer: SurveyLayerId) =
+  ## A load the import under way started is over (`layer` its layer;
+  ## `NoSurveyLayer` when it failed): the import ends when it was the last.
+  template j: untyped = state.joining
+  let at = j.loads.find(job)
+  if at >= 0:
+    j.loads.delete(at)
+    if layer != NoSurveyLayer: j.added.add layer
+    if j.loads.len == 0 and j.waits: state.finishImport()
 
 proc takeJoinPlan(state: var AppState; m: sink Msg) =
   ## The survey files read and what joining them does: when it changes some
@@ -2558,6 +2665,9 @@ proc onFinished(state: var AppState; job: JobInfo) =
           state.failed(x.path)
         of jsCancelled: state.log.add(sevInfo, name, "Loading " & name & " was cancelled.")
         else: discard
+        let dropped = state.droppedLoads.find(job.id)
+        if dropped >= 0: state.droppedLoads.delete(dropped)
+        state.loaded(job.id, NoSurveyLayer)
       elif job.state == jsFailed:
         state.log.add(sevWarning, name, "Cannot read the positions in " & name & ": " &
           job.error & ".")
@@ -3360,8 +3470,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
     state.showPoints(cmd)
   of ckJoin:
     let i = state.findSession(cmd.joinFile)
-    if i < 0: state.ignore(cmd, $cmd.joinFile & " is not open")
-    elif state.joining.job != NoJob:
+    if i < 0 and cmd.joinFile != NoSession: state.ignore(cmd, $cmd.joinFile & " is not open")
+    elif state.importing:
       state.ignore(cmd, "a survey import is under way: one at a time")
     elif cmd.joinFiles.len == 0: state.ignore(cmd, "no survey file was named")
     else: state.startJoin(i, cmd)

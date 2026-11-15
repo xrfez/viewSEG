@@ -1,6 +1,7 @@
 ## The "Import survey" window (File > Import > Survey...): a survey's files
-## matched to an open file's traces, in memory (`ckJoin`, `core/join`; the
-## code keeps parseSEG's word, the join).
+## put on the map (as File > Open loads them) and matched to an open file's
+## traces, in memory (`ckJoin`, `core/join`; the code keeps parseSEG's word,
+## the join); with no file open, put on the map only.
 ##
 ## In the order of the work: the survey files, the loaded ones ticked,
 ## others added with "Add files..." (SPS, SEG P1, CSV tables, a CSV table's
@@ -213,7 +214,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     ui.focus.watch()
     marks.markWindow("join")
     let underWay = st.joinUnderWay
-    let busy = underWay.job != NoJob
+    let busy = st.importing
     var opts = st.settings.join
     var changed = false
     var files: seq[JoinFile]
@@ -299,8 +300,8 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     # -- the seismic file
     igSeparatorText("Seismic file")
     if target < 0:
-      dim("No seismic file is open: open the file whose traces the survey is to be " &
-        "matched to.", t)
+      dim("No seismic file is open: Import puts the survey on the map; open a file and " &
+        "import again to match its traces.", t)
     else:
       template s: untyped = st.sessions[target]
       dim("The survey's stations are matched to this file's traces:", t)
@@ -351,14 +352,14 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
       marks.marked("join.options")
     # -- what the last import did
     let r = st.joinReport
-    if target >= 0 and r.serial > 0 and r.session == st.sessions[target].id:
-      let id = st.sessions[target].id
+    let id = if target >= 0: st.sessions[target].id else: NoSession
+    if r.serial > 0 and r.session == id:
       igSeparatorText("Imported")
       if r.serial != ui.reported: # a new one: shown
         igSetScrollHereY(0)
         ui.reported = r.serial
       let colour = case r.outcome
-        of joJoined: t.roles[rlText]
+        of joJoined, joMapOnly: t.roles[rlText]
         of joNothing: t.roles[rlWarning]
         of joFailed: t.roles[rlError]
         else: t.roles[rlTextDim]
@@ -377,20 +378,20 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     igEndChild()
     # -- import
     igSeparator()
-    let can = not busy and files.len > 0 and target >= 0
+    let can = not busy and files.len > 0
     igBeginDisabled(not can)
     if igButton((IconMap & "  Import").cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
         can:
-      let s = st.sessions[target]
-      result.commands.add Command(kind: ckJoin, joinFile: s.id, joinFiles: files,
-        joinOptions: opts, joinUnits: units)
+      result.commands.add Command(kind: ckJoin, joinFile: (if target >= 0:
+        st.sessions[target].id else: NoSession), joinFiles: files, joinOptions: opts,
+        joinUnits: units)
       ui.units[key] = units
     igEndDisabled()
     marks.marked("join.run")
-    tip(if busy: "An import is under way" elif target < 0: "No seismic file is open"
-        elif files.len == 0: "Choose the survey's files first"
-        else: "Match the survey to " & st.sessions[target].name & "'s traces, in memory: " &
-          "the file is not changed")
+    tip(if busy: "An import is under way" elif files.len == 0: "Choose the survey's files first"
+        elif target < 0: "Put the survey on the map (no seismic file is open to match it to)"
+        else: "Put the survey on the map and match it to " & st.sessions[target].name &
+          "'s traces, in memory: the file is not changed")
     igSameLine(0, -1)
     if igButton("Close", ImVec2_c(x: 0, y: 0)): ui.shown = false
     marks.marked("join.close")
@@ -398,17 +399,18 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
       igSameLine(0, -1)
       let info = st.jobs.info(underWay.job)
       var fraction = -float32(igGetTime())
-      var text = $underWay.step
+      var text = if underWay.job == NoJob: "putting the survey on the map" else: $underWay.step
       if info.isSome:
         let p = info.get.progress
         if p.total > 0: fraction = float32(p.done) / float32(p.total)
         if p.phase.len > 0: text = p.phase
       igProgressBar(fraction, ImVec2_c(x: igGetFontSize() * 12, y: 0), text.cstring)
       marks.marked("join.progress")
-      igSameLine(0, -1)
-      if igSmallButton((IconClose & " Cancel").cstring):
-        result.commands.add Command(kind: ckCancelJob, job: underWay.job)
-      marks.marked("join.cancel")
+      if underWay.job != NoJob:
+        igSameLine(0, -1)
+        if igSmallButton((IconClose & " Cancel").cstring):
+          result.commands.add Command(kind: ckCancelJob, job: underWay.job)
+        marks.marked("join.cancel")
     if changed:
       var s = st.settings
       s.join = opts

@@ -431,7 +431,13 @@ million points), each time.
 
 **The survey import** (`core/join`, `ckJoin`, File > Import > Survey...; `ui/imgui/joindialog`,
 the "Import survey" window). The user imports a survey; the code keeps parseSEG's word for
-what it does, a join.
+what it does, a join. Its SPS and P1 files not on the map yet are loaded onto it as File >
+Open loads them (`loadSurvey`, each a layer; their loads are `Joining.loads`), while the
+join below runs; the import ends, and its report and log line are made (`finishImport`:
+the points on the map, then the join's words), when both are done. With no file open
+(`joinFile` none) it is the loads alone (`joMapOnly`). A cancel or a failure cancels the
+loads and takes the layers they gave off the map again (a layer a cancelled load still
+posts is dropped: `droppedLoads`). A CSV table is joined, not drawn: it has no layer yet.
 Survey files (SPS S, R and X with parseSEG's `addSps`, SEG P1 with `addP1`, CSV tables of
 stations with `addCsv`) are joined to an open file's trace keys in memory: the file is
 never changed, and a file opened again is as it is on disk. Two jobs, so that the plot
