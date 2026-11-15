@@ -869,8 +869,9 @@ modification time match what is remembered), and Messages says so; a copy with o
 changed is another file and shows none (when even its time is the same, what came at
 once is taken away again when the hash tells them apart, with a warning). They are
 written beside the program's settings (`<config>/files/`, one small NIF document per
-file), a second after a change and at the quit; the data file's bytes and modification
-time are never touched. A file whose drive does not answer opens as always; its edits
+file), a second after a change and at the quit, each whole or not at all (a temporary
+file renamed over it; one that a write cut short leaves is removed at the next start);
+the data file's bytes and modification time are never touched. A file whose drive does not answer opens as always; its edits
 come when its identity can be read, and edits you make before that are said to wait for
 it (quit before, and they are lost: Messages says so). When a hash of every byte says
 that a file taken at once for one remembered was another, the remembered file's entry is

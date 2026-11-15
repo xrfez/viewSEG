@@ -648,6 +648,10 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
 
+let ProgramStart* = getTime()
+  ## when the program started: a temporary file of the store last written
+  ## well before it is what a write cut short left (`DiskIo.sweep`)
+
 const SaveDelay* = initDuration(seconds = 1)
   ## settings are saved this long after their last change (and at shutdown)
 
@@ -778,10 +782,12 @@ proc rememberFilesIn*(state: var AppState; dir: string) =
   ## From now on, remembers the trace edits of the files opened (the user's
   ## own: `keeps`) in `dir`'s `StoreFolder` (`core/filememory`), by each
   ## file's identity, and brings them back when a file of that identity is
-  ## opened again, under any name. Without it nothing is remembered.
+  ## opened again, under any name. Without it nothing is remembered. The
+  ## temporary files a write cut short left there are removed
+  ## (`DiskIo.sweep`).
   assertUiThread()
   state.store = Store(home: dir / StoreFolder)
-  discard state.diskIo
+  state.diskIo.sweep(state.store.home, ProgramStart) # what a write cut short left
 
 func store*(state: AppState): lent Store {.inline.} =
   ## Where what is remembered about files is kept.

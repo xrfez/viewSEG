@@ -28,6 +28,12 @@
 ## - **Read** reads a whole file up to a size, and posts it (or why it could
 ##   not be read) for the UI thread, with its NIF tree (`parseNif`) or why
 ##   it is not NIF, so the UI thread only takes in a tree.
+## - **Sweep** removes the temporary files of the store of what is
+##   remembered (`<document>.<process id>.tmp`) that a write cut short left
+##   (the program killed between the write and the rename): only in that
+##   folder, only names of the store's own documents, and only those last
+##   written `SweepMargin` or more before the program started. A write takes
+##   milliseconds, so such a file is never one another viewSEG is writing.
 ##
 ## `flush` waits until everything left so far is done (tests); `stop` (and
 ## destroying the `DiskIo`) does what is left, then ends the thread, waiting
@@ -43,7 +49,7 @@ when not defined(windows):
 
 type
   TaskKind = enum
-    tkAppend, tkReplace, tkPrune, tkRead, tkList, tkRemove
+    tkAppend, tkReplace, tkPrune, tkRead, tkList, tkRemove, tkSweep
 
   Task = object
     kind: TaskKind
@@ -61,6 +67,7 @@ type
     dirs: seq[string]      ## a list of the layouts: the folders of the presets
     memory: FileRecord     ## a replace with `render`: the document's record
     render: bool           ## a replace: the text is `memoryDocument(memory)`, made here
+    before: times.Time     ## a sweep: the files last written before this are removed
 
   DiskObj = object
     lock: Lock
@@ -203,6 +210,34 @@ proc removeFor(w: var Writer; t: Task) =
   except OSError:
     w.warn("Could not remove " & t.what & " (" & t.path & "): " & getCurrentExceptionMsg())
 
+func isLeftover*(name: string): bool =
+  ## Whether `name` is a temporary file a write of a document of the store
+  ## makes: `<document>.<process id>.tmp`.
+  if not name.endsWith(".tmp"): return false
+  let stem = name[0 ..< name.len - 4]
+  let dot = stem.rfind('.')
+  dot > 0 and dot < stem.high and stem[dot + 1 .. ^1].allCharsInSet(Digits) and
+    isStoreName(stem[0 ..< dot])
+
+proc sweepDir(w: var Writer; t: Task) =
+  var removed = 0
+  try:
+    for kind, path in fs.walkDir(t.path):
+      if kind == pcFile and path.extractFilename.isLeftover:
+        try:
+          if fs.getLastModificationTime(path) < t.before:
+            fs.removeFile(path)
+            inc removed
+        except OSError:
+          w.warn("Could not remove the temporary file " & path & " a write cut short left: " &
+            getCurrentExceptionMsg())
+  except OSError:
+    discard # no store yet: nothing left
+  if removed > 0:
+    w.say(sevInfo, "Removed " & $removed & (if removed == 1: " temporary file" else:
+      " temporary files") & " a write cut short (the program ended between a write and its " &
+      "rename) left in " & t.path & ".")
+
 proc readFor(w: var Writer; t: Task) =
   var msg = Msg(job: NoJob, kind: mkRead, purpose: t.purpose, readPath: t.path)
   try:
@@ -242,6 +277,7 @@ proc run(d: ptr DiskObj) {.thread.} =
       of tkPrune: w.pruneDir(t)
       of tkRead: w.readFor(t)
       of tkRemove: w.removeFor(t)
+      of tkSweep: w.sweepDir(t)
       of tkList:
         w.d.poster.post Msg(job: NoJob, kind: mkRead, purpose: rpLayouts, readPath: t.path,
           layouts: listLayouts(t.path, t.dirs))
@@ -333,7 +369,7 @@ proc leave(x: DiskIo; t: sink Task) =
         if t.text.len == 0:
           last.entries.add t.entries
           return
-    of tkPrune, tkRead, tkList: discard
+    of tkPrune, tkRead, tkList, tkSweep: discard
     x.p.tasks.add t
     signal(x.p.changed)
 
@@ -384,6 +420,17 @@ proc prune*(x: DiskIo; dir, prefix, suffix: string; keep: Natural; spare = "") =
   if x.p != nil:
     x.leave Task(kind: tkPrune, path: dir, text: prefix, suffix: suffix, keep: keep,
       spare: spare)
+
+const SweepMargin* = initDuration(minutes = 1)
+  ## how long before the program's start a temporary file of the store was
+  ## last written, at least, for a sweep to remove it
+
+proc sweep*(x: DiskIo; dir: string; started: times.Time) =
+  ## Removes, soon, the temporary files a write cut short left in the
+  ## store's folder `dir` (the module documentation), those last written
+  ## `SweepMargin` or more before `started`, the program's start.
+  if x.p != nil:
+    x.leave Task(kind: tkSweep, path: dir, before: started - SweepMargin)
 
 proc listLayouts*(x: DiskIo; configDir: string; presetDirs: seq[string]) =
   ## Lists the layouts in `configDir` and the presets in `presetDirs`

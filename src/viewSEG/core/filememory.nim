@@ -99,6 +99,10 @@ func isDocName*(name: string): bool =
     parts[1].len == 16 and parts[1].allCharsInSet(HexDigits) and
     parts[2].len in 1..6 and parts[2].allCharsInSet(Digits)
 
+func isStoreName*(name: string): bool =
+  ## Whether `name` is one of the store's own files (a document).
+  name.isDocName
+
 func freeDocName*(id: FileIdentity; taken: openArray[string]): string =
   ## The first document name of `id` that none of `taken` has.
   var n = 1

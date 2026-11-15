@@ -3,7 +3,9 @@
 ## keep their order; a prune keeps the newest names and the file it spares;
 ## a file that cannot be written is said once, through the inbox; a named
 ## pipe is never read; `stop` writes what was left; two writes under a
-## name no file has (two backups asked for under one name) are both kept. `AppState` writes each
+## name no file has (two backups asked for under one name) are both kept;
+## the store's temporary files a write cut short left are removed at the
+## start, only those. `AppState` writes each
 ## log entry to this run's
 ## session log, one line each, the entries logged before `logTo` first,
 ## prunes the old session logs, and writes the last entries at shutdown.
@@ -21,10 +23,11 @@
 ## newest-only rule of `leave`), `freshNeverDropped` found "a backup was
 ## dropped: @["second"]" (the cause of `tsettings`'s `twoResetsKeepBoth`
 ## failing about one run in nine under load: one backup, the settings before
-## the first reset lost).
+## the first reset lost); with no sweep at the start, "a temporary file a
+## write cut short left stays".
 
 import std/[os, sequtils, strutils, times]
-import viewSEG/core/[diskio, inbox, log, nif, persist, state]
+import viewSEG/core/[diskio, filememory, identity, inbox, log, nif, persist, state]
 import utils/[faultyfs, waiting]
 when not defined(windows):
   from std/posix import nil
@@ -231,6 +234,30 @@ block freshNeverDropped:
   doAssert kept.len == 2 and "first" in kept and "second" in kept,
     "a backup was dropped: " & $kept
   releaseAll()
+
+block leftoverTemporaryFiles:
+  # the temporary files of the store's documents that a write cut short
+  # left (a kill between the write and the rename) go at the start; one
+  # written since the program started (another viewSEG's, in flight), a
+  # file of another name, and one outside the store's folder stay
+  let config = tmp / "sweep"
+  let store = config / StoreFolder
+  createDir(store)
+  let id = FileIdentity(size: 123_456, quick: 0x1234_5678_9abc_def0'u64)
+  let old = store / docName(id, 1) & ".4242.tmp"
+  let fresh = store / docName(id, 2) & ".4243.tmp"
+  let notOurs = store / "notes.4242.tmp"
+  let outside = config / docName(id, 1) & ".4242.tmp"
+  for f in [old, fresh, notOurs, outside]: writeFile(f, "x")
+  let hourAgo = getTime() - initDuration(hours = 1)
+  for f in [old, notOurs, outside]: setLastModificationTime(f, hourAgo)
+  var st = initAppState()
+  st.rememberFilesIn(config)
+  st.flushFiles()
+  doAssert not fileExists(old), "a temporary file a write cut short left stays"
+  doAssert fileExists(fresh), "a temporary file written since the start was removed"
+  doAssert fileExists(notOurs) and fileExists(outside), "another file was removed"
+  st.shutdown()
 
 block entryWithLocation:
   var e = LogEntry(time: getTime(), severity: sevWarning, source: "a.sgy", text: "short",
