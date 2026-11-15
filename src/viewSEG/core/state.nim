@@ -851,16 +851,18 @@ func settingsRevision*(state: AppState): int {.inline.} =
   ## Bumped on every change of the settings.
   state.settingsRev
 
-proc saveSettings(state: var AppState) =
+proc saveSettings(state: var AppState; first = false) =
+  ## Hands the settings to the disk thread; `first`: before what waits there.
   let file = state.settingsFile
   if file.len > 0:
-    state.disk.replace(file, settingsDocument(state.kept), "the settings")
+    state.disk.replace(file, settingsDocument(state.kept), "the settings", first = first)
   state.savedRev = state.keptRev
 
-proc saveArrangement(state: var AppState) =
+proc saveArrangement(state: var AppState; first = false) =
+  ## Hands the window layout to the disk thread; `first`: before what waits there.
   if state.configDir.len > 0 and state.arrangement.len > 0:
     state.disk.replace(state.configDir / LayoutFileName,
-      layoutDocument(Layout(imgui: state.arrangement)), "the window layout")
+      layoutDocument(Layout(imgui: state.arrangement)), "the window layout", first = first)
   state.layoutSaved = state.layoutRev
 
 # ----------------------------------------------------------- file memory --
@@ -1039,7 +1041,11 @@ proc flushFiles*(state: var AppState) =
 
 const
   QuitWait* = initDuration(milliseconds = 800)
-    ## how long `shutdown` waits, at most, for the threads to end
+    ## how long `shutdown` waits, at most, for the threads to end, and for
+    ## any one write of the disk thread
+  DiskQuitLimit* = initDuration(seconds = 5)
+    ## how long `shutdown` waits, at most, for a disk thread that goes on
+    ## writing (a slow disk, a loaded machine): the settings, the layout
   CloseWait* = initDuration(milliseconds = 200)
     ## and then for the files to be closed
 
@@ -1055,23 +1061,28 @@ proc keepForStragglers(state: var AppState) =
   for c in state.qcHeld: GC_ref(c.relations)
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
 
-proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
+proc shutdown*(state: var AppState; wait = QuitWait;
+    diskLimit = DiskQuitLimit): bool {.discardable.} =
   ## Asks every thread to end at once (the panels' readers, the watch, the
   ## jobs: every job is cancelled), hands what is left to save to the disk
-  ## thread (the settings, the layout, the session log), and waits for them
-  ## all, together, at most `wait`, then `CloseWait` for the files to be
-  ## closed (on the closer's thread): true when all ended. A thread held by
-  ## a drive that does not answer is left to end on its own, with what it
-  ## may read (`keepForStragglers`), so the quit never waits for a drive.
-  ## Destroying the state does this too.
+  ## thread (the settings and the layout before what waits there, then the
+  ## documents of what is remembered and the session log), and waits for
+  ## them all, together, at most `wait`; the disk thread, while it goes on
+  ## writing, up to `diskLimit`, but no longer than `wait` for any one write;
+  ## then `CloseWait` for the files to be closed (on the closer's thread):
+  ## true when all ended. A thread held by a drive that does not answer is
+  ## left to end on its own, with what it may read (`keepForStragglers`), so
+  ## the quit never waits for a drive; what the disk thread did not write is
+  ## said (the log, and standard error: the window is gone). Destroying the
+  ## state does this too.
   assertUiThread()
   state.spectrumReader.askStop()
   state.inspector.askStop()
   for r in state.readers: r.askStop()
   state.watch.askStop()
   state.jobs.askStop()
-  if state.savedRev != state.keptRev: state.saveSettings()
-  if state.layoutSaved != state.layoutRev: state.saveArrangement()
+  if state.savedRev != state.keptRev: state.saveSettings(first = true)
+  if state.layoutSaved != state.layoutRev: state.saveArrangement(first = true)
   state.saveMemory(getMonoTime(), force = true)
   for r in state.remembered:
     if not r.known and r.pending:
@@ -1093,7 +1104,23 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
     if not x.stop(deadline): result = false
   state.watch.stop(deadline)
   if not state.jobs.stop(deadline): result = false
-  if not state.disk.stop(deadline): result = false
+  # The disk thread: as long as it goes on writing (what the user set must
+  # not be lost to a slow disk or a loaded machine), but not on a write a
+  # drive does not answer.
+  let began = deadline - wait
+  if not state.disk.stop(began + diskLimit, stuckAfter = wait):
+    result = false
+    let held = state.disk.stuckOn
+    let why = if getMonoTime() >= began + diskLimit:
+                "the disk had not finished in " & $diskLimit.inSeconds & " s"
+              else: "the drive did not answer for " & $wait.inMilliseconds & " ms"
+    let text = "Quit without waiting longer: " & why & (if held.len > 0: "; not written: " &
+      held else: "") & "."
+    state.log.add(sevWarning, "files", text)
+    try:
+      stderr.writeLine "viewSEG: ", text
+    except IOError:
+      discard # no standard error: the log has it
   # A reader left earlier to end on its own (stuck in a drive: Retry, Stop,
   # another file) is none of `readers`, and an abandoned job's work may have
   # ended its job: what they read is still held (their holds).

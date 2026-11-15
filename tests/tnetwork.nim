@@ -2,7 +2,8 @@
 ## file-system seam (`tests/utils/faultyfs`): a folder whose listing hangs, a
 ## file whose open hangs, a read that hangs and a drive that fails mid-read
 ## each leave every call the UI thread makes quick, another file can be shown
-## meanwhile, a cancel is taken at once, the quit ends within a second, and
+## meanwhile, a cancel is taken at once, the quit ends within a second (the
+## settings' folder hung too: the quit says they were not written), and
 ## nothing the UI thread calls reaches the file system. The same for the
 ## Headers window: its reader's read of a trace header that hangs is said
 ## not to answer while another file's trace is read meanwhile (its late
@@ -21,6 +22,8 @@
 ## (`leave` taken out of `followInspect`), `aHungHeaderRead` found "another
 ## file's trace is not read meanwhile"; with its header reads not marked
 ## (`fs.mappedRead` taken out of `serve`), "the header read hangs" never came.
+## With the disk thread waited for up to its 5 s limit whatever it does (no
+## bound on one write), "the quit took 4 seconds, 922 milliseconds...".
 ##
 ## Under ThreadSanitizer only thread leaks are reported: the threads left in
 ## the hung drive, by design.
@@ -329,6 +332,10 @@ withFixtures fx:
     echo "quit with an open, a read, the Headers window's reader and the watch hung: ",
       t.inMilliseconds, " ms"
     doAssert t < initDuration(milliseconds = 1500), "the quit took " & $t
+    var said = false # what was not written
+    for e in st.log:
+      if "Quit without waiting longer" in e.text and "the settings" in e.text: said = true
+    doAssert said, "the settings not written, not said"
     releaseAll() # the stuck threads come back and end on their own
     doAssert waitUntil(hung() == 0)
     sleep 50

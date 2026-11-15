@@ -277,7 +277,14 @@ for, let the user go on, and quit.
   `stop` waits until a deadline; `AppState.shutdown` asks them all at once and waits for
   them together at most `QuitWait` (0.8 s); a thread left keeps its memory, and the open
   files and relation files it may read, to the end of the process
-  (`docs/models/jobsquit.nif`). A reader left earlier (Retry, Stop, another file) is none
+  (`docs/models/jobsquit.nif`). The disk thread is waited for longer, so that what the
+  user set is not lost to a slow disk or a loaded machine: the settings and the window
+  layout (written a second after they change, `SaveDelay`) are handed to it at the quit
+  before what waits there, and it is waited for while it goes on writing, up to
+  `DiskQuitLimit` (5 s), but never longer than `QuitWait` for any one write: a write to
+  a drive that does not answer is left as before, and what was not written is said (the
+  log, and standard error, as the window is gone). The thread's memory follows the same
+  rule as the others' (freed only once it has ended), so the model is unchanged. A reader left earlier (Retry, Stop, another file) is none
   of the panels' readers: the holds still taken (`Jobs.holdsLeft`) count it as left too.
 - **What the user sees.** `AppState.waiting` (a panel: an open or a read not answering,
   or a file that cannot be read now, `mkUnread`) and `listingWait` (the listing, or the

@@ -24,10 +24,13 @@
 ## dropped: @["second"]" (the cause of `tsettings`'s `twoResetsKeepBoth`
 ## failing about one run in nine under load: one backup, the settings before
 ## the first reset lost); with no sweep at the start, "a temporary file a
-## write cut short left stays".
+## write cut short left stays". On a slow disk at the quit (`slowDiskAtTheQuit`):
+## with the disk thread waited for no longer than the other threads (0.8 s),
+## "4 of the 8 named layouts written"; and with the settings and the layout
+## not handed first either, settings.nif was not there.
 
-import std/[os, sequtils, strutils, times]
-import viewSEG/core/[diskio, filememory, identity, inbox, log, nif, persist, state]
+import std/[monotimes, os, sequtils, strutils, times]
+import viewSEG/core/[diskio, filememory, identity, inbox, layouts, log, nif, persist, state]
 import utils/[faultyfs, waiting]
 when not defined(windows):
   from std/posix import nil
@@ -234,6 +237,43 @@ block freshNeverDropped:
   doAssert kept.len == 2 and "first" in kept and "second" in kept,
     "a backup was dropped: " & $kept
   releaseAll()
+
+block slowDiskAtTheQuit:
+  # A slow configuration folder (every file opened there takes 100 ms, as
+  # a slow disk or a loaded machine gives) and ten documents left to write
+  # at the quit (eight named layouts saved just before it, then the
+  # settings and the window layout changed): a second of writing, more than
+  # the 0.8 s any one thread is waited for. The quit writes the settings
+  # and the layout first and waits for the disk while it goes on: every
+  # document is written when `shutdown` returns.
+  let config = tmp / "slow"
+  createDir(config)
+  var st = initAppState()
+  st.keepSettingsIn(config, LoadedSettings(saveable: true))
+  st.keepLayoutsIn(config, [])
+  st.apply Command(kind: ckLayout, arrangement: "[Window][before]\n")
+  st.flushFiles()
+  fault(config, fkDelay, {foOpen}, delay = initDuration(milliseconds = 100))
+  for k in 1 .. 8: st.apply Command(kind: ckSaveLayout, layoutName: "named " & $k)
+  var s = st.settings
+  s.theme = "slow disk"
+  st.apply Command(kind: ckSettings, settings: s)
+  st.apply Command(kind: ckLayout, arrangement: "[Window][after]\n")
+  let began = getMonoTime()
+  let ended = st.shutdown()
+  let took = getMonoTime() - began
+  fault(config, fkNone)
+  doAssert "slow disk" in readFile(config / SettingsFileName), "the settings were not written"
+  var problems: seq[string]
+  doAssert readLayout(readFile(config / LayoutFileName), LayoutFileName, problems).imgui ==
+    "[Window][after]\n", "the layout was not written"
+  var named = 0
+  for kind, f in walkDir(config / LayoutsDirName):
+    if f.endsWith(".nif"): inc named
+  doAssert named == 8, $named & " of the 8 named layouts written"
+  doAssert ended, "the disk thread was left"
+  doAssert took < DiskQuitLimit, "the quit took " & $took
+  echo "tdiskio: a quit on a slow disk wrote its 10 documents in ", took.inMilliseconds, " ms"
 
 block leftoverTemporaryFiles:
   # the temporary files of the store's documents that a write cut short

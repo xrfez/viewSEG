@@ -11,7 +11,9 @@
 ##   away does;
 ## - `fkPermits`: blocks until the test grants a read (`grant`), one call
 ##   each, then moves `fs.now` on by the fault's `delay`: a drive whose every
-##   round trip the test times itself.
+##   round trip the test times itself;
+## - `fkDelay`: holds the calling thread for the fault's `delay`, really (a
+##   slow disk that answers).
 ##
 ## A fault applies to the calls named in its `ops` (every call by default).
 ## The hook also **asserts that it is never called on the UI thread**: every
@@ -28,7 +30,7 @@ export filesystem
 
 type
   FaultKind* = enum
-    fkNone, fkSlow, fkHang, fkFail, fkPermits
+    fkNone, fkSlow, fkHang, fkFail, fkPermits, fkDelay
 
   Fault = object
     prefix: string
@@ -59,6 +61,7 @@ proc hookCall(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
   {.cast(gcsafe).}:
     var fail = false
     var ui = false
+    var hold = initDuration()
     withLock lock:
       inc counts[op]
       pathCounts.add (op, path)
@@ -70,6 +73,7 @@ proc hookCall(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
         case faults[i].kind
         of fkNone: discard
         of fkSlow: advanceFsClock(faults[i].delay)
+        of fkDelay: hold = faults[i].delay # (waited for outside the lock)
         of fkFail: fail = true
         of fkHang:
           let serial = faults[i].serial
@@ -101,6 +105,7 @@ proc hookCall(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
             let j = find(path, op)
             if j >= 0: advanceFsClock(faults[j].delay) # the round trip's time
           else: fail = true
+    if hold > initDuration(): sleep int(hold.inMilliseconds)
     if ui:
       try:
         stderr.writeLine "faultyfs: called on the UI thread: ", op, " ", path

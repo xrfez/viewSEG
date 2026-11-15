@@ -45,11 +45,16 @@
 ##   written `SweepMargin` or more before the program started. A write takes
 ##   milliseconds, so such a file is never one another viewSEG is writing.
 ##
+## The thread takes one task at a time, in order; a task left `first` (the
+## settings and the layout at the quit) goes before those waiting.
+##
 ## `flush` waits until everything left so far is done (tests); `stop` (and
 ## destroying the `DiskIo`) does what is left, then ends the thread, waiting
-## for it until a deadline only: a configuration or log folder on a drive
-## that does not answer must not hold the quit (the thread is then left to
-## end on its own, with its memory, and what it had left is not written).
+## for it until a deadline only, and no longer than `stuckAfter` for any one
+## task: a slow disk that goes on writing is waited for, but a configuration
+## or log folder on a drive that does not answer must not hold the quit (the
+## thread is then left to end on its own, with its memory, and what it had
+## left is not written: `stuckOn` says what it was held on).
 
 import std/[algorithm, locks, monotimes, os, strutils, tables, times]
 import edits, filememory, filesystem, inbox, jobs, layouts, log, nif, threads
@@ -83,12 +88,15 @@ type
       ## merged with another program's change (`base`, `expect`)
     base: EditLists        ## `merging`: the edits the document held as this run read or wrote it
     expect: DocStamp       ## `merging`: its stamp then; size -1 for no document
+    first: bool            ## left before the tasks waiting (after those left so before it)
 
   DiskObj = object
     lock: Lock
     changed, idle: Cond
     tasks: seq[Task]
     busy, quit, started, ended, abandoned: bool
+    since: MonoTime ## `busy`: when the task in hand was taken
+    current: string ## `busy`: what it writes, and where ("the settings (/home/...)")
     poster: Poster
     thread: Thread[ptr DiskObj]
 
@@ -377,30 +385,35 @@ proc readFor(w: var Writer; t: Task) =
       msg.docError = e.msg
   w.d.poster.post msg
 
+func named(t: Task): string =
+  ## What `t` is about, and where, for a message.
+  (if t.what.len > 0: t.what else: $t.kind) & " (" & t.path & ")"
+
 proc run(d: ptr DiskObj) {.thread.} =
   markWorkerThread()
   var w = Writer(d: d)
-  var work: seq[Task]
   while true:
+    var t: Task
     withLock d.lock:
       while d.tasks.len == 0 and not d.quit:
         wait(d.changed, d.lock)
       if d.tasks.len == 0:
         break # quit, and nothing is left
-      swap(work, d.tasks)
+      t = move d.tasks[0]
+      d.tasks.delete 0
       d.busy = true
-    for t in work:
-      case t.kind
-      of tkAppend: w.appendTo(t)
-      of tkReplace: w.replaceFile(t)
-      of tkPrune: w.pruneDir(t)
-      of tkRead: w.readFor(t)
-      of tkRemove: w.removeFor(t)
-      of tkSweep: w.sweepDir(t)
-      of tkList:
-        w.d.poster.post Msg(job: NoJob, kind: mkRead, purpose: rpLayouts, readPath: t.path,
-          layouts: listLayouts(t.path, t.dirs))
-    work.setLen 0
+      d.since = getMonoTime()
+      d.current = t.named
+    case t.kind
+    of tkAppend: w.appendTo(t)
+    of tkReplace: w.replaceFile(t)
+    of tkPrune: w.pruneDir(t)
+    of tkRead: w.readFor(t)
+    of tkRemove: w.removeFor(t)
+    of tkSweep: w.sweepDir(t)
+    of tkList:
+      w.d.poster.post Msg(job: NoJob, kind: mkRead, purpose: rpLayouts, readPath: t.path,
+        layouts: listLayouts(t.path, t.dirs))
     withLock d.lock:
       d.busy = false
       if d.tasks.len == 0: broadcast(d.idle)
@@ -422,19 +435,24 @@ proc askStop*(x: DiskIo) =
       x.p.quit = true
       signal(x.p.changed)
 
-proc stop*(x: DiskIo; deadline = getMonoTime() + DiskStopWait): bool {.discardable.} =
+proc stop*(x: DiskIo; deadline = getMonoTime() + DiskStopWait;
+    stuckAfter = DiskStopWait): bool {.discardable.} =
   ## Does what is left, then ends the thread, waiting for it until
-  ## `deadline`: true when it has ended; false when it is held by a drive
-  ## that does not answer, and it is then left to end on its own.
-  ## Idempotent; destroying the `DiskIo` does it.
+  ## `deadline`, and no longer once one task has been in hand for
+  ## `stuckAfter`: true when it has ended; false when it is held by a drive
+  ## that does not answer (or `deadline` came first), and it is then left to
+  ## end on its own. Idempotent; destroying the `DiskIo` does it.
   if x.p == nil or not x.p.started: return true
   if x.p.abandoned: return false
   x.askStop()
   var ended = false
   while true:
+    var stuck = false
+    let now = getMonoTime()
     withLock x.p.lock:
       ended = x.p.ended
-    if ended or getMonoTime() >= deadline: break
+      stuck = x.p.busy and now - x.p.since >= stuckAfter
+    if ended or stuck or now >= deadline: break
     sleep 1
   if ended:
     joinThread(x.p.thread)
@@ -442,6 +460,16 @@ proc stop*(x: DiskIo; deadline = getMonoTime() + DiskStopWait): bool {.discardab
   else:
     x.p.abandoned = true
   ended
+
+proc stuckOn*(x: DiskIo): string =
+  ## What the thread is held on, when `stop` left it: the task in hand
+  ## ("the settings (/home/...)"), and how many more wait; "" for nothing.
+  if x.p != nil and x.p.abandoned:
+    withLock x.p.lock:
+      if x.p.busy: result = x.p.current
+      if x.p.tasks.len > 0:
+        result.add (if result.len > 0: ", and " else: "") & $x.p.tasks.len &
+          (if x.p.tasks.len == 1: " more file" else: " more files") & " to write"
 
 proc `=destroy`*(x: DiskIo) =
   if x.p != nil:
@@ -465,6 +493,8 @@ proc newDiskIo*(poster: sink Poster): DiskIo =
   p.started = true
 
 proc leave(x: DiskIo; t: sink Task) =
+  ## Hands `t` to the thread: after the tasks waiting, or, `t.first`, before
+  ## them (after those left `first` before it).
   withLock x.p.lock:
     if x.p.quit: return
     case t.kind
@@ -491,20 +521,25 @@ proc leave(x: DiskIo; t: sink Task) =
           last.entries.add t.entries
           return
     of tkPrune, tkRead, tkList, tkSweep: discard
-    x.p.tasks.add t
+    if t.first:
+      var at = 0
+      while at < x.p.tasks.len and x.p.tasks[at].first: inc at
+      x.p.tasks.insert(t, at)
+    else: x.p.tasks.add t
     signal(x.p.changed)
 
 proc replace*(x: DiskIo; path: string; text: sink string; what: string; done = "";
-    entries: sink seq[LogEntry] = @[]; fresh = false) =
+    entries: sink seq[LogEntry] = @[]; fresh = false; first = false) =
   ## Writes `text`, then each of `entries` as a line (`fileLine`), to `path`
   ## atomically, soon (the module documentation); `what` names the document
   ## in a message ("the settings"), and `done`, when not "", is logged once
   ## it is written. With `fresh`, never over a file: under the first name
   ## no file has (`path`, or `-2`, `-3` ... before its extension), and
-  ## `done` is followed by that path and a full stop.
+  ## `done` is followed by that path and a full stop. With `first`, before
+  ## what waits to be written.
   if x.p != nil:
     x.leave Task(kind: tkReplace, path: path, text: text, what: what, done: done,
-      entries: entries, fresh: fresh)
+      entries: entries, fresh: fresh, first: first)
 
 proc replace*(x: DiskIo; path: string; record: sink FileRecord; what: string) =
   ## Writes `record`'s document (`memoryDocument`, made on the disk thread:
