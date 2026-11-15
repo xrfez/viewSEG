@@ -261,6 +261,21 @@ block takeInAndRemembered:
   f.forget()
   doAssert f.isEmpty and f.kept.isEmpty and not f.canUndo
 
+block merged:
+  # one file's edits made under two paths: each list the union, the
+  # history of both (each step undone as before)
+  var a, b: FileEdits
+  discard a.change(teKilled, [3, 5], on = true)
+  discard b.change(teKilled, [5, 9], on = true)
+  discard b.change(teReversed, [2], on = true, keep = false)
+  a.merge(b)
+  doAssert a.shown.lists[teKilled] == @[3, 5, 9] and a.kept.lists[teKilled] == @[3, 5, 9]
+  doAssert a.shown.lists[teReversed] == @[2] and a.kept.lists[teReversed].len == 0
+  doAssert a.steps.undos == 3
+  discard a.undo() # the reversal (shown only)
+  discard a.undo() # 5 and 9 killed
+  doAssert a.shown.lists[teKilled] == @[3], $a.shown.lists[teKilled]
+
 block cost:
   # What the screen asks of a file's lists every frame (whether the gather
   # shown has an edit: `gatherEdited`) and with every new view (the

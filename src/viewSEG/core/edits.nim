@@ -367,6 +367,31 @@ proc remembered*(e: var FileEdits; l: EditLists) =
   e.kept.allReversed = e.kept.allReversed or l.allReversed
   if e.shown != was: inc e.revision
 
+proc merge*(e: var FileEdits; other: sink FileEdits) =
+  ## Takes the edits of `other` in beside those of `e`, one file's edits
+  ## made under two paths (a copy, a link): shown and kept, each the union
+  ## of both, so neither loses an edit; the history of both, `e`'s steps
+  ## first (the steps undone are dropped), within `MaxSteps` and
+  ## `MaxHeldTraces`.
+  let (wasShown, wasKept) = (e.shown, e.kept)
+  for edit in TraceEdit:
+    e.shown.lists[edit] = union(e.shown.lists[edit], other.shown.lists[edit])
+    e.kept.lists[edit] = union(e.kept.lists[edit], other.kept.lists[edit])
+  e.shown.allReversed = e.shown.allReversed or other.shown.allReversed
+  e.kept.allReversed = e.kept.allReversed or other.kept.allReversed
+  if e.shown != wasShown: inc e.revision
+  if e.kept != wasKept: inc e.keptRevision
+  for r in e.redos: e.held -= r.size
+  e.redos.setLen 0
+  for s in other.undos:
+    e.held += s.size
+    e.undos.add s
+  var drop = 0
+  while e.undos.len - drop > 1 and (e.undos.len - drop > MaxSteps or e.held > MaxHeldTraces):
+    e.held -= e.undos[drop].size
+    inc drop
+  if drop > 0: e.undos = e.undos[drop .. ^1]
+
 proc forget*(e: var FileEdits) =
   ## Takes away what is kept and what is shown, and the history: the file
   ## is shown as it is on disk, and nothing is remembered.

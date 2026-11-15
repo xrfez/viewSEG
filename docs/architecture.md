@@ -708,7 +708,13 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   (`DiskIo.remove`). Edits made before the identity is known are kept by the path
   instead (`pendingName`: the path, size and modification time; `writePending`), taken
   in when that file is next identified unchanged (`takePending`) and the pending
-  document removed after its own is written. `AppState.knownDocs` holds what this run wrote, newer than the disk
+  document removed after its own is written. **One file under two paths** (a copy, a
+  hard or symbolic link, opened in one run): `edits` is keyed by `keyOf(path)`, the path
+  itself or, once two paths are known to hold the same bytes (`linkSame`: the same size,
+  ends and modification time at once, else equal full hashes), the first path's
+  (`editKey`); `link` merges their `FileEdits` (`merge`: the union, both histories) and
+  gives them one document; a path that changes on disk, is identified again or whose
+  hash tells it apart leaves the group with a copy (`unlink`). `AppState.knownDocs` holds what this run wrote, newer than the disk
   until it is written. **The File memory window** reads every document on a job
   (`listMemoryWork`: `memoryList`), then looks at where each file is, folder by folder
   (`lookWork`: gone, its folder not reached, or "not answering" once a folder's look has

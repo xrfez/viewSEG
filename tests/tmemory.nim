@@ -37,6 +37,8 @@
 ##   "not answering" and never gone;
 ## - a file rewritten in the middle while its hash runs is not confirmed;
 ## - an export leaves out an agent's kill (for the session only), and says so;
+## - one file opened under three paths (itself, a symbolic link, a copy)
+##   has one set of edits, the kills made under each kept, in one document;
 ## - the data file's bytes and modification time are as they were through
 ##   all of it, what is remembered of it forgotten (File memory) included.
 ##
@@ -65,7 +67,9 @@
 ## hashed was confirmed"; with the hash on the background lane, "a
 ## background job waits behind a file's hash"; with the files looked at in
 ## the listing's job, "the listing waits for a drive that does not answer";
-## with the edits shown exported, "the export holds the agent's kill".
+## with the edits shown exported, "the export holds the agent's kill"; with
+## the edits kept by path (`keyOf` the path itself), "the link does not share
+## the edits".
 
 import std/[atomics, os, strutils, times]
 import viewSEG/core/[jobs, state]
@@ -511,5 +515,68 @@ withFixtures fx:
     doAssert not st.rec("far.sgy").gone
     st.apply Command(kind: ckForgetFiles, forget: docs)
     st.shutdown()
+  block onePathAndAnother:
+    # one file opened under two paths (a symbolic link: at once; a copy
+    # with a time of its own: once both are hashed whole): one set of
+    # edits, every path's kept, in one document, back under any path
+    let l = fx.dir / "link.sgy"
+    createSymlink(b, l)
+    let c = fx.dir / "same-copy.sgy"
+    writeFile(c, readFile(b))
+    var st = start(config)
+    st.showFile(b)
+    doAssert st.settle(st.remembering(b).known)
+    st.edit(teKilled, 4)
+    st.showFile(l)
+    doAssert st.settle(st.remembering(l).known)
+    doAssert st.editsOf(0).has(teKilled, 4), "the link does not share the edits"
+    st.edit(teKilled, 8)
+    st.showFile(b)
+    doAssert st.editsOf(0).has(teKilled, 8), "the file does not share its link's edit"
+    st.showFile(c)
+    doAssert st.settle(st.remembering(c).confirmed and st.remembering(b).confirmed and
+      not st.remembering(c).looking and st.editsOf(0).has(teKilled, 4)),
+      "the copy does not share the edits once hashed"
+    st.edit(teKilled, 6)
+    st.flushFiles()
+    var t: Time
+    let key = quickIdentity(b, t).key
+    var d: seq[string]
+    for x in docs(config): # (the rewritten copy's, of the same ends, is another file's)
+      if x.extractFilename.startsWith(key) and "rewritten.sgy" notin readFile(x): d.add x
+    var texts = ""
+    for x in d: texts.add readFile(x) & "\n"
+    doAssert d.len == 1, "one file, documents: " & texts
+    doAssert "(killed \"5 7 9\")" in readFile(d[0]), readFile(d[0])
+    st.showFile(b)
+    doAssert st.editsOf(0).has(teKilled, 6), "the file does not share its copy's edit"
+    # a file of the same size, ends and time but another content: taken at
+    # once for the same file, and apart again when its hash says so
+    var bytes = readFile(b)
+    bytes[bytes.len div 2] = char(ord(bytes[bytes.len div 2]) xor 0x20)
+    let x = fx.dir / "same-ends.sgy"
+    writeFile(x, bytes)
+    setLastModificationTime(x, getLastModificationTime(b))
+    holdStep("reading every byte")
+    st.showFile(x)
+    doAssert st.settle(st.remembering(x).known and st.editsOf(0).has(teKilled, 4))
+    releaseStep("reading every byte")
+    doAssert st.settle(st.remembering(x).confirmed and not st.remembering(x).looking)
+    doAssert st.editsOf(0).isEmpty, "a file of another content keeps the edits of the other"
+    doAssert "its content differs" in st.lastWarning, st.lastWarning
+    st.showFile(b)
+    doAssert st.editsOf(0).has(teKilled, 4) and st.editsOf(0).has(teKilled, 6) and
+      st.editsOf(0).has(teKilled, 8), "the file lost its edits to the other"
+    st.shutdown()
+    removeFile(x)
+    st = start(config)
+    st.showFile(l)
+    doAssert st.settle(st.remembering(l).known and st.editsOf(0).has(teKilled, 6) and
+      st.editsOf(0).has(teKilled, 4) and st.editsOf(0).has(teKilled, 8)),
+      "the edits of the three paths did not all come back"
+    st.apply Command(kind: ckClearEdits, panel: MainPanel)
+    st.shutdown()
+    removeFile(l)
+    removeFile(c)
   doAssert (readFile(b), getLastModificationTime(b)) == kept, "the data file changed"
 echo "tmemory: ok"

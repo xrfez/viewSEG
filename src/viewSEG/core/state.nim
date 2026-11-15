@@ -546,7 +546,11 @@ type
     opening, closing: seq[Pending]
     files: FileList ## the file list
     edits: Table[string, FileEdits]
-      ## per file (its canonical path): the traces killed and reversed
+      ## per file (by `keyOf` its path): the traces killed and reversed
+    editKey: Table[string, string]
+      ## a path opened this run of a file opened under another too (a copy,
+      ## a link: the same bytes), to the path whose `edits` it shares
+      ## (`linkSame`); a path not in it has its own
     noEdits: FileEdits ## always empty: `editsOf` for a file with none
     showFound: PanelId ## show the first file the listing finds here; NoPanel for none
     jump: tuple[path: string; trace, record: int]
@@ -810,6 +814,11 @@ func store*(state: AppState): lent Store {.inline.} =
   ## Where what is remembered about files is kept.
   state.store
 
+func keyOf(state: AppState; path: string): string =
+  ## The key of `edits` of the file at `path`: its own path, or that of
+  ## another path of the same file opened this run (`linkSame`).
+  state.editKey.getOrDefault(path, path)
+
 func rememberedAt(state: AppState; path: string): int =
   for i, r in state.remembered:
     if r.path == path: return i
@@ -832,7 +841,7 @@ func recordOf(state: AppState; i: int): FileRecord =
   let r = state.remembered[i]
   result = FileRecord(identity: r.identity, name: r.path.extractFilename, path: r.path,
     opened: r.opened, modified: r.modified, doc: r.doc)
-  if r.path in state.edits: result.edits = state.edits[r.path].kept
+  if state.keyOf(r.path) in state.edits: result.edits = state.edits[state.keyOf(r.path)].kept
   if r.doc in state.knownDocs: result.later = state.knownDocs[r.doc].later # a later version's
 
 proc hashFile(state: var AppState; i: int) =
@@ -860,8 +869,8 @@ proc writePending(state: var AppState; i: int) =
   ## yet, by its path, size and modification time (`pendingName`), so that
   ## a quit before the identity comes loses none of them.
   template r: untyped = state.remembered[i]
-  if r.path notin state.edits: return
-  template e: untyped = state.edits[r.path]
+  if state.keyOf(r.path) notin state.edits: return
+  template e: untyped = state.edits[state.keyOf(r.path)]
   r.pendingRev = e.keptRevision
   if e.kept.isEmpty: state.dropPending(i)
   else:
@@ -877,7 +886,7 @@ proc writeMemoryDoc(state: var AppState; i: int) =
   template r: untyped = state.remembered[i]
   let name = r.path.extractFilename
   var rec = state.recordOf(i)
-  r.savedRev = if r.path in state.edits: state.edits[r.path].keptRevision else: 0
+  r.savedRev = if state.keyOf(r.path) in state.edits: state.edits[state.keyOf(r.path)].keptRevision else: 0
   if r.seenAside: # the document is written whole now: its own time
     state.diskIo.remove(state.store.docPath(r.doc).seenName, "when " & name & " was opened")
     r.seenAside = false
@@ -887,6 +896,11 @@ proc writeMemoryDoc(state: var AppState; i: int) =
       state.knownDocs.del r.doc
     state.dropPending(i)
     return
+  if r.doc.len == 0: # the same file under another path may have one
+    for x in state.remembered:
+      if x.doc.len > 0 and r.doc.len == 0 and state.keyOf(x.path) == state.keyOf(r.path):
+        (r.doc, r.ownDoc) = (x.doc, x.ownDoc)
+    rec.doc = r.doc
   if r.doc.len == 0:
     var taken = r.waiting.mapIt(it.doc) & r.taken
     for x in state.remembered: taken.add x.doc
@@ -897,6 +911,8 @@ proc writeMemoryDoc(state: var AppState; i: int) =
   state.knownDocs[r.doc] = rec
   state.diskIo.replace(state.store.docPath(r.doc), move rec, "what is remembered about " & name)
   state.dropPending(i) # written after the document: the edits are never on neither
+  for x in state.remembered.mitems: # the other paths of the file: written with it
+    if x.doc == r.doc: x.savedRev = r.savedRev
   if not r.identity.fullKnown: state.hashFile(i)
 
 proc saveMemory(state: var AppState; now: MonoTime; force: bool) =
@@ -906,15 +922,15 @@ proc saveMemory(state: var AppState; now: MonoTime; force: bool) =
   if state.store.isNowhere: return
   for i in 0 ..< state.remembered.len:
     template r: untyped = state.remembered[i]
-    if not r.known and r.path in state.edits and
-        state.edits[r.path].keptRevision != r.pendingRev and
-        state.edits[r.path].keptRevision != r.savedRev:
+    if not r.known and state.keyOf(r.path) in state.edits and
+        state.edits[state.keyOf(r.path)].keptRevision != r.pendingRev and
+        state.edits[state.keyOf(r.path)].keptRevision != r.savedRev:
       if r.changedAt == MonoTime(): r.changedAt = now
       if force or now - r.changedAt >= SaveDelay:
         state.writePending(i)
         r.changedAt = MonoTime()
-    elif r.known and r.path in state.edits:
-      let rev = state.edits[r.path].keptRevision
+    elif r.known and state.keyOf(r.path) in state.edits:
+      let rev = state.edits[state.keyOf(r.path)].keptRevision
       if rev != r.savedRev:
         if r.changedAt == MonoTime(): r.changedAt = now
         if force or now - r.changedAt >= SaveDelay:
@@ -1268,14 +1284,14 @@ func traceEdits*(state: AppState; trace: int): set[TraceEdit] =
   ## The edits of survey-wide trace `trace` now; none for a trace no open
   ## file has.
   let i = state.findTrace(trace)
-  if i >= 0 and state.sessions[i].path in state.edits:
-    result = state.edits[state.sessions[i].path].editsOf(trace - state.sessions[i].base)
+  if i >= 0 and state.keyOf(state.sessions[i].path) in state.edits:
+    result = state.edits[state.keyOf(state.sessions[i].path)].editsOf(trace - state.sessions[i].base)
 
 func editsAt(state: AppState; path: string): lent FileEdits =
   ## The edits of the file at `path`; none when it has none. Not a copy
   ## (`getOrDefault` copies the lists and the whole history).
-  if path in state.edits:
-    return state.edits[path]
+  if state.keyOf(path) in state.edits:
+    return state.edits[state.keyOf(path)]
   state.noEdits
 
 func editsOf*(state: AppState; panelIndex: int): lent FileEdits =
@@ -1285,8 +1301,8 @@ func editsOf*(state: AppState; panelIndex: int): lent FileEdits =
   # Not an `if` expression: Nim 2.4.2 copies its branch into a temporary
   # and returns a view of that, freed on return.
   let i = state.shownFile(panelIndex)
-  if i >= 0 and state.sessions[i].path in state.edits:
-    return state.edits[state.sessions[i].path]
+  if i >= 0 and state.keyOf(state.sessions[i].path) in state.edits:
+    return state.edits[state.keyOf(state.sessions[i].path)]
   state.noEdits
 
 func shownTraces(state: AppState; panelIndex: int): (int, Slice[int]) =
@@ -1304,9 +1320,9 @@ func gatherEdited*(state: AppState; panelIndex: int): bool =
   ## shown or kept (an edit an agent hid for the session): then the display
   ## header has a row for them.
   let (i, traces) = state.shownTraces(panelIndex)
-  i >= 0 and state.sessions[i].path in state.edits and
-    (state.edits[state.sessions[i].path].anyIn(traces) or
-    state.edits[state.sessions[i].path].anyKeptIn(traces))
+  i >= 0 and state.keyOf(state.sessions[i].path) in state.edits and
+    (state.edits[state.keyOf(state.sessions[i].path)].anyIn(traces) or
+    state.edits[state.keyOf(state.sessions[i].path)].anyKeptIn(traces))
 
 proc missing(what: string) {.noinline, noreturn.} =
   raise newException(KeyError, what)
@@ -1568,8 +1584,8 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
   p.pending = req
   var reversed, killed: seq[int]
   let (i, traces) = state.shownTraces(k)
-  if i >= 0 and state.sessions[i].path in state.edits:
-    template e: untyped = state.edits[state.sessions[i].path]
+  if i >= 0 and state.keyOf(state.sessions[i].path) in state.edits:
+    template e: untyped = state.edits[state.keyOf(state.sessions[i].path)]
     reversed = e.listIn(teReversed, traces)
     killed = e.listIn(teKilled, traces)
   state.readers[k].request ReaderRequest(read: req, fields: p.shownFields, flow: flow,
@@ -2087,15 +2103,33 @@ proc mark(state: var AppState; path: string; short, seen: bool) =
     if seen: e.isNew = false
     if (e.status, e.isNew) != was: state.files.changedAt(i)
 
+proc unlink(state: var AppState; path: string) =
+  ## `path` no longer shares its edits with the other paths of its file
+  ## (it changed on disk, or holds another file now): it keeps a copy of
+  ## them, and the others keep theirs.
+  let key = state.keyOf(path)
+  var others: seq[string]
+  for p, k in state.editKey:
+    if k == key and p != path: others.add p
+  if key != path:
+    state.editKey.del path
+    if key in state.edits: state.edits[path] = state.edits[key]
+  elif others.len > 0: # it was the key: the others move to one of theirs
+    let next = others[0]
+    state.editKey.del next
+    if path in state.edits: state.edits[next] = state.edits[path]
+    for p in others[1 .. ^1]: state.editKey[p] = next
+
 proc checkEdits(state: var AppState; s: Session) =
   ## Sets the edits of `s`'s path aside (as "Clear all edits" does, so Ctrl+Z
   ## brings them back) when they were made on the file as it was before
   ## another program changed it: by the trace's index, they may not fit.
-  if s.path notin state.edits or state.edits[s.path].isEmpty: return
+  if state.keyOf(s.path) notin state.edits or state.edits[state.keyOf(s.path)].isEmpty: return
   let now = (size: s.size, modified: s.modified)
   let was = state.editStamps.getOrDefault(s.path, now)
   state.editStamps[s.path] = now
-  if was != now and state.edits[s.path].clearAll(kind = skSetAside):
+  if was != now: state.unlink(s.path) # its other paths, a copy, did not change
+  if was != now and state.edits[state.keyOf(s.path)].clearAll(kind = skSetAside):
     state.log.add(sevWarning, s.name, s.name & " changed on disk after its traces were " &
       "edited, so its kills and polarity reversals are set aside: by trace number they may " &
       "not fit the traces it holds now. Edit > Undo (Ctrl+Z) brings them back. They stay " &
@@ -2110,7 +2144,7 @@ proc editsChanged(state: var AppState; path: string; step = EditStep(kind: skCha
   let any = step.kind == skChange and step.traces.len == 0
   for j in 0 ..< state.panels.len:
     let (i, traces) = state.shownTraces(j)
-    if i >= 0 and state.sessions[i].path == path:
+    if i >= 0 and state.keyOf(state.sessions[i].path) == state.keyOf(path):
       template layer: untyped = state.panels[j].layers[0]
       if layer.reversed != e.allReversed:
         layer.reversed = e.allReversed
@@ -2142,6 +2176,7 @@ proc identify(state: var AppState; s: Session) =
   if i < 0:
     state.remembered.add Remembered(path: s.path, job: NoJob, hashJob: NoJob)
     i = state.remembered.high
+  else: state.unlink(s.path) # perhaps another file under this name now
   template r: untyped = state.remembered[i]
   for j in [r.job, r.hashJob]:
     if j != NoJob: discard state.jobs.cancel(j)
@@ -2179,7 +2214,7 @@ proc applyRecord(state: var AppState; i: int; c: FileRecord) =
       "when " & name & " was opened")
     r.seenAside = true
   if c.edits.isEmpty: return
-  state.edits.mgetOrPut(r.path, FileEdits()).remembered(c.edits)
+  state.edits.mgetOrPut(state.keyOf(r.path), FileEdits()).remembered(c.edits)
   var said = name & ": " & keptWords(c.edits) & ", as you left " &
     (if c.name.len > 0 and c.name != name: "it as " & c.name else: "it")
   if c.opened != Time(): said.add " (" & c.opened.local.format("yyyy-MM-dd HH:mm") & ")"
@@ -2195,7 +2230,7 @@ proc takePending(state: var AppState; i: int; p: FileRecord; fits: bool) =
   let name = r.path.extractFilename
   r.pending = true # removed once its edits are written (`writeMemoryDoc`), or now
   if fits:
-    state.edits.mgetOrPut(r.path, FileEdits()).remembered(p.edits)
+    state.edits.mgetOrPut(state.keyOf(r.path), FileEdits()).remembered(p.edits)
     r.savedRev = -1 # its own document takes them
     state.log.add(sevInfo, name, name & ": " & keptWords(p.edits) & ", as you left it " &
       "when its drive did not give its first and last bytes (" &
@@ -2211,6 +2246,61 @@ proc takePending(state: var AppState; i: int; p: FileRecord; fits: bool) =
       ") are not applied: it changed since (its size or time is not the same). They were: " &
       lists.join("; ") & ".")
     state.dropPending(i)
+
+proc link(state: var AppState; i, j: int) =
+  ## `remembered[i]`'s file is `remembered[j]`'s, opened under another path
+  ## (a copy, a link): from now on their paths share one `FileEdits`, the
+  ## edits of both kept (`merge`), and one document.
+  let key = state.keyOf(state.remembered[j].path)
+  let was = state.keyOf(state.remembered[i].path)
+  var moved = @[was]
+  for p, k in state.editKey:
+    if k == was: moved.add p
+  var mine: FileEdits
+  if state.edits.pop(was, mine): state.edits.mgetOrPut(key, FileEdits()).merge(move mine)
+  for p in moved: state.editKey[p] = key
+  state.editKey.del key
+  # One document for the file: the one its other path has, else this one's.
+  var doc, theirs = ""
+  var own, theirsOwn = false
+  for x in state.remembered:
+    if x.doc.len > 0 and doc.len == 0 and state.keyOf(x.path) == key and x.path notin moved:
+      (doc, own) = (x.doc, x.ownDoc)
+    if x.doc.len > 0 and theirs.len == 0 and x.path in moved: (theirs, theirsOwn) = (x.doc, x.ownDoc)
+  if doc.len == 0: (doc, own) = (theirs, theirsOwn)
+  elif theirs.len > 0 and theirs != doc and not state.knownDocs.getOrDefault(theirs).damaged:
+    state.diskIo.remove(state.store.docPath(theirs), "what is remembered about " &
+      state.remembered[i].path.extractFilename) # its edits are in the other now
+    state.knownDocs.del theirs
+  for x in state.remembered.mitems:
+    if state.keyOf(x.path) == key:
+      if doc.len > 0: (x.doc, x.ownDoc) = (doc, own)
+      x.savedRev = -1 # written with what both kept
+  let (a, b) = (state.remembered[j].path.extractFilename,
+    state.remembered[i].path.extractFilename)
+  state.log.add(sevInfo, b, b & " holds what " & a & " holds (a copy or a link of it, " &
+    "opened under two paths): they share their kills and polarity reversals now, and " &
+    "they are remembered once, for both.")
+  state.editsChanged(state.remembered[j].path)
+
+proc linkSame(state: var AppState; i: int) =
+  ## Links `remembered[i]`'s file to another path opened this run that holds
+  ## the same bytes (`link`): at once when their size, ends and modification
+  ## time agree (a link, or a copy that kept its time), as what is
+  ## remembered is brought back; otherwise once the hash of every byte of
+  ## both says so (both are hashed then).
+  template r: untyped = state.remembered[i]
+  if not r.known: return
+  for j in 0 ..< state.remembered.len:
+    template o: untyped = state.remembered[j]
+    if j != i and o.known and o.identity.size == r.identity.size and
+        o.identity.quick == r.identity.quick and state.keyOf(o.path) != state.keyOf(r.path):
+      if r.hashed and o.hashed:
+        if r.identity.full == o.identity.full: state.link(i, j)
+      elif r.modified == o.modified: state.link(i, j)
+      else:
+        state.hashFile(i)
+        state.hashFile(j)
 
 proc takeIdentified(state: var AppState; m: sink Msg) =
   ## A file's quick identity and the documents of it: those that are about
@@ -2240,6 +2330,7 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
   else: r.waiting = cands
   if m.pending.doc.len > 0: state.takePending(i, m.pending, m.pendingFits)
   if cands.len > 0 or not state.editsAt(r.path).kept.isEmpty: state.hashFile(i)
+  state.linkSame(i)
 
 proc takeHashed(state: var AppState; m: sink Msg) =
   ## The hash of every byte of a file: what was brought back is confirmed,
@@ -2252,7 +2343,21 @@ proc takeHashed(state: var AppState; m: sink Msg) =
   if not r.known or m.hashed.size != r.identity.size or m.hashed.quick != r.identity.quick:
     return # another file under this name since
   let name = r.path.extractFilename
+  for j in 0 ..< state.remembered.len:
+    template o: untyped = state.remembered[j]
+    if j != i and o.hashed and o.identity.full != m.hashed.full and
+        state.keyOf(o.path) == state.keyOf(r.path) and state.keyOf(r.path) in state.edits:
+      # taken at once for the file at another path (the same size, ends and
+      # time), but its content differs: another file
+      state.log.add(sevWarning, name, name & " begins and ends as " & o.path.extractFilename &
+        " does, but its content differs: the edits of that file are taken away from it.")
+      state.unlink(r.path)
+      state.edits[state.keyOf(r.path)].forget()
+      r.savedRev = state.edits[state.keyOf(r.path)].keptRevision
+      (r.doc, r.ownDoc, r.brought) = ("", false, FileRecord())
+      state.editsChanged(r.path)
   if r.doc.len > 0 and r.identity.fullKnown and r.identity.full != m.hashed.full:
+    state.unlink(r.path) # the other paths of the file keep their edits
     state.log.add(sevWarning, name, name & " begins and ends as the file remembered as " &
       state.knownDocs.getOrDefault(r.doc).name & " did, but its content differs: the edits " &
       "remembered for that file are taken away from it (they stay remembered for that file).")
@@ -2268,8 +2373,8 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     else: state.knownDocs.del r.doc
     r.brought = FileRecord()
     r.doc = ""
-    state.edits.mgetOrPut(r.path, FileEdits()).forget()
-    r.savedRev = state.edits[r.path].keptRevision
+    state.edits.mgetOrPut(state.keyOf(r.path), FileEdits()).forget()
+    r.savedRev = state.edits[state.keyOf(r.path)].keptRevision
     state.editsChanged(r.path)
   r.identity = m.hashed
   r.hashed = true
@@ -2293,6 +2398,7 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     r.savedRev = -1 # its document gets the hash (not one with parts it cannot read)
   if r.doc.len == 0 and not state.editsAt(r.path).kept.isEmpty:
     r.savedRev = -1 # edits made before it was known: a document of its own
+  state.linkSame(i)
 
 proc endMemoryWork(state: var AppState; job: JobInfo): bool =
   ## Says how a job of what is remembered ended (quietly when it did);
@@ -2442,7 +2548,7 @@ proc takeImported(state: var AppState; m: sink Msg) =
     state.log.add(sevWarning, "edits", name & " was made on another file than " & target &
       " (its size or its bytes differ): its edits are applied by trace number all the same; " &
       "Edit > Undo (Ctrl+Z) takes them away.")
-  template e: untyped = state.edits.mgetOrPut(path, FileEdits())
+  template e: untyped = state.edits.mgetOrPut(state.keyOf(path), FileEdits())
   let n = e.takeIn(l, name, keeps(by))
   if n == 0:
     state.log.add(sevInfo, "edits", "Every edit in " & name & " was on " & target & " already.")
@@ -2551,9 +2657,9 @@ proc forgetFiles(state: var AppState; cmd: Command) =
         if r.doc == doc:
           r.doc = ""
           r.seenAside = false
-          if r.path in state.edits:
-            state.edits[r.path].forget()
-            r.savedRev = state.edits[r.path].keptRevision
+          if state.keyOf(r.path) in state.edits:
+            state.edits[state.keyOf(r.path)].forget()
+            r.savedRev = state.edits[state.keyOf(r.path)].keptRevision
             state.editsChanged(r.path)
       state.knownDocs.del doc
       let name = if rec.name.len > 0: rec.name else: doc
@@ -3452,8 +3558,8 @@ func filterHits*(state: AppState): array[MapFilter, FilterHits] =
     for (f, edit) in [(mfKilled, teKilled), (mfReversed, teReversed)]:
       if f in on:
         result[f] = FilterHits(state: fsDone, note: "traces")
-        if s.path in state.edits:
-          for t in state.edits[s.path].listIn(edit, traces): result[f].traces.add s.base + t
+        if state.keyOf(s.path) in state.edits:
+          for t in state.edits[state.keyOf(s.path)].listIn(edit, traces): result[f].traces.add s.base + t
         result[f].count = result[f].traces.len
     if mfNoPosition in on:
       let role = if state.shownDomain == rdReceiver: prSource else: prReceiver
@@ -3921,7 +4027,7 @@ proc editTraces(state: var AppState; cmd: Command) =
   let keep = keeps(cmd.origin)
   var changed = EditStep()
   var said = ""
-  template e: untyped = state.edits.mgetOrPut(s.path, FileEdits())
+  template e: untyped = state.edits.mgetOrPut(state.keyOf(s.path), FileEdits())
   case cmd.kind
   of ckEdit:
     var traces: seq[int]
@@ -3941,16 +4047,16 @@ proc editTraces(state: var AppState; cmd: Command) =
       said = describe(changed).capitalizeAscii & "."
       state.editStamps[s.path] = (s.size, s.modified)
   of ckUndoEdit:
-    if s.path in state.edits: changed = state.edits[s.path].undo(keep)
+    if state.keyOf(s.path) in state.edits: changed = state.edits[state.keyOf(s.path)].undo(keep)
     said = if changed.kind == skNone: "Nothing to undo."
            else: "Undone: " & describe(changed) & "."
   of ckRedoEdit:
-    if s.path in state.edits: changed = state.edits[s.path].redo(keep)
+    if state.keyOf(s.path) in state.edits: changed = state.edits[state.keyOf(s.path)].redo(keep)
     said = if changed.kind == skNone: "Nothing to redo."
            else: "Redone: " & describe(changed) & "."
   of ckClearEdits:
-    if s.path in state.edits and state.edits[s.path].clearAll(keep):
-      changed = state.edits[s.path].nextUndo
+    if state.keyOf(s.path) in state.edits and state.edits[state.keyOf(s.path)].clearAll(keep):
+      changed = state.edits[state.keyOf(s.path)].nextUndo
       said = "All edits cleared: the traces are shown as the file has them (Edit > Undo, " &
         "Ctrl+Z, brings the edits back)."
     else: said = "No edits to clear."
