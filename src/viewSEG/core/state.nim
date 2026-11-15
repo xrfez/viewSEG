@@ -5223,10 +5223,11 @@ proc applyCommand(state: var AppState; cmd: Command) =
     for f in cmd.unitsOf:
       if f.path.len == 0: state.ignore(cmd, "a file name was empty")
       elif state.surveyHead(f.path) < 0 or state.heads[state.surveyHead(f.path)].problem.len > 0:
-        # A short job each: one file on a drive that does not answer holds
-        # only its own.
+        # A short job each, on a lane of their own: one file on a drive that
+        # does not answer holds the lane until it is said not to answer
+        # (`StallAfter`), and nothing else.
         let job = state.jobs.submit(JobSpec(title: "Read the units of " &
-          f.path.extractFilename, lane: jlInteractive, reads: @[f.path]),
+          f.path.extractFilename, lane: jlPeeks, reads: @[f.path]),
           surveyHeadWork(f, state.inbox.poster))
         let i = state.surveyHead(f.path)
         if i >= 0: state.heads[i] = SurveyHead(file: f)

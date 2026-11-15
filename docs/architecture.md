@@ -124,7 +124,10 @@ so the wait the user notices is never behind a long job.
   background lane for the rest; the lane of hashes (`jlHashes`) for files read whole to
   confirm their identity (`fullHashWork`), which take seconds locally and minutes on a
   share, so that QC checks, shot lists and spreads never wait behind one (the Jobs
-  window calls it background too). Background work uses its own processSEG workspaces, not
+  window calls it background too); the lane of peeks (`jlPeeks`) for a file's first bytes
+  read for what its headers say (a survey file's units), so that a file on a drive that
+  does not answer holds no open and no import: only the peeks behind it, until the lane
+  goes on beside it (`StallAfter`, 3 s; the Jobs window calls it foreground). Background work uses its own processSEG workspaces, not
   the shared pool, so it cannot stall a panel.
 - **A job** (`JobSpec`, `JobInfo`) has a title in plain words, a lane, a state (queued,
   running, done, failed, cancelled), progress (done of total, a phase label), and the
@@ -522,9 +525,10 @@ file's CRS text as read; datum and projection as values are a parseSEG request.
 
 **The import's units** (`core/join`, "the import's units"). A survey file chosen in the
 window (added, dropped, or loaded with no unit known) has its headers read at once, from
-its first `HeadBytes` (64 KiB) only, on an interactive job of its own (`ckSurveyUnits`,
-`surveyHeadWork`, `mkSurveyHead`; a file on a drive that does not answer holds only its
-own job): `headUnitOf` reads SPS H20 and H201 (parseSEG's `gridUnit` of the header records
+its first `HeadBytes` (64 KiB) only, on a job of its own on the lane of peeks
+(`ckSurveyUnits`, `surveyHeadWork`, `mkSurveyHead`, `jlPeeks`; a file on a drive that does
+not answer holds no open and no import, only the other peeks for up to `StallAfter`):
+`headUnitOf` reads SPS H20 and H201 (parseSEG's `gridUnit` of the header records
 alone), SEG P1's H2000, a CSV table's comment or bracketed column unit; the results are
 `AppState.heads`, by path, read once (one that failed is read again when asked again).
 `surveyUnitsSaid` takes the first file's unit, words for each kind of file, and names
@@ -1202,8 +1206,8 @@ type
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
-    spec: JobSpec            # title, lane (jlInteractive, jlBackground, jlHashes), reads, exclusive,
-                             # cancellable
+    spec: JobSpec            # title, lane (jlInteractive, jlBackground, jlHashes,
+                             # jlPeeks), reads, exclusive, cancellable
     state: JobState          # jsQueued, jsRunning, jsDone, jsFailed, jsCancelled
     progress: JobProgress    # done, total, phase, since (the phase's start)
     error: string

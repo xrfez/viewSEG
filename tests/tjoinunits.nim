@@ -1,3 +1,6 @@
+## Runs alone: a seismic file's open is timed (it must not wait the 3 s a
+## lane waits for a job that does not answer).
+##
 ## The survey import's units in `core`, without a window: what survey files'
 ## headers say of their coordinates' unit, read as soon as a file is chosen,
 ## and the seismic file's unit following the survey's, so that the user
@@ -24,13 +27,15 @@
 ##   names (parseSEG's `crs`);
 ## - `ckSurveyUnits` reads the headers of the files it names on jobs (a file
 ##   once; one that cannot be read says why, and is read again when asked
-##   again);
+##   again), on a lane of their own: a file on a drive that does not answer
+##   holds no seismic file's open;
 ## - SEG-Y "feet" against a survey in US survey feet is no disagreement for
 ##   the map; the units an import takes when nobody chose any are the
 ##   window's (`importUnits`, an agent's import); after an import the units
 ##   confirmed for the file label it.
 ##
-## Seen to fail: with an H20 and H201 that contradict each other passed
+## Seen to fail: with the units' reads on the interactive lane, "the
+## seismic file waited for the survey file's headers: 3003 ms"; with an H20 and H201 that contradict each other passed
 ## over, "no warning for Metres + 0.3048006096"; with a P1 unit code taken for the factor, "1 FEET: (unit:
 ## metres, ...)"; with P1/11 not read, "P1/11: (unit: not given, ...)"; with
 ## a CSV unit taken from any column, "an elevation's
@@ -44,11 +49,11 @@
 ## feet"; with `unitsDisagree` counting SEG-Y's "feet" against US survey
 ## feet, "the units disagree: The coordinates' units disagree (...)".
 
-import std/[os, strutils]
+import std/[monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/[session, state]
 import viewSEG/view/maplayers
-import utils/[fixtures, waiting]
+import utils/[faultyfs, fixtures, waiting]
 
 const Morgantown = """H00 SPS format version num.     SPS 2.1;
 H01 Description of survey area  ,Post_261019;
@@ -302,4 +307,31 @@ block unitsOnTheMap:
     st.apply Command(kind: ckLoadSurvey, paths: @[ms])
     doAssert st.settle(st.survey.findFile(ms) >= 0)
     doAssert st.unitsDisagree.len > 0
+
+block aHungShare:
+  # A survey file on a drive that does not answer holds only the units'
+  # reads, on their own lane: a seismic file opens meanwhile, well before a
+  # lane would go on beside the stalled job (`StallAfter`).
+  install()
+  withFixtures fx:
+    let sps = fx.surveySpsIn("hung", "feet", "0.3048006096")
+    let segy = fx.surveySegy()
+    var st = initAppState()
+    fault(sps.s, fkHang)
+    st.apply Command(kind: ckSurveyUnits, unitsOf: @[JoinFile(path: sps.s, kind: jkSps)])
+    doAssert st.settle(hung() == 1), "the file does not answer"
+    let t0 = getMonoTime()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: segy)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let took = getMonoTime() - t0
+    doAssert took < StallAfter, "the seismic file waited for the survey file's headers: " &
+      $took.inMilliseconds & " ms"
+    for j in st.jobs.list:
+      if j.spec.title.startsWith("Read the units of"):
+        doAssert j.spec.lane == jlPeeks, $j.spec.lane
+    doAssert hung() == 1 and not st.heads[0].done
+    release(sps.s)
+    doAssert st.settle(st.heads[0].done)
+    doAssert st.heads[0].head.unit == suUsFeet, $st.heads[0]
+    doAssert uiCalls().len == 0, $uiCalls()
   echo "tjoinunits: done"

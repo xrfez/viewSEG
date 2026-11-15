@@ -89,6 +89,10 @@ type
     jlHashes = "hashes"
       ## files read whole for their identity: a lane of their own, so that a
       ## large file's hash never holds the background work
+    jlPeeks = "peeks"
+      ## a few bytes at the start of a file read for what its headers say
+      ## (a survey file's units): a lane of their own, so that a file on a
+      ## drive that does not answer holds no open and no import
 
   JobState* = enum
     jsQueued = "queued"
