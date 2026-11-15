@@ -185,9 +185,7 @@ type
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
         ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits, ckFilter, ckRetry, ckStopReading,
         ckPrepare:
-      panel*: PanelId
-        ## the panel's id (1: the Seismic window); ckRetry: `NoPanel` for the file
-        ## list's folder
+      panel*: PanelId                 ## the panel's id (1: the Seismic window; 0 retries the folder)
       gather*: int                    ## ckGather: index into the file's gathers
       path*: string                   ## ckShowFile, ckShowTrace: the file to show; ckPrepare: the next
       traceIndex*: int                ## ckShowTrace: the trace's index (in its record)

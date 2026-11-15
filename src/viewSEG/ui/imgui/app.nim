@@ -415,8 +415,13 @@ proc toggleAgent(ui: var Ui) =
   if ui.agent.running:
     ui.agent.stop(ui.core)
   else:
-    if ui.agentSocket.len == 0: ui.agentSocket = agentSocket()
-    discard ui.agent.start(ui.core, ui.agentSocket, ui.version, encodePng)
+    # The default socket is found off this thread: finding it writes a probe
+    # in the program's folder, which may be on a drive that does not answer.
+    # (`currentContext` was made at start, on this thread; it is only read there.)
+    discard ui.agent.start(ui.core, ui.agentSocket, ui.version, encodePng,
+      find = proc (): string {.nimcall, gcsafe.} =
+        {.cast(gcsafe).}: agentSocket())
+    if ui.agent.running: ui.agentSocket = ui.agent.path
 
 proc setAgentControl*(frame: FrameInfo; on: bool) =
   ## Turns agent control on or off, as File > Agent control does.
@@ -1309,7 +1314,9 @@ proc run*(opts = RunOptions()): int =
         ui.core.report(sevWarning, "frame", report.get)
     ui.echoNewLog()
     ui.core.persist()
-  ui.agent.stop(ui.core)
+  # The quit waits a fifth of a second for the agents' socket to go (its
+  # folder may not answer), then the core's threads (`shutdown`).
+  ui.agent.stop(ui.core, getMonoTime() + initDuration(milliseconds = 200))
   ui.map.stopGpu() # while the GL context is current
   ui.trace.stopGpu()
   ui.notePlacement()

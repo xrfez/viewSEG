@@ -28,7 +28,7 @@ const
     ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckReverseAll, ckBack,
     ckEdit, ckUndoEdit, ckClearEdits, ckHover, ckSelect, ckClearSelection, ckLoadSurvey,
     ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
-    ckShowPoints, ckJoin, ckSelectUnmatched}
+    ckShowPoints, ckJoin, ckSelectUnmatched, ckRetry, ckStopReading, ckPrepare}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The geometry

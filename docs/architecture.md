@@ -264,6 +264,12 @@ for, let the user go on, and quit.
   watch's look, not answering), worded by `words`; the plot and the Files window show them
   with Cancel (`ckCancelJob`, `ckStopReading`) and Retry (`ckRetry`: open again, read again
   with a new reader, list again with a new watch).
+- **Agent control's socket** (`remote/server`) is made, and at the end removed, on threads
+  of their own: finding the default socket writes a probe in the program's folder, and the
+  socket is made there, a folder that may be on a share. Turning agent control on waits
+  `StartWait` (0.5 s) for it, then says the folder does not answer yet and takes the
+  server in a later frame; turning it off, and the quit, wait 0.2 to 0.5 s, then leave the
+  removal to its thread. These calls are on a socket and its folder, outside `fs`.
 - **Files are closed off the UI thread** (`core/closer`): a close can wait for a share,
   and parseSEG 0.11 unmaps and closes under one lock of its own, so one stuck close holds
   every other open and close (an open then says it does not answer). `AppState` hands a

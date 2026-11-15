@@ -21,7 +21,7 @@
 ## run that ended without removing it is replaced; one another program
 ## listens on is left alone; a path that is not a socket is never removed.
 
-import std/[json, monotimes, strutils, times]
+import std/[json, locks, monotimes, os, strutils, times]
 import ../core/threads
 import protocol, tools
 
@@ -54,7 +54,7 @@ type
     text*: string
 
 when not defined(windows):
-  import std/[locks, os, posix]
+  import std/[atomics, posix]
 
   type
     Answer = object
@@ -332,16 +332,61 @@ when not defined(windows):
     `=destroy`(hub[])
     deallocShared hub
 
-  proc stop*(s: var Server) =
-    ## Disconnects the clients, stops the thread and removes the socket.
+  type
+    Stopping = object
+      ## A shutdown run on a thread of its own: it joins the server's
+      ## thread and removes the socket, which is on a drive that may not
+      ## answer; the UI thread waits for it until a deadline only.
+      hub: ptr HubObj
+      listener, wakeRead: cint
+      path: string
+      device, inode: uint64
+      done: Atomic[bool]
+      thread: Thread[ptr Stopping]
+
+  proc stopping(x: ptr Stopping) {.thread.} =
+    shutDown(x.hub, x.listener, x.wakeRead, x.path, x.device, x.inode)
+    x.done.store(true)
+
+  proc shutDownBy(hub: ptr HubObj; listener, wakeRead: cint; path: string;
+      device, inode: uint64; deadline: MonoTime): bool =
+    ## `shutDown` on a thread of its own, waited for until `deadline`: true
+    ## when it ended; else it is left to end on its own, with its memory.
+    let x = cast[ptr Stopping](allocShared0(sizeof(Stopping)))
+    (x.hub, x.listener, x.wakeRead, x.path, x.device, x.inode) =
+      (hub, listener, wakeRead, path, device, inode)
+    try:
+      createThread(x.thread, stopping, x)
+    except ResourceExhaustedError:
+      shutDown(hub, listener, wakeRead, path, device, inode) # no thread: here, then
+      `=destroy`(x[])
+      deallocShared(x)
+      return true
+    while not x.done.load and getMonoTime() < deadline:
+      sleep 1
+    result = x.done.load
+    if result:
+      joinThread(x.thread)
+      `=destroy`(x[])
+      deallocShared(x)
+
+  const ServerStopWait* = initDuration(milliseconds = 500)
+    ## how long `stop` waits by default
+
+  proc stop*(s: var Server; deadline = getMonoTime() + ServerStopWait): bool {.discardable.} =
+    ## Disconnects the clients, stops the thread and removes the socket,
+    ## waiting for it until `deadline`: true when done; false when the
+    ## socket's folder does not answer (the rest is left to end on its own).
     ## Does nothing on a server that is not running.
+    result = true
     if s.hub != nil:
-      shutDown(s.hub, s.listener, s.wakeRead, s.path, s.device, s.inode)
+      result = shutDownBy(s.hub, s.listener, s.wakeRead, s.path, s.device, s.inode, deadline)
       s.hub = nil
 
   proc `=destroy`*(s: Server) =
     if s.hub != nil:
-      shutDown(s.hub, s.listener, s.wakeRead, s.path, s.device, s.inode)
+      discard shutDownBy(s.hub, s.listener, s.wakeRead, s.path, s.device, s.inode,
+        getMonoTime() + ServerStopWait)
     `=destroy`(s.path)
 
   proc `=wasMoved`*(s: var Server) =
@@ -349,7 +394,7 @@ when not defined(windows):
     wasMoved(s.path) # not an assignment: that would free what was moved away
 
 else:
-  proc stop*(s: var Server) = discard
+  proc stop*(s: var Server; deadline = getMonoTime()): bool {.discardable.} = true
 
 proc `=copy`*(dest: var Server; src: Server) {.error.}
 proc `=dup`*(src: Server): Server {.error.}
@@ -488,3 +533,99 @@ proc clients*(s: Server): int =
   when not defined(windows):
     if s.hub != nil:
       withLock s.hub.lock: result = s.hub.clients
+
+# ------------------------------------------------- a start, off the UI thread --
+
+type
+  SocketFinder* = proc (): string {.nimcall, gcsafe.}
+    ## The default socket's path (it may probe the program's folder)
+
+  StartObj = object
+    path, toolList, version: string
+    toolNames: seq[string]
+    encode: PngEncoder
+    find: SocketFinder
+    lock: Lock
+    done, abandoned: bool
+    server: Server
+    why: string
+    thread: Thread[ptr StartObj]
+
+  Starting* = object
+    ## A server being started on a thread of its own (`beginServer`): the
+    ## socket's folder may be on a drive that does not answer. Move-only.
+    p: ptr StartObj
+
+proc `=destroy`*(x: Starting)
+proc `=wasMoved`*(x: var Starting) = x.p = nil
+proc `=copy`*(dest: var Starting; src: Starting) {.error.}
+proc `=dup`*(src: Starting): Starting {.error.}
+
+proc starting(x: ptr StartObj) {.thread.} =
+  markWorkerThread()
+  var path = x.path
+  if path.len == 0 and x.find != nil: path = x.find()
+  var (s, why) = startServer(path, x.toolList, x.version, x.toolNames, x.encode)
+  var left = false
+  withLock x.lock:
+    left = x.abandoned
+    if not left:
+      x.server = move s
+      x.why = why
+      x.path = path
+    x.done = true
+  if left: s.stop(getMonoTime() + initDuration(seconds = 10)) # nobody took it: it goes
+  clearCycleRoots()
+
+func isNil*(x: Starting): bool {.inline.} =
+  ## Whether no start is under way.
+  x.p == nil
+
+proc beginServer*(path, toolList, version: string; toolNames: seq[string];
+    encode: PngEncoder = nil; find: SocketFinder = nil): Starting =
+  ## Starts `startServer` (at `path`, or where `find` says when `path` is
+  ## "") on a thread of its own; `finished` takes its result.
+  let p = cast[ptr StartObj](allocShared0(sizeof(StartObj)))
+  initLock p.lock
+  (p.path, p.toolList, p.version, p.toolNames, p.encode, p.find) =
+    (path, toolList, version, toolNames, encode, find)
+  result = Starting(p: p)
+  createThread(p.thread, starting, p)
+
+proc finished*(x: var Starting; server: var Server; why, path: var string;
+    wait = initDuration()): bool =
+  ## Whether the start has ended, waiting for it at most `wait`: then the
+  ## server (`why` "") or why it could not start, at `path`, and `x` is none.
+  if x.p == nil: return false
+  let deadline = getMonoTime() + wait
+  var done = false
+  while true:
+    withLock x.p.lock: done = x.p.done
+    if done or getMonoTime() >= deadline: break
+    sleep 1
+  if not done: return false
+  joinThread(x.p.thread)
+  withLock x.p.lock:
+    server = move x.p.server
+    why = x.p.why
+    path = x.p.path
+  deinitLock x.p.lock
+  `=destroy`(x.p[])
+  deallocShared(x.p)
+  x.p = nil
+  true
+
+proc `=destroy`*(x: Starting) =
+  ## A start no longer wanted: left to end, and to stop what it started.
+  if x.p != nil:
+    var done = false
+    withLock x.p.lock:
+      x.p.abandoned = true
+      done = x.p.done
+    if done: # it ended: its server is stopped here, then freed
+      joinThread(x.p.thread)
+      x.p.server.stop()
+      deinitLock x.p.lock
+      `=destroy`(x.p[])
+      deallocShared(x.p)
+

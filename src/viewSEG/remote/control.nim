@@ -17,7 +17,7 @@
 ## written less than `QuietFor` before is counted instead, and the count is
 ## written once `QuietFor` has passed (`said`).
 
-import std/[json, monotimes, strutils, tables, times]
+import std/[json, monotimes, os, strutils, tables, times]
 import ../core/state
 import protocol, server, tools
 
@@ -47,6 +47,8 @@ type
     ## Owned by the UI thread, beside the application state. Off until
     ## `start`; move-only (it holds the server).
     server: Server
+    starting: Starting ## a start under way (its folder slow to answer); none otherwise
+    version: string    ## for the start under way
     queue: seq[Call] ## taken, not answered yet
     waits: seq[Waiting]
     calls: seq[Call] ## scratch
@@ -71,22 +73,42 @@ proc clientNames*(c: AgentControl): seq[string] =
   for n in c.names.values:
     if n.len > 0: result.add n
 
-proc start*(c: var AgentControl; state: var AppState; path, version: string;
-    encode: PngEncoder = nil): bool =
-  ## Turns agent control on at socket `path`, saying so in the log; false,
-  ## with the reason logged, when it cannot. Screenshots are encoded with
-  ## `encode` (on the server thread); none without it.
-  if c.running: return true
-  let (s, why) = startServer(path, toolList(), version, @ToolNames, encode)
+const StartWait* = initDuration(milliseconds = 500)
+  ## how long `start` waits for the socket to be made before it goes on and
+  ## takes the server in a later frame (its folder may not answer)
+
+proc started(c: var AgentControl; state: var AppState; wait: Duration): bool =
+  ## Takes in the start under way once it has ended (waiting at most
+  ## `wait`), saying how it went. True when the server listens now.
+  var s: Server
+  var why, path: string
+  if not c.starting.finished(s, why, path, wait): return false
   if why.len > 0:
     state.report(sevError, LogSource, "Agent control could not be turned on: " & why & ".")
     false
   else:
-    c.server = s
+    c.server = move s
     state.report(sevInfo, LogSource, "Agent control is on: an MCP client connects through " &
       path & " (it starts `viewSEG --mcp-stdio=" & path & "`). Every call it makes is " &
       "written here.")
     true
+
+proc start*(c: var AgentControl; state: var AppState; path, version: string;
+    encode: PngEncoder = nil; find: SocketFinder = nil): bool =
+  ## Turns agent control on at socket `path` (where `find` says when it is
+  ## ""), saying so in the log; false, with the reason logged, when it
+  ## cannot. Screenshots are encoded with `encode` (on the server thread);
+  ## none without it. The socket is made on a thread of its own: a folder
+  ## that does not answer within `StartWait` is said, and the server is
+  ## taken in by `serve` once it is made (false meanwhile).
+  if c.running: return true
+  if not c.starting.isNil: return false # under way
+  c.starting = beginServer(path, toolList(), version, @ToolNames, encode, find)
+  result = c.started(state, StartWait)
+  if not result and not c.starting.isNil:
+    state.report(sevWarning, LogSource, "Agent control is being turned on: the folder of " &
+      "its socket" & (if path.len > 0: " (" & path.parentDir & ")" else: "") &
+      " does not answer yet.")
 
 proc countsDue(c: var AgentControl; state: var AppState; now: MonoTime; all = false) =
   ## Writes the counts of the lines held back for `QuietFor` (all of them
@@ -104,11 +126,15 @@ proc countsDue(c: var AgentControl; state: var AppState; now: MonoTime; all = fa
         gone.add key
   for key in gone: c.quiet.del key
 
-proc stop*(c: var AgentControl; state: var AppState) =
-  ## Turns agent control off: the agents are disconnected, the socket removed.
+proc stop*(c: var AgentControl; state: var AppState; deadline = getMonoTime() + ServerStopWait) =
+  ## Turns agent control off: the agents are disconnected, the socket
+  ## removed, waiting for that until `deadline` (a socket's folder that does
+  ## not answer is left to the thread that removes it). A start under way is
+  ## left: what it starts is stopped.
+  c.starting = Starting()
   if c.running:
     let path = c.server.path
-    c.server.stop()
+    c.server.stop(deadline)
     c.queue.setLen 0
     c.waits.setLen 0
     c.names.clear()
@@ -193,6 +219,7 @@ proc serve*(c: var AgentControl; state: var AppState; fe: Frontend; now = getMon
   ## documentation). Call it once per frame, after the frame is drawn; it
   ## never waits.
   inc c.frame
+  if not c.starting.isNil: discard c.started(state, initDuration()) # made at last?
   if not c.running: return
   c.server.takeCalls(c.calls, c.events)
   for e in c.events: c.note(state, e, now)
