@@ -37,10 +37,10 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Status | parseSEG 0.11.0: capabilities | names | processSEG 0.4.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 38 (22 in part) | 96 | 11 (9 in part) | 45 |
-| `internal` | 14 | 34 | 4 | 38 |
+| `internal` | 14 | 34 | 4 | 39 |
 | `planned` | 38 | 285 | 53 | 352 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 19 | 354 | 5 | 60 |
+| `not applicable` | 19 | 354 | 5 | 59 |
 | all | 111 | 779 | 74 | 500 |
 
 In the next library release (below): parseSEG: 5 capabilities (5 planned); processSEG: 8 capabilities (4 planned, 4 to plan).
@@ -382,7 +382,7 @@ names when a working tree of each is linked at `deps/next/parseSEG` and
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | A file cut short while it is open, and a read that fails: no crash | `cutShort`, `readFailed` (`SeismicFile`, `MemFileSource`), `readable`, `dcTruncated`, `dcIo` | The viewer's own `cutShort` (a `stat` before each read) gives way to parseSEG's: another program cutting the file shown no longer ends the program with "Bus error"; the traces past the cut drawn blank and said so; a share that stops answering fails its rows with `dcIo` | planned |
-| Datum and projection as values | `crs` (an SPS file's, a seismic file's), `parseCrsText`, `CoordinateReference`, `CrsKind`, `GeodeticDatum`, `MapProjection`, `CrsParameter`, `parameter`, `kindOf`, `known` | Join geometry and File properties: the datum, ellipsoid, projection and zone in words, to check the survey files against the seismic files; the basemap's coordinate system | planned |
+| Datum and projection as values | `crs` (an SPS file's, a seismic file's), `parseCrsText`, `CoordinateReference`, `CrsKind`, `GeodeticDatum`, `MapProjection`, `CrsParameter`, `parameter`, `kindOf`, `known` | File → Import → Survey and File properties: the datum, ellipsoid, projection and zone in words, to check the survey files against the seismic files; the basemap's coordinate system | planned |
 | Survey files read with progress and cancel | `readSps(..., progress)`, `readP1(..., progress)`, `SpsOptions` (`skipBinary`, `maxJunkBytes`), `looksLikeSps` (a head of header records) | Loading survey files: one call with parseSEG's progress and cancel, in place of the viewer's 4 MiB chunks and its own test of a head of header records | planned |
 | Sources released on any thread | `openMemFileSource`, `MemFileSource` | Files closed on the viewer's closer thread without the cycle collector's care | planned |
 | A file on a network share opened without mapping it (being written, not on the branch yet) | `openSeismic`, `OpenOptions` | Files on a slow or failing share read by `pread`, as the viewer's reads of network drives want | planned |
