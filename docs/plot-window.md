@@ -625,6 +625,22 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Up / Down, Page Up / Page Down, Home / End (record list focused) | The next / previous record, a page on / back, the first / last record, in the order the list shows (a click on a column's header sorts it), shown in the plot |
 | Click a record in the record list (focused) | Show it in the plot |
 
+### A right-click menu holds what it acts on
+
+While a right-click menu is open, what was under the pointer at the right click stays
+highlighted and its read-outs stay as they were then, wherever the pointer goes over the
+menu (the user: "when i right click i want the highlighting and the values for x,y axis
+just as if i was not in the right click menu");
+when the menu closes, chosen or dismissed, the highlight follows the pointer again.
+
+| Window | Held while its menu is open |
+|---|---|
+| Seismic plot | The trace right-clicked stays the hover (drawn in the hover colour, its source and receiver lit up on the map); the status bar's read-out, the cursor's time line and the header values over its rows are those of the right click |
+| Map | The point right-clicked stays the hover (drawn in the hover colour, its traces lit up in the plot); its description (station, coordinates with units, file, traces, records) stays, in the popup beside the menu (not under it) or in the strip, and the status bar keeps the coordinates of the right click |
+| Headers (Summary, the header tables, Trace > Data) | The line or value right-clicked stays highlighted |
+| Messages | The line right-clicked stays highlighted |
+| Files, Records, FFT windows, Spectrum | No right-click menu (a right drag in a spectrum zooms to a box) |
+
 ## The map window
 
 ```

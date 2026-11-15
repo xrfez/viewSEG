@@ -182,6 +182,8 @@ type
     menuUnder: int = -1 ## the trace under the pointer when it opened (survey-wide); -1 for none
     menuStations: Command = Command(kind: ckSelectPoints)
       ## what its "Select its receiver on the map" sends, found when it opened
+    menuPick: Pick ## what lay under the pointer when it opened, held while it is open
+    menuMouse: ImVec2_c ## where the pointer was then
     cursorText: string ## the time the cursor's time line showed last; "" for none
     cursorHeader: seq[string] ## the header values it showed over the rows; none for none
     focus: FocusClicks ## a click selects only in a window that had the focus
@@ -1803,6 +1805,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   const flags = ImPlot_Flags_NoTitle.cint or ImPlot_Flags_NoLegend.cint or
     ImPlot_Flags_NoMenus.cint or ImPlot_Flags_NoMouseText.cint or ImPlot_Flags_NoInputs.cint
   var menu = false
+  let held = igIsPopupOpen_Str(menuId, 0) # the plot's menu, opened by a right click
   # Room for the scroll bars is always kept, so the plot does not move or
   # change size when one appears.
   let avail = igGetContentRegionAvail()
@@ -1929,9 +1932,14 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       st.selection.anySelected, recordOf(st, p), remember, res)
     tp.cursorText = ""
     tp.cursorHeader.setLen 0
-    if hovered:
-      let mouse = igGetIO_Nil().MousePos
-      res.pick = pick(tiles, p.layout, view, plot, vec2(mouse.x, mouse.y), turn)
+    # While the plot's menu is open, what was under the pointer at the right
+    # click is held: its trace stays the hover, the read-outs (the status
+    # bar, the cursor's time line and header values) say what they said
+    # then, wherever the pointer goes over the menu.
+    if hovered or held:
+      let mouse = if held: tp.menuMouse else: igGetIO_Nil().MousePos
+      res.pick = if held: tp.menuPick
+                 else: pick(tiles, p.layout, view, plot, vec2(mouse.x, mouse.y), turn)
       if st.settings.cursorLine and res.pick.inside:
         tp.drawCursorLine(mouse, pos, size, turn, res.pick.at.tMs, p.layout.dtMs, ink, t, marks)
         if res.pick.found and res.pick.position >= 0:
@@ -1940,7 +1948,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     # The trace under the pointer is the hover; a click selects it.
     let under = if res.pick.found and res.pick.trace >= 0 and base >= 0: base + res.pick.trace
                 else: -1
-    if hovered and under != st.selection.hover:
+    if held: discard # the menu's trace stays the hover until the menu closes
+    elif hovered and under != st.selection.hover:
       res.commands.add Command(kind: ckHover, trace: under)
       tp.hovering = under >= 0
     elif not hovered and tp.hovering:
@@ -1960,6 +1969,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     if menu:
       tp.menuTarget = targetOf(under, res.pick, st.selection)
       tp.menuUnder = under
+      tp.menuPick = res.pick
+      tp.menuMouse = igGetIO_Nil().MousePos
       tp.menuStations = if under >= 0: stationCommand(st, k, under)
                         else: Command(kind: ckSelectPoints)
     tp.cur = after

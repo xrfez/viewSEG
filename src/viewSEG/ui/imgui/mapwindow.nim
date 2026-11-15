@@ -159,6 +159,9 @@ type
     menuPoints: seq[PointRef]
     menuTitle: string
     menuShows: bool ## the menu's point shows its record on a click
+    menuCursor: string ## the status bar's coordinates when it opened, held while it is open
+    menuAt: ImVec2_c ## where the pointer was then
+    menuRect: Rect ## where the menu was drawn last frame, ImGui's coordinates
     stripWidths: array[4, float32]
     rulerText, scaleText: string
     scale: ScaleBar ## the scale bar drawn last
@@ -1001,12 +1004,22 @@ proc drawSpreads(mu: var MapUi; view: MapView; plot: Rect; ink: MapInk; t: Theme
     mu.drawSpreadBox(mu.spreadHovered, view, plot, ink.hover, ink, t, "map.template hovered",
       true, marks)
 
+func overlaps(a, b: Rect): bool =
+  a.pos.x < b.pos.x + b.size.x and b.pos.x < a.pos.x + a.size.x and
+    a.pos.y < b.pos.y + b.size.y and b.pos.y < a.pos.y + a.size.y
+
+func within(a, b: Rect): bool =
+  a.pos.x >= b.pos.x and a.pos.y >= b.pos.y and a.pos.x + a.size.x <= b.pos.x + b.size.x and
+    a.pos.y + a.size.y <= b.pos.y + b.size.y
+
 proc drawInfoBox(info: openArray[PointInfo]; at: ImVec2_c; plotPos, plotSize: ImVec2_c;
-    t: Theme; marks: var Marks) =
+    t: Theme; marks: var Marks; menu = Rect()) =
   ## What the map says of the points under the pointer, in a box beside the
   ## pointer, kept inside the plot (drawn in the window, not as a window of
   ## its own: a tooltip past the main window's edge would become a window of
-  ## its own and take the keyboard focus from the map).
+  ## its own and take the keyboard focus from the map). With the right-click
+  ## `menu` open (its area, not empty), on a side of the pointer where the
+  ## menu does not cover it, if the plot has room there.
   var rows: seq[(string, bool)] # text, a title
   for i in info.merged:
     if i.title.len > 0: rows.add (i.title, true)
@@ -1021,6 +1034,16 @@ proc drawInfoBox(info: openArray[PointInfo]; at: ImVec2_c; plotPos, plotSize: Im
   if lo.x + size.x > plotPos.x + plotSize.x: lo.x = at.x - 18 - size.x
   if lo.y + size.y > plotPos.y + plotSize.y: lo.y = at.y - 18 - size.y
   lo = ImVec2_c(x: max(lo.x, plotPos.x), y: max(lo.y, plotPos.y))
+  if menu.size.x > 0:
+    let plot = Rect(pos: vec2(plotPos.x, plotPos.y), size: vec2(plotSize.x, plotSize.y))
+    let box = vec2(size.x, size.y)
+    for c in [vec2(at.x + 18, at.y + 18), vec2(at.x - 18 - size.x, at.y + 18),
+        vec2(at.x + 18, at.y - 18 - size.y), vec2(at.x - 18 - size.x, at.y - 18 - size.y),
+        vec2(menu.pos.x - 8 - size.x, menu.pos.y), vec2(menu.pos.x + menu.size.x + 8, menu.pos.y)]:
+      let r = Rect(pos: c, size: box)
+      if r.within(plot) and not r.overlaps(menu):
+        lo = ImVec2_c(x: c.x, y: c.y)
+        break
   let hi = ImVec2_c(x: lo.x + size.x, y: lo.y + size.y)
   let dl = igGetWindowDrawList()
   ImDrawList_AddRectFilled(dl, lo, hi, u32(t.roles[rlPopup]), igGetStyle().PopupRounding, 0)
@@ -1034,8 +1057,11 @@ proc drawInfoBox(info: openArray[PointInfo]; at: ImVec2_c; plotPos, plotSize: Im
 
 proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput) =
   ## The right-click menu: only what acts on the point under the pointer.
+  mu.menuRect = Rect()
   if igBeginPopup(menuId, 0):
     marks.markWindow("map menu")
+    let (at, size) = (igGetWindowPos(), igGetWindowSize())
+    mu.menuRect = Rect(pos: vec2(at.x, at.y), size: vec2(size.x, size.y))
     if mu.menuPoints.len == 0:
       igTextDisabled("No point here")
     else:
@@ -1119,6 +1145,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
   const flags = ImPlot_Flags_NoTitle.cint or ImPlot_Flags_NoLegend.cint or
     ImPlot_Flags_NoMenus.cint or ImPlot_Flags_NoMouseText.cint or ImPlot_Flags_NoInputs.cint
   var menu = false
+  let held = igIsPopupOpen_Str(menuId, 0) # the map's menu, opened by a right click
   let plotH = max(1'f32, avail.y - float32(infoRows) * lineH - (if infoRows > 0: 4 else: 0))
   if ImPlot_BeginPlot("##map", ImVec2_c(x: max(1, avail.x), y: plotH), flags):
     # No values, ticks or titles on the axes (the scale bar, the north arrow
@@ -1217,9 +1244,17 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     var click = 0
     mu.handleMouse(st, after, view, plot, lim, hovered, t, remember, menu, click, res)
     mu.handleKeys(st, after, view, plot, lim, hovered, remember, res)
-    # The point under the pointer, and what the map says of it.
+    # The point under the pointer, and what the map says of it. While the
+    # map's menu is open, what was under the pointer at the right click is
+    # held: its points stay the hover (drawn so here, their traces lit up in
+    # the plot), and what the map says of them and the status bar's
+    # coordinates are what they were then, wherever the pointer goes over
+    # the menu.
     var under: seq[PointRef]
-    if hovered and mu.drag.kind in {mdNone, mdMeasure}:
+    if held:
+      under = mu.menuPoints
+      res.cursor = mu.menuCursor
+    elif hovered and mu.drag.kind in {mdNone, mdMeasure}:
       let m = igGetIO_Nil().MousePos
       let at = view.mapAt(plot, v2(m))
       res.cursor = coordinatesText(at, view.perPixel, units)
@@ -1251,14 +1286,18 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       mu.menuPoints = under
       mu.menuTitle = if under.len > 0: mu.info[0].title else: "No point here"
       mu.menuShows = under.len > 0 and st.opensRecord(under[0])
+      mu.menuCursor = res.cursor
+      mu.menuAt = igGetIO_Nil().MousePos
     if view.isSet:
       mu.followSpreads(st)
       mu.drawSpreads(view, plot, ink, t, marks)
       mu.drawRuler(view, plot, lengths, ink, t, marks)
       mu.drawScaleBar(view, pos, size, fb.x, lengths, ink, t, marks)
-    if hovered and mu.info.len > 0 and st.settings.map.info == miPopup and
+    if (hovered or held) and mu.info.len > 0 and st.settings.map.info == miPopup and
         mu.drag.kind == mdNone:
-      drawInfoBox(mu.info, igGetIO_Nil().MousePos, pos, size, t, marks)
+      # (beside the menu, not under it)
+      drawInfoBox(mu.info, (if held: mu.menuAt else: igGetIO_Nil().MousePos), pos, size, t,
+        marks, (if held: mu.menuRect else: Rect()))
     ImDrawList_PopClipRect(dl)
     mu.cur = after
     if after != st.map.view:

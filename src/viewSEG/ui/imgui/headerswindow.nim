@@ -160,7 +160,8 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
           igTableNextRow(0, 0)
           discard igTableNextColumn()
           igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-          if igSelectable_Bool(l.label.cstring, ui.picked == i,
+          # (drawn as picked while its menu is open, as it was under the pointer)
+          if igSelectable_Bool(l.label.cstring, ui.picked == i or igIsPopupOpen_Str("##copy", 0),
               ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
             ui.picked = i
           igPopStyleColor(1)
@@ -214,9 +215,10 @@ proc syncColumns(ui: var HeadersUi; id: string; values: int; st: AppState;
     ui.applied.clear() # the other tables are given them anew
     ui.applied[id] = now
 
-proc valueMenu(table: FieldTable; column: int; value: string) =
+proc valueMenu(table: FieldTable; column: int; value: string; marks: var Marks) =
   ## The right-click menu of a value: copy it, its column, or the table.
   if igBeginPopupContextItem("##value", ImGui_PopupFlags_MouseButtonRight.cint):
+    marks.markWindow("headers.value menu")
     if igMenuItem_Bool("Copy", "Ctrl+C", false, true): igSetClipboardText(value.cstring)
     if table.columns.len > 1 and igMenuItem_Bool(("Copy the column of " &
         table.columns[column]).cstring, nil, false, true):
@@ -311,13 +313,15 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
               let joined = c < row.joined.len and row.joined[c] # (the join's accent colour)
               if joined: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
               rightAlign(v)
-              discard igSelectable_Bool((v & "##v").cstring, false, 0, ImVec2_c(x: 0, y: 0))
+              # (drawn as chosen while its menu is open, as it was under the pointer)
+              discard igSelectable_Bool((v & "##v").cstring, igIsPopupOpen_Str("##value", 0), 0,
+                ImVec2_c(x: 0, y: 0))
               if joined:
                 igPopStyleColor(1)
                 if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
                   igSetTooltip("%s", JoinedTip.cstring)
                 if i < 400: marks.mark(id & " joined " & row.name & " " & $c)
-              valueMenu(table, c, v)
+              valueMenu(table, c, v, marks)
               if i < 400: marks.mark(id & " " & row.name & " " & $c)
               igPopID()
           if row.differs:
@@ -668,7 +672,8 @@ proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerIn
               let v = sampleText(d.samples[i])
               igPushID_Int(cint(c))
               rightAlign(v)
-              discard igSelectable_Bool((v & "##s").cstring, false, 0, ImVec2_c(x: 0, y: 0))
+              discard igSelectable_Bool((v & "##s").cstring, igIsPopupOpen_Str("##sample", 0), 0,
+                ImVec2_c(x: 0, y: 0))
               if i < 64: marks.mark("headers.data " & $i & " " & $c)
               if igBeginPopupContextItem("##sample", ImGui_PopupFlags_MouseButtonRight.cint):
                 marks.markWindow("headers.data menu")

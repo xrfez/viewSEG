@@ -203,7 +203,9 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
           igSameLine(0, -1)
           let text = line(e)
           let jumps = e.loc.file.len > 0 and e.loc.trace >= 0
-          if igSelectable_Bool(text.cstring, false, 0, ImVec2_c(x: 0, y: 0)) and jumps and
+          # (drawn as chosen while its menu is open, as it was under the pointer)
+          if igSelectable_Bool(text.cstring, igIsPopupOpen_Str("##line", 0), 0,
+              ImVec2_c(x: 0, y: 0)) and jumps and
               view.focus.acts:
             (result.showPath, result.showTrace, result.showRecord) = (e.loc.file, e.loc.trace,
               e.loc.record)
