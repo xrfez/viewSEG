@@ -1,5 +1,5 @@
 ## SDL3-backed shell services, behind plain Nim types: native file dialogs, the
-## system light/dark theme, and the window icon. Only `ui/` may import SDL
+## system light/dark theme, the window icon, and the tray icon with its menu. Only `ui/` may import SDL
 ## (docs/architecture.md), so these live here rather than in `platform/`.
 ##
 ## Results reach the frame loop as `ShellEvent`s on a thread-safe queue that it
@@ -12,10 +12,21 @@
 ##
 ## The window icon (`res/viewSEG-64.png`) is the 64-pixel PNG image of
 ## `res/viewSEG.ico`, extracted as is; replace both together.
+##
+## The tray (`showTray`): SDL's, with the program's icon and a menu of
+## `TrayAction`s, whose clicks arrive as `seTray` events. SDL calls a tray
+## entry's callback on the main thread, while events are pumped (Windows:
+## the tray's window procedure; Linux: GTK's loop), so it queues the event
+## directly. On Linux SDL uses AppIndicator (libayatana-appindicator through
+## GTK), which needs a StatusNotifier host in the desktop's bar to be seen.
+## The icon goes when the tray is hidden and at `SDL_Quit`; on Windows a
+## fatal signal also removes it (`platform/trayguard`), so a crash leaves no
+## ghost icon in the notification area.
 
 import std/[locks, strutils]
 from std/os import getEnv
 import sdl3_nim
+import ../../platform/trayguard
 
 type
   SystemTheme* = enum
@@ -40,6 +51,11 @@ type
     seCancelled,    ## a dialog was closed without a choice
     seDialogFailed, ## a dialog could not be shown; `error` says why
     seThemeChanged  ## the OS switched to `theme`
+    seTray          ## an entry of the tray's menu was clicked: `action`
+
+  TrayAction* = enum
+    ## The tray menu's entries, in order; the string is the label.
+    taShow = "Show viewSEG", taOpenFile = "Open file...", taQuit = "Quit"
 
   ShellEvent* = object
     ## Something the OS shell reports to the application.
@@ -50,6 +66,8 @@ type
       error*: string
     of seThemeChanged:
       theme*: SystemTheme
+    of seTray:
+      action*: TrayAction
 
   ShellQueue* = object
     ## A FIFO of shell events: any Nim thread pushes, the frame loop drains.
@@ -313,3 +331,81 @@ proc setWindowIcon*(windowId: uint32): bool =
     result = SDL_SetWindowIcon(window, icon)
   if not icon.isNil:
     SDL_DestroySurface(icon)
+
+# ------------------------------------------------------------------- tray --
+
+const
+  TrayTooltip = "viewSEG"
+  TrayWindowClass = "SDL_TRAY" ## the class of SDL's hidden tray window on Windows
+
+var
+  tray: ptr SDL_Tray
+  trayEntries: array[TrayAction, ptr SDL_TrayEntry]
+
+proc onTrayEntry(userdata: pointer; entry: ptr SDL_TrayEntry) {.cdecl.} =
+  ## SDL's tray callback (main thread, during event pumping).
+  postShellEvent ShellEvent(kind: seTray, action: TrayAction(cast[int](userdata)))
+
+proc dropTrayIcons() {.nimcall, gcsafe, raises: [].} =
+  ## The last thing done on a fatal signal: the tray icon taken away.
+  discard removeTrayIcons()
+
+proc trayShown*(): bool =
+  ## The tray icon is there.
+  not tray.isNil
+
+proc showTray*(): string =
+  ## Puts the program's icon in the tray, with its menu (`TrayAction`);
+  ## nothing when it is there. Returns "" or why it cannot be shown (no tray
+  ## on this desktop, no AppIndicator library). Main thread.
+  result = ""
+  if tray.isNil:
+    # Windows takes the icon from the executable (`setIconHints`); elsewhere
+    # SDL writes the image to a file for AppIndicator.
+    var icon: ptr SDL_Surface = nil
+    when not defined(windows):
+      let io = SDL_IOFromConstMem(iconPng.cstring, iconPng.len.csize_t)
+      if not io.isNil: icon = SDL_LoadPNG_IO(io, true)
+    tray = SDL_CreateTray(icon, TrayTooltip)
+    if not icon.isNil: SDL_DestroySurface(icon)
+    if tray.isNil:
+      let why = $SDL_GetError()
+      result = if why.len > 0: why else: "this desktop has no tray"
+    else:
+      let menu = SDL_CreateTrayMenu(tray)
+      for a in TrayAction:
+        if a == taQuit:
+          discard SDL_InsertTrayEntryAt(menu, -1, nil, SDL_TRAYENTRY_BUTTON) # a separator
+        trayEntries[a] = SDL_InsertTrayEntryAt(menu, -1, cstring($a), SDL_TRAYENTRY_BUTTON)
+        if not trayEntries[a].isNil:
+          SDL_SetTrayEntryCallback(trayEntries[a], onTrayEntry, cast[pointer](a.int))
+      when defined(windows):
+        prepareTrayRemoval(TrayWindowClass)
+        guardFatalSignals(dropTrayIcons)
+
+proc hideTray*() =
+  ## Takes the icon out of the tray; nothing when it is not there. Main
+  ## thread. (`SDL_Quit` does it too.)
+  if not tray.isNil:
+    SDL_DestroyTray(tray)
+    tray = nil
+    for a in TrayAction: trayEntries[a] = nil
+
+proc trayMenu*(): seq[string] =
+  ## The labels of the tray menu's entries as SDL holds them, "" for a
+  ## separator; none while the tray is hidden.
+  result = @[]
+  if not tray.isNil:
+    var n: cint = 0
+    let entries = SDL_GetTrayEntries(SDL_GetTrayMenu(tray), addr n)
+    if not entries.isNil:
+      let list = cast[ptr UncheckedArray[ptr SDL_TrayEntry]](entries)
+      for i in 0 ..< n.int:
+        let label = SDL_GetTrayEntryLabel(list[i])
+        result.add(if label.isNil: "" else: $label)
+
+proc clickTray*(a: TrayAction) =
+  ## Clicks entry `a` of the tray menu as the user would (tests); its event
+  ## comes from `pollShellEvents`.
+  if not trayEntries[a].isNil:
+    SDL_ClickTrayEntry(trayEntries[a])

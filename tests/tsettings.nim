@@ -70,7 +70,8 @@ proc everyFieldSet(): Settings =
     displayPresets: @[DisplayPreset(name: "Section", display: DisplaySettings(mode: dmDensity,
       colourMap: cmViridis, gain: dgFixed, fixedClip: 0.5, clipPercentile: 97)),
       DisplayPreset(name: "Wiggles", display: DisplaySettings(fills: {}, overlap: 3,
-      fixedClip: 2))])
+      fixedClip: 2))],
+    tray: TrayOptions(icon: false, minimize: true))
   result.plot = PlotDefaults(
     display: DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
       fills: {wfNegative}, colours: pcCustom,
@@ -157,6 +158,15 @@ block gainAmountTo300:
   top.plot.display.gainDb = 300
   doAssert roundTrip(top)[0].plot.display.gainDb == 300
 
+block trayNotInAnOlderFile:
+  # Files written before the tray existed read with no word about it, and
+  # the tray takes its defaults: the icon on, minimizing to the taskbar.
+  var problems: seq[string]
+  let s = readSettings("(settings (version 1) (hideKilled true))", "settings.nif", Settings(),
+    problems)
+  doAssert problems.len == 0, $problems
+  doAssert s.hideKilled and s.tray.icon and not s.tray.minimize, $s.tray
+
 block everyField:
   let s = everyFieldSet()
   # Every field is away from its default, so a field the writer forgets
@@ -175,6 +185,8 @@ block everyField:
     doAssert a != b, "spectrum window field " & name & " is at its default"
   for name, a, b in fieldPairs(s.spectrum.live, d.spectrum.live):
     doAssert a != b, "spectrum live field " & name & " is at its default"
+  for name, a, b in fieldPairs(s.tray, d.tray):
+    doAssert a != b, "tray field " & name & " is at its default"
   let (back, problems) = roundTrip(s)
   doAssert problems.len == 0, $problems
   doAssert back == s, $back

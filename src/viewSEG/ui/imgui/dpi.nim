@@ -34,6 +34,16 @@ func scaledWindowSize*(base: (int, int); scale: float32; usable: (int, int)): (i
   if usable[0] > 0 and usable[1] > 0:
     result = (min(result[0], usable[0] * 9 div 10), min(result[1], usable[1] * 9 div 10))
 
+func startsMaximized*(base: (int, int); scale: float32; usable: (int, int)): bool =
+  ## Whether a first window (never placed before) opens maximized: when
+  ## `base` at UI scale `scale` is larger than 90 % of the usable display
+  ## area `usable` (`scaledWindowSize` had to shrink it), as on a 1080p laptop
+  ## at 150 % (1280 x 720 usable points) or a 1366 x 768 screen at 100 %.
+  ## False when `usable` is not known (0).
+  usable[0] > 0 and usable[1] > 0 and
+    (int(base[0].float32 * scale) > usable[0] * 9 div 10 or
+     int(base[1].float32 * scale) > usable[1] * 9 div 10)
+
 proc windowScale*(window: ptr SDL_Window): float32 =
   ## The UI scale of `window` (`uiScale` of its SDL scales).
   uiScale(SDL_GetWindowDisplayScale(window), SDL_GetWindowPixelDensity(window))

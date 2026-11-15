@@ -60,6 +60,8 @@ const
   IconAgent* = ""      ## nf-cod-robot
   IconUndo* = "\u{EAE2}" ## nf-cod-discard
   IconRedo* = "\u{EBB0}" ## nf-cod-redo
+  IconTray* = "\u{EB09}" ## nf-cod-inbox
+  IconMinimize* = "\u{EABA}" ## nf-cod-chrome_minimize
 
   AllIcons* = [IconOpenFile, IconOpenFiles, IconOpenFolder, IconFolder, IconSave,
     IconSettings, IconLog, IconMap, IconFilter, IconEye, IconEyeOff, IconZoomIn,
@@ -68,7 +70,7 @@ const
     IconLayers, IconTarget, IconLocation, IconRefresh, IconArrowUp, IconArrowDown, IconTrash,
     IconCopy, IconClearAll, IconTasks, IconList, IconGoTo, IconExport, IconHistory,
     IconRecordBack, IconRecordNext, IconRecords, IconNew, IconWriting, IconFollow,
-    IconAgent, IconUndo, IconRedo]
+    IconAgent, IconUndo, IconRedo, IconTray, IconMinimize]
     ## for tests: every glyph above must be in the UI font
 
 func codepoint*(icon: string): int =

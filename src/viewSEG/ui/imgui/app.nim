@@ -11,7 +11,14 @@
 ## and folders dropped on the window are opened;
 ## `-d:imguiDemo` adds the Dear ImGui demo window. The look comes from a theme file
 ## (`view/theme`, `style`, `fonts`); the shell services (dialogs, system theme,
-## icon) are in `shell`, DPI handling in `dpi`, the chrome in `chrome`.
+## icon, tray) are in `shell`, DPI handling in `dpi`, the chrome in `chrome`,
+## the frames the OS draws around the windows in `frames`.
+##
+## With `RunOptions.tray` the program's icon is in the system tray while the
+## settings say so (`Settings.tray.icon`, Window > Icon in the tray), with a
+## menu: Show viewSEG, Open file..., Quit. With `Settings.tray.minimize` too,
+## minimizing the main window hides it (and the windows dragged out of it,
+## its SDL children) in the tray; Show viewSEG brings it back as it was.
 ##
 ## The application state (`core/state`) lives here, on the UI thread: each
 ## frame drains its inbox, and the Messages window shows its log, where the
@@ -27,17 +34,18 @@
 ## `<logs>/startup-failure.log`, and `run` returns 1. In release builds a failed
 ## Dear ImGui check is logged instead of aborting (`asserts`).
 
-import std/[math, options, os, strutils, terminal, times]
+import std/[atomics, math, options, os, strutils, terminal, times]
 import asserts # before imguin: Nim keys its cache of imguin's C++ objects on the
                # C flags in force when imguin is compiled, and this adds one
 import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
 import ../../core/[filesystem, geometry, screens, state, watchdog]
-import ../../platform/paths
+import ../../platform/[paths, trayguard]
 import ../../remote/control
 import ../../view/jobstatus
-import agentshot, chrome, dpi, filelist, fonts, headerswindow, icons, jobswindow, joindialog,
+import agentshot, chrome, dpi, filelist, fonts, frames, headerswindow, icons, jobswindow,
+  joindialog,
   mapwindow, memorywindow, menus, messages, recordlist, shell, spectrumwindow, style,
   tracepanel, windows
 
@@ -59,6 +67,8 @@ const
   noticeSeconds = 5.0                     ## how long a notice stays on screen
   CheckFrames = 8                         ## frames after a layout's arrival to look for windows off screen
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
+
+var stopAsked: Atomic[bool] ## Ctrl+C was pressed in the console (`RunOptions.tray`)
 
 type
   Ui = object
@@ -119,6 +129,11 @@ type
     agentSocket: string                        ## where it listens; "" until first needed
     version: string                            ## the program's version, for agents
     dialogs: DialogHook                        ## `RunOptions.dialogs`
+    trayAllowed: bool                          ## `RunOptions.tray`
+    trayProblem: string                        ## why the tray icon could not be shown; "" for none
+    trayTried: bool                            ## the icon was asked for since the setting last changed
+    inTray: bool                               ## the main window is hidden in the tray
+    trayHides: int                             ## times it was hidden there (tests)
 
   FrameInfo* = object
     ## What a frame hook sees. The hook runs after the main window is drawn and
@@ -207,6 +222,9 @@ type
       ## start with the windows as at a first start (`--reset-windows`): the
       ## saved layout is not used, and the main window opens on the primary
       ## screen at its default size; every other setting is as saved
+    tray*: bool
+      ## the program's icon may be in the system tray (`Settings.tray`); the
+      ## program sets it, tests choose (a tray loads GTK on Linux)
     simulate: set[StartupStep] ## tests: these steps fail without being tried
 
 proc readPixel*(frame: FrameInfo; x, y: int): Rgba =
@@ -338,6 +356,30 @@ proc moveMainWindow*(frame: FrameInfo; x, y: int) =
 proc stop*(frame: FrameInfo) =
   ## Ends the run after this frame, as closing the window does.
   frame.ui.running = false
+
+proc sayMinimized*(frame: FrameInfo) =
+  ## Tells the frame loop the main window was minimized, as the desktop does
+  ## (an X server without a window manager minimizes nothing). For tests.
+  var ev: SDL_Event
+  ev.window = struct_SDL_WindowEvent(type_field: SDL_EVENT_WINDOW_MINIMIZED,
+    windowID: SDL_GetWindowID(frame.ui.window))
+  discard SDL_PushEvent(addr ev)
+
+proc inTray*(frame: FrameInfo): bool =
+  ## The main window is hidden in the tray (Window > Minimize to the tray).
+  frame.ui.inTray
+
+proc trayHides*(frame: FrameInfo): int =
+  ## How many times the main window was hidden in the tray since the start.
+  frame.ui.trayHides
+
+proc mainWindowHidden*(frame: FrameInfo): bool =
+  ## SDL says the main window is hidden.
+  (SDL_GetWindowFlags(frame.ui.window) and SDL_WINDOW_HIDDEN) != 0
+
+proc trayProblem*(frame: FrameInfo): string =
+  ## Why the tray icon could not be shown; "" when it could or was not asked.
+  frame.ui.trayProblem
 
 proc moveMouse*(frame: FrameInfo; at: Vec2) =
   ## Moves the mouse pointer to `at` (framebuffer pixels from the window's
@@ -554,12 +596,14 @@ proc flushMessages(ui: var Ui) =
   ui.messages.items.setLen 0
 
 proc setTheme(ui: var Ui) =
-  ## Loads the theme `pickTheme` names, with its fonts, and restyles.
+  ## Loads the theme `pickTheme` names, with its fonts, and restyles, the
+  ## windows' frames too.
   ui.theme = ui.pickTheme()
   ui.previewing = false # what is set now replaces a preview
   ui.fonts.load(ui.theme, ui.fontDirs, ui.messages)
   ui.flushMessages()
   ui.restyle()
+  dressWindows(lookOf(ui.theme))
 
 proc followPreview(ui: var Ui) =
   ## Draws the theme View > Theme's pointer rests on, from the file as read
@@ -606,6 +650,59 @@ proc followSettings(ui: var Ui) =
   if wanted != ui.appliedTheme:
     ui.appliedTheme = wanted
     if wanted != ui.selected: ui.pendingTheme = some(wanted)
+
+# ------------------------------------------------------------------- tray --
+
+proc ask(ui: Ui; kind: DialogKind; location = "") =
+  ## Shows the file dialog `kind`, starting at `location`; its answer comes
+  ## as a shell event (from `RunOptions.dialogs` when a test gives one).
+  if ui.dialogs == nil:
+    showDialog(kind, SDL_GetWindowID(ui.window), location)
+  else:
+    let paths = ui.dialogs(kind, location)
+    postShellEvent(if paths.len > 0: ShellEvent(kind: sePathsChosen, dialog: kind,
+      paths: paths) else: ShellEvent(kind: seCancelled, dialog: kind))
+
+proc askOpenFile(ui: Ui) =
+  ## File > Open file: the dialog, in the folder listed last.
+  let recent = ui.core.settings.recentFolders
+  ui.ask(dkOpenFile, if recent.len > 0: recent[0] & DirSep else: "")
+
+proc showMain(ui: var Ui) =
+  ## The main window shown, restored and in front: out of the tray, or from
+  ## the taskbar, or from behind other windows.
+  if ui.inTray:
+    discard SDL_ShowWindow(ui.window) # its SDL children (viewports) come back with it
+    ui.inTray = false
+  if (SDL_GetWindowFlags(ui.window) and SDL_WINDOW_MINIMIZED) != 0:
+    discard SDL_RestoreWindow(ui.window)
+  discard SDL_RaiseWindow(ui.window)
+
+proc hideInTray(ui: var Ui) =
+  ## Minimizing with Window > Minimize to the tray on: the main window and its
+  ## children hidden, off the taskbar, while the tray icon is there.
+  if ui.core.settings.tray.minimize and trayShown() and not ui.inTray:
+    discard SDL_HideWindow(ui.window)
+    ui.inTray = true
+    if (SDL_GetWindowFlags(ui.window) and SDL_WINDOW_HIDDEN) != 0: inc ui.trayHides
+
+proc followTray(ui: var Ui) =
+  ## The tray icon shown or taken away as the settings say; a desktop
+  ## without a tray is said once, until the setting changes.
+  let want = ui.trayAllowed and ui.core.settings.tray.icon
+  if want and not trayShown() and not ui.trayTried:
+    ui.trayTried = true
+    ui.trayProblem = showTray()
+    if ui.trayProblem.len > 0:
+      ui.core.report(sevWarning, "tray", "The icon cannot be put in the system tray: " &
+        ui.trayProblem & (when defined(linux): " (a tray in Linux needs " &
+          "libayatana-appindicator3 and a bar that shows StatusNotifier items)" else: ""))
+  elif not want:
+    ui.trayTried = false
+    ui.trayProblem = ""
+    if trayShown():
+      if ui.inTray: ui.showMain() # never hidden with no way back
+      hideTray()
 
 # ------------------------------------------------------------------ events --
 
@@ -658,16 +755,17 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     ui.system = ev.theme
     if ui.selected.len == 0 and resolveTheme(ui.choice, ev.theme) != ui.theme.mode:
       ui.setTheme()
-
-proc ask(ui: Ui; kind: DialogKind; location = "") =
-  ## Shows the file dialog `kind`, starting at `location`; its answer comes
-  ## as a shell event (from `RunOptions.dialogs` when a test gives one).
-  if ui.dialogs == nil:
-    showDialog(kind, SDL_GetWindowID(ui.window), location)
-  else:
-    let paths = ui.dialogs(kind, location)
-    postShellEvent(if paths.len > 0: ShellEvent(kind: sePathsChosen, dialog: kind,
-      paths: paths) else: ShellEvent(kind: seCancelled, dialog: kind))
+    else:
+      dressWindows(lookOf(ui.theme)) # SDL has just set the title bars to the system's mode
+  of seTray:
+    case ev.action
+    of taShow:
+      ui.showMain()
+    of taOpenFile:
+      ui.showMain()
+      ui.askOpenFile()
+    of taQuit:
+      ui.running = false
 
 func everyWindow(core: AppState): seq[string] =
   ## The ImGui IDs of the windows that can be outside the main window: the
@@ -753,7 +851,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
   let folder = if recent.len > 0: recent[0] & DirSep else: ""
   for a in actions:
     case a
-    of maOpenFile: ui.ask(dkOpenFile, folder)
+    of maOpenFile: ui.askOpenFile()
     of maOpenFiles: ui.ask(dkOpenFiles, folder)
     of maOpenFolder: ui.ask(dkOpenFolder, folder)
     of maClose:
@@ -995,8 +1093,15 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     agentOn: ui.agent.running, agentSocket: ui.agentSocket,
     prepareNext: ui.core.settings.files.prepareNext,
     shown: {AppWindow.low .. AppWindow.high} - ui.windows.hidden,
-    seismicName: ui.core.windowTitle(MainPanel), joinShown: ui.join.shown), ui.marks)
+    seismicName: ui.core.windowTitle(MainPanel), joinShown: ui.join.shown,
+    trayIcon: ui.core.settings.tray.icon, trayMinimize: ui.core.settings.tray.minimize,
+    trayProblem: ui.trayProblem), ui.marks)
   if menu.toggleAgent: ui.toggleAgent()
+  if menu.toggleTrayIcon or menu.toggleTrayMinimize:
+    var s = ui.core.settings
+    if menu.toggleTrayIcon: s.tray.icon = not s.tray.icon
+    if menu.toggleTrayMinimize: s.tray.minimize = not s.tray.minimize
+    ui.core.apply Command(kind: ckSettings, settings: s)
   for w in menu.pickedWindows: ui.windows.picked(w)
   if menu.toggleJoin:
     if ui.join.shown: ui.join.shown = false else: ui.join.open()
@@ -1273,7 +1378,8 @@ proc createMainWindow(size: (int, int); placed: WindowPlacement; reset: bool): M
   ## to fit the screen it is on when no screen is that large); else, and
   ## with `reset` (`--reset-windows`), at the default size in the middle of
   ## the primary screen; at the default size where the desktop puts it when
-  ## it was never saved.
+  ## it was never saved, maximized when the primary screen is too small for
+  ## it (`startsMaximized`).
   const flags = SDL_WINDOW_OPENGL or SDL_WINDOW_RESIZABLE or SDL_WINDOW_HIGH_PIXEL_DENSITY
   result = MainPlace(severity: sevInfo)
   let (screens, primary) = screensNow()
@@ -1311,6 +1417,11 @@ proc createMainWindow(size: (int, int); placed: WindowPlacement; reset: bool): M
       discard SDL_SetWindowPosition(result.window, cint(at.pos.x), cint(at.pos.y))
       if placed.maximized and not result.moved: discard SDL_MaximizeWindow(result.window)
       discard SDL_ShowWindow(result.window)
+  elif size[0] <= 0 and startsMaximized(wanted, primaryDisplayScale(),
+      (int(home.size.x), int(home.size.y))):
+    # A small screen (or a large scale): the whole of it, as Windows
+    # programs open there; restored, the window is `w` x `h`.
+    result.window = SDL_CreateWindow("viewSEG", w.cint, h.cint, flags or SDL_WINDOW_MAXIMIZED)
   else:
     result.window = SDL_CreateWindow("viewSEG", w.cint, h.cint, flags)
 
@@ -1429,7 +1540,7 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
     themes: themeFiles(themeDirs(userThemes, assets)), scale: windowScale(window),
     core: initAppState(indexCache = indexCache), pick: noPick(), dog: initFrameWatchdog(),
     slow: initSlowFrameDigest(), echoing: isatty(stdout), running: true,
-    agentSocket: opts.agentSocket, dialogs: opts.dialogs,
+    agentSocket: opts.agentSocket, dialogs: opts.dialogs, trayAllowed: opts.tray,
     version: if opts.version.len > 0: opts.version else: "unknown")
   if opts.version.len > 0:
     result.say("viewSEG " & opts.version)
@@ -1521,6 +1632,7 @@ proc run*(opts = RunOptions()): int =
     return opts.fail(ssImguiGl, "")
   defer: ImGui_Impl_OpenGL3_Shutdown()
   installDpiScaling(window)
+  installFrames(window) # the OS frames of the viewport windows, in the theme's colours
 
   # The windows as they were at the last exit: read, as the settings were,
   # before this thread becomes the UI thread, which never reads a file.
@@ -1534,6 +1646,15 @@ proc run*(opts = RunOptions()): int =
   for (severity, text) in last.notes: ui.core.report(severity, "layouts", text)
   if last.found: ui.arrange(last.layout.imgui)
   ui.setTheme()
+  when defined(windows):
+    ui.say(framesNote(windowsVersionNow()))
+  if opts.tray:
+    # Ctrl+C in a console: a clean quit (settings saved, tray icon removed);
+    # a second one ends the program at once.
+    setControlCHook(proc () {.noconv.} =
+      if stopAsked.exchange(true):
+        discard removeTrayIcons()
+        quit(130))
   let gpuError = ui.trace.startGpu(glProc, opts.maxTextureSize)
   if gpuError.len > 0:
     ui.say("The plot cannot be drawn: " & gpuError, mlError)
@@ -1564,6 +1685,8 @@ proc run*(opts = RunOptions()): int =
       if event.type_field == SDL_EVENT_QUIT.uint32 or
           (event.type_field == SDL_EVENT_WINDOW_CLOSE_REQUESTED.uint32 and mainWindowEvent):
         ui.running = false
+      elif mainWindowEvent and event.type_field == SDL_EVENT_WINDOW_MINIMIZED.uint32:
+        ui.hideInTray()
       elif mainWindowEvent and event.type_field in [SDL_EVENT_WINDOW_MOVED.uint32,
           SDL_EVENT_WINDOW_RESIZED.uint32, SDL_EVENT_WINDOW_MAXIMIZED.uint32,
           SDL_EVENT_WINDOW_RESTORED.uint32]:
@@ -1581,15 +1704,18 @@ proc run*(opts = RunOptions()): int =
       elif event.type_field == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED.uint32 and
           mainWindowEvent:
         let scale = windowScale(window)
+        refreshIcons() # the title bar's and taskbar's icons at the new size
         if scale != ui.scale:
           ui.scale = scale
           ui.restyle()
           ui.say("Display scale: " & $int(round(scale * 100)) & " %")
     for ev in pollShellEvents():
       ui.onShellEvent(ev)
+    if stopAsked.load: ui.running = false
+    if frame > 0: ui.followTray() # after the first picture: GTK's start takes a moment on Linux
     ui.mark "inbox"
     discard ui.core.drainInbox()
-    if (SDL_GetWindowFlags(window) and SDL_WINDOW_MINIMIZED) != 0:
+    if (SDL_GetWindowFlags(window) and (SDL_WINDOW_MINIMIZED or SDL_WINDOW_HIDDEN)) != 0:
       ui.mark "agents"
       ui.agent.serve(ui.core, asleep)
       ui.mark("minimized", idle = true)
@@ -1656,6 +1782,7 @@ proc run*(opts = RunOptions()): int =
         ui.core.report(sevWarning, "frame", report.get)
     ui.echoNewLog()
     ui.core.persist()
+  hideTray() # the icon goes first: the rest of the quit can take a moment
   # The quit waits a fifth of a second for the agents' socket to go (its
   # folder may not answer), then the core's threads (`shutdown`).
   ui.agent.stop(ui.core, getMonoTime() + initDuration(milliseconds = 200))

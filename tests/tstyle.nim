@@ -38,6 +38,16 @@ block windowSize:
   doAssert scaledWindowSize((1280, 800), 1.5, (3840, 2100)) == (1920, 1200)
   doAssert scaledWindowSize((1280, 800), 2, (1920, 1040)) == (1728, 936) # 90 % of usable
   doAssert scaledWindowSize((1280, 800), 2, (0, 0)) == (2560, 1600) # unknown display
+  # The first window on laptops at 150 % (usable areas in pixels, under a
+  # 48-pixel taskbar): 1080p is too small for 1280 x 800 points, so it opens
+  # maximized (restored: 90 % of the screen); 4K takes it as it is.
+  doAssert scaledWindowSize((1280, 800), 1.5, (1920, 1032)) == (1728, 928)
+  doAssert startsMaximized((1280, 800), 1.5, (1920, 1032))
+  doAssert scaledWindowSize((1280, 800), 1.5, (3840, 2088)) == (1920, 1200)
+  doAssert not startsMaximized((1280, 800), 1.5, (3840, 2088))
+  doAssert not startsMaximized((1280, 800), 1, (1920, 1040)) # 1080p at 100 %
+  doAssert startsMaximized((1280, 800), 1, (1366, 728)) # a 1366 x 768 screen
+  doAssert not startsMaximized((1280, 800), 2, (0, 0)) # unknown display
 
 block colourPacking:
   doAssert u32(Rgba(r: 1, g: 2, b: 3, a: 4)) == 0x04030201'u32

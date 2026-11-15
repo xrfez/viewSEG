@@ -41,7 +41,8 @@
 ##   (live (scale db) (logFrequency false) (time visible) (raw true) (processed true)
 ##    (response true) (phase false)))
 ##  (displayPresets
-##   (preset "Section" (mode density) (colourMap viridis) (gain none) ...)))
+##   (preset "Section" (mode density) (colourMap viridis) (gain none) ...))
+##  (tray (icon true) (minimize false)))
 ## ```
 ##
 ## Reading is forgiving where it can be and says what it did: a setting that
@@ -338,6 +339,10 @@ proc settingsDocument*(s: Settings): string =
     w.add p.name
     w.display(p.display, turned = false)
     w.close()
+  w.close()
+  w.open("tray")
+  w.value("icon", s.tray.icon)
+  w.value("minimize", s.tray.minimize)
   w.close()
   w.close()
   w.finish
@@ -790,6 +795,11 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           elif k.isTree("live"): r.spectrumDisplay(k, result.spectrum.live)
           else: r.unknown(k, "spectrum")
       of "displayPresets": r.displayPresets(c, result.displayPresets)
+      of "tray":
+        for k in c.kids:
+          if k.isTree("icon"): r.flag(k, result.tray.icon)
+          elif k.isTree("minimize"): r.flag(k, result.tray.minimize)
+          else: r.unknown(k, "tray")
       else: r.unknown(c, "settings")
   if version == 0:
     r.problem(doc[root], "(settings) gives no (version); read as version " &

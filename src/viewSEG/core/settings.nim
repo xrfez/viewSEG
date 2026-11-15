@@ -52,6 +52,14 @@ type
     autoScroll*: bool = true ## follow new messages; off: stay where the user scrolled
     hidden*: set[Severity]   ## severities not shown (an error hides with sevFatal)
 
+  TrayOptions* = object
+    ## The program's icon in the system tray (the notification area).
+    icon*: bool = true
+      ## the icon is there, with a menu: Show viewSEG, Open file..., Quit
+    minimize*: bool
+      ## minimizing the main window hides it in the tray instead of the
+      ## taskbar (with the icon on)
+
   FilesView* = object
     ## How the Files window follows its folder.
     followLatest*: bool
@@ -151,6 +159,7 @@ type
       ## up); off: drawn blank
     spectrum*: SpectrumOptions                    ## the spectrum windows' display
     displayPresets*: seq[DisplayPreset]           ## named displays, in the order made
+    tray*: TrayOptions                            ## the tray icon and minimizing to it
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not

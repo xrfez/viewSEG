@@ -90,6 +90,7 @@ const Reached = {
   "join.coordinates": "", "join.recordMatch": "", "join.traceMatch": "",
   "headers.tab": "", "headers.traceTab": "", "headers.followPointer": "",
   "headers.asDisplayed": "", "headers.columns": "", "hideKilled": "",
+  "tray.icon": "", "tray.minimize": "",
   "spectrum.window.scale": "open spectrum", "spectrum.window.logFrequency": "open spectrum",
   "spectrum.window.time": "open spectrum", "spectrum.window.raw": "open spectrum",
   "spectrum.window.processed": "open spectrum", "spectrum.window.phase": "open spectrum",

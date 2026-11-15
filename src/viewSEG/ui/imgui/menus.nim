@@ -11,8 +11,9 @@
 ## file the Seismic window shows, whichever window has the focus (Ctrl+Z,
 ## Ctrl+Shift+Z and Ctrl+Y everywhere but in a text field, which keeps its
 ## own undo); View holds the theme; Window puts the windows right (Reset the
-## windows, Bring all windows onto this screen), shows, hides and brings
-## forward each window, and loads and saves layouts.
+## windows, Bring all windows onto this screen), says whether the program's
+## icon is in the tray and whether minimizing hides it there, shows, hides
+## and brings forward each window, and loads and saves layouts.
 
 import std/os
 import imguin/cimgui
@@ -65,6 +66,9 @@ type
     edited*: bool               ## the file shown has edits (Edit > Clear all edits)
     editedName*: string         ## its name; "" when no file is shown
     memoryShown*: bool          ## the File memory window is open
+    trayIcon*: bool             ## Window > Icon in the tray is checked
+    trayMinimize*: bool         ## Window > Minimize to the tray is checked
+    trayProblem*: string        ## why the tray icon cannot be shown; "" when it can
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -81,6 +85,8 @@ type
     pickedWindows*: set[AppWindow]
       ## their entries under Window were clicked (`picked`)
     toggleJoin*: bool     ## the "Import survey" window's entry under Window was clicked
+    toggleTrayIcon*: bool     ## Window > Icon in the tray was clicked
+    toggleTrayMinimize*: bool ## Window > Minimize to the tray was clicked
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
@@ -282,6 +288,19 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
   tip("The windows dragged out of the main window, wherever they are (on another screen, " &
     "on one that is gone, or past a screen's edge), and the main window itself, brought " &
     "wholly onto the screen the main window is on")
+  if igMenuItem_Bool((IconTray & "  Icon in the tray").cstring, nil, input.trayIcon, true):
+    res.toggleTrayIcon = true
+  if marked != nil: marked[].mark("menu.tray.icon")
+  tip(if input.trayProblem.len > 0 and input.trayIcon:
+        "The tray icon cannot be shown here: " & input.trayProblem
+      else: "viewSEG's icon in the system tray, with a menu: Show viewSEG, Open file..., Quit")
+  if igMenuItem_Bool((IconMinimize & "  Minimize to the tray").cstring, nil,
+      input.trayMinimize, input.trayIcon):
+    res.toggleTrayMinimize = true
+  if marked != nil: marked[].mark("menu.tray.minimize")
+  tip(if input.trayIcon: "On: minimizing the main window hides it, and its windows, in the " &
+        "tray instead of the taskbar; the tray icon's Show viewSEG brings it back"
+      else: "Needs the icon in the tray")
   igSeparatorText("Windows")
   for w in AppWindow:
     let name = if w == awSeismic and input.seismicName.len > 0: input.seismicName

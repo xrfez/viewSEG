@@ -185,4 +185,4 @@ when isMainModule:
     quit run(RunOptions(openPaths: cmd.files, persist: true,
       version: ViewSEGVersion & " (parseSEG " & parseSEG.PackageVersion & ")",
       agent: cmd.agent, agentSocket: if cmd.socket.len > 0: absolutePath(cmd.socket) else: "",
-      resetWindows: cmd.resetWindows))
+      resetWindows: cmd.resetWindows, tray: true))
