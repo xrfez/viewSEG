@@ -24,7 +24,7 @@ Status values:
 |---|---|---|---|
 | Open SEG-Y, SEG-D and SEG-2, detected from content | `openSeismic`, `detectKind`, `f.kind`, `f.len`, `f.isOpen` | File → Open, drag and drop, file browser | planned |
 | Progress and cancel while indexing | `Progress`, `SegCancelledError`, `ProgressStep` | Progress bar with Cancel | planned |
-| Index cache for instant reopening | `OpenOptions.cache`, `saveIndex`, `f.fromCache` | Instant stepping between files in the file browser | planned |
+| Index cache for instant reopening | `OpenOptions.cache`, `saveIndex`, `f.fromCache` | Instant stepping between files in the file browser: the open job reads and saves caches on the local disk (`<cache>/index`, never beside the file, kept under 4 GiB); the next file of the list is opened through it in the background ("Prepare the next file") | done |
 | Per-trace geometry keys, all or on demand | `keys = true`, `ensureKeys`, `traceKeys(traces)`, `traceKeysInto`, `hasKeys` | The open file's source and receiver positions in the survey (`traceKeysInto` on a job after each open), drawn on the map as rings; status bar, gathers (keys built when first needed) | built (positions, map); planned (the rest) |
 | Open options: force the standard, verify every header, two's-complement mantissas (SEG-D 8015, SEG-2 format 3), demux folder | `OpenOptions(kind, verify: vfFull, twosComplement8015, demuxDir)` | "Reopen with options…" (offered on a "not recognised" log entry) | planned |
 | Multiplexed SEG-D read transparently | `openSeismic` (demux copy), `f.demuxPath`, `dcMultiplexed` | Opens like any file; a log note says a temporary copy is used | planned |
@@ -39,7 +39,7 @@ Status values:
 |---|---|---|---|
 | Ranges, selections and sample windows into reused buffers | `readTraces`, `readTracesInto` (window forms), `newTraceTensor`, `maxSamples(f, traces)` | Trace panel tiles, deep zoom | planned |
 | Undecodable traces as zero rows, reported | `readTracesInto(..., failedRows)`, `PrefetchChunk.failed`, `failedRows`, `log` | Failed traces marked on the trace axis and listed in the log | planned |
-| Read-ahead on worker threads | `newPrefetcher`, `tryNext`, `next`, `seek`, `quickFirst`, `workers`, `maxRingBytes`, `atEnd`, `traceAt` | internal: each trace panel's reader thread | internal |
+| Read-ahead on worker threads | `newPrefetcher`, `tryNext`, `next`, `seek`, `quickFirst`, `workers`, `maxRingBytes`, `atEnd`, `traceAt` | internal: each trace panel's reader thread; on a slow drive (its reads timed) further ahead, in chunks of 256 traces; the next file's first view read in the background | internal |
 | Buffer recycling | `nextInto`, `tryNextInto`, `recycle` | internal: scrolling without allocation | internal |
 | Chunks of one channel set and interval | `uniform = true`, `uniformRuns` | internal: one `dt` per processing call | internal |
 | Processing on the decode worker | `ChunkTransform`, `user` | internal: background QC attribute passes | internal |

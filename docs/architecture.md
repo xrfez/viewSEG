@@ -105,7 +105,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), reads one trace's headers, hex bytes or textual header, closes files, and makes every OpenGL call |
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, an open file's positions, survey files read, `ensureKeys`, survey joins, sorts across files |
 | Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, brute stack, conversions, exports and patches, queued workflows |
-| Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
+| Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; lists the layouts; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
 | Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
 | Agent server | `remote/server`, started only when agent control is turned on | Accepts MCP clients on the socket, reads and frames their messages, answers the handshake and the tool list itself, queues tool calls for the UI thread and writes the answers it is given; never reads or changes `AppState` |
@@ -146,7 +146,8 @@ the wait the user notices is never behind a long job.
   `drainInbox` takes the finished jobs first and then the messages, so a job's messages
   are always taken in no later than its end.
 - **Stop.** `shutdown` (or destroying `AppState`) cancels the queued jobs, asks the
-  running ones to stop and joins both runners. Work must notice its cancel.
+  running ones to stop and waits for the runners until a deadline; one held by a drive
+  that does not answer is left (Network drives, below). Work must notice its cancel.
 - **What the user sees.** The status bar shows the job the user most likely waits for
   (`view/jobstatus`); the Jobs window (`view/joblist`) lists the running, queued (in each
   lane's order, with up, down and remove) and finished ones, and turns its buttons into
@@ -200,8 +201,8 @@ or time changed since the look before (`changing`), one that stopped changing, o
 went. No operating system notification is used, so it works the same on every system and
 on shares. A folder that cannot be read is said once and keeps its list. It is its own
 thread, not a job on the background lane, so a long background job (a QC pass) never
-holds it up and the Jobs window is not filled with looks; its `stop` waits two seconds at
-most, so a share that hangs a look cannot hold the quit. `AppState.takeWatched` updates
+holds it up and the Jobs window is not filled with looks; its `stop` waits until a
+deadline only, so a share that hangs a look cannot hold the quit. `AppState.takeWatched` updates
 the entries: a new one is marked `isNew` until it is shown, one that changed is
 `fsWriting` until a look finds it the same, one found cut short when opened is
 `fsShort`. With **Follow the latest** (`Settings.files.followLatest`), the newest file
@@ -223,6 +224,75 @@ while a read of it is under way still ends the program; only reading the samples
 `pread`, or a guard around decoding, in parseSEG, removes that. Edits made on a file are
 kept with its size and time; when the file is opened again changed, they are set aside
 as "Clear all edits" does, so Ctrl+Z brings them back.
+
+**Network drives** (`core/filesystem`). A drive can answer slowly, stop answering for
+minutes, or go away while a file is open; the window must stay alive, say what it waits
+for, let the user go on, and quit.
+
+- **The seam.** Every file-system call `core` makes goes through `fs` (`fs.getFileInfo`,
+  `fs.walkDir`, `fs.open`, `fs.readFile`, `fs.moveFile` ...: the `std/os` calls of those
+  names, behind a hook), and `fs.mappedRead` marks where parseSEG reads a seismic file's
+  map (each step of the open's walk, each chunk a panel's reader takes), which cannot go
+  through it. `fs.now` is the clock the waits on drives are measured with. Tests install a
+  hook (`tests/utils/faultyfs`) that makes chosen paths slow (it moves `fs.now` on), hang
+  (it blocks until released), fail (EIO) or wait for a round trip the test grants, and
+  that keeps every call made on the UI thread; `tfilesystem` checks that no module of
+  `core` calls the file system past the seam. Outside it, by design: the program's own
+  assets (themes, fonts), `platform/paths`' probe of its folders at start, and the
+  settings and the window layout, read once before the main thread becomes the UI thread.
+- **The UI thread never touches a drive.** Paths are made canonical without the disk;
+  the folder listed last is listed again at start by the listing (a folder gone is said
+  quietly); the layouts are listed on the disk thread; a settings reset's backup gets its
+  free name there; the folder's watch makes no call under the lock the UI thread takes;
+  native dialogs run outside this thread (SDL). The locks the UI thread takes (the inbox,
+  the jobs, each reader's, the watch's, the disk thread's) are never held over a call.
+- **Nothing waits for a stuck thread without a bound.** A running job beats as it
+  reports (`progress`, `setPhase`); one silent for `StallAfter` (3 s) does not answer
+  (`notAnsweringFor`). `Jobs.tend`, each frame, gives its lane a new runner when work
+  waits behind it (it runs on, and its result is taken), and abandons it once cancelled
+  and still silent (or after `CancelGrace`): listed as cancelled at once, its result
+  dropped, its files held until its work comes back, so nothing it reads is closed under
+  it (`docs/models/jobsabandon.nif`). A panel's reader beats per chunk; a reader silent
+  for `StallAfter` is left when its panel is given something else, or on Cancel, and a new
+  one takes over; its late tiles answer an old request and are dropped. Every thread's
+  `stop` waits until a deadline; `AppState.shutdown` asks them all at once and waits for
+  them together at most `QuitWait` (0.8 s); a thread left keeps its memory, and the open
+  files and relation files it may read, to the end of the process
+  (`docs/models/jobsquit.nif`).
+- **What the user sees.** `AppState.waiting` (a panel: an open or a read not answering,
+  or a file that cannot be read now, `mkUnread`) and `listingWait` (the listing, or the
+  watch's look, not answering), worded by `words`; the plot and the Files window show them
+  with Cancel (`ckCancelJob`, `ckStopReading`) and Retry (`ckRetry`: open again, read again
+  with a new reader, list again with a new watch).
+- **Files are closed off the UI thread** (`core/closer`): a close can wait for a share,
+  and parseSEG 0.11 unmaps and closes under one lock of its own, so one stuck close holds
+  every other open and close (an open then says it does not answer). `AppState` hands a
+  file it lets go of (after its close job, or one never handed to a reader) to the
+  closer's thread, emptying its own list of cycle roots first; prefetchers are made and
+  closed only on readers' and jobs' threads (`Prefetcher.close` joins its decoders with no
+  bound). A file a thread left may still read is never closed: its hold keeps its close
+  job waiting, and at the quit it is kept to the end of the process.
+- **A drive that goes away.** The reader `stat`s the file before each read and reads
+  nothing of a file it cannot look at (or that is shorter than it was opened): the plot
+  keeps its picture and says why, a drive that fails apart from a file cut short
+  (`UnreadCause`), as parseSEG's coming `readFailed` and `cutShort` will tell them apart. A fault in the middle of a read (the drive fails, or the
+  file is cut short then) still ends the program, in parseSEG's mapped read, until
+  parseSEG guards its maps.
+- **Slow drives.** Each tile says how long its reader waited for the samples
+  (`Tile.readTime`, on `fs.now`); a panel whose reads wait 30 ms or more for 64 traces
+  (`SlowPer64`, smoothed) reads `SlowReadAhead` (3) views ahead, keeps `SlowKeepAhead`
+  (2), in reads of `SlowChunkTraces` (256) traces, its read-ahead within
+  `SlowMaxAheadValues` (128 MiB; the panel's tiles stay within 192 MiB). A request the
+  view has left is given up between chunks (a newer note). With **Prepare the next file**
+  (`Settings.files.prepareNext`, on by default) the Files window names the file a step
+  down would show (`ckPrepare`); once the main panel shows its file with a tile, a
+  background job opens it through the index cache (local: `<cache>/index`, never beside
+  the file) and reads its first view's samples (`prepareWork`), and the session is kept
+  unshown until the user steps to it (`showPath` takes it as an open). A file over 2 GiB is
+  not prepared. Measured with the seam (`tslowdrive`, round trips counted): panning half
+  a view a step, two round trips a step, 26 of 30 steps waited at the old read-ahead, 2 on
+  a drive found slow; stepping through four files at 200 ms a call, 138 calls waited for
+  without preparing, 30 with.
 
 **The survey** (`core/survey`, `core/surveyjobs`, `core/spatial`). Where the sources and
 receivers are, for the map and for linking traces to the places they were recorded at. One

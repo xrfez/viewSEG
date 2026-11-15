@@ -117,6 +117,36 @@ its own; a slow network folder is looked at less often (ten times as long as a l
 takes), and a folder that cannot be read for a while (a share that went away) is said
 once in Messages and keeps its list.
 
+### Files on a network drive
+
+viewSEG never waits for a drive in its window: listing a folder, opening a file, reading
+its traces and saving the settings all happen on threads of their own, so the window keeps
+drawing, and every button works, however slow the drive is.
+
+- **A drive that stops answering.** After 3 seconds without an answer viewSEG says so where
+  you wait: in the Seismic window ("Reading shot12.sgd: not answering for 12 s"; the plot
+  keeps what it showed), above the plot for a file being opened, and under the list in the
+  Files window for a folder being listed or looked at. Each comes with **Cancel** (stop
+  waiting: the picture stays as it is) and **Retry** (try the drive again). The status bar's
+  job says it too. Meanwhile you can show other files, from other folders or drives.
+- **A drive that goes away** while a file is shown: the plot keeps the picture and says the
+  file cannot be read now; Retry reads it again once the drive is back.
+- **Quitting** never waits for a drive: the window closes within about a second, whatever
+  is stuck. A read the drive still holds is left to end on its own.
+- **A slow drive.** viewSEG times its reads; when they are slow it reads further ahead
+  (three views on each side instead of one and a half) in larger reads, so panning finds
+  its data on hand more often. **File > Prepare the next file** (on by default) opens the
+  next file of the list in the background while you look at one: its index, and the
+  samples of its first view, so the next step does not wait for the drive to be walked.
+  Files larger than 2 GiB are not prepared.
+- **The index cache** stays on your own disk (in the cache folder, `viewSEG --paths`),
+  never beside the files, so a second visit to a file reads its index locally.
+- **What can still stop viewSEG:** a file whose drive fails, or that another program cuts
+  short, in the fraction of a second a read of it is under way ("Bus error" on Linux and
+  macOS, a crash on Windows). viewSEG checks the file before each read and reads nothing of
+  a file it cannot look at, but the read itself goes through parseSEG's memory map, which
+  will guard such a fault in a later release.
+
 ## Step through the records of a file
 
 A file often holds several records (shots, receiver gathers, CDPs). The Seismic window shows

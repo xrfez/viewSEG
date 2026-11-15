@@ -34,6 +34,7 @@ type
     followLatest*: bool         ## File > Follow the latest file is checked
     agentOn*: bool              ## File > Agent control is checked
     agentSocket*: string        ## where agents connect; "" while not known yet
+    prepareNext*: bool          ## File > Prepare the next file is checked
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -45,6 +46,7 @@ type
     loadLayout*: string   ## a layout file to load; "" for none
     toggleFollow*: bool   ## File > Follow the latest file was clicked
     toggleAgent*: bool    ## File > Agent control was clicked
+    togglePrepare*: bool  ## File > Prepare the next file was clicked
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
@@ -168,6 +170,12 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
           input.followLatest, true):
         result.toggleFollow = true
       tip(FollowHelp)
+      if igMenuItem_Bool((IconStep & "  Prepare the next file").cstring, nil,
+          input.prepareNext, true):
+        result.togglePrepare = true
+      tip("While a file is shown, open the next file of the list in the background " &
+        "(its index and its first view), so that the next step does not wait for a slow " &
+        "or network drive")
       igSeparator()
       item(maJoinGeometry, result)
       tip("Join survey files (SPS, SEG P1, a CSV table) to an open file's traces, so they " &

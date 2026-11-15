@@ -1582,7 +1582,8 @@ proc drawWaiting(w: Waiting; panel: PanelId; t: Theme; marks: var Marks;
   ## above the plot, which keeps what it showed: the buttons first, so a
   ## narrow window wraps the words, never the buttons.
   let text = IconWarning & "  " & w.words
-  let colour = if w.kind == wkUnreadable: t.roles[rlError] else: t.roles[rlWarning]
+  let colour = if w.kind == wkUnreadable and w.cause == ucFailed: t.roles[rlError]
+               else: t.roles[rlWarning]
   template words() =
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
     igTextWrapped("%s", text.cstring)

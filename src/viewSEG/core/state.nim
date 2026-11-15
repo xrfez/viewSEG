@@ -90,8 +90,9 @@
 import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
-import diskio, edits, filejobs, filelist, filesystem, inbox, jobs, join, layouts, log, mapstate,
-  panels, persist, pick, reader, selection, session, settings, survey, surveyjobs, threads, tiles, watch,
+import closer, diskio, edits, filejobs, filelist, filesystem, inbox, jobs, join, layouts, log,
+  mapstate, panels, persist, pick, reader, selection, session, settings, survey, surveyjobs,
+  threads, tiles, watch,
   zoom
 
 export edits, filelist, inbox, jobs, join, layouts, log, mapstate, panels, persist, pick,
@@ -107,6 +108,13 @@ const
   MaxPanelValues* = 48 * 1024 * 1024
     ## the values (192 MiB, and as much on the GPU) a panel's tiles hold at
     ## most: the oldest are dropped first, the newest is always kept
+  SlowPer64* = 30.0
+    ## ms a read waits for 64 traces' samples, at least, on a slow drive: the
+    ## panel then reads further ahead (`SlowReadAhead`), in larger reads
+  SlowChunkTraces* = 256 ## traces per read from a slow drive (else the reader's 64)
+  MaxPrepareBytes* = 2'i64 * 1024 * 1024 * 1024
+    ## a file larger than this (2 GiB) is not prepared: its index and keys
+    ## would hold too much memory beside the file shown
 
 type
   CommandKind* = enum
@@ -155,6 +163,7 @@ type
       ## select the traces a join left unmatched
     ckRetry = "retry"                    ## open, read or list again what does not answer
     ckStopReading = "stop reading"       ## leave a panel's read that does not answer
+    ckPrepare = "prepare"                ## the file the user is likely to step to next
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -174,12 +183,13 @@ type
       reordered*: JobId               ## the job's id
       position*: int                  ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
-        ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits, ckFilter, ckRetry, ckStopReading:
+        ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits, ckFilter, ckRetry, ckStopReading,
+        ckPrepare:
       panel*: PanelId
         ## the panel's id (1: the Seismic window); ckRetry: `NoPanel` for the file
         ## list's folder
       gather*: int                    ## ckGather: index into the file's gathers
-      path*: string                   ## ckShowFile, ckShowTrace: the file to show
+      path*: string                   ## ckShowFile, ckShowTrace: the file to show; ckPrepare: the next
       traceIndex*: int                ## ckShowTrace: the trace's index (in its record)
       recordIndex*: int               ## ckShowTrace: the SEG-D record it counts in; -1: the file
       listFolder*: bool               ## ckShowFile: the file list lists its folder too
@@ -257,6 +267,7 @@ type
     silent*: Duration ## how long it has not answered (on `fs.now`)
     job*: JobId       ## the job Cancel stops (an open, a listing); `NoJob` for none
     why*: string      ## wkUnreadable: why, in plain words
+    cause*: UnreadCause ## wkUnreadable: a drive that fails, a file cut short, or a stop
 
   Pending = object
     ## An open or close job the state waits for.
@@ -370,8 +381,15 @@ type
       ## a trace to show once its file is open (`ckShowTrace`); "" for none
     oldScans: seq[JobId] ## scans replaced by a newer listing: they end quietly
     quietScan: JobId     ## a listing of the folder listed last: a missing folder is said quietly
-    unread: seq[tuple[panel: PanelId; why: string]]
+    unread: seq[tuple[panel: PanelId; cause: UnreadCause; why: string]]
       ## the panels whose file cannot be read now, and why (`mkUnread`)
+    speeds: seq[tuple[panel: PanelId; ms: float64]]
+      ## per panel: ms its reads wait for 64 traces, smoothed (`SlowPer64`)
+    prepareWanted: string ## the file to prepare (`ckPrepare`); "" for none
+    preparing: tuple[job: JobId; path: string] ## the prepare job running; `NoJob` for none
+    prepared: tuple[job: JobId; session: Session]
+      ## the file prepared, opened and unshown until the user steps to it
+    prepareFailed: string ## the file whose preparing failed last: not tried again
     watch: FolderWatch
       ## looks at the listed folder and the open files; none until needed
     watchEvery: Duration ## the pause between its looks
@@ -396,6 +414,7 @@ type
     scratch: Workspace ## for the Float gain's level, on this thread
     inbox: Inbox
     disk: DiskIo ## writes the session log and the settings; none until needed
+    closer: Closer ## closes the files the state lets go of; none until needed
     logFile: string ## the session log; "" for none
     logged: int ## the log's serial the session log has reached
     configDir: string ## where the settings and layouts are saved; "" for nowhere
@@ -432,7 +451,8 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   result = AppState(log: initMessageLog(logCapacity), inbox: initInbox(),
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
     nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
-    files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob)
+    files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob,
+    preparing: (NoJob, ""), prepared: (NoJob, nil))
   result.panels.add Panel(id: MainPanel)
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
@@ -444,6 +464,13 @@ proc diskIo(state: var AppState): lent DiskIo =
   ## The disk thread, started when first needed.
   if state.disk.isNil: state.disk = newDiskIo(state.inbox.poster)
   state.disk
+
+proc release(state: var AppState; s: sink Session) =
+  ## Lets go of `s`, which nothing reads any more: its file is closed on the
+  ## closer's thread, never on this one (a share may hold a close).
+  if s.isNil: return
+  if state.closer.isNil: state.closer = newCloser()
+  state.closer.drop(s)
 
 proc folderWatch(state: var AppState): lent FolderWatch =
   ## The folder's watch, started when first needed.
@@ -573,8 +600,11 @@ proc flushFiles*(state: var AppState) =
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
   state.disk.flush()
 
-const QuitWait* = initDuration(milliseconds = 800)
-  ## how long `shutdown` waits, at most, for the threads to end
+const
+  QuitWait* = initDuration(milliseconds = 800)
+    ## how long `shutdown` waits, at most, for the threads to end
+  CloseWait* = initDuration(milliseconds = 200)
+    ## and then for the files to be closed
 
 proc keepForStragglers(state: var AppState) =
   ## A thread left running at the quit (held by a drive that does not
@@ -588,9 +618,10 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   ## Asks every thread to end at once (the panels' readers, the watch, the
   ## jobs: every job is cancelled), hands what is left to save to the disk
   ## thread (the settings, the layout, the session log), and waits for them
-  ## all, together, at most `wait`: true when all ended. A thread held by a
-  ## drive that does not answer is left to end on its own, with what it may
-  ## read (`keepForStragglers`), so the quit never waits for a drive.
+  ## all, together, at most `wait`, then `CloseWait` for the files to be
+  ## closed (on the closer's thread): true when all ended. A thread held by
+  ## a drive that does not answer is left to end on its own, with what it
+  ## may read (`keepForStragglers`), so the quit never waits for a drive.
   ## Destroying the state does this too.
   assertUiThread()
   for r in state.readers: r.askStop()
@@ -607,7 +638,16 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   state.watch.stop(deadline)
   if not state.jobs.stop(deadline): result = false
   if not state.disk.stop(deadline): result = false
+  # The files are closed on the closer's thread (a share may hold a close),
+  # unless a thread left may still read them.
   if not result: state.keepForStragglers()
+  else:
+    var open = move state.sessions
+    for s in open.mitems: state.release(move s)
+    var closing = move state.closing
+    for p in closing.mitems: state.release(move p.session)
+  state.release(move state.prepared.session)
+  if not state.closer.stop(getMonoTime() + CloseWait): result = false
 
 # --------------------------------------------------------------- reading --
 
@@ -772,7 +812,8 @@ proc waiting*(state: AppState; panelIndex: int; now = fs.now()): Waiting =
     return Waiting(kind: wkReading, path: state.sessions[i].path, silent: silent, job: NoJob)
   for u in state.unread:
     if u.panel == p.id:
-      return Waiting(kind: wkUnreadable, path: state.sessions[i].path, job: NoJob, why: u.why)
+      return Waiting(kind: wkUnreadable, path: state.sessions[i].path, job: NoJob, why: u.why,
+        cause: u.cause)
 
 func words*(w: Waiting): string =
   ## What the plot or the Files window says of `w`, in plain words; "" for
@@ -1013,11 +1054,32 @@ func gatherKind(state: AppState; layer: Layer): GatherKind =
     if i >= 0 and layer.source.gather in 0 ..< state.sessions[i].gathers.len:
       result = state.sessions[i].gathers[layer.source.gather].kind
 
+func slowDrive*(state: AppState; panel: PanelId): bool =
+  ## Whether `panel`'s reads wait long for the drive (`SlowPer64`): it then
+  ## reads further ahead, in larger reads.
+  for s in state.speeds:
+    if s.panel == panel: return s.ms >= SlowPer64
+  false
+
+proc timeRead(state: var AppState; t: Tile) =
+  ## Takes in how long tile `t`'s read waited for the drive.
+  if t.cached or t.chunks == 0 or t.request.count == 0: return
+  let ms = t.readTime.inMicroseconds.float64 / 1000 * 64 / float64(t.request.count)
+  for s in state.speeds.mitems:
+    if s.panel == t.panel:
+      s.ms = (s.ms + ms) / 2
+      return
+  state.speeds.add (t.panel, ms)
+
 proc requestView(state: var AppState; k: int) =
   ## Asks `panels[k]`'s reader for its view, unless the request sent last
-  ## already covers it.
+  ## already covers it. On a slow drive (`slowDrive`) it reads further
+  ## ahead, in larger reads.
   template p: untyped = state.panels[k]
   if p.layers.len == 0 or p.layout.traces == 0 or state.readers[k].isNil: return
+  let slow = state.slowDrive(p.id)
+  let (ahead, kept, most) = if slow: (SlowReadAhead, SlowKeepAhead, SlowMaxAheadValues)
+                            else: (ReadAhead, KeepAhead, MaxAheadValues)
   let flow = p.layers[0].displayPipeline(state.gatherKind(p.layers[0]))
   let margin = displayMargin(flow, p.layout.dtMs)
   let wiggles = p.layers[0].display.drawsWiggles
@@ -1026,11 +1088,13 @@ proc requestView(state: var AppState; k: int) =
     # or on its way: the read-ahead is filled again once the request sent is
     # answered, so a key held down does not start a read every few frames
     # and finish none.
-    if p.pending.covers(p.layout, p.view, margin, wiggles, keep = KeepAhead): return
+    if p.pending.covers(p.layout, p.view, margin, wiggles, keep = kept, readAhead = ahead,
+        maxValues = most): return
     if p.pending.covers(p.layout, p.view, margin, wiggles) and
         not state.tiles[k].anyIt(it.request.gen == p.pending.gen):
       return
-  var req = requestFor(p.layout, p.view, margin, wiggles = wiggles)
+  var req = requestFor(p.layout, p.view, margin, readAhead = ahead, wiggles = wiggles,
+    maxValues = most)
   if req.isEmpty: return
   inc p.requestGen
   req.gen = p.requestGen
@@ -1043,7 +1107,7 @@ proc requestView(state: var AppState; k: int) =
     killed = e.listIn(teKilled, traces)
   state.readers[k].request ReaderRequest(read: req, fields: p.shownFields, flow: flow,
     clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
-    raw: rfRawAmplitude in state.settings.readout)
+    raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0)
 
 proc remember(state: var AppState; k: int) =
   ## Keeps `panels[k]`'s view for back, unless it is the one kept last or
@@ -1595,7 +1659,9 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   var follow = false
   for p in state.opening:
     if p.job == job:
-      if p.unwanted: return # another file was chosen meanwhile: closed here
+      if p.unwanted: # another file was chosen meanwhile
+        state.release(s)
+        return
       if p.panel != NoPanel: (panel, replacing) = (p.panel, true)
       (gather, follow) = (p.gather, p.follow)
   if follow and s.file.kind != skUnknown and s.file.cutShort:
@@ -1605,7 +1671,8 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
       "trace, so it is still being written (or was cut short). It is shown once it has " &
       "changed and is whole; click it in Files to see it as it is.")
     if panel == MainPanel: state.chooseShown()
-    return # `s` is closed here, on the UI thread: nothing else has it
+    state.release(s) # nothing else has it
+    return
   if s.file.kind == skUnknown:
     state.log.add(s.file.log, s.name)
     state.log.add(sevError, s.name, s.name & " is not a SEG-Y, SEG-D or SEG-2 file, " &
@@ -1613,7 +1680,8 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
     if panel == MainPanel:
       state.failed(s.path)
       state.chooseShown()
-    return # `s` is closed here, on the UI thread: nothing else has it
+    state.release(s) # nothing else has it
+    return
   let id = SessionId(state.nextFile)
   inc state.nextFile
   s.register(id, state.nextBase)
@@ -1843,6 +1911,9 @@ proc onFinished(state: var AppState; job: JobInfo) =
     of jsCancelled: state.endJoin(joCancelled)
     of jsFailed: state.endJoin(joFailed, job.error)
     of jsQueued, jsRunning: discard
+  if job.id == state.preparing.job: # quietly: the user did not ask
+    if job.state == jsFailed: state.prepareFailed = state.preparing.path
+    state.preparing = (NoJob, "")
     return
   state.checking.keepItIf(it.job != job.id) # the relations a check read
   for i in 0 ..< state.loading.len:
@@ -1869,7 +1940,8 @@ proc onFinished(state: var AppState; job: JobInfo) =
     if p.job == job.id:
       let name = p.path.extractFilename
       if job.state == jsDone and not p.quiet: state.log.add(sevInfo, name, "Closed " & name & ".")
-      state.closing.delete(i) # the file is closed here, on the UI thread
+      state.release(move state.closing[i].session) # nothing reads it now
+      state.closing.delete(i)
       return
   let old = state.oldScans.find(job.id)
   if old >= 0: # replaced by a newer listing: nothing to say
@@ -1901,6 +1973,14 @@ proc onFinished(state: var AppState; job: JobInfo) =
       state.notify(sevInfo, job.spec.title & " is done.")
   of jsQueued, jsRunning: discard
 
+proc preparedCurrent(state: AppState): bool =
+  ## Whether the file prepared is as the folder's watch saw it last: steady,
+  ## with the size and time it was opened with.
+  let s = state.prepared.session
+  let e = state.files.find(s.path)
+  e >= 0 and state.files.entries[e].status == fsSteady and
+    state.files.entries[e].size == s.size and state.files.entries[e].modified == s.modified
+
 proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = false) =
   ## Shows the file at `path` (canonical) in `panels[k]`, in place of the
   ## one it shows: at once when it is open, else once an open job opened it
@@ -1927,7 +2007,20 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
     if o >= 0:
       state.opening[o].panel = panel
       if not follow: state.opening[o].follow = false # the user's own choice: shown as it is
+    elif not state.prepared.session.isNil and state.prepared.session.path == path and
+        state.preparedCurrent():
+      # Opened already, in the background, and not changed since: shown at once.
+      let job = state.prepared.job
+      var s = move state.prepared.session
+      state.prepared = (NoJob, nil)
+      state.opening.add Pending(job: job, path: path, panel: panel, gather: gather,
+        follow: follow)
+      state.adopt(s, job)
+      state.opening.keepItIf(it.job != job)
     else:
+      if not state.prepared.session.isNil and state.prepared.session.path == path:
+        state.release(move state.prepared.session) # changed since it was prepared
+        state.prepared = (NoJob, nil)
       let job = state.jobs.submit(JobSpec(title: "Open " & path.extractFilename,
         lane: jlInteractive, reads: @[path]), openFileWork(path, state.inbox.poster,
         indexCacheFile(state.indexCache, path), whole = follow))
@@ -2205,6 +2298,47 @@ proc retry(state: var AppState; k: int) =
       state.readers[k].abandon()
     state.newSource(k) # read again, at the same scales
 
+proc prepareNext(state: var AppState) =
+  ## Prepares the file the user is likely to step to next (`ckPrepare`), with
+  ## "Prepare the next file" on (`Settings.files.prepareNext`): a background
+  ## job opens it and reads its first view (`prepareWork`) once the main
+  ## panel shows its own file with a tile (the drive is the user's first),
+  ## and its session is kept unshown (`prepared`) until `showPath` takes it.
+  ## What is no longer wanted is cancelled or closed. Only a listed seismic
+  ## file of at most `MaxPrepareBytes`, not open, not opening, is prepared.
+  let want = if state.settings.files.prepareNext: state.prepareWanted else: ""
+  if state.preparing.job != NoJob and state.preparing.path != want:
+    discard state.jobs.cancel(state.preparing.job) # its file is dropped if it comes
+  if not state.prepared.session.isNil and state.prepared.session.path != want:
+    state.release(move state.prepared.session) # nothing else has it
+    state.prepared = (NoJob, nil)
+  if want.len == 0 or want == state.prepareFailed or state.preparing.job != NoJob or
+      not state.prepared.session.isNil:
+    return
+  if state.sessions.anyIt(it.path == want) or state.opening.anyIt(not it.unwanted):
+    return
+  let e = state.files.find(want)
+  if e < 0 or not state.files.entries[e].kind.isSeismic or
+      state.files.entries[e].status != fsSteady or state.files.entries[e].size > MaxPrepareBytes:
+    return # (a file being written is opened when it is shown)
+  let k = state.findPanel(MainPanel)
+  if k < 0 or not state.panels[k].laidOut or state.tiles[k].len == 0: return
+  let r = state.panels[k].pending # the first view's read, as the next file is shown alike
+  let job = state.jobs.submit(JobSpec(title: "Prepare " & want.extractFilename,
+    lane: jlBackground, reads: @[want]), prepareWork(want, state.inbox.poster,
+    indexCacheFile(state.indexCache, want), r.first .. r.last, r.stride,
+    r.firstSample ..< r.firstSample + r.samples))
+  state.preparing = (job, want)
+
+proc takePrepared(state: var AppState; s: sink Session; job: JobId) =
+  ## The file a prepare job opened: kept unshown while it is still wanted,
+  ## else closed (here, on this thread).
+  if state.settings.files.prepareNext and s.path == state.prepareWanted and
+      s.file.kind != skUnknown and not state.sessions.anyIt(it.path == s.path):
+    state.prepared = (job, s)
+  else:
+    state.release(s)
+
 proc retryListing(state: var AppState) =
   ## Lists the folder again: its listing, or the watch's look at it, did
   ## not answer. A look that does not answer leaves its thread to end on its
@@ -2374,6 +2508,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
     let raw = (rfRawAmplitude in s.readout) != (rfRawAmplitude in state.settings.readout)
     state.change s
     if follow: state.followNewest() # the newest file whole now, at once
+    state.prepareNext() # (turned on or off)
     if raw: # the tiles carry their raw samples, or no longer: made again from the samples held
       for k in 0 ..< state.panels.len: state.resample(k)
   of ckExportSettings:
@@ -2571,6 +2706,9 @@ proc applyCommand(state: var AppState; cmd: Command) =
     else: state.startJoin(i, cmd)
   of ckSelectUnmatched:
     state.selectUnmatched(cmd)
+  of ckPrepare:
+    state.prepareWanted = if cmd.path.len > 0: canonical(cmd.path) else: ""
+    state.prepareNext()
   of ckRetry:
     if cmd.panel == NoPanel: state.retryListing()
     else:
@@ -2591,8 +2729,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
       let i = state.shownFile(k)
       let file = if i >= 0: state.sessions[i].name else: "the file"
       state.unread.keepItIf(it.panel != cmd.panel)
-      state.unread.add (cmd.panel, "Not reading " & file & ": the plot stopped waiting for " &
-        "its drive, and shows what it had read.")
+      state.unread.add (cmd.panel, ucStopped, "Not reading " & file & ": the plot stopped " &
+        "waiting for its drive, and shows what it had read.")
       state.log.add(sevInfo, "files", "The " & name & " window stopped waiting for the drive " &
         "of " & file & ": it shows what it had read. Retry reads again.")
   of ckUnloadSurvey:
@@ -2680,7 +2818,9 @@ proc drainInbox*(state: var AppState): bool =
   result = finished.len > 0 or state.mail.len > 0
   for m in state.mail.mitems:
     case m.kind
-    of mkOpened: state.adopt(move m.session, m.job)
+    of mkOpened:
+      if m.job == state.preparing.job: state.takePrepared(move m.session, m.job)
+      else: state.adopt(move m.session, m.job)
     of mkLog: state.log.add(move m.entry)
     of mkRead: state.takeIn(m)
     of mkListed: state.takeListed(move m)
@@ -2716,12 +2856,13 @@ proc drainInbox*(state: var AppState): bool =
       let k = state.findPanel(m.unreadPanel)
       if k >= 0 and m.unreadGen == state.panels[k].sourceGen:
         state.unread.keepItIf(it.panel != m.unreadPanel)
-        state.unread.add (m.unreadPanel, m.why)
+        state.unread.add (m.unreadPanel, m.cause, m.why)
         inc state.panels[k].revision
     of mkTile:
       let k = state.findPanel(m.tile.panel)
       if k >= 0 and m.tile.request.gen == state.panels[k].requestGen:
         state.unread.keepItIf(it.panel != m.tile.panel) # read again
+        state.timeRead(m.tile)
         m.tile.id = state.nextTile
         inc state.nextTile
         if state.panels[k].level.clip.isNaN or state.panels[k].relevel:
@@ -2746,5 +2887,6 @@ proc drainInbox*(state: var AppState): bool =
   state.mail.setLen 0
   for job in finished:
     state.onFinished(job)
+  state.prepareNext() # (once the main panel has its tile; or a prepare ended)
   state.map.followed(state.survey) # a layer came, or went with a file
   state.relink()

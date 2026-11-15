@@ -50,6 +50,10 @@ type
     followLatest*: bool
       ## show each new file in the plot once it is completely written; off:
       ## the plot stays on the file the user chose
+    prepareNext*: bool = true
+      ## open the next file of the list in the background while one is
+      ## shown (its index, its first view's samples), so that stepping
+      ## through a folder on a slow drive does not wait at every file
 
   MapInfo* = enum
     ## Where the map shows the information of the point under the pointer.

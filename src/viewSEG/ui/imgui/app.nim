@@ -764,7 +764,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,
     canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
     keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest,
-    agentOn: ui.agent.running, agentSocket: ui.agentSocket), ui.marks)
+    agentOn: ui.agent.running, agentSocket: ui.agentSocket,
+    prepareNext: ui.core.settings.files.prepareNext), ui.marks)
   if menu.toggleAgent: ui.toggleAgent()
   if menu.loadLayout.len > 0:
     ui.core.apply Command(kind: ckLoadLayout, docPath: menu.loadLayout)
@@ -808,6 +809,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   if maShowFiles in ui.focus: bringForward(filesTitle)
   var files = ui.files.drawFileList(filesTitle, ui.core, ui.theme, ui.marks)
   result.incl files.actions
+  if menu.togglePrepare:
+    var s = ui.core.settings
+    s.files.prepareNext = not s.files.prepareNext
+    ui.core.apply Command(kind: ckSettings, settings: s)
   if files.toggleFollow or menu.toggleFollow:
     var s = ui.core.settings
     s.files.followLatest = not s.files.followLatest

@@ -29,6 +29,13 @@ type
     mkJoined  ## a join done
     mkUnread  ## a panel's file cannot be read now (its drive went away, or fails), from its reader
 
+  UnreadCause* = enum
+    ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
+    ## that fails and a file cut short are different things.
+    ucFailed = "failed"      ## its drive went away or fails (an I/O error)
+    ucCutShort = "cut short" ## it is shorter than when it was opened
+    ucStopped = "stopped"    ## the user stopped waiting for its drive
+
   ReadPurpose* = enum
     ## What a document is read for.
     rpImportSettings ## settings to take in (File > Settings > Import)
@@ -115,6 +122,7 @@ type
     of mkUnread:
       unreadPanel*: PanelId
       unreadGen*: uint64 ## the panel's `sourceGen` it is about
+      cause*: UnreadCause
       why*: string       ## in plain words
 
   InboxObj = object

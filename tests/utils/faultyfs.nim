@@ -10,7 +10,8 @@
 ## - `fkFail`: raises `OSError` ("Input/output error"), as a drive that went
 ##   away does;
 ## - `fkPermits`: blocks until the test grants a read (`grant`), one call
-##   each: a drive whose every round trip the test times itself.
+##   each, then moves `fs.now` on by the fault's `delay`: a drive whose every
+##   round trip the test times itself.
 ##
 ## A fault applies to the calls named in its `ops` (every call by default).
 ## The hook also **asserts that it is never called on the UI thread**: every
@@ -95,7 +96,10 @@ proc hookCall(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
             acquire(lock)
           dec hanging
           broadcast(changed)
-          if permits > 0: dec permits
+          if permits > 0:
+            dec permits
+            let j = find(path, op)
+            if j >= 0: advanceFsClock(faults[j].delay) # the round trip's time
           else: fail = true
     if ui:
       try:
@@ -121,6 +125,7 @@ proc fault*(prefix: string; kind: FaultKind; ops: set[FsOp] = {low(FsOp) .. high
     for f in faults:
       if f.prefix == prefix: serial = max(serial, f.serial)
     faults.add Fault(prefix: prefix, kind: kind, ops: ops, delay: delay, serial: serial)
+    if kind == fkPermits: permits = 0
 
 proc release*(prefix: string) =
   ## The calls hung on `prefix` go on (as the faults now say): the drive
@@ -145,6 +150,11 @@ proc grant*(n = 1) =
   ## Lets `n` more calls that wait for a permit go on.
   withLock lock:
     permits += n
+
+proc permitsLeft*(): int =
+  ## The reads granted and not yet made.
+  withLock lock:
+    result = permits
 
 proc hung*(): int =
   ## How many calls are held now (hung, or waiting for a permit).

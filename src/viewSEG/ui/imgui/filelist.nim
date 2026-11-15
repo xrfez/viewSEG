@@ -40,6 +40,9 @@ type
     follow: bool
     focus: FocusClicks ## a click on a row acts only in a window that had the focus
     keys: ListFocus    ## the navigation's cursor follows the file shown
+    nextOf: string     ## the chosen file the next one was found for
+    nextRev: int       ## the list's revision then
+    toldNext: string   ## the next file `core` was told to prepare; "" for none
 
   FileListOutput* = object
     ## What the window asks for.
@@ -339,5 +342,16 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
       marks.mark("files.wait.retry")
       tip("List the folder again")
     ui.handleKeys(f, result)
+    # The file a step down would show, prepared in the background (core
+    # decides whether, by the setting); found again when the choice changes,
+    # or while there was none yet and the list changed.
+    if f.chosen.len > 0 and (f.chosen != ui.nextOf or
+        (ui.toldNext.len == 0 and f.revision != ui.nextRev)):
+      ui.nextOf = f.chosen
+      ui.nextRev = f.revision
+      let next = ui.table.stepped(f, f.chosen, 1)
+      ui.toldNext = if next != f.chosen: next else: ""
+      if ui.toldNext.len > 0:
+        result.commands.add Command(kind: ckPrepare, panel: MainPanel, path: ui.toldNext)
   ui.focus.settle()
   igEnd()

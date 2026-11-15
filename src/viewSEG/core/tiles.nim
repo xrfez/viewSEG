@@ -18,7 +18,7 @@
 ## what `amplitudeAt` and `densityColour` do here. The CPU forms are the
 ## reference the GPU is tested against, and what an export draws with.
 
-import std/[fenv, math]
+import std/[fenv, math, times]
 from parseSEG import TraceKeys, JoinGroup
 from processSEG/gain/stats import percentileAbs, percentileWorkspace
 from processSEG/core/workspace import Workspace, reserve
@@ -46,6 +46,10 @@ type
     level*: Level           ## RMS, peak and clip percentile of |x| over the live traces
     failed*: int            ## traces that could not be decoded (zero rows)
     cached*: bool           ## the reader made it from samples it held, not from the file
+    readTime*: Duration
+      ## how long its reader waited for the file's samples (`fs.now`): the
+      ## drive and the decoding, not the processing; zero when cached
+    chunks*: int            ## the reads (prefetch chunks) it took from the file
     raw*: seq[float32]
       ## when asked for (`ReaderRequest.raw`): the samples as the file has
       ## them, before polarity, edits, processing and gain, cut and

@@ -54,6 +54,13 @@ const
   MaxAheadValues* = 16.0 * 1024 * 1024
     ## the values (64 MiB) a request's read-ahead may bring its tile to; the
     ## view itself is always read whole
+  SlowReadAhead* = 3.0
+    ## `ReadAhead` on a slow drive (`core/state`'s read timing): fewer,
+    ## larger reads, so the view stays on hand between them
+  SlowKeepAhead* = 2.0 ## `KeepAhead` on a slow drive
+  SlowMaxAheadValues* = 32.0 * 1024 * 1024
+    ## `MaxAheadValues` on a slow drive (128 MiB: a panel's tiles stay within
+    ## its 192 MiB)
   MinTracePixels* = 1.0
     ## the narrowest trace spacing, in pixels, of a view in a wiggle mode:
     ## zoomed out as far as it goes, every trace in view has a pixel column
@@ -172,12 +179,12 @@ type Reach = object
   envelope: bool
 
 func reachFor(layout: PanelLayout; view: Viewport; readAhead: float64;
-    wiggles: bool): Reach =
+    wiggles: bool; maxValues = MaxAheadValues): Reach =
   ## The steps of `view` and its read-ahead: `readAhead` views on each side
   ## along each axis (less where the data ends), zoomed out never more than
   ## the plot's columns (density) or two columns per pixel row, and no more
-  ## in all than `MaxAheadValues` values (both axes' read-ahead shrunk
-  ## alike), however much the view itself holds.
+  ## in all than `maxValues` values (both axes' read-ahead shrunk alike),
+  ## however much the view itself holds.
   let vis = visiblePositions(layout, view)
   let vs = visibleSamples(layout, view)
   # Positions: multiples of the stride. A view no wider than the plot's
@@ -210,25 +217,26 @@ func reachFor(layout: PanelLayout; view: Viewport; readAhead: float64;
     let (j0, j1) = spread(r.jLo, r.jHi, r.jTop, b)
     float64(k1 - k0 + 1) * float64(j1 - j0 + 1) * per
   var f = 1.0
-  if values(ahead, aheadS) > MaxAheadValues:
+  if values(ahead, aheadS) > maxValues:
     var (lo, hi) = (0.0, 1.0)
     for _ in 0 ..< 30:
       let m = (lo + hi) / 2
-      if values(int(float64(ahead) * m), int(float64(aheadS) * m)) > MaxAheadValues: hi = m
+      if values(int(float64(ahead) * m), int(float64(aheadS) * m)) > maxValues: hi = m
       else: lo = m
     f = lo
   result.aheadK = int(float64(ahead) * f)
   result.aheadJ = int(float64(aheadS) * f)
 
 func requestFor*(layout: PanelLayout; view: Viewport; margin = 0;
-    readAhead = ReadAhead; wiggles = false): ReadRequest =
+    readAhead = ReadAhead; wiggles = false; maxValues = MaxAheadValues): ReadRequest =
   ## What to read for `view` of a layer that draws wiggles (`wiggles`) or
-  ## not: see the module documentation. Empty (`count` 0) when the panel has
-  ## no traces or no size. `gen` is left 0.
+  ## not: see the module documentation; `readAhead` views on each side, the
+  ## read-ahead within `maxValues` values. Empty (`count` 0) when the panel
+  ## has no traces or no size. `gen` is left 0.
   if visiblePositions(layout, view).len == 0 or visibleSamples(layout, view).len == 0 or
       view.columns <= 0 or view.rows <= 0:
     return ReadRequest(stride: 1, decimation: 1)
-  let r = reachFor(layout, view, readAhead, wiggles)
+  let r = reachFor(layout, view, readAhead, wiggles, maxValues)
   let (k0, k1) = spread(r.kLo, r.kHi, r.kTop, r.aheadK)
   let (j0, j1) = spread(r.jLo, r.jHi, r.jTop, r.aheadJ)
   let firstSample = j0 * r.dec
@@ -237,17 +245,17 @@ func requestFor*(layout: PanelLayout; view: Viewport; margin = 0;
     decimation: r.dec, margin: max(margin, 0), envelope: r.envelope)
 
 func covers*(r: ReadRequest; layout: PanelLayout; view: Viewport; margin = 0;
-    wiggles = false; keep = 0.0): bool =
+    wiggles = false; keep = 0.0; readAhead = ReadAhead; maxValues = MaxAheadValues): bool =
   ## Whether `r` holds what `view` shows, at the resolution it needs (with
   ## the extremes wiggles need, for `wiggles`), and with `keep` views on
-  ## each side of it as well (of the `ReadAhead` a request for `view` would
-  ## read, where the data goes on; 0: the view alone): then nothing new is
-  ## read.
+  ## each side of it as well (of the `readAhead` a request for `view` would
+  ## read within `maxValues`, where the data goes on; 0: the view alone):
+  ## then nothing new is read.
   if r.isEmpty or visiblePositions(layout, view).len == 0 or
       visibleSamples(layout, view).len == 0 or view.columns <= 0 or view.rows <= 0:
     return false
-  let n = reachFor(layout, view, ReadAhead, wiggles)
-  let share = clamp(keep / ReadAhead, 0.0, 1.0)
+  let n = reachFor(layout, view, readAhead, wiggles, maxValues)
+  let share = clamp(keep / readAhead, 0.0, 1.0)
   let (k0, k1) = spread(n.kLo, n.kHi, n.kTop, int(float64(n.aheadK) * share))
   let (j0, j1) = spread(n.jLo, n.jHi, n.jTop, int(float64(n.aheadJ) * share))
   r.stride == n.stride and r.decimation == n.dec and r.margin == max(margin, 0) and

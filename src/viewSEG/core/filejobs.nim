@@ -117,6 +117,32 @@ proc saveCache(s: Session; cache: string; budget: int64; to: Poster; job: JobId)
       cache.parentDir & " (" & getCurrentExceptionMsg() & "): the next open walks the " &
       "file again.")
 
+proc openCached(path: string; ctx: JobContext; to: Poster; cache: string; budget: int64;
+    whole: bool): Session =
+  ## Opens `path` on job `ctx`, through the index cache `cache` (read when
+  ## current, saved after a walk; see `openWork`).
+  let cached = cache.len > 0 and fs.fileExists(cache)
+  ctx.setPhase(if cached: "reading the index cache" else: "indexing")
+  let progress: Progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
+    try:
+      fs.mappedRead(path) # (tests: the walk's next pages come late)
+    except OSError:
+      discard # a real drive that fails here ends the walk in parseSEG
+    ctx.progress(done, total)
+  result = openSession(path, progress, if cached: cache else: "")
+  ctx.checkCancelled() # the file closes here, on the thread that opened it
+  if cache.len > 0 and result.file.kind != skUnknown:
+    if result.file.fromCache:
+      try:
+        fs.setLastModificationTime(cache, getTime()) # used now: pruned last
+      except OSError:
+        discard
+    elif result.file.demuxPath.len == 0 and not (whole and result.file.cutShort):
+      # (a demultiplexed copy is never cached)
+      ctx.setPhase "saving the index cache"
+      result.saveCache(cache, budget, to, ctx.id)
+      ctx.checkCancelled()
+
 proc openWork*(path: string; to: Poster; cache = "";
     cacheBudget = DefaultIndexCacheBudget; whole = false): JobWork =
   ## The work of a job that opens `path` and posts its session (`mkOpened`).
@@ -127,23 +153,50 @@ proc openWork*(path: string; to: Poster; cache = "";
   ## latest" made, which shows the file only when it is complete), a file
   ## cut short gets no cache: it is still being written.
   result = proc (ctx: JobContext) {.gcsafe.} =
-    let cached = cache.len > 0 and fs.fileExists(cache)
-    ctx.setPhase(if cached: "reading the index cache" else: "indexing")
-    let progress: Progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
-      ctx.progress(done, total)
-    var s = openSession(path, progress, if cached: cache else: "")
-    ctx.checkCancelled() # the file closes here, on the thread that opened it
-    if cache.len > 0 and s.file.kind != skUnknown:
-      if s.file.fromCache:
-        try:
-          fs.setLastModificationTime(cache, getTime()) # used now: pruned last
-        except OSError:
-          discard
-      elif s.file.demuxPath.len == 0 and not (whole and s.file.cutShort):
-        # (a demultiplexed copy is never cached)
-        ctx.setPhase "saving the index cache"
-        s.saveCache(cache, cacheBudget, to, ctx.id)
-        ctx.checkCancelled()
+    var s = openCached(path, ctx, to, cache, cacheBudget, whole)
+    clearCycleRoots() # the UI thread may release the file's objects at once
+    to.post Msg(job: ctx.id, kind: mkOpened, session: move s)
+
+const WarmChunk = 256 ## traces per read when a prepared file's first view is read
+
+proc prepareWork*(path: string; to: Poster; cache: string; positions: Slice[int];
+    stride: int; samples: Slice[int]; cacheBudget = DefaultIndexCacheBudget): JobWork =
+  ## The work of a background job that prepares `path`, the file the user
+  ## is likely to step to next: opens it (through the index cache, which a
+  ## walk fills), then reads the samples of its first view, as the plot
+  ## shows the file before it (`positions` of its first gather at
+  ## `stride`, `samples` of each trace), so that the drive's pages are at
+  ## hand, and posts its session (`mkOpened`), which the UI keeps unshown
+  ## until the user steps to it. Stops at a cancel; posts nothing then.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    var s = openCached(path, ctx, to, cache, cacheBudget, whole = false)
+    if s.file.kind != skUnknown and s.gathers.len > 0 and positions.len > 0:
+      ctx.setPhase "reading its first view"
+      let g = s.gathers[0].traces
+      var list: seq[int]
+      var k = positions.a
+      while k <= positions.b and g.a + k <= g.b:
+        list.add g.a + k
+        k += max(1, stride)
+      if list.len > 0:
+        {.cast(gcsafe).}:
+          let most = s.file.maxSamples(g)
+          let first = clamp(samples.a, 0, max(0, most - 1))
+          let cols = clamp(samples.len, 1, max(1, most - first))
+          var pf = newPrefetcher[float32](s.file, list, chunkTraces = WarmChunk, cols = cols,
+            firstSample = first, workers = 2, uniform = true)
+          var c: PrefetchChunk[float32]
+          var n = 0
+          while pf.nextInto(c):
+            try:
+              fs.mappedRead(path)
+            except OSError:
+              break
+            n += c.count
+            pf.recycle(move c)
+            if not ctx.progress(n, list.len): break
+          pf.close()
+      ctx.checkCancelled()
     clearCycleRoots() # the UI thread may release the file's objects at once
     to.post Msg(job: ctx.id, kind: mkOpened, session: move s)
 

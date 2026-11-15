@@ -23,7 +23,7 @@
 ##  (customOrder (key offset))
 ##  (messages (autoScroll true) (hide info))
 ##  (cursorLine false)
-##  (files (followLatest false))
+##  (files (followLatest false) (prepareNext true))
 ##  (map (info popup) (lengths survey))
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
 ##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960))))
@@ -217,6 +217,7 @@ proc settingsDocument*(s: Settings): string =
   w.value("cursorLine", s.cursorLine)
   w.open("files")
   w.value("followLatest", s.files.followLatest)
+  w.value("prepareNext", s.files.prepareNext)
   w.close()
   w.open("map")
   w.choice("info", MapInfoNames[s.map.info])
@@ -552,6 +553,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       of "files":
         for k in c.kids:
           if k.isTree("followLatest"): r.flag(k, result.files.followLatest)
+          elif k.isTree("prepareNext"): r.flag(k, result.files.prepareNext)
           else: r.unknown(k, "files")
       of "map":
         for k in c.kids:

@@ -95,6 +95,7 @@ type
     reversed*: seq[int]       ## the gather's traces whose polarity is reversed, ascending
     killed*: seq[int]         ## the gather's traces killed, ascending
     raw*: bool                ## the tile carries the samples as the file has them too
+    chunkTraces*: int         ## traces per read from the file; 0: `ChunkTraces`
 
   ReaderObj = object
     lock: Lock
@@ -374,12 +375,14 @@ proc cutShort(rd: var Reader): bool =
   ## the UI closes a file cut short when the folder's watch sees the change.
   result = false
   var why = ""
+  var cause = ucCutShort
   try:
     let size = fs.getFileInfo(rd.src.path).size
     if rd.src.size >= 0 and size < rd.src.size:
       why = rd.name & " is shorter than when it was opened: another program has cut it " &
         "short or is writing it again, so it is not read until it is opened again."
   except OSError as e:
+    cause = ucFailed
     var msg = e.msg # its first line: the system's words
     let cut = msg.find('\n')
     if cut >= 0: msg.setLen cut
@@ -390,7 +393,7 @@ proc cutShort(rd: var Reader): bool =
   if not result: rd.toldShort = false # (said again if it fails again)
   if result:
     rd.r.poster.post Msg(job: NoJob, kind: mkUnread, unreadPanel: rd.r.panel,
-      unreadGen: rd.src.gen, why: why)
+      unreadGen: rd.src.gen, cause: cause, why: why)
   if result and not rd.toldShort:
     rd.toldShort = true
     rd.note(sevWarning, why)
@@ -512,11 +515,15 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       rd.raw.failed.setLen 0
     else: rd.raw = RawCache() # too large to keep: the one before goes too
     var firstError = ""
-    var pf = newPrefetcher[float32](f[], list, chunkTraces = ChunkTraces, cols = cols,
+    var waitFrom = fs.now()
+    let chunk = if req.chunkTraces > 0: req.chunkTraces else: ChunkTraces
+    var pf = newPrefetcher[float32](f[], list, chunkTraces = chunk, cols = cols,
       firstSample = window.a, workers = DecodeWorkers, quickFirst = true, uniform = true)
     var c: PrefetchChunk[float32]
     while pf.nextInto(c):
       fs.mappedRead(rd.src.path) # (tests: the chunk's pages come late, or never)
+      tile.readTime += fs.now() - waitFrom
+      inc tile.chunks
       let b = rowBlock(c.samples)
       if keep and c.count * cols > 0: # as read, before anything changes them
         copyMem(addr rd.raw.samples[c.first * cols], b.rowPtr(0), c.count * cols *
@@ -531,6 +538,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       if rd.r.interrupted:
         given = true
         break
+      waitFrom = fs.now()
     pf.close()
     clearCycleRoots()
     if keep and not given:
@@ -597,7 +605,8 @@ proc run(r: ptr ReaderObj) {.thread.} =
       rd.note(sevError, "Cannot read " & rd.name & ": " & e.msg)
       if rd.src.file != nil:
         r.poster.post Msg(job: NoJob, kind: mkUnread, unreadPanel: r.panel,
-          unreadGen: rd.src.gen, why: "Cannot read " & rd.name & ": " & e.msg & ".")
+          unreadGen: rd.src.gen, cause: ucFailed, why: "Cannot read " & rd.name & ": " &
+          e.msg & ".")
       clearCycleRoots()
     withLock r.lock:
       r.busy = false

@@ -92,7 +92,11 @@ withFixtures fx:
     let now = getMonoTime()
     if hanging and lastFrame != MonoTime(): worstGap = max(worstGap, now - lastFrame)
     lastFrame = now
-    if f.index == 0: f.moveMouse(vec2(4, 4))
+    if f.index == 0:
+      f.moveMouse(vec2(4, 4))
+      var s = f.core.settings
+      s.files.prepareNext = false # c.sgy is opened here, not before (tslowdrive prepares)
+      f.apply Command(kind: ckSettings, settings: s)
     case stage
     of 0: # a.sgy shown from the drive, its first tile in
       if f.shownPath == far / "a.sgy" and f.main.laidOut and f.tiles > 0 and
