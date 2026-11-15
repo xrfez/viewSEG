@@ -49,7 +49,8 @@ import utils/[fixtures, waiting]
 # command that reaches it (and this test then shows it is not saved), or ""
 # (and this test shows no command reaches it). A new plot's display is
 # always shown (`remembered`); its Fixed amplitude an agent's display command
-# also changes through the data it shows (`settleGain`).
+# also changes through the data it shows (`settleGain`). An agent's join
+# gives its own options: the join's settings are the window's.
 const Reached = {
   "theme": "", "window.x": "", "window.y": "", "window.width": "", "window.height": "",
   "window.maximized": "", "recentFiles": "open", "recentFolders": "browse",
@@ -69,7 +70,9 @@ const Reached = {
   "plot.header.fields": "display header", "scale.length": "", "scale.speed": "",
   "calibrations": "", "readout": "", "sortPresets": "", "customOrder": "sort",
   "messages.autoScroll": "", "messages.hidden": "", "cursorLine": "",
-  "files.followLatest": "", "map.info": ""}.toTable
+  "files.followLatest": "", "map.info": "", "map.lengths": "", "join.trailingDigits": "",
+  "join.multiComponent": "", "join.lineNames": "", "join.coordinates": "",
+  "join.recordMatch": "", "join.traceMatch": ""}.toTable
 
 proc flatten[T](x: T; at: string; into: var OrderedTable[string, string]) =
   ## Every setting in `x` by its path ("plot.display.mode"), with its value
@@ -209,6 +212,9 @@ withFixtures fx:
     st.agent(%*{"kind": "undo edit"})
     st.agent(%*{"kind": "clear edits"})
     st.agent(%*{"kind": "clear selection"})
+    st.agent(%*{"kind": "join geometry", "joinFiles": [{"path": sps.s, "kind": "SPS"},
+      {"path": sps.r, "kind": "SPS"}, {"path": sps.x, "kind": "SPS"}]})
+    st.agent(%*{"kind": "select unmatched"})
     st.agent(%*{"kind": "load survey", "paths": [sps.s, sps.r, sps.x]})
     doAssert st.survey.layers.len >= 3, $st.survey.layers.len
     var layer = NoSurveyLayer
