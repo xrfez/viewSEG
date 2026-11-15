@@ -22,9 +22,6 @@ import std/[math, os, strutils]
 import viewSEG/core/[displaypresets, settingsnif, state]
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 const Look = DisplaySettings(mode: dmDensity, colourMap: cmViridis, gain: dgNone,
   gainDb: 6, clipPercentile: 97.5, colours: pcTheme, overlap: 2, fills: {wfNegative})
 
