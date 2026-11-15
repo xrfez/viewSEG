@@ -10,11 +10,16 @@
 ##   (Tokyo Night, then White), and closing the menu without a click goes
 ##   back to the theme before (Everforest Dark), the settings untouched;
 ## - a click on an entry keeps it (Catppuccin Latte), in the settings too,
-##   and the menu then ticks it.
+##   and the menu then ticks it;
+## - started in a named theme (Nord, as `VIEWSEG_THEME=nord` does) with the
+##   settings following the system, a click on "Follow system" after a
+##   preview of Tokyo Night draws Everforest Dark, though no setting changes.
 ##
 ## Seen to fail: with the preview not reverted when the submenu closes
 ## (`previewWanted` left as it was), "Escape: back to Everforest Dark did not
-## happen"; with the entries in file order, "Catppuccin Latte (light) is
+## happen"; with a pick that changes no setting left to the settings
+## (`previewKept` set, nothing applied), "drawn in Tokyo Night after the menu
+## closed"; with the entries in file order, "Catppuccin Latte (light) is
 ## listed among the dark ones"; with no swatch drawn, "White's swatch: 0
 ## white pixels".
 ##
@@ -192,3 +197,25 @@ withFixtures fx:
     true)
   drive(steps, opts)
   echo "tguithemes: ", shipped.len, " themes listed, previewed, reverted and picked"
+
+  # Started in a named theme (VIEWSEG_THEME, `themeName`) while the settings
+  # follow the system: a click on "Follow system" after resting on another
+  # theme changes no setting, and must still leave the preview.
+  steps.setLen 0
+  var named = opts
+  named.themeName = "nord"
+  step("started in Nord", noop, proc (f: FrameInfo): bool =
+    f.theme.name == "Nord" and f.markOf("menu.View").size.x > 0 and
+      f.core.settings.theme == "")
+  openThemes("named")
+  rest("tokyo-night", "Tokyo Night")
+  step("Follow system clicked", proc (f: FrameInfo) =
+    f.click(f.markOf("menu.theme.follow").centre), proc (f: FrameInfo): bool =
+    f.markOf("menu.Theme").size.x == 0)
+  step("drawn in Everforest Dark, not the preview", noop, proc (f: FrameInfo): bool =
+    if wait > 30:
+      doAssert f.theme.name == "Everforest Dark", "drawn in " & f.theme.name &
+        " after the menu closed"
+    wait > 30)
+  drive(steps, named)
+  echo "tguithemes: a named theme, then Follow system"

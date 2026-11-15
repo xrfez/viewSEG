@@ -1130,9 +1130,12 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.apply Command(kind: ckLoadLayout, docPath: menu.loadLayout)
   result = menu.actions
   if menu.pickedTheme and menu.theme != ui.selected:
-    ui.chooseTheme(menu.theme) # applied between frames: fonts and styles change
+    ui.chooseTheme(menu.theme) # the settings' theme
+    # Applied between frames (fonts and styles change), also when the
+    # settings named it already (a theme given at start by name).
+    ui.pendingTheme = some(menu.theme)
   # Resting on an entry previews it until the submenu closes; a pick of
-  # another theme keeps what it shows.
+  # another theme replaces it (`setTheme`), any other pick goes back.
   if menu.pickedTheme:
     ui.previewKept = menu.theme != ui.selected
     ui.previewWanted = none(string)
