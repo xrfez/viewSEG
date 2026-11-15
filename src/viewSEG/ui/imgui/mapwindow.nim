@@ -1008,10 +1008,6 @@ func overlaps(a, b: Rect): bool =
   a.pos.x < b.pos.x + b.size.x and b.pos.x < a.pos.x + a.size.x and
     a.pos.y < b.pos.y + b.size.y and b.pos.y < a.pos.y + a.size.y
 
-func within(a, b: Rect): bool =
-  a.pos.x >= b.pos.x and a.pos.y >= b.pos.y and a.pos.x + a.size.x <= b.pos.x + b.size.x and
-    a.pos.y + a.size.y <= b.pos.y + b.size.y
-
 proc drawInfoBox(info: openArray[PointInfo]; at: ImVec2_c; plotPos, plotSize: ImVec2_c;
     t: Theme; marks: var Marks; menu = Rect()) =
   ## What the map says of the points under the pointer, in a box beside the
@@ -1035,14 +1031,19 @@ proc drawInfoBox(info: openArray[PointInfo]; at: ImVec2_c; plotPos, plotSize: Im
   if lo.y + size.y > plotPos.y + plotSize.y: lo.y = at.y - 18 - size.y
   lo = ImVec2_c(x: max(lo.x, plotPos.x), y: max(lo.y, plotPos.y))
   if menu.size.x > 0:
+    # Beside the pointer, beside the menu, or above or below it, kept inside
+    # the plot (a box wider than the plot from its left edge, cut there).
     let plot = Rect(pos: vec2(plotPos.x, plotPos.y), size: vec2(plotSize.x, plotSize.y))
-    let box = vec2(size.x, size.y)
+    let right = max(plot.pos.x, plot.pos.x + plot.size.x - size.x)
     for c in [vec2(at.x + 18, at.y + 18), vec2(at.x - 18 - size.x, at.y + 18),
         vec2(at.x + 18, at.y - 18 - size.y), vec2(at.x - 18 - size.x, at.y - 18 - size.y),
-        vec2(menu.pos.x - 8 - size.x, menu.pos.y), vec2(menu.pos.x + menu.size.x + 8, menu.pos.y)]:
-      let r = Rect(pos: c, size: box)
-      if r.within(plot) and not r.overlaps(menu):
-        lo = ImVec2_c(x: c.x, y: c.y)
+        vec2(menu.pos.x - 8 - size.x, menu.pos.y), vec2(menu.pos.x + menu.size.x + 8, menu.pos.y),
+        vec2(at.x - size.x / 2, menu.pos.y + menu.size.y + 8),
+        vec2(at.x - size.x / 2, menu.pos.y - 8 - size.y)]:
+      let r = Rect(pos: vec2(clamp(c.x, plot.pos.x, right), c.y), size: vec2(size.x, size.y))
+      if r.pos.y >= plot.pos.y and r.pos.y + r.size.y <= plot.pos.y + plot.size.y and
+          not r.overlaps(menu):
+        lo = ImVec2_c(x: r.pos.x, y: r.pos.y)
         break
   let hi = ImVec2_c(x: lo.x + size.x, y: lo.y + size.y)
   let dl = igGetWindowDrawList()
