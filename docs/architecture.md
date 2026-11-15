@@ -598,7 +598,23 @@ Load average 60 to 80 for the first two columns unless said. Cancel, at full sca
 each phase of the import's read (S, R, X, their layers, the plan) the import ended within
 37 to 72 ms of the cancel, 267 ms in the plan's last step, with the map and the file's
 keys as they were; the join's step that changes the keys is not cancelled (by design,
-above). MAPBENCH
+above).
+
+The running program at full scale (`tools/mapbench.nim`, Mesa llvmpipe under Xvfb, 1600 x
+1000, "Plot and map", load average 18): the import took 8.1 s, and the frames meanwhile
+were 10.2 ms (median), 17.7 ms (95th percentile), 42.3 ms (worst, of 774); the map with
+its 2.2 million points (about 180 000 drawn at fit, from the levels of detail) idle 6.8
+ms; zooming a notch a frame 10.6 / 39.4 / 42.2 ms; panning 10.0 / 31.9 / 34.1 ms;
+hovering 9.3 / 27.3 / 30.9 ms. A box selection of half a million points took one frame
+of 193 ms, and the frames that drew half a million highlighted points again 100-250 ms
+each on llvmpipe; now the selection takes 25 ms in `core` (was 60), and more than 50 000
+selected points are highlighted about one a pixel and a half (`ThinAbove`, thinned again
+when the scale changes by half: `tguimapload` holds it), so the map draws what a screen
+shows. Run again at load 24 with both: the import 9.5 s, its frames 11.5 / 15.7 / 52.5
+ms; the box selection's frames 9.9 / 27.5 / 69.8 ms and the click after it 10.8 / 46.7 /
+58.6 ms. At a tenth of the scale, before (load 23): the import 38.2 s with a frame of
+393 ms. Before, the import's last step held the UI thread 288 ms at a tenth of this
+scale (2.1 s at 0.3x).
 
 **What is left.** parseSEG's `readSps` and `addSps(path)` hold a whole file's records
 before anything is done with them (5.4 GB for the 0.3 X file): a reader of large files
