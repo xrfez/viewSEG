@@ -39,6 +39,7 @@ import std/[algorithm, locks, monotimes, os, strutils, tables, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
+import processSEG/filter/design
 import filesystem, inbox, jobs, log, processing, spectra, threads
 
 const
@@ -195,8 +196,6 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   answer.fromMs = t0Ms + float64(window.a) * dtMs
   answer.toMs = t0Ms + float64(window.b) * dtMs
   answer.windowLen = window.len
-  var raw = initSpectrumSum(dtMs, window.len)
-  var processed = initSpectrumSum(dtMs, window.len)
   var pr = a.processing
   pr.raw = false
   var filtering = pr.hasFilters
@@ -208,6 +207,23 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
     if filters.len == 0:
       answer.filterProblem = "none of them is below Nyquist"
       filtering = false
+  # Finer bins for a narrow filter (`spectrumNfft`), and its own response on them.
+  var narrowest = Inf
+  if filtering:
+    for op in filters:
+      if op.kind == opFilter: narrowest = min(narrowest, op.filter.spec.narrowestRampHz)
+  let nfft = spectrumNfft(window.len, dtMs, narrowest)
+  var raw = initSpectrumSum(dtMs, window.len, nfft)
+  var processed = initSpectrumSum(dtMs, window.len, nfft)
+  var response: seq[float64]
+  if filtering:
+    var gain = newSeq[float64](raw.bins)
+    for op in filters:
+      if op.kind == opFilter:
+        op.filter.spec.responseInto(dtMs, nfft, gain)
+        if response.len == 0: response = gain
+        else:
+          for k in 0 ..< response.len: response[k] *= gain[k]
   var plan: PipelinePlan[float32]
   var planCols = -1
   var ws = initWorkspace()
@@ -270,6 +286,7 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
     answer.filtered = processed.used
     if not pr.aux: answer.passedBy = raw.used - processed.used
     if processed.used > 0: answer.processed = processed.amplitudes
+    answer.response = move response
   if answer.processed.len == 0: answer.processedPhase.setLen 0
   true
 

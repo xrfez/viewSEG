@@ -37,9 +37,9 @@
 ##  (hideKilled false)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
-##    (phase false))
+##    (response true) (phase false))
 ##   (live (scale db) (logFrequency false) (time visible) (raw true) (processed true)
-##    (phase false)))
+##    (response true) (phase false)))
 ##  (displayPresets
 ##   (preset "Section" (mode density) (colourMap viridis) (gain none) ...)))
 ## ```
@@ -212,6 +212,7 @@ proc spectrumDisplay(w: var NifWriter; tag: string; d: SpectrumDisplay) =
   w.choice("time", SpectrumTimeNames[d.time])
   w.value("raw", d.raw)
   w.value("processed", d.processed)
+  w.value("response", d.response)
   w.value("phase", d.phase)
   w.close()
 
@@ -668,6 +669,7 @@ proc spectrumDisplay(r: var Reading; n: NifNode; d: var SpectrumDisplay) =
     elif k.isTree("time"): r.choice(k, SpectrumTimeNames, d.time)
     elif k.isTree("raw"): r.flag(k, d.raw)
     elif k.isTree("processed"): r.flag(k, d.processed)
+    elif k.isTree("response"): r.flag(k, d.response)
     elif k.isTree("phase"): r.flag(k, d.phase)
     else: r.unknown(k, n.tag)
 

@@ -17,7 +17,11 @@
 ## - raw and processed differ as the filter predicts: a band-pass's ratio
 ##   is 0 below its first corner and above its last, 1 between the second
 ##   and third, a half at its ramps' middles; a notch's dip at its
-##   frequency, none either side; the visible time asked over that time;
+##   frequency, none either side; the filter's own response on the same
+##   bins is processSEG's (`response` at each bin's frequency), drawn as a
+##   third curve in dB (0 dB at the top) or linear (1 at the larger peak),
+##   read in dB, and hidden by its toggle; the visible time asked over that
+##   time; a narrow notch over it gives finer bins (`spectrumNfft`);
 ## - several windows at once, each its own; one closed while it computes
 ##   takes no answer; another of the same traces reads nothing again;
 ## - the live panel works only while on screen and not frozen; follows the
@@ -59,11 +63,15 @@
 ## taken)". With the processed sum taking the auxiliary rows as live again
 ## (as before), "the auxiliary trace counted as processed: (5, 5, 0)";
 ## with the FFT windows keeping the filters they were opened with (as
-## before), "the FFT window did not follow the plot's filters".
+## before), "the FFT window did not follow the plot's filters". With the
+## reader's FFT at the next power of two whatever the filters, "the narrow
+## notch's spectrum is not padded: nfft 512"; with no response in the
+## answer, the band-pass's curves were only "raw" and "processed".
 
 import std/[math, os, sequtils, strutils]
 import parseSEG
 import processSEG/core/[rows, types]
+import processSEG/filter/design
 import viewSEG/core/[settingsnif, state]
 import viewSEG/view/[curveplot, spectrumview, theme]
 import utils/[faultyfs, fixtures, waiting]
@@ -80,6 +88,10 @@ block helpers:
     spectrumTraces(0) == MaxSpectrumTraces and spectrumTraces(high(int)) == 1,
     "a spectrum's traces are bounded by their samples"
   doAssert evenly(10, 5) == @[0, 2, 4, 6, 8]
+  # finer bins for a narrow filter: a bin at most half its narrowest feature
+  doAssert spectrumNfft(1001, 1, Inf) == 1024 and spectrumNfft(1001, 1, 1) == 2048 and
+    spectrumNfft(4001, 1, 1) == 4096 and spectrumNfft(100, 1, 1e-6) == 8 * 128 and
+    spectrumNfft(501, 2, 1) == 1024, $spectrumNfft(501, 2, 1)
   doAssert freeSpectrumId([SpectrumWindow(id: 0), SpectrumWindow(id: 1),
     SpectrumWindow(id: 3)]) == 2
   doAssert freeSpectrumId([SpectrumWindow(id: 0)]) == 1
@@ -280,7 +292,7 @@ withFixtures fx:
     for hz in [45.0, 85.0]: # the cos² ramps' middles
       doAssert abs(sp.ratio(hz) - 0.5) < 0.1, "the ramp at " & $hz & " Hz: " & $sp.ratio(hz)
     let plot = st.spectra[w].spectrumPlot(builtinTheme(tmLight))
-    doAssert plot.curves.mapIt(it.name) == @["raw", "processed"]
+    doAssert plot.curves.mapIt(it.name) == @["raw", "processed", "filter response"]
     # Shown raw, the plot's spectrum is still processed: the two compare.
     st.filters Processing(raw: true, band: pbBandPass, f1: 40, f2: 50, f3: 80, f4: 90)
     let v = st.fft(@[base])
@@ -296,6 +308,27 @@ withFixtures fx:
     doAssert sp.ratio(60) < 0.1, "no dip at 60 Hz: " & $sp.ratio(60)
     for hz in [50.0, 55.0, 65.0, 70.0, SpectrumSineHz]:
       doAssert abs(sp.ratio(hz) - 1) < 0.05, "the notch cuts " & $hz & " Hz: " & $sp.ratio(hz)
+    # The filter's own response, on the same bins: processSEG's design.
+    let spec = bandPass(Corners(f1: 0, f2: 0, f3: Inf, f4: Inf)).withNotch(60, 4)
+    doAssert sp.response.len == sp.raw.len, "no response: " & $sp.response.len
+    for k in [0, 100, 240, 245, 246, 250, 300, 1000]:
+      doAssert abs(sp.response[k] - spec.response(float64(k) * sp.binHz, DtMs)) < 1e-12,
+        "the response at bin " & $k & " is not the filter's: " & $sp.response[k]
+    let plot = st.spectra[w].spectrumPlot(builtinTheme(tmLight))
+    doAssert plot.curves.mapIt(it.name) == @["raw", "processed", "filter response"]
+    let k60 = int(round(60 / sp.binHz))
+    doAssert plot.curves[2].ys[k60] < -40 and plot.curves[2].ys[100] == 0,
+      "the notch's depth in dB: " & $plot.curves[2].ys[k60]
+    doAssert plot.readoutText(plot.readingAt(float64(100) * sp.binHz)).endsWith(
+      "filter response 0 dB"), plot.readoutText(plot.readingAt(float64(100) * sp.binHz))
+    # linear: a gain of 1 at the larger peak, read in dB all the same
+    var linear = st.spectra[w]
+    linear.display.scale = ssLinear
+    let lp = linear.spectrumPlot(builtinTheme(tmLight))
+    let top = max(sp.raw.peakOf, sp.processed.peakOf)
+    doAssert abs(lp.curves[2].ys[100] - top) < 1e-12 and lp.curves[2].reads[100] == 0
+    linear.display.response = false
+    doAssert linear.spectrumPlot(builtinTheme(tmLight)).curves.len == 2
     st.apply Command(kind: ckCloseSpectrum, spectrum: st.spectra[w].id)
     st.filters Processing()
 
@@ -324,6 +357,16 @@ withFixtures fx:
     doAssert plot.logX and plot.yUnit == "" and
       plot.curves[0].ys[SpectrumSineBin] == st.spectra[w].spectrum.raw[SpectrumSineBin]
     doAssert st.settings.spectrum.window.scale == ssLinear, "a new FFT window starts as the last"
+    # A 2 Hz notch over the visible time (501 samples, bins of 0.98 Hz): the
+    # window follows the plot's filters, with bins of 0.49 Hz.
+    st.apply Command(kind: ckSpectrumDisplay, spectrum: st.spectra[w].id,
+      spectrumShow: SpectrumDisplay(time: stVisible))
+    st.filters Processing(notches: @[NotchFilter(hz: 60, widthHz: 2)])
+    doAssert st.spectra[w].waiting and st.answered(w) and
+      st.settle(st.spectra[w].spectrum.filters == "notch 60 Hz")
+    doAssert st.spectra[w].spectrum.nfft == 1024 and st.spectra[w].spectrum.windowLen == 501,
+      "the narrow notch's spectrum is not padded: nfft " & $st.spectra[w].spectrum.nfft
+    st.filters Processing()
     st.apply Command(kind: ckCloseSpectrum, spectrum: st.spectra[w].id)
     st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 640, 512))
 
@@ -434,6 +477,7 @@ withFixtures fx:
     s.spectrum.window = SpectrumDisplay(scale: ssLinear, logFrequency: true, time: stVisible,
       raw: false)
     s.spectrum.live.processed = false
+    s.spectrum.live.response = false
     var problems: seq[string]
     let back = readSettings(settingsDocument(s), "settings.nif", Settings(), problems)
     doAssert problems.len == 0, $problems
@@ -604,8 +648,9 @@ withFixtures fx:
     doAssert pilot.filterText == "not processed: the auxiliary trace is not filtered: " &
       "Filters > Filter the Aux traces too is off (the plot's filters: notch 60 Hz)",
       pilot.filterText
-    doAssert pilot.spectrumPlot(builtinTheme(tmLight)).curves.mapIt(it.name) == @["raw"]
     doAssert pilot.auxUnfiltered
+    doAssert pilot.spectrumPlot(builtinTheme(tmLight)).curves.mapIt(it.name) ==
+      @["raw", "filter response (not applied)"]
     # A notch above Nyquist alone: no filter can run at this interval, said.
     five.filters Processing(aux: true, notches: @[NotchFilter(hz: 300, widthHz: 4)])
     let q = five.answer(@[five.sessions[0].base])

@@ -91,7 +91,8 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
         ImDrawList_AddLine(dl, ImVec2_c(x: round(a.x), y: pos.y),
           ImVec2_c(x: round(a.x), y: pos.y + area.y), cross, width)
       for i, c in p.curves:
-        let v = result.reading.values[i]
+        let j = result.reading.index # the dot on the curve as drawn
+        let v = if j < c.ys.len: c.ys[j] else: NaN
         if v.classify notin {fcNan, fcInf, fcNegInf}:
           let q = if turned: ImPlot_PlotToPixels_double(v, at, ImAxis_X1.cint, ImAxis_Y1.cint)
                   else: ImPlot_PlotToPixels_double(at, v, ImAxis_X1.cint, ImAxis_Y1.cint)

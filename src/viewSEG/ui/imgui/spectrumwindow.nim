@@ -4,8 +4,8 @@
 ## window's view or selection while it is on screen.
 ##
 ## Each shows a line of controls (dB or linear, the frequency axis
-## logarithmic, the raw and processed curves, the whole trace or the time
-## the plot showed; Freeze), what the spectrum is of and
+## logarithmic, the raw and processed curves, the filters' response, the
+## whole trace or the time the plot showed; Freeze), what the spectrum is of and
 ## what was left out, the plot (`curveplot`), and what the pointer reads.
 ## The windows read `core` and issue `Command`s: `ckSpectrumDisplay` for a
 ## control, `ckCloseSpectrum` when an FFT window is closed,
@@ -94,6 +94,15 @@ proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var Sp
   tip(if w.spectrum.processed.len > 0: "Through the plot's filters: " & w.spectrum.filters
       elif w.spectrum.filters.len > 0: "No processed curve: " & w.filterText
       else: "The plot has no filters (Filters in the Seismic window's strip)")
+  after("Response")
+  igBeginDisabled(w.spectrum.response.len == 0)
+  if igCheckbox("Response", addr d.response): changed = true
+  igEndDisabled()
+  marks.mark(name & ".response")
+  tip(if w.spectrum.response.len > 0: "The plot's filters' own response (processSEG's " &
+        "design): their gain at each frequency, 0 dB at the top of the curves, so a notch " &
+        "shows at its true depth whatever the data"
+      else: "The plot has no pass band or notch to draw")
   after("Visible time")
   var visible = d.time == stVisible
   if igCheckbox("Visible time", addr visible):

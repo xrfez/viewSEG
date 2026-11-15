@@ -24,6 +24,10 @@ type
     name*: string
     colour*: Rgba
     ys*: seq[float64]
+    reads*: seq[float64]
+      ## what the readout says per x, when it is not `ys` (a gain drawn
+      ## against amplitudes reads in dB); empty: `ys`
+    unit*: string ## the readout's unit of `reads`; "": the plot's `yUnit`
 
   CurvePlot* = object
     ## Curves over one shared axis.
@@ -105,7 +109,8 @@ func readingAt*(p: CurvePlot; x: float64): Reading =
   if result.index >= 0:
     result.x = p.xs[result.index]
     for c in p.curves:
-      result.values.add(if result.index < c.ys.len: c.ys[result.index] else: NaN)
+      let said = if c.reads.len > 0: c.reads else: c.ys
+      result.values.add(if result.index < said.len: said[result.index] else: NaN)
 
 func valueText*(x: float64; digits = 3): string =
   ## `x` with `digits` significant digits at least, and none past the point
@@ -129,5 +134,6 @@ func readoutText*(p: CurvePlot; r: Reading): string =
   result = valueText(r.x) & (if p.xUnit.len > 0: " " & p.xUnit else: "")
   for i, c in p.curves:
     if i < r.values.len:
+      let unit = if c.reads.len > 0 and c.unit.len > 0: c.unit else: p.yUnit
       result.add "   " & c.name & " " & valueText(r.values[i]) &
-        (if p.yUnit.len > 0: " " & p.yUnit else: "")
+        (if unit.len > 0: " " & unit else: "")

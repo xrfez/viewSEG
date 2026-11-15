@@ -64,9 +64,9 @@ proc everyFieldSet(): Settings =
     headers: HeadersView(tab: htTrace, traceTab: ttData, followPointer: false,
       asDisplayed: true, columns: {hcName, hcOffset}), hideKilled: true,
     spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
-      time: stVisible, raw: false, processed: false, phase: true), live: SpectrumDisplay(
-      scale: ssLinear, logFrequency: true, time: stWhole, raw: false, processed: false,
-      phase: true)),
+      time: stVisible, raw: false, processed: false, response: false, phase: true),
+      live: SpectrumDisplay(scale: ssLinear, logFrequency: true, time: stWhole, raw: false,
+      processed: false, response: false, phase: true)),
     displayPresets: @[DisplayPreset(name: "Section", display: DisplaySettings(mode: dmDensity,
       colourMap: cmViridis, gain: dgFixed, fixedClip: 0.5, clipPercentile: 97)),
       DisplayPreset(name: "Wiggles", display: DisplaySettings(fills: {}, overlap: 3,

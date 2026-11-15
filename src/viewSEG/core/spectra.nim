@@ -5,8 +5,11 @@
 ## Every number comes from processSEG's `SpectrumPlan`
 ## (`processSEG/fft/spectrum`): a window of each trace is demeaned,
 ## Tukey-tapered (10 % at each end), zero-padded to the next power of two
-## and transformed; the amplitudes are one-sided and corrected for the
-## taper, so a sinusoid of amplitude A on a bin reads A. A spectrum of
+## (more when the filters have a feature narrower than two bins:
+## `spectrumNfft`) and transformed; the amplitudes are one-sided and
+## corrected for the taper, so a sinusoid of amplitude A on a bin reads A.
+## The filters' own response (processSEG's `responseInto`) comes with the
+## answer, on the same bins, to be drawn over the curves. A spectrum of
 ## several traces is the power average (`averageAmplitudeInto`): the RMS
 ## amplitude over the traces, which the sum keeps across blocks of traces
 ## as Σ amplitude² · traces.
@@ -62,6 +65,7 @@ type
     time*: SpectrumTime = stWhole
     raw*: bool = true         ## the raw curve is drawn
     processed*: bool = true   ## the curve through the filters is drawn
+    response*: bool = true    ## the filters' own response is drawn (when there are some)
     phase*: bool              ## a one-trace spectrum's phase is drawn under its amplitude
 
   SpectrumOf* = enum
@@ -105,6 +109,10 @@ type
     filterProblem*: string
       ## why the filters did not run on these traces; "" when they did or
       ## there are none
+    response*: seq[float64]
+      ## per bin, the filters' gain, 0 to 1 (processSEG's `responseInto`
+      ## for each FFT filter, multiplied): what they do whatever the data;
+      ## empty when they have no pass band or notch, or did not run
     problem*: string        ## why there is no spectrum; "" when there is one
 
   SpectrumWindow* = object
@@ -154,6 +162,8 @@ const
     ## decoded samples (128 MiB) a spectrum's traces hold at most, whole,
     ## and its reader keeps at hand: fewer traces of long records
   MaxSpectrumWindows* = 32 ## FFT windows open at once, at most
+  MaxSpectrumPadding* = 8
+    ## a spectrum's FFT is at most this many times the window's next power of two
 
 func label*(w: SpectrumWindow): string =
   ## What a window shows, in words: "trace 12 · FFID 151 · shot.sgd",
@@ -245,11 +255,29 @@ func evenly*(n, most: int): seq[int] =
     result = newSeq[int](most)
     for i in 0 ..< most: result[i] = int(float64(i) * float64(n) / float64(most))
 
-proc initSpectrumSum*(dtMs: float64; windowLen: int): SpectrumSum =
-  ## An empty sum of spectra of windows of `windowLen` samples `dtMs` apart.
-  ## Raises `ValueError` for a window of no sample or an interval that is
-  ## not positive and finite.
-  result = SpectrumSum(plan: initSpectrumPlan(float32, dtMs, windowLen), ws: initWorkspace())
+func spectrumNfft*(windowLen: int; dtMs, narrowestHz: float64): int =
+  ## The FFT length of a spectrum of windows of `windowLen` samples `dtMs`
+  ## apart, under filters whose narrowest feature (a ramp, half a notch:
+  ## processSEG's `narrowestRampHz`) is `narrowestHz` wide (`Inf` for none):
+  ## the next power of two, doubled while a bin is wider than half that
+  ## feature, up to `MaxSpectrumPadding` times. A 2 Hz notch over 1 s at
+  ## 1 ms (1001 samples) is then sampled every 0.49 Hz, not 0.98: measured
+  ## on a record with 60 Hz hum, its depth reads 21 dB below its
+  ## neighbours, not 12.
+  let base = nextPowerOfTwo(max(windowLen, 1))
+  result = base
+  if dtMs > 0 and dtMs < Inf:
+    while result < MaxSpectrumPadding * base and
+        1000 / (float64(result) * dtMs) > narrowestHz / 2:
+      result *= 2
+
+proc initSpectrumSum*(dtMs: float64; windowLen: int; nfft = 0): SpectrumSum =
+  ## An empty sum of spectra of windows of `windowLen` samples `dtMs` apart,
+  ## by FFTs of `nfft` (0: the window's next power of two). Raises
+  ## `ValueError` for a window of no sample, an interval that is not
+  ## positive and finite, or an `nfft` shorter than the window.
+  result = SpectrumSum(plan: initSpectrumPlan(float32, dtMs, windowLen, nfft = nfft),
+    ws: initWorkspace())
   result.ws.reserve(result.plan.workspaceSize)
   result.amp = newSeq[float64](result.plan.bins)
   result.power = newSeq[float64](result.plan.bins)

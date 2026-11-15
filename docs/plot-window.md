@@ -1044,8 +1044,9 @@ the 12 000 selected").
 
 **What a spectrum is.** processSEG's spectrum (`SpectrumPlan`): each trace's window is
 demeaned, tapered (a sin² ramp over 10 % at each end) and zero-padded to the next power
-of two; amplitudes are one-sided and corrected for the taper, so a sine of amplitude A
-on a bin reads A. Several traces are averaged over power (the RMS amplitude across them).
+of two, or further while a bin is wider than half the plot's narrowest filter feature
+(a ramp, half a notch: `narrowestRampHz`), up to 8 times; amplitudes are one-sided and
+corrected for the taper, so a sine of amplitude A on a bin reads A. Several traces are averaged over power (the RMS amplitude across them).
 The frequency axis runs from 0 Hz to Nyquist (500 / interval in ms). Left out, and
 counted in the window's line of words: killed traces, traces the file marks dead, traces
 that cannot be read or hold a sample that is not a number, and traces at another sample
@@ -1060,6 +1061,37 @@ amplitude 0.000142 (raw peak)"): each window has a 0 dB of its own, so two windo
 compare by it; linear, in the file's sample units. The frequency axis can be
 logarithmic (0 Hz is then left out). A spectrum of one trace has its phase too (Phase:
 degrees, from the window's first sample, drawn under the amplitude).
+
+**The filter's response.** Over the curves, the plot's filters' own response
+(processSEG's `responseInto` on the same bins, for each filter, multiplied; never made
+by the viewer): their gain at each frequency, 0 dB at the top of the curves (linear: a
+gain of 1 at the larger peak), read in dB under the plot ("60 Hz ... filter response
+-120 dB"). A notch shows at its true depth whatever the data, where the processed curve
+shows what the data and the window make of it. **Response** hides it; it is on by
+default and drawn whenever the filters have a pass band or a notch, named "(not
+applied)" when they reached none of the traces.
+
+**Why this window.** A narrow notch in a spectrum is filled in from its sides: by the
+taper's leakage, by bins too wide for it, and by the filter's own ringing near the
+trace ends (real energy in the processed traces, not an artefact of the spectrum).
+Measured with a notch at 60 Hz, 2 Hz wide, on the user's two files at 1 ms (the depth
+at 60 Hz below the processed level at 55 to 58 and 62 to 65 Hz):
+
+| Data, window | Tukey 10 % (kept) | Tukey 25 % | Hann (50 %) | 10 %, bins halved |
+|---|---:|---:|---:|---:|
+| Morgantown, 20 traces, whole (4 s) | -27.3 dB | -20.0 dB | -20.5 dB | -27.3 dB |
+| Morgantown, 20 traces, 1 to 2 s | -11.8 dB | -8.7 dB | -8.7 dB | **-21.2 dB** |
+| Morgantown, 20 traces, 0.5 to 2.5 s | -19.6 dB | -13.1 dB | -10.8 dB | -19.7 dB |
+| Sweep0, Aux filtered, whole (12 s) | -94.2 dB | -94.7 dB | -41.3 dB | -94.2 dB |
+
+A wider taper widens the main lobe, which fills a notch a few bins wide: the 10 % taper
+shows every notch deepest, so it stays. What helps is finer bins when the window is
+short (1 s: 0.98 Hz bins for a 2 Hz notch), hence the padding above. A Hann window
+does show a weak hum line the 10 % taper's leakage hides (Morgantown traces 101 to 120,
+whole: the raw 60 Hz line 12 dB over its neighbours, against 1 dB), but not a notch.
+On those traces the processed curve rises above the raw one just beside 60 Hz,
+whatever the window: the notch's ringing near the trace ends; the response curve shows
+what the filter itself does there.
 
 **What the processed curve went through.** The filters are made for the traces' own
 sample interval (a corner or notch past its Nyquist is cut or left out, as in the
