@@ -167,12 +167,8 @@ proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Ca
   if missing.len == 0: return 0
   let f = a.file
   p.beat(a.path)
-  # parseSEG's prefetcher keeps the readers it gave up on in a list of its
-  # own, under a lock, which makes `newPrefetcher` and `close` not gcsafe.
-  var pf = block:
-    {.cast(gcsafe).}:
-      newPrefetcher[float32](f[], missing, chunkTraces = ReadTraces,
-        workers = 2, uniform = true)
+  var pf = newPrefetcher[float32](f[], missing, chunkTraces = ReadTraces,
+    workers = 2, uniform = true)
   var c: PrefetchChunk[float32]
   var given = false
   while pf.nextInto(c):
@@ -192,9 +188,7 @@ proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Ca
       given = true
       break
     p.beat(a.path)
-  {.cast(gcsafe).}:
-    pf.close() # false when a worker stuck in a read is left to finish
-    discard
+  discard pf.close() # false when a worker stuck in a read is left to finish
   clearCycleRoots()
   if given: result = -1
 
