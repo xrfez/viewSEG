@@ -1,4 +1,5 @@
-## The geometry join (File > Join geometry): survey files joined to an
+## The geometry join behind File > Import > Survey (the user imports a
+## survey; parseSEG and this code call it a join): survey files joined to an
 ## open seismic file's trace keys, so that traces whose headers give
 ## stations only (or record and channel numbers only) get their sources'
 ## and receivers' coordinates. **In memory only:** the file is never
@@ -512,7 +513,7 @@ func whyUnmatched*(p: JoinPlan; s: JoinSurvey; opts: JoinOptions): seq[string] =
   ## not in the relation file).
   let none = p.seismic > 0 and p.matched == 0
   if p.seismic == 0:
-    return @["the file has no seismic traces: auxiliary traces are never joined"]
+    return @["the file has no seismic traces: auxiliary traces are never matched"]
   if s.unresolved.len > 0 and not opts.trailingDigits:
     result.add "the survey files name lines with text (\"" & s.unresolved[0] & "\"" &
       (if s.unresolved.len > 1: ", \"" & s.unresolved[1] & "\"" else: "") & "), so " &
@@ -549,7 +550,7 @@ func whyUnmatched*(p: JoinPlan; s: JoinSurvey; opts: JoinOptions): seq[string] =
     elif not have and p.found[r] < p.seismic:
       if s.relations == 0:
         result.add "the headers give no " & role & " stations, and no relation file (SPS X) " &
-          "was joined to find them from the record and channel numbers"
+          "was imported to find them from the record and channel numbers"
       elif not overlaps(p.headerRecords, s.records):
         result.add "the headers give no " & role & " stations, and their field record " &
           "numbers (" & $p.headerRecords & ") are not in the relation file (records " &
@@ -570,7 +571,7 @@ func planWords*(p: JoinPlan; s: JoinSurvey; opts: JoinOptions; unit = suNotGiven
   ## how, what did not and why, what became of the headers' coordinates.
   let aux = p.traces - p.seismic
   if p.seismic == 0:
-    result.add "The file has no seismic traces, so nothing was joined."
+    result.add "The file has no seismic traces, so nothing was matched."
   elif p.matched == 0:
     result.add "No seismic trace was matched to the survey."
   else:

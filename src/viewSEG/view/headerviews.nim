@@ -71,7 +71,7 @@ func firstLine(text: string): string =
 
 func unitWords*(c: CoordinateUnits): string =
   ## The unit a file's headers give its coordinates in, in the words of the
-  ## join window (File > Join geometry).
+  ## Import survey window (File > Import > Survey).
   result = $unitOf(c)
   if c == cuLength: result.add " (the headers say a length, not whether metres or feet)"
 
@@ -124,7 +124,7 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = []): seq[
   let said = unitWords(s.crs.units)
   if joined >= 0:
     let confirmed = $joins[joined].units.file
-    result.add "Units", confirmed & " (confirmed for the geometry join" &
+    result.add "Units", confirmed & " (confirmed when the survey was imported" &
       (if confirmed != $unitOf(s.crs.units): "; the headers say " & said else: "") & ")"
   else:
     result.add "Units", said
@@ -132,7 +132,7 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = []): seq[
     "none in the file" else: $s.crs.format & ": " & firstLine(latin1(s.crs.text)))
   if joined >= 0:
     let j = joins[joined]
-    result.heading "Geometry join"
+    result.heading "Survey imported"
     var names: seq[string]
     for f in j.files: names.add f.path.extractFilename
     result.add "Survey files", names.join(", ")
@@ -278,9 +278,9 @@ func manyFiles*(traces: openArray[TraceDetail]): bool =
   false
 
 const
-  JoinedTitle* = "Joined from the survey files"
-    ## the title of the trace table's rows of joined values: not in the
-    ## trace's header, whose own fields follow
+  JoinedTitle* = "From the survey"
+    ## the title of the trace table's rows of values from the survey (an
+    ## import): not in the trace's header, whose own fields follow
   JoinedKeys = [(jgSourceStation, "srcLine", "Source line"),
     (jgSourceStation, "srcPoint", "Source point"),
     (jgSourceStation, "srcIndex", "Source point index"),

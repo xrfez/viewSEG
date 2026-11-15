@@ -128,7 +128,7 @@ withFixtures fx:
     f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
     let it = f.markOf("menu.Reset the settings")
     if it.size.x > 0 and wait mod 5 == 0:
-      for old in ["menu.Settings", "menu.Join geometry...", "menu.Export...", "menu.Import..."]:
+      for old in ["menu.Settings", "menu.Export...", "menu.Import..."]:
         doAssert f.markOf(old).size.x == 0, "File still has " & old
       f.click(it.centre)
     not f.core.settings.cursorLine)

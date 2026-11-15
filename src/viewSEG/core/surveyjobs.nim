@@ -474,11 +474,12 @@ proc joinApplyWork*(file: ptr SeismicFile; path: string; session: SessionId;
   ## holds it found (none), and refuses to join when there are any. A cancel
   ## that comes before it joins stops it; the join itself is one step.
   result = proc (ctx: JobContext) {.gcsafe.} =
-    ctx.setPhase "joining"
+    ctx.setPhase "matching"
     ctx.checkCancelled()
     let held = holds.held(path)
     if held > 0:
-      raise newException(IOError, "a reader still reads the file, so it was not joined")
+      raise newException(IOError, "a reader still reads the file, so its traces were not " &
+        "matched")
     var stats: JoinStats
     var (changed, revision) = (0, 0)
     {.cast(gcsafe).}:

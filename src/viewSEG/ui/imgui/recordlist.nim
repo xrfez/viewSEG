@@ -83,7 +83,8 @@ func missingText(r: RecordRow; against: string): string =
   of msFile: $r.missing & " of the " & $r.declared & " seismic traces the file declares " &
     "for it are not in it (it holds " & $r.seismic & ")."
   of msNone: "Nothing says how many traces it should hold: load the survey's relation " &
-    "file (SPS X), or join it (File > Join geometry), to check it against the plan."
+    "file (SPS X), or import the survey (File > Import > Survey), to check it against the " &
+    "plan."
 
 func key(r: RecordRow; by: RecordSort; i: int): float64 =
   ## What row `i` (`r`) sorts by; the unknown (NaN) come last.

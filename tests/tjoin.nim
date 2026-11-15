@@ -248,7 +248,8 @@ block nothingMatched:
       st.words
     doAssert "the headers' source lines (1) are not the survey's (100)" in st.words, st.words
     doAssert st.log[st.log.len - 1].severity == sevWarning
-    doAssert "Nothing was joined to stations-only.sgd" in st.log[st.log.len - 1].text
+    doAssert "The survey matches none of the traces of stations-only.sgd" in
+      st.log[st.log.len - 1].text, st.log[st.log.len - 1].text
     doAssert st.joinedOf(st.sessions[0].id) < 0
     echo "tjoin: nothing matched: ", st.words
     # Line names that are text (SPS 1.0): passed by, then matched by their trailing digits.
@@ -289,7 +290,8 @@ block cancelled:
     st.apply Command(kind: ckCancelJob, job: reading)
     doAssert st.settle(st.joinUnderWay.job == NoJob)
     doAssert st.joinReport.outcome == joCancelled, $st.joinReport.outcome
-    doAssert "The join was cancelled: stations-only.sgd is as it was." == st.words, st.words
+    doAssert "The survey import was cancelled: stations-only.sgd is as it was." == st.words,
+      st.words
     doAssert st.sessions[0].file.keysRevision == 0 and st.jobs.held(path) == 1
     # While the join waits for the file: another job reads it.
     gate.close()

@@ -332,10 +332,10 @@ type
   JoinStep* = enum
     ## What a join is doing.
     jpReading = "reading the survey files" ## and working out what joining them does
-    jpJoining = "joining"                  ## the readers stopped, the keys changed
+    jpJoining = "matching"                 ## the readers stopped, the keys changed
 
   Joining = object
-    ## The join under way (File > Join geometry): one at a time.
+    ## The survey import under way (File > Import > Survey): one at a time.
     job: JobId = NoJob           ## the job of its step; `NoJob`: none under way
     step: JoinStep
     session: SessionId
@@ -1811,7 +1811,7 @@ proc checkRecords(state: var AppState; s: Session) =
   if j >= 0:
     template x: untyped = state.joins[j]
     let job = state.jobs.submit(JobSpec(title: "Check the records of " & s.name &
-      " against the survey joined", lane: jlBackground, reads: @[s.path]), checkWork(s.filePtr,
+      " against the survey imported", lane: jlBackground, reads: @[s.path]), checkWork(s.filePtr,
       s.id, gathers, addr x.geometry[], fileNames(x.files), NoSurveyLayer, state.inbox.poster,
       x.options.recordMatch, x.options.traceMatch))
     state.checking.add (job, x.geometry)
@@ -2024,11 +2024,13 @@ proc startJoin(state: var AppState; i: int; cmd: Command) =
   if files.len == 0:
     state.ignore(cmd, "no survey file was named")
     return
-  let job = state.jobs.submit(JobSpec(title: "Join geometry to " & s.name, lane: jlInteractive,
-    reads: reads), joinReadWork(s.filePtr, s.id, files, cmd.joinOptions, state.inbox.poster))
+  let job = state.jobs.submit(JobSpec(title: "Import the survey for " & s.name,
+    lane: jlInteractive, reads: reads), joinReadWork(s.filePtr, s.id, files, cmd.joinOptions,
+    state.inbox.poster))
   state.joining = Joining(job: job, step: jpReading, session: s.id, path: s.path, name: s.name,
     files: files, options: cmd.joinOptions, units: cmd.joinUnits)
-  state.log.add(sevInfo, s.name, "Joining " & fileNames(files) & " to " & s.name & ".")
+  state.log.add(sevInfo, s.name, "Importing the survey (" & fileNames(files) & ") for " &
+    s.name & ".")
 
 proc pauseReaders(state: var AppState; path: string) =
   ## Has the readers of the panels that show `path` let go of it, for the
@@ -2096,13 +2098,14 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
         state.log.add(sevInfo, s.name, "The survey files' headers say: " &
           j.survey.notes.join("; ") & ".")
       state.log.add(if outcome == joNothing: sevWarning else: sevInfo, s.name,
-        (if outcome == joNothing: "Nothing was joined to " else: "Joined to ") & s.name &
-        " (" & fileNames(j.files) & "): " & words.join(" "))
+        (if outcome == joNothing: "The survey matches none of the traces of " & s.name
+          else: "Survey imported for " & s.name) & " (" & fileNames(j.files) & "): " &
+        words.join(" "))
   of joCancelled:
-    words = @["The join was cancelled: " & j.name & " is as it was."]
+    words = @["The survey import was cancelled: " & j.name & " is as it was."]
     state.log.add(sevInfo, j.name, words[0])
   of joFailed:
-    words = @["The join failed: " & error & ". " & j.name & " is as it was."]
+    words = @["The survey import failed: " & error & ". " & j.name & " is as it was."]
     state.log.add(sevError, j.name, words[0])
   of joNone: discard
   state.joinReport = JoinReport(serial: state.joinReport.serial + 1, session: j.session,
@@ -2128,9 +2131,9 @@ proc takeJoinPlan(state: var AppState; m: sink Msg) =
     let s = state.sessions[i]
     state.pauseReaders(s.path)
     let tableOnly = j.files.allIt(it.kind == jkCsv)
-    j.job = state.jobs.submit(JobSpec(title: "Join geometry to " & s.name, lane: jlInteractive,
-      exclusive: @[s.path]), joinApplyWork(s.filePtr, s.path, s.id, addr j.geometry[],
-      j.plan.replace, tableOnly, state.jobs.holdRelease, state.inbox.poster))
+    j.job = state.jobs.submit(JobSpec(title: "Import the survey for " & s.name,
+      lane: jlInteractive, exclusive: @[s.path]), joinApplyWork(s.filePtr, s.path, s.id,
+      addr j.geometry[], j.plan.replace, tableOnly, state.jobs.holdRelease, state.inbox.poster))
     j.step = jpJoining
 
 proc takeJoined(state: var AppState; m: Msg) =
@@ -2140,7 +2143,7 @@ proc takeJoined(state: var AppState; m: Msg) =
     j.joined = true
     j.held = m.heldAtJoin
     if m.changed != j.plan.changes:
-      state.log.add(sevWarning, j.name, "The join changed " & plural(m.changed, "trace") &
+      state.log.add(sevWarning, j.name, "The import changed " & plural(m.changed, "trace") &
         " where " & $j.plan.changes & " were expected (parseSEG: " & $m.stats & ").")
 
 proc selectUnmatched(state: var AppState; cmd: Command) =
@@ -2150,7 +2153,7 @@ proc selectUnmatched(state: var AppState; cmd: Command) =
   let j = state.joinedOf(cmd.unmatchedOf)
   let i = state.findSession(cmd.unmatchedOf)
   if j < 0 or i < 0:
-    state.ignore(cmd, $cmd.unmatchedOf & " is not joined")
+    state.ignore(cmd, $cmd.unmatchedOf & " has no survey imported")
     return
   let s = state.sessions[i]
   var ids = newSeqOfCap[int](state.joins[j].plan.unmatched.len)
@@ -2533,7 +2536,7 @@ proc onFinished(state: var AppState; job: JobInfo) =
     of jsDone:
       if state.joining.step == jpJoining:
         if state.joining.joined: state.endJoin(joJoined)
-        else: state.endJoin(joFailed, "it ended without joining")
+        else: state.endJoin(joFailed, "it ended without matching")
       else: state.endJoin(joCancelled) # the file was closed before its plan came
     of jsCancelled: state.endJoin(joCancelled)
     of jsFailed: state.endJoin(joFailed, job.error)
@@ -3358,7 +3361,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckJoin:
     let i = state.findSession(cmd.joinFile)
     if i < 0: state.ignore(cmd, $cmd.joinFile & " is not open")
-    elif state.joining.job != NoJob: state.ignore(cmd, "a join is under way: one at a time")
+    elif state.joining.job != NoJob:
+      state.ignore(cmd, "a survey import is under way: one at a time")
     elif cmd.joinFiles.len == 0: state.ignore(cmd, "no survey file was named")
     else: state.startJoin(i, cmd)
   of ckSelectUnmatched:

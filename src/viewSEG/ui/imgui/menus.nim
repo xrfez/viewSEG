@@ -50,7 +50,7 @@ type
     prepareNext*: bool          ## File > Prepare the next file is checked
     shown*: set[AppWindow]      ## the windows ticked under Window
     seismicName*: string        ## what the Seismic window is called now (`windowTitle`)
-    joinShown*: bool            ## the "Join geometry" window is open
+    joinShown*: bool            ## the "Import survey" window is open
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -65,7 +65,7 @@ type
     togglePrepare*: bool  ## File > Prepare the next file was clicked
     pickedWindows*: set[AppWindow]
       ## their entries under Window were clicked (`picked`)
-    toggleJoin*: bool     ## the "Join geometry" window's entry under Window was clicked
+    toggleJoin*: bool     ## the "Import survey" window's entry under Window was clicked
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
@@ -160,8 +160,9 @@ proc drawImports(res: var MenuResult) =
   if marked != nil: marked[].mark("menu.Import")
   if open:
     item(maImportSurvey, res)
-    tip("Join survey files (SPS, SEG P1, a CSV table) to an open file's traces, so they " &
-      "have their sources' and receivers' coordinates; in memory only, the file is not changed")
+    tip("A survey's files (SPS, SEG P1, a CSV table of stations) matched to an open file's " &
+      "traces, so they have their sources' and receivers' coordinates; in memory only, the " &
+      "file is not changed")
     item(maImportSettings, res)
     tip("Take in the settings of a file exported before (here or on another computer); " &
       "those it does not hold stay as they are")
@@ -234,7 +235,7 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
     tip(if w in AlwaysShown: "Always shown: a click brings it forward"
         else: "Ticked while shown. A click shows it in front when it is hidden or behind " &
           "another tab, and hides it when it is in sight")
-  if igMenuItem_Bool((IconMap & "  Join geometry").cstring, nil, input.joinShown, true):
+  if igMenuItem_Bool((IconMap & "  Import survey").cstring, nil, input.joinShown, true):
     res.toggleJoin = true
   if marked != nil: marked[].mark("menu.window.join")
   tip("Ticked while open: a click opens it in front, or closes it")

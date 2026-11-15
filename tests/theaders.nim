@@ -176,7 +176,7 @@ block theJoinedValues:
       "joined values before a join"
     let before = summaryLines(s, 0, st.joins)
     doAssert before.valueOf("Units") == $unitOf(s.crs.units), before.valueOf("Units")
-    doAssert not before.hasHeading("Geometry join")
+    doAssert not before.hasHeading("Survey imported")
     var files: seq[JoinFile]
     for p in [survey.s, survey.r, survey.x]: files.add JoinFile(path: p, kind: jkSps)
     st.apply Command(kind: ckJoin, joinFile: s.id, joinFiles: files,
@@ -205,9 +205,9 @@ block theJoinedValues:
     let own = row("ext1.receiverLineNumber")
     doAssert own.joined.len == 0 and own.values == @["100", "101"], $own
     let after = summaryLines(s, 0, st.joins)
-    doAssert after.valueOf("Units") == "feet (confirmed for the geometry join; the headers say " &
-      $unitOf(s.crs.units) & ")", after.valueOf("Units")
-    doAssert after.hasHeading("Geometry join")
+    doAssert after.valueOf("Units") == "feet (confirmed when the survey was imported; the " &
+      "headers say " & $unitOf(s.crs.units) & ")", after.valueOf("Units")
+    doAssert after.hasHeading("Survey imported")
     doAssert after.valueOf("Survey files") == survey.s.extractFilename & ", " &
       survey.r.extractFilename & ", " & survey.x.extractFilename, after.valueOf("Survey files")
     doAssert after.valueOf("Their units") == "metres"

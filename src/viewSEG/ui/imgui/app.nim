@@ -52,7 +52,7 @@ const
   filesTitle = IconList & "  Files###files"
   jobsTitle = IconTasks & "  Jobs###jobs"
   recordsTitle = IconRecords & "  Records###records"
-  joinTitle = IconMap & "  Join geometry###join"
+  joinTitle = IconMap & "  Import survey###join"
   noticeSeconds = 5.0                     ## how long a notice stays on screen
   CheckFrames = 8                         ## frames after a layout's arrival to look for windows off screen
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
@@ -77,7 +77,7 @@ type
     mapCursor: string                          ## the pointer's coordinates over the map last frame
     files: FileListUi                          ## the file list's window
     records: RecordListUi                      ## the record list's window
-    join: JoinUi                               ## the "Join geometry" window
+    join: JoinUi                               ## the "Import survey" window
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
     dropAt: float64                            ## when a drag was last seen over the window
     windows: WindowsUi                         ## which windows are shown (the Window menu)
@@ -442,11 +442,11 @@ proc tracePanel*(frame: FrameInfo): lent TracePanelUi =
   frame.ui.trace
 
 proc joinWindow*(frame: FrameInfo): lent JoinUi =
-  ## The "Join geometry" window's state (`shown`).
+  ## The "Import survey" window's state (`shown`).
   frame.ui.join
 
 proc addJoinFiles*(frame: FrameInfo; paths: openArray[string]) =
-  ## Adds `paths` to the survey files of the "Join geometry" window, as its
+  ## Adds `paths` to the survey files of the "Import survey" window, as its
   ## "Add files..." dialog does (tests cannot drive the system's dialog).
   frame.ui.join.addFiles(paths)
 
@@ -619,7 +619,7 @@ proc ask(ui: Ui; kind: DialogKind; location = "") =
 
 func everyWindow(): seq[string] =
   ## The ImGui IDs of the windows that can be outside the main window: the
-  ## docked ones and the "Join geometry" window.
+  ## docked ones and the "Import survey" window.
   for w in AppWindow: result.add $w
   result.add "join"
 
@@ -652,7 +652,7 @@ proc placeMain(ui: var Ui; wholly: bool): Rect =
 
 proc resetWindows(ui: var Ui) =
   ## Window > Reset the windows: the default layout next frame (every
-  ## window shown and docked in the main window), the "Join geometry" window
+  ## window shown and docked in the main window), the "Import survey" window
   ## at its first place, and the main window brought onto a screen when it
   ## is off every one.
   ui.windows.showAll()

@@ -634,9 +634,10 @@ program's core: neither window talks to the other, each draws what the core hold
   recorded at this receiver", "24 traces recorded at this source, none in the record
   shown (FFID 12)", "No trace here: no seismic file is open".
 
-**Where the positions come from, before the survey files are joined to the seismic
-file** (the join, File > Join geometry, is still to come; it writes the survey's
-stations and coordinates into the file's keys, never into the file):
+**Where the positions come from, before a survey is imported for the seismic file**
+(File > Import > Survey...: it writes the survey's stations and coordinates into the
+file's keys, never into the file; then a trace whose headers lack its stations finds them
+too):
 
 | The trace headers give | Trace → map | Map → plot |
 |---|---|---|

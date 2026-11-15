@@ -31,7 +31,7 @@ type
     dkExportLayout = "Export layout",     ## a NIF file to write (a save dialog)
     dkImportLayout = "Import layout",     ## a NIF file to read
     dkExportLog = "Export messages"       ## a text file to write (a save dialog)
-    dkJoinFiles = "Add survey files"      ## survey files to join: SPS, SEG P1, CSV tables
+    dkJoinFiles = "Add survey files"      ## survey files to import: SPS, SEG P1, CSV tables
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)

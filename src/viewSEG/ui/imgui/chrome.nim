@@ -185,7 +185,7 @@ proc readoutField(fonts: Fonts; f: ReadoutField; value: string; t: Theme;
   marks.mark("status." & $f)
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
     igTextUnformatted(($f & (if f == rfAmplitude: ", as displayed (after processing and " &
-      "gain)" else: "") & (if joined: ", from the survey files (joined, not in the header)"
+      "gain)" else: "") & (if joined: ", from the survey, not the trace header"
       else: "") & ". Right-click the bar to choose the fields.").cstring, nil)
     igEndTooltip()
   igSameLine(0, 16)

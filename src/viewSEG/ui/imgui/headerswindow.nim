@@ -68,7 +68,7 @@ type
   HeadersOutput* = object
     commands*: seq[Command]
 
-const JoinedTip = "From the survey files (joined, not in the header)"
+const JoinedTip = "From the survey, not the trace header"
   ## what a value a geometry join gave says when pointed at, as in the plot
 
 proc tabItem(ui: var HeadersUi; tab: HeadersTab; wanted: HeadersTab): bool =

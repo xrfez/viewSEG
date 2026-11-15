@@ -1,22 +1,24 @@
-## The "Join geometry" window (File > Join geometry...): survey files joined
-## to an open file's traces, in memory (`ckJoin`, `core/join`).
+## The "Import survey" window (File > Import > Survey...): a survey's files
+## matched to an open file's traces, in memory (`ckJoin`, `core/join`; the
+## code keeps parseSEG's word, the join).
 ##
-## From the top: the seismic file (the one the plot shows, or another open
-## file) with the units its headers give its coordinates in and its CRS as
-## the file gives it; the survey files, the loaded ones ticked, others added
-## with "Add files..." (SPS, SEG P1, CSV tables, a CSV table's role), with
-## the units their headers give; the join's options (the trailing digits of
-## line names, line names mapped to numbers, several channels per station,
-## the headers' coordinates kept or replaced, how the records are checked
-## against the relation records); Join; then what the join did, in plain
-## words, with "Select unmatched traces". **Units and the CRS come from the
+## In the order of the work: the survey files, the loaded ones ticked,
+## others added with "Add files..." (SPS, SEG P1, CSV tables, a CSV table's
+## role), with the units their headers give; the seismic file whose traces
+## they are matched to (the one the plot shows, or another open file), with
+## the units its headers give its coordinates in and its CRS as the file
+## gives it; the options (the trailing digits of line names, line names
+## mapped to numbers, several channels per station, the headers'
+## coordinates kept or replaced, how the records are checked against the
+## relation records); Import; then what the import did, in plain words,
+## with "Select unmatched traces". **Units and the CRS come from the
 ## headers first:** each dropdown starts at what the headers say, and the
-## user only confirms or corrects; the units the join is made with label
-## the map and the status bar. The options are remembered (the settings);
-## the units chosen for a file are kept while the program runs.
+## user only confirms or corrects; the units the survey is imported with
+## label the map and the status bar. The options are remembered (the
+## settings); the units chosen for a file are kept while the program runs.
 ##
 ## A floating window like any other: Tab moves between its controls, and
-## the click that brings it forward does only that (Join and Select act only
+## the click that brings it forward does only that (Import and Select act only
 ## in a window that had the focus).
 
 import std/[options, os, strutils, tables]
@@ -51,8 +53,9 @@ type
     addFiles*: bool ## show the file dialog for survey files to add
 
 func kindByName*(path: string): JoinFileKind =
-  ## What a file added to the join is, by its name (the join reads its first
-  ## bytes to be sure): a CSV table (`.csv`, `.txt`, `.tsv`), SEG P1, or SPS.
+  ## What a file added to the import is, by its name (the import reads its
+  ## first bytes to be sure): a CSV table (`.csv`, `.txt`, `.tsv`), SEG P1,
+  ## or SPS.
   case path.splitFile.ext.toLowerAscii
   of ".csv", ".txt", ".tsv": jkCsv
   of ".p1", ".p190", ".ukooa": jkP1
@@ -69,7 +72,7 @@ proc placeAgain*(ui: var JoinUi) =
   ui.placeAgain = true
 
 proc addFiles*(ui: var JoinUi; paths: openArray[string]) =
-  ## Adds `paths` (from the file dialog) to the survey files to join.
+  ## Adds `paths` (from the file dialog) to the survey files to import.
   for p in paths:
     var known = false
     for f in ui.added:
@@ -198,7 +201,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     ui.bringUp = false
   let vp = igGetMainViewport()
   # First over the left of the main window (the file list): the plot and the
-  # map, which show what the join does, stay in sight.
+  # map, which show what the import does, stay in sight.
   let cond = if ui.placeAgain: ImGui_Cond_Always.cint else: ImGui_Cond_FirstUseEver.cint
   ui.placeAgain = false
   igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + igGetFontSize(), y: vp.WorkPos.y +
@@ -214,49 +217,115 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     var opts = st.settings.join
     var changed = false
     var files: seq[JoinFile]
-    var units: JoinUnits
-    var target = -1 # the file chosen: its index in `sessions`
-                    # The window's content scrolls; Join, Close and the progress stay below
-                    # it, in sight. Tab goes through both (a flattened child).
+    # The file the survey is matched to: the one chosen, else the plot's,
+    # else the first open; its index in `sessions`, -1 for none.
+    let k = st.findPanel(MainPanel)
+    let shown = if k >= 0: st.shownFile(k) else: -1
+    var target = st.findSession(ui.session)
+    if target < 0: target = shown
+    if target < 0 and st.sessions.len > 0: target = 0
+    if target >= 0: ui.learn(st, target)
+    let key = if target >= 0: st.sessions[target].path else: ""
+    var units = ui.units.getOrDefault(key, JoinUnits(
+      file: (if target >= 0: ui.fileUnits else: suNotGiven), survey: suNotGiven))
+    # The window's content scrolls; Import, Close and the progress stay below
+    # it, in sight. Tab goes through both (a flattened child).
     let footer = igGetFrameHeightWithSpacing() + igGetStyle().ItemSpacing.y
     discard igBeginChild_Str("##content", ImVec2_c(x: 0, y: -footer),
       ImGui_ChildFlags_NavFlattened.cint, 0)
+    # -- the survey files
+    igSeparatorText("Survey files")
+    var derived = suNotGiven
+    var said = ""
+    var loaded = 0
+    for li in 0 ..< st.survey.layers.len:
+      template l: untyped = st.survey.layers[li]
+      if l.origin == loSurveyFile:
+        inc loaded
+        igPushID_Int(cint(li))
+        var on = l.path notin ui.unticked
+        if igCheckbox((l.name & "  (" & $l.kind & ")").cstring, addr on):
+          if on: ui.unticked.delete(ui.unticked.find(l.path))
+          else: ui.unticked.add l.path
+        marks.marked("join.survey " & l.name)
+        tip(l.path & "\n" & l.summary)
+        igPopID()
+        if on:
+          files.add JoinFile(path: l.path, kind: (if l.kind == fkP1: jkP1 else: jkSps))
+          if derived == suNotGiven and l.gridUnit.known:
+            derived = unitOf(l.gridUnit)
+            said = describe(l.gridUnit)
+    var drop = -1
+    for a in 0 ..< ui.added.len:
+      igPushID_Int(cint(10_000 + a))
+      if igSmallButton(IconClose.cstring): drop = a
+      tip("Leave it out")
+      igSameLine(0, -1)
+      igTextUnformatted((ui.added[a].path.extractFilename & "  (" & $ui.added[a].kind &
+        ")").cstring, nil)
+      tip(ui.added[a].path)
+      if ui.added[a].kind == jkCsv:
+        igSameLine(0, -1)
+        var role = ui.added[a].role
+        if enumCombo("##role", role, igGetFontSize() * 13): ui.added[a].role = role
+        tip("Which stations its rows are: as its kind column says (S or R), or all " &
+          "sources, or all receivers")
+      igPopID()
+      files.add ui.added[a]
+    if drop >= 0: ui.added.delete(drop)
+    if loaded == 0 and ui.added.len == 0:
+      dim("Choose the survey's files: its S, R and X files (SPS), SEG P1 files or a CSV " &
+        "table of stations.", t)
+    if igButton((IconOpenFile & "  Add files...").cstring, ImVec2_c(x: 0, y: 0)):
+      result.addFiles = true
+    marks.marked("join.add")
+    tip("SPS (S, R, X), SEG P1 files, or a CSV table of stations: line, point, x, y " &
+      "(and index, elevation, kind) columns")
+    if not ui.units.hasKey(key) or units.survey == suNotGiven and derived != suNotGiven:
+      units.survey = derived
+    igAlignTextToFramePadding()
+    igTextUnformatted("Their coordinates are in", nil)
+    igSameLine(0, -1)
+    var surveyUnit = units.survey
+    if unitCombo("##surveyunits", surveyUnit, marks, "join.survey units"):
+      units.survey = surveyUnit
+      ui.units[key] = units
+    tip(if said.len > 0: "What the SPS headers say: " & said & ". Change it when they are " &
+          "wrong; nothing is converted: the map and the status bar label the coordinates " &
+          "with it."
+        else: "No survey file chosen says. Choose what its coordinates are in: the map " &
+          "and the status bar label them with it; nothing is converted.")
+    if said.len > 0: dim("The SPS headers say " & said & ".", t)
     # -- the seismic file
     igSeparatorText("Seismic file")
-    let k = st.findPanel(MainPanel)
-    let shown = if k >= 0: st.shownFile(k) else: -1
-    var i = st.findSession(ui.session)
-    if i < 0: i = shown
-    if i < 0 and st.sessions.len > 0: i = 0
-    target = i
-    if i < 0:
-      dim("No seismic file is open: open the file to join its traces with the survey.", t)
+    if target < 0:
+      dim("No seismic file is open: open the file whose traces the survey is to be " &
+        "matched to.", t)
     else:
-      template s: untyped = st.sessions[i]
+      template s: untyped = st.sessions[target]
+      dim("The survey's stations are matched to this file's traces:", t)
       igSetNextItemWidth(-1)
       if igBeginCombo("##file", s.name.cstring, 0):
         for j in 0 ..< st.sessions.len:
           let name = st.sessions[j].name & (if j == shown: "  (in the plot)" else: "")
           igPushID_Int(cint(j))
-          if igSelectable_Bool(name.cstring, j == i, 0, ImVec2_c(x: 0, y: 0)):
+          if igSelectable_Bool(name.cstring, j == target, 0, ImVec2_c(x: 0, y: 0)):
             ui.session = st.sessions[j].id
           igPopID()
         igEndCombo()
       marks.marked("join.file")
       tip(s.path)
-      ui.learn(st, i)
-      units = ui.units.getOrDefault(s.path, JoinUnits(file: ui.fileUnits, survey: suNotGiven))
       let joinedAt = st.joinedOf(s.id)
       if joinedAt >= 0:
-        dim("Joined already with " & ($st.joins[joinedAt].files.len) & " survey files: a " &
-          "join again starts from the keys as they are now.", t)
+        dim("A survey was imported for it already (" & $st.joins[joinedAt].files.len &
+          " files): importing again starts from its keys as they are now.", t)
       igAlignTextToFramePadding()
       igTextUnformatted("Its headers' coordinates are in", nil)
       igSameLine(0, -1)
       var fileUnit = units.file
       if unitCombo("##fileunits", fileUnit, marks, "join.file units"):
         units.file = fileUnit
-        ui.units[s.path] = units
+        ui.units[key] = units
       tip("What the file's headers say: " & $ui.fileUnits & ". Change it when the headers " &
         "are wrong; nothing is converted.")
       if ui.crs.len > 1:
@@ -267,122 +336,61 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
           nil, nil)
         marks.marked("join.crs")
       else:
-        dim("The file gives no coordinate reference system: the survey's headers say what " &
-          "the join's coordinates are (below).", t)
-      # -- the survey files
-      igSeparatorText("Survey files")
-      var derived = suNotGiven
-      var said = ""
-      var loaded = 0
-      for li in 0 ..< st.survey.layers.len:
-        template l: untyped = st.survey.layers[li]
-        if l.origin == loSurveyFile:
-          inc loaded
-          igPushID_Int(cint(li))
-          var on = l.path notin ui.unticked
-          if igCheckbox((l.name & "  (" & $l.kind & ")").cstring, addr on):
-            if on: ui.unticked.delete(ui.unticked.find(l.path))
-            else: ui.unticked.add l.path
-          marks.marked("join.survey " & l.name)
-          tip(l.path & "\n" & l.summary)
-          igPopID()
-          if on:
-            files.add JoinFile(path: l.path, kind: (if l.kind == fkP1: jkP1 else: jkSps))
-            if derived == suNotGiven and l.gridUnit.known:
-              derived = unitOf(l.gridUnit)
-              said = describe(l.gridUnit)
-      var drop = -1
-      for a in 0 ..< ui.added.len:
-        igPushID_Int(cint(10_000 + a))
-        if igSmallButton(IconClose.cstring): drop = a
-        tip("Leave it out")
-        igSameLine(0, -1)
-        igTextUnformatted((ui.added[a].path.extractFilename & "  (" & $ui.added[a].kind &
-          ")").cstring, nil)
-        tip(ui.added[a].path)
-        if ui.added[a].kind == jkCsv:
-          igSameLine(0, -1)
-          var role = ui.added[a].role
-          if enumCombo("##role", role, igGetFontSize() * 13): ui.added[a].role = role
-          tip("Which stations its rows are: as its kind column says (S or R), or all " &
-            "sources, or all receivers")
-        igPopID()
-        files.add ui.added[a]
-      if drop >= 0: ui.added.delete(drop)
-      if loaded == 0 and ui.added.len == 0:
-        dim("No survey file is loaded: add the survey's S, R and X files (SPS), SEG P1 " &
-          "files or a CSV table of stations.", t)
-      if igButton((IconOpenFile & "  Add files...").cstring, ImVec2_c(x: 0, y: 0)):
-        result.addFiles = true
-      marks.marked("join.add")
-      tip("SPS (S, R, X), SEG P1 files, or a CSV table of stations: line, point, x, y " &
-        "(and index, elevation, kind) columns")
-      if not ui.units.hasKey(s.path) or units.survey == suNotGiven and derived != suNotGiven:
-        units.survey = derived
-      igAlignTextToFramePadding()
-      igTextUnformatted("Their coordinates are in", nil)
-      igSameLine(0, -1)
-      var surveyUnit = units.survey
-      if unitCombo("##surveyunits", surveyUnit, marks, "join.survey units"):
-        units.survey = surveyUnit
-        ui.units[s.path] = units
-      tip(if said.len > 0: "What the SPS headers say: " & said & ". Change it when they are " &
-            "wrong; nothing is converted: the map and the status bar label the coordinates " &
-            "with it."
-          else: "No loaded survey file says. Choose what its coordinates are in: the map " &
-            "and the status bar label them with it; nothing is converted.")
-      if said.len > 0: dim("The SPS headers say " & said & ".", t)
+        dim("The file gives no coordinate reference system: the survey files' headers say " &
+          "what the coordinates are (above).", t)
       if units.file != suNotGiven and units.survey != suNotGiven and
           units.file != units.survey and opts.coordinates == hcFill:
         wrapped("The headers' coordinates are in " & $units.file & " and the survey's in " &
-          $units.survey & ": the join does not convert them. Choose \"" & $hcReplace &
+          $units.survey & ": the import does not convert them. Choose \"" & $hcReplace &
           "\" to have the survey's everywhere.", t.roles[rlWarning])
-      # -- options
-      if igCollapsingHeader_TreeNodeFlags("Options", 0):
-        marks.marked("join.options")
-        if ui.drawOptions(opts, t, marks): changed = true
-      else:
-        marks.marked("join.options")
-      # -- what the last join did
-      let r = st.joinReport
-      if r.serial > 0 and r.session == s.id:
-        igSeparatorText("Joined")
-        if r.serial != ui.reported: # a new one: shown
-          igSetScrollHereY(0)
-          ui.reported = r.serial
-        let colour = case r.outcome
-          of joJoined: t.roles[rlText]
-          of joNothing: t.roles[rlWarning]
-          of joFailed: t.roles[rlError]
-          else: t.roles[rlTextDim]
-        for w in r.words: wrapped(w, colour)
-        marks.marked("join.report")
-        let j = st.joinedOf(s.id)
-        if j >= 0:
-          for n in st.joins[j].survey.notes: dim(n, t)
-        if r.outcome == joJoined and r.unmatched > 0 and j >= 0:
-          if igButton(("Select unmatched traces (" & $r.unmatched & ")").cstring,
-              ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
-            result.commands.add Command(kind: ckSelectUnmatched, unmatchedOf: s.id)
-          marks.marked("join.unmatched")
-          tip("Select the traces the survey has no source or receiver station for, in the " &
-            "plot and on the map")
+    # -- options
+    if igCollapsingHeader_TreeNodeFlags("Options", 0):
+      marks.marked("join.options")
+      if ui.drawOptions(opts, t, marks): changed = true
+    else:
+      marks.marked("join.options")
+    # -- what the last import did
+    let r = st.joinReport
+    if target >= 0 and r.serial > 0 and r.session == st.sessions[target].id:
+      let id = st.sessions[target].id
+      igSeparatorText("Imported")
+      if r.serial != ui.reported: # a new one: shown
+        igSetScrollHereY(0)
+        ui.reported = r.serial
+      let colour = case r.outcome
+        of joJoined: t.roles[rlText]
+        of joNothing: t.roles[rlWarning]
+        of joFailed: t.roles[rlError]
+        else: t.roles[rlTextDim]
+      for w in r.words: wrapped(w, colour)
+      marks.marked("join.report")
+      let j = st.joinedOf(id)
+      if j >= 0:
+        for n in st.joins[j].survey.notes: dim(n, t)
+      if r.outcome == joJoined and r.unmatched > 0 and j >= 0:
+        if igButton(("Select unmatched traces (" & $r.unmatched & ")").cstring,
+            ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
+          result.commands.add Command(kind: ckSelectUnmatched, unmatchedOf: id)
+        marks.marked("join.unmatched")
+        tip("Select the traces the survey has no source or receiver station for, in the " &
+          "plot and on the map")
     igEndChild()
-    # -- join
+    # -- import
     igSeparator()
     let can = not busy and files.len > 0 and target >= 0
     igBeginDisabled(not can)
-    if igButton((IconMap & "  Join").cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and can:
+    if igButton((IconMap & "  Import").cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
+        can:
       let s = st.sessions[target]
       result.commands.add Command(kind: ckJoin, joinFile: s.id, joinFiles: files,
         joinOptions: opts, joinUnits: units)
-      ui.units[s.path] = units
+      ui.units[key] = units
     igEndDisabled()
     marks.marked("join.run")
-    tip(if busy: "A join is under way" elif target < 0: "No seismic file is open"
-        elif files.len == 0: "Choose survey files first"
-        else: "Join them to " & st.sessions[target].name & "'s traces, in memory: the file " &
-          "is not changed")
+    tip(if busy: "An import is under way" elif target < 0: "No seismic file is open"
+        elif files.len == 0: "Choose the survey's files first"
+        else: "Match the survey to " & st.sessions[target].name & "'s traces, in memory: " &
+          "the file is not changed")
     igSameLine(0, -1)
     if igButton("Close", ImVec2_c(x: 0, y: 0)): ui.shown = false
     marks.marked("join.close")

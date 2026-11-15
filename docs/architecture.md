@@ -429,7 +429,9 @@ joined with its survey (below). Code outside `core/survey` indexes the survey's 
 accessor makes ARC copy the whole seq first, every layer (a hundred megabytes for a
 million points), each time.
 
-**The geometry join** (`core/join`, `ckJoin`, File > Join geometry; `ui/imgui/joindialog`).
+**The survey import** (`core/join`, `ckJoin`, File > Import > Survey...; `ui/imgui/joindialog`,
+the "Import survey" window). The user imports a survey; the code keeps parseSEG's word for
+what it does, a join.
 Survey files (SPS S, R and X with parseSEG's `addSps`, SEG P1 with `addP1`, CSV tables of
 stations with `addCsv`) are joined to an open file's trace keys in memory: the file is
 never changed, and a file opened again is as it is on disk. Two jobs, so that the plot

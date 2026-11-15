@@ -1,15 +1,18 @@
-## The "Join geometry" window in the running frontend, headless, driven by
+## The "Import survey" window in the running frontend, headless, driven by
 ## SDL events as the user's mouse and keyboard send them, on a SEG-D record
 ## whose headers name stations but give (0, 0) coordinates, with the
 ## survey's S, R and X files loaded:
 ##
-## - File > Import > Survey... opens the window; the loaded survey files are
-##   listed, ticked; Tab moves between its controls;
-## - Join joins them: the window says what it did in plain words, the file's
-##   keys hold the survey's coordinates, the plot shows the joined record
-##   again and the status bar draws a joined value (the offset) in the
-##   accent colour; the map shows the file's own receivers at the survey's
-##   places;
+## - File > Import > Survey... opens the window, titled "Import survey"
+##   (and so named under Window); the loaded survey files are listed,
+##   ticked; Tab moves between its controls;
+## - Import matches them to the file's traces: the window says what it did
+##   in plain words, the file's keys hold the survey's coordinates, the plot
+##   shows the record again and the status bar draws a value from the survey
+##   (the offset) in the accent colour; the map shows the file's own
+##   receivers at the survey's places; what the user reads of it (the
+##   window's title, the job's title, the messages, the words) says import
+##   and matched, never join;
 ## - "Select unmatched traces" selects the traces the survey has no
 ##   receiver for;
 ## - an option set in the window is remembered (the settings).
@@ -17,7 +20,9 @@
 ## Seen to fail: with `marked` not marking the focused control, "Tab moves
 ## between the controls" found no focused control; with the status bar's
 ## joined colour left out, "the offset is drawn as joined" found no pixel in
-## the accent colour.
+## the accent colour; with the window titled "Join geometry" as before, "the
+## window is titled  Join geometry###join"; with the log's old words ("Joined
+## to"), "the log does not say the survey was imported".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves join-*.png there, and with the example
@@ -126,6 +131,10 @@ proc joinWindow() =
       elif f.markOf("menu.Import").size.x > 0 and f.index mod 10 == 0:
         f.click(f.markOf("menu.Import").centre)
       f.joinWindow.shown and f.markOf("join").size.x > 0)
+    step("the window says import", noop, proc (f: FrameInfo): bool =
+      doAssert f.windowName("join").endsWith("  Import survey###join"),
+        "the window is titled " & f.windowName("join")
+      true)
     step("the loaded survey files are listed", noop, proc (f: FrameInfo): bool =
       result = f.markOf("join.run").size.x > 0
       if result:
@@ -157,7 +166,22 @@ proc joinWindow() =
         f.markOf("join.report").size.x > 0 and f.markOf("join.unmatched").size.x > 0
       if result:
         doAssert f.core.joinReport.outcome == joJoined, $f.core.joinReport.words
-        doAssert "12 of 24 seismic traces matched the survey" in f.core.joinReport.words[0])
+        doAssert "12 of 24 seismic traces matched the survey" in f.core.joinReport.words[0]
+        for w in f.core.joinReport.words:
+          doAssert "join" notin w.toLowerAscii, "the words say join: " & w
+        var started, ended = false
+        for e in f.core.log:
+          if e.text.startsWith("Importing the survey (") and "for stations" in e.text:
+            started = true
+          if e.text.startsWith("Survey imported for stations"):
+            ended = true
+            doAssert "join" notin e.text.toLowerAscii, e.text
+        doAssert started and ended, "the log does not say the survey was imported"
+        var titled = false
+        for j in f.core.jobs.list:
+          if j.spec.title.startsWith("Import the survey for "): titled = true
+          doAssert "join" notin j.spec.title.toLowerAscii, "a job is titled " & j.spec.title
+        doAssert titled, "no job is titled Import the survey for ...")
     step("the window shows what the join did", noop, proc (f: FrameInfo): bool =
       let (w, r) = (f.markOf("join"), f.markOf("join.unmatched"))
       result = r.pos.y > w.pos.y and r.pos.y + r.size.y < w.pos.y + w.size.y

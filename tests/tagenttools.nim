@@ -297,7 +297,7 @@ withFixtures fx:
     doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
 
   block theJoin:
-    # File > Join geometry through the command tool: the plot's file and the
+    # File > Import > Survey through the command tool: the plot's file and the
     # window's options when not given; in memory, no file written.
     let sps = fx.surveySps()
     let joined = st.run(%*{"kind": "join geometry", "joinFiles": [

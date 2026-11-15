@@ -5,7 +5,7 @@
 ## the sort presets, the user's own sort keys, the Messages window's
 ## toggles, the plot's cursor time line, whether the Files window follows
 ## the latest file, where the map shows the point under the pointer, the
-## geometry join's options (File > Join geometry), and the Headers window's
+## survey import's options (File > Import > Survey), and the Headers window's
 ## tabs, toggles and columns.
 ## Every field has a default.
 ##

@@ -262,3 +262,47 @@ withFixtures fx:
   next = steps
   drive(next, opts)
   echo "tguiwindows: ", next.len, " steps in the second run"
+
+# With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
+# local only), the menus are saved open over the Morgantown record: File >
+# Import (menus-import.png), File > Export (menus-export.png) and Window
+# (menus-window.png); docs/screenshots/ holds the committed ones.
+
+const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
+
+proc menuShots(dir: string) =
+  let record = examples / "00000151_12900_11300.sgd"
+  let shots = [("menu.File", "menu.Import", "menus-import.png"),
+    ("menu.File", "menu.Export", "menus-export.png"), ("menu.Window", "", "menus-window.png")]
+  var stage = 0
+  var wait = 0
+  var saved: seq[string]
+  proc onFrame(f: FrameInfo) =
+    inc wait
+    let k = f.core.findPanel(MainPanel)
+    if stage == 0:
+      if f.core.panels[k].laidOut and f.core.tiles(k).len > 0 and wait > 30:
+        (stage, wait) = (1, 0)
+    elif stage <= shots.len:
+      let (top, sub, file) = shots[stage - 1]
+      if wait == 2: f.click(f.markOf(top).centre)
+      if wait == 8 and sub.len > 0: f.click(f.markOf(sub).centre)
+      if wait == 20:
+        if f.savePng(dir / file): saved.add file
+        f.click(f.markOf("statusbar").centre) # closes the menu
+      if wait == 30: (stage, wait) = (stage + 1, 0)
+    else: f.stop()
+    if f.index > 3000: f.stop()
+  let tmp = getTempDir() / ("viewseg-menushots-" & $getCurrentProcessId())
+  # Kept settings, so that the presets are listed and a layout can be saved.
+  let code = run(RunOptions(maxFrames: 4000, openPaths: @[record], windowSize: (1600, 1000),
+    theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
+    persist: true, configDir: some(tmp / "config"), logDir: some(tmp / "logs"),
+    assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]), onFrame: onFrame))
+  removeDir(tmp)
+  doAssert code == 0 and saved.len == shots.len, "screenshots saved: " & $saved
+  echo "tguiwindows: saved ", saved.join(", "), " in ", dir
+
+if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and fileExists(examples / "00000151_12900_11300.sgd"):
+  createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+  menuShots(getEnv("VIEWSEG_SCREENSHOTS"))
