@@ -23,6 +23,8 @@
 ## `noUsableFieldKeepsTheReadout` found the status bar's fields gone; with
 ## the import parsed on the UI thread (`readSettings(m.content, ...)` in
 ## `takeIn`), `importHoldsNoFrame` found a frame held 51 ms.
+##
+## Runs alone: it bounds the time taking in an import holds a frame (25 ms).
 
 import std/[math, monotimes, os, random, strutils, times]
 import viewSEG/core/[geometry, state]

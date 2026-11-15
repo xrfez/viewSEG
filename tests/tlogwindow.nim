@@ -11,6 +11,8 @@
 ## with the export writing only the newest entry, `exported` found one line;
 ## with the lines made on the UI thread (`fileLine` in `apply`),
 ## `exportHoldsNoFrame` found the export holding the frame 88 ms.
+##
+## Runs alone: it bounds the time the export holds the frame (30 ms).
 
 import std/[monotimes, os, strutils, times]
 import viewSEG/core/[persist, state]

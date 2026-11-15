@@ -53,6 +53,13 @@
 ## it showed, "overlap 2 from fit: all of it did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
+##
+## Every step that compares pixels waits for two quiet frames first (the image
+## of a frame shows the hover of the frame before). The density step once did
+## not: on a busy machine the new tile came in the frame after the wheel, and
+## the image still showed the trace hovered before it ("density: 104 of 11648
+## pixels off the reference", one column tinted: 3 of 4 runs among the other
+## tests, 1 of 8 alone under xvfb-run while other work loaded the machine).
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/[geometry, state, wiggle]
@@ -274,7 +281,8 @@ proc main() =
       f.moveMouse(mid)
       f.scrollWheel(mid, -8), proc (f: FrameInfo): bool =
         let lim = limitsOf(f.panel.layout)
-        result = f.answered and f.tracePanel.drawnView.traces == lim[axTraces].bounds
+        result = f.answered and quiet >= 2 and
+          f.tracePanel.drawnView.traces == lim[axTraces].bounds
         if result:
           let s = f.capture
           doAssert s.density and not s.wiggles

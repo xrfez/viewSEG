@@ -14,6 +14,8 @@
 ## fitted to each new gather (`carry` not set), `stepThroughRecords` found
 ## the scales changed at the second record; with `columnsOf` listing the CDP
 ## column whatever the rows hold, `rowsOfAShot` found it.
+##
+## Runs alone: it measures how long writing 100 000 records and finding one take.
 
 import std/[math, monotimes, os, times]
 import viewSEG/core/state

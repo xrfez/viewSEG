@@ -25,6 +25,8 @@
 ## every file, it found it for the second file of a folder; with binary
 ## cards blanked as one line (the whole chunk), `fixedCardsWithABinaryCard`
 ## found no receiver.
+##
+## Runs alone: it measures the time the Morgantown survey takes to load.
 
 import std/[os, strutils, times]
 import parseSEG

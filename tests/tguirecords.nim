@@ -27,6 +27,8 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves records-*.png there.
+##
+## Runs alone: it bounds the frame times while the list scrolls.
 
 import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]

@@ -87,10 +87,10 @@ jobs:
           done
           exit $status
 
-      # tests/tgui.nim opens a window and fails without a display: xvfb (Mesa
-      # llvmpipe) provides one.
+      # The GUI tests open windows: tests/tester.nim starts an Xvfb server (Mesa
+      # llvmpipe) for each test it runs, several at a time.
       - name: Run test suite (headless)
-        run: xvfb-run -a -s "-screen 0 1920x1080x24" nim test
+        run: nim test
 
       # dist/viewSEG-<version>-linux-x64.tar.gz; packageTest also unpacks it and runs
       # the binary with --paths (no window, so no display needed).

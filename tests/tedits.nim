@@ -43,6 +43,8 @@
 ## traces edited elsewhere"; with the dead trace drawn as recorded under
 ## None (the blanking only when something runs on the samples), "under
 ## None the dead-marked trace is drawn".
+##
+## Runs alone: it bounds the time a frame's questions to the lists take (50 µs).
 
 import std/[algorithm, math, monotimes, os, sequtils, strutils, times]
 import parseSEG

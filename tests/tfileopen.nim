@@ -14,6 +14,8 @@
 ## out, `cancelStopsARunningOpen` found the job done and a session posted
 ## (either alone still cancels it); with `openSession` dropping its
 ## `progress`, `progressReachesTheEnd` saw no calls.
+##
+## Runs alone: it bounds the time stopping the jobs takes (1 s).
 
 import std/[os, strutils, times]
 import parseSEG

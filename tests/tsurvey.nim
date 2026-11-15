@@ -19,6 +19,8 @@
 ## given twice, `plantedSpsFile` found receiver 110 at its first place; with
 ## `tracePoints` not filling stations from the relations, `linksBothWays`
 ## found no survey point for the traces without stations.
+##
+## Runs alone: it bounds the time a million traces take into a layer (2 s).
 
 import std/[math, monotimes, os, random, strutils, times]
 import parseSEG

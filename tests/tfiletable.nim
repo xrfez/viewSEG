@@ -18,6 +18,8 @@
 ## update of 85 ms; with `follow` not moving the indices of the rows after
 ## an inserted entry, `changesAreFollowed` found the rows differing from
 ## those made from scratch at its first insertion.
+##
+## Runs alone: it bounds the time an update of the table takes (25 ms).
 
 import std/[monotimes, random, times]
 import viewSEG/core/filelist

@@ -15,7 +15,7 @@ Requires Nim 2.4.0. Dependencies are pinned in `atlas.lock` and checked out into
 
 ```sh
 atlas rep atlas.lock    # fresh clone: check out the pinned dependencies
-nim test                # run the test suite
+nim test                # run the test suite in parallel, each test on its own Xvfb display
 nim nimRelease          # build bin/viewSEG for this machine
 nim winRelease          # cross-build bin/viewSEG.exe for Windows (zig)
 ```

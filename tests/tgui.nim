@@ -19,6 +19,10 @@
 ##
 ## `VIEWSEG_SCREENSHOTS=<dir>` also saves shell-dark.png, shell-light.png and
 ## shell-dark-200.png there (docs/screenshots/ holds the committed ones).
+##
+## Runs alone: it asserts that the frontend warns of nothing, and a debug build
+##   warns of a frame over its 50-ms budget, as a first frame on a busy machine
+##   can be (seen in a parallel run: "Frame 0 took 64 ms").
 
 import std/[options, os, strutils]
 import viewSEG/core/geometry

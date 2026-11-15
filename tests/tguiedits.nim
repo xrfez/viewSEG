@@ -39,6 +39,9 @@
 ## killed".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
+##
+## Runs alone: it measures the time from a key to the new picture (on
+##   Morgantown, where exampleFiles/ holds it).
 
 import std/[algorithm, math, monotimes, options, os, sequtils, strutils, tables, times]
 import viewSEG/core/[geometry, state]

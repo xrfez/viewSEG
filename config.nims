@@ -194,12 +194,18 @@ task packageTest, "nim package, then check dist/ and run the packaged Linux bina
   selfExec "c -r --hints:off" & define & " tests/package/tpackage.nim"
 
 # Every test task builds the runner tests/tester.nim once, in debug; the runner
-# compiles and runs each tests/t*.nim with the flags given after it.
+# compiles and runs each tests/t*.nim with the flags given after it, several
+# files at a time, each run on an Xvfb display of its own (its module doc).
 const tester = "c -r --hints:off tests/tester.nim"
 
-task test, "Run test suite":
-  ## Runs every tests/t*.nim in a debug build.
+task test, "Run the test suite, several files at a time":
+  ## Runs every tests/t*.nim in a debug build, as many files at a time as
+  ## there are CPU cores; no xvfb-run needed.
   selfExec tester
+
+task testSerial, "Run the test suite one file at a time":
+  ## As `nim test`, a file after another: to compare, or to debug.
+  selfExec tester & " --jobs:1"
 
 task testRelease, "Run the test suite in -d:release and -d:danger builds":
   ## Runs the suite with the optimization levels the release builds use.

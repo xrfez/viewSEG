@@ -33,6 +33,9 @@
 ## back to.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
+##
+## Runs alone: it counts the warnings, and a debug build warns of a frame over
+##   its 50-ms budget.
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/[geometry, state]

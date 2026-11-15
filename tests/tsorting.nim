@@ -22,6 +22,8 @@
 ## `drainInbox` keeping the tiles of the old order, `oldOrderDropped` found
 ## 3 tiles kept, two in the old order; with By Flag's keys given as line and
 ## point only, `presetsAreTheUsersOrders` failed.
+##
+## Runs alone: it measures the time the sort command and the sorted tile take.
 
 import std/[algorithm, math, os, sequtils, strutils, times]
 import parseSEG

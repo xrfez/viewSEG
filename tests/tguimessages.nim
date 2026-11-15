@@ -12,6 +12,9 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves messages.png there.
+##
+## Runs alone: it counts and clicks the lines of the Messages window, where
+##   a debug build also warns of a frame over its 50-ms budget.
 
 import std/[math, options, os, strutils, times]
 import viewSEG/core/[geometry, log]

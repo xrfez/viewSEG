@@ -24,6 +24,9 @@
 ## reader not looking at the file's size (`cutShort` in `serve`),
 ## `readerReadsNothingPastTheEnd` ended in "Bus error" (SIGBUS, the crash of
 ## the original finding).
+##
+## Runs alone: it bounds the time the quit takes (3 s), a look at 5 000 files
+##   (250 ms) and the frame that takes in a new file (10 ms).
 
 import std/[monotimes, os, strutils, times]
 import viewSEG/core/state

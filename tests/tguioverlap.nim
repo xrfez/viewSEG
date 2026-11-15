@@ -17,6 +17,9 @@
 ## happen"; with the box's value not sent, "typed 0.5 did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
+##
+## Runs alone: under the others' load the typed 0.5 did not take (2 of 4
+##   parallel runs; never alone).
 
 import std/[math, options, os, strutils]
 import viewSEG/core/[geometry, state]

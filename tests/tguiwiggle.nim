@@ -46,6 +46,9 @@
 ## in the frame the new file came in.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
+##
+## Runs alone: it measures the frame times while panning (with
+##   `VIEWSEG_SCREENSHOTS`).
 
 import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state, wiggle]
