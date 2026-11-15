@@ -114,9 +114,9 @@ withFixtures fx:
     # idle on two frames in a row: what a job that ended between this
     # frame's inbox and its answers posted is taken in first
     doAssert c.sendRaw("""{"jsonrpc":"2.0","id":"w","method":"tools/call","params":""" &
-      """{"name":"wait"}}""" & "\n")
-    sleep 100 # the server thread has queued it
-    ctl.serve(st, fe)
+      """{"name":"wait","arguments":{"timeout":7}}}""" & "\n")
+    # frames until one takes the call (and finds nothing busy, once)
+    doAssert waitUntil((ctl.serve(st, fe); st.logHas("wait {\"timeout\":7}")))
     doAssert c.readLine(initDuration(milliseconds = 100)) == "", "idle after one frame"
     ctl.serve(st, fe)
     doAssert parseJson(c.readLine())["id"].getStr == "w"
