@@ -554,6 +554,110 @@ proc mapSps*(fx: Fixtures): tuple[s, r: string] =
   ## them (`mapRcv`, `mapSrc`), so a source is never on a receiver.
   fx.mapSpsIn("map", "Metres", "1.0")
 
+const MapPlanned* = 10
+  ## receivers per line `mapXps` plans for a shot: points 101 .. 110 for
+  ## source line 1 (its sources stand between points 105 and 106), 111 .. 120
+  ## for source line 3 (between 115 and 116), on all three receiver lines
+
+func mapRecord*(line, k: int): int64 =
+  ## The field record (FFID) of `mapSps`'s source `k` (0-based) of source
+  ## line `line` (0-based): 1 .. 16.
+  int64(1 + line * MapSrcPoints + k)
+
+func mapPlannedFirst*(line: int): int =
+  ## The first receiver (0-based along its line) `mapXps` plans for a
+  ## source of source line `line` (0-based); `MapPlanned` from there.
+  line * MapPlanned
+
+proc mapXps*(fx: Fixtures): string =
+  ## The X file of `mapSps`: one X record per source (`mapRecord`), its
+  ## channels 1 .. 30 at receivers `mapPlannedFirst` .. + `MapPlanned` - 1 of
+  ## lines 100, 102, 104.
+  result = fx.dir / "map.x"
+  if fileExists(result): return
+  var x = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
+    data: "SPS 2.1;")])
+  for i, sl in MapSrcLines:
+    for k in 0 ..< MapSrcPoints:
+      for j, rl in MapRcvLines:
+        let first = 101 + float64(mapPlannedFirst(i))
+        x.relations.add SpsRelation(fieldRecord: mapRecord(i, k), recordIncrement: 1,
+          instrumentCode: '1', srcLine: sl, srcPoint: 1001 + float64(k), srcIndex: 1,
+          fromChannel: int64(1 + j * MapPlanned), toChannel: int64((j + 1) * MapPlanned),
+          channelIncrement: 1, rcvLine: rl, fromReceiver: first,
+          toReceiver: first + float64(MapPlanned - 1), rcvIndex: 1)
+  let log = writeSps(x, result)
+  doAssert log.len == 0, $log
+
+proc mapOps*(fx: Fixtures): string =
+  ## The receiver-domain (O) records of `mapXps`, as parseSEG's
+  ## `receiverRelations` makes them: one gather per receiver, its traces the
+  ## sources whose X record lists it.
+  result = fx.dir / "map.o"
+  if fileExists(result): return
+  var g = initSurveyGeometry()
+  g.addSps(fx.mapXps)
+  var o = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
+    data: "SPS 2.1;")], relations: g.receiverRelations())
+  let log = writeSps(o, result)
+  doAssert log.len == 0, $log
+
+func mapWave(offset: float64; i: int): float32 =
+  ## Sample `i` of a map fixture's trace `offset` metres from its source.
+  sample(offset, float64(i) * DtMs / 1000)
+
+proc mapTrace(w: var SeismicWriter; record: int64; channel: int; sl, sk, rl, rk: int;
+    ensemble = 0.0; status = tsLive; scale = 1.0) =
+  ## One trace of field record `record` from `mapSps`'s source `sk` of source
+  ## line `sl` to receiver `rk` of receiver line `rl` (0-based), with
+  ## coordinates (and stations, which SEG-Y does not keep) in its keys.
+  var k = initTraceKeys()
+  let (sx, sy) = mapSrc(sl, sk)
+  let (rx, ry) = mapRcv(rl, rk)
+  (k.record, k.channel, k.ensemble) = (float64(record), float64(channel), ensemble)
+  (k.srcLine, k.srcPoint, k.srcIndex) = (MapSrcLines[sl], 1001 + float64(sk), 1'i16)
+  (k.rcvLine, k.rcvPoint, k.rcvIndex) = (MapRcvLines[rl], 101 + float64(rk), 1'i16)
+  (k.srcX, k.srcY, k.srcZ, k.rcvX, k.rcvY, k.rcvZ) = (sx, sy, Elevation, rx, ry, Elevation)
+  k.offset = hypot(rx - sx, ry - sy)
+  (k.t0Ms, k.intervalUs, k.status) = (0.0, DtMs * 1000, status)
+  var buf = newSeq[float32](Samples)
+  for i in 0 ..< Samples: buf[i] = float32(scale * float64(mapWave(k.offset, i)))
+  w.writeTrace(k, buf)
+
+const MapFfid* = 1000
+  ## `mapShotSegy`'s FFIDs are their X records' numbers plus this: the X
+  ## record is found by the source's station, as a recorder numbers its
+  ## files its own way
+
+proc mapShotSegy*(fx: Fixtures; line, k: int; name = ""): string =
+  ## The shot record of `mapSps`'s source `k` of source line `line` (0-based;
+  ## FFID `MapFfid + mapRecord`): a trace for each of its 63 receivers, line
+  ## by line, with coordinates in the headers (SEG-Y keeps no stations
+  ## without a header layout naming them).
+  result = fx.dir / (if name.len > 0: name else: "shot-" & $mapRecord(line, k) & ".sgy")
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+    text: @["C01 viewSEG test fixture: a shot of the map's spread"]))
+  for rl in 0 ..< MapRcvLines.len:
+    for rk in 0 ..< MapRcvPoints:
+      w.mapTrace(MapFfid + mapRecord(line, k), rl * MapRcvPoints + rk + 1, line, k, rl, rk)
+  w.checkClose()
+
+proc mapReceiverSegy*(fx: Fixtures; line, k: int): string =
+  ## The receiver gather of `mapSps`'s receiver `k` of receiver line `line`
+  ## (0-based): a trace from each of its 16 sources, the SEG-Y binary header
+  ## saying common-receiver gathers.
+  result = fx.dir / ("receiver-" & $(101 + k) & "-" & $int(MapRcvLines[line]) & ".sgy")
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 6, measurementSystem: 1,
+    text: @["C01 viewSEG test fixture: a receiver gather of the map's spread"]))
+  var n = 0
+  for sl in 0 ..< MapSrcLines.len:
+    for sk in 0 ..< MapSrcPoints:
+      inc n
+      w.mapTrace(mapRecord(sl, sk), n, sl, sk, line, k, ensemble = 1)
+  w.checkClose()
+
 proc bigSps*(fx: Fixtures; lines, points: int; spacing = 5.0; gap = 50.0): string =
   ## An R file of `lines` × `points` receivers (lines `gap` apart running
   ## east, `spacing` apart along them, each line wavering north and south a

@@ -30,6 +30,7 @@ type
     mkUnread  ## a panel's file cannot be read now (its drive went away, or fails), from its reader
     mkInspected
       ## what the Headers window shows of a record and of traces, from its reader
+    mkSpreads ## relation records made for the map's planned spreads (`core/spread`)
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -128,6 +129,12 @@ type
       why*: string       ## in plain words
     of mkInspected:
       inspected*: Inspected ## moved, never shared
+    of mkSpreads:
+      spreads*: ref SurveyGeometry
+        ## the relation records made (X generated from the template, O from
+        ## X); moved, never shared; nil when none could be made
+      spreadWords*: seq[string]
+        ## what was made, or why nothing was, in plain words
 
   InboxObj = object
     lock: Lock

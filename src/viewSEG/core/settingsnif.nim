@@ -24,7 +24,8 @@
 ##  (messages (autoScroll true) (hide info))
 ##  (cursorLine false)
 ##  (files (followLatest false) (prepareNext true))
-##  (map (info popup) (lengths survey) (hide recorded))
+##  (map (info popup) (lengths survey) (hide recorded) (templateBox false)
+##   (template (shape patch) (lines 8) (channels 120) (inline 1500.0) (crossline 500.0)))
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
 ##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960)))
 ##  (headers (tab summary) (traceTab header) (followPointer true) (asDisplayed false)
@@ -65,6 +66,7 @@ const
   MapInfoNames: array[MapInfo, string] = ["popup", "strip"]
   MapLengthNames: array[MapLengths, string] = ["survey", "metres", "feet", "usFeet"]
   MapGroupNames: array[MapGroup, string] = ["preplot", "recorded"]
+  TemplateShapeNames: array[TemplateShape, string] = ["patch", "box"]
   CoordinateNames: array[HeaderCoordinates, string] = ["fill", "replace"]
   RecordMatchNames: array[RecordMatch, string] = ["auto", "source", "ffid"]
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
@@ -231,6 +233,14 @@ proc settingsDocument*(s: Settings): string =
   w.choice("lengths", MapLengthNames[s.map.lengths])
   w.open("hide")
   for g in s.map.hiddenGroups: w.ident MapGroupNames[g]
+  w.close()
+  w.value("templateBox", s.map.templateBox)
+  w.open("template")
+  w.choice("shape", TemplateShapeNames[s.map.spreadTemplate.shape])
+  w.value("lines", s.map.spreadTemplate.lines)
+  w.value("channels", s.map.spreadTemplate.channels)
+  w.value("inline", s.map.spreadTemplate.inlineHalf)
+  w.value("crossline", s.map.spreadTemplate.crosslineHalf)
   w.close()
   w.close()
   w.open("join")
@@ -584,6 +594,16 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
               var g = mgPreplot
               if r.pick(v, MapGroupNames, "hide", g): hidden.incl g
             result.map.hiddenGroups = hidden
+          elif k.isTree("templateBox"): r.flag(k, result.map.templateBox)
+          elif k.isTree("template"):
+            template t: untyped = result.map.spreadTemplate
+            for v in k.kids:
+              if v.isTree("shape"): r.choice(v, TemplateShapeNames, t.shape)
+              elif v.isTree("lines"): r.integer(v, 1, MaxTemplateLines, t.lines)
+              elif v.isTree("channels"): r.integer(v, 1, MaxTemplateChannels, t.channels)
+              elif v.isTree("inline"): r.number(v, 1e-6, 1e12, t.inlineHalf)
+              elif v.isTree("crossline"): r.number(v, 1e-6, 1e12, t.crosslineHalf)
+              else: r.unknown(v, "template")
           else: r.unknown(k, "map")
       of "join": r.join(c, result.join)
       of "headers":

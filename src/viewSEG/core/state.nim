@@ -103,11 +103,11 @@ import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, ti
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 import closer, diskio, edits, filejobs, filelist, filesystem, inbox, inspector, jobs, join, layouts,
-  log, mapstate, panels, persist, pick, reader, selection, session, settings, survey, surveyjobs,
-  threads, tiles, watch, zoom
+  log, mapstate, panels, persist, pick, reader, selection, session, settings, spread, survey,
+  surveyjobs, threads, tiles, watch, zoom
 
-export edits, filelist, inbox, jobs, join, layouts, log, mapstate, panels, persist, pick,
-  selection, session, settings, survey, threads, tiles, zoom
+export edits, filelist, inbox, jobs, join, layouts, log, mapstate, panels, persist, pick, selection,
+  session, settings, spread, survey, threads, tiles, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues
 export WatchInterval
 
@@ -427,6 +427,8 @@ type
       ## the open files joined with survey files
     joinReport: JoinReport
       ## how the last join ended
+    spreads: Spreads
+      ## relation records made for the map's planned spreads (`core/spread`)
     loadNamed: seq[string]
       ## the files the listing was asked for: loaded when it finds them survey files
     saidPositions: HashSet[string]
@@ -813,6 +815,11 @@ func joinedOf*(state: AppState; session: SessionId): int =
   for i in 0 ..< state.joins.len:
     if state.joins[i].session == session: return i
   -1
+
+func spreads*(state: AppState): lent Spreads {.inline.} =
+  ## The relation records made for the map's planned spreads, and what was
+  ## made in words (`core/spread`).
+  state.spreads
 
 func joinReport*(state: AppState): lent JoinReport {.inline.} =
   ## How the last join ended (its `serial` goes up with each).
@@ -2144,8 +2151,142 @@ proc selectUnmatched(state: var AppState; cmd: Command) =
     let g = s.gatherOf(state.joins[j].plan.unmatched[0])
     if g >= 0: state.show(MainPanel, s.id, g)
 
+# ------------------------------------------------------- the map's work --
+# What the map shows besides the survey's layers, each made on a job that
+# follows what it depends on (`followMapWork`, after every command and
+# drained inbox): the relation records the planned spreads need.
+
+func shownDomain*(state: AppState): RelationDomain =
+  ## The domain of the record on show in the main panel: `rdReceiver` for a
+  ## receiver gather, else `rdSource` (a shot, or no record).
+  let g = state.selection.activeGather
+  let i = state.findSession(g.file)
+  if i >= 0 and g.gather in 0 ..< state.sessions[i].gathers.len and
+      state.sessions[i].gathers[g.gather].kind == gkReceiver: rdReceiver
+  else: rdSource
+
+func shownSpread*(state: AppState): PlannedSpread =
+  ## The spread planned for the record on show in the main panel (its
+  ## receivers; for a receiver gather, the receiver's shots), as the loaded
+  ## relation records, or those made from the template, give it; `record`
+  ## -1 for none.
+  let domain = state.shownDomain
+  result = PlannedSpread(domain: domain)
+  let g = state.selection.activeGather
+  let i = state.findSession(g.file)
+  if i < 0 or g.gather notin 0 ..< state.sessions[i].gathers.len: return
+  let s = state.sessions[i]
+  let role = if domain == rdSource: prSource else: prReceiver
+  var fixed: StationKey
+  var has = false
+  let own = state.survey.findTraces(s.id)
+  if own >= 0:
+    template l: untyped = state.survey.layers[own]
+    var placed = -1
+    for t in s.gathers[g.gather].traces:
+      let st = l.stationOf(role, t)
+      if st.known and not has:
+        (fixed, has) = (stationKeyOf(st), true)
+      if placed < 0: placed = l.pointOf(role, t)
+    if not has and placed >= 0: # no station in the headers: the survey file's at its place
+      (has, fixed) = state.survey.stationNear(role, l.points[role].index.x(placed),
+        l.points[role].index.y(placed))
+  let ffid = if domain == rdSource: s.records[g.gather].record else: NaN
+  result = state.survey.plannedSpread(state.spreads, domain, ffid, fixed, has)
+
+func spreadAt*(state: AppState; p: PointRef): PlannedSpread =
+  ## The spread planned at map point `p` when records of the domain shown
+  ## are keyed by its role (a source; in a file of receiver gathers, a
+  ## receiver): its station's first record. `record` -1 for none.
+  let domain = state.shownDomain
+  result = PlannedSpread(domain: domain)
+  let i = state.survey.find(p.layer)
+  if p.role != (if domain == rdSource: prSource else: prReceiver) or i < 0 or
+      p.point notin 0 ..< state.survey.layers[i].points[p.role].len:
+    return
+  template ps: untyped = state.survey.layers[i].points[p.role]
+  let st = ps.station[p.point]
+  # An open file's own point whose headers name no station: the survey file's at its place.
+  let (has, key) = if st.known: (true, stationKeyOf(st))
+                   else: state.survey.stationNear(p.role, ps.index.x(p.point), ps.index.y(p.point))
+  if has: result = state.survey.plannedSpread(state.spreads, domain, NaN, key, true)
+
+func wantedSpreads(state: AppState): SpreadInputs =
+  ## The relation records the map's template box needs made: none while it
+  ## is off or the loaded survey files have them; X records from the
+  ## template when no X records are loaded (S and R files are); O records
+  ## from the X records for a receiver gather when no O records are loaded.
+  if not state.settings.map.templateBox: return
+  var (sources, receivers, xs, os) = (false, false, false, false)
+  var files: seq[tuple[path: string; size: int64; modified: Time]]
+  for i in 0 ..< state.survey.layers.len:
+    template l: untyped = state.survey.layers[i]
+    if l.origin == loSurveyFile:
+      files.add (l.path, l.size, l.modified)
+      sources = sources or l.points[prSource].len > 0
+      receivers = receivers or l.points[prReceiver].len > 0
+      xs = xs or l.xRuns > 0
+      os = os or l.relationRuns > l.xRuns
+  if not xs and sources and receivers:
+    result = SpreadInputs(files: files, spec: state.settings.map.spreadTemplate,
+      needs: {snGenerate})
+  elif xs and not os and state.shownDomain == rdReceiver:
+    result = SpreadInputs(files: files, needs: {snReceivers})
+
+proc followSpreads(state: var AppState) =
+  ## Makes the relation records the map needs on a job when what they are
+  ## made from changed (the survey files, the template); the records made
+  ## before stay until the new ones come, and go when none are needed.
+  let want = state.wantedSpreads
+  template sp: untyped = state.spreads
+  if want == sp.inputs: return
+  if sp.job != NoJob:
+    discard state.jobs.cancel(sp.job)
+    sp.replaced.add sp.job
+  sp.job = NoJob
+  sp.inputs = want
+  if want.needs == {}:
+    if not sp.relations.isNil or sp.words.len > 0:
+      sp.relations = nil
+      sp.words.setLen 0
+      inc sp.revision
+  else:
+    var paths: seq[string]
+    for f in want.files: paths.add f.path
+    sp.job = state.jobs.submit(JobSpec(title: "Plan the spreads for the map",
+      lane: jlBackground, reads: paths), spreadWork(paths, want.spec, want.needs,
+      state.inbox.poster))
+
+proc takeSpreads(state: var AppState; m: sink Msg) =
+  ## The relation records the job asked for last made.
+  if m.job == state.spreads.job:
+    state.spreads.relations = move m.spreads
+    state.spreads.words = move m.spreadWords
+    inc state.spreads.revision
+
+proc followMapWork(state: var AppState) =
+  ## After every command and drained inbox: the map's jobs follow what they
+  ## depend on.
+  state.followSpreads()
+
+proc endMapWork(state: var AppState; job: JobInfo): bool =
+  ## A job of the map's ended: forgotten, a failure said; false when `job`
+  ## is none of them.
+  let replaced = state.spreads.replaced.find(job.id)
+  if replaced >= 0:
+    state.spreads.replaced.delete(replaced)
+    return true
+  result = job.id == state.spreads.job
+  if result:
+    state.spreads.job = NoJob
+    if job.state == jsFailed:
+      state.spreads.words = @["The planned spreads could not be made: " & job.error & "."]
+      inc state.spreads.revision
+      state.log.add(sevWarning, "map", state.spreads.words[0])
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
+  if state.endMapWork(job): return
   if job.id == state.joining.job:
     case job.state
     of jsDone:
@@ -2608,6 +2749,7 @@ proc apply*(state: var AppState; cmd: Command) =
   state.map.followed(state.survey) # a layer went (a file closed, a survey file unloaded)
   state.relink()
   state.followInspect()
+  state.followMapWork()
 
 proc applyCommand(state: var AppState; cmd: Command) =
   case cmd.kind
@@ -3093,6 +3235,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkJoining: state.takeJoinPlan(move m)
     of mkJoined: state.takeJoined(m)
     of mkInspected: state.takeInspected(move m)
+    of mkSpreads: state.takeSpreads(move m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:
@@ -3155,3 +3298,4 @@ proc drainInbox*(state: var AppState): bool =
   state.map.followed(state.survey) # a layer came, or went with a file
   state.relink()
   state.followInspect()
+  state.followMapWork()

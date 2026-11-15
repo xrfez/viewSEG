@@ -57,7 +57,9 @@ proc everyFieldSet(): Settings =
     customOrder: @[SortKey(field: hfSrcPoint), SortKey(field: hfTrace, descending: true)],
     messages: MessagesView(autoScroll: false, hidden: {sevInfo, sevWarning}), cursorLine: true,
     files: FilesView(followLatest: true, prepareNext: false),
-    map: MapOptions(info: miStrip, lengths: dlUsFeet, hiddenGroups: {mgRecorded}),
+    map: MapOptions(info: miStrip, lengths: dlUsFeet, hiddenGroups: {mgRecorded},
+      templateBox: true, spreadTemplate: TemplateSpec(shape: tsBox, lines: 12, channels: 240,
+      inlineHalf: 2500.5, crosslineHalf: 750)),
     join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
       recordMatch: rmFieldRecord, traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
       line: 4960), LineName(name: "A line", line: 12.5)]),
@@ -89,7 +91,8 @@ block savedByAnOlderBuild:
   doAssert not s.cursorLine and s.recentFiles.len == 1 and s.plot.display.mode == dmWiggle
   doAssert not s.files.followLatest, "a new setting takes its default"
   doAssert s.files.prepareNext, "preparing the next file is on by default"
-  doAssert s.map.info == miPopup and s.map.lengths == dlSurvey and s.map.hiddenGroups == {},
+  doAssert s.map.info == miPopup and s.map.lengths == dlSurvey and s.map.hiddenGroups == {} and
+    not s.map.templateBox and s.map.spreadTemplate == TemplateSpec(),
     "the map's settings take their defaults"
   doAssert s.join == JoinOptions(), "the join's options take their defaults"
   doAssert s.headers == HeadersView(), "the Headers window's settings take their defaults"
@@ -106,6 +109,20 @@ block joinOptions:
   doAssert s.join.trailingDigits and s.join.coordinates == hcFill
   doAssert s.join.lineNames == @[LineName(name: "L1", line: 1)], $s.join.lineNames
   doAssert problems.len == 3, $problems
+
+block spreadTemplate:
+  # The map's template: values out of range keep the base's, with a line
+  # each; one given in code out of range is brought into it.
+  var problems: seq[string]
+  let s = readSettings("(settings (version 1) (map (templateBox true) (template (shape box) " &
+    "(lines 0) (channels 50) (inline -1))))", "settings.nif", Settings(), problems)
+  doAssert s.map.templateBox and s.map.spreadTemplate.shape == tsBox
+  doAssert s.map.spreadTemplate.channels == 50 and s.map.spreadTemplate.lines == 8 and
+    s.map.spreadTemplate.inlineHalf == 1500, $s.map.spreadTemplate
+  doAssert problems.len == 2, $problems
+  let c = cleaned(Settings(map: MapOptions(spreadTemplate: TemplateSpec(lines: -3,
+    inlineHalf: NaN))))[0]
+  doAssert c.map.spreadTemplate == TemplateSpec(lines: 1), $c.map.spreadTemplate
 
 block gainAmountTo300:
   # The gain amount reads from -300 to +300 dB (60 before: a file of an

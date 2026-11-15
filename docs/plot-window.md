@@ -458,7 +458,21 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   layer is neither drawn, nor found under the pointer or in a box, nor highlighted. The
   groups hidden are kept in the settings (`map.hiddenGroups`); a layer hidden on its own is
   kept while the program runs (with the file's identity across runs: what is remembered
-  about a file). A layer's points get smaller as they crowd on the screen (from 5
+  about a file). **The template box** (under the Preplot, off by default; the user: "a
+  bounding box from the template should be able to be drawn"): the box round the receivers
+  the relation (X) records plan for the record on show (in the outline colour, "X record 77:
+  1127 receivers planned" above it) and for the source under the pointer (in the hover
+  colour, its words below it); for a file of receiver gathers (the domain follows the
+  record shown), round the shots the O records plan for its receiver, and for the receiver
+  under the pointer. The record's X record is found as the Records window's check finds it
+  (the source station's, else the FFID's); a source shot again shows its first. The box's
+  sides run along and across the planned stations' lines (the run with most places), a few
+  pixels outside them. **Without a relation file**, the spreads are generated from a
+  template the user gives in the Layers list (lines × stations centred on the source, or a
+  distance box along and across the receiver lines), on a job, through processSEG's
+  `generateRelations` over the S and R files, and the box says "Generated"; with X records
+  but no O records, a receiver gather's planned shots are made from the X records the same
+  way. A layer's points get smaller as they crowd on the screen (from 5
   pixels across down to 2, from how far apart its points typically are), so lines of
   stations stay lines when zoomed out; a ring that small is drawn as a disc.
 - **Colours:** the plot's background (the plot window's colour scheme: paper by default);
@@ -537,6 +551,15 @@ what it was instead of):
    the Recorded alone. (Before the groups, the highlight was drawn over a hidden layer.)
    The groups hidden are remembered between runs; a layer hidden on its own only while
    the program runs, as it names a file.
+8. **The template box** is off by default (the task's word), a tick under the Preplot;
+   the record on show's box is drawn in the outline colour and the hovered shot's in the
+   hover colour, each with its X (or O) record and the stations planned in words; a
+   station no loaded survey file places is counted ("3 not on the map"), not drawn. With
+   no relation file the default template is 8 lines × 120 stations (a guess at a land 3D
+   patch: the user sets the real one); the generated records are not written to a file
+   (an export, later). A trace whose headers give coordinates but no station (a SEG-Y file
+   without a header layout naming them) is at the survey file's station at its place,
+   within half a survey unit.
 
 ## Linking the plot and the map
 

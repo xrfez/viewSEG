@@ -79,6 +79,11 @@ type
       ## the survey's when another is chosen
     hiddenGroups*: set[MapGroup]
       ## the groups of layers hidden as a whole (the Preplot, the Recorded)
+    templateBox*: bool
+      ## the box round the spread planned for the record shown and for the
+      ## shot under the pointer is drawn (off by default)
+    spreadTemplate*: TemplateSpec
+      ## what planned spreads are generated from when no relation file is loaded
 
   HeadersTab* = enum
     ## The Headers window's tabs.
@@ -228,5 +233,6 @@ func cleaned*(s: Settings): (Settings, int) =
   r.recentFolders = uniqueItems(s.recentFolders)
   if not (r.window.width > 0 and r.window.height > 0):
     r.window = WindowPlacement()
+  r.map.spreadTemplate = bounded(s.map.spreadTemplate)
   (r, s.calibrations.len - r.calibrations.len + s.readout.len - r.readout.len +
     s.sortPresets.len - r.sortPresets.len)

@@ -397,6 +397,19 @@ the traces recorded there (`Survey.tracesAt`), or, as a range, the stations alon
 from the point clicked last (`lineRange`, `Selection.pointAnchor`); a trace selection made
 anew takes the points away, `ckClearSelection` takes both.
 
+**The template box** (`core/spread`): the spread planned for the record on show
+(`shownSpread`) and for the shot under the map's pointer (`spreadAt`), from the first
+loaded survey file with relation records of the domain shown (X for shots, O for receiver
+gathers: `shownDomain`), the record found as processSEG's `recordCompleteness` finds it
+(`xRecordOf`), the box round the planned stations' places along their lines (`boxOf`).
+When no relation file has them, a job on the background lane (`spreadWork`) reads the
+survey files again (`surveyjobs.readGeometry`, quietly) and makes them: X records
+generated from the user's template (`generateRelations`) and O records from them, or O
+records from the loaded X records (`receiverRelations`); `AppState.spreads` keeps them,
+the job is cancelled and another submitted when the survey files or the template change
+(`followMapWork`, after every command and drained inbox), and the records made before stay
+drawn until the new ones come.
+
 **Linking the plot and the map** goes through the selection only. `ckHover` (the plot's
 pointer) finds where the trace was recorded, `Selection.hoverAt`: from a copy of its keys
 in the panel's tile (`tracePoints`, so a loaded relation file fills the stations the

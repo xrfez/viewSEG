@@ -489,3 +489,34 @@ proc joinApplyWork*(file: ptr SeismicFile; path: string; session: SessionId;
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkJoined, joinedSession: session, stats: stats,
       changed: changed, joinedRevision: revision, heldAtJoin: held)
+
+proc readGeometry*(paths: openArray[string]; ctx: JobContext; to: Poster): SurveyGeometry =
+  ## The survey files `paths` read again into one parseSEG geometry, on a
+  ## job (SPS a chunk at a time with `addSps`, each file's X records in the
+  ## domain its name gives; SEG P1 whole with `addP1`), quietly: they were
+  ## loaded, and what is wrong with them was said then. A file that is no
+  ## longer a survey file, or cannot be read, raises `IOError`;
+  ## `JobCancelledError` at a cancel. Worker-only.
+  assertWorkerThread()
+  result = initSurveyGeometry()
+  for path in paths:
+    # Quiet: told as many problems as are told, so none is posted again.
+    var p = Problems(to: to, job: ctx.id, name: path.extractFilename, told: MaxProblems)
+    ctx.setPhase "reading " & p.name
+    let kind = sniff(path)
+    {.cast(gcsafe).}:
+      if kind == fkP1:
+        let (_, text) = readWhole(path, ctx, "SEG P1 files")
+        result.addP1(parseP1(text, path))
+      elif kind.isSurvey:
+        var f: File
+        let info = checkedOpen(path, f)
+        let domain = relationDomainOf(path)
+        var g = addr result
+        try:
+          eachSpsPart(path, f, info.size, ctx, p, proc (part: SpsFile) =
+            g[].addSps(part, domain))
+        finally:
+          close(f)
+      else:
+        raise newException(IOError, p.name & " is no longer an SPS or SEG P1 file")

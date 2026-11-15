@@ -406,6 +406,14 @@ in another unit instead, converted exactly (1 ft = 0.3048 m, 1 ftUS = 1200/3937 
 - **Recorded**: what the seismic files say of themselves: each open file's own sources and
   receivers, as its trace headers give them, or as a join made them ("(joined)"), as rings.
 
+Under the Preplot, **Template box** (off until you tick it) draws the box round the spread
+planned for the record on show (dark, with its X record and how many receivers it plans)
+and for the source under the pointer (orange): the receivers the relation (X) file plans
+for that shot. For a file of receiver gathers it is the shots the O records plan for the
+receiver. With no relation file loaded, give the template there (lines × stations, or a
+distance box along and across the receiver lines): the spreads are generated from it and
+the box says **Generated**.
+
 Untick a group to hide all of it (its layers keep their own ticks, greyed out, for when it
 comes back), or a layer to hide that layer alone; the highlight (the record on show, the
 selection, and the source and receiver of the trace under the pointer in the plot) has its

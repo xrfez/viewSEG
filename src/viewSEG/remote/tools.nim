@@ -114,7 +114,8 @@ proc toolList*(): string =
        "the picture is complete), the selection, the map (its view, its layers, each " &
        "in its group, Preplot (the survey files) or Recorded (the seismic files' own " &
        "positions), shown or hidden by its own toggle and drawn or not, the groups " &
-       "hidden, the points selected and hovered), the jobs, " &
+       "hidden, the template box: the spread planned for the record on show, its X or O " &
+       "record and stations, read or generated, the points selected and hovered), the jobs, " &
        "the newest messages, the survey, and the Headers window (headers: the tab shown, " &
        "what it has on screen, the traces its Trace tab is about and what its reader read " &
        "of them, and the facts its Summary gives of the file the plot shows). All parts " &
@@ -380,6 +381,18 @@ proc mapJson(state: AppState; limit: int): JsonNode =
           "group": $l.groupOf, "mapLayer": toJson(key), "points": l.points[role].len,
           "shown": m.shown(key), "drawn": m.drawn(hiddenGroups, l, role)}
   result["layers"] = layers
+  # The template box: the spread planned for the record on show.
+  var spread = %*{"shown": state.settings.map.templateBox}
+  if state.settings.map.templateBox:
+    let sp = state.shownSpread
+    spread["domain"] = %($sp.domain)
+    spread["record"] = %sp.record
+    spread["planned"] = %sp.stations
+    spread["placed"] = %sp.places.len
+    spread["generated"] = %sp.generated
+    spread["from"] = %sp.source
+    spread["made"] = %state.spreads.words
+  result["template"] = spread
   var selected = newJArray()
   for i in 0 ..< min(state.selection.points.len, limit):
     selected.add state.pointJson(state.selection.points[i])

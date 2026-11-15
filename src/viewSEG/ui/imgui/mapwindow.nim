@@ -122,6 +122,14 @@ type
       ## what `active` was made from
     visibleFor: tuple[hidden: seq[MapLayerKey]; groups: set[MapGroup]]
       ## the layers and groups hidden when the highlight's places were found
+    spreadShown, spreadHovered: PlannedSpread
+      ## the spreads planned for the record on show and for the shot under the pointer
+    spreadFor: tuple[gather: GatherRef; survey, spreads: int; domain: RelationDomain; on: bool]
+      ## what `spreadShown` was found from
+    spreadHoverFor: tuple[point, survey, spreads: int; domain: RelationDomain; on: bool]
+      ## what `spreadHovered` was found from
+    boxes: seq[tuple[name: string; corners: array[4, Vec2]]]
+      ## the template boxes drawn last frame, ImGui's coordinates (for tests)
     highlightRev: int
     drawnHover, drawnPlotHover: seq[PointRef]
       ## the map's own hover and the plot's hovered trace's points the GPU's
@@ -208,6 +216,17 @@ proc mapImage*(mu: MapUi): (seq[Rgba], int, int) =
 func mapPlot*(mu: MapUi): Rect {.inline.} = mu.plot
   ## The plot's area last frame, in framebuffer pixels (for tests).
 
+func templateBoxes*(mu: MapUi): lent seq[tuple[name: string; corners: array[4, Vec2]]] {.inline.} =
+  ## The template boxes drawn last frame ("map.template shown", "map.template
+  ## hovered"), their corners a few pixels outside the planned stations, in
+  ## ImGui's coordinates (for tests).
+  mu.boxes
+
+func spreadsShown*(mu: MapUi): (PlannedSpread, PlannedSpread) {.inline.} =
+  ## The spreads planned for the record on show and for the shot under the
+  ## pointer, as the map drew them last (for tests).
+  (mu.spreadShown, mu.spreadHovered)
+
 proc tip(text: string) =
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
       ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
@@ -262,6 +281,91 @@ const groupTips: array[MapGroup, string] = [
   "What the seismic files say: their traces' own positions, as their headers give " &
     "them or as a join with the survey files made them"]
 
+proc numberEntry(id: string; value: float64; format: string; typed: var float64): bool =
+  ## A box for a number: true once the user has finished typing into it
+  ## (Enter, or clicking away), the value in `typed`.
+  var v = cdouble(value)
+  igSetNextItemWidth(round(igCalcTextSize("0000000.0", nil, false, -1).x +
+    2 * igGetStyle().FramePadding.x))
+  discard igInputDouble(id.cstring, addr v, 0, 0, format.cstring, 0)
+  typed = float64(v)
+  igIsItemDeactivatedAfterEdit()
+
+proc wrapped(text: string) =
+  ## Dim text, wrapped at the popover's width.
+  igPushTextWrapPos(igGetCursorPosX() + 34 * igGetFontSize())
+  igTextDisabled("%s", text.cstring)
+  igPopTextWrapPos()
+
+const TemplateLabel = "Template box: the spread planned for the shot"
+const templateTip = "Off by default. A box round the receivers the relation (X) records " &
+  "plan for the record shown (dark) and for the source under the pointer (the hover " &
+  "colour); for a file of receiver gathers, round the shots the O records plan for the " &
+  "receiver. With no relation file loaded, the planned spreads are generated from the " &
+  "template given here."
+
+proc drawTemplateRow(st: AppState; marks: var Marks; res: var MapOutput) =
+  ## The template box's tick, under the Preplot: what the planned spreads
+  ## come from, and the template they are generated from when no relation
+  ## file is loaded.
+  var s = st.settings
+  var on = s.map.templateBox
+  if igCheckbox(TemplateLabel, addr on):
+    s.map.templateBox = on
+    res.commands.add Command(kind: ckSettings, settings: s)
+  marks.mark("map.template")
+  tip(templateTip)
+  if not on: return
+  igIndent(0)
+  let listed = st.survey.listedLayer(st.shownDomain)
+  if listed >= 0:
+    wrapped("From the relation records of " & st.survey.layers[listed].name & ".")
+  for w in st.spreads.words: wrapped(w)
+  if st.spreads.job != NoJob: wrapped("Making the planned spreads...")
+  if st.survey.listedLayer(rdSource) < 0:
+    var t = s.map.spreadTemplate
+    var changed = false
+    igTextUnformatted("Template (no relation file is loaded):", nil)
+    for (shape, label) in [(tsPatch, "Lines × stations"), (tsBox, "A distance box")]:
+      if igRadioButton_Bool(label.cstring, t.shape == shape) and t.shape != shape:
+        t.shape = shape
+        changed = true
+      marks.mark("map.template " & (if shape == tsPatch: "patch" else: "box"))
+      igSameLine(0, -1)
+    igNewLine()
+    var typed = 0.0
+    case t.shape
+    of tsPatch:
+      if numberEntry("##lines", float64(t.lines), "%.0f", typed):
+        (t.lines, changed) = (int(clamp(typed, 1, MaxTemplateLines)), true)
+      marks.mark("map.template lines")
+      igSameLine(0, -1)
+      igTextUnformatted("lines ×", nil)
+      igSameLine(0, -1)
+      if numberEntry("##channels", float64(t.channels), "%.0f", typed):
+        (t.channels, changed) = (int(clamp(typed, 1, MaxTemplateChannels)), true)
+      marks.mark("map.template channels")
+      igSameLine(0, -1)
+      igTextUnformatted("stations, centred on the source", nil)
+    of tsBox:
+      igTextUnformatted("±", nil)
+      igSameLine(0, 2)
+      if numberEntry("##inline", t.inlineHalf, "%.1f", typed) and typed > 0:
+        (t.inlineHalf, changed) = (typed, true)
+      marks.mark("map.template inline")
+      igSameLine(0, -1)
+      igTextUnformatted("along the receiver lines, ±", nil)
+      igSameLine(0, 2)
+      if numberEntry("##crossline", t.crosslineHalf, "%.1f", typed) and typed > 0:
+        (t.crosslineHalf, changed) = (typed, true)
+      marks.mark("map.template crossline")
+      igSameLine(0, -1)
+      igTextUnformatted(("across " & st.unitsOf).cstring, nil)
+    if changed:
+      s.map.spreadTemplate = bounded(t)
+      res.commands.add Command(kind: ckSettings, settings: s)
+  igUnindent(0)
+
 proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     res: var MapOutput) =
   ## The layers popover, in groups: the Preplot (the survey files), then the
@@ -289,6 +393,7 @@ proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
       let none = if g == mgPreplot: "No survey file loaded (open SPS or SEG P1 files)"
                  else: "No seismic file whose traces carry positions is open"
       igTextDisabled("%s", none.cstring)
+    if g == mgPreplot: drawTemplateRow(st, marks, res)
     igUnindent(0)
   igSeparator()
   for i, l in layers:
@@ -309,7 +414,7 @@ proc placePopover(at: ImVec2_c; width: float32) =
 
 proc layersWidth(layers: openArray[MapLayerView]): float32 =
   ## The widest line of the Layers popover.
-  var lines = @[$mgPreplot & ": the survey files",
+  var lines = @[$mgPreplot & ": the survey files", TemplateLabel,
     "No survey file loaded (open SPS or SEG P1 files)",
     "No seismic file whose traces carry positions is open"]
   for l in layers: lines.add l.name & "  (" & $l.points & ")"
@@ -654,6 +759,97 @@ proc drawRuler(mu: var MapUi; view: MapView; plot: Rect;
   ImDrawList_AddText_Vec2(dl, at, u32(t.roles[rlText]), mu.rulerText.cstring, nil)
   marks.markRect("map.ruler", lo, hi)
 
+proc followSpreads(mu: var MapUi; st: AppState) =
+  ## The spreads planned for the record on show and for the shot under the
+  ## pointer (a source; in a file of receiver gathers, a receiver), found
+  ## again only when what they come from changes.
+  let on = st.settings.map.templateBox
+  let domain = st.shownDomain
+  let shown = (st.selection.activeGather, st.survey.revision, st.spreads.revision, domain, on)
+  if shown != mu.spreadFor:
+    mu.spreadFor = shown
+    mu.spreadShown = if on: st.shownSpread else: PlannedSpread()
+  let role = if domain == rdSource: prSource else: prReceiver
+  var at = PointRef()
+  var point = -1
+  for p in mu.hovered:
+    if point < 0 and p.role == role: (point, at) = (p.key, p)
+  let hovered = (point, st.survey.revision, st.spreads.revision, domain, on)
+  if hovered != mu.spreadHoverFor:
+    mu.spreadHoverFor = hovered
+    mu.spreadHovered = if on and point >= 0: st.spreadAt(at) else: PlannedSpread()
+
+func spreadText(sp: PlannedSpread): string =
+  ## What a template box says of itself: "X record 77: 1127 receivers
+  ## planned", "Generated: 8 receivers planned".
+  let what = if sp.domain == rdSource: "receiver" else: "shot"
+  result = (if sp.generated: "Generated"
+    elif sp.domain == rdSource: "X record " & $sp.record
+    else: "O gather " & $sp.record) & ": " & $sp.stations & " " & what &
+    (if sp.stations == 1: "" else: "s") & " planned"
+  if sp.unplaced > 0: result.add ", " & $sp.unplaced & " not on the map"
+
+proc drawSpreadBox(mu: var MapUi; sp: PlannedSpread; view: MapView; plot: Rect; c: Rgba;
+    ink: MapInk; t: Theme; name: string; below: bool; marks: var Marks) =
+  ## The box round spread `sp`'s places, a few pixels outside them, in `c`,
+  ## with what it is above its top corner (`below`: below its bottom one, so
+  ## two boxes on one line of receivers do not write over each other);
+  ## marked `name`.
+  if not sp.box.shown: return
+  var q: array[4, Vec2]
+  for i in 0 .. 3: q[i] = view.screenAt(plot, sp.box.corners[i])
+  func unit(a, b: Vec2): Vec2 =
+    let n = hypot(b.x - a.x, b.y - a.y)
+    if n > 0.5: vec2((b.x - a.x) / n, (b.y - a.y) / n) else: vec2(0, 0)
+  var u = unit(q[0], q[1])
+  var v = unit(q[0], q[3])
+  if u.x == 0 and u.y == 0: u = if v.x == 0 and v.y == 0: vec2(1, 0) else: vec2(-v.y, v.x)
+  if v.x == 0 and v.y == 0: v = vec2(-u.y, u.x)
+  const pad = 7'f32
+  let su = [-1'f32, 1, 1, -1]
+  let sv = [-1'f32, -1, 1, 1]
+  var e: array[4, ImVec2_c]
+  var lo = ImVec2_c(x: Inf, y: Inf)
+  var hi = ImVec2_c(x: -Inf, y: -Inf)
+  var top = 0
+  for i in 0 .. 3:
+    e[i] = ImVec2_c(x: q[i].x + pad * (su[i] * u.x + sv[i] * v.x),
+      y: q[i].y + pad * (su[i] * u.y + sv[i] * v.y))
+    lo = ImVec2_c(x: min(lo.x, e[i].x), y: min(lo.y, e[i].y))
+    hi = ImVec2_c(x: max(hi.x, e[i].x), y: max(hi.y, e[i].y))
+    let higher = if below: e[i].y > e[top].y else: e[i].y < e[top].y
+    if higher or (e[i].y == e[top].y and e[i].x < e[top].x): top = i
+  let dl = igGetWindowDrawList()
+  for i in 0 .. 3:
+    ImDrawList_AddLine(dl, e[i], e[(i + 1) mod 4], u32(withAlpha(ink.background, 200)), 4)
+  for i in 0 .. 3:
+    ImDrawList_AddLine(dl, e[i], e[(i + 1) mod 4], u32(c), 1.6)
+  let text = spreadText(sp)
+  let ts = igCalcTextSize(text.cstring, nil, false, -1)
+  let y = if below: e[top].y + 3 else: e[top].y - ts.y - 3
+  let at = ImVec2_c(x: clamp(e[top].x, plot.pos.x + 2, max(plot.pos.x + 2,
+    plot.pos.x + plot.size.x - ts.x - 2)), y: clamp(y, plot.pos.y + 2,
+    max(plot.pos.y + 2, plot.pos.y + plot.size.y - ts.y - 2)))
+  ImDrawList_AddRectFilled(dl, ImVec2_c(x: at.x - 3, y: at.y - 1), ImVec2_c(x: at.x + ts.x + 3,
+    y: at.y + ts.y + 1), u32(withAlpha(ink.background, 215)), 2, 0)
+  ImDrawList_AddText_Vec2(dl, at, u32(c), text.cstring, nil)
+  marks.markRect(name, lo, hi)
+  var drawn: array[4, Vec2]
+  for i in 0 .. 3: drawn[i] = vec2(e[i].x, e[i].y)
+  mu.boxes.add (name, drawn)
+
+proc drawSpreads(mu: var MapUi; view: MapView; plot: Rect; ink: MapInk; t: Theme;
+    marks: var Marks) =
+  ## The template boxes: the record on show's in the outline colour, the
+  ## shot under the pointer's in the hover colour.
+  mu.boxes.setLen 0
+  mu.drawSpreadBox(mu.spreadShown, view, plot, ink.outline, ink, t, "map.template shown",
+    false, marks)
+  if mu.spreadHovered.record != mu.spreadShown.record or
+      mu.spreadHovered.generated != mu.spreadShown.generated:
+    mu.drawSpreadBox(mu.spreadHovered, view, plot, ink.hover, ink, t, "map.template hovered",
+      true, marks)
+
 proc drawInfoBox(info: openArray[PointInfo]; at: ImVec2_c; plotPos, plotSize: ImVec2_c;
     t: Theme; marks: var Marks) =
   ## What the map says of the points under the pointer, in a box beside the
@@ -869,6 +1065,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       mu.menuTitle = if under.len > 0: mu.info[0].title else: "No point here"
       mu.menuShows = under.len > 0 and st.opensRecord(under[0])
     if view.isSet:
+      mu.followSpreads(st)
+      mu.drawSpreads(view, plot, ink, t, marks)
       mu.drawRuler(view, plot, lengths, ink, t, marks)
       mu.drawScaleBar(view, pos, size, fb.x, lengths, ink, t, marks)
     if hovered and mu.info.len > 0 and st.settings.map.info == miPopup and
