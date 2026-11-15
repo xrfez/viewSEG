@@ -112,8 +112,13 @@ proc drawClip(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Comm
   if source.len > 0 and not (d.effectiveGain(p.kind) == dgNormalized and
       d.normScope == perTrace) and d.effectiveGain(p.kind) != dgFixed:
     let now = if r > 0 and r < Inf: "|x| = " & significant(r, 4) else: "not known yet"
-    igTextUnformatted(("Now: " & now).cstring, nil)
+    let over = p.levelSampling
+    igTextUnformatted(("Now: " & now & (if over.len > 0: ", over " & over else: "")).cstring,
+      nil)
     marks.mark("plot.gain clip amplitude")
+    if over.len > 0:
+      tip("Taken over " & over & " of the record, as a plot of all of it reads them: a " &
+        "trace louder than its neighbours between them is not counted")
 
 proc settings(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Command];
     notes: var seq[string]) =

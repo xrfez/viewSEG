@@ -7,13 +7,15 @@
 ## and a record whose first view is not all of it (a wiggle mode's first
 ## screen; the scales carried from a zoom into another record) still gets
 ## the whole record's level (to 3 %: a sample of it of another stride), once
-## its reader has read every few traces of it.
+## its reader has read every few traces of it. Over every few traces, the
+## drop-down says so (`levelSampling`: "every 4th trace").
 ##
 ## Seen to fail: with the level taken from the first tile after a change
 ## (the view's, as it was), "clip 98: zoomed 18.92659375, the whole record
 ## 1.91795" (~10 times too bright); with the level taken over the record's
 ## first request whatever it was, "a wiggle mode's first screen: 1.614" and
-## "the scales carried from a zoom: 1.227" (the whole record's: 1.968).
+## "the scales carried from a zoom: 1.227" (the whole record's: 1.968); with
+## `levelSampling` saying nothing, "" for "every 4th trace".
 
 import std/[math, os]
 import parseSEG
@@ -55,6 +57,8 @@ proc loudCorner(fx: Fixtures): string =
       w.writeTrace(keys, buf)
   doAssert w.close().len == 0
 
+var sampledAtFit = "" ## what the drop-down says the level is over, at the fit
+
 proc steps(path: string; zoomed: bool): seq[(string, float64)] =
   ## The panel's level after each step, zoomed into the loud corner or not.
   var st = initAppState()
@@ -67,6 +71,7 @@ proc steps(path: string; zoomed: bool): seq[(string, float64)] =
   st.apply Command(kind: ckView, panel: MainPanel, view: v)
   doAssert st.settle(st.levelled)
   result.add ("open", st.panel(MainPanel).level.clip)
+  if not zoomed: sampledAtFit = st.panel(MainPanel).levelSampling
   if zoomed:
     v.traces = Span(lo: float64(Loud), hi: float64(Traces))
     v.timeMs = Span(lo: 2 * LoudFrom, hi: 2 * Samples)
@@ -136,6 +141,8 @@ withFixtures fx:
     doAssert abs(got - want) <= 1e-6 * abs(want), name & ": zoomed " & $got &
       ", the whole record " & $want
   doAssert whole[1][1] < whole[0][1] and whole[2][1] == whole[0][1], $whole
+  # over every 4th trace at the fit on 256 pixels for 1000 traces: said
+  doAssert sampledAtFit == "every 4th trace", sampledAtFit
   # a record whose first view is not all of it: its level is still all of it's
   for (name, got) in [("a wiggle mode's first screen", wiggleFirst(path)),
       ("the scales carried from a zoom", carriedZoom(path))]:

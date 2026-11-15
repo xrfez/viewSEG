@@ -649,6 +649,22 @@ func recordRequest*(p: Panel; margin: int): ReadRequest =
     result = requestFor(p.layout, fitted(viewLimits(p.layout, d, columns), columns,
       p.view.rows), margin, readAhead = 0)
 
+func levelSampling*(p: Panel): string =
+  ## Over which traces `p`'s record's level is taken, when not over every
+  ## one: "every 4th trace" (a trace louder than its neighbours between
+  ## them is missed, which a peak or a clip of 100 would show); "" for every
+  ## trace, or while it is not known.
+  let n = p.basis.stride
+  if p.basis.isEmpty or n <= 1: return ""
+  let suffix = if n mod 100 in 11 .. 13: "th"
+               else:
+                 case n mod 10
+                 of 1: "st"
+                 of 2: "nd"
+                 of 3: "rd"
+                 else: "th"
+  "every " & $n & suffix & " trace"
+
 func displayMargin*(flow: Pipeline; dtMs: float64): int =
   ## The samples `flow` needs beyond a window on each side; 0 when it
   ## cannot say (an invalid op: the reader reports it).

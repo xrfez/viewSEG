@@ -361,7 +361,7 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
   result = %*{"id": int(p.id), "title": state.windowTitle(p.id), "shows": $p.shows,
     "picture": state.pictureOf(k, fe), "laidOut": p.laidOut, "layout": toJson(p.layout),
     "view": toJson(p.view), "canGoBack": p.back.len > 0, "header": toJson(p.header),
-    "level": toJson(p.level)}
+    "level": toJson(p.level), "levelOver": p.levelSampling}
   let i = state.shownFile(k)
   if i >= 0:
     let s = state.sessions[i]
