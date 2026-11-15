@@ -166,7 +166,7 @@ Turn agent control on for agents you would let do what you can do in the windows
 - **It changes the plot as you would, for this session only.** What it does shows and
   acts exactly as if you had done it: the display, gain, display header and sort it sets
   are what a new plot starts with until you quit, and the files and folders it opens are
-  in File > Open recent. Nothing of it is saved: not the defaults for new plots, not the
+  in File > Open recent until then. Nothing of it is saved: not the defaults for new plots, not the
   recent files and folders, nothing in `settings.nif` or `layout.nif`. What you change by
   hand is saved as always, also while an agent is connected, and only your change: if an
   agent set the gain and you then pick another display mode, the mode is saved and the
