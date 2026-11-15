@@ -30,7 +30,8 @@
 ## commands as an agent's, the same as the first; with the open's origin not
 ## carried to its end (`adopt` taking every open as a window's), and with
 ## the listing's not carried (the file it shows first), "... reached
-## recentFiles"; with `ckDisplay` keeping the whole display (`s.plot.display
+## recentFiles" (and with a prepared file's show not carrying it, the same,
+## for third.sgy); with `ckDisplay` keeping the whole display (`s.plot.display
 ## = remembered(d)`), "the user's new mode kept the agent's gain: normalized";
 ## with `ckSettings` keeping what the window sent whole, "the user's status
 ## bar fields kept the agent's sort"; with `settleGain` keeping the data's
@@ -38,7 +39,7 @@
 ## plot.display.fixedClip"; with a field `gadget` added to `Settings`, "a
 ## setting nobody has decided on: gadget".
 
-import std/[json, math, os, strutils, tables]
+import std/[json, math, os, sequtils, strutils, tables]
 import viewSEG/core/[geometry, settingsnif, state]
 import viewSEG/remote/[schema, tools]
 import utils/[fixtures, waiting]
@@ -70,9 +71,9 @@ const Reached = {
   "plot.header.fields": "display header", "scale.length": "", "scale.speed": "",
   "calibrations": "", "readout": "", "sortPresets": "", "customOrder": "sort",
   "messages.autoScroll": "", "messages.hidden": "", "cursorLine": "",
-  "files.followLatest": "", "map.info": "", "map.lengths": "", "join.trailingDigits": "",
-  "join.multiComponent": "", "join.lineNames": "", "join.coordinates": "",
-  "join.recordMatch": "", "join.traceMatch": ""}.toTable
+  "files.followLatest": "", "files.prepareNext": "", "map.info": "", "map.lengths": "",
+  "join.trailingDigits": "", "join.multiComponent": "", "join.lineNames": "",
+  "join.coordinates": "", "join.recordMatch": "", "join.traceMatch": ""}.toTable
 
 proc flatten[T](x: T; at: string; into: var OrderedTable[string, string]) =
   ## Every setting in `x` by its path ("plot.display.mode"), with its value
@@ -152,7 +153,9 @@ withFixtures fx:
   createDir(agentDir)
   let theirs = agentDir / "shot.sgy"
   let other = agentDir / "spread.sgy"
+  let third = agentDir / "third.sgy"
   copyFile(mine, theirs)
+  copyFile(mine, third)
   copyFile(fx.longSpreadSegy(), other)
   let sps = fx.surveySps()
   let dir = fx.dir / "config"
@@ -233,6 +236,12 @@ withFixtures fx:
     st.agent(%*{"kind": "reorder job", "reordered": int(job), "position": 0})
     st.agent(%*{"kind": "cancel job", "job": int(job)})
     st.agent(%*{"kind": "remove job", "job": int(job)})
+    st.agent(%*{"kind": "stop reading"})
+    st.agent(%*{"kind": "retry"})
+    st.agent(%*{"kind": "retry", "panel": 0}) # the folder's listing
+    st.agent(%*{"kind": "prepare", "path": third})
+    st.agent(%*{"kind": "show file", "path": third})
+    doAssert st.sessions.anyIt(it.path == third)
     # Fixed, with no amplitude yet: it takes one from the data shown
     st.agent(%*{"kind": "display", "display": {"gain": "fixed", "fixedClip": nil}})
     let shown = st.panel(MainPanel).layers[0].display

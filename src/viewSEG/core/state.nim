@@ -177,14 +177,6 @@ type
     ckStopReading = "stop reading"       ## leave a panel's read that does not answer
     ckPrepare = "prepare"                ## the file the user is likely to step to next
 
-  CommandOrigin* = enum
-    ## Where a command came from: what decides whether its changes are
-    ## saved (`keeps`).
-    coWindow = "a window"
-      ## the user, in a window: saved as before
-    coAgent = "agent control"
-      ## an agent (`remote/tools`): for the session only
-
   Command* = object
     ## A user intent: the only way the UI changes the state.
     origin*: CommandOrigin
@@ -262,6 +254,14 @@ type
     of ckSelectUnmatched:
       unmatchedOf*: SessionId
         ## the joined file
+
+  CommandOrigin* = enum
+    ## Where a command came from: what decides whether its changes are
+    ## saved (`keeps`).
+    coWindow = "a window"
+      ## the user, in a window: saved as before
+    coAgent = "agent control"
+      ## an agent (`remote/tools`): for the session only
 
   Notice* = object
     ## A brief notice: a background job ended (the frontend shows it for a
