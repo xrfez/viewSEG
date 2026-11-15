@@ -37,6 +37,23 @@ block builtinsComplete:
   doAssert toHex(EverforestLight.palette[bcBackground]) == "#fdf6e3"
   doAssert builtinTheme(tmLight) == EverforestLight
 
+block framesShow:
+  # an unticked checkbox or radio button, an empty box, is its frame alone:
+  # in every theme the program ships it stands out from windows and popups
+  # (seen to fail with the frame `lighter_background` as it was: Everforest
+  # Dark's is its popup's colour, distance 0)
+  var shipped = @[EverforestDark, EverforestLight]
+  for f in walkFiles(assetThemes / "*.toml"):
+    var messages: seq[string]
+    let mode = if "light" in f.extractFilename: tmLight else: tmDark
+    shipped.add loadTheme(f, mode, messages)
+    doAssert messages.len == 0, f & ": " & $messages
+  for t in shipped:
+    doAssert distance(t.roles[rlFrame], t.roles[rlPopup]) >= MinFrameStep and
+      distance(t.roles[rlFrame], t.roles[rlWindow]) >= MinFrameStep,
+      t.name & ": frame " & toHex(t.roles[rlFrame]) & ", popup " & toHex(t.roles[rlPopup]) &
+      ", window " & toHex(t.roles[rlWindow])
+
 block colourHelpers:
   var c: Rgba
   doAssert parseColor("#7fbbb3", c) and c == rgb(0x7fbbb3)

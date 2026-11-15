@@ -393,10 +393,13 @@ trace) both ways.
   (the default) and **"Follow the theme"**, the two ready-made ones, which also put the
   ready-made colours back, and "My own", which brings the user's own back unchanged.
   The six and the scheme are remembered between runs.
-- **The gear popover** is laid out in three columns (presets, colours and maps; wiggles,
-  killed traces and the display header; scales), and opens below the gear, moved left
-  or up as far as needed to stay inside the program's window: past its edge it would
-  become a window of the desktop's own.
+- **The gear popover** is in three tabs: **Look** (display presets, colours and the
+  density colour map), **Traces** (wiggles, killed traces and the display header) and
+  **Scales** (scale units and the screen's calibration); the tab chosen last opens
+  again. It opens below the gear, moved left or up as far as needed to stay inside the
+  program's window (past its edge it would become a window of the desktop's own), and
+  is never larger than the window: a tab taller than it scrolls. At 125 % in a 1152 x
+  720 window (what a 1280 x 800 laptop screen opens) every tab fits.
 - **Density has a colour map of its own**, chosen in the gear popover's **Density colour
   map** section, where each map is shown as its colour bar (the most negative amplitude
   at the left, the most positive at the right) with its name; a click on a bar or its
@@ -443,15 +446,17 @@ A **display preset** keeps a whole display under a name, to put it back with one
 the mode, the fills, the trace overlap, the colours (the scheme and the six), density's
 colour map, the gain type with every setting of its drop-down, the gain amount and the
 clip percentile. Not the orientation: applying a preset leaves the plot turned as it is.
-They are the first section of the gear popover, **Display presets**:
+They are the first section of the gear popover's Look tab, **Display presets**:
 
 - the presets, in the order they were made, each a line to click: the plot is drawn as
   it says at once (as if each control had been set; only what changes the samples, a
   gain type that runs on them, reads again, from the samples at hand). The preset the
-  plot shows now is drawn selected;
+  plot shows now is drawn selected. A right-click on one opens its menu: **Apply**,
+  **Rename to** the name in the box, and **Delete**, without the plot being drawn as it
+  first;
 - a box for a name and **Save**: the display shown kept under that name (a name already
-  there, in any case, is replaced in its place); **Rename** gives the preset picked last
-  the name in the box; **Delete** forgets it. A name is not empty and at most 64
+  there, in any case, is replaced in its place); **Rename** gives the preset clicked or
+  right-clicked last the name in the box; **Delete** forgets it. A name is not empty and at most 64
   characters; at most 32 presets are kept. What cannot be done (no such preset, a name
   taken) is said in the Messages window.
 

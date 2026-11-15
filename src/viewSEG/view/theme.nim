@@ -184,10 +184,15 @@ func parseColor*(s: string; c: var Rgba): bool =
 
 # ------------------------------------------------------------------ roles --
 
+const MinFrameStep* = 12
+  ## the least `distance` of a frame's colour from a window's and a popup's
+
 func deriveRoles*(p: Palette; mode: ThemeMode): array[Role, Rgba] =
   ## The roles built from the palette. Backgrounds: `backdrop` is
   ## `darker_background`, `window` is `background`, `bar` is `dark_background`,
-  ## `frame` is `lighter_background`, and `popup` is `lighter_background` in a
+  ## `frame` is `lighter_background` (moved toward `foreground` until it is
+  ## `MinFrameStep` from both `window` and `popup`, so an unticked checkbox
+  ## shows in a popup too), and `popup` is `lighter_background` in a
   ## dark theme and `background` in a light one (popups stay the brightest
   ## surface). Text: `foreground`, `light_foreground` (dim) and, for disabled,
   ## halfway between `dark_foreground` and `light_foreground`. `border` is
@@ -200,7 +205,16 @@ func deriveRoles*(p: Palette; mode: ThemeMode): array[Role, Rgba] =
   result[rlWindow] = p[bcBackground]
   result[rlPopup] = if mode == tmDark: p[bcLighterBackground] else: p[bcBackground]
   result[rlBar] = p[bcDarkBackground]
-  result[rlFrame] = p[bcLighterBackground]
+  # Frames (checkboxes, radio buttons, inputs) must show on windows and in
+  # popups alike: where `lighter_background` is the popup's own colour (a
+  # dark theme), they are lifted toward the foreground until they stand out.
+  var frame = p[bcLighterBackground]
+  var t = 0'f32
+  while t < 0.5 and (distance(frame, result[rlPopup]) < MinFrameStep or
+      distance(frame, result[rlWindow]) < MinFrameStep):
+    t += 0.02
+    frame = mix(p[bcLighterBackground], p[bcForeground], t)
+  result[rlFrame] = frame
   result[rlText] = p[bcForeground]
   result[rlTextDim] = p[bcLightForeground]
   result[rlTextDisabled] = mix(p[bcDarkForeground], p[bcLightForeground], 0.5)

@@ -201,7 +201,8 @@ type
     bandKey: (uint64, seq[HeaderField])
     picking: int ## the colour whose picker is open (as `colourKeys` lists them)
     hex: array[12, char] ## what the picker's `#rrggbb` box holds
-    presetBox: array[MaxPresetName + 1, char] ## the Display presets section's name box
+    presetBox: array[4 * MaxPresetName + 1, char]
+      ## the Display presets section's name box: UTF-8, up to 4 bytes a character
     presetPicked: string ## the preset clicked last there: Rename and Delete act on it
     moreSize: ImVec2_c ## the gear popover's size, as drawn last
 
@@ -941,14 +942,16 @@ proc drawGoTo(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
 proc drawPresets(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
     res: var PanelOutput) =
   ## The display presets: each a line to click, which draws the plot as it
-  ## says (the one shown now drawn selected); a box for a name, Save (the
-  ## display shown, under that name), Rename and Delete (the preset clicked
-  ## last).
+  ## says (the one shown now drawn selected), or to right-click, for a menu
+  ## that applies, renames or deletes it without drawing it first; a box for
+  ## a name, Save (the display shown, under that name), Rename and Delete
+  ## (the preset clicked or right-clicked last).
   let presets = st.settings.displayPresets
   let shown = presets.shownPreset(p.layers[0].display)
   template command(action: PresetAction; name: string; newName = "") =
     res.commands.add Command(kind: ckDisplayPreset, panel: p.id, presetAction: action,
       presetName: name, presetNewName: newName)
+  let typed = ($cast[cstring](addr tp.presetBox[0])).strip
   if presets.len == 0:
     igTextUnformatted("None yet: name the display shown and Save it.", nil)
   for i, q in presets:
@@ -959,14 +962,31 @@ proc drawPresets(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
       copyMem(addr tp.presetBox[0], q.name.cstring, min(q.name.len, tp.presetBox.len - 1))
       command(paApply, q.name)
     marks.mark("plot.preset." & q.name)
-    tip("Draw the plot as \"" & q.name & "\" says (it stays turned as it is)")
+    tip("Click: draw the plot as \"" & q.name & "\" says (it stays turned as it is).\n" &
+      "Right-click: apply, rename or delete it, without drawing it first.")
+    if igBeginPopupContextItem(("##presetmenu" & $i).cstring,
+        ImGui_PopupFlags_MouseButtonRight.cint):
+      tp.presetPicked = q.name # the Rename and Delete buttons act on it too
+      marks.markWindow("plot.preset menu")
+      if igMenuItem_Bool("Apply", nil, false, true): command(paApply, q.name)
+      marks.mark("plot.preset menu apply")
+      let to = if typed.len > 0 and typed != q.name: "Rename to \"" & typed & "\""
+               else: "Rename (type the new name in the box first)"
+      if igMenuItem_Bool(to.cstring, nil, false, typed.len > 0 and typed != q.name):
+        command(paRename, q.name, typed)
+        tp.presetPicked = typed
+      marks.mark("plot.preset menu rename")
+      if igMenuItem_Bool(("Delete \"" & q.name & "\"").cstring, nil, false, true):
+        command(paDelete, q.name)
+        tp.presetPicked = ""
+      marks.mark("plot.preset menu delete")
+      igEndPopup()
   igSetNextItemWidth(round(igCalcTextSize("A preset's long name", nil, false, -1).x +
     2 * igGetStyle().FramePadding.x))
   let entered = igInputTextWithHint("##presetname", "a name", cast[cstring](addr tp.presetBox[0]),
     csize_t(tp.presetBox.len), ImGui_InputTextFlags_EnterReturnsTrue.cint, nil, nil)
   marks.mark("plot.preset name")
   tip("The name to save the display shown under, or to give the preset clicked last")
-  let typed = ($cast[cstring](addr tp.presetBox[0])).strip
   igSameLine(0, -1)
   igBeginDisabled(typed.len == 0)
   if igButton("Save##preset", ImVec2_c(x: 0, y: 0)) or (entered and typed.len > 0):
@@ -984,7 +1004,7 @@ proc drawPresets(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
   igEndDisabled()
   marks.mark("plot.preset rename")
   tipAlways(if known: "Give \"" & tp.presetPicked & "\" the name in the box"
-            else: "Click a preset first, then type its new name")
+            else: "Click or right-click a preset first, then type its new name")
   igSameLine(0, -1)
   igBeginDisabled(not known)
   if igButton("Delete##preset", ImVec2_c(x: 0, y: 0)):
@@ -992,7 +1012,8 @@ proc drawPresets(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
     tp.presetPicked = ""
   igEndDisabled()
   marks.mark("plot.preset delete")
-  tipAlways(if known: "Forget \"" & tp.presetPicked & "\"" else: "Click a preset first")
+  tipAlways(if known: "Forget \"" & tp.presetPicked & "\""
+            else: "Click or right-click a preset first")
 
 proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks: var Marks;
     res: var PanelOutput; ask: var ViewAsk; ppi: float64; mon: MonitorInfo) =
@@ -1141,47 +1162,46 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     let x = max(vp.WorkPos.x, min(gear.x - size.x, vp.WorkPos.x + vp.WorkSize.x - size.x))
     let y = max(vp.WorkPos.y, min(gear.y, vp.WorkPos.y + vp.WorkSize.y - size.y))
     igSetNextWindowPos(ImVec2_c(x: x, y: y), ImGui_Cond_Always.cint, ImVec2_c(x: 0, y: 0))
+    # never larger than the window: a tab taller than it scrolls
+    igSetNextWindowSizeConstraints(ImVec2_c(x: 0, y: 0), vp.WorkSize, nil, nil)
   if igBeginPopup(moreId, 0):
     tp.moreSize = igGetWindowSize()
     marks.markWindow("plot.more popover")
-    # in columns, so the popover fits a laptop's screen: how the traces
-    # look; the wiggles, killed traces and the header; the scales
-    let table = igBeginTable("##more", 3, ImGui_TableFlags_SizingFixedFit.ImGuiTableFlags,
-      ImVec2_c(x: 0, y: 0), 0)
-    template nextColumn() =
-      if table:
-        discard igTableNextColumn()
-        igDummy(ImVec2_c(x: round(igGetFontSize()), y: 0)) # a gutter between the columns
-        igSameLine(0, 0)
-        igBeginGroup()
-    if table: discard igTableNextColumn()
-    igSeparatorText("Display presets")
-    tp.drawPresets(st, p, marks, res)
-    igSeparatorText("Colours")
-    tp.drawColours(p, t, marks, res)
-    igSeparatorText("Density colour map")
-    drawColourMaps(p, t, marks, res)
-    nextColumn()
-    igSeparatorText("Wiggles")
-    drawWiggleSettings(p, res)
-    igSeparatorText("Killed traces")
-    var hide = st.settings.hideKilled
-    if igCheckbox("Hide killed traces", addr hide):
-      var s = st.settings
-      s.hideKilled = hide
-      res.commands.add Command(kind: ckSettings, settings: s)
-    marks.mark("plot.more.hide killed")
-    tip("On: killed traces are left out of the plot, the traces beside them close up. " &
-      "Off: they are drawn blank. Either way they are left out of the levels and spectra.")
-    igSeparatorText("Display header")
-    drawHeaderChoice(p, marks, "plot.more.header.", res)
-    if table: igEndGroup()
-    nextColumn()
-    igSeparatorText("Scales")
-    tp.drawScaleSettings(st, res, ppi, mon)
-    if table:
-      igEndGroup()
-      igEndTable()
+    # in tabs, so the popover fits a small window (1152 x 720 at 125 %):
+    # how the traces look; the wiggles, killed traces and the header; the
+    # scales (each tab as tall as its own content; the tab chosen is kept)
+    if igBeginTabBar("##moretabs", 0):
+      template tab(name, markName: string; body: untyped) =
+        let open = igBeginTabItem(name, nil, 0)
+        marks.mark(markName)
+        if open:
+          body
+          igEndTabItem()
+      tab("Look", "plot.more tab look"):
+        igSeparatorText("Display presets")
+        tp.drawPresets(st, p, marks, res)
+        igSeparatorText("Colours")
+        tp.drawColours(p, t, marks, res)
+        igSeparatorText("Density colour map")
+        drawColourMaps(p, t, marks, res)
+      tab("Traces", "plot.more tab traces"):
+        igSeparatorText("Wiggles")
+        drawWiggleSettings(p, res)
+        igSeparatorText("Killed traces")
+        var hide = st.settings.hideKilled
+        if igCheckbox("Hide killed traces", addr hide):
+          var s = st.settings
+          s.hideKilled = hide
+          res.commands.add Command(kind: ckSettings, settings: s)
+        marks.mark("plot.more.hide killed")
+        tip("On: killed traces are left out of the plot, the traces beside them close up. " &
+          "Off: they are drawn blank. Either way they are left out of the levels and spectra.")
+        igSeparatorText("Display header")
+        drawHeaderChoice(p, marks, "plot.more.header.", res)
+      tab("Scales", "plot.more tab scales"):
+        igSeparatorText("Scales")
+        tp.drawScaleSettings(st, res, ppi, mon)
+      igEndTabBar()
     igEndPopup()
 
 proc drawStartScreen(t: Theme; recent, folders: openArray[string]; marks: var Marks;
