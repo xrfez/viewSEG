@@ -144,9 +144,6 @@ type
   DisplaySettings* = object
     ## How a layer is drawn.
     visible*: bool = true
-    orientation*: Orientation = orTimeDown
-      ## which way the plot is turned (`core/orientation`): the panel's
-      ## layer 0 decides for the whole plot
     mode*: DisplayMode = dmWiggle
     fills*: set[WiggleFill] = {wfPositive} ## the wiggles' fills: either, both or none
     colours*: PlotColours = pcPaper
@@ -166,6 +163,9 @@ type
       ## a wiggle's largest swing, in trace spacings (1 reaches the next
       ## trace's baseline): the reference amplitude swings this far, and
       ## nothing further
+    orientation*: Orientation = orTimeDown
+      ## which way the plot is turned (`core/orientation`): the panel's
+      ## layer 0 decides for the whole plot
 
   Layer* = object
     source*: LayerSource

@@ -20,9 +20,9 @@ const Tolerance* = 6 ## per channel: float rounding and 8-bit blending on the GP
 type
   Shot* = object
     ## A plot image and what it was drawn from.
-    image*: seq[Rgba]  ## as drawn, rows from the top
-    width*: int        ## the image's width
-    w*, h*: int        ## pixels along the traces and along time (the view's)
+    image*: seq[Rgba] ## as drawn, rows from the top
+    width*: int       ## the image's width
+    w*, h*: int       ## pixels along the traces and along time (the view's)
     turn*: Turn
     view*: Viewport
     tiles*: seq[Tile]

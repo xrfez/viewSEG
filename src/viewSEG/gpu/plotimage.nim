@@ -34,16 +34,16 @@ export GetProcAddress, GLuint
 type
   PlotFrame* = object
     ## What one image shows, and how.
-    view*: Viewport ## the data shown, and the plot's pixels along each axis
+    view*: Viewport        ## the data shown, and the plot's pixels along each axis
     turn*: Turn = TimeDown ## which way the plot is turned: the image is `screenSize`
     background*: Rgba
-    density*: bool  ## greyscale density under everything
+    density*: bool         ## greyscale density under everything
     wiggles*: bool
-    scale*: float32 ## the display gain (`displayScale`)
+    scale*: float32        ## the display gain (`displayScale`)
     style*: WiggleStyle
     ink*: WiggleInk
-    tint*: float32  ## density alone: how far a marked trace's column is tinted
-    marks*: int     ## bumped by the caller whenever a tile's marks change
+    tint*: float32         ## density alone: how far a marked trace's column is tinted
+    marks*: int            ## bumped by the caller whenever a tile's marks change
 
   PlotRenderer* = object
     ## The two programs, the colour map, and the image the plot shows.

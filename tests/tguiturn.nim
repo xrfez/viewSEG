@@ -64,12 +64,12 @@ proc main() =
     var started = false
     var wait = 0
     var failed = ""
-    var plot: Rect      # the plot's data area, framebuffer pixels
-    var q: Vec2         # a point over the plot
-    var was: Viewport   # the view before a step
+    var plot: Rect # the plot's data area, framebuffer pixels
+    var q: Vec2 # a point over the plot
+    var was: Viewport # the view before a step
     var gen, taken, uploads: int
     var shots: seq[(string, int, int)] # pixel checks: name, pixels off, looked at
-    var drawnAt = 0     # images drawn when a picture was asked for
+    var drawnAt = 0 # images drawn when a picture was asked for
     let dir = getEnv("VIEWSEG_SCREENSHOTS")
 
     template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]

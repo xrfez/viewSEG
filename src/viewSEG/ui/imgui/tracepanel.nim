@@ -382,9 +382,9 @@ type HeaderBands = object
   ## Where the display header's rows lie (its columns, when time is
   ## across): a band per field, then the edits band, along the screen axis
   ## time runs on, before the plot's start along it.
-  axis: ScreenAxis    ## the bands' axis: time's
+  axis: ScreenAxis ## the bands' axis: time's
   start: seq[float32] ## each band's start along it
-  size: seq[float32]  ## its thickness
+  size: seq[float32] ## its thickness
 
 proc inBand(b: HeaderBands; i: int; extent: float32): float32 =
   ## Where a label `extent` long along the bands' axis starts in band `i`:
@@ -1307,7 +1307,8 @@ proc drawCursorLine(tp: var TracePanelUi; at, pos, size: ImVec2_c; m: Turn; tMs,
   let ba = other(ta)
   let fb = igGetIO_Nil().DisplayFramebufferScale.along(ba)
   let px = 1 / max(fb, 0.01) # one framebuffer pixel
-  let top = floor(at.along(ba) * fb) / fb # the pointer's pixel: rectangles, so no blur
+                             # the pointer's pixel, drawn as rectangles, so there is no blur
+  let top = floor(at.along(ba) * fb) / fb
   # ImPlot writes the y axis's values left of the plot, the x axis's below it
   let edge = if ta == saX: pos.x else: pos.y + size.y
   let colour = readableOn(t.roles[rlCrosshair], ink.background)
@@ -1503,7 +1504,8 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
       fx += dx
       fy += dy
   if fx != 0 or fy != 0:
-    let (alongTraces, alongTime) = m.dataDelta(fx, fy) # the way the keys point
+    # the way the keys point, on the screen
+    let (alongTraces, alongTime) = m.dataDelta(fx, fy)
     after = after.stepped(alongTraces, alongTime, lim)
     if tp.burst(gsKeyPan): remember = true
   if once(ctrl or ImGui_Key_0.cint) or once(ctrl or ImGui_Key_Keypad0.cint):
@@ -1623,7 +1625,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       # status bar; nothing drawn over the data. The traces: none.
       let flags = ImPlot_AxisFlags_NoMenus.cint or
         (if a == axTraces: ImPlot_AxisFlags_NoDecorations.cint
-         else: ImPlot_AxisFlags_NoGridLines.cint or ImPlot_AxisFlags_NoTickMarks.cint) or
+          else: ImPlot_AxisFlags_NoGridLines.cint or ImPlot_AxisFlags_NoTickMarks.cint) or
         (if inverted[s]: ImPlot_AxisFlags_Invert.cint else: 0)
       ImPlot_SetupAxis(implot, nil, flags)
     if turn.along[axTime] == saY:

@@ -258,7 +258,7 @@ block notTurnedWithTheScreen:
   doAssert near(timeScale(across, 96, ScaleUnits()), View.timeMs.width / (1200 / 96))
   var wide = across
   wide.traces = Span(lo: -0.5, hi: 1199.5) # 1200 traces on 300 pixels: every 4th
-  wide.timeMs = Span(lo: 0, hi: 3999)      # 4000 samples on 1200 pixels: in bins of 2
+  wide.timeMs = Span(lo: 0, hi: 3999) # 4000 samples on 1200 pixels: in bins of 2
   let r = requestFor(layout, wide)
   doAssert r.stride == 4 and r.decimation == 2, $r
   var down = wide

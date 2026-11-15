@@ -313,8 +313,7 @@ signals can start time across.
   Only where the plot's other shape needs another resolution (zoomed out past a trace or
   a sample a pixel, as a new window size can) is a new view asked for, as for any view.
 - **The first trace at the top** when time is across is the default taken (the traces
-  then read down the plot as the rows of the display header, a table's rows and a chart
-  recorder's channels do); whether the user would rather have it at the bottom (the
+  then read down the plot as a table's rows and a chart recorder's channels do); whether the user would rather have it at the bottom (the
   time-down picture turned a quarter turn anticlockwise, "-90 degrees" taken literally)
   is asked. It is one constant (`FirstTraceAtTop`); either way a positive amplitude
   swings up.
