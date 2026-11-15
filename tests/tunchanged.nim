@@ -1,14 +1,16 @@
 ## A loaded file is never changed: every fixture (the survey and each of its
-## planted defects, the SPS files, the three SEG-D records, the pilot,
+## planted defects, the SPS files, the four SEG-D records, the pilot,
 ## parseSEG's demo files, and two damaged files) is opened, shown gather by
 ## gather, zoomed, panned, box-zoomed, sent back, given every display gain,
 ## reversed polarity and other header rows, given an edited panel (traces
 ## killed and reversed, one change undone; the panel then sorted with them,
 ## and the edits cleared after, so that the second round starts with none),
-## sorted by each sort button and by keys of the user's own, read to the
-## newest tile, closed, and then opened again from the index cache. Each file's bytes and modification
-## time are then as they were, and its folder holds the same files, of the
-## same sizes, and nothing else.
+## linked to the map (a trace hovered, the points it was recorded at hovered
+## and their record shown), sorted by each sort button and by keys of the
+## user's own, read to the newest tile, closed, and then opened again from
+## the index cache. Each file's bytes and modification time are then as they
+## were, and its folder holds the same files, of the same sizes, and nothing
+## else.
 ##
 ## Seen to fail: with the open job marking the seismic file used instead of
 ## its index cache (`setLastModificationTime(path, ...)` in `openWork`), the
@@ -103,6 +105,14 @@ proc drive(st: var AppState) =
     st.apply Command(kind: ckUndoEdit, panel: MainPanel)
     doAssert st.settle(st.answered)
     if lay.traces > 0 and lay.samples > 0: inc edited
+    # linked to the map: the first trace hovered, then the points it was
+    # recorded at, and their record (the one on show: nothing changes)
+    st.apply Command(kind: ckHover, trace: s.base + g.a)
+    let at = st.selection.hoverAt
+    st.apply Command(kind: ckHoverPoints, points: at)
+    if at.len > 0: st.apply Command(kind: ckShowPoints, points: at)
+    st.apply Command(kind: ckHover, trace: -1)
+    st.apply Command(kind: ckHoverPoints, points: @[])
   # every sort button, keys of the user's own, then the file's order; each
   # sorted panel read to its newest tile
   var orders: seq[seq[SortKey]]
@@ -138,7 +148,8 @@ withFixtures fx:
     files.add fx.surveySegy(d)
   let sps = fx.surveySps()
   files.add [sps.s, sps.r, sps.x]
-  files.add [fx.twoSetSegd(), fx.threeComponentSegd(), fx.mixedOrderSegd(), fx.pilotSegy()]
+  files.add [fx.twoSetSegd(), fx.threeComponentSegd(), fx.mixedOrderSegd(), fx.stationsSegd(),
+    fx.pilotSegy()]
   for name in demoFileNames:
     files.add fx.demoFile(name)
   let cut = fx.dir / "cut.sgy"
