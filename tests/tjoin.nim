@@ -29,7 +29,11 @@
 ##   a record shown meanwhile, which waits for the join without a warning);
 ##   a cancel while the step changes the keys (held there by the job hook)
 ##   is refused, and the step is never abandoned however long it takes;
-## - the survey's units confirmed with the join label the map.
+## - the survey's units confirmed with the join label the map;
+## - an import's distances name their unit (confirmed, else the survey
+##   files', else the headers');
+## - an import's records are checked once, after it (not also against the
+##   relation file it loads onto the map while it runs).
 ##
 ## Seen to fail: with the join's second job submitted with the file in
 ## `reads` (not `exclusive`), the join found a panel reader's hold and
@@ -41,7 +45,10 @@
 ## said "busy"; with the import's files not loaded (`loadSurvey` left out of
 ## `startJoin`), "the S file is not on the map"; with the layers of a
 ## cancelled import left on the map, "the map holds 2 survey files after the
-## cancel".
+## cancel"; with the X file's load checking the records while the import
+## runs, "the records checked 2 times"; with the survey files' unit not
+## taken when none was confirmed, `distancesSayTheirUnit` found the distance
+## without "ftUS".
 
 import std/[math, os, sequtils, strutils, tables, times]
 import parseSEG
@@ -83,6 +90,25 @@ proc surveyFiles(st: AppState): int =
   for l in st.survey.layers:
     if l.origin == loSurveyFile: inc result
 
+block distancesSayTheirUnit:
+  # The headers' coordinates kept, the survey's up to 0.1 from them: said
+  # in the unit confirmed, else the survey files' (H201: US survey feet),
+  # else "units".
+  var p = JoinPlan(traces: 10, seismic: 10, matched: 10)
+  p.given[prReceiver] = 10
+  p.differ[prReceiver] = 0.1
+  var g = initSurveyGeometry()
+  func said(p: JoinPlan; u: SurveyUnit): string = planWords(p, JoinSurvey(), JoinOptions(), u).join(" ")
+  doAssert "the survey's are up to 0.1 units from them" in p.said(wordsUnit(suNotGiven, g,
+    suNotGiven)), p.said(suNotGiven)
+  g.addSps(parseSps("H00 SPS format version num.     SPS 2.1;\n" &
+    "H20 Description of grid units   feet;\nH201Factor to meters            0.3048006096;\n",
+    "units.s"))
+  doAssert g.gridUnit.known, "the H201 is read"
+  let u = wordsUnit(suNotGiven, g, suMetres)
+  doAssert u == suUsFeet and "up to 0.1 ftUS from them" in p.said(u), p.said(u)
+  doAssert wordsUnit(suMetres, g, suNotGiven) == suMetres, "the unit confirmed first"
+
 block onTheMap:
   withFixtures fx:
     let path = fx.stationsSegd()
@@ -107,6 +133,14 @@ block onTheMap:
       if e.text.startsWith("Survey imported for stations-only.sgd (survey.s, survey.r, " &
           "survey.x): On the map:"): said = true
     doAssert said, "the log does not say what is on the map"
+    # The records checked once, against the survey imported (not first
+    # against the X file the import put on the map).
+    doAssert st.settle(st.jobs.active.len == 0)
+    var checks: seq[string]
+    for j in st.jobs.list:
+      if j.spec.title.startsWith("Check the records of"): checks.add j.spec.title
+    doAssert checks == @["Check the records of stations-only.sgd against the survey imported"],
+      "the records checked " & $checks.len & " times: " & $checks
     # Again: nothing is loaded twice.
     let layers = st.survey.layers.len
     st.join(sps(survey.s, survey.r, survey.x))

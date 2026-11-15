@@ -350,6 +350,9 @@ type
       ## its files' loads onto the map, until their layers come
     added: seq[SurveyLayerId]
       ## the layers they gave (taken out again at a cancel)
+    checkLater: bool
+      ## a relation file loaded meanwhile: the file's records are checked
+      ## once, when the match ends (against the survey imported, or that file)
     waits: bool
       ## the match is over (or none): the end waits for `loads`
     outcome: JoinOutcome
@@ -2006,7 +2009,9 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
     let now = state.relationLayer
     if now >= 0 and state.survey.layers[now].id != wasId:
       for s in state.sessions: # against the relation file now loaded
-        if state.joinedRelations(s.id) < 0: state.checkRecords(s)
+        if state.joining.job != NoJob and state.joining.session == s.id:
+          state.joining.checkLater = true # its import checks it once, at its end
+        elif state.joinedRelations(s.id) < 0: state.checkRecords(s)
     state.loaded(job, id)
 
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
@@ -2246,7 +2251,10 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
   var words: seq[string]
   case outcome
   of joJoined, joNothing:
-    words = planWords(j.plan, j.survey, j.options, j.units.survey)
+    # The distances in the unit confirmed, else the survey files' or the file's.
+    let unit = wordsUnit(j.units.survey, (if j.geometry.isNil: initSurveyGeometry()
+      else: j.geometry[]), (if i >= 0: unitOf(state.sessions[i].crs.units) else: suNotGiven))
+    words = planWords(j.plan, j.survey, j.options, unit)
     if i >= 0:
       let s = state.sessions[i]
       let before = state.joinedOf(s.id)
@@ -2274,6 +2282,12 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
     for id in j.added: discard state.survey.remove(id)
     if j.added.len > 0: state.map.followed(state.survey)
     j.loads.setLen 0
+  # A relation file loaded while it ran: checked against now, once (a file
+  # joined was checked above).
+  if j.checkLater and outcome != joJoined and i >= 0 and
+      state.joinedRelations(state.sessions[i].id) < 0:
+    state.checkRecords(state.sessions[i])
+  j.checkLater = false
   if j.loads.len == 0: state.finishImport()
 
 proc loaded(state: var AppState; job: JobId; layer: SurveyLayerId) =

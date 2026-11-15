@@ -501,8 +501,17 @@ proc surveyOf*(g: SurveyGeometry; files: openArray[string]): JoinSurvey =
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
 
+func wordsUnit*(confirmed: SurveyUnit; g: SurveyGeometry; headers: SurveyUnit): SurveyUnit =
+  ## The unit an import's words give its distances in: the one the user
+  ## confirmed, else the survey files' (SPS H20, H201), else the seismic
+  ## file's headers'; not given when nothing says.
+  if confirmed != suNotGiven: confirmed
+  elif g.gridUnit.known and unitOf(g.gridUnit) != suNotGiven: unitOf(g.gridUnit)
+  else: headers
+
 func distanceWords(d: float64; unit: SurveyUnit): string =
-  let u = if unit.abbreviation.len > 0: " " & unit.abbreviation else: ""
+  ## "0.1 ftUS"; "0.1 units" when nothing names the unit.
+  let u = if unit.abbreviation.len > 0: " " & unit.abbreviation else: " units"
   (if d < 0.05: formatFloat(d, ffDecimal, 3) elif d < 100: formatFloat(d, ffDecimal, 1)
     else: $int64(round(d))) & u
 
