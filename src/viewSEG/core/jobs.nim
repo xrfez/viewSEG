@@ -123,7 +123,7 @@ type
     error*: string                               ## why it failed; "" otherwise
     cancelRequested*: bool                       ## a cancel was asked for while it ran
     queuedAt*, startedAt*, finishedAt*: MonoTime ## zero until they happen
-    cancelAt*: MonoTime ## when the cancel was asked for (`fs.now`); zero for none
+    cancelAt*: MonoTime                          ## when the cancel was asked for (`fs.now`); zero for none
     beat*: MonoTime
       ## when the running work last reported (`fs.now`): `notAnsweringFor`
     abandoned*: bool
@@ -158,10 +158,10 @@ type
     ## jobs' lock.
     thread: Thread[RunnerArg]
     lane: JobLane
-    job: JobId              ## the job it runs; `NoJob` while it picks
+    job: JobId ## the job it runs; `NoJob` while it picks
     abandoned: bool
       ## its job was abandoned (`tend`): listed cancelled already
-    held: seq[string]       ## its job was abandoned: the holds to end when its work is back
+    held: seq[string] ## its job was abandoned: the holds to end when its work is back
     exclusive: seq[string]
       ## of those, the files its job needed to itself: no reader meanwhile
     ended, joined: bool
@@ -173,11 +173,11 @@ type
   JobsObj = object
     ## Shared by the UI thread and the runners; every field under `lock`.
     lock: Lock
-    changed: Cond                     ## broadcast on every change a runner may wait for
-    recs: seq[JobRec]                 ## every job not removed, in submission order
-    queue: array[JobLane, seq[JobId]] ## the queued jobs of each lane, in run order
-    finished: seq[JobInfo]            ## finished since the last `takeFinished`
-    holds: seq[string]                ## one entry per `hold` not yet released
+    changed: Cond                          ## broadcast on every change a runner may wait for
+    recs: seq[JobRec]                      ## every job not removed, in submission order
+    queue: array[JobLane, seq[JobId]]      ## the queued jobs of each lane, in run order
+    finished: seq[JobInfo]                 ## finished since the last `takeFinished`
+    holds: seq[string]                     ## one entry per `hold` not yet released
     nextId: int
     revision: int
     historyLimit: int

@@ -16,23 +16,23 @@ import edits, filelist, filememory, identity, join, jobs, layouts, log, mapkinds
 
 type
   MsgKind* = enum
-    mkOpened  ## an open job's file
-    mkLog     ## a message for the log
-    mkLayout  ## what a panel's traces span, from its reader
-    mkOrder   ## the traces at a panel's positions, in the order shown, from its reader
-    mkTile    ## samples a panel asked for, from its reader
-    mkRead    ## a document the disk thread read
-    mkListed  ## files a folder scan found
-    mkWatched ## what a look at the listed folder found changed
-    mkSurvey  ## a survey layer: a survey file read, or an open file's positions
-    mkChecked ## an open file's records checked against a relation file
-    mkJoining ## survey files read for a join, and what joining them does
-    mkJoined  ## a join done
-    mkUnread  ## a panel's file cannot be read now (its drive went away, or fails), from its reader
+    mkOpened     ## an open job's file
+    mkLog        ## a message for the log
+    mkLayout     ## what a panel's traces span, from its reader
+    mkOrder      ## the traces at a panel's positions, in the order shown, from its reader
+    mkTile       ## samples a panel asked for, from its reader
+    mkRead       ## a document the disk thread read
+    mkListed     ## files a folder scan found
+    mkWatched    ## what a look at the listed folder found changed
+    mkSurvey     ## a survey layer: a survey file read, or an open file's positions
+    mkChecked    ## an open file's records checked against a relation file
+    mkJoining    ## survey files read for a join, and what joining them does
+    mkJoined     ## a join done
+    mkUnread     ## a panel's file cannot be read now (its drive went away, or fails), from its reader
     mkInspected
       ## what the Headers window shows of a record and of traces, from its reader
-    mkSpreads ## relation records made for the map's planned spreads (`core/spread`)
-    mkShots   ## a listed file's shots, for the map (`core/shots`)
+    mkSpreads    ## relation records made for the map's planned spreads (`core/spread`)
+    mkShots      ## a listed file's shots, for the map (`core/shots`)
     mkRecordQc
       ## what the map's filters find in the record shown (`core/recordqc`)
     mkTraceRead
@@ -46,16 +46,16 @@ type
     mkMemoryMerged
       ## a document of what is remembered that another program (a second
       ## viewSEG) changed since this run read or wrote it: written merged
-    mkEditsList  ## a file's list of edits, as the text of the file it is exported to
-    mkEditsRead  ## a file's list of edits the user imports, read
-    mkSpectrum   ## a spectrum window's spectrum, from the spectrum reader
+    mkEditsList ## a file's list of edits, as the text of the file it is exported to
+    mkEditsRead ## a file's list of edits the user imports, read
+    mkSpectrum ## a spectrum window's spectrum, from the spectrum reader
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
     ## that fails and a file cut short are different things.
-    ucFailed = "failed"      ## its drive went away or fails (an I/O error)
+    ucFailed = "failed" ## its drive went away or fails (an I/O error)
     ucCutShort = "cut short" ## it is shorter than when it was opened
-    ucStopped = "stopped"    ## the user stopped waiting for its drive
+    ucStopped = "stopped" ## the user stopped waiting for its drive
 
   ReadPurpose* = enum
     ## What a document is read for.
@@ -66,38 +66,38 @@ type
 
   Msg* = object
     ## One message for the UI thread.
-    job*: JobId                  ## the job that sent it; `NoJob` for none
+    job*: JobId                     ## the job that sent it; `NoJob` for none
     case kind*: MsgKind
     of mkOpened: session*: Session
     of mkLog: entry*: LogEntry
     of mkLayout:
       panel*: PanelId
-      sourceGen*: uint64         ## the panel's `sourceGen` it answers
+      sourceGen*: uint64            ## the panel's `sourceGen` it answers
       layout*: PanelLayout
-      known*: set[HeaderField]   ## the header fields the traces have values for
+      known*: set[HeaderField]      ## the header fields the traces have values for
       widest*: array[HeaderField, int]
         ## per field, its longest value as the header shows it, in characters
     of mkOrder:
       orderPanel*: PanelId
-      orderGen*: uint64          ## the panel's newer of `sourceGen` and `orderGen` it answers
-      positions*: seq[int]       ## per position: the trace's index in its file
+      orderGen*: uint64             ## the panel's newer of `sourceGen` and `orderGen` it answers
+      positions*: seq[int]          ## per position: the trace's index in its file
     of mkTile: tile*: Tile
     of mkRead:
       purpose*: ReadPurpose
       readPath*: string
       content*: string
-      readError*: string         ## why it could not be read; "" when it was
-      doc*: seq[NifNode]         ## `content` as NIF, read on the disk thread
-      docError*: string          ## why `content` is not NIF; "" when it is (or was not read)
-      layouts*: seq[SavedLayout] ## `rpLayouts`: what `listLayouts` found
+      readError*: string            ## why it could not be read; "" when it was
+      doc*: seq[NifNode]            ## `content` as NIF, read on the disk thread
+      docError*: string             ## why `content` is not NIF; "" when it is (or was not read)
+      layouts*: seq[SavedLayout]    ## `rpLayouts`: what `listLayouts` found
     of mkListed:
-      listGen*: uint64           ## the file list's `gen` it answers
-      listed*: seq[FileEntry]    ## seismic files, in natural order
-      others*: int               ## files found that are not seismic
-      unreadable*: int           ## files that could not be read
-      listDone*: bool            ## the scan's last message
-      listFolder*: string        ## the folder listed, once known; "" for files chosen one by one
-      listChosen*: string        ## the one file named, when only a file was named; "" otherwise
+      listGen*: uint64              ## the file list's `gen` it answers
+      listed*: seq[FileEntry]       ## seismic files, in natural order
+      others*: int                  ## files found that are not seismic
+      unreadable*: int              ## files that could not be read
+      listDone*: bool               ## the scan's last message
+      listFolder*: string           ## the folder listed, once known; "" for files chosen one by one
+      listChosen*: string           ## the one file named, when only a file was named; "" otherwise
       listLooked*: seq[WatchedFile]
         ## with `listDone`: every file the scan looked at, seismic or not, as it
         ## found it: what the folder's watch starts from
@@ -146,7 +146,7 @@ type
       unreadPanel*: PanelId
       unreadGen*: uint64 ## the panel's `sourceGen` it is about
       cause*: UnreadCause
-      why*: string       ## in plain words
+      why*: string ## in plain words
     of mkInspected:
       inspected*: Inspected ## moved, never shared
     of mkSpreads:
@@ -183,12 +183,12 @@ type
       headerRows*: seq[HeaderRow]
         ## the fields of its headers (parseSEG's), in file order
     of mkIdentified:
-      identPath*: string             ## the file
-      identity*: FileIdentity        ## its quick identity
-      identModified*: Time           ## its modification time when it was read
-      candidates*: seq[FileRecord]   ## the store's documents of that quick identity
-      taken*: seq[string]            ## every document name of that quick identity
-      memoryProblems*: seq[string]   ## documents that could not be read, in plain words
+      identPath*: string ## the file
+      identity*: FileIdentity ## its quick identity
+      identModified*: Time ## its modification time when it was read
+      candidates*: seq[FileRecord] ## the store's documents of that quick identity
+      taken*: seq[string] ## every document name of that quick identity
+      memoryProblems*: seq[string] ## documents that could not be read, in plain words
       pending*: FileRecord
         ## the file's pending document (`pendingName`): edits made while its
         ## identity was not known; `pending.doc` "" for none
@@ -196,34 +196,34 @@ type
         ## `pending` was made on the file as it is (its size and time): its
         ## edits are the file's
     of mkHashed:
-      hashedPath*: string            ## the file
-      hashed*: FileIdentity          ## its identity, `fullKnown`
+      hashedPath*: string ## the file
+      hashed*: FileIdentity ## its identity, `fullKnown`
     of mkMemoryList:
-      records*: seq[FileRecord]      ## every document of the store, the newest opened first
-      listProblems*: seq[string]     ## documents that could not be read
+      records*: seq[FileRecord] ## every document of the store, the newest opened first
+      listProblems*: seq[string] ## documents that could not be read
     of mkMemoryMerged:
-      mergedDoc*: string             ## the document's name in the store
-      mergedEdits*: EditLists        ## what it holds now: both programs' edits
-      mergedSent*: EditLists         ## what this run had asked to write
-      mergedRemoved*: bool           ## this run had asked to remove it
+      mergedDoc*: string ## the document's name in the store
+      mergedEdits*: EditLists ## what it holds now: both programs' edits
+      mergedSent*: EditLists ## what this run had asked to write
+      mergedRemoved*: bool ## this run had asked to remove it
     of mkMemoryLooked:
-      lookedFolder*: string          ## the folder looked in
+      lookedFolder*: string ## the folder looked in
       looked*: seq[tuple[doc: string; gone, unreached: bool]]
         ## each document of a file last seen there, and where it stands
     of mkEditsList:
-      listText*: string              ## the text to write
-      listDest*: string              ## the file to write it to
-      listName*: string              ## the seismic file's name
+      listText*: string ## the text to write
+      listDest*: string ## the file to write it to
+      listName*: string ## the seismic file's name
     of mkEditsRead:
-      importedList*: string          ## the list's file
-      importedEdits*: EditLists      ## its edits; none when it could not be read
-      importProblems*: seq[string]   ## what in it could not be used, in plain words
-      importFailure*: string         ## why nothing of it could be used; "" when it could
-      importIdentity*: FileIdentity  ## the identity of the file it was made on (NIF)
-      importHasIdentity*: bool       ## it names one
-      importOutside*: int            ## its traces past the file's last, left out
+      importedList*: string ## the list's file
+      importedEdits*: EditLists ## its edits; none when it could not be read
+      importProblems*: seq[string] ## what in it could not be used, in plain words
+      importFailure*: string ## why nothing of it could be used; "" when it could
+      importIdentity*: FileIdentity ## the identity of the file it was made on (NIF)
+      importHasIdentity*: bool ## it names one
+      importOutside*: int ## its traces past the file's last, left out
     of mkSpectrum:
-      spectrum*: Spectrum            ## moved, never shared
+      spectrum*: Spectrum ## moved, never shared
 
   InboxObj = object
     lock: Lock

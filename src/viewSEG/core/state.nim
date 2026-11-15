@@ -117,9 +117,9 @@ export WatchInterval
 const
   MainPanel* = PanelId(1)
     ## The panel `initAppState` makes; opened files appear in it.
-  MaxTiles* = 4         ## tiles kept per panel, newest last
-  FloatValues* = 32_768 ## values in view the Float gain takes its level from, at most
-  MaxNotices* = 20      ## notices kept
+  MaxTiles* = 4          ## tiles kept per panel, newest last
+  FloatValues* = 32_768  ## values in view the Float gain takes its level from, at most
+  MaxNotices* = 20       ## notices kept
   MaxTraceReads* = 16
     ## traces read for agent control and not taken, kept at most
   MaxPanelValues* = 48 * 1024 * 1024
@@ -213,27 +213,27 @@ type
     of ckCancelJob, ckRemoveJob: job*: JobId
       ## the job's id
     of ckReorderJob:
-      reordered*: JobId               ## the job's id
-      position*: int                  ## 0 runs next
+      reordered*: JobId ## the job's id
+      position*: int ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
         ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckExportEdits, ckImportEdits,
         ckFilter, ckRetry, ckStopReading, ckPrepare, ckProcessing, ckDisplayPreset:
-      panel*: PanelId                 ## the panel's id (1: the Seismic window; 0 retries the folder)
-      gather*: int                    ## ckGather: index into the file's gathers
-      path*: string                   ## ckShowFile, ckShowTrace: the file to show; ckPrepare: the next
-      traceIndex*: int                ## ckShowTrace: the trace's index (in its record)
-      recordIndex*: int               ## ckShowTrace: the SEG-D record it counts in; -1: the file
-      listFolder*: bool               ## ckShowFile: the file list lists its folder too
-      view*: Viewport                 ## ckView: what the panel's plot shows now
-      remember*: bool                 ## ckView: a gesture starts; keep the view it replaces for back
-      display*: DisplaySettings       ## ckDisplay: how layer 0 is drawn
-      header*: HeaderChoice           ## ckHeader: the display header's rows
-      order*: seq[SortKey]            ## ckSort: layer 0's keys, the first first; empty: the file's order
-      reverse*: bool                  ## ckReverseAll: every trace of layer 0 reversed, or none
-      edit*: TraceEdit                ## ckEdit: killed, or reversed
-      edited*: seq[int]               ## ckEdit: survey-wide ids of traces of the panel's file
-      on*: bool                       ## ckEdit: the edit given (true) or taken away
-      filter*: TraceFilter            ## ckFilter: layer 0's traces (seismic, auxiliary)
+      panel*: PanelId ## the panel's id (1: the Seismic window; 0 retries the folder)
+      gather*: int ## ckGather: index into the file's gathers
+      path*: string ## ckShowFile, ckShowTrace: the file to show; ckPrepare: the next
+      traceIndex*: int ## ckShowTrace: the trace's index (in its record)
+      recordIndex*: int ## ckShowTrace: the SEG-D record it counts in; -1: the file
+      listFolder*: bool ## ckShowFile: the file list lists its folder too
+      view*: Viewport ## ckView: what the panel's plot shows now
+      remember*: bool ## ckView: a gesture starts; keep the view it replaces for back
+      display*: DisplaySettings ## ckDisplay: how layer 0 is drawn
+      header*: HeaderChoice ## ckHeader: the display header's rows
+      order*: seq[SortKey] ## ckSort: layer 0's keys, the first first; empty: the file's order
+      reverse*: bool ## ckReverseAll: every trace of layer 0 reversed, or none
+      edit*: TraceEdit ## ckEdit: killed, or reversed
+      edited*: seq[int] ## ckEdit: survey-wide ids of traces of the panel's file
+      on*: bool ## ckEdit: the edit given (true) or taken away
+      filter*: TraceFilter ## ckFilter: layer 0's traces (seismic, auxiliary)
       listPath*: string
         ## ckExportEdits, ckImportEdits: the list's file (`.nif`, or `.csv`)
       processing*: Processing
@@ -243,12 +243,12 @@ type
         ## ckDisplayPreset: draw the panel as the preset says (its orientation
         ## kept), save the panel's display under the name (replacing a preset
         ## so named), rename the preset, or delete it
-      presetName*: string             ## ckDisplayPreset: the preset's name, in any case
-      presetNewName*: string          ## ckDisplayPreset: the new name, to rename
-    of ckHover: trace*: int           ## survey-wide trace id; -1 for none
+      presetName*: string ## ckDisplayPreset: the preset's name, in any case
+      presetNewName*: string ## ckDisplayPreset: the new name, to rename
+    of ckHover: trace*: int ## survey-wide trace id; -1 for none
     of ckSelect:
-      traces*: seq[int]               ## survey-wide trace ids
-      mode*: SelectMode               ## how they change the selection
+      traces*: seq[int] ## survey-wide trace ids
+      mode*: SelectMode ## how they change the selection
     of ckClearSelection, ckResetSettings, ckFileMemory: discard
     of ckForgetFiles:
       forget*: seq[string]
@@ -256,19 +256,19 @@ type
     of ckSettings: settings*: Settings
     of ckExportSettings, ckImportSettings, ckLoadLayout, ckExportLayout, ckImportLayout,
         ckExportLog:
-      docPath*: string                ## the file written or read
+      docPath*: string ## the file written or read
     of ckLayout: arrangement*: string ## the toolkit's layout text
     of ckSaveLayout: layoutName*: string
       ## the name to keep it under
     of ckUnloadSurvey: layer*: SurveyLayerId
       ## the survey layer's id
     of ckMapView:
-      mapView*: MapView               ## what the map shows now
-      mapRemember*: bool              ## a gesture starts: keep the view it replaces for back
+      mapView*: MapView ## what the map shows now
+      mapRemember*: bool ## a gesture starts: keep the view it replaces for back
     of ckMapBack: discard
     of ckMapLayer:
-      mapLayer*: MapLayerKey          ## the layer: its kind, file and role
-      shown*: bool                    ## drawn, or hidden
+      mapLayer*: MapLayerKey ## the layer: its kind, file and role
+      shown*: bool ## drawn, or hidden
     of ckSelectPoints, ckHoverPoints, ckShowPoints:
       points*: seq[PointRef]
         ## ckSelectPoints: the points; ckHoverPoints: those under the
@@ -349,10 +349,10 @@ type
     ## Something the user waits for that the drive does not answer: what the
     ## plot and the Files window say, with Cancel and Retry.
     kind*: WaitKind
-    path*: string     ## the file or the folder
+    path*: string ## the file or the folder
     silent*: Duration ## how long it has not answered (on `fs.now`)
-    job*: JobId       ## the job Cancel stops (an open, a listing); `NoJob` for none
-    why*: string      ## wkUnreadable: why, in plain words
+    job*: JobId ## the job Cancel stops (an open, a listing); `NoJob` for none
+    why*: string ## wkUnreadable: why, in plain words
     cause*: UnreadCause ## wkUnreadable: a drive that fails, a file cut short, or a stop
 
   Pending = object
@@ -415,10 +415,10 @@ type
     geometry: ref SurveyGeometry ## once read: kept alive while the join reads it
     plan: JoinPlan
     survey: JoinSurvey
-    joined: bool                 ## the join's job said it was done (`mkJoined`)
-    revision: int                ## the file's keys' revision after the join (`mkJoined`)
-    held: int = -1               ## the holds on the file its job found: none (-1: it never ran)
-    paused: seq[PanelId]         ## the panels whose readers let go of the file for it
+    joined: bool ## the join's job said it was done (`mkJoined`)
+    revision: int ## the file's keys' revision after the join (`mkJoined`)
+    held: int = -1 ## the holds on the file its job found: none (-1: it never ran)
+    paused: seq[PanelId] ## the panels whose readers let go of the file for it
 
   Joined* = object
     ## An open file joined with survey files: what it was joined with and how.
@@ -488,14 +488,14 @@ type
   Remembered = object
     ## An opened file's place in what is remembered (`core/filememory`).
     path: string
-    identity: FileIdentity  ## known once `job` has posted it
-    known: bool             ## `identity` is known (the quick one at least)
-    modified: Time          ## the file's modification time as it was identified
-    size: int64             ## its size as the session opened it
-    job: JobId              ## the identification under way; `NoJob` for none
-    hashJob: JobId          ## the full hash under way; `NoJob` for none
-    hashed: bool            ## `identity.full` known
-    doc: string             ## the store's document its edits are kept in; "" for none yet
+    identity: FileIdentity ## known once `job` has posted it
+    known: bool            ## `identity` is known (the quick one at least)
+    modified: Time         ## the file's modification time as it was identified
+    size: int64            ## its size as the session opened it
+    job: JobId             ## the identification under way; `NoJob` for none
+    hashJob: JobId         ## the full hash under way; `NoJob` for none
+    hashed: bool           ## `identity.full` known
+    doc: string            ## the store's document its edits are kept in; "" for none yet
     waiting: seq[FileRecord]
       ## documents of its quick identity that wait for the full hash to say
       ## whether they are about this file
@@ -506,15 +506,15 @@ type
       ## the document `doc` as it was brought back before the hash of every
       ## byte confirmed it: written back as it was when the hash says it
       ## was another file's
-    savedRev: int           ## the edits' `keptRevision` written last
-    changedAt: MonoTime     ## when its kept edits changed last
-    opened: Time            ## when it was opened
-    saidWaiting: bool       ## said that its edits wait for its identity
+    savedRev: int ## the edits' `keptRevision` written last
+    changedAt: MonoTime ## when its kept edits changed last
+    opened: Time ## when it was opened
+    saidWaiting: bool ## said that its edits wait for its identity
     ownDoc: bool
       ## `doc` was made in this run for edits made before the hash of every
       ## byte came (not one brought back): a document waiting for that hash
       ## may still be this file's
-    openModified: Time      ## the file's modification time as the session opened it
+    openModified: Time ## the file's modification time as the session opened it
     pendingRev: int
       ## the edits' `keptRevision` its pending document (`pendingName`) was
       ## written with, while its identity is not known; -1 for none
@@ -538,7 +538,7 @@ type
     ## Everything the views show. Move-only.
     log: MessageLog
     selection: Selection
-    hoverNote: string     ## why the hover lights nothing up; "" when it does
+    hoverNote: string                          ## why the hover lights nothing up; "" when it does
     linked: Linked
     inspect: Inspection
       ## what the Headers window shows of the files' bytes
@@ -552,8 +552,8 @@ type
       ## the newest request's
     answerGen: uint64
       ## the newest answer's taken in
-    survey: Survey        ## the survey files loaded and the open files' positions
-    map: MapState         ## the map's view and hidden layers
+    survey: Survey ## the survey files loaded and the open files' positions
+    map: MapState ## the map's view and hidden layers
     loading: seq[Loading] ## the jobs that fill the survey
     droppedLoads: seq[JobId]
       ## loads a cancelled import started: a layer one still posts is not taken
@@ -600,7 +600,7 @@ type
     jump: tuple[path: string; trace, record: int]
       ## a trace to show once its file is open (`ckShowTrace`); "" for none
     oldScans: seq[JobId] ## scans replaced by a newer listing: they end quietly
-    quietScan: JobId     ## a listing of the folder listed last: a missing folder is said quietly
+    quietScan: JobId ## a listing of the folder listed last: a missing folder is said quietly
     unread: seq[tuple[panel: PanelId; cause: UnreadCause; why: string]]
       ## the panels whose file cannot be read now, and why (`mkUnread`)
     speeds: seq[tuple[panel: PanelId; ms: float64]]
@@ -696,7 +696,7 @@ type
     spectra: seq[SpectrumWindow]
       ## the live spectrum panel first, then the FFT windows in the order opened
     spectrumGen: uint64 ## the newest spectrum request's
-    liveKey: LiveKey    ## what the live panel asked for last
+    liveKey: LiveKey ## what the live panel asked for last
     spectrumReader: SpectrumReader
       ## computes the spectra; started when first asked. Last: it stops (and
       ## ends its holds) first.
@@ -4453,7 +4453,7 @@ proc editTraces(state: var AppState; cmd: Command) =
     return
   if i < 0:
     state.ignore(cmd, $cmd.panel & (if cmd.kind == ckReverseAll: " shows nothing"
-                                    else: " shows no file"))
+      else: " shows no file"))
     return
   let s = state.sessions[i]
   let keep = keeps(cmd.origin)
