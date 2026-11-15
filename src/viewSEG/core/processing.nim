@@ -34,6 +34,7 @@ import std/[math, strutils]
 import parseSEG
 import processSEG/pipeline
 import processSEG/filter/design
+import ./viewport
 
 export design.Corners
 
@@ -231,6 +232,32 @@ proc filterPipeline*(p: Processing; dtMs: float64): Pipeline =
       result.add filterOp(spec)
   except ValueError:
     discard # corners `bounded` would not give: no filter
+
+proc filterPipeline*(p: Processing; layout: PanelLayout): Pipeline =
+  ## The filters `p` runs on a panel's traces of `layout`: with no sample
+  ## interval in the headers, the DC removal alone (a frequency means
+  ## nothing without one: `intervalNote`).
+  if not layout.noInterval: return p.filterPipeline(layout.dtMs)
+  Processing(dc: p.dc, raw: p.raw).filterPipeline(layout.dtMs)
+
+func intervalNote*(p: Processing; layout: PanelLayout): string =
+  ## What the filters' drop-down says when the traces of `layout` have no
+  ## sample interval and `p` sets a pass band or a notch; "" otherwise.
+  var hz = p.band != pbNone
+  for n in p.notches:
+    if n.on: hz = true
+  if layout.noInterval and hz:
+    "The headers of this file give no sample interval, so the pass band and the " &
+      "notches, set in Hz, are not applied to it" &
+      (if p.dc != dcNone: "; the DC removal is." else: ".")
+  else: ""
+
+func filterNote*(p: Processing; layout: PanelLayout): string =
+  ## What the filters' drop-down says of `p` on traces of `layout`: that
+  ## they have no sample interval, or what Nyquist cuts (`limitNote`); "" when
+  ## nothing.
+  result = p.intervalNote(layout)
+  if result.len == 0 and not layout.noInterval: result = p.limitNote(layout.dtMs)
 
 func describe*(p: Processing): string =
   ## `p` in a few words, as the strip's button says it: "4-8-60-80 Hz,

@@ -494,7 +494,10 @@ the polarity and the gain, as before. The sliders are logarithmic (fine at low
 frequencies), each corner between its neighbours (`f1 < f2 <= f3 < f4`, `core` keeps them
 so whoever sends them), and end at the file's Nyquist frequency: a corner or notch set
 for a finer interval is cut at Nyquist or left out for this file, and the drop-down says
-so; the processing never stops for it.
+so; the processing never stops for it. A file whose headers give no sample interval
+(its time axis counts samples) gets the DC removal alone: the drop-down says that the
+pass band and the notches, set in Hz, are not applied to it, and the log says it once
+when the record is shown, as it says any reason the filters cannot run once for the file.
 
 **Raw / processed:** the **Raw** toggle beside the button, and `P` while the plot has
 the focus, show the traces without the filters, under the same gain, and filtered again;

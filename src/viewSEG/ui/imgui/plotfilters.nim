@@ -182,7 +182,7 @@ proc drawSettings(p: Panel; pr: Processing; hasAux: bool; reach: FilterReach;
     igPopStyleColor(1)
     igPopTextWrapPos()
     marks.mark("plot.filters reach")
-  let note = pr.limitNote(dt)
+  let note = pr.filterNote(p.layout)
   if note.len > 0:
     igPushTextWrapPos(w * 2.5)
     igTextDisabled("%s", note.cstring)

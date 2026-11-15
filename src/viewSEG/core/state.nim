@@ -1734,7 +1734,7 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
                             elif slow: (SlowReadAhead, SlowKeepAhead, SlowMaxAheadValues)
                             else: (ReadAhead, KeepAhead, MaxAheadValues)
   let flow = p.layers[0].displayPipeline(state.gatherKind(p.layers[0]))
-  let filters = p.layers[0].processing.filterPipeline(p.layout.dtMs)
+  let filters = p.layers[0].processing.filterPipeline(p.layout)
   # While it filters, whole traces: a filter's margin grows as its ramp
   # narrows, and the samples the reader holds must still be enough after
   # a slider has moved, so that it filters them again without a read. The
@@ -2165,7 +2165,7 @@ proc followInspect(state: var AppState) =
     if shown >= 0:
       let layer = state.panels[k].layers[0]
       want.shown = state.sessions[shown].id
-      let filters = layer.processing.filterPipeline(state.panels[k].layout.dtMs)
+      let filters = layer.processing.filterPipeline(state.panels[k].layout)
       want.flow = (layer.reversed, stepsText(layer.pipeline) & "|" & stepsText(filters) &
         (if layer.processing.aux: "|aux" else: ""), state.gatherKind(layer))
       want.display = layer.display
@@ -2204,7 +2204,7 @@ proc followInspect(state: var AppState) =
   if want.displayed and shown >= 0:
     let layer = state.panels[k].layers[0]
     req.flow = layer.displayPipeline(state.gatherKind(layer))
-    req.filters = layer.processing.filterPipeline(state.panels[k].layout.dtMs)
+    req.filters = layer.processing.filterPipeline(state.panels[k].layout)
     req.filterAux = layer.processing.aux
   for n, t in want.traces:
     let i = state.findTrace(t)
@@ -5054,8 +5054,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
         # again, from the samples at hand: the plot from before stays until
         # the first new tile, which sets the level again (a filter changes
         # the amplitudes).
-        let dt = p.layout.dtMs
-        if pr.filterPipeline(dt).stepsText != was.filterPipeline(dt).stepsText or
+        let lay = p.layout
+        if pr.filterPipeline(lay).stepsText != was.filterPipeline(lay).stepsText or
             (pr.aux != was.aux and pr.filtering):
           let first = p.requestGen != p.filterGen or p.filterRun == 0
           if first: p.filterRun = p.requestGen + 1 # the first of a run of filter changes

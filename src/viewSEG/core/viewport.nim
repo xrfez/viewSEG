@@ -93,6 +93,8 @@ type
     samples*: int ## samples of the longest of them
     dtMs*: float64 ## the sample interval
     t0Ms*: float64 ## the time of sample 0
+    noInterval*: bool
+      ## the headers give no sample interval: `dtMs` is 1, counting samples
 
   ReadRequest* = object
     ## The traces and samples a panel asks its reader for.

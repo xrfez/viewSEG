@@ -176,6 +176,8 @@ type
     pool: ProcessPool    ## the processing's workers; none until first needed
     toldShort: bool      ## the file was found shorter than when it was opened: said once
     toldNotNumbers: bool ## samples that are not numbers were found in the file: said once
+    toldFilters: string  ## what was said last of the filters of `toldPath`: said once
+    toldPath: string
 
 proc `=destroy`*(x: PanelReader)
 proc `=wasMoved`*(x: var PanelReader) = x.p = nil
@@ -198,6 +200,14 @@ proc note(rd: Reader; severity: Severity; text: string) =
   ## Posts `text` for the log, about the panel's file.
   rd.r.poster.post Msg(job: NoJob, kind: mkLog, entry: LogEntry(time: getTime(),
     severity: severity, source: rd.name, text: text))
+
+proc tellFilters(rd: var Reader; text: string) =
+  ## Says why the filters do not run on the panel's file, once for the file
+  ## and that reason: a slider dragged asks again every frame.
+  if rd.toldPath != rd.src.path or rd.toldFilters != text:
+    rd.toldPath = rd.src.path
+    rd.toldFilters = text
+    rd.note(sevError, text)
 
 proc interrupted(r: ptr ReaderObj): bool =
   ## Whether a newer note is waiting: then the current work is given up.
@@ -301,8 +311,10 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
             "sample interval than the seismic traces, and are drawn at theirs (" &
             $(k0.intervalUs / 1000) & " ms): their times are not to scale.")
     else:
+      layout.noInterval = true
       rd.note(sevWarning, "The sample interval of " & rd.name & " is not known: the time " &
-        "axis counts samples (1 ms each).")
+        "axis counts samples (1 ms each), and the filters' pass band and notches, set in " &
+        "Hz, are not applied to it.")
     if k0.t0Ms.classify notin {fcNan, fcInf, fcNegInf}: layout.t0Ms = k0.t0Ms
     let step = max(1, n div HeaderScan)
     var k = 0
@@ -429,7 +441,7 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
           rd.poolOf.apply(pr.filterPlan, b, meta)
         pr.filtered += b.len
       except ValueError as e:
-        rd.note(sevError, "The filters stopped on " & rd.name & ": " & e.msg)
+        rd.tellFilters("The filters stopped on " & rd.name & ": " & e.msg)
         pr.filtering = false
     if pr.processing: rd.poolOf.apply(pr.plan, b, meta)
   except ValueError as e:
@@ -505,7 +517,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       pr.filterPlan = req.filters.compile(float32, rd.layout.dtMs, cols,
         recordSamples = rd.layout.samples)
     except ValueError as e:
-      rd.note(sevError, "The filters cannot run on " & rd.name & ": " & e.msg)
+      rd.tellFilters("The filters cannot run on " & rd.name & ": " & e.msg)
       pr.filtering = false
   if pr.processing:
     try:
