@@ -18,6 +18,10 @@
 ##   is as it was (bytes and time).
 ## - A file that does not answer is not tried again while its first try
 ##   still hangs: each try that hangs holds a thread until the drive answers.
+## - A shot two files hold (a copy of a record): listed latest first, the
+##   newer file first whatever the order the files were read in, also once
+##   the survey is matched again; a click shows the newer; `shotPath`
+##   names the other.
 ## - A folder whose drive stops answering holds `MaxHanging` threads, not
 ##   one a file: no job starts while that many given up still hang, the
 ##   state says the folder does not answer, and the reading goes on (every
@@ -28,7 +32,9 @@
 ## "listed again" found 3 mapped reads of shot-2.sgy; with a file tried again
 ## after `RetryAfter` whatever its first try was doing, "2 tries of the file
 ## hang"; with no bound on the jobs given up that still hang, "3 files'
-## reads hang" in a folder that does not answer (the bound is 2).
+## reads hang" in a folder that does not answer (the bound is 2); with the
+## records kept in the order they were read (`place` appending), "the
+## newer file first" found the older first.
 
 import std/[os, sets, tables, times]
 import viewSEG/core/state
@@ -136,6 +142,38 @@ withFixtures fx:
     doAssert st.settle(st.shots.done(5) and st.shots.later.len == 0), "tried again"
     doAssert st.shots.pointRefs.len == 5
     doAssert uiCalls().len == 0, $uiCalls()
+    st.shutdown()
+
+  block oneShotTwoFiles:
+    # The older file listed first (its name), the newer second.
+    let twice = fx.dir / "twice"
+    createDir(twice)
+    let older = twice / "a-older.sgy"
+    let newer = twice / "b-newer.sgy"
+    copyFile(paths[1], older)
+    copyFile(paths[1], newer)
+    let t = getTime()
+    setLastModificationTime(older, t - initDuration(hours = 2))
+    setLastModificationTime(newer, t - initDuration(hours = 1))
+    var st = initAppState(indexCache = fx.dir / "cache-twice")
+    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+    st.apply Command(kind: ckBrowse, paths: @[twice])
+    doAssert st.settle(st.shots.done(2)), $st.shots.shotFiles
+    let source = st.sourcePoint(0, 1)
+    var at = st.shots.shotsAt(source)
+    doAssert at.len == 2 and at[0].path == newer and at[1].path == older,
+      "the newer file first: " & $at
+    # The survey matched again (loaded again): the same order.
+    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+    doAssert st.settle(st.jobs.active.len == 0 and st.shots.surveyRev == st.survey.revision)
+    at = st.shots.shotsAt(st.sourcePoint(0, 1))
+    doAssert at.len == 2 and at[0].path == newer, "matched again: " & $at
+    st.apply Command(kind: ckShowPoints, points: @[st.sourcePoint(0, 1)])
+    doAssert st.settle(st.sessions.len == 1 and st.selection.activeGather.file ==
+      st.sessions[0].id) and st.sessions[0].path == newer, "a click shows the newer"
+    st.apply Command(kind: ckShowPoints, points: @[st.sourcePoint(0, 1)], shotPath: older)
+    doAssert st.settle((let i = st.findSession(st.selection.activeGather.file);
+      i >= 0 and st.sessions[i].path == older)), "the menu's other file"
     st.shutdown()
 
   block aFolderThatDoesNotAnswer:

@@ -72,6 +72,7 @@ const
     ## how much wider than its source's disc the ring round a source with a
     ## file in the folder is, pixels at 100 %
   hoveredSize = 12'f32
+  menuShots = 20 ## files that hold a source's shot named one by one in its menu
   scalePixels = 150'f32 ## the longest the scale bar may be, at 100 %
 
 type
@@ -1034,10 +1035,24 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
       var traces = 0
       for p in mu.menuPoints: traces += st.survey.tracesAt(p).len
       let selected = mu.menuPoints[0].key in st.selection.pointKeys
-      if mu.menuShows:
+      var places: seq[ShotPlace] # the listed files that hold a source's shot
+      for p in mu.menuPoints:
+        if places.len == 0: places = st.shots.shotsAt(p)
+      if mu.menuShows and traces > 0:
         if igMenuItem_Bool("Show its record", "Click", false, true):
           res.commands.add Command(kind: ckShowPoints, points: mu.menuPoints)
         marks.mark("map menu.show")
+      # Each listed file that holds the shot; a click shows the first when no
+      # open file has its traces.
+      for k in 0 ..< min(places.len, menuShots):
+        let label = "Show " & places[k].shotName & "##shot" & $k
+        let key: cstring = if k == 0 and traces == 0: "Click" else: nil
+        if igMenuItem_Bool(label.cstring, key, false, true):
+          res.commands.add Command(kind: ckShowPoints, points: mu.menuPoints,
+            shotPath: places[k].path)
+        marks.mark(if k == 0 and traces == 0: "map menu.show" else: "map menu.shot " & $k)
+      if places.len > menuShots:
+        igTextDisabled("%s", ("... and " & $(places.len - menuShots) & " more").cstring)
       let what = if traces == 0: "Select it"
                  elif traces == 1: "Select it and its trace"
                  else: "Select it and its " & $traces & " traces"

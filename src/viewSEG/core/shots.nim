@@ -29,9 +29,14 @@
 ## (as parseSEG's join matches stations: the same index, index 0 any), or,
 ## for a record whose headers name no source station, when its source's
 ## coordinates are its place, or else when the relation files plan the
-## record's FFID for that source.
+## record's FFID for that source. A source several listed records were shot
+## at (a reshoot, a copy of a file) lists them latest first: the newest file
+## (by its time), files of one time by path, and in one file its last record
+## first; a click shows the first (`ckShowPoints`), the point's menu each.
+## A file read again, or gone, takes only its own records out (`unplace`):
+## many files changed at once cost what they hold, not a match of all.
 
-import std/[math, monotimes, os, sets, tables, times]
+import std/[math, monotimes, os, sequtils, sets, tables, times]
 import parseSEG
 import filejobs, filesystem, inbox, jobs, session, shotfiles, spread, survey, threads
 
@@ -74,8 +79,11 @@ type
     listedRev*: int                  ## the file list's `entriesRev` the files to read were found from
     surveyRev*: int                  ## the survey's revision `points` were matched with
     points*: Table[int, seq[ShotPlace]]
-      ## per survey file source point (`PointRef.key`): the listed records shot there
+      ## per survey file source point (`PointRef.key`): the listed records shot
+      ## there, latest first (`latestFirst`)
     pointRefs*: seq[PointRef]        ## those points, each once
+    placedAt*: Table[string, seq[int]]
+      ## per file: the points (`PointRef.key`) its records are at
     revision*: int                   ## bumped on every change of `files` or `points`
     started*: MonoTime               ## when the listing's first job started (`fs.now`)
     finished*: MonoTime              ## when the last file was answered
@@ -171,6 +179,45 @@ proc shotsWork*(gen: uint64; paths: seq[string]; cacheDir: string; to: Poster): 
 
 # --------------------------------------------------------- matching --
 
+func latestFirst(x: ShotIndex; a, b: ShotPlace): bool =
+  ## Whether listed record `a` comes before `b` at one source: the newer
+  ## file first (a reshoot, a file written again), then by path; in one
+  ## file, the later record first.
+  let (ta, tb) = (x.files[a.path].modified, x.files[b.path].modified)
+  if ta != tb: ta > tb
+  elif a.path != b.path: a.path < b.path
+  else: a.gather > b.gather
+
+proc place(x: var ShotIndex; p: PointRef; at: ShotPlace) =
+  ## Puts listed record `at` at survey source point `p`, in its place in
+  ## the order (`latestFirst`).
+  let key = p.key
+  if key notin x.points:
+    x.points[key] = @[]
+    x.pointRefs.add p
+  x.points.withValue(key, places):
+    var i = places[].len
+    while i > 0 and x.latestFirst(at, places[][i - 1]): dec i
+    places[].insert(at, i)
+  x.placedAt.withValue(at.path, keys):
+    if key notin keys[]: keys[].add key
+  do:
+    x.placedAt[at.path] = @[key]
+
+proc unplace(x: var ShotIndex; path: string): bool =
+  ## Takes the records of file `path` off the points they are at; true when
+  ## a point is left with none (`pointRefs` is then for the caller to prune).
+  var keys: seq[int]
+  if x.placedAt.pop(path, keys):
+    for key in keys:
+      x.points.withValue(key, places):
+        places[].keepItIf(it.path != path)
+        if places[].len == 0: result = true
+      if key in x.points and x.points[key].len == 0: x.points.del key
+
+proc pruneRefs(x: var ShotIndex) =
+  x.pointRefs.keepItIf(it.key in x.points)
+
 proc matchOne*(x: var ShotIndex; s: Survey; path: string; shot: ShotOf) =
   ## Matches listed record `shot` of file `path` to the survey files'
   ## sources: by its source station; without one, by its source's place
@@ -203,45 +250,43 @@ proc matchOne*(x: var ShotIndex; s: Survey; path: string; shot: ShotOf) =
               let p = l.stationPoint(prSource, Station(line: run.fixed.line,
                 point: run.fixed.point, index: run.fixed.index))
               if p >= 0: places.add PointRef(layer: l.id, role: prSource, point: p)
-  for p in places:
-    let key = p.key
-    if key notin x.points:
-      x.points[key] = @[]
-      x.pointRefs.add p
-    x.points[key].add (path, shot.gather, shot.record)
+  for p in places: x.place(p, (path, shot.gather, shot.record))
 
 proc match*(x: var ShotIndex; s: Survey) =
   ## Matches every listed record to the survey files' sources again (the
   ## survey changed): `points`, `pointRefs`.
   x.points.clear()
   x.pointRefs.setLen 0
+  x.placedAt.clear()
   x.surveyRev = s.revision
   for path, f in x.files.pairs:
     for shot in f.shots: x.matchOne(s, path, shot)
   inc x.revision
 
 proc forget*(x: var ShotIndex; s: Survey; paths: openArray[string]) =
-  ## Takes the records of files `paths` out (no longer listed), matching
-  ## the others again once (not once a file: a folder emptied at once held
-  ## the window for seconds).
-  var any = false
+  ## Takes the records of files `paths` out (no longer listed), each file's
+  ## from the points it is at (a folder emptied at once held the window for
+  ## seconds when the rest were matched again).
+  var (any, emptied) = (false, false)
   for path in paths:
     if path in x.files:
+      emptied = x.unplace(path) or emptied
       x.files.del path
       any = true
-  if any: x.match(s)
+  if emptied: x.pruneRefs()
+  if any: inc x.revision
 
 proc take*(x: var ShotIndex; s: Survey; f: sink FileShots) =
   ## The shots a job read of one file.
   let path = f.path
   let i = x.jobPaths.find(path)
   if i >= 0: x.jobPaths.delete(i)
-  let again = path in x.files
+  # A file read again (changed): its records before taken off, not every
+  # file matched again (many files copied over at once).
+  if path in x.files and x.unplace(path): x.pruneRefs()
   x.files[path] = f
-  if again: x.match(s)
-  else:
-    for shot in x.files[path].shots: x.matchOne(s, path, shot)
-    inc x.revision
+  for shot in x.files[path].shots: x.matchOne(s, path, shot)
+  inc x.revision
 
 func shotsAt*(x: ShotIndex; p: PointRef): seq[ShotPlace] =
   ## The listed records shot at survey source point `p`; none for another point.

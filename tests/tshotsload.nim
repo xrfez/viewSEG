@@ -7,14 +7,17 @@
 ## up (it is done before the first shot is read, and a new listing while
 ## shots are read is done as quickly as the first); and the UI thread's
 ## work per drained inbox stays small (no frame stalls), the longest said,
-## also when half the files are taken out of the folder at once.
+## also when half the files are taken out of the folder at once, and when
+## the other half are written again at once (each read again).
 ##
 ## Seen to fail: with every file's shots matched to the survey again for
 ## each file read (`match` in place of `matchOne`), "the UI thread's work"
 ## found a drain of 212 ms; with the shots matched again for each file
-## taken out, "files taken out: a drain of 3288 ms" (a debug build).
+## taken out, "files taken out: a drain of 3288 ms" (a debug build); with
+## every file's shots matched again for each file read again, "files written
+## again: a drain of 57 ms, 2770 ms in all" (129 ms in all now; a debug build)
 
-import std/[monotimes, os, strutils, times]
+import std/[monotimes, os, strutils, tables, times]
 import parseSEG
 import viewSEG/core/state
 import utils/[fixtures, waiting]
@@ -120,4 +123,28 @@ withFixtures fx:
   echo "tshotsload: ", Files div 2, " files taken out: their shots gone in ",
     (getMonoTime() - t2).ms, "; the longest drain ", gone.ms
   doAssert gone < initDuration(milliseconds = 50), "files taken out: a drain of " & gone.ms
+  # The other half written again at once (a folder copied over): each read
+  # again, only its own shots matched again.
+  let t3 = getTime()
+  for i in countup(1, Files - 1, 2):
+    setLastModificationTime(folder / ("shot" & align($i, 5, '0') & ".sgy"),
+      t3 + initDuration(seconds = 10))
+  var (again2, busy) = (Duration(), Duration())
+  let t4 = getMonoTime()
+  doAssert waitUntil((
+    let d0 = getMonoTime()
+    discard later.drainInbox()
+    again2 = max(again2, getMonoTime() - d0)
+    busy += getMonoTime() - d0
+    var fresh = 0
+    for f in later.shots.files.values:
+      if f.modified > t3: inc fresh
+    fresh == Files div 2 and later.shots.pending.len == 0 and later.shots.job == NoJob),
+    initDuration(seconds = 120)), "files written again: not all read again"
+  doAssert later.shots.pointRefs.len == Files div 2
+  echo "tshotsload: ", Files div 2, " files written again: read again in ",
+    (getMonoTime() - t4).ms, "; the UI thread's drains ", busy.ms, " in all, the longest ",
+    again2.ms
+  doAssert again2 < initDuration(milliseconds = 50) and busy < initDuration(milliseconds = 1000),
+    "files written again: a drain of " & again2.ms & ", " & busy.ms & " in all"
   later.shutdown()

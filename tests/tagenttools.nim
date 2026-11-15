@@ -192,8 +192,8 @@ block schemaFromCommand:
   doAssert takes(ckMapView) == @["mapView", "mapRemember"], $takes(ckMapView)
   doAssert takes(ckMapLayer) == @["mapLayer", "shown"], $takes(ckMapLayer)
   doAssert takes(ckSelectPoints) == @["points", "pointMode"], $takes(ckSelectPoints)
-  doAssert takes(ckHoverPoints) == @["points"] and takes(ckShowPoints) == @["points"],
-    $takes(ckHoverPoints)
+  doAssert takes(ckHoverPoints) == @["points"] and
+    takes(ckShowPoints) == @["points", "shotPath"], $takes(ckShowPoints)
   # the geometry join: a user's in a window, in memory, no file written
   for k in [ckJoin, ckSelectUnmatched]:
     doAssert k in Offered and $k in kinds and Docs.kinds.getOrDefault($k).len > 0, $k

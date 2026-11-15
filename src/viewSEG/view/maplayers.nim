@@ -376,19 +376,25 @@ func merged*(infos: openArray[PointInfo]): seq[PointInfo] =
         seen.add l
     if m.title.len > 0 or m.lines.len > 0: result.add m
 
+func shotName*(place: ShotPlace): string =
+  ## A listed record as the map names it: "shot-3.sgy (FFID 1003)".
+  elided(place.path.extractFilename) & (if abs(place.record) < 1e15 and
+    place.record == round(place.record): " (FFID " & $int64(place.record) & ")" else: "")
+
 func shotLines*(st: AppState; p: PointRef): seq[string] =
   ## For a survey file's source whose record a file of the folder listed
-  ## holds: "Shot in the folder: shot-3.sgy (FFID 1003)"; none for another
-  ## point.
+  ## holds: "Shot in the folder: shot-3.sgy (FFID 1003)", the latest first
+  ## (`ShotIndex.points`), and for several which a click shows; none for
+  ## another point.
   let places = st.shots.shotsAt(p)
   if places.len == 0: return
   var names: seq[string]
-  for (path, _, record) in places:
-    if names.len < 3:
-      names.add elided(path.extractFilename) & (if abs(record) < 1e15 and record == round(record):
-        " (FFID " & $int64(record) & ")" else: "")
+  for place in places:
+    if names.len < 3: names.add place.shotName
   result.add "Shot in the folder: " & names.join(", ") &
     (if places.len > names.len: ", ... (" & $places.len & " records)" else: "")
+  if places.len > 1:
+    result.add "A click shows the first (the newest file); the right-click menu lists each"
 
 proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
   ## What the map says of point `p`: its role, station and file; its

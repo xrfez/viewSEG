@@ -248,6 +248,9 @@ type
         ## ckSelectPoints: replace, add, toggle or remove, their traces
         ## likewise; or a range, from the point clicked last along its line
         ## to the first of `points`
+      shotPath*: string
+        ## ckShowPoints: of the listed files that hold a source's shot, the
+        ## one to show it from; "" the first (the latest, `ShotIndex.points`)
     of ckJoin:
       joinFile*: SessionId
         ## the open file the survey is matched to; none: the map only
@@ -1773,8 +1776,10 @@ proc showPoints(state: var AppState; cmd: Command) =
   ## `ckShowPoints`: the main panel shows the record of the traces recorded
   ## at `cmd.points` (a source's shot record), in the file it shows when it
   ## has some, else in the file that has the first; nothing changes when it
-  ## shows one of them already.
+  ## shows one of them already. With `shotPath`, that listed file's record of
+  ## the shot (the point's menu chose it).
   let k = state.findPanel(MainPanel)
+  if cmd.shotPath.len > 0 and state.showListedShot(cmd): return
   var traces: seq[int]
   for p in cmd.points: traces.add state.survey.tracesAt(p)
   if traces.len == 0:
@@ -2871,12 +2876,18 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
 proc showListedShot(state: var AppState; cmd: Command): bool =
   ## `ckShowPoints` on a survey source no open file's trace was recorded at:
   ## the main panel shows the record a listed file holds of its shot (opened
-  ## first, as the user's click asked); false when no listed file has one.
+  ## first, as the user's click asked): the latest (the first listed), or
+  ## the one of file `cmd.shotPath`; false when no listed file has one.
   let k = state.findPanel(MainPanel)
   for p in cmd.points:
     let places = state.shots.shotsAt(p)
     if places.len > 0 and k >= 0:
-      let (path, gather, _) = places[0]
+      var chosen = 0
+      if cmd.shotPath.len > 0:
+        let wanted = canonical(cmd.shotPath)
+        for j in countdown(places.high, 0):
+          if places[j].path == wanted: chosen = j
+      let (path, gather, _) = places[chosen]
       var i = -1
       for j, s in state.sessions:
         if s.path == path: i = j
