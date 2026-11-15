@@ -12,11 +12,17 @@
 ##   1200/3937 m), and a scale bar's length and pixels in it; nothing
 ##   converted from a unit not known.
 ##
+## - H201's factor rounded as files write it (0.3048006, 0.304801): the
+##   foot it is nearest, US survey or international.
+##
 ## Seen to fail: with "US ft" as the abbreviation of US survey feet, the
 ## US survey feet case failed; with lengths converted by 0.3048 for US
-## survey feet too, "metres from US survey feet" failed.
+## survey feet too, "metres from US survey feet" failed; with the factor
+## matched to 1e-9 (as it was), `factorsAsWritten` took 0.3048006 for
+## international feet.
 
 import std/math
+import parseSEG/survey/sps
 import viewSEG/core/[mapview, state]
 import viewSEG/view/maplayers
 import utils/[fixtures, waiting]
@@ -47,6 +53,18 @@ withFixtures fx:
       doAssert st.unitsOf == text, name & ": " & st.unitsOf
       doAssert st.shownLengths == (unit, 1.0), name
       doAssert lengthText(500, st.unitsOf) == (if text.len > 0: "500 " & text else: "500 units")
+
+  block factorsAsWritten:
+    # H201's factor as survey files write it, rounded: the foot it is nearest
+    # (the two differ by 2 parts in a million). A factor that is neither
+    # leaves the words to say.
+    for (factor, words, unit) in [(0.3048006096, "feet", suUsFeet), (0.3048006, "feet", suUsFeet),
+        (0.304801, "feet", suUsFeet), (0.30480061, "Metres", suUsFeet),
+        (0.3048, "feet", suFeet), (0.30480, "US survey feet", suFeet),
+        (0.304800, "", suFeet), (1.0, "feet", suMetres), (0.9999999, "", suMetres),
+        (0.3047, "feet", suFeet), (0.3047, "", suNotGiven), (NaN, "US ft", suUsFeet)]:
+      let got = unitOf(GridUnit(name: words, metres: factor))
+      doAssert got == unit, $factor & " " & words & ": " & $got
 
   block conversions:
     doAssert metresPerUnit(suUsFeet) == 1200 / 3937 and metresPerUnit(suFeet) == 0.3048

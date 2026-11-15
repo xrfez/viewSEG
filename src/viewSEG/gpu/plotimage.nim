@@ -11,12 +11,18 @@
 ##
 ## Drawing is skipped when nothing it depends on changed since the last
 ## image (`PlotFrame`, the tiles and their marks): an idle plot costs the
-## GPU nothing.
+## GPU nothing. **A hover** (the pointer moved to another trace) changes
+## only the pixels of the trace it leaves and of the one it reaches: those
+## two stripes are drawn again, as the whole image is (cleared, every tile
+## in its order), with the rest of the image kept, so the image is the one a
+## whole drawing makes, at the cost of two traces' columns instead of the
+## plot's (on software OpenGL, a whole Morgantown record in wiggles took
+## about 30 ms a hover).
 ##
 ## Everything here runs on the UI thread with the frontend's GL context
 ## current. Objects are freed explicitly (`free`), never by a destructor.
 
-import std/strutils
+import std/[algorithm, math, strutils]
 import ../core/[geometry, panels, tiles, viewport, wiggle]
 import density, gl, textures, wiggle as gpuwiggle
 
@@ -47,6 +53,7 @@ type
     lastTiles: seq[uint64]
     lastHover: seq[int]
     drawn: int      ## images drawn, for tests
+    columns: int    ## columns of the image the last drawing drew (all, or a hover's stripes)
 
 var missing: seq[string]
 var loaded = false
@@ -111,6 +118,10 @@ func maxSize*(r: PlotRenderer): int {.inline.} = r.maxSize
 func imagesDrawn*(r: PlotRenderer): int {.inline.} = r.drawn
   ## How many images it has drawn (an unchanged frame draws none).
 
+func columnsDrawn*(r: PlotRenderer): int {.inline.} = r.columns
+  ## How many of the image's columns the last drawing drew: all of them, or
+  ## the stripes of the traces a hover left and reached (for tests).
+
 proc upload*(r: PlotRenderer; t: Tile): TileTextures =
   ## The GPU's copy of `t`.
   if r.ready: upload(t, r.maxSize) else: TileTextures(id: t.id, hoverRow: -1)
@@ -132,6 +143,42 @@ proc unchanged(r: PlotRenderer; f: PlotFrame; textures: openArray[TileTextures])
     if tt.id != r.lastTiles[i] or tt.hoverRow != r.lastHover[i]: return false
   true
 
+const StripeRoom = 2 ## pixels a hover's stripe reaches past its trace's quad
+
+proc hoverStripes(r: PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
+    textures: openArray[TileTextures]): seq[Slice[int]] =
+  ## When the image shows `f` and `textures` but for the hovered rows: the
+  ## columns of the image that the rows a hover left and reached draw on
+  ## (each row's quad: its column under density, its wiggle's reach), merged
+  ## and in order. None when more than that changed, or when they would
+  ## cover half the image (a whole drawing is as cheap).
+  if r.target == 0 or f != r.last or textures.len != r.lastTiles.len or
+      tiles.len < textures.len:
+    return
+  let v = f.view
+  let perPos = float64(v.columns) / v.traces.width # pixels a position
+  var spans: seq[Slice[int]]
+  for i, tt in textures:
+    if tt.id != r.lastTiles[i]: return @[]
+    if tt.hoverRow != r.lastHover[i]:
+      let q = tiles[i].request
+      let half = (if f.wiggles: max(f.style.reach, 0.5) else: 0.5) * float64(q.stride) +
+        float64(q.stride)
+      for row in [tt.hoverRow, r.lastHover[i]]:
+        if row >= 0:
+          let x = (float64(q.position(row)) - v.traces.lo) * perPos
+          let a = max(0, int(floor(x - half * perPos)) - StripeRoom)
+          let b = min(v.columns - 1, int(ceil(x + half * perPos)) + StripeRoom)
+          if a <= b: spans.add a .. b
+  if spans.len == 0: return
+  spans.sort(proc (a, b: Slice[int]): int = cmp(a.a, b.a))
+  var width = 0
+  for s in spans:
+    if result.len > 0 and s.a <= result[^1].b + 1: result[^1].b = max(result[^1].b, s.b)
+    else: result.add s
+  for s in result: width += s.len
+  if 2 * width > v.columns: result.setLen 0
+
 proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
     textures: openArray[TileTextures]): GLuint =
   ## Draws `tiles` (with their GPU copies `textures`, in the same order;
@@ -144,9 +191,10 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
       not (f.view.timeMs.width > 0):
     return 0
   if r.unchanged(f, textures): return r.target
+  let stripes = r.hoverStripes(f, tiles, textures)
   var lastFbo, lastRead, lastProgram, lastVao, lastActive, lastBuf: GLint
   var lastTex: array[3, GLint]
-  var lastViewport: array[4, GLint]
+  var lastViewport, lastScissor: array[4, GLint]
   var lastClear: array[4, float32]
   glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, addr lastFbo)
   glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, addr lastRead)
@@ -155,6 +203,7 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
   glGetIntegerv(GL_ARRAY_BUFFER_BINDING, addr lastBuf)
   glGetIntegerv(GL_ACTIVE_TEXTURE, addr lastActive)
   glGetIntegerv(GL_VIEWPORT, addr lastViewport[0])
+  glGetIntegerv(GL_SCISSOR_BOX, addr lastScissor[0])
   glGetFloatv(GL_COLOR_CLEAR_VALUE, addr lastClear[0])
   for unit in 0 .. 2:
     glActiveTexture(GL_TEXTURE0 + GLenum(unit))
@@ -170,25 +219,38 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
   glViewport(0, 0, GLsizei(width), GLsizei(height))
   let bg = f.background
   glClearColor(bg.r.float32 / 255, bg.g.float32 / 255, bg.b.float32 / 255, 1)
-  glClear(GL_COLOR_BUFFER_BIT)
   glActiveTexture(GL_TEXTURE0 + 1)
   glBindTexture(GL_TEXTURE_2D, r.lut)
   glActiveTexture(GL_TEXTURE0)
   let look = DensityLook(scale: f.scale, solid: not f.density, solidColour: bg,
     tint: (if f.wiggles: 0'f32 else: f.tint), hover: f.ink.hover, selected: f.ink.selected)
-  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) # premultiplied
   let n = min(tiles.len, textures.len)
-  for i in 0 ..< n:
-    if not tiles.toOpenArray(0, n - 1).hidden(i, f.view):
-      let tt = textures[i]
-      glDisable(GL_BLEND)
-      r.density.use(look)
-      r.density.draw(f.view, tiles[i], tt, tt.hoverRow)
-      if f.wiggles:
-        glEnable(GL_BLEND)
-        r.wiggle.use(f.view, f.style, f.ink)
-        r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = false)
-        r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = true)
+  template drawAll() =
+    glClear(GL_COLOR_BUFFER_BIT)
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) # premultiplied
+    for i in 0 ..< n:
+      if not tiles.toOpenArray(0, n - 1).hidden(i, f.view):
+        let tt = textures[i]
+        glDisable(GL_BLEND)
+        r.density.use(look)
+        r.density.draw(f.view, tiles[i], tt, tt.hoverRow)
+        if f.wiggles:
+          glEnable(GL_BLEND)
+          r.wiggle.use(f.view, f.style, f.ink)
+          r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = false)
+          r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = true)
+  if stripes.len > 0:
+    # Only the hover changed: its stripes drawn again as the whole image is.
+    glEnable(GL_SCISSOR_TEST)
+    r.columns = 0
+    for s in stripes:
+      glScissor(GLint(s.a), 0, GLsizei(s.len), GLsizei(height))
+      drawAll()
+      r.columns += s.len
+    glDisable(GL_SCISSOR_TEST)
+  else:
+    drawAll()
+    r.columns = width
   r.last = f
   r.lastTiles.setLen 0
   r.lastHover.setLen 0
@@ -207,6 +269,7 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
     glBindTexture(GL_TEXTURE_2D, GLuint(lastTex[unit]))
   glActiveTexture(GLenum(lastActive))
   glViewport(lastViewport[0], lastViewport[1], lastViewport[2], lastViewport[3])
+  glScissor(lastScissor[0], lastScissor[1], lastScissor[2], lastScissor[3])
   glClearColor(lastClear[0], lastClear[1], lastClear[2], lastClear[3])
   for i, c in caps:
     if enabled[i]: glEnable(c)

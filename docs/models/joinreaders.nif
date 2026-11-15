@@ -1,0 +1,140 @@
+(stmts#Hypothesis: some interleaving of a panel's reader, the UI thread and the interactive
+ runner lets a reader touch an open file (or hold it) while a geometry join's second job changes
+ its keys, also when that job is cancelled and abandoned while it runs.
+ Source: src/viewSEG/core/state.nim takeJoinPlan (pauseReaders, then the job submitted),
+ newSource (jobs.hold; refused: an empty source shown), endJoin and resumeReaders (hold, then
+ show); src/viewSEG/core/reader.nim show (UI side: a file not yet taken has its hold ended), run
+ (the note taken under the reader's lock; letGo ends the hold after the last read, for serve stops
+ at interrupted and closes its prefetcher first; adopt); src/viewSEG/core/jobs.nim hold (refused
+ while an exclusive job is queued or running, or abandoned with its work not back), pick (no hold
+ on an exclusive file), runner, cancel, tend and abandon; src/viewSEG/core/surveyjobs.nim
+ joinApplyWork (the held check, then applySurvey in one step no cancel reaches).
+ Variables: pend: the reader's mailbox 0 nothing, 1 a file (with its hold), 2 nothing to show;
+ rd: the reader 0 no file, 1 has the file (reads it at any time), 2 took a note, not let go yet;
+ tk: what it took 0 none, 1 a file, 2 nothing; own: the reader's file hold is its own to end;
+ holds: readers' holds on the file; job: the apply job 0 not submitted, 1 queued, 2 running
+ (keys change), 3 ended, 4 abandoned (listed as cancelled, its work still changing the keys),
+ 5 its work back; cx: a cancel was asked for while it ran; ui: 0 before the plan, 1 readers told
+ to let go, 2 job submitted, 3 resumed; ns: newSource on the UI thread 0 idle, 1 hold taken, show
+ not sent yet; err: 0 fine, 1 a reader holds or reads the file while its keys change, 2 the job
+ refused (IOError).
+ Switches: Fix (true: hold refuses the file of an abandoned exclusive job until its work is back;
+ false: it did not); Mut 0 none; 1 pick ignores holds; 2 hold never refused; 3 pauseReaders ends
+ the shown file's hold itself (not the reader after its last read); 4 the job does not check held.
+ Expected: base passes; Witness=(true), Fix=(false), Mut 1, 2, 3 fail; Mut 4 passes (the job's own
+ held check is a second guard: pick and hold already keep readers out).#
+  (variables :pend.0. :rd.0. :tk.0. :own.0. :holds.0. :job.0. :ui.0. :ns.0. :err.0. :cx.0.)
+  (assign Fix.0. (true))
+  (assign Mut.0. 0)
+  (assign Witness.0. (false))
+
+  (def :Init.0.#The plot shows the file: its reader has it, with one hold.#
+    (and (prime pend.0. 0) (prime rd.0. 1) (prime tk.0. 0) (prime own.0. (true)) (prime holds.0. 1)
+      (prime job.0. 0) (prime ui.0. 0) (prime ns.0. 0) (prime err.0. 0) (prime cx.0. (false))))
+
+  (def :Exclusive.0. (or (eq job.0. 1) (eq job.0. 2) (and Fix.0. (eq job.0. 4))))
+  (def :Working.0.#The apply job's work may be changing the keys.#
+    (or (eq job.0. 2) (eq job.0. 4)))
+  (def :Near.0.#The reader shows the file: or it has not let go yet.#
+    (or (eq rd.0. 1) (and (eq rd.0. 2) own.0.)))
+
+  (def :UiPause.0.#pauseReaders: show(empty); a file not yet taken has its hold ended (reader.show).#
+    (and (eq err.0. 0) (eq ui.0. 0) (eq ns.0. 0)
+      (prime ui.0. 1)
+      (prime pend.0. 2)
+      (if (and (eq Mut.0. 3) (eq rd.0. 1) own.0.)
+        (and (prime own.0. (false))
+          (prime holds.0. (minus holds.0. (if (eq pend.0. 1) 2 1))))
+        (and (unchanged own.0.)
+          (prime holds.0. (if (eq pend.0. 1) (minus holds.0. 1) holds.0.))))
+      (unchanged rd.0. tk.0. job.0. ns.0. err.0.)))
+
+  (def :UiSubmit.0.#takeJoinPlan: jobs.submit of joinApplyWork, exclusive on the file.#
+    (and (eq err.0. 0) (eq ui.0. 1) (eq ns.0. 0)
+      (prime ui.0. 2) (prime job.0. 1)
+      (unchanged pend.0. rd.0. tk.0. own.0. holds.0. ns.0. err.0.)))
+
+  (def :UiHold.0.#newSource (another record, a sort): jobs.hold; refused: an empty source shown.#
+    (and (eq err.0. 0) (eq ns.0. 0) (lt holds.0. 3) (not (eq ui.0. 1))
+      (if (and Exclusive.0. (not (eq Mut.0. 2)))
+        (and (unchanged ns.0.) (prime pend.0. 2)
+          (prime holds.0. (if (eq pend.0. 1) (minus holds.0. 1) holds.0.)))
+        (and (prime ns.0. 1) (prime holds.0. (plus holds.0. 1)) (unchanged pend.0.)))
+      (unchanged rd.0. tk.0. own.0. job.0. ui.0. err.0.)))
+
+  (def :UiShow.0.#newSource: show(file); a file not yet taken is replaced and its hold ended.#
+    (and (eq err.0. 0) (eq ns.0. 1)
+      (prime ns.0. 0) (prime pend.0. 1)
+      (prime holds.0. (if (eq pend.0. 1) (minus holds.0. 1) holds.0.))
+      (unchanged rd.0. tk.0. own.0. job.0. ui.0. err.0.)))
+
+  (def :ReaderTake.0.#run: under the reader's lock, takes the note (its read in progress saw it and stopped).#
+    (and (eq err.0. 0) (not (eq pend.0. 0)) (not (eq rd.0. 2))
+      (prime tk.0. pend.0.) (prime pend.0. 0)
+      (prime rd.0. 2)
+      (if (eq rd.0. 0) (prime own.0. (false)) (unchanged own.0.))
+      (prime holds.0. holds.0.)
+      (unchanged job.0. ui.0. ns.0. err.0.)))
+
+  (def :ReaderLetGo.0.#run: letGo (its hold ended, if still its own), then adopt the note taken.#
+    (and (eq err.0. 0) (eq rd.0. 2)
+      (prime holds.0. (if own.0. (minus holds.0. 1) holds.0.))
+      (prime rd.0. (if (eq tk.0. 1) 1 0))
+      (prime own.0. (eq tk.0. 1))
+      (prime tk.0. 0)
+      (unchanged pend.0. job.0. ui.0. ns.0. err.0.)))
+
+  (def :ReaderRead.0.#serve: a read of the file it shows.#
+    (and (eq err.0. 0) (eq rd.0. 1)
+      (prime err.0. (if Working.0. 1 0))
+      (unchanged pend.0. rd.0. tk.0. own.0. holds.0. job.0. ui.0. ns.0. cx.0.)))
+
+  (def :RunnerPick.0.#jobs pick and runner, one lock region: no hold on the file.#
+    (and (eq err.0. 0) (eq job.0. 1) (or (eq holds.0. 0) (eq Mut.0. 1))
+      (prime job.0. 2)
+      (unchanged pend.0. rd.0. tk.0. own.0. holds.0. ui.0. ns.0. err.0.)))
+
+  (def :RunnerApply.0.#joinApplyWork: held > 0 refuses (IOError); else the keys change and the job ends.#
+    (and (eq err.0. 0) (eq job.0. 2)
+      (if (and (gt holds.0. 0) (not (eq Mut.0. 4)))
+        (prime err.0. 2)
+        (prime err.0. (if (or (gt holds.0. 0) Near.0.) 1 0)))
+      (prime job.0. 3)
+      (unchanged pend.0. rd.0. tk.0. own.0. holds.0. ui.0. ns.0.)))
+
+  (def :UiCancel.0.#ckCancelJob on the running apply job: jobs.cancel marks it (cancelRequested, cancelAt).#
+    (and (eq err.0. 0) (eq job.0. 2) (not cx.0.)
+      (prime cx.0. (true))
+      (unchanged pend.0. rd.0. tk.0. own.0. holds.0. job.0. ui.0. ns.0. err.0.)))
+
+  (def :TendAbandon.0.#jobs.tend a second after the cancel: abandon lists it cancelled, its files held by its runner.#
+    (and (eq err.0. 0) (eq job.0. 2) cx.0.
+      (prime job.0. 4)
+      (unchanged pend.0. rd.0. tk.0. own.0. holds.0. ui.0. ns.0. err.0. cx.0.)))
+
+  (def :WorkBack.0.#runner: the abandoned work comes back (the keys changed); its holds end.#
+    (and (eq err.0. 0) (eq job.0. 4)
+      (prime job.0. 5)
+      (unchanged pend.0. rd.0. tk.0. own.0. holds.0. ui.0. ns.0. err.0. cx.0.)))
+
+  (def :UiResume.0.#endJoin when the job is listed ended (onFinished: done, or cancelled): resumeReaders' hold, its show.#
+    (and (eq err.0. 0) (or (eq job.0. 3) (eq job.0. 4)) (eq ui.0. 2) (eq ns.0. 0)
+      (prime ui.0. 3)
+      (if Exclusive.0.
+        (and (unchanged ns.0.) (prime pend.0. 2)
+          (prime holds.0. (if (eq pend.0. 1) (minus holds.0. 1) holds.0.)))
+        (and (prime ns.0. 1) (prime holds.0. (plus holds.0. 1)) (unchanged pend.0.)))
+      (unchanged rd.0. tk.0. own.0. job.0. err.0.)))
+
+  (def :Next.0. (or UiPause.0. UiSubmit.0. UiHold.0. UiShow.0. ReaderTake.0. ReaderLetGo.0.
+    ReaderRead.0. RunnerPick.0. RunnerApply.0. UiCancel.0. TendAbandon.0. WorkBack.0. UiResume.0.))
+
+  (def :Safe.0.#No reader on the file while its keys change; the job never refused; holds never below 0.#
+    (and (eq err.0. 0) (ge holds.0. 0)
+      (implies Working.0. (and (eq holds.0. 0) (not Near.0.)))))
+
+  (def :Reached.0.#The keys changed, the plot resumed and its reader has the file again.#
+    (and (eq job.0. 3) (eq err.0. 0) (eq ui.0. 3) (eq rd.0. 1)))
+
+  (spec (always-stutter Init.0. Next.0. (tuple pend.0. rd.0. tk.0. own.0. holds.0. job.0. ui.0. ns.0. err.0.)))
+  (check (if Witness.0. (not Reached.0.) Safe.0.)))

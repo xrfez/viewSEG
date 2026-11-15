@@ -207,10 +207,13 @@ func metresPerUnit*(u: SurveyUnit): float64 =
 
 func unitOf*(g: GridUnit): SurveyUnit =
   ## The unit an SPS header gives (H201's factor to metres, else H20's word).
+  ## Files round the factor (0.3048006, 0.304801): it names the foot it is
+  ## nearest, international (0.3048) or US survey (1200/3937, 2 parts in a
+  ## million more), when it is within 1e-5 of either.
   if g.metres > 0:
-    if abs(g.metres - 1) <= 1e-9: return suMetres
-    if abs(g.metres - 0.3048) <= 1e-9: return suFeet
-    if abs(g.metres - 1200 / 3937) <= 1e-9: return suUsFeet
+    if abs(g.metres - 1) <= 1e-6: return suMetres
+    let (ft, us) = (abs(g.metres - 0.3048), abs(g.metres - 1200 / 3937))
+    if min(ft, us) <= 1e-5: return (if us < ft: suUsFeet else: suFeet)
   let n = g.name.strip.toLowerAscii
   if n in ["m", "meter", "meters", "metre", "metres"]: suMetres
   elif n in ["ft", "foot", "feet", "international feet"]: suFeet

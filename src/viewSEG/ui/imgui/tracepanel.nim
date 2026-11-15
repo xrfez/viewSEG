@@ -250,6 +250,10 @@ func imagesDrawn*(tp: TracePanelUi): int {.inline.} = tp.renderer.imagesDrawn
   ## How many plot images were drawn: a frame in which nothing changed draws
   ## none (for tests).
 
+func columnsDrawn*(tp: TracePanelUi): int {.inline.} = tp.renderer.columnsDrawn
+  ## How many columns of the plot image the last drawing drew: all, or the
+  ## stripes of the traces a hover left and reached (for tests).
+
 func tilesUploaded*(tp: TracePanelUi): int {.inline.} = tp.uploads
   ## How many tiles were uploaded to the GPU: each once (for tests).
 

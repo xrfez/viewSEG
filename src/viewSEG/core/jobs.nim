@@ -25,7 +25,9 @@
 ##   the file instead (`hold`, then `release`): a job that needs the file to
 ##   itself does not start while it is held. A hold is refused while a job
 ##   that needs the file to itself is queued or running, so a stream of
-##   readers never keeps such a job waiting.
+##   readers never keeps such a job waiting; also once such a job is
+##   abandoned (below), until its work comes back: it may still be changing
+##   the file's keys (a geometry join, one step that no cancel stops).
 ## - **Progress and cancel.** The work gets a `JobContext`: it reports
 ##   progress (`progress`, `setPhase`) and checks `cancelled`, or calls
 ##   `checkCancelled`, which raises `JobCancelledError`. `progress` returns
@@ -145,6 +147,8 @@ type
     lane: JobLane
     job: JobId              ## the job it runs; `NoJob` while it picks
     held: seq[string]       ## its job was abandoned: the holds to end when its work is back
+    exclusive: seq[string]
+      ## of those, the files its job needed to itself: no reader meanwhile
     ended, joined: bool
 
   RunnerArg = object
@@ -299,6 +303,7 @@ proc runner(arg: RunnerArg) {.thread.} =
         let h = q.holds.find(p)
         if h >= 0: q.holds.delete(h)
       me.held.setLen 0
+      me.exclusive.setLen 0
     else:
       let j = q.find(id) # a running job is never removed or pruned
       let state =
@@ -509,7 +514,9 @@ proc abandon(q: ptr JobsObj; r: ptr RunnerObj; i: int) =
   ## as cancelled now; its files stay held until its work comes back.
   template info: untyped = q.recs[i].info
   for p in info.spec.reads: r.held.add p
-  for p in info.spec.exclusive: r.held.add p
+  for p in info.spec.exclusive:
+    r.held.add p
+    r.exclusive.add p
   q.holds.add r.held
   info.abandoned = true
   q.finish(i, jsCancelled, "")
@@ -545,13 +552,16 @@ proc hold*(jobs: Jobs; path: string): bool {.raises: [].} =
   ## Marks `path` as read by something that is not a job, such as a trace
   ## panel's thread: a job that needs it to itself does not start until
   ## `release`. False, and nothing held, while such a job is queued or
-  ## running. Any thread; take the hold before handing the file to the
-  ## reader, so that a close issued later waits for it.
+  ## running, or was abandoned and its work has not come back. Any thread;
+  ## take the hold before handing the file to the reader, so that a close
+  ## issued later waits for it.
   let q = jobs.obj
   withLock q.lock:
     for r in q.recs:
       if r.info.state in {jsQueued, jsRunning} and path in r.info.spec.exclusive:
         return false
+    for r in q.runners:
+      if path in r.exclusive: return false
     q.holds.add path
     result = true
 

@@ -571,10 +571,12 @@ traces, each tile's marks (a byte a trace) go to the GPU again; the map uploads 
 highlight (the record's points, a few thousand, and the hovered ones). Measured on the
 Morgantown record (3 957 traces at a pixel a trace) with its S, R and X files, in the
 "Plot and map" layout under software OpenGL (llvmpipe, an optimised build, the machine
-busy with other work): with the pointer sweeping the map, 11 to 13 ms a frame (median;
-the frames that light another trace take as long as a hover in the plot); sweeping the
-plot, 40 to 49 ms, as before the linking: each hover draws the plot's whole image
-again, which at a pixel a trace on llvmpipe costs about 30 ms. A GPU draws it in a
+busy with other work): sweeping the plot, 16 to 17 ms a frame (median; an idle frame
+10 to 12): a hover draws again only the stripes of the trace it leaves and of the one it
+reaches, as the whole image draws them, over the image kept (it drew the whole image,
+about 30 ms on llvmpipe, 39 to 41 ms a frame). With the pointer sweeping the map, 11 to
+17 ms a frame; the frames that light another trace in the plot still draw its whole
+image (its marks change), up to 50 to 70 ms on llvmpipe. A GPU draws either in a
 fraction of that.
 
 ## The plot's menu: functions on the data

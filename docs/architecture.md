@@ -330,9 +330,11 @@ zero coordinates are data:** a position without coordinates, or at (0, 0), is co
 role (`Positions`), said in the log, and left off the map; nothing raises. Each role's
 points (`PointSet`) are kept in the order of a **uniform-grid spatial index**
 (`SpatialIndex`: square cells over the points' bounds, about one point a cell, the points
-of a cell side by side): `nearest(x, y, radius)` looks at rings of cells around the place
-until no nearer point can be in the next ring, `within(box)` at the cells the box
-covers, and `bounds` gives what fit needs. A traces layer also keeps each trace's point
+of a cell side by side; a few points far from the rest, a wrong coordinate, lie in the
+edge cells, which reach out without end, so they do not make the cells huge: `grid`):
+`nearest(x, y, radius)` looks at rings of cells around the place until no nearer point
+can be in the next ring, `within(box)` at the cells the box covers, and `bounds` gives
+what fit needs. The levels of detail keep each far point as a point of every level. A traces layer also keeps each trace's point
 and station and the traces of each point and station; a survey file's layer finds a
 point by station as parseSEG's join finds one (the same index, then any index, then the
 first position). **Links:** `tracePoints` gives the points a trace was recorded at in
@@ -431,6 +433,11 @@ stops reading the file only for the moment its keys change:
    (`resumeReaders`: the same gather at the same scales; the tiles from before are drawn
    until the first new one comes, through `samplesGen`), so new prefetchers and `rowsOf`
    views see the joined keys. A panel shown the file meanwhile waits for the join quietly.
+   A join cancelled while it changes the keys (one step no cancel reaches) and abandoned
+   by `Jobs.tend` keeps readers out until its work is back (`hold` refuses the file of an
+   abandoned exclusive job). The protocol is modelled in `docs/models/joinreaders.nif`
+   (a reader near the file while its keys change is never reached; without that refusal,
+   it is).
 
 A joined file keeps what it was joined with (`AppState.joins`: the files, options, units,
 the plan, the geometry): its positions are read again from its keys (the map), its records
@@ -677,7 +684,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    a scale alone, of the mode, the fills, the overlap or the colours, and a hover, draws
    again at once and reads nothing; a click, or a change of the traces the map's pointer
    lights up, uploads one byte per trace of each tile. An
-   image whose inputs did not change is not drawn again. The frontend shows the image
+   image whose inputs did not change is not drawn again; one whose hovered rows alone
+   changed draws again only the stripes of the traces the hover left and reached (the
+   scissor test; the same draws, so the same pixels), keeping the rest. The frontend shows the image
    in its plot. The CPU twins (`amplitudeAt`, `densityColour`, `traceInk`,
    `densityTint`) are what the shaders are tested against.
 8. **Read out** (UI, `core/pick` and `core/readout`). The pointer's screen point goes

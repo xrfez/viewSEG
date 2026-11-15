@@ -13,7 +13,8 @@
 ##   units, its file) in a popup, drawn in the hover colour, and the status
 ##   bar shows the pointer's coordinates with their units;
 ## - a click selects the point (drawn in the selection colour), the wheel
-##   zooms about the pointer, `-` zooms out, the arrows pan, Ctrl + 0 fits,
+##   zooms about the pointer (Ctrl + click adds a point, and takes it out
+##   again), `-` zooms out, the arrows pan, Ctrl + 0 fits,
 ##   Backspace goes back, a right drag zooms to the box, a Shift drag
 ##   selects the points in its box, a Ctrl drag measures (length and
 ##   bearing) until Esc, and Esc then clears the selection;
@@ -30,7 +31,9 @@
 ## about the view's centre, "wheel zooms about the pointer" found the source
 ## 112 pixels from where it was; with the box select's points not sent, "a
 ## Shift drag selects" found no point selected; with the axes' values back,
-## "no values on the axes" found a left margin of 94 px.
+## "no values on the axes" found a left margin of 94 px; with a Ctrl press
+## always starting the ruler (as it did), "Ctrl + click adds the point"
+## found 1 point selected.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-*.png there.
@@ -200,6 +203,26 @@ proc main() =
           $f.mapWindow.pointTexts
         was = f.mapWindow.mapShown
         backs = f.core.map.back.len)
+
+    proc ctrlClick(f: FrameInfo; at: Vec2) =
+      f.pressKey(skCtrl, true, {smCtrl})
+      f.pressMouse(at, true)
+      f.pressMouse(at, false)
+      f.pressKey(skCtrl, false)
+    step("Ctrl + click adds the point", proc (f: FrameInfo) =
+      f.ctrlClick(vec2(round(q.x), round(q.y))), proc (f: FrameInfo): bool =
+      result = wait > 4
+      if result:
+        doAssert f.core.selection.points.len == 2, "Ctrl + click selected " &
+          $f.core.selection.points.len & " points"
+        doAssert f.core.selection.points[1].role == prSource
+        doAssert f.mapWindow.rulerText.len == 0, "a Ctrl + click is no ruler")
+    step("Ctrl + click again takes it out", proc (f: FrameInfo) =
+      f.ctrlClick(vec2(round(q.x), round(q.y))), proc (f: FrameInfo): bool =
+      result = wait > 4
+      if result:
+        doAssert f.core.selection.points.len == 1, $f.core.selection.points.len
+        doAssert f.core.selection.points[0].role == prReceiver)
 
     step("wheel zooms about the pointer", proc (f: FrameInfo) =
       f.scrollWheel(vec2(round(q.x), round(q.y)), 4), proc (f: FrameInfo): bool =

@@ -19,8 +19,14 @@
 ## The levels are made once per layer, on the worker that makes the layer
 ## (`buildLevels`), so the map never waits for one: every level a view can
 ## need is there as soon as the layer is. Positions are also kept as
-## `float32` relative to the points' lower-left corner (`origin`), ready for
-## the GPU: a survey 100 km across keeps them to a centimetre.
+## `float32` relative to the lower-left corner of the index's grid
+## (`origin`), ready for the GPU: a survey 100 km across keeps them to a
+## centimetre.
+##
+## **Points far from the rest**, which the index keeps in its edge cells
+## beyond its grid (`SpatialIndex.grid`), are each a point of every level:
+## a cell's point is always one inside the grid, so a far point neither
+## stands for the points of its cell nor is lost.
 
 import std/[algorithm, math]
 import spatial
@@ -41,7 +47,8 @@ type
 
   PointLevels* = object
     ## The levels of one set of points, finest first, and every point.
-    origin*: tuple[x, y: float64] ## the points' lower-left corner
+    origin*: tuple[x, y: float64] ## the lower-left corner of the index's grid
+    outside*: bool                ## some points lie beyond the grid (far from the rest)
     xy*: seq[float32]             ## every point, as `LodLevel.xy`, in the index's order
     cell*: float64                ## the side of the index's cells
     spacing*: float64
@@ -53,47 +60,77 @@ type
 func len*(l: LodLevel): int {.inline.} = l.col.len
   ## The points of level `l`.
 
+const FarAway = 1e30 ## a position (from the origin) is kept to this, so `float32` holds it
+
 proc relative(ix: SpatialIndex; origin: tuple[x, y: float64]): seq[float32] =
   result = newSeq[float32](2 * ix.len)
   for i in 0 ..< ix.len:
-    result[2 * i] = float32(ix.x(i) - origin.x)
-    result[2 * i + 1] = float32(ix.y(i) - origin.y)
+    result[2 * i] = float32(clamp(ix.x(i) - origin.x, -FarAway, FarAway))
+    result[2 * i + 1] = float32(clamp(ix.y(i) - origin.y, -FarAway, FarAway))
 
-proc coarser(fine: LodLevel): LodLevel =
-  ## The level of cells twice as wide as `fine`'s, from its points.
+type Grid = tuple[w, h: float32] ## the index's grid, from the origin
+
+func beyond(xy: openArray[float32]; p: int; g: Grid): bool {.inline.} =
+  ## Whether point `p` of `xy` lies beyond the index's grid (an edge cell
+  ## holds it, but it is far from the rest).
+  let (x, y) = (xy[2 * p], xy[2 * p + 1])
+  x < 0 or y < 0 or x > g.w or y > g.h
+
+proc emit(l: var LodLevel; xy: openArray[float32]; slot: openArray[int32];
+    far: var seq[(int32, int32)]) =
+  ## Adds a row of cells: each cell's point (`slot`, -1 for none), and after
+  ## it the far points of that cell (`far`: cell, point), in cell order.
+  far.sort()
+  var k = 0
+  for c, p in slot:
+    if p >= 0:
+      l.xy.add xy[2 * p]
+      l.xy.add xy[2 * p + 1]
+      l.col.add int32(c)
+    while k < far.len and far[k][0] == int32(c):
+      l.xy.add xy[2 * far[k][1]]
+      l.xy.add xy[2 * far[k][1] + 1]
+      l.col.add int32(c)
+      inc k
+  far.setLen 0
+
+proc coarser(fine: LodLevel; g: Grid): LodLevel =
+  ## The level of cells twice as wide as `fine`'s, from its points: a cell's
+  ## first point within the grid, and every point beyond it.
   result = LodLevel(cell: fine.cell * 2, nx: (fine.nx + 1) div 2, ny: (fine.ny + 1) div 2)
   result.rowStart = newSeq[int32](result.ny + 1)
   var slot = newSeq[int32](result.nx)
+  var far: seq[(int32, int32)]
   for jj in 0 ..< result.ny:
     for s in slot.mitems: s = -1
     for j in 2 * jj .. min(2 * jj + 1, fine.ny - 1):
       for p in fine.rowStart[j] ..< fine.rowStart[j + 1]:
         let c = fine.col[p] shr 1
-        if slot[c] < 0: slot[c] = p
-    for c, p in slot:
-      if p >= 0:
-        result.xy.add fine.xy[2 * p]
-        result.xy.add fine.xy[2 * p + 1]
-        result.col.add int32(c)
+        if fine.xy.beyond(p, g): far.add (c, p)
+        elif slot[c] < 0: slot[c] = p
+    result.emit(fine.xy, slot, far)
     result.rowStart[jj + 1] = int32(result.col.len)
 
-proc firstLevel(ix: SpatialIndex; xy: openArray[float32]): LodLevel =
-  ## Level 1: a point per 2 × 2 cells of the index.
+proc firstLevel(ix: SpatialIndex; xy: openArray[float32]; g: Grid): LodLevel =
+  ## Level 1: a point per 2 × 2 cells of the index (the first within the
+  ## grid), and every point beyond the grid (only edge cells hold them).
   let (nx, ny) = ix.cells
   result = LodLevel(cell: ix.cellSize * 2, nx: (nx + 1) div 2, ny: (ny + 1) div 2)
   result.rowStart = newSeq[int32](result.ny + 1)
   var slot = newSeq[int32](result.nx)
+  var far: seq[(int32, int32)]
   for jj in 0 ..< result.ny:
     for s in slot.mitems: s = -1
     for j in 2 * jj .. min(2 * jj + 1, ny - 1):
       for i in 0 ..< nx:
         let run = ix.cellPoints(i, j)
-        if run.len > 0 and slot[i shr 1] < 0: slot[i shr 1] = int32(run.a)
-    for c, p in slot:
-      if p >= 0:
-        result.xy.add xy[2 * p]
-        result.xy.add xy[2 * p + 1]
-        result.col.add int32(c)
+        let c = int32(i shr 1)
+        if i == 0 or i == nx - 1 or j == 0 or j == ny - 1:
+          for p in run:
+            if xy.beyond(p, g): far.add (c, int32(p))
+            elif slot[c] < 0: slot[c] = int32(p)
+        elif run.len > 0 and slot[c] < 0: slot[c] = int32(run.a)
+    result.emit(xy, slot, far)
     result.rowStart[jj + 1] = int32(result.col.len)
 
 const SpacingSample = 2000 ## points the spacing is measured at, at most
@@ -108,14 +145,15 @@ proc spacingOf*(ix: SpatialIndex): float64 =
   if ix.len < 2: return
   let (nx, ny) = ix.cells
   let c = ix.cellSize
-  let b = ix.bounds
+  let g = ix.grid
   var found: seq[float64]
   let step = max(1, ix.len div SpacingSample)
   var i = 0
   while i < ix.len:
     let (x, y) = (ix.x(i), ix.y(i))
-    let ci = clamp(int((x - b.minX) / c), 0, nx - 1)
-    let cj = clamp(int((y - b.minY) / c), 0, ny - 1)
+    # (the clamp before `int`: a far point's cell number overflows an int)
+    let ci = int(clamp(floor((x - g.minX) / c), 0.0, float64(nx - 1)))
+    let cj = int(clamp(floor((y - g.minY) / c), 0.0, float64(ny - 1)))
     var best = Inf
     for j in cj - 1 .. cj + 1:
       for k in ci - 1 .. ci + 1:
@@ -132,19 +170,21 @@ proc spacingOf*(ix: SpatialIndex): float64 =
 proc buildLevels*(ix: SpatialIndex): PointLevels =
   ## The levels of the points of `ix`: none for fewer than `LodFrom` points,
   ## else level 1, 2 ... until one cell holds them all.
-  let b = ix.bounds
+  let g = ix.grid
   if ix.len == 0: return
-  result.origin = (b.minX, b.minY)
+  result.origin = (g.minX, g.minY)
   result.xy = ix.relative(result.origin)
+  result.outside = g != ix.bounds
   result.cell = ix.cellSize
   result.spacing = ix.spacingOf
   if ix.len < LodFrom: return
-  var level = firstLevel(ix, result.xy)
+  let grid: Grid = (float32(g.width), float32(g.height))
+  var level = firstLevel(ix, result.xy, grid)
   while true:
     let done = level.nx <= 1 and level.ny <= 1
     result.levels.add level
     if done: break
-    level = coarser(result.levels[^1])
+    level = coarser(result.levels[^1], grid)
 
 func levelFor*(p: PointLevels; perPixel, pixels: float64): int =
   ## The coarsest level whose cells are at most `pixels` pixels wide at
@@ -178,7 +218,9 @@ iterator runs*(p: PointLevels; level: int; box: Bounds): Slice[int] =
     let l = addr p.levels[level]
     let (lx, ly) = (box.minX - p.origin.x, box.minY - p.origin.y)
     let (hx, hy) = (box.maxX - p.origin.x, box.maxY - p.origin.y)
-    if hx >= 0 and hy >= 0 and lx <= l.cell * float64(l.nx) and ly <= l.cell * float64(l.ny):
+    # (a box beyond the grid still reaches the far points of the edge cells)
+    if p.outside or (hx >= 0 and hy >= 0 and lx <= l.cell * float64(l.nx) and
+        ly <= l.cell * float64(l.ny)):
       let (i0, i1) = (cellOf(lx, l.cell, l.nx), cellOf(hx, l.cell, l.nx))
       let (j0, j1) = (cellOf(ly, l.cell, l.ny), cellOf(hy, l.cell, l.ny))
       for j in j0 .. j1:

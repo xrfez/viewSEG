@@ -416,7 +416,10 @@ proc handleMouse(mu: var MapUi; st: AppState; after: var MapView; view: MapView;
     if mu.drag.moved:
       mu.ruler = Ruler(shown: true, a: view.mapAt(plot, v2(mu.drag.press)),
         b: view.mapAt(plot, v2(b)))
-    if not down: mu.drag = MapDrag()
+    if not down:
+      if not mu.drag.moved and hovered and mu.focus.acts:
+        click = 2 # Ctrl + click (no drag, no ruler): adds the point or takes it out
+      mu.drag = MapDrag()
 
 proc handleKeys(mu: var MapUi; st: AppState; after: var MapView; view: MapView; plot: Rect;
     lim: MapLimits; hovered: bool; remember: var bool; res: var MapOutput) =

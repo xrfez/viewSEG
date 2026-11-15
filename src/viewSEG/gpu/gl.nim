@@ -33,6 +33,7 @@ const
   GL_STENCIL_TEST* = 0x0B90'u32
   GL_VIEWPORT* = 0x0BA2'u32
   GL_BLEND* = 0x0BE2'u32
+  GL_SCISSOR_BOX* = 0x0C10'u32
   GL_SCISSOR_TEST* = 0x0C11'u32
   GL_COLOR_CLEAR_VALUE* = 0x0C22'u32
   GL_UNPACK_ROW_LENGTH* = 0x0CF2'u32
@@ -84,6 +85,7 @@ var
   glEnable*: proc (cap: GLenum) {.glcall.}
   glDisable*: proc (cap: GLenum) {.glcall.}
   glViewport*: proc (x, y: GLint; w, h: GLsizei) {.glcall.}
+  glScissor*: proc (x, y: GLint; w, h: GLsizei) {.glcall.}
   glClearColor*: proc (r, g, b, a: float32) {.glcall.}
   glClear*: proc (mask: GLbitfield) {.glcall.}
   glPixelStorei*: proc (pname: GLenum; param: GLint) {.glcall.}
@@ -154,6 +156,7 @@ proc loadGl*(getProc: GetProcAddress): seq[string] =
   load glEnable
   load glDisable
   load glViewport
+  load glScissor
   load glClearColor
   load glClear
   load glPixelStorei

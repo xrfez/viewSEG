@@ -15,8 +15,17 @@
 ## before it builds an index. Points that all lie on one spot, or on one
 ## line, still get cells along what they span; points whose span overflows
 ## a float share one cell.
+##
+## **A few points far from the rest** (a wrong coordinate, say an easting
+## with a digit too many) do not make the cells huge: the cells cover the
+## extent of the rest (`grid`: the bounds, cut in, along each axis, to a
+## sample's 1st to 99th percentile widened by half that extent on both
+## sides),
+## and the far points lie in the edge cells, which reach out without end. Without that
+## one point at 1e9 put a million points over 10 km into a handful of cells,
+## and every lookup near them walked them all.
 
-import std/math
+import std/[algorithm, math]
 
 const
   CellsPerPoint* = 4 ## an index has at most this many cells a point (and 16 more)
@@ -33,6 +42,7 @@ type
     ## Points in the plane, in cell order (point `i` is at `x(i)`, `y(i)`).
     xs, ys: seq[float64]
     bounds: Bounds
+    grid: Bounds  ## what the cells cover: `bounds`, but for a few far points
     cell: float64 ## the side of a cell
     nx, ny: int   ## cells across and down; 0 for no points
     starts: seq[int32]
@@ -71,6 +81,10 @@ func x*(ix: SpatialIndex; i: int): float64 {.inline.} = ix.xs[i]
 func y*(ix: SpatialIndex; i: int): float64 {.inline.} = ix.ys[i]
 func bounds*(ix: SpatialIndex): Bounds {.inline.} = ix.bounds
   ## The points' bounds; empty for none.
+func grid*(ix: SpatialIndex): Bounds {.inline.} = ix.grid
+  ## What the cells cover, from the lower-left corner (`minX`, `minY`): the
+  ## points' bounds, but for a few points far from the rest (which lie in
+  ## the edge cells); empty for no points.
 func cellSize*(ix: SpatialIndex): float64 {.inline.} = ix.cell
 func cells*(ix: SpatialIndex): (int, int) {.inline.} = (ix.nx, ix.ny)
   ## Cells across and down.
@@ -82,6 +96,33 @@ func cellAt(v, lo, cell: float64; n: int): int {.inline.} =
   if t >= float64(n - 1): n - 1
   elif t > 0: int(t)
   else: 0
+
+const OutlierSample = 1024 ## points sampled for the extent of most points
+
+func bulkOf(xs, ys: openArray[float64]; b: Bounds): Bounds =
+  ## What the cells of an index of these points cover: their bounds `b`, cut
+  ## in, along each axis, to the sampled 1st to 99th percentile widened by
+  ## half its extent on both sides, so that a few far points do not stretch
+  ## the cells (for points spread as surveys are, nothing is cut).
+  result = b
+  let n = xs.len
+  if n < 200: return # too few to tell; a lookup walks few points anyway
+  let step = max(1, n div OutlierSample)
+  var sx, sy: seq[float64]
+  var i = 0
+  while i < n:
+    sx.add xs[i]
+    sy.add ys[i]
+    i += step
+  sx.sort()
+  sy.sort()
+  let k = sx.len div 100
+  func cut(s: seq[float64]; k: int; lo, hi: float64): (float64, float64) =
+    let (a, z) = (s[k], s[s.high - k])
+    let reach = (z - a) / 2 # Inf when it overflows: nothing is cut
+    (max(lo, a - reach), min(hi, z + reach))
+  (result.minX, result.maxX) = cut(sx, k, b.minX, b.maxX)
+  (result.minY, result.maxY) = cut(sy, k, b.minY, b.maxY)
 
 func gridOf(b: Bounds; n: int): tuple[cell: float64; nx, ny: int] =
   ## Square cells over `b` for `n` points: about one a cell, at most
@@ -121,12 +162,14 @@ proc initSpatialIndex*(xs, ys: openArray[float64]; order: var seq[int32]): Spati
   if n == 0:
     result.starts = @[0'i32]
     return
-  let (cell, nx, ny) = gridOf(b, n)
+  let g = bulkOf(xs, ys, b)
+  result.grid = g
+  let (cell, nx, ny) = gridOf(g, n)
   (result.cell, result.nx, result.ny) = (cell, nx, ny)
   var cellOf = newSeq[int32](n)
   result.starts = newSeq[int32](nx * ny + 1)
   for i in 0 ..< n:
-    let c = cellAt(ys[i], b.minY, cell, ny) * nx + cellAt(xs[i], b.minX, cell, nx)
+    let c = cellAt(ys[i], g.minY, cell, ny) * nx + cellAt(xs[i], g.minX, cell, nx)
     cellOf[i] = int32(c)
     inc result.starts[c + 1]
   for c in 1 .. nx * ny: result.starts[c] += result.starts[c - 1]
@@ -155,11 +198,16 @@ func nearest*(ix: SpatialIndex; x, y, radius: float64): int =
   let r2 = radius * radius
   if gap(x, b.minX, b.maxX) ^ 2 + gap(y, b.minY, b.maxY) ^ 2 > r2: return
   let one = ix.nx == 1 and ix.ny == 1 # one cell: it holds every point, whatever its size
-  let (ci, cj) = (cellAt(x, b.minX, ix.cell, ix.nx), cellAt(y, b.minY, ix.cell, ix.ny))
+  let g = ix.grid
+  let (ci, cj) = (cellAt(x, g.minX, ix.cell, ix.nx), cellAt(y, g.minY, ix.cell, ix.ny))
   var best = Inf
   template visit(i, j: int) =
-    let (left, top) = (b.minX + float64(i) * ix.cell, b.minY + float64(j) * ix.cell)
-    let d2 = gap(x, left, left + ix.cell) ^ 2 + gap(y, top, top + ix.cell) ^ 2
+    # The edge cells reach out without end: they hold the points beyond the grid.
+    let left = if i == 0: -Inf else: g.minX + float64(i) * ix.cell
+    let right = if i == ix.nx - 1: Inf else: g.minX + float64(i + 1) * ix.cell
+    let low = if j == 0: -Inf else: g.minY + float64(j) * ix.cell
+    let high = if j == ix.ny - 1: Inf else: g.minY + float64(j + 1) * ix.cell
+    let d2 = gap(x, left, right) ^ 2 + gap(y, low, high) ^ 2
     if one or d2 <= min(best, r2):
       let c = j * ix.nx + i
       for p in int(ix.starts[c]) ..< int(ix.starts[c + 1]):
@@ -167,7 +215,8 @@ func nearest*(ix: SpatialIndex; x, y, radius: float64): int =
         if d <= r2 and (result < 0 or d < best or (d == best and p < result)):
           (best, result) = (d, p)
   # Rings of cells around the place's cell (the nearest cell, for a place
-  # outside): every point in ring k is at least k - 1 cells away.
+  # outside): every point in ring k is at least k - 1 cells away (also one
+  # beyond the grid, in an edge cell: it is farther out than the cell).
   for k in 0 .. max(ix.nx, ix.ny):
     if float64(k - 1) * ix.cell > sqrt(min(best, r2)): break
     for j in max(cj - k, 0) .. min(cj + k, ix.ny - 1):
@@ -182,11 +231,11 @@ iterator runs*(ix: SpatialIndex; box: Bounds): Slice[int] =
   ## (one per row of cells): every point in `box` is in one, with others
   ## near it. Nothing for a box that misses the points' bounds.
   if ix.xs.len > 0 and overlaps(ix.bounds, box):
-    let b = ix.bounds
-    let (i0, i1) = (cellAt(box.minX, b.minX, ix.cell, ix.nx),
-      cellAt(box.maxX, b.minX, ix.cell, ix.nx))
-    let (j0, j1) = (cellAt(box.minY, b.minY, ix.cell, ix.ny),
-      cellAt(box.maxY, b.minY, ix.cell, ix.ny))
+    let g = ix.grid
+    let (i0, i1) = (cellAt(box.minX, g.minX, ix.cell, ix.nx),
+      cellAt(box.maxX, g.minX, ix.cell, ix.nx))
+    let (j0, j1) = (cellAt(box.minY, g.minY, ix.cell, ix.ny),
+      cellAt(box.maxY, g.minY, ix.cell, ix.ny))
     for j in j0 .. j1:
       let run = int(ix.starts[j * ix.nx + i0]) ..< int(ix.starts[j * ix.nx + i1 + 1])
       if run.len > 0: yield run
@@ -198,8 +247,9 @@ iterator within*(ix: SpatialIndex; box: Bounds): int =
       if box.contains(ix.xs[p], ix.ys[p]): yield p
 
 func cellPoints*(ix: SpatialIndex; i, j: int): Slice[int] =
-  ## The points of cell (`i`, `j`) (`i` across, `j` down from the bounds'
-  ## lower corner); empty outside the grid.
+  ## The points of cell (`i`, `j`) (`i` across, `j` up from the grid's
+  ## lower-left corner; an edge cell also holds the points beyond it);
+  ## empty outside the grid.
   if i in 0 ..< ix.nx and j in 0 ..< ix.ny:
     int(ix.starts[j * ix.nx + i]) ..< int(ix.starts[j * ix.nx + i + 1])
   else: 0 ..< 0

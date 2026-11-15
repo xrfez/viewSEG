@@ -21,8 +21,11 @@
 ## at holds, `holdsKeepExclusiveJobsWaiting` found the close run while the
 ## file was held ("a job had a held file to itself"), and with `release` not
 ## broadcasting, it timed out ("the last release left the runner asleep").
+## With `hold` looking at the queued and running jobs only,
+## `anAbandonedJobKeepsReadersOut` let a reader hold the file while the
+## abandoned job's work still ran ("a reader let in ...").
 
-import std/[atomics, os, strutils, times]
+import std/[atomics, monotimes, os, strutils, times]
 import viewSEG/core/[jobs, threads]
 import utils/waiting
 
@@ -308,6 +311,30 @@ block holdsKeepExclusiveJobsWaiting:
   doAssert jobs.hold("z.sgy"), "a hold was refused after the job ended"
 
 var sawCancel: Atomic[bool]
+
+block anAbandonedJobKeepsReadersOut:
+  # A job that needs a file to itself and cannot stop once started (a
+  # geometry join's step: parseSEG's `applySurvey` is one call) is cancelled
+  # and, still running a second later, abandoned (`tend`): no reader may
+  # hold the file until its work is back, for it may still be changing the
+  # file's keys.
+  reset()
+  let jobs = initJobs()
+  let job = jobs.submit(spec("join", exclusive = @["f.sgy"]), proc (ctx: JobContext) {.gcsafe.} =
+    let deadline = getMonoTime() + Patience * 2
+    while not gates[0].isOpen and getMonoTime() < deadline: sleep 1 # no cancel reaches it
+    ran[0].atomicInc)
+  doAssert waitUntil(jobs.state(job) == jsRunning)
+  doAssert not jobs.hold("f.sgy"), "a hold while the job runs"
+  doAssert jobs.cancel(job)
+  doAssert jobs.tend(getMonoTime() + CancelGrace + initDuration(seconds = 1))
+  doAssert jobs.info(job).get.abandoned and jobs.state(job) == jsCancelled
+  doAssert not jobs.hold("f.sgy"),
+    "a reader let in while the abandoned job's work may still change the file"
+  gates[0].open()
+  doAssert waitUntil(ran[0].load == 1)
+  doAssert waitUntil(jobs.hold("f.sgy")), "no hold once the work is back"
+  doAssert jobs.release("f.sgy")
 
 block destroyStopsRunningJobs:
   # Leaving the scope with a job running cancels it and waits for it: by

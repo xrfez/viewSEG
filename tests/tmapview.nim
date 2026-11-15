@@ -8,6 +8,11 @@
 ## Seen to fail: with `keptAxis` not centring a view wider than the survey,
 ## "a wide view is centred" failed; with `levelFor` taking the finest level
 ## instead of the coarsest that fits, "the coarsest level that fits" failed.
+## `aFarPoint` failed on the index's cells taken from every point's bounds (a
+## point at 1e9: cells 100 000 times as large, every lookup near the survey
+## walking tens of thousands of points; at ±1e308 one cell, a level of one
+## point, and positions that are not numbers for the GPU), and with the
+## levels' far points left out ("the far point is in every level").
 
 import std/[math, random, sets]
 import viewSEG/core/[geometry, maplod, mapview, spatial]
@@ -236,5 +241,78 @@ block runsHoldThePointsInView:
   var none = 0
   for run in p.runs(0, box(0, 0, 1, 1)): none += run.len
   doAssert none == 0
+
+block aFarPoint:
+  # A survey of 200 000 points over 10 km, and one point far from it (a
+  # wrong coordinate): the index's cells and the levels of detail are those
+  # of the survey alone, and the far point is found and drawn all the same.
+  var order: seq[int32]
+  var r = initRand(5)
+  var xs, ys: seq[float64]
+  for i in 0 ..< 200_000:
+    xs.add 500_000 + r.rand(10_000.0)
+    ys.add 4_000_000 + r.rand(10_000.0)
+  let alone = initSpatialIndex(xs, ys, order)
+  let aloneLevels = buildLevels(alone)
+  let bulk = box(502_000, 4_002_000, 506_000, 4_006_000)
+  proc drawnAt(p: PointLevels; ix: SpatialIndex; perPixel: float64; view: Bounds): int =
+    let k = p.levelFor(perPixel, 2)
+    if k < 0:
+      for run in ix.runs(view): result += run.len
+    else:
+      for run in p.runs(k, view): result += run.len
+  # at 25 m a pixel
+  let pixels = int(bulk.width / 25) * int(bulk.height / 25)
+  let wanted = aloneLevels.drawnAt(alone, 25, bulk)
+  doAssert wanted in pixels div 8 .. 2 * pixels, $wanted
+  for far in [(1e9, 1e9), (5_123_456.0, 4_005_000.0), (-1e308, -1e308), (1e308, 1e308),
+      (500_000.0, -1e12)]:
+    var fx = xs
+    var fy = ys
+    fx.add far[0]
+    fy.add far[1]
+    let ix = initSpatialIndex(fx, fy, order)
+    let at = $far
+    doAssert ix.cellSize <= 2 * alone.cellSize, at & ": cells of " & $ix.cellSize &
+      " for the survey's " & $alone.cellSize
+    doAssert ix.bounds.maxX >= far[0] and ix.bounds.minX <= far[0], at & ": its bounds hold it"
+    # found as a search of every point finds them
+    for q in 0 ..< 60:
+      let (qx, qy) = if q mod 6 == 0: (far[0], far[1] + 3)
+                     elif q mod 6 == 1: (510_000.0 + float64(q) * 1000, 4_005_000.0)
+                     else: (500_000 + r.rand(10_000.0), 4_000_000 + r.rand(10_000.0))
+      let radius = [Inf, 50.0, 5.0, 1e9][q mod 4]
+      var want = -1
+      var best = Inf
+      for i in 0 ..< ix.len:
+        let d = (ix.x(i) - qx) ^ 2 + (ix.y(i) - qy) ^ 2
+        if d <= radius * radius and d < best: (best, want) = (d, i)
+      doAssert ix.nearest(qx, qy, radius) == want, at & ": query " & $q
+    var found = 0
+    for p in ix.within(box(far[0] - 1, far[1] - 1, far[0] + 1, far[1] + 1)):
+      doAssert ix.x(p) == far[0]
+      inc found
+    doAssert found == 1, at & ": the box round it finds it"
+    # the levels: positions the GPU can take, the survey drawn as without it
+    let p = buildLevels(ix)
+    doAssert p.origin.x > -1e7 and p.origin.y > -1e7, at & ": the origin is the survey's"
+    for v in p.xy: doAssert abs(v) < Inf, at & ": a position that is not a number"
+    let drawn = p.drawnAt(ix, 25, bulk)
+    doAssert drawn in pixels div 8 .. 2 * pixels, at & ": " & $drawn & " points drawn in " &
+      $pixels & " pixels (" & $wanted & " without it)"
+    for k, l in p.levels:
+      var there = false
+      for q in 0 ..< l.len:
+        if l.xy[2 * q] == float32(clamp(far[0] - p.origin.x, -1e30, 1e30)) and
+            l.xy[2 * q + 1] == float32(clamp(far[1] - p.origin.y, -1e30, 1e30)):
+          there = true
+      doAssert there, at & ": the far point is in every level (" & $k & ")"
+    if abs(far[0]) < 1e12:
+      var seen = 0
+      for k in 0 ..< p.levels.len:
+        for run in p.runs(k, box(far[0] - 1, far[1] - 1, far[0] + 1, far[1] + 1)):
+          for q in run:
+            if p.levels[k].xy[2 * q] == float32(far[0] - p.origin.x): inc seen
+      doAssert seen == p.levels.len, at & ": a view of it alone draws it at every level"
 
 echo "tmapview: ok"

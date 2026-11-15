@@ -23,6 +23,13 @@
 ## trace no survey file has a station for, light nothing up and the status
 ## bar says why; Shift + click selects the stations along a line.
 ##
+## A hover in the plot draws the stripes of the two traces it changes, not
+## the whole image (Morgantown in wiggles: about 40 ms a hover on software
+## OpenGL before), and the image is the reference's after it. Seen to fail:
+## with every hover drawing the whole image, "to the next trace" found every
+## column drawn; with stripes a fifth of a trace wide, 750 pixels differed
+## from the reference there (and `tguiwiggle`'s hover failed too).
+##
 ## Seen to fail: with the plot's marks not following the map's hover
 ## (`hoveredRevision` left out of `sync`), "the map lights up channel 5" did
 ## not happen (the trace never drawn lit); with the wiggle shader ignoring
@@ -225,6 +232,18 @@ proc fromTheHeaders() =
       f.shot("link-map-to-plot.png")
       true)
     hoverPlot("the plot lights up receiver 10", 10)
+    var drawn = 0
+    step("to the next trace: its stripes drawn again", proc (f: FrameInfo) =
+      drawn = f.tracePanel.imagesDrawn
+      f.moveMouse(f.inPlot(f.positionOf(10))), proc (f: FrameInfo): bool =
+      result = f.core.selection.hover == 10 and f.tracePanel.imagesDrawn > drawn
+      if result:
+        let columns = f.tracePanel.drawnView.columns
+        doAssert f.tracePanel.columnsDrawn < columns div 4, "a hover drew " &
+          $f.tracePanel.columnsDrawn & " of the plot's " & $columns & " columns again"
+        let (bad, looked) = f.capture.mismatches(step = 1)
+        doAssert bad == 0, "after a hover: " & $bad & " of " & $looked & " pixels differ from " &
+          "the reference")
     step("nothing read", noop, proc (f: FrameInfo): bool =
       f.shot("link-plot-to-map.png")
       doAssert f.counts == before, "a hover read or rebuilt something: " & $before & " to " &
