@@ -17,9 +17,9 @@
 ## read only the keys in memory), so a close or a step to another file
 ## never waits for a hash of a large file.
 
-import std/[algorithm, os, strutils, times]
+import std/[os, strutils, times]
 import parseSEG
-import edits, filememory, filesystem, identity, inbox, jobs, nif, threads
+import filememory, filesystem, identity, inbox, jobs, nif, threads
 
 proc identifyWork*(path: string; store: Store; to: Poster): JobWork =
   ## Posts `mkIdentified`: the quick identity of the file at `path` and the
@@ -101,7 +101,8 @@ proc importEditsWork*(path: string; traces: int; to: Poster): JobWork =
   ## Posts `mkEditsRead`: the edits of the list at `path` (a NIF document
   ## when its name ends in `.nif`, else a CSV table: `readEdits`) on the
   ## first `traces` traces (`importOutside` counts those past them, left
-  ## out), what in it could not be used, or why none of it could.
+  ## out before any run is expanded), what in it could not be used, or why
+  ## none of it could.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading the list"
     var msg = Msg(job: ctx.id, kind: mkEditsRead, importedList: path)
@@ -119,13 +120,10 @@ proc importEditsWork*(path: string; traces: int; to: Poster): JobWork =
         if name.toLowerAscii.endsWith(".nif"):
           try: doc = parseNif(text, name, MaxMemoryBytes)
           except NifError as e: docError = e.msg
-        msg.importedEdits = readEdits(text, name, doc, docError, msg.importProblems,
-          msg.importIdentity, msg.importHasIdentity)
-        for edit in TraceEdit:
-          template l: untyped = msg.importedEdits.lists[edit]
-          let inside = l.lowerBound(traces) # ascending
-          msg.importOutside += l.len - inside
-          l.setLen inside
+        # cut at the file's last trace before a run is expanded: a list
+        # from elsewhere may name billions
+        msg.importedEdits = readEdits(text, name, doc, docError, traces, msg.importProblems,
+          msg.importIdentity, msg.importHasIdentity, msg.importOutside)
     except ValueError as e: # a NifError too
       msg.importFailure = e.msg
     except IOError, OSError:

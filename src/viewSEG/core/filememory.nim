@@ -47,6 +47,11 @@ const
     ## the largest document read, and the largest list imported: a document
     ## of a million traces killed one in two is about 7.5 MB, its CSV 25 MB
   MemorySuffix* = ".nif"
+  MaxListTraces* = 20_000_000
+    ## the traces one list (killed, or reversed) may name, after its runs
+    ## are merged (160 MB of indices, as many as an edit history holds,
+    ## `MaxHeldTraces`): a list from elsewhere that names more has the rest
+    ## left out and said
 
 type
   Store* = object
@@ -116,14 +121,14 @@ func runsText*(traces: openArray[int]): string =
     if j > i: result.add "-" & $(traces[j] + 1)
     i = j + 1
 
-proc readRuns*(text: string; traces: var seq[int]; problems: var seq[string];
-    what: string; most = high(int32)) =
-  ## The trace numbers from 1 in `text` ("3 7-9 120"), as indices from 0,
-  ## ascending and each once, into `traces`; each part that is not a number
-  ## or a run (or past `most`) is a problem, and is passed by.
-  var parts = 0
+proc addRuns(text: string; runs: var seq[Slice[int]]; problems: var seq[string];
+    what: string; most, upTo: int; beyond: var seq[Slice[int]]) =
+  ## The trace numbers from 1 in `text` ("3 7-9 120"), as runs of indices
+  ## from 0 added to `runs`, nothing expanded; each part that is not a
+  ## number or a run (or past `most`) is a problem, and is passed by. The
+  ## indices from `upTo` on (past a file's last trace) are cut off, into
+  ## `beyond`.
   for part in text.splitWhitespace:
-    inc parts
     var a, b: int
     let dash = part.find('-', start = 1)
     let ok = if dash < 0: part.parseInt(a) == part.len and (b = a; true)
@@ -132,11 +137,48 @@ proc readRuns*(text: string; traces: var seq[int]; problems: var seq[string];
     if not ok or a < 1 or b < a or b > most:
       if problems.len < WordedProblems:
         problems.add what & ": \"" & part & "\" is not a trace number or a run of them"
-    elif b - a > 50_000_000:
-      problems.add what & ": the run " & part & " is too long"
     else:
-      for t in a .. b: traces.add t - 1
-  traces = sortedTraces(traces)
+      let last = min(b - 1, upTo - 1)
+      if last >= a - 1: runs.add (a - 1) .. last
+      if last < b - 1: beyond.add max(a - 1, last + 1) .. b - 1
+
+proc merge(runs: var seq[Slice[int]]): seq[Slice[int]] =
+  ## `runs` sorted and merged: no two overlap or touch.
+  runs.sort(proc (x, y: Slice[int]): int = cmp(x.a, y.a))
+  for r in runs:
+    if result.len > 0 and r.a <= result[^1].b + 1: result[^1].b = max(result[^1].b, r.b)
+    else: result.add r
+
+func count(runs: openArray[Slice[int]]): int =
+  for r in runs: result += r.len
+
+proc expandRuns(runs: var seq[Slice[int]]; problems: var seq[string]; what: string;
+    bound: int): seq[int] =
+  ## The indices of `runs`, ascending and each once, at most `bound` of
+  ## them: the runs are merged first, so a list that names one trace many
+  ## times costs no more than its traces; what is past the bound is left
+  ## out and said.
+  let merged = merge(runs)
+  let total = count(merged)
+  result = newSeqOfCap[int](min(total, bound))
+  for r in merged:
+    for t in r:
+      if result.len < bound: result.add t
+  if total > bound:
+    problems.add what & ": " & $(total - bound) & " traces past the " & $bound &
+      " a list may hold are left out"
+
+proc readRuns*(text: string; traces: var seq[int]; problems: var seq[string];
+    what: string; most = high(int32); bound = MaxListTraces) =
+  ## The trace numbers from 1 in `text` ("3 7-9 120"), as indices from 0,
+  ## ascending and each once, into `traces` (at most `bound` of them, the
+  ## rest said); each part that is not a number or a run (or past `most`)
+  ## is a problem, and is passed by.
+  var runs: seq[Slice[int]]
+  for t in traces: runs.add t .. t
+  var beyond: seq[Slice[int]]
+  addRuns(text, runs, problems, what, most, high(int), beyond)
+  traces = expandRuns(runs, problems, what, bound)
 
 # ------------------------------------------------------------- documents --
 
@@ -234,31 +276,40 @@ proc readSeen(n: NifNode; r: var FileRecord; problems: var seq[string]) =
         else: problems.add "seen: the modification time is not a time"
       else: discard
 
-proc readEditsIn(n: NifNode; r: var FileRecord; problems: var seq[string]) =
-  ## The edit lists of the document `n` (its top node), into `r.edits`.
+proc readEditsIn(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo: int;
+    outside: var int) =
+  ## The edit lists of the document `n` (its top node), into `r.edits`; the
+  ## traces from `upTo` on are left out and counted in `outside`, before
+  ## any run is expanded.
+  var runs, beyond: array[TraceEdit, seq[Slice[int]]]
   for k in n.kids:
     if k.kind == nkTree:
       case k.tag
       of "killed", "reversed":
         let edit = if k.tag == "killed": teKilled else: teReversed
-        var traces: seq[int]
         for v in k.kids:
-          if v.kind == nkString: readRuns(v.text, traces, problems, k.tag)
+          if v.kind == nkString:
+            addRuns(v.text, runs[edit], problems, k.tag, high(int32), upTo, beyond[edit])
           elif v.kind == nkInt and v.intVal >= 1 and v.intVal <= high(int32):
-            traces.add int(v.intVal) - 1
+            let t = int(v.intVal) - 1
+            if t < upTo: runs[edit].add t .. t else: beyond[edit].add t .. t
           else: problems.add k.tag & ": not a list of trace numbers"
-        r.edits.lists[edit] = sortedTraces(r.edits.lists[edit] & traces)
       of "allReversed":
         if k.kids.len == 1 and k.kids[0].kind == nkIdent and k.kids[0].text in ["true", "false"]:
           r.edits.allReversed = k.kids[0].text == "true"
         else: problems.add "allReversed: not true or false"
       else: discard
+  for edit in TraceEdit:
+    if runs[edit].len > 0: r.edits.lists[edit] = expandRuns(runs[edit], problems, $edit, MaxListTraces)
+    outside += count(merge(beyond[edit]))
 
-proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string]): FileRecord =
+proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string];
+    upTo: int; outside: var int): FileRecord =
   ## The record a document of the store (or a file's list exported as NIF)
-  ## holds. Raises `NifError` when it holds no `fileMemory` node, or one of
-  ## a later version that this one cannot read; what else it cannot use is
-  ## a problem.
+  ## holds, its traces from `upTo` on left out (counted in `outside`).
+  ## Raises `NifError` when it holds no `fileMemory` node, or one of a
+  ## later version that this one cannot read; what else it cannot use is a
+  ## problem.
   result = FileRecord(doc: name)
   let before = problems.len
   var found = false
@@ -279,10 +330,15 @@ proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string
           of "seen": readSeen(k, result, problems)
           of "killed", "reversed", "allReversed": discard # readEditsIn
           else: result.later.add k # a later version's: kept as it is
-      readEditsIn(n, result, problems)
+      readEditsIn(n, result, problems, upTo, outside)
   if not found:
     raise newException(NifError, name & " holds no trace edits (no fileMemory node)")
   result.damaged = problems.len > before
+
+proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string]): FileRecord =
+  ## `readMemory` with every trace kept.
+  var outside = 0
+  readMemory(doc, name, problems, high(int), outside)
 
 proc readMemoryFile*(path: string; problems: var seq[string]): FileRecord =
   ## The record in the store's document at `path`. Raises `NifError` for a
@@ -373,7 +429,8 @@ func csvTrace(t: string; v: var int): bool =
     return true
   false
 
-proc readEditsCsv*(text, name: string; problems: var seq[string]): EditLists =
+proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
+    outside: var int): EditLists =
   ## The edits of a CSV table (`editsCsv`'s, or one made by hand or saved
   ## from a spreadsheet: a UTF-8 byte order mark, CRLF line ends, cells in
   ## quotes, `;` or tabs between them, title rows above the header and
@@ -381,7 +438,8 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]): EditLists =
   ## column (the trace's number in the file, from 1, or "all") and an
   ## `edit` column (`killed` or `reversed`; "kill" and "reverse" too);
   ## without an `edit` column every trace listed is killed. Lines it cannot
-  ## use are problems.
+  ## use are problems; traces from `upTo` on (past the file's last) are
+  ## left out and counted in `outside`.
   var lines = text.splitLines
   if lines.len > 0 and lines[0].startsWith("\xEF\xBB\xBF"): lines[0] = lines[0][3 .. ^1]
   var traceCol, editCol = -1
@@ -426,26 +484,36 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]): EditLists =
         let t = if traceCol < cells.len: cells[traceCol] else: ""
         var v: int
         if t.toLowerAscii == "all" and edit == teReversed: result.allReversed = true
-        elif csvTrace(t, v): lists[edit].add v - 1
+        elif csvTrace(t, v):
+          if v - 1 < upTo: lists[edit].add v - 1 else: inc outside
         elif problems.len < WordedProblems:
           problems.add at & ": \"" & t & "\" is not a trace number"
   for edit in TraceEdit: result.lists[edit] = sortedTraces(lists[edit])
 
+proc readEditsCsv*(text, name: string; problems: var seq[string]): EditLists =
+  ## `readEditsCsv` with every trace kept.
+  var outside = 0
+  readEditsCsv(text, name, problems, high(int), outside)
+
 proc readEdits*(content, name: string; doc: openArray[NifNode]; docError: string;
-    problems: var seq[string]; identity: var FileIdentity; hasIdentity: var bool): EditLists =
-  ## The edits in a file's list the user imports: a NIF document (`.nif`:
-  ## the store's form, with the identity of the file it was made on) or a
-  ## CSV table (any other name). Raises `ValueError` (a `NifError` for NIF)
-  ## when it holds none it can use.
+    traces: int; problems: var seq[string]; identity: var FileIdentity; hasIdentity: var bool;
+    outside: var int): EditLists =
+  ## The edits in a file's list the user imports onto a file of `traces`
+  ## traces: a NIF document (`.nif`: the store's form, with the identity of
+  ## the file it was made on) or a CSV table (any other name). The traces
+  ## past the file's last are left out before any run is expanded, and
+  ## counted in `outside`, so a list from elsewhere costs no more than the
+  ## file's traces. Raises `ValueError` (a `NifError` for NIF) when it
+  ## holds none it can use.
   hasIdentity = false
   if name.toLowerAscii.endsWith(".nif"):
     if docError.len > 0: raise newException(NifError, docError)
-    let r = readMemory(doc, name, problems)
+    let r = readMemory(doc, name, problems, traces, outside)
     identity = r.identity
     hasIdentity = r.identity.size > 0 or r.identity.quick != 0
     result = r.edits
   else:
-    result = readEditsCsv(content, name, problems)
+    result = readEditsCsv(content, name, problems, traces, outside)
     if result.isEmpty and problems.len > 0:
       raise newException(ValueError, problems[0])
 

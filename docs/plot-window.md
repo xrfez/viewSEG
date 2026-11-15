@@ -896,8 +896,10 @@ either (a CSV table needs a header naming a `trace` column, within its first lin
 without an `edit` column every trace listed is killed; a table saved by a spreadsheet,
 with a byte order mark, quoted cells, `;` or tabs, reads as well) onto the file shown, as
 one step that Undo takes back, read off the screen's thread (lists of up to 64 MB);
-traces past the file's last are left out and said; a list made on another file is
-applied by trace number all the same, with a warning.
+traces past the file's last are left out and said, before any run is expanded (a list
+from elsewhere naming "1-50000000" costs no more than the file's traces), and a list
+names at most 20 million traces of each edit (the rest left out and said); a list made
+on another file is applied by trace number all the same, with a warning.
 
 An edit must show at once. The window's reader keeps the samples it last read from the
 file (as decoded, up to 128 MiB), so an edit of traces in view, a gain change, or a

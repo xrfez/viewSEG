@@ -7,7 +7,8 @@
 ## parts written back as they were, the listing with a file gone and one
 ## whose folder is not there (not gone), and a file's list as CSV read back
 ## (naming its file on every row), with one made by hand and one as a
-## spreadsheet saves it.
+## spreadsheet saves it; a list naming far more traces than the file has
+## cut at its last before anything is expanded, and a list's total bounded.
 ##
 ## Seen to fail: with `runsText` writing trace indices from 0, "the runs
 ## are 2 6-9 119"; with `recordsOf` taking every document of the folder (by
@@ -19,7 +20,9 @@
 ## gone"; with the byte order mark left on the header, "a byte order mark:
 ## no line at its start names a trace column"; the old reader (cells split
 ## at every `,`, `;` and tab, no quotes) took the spreadsheet's table as
-## having no trace column.
+## having no trace column; with the runs expanded first and cut at the
+## file's last trace after, "the runs were expanded before the cut: 39 MB
+## more" (merged; as `readRuns` was, each run on its own, 320 MB).
 
 import std/[os, sequtils, strutils, times]
 import viewSEG/core/[edits, filememory, identity, nif]
@@ -160,12 +163,40 @@ try:
     doAssert readEditsCsv("5\n6\n", "bare.csv", problems).isEmpty and problems.len == 1
     var fid: FileIdentity
     var has: bool
+    var outside = 0
     doAssertRaises ValueError:
-      discard readEdits("5\n6\n", "bare.csv", [], "", problems, fid, has)
+      discard readEdits("5\n6\n", "bare.csv", [], "", high(int), problems, fid, has, outside)
     problems.setLen 0
-    let fromNif = readEdits("", "x.nif", parseNif(memoryDocument(rec), "x.nif"), "", problems,
-      fid, has)
-    doAssert fromNif == rec.edits and has and fid == id
+    let fromNif = readEdits("", "x.nif", parseNif(memoryDocument(rec), "x.nif"), "", high(int),
+      problems, fid, has, outside)
+    doAssert fromNif == rec.edits and has and fid == id and outside == 0
+  block bounded:
+    # a list from elsewhere naming far more traces than the file has: cut
+    # at the file's last trace before anything is expanded (eight runs of
+    # five million were 40 million indices, 320 MB, before the cut), and a
+    # list's total bounded, what is past the bound said
+    var problems: seq[string]
+    var fid: FileIdentity
+    var has: bool
+    var outside = 0
+    let text = "(fileMemory (version 1) (killed" & " \"1-5000000\"".repeat(8) & " 7))"
+    let peak = getMaxMem()
+    let l = readEdits("", "far.nif", parseNif(text, "far.nif"), "", 1000, problems, fid, has,
+      outside)
+    doAssert getMaxMem() - peak < 32 shl 20, "the runs were expanded before the cut: " &
+      $((getMaxMem() - peak) shr 20) & " MB more"
+    doAssert l.lists[teKilled].len == 1000 and l.lists[teKilled][^1] == 999, $l.lists[teKilled].len
+    doAssert outside == 5_000_000 - 1000, "the traces past the file's last are not counted: " &
+      $outside
+    doAssert problems.len == 0, $problems
+    outside = 0
+    let csv = readEdits("trace\n3\n2000\n4\n", "far.csv", [], "", 1000, problems, fid, has,
+      outside)
+    doAssert csv.lists[teKilled] == @[2, 3] and outside == 1, $outside
+    var t: seq[int]
+    readRuns("1-30 41-50 20-35", t, problems, "killed", bound = 25)
+    doAssert t.len == 25 and t[^1] == 24, $t
+    doAssert problems.len == 1 and "left out" in problems[0], $problems
   block words:
     doAssert keptWords(lists([1, 2], [], all = true)) == "2 killed, all reversed"
     doAssert keptWords(EditLists()) == "nothing"
