@@ -1,0 +1,136 @@
+## The signal-analysis views' numbers (`core/analysis`), against what is
+## known of synthetic traces, worked out apart:
+##
+## - spectrogram: a linear chirp (20 to 120 Hz over 2 s) peaks, frame by
+##   frame, at the frequency it sweeps through at the frame's centre (to a
+##   bin), and the image is in dB from its largest amplitude, 0 at the top;
+## - envelope: of `A(t)·cos(2π·f·t)` with a slow Gaussian `A`, the envelope
+##   is `A` and the instantaneous frequency `f` away from the ends;
+## - phase spectrum: an impulse at sample m has the phase `-360·f·m·dt`
+##   (degrees, unwrapped) where the amplitude is within the threshold, and
+##   none (NaN) where it is not; wrapped, it stays within ±180;
+## - cross-correlation: a Ricker wavelet delayed 40 ms against itself peaks
+##   at +40 ms, scaled by 0.5 its amplitude ratio is -6 dB in band.
+##
+## Seen to fail: with the frames' times taken at their start rather than
+## their centre, "frame 4: peak 31.25 Hz, the chirp at 17.6"; with the
+## instantaneous frequency not divided by the two samples' span, "frequency
+## 60.00009145758993 at 1000.0 ms, want 30.0"; with the unwrap's offset not
+## kept between bins, "phase at 6.8359375 Hz: 177.89..., want -182.109375".
+
+import std/math
+import viewSEG/core/analysis
+
+const DtMs = 2.0
+
+func near(a, b, tol: float64): bool = abs(a - b) <= tol
+
+block spectrogramRidge:
+  let n = 1001 # 2 s
+  var x = newSeq[float32](n)
+  let (f0, f1, T) = (20.0, 120.0, 2.0)
+  for i in 0 ..< n:
+    let t = float64(i) * DtMs / 1000
+    x[i] = float32(sin(2 * PI * (f0 * t + (f1 - f0) / (2 * T) * t * t)))
+  let r = spectrogramOf([x], DtMs, 0, AnalysisParams(windowMs: 512, overlap: 90))
+  doAssert r.problem == "", r.problem
+  let img = r.image
+  doAssert img.cols > 20 and img.rows > 20, $(img.cols, img.rows)
+  var top = -Inf
+  for v in img.values: top = max(top, float64(v))
+  doAssert near(top, 0, 1e-6), "the image's largest is " & $top & " dB"
+  # frames well inside the trace: the peak bin is the chirp's frequency at
+  # the frame's centre
+  for col in 4 ..< img.cols - 4:
+    let t = (img.x0 + float64(col) * img.dx) / 1000
+    let want = f0 + (f1 - f0) / T * t
+    var best = 0
+    for row in 0 ..< img.rows:
+      if img.valueAt(col, row) > img.valueAt(col, best): best = row
+    let got = img.y0 + float64(best) * img.dy
+    doAssert near(got, want, 1.0 * img.dy), "frame " & $col & ": peak " & $got &
+      " Hz, the chirp at " & $want
+  # two traces: their power average
+  let two = spectrogramOf([x, x], DtMs, 0, AnalysisParams())
+  doAssert two.image.values == spectrogramOf([x], DtMs, 0, AnalysisParams()).image.values
+
+block envelopeOfAModulatedCosine:
+  let n = 2001
+  let f = 30.0
+  var x = newSeq[float32](n)
+  var a = newSeq[float64](n)
+  for i in 0 ..< n:
+    let t = float64(i) * DtMs
+    a[i] = exp(-(((t - 2000) / 600) ^ 2))
+    x[i] = float32(a[i] * cos(2 * PI * f * t / 1000))
+  let r = envelopeOf(x, "trace 1", DtMs, 0)
+  doAssert r.problem == "" and r.plots.len == 3
+  let env = r.plots[0].curves[1].ys
+  let freq = r.plots[2].curves[0].ys
+  for i in countup(500, 1500, 50):
+    doAssert near(env[i], a[i], 0.01), "envelope at " & $(float64(i) * DtMs) & " ms: " &
+      $env[i] & ", want " & $a[i]
+    doAssert near(freq[i], f, 0.2), "frequency " & $freq[i] & " at " & $(float64(i) * DtMs) &
+      " ms, want " & $f
+  doAssert r.plots[0].xs[10] == 20.0
+
+block phaseOfAnImpulse:
+  let n = 512
+  let m = 37
+  var x = newSeq[float32](n)
+  x[m] = 1
+  # an impulse's amplitude is flat: every bin within 20 dB, the phase a line
+  let r = phaseOf(x, "impulse", DtMs, AnalysisParams(phaseWithinDb: 20, unwrap: true))
+  doAssert r.problem == ""
+  let hz = r.plots[1].xs
+  let ph = r.plots[1].curves[0].ys
+  for k in 1 ..< hz.len - 1:
+    let want = -360 * hz[k] * float64(m) * DtMs / 1000
+    doAssert near(ph[k], want, 1e-3), "phase at " & $hz[k] & " Hz: " & $ph[k] & ", want " & $want
+  let wrapped = phaseOf(x, "impulse", DtMs, AnalysisParams(unwrap: false))
+  for v in wrapped.plots[1].curves[0].ys:
+    doAssert v.isNaN or abs(v) <= 180 + 1e-3, $v
+  # a band-limited pulse: no phase where its amplitude is 20 dB under its peak
+  var y = newSeq[float32](n)
+  for i in 0 ..< n:
+    let t = (float64(i - 200) * DtMs / 1000) * PI * 25
+    y[i] = float32((1 - 2 * t * t) * exp(-t * t)) # a 25 Hz Ricker
+  let rp = phaseOf(y, "ricker", DtMs, AnalysisParams(phaseWithinDb: 20))
+  let db = rp.plots[0].curves[0].ys
+  let yp = rp.plots[1].curves[0].ys
+  var shown, hidden = 0
+  for k in 0 ..< db.len:
+    if db[k] >= -20:
+      doAssert not yp[k].isNaN
+      inc shown
+    else:
+      doAssert yp[k].isNaN, "a phase at " & $db[k] & " dB"
+      inc hidden
+  doAssert shown > 5 and hidden > 5, $(shown, hidden)
+  doAssert unwrapWhere([170.0, -170, -150, 170], [true, true, true, true]) ==
+    @[170.0, 190, 210, 170]
+
+block correlationLag:
+  let n = 1001
+  var r, s, half = newSeq[float32](n)
+  for i in 0 ..< n:
+    let t = (float64(i - 300) * DtMs / 1000) * PI * 25
+    r[i] = float32((1 - 2 * t * t) * exp(-t * t))
+  for i in 0 ..< n:
+    let j = i - 20 # 40 ms later
+    s[i] = if j >= 0: r[j] else: 0
+    half[i] = 0.5'f32 * r[i]
+  let c = correlationOf([("delayed", s), ("half", half)], r, "the reference", DtMs,
+    AnalysisParams(maxLagMs: 200))
+  doAssert c.problem == "", c.problem
+  doAssert c.plots.len == 3 and c.plots[0].curves.len == 4
+  doAssert near(c.peakLagMs(0), 40, 1e-9), "peak at " & $c.peakLagMs(0) & " ms, want 40"
+  doAssert near(c.peakLagMs(1), 0, 1e-9)
+  # the half-amplitude copy: -6.02 dB where the reference has energy
+  let hz = c.plots[1].xs
+  let ratio = c.plots[1].curves[1].ys
+  for k in 0 ..< hz.len:
+    if hz[k] >= 15 and hz[k] <= 40:
+      doAssert near(ratio[k], 20 * log10(0.5), 0.05), "ratio at " & $hz[k] & " Hz: " & $ratio[k]
+
+echo "tanalysis: ok"

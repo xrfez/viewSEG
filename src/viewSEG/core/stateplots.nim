@@ -1,0 +1,228 @@
+## The analysis windows (New plot) in `AppState`: opened from a plot's
+## traces, asked of their reader (`core/analysisreader`), following the
+## plot they came from, closed. Included in `core/state`, after the
+## spectrum windows, whose helpers it shares.
+
+const MaxPlotTraces* = 256
+  ## traces a spectrogram averages at most (more chosen are taken evenly);
+  ## a curve view draws the first `MaxAnalysisCurves`
+
+func plots*(state: AppState): lent seq[AnalysisWindow] {.inline.} =
+  ## The analysis windows, in the order opened.
+  state.plots
+
+func findPlot*(state: AppState; id: int): int =
+  ## The index in `plots` of window `id`; -1 when there is none.
+  for i, w in state.plots:
+    if w.id == id: return i
+  -1
+
+func plotsWaiting*(state: AppState): seq[string] =
+  ## The windows whose numbers are on their way, by title.
+  for w in state.plots:
+    if w.waiting: result.add w.title
+
+proc analysisReaderFor(state: var AppState; path: string): lent AnalysisReader =
+  ## The analysis reader, started when first needed; one stuck in a drive
+  ## that does not answer is left to end on its own when `path` is another
+  ## file.
+  if not state.analysisReader.isNil and state.analysisReader.silentFor >= StallAfter and
+      state.analysisReader.readingPath != path:
+    state.analysisReader.leave()
+    state.leftAnalysisReaders.add move state.analysisReader
+  if state.analysisReader.isNil:
+    state.analysisReader = newAnalysisReader(state.inbox.poster, state.jobs.holdRelease)
+  state.analysisReader
+
+func firstAux(s: Session; trace: int): int =
+  ## The first auxiliary trace (index in the file) of the record `trace`
+  ## is in: its pilot, for a correlation; -1 for none.
+  result = -1
+  let g = s.gatherOf(trace)
+  if g >= 0 and g < s.gathers.len:
+    let f = s.filePtr
+    for t in s.gathers[g].traces:
+      if t in 0 ..< f[].len and not isSeismic(f[].index, t): return t
+
+proc askPlot(state: var AppState; w: int): bool =
+  ## Asks the reader for window `plots[w]`'s numbers of its traces, with
+  ## the filters it has; false when its file is not open any more or cannot
+  ## be held now (asked again once it can).
+  template pw: untyped = state.plots[w]
+  let i = state.findTrace(if pw.traces.len > 0: pw.traces[0] else: -1)
+  if i < 0: return false
+  let s = state.sessions[i]
+  var traces: seq[int] = @[]
+  var labels: seq[string] = @[]
+  for t in pw.traces:
+    if t in s:
+      traces.add t - s.base
+      labels.add "trace " & $(t - s.base + 1)
+  var a = AnalysisAsk(id: pw.id, view: pw.view, params: pw.params, file: s.filePtr,
+    path: s.path, size: s.size, traces: traces, names: labels,
+    processing: pw.processing)
+  if pw.view == avCorrelation:
+    let r = pw.params.reference
+    let j = state.findTrace(r)
+    if j >= 0:
+      let rs = state.sessions[j]
+      (a.refTrace, a.refName) = (r - rs.base, "trace " & $(r - rs.base + 1) &
+        (if j != i: " of " & rs.name else: ""))
+      if j != i:
+        if not state.jobs.hold(rs.path): return false
+        (a.refFile, a.refPath, a.refSize) = (rs.filePtr, rs.path, rs.size)
+    else:
+      let aux = s.firstAux(traces[0])
+      if aux >= 0: (a.refTrace, a.refName) = (aux, "the pilot, trace " & $(aux + 1))
+    pw.reference = a.refName
+  if not state.jobs.hold(s.path):
+    if a.refFile != nil: discard state.jobs.holdRelease.release(a.refPath)
+    return false
+  var killed = killedOf(state.editsAt(s.path), traces)
+  killed.sort()
+  a.killed = killed
+  inc state.plotGen
+  a.gen = state.plotGen
+  pw.asked = state.plotGen
+  pw.waiting = true
+  pw.killed = killed
+  pw.editsSeen = state.editsAt(s.path).revision
+  inc pw.asks
+  inc pw.revision
+  state.analysisReaderFor(s.path).ask a
+  true
+
+proc openPlot(state: var AppState; cmd: Command) =
+  ## `ckOpenPlot`: a new analysis window of `cmd.plotTraces` (else the
+  ## selected traces of the panel's file, else the trace under the
+  ## pointer), asked for at once.
+  let k = state.findPanel(if cmd.plotOf == NoPanel: MainPanel else: cmd.plotOf)
+  let i = if k >= 0: state.shownFile(k) else: -1
+  if k < 0:
+    state.ignore(cmd, $cmd.plotOf & " does not exist")
+    return
+  if i < 0:
+    state.ignore(cmd, "the panel shows no file")
+    return
+  if state.plots.len >= MaxAnalysisWindows:
+    state.ignore(cmd, $MaxAnalysisWindows & " plot windows are open; close one first")
+    return
+  let s = state.sessions[i]
+  var ids = cmd.plotTraces
+  if ids.len == 0:
+    for t in state.selection.selected:
+      if t in s: ids.add t
+    ids.sort()
+  if ids.len == 0 and state.selection.hover >= 0 and state.selection.hover in s:
+    ids.add state.selection.hover
+  var traces: seq[int] = @[]
+  var outside = 0
+  for t in ids:
+    if t in s: traces.add t - s.base
+    else: inc outside
+  traces = deduplicate(traces)
+  if traces.len == 0:
+    state.ignore(cmd, if ids.len == 0: "no trace is selected or under the pointer in " & s.name
+                      else: "none of the traces is in " & s.name)
+    return
+  if traces.len > MaxPlotTraces:
+    var kept: seq[int] = @[]
+    for j in evenly(traces.len, MaxPlotTraces): kept.add traces[j]
+    traces = kept
+  if cmd.plotParams.reference >= 0 and state.findTrace(cmd.plotParams.reference) < 0:
+    state.ignore(cmd, "the reference trace " & $cmd.plotParams.reference &
+      " is in no open file")
+    return
+  template p: untyped = state.panels[k]
+  var w = AnalysisWindow(id: freePlotId(state.plots), view: cmd.plotView,
+    params: cmd.plotParams, panel: p.id, file: s.name, record: s.recordText(traces[0]),
+    traces: traces.mapIt(it + s.base), first: traces[0], processing: spectrumFilters(p),
+    since: state.plotGen + 1)
+  w.filters = filtersText(w.processing)
+  state.plots.add w
+  if not state.askPlot(state.plots.high):
+    state.plots.delete state.plots.high
+    state.ignore(cmd, s.name & " is busy (a job needs it to itself)")
+    return
+  if outside > 0:
+    state.log.add(sevWarning, s.name, $outside & " of the traces given are not in " & s.name &
+      ": left out of the plot.")
+
+proc showPlot(state: var AppState; cmd: Command) =
+  ## `ckPlotDisplay`: an analysis window's settings, and whether it is
+  ## frozen; asked again when a setting changed (from the samples, once
+  ## read: nothing else follows a frozen window).
+  let w = state.findPlot(cmd.plot)
+  if w < 0:
+    state.ignore(cmd, "there is no plot window " & $cmd.plot)
+    return
+  template pw: untyped = state.plots[w]
+  if cmd.plotParams.reference >= 0 and state.findTrace(cmd.plotParams.reference) < 0:
+    state.ignore(cmd, "the reference trace " & $cmd.plotParams.reference &
+      " is in no open file")
+    return
+  let changed = cmd.plotParams != pw.params
+  pw.params = cmd.plotParams
+  pw.frozen = cmd.plotFrozen # unfrozen, `followPlots` asks again if the plot changed
+  inc pw.revision
+  if changed and not state.askPlot(w):
+    state.log.add(sevWarning, "New plot", "The file of " & pw.title & " is not open any " &
+      "more, or busy: it shows what it had.")
+
+proc holdPlotCursor(state: var AppState; cmd: Command) =
+  ## `ckPlotCursor`: where an analysis window's cursor is held (by its
+  ## keys, or an agent); let go (`held` false), it follows the pointer.
+  let w = state.findPlot(cmd.plot)
+  if w < 0:
+    state.ignore(cmd, "there is no plot window " & $cmd.plot)
+    return
+  state.plots[w].cursor = cmd.plotCursor
+  inc state.plots[w].revision
+
+proc closePlot(state: var AppState; cmd: Command) =
+  ## `ckClosePlot`: the window goes, its work with it.
+  let w = state.findPlot(cmd.plot)
+  if w < 0:
+    state.ignore(cmd, "there is no plot window " & $cmd.plot)
+    return
+  if not state.analysisReader.isNil: state.analysisReader.cancel(cmd.plot)
+  state.plots.delete w
+
+proc takeAnalysis(state: var AppState; m: sink Msg) =
+  ## Numbers for a window still open, newer than those it shows.
+  let w = state.findPlot(m.analysis.id)
+  if w >= 0 and m.analysis.gen >= state.plots[w].since and
+      m.analysis.gen <= state.plots[w].asked and m.analysis.gen > state.plots[w].result.gen:
+    template pw: untyped = state.plots[w]
+    pw.waiting = m.analysis.gen < pw.asked
+    pw.result = move m.analysis
+    inc pw.revision
+
+proc followPlots(state: var AppState) =
+  ## After every change: each window not frozen follows the filters of the
+  ## plot it was opened from (and its Aux toggle; shown raw or not alike),
+  ## and the kills of its traces, asked again when either changed. Its
+  ## traces stay those it was opened on.
+  for w in 0 ..< state.plots.len:
+    template pw: untyped = state.plots[w]
+    if not pw.frozen:
+      let k = state.findPanel(pw.panel)
+      let i = state.findTrace(if pw.traces.len > 0: pw.traces[0] else: -1)
+      if k >= 0 and i >= 0 and state.panels[k].layers.len > 0:
+        let pr = spectrumFilters(state.panels[k])
+        let s = state.sessions[i]
+        let e = state.editsAt(s.path)
+        var killsMoved = false
+        if e.revision != pw.editsSeen:
+          var traces: seq[int] = @[]
+          for t in pw.traces:
+            if t in s: traces.add t - s.base
+          var killed = killedOf(e, traces)
+          killed.sort()
+          killsMoved = killed != pw.killed
+          if not killsMoved: pw.editsSeen = e.revision # other traces' edits: nothing to ask
+        if pr != pw.processing or killsMoved:
+          let was = pw.processing
+          pw.processing = pr
+          if state.askPlot(w): pw.filters = filtersText(pr)
+          else: pw.processing = was # asked again once it can be

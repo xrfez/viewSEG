@@ -104,14 +104,14 @@ from std/unicode import runeSubStr
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
-import closer, diskio, edits, filejobs, filelist, filememory, filesystem, identity, inbox, inspector,
-  jobs, join, layouts, log, mapstate, memoryjobs, panels, persist, pick, reader, recordqc,
-  selection, session, settings, shots, spectra, spectrumreader, spread, survey, surveyjobs,
-  threads, tiles, watch, zoom
+import analysis, analysisreader, closer, diskio, edits, filejobs, filelist, filememory,
+  filesystem, identity, inbox, inspector, jobs, join, layouts, log, mapstate, memoryjobs,
+  panels, persist, pick, reader, recordqc, selection, session, settings, shots, spectra,
+  spectrumreader, spread, survey, surveyjobs, threads, tiles, watch, zoom
 
-export edits, filelist, filememory, identity, inbox, jobs, join, layouts, log, mapstate, panels,
-  persist, pick, recordqc, selection, session, settings, shots, spectra, spread, survey, threads,
-  tiles, zoom
+export analysis, edits, filelist, filememory, identity, inbox, jobs, join, layouts, log,
+  mapstate, panels, persist, pick, recordqc, selection, session, settings, shots, spectra,
+  spread, survey, threads, tiles, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues
 export WatchInterval
 
@@ -202,6 +202,10 @@ type
       ## hold a spectrum window's cursor at a frequency bin and curve, or let it go
     ckStepTrace = "step trace"
       ## select the next or previous trace of the record shown (Alt + arrow)
+    ckOpenPlot = "open plot"             ## New plot: an analysis window of traces (a spectrogram, ...)
+    ckPlotDisplay = "plot display"       ## an analysis window's settings, frozen or not
+    ckPlotCursor = "plot cursor"         ## where an analysis window's cursor is held
+    ckClosePlot = "close plot"           ## close an analysis window
     ckDisplayPreset = "display preset"
       ## draw a panel as a named display says; keep, rename or forget one
     ckTheme = "theme"                    ## the theme the program is drawn in, as View > Theme picks it
@@ -352,6 +356,24 @@ type
       onScreen*: bool
         ## ckSpectrumPanel: the live panel is on screen (it follows the
         ## Seismic window's view or selection, off the UI thread, only then)
+    of ckOpenPlot, ckPlotDisplay, ckPlotCursor, ckClosePlot:
+      plot*: int
+        ## ckPlotDisplay, ckPlotCursor, ckClosePlot: the window (from 1, as
+        ## `state`'s `plots` lists them)
+      plotView*: AnalysisView
+        ## ckOpenPlot: what it shows: a spectrogram, the envelope and
+        ## instantaneous phase, the phase spectrum, a cross-correlation
+      plotOf*: PanelId
+        ## ckOpenPlot: the panel whose file and filters it is of (1: the
+        ## Seismic window)
+      plotTraces*: seq[int]
+        ## ckOpenPlot: survey-wide ids of traces of the panel's file; none:
+        ## its selected traces there, else the trace under the pointer
+      plotParams*: AnalysisParams
+        ## ckOpenPlot, ckPlotDisplay: its settings (frame length and overlap,
+        ## the phase's dB threshold, the reference trace, the lags, ...)
+      plotFrozen*: bool ## ckPlotDisplay: it keeps what it shows
+      plotCursor*: PlotCursor ## ckPlotCursor: where its cursor is held
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -752,6 +774,12 @@ type
       ## ends its holds) first.
     leftSpectrumReaders: seq[SpectrumReader]
       ## spectrum readers left stuck in a drive that does not answer
+    plots: seq[AnalysisWindow] ## the analysis windows (New plot), in the order opened
+    plotGen: uint64 ## the newest analysis request's
+    analysisReader: AnalysisReader
+      ## works the analysis windows out; started when first asked
+    leftAnalysisReaders: seq[AnalysisReader]
+      ## analysis readers left stuck in a drive that does not answer
 
 proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     jobHistory: Natural = DefaultJobHistory; indexCache = "";
@@ -1127,6 +1155,7 @@ proc shutdown*(state: var AppState; wait = QuitWait; diskLimit = DiskQuitLimit;
   ## given, is called about every 16 ms while the disk thread is waited for
   ## (the frontend draws). Destroying the state does this too.
   assertUiThread()
+  state.analysisReader.askStop()
   state.spectrumReader.askStop()
   state.inspector.askStop()
   for r in state.readers: r.askStop()
@@ -1152,6 +1181,9 @@ proc shutdown*(state: var AppState; wait = QuitWait; diskLimit = DiskQuitLimit;
     if not x.stop(deadline): result = false
   if not state.spectrumReader.stop(deadline): result = false
   for x in state.leftSpectrumReaders:
+    if not x.stop(deadline): result = false
+  if not state.analysisReader.stop(deadline): result = false
+  for x in state.leftAnalysisReaders:
     if not x.stop(deadline): result = false
   state.watch.stop(deadline)
   if not state.jobs.stop(deadline): result = false
@@ -2637,6 +2669,8 @@ proc takeSpectrum(state: var AppState; m: sink Msg) =
     sw.waiting = m.spectrum.gen < sw.asked
     sw.spectrum = move m.spectrum
     inc sw.revision
+
+include stateplots
 
 proc showListedShot(state: var AppState; cmd: Command): bool
 
@@ -4852,6 +4886,7 @@ proc apply*(state: var AppState; cmd: Command) =
   state.followHidden()
   state.followInspect()
   state.followSpectrum()
+  state.followPlots()
   state.followMapWork()
 
 proc displayPreset(state: var AppState; cmd: Command) =
@@ -5421,6 +5456,10 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckCloseSpectrum: state.closeSpectrum(cmd)
   of ckSpectrumCursor: state.holdCursor(cmd)
   of ckStepTrace: state.stepTrace(cmd)
+  of ckOpenPlot: state.openPlot(cmd)
+  of ckPlotDisplay: state.showPlot(cmd)
+  of ckPlotCursor: state.holdPlotCursor(cmd)
+  of ckClosePlot: state.closePlot(cmd)
   of ckSpectrumPanel:
     template live: untyped = state.spectra[0]
     if cmd.onScreen != live.shown:
@@ -5544,6 +5583,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkJoined: state.takeJoined(m)
     of mkInspected: state.takeInspected(move m)
     of mkSpectrum: state.takeSpectrum(move m)
+    of mkAnalysis: state.takeAnalysis(move m)
     of mkSurveyHead:
       let i = state.surveyHead(m.surveyHead.file.path)
       if i >= 0: state.heads[i] = move m.surveyHead
@@ -5649,5 +5689,6 @@ proc drainInbox*(state: var AppState): bool =
   state.followHidden()
   state.followInspect()
   state.followSpectrum()
+  state.followPlots()
   state.followMapWork()
   state.followMemoryLook()

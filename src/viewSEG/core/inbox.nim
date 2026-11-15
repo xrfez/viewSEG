@@ -11,8 +11,8 @@
 
 import std/[locks, times]
 import parseSEG
-import edits, filelist, filememory, identity, join, jobs, layouts, log, mapkinds, nif, panels, session,
-  shotfiles, spectra, survey, tiles
+import analysis, edits, filelist, filememory, identity, join, jobs, layouts, log, mapkinds,
+  nif, panels, session, shotfiles, spectra, survey, tiles
 
 type
   MsgKind* = enum
@@ -49,6 +49,7 @@ type
     mkEditsList ## a file's list of edits, as the text of the file it is exported to
     mkEditsRead ## a file's list of edits the user imports, read
     mkSpectrum ## a spectrum window's spectrum, from the spectrum reader
+    mkAnalysis ## an analysis window's numbers, from the analysis reader (New plot)
     mkSurveyHead ## what a survey file's headers say of its unit, for the import's window
 
   UnreadCause* = enum
@@ -233,6 +234,8 @@ type
       importOutside*: int ## its traces past the file's last, left out
     of mkSpectrum:
       spectrum*: Spectrum ## moved, never shared
+    of mkAnalysis:
+      analysis*: AnalysisResult ## moved, never shared
     of mkSurveyHead:
       surveyHead*: SurveyHead
 

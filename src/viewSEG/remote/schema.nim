@@ -33,7 +33,8 @@ const
     ckClearSelection, ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
     ckShowPoints, ckJoin, ckSelectUnmatched, ckSurveyUnits, ckChooseUnit, ckRetry, ckStopReading,
     ckPrepare, ckInspect, ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel,
-    ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckTheme}
+    ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckTheme, ckOpenPlot, ckPlotDisplay,
+    ckPlotCursor, ckClosePlot}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey
