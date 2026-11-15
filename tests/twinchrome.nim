@@ -41,7 +41,7 @@ import viewSEG/platform/[chrome, trayguard, winres]
 proc onDeath() {.nimcall, gcsafe, raises: [].} = discard removeTrayIcons()
 
 let v = windowsVersion()
-prepareTrayRemoval("SDL_TRAY")
+prepareTrayRemoval("SDL_TRAY", trayIdBound(1, 4))
 guardFatalSignals(onDeath)
 guardUnhandled(onDeath)
 echo v.build, " ", applyChrome(nil, ChromeLook(dark: true)), " ", setWindowIcons(nil)

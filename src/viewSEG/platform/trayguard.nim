@@ -103,9 +103,7 @@ when defined(windows):
     ShellNotifyIconWFn = proc (msg: uint32; data: ptr NotifyIconDataV1): int32 {.
       stdcall, gcsafe, raises: [].}
 
-  const
-    NimDelete = 2'u32
-    MaxIds = 64 ## SDL numbers its icons and menu entries from one counter
+  const NimDelete = 2'u32
 
   var
     findWindowEx: FindWindowExWFn
@@ -113,11 +111,21 @@ when defined(windows):
     getCurrentProcessId: GetCurrentProcessIdFn
     shellNotifyIcon: ShellNotifyIconWFn
     trayClass: array[64, uint16]
+    idBound = 0'u32 ## the highest icon id to remove (`prepareTrayRemoval`)
 
-proc prepareTrayRemoval*(windowClass: string) =
+func trayIdBound*(trays, entries: int): int =
+  ## The highest icon id SDL can have given the last of `trays` trays made in
+  ## this run, each with a menu of `entries` entries (separators count): SDL
+  ## numbers its tray icons and menu entries from one counter that never goes
+  ## back, a tray taking one id and each entry one; plus room for 16 more.
+  max(trays, 1) * (1 + max(entries, 0)) + 16
+
+proc prepareTrayRemoval*(windowClass: string; maxId: int) =
   ## Looks up what `removeTrayIcons` needs, for icons added through hidden
-  ## windows of class `windowClass`. Main thread, before any fatal signal.
+  ## windows of class `windowClass` with ids up to `maxId` (`trayIdBound`).
+  ## Main thread, before any fatal signal; again after each new tray.
   when defined(windows):
+    idBound = uint32(clamp(maxId, 1, 100_000))
     let user32 = loadLib("user32.dll")
     let kernel32 = loadLib("kernel32.dll")
     let shell32 = loadLib("shell32.dll")
@@ -134,6 +142,7 @@ proc prepareTrayRemoval*(windowClass: string) =
     trayClass[n] = 0
   else:
     discard windowClass
+    discard maxId
 
 proc removeTrayIcons*(): int {.gcsafe, raises: [].} =
   ## Removes the tray icons this process added through windows of the class
@@ -153,7 +162,7 @@ proc removeTrayIcons*(): int {.gcsafe, raises: [].} =
           discard getWindowThreadProcessId(hwnd, addr pid)
           if pid == me:
             inc result
-            for id in 1'u32 .. MaxIds:
+            for id in 1'u32 .. idBound:
               var data = NotifyIconDataV1(size: uint32(sizeof(NotifyIconDataV1)),
                 hwnd: hwnd, id: id)
               discard shellNotifyIcon(NimDelete, addr data)

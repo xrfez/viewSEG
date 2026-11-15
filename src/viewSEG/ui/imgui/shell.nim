@@ -346,6 +346,7 @@ const
 var
   tray: ptr SDL_Tray
   trayEntries: array[TrayAction, ptr SDL_TrayEntry]
+  traysMade = 0 ## trays made in this run (SDL's icon ids grow with each)
 
 proc onTrayEntry(userdata: pointer; entry: ptr SDL_TrayEntry) {.cdecl.} =
   ## SDL's tray callback (main thread, during event pumping).
@@ -418,7 +419,9 @@ proc showTray*(): string =
         if not trayEntries[a].isNil:
           SDL_SetTrayEntryCallback(trayEntries[a], onTrayEntry, cast[pointer](a.int))
       when defined(windows):
-        prepareTrayRemoval(TrayWindowClass)
+        inc traysMade
+        let entries = ord(TrayAction.high) + 2 # the actions and the separator
+        prepareTrayRemoval(TrayWindowClass, trayIdBound(traysMade, entries))
         guardFatalSignals(dropTrayIcons)
         guardUnhandled(dropTrayIcons)
 

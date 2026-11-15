@@ -20,7 +20,9 @@
 ## Seen to fail: with the dark mode attribute 20 given from build 17763,
 ## "1809 takes attribute 19"; with red and blue swapped in `colorRef`,
 ## "0x003b352d"; with `guardFatalSignals` not calling the cleanup, "the
-## cleanup did not run before Nim's handler"; with `guardUnhandled` not
+## cleanup did not run before Nim's handler"; with the ids to remove fixed
+## at 1 to 64, "13 trays: ids up to 64, the last tray's is 61"; with
+## `guardUnhandled` not
 ## installing its hook, "the cleanup did not run for a worker's Defect".
 
 import std/[os, osproc, strutils]
@@ -126,6 +128,15 @@ block lookOfTheme:
   let light = lookOf(EverforestLight)
   doAssert not light.dark
   doAssert light.caption == ChromeRgb(r: 0xf4, g: 0xf0, b: 0xd9)
+
+block trayIds:
+  # SDL's ids for tray icons and menu entries share one counter: our menu
+  # has 4 entries (a separator among them), so each tray takes 5 ids.
+  for trays in [1, 13, 14, 100]:
+    let lastTrayId = 1 + 5 * (trays - 1)
+    doAssert trayIdBound(trays, 4) >= lastTrayId + 4,
+      $trays & " trays: ids up to " & $trayIdBound(trays, 4) & ", the last tray's is " &
+      $lastTrayId
 
 block notWindows:
   when not defined(windows):
