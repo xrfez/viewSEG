@@ -755,9 +755,10 @@ when the menu closes, chosen or dismissed, the highlight follows the pointer aga
   pixels across down to 2, from how far apart its points typically are), so lines of
   stations stay lines when zoomed out; a ring that small is drawn as a disc.
 - **Colours:** the plot's background (the plot window's colour scheme: paper by default);
-  sources in the theme's red, receivers in its blue, or its green where the blue is the
-  accent that marks the selection (as in the Everforest themes), each made readable on
-  the background; the highlight in the plot's hover and selection colours. Hover and
+  sources and receivers in the theme's `source` and `receiver` roles (its red, and its
+  blue, or its green where the blue is the accent that marks the selection, as in the
+  Everforest themes; another of its colours where they would be hard to tell apart:
+  `view/theme.deriveRoles`), each made readable on the background; the highlight in the plot's hover and selection colours. Hover and
   selection are shared with the plot: a selection made on the map selects the points'
   traces, the trace under the pointer in the plot lights up its source and receiver, and
   the point under the pointer on the map lights up its traces in the plot ([Linking the

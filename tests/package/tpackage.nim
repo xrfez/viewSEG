@@ -40,6 +40,11 @@ proc expectedFiles(os: string): seq[string] =
     "licences/ImPlot-LICENSE.txt", "licences/cimgui-LICENSE.txt",
     "licences/imguin-LICENSE.txt", "licences/sdl3_nim-LICENSE.txt",
     "licences/parseSEG-LICENSE.txt"]
+  # every theme, and the licences of the palettes
+  for f in walkFiles(root / "assets" / "themes" / "*"):
+    result.add "assets/themes/" & f.extractFilename
+  for f in walkFiles(root / "licences" / "themes" / "*"):
+    result.add "licences/themes/" & f.extractFilename
 
 proc run(cmd: string; workingDir = ""): string =
   let (output, code) = execCmdEx(cmd, workingDir = workingDir)

@@ -5,9 +5,11 @@ viewSEG tables. Any Omarchy theme's `colors.toml` works as it is, in either of i
 (the named colours of `everforest-dark.toml`, or the terminal form with `color0` ..
 `color15`).
 
-- **Shipped:** every theme of Omarchy, and Everforest Light (below), listed under
-  *View > Theme*. *Follow system* uses `everforest-dark.toml` and `everforest-light.toml`
-  for a dark or a light desktop, and is the default.
+- **Shipped:** every theme of Omarchy, and Everforest Light (below). *View > Theme* lists
+  them, dark ones first, each with a swatch of its background, text and accent colours;
+  resting the pointer on one shows the program in it until the menu closes, and a click
+  keeps it. *Follow system* uses `everforest-dark.toml` and `everforest-light.toml` for a
+  dark or a light desktop, and is the default.
 - **Your own:** copy one to `<config>/themes/<name>.toml` (`viewSEG --paths` prints
   `<config>`), edit it, and choose it under *View > Theme*. A file there with the name of
   a shipped one replaces it. `VIEWSEG_THEME=<name>` (or a path) picks one at start;

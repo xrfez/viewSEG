@@ -353,7 +353,8 @@ reversed, it comes back with the file, and another file is shown as you left it.
 density, its column is tinted), and the status bar reads it out. Click a trace to select
 it; Ctrl + click adds another or takes one out; Shift + click selects every trace from
 the one clicked last to this one, in the order shown; Esc clears the selection. Selected
-traces are drawn in the theme's accent colour. Nothing is read again for any of this.
+traces are drawn in the theme's accent colour (another of its colours where the accent
+is too close to the traces). Nothing is read again for any of this.
 
 **Gain.** The drop-down in the strip picks the gain type, and its settings are in the
 same list: Automatic (AGC on shot and receiver records, none on stacked data), None,
@@ -425,9 +426,9 @@ and their order.
 ## The map
 
 The **Map** window (right of the plot at a first start; Window > Map brings it
-forward) draws the survey: each survey file's **sources** (red) and **receivers** (the
-theme's blue, or its green where the blue is the selection's colour, as in Everforest) as
-dots, the open file's own
+forward) draws the survey: each survey file's **sources** (the theme's red) and
+**receivers** (its blue, or its green where the blue is the selection's colour, as in
+Everforest; another of its colours where those would be hard to tell apart) as dots, the open file's own
 source and receiver positions (from its trace headers) as rings round them, so where the
 headers and the SPS agree each dot sits in its ring. North is up, one foot (or metre) is
 as long across as down, and nothing is fetched from the internet: there is no basemap.
@@ -706,6 +707,17 @@ for all of it), jobs that failed. Its strip:
 Click a message that names a trace (a damaged trace, say) to see that trace: its record is
 shown in the Seismic window with the trace selected, and its file is opened again if you have
 stepped away from it.
+
+## Themes
+
+View > Theme lists every theme that comes with viewSEG (all of Omarchy's, and Everforest
+Light), dark ones first, each with a swatch of its background, text and accent colours.
+Rest the pointer on one and the whole program is drawn in it; move to another to compare;
+close the menu (Esc, or a click elsewhere) to go back, or click one to keep it. **Follow
+system** (the default) uses Everforest Dark or Everforest Light as your desktop is dark or
+light; View > Light / dark switches between those two. Your own themes go in the `themes`
+folder of the settings folder: `assets/themes/README.md` says how, and how viewSEG keeps
+every theme readable. The seismic colour maps do not change with the theme.
 
 ## What viewSEG remembers
 

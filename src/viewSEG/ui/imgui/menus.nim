@@ -18,7 +18,7 @@ import std/os
 import imguin/cimgui
 import ../../core/layouts
 import ../../view/theme
-import icons, marks, windows
+import icons, marks, thememenu, windows
 
 type
   MenuAction* = enum
@@ -46,6 +46,7 @@ type
     ## What the menus show besides their fixed items.
     themes*: seq[ThemeFile]     ## listed under View > Theme
     theme*: string              ## the one checked; "" for following the system
+    follows*: string            ## the theme file "Follow system" uses now
     recent*: seq[string]        ## File > Open recent, newest first
     recentFolders*: seq[string] ## the folders there, newest first
     canClose*: bool             ## a file is shown, so File > Close closes it
@@ -69,6 +70,7 @@ type
     actions*: set[MenuAction]
     pickedTheme*: bool    ## a theme was chosen under View > Theme
     theme*: string        ## its file name, or "" for "Follow system"
+    themeMenu*: ThemeMenu ## the submenu this frame: open, the entry the pointer rests on
     openRecent*: string   ## a recent file to open; "" for none
     browseRecent*: string ## a recent folder to list; "" for none
     clearRecent*: bool    ## "Clear the list" under File > Open recent
@@ -365,15 +367,9 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
     let view = igBeginMenu("View", true)
     marks.mark("menu.View")
     if view:
-      if igBeginMenu((IconTheme & "  Theme").cstring, true):
-        if igMenuItem_Bool("Follow system", nil, input.theme.len == 0, true):
-          (result.pickedTheme, result.theme) = (true, "")
-        if input.themes.len > 0:
-          igSeparator()
-        for f in input.themes:
-          if igMenuItem_Bool(displayName(f.name).cstring, nil, f.name == input.theme, true):
-            (result.pickedTheme, result.theme) = (true, f.name)
-        igEndMenu()
+      result.themeMenu = drawThemeMenu(input.themes, input.theme, input.follows,
+        IconTheme & "  Theme", marks)
+      (result.pickedTheme, result.theme) = (result.themeMenu.picked, result.themeMenu.theme)
       if igMenuItem_Bool(label(maToggleTheme).cstring, nil, false, true):
         result.actions.incl maToggleTheme
       igEndMenu()

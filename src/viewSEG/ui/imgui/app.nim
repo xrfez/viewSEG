@@ -100,6 +100,13 @@ type
     slow: SlowFrameDigest
     marks: Marks
     pendingTheme: Option[string]               ## picked in the menu, applied after the frame
+    previewWanted: Option[string]
+      ## the theme the pointer rests on in View > Theme ("" for Follow system),
+      ## drawn after the frame until the submenu closes (`followPreview`)
+    previewing: bool                           ## `theme` is a preview of `previewName`
+    previewName: string
+    beforePreview: Theme                       ## the theme the preview replaced, to go back to
+    previewKept: bool                          ## the preview ends with a pick of another theme
     appliedTheme: string                       ## the settings' theme last followed
     layoutLoads: int                           ## the core's `layoutLoads` last followed
     layoutName: array[MaxLayoutName + 1, char] ## the name typed in "Save layout"
@@ -549,9 +556,36 @@ proc flushMessages(ui: var Ui) =
 proc setTheme(ui: var Ui) =
   ## Loads the theme `pickTheme` names, with its fonts, and restyles.
   ui.theme = ui.pickTheme()
+  ui.previewing = false # what is set now replaces a preview
   ui.fonts.load(ui.theme, ui.fontDirs, ui.messages)
   ui.flushMessages()
   ui.restyle()
+
+proc followPreview(ui: var Ui) =
+  ## Draws the theme View > Theme's pointer rests on, from the file as read
+  ## at start (no message: its problems are said when it is picked), or
+  ## goes back to the theme before once the submenu closes without a pick
+  ## of another. Between frames: fonts and styles change.
+  if ui.previewWanted.isSome:
+    let name = ui.previewWanted.get
+    if not ui.previewing or name != ui.previewName:
+      let wanted = if name.len > 0: name
+                   else: DefaultThemeNames[resolveTheme(ui.choice, ui.system)]
+      for f in ui.themes:
+        if f.name == wanted:
+          if not ui.previewing: (ui.beforePreview, ui.previewKept) = (ui.theme, false)
+          (ui.previewing, ui.previewName, ui.theme) = (true, name, f.theme)
+          ui.fonts.load(ui.theme, ui.fontDirs, ui.messages)
+          ui.flushMessages()
+          ui.restyle()
+  elif ui.previewing:
+    ui.previewing = false
+    if not ui.previewKept:
+      ui.theme = ui.beforePreview
+      ui.fonts.load(ui.theme, ui.fontDirs, ui.messages)
+      ui.flushMessages()
+      ui.restyle()
+    ui.previewKept = false
 
 proc chooseTheme(ui: var Ui; name: string) =
   ## Makes theme file `name` ("" follows the system) the settings' theme;
@@ -953,7 +987,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   template e: untyped = ui.core.editsOf(ui.core.findPanel(MainPanel))
   let menu = drawMainMenu(MenuInput(undo: e.undoText, redo: e.redoText,
     edited: not e.isEmpty, editedName: (if shownAt >= 0: ui.core.sessions[shownAt].name
-    else: ""), memoryShown: ui.memory.shown,themes: ui.themes, theme: ui.selected,
+    else: ""), memoryShown: ui.memory.shown, themes: ui.themes, theme: ui.selected,
+    follows: DefaultThemeNames[resolveTheme(ui.choice, ui.system)],
     recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,
     canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
     keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest,
@@ -970,6 +1005,15 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   result = menu.actions
   if menu.pickedTheme and menu.theme != ui.selected:
     ui.chooseTheme(menu.theme) # applied between frames: fonts and styles change
+  # Resting on an entry previews it until the submenu closes; a pick of
+  # another theme keeps what it shows.
+  if menu.pickedTheme:
+    ui.previewKept = menu.theme != ui.selected
+    ui.previewWanted = none(string)
+  elif not menu.themeMenu.open:
+    ui.previewWanted = none(string)
+  elif menu.themeMenu.rests:
+    ui.previewWanted = some(menu.themeMenu.rested)
   if menu.openRecent.len > 0:
     ui.core.apply Command(kind: ckShowFile, panel: MainPanel, path: menu.openRecent,
       listFolder: true)
@@ -1356,6 +1400,9 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
     result.core.keepLayoutsIn(configDir, assets)
     result.keepsLayouts = true
   result.appliedTheme = result.core.settings.theme
+  var names: seq[string] = @[]
+  for f in result.themes: names.add f.name
+  result.core.offerThemes(names)
   for d in assets:
     result.fontDirs.add d / "fonts"
   if assets.len == 0:
@@ -1550,6 +1597,7 @@ proc run*(opts = RunOptions()): int =
       ui.offScreenCheck()
       ui.noteLayout()
       ui.followLayouts()
+      ui.followPreview()
       if ui.pendingTheme.isSome:
         ui.selected = ui.pendingTheme.get
         ui.pendingTheme = none(string)
