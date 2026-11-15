@@ -3,8 +3,9 @@
 ## a new plot window starts with (display, order, display header), how
 ## scales are stated, each monitor's calibration, the status bar's fields,
 ## the sort presets, the user's own sort keys, the Messages window's
-## toggles, the plot's cursor time line and whether the Files window follows
-## the latest file. Every field has a default.
+## toggles, the plot's cursor time line, whether the Files window follows
+## the latest file and where the map shows the point under the pointer.
+## Every field has a default.
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
 ## whole object, and the plot window's own commands (display, sort, display
@@ -49,6 +50,15 @@ type
       ## show each new file in the plot once it is completely written; off:
       ## the plot stays on the file the user chose
 
+  MapInfo* = enum
+    ## Where the map shows the information of the point under the pointer.
+    miPopup = "popup" ## in a popup beside the pointer
+    miStrip = "strip" ## in a strip along the map's bottom edge
+
+  MapOptions* = object
+    ## How the map shows what it shows.
+    info*: MapInfo ## where the point under the pointer is described
+
   Settings* = object
     theme*: string                                ## the theme file's name; "" follows the system
     window*: WindowPlacement
@@ -63,6 +73,7 @@ type
     messages*: MessagesView                       ## the Messages window's toggles
     cursorLine*: bool                             ## the plot's cursor time line is on
     files*: FilesView                             ## the Files window's toggles
+    map*: MapOptions                              ## the map's own settings
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not

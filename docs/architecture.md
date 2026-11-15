@@ -15,7 +15,8 @@ src/viewSEG/ui/imgui/         THE ONLY CODE THAT KNOWS IMGUI, IMPLOT OR SDL
         │  (a future ui/<toolkit>/ replaces this directory)
         ▼
 src/viewSEG/gpu/              GPU resources for OpenGL frontends: float32 textures,
-        │                     the density and wiggle shaders, the plot's image
+        │                     the density and wiggle shaders, the plot's image,
+        │                     the map's points
         ▼
 src/viewSEG/view/             view models: what each panel shows, toolkit-neutral
         ▼
@@ -30,8 +31,8 @@ src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows res
 | Layer | Owns | Must not import |
 |---|---|---|
 | `core` | `AppState` (open files, panels and their layers, the selection, the message log, the survey: where sources and receivers are, with a spatial index), `Command`s (each user intent as data), jobs in two lanes (prefetch through parseSEG's `Prefetcher`, processing through processSEG plans and its pool; results posted to a main-thread inbox), thread guards and the frame watchdog, kernels (colour maps, decimation, picking, cursor readout), map maths (tiles, projections, hit-testing) | `ui`, `gpu`, `platform`, any toolkit, SDL, OpenGL |
-| `view` | View models such as `PanelView`, `TableModel`, `TreeModel`, `PlotSeries` and `MapLayer`. Each has plain-Nim geometry (`Vec2`, `Rect`, `Rgba`) and a `revision` counter that bumps on change | `ui`, `gpu`, `platform`, any toolkit |
-| `gpu` | OpenGL 3 objects behind small procs: upload a sample tile as `R32F` textures (`textures`), the density shader and its colour-map LUT (`density`), the wiggle shader (`wiggle`), and the plot's image that draws a panel's tiles with them (`plotimage`). It loads the GL functions it needs itself (`gpu/gl`), through a loader the frontend passes in (`SDL_GL_GetProcAddress`), so it imports no GL binding package | `ui`, any toolkit (OpenGL itself is allowed) |
+| `view` | View models such as `PanelView`, `TableModel`, `TreeModel`, `PlotSeries` and the map's `MapLayerView`. Each has plain-Nim geometry (`Vec2`, `Rect`, `Rgba`) and a `revision` counter that bumps on change | `ui`, `gpu`, `platform`, any toolkit |
+| `gpu` | OpenGL 3 objects behind small procs: upload a sample tile as `R32F` textures (`textures`), the density shader and its colour-map LUT (`density`), the wiggle shader (`wiggle`), the plot's image that draws a panel's tiles with them (`plotimage`), and the map's image of the survey's points (`mappoints`). It loads the GL functions it needs itself (`gpu/gl`), through a loader the frontend passes in (`SDL_GL_GetProcAddress`), so it imports no GL binding package | `ui`, any toolkit (OpenGL itself is allowed) |
 | `platform` | `winres` (compile-time manifest, icon, version info), window chrome (DWM attributes on a native window handle), config paths, and whatever else needs raw OS APIs. Services the windowing library already has (SDL3: file dialogs, system theme, tray) are wrapped in `ui/<toolkit>/shell` instead, because only `ui` may import SDL | `ui`, `core`, any toolkit |
 | `ui/imgui` | The frame loop, docking layout and viewports, widgets that draw view models, input → `Command`, and `shell` (SDL3's file dialog, system theme and tray; results come back as inbox messages) | (top layer) |
 
@@ -264,6 +265,39 @@ join, make a new layer in place of the old (each layer's `keysRevision` says whi
 it was made from). A million traces become a layer in about 0.1 s (land) to 0.25 s
 (marine, every receiver a point of its own) in an optimised build; a lookup takes a few
 microseconds.
+
+**The map** (`core/mapview`, `core/maplod`, `core/mapstate`, `view/maplayers`,
+`gpu/mappoints`, `ui/imgui/mapwindow`; docs/plot-window.md, "The map window"). A
+`MapView` is the survey point at the plot's centre and the survey units per pixel, the
+same across and down, so the map is at equal aspect by construction; `core/mapview` moves
+it (zoom about a point, pan, drag, box zoom, fit, a new plot size) and keeps it within the
+survey: never zoomed out past the whole survey, never past its bounds by more than equal
+aspect needs (`keptMap`). The frontend moves the view itself and reports it (`ckMapView`,
+with `mapRemember` at a gesture's start, for `ckMapBack`); `AppState.map` (`MapState`)
+holds it, the views before it and the layers hidden (`ckMapLayer`, by file and role, so a
+file loaded again stays hidden), and follows the survey after every command and every
+drained inbox (`followed`): a map that showed the whole survey fits the new one, another
+view is kept within the new bounds and the frontend follows `jumps`. **Levels of detail**
+are made with each layer, on the worker that reads it (`SurveyLayer.levels`, `withLevels`:
+`buildLevels` per role): grids twice, four times ... the spatial index's cells, a point per
+cell (the first of the cell, a real position), each kept row by row so the points of a view
+are a run per row (`runs`), the positions as `float32` relative to the layer's corner; and
+how far apart its points typically are (`spacing`), from which the frontend sizes the
+markers. `gpu/mappoints` uploads a layer's points and levels once, and each frame draws, per
+layer, the coarsest level whose cells are no wider than a pixel and a half (every point,
+from the index's own runs, closer in), as point sprites made discs or rings in the fragment
+shader, into an image the size of the plot, then the highlight; an image whose inputs did
+not change is not drawn again. So no pan or zoom waits for anything: 1 000 000 points draw
+about 60 000 at fit. The view models (`view/maplayers`) say what each layer is and its
+colour, the highlight (the points of the hovered trace and of the selection: `tracePointsOf`
+from a traces layer's stations, so it needs no keys), the points near a place
+(`pointsAt`: the nearest within a radius and the others on its spot) and in a box
+(`pointsIn`), what the map says of a point (`pointInfo`: station, coordinates and units,
+file, the open files' traces at it and their records, a source's field records from the
+relation files, `recordsAt`), and the words of coordinates and lengths. **Selecting
+points** (`ckSelectPoints`) keeps them in `Selection.points` beside the traces and selects
+the traces recorded there (`Survey.tracesAt`); a trace selection made anew takes the points
+away, `ckClearSelection` takes both.
 
 **Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
 severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`
@@ -553,7 +587,8 @@ type
     anchor: int = -1         # the trace clicked last: where a Shift + click's range starts
     activeGather: GatherRef  # (file: SessionId, gather: int = -1)
     revision: int            # bumped on every change
-    selectedRevision: int    # bumped when `selected` changes (a hover does not)
+    points: seq[PointRef]    # points selected on the map (with `pointKeys` to find them)
+    selectedRevision: int    # bumped when `selected` or `points` changes (a hover does not)
 
   Session = ref object       # core/session: an open file; workers may hold a ptr SeismicFile
     id: SessionId
@@ -624,7 +659,7 @@ type
     ckEdit, ckUndoEdit, ckClearEdits, ckHover, ckSelect,
     ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
     ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog,
-    ckLoadSurvey, ckUnloadSurvey
+    ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
@@ -662,6 +697,8 @@ type
     edits: Table[string, FileEdits] # core/edits, per file's path: the traces killed and
                              # reversed, and the last change for the undo
     survey: Survey           # core/survey: the survey files loaded, the open files' positions
+    map: MapState            # core/mapstate: the map's view, the views before it, the
+                             # layers hidden; follows the survey
     inbox: Inbox             # Poster handles for workers; freed with the last handle
     disk: DiskIo             # core/diskio: the session log, settings and layouts, off this thread
     watch: FolderWatch       # core/watch: the folder listed and the open files, looked at
@@ -684,6 +721,7 @@ type
     messages: MessagesView         # the Messages window's toggles: auto-scroll, hidden severities
     cursorLine: bool               # the plot's cursor time line is on
     files: FilesView               # the Files window: followLatest
+    map: MapOptions                # the map: where the point under the pointer is described
 
   Pick = object              # core/pick: what lies under the pointer
     inside, found: bool      # over the plot; a tile holds the trace there
@@ -707,6 +745,8 @@ type
     relations: SurveyGeometry # survey files: X / O records, as parseSEG's join reads them
     gridUnit: GridUnit       # survey files: what the SPS header says the units are
     bounds: Bounds
+    levels: array[PointRole, PointLevels] # core/maplod: the map's levels of detail, the
+                             # positions for the GPU, the points' typical spacing
 
   Tile = object              # core/tiles: one request's samples, moved, never shared
     id: uint64               # given when taken in; the GPU keys its textures on it

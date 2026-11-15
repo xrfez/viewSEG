@@ -262,11 +262,13 @@ proc jobField(job: JobStatus; t: Theme; marks: var Marks; res: var StatusOutput)
   igSameLine(0, 18)
 
 proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
-    fields: openArray[ReadoutField]; at: Pick; marks: var Marks): StatusOutput =
+    fields: openArray[ReadoutField]; at: Pick; marks: var Marks;
+    mapCursor = ""): StatusOutput =
   ## The status strip along the bottom of the main window: the running job,
   ## then the readout of `fields` at `at` (blank where a value is not known),
-  ## the theme and the scale on the right. A right click on it opens the
-  ## menu that chooses the fields.
+  ## or, with the pointer over the map, its coordinates (`mapCursor`), the
+  ## theme and the scale on the right. A right click on it opens the menu
+  ## that chooses the fields.
   result = StatusOutput(cancel: NoJob)
   let style = igGetStyle()
   let height = round(igGetFontSize() + 2 * style.FramePadding.y + 2)
@@ -276,9 +278,14 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     igDummy(ImVec2_c(x: 0, y: 0))
     if job.shown:
       jobField(job, t, marks, result)
-    for f in fields:
-      readoutField(fonts, f, at.text(f), t, marks)
-    let note = at.editNote # whatever the fields: the trace's edits
+    if mapCursor.len > 0:
+      igTextUnformatted(mapCursor.cstring, nil)
+      marks.mark("status.map")
+      igSameLine(0, 16)
+    else:
+      for f in fields:
+        readoutField(fonts, f, at.text(f), t, marks)
+    let note = if mapCursor.len > 0: "" else: at.editNote # whatever the fields: the trace's edits
     if note.len > 0:
       igSameLine(0, -1)
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))

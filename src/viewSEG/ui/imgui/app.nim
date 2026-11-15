@@ -4,10 +4,11 @@
 ##
 ## The window holds a menu bar, an icon toolbar, a dockspace with the file
 ## list (`filelist`), the record list (`recordlist`), the trace panel
-## (`tracepanel`), a sample header table, the Jobs window (`jobswindow`) and
-## the Messages window, and a status bar with the running job's progress and
-## its Cancel button, and the readout of what lies under the mouse in the
-## plot; files and folders dropped on the window are opened;
+## (`tracepanel`), the map (`mapwindow`), a sample header table, the Jobs
+## window (`jobswindow`) and the Messages window, and a status bar with the
+## running job's progress and its Cancel button, and the readout of what
+## lies under the mouse in the plot (or its coordinates on the map); files
+## and folders dropped on the window are opened;
 ## `-d:imguiDemo` adds the Dear ImGui demo window. The look comes from a theme file
 ## (`view/theme`, `style`, `fonts`); the shell services (dialogs, system theme,
 ## icon) are in `shell`, DPI handling in `dpi`, the chrome in `chrome`.
@@ -35,15 +36,16 @@ import imguin/glad/gl
 import ../../core/[geometry, state, watchdog]
 import ../../platform/paths
 import ../../view/jobstatus
-import chrome, dpi, filelist, fonts, icons, jobswindow, menus, messages, recordlist, shell,
-  style, tracepanel
+import chrome, dpi, filelist, fonts, icons, jobswindow, mapwindow, menus, messages, recordlist,
+  shell, style, tracepanel
 
-export ThemeChoice, theme, messages, ImguiCheck, tracepanel
+export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow
 
 const
   glslVersion = "#version 330"
   defaultSize = (1280, 800)               ## the first window size at 100 %
   plotId = "plot"                         ## the main plot window's ImGui ID: "###plot"
+  mapId = "map"                           ## the map window's ImGui ID: "###map"
   tableTitle = IconTable & "  Headers (example)###headers"
   messagesTitle = IconLog & "  Messages###Messages"
   filesTitle = IconList & "  Files###files"
@@ -67,6 +69,8 @@ type
     messages: Messages                         ## the frontend's messages, on their way to the log
     core: AppState                             ## the application state
     trace: TracePanelUi                        ## the main panel's plot window
+    map: MapUi                                 ## the map window
+    mapCursor: string                          ## the pointer's coordinates over the map last frame
     files: FileListUi                          ## the file list's window
     records: RecordListUi                      ## the record list's window
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
@@ -362,6 +366,16 @@ proc tracePanel*(frame: FrameInfo): lent TracePanelUi =
   ## `densityImage`.
   frame.ui.trace
 
+proc mapWindow*(frame: FrameInfo): lent MapUi =
+  ## The map window's state as this frame drew it: `mapShown`,
+  ## `hoveredPoints`, `pointTexts`, `rulerText`, `scaleText`.
+  frame.ui.map
+
+proc mapCursor*(frame: FrameInfo): lent string =
+  ## The coordinates the status bar shows for the pointer over the map;
+  ## "" when it is not over the map (for tests).
+  frame.ui.mapCursor
+
 proc showView*(frame: FrameInfo; v: Viewport) =
   ## Pans and zooms the main plot to `v` next frame, as the user would.
   frame.ui.trace.show(v)
@@ -510,7 +524,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       showDialog(dkExportLayout, parent,
         (if dir.len > 0: dir / "viewSEG-layout.nif" else: "viewSEG-layout.nif"))
     of maImportLayout: showDialog(dkImportLayout, parent)
-    of maShowFiles, maShowRecords, maShowJobs, maShowMessages: ui.focus.incl a
+    of maShowFiles, maShowRecords, maShowMap, maShowJobs, maShowMessages: ui.focus.incl a
     of maExportLog:
       let dir = ui.core.settingsFile.parentDir
       showDialog(dkExportLog, parent, (if dir.len > 0: dir / "viewSEG-messages.log"
@@ -544,20 +558,22 @@ proc echoNewLog(ui: var Ui) =
 
 proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   ## The first layout: the file list at the left over the record list, the
-  ## plot beside them with the messages (and the jobs) under it, the header
-  ## table on the right.
+  ## plot beside them with the messages (and the jobs) under it, the map on
+  ## the right over the header table.
   igDockBuilderRemoveNode(dockId)
   discard igDockBuilderAddNode(dockId, ImGui_DockNodeFlags_DockSpace.cint)
   igDockBuilderSetNodeSize(dockId, size)
-  var side, files, records, rest, left, right, top, bottom: ImGuiID
+  var side, files, records, rest, left, right, top, bottom, map, table: ImGuiID
   discard igDockBuilderSplitNode(dockId, ImGuiDir_Left, 0.22, addr side, addr rest)
   discard igDockBuilderSplitNode(side, ImGui_Dir_Down, 0.4, addr records, addr files)
-  discard igDockBuilderSplitNode(rest, ImGuiDir_Right, 0.3, addr right, addr left)
+  discard igDockBuilderSplitNode(rest, ImGuiDir_Right, 0.34, addr right, addr left)
   discard igDockBuilderSplitNode(left, ImGui_Dir_Down, 0.3, addr bottom, addr top)
+  discard igDockBuilderSplitNode(right, ImGui_Dir_Down, 0.35, addr table, addr map)
   igDockBuilderDockWindow(filesTitle, files)
   igDockBuilderDockWindow(recordsTitle, records)
   igDockBuilderDockWindow("###" & plotId, top)
-  igDockBuilderDockWindow(tableTitle, right)
+  igDockBuilderDockWindow("###" & mapId, map)
+  igDockBuilderDockWindow(tableTitle, table)
   igDockBuilderDockWindow(jobsTitle, bottom)
   igDockBuilderDockWindow(messagesTitle, bottom) # the tab shown
   igDockBuilderFinish(dockId)
@@ -727,7 +743,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   # The readout is last frame's pick: the bar is drawn before the plot.
   let status = drawStatusBar(ui.fonts, ui.theme,
     ChromeInfo(themeName: ui.theme.name, scale: ui.scale), job, ui.core.settings.readout,
-    ui.pick, ui.marks)
+    ui.pick, ui.marks, ui.mapCursor)
   if status.cancel != NoJob:
     ui.core.apply Command(kind: ckCancelJob, job: status.cancel)
   if status.showJobs: ui.focus.incl maShowJobs
@@ -758,6 +774,16 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   for c in records.commands.mitems:
     ui.core.apply move c
   drawSampleTable(tableTitle, ui.fonts, ui.theme, ui.marks)
+  # A layout saved before the map came names no map: it joins the Headers
+  # window's place (only when the layout says nothing of it).
+  let headers = igFindWindowByName(tableTitle)
+  if headers != nil and headers.DockNode != nil:
+    igSetNextWindowDockID(headers.DockNode.ID, ImGui_Cond_FirstUseEver.cint)
+  if maShowMap in ui.focus: bringForward("###" & mapId)
+  var map = ui.map.drawMap(mapId, ui.core, ui.theme, ui.marks)
+  ui.mapCursor = map.cursor
+  for c in map.commands.mitems:
+    ui.core.apply move c
   ui.drawSaveLayout()
   ui.drawDropHint()
   if maShowJobs in ui.focus: bringForward(jobsTitle)
@@ -1055,6 +1081,9 @@ proc run*(opts = RunOptions()): int =
   let gpuError = ui.trace.startGpu(glProc, opts.maxTextureSize)
   if gpuError.len > 0:
     ui.say("The plot cannot be drawn: " & gpuError, mlError)
+  let mapError = ui.map.startGpu()
+  if mapError.len > 0:
+    ui.say("The map cannot be drawn: " & mapError, mlError)
   if opts.openPaths.len > 0:
     ui.core.apply Command(kind: ckBrowse, paths: opts.openPaths, showFirst: true)
   elif opts.persist and ui.core.settings.recentFolders.len > 0 and
@@ -1161,7 +1190,8 @@ proc run*(opts = RunOptions()): int =
         ui.core.report(sevWarning, "frame", report.get)
     ui.echoNewLog()
     ui.core.persist()
-  ui.trace.stopGpu() # while the GL context is current
+  ui.map.stopGpu() # while the GL context is current
+  ui.trace.stopGpu()
   ui.notePlacement()
   ui.core.apply Command(kind: ckLayout, arrangement: $igSaveIniSettingsToMemory(nil))
   ui.core.shutdown() # saves the settings and the layout

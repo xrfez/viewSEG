@@ -80,11 +80,11 @@
 import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
-import diskio, edits, filejobs, filelist, inbox, jobs, layouts, log, panels, persist, pick,
-  reader, selection, session, settings, survey, surveyjobs, threads, tiles, watch, zoom
+import diskio, edits, filejobs, filelist, inbox, jobs, layouts, log, mapstate, panels, persist,
+  pick, reader, selection, session, settings, survey, surveyjobs, threads, tiles, watch, zoom
 
-export edits, filelist, inbox, jobs, layouts, log, panels, persist, pick, selection, session,
-  settings, survey, threads, tiles, zoom
+export edits, filelist, inbox, jobs, layouts, log, mapstate, panels, persist, pick, selection,
+  session, settings, survey, threads, tiles, zoom
 export WatchInterval
 
 const
@@ -133,6 +133,10 @@ type
     ckClearSelection = "clear selection"
     ckLoadSurvey = "load survey"         ## read SPS or P1 files into the survey
     ckUnloadSurvey = "unload survey"     ## take a survey file's layer out of the survey
+    ckMapView = "map view"               ## what the map shows (zoom, pan, size)
+    ckMapBack = "map back"               ## the map's view before the last gesture
+    ckMapLayer = "map layer"             ## show or hide a layer of the map
+    ckSelectPoints = "select points"     ## change the points selected on the map, and their traces
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -176,6 +180,16 @@ type
     of ckLayout: arrangement*: string ## the toolkit's layout text
     of ckSaveLayout: layoutName*: string
     of ckUnloadSurvey: layer*: SurveyLayerId
+    of ckMapView:
+      mapView*: MapView               ## what the map shows now
+      mapRemember*: bool              ## a gesture starts: keep the view it replaces for back
+    of ckMapBack: discard
+    of ckMapLayer:
+      mapLayer*: MapLayerKey
+      shown*: bool                    ## drawn, or hidden
+    of ckSelectPoints:
+      points*: seq[PointRef]
+      pointMode*: SelectMode          ## replace, add, toggle or remove; their traces likewise
 
   Notice* = object
     ## A brief notice: a background job ended (the frontend shows it for a
@@ -213,6 +227,7 @@ type
     log: MessageLog
     selection: Selection
     survey: Survey        ## the survey files loaded and the open files' positions
+    map: MapState         ## the map's view and hidden layers
     loading: seq[Loading] ## the jobs that fill the survey
     checking: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relations each record check reads in place, kept alive until it
@@ -477,6 +492,10 @@ func fileList*(state: AppState): lent FileList {.inline.} =
 func survey*(state: AppState): lent Survey {.inline.} =
   ## The survey: the survey files loaded and the open files' positions.
   state.survey
+
+func map*(state: AppState): lent MapState {.inline.} =
+  ## The map's view, the views before it and its hidden layers.
+  state.map
 
 func surveyLoading*(state: AppState; path: string): bool =
   ## Whether survey file `path` (canonical) is being loaded, or opened by a
@@ -940,7 +959,7 @@ proc showReplacing(state: var AppState; k: int; file: SessionId; gather: int) =
       not state.panels.anyIt(it.layers.anyIt(it.shows(old))):
     state.closeSession(state.findSession(old), quiet = true)
 
-func gatherOf(s: Session; trace: int): int =
+func gatherOf*(s: Session; trace: int): int =
   ## The index of the gather of `s` that holds trace `trace`; -1 for none.
   var (lo, hi) = (0, s.gathers.high)
   while lo <= hi:
@@ -1537,10 +1556,16 @@ proc editTraces(state: var AppState; cmd: Command) =
 
 # ---------------------------------------------------------------- changes --
 
+proc applyCommand(state: var AppState; cmd: Command)
+
 proc apply*(state: var AppState; cmd: Command) =
   ## Carries out `cmd`. Anything slow it starts runs as a job; `drainInbox`
   ## takes in the result.
   assertUiThread()
+  state.applyCommand(cmd)
+  state.map.followed(state.survey) # a layer went (a file closed, a survey file unloaded)
+
+proc applyCommand(state: var AppState; cmd: Command) =
   case cmd.kind
   of ckOpen:
     if cmd.paths.len == 0: state.ignore(cmd, "no file was named")
@@ -1820,6 +1845,31 @@ proc apply*(state: var AppState; cmd: Command) =
     for given in cmd.paths:
       if given.len == 0: state.ignore(cmd, "a file name was empty")
       else: state.loadSurvey(canonical(given))
+  of ckMapView:
+    state.map.followed(state.survey)
+    state.map.setView(keptMap(cmd.mapView, state.map.limits), cmd.mapRemember)
+  of ckMapBack:
+    discard state.map.goBack()
+  of ckMapLayer:
+    state.map.show(cmd.mapLayer, cmd.shown)
+  of ckSelectPoints:
+    var traces: seq[int]
+    var seen: IntSet
+    for p in cmd.points:
+      for t in state.survey.tracesAt(p):
+        if t notin seen:
+          seen.incl t
+          traces.add t
+    state.selection.selectPoints(cmd.points, cmd.pointMode)
+    case cmd.pointMode
+    of smReplace, smRange: # the points' own traces replace those selected
+      var keep = state.selection.points
+      state.selection.select(traces, smReplace)
+      state.selection.selectPoints(keep, smReplace)
+    of smAdd, smRemove: state.selection.select(traces, cmd.pointMode)
+    of smToggle:
+      let added = cmd.points.len > 0 and cmd.points[0].key in state.selection.pointKeys
+      state.selection.select(traces, if added: smAdd else: smRemove)
   of ckUnloadSurvey:
     let i = state.survey.find(cmd.layer)
     if i < 0: state.ignore(cmd, $cmd.layer & " is not loaded")
@@ -1955,3 +2005,4 @@ proc drainInbox*(state: var AppState): bool =
   state.mail.setLen 0
   for job in finished:
     state.onFinished(job)
+  state.map.followed(state.survey) # a layer came, or went with a file

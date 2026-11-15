@@ -22,6 +22,7 @@ type
 
 const
   GL_NO_ERROR* = 0'u32
+  GL_POINTS* = 0x0000'u32
   GL_TRIANGLES* = 0x0004'u32
   GL_TRIANGLE_STRIP* = 0x0005'u32
   GL_ONE* = 1'u32
@@ -59,6 +60,8 @@ const
   GL_ARRAY_BUFFER* = 0x8892'u32
   GL_ARRAY_BUFFER_BINDING* = 0x8894'u32
   GL_STREAM_DRAW* = 0x88E0'u32
+  GL_STATIC_DRAW* = 0x88E4'u32
+  GL_PROGRAM_POINT_SIZE* = 0x8642'u32
   GL_FRAGMENT_SHADER* = 0x8B30'u32
   GL_VERTEX_SHADER* = 0x8B31'u32
   GL_COMPILE_STATUS* = 0x8B81'u32
@@ -135,6 +138,8 @@ var
   glDrawArrays*: proc (mode: GLenum; first: GLint; count: GLsizei) {.glcall.}
   glDrawArraysInstanced*: proc (mode: GLenum; first: GLint; count,
     instances: GLsizei) {.glcall.}
+  glMultiDrawArrays*: proc (mode: GLenum; first: ptr GLint; count: ptr GLsizei;
+    drawCount: GLsizei) {.glcall.}
 
 proc loadGl*(getProc: GetProcAddress): seq[string] =
   ## Loads the functions above; returns the names the driver did not give.
@@ -194,3 +199,4 @@ proc loadGl*(getProc: GetProcAddress): seq[string] =
   load glEnableVertexAttribArray
   load glDrawArrays
   load glDrawArraysInstanced
+  load glMultiDrawArrays

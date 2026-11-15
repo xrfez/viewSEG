@@ -43,9 +43,8 @@ which stays on the file it shows. Messages says what each held ("Loaded line7.rp
 6385 receiver points.") and what was left out: records without coordinates or at (0, 0),
 stations given twice (the last one is kept), damaged lines by number. A file that is not a
 survey file, or a damaged one, is refused or read as far as it goes, and the program goes
-on. Each open seismic file's source and receiver positions are read into the survey too.
-The map that shows the survey comes next; for now the survey is what Messages and the
-Files window say of it.
+on. Each open seismic file's source and receiver positions are read into the survey too,
+and everything in the survey is drawn on the **Map** (below).
 
 **File > Open recent** lists the files and the folders opened last (the start screen
 shows the newest ones); the file dialogs start in the folder of the last file opened.
@@ -323,6 +322,48 @@ a trace the file marks dead, "killed" or "polarity reversed" for an edited trace
 one of the fields you can add; it is off until you do. Right-click the status bar to choose the fields
 and their order.
 
+## The map
+
+The **Map** window (right of the plot at a first start; View > Windows > Map brings it
+forward) draws the survey: each survey file's **sources** (red) and **receivers** (the
+theme's blue, or its green where the blue is the selection's colour, as in Everforest) as
+dots, the open file's own
+source and receiver positions (from its trace headers) as rings round them, so where the
+headers and the SPS agree each dot sits in its ring. North is up, one foot (or metre) is
+as long across as down, and nothing is fetched from the internet: there is no basemap.
+Dots get smaller as you zoom out, so lines of stations stay lines; a million points draw
+at once (the map draws a point per pixel or two of what is there, and every point once you
+zoom in).
+
+The gestures are the plot's:
+
+| Input | Action |
+|---|---|
+| Wheel, or `+` / `-` | Zoom about the pointer (the map never zooms out past the whole survey) |
+| Left or middle drag | Pan |
+| Right drag | Zoom to the box |
+| Arrows (Shift: a whole view) | Pan |
+| Ctrl+0, or the fit button | The whole survey |
+| Backspace, Alt+Left, or the back button | The view before |
+| Point at a dot | What it is: source or receiver, line and point, coordinates and elevation, its file, the traces of the open file recorded there and their records, and for a source, the field records the relation (X) file gives it |
+| Click a dot (Ctrl+click) | Select it and its traces (add it, or take it out) |
+| Shift+drag | Select every dot in the box, and their traces (Ctrl+Shift+drag adds) |
+| Ctrl+drag | Measure: the distance and the grid bearing, until Esc |
+| Right-click a dot | Select it, add it to the selection or take it out, hide its layer |
+| Esc | The drag going on, else the ruler, else the selection |
+
+The **status bar** shows the pointer's coordinates in the survey's units (from the SPS
+header: `ft`, `US ft`, `m`), and a **scale bar** and a north arrow stand in the map's
+corners. **Layers** in the map's strip shows or hides each layer: each survey file's
+sources or receivers, the open file's own, and the highlight (the selection, and the source
+and receiver of the trace under the pointer in the plot). The gear chooses where the
+description of the dot under the pointer goes: in a box beside the pointer (the default),
+or in a strip along the map's bottom. Opening a record by clicking its source, and the
+traces of a receiver lighting up in the plot as you point at it, are still to come.
+
+The **Plot and map** layout (View > Layout > Load) puts the plot and the map side by side,
+as large as each other.
+
 ## Messages
 
 The **Messages** window lists what viewSEG has to say, newest last: files opened, problems
@@ -357,8 +398,9 @@ change and when you quit.
 **Layouts.** The windows open where they were when you quit (`layout.nif` beside the
 settings). **View > Layout** saves the arrangement on screen under a name (*Save as...*),
 loads one of yours or a preset that ships with viewSEG (*Load*: "Wide plot", "Side by
-side"), puts the windows back as at a first start (*Reset*), and exports or imports a
-layout file.
+side", "Plot and map"), puts the windows back as at a first start (*Reset*), and exports or
+imports a layout file. A layout saved before the map came puts the map where the Headers
+window is.
 
 **File > Settings** exports them to a file of your choice (to keep, or to take to another
 computer), imports such a file (what it does not hold stays as it is), or resets them to

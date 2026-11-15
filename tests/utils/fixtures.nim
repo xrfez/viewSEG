@@ -476,6 +476,74 @@ proc plantedSps*(fx: Fixtures): SpsPaths =
     doAssert log.len == 0, $log
 
 const
+  MapRcvLines* = [100.0, 102.0, 104.0] ## `mapSps`'s receiver lines, west to east
+  MapRcvSpacing* = 25.0                ## receiver spacing along a line (metres)
+  MapRcvPoints* = 21                   ## receivers per line: points 101 .. 121
+  MapLineGap* = 200.0                  ## between receiver lines, northward
+  MapSrcLines* = [1.0, 3.0]            ## `mapSps`'s source lines, running north
+  MapSrcSpacing* = 62.5                ## source spacing along a line
+  MapSrcPoints* = 8
+    ## sources per line: points 1001 .. 1008 (so north and south differ)
+
+func mapRcv*(line, k: int): (float64, float64) =
+  ## Where receiver `k` (0-based) of `mapSps`'s receiver line `line`
+  ## (0-based) is: lines run east from `OriginX`, one `MapLineGap` north of
+  ## the one before.
+  (OriginX + MapRcvSpacing * float64(k), OriginY + MapLineGap * float64(line))
+
+func mapSrc*(line, k: int): (float64, float64) =
+  ## Where source `k` (0-based) of `mapSps`'s source line `line` (0-based)
+  ## is: lines run north from 50 m south of the receivers, between their
+  ## points 5 and 6 and 15 and 16.
+  (OriginX + MapRcvSpacing * (4.5 + 10 * float64(line)),
+    OriginY - 50 + MapSrcSpacing * float64(k))
+
+proc mapSps*(fx: Fixtures): tuple[s, r: string] =
+  ## An S and an R file (SPS 2.1, grid units metres) of a small 3D land
+  ## spread: receiver lines running east, source lines running north across
+  ## them (`mapRcv`, `mapSrc`), so a source is never on a receiver.
+  result = (fx.dir / "map.s", fx.dir / "map.r")
+  if fileExists(result.r): return
+  let headers = @[SpsHeader(code: "00", description: "SPS format version num.",
+    data: "SPS 2.1;"), SpsHeader(code: "20", description: "Description of grid units",
+    data: "Metres;"), SpsHeader(code: "201", description: "Factor to metres", data: "1.0;")]
+  var s, r = SpsFile(headers: headers)
+  for i, line in MapRcvLines:
+    for k in 0 ..< MapRcvPoints:
+      let (x, y) = mapRcv(i, k)
+      r.points.add spsPoint(pkReceiver, line, 101 + float64(k), x, y)
+  for i, line in MapSrcLines:
+    for k in 0 ..< MapSrcPoints:
+      let (x, y) = mapSrc(i, k)
+      s.points.add spsPoint(pkSource, line, 1001 + float64(k), x, y)
+  for (f, path) in [(s, result.s), (r, result.r)]:
+    let log = writeSps(f, path)
+    doAssert log.len == 0, $log
+
+proc bigSps*(fx: Fixtures; lines, points: int; spacing = 5.0; gap = 50.0): string =
+  ## An R file of `lines` × `points` receivers (lines `gap` apart running
+  ## east, `spacing` apart along them, each line wavering north and south a
+  ## little), written as 80-column cards directly: a million in a second or
+  ## two.
+  result = fx.dir / ("big-" & $lines & "x" & $points & ".r")
+  if fileExists(result): return
+  var f = open(result, fmWrite)
+  defer: f.close()
+  f.writeLine alignLeft("H00 SPS format version num.     SPS 2.1;", 80)
+  f.writeLine alignLeft("H20 Description of grid units   Metres;", 80)
+  var card = newString(80)
+  for j in 0 ..< lines:
+    for k in 0 ..< points:
+      let x = OriginX + spacing * float64(k)
+      let y = OriginY + gap * float64(j) + 3 * sin(float64(k) / 40)
+      # R, line (2-11), point (12-21), index (24), code (25-26), easting
+      # (47-55), northing (56-65), elevation (66-71): SPS 2.1's columns
+      card = "R" & align($(1000 + j), 10) & align($(1 + k), 10) & "  1G1" & spaces(20) &
+        align(formatFloat(x, ffDecimal, 1), 9) & align(formatFloat(y, ffDecimal, 1), 10) &
+        align("100.0", 6) & spaces(9)
+      f.writeLine card
+
+const
   P1Line* = 7.0          ## the shot line of `surveyP1`
   P1Shots* = 5           ## its shotpoints 1 .. P1Shots
   P1OriginX* = 600_000.0 ## easting of shotpoint 1 (metres); each next one 50 m east

@@ -5,10 +5,14 @@
 ## folder made the fixtures' folder), every window is docked where that
 ## layout puts it (each window's `DockId` in the arrangement Dear ImGui
 ## would save now is the one the file gives it), and
-## nothing is said about either file (no warning, no error); then each
-## preset in `assets/layouts/` is loaded and puts every window it names in
-## its place too. A layout of the new build names the window as the old one
-## did (`[Window][plot]`).
+## nothing is said about either file (no warning, no error); the map, which
+## that layout does not name, joins the Headers window's place; then each
+## preset in `assets/layouts/` is loaded and puts every window it names, the
+## map too, in its place. A layout of the new build names the window as the
+## old one did (`[Window][plot]`).
+##
+## Seen to fail (the map): without the map docked where Headers is when a
+## layout does not name it, "the map is not docked" (it floated).
 ##
 ## Seen to fail: with the window's ID taken from its title (`"  Seismic"`,
 ## no `###plot`), no window `###plot` was found ("the window is titled ");
@@ -36,12 +40,14 @@ func dockIds(ini: string): Table[string, string] =
     elif name.len > 0 and line.startsWith("DockId="):
       result[name] = line["DockId=".len .. ^1].split(',')[0]
 
-const windows = ["plot", "files", "records", "headers", "jobs", "Messages"]
+const windows = ["plot", "files", "records", "headers", "jobs", "Messages", "map"]
 
-proc inPlace(now, wanted: string; what: string) =
-  ## Every window `wanted` docks is docked so in `now`.
+proc inPlace(now, wanted: string; what: string; all = true) =
+  ## Every window `wanted` docks is docked so in `now`; with `all`, it names
+  ## every window.
   let (a, b) = (dockIds(now), dockIds(wanted))
   for w in windows:
+    if w notin b and not all: continue
     doAssert w in b, what & " does not name " & w
     doAssert a.getOrDefault(w, "none") == b[w], what & ": " & w & ": DockId " &
       a.getOrDefault(w, "none") & ", the file says " & b[w]
@@ -68,7 +74,11 @@ withFixtures fx:
         doAssert f.windowName("plot") == IconPlot & "  Seismic###plot",
           "the window is titled " & f.windowName("plot")
         doAssert f.markOf("seismic").size.x > 0, "no window marked seismic"
-        inPlace(f.layoutText, old, "the layout saved by 0.1.0")
+        inPlace(f.layoutText, old, "the layout saved by 0.1.0", all = false)
+        let ids = dockIds(f.layoutText)
+        doAssert ids.getOrDefault("map", "none") != "none", "the map is not docked"
+        doAssert ids["map"] == ids["headers"], "the map is not where Headers is: " & ids["map"] &
+          ", " & ids["headers"]
         checked.add "saved"
         for e in f.core.log:
           doAssert e.severity == sevInfo, "said at start: " & e.text
@@ -99,7 +109,8 @@ withFixtures fx:
     assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]),
     userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFrame)) == 0
   doAssert stage == 3, "stopped at stage " & $stage & " after " & $checked
-  doAssert "Wide plot" in checked and "Side by side" in checked, $checked
+  doAssert "Wide plot" in checked and "Side by side" in checked and "Plot and map" in checked,
+    $checked
   # what this build saves at exit names the window as before
   let now = readLayout(readFile(config / LayoutFileName), LayoutFileName, problems).imgui
   doAssert "[Window][plot]" in now and "Seismic" notin now, now

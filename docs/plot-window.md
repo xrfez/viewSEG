@@ -377,25 +377,25 @@ its shortcut shown there.
 
 ### The map
 
-The map uses the same gestures wherever the meaning carries over, always at equal aspect.
+The map uses the same gestures wherever the meaning carries over, always at equal aspect
+([The map window](#the-map-window) says how it looks).
 
 | Input | Action |
 |---|---|
-| Move the mouse | **Hover:** the point under the cursor shows its line, point, coordinates and the records or traces it belongs to (in a popup or in a strip along the map's bottom, as the user chooses); a receiver's traces light up in the plot; the status bar shows the cursor's coordinates with their units |
-| Left click on a source | Open its gather in the plot |
-| Left click on a receiver | Select its traces |
-| Ctrl + left click | Add the point's traces to the selection, or take them out |
+| Move the mouse | **Hover:** the point under the cursor (within 7 pixels) is drawn in the hover colour and described: source or receiver, line and point, coordinates and elevation with their units, its file, the traces of the open files recorded there and their records, and for a survey file's source the field records the loaded relation file gives it; in a box beside the pointer or in a strip along the map's bottom, as the map's settings say. Points of other layers on the same spot (an SPS receiver and the open file's own) are described together. The status bar shows the cursor's coordinates with their units |
+| Left click on a point | **Select** it and its traces (replaces the selection); opening a source's record from a click, and a receiver's traces lighting up in the plot as the pointer passes over it, are still to come |
+| Ctrl + left click | Add the point (and its traces) to the selection, or take it out |
 | Left drag | **Pan** |
-| Shift + left drag | **Box select:** the traces of every point in the box |
-| Ctrl + left drag | **Measure** a distance (with units) until Esc |
-| Right drag | **Box zoom** |
-| Right click | **Context menu** of the point under the cursor (open its gather, select its traces, show its information) or of the map (layers, fit) |
+| Shift + left drag | **Box select:** every point of a shown layer in the box, and their traces (replaces the selection; with Ctrl too, adds to it) |
+| Ctrl + left drag | **Measure:** a line from press to release, its length (in the survey's units) and grid bearing beside it, until Esc |
+| Right drag | **Box zoom:** as close as shows the whole box, at equal aspect |
+| Right click | **The menu of the point under the cursor:** select it and its traces, add it to the selection or take it out, hide its layer; over no point, "No point here". Layers and fit are in the strip |
 | Middle drag | Pan |
 | Wheel | **Zoom** about the cursor |
-| `+` / `-` | Zoom in or out about the cursor (or the centre) |
+| `+` / `-` (main keys or keypad) | Zoom in or out about the cursor (or the centre) |
 | Arrow keys | Pan by a tenth of the view; with Shift, by a whole view |
-| Ctrl + `0` | Fit all |
-| Backspace, or Alt + Left | Back to the previous view |
+| Ctrl + `0` | Fit all (also a button in the strip) |
+| Backspace, or Alt + Left | Back to the previous view (also a button) |
 | Esc | Cancel, innermost first: the drag in progress, else the measurement, else the selection |
 
 The map always keeps equal aspect, so it has no zoom along one axis: Ctrl and Shift
@@ -417,6 +417,86 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Click a file in the file list (focused) | Show it in the plot, in place of the one shown |
 | Up / Down, Page Up / Page Down, Home / End (record list focused) | The next / previous record, a page on / back, the first / last record, in the order the list shows (a click on a column's header sorts it), shown in the plot |
 | Click a record in the record list (focused) | Show it in the plot |
+
+## The map window
+
+```
+┌ Map ──────────────────────────────────────┐
+│ [Layers] [-][+][fit][<] [⚙]               │  controls (they wrap when narrow)
+├───────────────────────────────────────────┤
+│ 446000 ┤ ·  ·  ·  ·  ·  ·  ·  ·  ·     ▲ │  survey coordinates, north up,
+│        │   •     •        •          N │  equal aspect; tick values only
+│ 445000 ┤ ·  ·  ◉  ·  ·  ·  ·  ·  ·       │  · receivers   • sources
+│        │ ┌──────────────────────┐        │  ◯ the open file's own positions
+│ 444000 ┤ │ Receiver, line 104, … │       │  the point under the pointer
+│        │ └──────────────────────┘        │
+│        │ 2000 US ft                      │  scale bar
+│        └┬──────┬──────┬──────┬───────────│
+│      1834000 1836000 1838000             │
+└───────────────────────────────────────────┘
+```
+
+- **Named "Map"**, with an identity of its own (Dear ImGui's `###map`) that layouts keep.
+  At a first start it stands right of the plot, over the Headers window; a layout saved
+  before the map existed names no map, and the map then joins the Headers window's place.
+  The presets place it too, and **Plot and map** puts the plot and the map side by side.
+- **Layers:** each loaded survey file's sources and receivers, as filled discs, sources
+  over receivers; each open file's own sources and receivers (its trace headers'
+  coordinates), as rings, so where the headers and the survey files agree each disc sits
+  in its ring and where they do not both show; and the **highlight** on top: the selected
+  points (the selection's colour) and the hovered ones (the hover colour), larger and
+  outlined. Each layer can be hidden (**Layers** in the strip, or the right-click menu of
+  one of its points). A layer's points get smaller as they crowd on the screen (from 5
+  pixels across down to 2, from how far apart its points typically are), so lines of
+  stations stay lines when zoomed out; a ring that small is drawn as a disc.
+- **Colours:** the plot's background (the plot window's colour scheme: paper by default);
+  sources in the theme's red, receivers in its blue, or its green where the blue is the
+  accent that marks the selection (as in the Everforest themes), each made readable on
+  the background; the highlight in the plot's hover and selection colours. Hover and
+  selection are shared with the plot: a selection made on the map selects the points'
+  traces, and the trace under the pointer in the plot lights up its source and receiver.
+- **No basemap**, nothing fetched: survey coordinates as the files give them (SPS
+  easting and northing, the trace headers' X and Y with their scalar).
+- **Equal aspect, always, and the survey never lost:** zoomed out as far as it goes, the
+  whole survey fits the plot (with a margin of 12 pixels for the markers on its edges);
+  along an axis where the view is narrower than the survey it stays within it, and along
+  one where it is wider the survey is centred. Every gesture, back and a new survey keep
+  to it. **A new window size keeps the scale and the top-left corner**, as the plot does,
+  but a map that shows the whole survey goes on showing all of it (a map has no scroll
+  bars to reach what a smaller plot would cut off). A survey file loaded or a file
+  closed: a map that showed the whole survey shows the whole new one; another view stays.
+- **The axes** carry tick values only, as wide as the survey's largest coordinate always,
+  so the plot's edge stays put; the units are in the status bar, the scale bar and the
+  ruler, from the survey file's header (`H20`, `H201`: `ft`, `US ft`, `m`, or its own
+  words); "units" where nothing says.
+- **A scale bar** (1, 2 or 5 times a power of ten, at most 150 pixels long) in the plot's
+  bottom-left corner and a **north arrow** (grid north) in its top-right one.
+- **The strip:** Layers, zoom out, zoom in, fit, back, and the gear: where the point under
+  the pointer is described, beside the pointer (the default) or in a strip along the map's
+  bottom (kept when nothing is pointed at, so the map does not change size).
+- **Levels of detail.** When the points outnumber the pixels, the map draws a point per
+  cell of a grid no wider than a pixel and a half (the first point of the cell, a real
+  position), and every point once zoomed in closer. The grids, from twice the spatial
+  index's cells to one cell for the whole layer, are made with the layer, on the worker
+  that reads the file, and go to the GPU with it, so no pan or zoom waits for a level:
+  each frame draws the level its scale needs, and only the rows of cells in view.
+
+### The map's own choices
+
+Taken here, in the plot window's conventions, and not yet put to the user (each says
+what it was instead of):
+
+1. **The point under the pointer is described beside it** by default (a box drawn in
+   the map, kept inside it), the strip along the bottom a setting. (Either was asked
+   for; the box is the one the eye is already at.)
+2. **A click on a point selects it and its traces**, whatever the point; the plot's
+   design had a click on a source open its record, which comes with the linking of the
+   map and the plot.
+3. **A map that shows the whole survey keeps showing it when its window changes size**;
+   any other view keeps its scale. (The plot keeps its scale always, but it has scroll
+   bars.)
+4. **Sources are red, receivers blue** (green where the theme's blue is its accent); the
+   open file's own positions are rings in the same colours.
 
 ## The plot's menu: functions on the data
 
@@ -489,6 +569,7 @@ sometimes a laptop with integrated graphics; plan for 16 GB of RAM and files ove
 | Floor | software OpenGL (Mesa llvmpipe), as in CI |
 | Frame time while panning or zooming | under 16 ms on a GPU; under 33 ms on software OpenGL |
 | Frame watchdog | a frame whose UI-thread work passes 50 ms is logged as a stall |
+| The map, a million points | a pan or a zoom draws at once from the levels of detail on the GPU; see the numbers in [The map window](#the-map-window) |
 | Response to a zoom or pan | the view moves at once with what is already drawn; new data replaces it as it arrives; a pan of up to a whole view (an arrow key, Shift + arrow, a click on a scroll bar's track) finds its data on hand: a view and a half is read ahead on each side, and read again as the view moves once less than a view is left (the user: "arrow and shift arrow have visible delay in data being drawn") |
 | Work per view | only the traces and samples on screen (plus that read-ahead, which shrinks to keep a tile within 64 MiB, and the filter margin); a panel's tiles hold 192 MiB at most; in density zoomed out past a trace per pixel, only the traces drawn; in the wiggle modes at most a trace per pixel column, every one of them read |
 | Open | progress and Cancel at once; a second open of an unchanged file reads its index cache |

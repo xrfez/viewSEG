@@ -38,12 +38,14 @@
 ##
 ## Layers are made off the UI thread (the builders below) and do not change
 ## once made: a changed file, or keys changed by a join, make a new layer.
+## The map's levels of detail (`core/maplod`) are made with the layer, on the
+## same worker (`withLevels`).
 
 import std/[math, os, strutils, times]
 import parseSEG
-import filekinds, session, spatial
+import filekinds, maplod, session, spatial
 
-export spatial
+export maplod, spatial
 
 type
   IdTable = object
@@ -123,6 +125,8 @@ type
     relationRecords*: int ## field records they describe
     gridUnit*: GridUnit ## survey files: the unit the SPS header gives
     bounds*: Bounds ## of every point
+    levels*: array[PointRole, PointLevels]
+      ## each role's points for the map, coarser and coarser (`withLevels`)
     pointOf, stationOf: array[PointRole, seq[int32]]
       ## traces: per trace, its point and its station (-1 for none)
     stations: array[PointRole, StationSet]
@@ -142,6 +146,10 @@ type
 const NoSurveyLayer* = SurveyLayerId(0)
 
 func `==`*(a, b: SurveyLayerId): bool {.borrow.}
+
+func key*(p: PointRef): int {.inline.} =
+  ## A number that names `p` alone (for sets of points).
+  (int(p.layer) shl 33) or (ord(p.role) shl 32) or p.point
 func `$`*(id: SurveyLayerId): string = "survey layer " & $int(id)
 
 func len*(p: PointSet): int {.inline.} = p.index.len
@@ -458,6 +466,11 @@ proc finish*(b: var SurveyFileBuilder): SurveyLayer =
     for _ in result.relations[].records(d): inc records
   result.relationRecords = records
 
+proc withLevels*(l: var SurveyLayer) =
+  ## Makes the map's levels of detail of each role's points (on the worker
+  ## that made the layer: a million points take a few tens of ms).
+  for r in PointRole: l.levels[r] = buildLevels(l.points[r].index)
+
 # ------------------------------------------------------- finding points --
 
 func stationPoint*(l: SurveyLayer; r: PointRole; s: Station): int =
@@ -562,7 +575,8 @@ proc remove*(s: var Survey; id: SurveyLayerId): bool =
     inc s.revision
 
 func bounds*(s: Survey): Bounds =
-  ## Of every point of every layer.
+  ## Of every point of every layer; empty for none.
+  result = Bounds() # a result starts zeroed, not at the fields' defaults
   for l in s.layers: result.incl l.bounds
 
 func tracePoints*(s: Survey; trace: int; keys: TraceKeys): seq[PointRef] =
@@ -585,6 +599,28 @@ func tracePoints*(s: Survey; trace: int; keys: TraceKeys): seq[PointRef] =
         of loTraces: l.pointOf(r, trace - l.base)
         of loSurveyFile: l.stationPoint(r, ends[ord(r)])
       if at >= 0: result.add PointRef(layer: l.id, role: r, point: at)
+
+func tracePointsOf*(s: Survey; trace: int): seq[PointRef] =
+  ## Where survey-wide trace `trace` was recorded, as its own file's traces
+  ## layer has it: its source and receiver points there, and the points of
+  ## those stations in each survey file's layer. None while its file's
+  ## positions are not read. (`tracePoints` also fills stations the keys
+  ## lack from the relation files.)
+  var own = -1
+  for i, l in s.layers:
+    if l.origin == loTraces and trace in l.base ..< l.base + l.traces: own = i
+  if own < 0: return
+  template l: untyped = s.layers[own]
+  let t = trace - l.base
+  for r in PointRole:
+    let at = l.pointOf(r, t)
+    if at >= 0: result.add PointRef(layer: l.id, role: r, point: at)
+    let st = l.stationOf(r, t)
+    if st.known:
+      for m in s.layers:
+        if m.origin == loSurveyFile:
+          let p = m.stationPoint(r, st)
+          if p >= 0: result.add PointRef(layer: m.id, role: r, point: p)
 
 func tracesAt*(s: Survey; at: PointRef): seq[int] =
   ## The survey-wide ids of the open files' traces recorded at point `at`:

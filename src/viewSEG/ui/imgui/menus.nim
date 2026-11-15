@@ -17,7 +17,7 @@ type
     maResetSettings = "Reset to defaults",
     maSaveLayout = "Save as...", maResetLayout = "Reset",
     maExportLayout = "Export... ", maImportLayout = "Import... ",
-    maShowFiles = "Files", maShowRecords = "Records", maShowJobs = "Jobs",
+    maShowFiles = "Files", maShowRecords = "Records", maShowMap = "Map", maShowJobs = "Jobs",
     maShowMessages = "Messages",
     maExportLog = "Export messages..."
 
@@ -51,11 +51,12 @@ const
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
     maToggleTheme: 0, maExportSettings: 0, maImportSettings: 0, maResetSettings: 0,
     maSaveLayout: 0, maResetLayout: 0, maExportLayout: 0, maImportLayout: 0,
-    maShowFiles: 0, maShowRecords: 0, maShowJobs: 0, maShowMessages: 0, maExportLog: 0]
+    maShowFiles: 0, maShowRecords: 0, maShowMap: 0, maShowJobs: 0, maShowMessages: 0,
+    maExportLog: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [IconOpenFile, IconOpenFiles, IconOpenFolder,
     IconClose, IconQuit, IconTheme, IconSave, IconOpenFile, IconClose, IconSave, IconClose,
-    IconSave, IconOpenFile, IconList, IconRecords, IconTasks, IconLog, IconExport]
+    IconSave, IconOpenFile, IconList, IconRecords, IconMap, IconTasks, IconLog, IconExport]
 
 const FollowHelp* = "On: each file that appears in the folder listed is shown in the " &
   "plot once it is completely written (its size has stopped changing and it is whole). " &

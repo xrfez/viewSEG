@@ -277,7 +277,7 @@ block positionsOfOpenFiles:
     var job: JobInfo
     for j in st.jobs.list:
       if j.spec.title == "Read the positions in survey-clean.sgy": job = j
-    doAssert job.state == jsDone and job.progress.phase == "indexing the positions" and
+    doAssert job.state == jsDone and job.progress.phase == "preparing the map" and
       job.progress.done == job.progress.total and job.spec.reads == @[s.path], $job
     st.apply Command(kind: ckClose, file: s.id)
     doAssert st.survey.findTraces(s.id) < 0 and st.survey.layers.len == 0

@@ -177,8 +177,10 @@ func nearest*(ix: SpatialIndex; x, y, radius: float64): int =
         if ci - k >= 0: visit(ci - k, j)
         if k > 0 and ci + k < ix.nx: visit(ci + k, j)
 
-iterator within*(ix: SpatialIndex; box: Bounds): int =
-  ## The points in `box`, edges included, in the index's order.
+iterator runs*(ix: SpatialIndex; box: Bounds): Slice[int] =
+  ## The points of the cells `box` touches, as runs of consecutive points
+  ## (one per row of cells): every point in `box` is in one, with others
+  ## near it. Nothing for a box that misses the points' bounds.
   if ix.xs.len > 0 and overlaps(ix.bounds, box):
     let b = ix.bounds
     let (i0, i1) = (cellAt(box.minX, b.minX, ix.cell, ix.nx),
@@ -186,5 +188,18 @@ iterator within*(ix: SpatialIndex; box: Bounds): int =
     let (j0, j1) = (cellAt(box.minY, b.minY, ix.cell, ix.ny),
       cellAt(box.maxY, b.minY, ix.cell, ix.ny))
     for j in j0 .. j1:
-      for p in int(ix.starts[j * ix.nx + i0]) ..< int(ix.starts[j * ix.nx + i1 + 1]):
-        if box.contains(ix.xs[p], ix.ys[p]): yield p
+      let run = int(ix.starts[j * ix.nx + i0]) ..< int(ix.starts[j * ix.nx + i1 + 1])
+      if run.len > 0: yield run
+
+iterator within*(ix: SpatialIndex; box: Bounds): int =
+  ## The points in `box`, edges included, in the index's order.
+  for run in ix.runs(box):
+    for p in run:
+      if box.contains(ix.xs[p], ix.ys[p]): yield p
+
+func cellPoints*(ix: SpatialIndex; i, j: int): Slice[int] =
+  ## The points of cell (`i`, `j`) (`i` across, `j` down from the bounds'
+  ## lower corner); empty outside the grid.
+  if i in 0 ..< ix.nx and j in 0 ..< ix.ny:
+    int(ix.starts[j * ix.nx + i]) ..< int(ix.starts[j * ix.nx + i + 1])
+  else: 0 ..< 0

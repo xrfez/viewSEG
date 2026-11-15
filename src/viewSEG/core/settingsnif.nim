@@ -23,7 +23,8 @@
 ##  (customOrder (key offset))
 ##  (messages (autoScroll true) (hide info))
 ##  (cursorLine false)
-##  (files (followLatest false)))
+##  (files (followLatest false))
+##  (map (info popup)))
 ## ```
 ##
 ## Reading is forgiving where it can be and says what it did: a setting that
@@ -57,6 +58,7 @@ const
   ScopeNames: array[NormScope, string] = ["trace", "panel"]
   StatNames: array[NormStat, string] = ["peak", "rms", "percentile"]
   LengthNames: array[LengthUnit, string] = ["inch", "cm"]
+  MapInfoNames: array[MapInfo, string] = ["popup", "strip"]
   FieldNames: array[HeaderField, string] = ["rcvLine", "rcvPoint", "component", "channel",
     "ffid", "srcLine", "srcPoint", "offset", "cdp", "inline", "crossline", "trace"]
   SeverityNames: array[Severity, string] = ["info", "warning", "error", "fatal"]
@@ -208,6 +210,9 @@ proc settingsDocument*(s: Settings): string =
   w.value("cursorLine", s.cursorLine)
   w.open("files")
   w.value("followLatest", s.files.followLatest)
+  w.close()
+  w.open("map")
+  w.choice("info", MapInfoNames[s.map.info])
   w.close()
   w.close()
   w.finish
@@ -501,6 +506,10 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
         for k in c.kids:
           if k.isTree("followLatest"): r.flag(k, result.files.followLatest)
           else: r.unknown(k, "files")
+      of "map":
+        for k in c.kids:
+          if k.isTree("info"): r.choice(k, MapInfoNames, result.map.info)
+          else: r.unknown(k, "map")
       else: r.unknown(c, "settings")
   if version == 0:
     r.problem(doc[root], "(settings) gives no (version); read as version " &

@@ -249,6 +249,9 @@ proc surveyWork*(path: string; to: Poster): JobWork =
   ## posts its layer (`mkSurvey`).
   result = proc (ctx: JobContext) {.gcsafe.} =
     var layer = readSurveyFile(path, ctx, to)
+    ctx.setPhase "preparing the map"
+    layer.withLevels()
+    discard ctx.progress(1, 1)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkSurvey, layer: move layer)
 
@@ -314,6 +317,8 @@ proc positionsWork*(file: ptr SeismicFile; path: string; kind: FileKind; session
       if not ctx.progress(t, n): raise newException(JobCancelledError, "cancelled")
     ctx.setPhase "indexing the positions"
     var layer = b.finish()
+    ctx.setPhase "preparing the map"
+    layer.withLevels()
     discard ctx.progress(1, 1)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkSurvey, layer: move layer)

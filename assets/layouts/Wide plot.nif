@@ -39,11 +39,19 @@ Size=400,400
 Collapsed=0
 DockId=0x00000004,0
 
+\5BWindow\5D\5Bmap\5D
+Pos=60,60
+Size=400,400
+Collapsed=0
+DockId=0x00000008,0
+
 \5BDocking\5D\5BData\5D
 DockSpace     ID=0x53E66D1A Window=0xB7D74A37 Pos=324,211 Size=1272,698 Split=X
   DockNode    ID=0x00000001 Parent=0x53E66D1A SizeRef=300,698 Split=Y
-    DockNode  ID=0x00000003 Parent=0x00000001 SizeRef=300,420
-    DockNode  ID=0x00000004 Parent=0x00000001 SizeRef=300,274
+    DockNode  ID=0x00000003 Parent=0x00000001 SizeRef=300,300
+    DockNode  ID=0x00000007 Parent=0x00000001 SizeRef=300,394 Split=Y
+      DockNode ID=0x00000004 Parent=0x00000007 SizeRef=300,160
+      DockNode ID=0x00000008 Parent=0x00000007 SizeRef=300,230 Selected=0x68EC9576
   DockNode    ID=0x00000002 Parent=0x53E66D1A SizeRef=968,698 Split=Y
     DockNode  ID=0x00000005 Parent=0x00000002 SizeRef=968,499 CentralNode=1 Selected=0x4DB5F75D
     DockNode  ID=0x00000006 Parent=0x00000002 SizeRef=968,195 Selected=0x74AB777B
