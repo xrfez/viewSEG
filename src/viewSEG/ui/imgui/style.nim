@@ -108,7 +108,7 @@ func imguiColours*(t: Theme): array[ImGui_Col_COUNT.int, Rgba] =
   set ImGui_Col_TableRowBg, Rgba() # transparent: the window shows through
   set ImGui_Col_TableRowBgAlt, alpha(r[rlText], 0.035)
   set ImGui_Col_TextLink, r[rlAccent]
-  set ImGui_Col_TextSelectedBg, alpha(r[rlAccent], 0.35)
+  set ImGui_Col_TextSelectedBg, r[rlTextSelection]
   set ImGui_Col_TreeLines, r[rlBorder]
   set ImGui_Col_DragDropTarget, r[rlHighlight]
   set ImGui_Col_DragDropTargetBg, alpha(r[rlHighlight], 0.15)

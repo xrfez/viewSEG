@@ -12,7 +12,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   text, text_dim, accent, ok, warning, error, info, fill_negative
+#   text, text_dim, active, accent, ok, warning, error, info, fill_negative, text_selection
 
 name = "Everforest Light"
 mode = "light"

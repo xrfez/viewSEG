@@ -18,6 +18,10 @@
 ##   40 from receivers; both 20 from the hovered and the selected points,
 ##   those 20 from each other; the record's receivers 12 from the others;
 ## - each file names, in its comment, the roles viewSEG moved to meet them;
+## - text 4.5 on a pressed item (`active`) and on selected text in an input
+##   (`text_selection`, itself 1.08 off the frame); secondary and status text
+##   3 on a selected or hovered item; a checkbox's tick 3 on its checked box;
+##   disabled items 2 on every surface;
 ## - the status colours (ok, warning, error, info) 20 (deltaE) from each
 ##   other and 15 from the text, where colour alone tells them apart;
 ## - a frame (an unticked checkbox) 12 (largest channel difference) from the
@@ -37,7 +41,10 @@
 ## selection 1.00 against window ...); with bars of the other kind left as
 ## they are, "light, dark bar: text on bar 1.29 < 4.5"; with the status
 ## colours as the palettes give them, 28 problems ("Lumon: error from ok
-## 3.47 < 20.0", "Solitude: warning from text 5.41 < 15.0" ...).
+## 3.47 < 20.0", "Solitude: warning from text 5.41 < 15.0" ...); with
+## pressed items, rows, ticks and text selections as they were, 105
+## ("Last Horizon: warning on selection 1.49 < 3.0", "Everforest Dark: text
+## on text_selection 4.17 < 4.5" ...).
 
 import std/[os, sequtils, strformat, strutils]
 import viewSEG/core/[geometry, panels, survey]
@@ -100,8 +107,21 @@ proc checkUi(t: Theme) =
       atLeast(t.name & ": " & $role & " on " & where, contrast(r[role], bg), 3.0)
   atLeast(t.name & ": text over secondary text, on window",
     contrast(r[rlText], r[rlWindow]) - contrast(r[rlTextDim], r[rlWindow]), 0.01)
-  for where in [rlWindow, rlPopup]:
+  for where in [rlWindow, rlPopup, rlBar, rlFrame, rlSelection, rlHover]:
     atLeast(t.name & ": text_disabled on " & $where, contrast(r[rlTextDisabled], r[where]), 2.0)
+  # what else is drawn on what: text on a pressed button, secondary and
+  # status text on a selected or hovered row, a checkbox's tick on its
+  # checked box (the frame a fifth of the way to the accent, as the style
+  # draws it), text on its selection in an input
+  atLeast(t.name & ": text on active", contrast(r[rlText], r[rlActive]), 4.5)
+  for role in [rlTextDim, rlAccent, rlOk, rlWarning, rlError, rlInfo]:
+    for where in [rlSelection, rlHover]:
+      atLeast(t.name & ": " & $role & " on " & $where, contrast(r[role], r[where]), 3.0)
+  atLeast(t.name & ": the tick on a checked box",
+    contrast(r[rlAccent], mix(r[rlFrame], r[rlAccent], 0.2)), 3.0)
+  atLeast(t.name & ": text on text_selection", contrast(r[rlText], r[rlTextSelection]), 4.5)
+  atLeast(t.name & ": text_selection against frame",
+    contrast(r[rlTextSelection], r[rlFrame]), 1.08)
   for role in [rlSelection, rlHover]:
     for where in [rlWindow, rlPopup, rlFrame]:
       atLeast(t.name & ": " & $role & " against " & $where, contrast(r[role], r[where]), 1.08)

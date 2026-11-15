@@ -37,9 +37,10 @@ limits, and leaves it alone where it does not:
 
 | What | Against | At least |
 |---|---|---|
-| Text | windows, popups, bars, buttons and inputs, a selected or hovered item | contrast 4.5 (WCAG AA) |
-| Secondary text, the accent, ok, warning, error and information colours | the same | contrast 3 |
-| Disabled items | windows and popups | contrast 2 |
+| Text | windows, popups, bars, buttons and inputs, a selected, hovered or pressed item, selected text in an input | contrast 4.5 (WCAG AA) |
+| Secondary text, the accent, ok, warning, error and information colours | the same but the pressed item and the text selection | contrast 3 |
+| A checkbox's tick | its checked box | contrast 3 |
+| Disabled items | the same | contrast 2 |
 | Ok, warning, error and information colours | each other; the text | a colour difference (CIE76) of 20; 15 |
 | A selected or hovered item | the window, popup or button it is on | contrast 1.08 |
 | The plot's traces, fills, a hovered and a selected trace | the plot, on paper and in the theme's colours | contrast 3 |

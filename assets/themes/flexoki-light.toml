@@ -7,7 +7,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   ok, warning
+#   ok, warning, error
 
 name = "Flexoki Light"
 mode = "light"

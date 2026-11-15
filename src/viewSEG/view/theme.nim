@@ -86,6 +86,7 @@ type
     rlSelected = "selected" ## selected traces, and their points on the map
     rlSource = "source" ## sources on the map
     rlReceiver = "receiver" ## receivers on the map
+    rlTextSelection = "text_selection" ## behind selected text in an input
 
   FontRole* = enum
     ## The faces of the interface.
@@ -190,6 +191,11 @@ func lab(c: Rgba): array[3, float64] =
   let y = f(0.2126 * r + 0.7152 * g + 0.0722 * b)
   let z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883)
   [116 * y - 16, 500 * (x - y), 200 * (y - z)]
+
+func chroma(c: Rgba): float64 =
+  ## How much colour `c` has: 0 for a grey (CIELAB's C*).
+  let l = lab(c)
+  sqrt(l[1] ^ 2 + l[2] ^ 2)
 
 func deltaE*(a, b: Rgba): float64 =
   ## How different two colours look: CIE76's distance in CIELAB, 0 for the
@@ -310,6 +316,7 @@ func plainRoles(p: Palette; mode: ThemeMode): array[Role, Rgba] =
   result[rlSelected] = p[bcAccent]
   result[rlSource] = p[bcRed]
   result[rlReceiver] = if distance(p[bcBlue], p[bcAccent]) < 40: p[bcGreen] else: p[bcBlue]
+  result[rlTextSelection] = mix(result[rlFrame], p[bcAccent], 0.35)
 
 const
   TextContrast* = 4.5
@@ -338,13 +345,22 @@ const
   StatusApart* = 20.0
     ## `deltaE` of the status colours (ok, warning, error, info) from each other
   StatusFromText* = 15.0 ## `deltaE` of a status colour from the text
+  StatusChroma = 15.0
+    ## how much colour (CIELAB's C*) a status colour is given when it is
+    ## moved: a hue, not a grey
 
-func lift(c: Rgba; on: openArray[Rgba]; ratio: float64): Rgba =
+func invert(c: Rgba): Rgba {.inline.} =
+  Rgba(r: 255 - c.r, g: 255 - c.g, b: 255 - c.b, a: c.a)
+
+func lift(c: Rgba; on: openArray[Rgba]; ratio: float64; toward = Rgba()): Rgba =
   ## `c` made `readable` on every colour of `on` (all light or all dark, as
-  ## a theme's surfaces are).
+  ## a theme's surfaces are): moved toward black on light ones, white on
+  ## dark ones, or toward `toward` when given.
   result = c
   var t = 0.0
-  let target = if luminance(on[0]) > 0.18: Black else: White
+  let target = if toward.a != 0: toward
+               elif luminance(on[0]) > 0.18: Black
+               else: White
   var low = false
   for b in on: low = low or contrast(result, b) < ratio
   while low and t < 1:
@@ -460,37 +476,76 @@ func legible(r: var array[Role, Rgba]; p, builtin: Palette) =
   # A hovered or selected item shows on what it is on, and text on it reads.
   r[rlSelection] = stepFrom(r[rlSelection], r[rlText], [r[rlWindow], r[rlPopup], r[rlFrame]])
   r[rlHover] = stepFrom(r[rlHover], r[rlText], [r[rlWindow], r[rlPopup], r[rlFrame]])
-  r[rlText] = lift(r[rlText], @surfaces & @[r[rlSelection], r[rlHover]], TextContrast)
+  # A pressed item (`active`) is of the window's kind too.
+  r[rlActive] = toward(r[rlActive], r[rlWindow], r[rlText], TextContrast)
+  let items = @surfaces & @[r[rlSelection], r[rlHover]]
+    ## what text is drawn on: the surfaces, a selected or hovered row
+  r[rlText] = lift(r[rlText], items & @[r[rlActive]], TextContrast)
   # Secondary text is dimmer than text, and still reads; disabled is dimmer still.
   let window = r[rlWindow]
   if contrast(r[rlTextDim], window) > 0.9 * contrast(r[rlText], window):
     r[rlTextDim] = mix(r[rlText], window, 0.3)
-  r[rlTextDim] = lift(r[rlTextDim], surfaces, DimContrast)
+  r[rlTextDim] = lift(r[rlTextDim], items, DimContrast)
   if contrast(r[rlTextDisabled], window) >= contrast(r[rlTextDim], window):
     r[rlTextDisabled] = mix(r[rlTextDim], window, 0.35)
-  r[rlTextDisabled] = lift(r[rlTextDisabled], [window, r[rlPopup]], DisabledContrast)
+  r[rlTextDisabled] = lift(r[rlTextDisabled], items, DisabledContrast)
   for role in [rlAccent, rlOk, rlWarning, rlError, rlInfo]:
-    r[role] = lift(r[role], surfaces, DimContrast)
+    r[role] = lift(r[role], items, DimContrast)
+  # A checkbox's tick (the accent) on its checked box, which the style draws
+  # a fifth of the way from the frame to the accent.
+  let accent = r[rlAccent]
+  let extreme = if luminance(window) > 0.18: Black else: White
+  var t = 0.0
+  while contrast(r[rlAccent], mix(r[rlFrame], r[rlAccent], 0.2)) < DimContrast and t < 1:
+    t += 0.05
+    r[rlAccent] = mix(accent, extreme, t)
   # The status colours apart from each other and from the text, where colour
   # alone says which (a warning is not an error): the first of the
   # palette's colours of the same kind that is, else the built-in theme's,
   # else a strong one, each readable as above.
-  var said: seq[Rgba] = @[]
-  for (role, keys) in [(rlError, @[bcRed, bcBrightRed, bcMagenta, bcOrange]),
-      (rlWarning, @[bcYellow, bcBrightYellow, bcOrange, bcBrown]),
-      (rlOk, @[bcGreen, bcBrightGreen, bcCyan]),
-      (rlInfo, @[bcBlue, bcBrightBlue, bcCyan, bcAccent])]:
-    var candidates = @[r[role]]
-    for k in keys: candidates.add lift(p[k], surfaces, DimContrast)
-    for k in keys: candidates.add lift(builtin[k], surfaces, DimContrast)
-    for k in keys: candidates.add lift(signal(k), surfaces, DimContrast)
-    var (best, margin) = (r[role], -Inf)
-    for c in candidates:
-      var m = deltaE(c, r[rlText]) - StatusFromText
-      for o in said: m = min(m, deltaE(c, o) - StatusApart)
-      if margin < 0 and m > margin: (best, margin) = (c, m)
-    r[role] = best
-    said.add best
+  # Greedy, in that order; where a later one cannot be kept apart (a grey
+  # theme's own grey error), again with every one of them a hue.
+  let given = [r[rlError], r[rlWarning], r[rlOk], r[rlInfo]]
+  for strict in [false, true]:
+    var said: seq[Rgba] = @[]
+    var short = false
+    for n, (role, keys) in [(rlError, @[bcRed, bcBrightRed, bcMagenta, bcOrange]),
+        (rlWarning, @[bcYellow, bcBrightYellow, bcOrange, bcBrown]),
+        (rlOk, @[bcGreen, bcBrightGreen, bcCyan]),
+        (rlInfo, @[bcBlue, bcBrightBlue, bcCyan, bcAccent])]:
+      var candidates = @[given[n]]
+      for pal in [p, builtin]:
+        for k in keys: candidates.add pal[k]
+      for k in keys: candidates.add signal(k)
+      var (best, margin) = (given[n], -Inf)
+      for i, raw in candidates:
+        # made readable the usual way, or the other (on a mid grey both can)
+        for c in [lift(raw, items, DimContrast), lift(raw, items, DimContrast, extreme.invert)]:
+          var readable = true
+          for b in items: readable = readable and contrast(c, b) >= DimContrast
+          var m = deltaE(c, r[rlText]) - StatusFromText
+          if strict or i > 0: m = min(m, chroma(c) - StatusChroma) # put in: a hue
+          for o in said: m = min(m, deltaE(c, o) - StatusApart)
+          if readable and margin < 0 and m > margin: (best, margin) = (c, m)
+      r[role] = best
+      said.add best
+      short = short or margin < 0
+    if not short: break
+  # Selected text in an input: the frame tinted toward the accent, as much
+  # as the text allows, and still apart from the frame (moved away from the
+  # text where the tint alone is too faint).
+  var a = 0.35
+  var tsel = mix(r[rlFrame], r[rlAccent], a)
+  while contrast(r[rlText], tsel) < TextContrast and a > 0:
+    a -= 0.05
+    tsel = mix(r[rlFrame], r[rlAccent], max(a, 0))
+  let fromText = if luminance(r[rlText]) > luminance(window): Black else: White
+  let tinted = tsel
+  t = 0.0
+  while contrast(tsel, r[rlFrame]) < StepContrast and t < 1:
+    t += 0.02
+    tsel = mix(tinted, fromText, t)
+  r[rlTextSelection] = tsel
   # The theme's own plot: traces and fills show on its background.
   for role in [rlTrace, rlFillPositive, rlFillNegative]:
     r[role] = lift(r[role], [r[rlPlotBackground]], InkContrast)
@@ -524,7 +579,8 @@ func deriveRoles*(p: Palette; mode: ThemeMode): array[Role, Rgba] =
   ## 12 % of the way to `foreground`. Traces: the line and the positive fill are
   ## `foreground`, the negative fill `red`; the crosshair is `accent`. Marked
   ## traces: `selected` is `accent`. The map: sources `red`, receivers `blue`
-  ## (`green` where the blue is the accent).
+  ## (`green` where the blue is the accent). Selected text in an input:
+  ## `text_selection`, the frame 35 % of the way to the accent.
   ##
   ## Then each role that would be hard to read or to tell apart is moved
   ## (`adjustedRoles` says which), by the limits `TextContrast` ..
