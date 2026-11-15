@@ -565,8 +565,8 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   when they give neither); a source whose record a listed file holds is **ringed**, its
   description names the file ("Shot in the folder: shot-14.sgy (FFID 1014)"), and a click
   on it shows that file at that record. **A shot several files hold** (a reshoot, a copy of
-  a record): the description names them latest first, and a click shows the first, **the
-  newest file** (by its modification time; files of one time by name; in one file its last
+  a record): the description names them latest first, a line each ("also in ..."), and a
+  click shows the first, **the newest file** (by its modification time; files of one time by name; in one file its last
   record of that shot); the point's right-click menu lists each file, to show another. The Layers list says how many of the survey's
   sources have a file, and how far the reading is. **Filters** (the user: "filters for
   failed traces, missing traces from template, any other relevent items", and "perhaps

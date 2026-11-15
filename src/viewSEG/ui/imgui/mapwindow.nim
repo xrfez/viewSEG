@@ -482,7 +482,9 @@ proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
   let disagree = st.unitsDisagree
   if disagree.len > 0:
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-    wrapped(disagree & ".")
+    igPushTextWrapPos(igGetCursorPosX() + 34 * igGetFontSize())
+    igTextUnformatted((disagree & ".").cstring, nil)
+    igPopTextWrapPos()
     igPopStyleColor(1)
     marks.mark("map.units disagree")
   for g in MapGroup:

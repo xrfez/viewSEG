@@ -374,18 +374,16 @@ func shotName*(place: ShotPlace): string =
 
 func shotLines*(st: AppState; p: PointRef): seq[string] =
   ## For a survey file's source whose record a file of the folder listed
-  ## holds: "Shot in the folder: shot-3.sgy (FFID 1003)", the latest first
-  ## (`ShotIndex.points`), and for several which a click shows; none for
+  ## holds: "Shot in the folder: shot-3.sgy (FFID 1003)"; for several, the
+  ## latest first (`ShotIndex.points`, what a click shows), each other on a
+  ## line of its own ("also in ..."), and where the others are; none for
   ## another point.
   let places = st.shots.shotsAt(p)
   if places.len == 0: return
-  var names: seq[string]
-  for place in places:
-    if names.len < 3: names.add place.shotName
-  result.add "Shot in the folder: " & names.join(", ") &
-    (if places.len > names.len: ", ... (" & $places.len & " records)" else: "")
-  if places.len > 1:
-    result.add "A click shows the first (the newest file); the right-click menu lists each"
+  result.add "Shot in the folder: " & places[0].shotName
+  for k in 1 ..< min(places.len, 3): result.add "  also in " & places[k].shotName
+  if places.len > 3: result.add "  and " & $(places.len - 3) & " more"
+  if places.len > 1: result.add "A click shows the newest" # (the menu lists each)
 
 proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
   ## What the map says of point `p`: its role, station and file; its
