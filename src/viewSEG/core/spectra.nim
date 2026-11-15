@@ -107,8 +107,8 @@ type
     filterNote*: string
       ## what the sample interval cut of the filters (`limitNote`); "" for nothing
     filterProblem*: string
-      ## why the filters did not run on these traces; "" when they did or
-      ## there are none
+      ## why the filters cannot run on these traces, a clause ("none of them
+      ## is below Nyquist"); "" when they did or there are none
     response*: seq[float64]
       ## per bin, the filters' gain, 0 to 1 (processSEG's `responseInto`
       ## for each FFT filter, multiplied): what they do whatever the data;
@@ -201,7 +201,8 @@ func filterText*(w: SpectrumWindow): string =
   if sp.raw.len == 0: return ""
   if sp.filters.len == 0: return "no filters on the plot: the raw curve only"
   if sp.filterProblem.len > 0:
-    result = "not processed: the plot's filters (" & sp.filters & ") " & sp.filterProblem
+    result = "not processed: the plot's filters (" & sp.filters & ") cannot run: " &
+      sp.filterProblem
   elif sp.filtered == 0 and sp.passedBy > 0:
     result = "not processed: " & auxText(sp.passedBy) & " not filtered: " & AuxOff &
       " (the plot's filters: " & sp.filters & ")"

@@ -261,7 +261,7 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
         ws.reserve(plan)
         planCols = cols
       except ValueError as e:
-        answer.filterProblem = "they cannot run on these traces (" & e.msg & ")"
+        answer.filterProblem = e.msg
         filtering = false
     if filtering:
       # Through the filters, and in the processed curve, only the rows they

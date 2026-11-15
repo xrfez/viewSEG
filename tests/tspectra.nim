@@ -66,7 +66,9 @@
 ## before), "the FFT window did not follow the plot's filters". With the
 ## reader's FFT at the next power of two whatever the filters, "the narrow
 ## notch's spectrum is not padded: nfft 512"; with no response in the
-## answer, the band-pass's curves were only "raw" and "processed".
+## answer, the band-pass's curves were only "raw" and "processed". With
+## the words as before, "not processed: the plot's filters (low-cut 4-8 Hz)
+## a low cut needs ..." (no verb).
 
 import std/[math, os, sequtils, strutils]
 import parseSEG
@@ -107,6 +109,11 @@ block helpers:
   w.first = 3
   doAssert w.title == "FFT: trace 4 · FFID 5 · a.sgy", w.title
   doAssert SpectrumWindow(id: 0).title == "Spectrum"
+  # filters that did not run say why in a sentence
+  let failing = SpectrumWindow(spectrum: Spectrum(raw: @[1.0], averaged: 1,
+    filters: "low-cut 4-8 Hz", filterProblem: "a low cut needs 0 ≤ f1 < f2"))
+  doAssert failing.filterText == "not processed: the plot's filters (low-cut 4-8 Hz) cannot " &
+    "run: a low cut needs 0 ≤ f1 < f2", failing.filterText
   # which of a plot's traces its filters reach
   let n = Processing(notches: @[NotchFilter()])
   doAssert Processing().reach(3, 1) == frNone and Processing(raw: true, dc: dcMean).reach(3, 1) ==
@@ -661,8 +668,8 @@ withFixtures fx:
       above.filterNote == "Nyquist is 250 Hz at 2 ms: a notch is not below Nyquist and left out.",
       above.filterNote
     doAssert five.spectra[q].filterText == "not processed: the plot's filters (notch 300 Hz) " &
-      "none of them is below Nyquist. Nyquist is 250 Hz at 2 ms: a notch is not below Nyquist " &
-      "and left out.", five.spectra[q].filterText
+      "cannot run: none of them is below Nyquist. Nyquist is 250 Hz at 2 ms: a notch is not " &
+      "below Nyquist and left out.", five.spectra[q].filterText
     five.shutdown()
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
 echo "tspectra: ok"
