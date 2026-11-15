@@ -129,8 +129,13 @@ drawing, and every button works, however slow the drive is.
   Files window for a folder being listed or looked at. Each comes with **Cancel** (stop
   waiting: the picture stays as it is) and **Retry** (try the drive again). The status bar's
   job says it too. Meanwhile you can show other files, from other folders or drives.
+  The **Headers** window says it above its tabs ("Reading shot12.sgd for the Headers
+  window: not answering for 5 s") and keeps what it showed; pointing at a trace of another
+  file reads that one meanwhile.
 - **A drive that goes away** while a file is shown: the plot keeps the picture and says the
-  file cannot be read now; Retry reads it again once the drive is back.
+  file cannot be read now; Retry reads it again once the drive is back. The Headers window
+  says so for a trace or a record it could not read; a file whose own headers could not be
+  read as it was opened is open without them, and its Summary says why.
 - **Quitting** never waits for a drive: the window closes within about a second, whatever
   is stuck. A read the drive still holds is left to end on its own.
 - **A slow drive.** viewSEG times its reads; when they are slow it reads further ahead

@@ -763,7 +763,7 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 | `traceStatsInto`, `panelStats`, `moveoutColumnsInto`, `checkGeometryInto` | panel | Fill the caller's seqs; ticks and flags tagged with `keysRevision` |
 | `readTracesInto`, `traceKeysInto`, `traceFieldColumnInto` | any | Fill the caller's buffer |
 | `summary`, `channelSets`, `crsText`, `fileHeaders`, `textHeader`, `extendedTextHeaders`, `copyBytes` (the Headers window's facts of a file) | interactive job (open) | Owned copies, kept in the `Session` |
-| `traceHeaders`, `recordHeaders`, `copyBytes`, `readTraces`, `traceKeys` (the Headers window's record and traces) | Headers reader (`core/inspector`), holding the file | Owned copies, moved to the UI thread (`mkInspected`) |
+| `traceHeaders`, `recordHeaders`, `copyBytes`, `readTraces`, `traceKeys`, `joinedGroups` (the Headers window's record and traces) | Headers reader (`core/inspector`), holding the file | Owned copies, moved to the UI thread (`mkInspected`) |
 | `traceField` | UI | Owned copies |
 | `traceFieldColumnInto`, then `sortOrder` (a sorted view) | job | A `seq[int]` selection |
 | `rowsOf(list)` keys, then `sortOrder` (a panel's order, `core/sorting`) | panel reader, while it holds the file | Positions: a `seq[int]` of trace numbers |
@@ -956,6 +956,7 @@ type
     jobs: Jobs               # destroyed after the readers, before the sessions
     readers: seq[PanelReader] # per panel; they stop (and end their holds) before the jobs
     inspector: Inspector     # the Headers reader; declared last: it stops first
+    leftInspectors: seq[Inspector] # Headers readers left stuck in a drive, until they end
 
   Settings = object          # core/settings: changed only by commands; settings.nif
     theme: string            # the theme file; "" follows the system
