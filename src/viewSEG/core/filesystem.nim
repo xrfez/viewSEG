@@ -26,6 +26,9 @@
 ##   places where such a read is about to happen (the open's walk of the
 ##   headers, each chunk a panel's reader takes in): it does nothing but call
 ##   the hook, so a test hangs or slows the thread there as the kernel would.
+##   A read of header blocks alone (a file's own headers read with its open,
+##   a record's or a trace's the Headers window shows) is marked apart
+##   (`headers = true`, `foHeaders`), so that a test can hold those alone.
 ##   What stays untestable: a fault inside parseSEG's own decode threads, and
 ##   the crash on a page that cannot be read.
 ## - **Its clock.** `fs.now` is the monotonic clock plus what a test hook has
@@ -53,6 +56,8 @@ type
     foRead = "read"          ## reads bytes from a file opened here
     foWrite = "write"        ## makes a folder, moves, copies or removes a file, sets its time
     foMapped = "mapped read" ## the mapped memory of a seismic file is read next (parseSEG)
+    foHeaders = "header read"
+      ## the same, for header blocks alone: a file's own, a record's, a trace's
 
   FileSystem* = object
     ## The file system the viewer calls: `fs`. Its calls are those of
@@ -165,11 +170,12 @@ proc readFile*(_: FileSystem; path: string): string {.raises: [IOError].} =
     raise newException(IOError, e.msg)
   system.readFile(path)
 
-proc mappedRead*(_: FileSystem; path: string) {.raises: [OSError].} =
+proc mappedRead*(_: FileSystem; path: string; headers = false) {.raises: [OSError].} =
   ## Marks that the mapped memory of seismic file `path` is read next (by
-  ## parseSEG): nothing but the hook, which may hold the thread as a drive
-  ## that does not answer would, or raise as one that went away.
-  enter(foMapped, path)
+  ## parseSEG), its header blocks alone with `headers`: nothing but the hook,
+  ## which may hold the thread as a drive that does not answer would, or
+  ## raise as one that went away.
+  enter(if headers: foHeaders else: foMapped, path)
 
 # ---------------------------------------------------------------- write --
 

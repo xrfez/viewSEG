@@ -11,9 +11,9 @@
 ## Trace ids are survey-wide: `base + index`. Bases are never reused, so an id
 ## kept by a view never names a trace of a file opened later.
 
-import std/[os, times]
+import std/[os, strutils, times]
 import parseSEG
-import headers, records
+import filesystem, headers, records
 
 export headers, records
 
@@ -56,19 +56,36 @@ func `$`*(id: SessionId): string = "file " & $int(id)
 proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
     modified = Time()): Session =
   ## A session for `file`, opened from `path`, with its gathers and the
-  ## record list's rows; `size` and `modified` are the file's as it was
-  ## opened. On the thread that opened the file.
+  ## record list's rows, its coordinates and what the Headers window shows of
+  ## it (`facts`); `size` and `modified` are the file's as it was opened. On
+  ## the thread that opened the file: the file's own headers are read from
+  ## its map here (`fs.mappedRead`), so a drive that does not answer holds
+  ## this thread, never the UI's, and one that fails leaves them unread, said
+  ## in `facts.problems`.
   result = Session(path: path, file: file, size: size, modified: modified)
   result.gathers = result.file.gathers
   result.records = recordRows(result.file, result.gathers)
   result.columns = columnsOf(result.records)
+  var readable = true
+  try:
+    fs.mappedRead(path, headers = true)
+  except OSError as e:
+    readable = false
+    var msg = e.msg # its first line: the system's words
+    let cut = msg.find('\n')
+    if cut >= 0: msg.setLen cut
+    result.facts.problems.add "the file's headers cannot be read now (" & msg & "): its " &
+      "drive went away or fails; open the file again once it answers"
   try:
     let sum = result.file.summary
     result.crs = FileCrs(units: sum.coordinateUnits, format: sum.crsFormat)
-    if sum.crsFormat != ctNone: result.crs.text = result.file.crsText
+    if readable and sum.crsFormat != ctNone: result.crs.text = result.file.crsText
   except CatchableError:
     discard # a file whose summary cannot be made says nothing of its coordinates
-  result.facts = fileFacts(result.file)
+  var problems = move result.facts.problems
+  result.facts = fileFacts(result.file, headers = readable)
+  problems.add result.facts.problems
+  result.facts.problems = move problems
 
 proc register*(s: Session; id: SessionId; base: int) =
   ## Gives `s` its id and the survey-wide id of its first trace (`AppState`

@@ -287,6 +287,8 @@ type
     wkUnreadable = "unreadable" ## the file a panel shows cannot be read now (its drive went away)
     wkListing = "listing"       ## the listing of the folder
     wkWatching = "watching"     ## a look at the folder listed
+    wkHeaders = "headers"
+      ## the Headers window's read of a file's headers or samples
 
   Waiting* = object
     ## Something the user waits for that the drive does not answer: what the
@@ -504,6 +506,9 @@ type
     inspector: Inspector
       ## the Headers window's reader; started when it is first asked. Last:
       ## it stops (and ends its holds) first.
+    leftInspectors: seq[Inspector]
+      ## readers of the Headers window left stuck in a drive that does not
+      ## answer, until they end (their holds with them)
 
 proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     jobHistory: Natural = DefaultJobHistory; indexCache = "";
@@ -693,7 +698,7 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   ## may read (`keepForStragglers`), so the quit never waits for a drive.
   ## Destroying the state does this too.
   assertUiThread()
-  state.inspector.stop()
+  state.inspector.askStop()
   for r in state.readers: r.askStop()
   state.watch.askStop()
   state.jobs.askStop()
@@ -705,6 +710,9 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   result = true
   for r in state.readers:
     if not r.stop(deadline): result = false
+  if not state.inspector.stop(deadline): result = false
+  for x in state.leftInspectors:
+    if not x.stop(deadline): result = false
   state.watch.stop(deadline)
   if not state.jobs.stop(deadline): result = false
   if not state.disk.stop(deadline): result = false
@@ -909,6 +917,19 @@ func words*(w: Waiting): string =
   of wkUnreadable: w.why
   of wkListing: "Listing " & name & ": " & silent & " (its drive may be slow, or gone)."
   of wkWatching: name & ": " & silent & "; the list is as it was read last."
+  of wkHeaders: "Reading " & name & " for the Headers window: " & silent & " (its drive may " &
+    "be slow, or gone). The window shows what was read before; another file can be looked at " &
+    "meanwhile."
+
+proc headersWait*(state: AppState; now = fs.now()): Waiting =
+  ## What the Headers window waits for that its drive does not answer: its
+  ## reader's read of a file, once silent `StallAfter`. None otherwise.
+  result = Waiting(job: NoJob)
+  if not state.inspector.isNil:
+    let silent = state.inspector.silentFor(now)
+    if silent >= StallAfter:
+      result = Waiting(kind: wkHeaders, path: state.inspector.readingPath, silent: silent,
+        job: NoJob)
 
 proc listingWait*(state: AppState; now = fs.now()): Waiting =
   ## What the file list waits for that its drive does not answer: the
@@ -1641,6 +1662,17 @@ proc followInspect(state: var AppState) =
       req.traces.add InspectTrace(id: t, at: state.fileOf(req, held, i), trace: t - s.base,
         edits: (if want.displayed: want.edits[n] else: {}),
         displayed: want.displayed and i == shown)
+  if not state.inspector.isNil and state.inspector.silentFor >= StallAfter:
+    # Stuck in a drive that does not answer: a request that does not need
+    # that file is read by a new inspector (the stuck one ends on its own,
+    # with its holds, once the drive answers); one that does waits for it.
+    let stuck = state.inspector.readingPath
+    var needs = false
+    for f in req.files:
+      if f.path == stuck: needs = true
+    if not needs:
+      state.inspector.leave()
+      state.leftInspectors.add move state.inspector
   if state.inspector.isNil:
     state.inspector = newInspector(state.inbox.poster, state.jobs.holdRelease)
   ins.waiting = true
@@ -3031,6 +3063,10 @@ proc drainInbox*(state: var AppState): bool =
   assertUiThread()
   # A job that does not answer: its lane goes on without it, a cancelled one is left.
   state.jobs.tend()
+  var k = 0 # a reader of the Headers window left in a drive: gone once it has ended
+  while k < state.leftInspectors.len:
+    if state.leftInspectors[k].hasEnded: state.leftInspectors.delete(k)
+    else: inc k
   # Finished jobs first: a job posts before it finishes, so every message of
   # a job seen finishing here is in the mail drained next.
   let finished = state.jobs.takeFinished()

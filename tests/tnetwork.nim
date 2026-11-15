@@ -3,13 +3,21 @@
 ## file whose open hangs, a read that hangs and a drive that fails mid-read
 ## each leave every call the UI thread makes quick, another file can be shown
 ## meanwhile, a cancel is taken at once, the quit ends within a second, and
-## nothing the UI thread calls reaches the file system.
+## nothing the UI thread calls reaches the file system. The same for the
+## Headers window: its reader's read of a trace header that hangs is said
+## not to answer while another file's trace is read meanwhile (its late
+## answer dropped), one that fails says why; the file's own headers, read
+## with its open, leave the file open without them when the drive fails, and
+## hold the open (said, cancelled) when it hangs.
 ##
 ## Seen to fail: with the watch's `dirExists` back under its lock,
 ## `watchStatsOutsideItsLock` found `watchOpen` held as long as the stat hung
 ## (60 s, the fault's limit); with `tend` not called from `drainInbox`,
 ## `aHungOpenIsLeft` never showed the second file (the lane stayed with the
-## hung open).
+## hung open). With the stuck Headers reader not left for a new one
+## (`leave` taken out of `followInspect`), `aHungHeaderRead` found "another
+## file's trace is not read meanwhile"; with its header reads not marked
+## (`fs.mappedRead` taken out of `serve`), "the header read hangs" never came.
 ##
 ## Under ThreadSanitizer only thread leaks are reported: the threads left in
 ## the hung drive, by design.
@@ -44,6 +52,15 @@ proc tilesOf(st: AppState): int = st.tiles(st.findPanel(MainPanel)).len
 proc shownPath(st: AppState): string =
   let i = st.shownFile(st.findPanel(MainPanel))
   if i >= 0: st.sessions[i].path else: ""
+
+proc idOf(st: AppState; path: string; index: int): int =
+  ## The survey-wide id of trace `index` of open file `path`.
+  for s in st.sessions:
+    if s.path == path: return s.base + index
+  -1
+
+proc select(st: var AppState; path: string; index: int) =
+  st.apply Command(kind: ckSelect, traces: @[st.idOf(path, index)], mode: smReplace)
 
 proc look(st: var AppState; first, last: float64) =
   var v = fitAll(st.main.layout, 800, 600)
@@ -161,6 +178,98 @@ withFixtures fx:
     doAssert st.settle(st.tilesTaken > before), "read again once the drive is back"
     st.shutdown()
 
+  block aHungHeaderRead:
+    # The Headers window's reader hangs on a trace header of the drive's
+    # file: said not to answer; a trace of a local file is read meanwhile by
+    # a new reader; the old one's late answer is dropped.
+    var st = initAppState(watchEvery = initDuration(seconds = 30))
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: far / "a.sgy")
+    doAssert st.settle(st.main.laidOut)
+    st.apply Command(kind: ckOpen, paths: @[near / "b.sgy"])
+    doAssert st.settle(st.sessions.len == 2)
+    st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders})
+    fault(far / "a.sgy", fkHang, {foHeaders})
+    var t = quick: st.select(far / "a.sgy", 2)
+    doAssert t < Budget
+    doAssert waitUntil(hung() == 1), "the header read hangs"
+    doAssert st.headersWait.kind == wkNone, "said not to answer at once"
+    silent()
+    let w = st.headersWait
+    doAssert w.kind == wkHeaders and w.path == far / "a.sgy" and
+      "a.sgy for the Headers window: not answering for" in w.words, $w
+    let b = st.idOf(near / "b.sgy", 4)
+    t = quick: st.select(near / "b.sgy", 4)
+    doAssert t < Budget
+    var worst = initDuration()
+    doAssert waitUntil((block:
+      let d = quick: discard st.drainInbox()
+      worst = max(worst, d)
+      st.inspection.answer.traces.len == 1 and st.inspection.answer.traces[0].id == b and
+        st.inspection.answer.traces[0].rows.len > 0)),
+      "another file's trace is not read meanwhile"
+    doAssert worst < Budget, "a frame's inbox took " & $worst
+    doAssert st.headersWait.kind == wkNone, "the new reader answers"
+    release(far / "a.sgy")
+    doAssert waitUntil(hung() == 0)
+    sleep 100
+    discard st.drainInbox()
+    doAssert st.inspection.answer.traces[0].id == b, "the late answer is dropped"
+    doAssert st.shutdown(), "the reader left in the drive has ended"
+
+  block aFailingHeaderRead:
+    # The drive fails the reads of a trace's header and samples: the answer
+    # says why, and the next trace is read once the drive is back.
+    var st = initAppState(watchEvery = initDuration(seconds = 30))
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: far / "a.sgy")
+    doAssert st.settle(st.main.laidOut)
+    st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders, ipTraceSamples})
+    fault(far / "a.sgy", fkFail, {foHeaders, foMapped})
+    st.select(far / "a.sgy", 3)
+    doAssert st.settle(not st.inspection.waiting and st.inspection.answer.traces.len == 1)
+    let d = st.inspection.answer.traces[0]
+    doAssert d.rows.len == 0 and d.samples.len == 0 and
+      "cannot be read now" in d.problem and "drive went away or fails" in d.problem, d.problem
+    release(far / "a.sgy")
+    st.select(far / "a.sgy", 4)
+    doAssert st.settle(not st.inspection.waiting and st.inspection.answer.traces.len == 1 and
+      st.inspection.answer.traces[0].rows.len > 0 and
+      st.inspection.answer.traces[0].problem.len == 0), "read once the drive is back"
+    st.shutdown()
+
+  block theOpensHeaderReads:
+    # The file's own headers (its textual and binary headers, for the
+    # Headers window) are read with its open: a drive that fails them leaves
+    # the file open without them, and the Summary says why; one that hangs
+    # holds the open, which is said not to answer and is cancelled.
+    var st = initAppState(watchEvery = initDuration(seconds = 30))
+    fault(far / "a.sgy", fkFail, {foHeaders})
+    st.apply Command(kind: ckOpen, paths: @[far / "a.sgy"])
+    doAssert st.settle(st.sessions.len == 1), "the file is opened"
+    let f = st.sessions[0].facts
+    doAssert f.text.len == 0 and f.rows.len == 0 and f.summary.traceCount > 0, $f.summary
+    doAssert f.problems.len == 1 and "headers cannot be read now" in f.problems[0], $f.problems
+    release(far / "a.sgy")
+    st.shutdown()
+    var again = initAppState(watchEvery = initDuration(seconds = 30))
+    fault(far / "a.sgy", fkHang, {foHeaders})
+    let t = quick: again.apply Command(kind: ckOpen, paths: @[far / "a.sgy"])
+    doAssert t < Budget
+    doAssert waitUntil(hung() == 1), "the open's header read hangs"
+    silent()
+    var stuck = NoJob
+    for j in again.jobs.active:
+      if "a.sgy" in j.spec.title: stuck = j.id
+    doAssert stuck != NoJob and again.jobs.info(stuck).get.notAnsweringFor > initDuration()
+    let c = quick: again.apply Command(kind: ckCancelJob, job: stuck)
+    doAssert c < Budget
+    doAssert again.settle(again.jobs.info(stuck).get.state == jsCancelled)
+    release(far / "a.sgy")
+    doAssert waitUntil(hung() == 0)
+    sleep 100
+    discard again.drainInbox()
+    doAssert again.sessions.len == 0, "the cancelled open is dropped"
+    again.shutdown()
+
   block quitWithin:
     # Everything hangs at once: an open, a read, the listing, the watch and
     # the folder the settings go to. The quit ends within a second.
@@ -177,14 +286,18 @@ withFixtures fx:
     fault(config, fkHang)
     st.look(1000, 1099) # the reader's stat hangs
     st.apply Command(kind: ckOpen, paths: @[far / "a.sgy"]) # the open hangs
+    st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders})
+    st.select(far / "c.sgy", 5) # the Headers window's reader hangs
     var s = st.settings
     s.theme = "changed"
     st.apply Command(kind: ckSettings, settings: s)
-    doAssert waitUntil(hung() >= 3), "the read, the open and the watch hang: " & $hung()
+    doAssert waitUntil(hung() >= 4), "the read, the open, the Headers window's reader and " &
+      "the watch hang: " & $hung()
     let t = quick:
       let ended = st.shutdown()
       doAssert not ended, "something was left"
-    echo "quit with an open, a read and the watch hung: ", t.inMilliseconds, " ms"
+    echo "quit with an open, a read, the Headers window's reader and the watch hung: ",
+      t.inMilliseconds, " ms"
     doAssert t < initDuration(milliseconds = 1500), "the quit took " & $t
     releaseAll() # the stuck threads come back and end on their own
     doAssert waitUntil(hung() == 0)

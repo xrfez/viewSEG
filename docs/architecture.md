@@ -109,7 +109,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
 | Agent server | `remote/server`, started only when agent control is turned on | Accepts MCP clients on the socket, reads and frames their messages, answers the handshake and the tool list itself, queues tool calls for the UI thread and writes the answers it is given; never reads or changes `AppState` |
-| Headers reader | `core/inspector`, started by `AppState` when the Headers window first has something on screen to read | Reads what the Headers window shows of the files' bytes: a SEG-D record's headers (`recordHeaders`, `copyBytes`), the chosen traces' header fields (`traceHeaders`) and samples (`readTraces`, then the edits and the display pipeline when shown as displayed, its own `Workspace`), and posts them (`mkInspected`); newest request wins |
+| Headers reader | `core/inspector`, started by `AppState` when the Headers window first has something on screen to read | Reads what the Headers window shows of the files' bytes: a SEG-D record's headers (`recordHeaders`, `copyBytes`), the chosen traces' header fields (`traceHeaders`) and samples (`readTraces`, then the edits and the display pipeline when shown as displayed, its own `Workspace`), and posts them (`mkInspected`); newest request wins; a `stat` of each file first, and every read marked (`fs.mappedRead`): one stuck in a drive is left for a new one (Network drives, below) |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
 | Pool workers | processSEG: one `ProcessPool`, made by `core` at start-up | The rows of `pool.apply`, `pool.pickInto` and `pool.traceAmplitudeInto`; destroyed at shutdown, once every caller has stopped |
 
@@ -233,8 +233,9 @@ for, let the user go on, and quit.
 - **The seam.** Every file-system call `core` makes goes through `fs` (`fs.getFileInfo`,
   `fs.walkDir`, `fs.open`, `fs.readFile`, `fs.moveFile` ...: the `std/os` calls of those
   names, behind a hook), and `fs.mappedRead` marks where parseSEG reads a seismic file's
-  map (each step of the open's walk, each chunk a panel's reader takes), which cannot go
-  through it. `fs.now` is the clock the waits on drives are measured with. Tests install a
+  map (each step of the open's walk, each chunk a panel's reader takes, each read of the
+  Headers reader; header blocks alone, `headers = true`: the file's own read with its
+  open, a record's, a trace's), which cannot go through it. `fs.now` is the clock the waits on drives are measured with. Tests install a
   hook (`tests/utils/faultyfs`) that makes chosen paths slow (it moves `fs.now` on), hang
   (it blocks until released), fail (EIO) or wait for a round trip the test grants, and
   that keeps every call made on the UI thread; `tfilesystem` checks that no module of
@@ -255,7 +256,11 @@ for, let the user go on, and quit.
   dropped, its files held until its work comes back, so nothing it reads is closed under
   it (`docs/models/jobsabandon.nif`). A panel's reader beats per chunk; a reader silent
   for `StallAfter` is left when its panel is given something else, or on Cancel, and a new
-  one takes over; its late tiles answer an old request and are dropped. Every thread's
+  one takes over; its late tiles answer an old request and are dropped. The Headers
+  reader (`core/inspector`) beats before each call, naming the file; one silent for
+  `StallAfter` is left (`leave`, kept in `leftInspectors` until it ends) when the window
+  wants another file read, and a new one reads it; a request on the stuck file waits for
+  it. Its late answer is older than what was taken since, and dropped. Every thread's
   `stop` waits until a deadline; `AppState.shutdown` asks them all at once and waits for
   them together at most `QuitWait` (0.8 s); a thread left keeps its memory, and the open
   files and relation files it may read, to the end of the process
@@ -264,7 +269,10 @@ for, let the user go on, and quit.
   or a file that cannot be read now, `mkUnread`) and `listingWait` (the listing, or the
   watch's look, not answering), worded by `words`; the plot and the Files window show them
   with Cancel (`ckCancelJob`, `ckStopReading`) and Retry (`ckRetry`: open again, read again
-  with a new reader, list again with a new watch).
+  with a new reader, list again with a new watch). `headersWait` (the Headers reader not
+  answering) is a line above the Headers window's tabs, which keep what was read; a read
+  the drive fails is said in the tab (the trace's or the record's problem), and the file's
+  own headers that its open could not read in the Summary.
 - **Agent control's socket** (`remote/server`) is made, and at the end removed, on threads
   of their own: finding the default socket writes a probe in the program's folder, and the
   socket is made there, a folder that may be on a share. Turning agent control on waits

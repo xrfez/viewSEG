@@ -400,6 +400,7 @@ proc headersJson(state: AppState; limit: int): JsonNode =
       "problem": d.problem}
   result["trace"] = %*{"chosenBy": $ins.chosen.by, "traces": clipped(ins.chosen.traces, limit),
     "total": ins.chosen.total, "reading": ins.waiting, "read": answered}
+  result["notAnswering"] = %state.headersWait.words # "" while its reader answers
   let k = state.findPanel(MainPanel)
   let i = if k >= 0: state.shownFile(k) else: -1
   if i < 0:
@@ -637,7 +638,9 @@ proc busy*(state: AppState; fe: Frontend): seq[string] =
   for j in state.jobs.active:
     result.add "job \"" & j.spec.title & "\" (" & $j.state & ")"
   if state.fileList.scanning: result.add "the folder's listing"
-  if state.inspection.waiting: result.add "the Headers window's reader"
+  if state.inspection.waiting:
+    let w = state.headersWait
+    result.add "the Headers window's reader" & (if w.kind == wkNone: "" else: ": " & w.words)
   for k in 0 ..< state.panels.len:
     let picture = state.pictureOf(k, fe)
     if picture notin ["complete", "nothing shown"]:

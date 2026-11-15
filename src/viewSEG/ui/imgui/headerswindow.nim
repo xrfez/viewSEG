@@ -18,7 +18,9 @@
 ##   read off the UI thread (`core/inspector`), only while the tab shows.
 ##
 ## What is on screen is told to `core` (`ckInspect`) when it changes, so
-## nothing is read for a hidden tab. The tab shown and the columns chosen
+## nothing is read for a hidden tab; when its reader does not answer (a
+## drive that is slow or gone), a line above the tabs says so, and the tabs
+## keep what was read before. The tab shown and the columns chosen
 ## are remembered in the settings (`Settings.headers`). A value is copied
 ## with Ctrl + C on its row, or from its right-click menu, which also copies
 ## the whole summary or table. A click that only brings the window forward
@@ -450,7 +452,7 @@ proc toggle(st: AppState; label, tip: string; on: bool; marks: var Marks; mark: 
     igPopTextWrapPos()
     igEndTooltip()
 
-proc problems(traces: openArray[TraceDetail]; t: Theme) =
+proc problems(traces: openArray[TraceDetail]; t: Theme; marks: var Marks) =
   ## A line for each trace that could not be read whole.
   for d in traces:
     if d.problem.len > 0:
@@ -460,6 +462,7 @@ proc problems(traces: openArray[TraceDetail]; t: Theme) =
         nil)
       igPopTextWrapPos()
       igPopStyleColor(1)
+      marks.mark("headers.problem")
     if d.cut > 0:
       dim(t, "Trace " & $(d.trace + 1) & ": its last " & $d.cut & " samples are left out " &
         "(too many samples at once).")
@@ -604,7 +607,7 @@ proc drawTrace(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerInPlot
     output.commands.add Command(kind: ckSettings, settings: s)
   dim(t, chosenLine(st, view.followPointer))
   marks.mark("headers.chosen")
-  problems(st.inspection.answer.traces, t)
+  problems(st.inspection.answer.traces, t, marks)
   if st.inspection.chosen.traces.len == 0: return
   if igBeginTabBar("##tracetabs", 0):
     let wanted = view.traceTab
@@ -655,6 +658,14 @@ proc drawHeaders*(ui: var HeadersUi; title: string; st: AppState; cursorMs: floa
   if igBegin(title.cstring, nil, 0):
     ui.focus.watch()
     marks.markWindow("headers")
+    let waiting = st.headersWait()
+    if waiting.kind != wkNone: # its reader is stuck in a drive that does not answer
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+      igPushTextWrapPos(0)
+      igTextUnformatted(waiting.words.cstring, nil)
+      igPopTextWrapPos()
+      igPopStyleColor(1)
+      marks.mark("headers.waiting")
     if igBeginTabBar("##headerstabs", 0):
       var shown = ui.shownTab
       if ui.tabItem(htSummary, view.tab):

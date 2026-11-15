@@ -19,12 +19,21 @@
 ## selection cleared (Esc in the plot): the trace under the pointer again;
 ## "Follow the pointer" off: empty, with the pointer over a trace.
 ##
+## A drive that stops answering, through the file-system seam
+## (`tests/utils/faultyfs`): a trace header the Trace tab reads hangs; the
+## window keeps drawing frames and says, above its tabs, that its reader does
+## not answer; once the drive answers the trace is shown and the line goes;
+## a read the drive fails says why. Nothing the UI thread calls reaches the
+## file system.
+##
 ## Seen to fail: with the tab chosen not put in the settings (no
 ## `ckSettings` when the tab changes), "the File headers tab was not
 ## remembered"; with the columns set up without `syncColumns` (every column
 ## shown), "stopped at binary" (the value pushed out of view by the Name and
 ## Offset columns); with `ckInspect` never sent, "the record's general
-## headers never came".
+## headers never came". With the line of what does not answer not drawn
+## (`headersWait` not asked in `drawHeaders`), "stopped at \"a header read
+## hangs\"".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves headers-*.png there, and, with the
@@ -32,10 +41,10 @@
 ## example (headers-inglewood-*.png, headers-morgantown-*.png), the Headers
 ## window made larger by dragging its splitters.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[faultyfs, fixtures]
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
@@ -274,6 +283,56 @@ withFixtures fx:
         doAssert f.core.inspection.answer.traces.len == 0
         f.shoot("headers-trace-none-segy.png")))],
     fx.dir / "cache")
+
+# A drive that stops answering: a hung read of a trace header leaves the
+# window drawing, and says so; a failing one says why.
+block aDriveThatStopsAnswering:
+  install()
+  withFixtures fx:
+    let far = fx.dir / "far"
+    createDir(far)
+    copyFile(fx.surveySegy, far / "a.sgy")
+    var last = MonoTime()
+    var worst = initDuration()
+    var advanced = false
+    runSteps(far / "a.sgy", [
+      ("shown", Step(proc (f: FrameInfo; wait: int): bool =
+        f.laidOut and f.core.panels[0].shown.len == Channels and wait > 3)),
+      ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.tab trace")
+        wait > 8 and f.core.settings.headers.tab == htTrace)),
+      ("a header read hangs", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1:
+          fault(far / "a.sgy", fkHang, {foHeaders})
+          f.moveMouse(f.pointAt(3))
+          last = getMonoTime()
+        let now = getMonoTime()
+        worst = max(worst, now - last)
+        last = now
+        if not advanced and hung() >= 1:
+          advanceFsClock(StallAfter + initDuration(seconds = 1)) # as if it had not answered since
+          advanced = true
+        result = advanced and wait > 10 and f.shown("headers.waiting")
+        if result:
+          doAssert f.core.inspection.waiting and f.core.inspection.chosen.traces == @[f.idAt(3)]
+          doAssert "not answering for" in f.core.headersWait.words, f.core.headersWait.words
+          f.shoot("headers-not-answering.png"))),
+      ("the drive answers", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1: release(far / "a.sgy")
+        result = wait > 3 and f.answered([f.idAt(3)]) and not f.shown("headers.waiting") and
+          f.shown("headers.trace trace.fieldRecord 0"))),
+      ("a header read fails", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1:
+          fault(far / "a.sgy", fkFail, {foHeaders})
+          f.moveMouse(f.pointAt(6))
+        result = wait > 3 and f.answered([f.idAt(6)]) and f.shown("headers.problem")
+        if result:
+          let d = f.core.inspection.answer.traces[0]
+          doAssert "cannot be read now" in d.problem and d.rows.len == 0, d.problem
+          release(far / "a.sgy")))],
+      fx.dir / "cache")
+    doAssert worst < initDuration(seconds = 5), "a frame waited " & $worst & " for the drive"
+    doAssert uiCalls().len == 0, "the UI thread called the file system:\n" & uiCalls().join("\n")
 
 # Screenshots of each tab on the example files (local only).
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"

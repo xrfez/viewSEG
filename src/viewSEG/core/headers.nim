@@ -157,11 +157,11 @@ func cardLines(text: string): seq[string] =
   ## A decoded text block (lines joined by '\n') as UTF-8 lines.
   for line in text.split('\n'): result.add latin1(line)
 
-proc fileFacts*(f: SeismicFile): FileFacts =
-  ## What the Summary and File headers tabs show of `f`. Reads the index and
-  ## the file's own header blocks (no trace): call it on the thread that
-  ## holds the file, before it is handed to another. What cannot be read is
-  ## said in `problems`; nothing raises.
+proc fileFacts*(f: SeismicFile; headers = true): FileFacts =
+  ## What the Summary and File headers tabs show of `f`. Reads the index and,
+  ## with `headers`, the file's own header blocks (no trace): call it on the
+  ## thread that holds the file, before it is handed to another. What cannot
+  ## be read is said in `problems`; nothing raises.
   result = FileFacts()
   try:
     result.summary = f.summary
@@ -169,9 +169,10 @@ proc fileFacts*(f: SeismicFile): FileFacts =
     result.problems.add "the summary cannot be read: " & e.msg
   try:
     result.channelSets = f.channelSets
-    result.crs = latin1(f.crsText)
+    if headers: result.crs = latin1(f.crsText)
   except ValueError as e:
     result.problems.add "the channel sets cannot be read: " & e.msg
+  if not headers: return
   if f.kind == skSegy:
     result.textEncoding = if f.index.segy.text.encoding == teEbcdic: "EBCDIC" else: "ASCII"
     try:
