@@ -897,7 +897,7 @@ proc drawDropHint(ui: Ui) =
   let a = vp.WorkPos
   let b = ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x, y: vp.WorkPos.y + vp.WorkSize.y)
   ImDrawList_AddRectFilled(dl, a, b, u32(withAlpha(ui.theme.roles[rlAccent], 40)), 0, 0)
-  ImDrawList_AddRect(dl, a, b, u32(ui.theme.roles[rlAccent]), 0, 0, 4)
+  ImDrawList_AddRect(dl, a, b, u32(ui.theme.roles[rlAccent]), 0, 4, 0) # 4 pixels thick
   let text = "Drop to open: a folder lists its files; a seismic file is shown, its folder " &
     "listed; survey files (SPS, P1) are loaded into the survey"
   let ts = igCalcTextSize(text.cstring, nil, false, -1)
