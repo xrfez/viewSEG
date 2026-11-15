@@ -1,6 +1,6 @@
 ## The windows the main window docks, and what the Window menu does with
 ## them: which are shown (each with a tick: shown or hidden, and brought
-## forward), all put back as at a first start (`resetLayout`, in `app`), all
+## forward), all put back as at a first start (`resetWindows`, in `app`), all
 ## brought onto the main window's screen, a window that a layout does not
 ## know docked beside its neighbours and shown, and the windows a layout
 ## puts off every screen brought back at start. The rules on screens are

@@ -543,7 +543,7 @@ headers give" to have the survey's).
 
 ## Headers
 
-The **Headers** window (View > Windows > Headers) shows what the file in the Seismic window
+The **Headers** window (Window > Headers) shows what the file in the Seismic window
 holds, read-only, in three tabs:
 
 - **Summary:** what the file is, in plain words: its standard and revision, byte order,
