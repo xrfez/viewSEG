@@ -19,10 +19,10 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves filters-popup.png there.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/[app, plotfilters]
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -47,7 +47,8 @@ withFixtures fx:
   var steps: seq[Step]
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   var pointAt: Vec2
   var dragged: seq[float64] # f2 as each new tile came while the button was held
@@ -157,16 +158,16 @@ withFixtures fx:
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 600:
+      elif overdue(wait, 600, since):
         failed = steps[at].name & " did not happen"
         f.stop()
-  let code = run(RunOptions(maxFrames: 6000, openPaths: @[fx.twoSetSegd()],
+  let code = run(RunOptions(openPaths: @[fx.twoSetSegd()],
     windowSize: (1400, 900), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code

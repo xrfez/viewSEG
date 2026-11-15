@@ -26,18 +26,18 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, times]
+import std/[math, monotimes, options, os, times]
 import viewSEG/core/[geometry, log]
 import viewSEG/core/state {.all.}
 import viewSEG/ui/imgui/[app, shell]
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
     name: string
     act: proc (f: FrameInfo)
     done: proc (f: FrameInfo): bool
-    patience: int ## frames
+    patience: int ## frames, and `Patience` at least
 
   Kept = object
     traces, timeMs: Span
@@ -73,7 +73,8 @@ withFixtures fx:
   var steps: seq[Step]
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   var images, quiet = 0
   var want: Kept
@@ -231,17 +232,17 @@ withFixtures fx:
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > steps[at].patience:
+      elif overdue(wait, steps[at].patience, since):
         failed = steps[at].name & " did not happen (" & f.shownPath & " shown)"
         f.stop()
 
-  let code = run(RunOptions(maxFrames: 20000, openPaths: @[a], windowSize: (1400, 900),
+  let code = run(RunOptions(openPaths: @[a], windowSize: (1400, 900),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code

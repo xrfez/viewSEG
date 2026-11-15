@@ -26,9 +26,6 @@ import viewSEG/core/state {.all.}
 privateAccess(AppState)
 import utils/[faultyfs, fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc main(st: AppState): lent Panel = st.panel(MainPanel)
 
 proc mainTiles(st: AppState): lent seq[Tile] = st.tiles(st.findPanel(MainPanel))

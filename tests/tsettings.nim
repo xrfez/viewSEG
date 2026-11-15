@@ -28,14 +28,11 @@
 
 import std/[math, monotimes, os, random, strutils, times]
 import viewSEG/core/[geometry, state]
-import utils/[fixtures, waiting]
+import utils/[fixtures, owntime, waiting]
 
 let tmp = getTempDir() / ("viewseg_tsettings_" & $getCurrentProcessId())
 removeDir(tmp)
 createDir(tmp)
-
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
 
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
   for e in log:
@@ -513,9 +510,9 @@ block importHoldsNoFrame:
   st.apply Command(kind: ckImportSettings, docPath: tmp / "large.nif")
   var longest = Duration()
   doAssert waitUntil((
-    let t0 = getMonoTime()
+    let t0 = ownTime()
     discard st.drainInbox()
-    longest = max(longest, getMonoTime() - t0)
+    longest = max(longest, ownTime() - t0)
     st.log.has("Settings imported from " & tmp / "large.nif")))
   doAssert longest < initDuration(milliseconds = 25), "taking in the import held a frame " &
     $longest.inMilliseconds & " ms"

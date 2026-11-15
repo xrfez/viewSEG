@@ -25,7 +25,7 @@ import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/maplayers
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 const
   Lines = 1000
@@ -113,8 +113,8 @@ proc main() =
           drawnClose = f.mapWindow.mapPointsDrawn
           f.stop()
       else: discard
-      if f.index > 4000: f.stop()
-    let code = run(RunOptions(maxFrames: 5000, openPaths: @[path], windowSize: (1600, 1000),
+      if overdue(f.index, 4000, loadStart): f.stop()
+    let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
       theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0

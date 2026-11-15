@@ -24,9 +24,6 @@ import std/[os, strutils, times]
 import viewSEG/core/state
 import faultyfs, fixtures, steps, waiting
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc opened(st: var AppState; path: string) =
   ## `path` shown in the main panel, a tile of it taken in, its positions read.
   st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)

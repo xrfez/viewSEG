@@ -17,11 +17,11 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-filters-*.png there.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/[maplayers, theme]
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -54,7 +54,8 @@ proc main() =
     var steps: seq[Step]
     var at = 0
     var started = false
-    var wait = 0
+    var wait = 0 # frames since the step began, at `since`
+    var since = getMonoTime()
     var failed = ""
     var ink: MapInk
     proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
@@ -133,16 +134,16 @@ proc main() =
       if not started:
         steps[at].act(f)
         started = true
-        wait = 0
+        (wait, since) = (0, getMonoTime())
       else:
         inc wait
         if wait >= 3 and steps[at].done(f):
           inc at
           started = false
-        elif wait > 600:
+        elif overdue(wait, 600, since):
           failed = steps[at].name & " did not happen"
           f.stop()
-    let code = run(RunOptions(maxFrames: 8000, openPaths: @[sps.s, sps.r, fx.mapXps, shotPath],
+    let code = run(RunOptions(openPaths: @[sps.s, sps.r, fx.mapXps, shotPath],
       windowSize: (1400, 1100), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0, "run() exit code " & $code

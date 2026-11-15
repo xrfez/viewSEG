@@ -27,11 +27,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, times]
+import std/[math, monotimes, options, os, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -55,7 +55,8 @@ withFixtures fx:
   var steps: seq[Step]
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   var plot: Rect
   var theme: Theme
@@ -235,17 +236,17 @@ withFixtures fx:
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 300:
+      elif overdue(wait, 300, since):
         failed = steps[at].name & " did not happen"
         f.stop()
 
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
@@ -273,6 +274,7 @@ proc menuShot(path, file: string; header: bool) =
   var wait = 0
   var saved = false
   var q: Vec2
+  let start = getMonoTime()
   proc onFrame(f: FrameInfo) =
     let k = f.core.findPanel(MainPanel)
     let p = f.core.panels[k]
@@ -304,9 +306,9 @@ proc menuShot(path, file: string; header: bool) =
         saved = f.savePng(dir / file)
         f.stop()
     else: discard
-    if f.index > 3000: f.stop()
+    if overdue(f.index, 3000, start): f.stop()
   let tmp = getTempDir() / ("viewseg-menushot-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onFrame))
   removeDir(tmp)

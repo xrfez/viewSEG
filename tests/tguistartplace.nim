@@ -28,11 +28,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[options, os, strutils]
+import std/[monotimes, options, os, strutils]
 import viewSEG/core/[geometry, layouts, screens, settings, settingsnif, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/theme
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 const ids = ["plot", "files", "records", "map", "headers", "jobs", "Messages"]
 
@@ -63,6 +63,15 @@ func withHook(o: RunOptions; hook: FrameHook): RunOptions =
   result = o
   result.onFrame = hook
 
+var began: MonoTime ## a run's first frame
+
+proc shown(f: FrameInfo): bool =
+  ## Whether the file the run opens is shown (a job opens it); a failure
+  ## past 3000 frames and `Patience`.
+  if f.index == 0: began = getMonoTime()
+  result = f.core.panels[f.core.findPanel(MainPanel)].laidOut
+  doAssert result or not overdue(f.index, 3000, began), "the file was not shown"
+
 proc said(f: FrameInfo; words: string; severity: Severity): bool =
   result = false
   for e in f.core.log:
@@ -74,7 +83,7 @@ withFixtures fx:
   createDir(config)
   let assets = currentSourcePath().parentDir.parentDir / "assets"
   proc options(reset = false): RunOptions =
-    RunOptions(maxFrames: 3000, openPaths: @[path], theme: forceDark, persist: true,
+    RunOptions(openPaths: @[path], theme: forceDark, persist: true,
       configDir: some(config), logDir: some(fx.dir / "logs"),
       indexCacheDir: some(fx.dir / "cache"), userThemeDir: some(fx.dir / "no-user-themes"),
       assetDirs: some(@[assets]), resetWindows: reset)
@@ -113,8 +122,7 @@ withFixtures fx:
     ("jobs", Rect(pos: vec2(300, 300), size: vec2(320, 220)))], "records"))
   var checked = false
   proc reset(f: FrameInfo) =
-    let p = f.core.panels[f.core.findPanel(MainPanel)]
-    if f.index >= 30 and p.laidOut:
+    if f.shown and f.index >= 30:
       for id in ids:
         let w = f.windowPlace(id)
         doAssert w.shown, id & " is not shown after --reset-windows"
@@ -138,8 +146,7 @@ withFixtures fx:
     ("headers", Rect(pos: vec2(5000, 4000), size: vec2(400, 300)))], ""))
   checked = false
   proc offScreen(f: FrameInfo) =
-    let p = f.core.panels[f.core.findPanel(MainPanel)]
-    if f.index >= 30 and p.laidOut:
+    if f.shown and f.index >= 30:
       f.defaultPlace("when its saved place is off every screen")
       doAssert f.said("off every screen (on a monitor that is not there now?)", sevWarning),
         "nothing says the main window was off every screen"
@@ -159,7 +166,7 @@ withFixtures fx:
   writeFiles(WindowPlacement(x: 100, y: 50, width: 3000, height: 2000), plain)
   checked = false
   proc large(f: FrameInfo) =
-    if f.index >= 20:
+    if f.shown and f.index >= 20:
       let m = f.mainWindowRect
       doAssert m.inside(screen), "the main window is not on the screen: " & $m
       doAssert m.size == screen.size, "the main window does not fill the screen: " & $m

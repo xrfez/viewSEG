@@ -23,11 +23,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, layouts, settings, settingsnif, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/theme
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -42,7 +42,8 @@ proc click(f: FrameInfo; at: Vec2) =
   f.pressMouse(at, true)
   f.pressMouse(at, false)
 
-var wait = 0 ## frames since the step began
+var wait = 0 ## frames since the step began, at `since`
+var since = getMonoTime()
 
 withFixtures fx:
   let path = fx.surveySegy()
@@ -151,15 +152,16 @@ withFixtures fx:
       steps[at].act(f)
       started = true
       wait = 0
+      since = getMonoTime()
     else:
       inc wait
       if wait >= 3 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 400:
+      elif overdue(wait, 400, since):
         failed = steps[at].name & " did not happen"
         f.stop()
-  let code = run(RunOptions(maxFrames: 8000, openPaths: @[path], windowSize: (1400, 900),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1400, 900),
     theme: forceDark, persist: true, configDir: some(config), logDir: some(fx.dir / "logs"),
     indexCacheDir: some(fx.dir / "cache"), userThemeDir: some(fx.dir / "no-user-themes"),
     assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]), dialogs: hook,

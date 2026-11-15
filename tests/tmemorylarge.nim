@@ -18,7 +18,7 @@
 
 import std/[monotimes, os, strutils, times]
 import viewSEG/core/[diskio, inbox, state]
-import utils/[fixtures, waiting]
+import utils/[fixtures, owntime, waiting]
 
 let tmp = getTempDir() / ("viewseg_tmemorylarge_" & $getCurrentProcessId())
 removeDir(tmp)
@@ -32,9 +32,9 @@ block millionScattered:
   for i in 0 ..< 1_000_000: r.edits.lists[teKilled].add 2 * i
   let want = r.edits
   let store = Store(home: tmp / StoreFolder)
-  let t0 = getMonoTime()
+  let t0 = ownTime()
   d.replace(store.docPath(r.doc), r, "what is remembered about big.sgy")
-  let took = getMonoTime() - t0
+  let took = ownTime() - t0
   doAssert took < initDuration(milliseconds = 20),
     "handing the document over took " & $took.inMilliseconds & " ms"
   d.flush()
@@ -45,7 +45,8 @@ block millionScattered:
   doAssert back.edits == want, "the large document did not read back whole"
 
 template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); st.persist(); cond))
+  waitUntil((discard st.drainInbox(); st.persist(); cond) and
+    (discard st.drainInbox(); st.persist(); cond))
 
 block millionRowsImported:
   withFixtures fx:
@@ -64,9 +65,9 @@ block millionRowsImported:
     proc logText(st: AppState): string =
       for e in st.log: result.add e.text & "\n"
     doAssert waitUntil((
-      let t0 = getMonoTime()
+      let t0 = ownTime()
       discard st.drainInbox()
-      longest = max(longest, getMonoTime() - t0)
+      longest = max(longest, ownTime() - t0)
       not st.editsOf(0).isEmpty or "Cannot import" in st.logText), initDuration(seconds = 60))
     let said = st.logText
     doAssert not st.editsOf(0).isEmpty, said

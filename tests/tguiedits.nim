@@ -52,7 +52,7 @@ import std/[algorithm, math, monotimes, options, os, sequtils, strutils, tables,
 import viewSEG/core/[geometry, state]
 import viewSEG/view/plotink
 import viewSEG/ui/imgui/app
-import utils/[fixtures, plotref]
+import utils/[fixtures, plotref, waiting]
 
 type
   Step = object
@@ -163,7 +163,8 @@ withFixtures fx:
   var steps: seq[Step]
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   var shots: Table[string, Shot]
 
@@ -378,16 +379,17 @@ withFixtures fx:
       steps[at].act(f)
       started = true
       wait = 0
+      since = getMonoTime()
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 300:
+      elif overdue(wait, 300, since):
         failed = steps[at].name & " did not happen"
         f.stop()
 
-  let code = run(RunOptions(maxFrames: 6000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
@@ -446,6 +448,7 @@ proc morgantown(path: string) =
   const keys = [(skK, 1012), (skK, 1012), (skR, 1020), (skR, 1020), (skK, 1012), (skR, 1020)]
   var stage = 0
   var wait = 0
+  var since = getMonoTime() # when the stage began
   var press = 0
   var pressedAt: MonoTime
   var drawnAt = 0
@@ -460,6 +463,7 @@ proc morgantown(path: string) =
     let k = f.core.findPanel(MainPanel)
     let p = f.core.panels[k]
     inc wait
+    template next(n, frames: int) = (stage, wait, since) = (n, frames, getMonoTime())
     proc screen(position: int): Vec2 =
       let at = p.view.screenAt(f.markOf("plot.data"), DataPoint(x: float64(position), tMs: 640))
       vec2(round(at.x), round(at.y))
@@ -469,13 +473,13 @@ proc morgantown(path: string) =
         var v = p.view
         (v.traces, v.timeMs) = (Span(lo: 999.5, hi: 1039.5), Span(lo: 400, hi: 1000))
         f.showView(v)
-        (stage, wait) = (1, 0)
+        next 1, 0
     of 1: # the view drawn: the pointer over the first trace, then a key
       let tiles = f.core.tiles(k)
       if wait > 10 and tiles.len > 0 and tiles[^1].request == p.pending and
           not p.pending.isEmpty and p.pending.gen == p.requestGen:
         if press == keys.len:
-          (stage, wait) = (3, 0)
+          next 3, 0
         elif wait == 11:
           f.moveMouse(screen(keys[press][1]))
         elif not focused: # a click gives the plot the keys; Esc takes the selection away
@@ -493,7 +497,7 @@ proc morgantown(path: string) =
           f.pressKey(keys[press][0], false)
           pressedAt = getMonoTime()
           pressFrame = f.index
-          (stage, wait) = (2, 0)
+          next 2, 0
     of 2: # the new picture: a tile made after the key, drawn
       let tiles = f.core.tiles(k)
       if p.requestGen > gen and tiles.len > 0 and tiles[^1].request.gen == p.requestGen and
@@ -502,8 +506,8 @@ proc morgantown(path: string) =
         frames.add f.index - pressFrame
         if tiles[^1].cached: inc fromHeld
         inc press
-        (stage, wait) = (1, 10) # the pointer to the next key's trace
-      elif wait > 300:
+        next 1, 10 # the pointer to the next key's trace
+      elif overdue(wait, 300, since):
         echo "tguiedits: key ", press, " brought no new picture"
         f.stop()
     of 3: # one trace killed and one reversed: the screenshots
@@ -521,9 +525,9 @@ proc morgantown(path: string) =
         if f.savePng(dir / "edits-morgantown-density.png"): inc saved
         f.stop()
     else: discard
-    if f.index > 5000: f.stop()
+    if overdue(f.index, 5000, since): f.stop()
   let tmp = getTempDir() / ("viewseg-editshot-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 6000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onFrame))
   removeDir(tmp)

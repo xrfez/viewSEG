@@ -18,11 +18,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, strutils]
+import std/[math, monotimes, options, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 const Traces = 20_000
 
@@ -56,7 +56,8 @@ proc sameTime(a, b: Span): bool = abs(a.lo - b.lo) < 1e-6 and abs(a.hi - b.hi) <
 withFixtures fx:
   var plotX = 0'f32
   var stage = 0
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var reached: seq[string]
   let steps: seq[(string, Step)] = @[
     ("shown", Step(proc (f: FrameInfo; wait: int): bool =
@@ -109,10 +110,11 @@ withFixtures fx:
       if steps[stage][1](f, wait):
         reached.add steps[stage][0]
         inc stage
-        wait = 0
-      else: doAssert wait < 400, "stopped at \"" & steps[stage][0] & "\" after " & $reached
+        (wait, since) = (0, getMonoTime())
+      else: doAssert not overdue(wait, 400, since), "stopped at \"" & steps[stage][0] &
+        "\" after " & $reached
     else: f.stop()
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[fx.manyTracesSegy(Traces, 500)],
+  let code = run(RunOptions(openPaths: @[fx.manyTracesSegy(Traces, 500)],
     windowSize: (1600, 1000), theme: forceDark, onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
   doAssert stage == steps.len, "stopped at stage " & $stage & " after " & $reached

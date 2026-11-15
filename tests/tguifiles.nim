@@ -24,11 +24,11 @@
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves files-<name>.png there, with the example
 ## files when they are present (local only).
 
-import std/[math, options, os, strutils, times]
+import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type Snapshot = tuple[bytes: string; time: Time]
 
@@ -66,7 +66,8 @@ withFixtures fx:
 
   var
     stage = 0
-    wait = 0
+    wait = 0             # frames since the stage began, at `since`
+    since = getMonoTime()
     at: Vec2
     reached: seq[string] # what each stage saw
     lines: seq[Message]
@@ -92,6 +93,7 @@ withFixtures fx:
     reached.add what
     inc stage
     wait = 0
+    since = getMonoTime()
   proc onFrame(f: FrameInfo) =
     inc wait
     maxOpen = max(maxOpen, f.core.sessions.len)
@@ -145,7 +147,7 @@ withFixtures fx:
         if f.typing:
           doAssert tabs == 4, $tabs & " Tabs to the filter"
           f.next "shift tab"
-        doAssert wait < 100, "Tab did not reach the filter"
+        doAssert not overdue(wait, 100, since), "Tab did not reach the filter"
     of 5: # in the filter Down is the box's; out of it (Tab on), Down steps
       if wait == 2: f.pressKey(skDown, true)
       if wait == 3: f.pressKey(skDown, false)
@@ -160,7 +162,7 @@ withFixtures fx:
         f.pressKey(skDown, true)
       if wait == 15: f.pressKey(skDown, false)
       if wait > 15 and shown == dir / "shot10.sgy" and f.laidOut: f.next "down"
-      doAssert wait < 200, "Down did not step from Latest"
+      doAssert not overdue(wait, 200, since), "Down did not step from Latest"
     of 6:
       f.key(skHome)
       if wait > 4 and shown == dir / "Shot1.sgd" and f.laidOut: f.next "home"
@@ -206,11 +208,11 @@ withFixtures fx:
         lines = f.messages
         f.stop()
     else: discard
-    if f.index > 3000:
+    if overdue(f.index, 3000, since):
       lines = f.messages
       f.stop()
 
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[dir], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[dir], windowSize: (1600, 1000),
     indexCacheDir: some(fx.dir / "cache"), theme: forceDark,
     userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
@@ -249,18 +251,18 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and dirExists(examples):
   var saved = false
   var stage = 0
   var wait = 0
+  var since = getMonoTime() # when the stage began
   proc onShot(f: FrameInfo) =
     inc wait
     if f.index == 0: f.moveMouse(vec2(4, 4))
     if stage == 0 and not f.core.fileList.scanning and f.answered:
-      stage = 1
-      wait = 0
+      (stage, wait, since) = (1, 0, getMonoTime())
     elif stage == 1 and wait > 5:
       saved = f.savePng(shots / "files-examples.png")
       f.stop()
-    if f.index > 2000: f.stop()
+    if overdue(f.index, 2000, since): f.stop()
   let tmp = getTempDir() / ("viewseg-files-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 2500, openPaths: @[examples / "00000151_12900_11300.sgd"],
+  let code = run(RunOptions(openPaths: @[examples / "00000151_12900_11300.sgd"],
     windowSize: (1600, 1000), theme: forceDark, indexCacheDir: some(tmp),
     userThemeDir: some(tmp / "no-user-themes"), onFrame: onShot))
   removeDir(tmp)

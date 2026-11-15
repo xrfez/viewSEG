@@ -21,9 +21,6 @@ import std/[math, monotimes, os, times]
 import viewSEG/core/state
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc laidOut(st: AppState): bool =
   let p = st.panel(MainPanel)
   p.laidOut and p.layout.traces > 0

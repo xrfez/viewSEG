@@ -30,9 +30,6 @@ import viewSEG/core/state
 import viewSEG/view/maplayers
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc layerOf(st: AppState; path: string): int =
   for i, l in st.survey.layers:
     if l.path == path: return i

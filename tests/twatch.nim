@@ -35,14 +35,11 @@
 import std/[algorithm, monotimes, os, strutils, times]
 import viewSEG/core/state
 import viewSEG/view/filetable
-import utils/[fixtures, waiting]
+import utils/[fixtures, owntime, waiting]
 when not defined(windows):
   from std/posix import nil
 
 const Look = initDuration(milliseconds = 40) ## the watch's pause in these tests
-
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
 
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
   for e in log:
@@ -346,9 +343,9 @@ block fiveThousandFiles:
     writeFile(dir / "shot5000.sgd", segd)
     var longest = Duration()
     doAssert waitUntil((
-      let t0 = getMonoTime()
+      let t0 = ownTime()
       discard st.drainInbox()
-      longest = max(longest, getMonoTime() - t0)
+      longest = max(longest, ownTime() - t0)
       st.listed(dir / "shot5000.sgd")))
     doAssert longest < initDuration(milliseconds = 10), $longest
     st.shutdown()
@@ -375,10 +372,10 @@ block manyAtOnce:
     proc frames(st: var AppState; table: var FileTable; done: proc (st: AppState): bool): Duration =
       ## The longest frame (the inbox and the table) until `done`.
       doAssert waitUntil((
-        let t0 = getMonoTime()
+        let t0 = ownTime()
         discard st.drainInbox()
         table.update(st.fileList, "", FileOrder(column: fcSize, descending: true))
-        result = max(result, getMonoTime() - t0)
+        result = max(result, ownTime() - t0)
         done(st)), initDuration(seconds = 60))
     for i in 0 ..< 4_000: removeFile(dir / ("shot" & align($(i * 5), 5, '0') & ".sgd"))
     let removed = st.frames(table, proc (st: AppState): bool = st.fileList.entries.len == 16_000)

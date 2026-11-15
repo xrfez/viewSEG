@@ -18,11 +18,11 @@
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves aux-morgantown.png and gain-exponential.png
 ## there when the example files are present (local only).
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import parseSEG
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/[app, icons]
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -45,7 +45,8 @@ proc title(f: FrameInfo): string =
 proc runSteps(file: string; steps: seq[Step]; dir: string) =
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   proc onFrame(f: FrameInfo) =
     if f.index == 0: f.moveMouse(vec2(4, 4))
@@ -56,15 +57,16 @@ proc runSteps(file: string; steps: seq[Step]; dir: string) =
       steps[at].act(f)
       started = true
       wait = 0
+      since = getMonoTime()
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 300:
+      elif overdue(wait, 300, since):
         failed = steps[at].name & " did not happen"
         f.stop()
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[file], windowSize: (1400, 900),
+  let code = run(RunOptions(openPaths: @[file], windowSize: (1400, 900),
     theme: forceDark, userThemeDir: some(dir / "no-user-themes"),
     indexCacheDir: some(dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
@@ -159,9 +161,11 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and fileExists(morgantown):
   createDir(shots)
   let tmp = getTempDir() / ("viewseg-aux-" & $getCurrentProcessId())
   var stage, wait = 0
+  var since = getMonoTime() # when the stage began
   var saved: seq[string]
   proc onShot(f: FrameInfo) =
     inc wait
+    template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
     if f.index == 0: f.moveMouse(vec2(4, 4))
     case stage
     of 0:
@@ -172,14 +176,14 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and fileExists(morgantown):
         var flt = f.panel.layers[0].filter
         flt.auxiliary = true
         f.apply Command(kind: ckFilter, panel: MainPanel, filter: flt)
-        (stage, wait) = (1, 0)
+        next 1
     of 1:
       if f.answered and wait > 30 and f.title == "Seismic + Aux":
         if f.savePng(shots / "aux-morgantown.png"): saved.add "aux-morgantown.png"
         var d = f.panel.layers[0].display
         d.gain = dgExponential
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
-        (stage, wait) = (2, 0)
+        next 2
     of 2:
       if wait == 10: f.moveMouse(f.markOf("plot.gain").centre)
       if wait == 13: f.pressMouse(f.markOf("plot.gain").centre, true)
@@ -189,8 +193,8 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and fileExists(morgantown):
         if f.savePng(shots / "gain-exponential.png"): saved.add "gain-exponential.png"
         f.stop()
     else: f.stop()
-    if f.index > 3000: f.stop()
-  let code = run(RunOptions(maxFrames: 3500, openPaths: @[morgantown], windowSize: (1600, 1000),
+    if overdue(f.index, 3000, since): f.stop()
+  let code = run(RunOptions(openPaths: @[morgantown], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onShot))
   removeDir(tmp)

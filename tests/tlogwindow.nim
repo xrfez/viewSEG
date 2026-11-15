@@ -16,10 +16,7 @@
 
 import std/[monotimes, os, strutils, times]
 import viewSEG/core/[persist, state]
-import utils/[fixtures, waiting]
-
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
+import utils/[fixtures, owntime, waiting]
 
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
   for e in log:
@@ -100,9 +97,9 @@ block exportHoldsNoFrame:
     var st = initAppState()
     for i in 1 .. DefaultLogCapacity: st.report(sevWarning, "test", "warning number " & $i)
     let path = fx.dir / "full.log"
-    let t0 = getMonoTime()
+    let t0 = ownTime()
     st.apply Command(kind: ckExportLog, docPath: path)
-    let took = getMonoTime() - t0
+    let took = ownTime() - t0
     doAssert took < initDuration(milliseconds = 30), "the export held the frame " &
       $took.inMilliseconds & " ms"
     st.flushFiles()

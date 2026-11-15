@@ -21,9 +21,6 @@ import viewSEG/core/state
 import viewSEG/view/[maplayers, theme]
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 func near(a, b: float64; eps = 1e-9): bool = abs(a - b) <= eps * max(1.0, abs(b))
 
 proc layerOf(st: AppState; path: string): int =

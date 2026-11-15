@@ -38,11 +38,11 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-*.png there.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/maplayers
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -80,7 +80,8 @@ proc main() =
     var steps: seq[Step]
     var at = 0
     var started = false
-    var wait = 0
+    var wait = 0 # frames since the step began, at `since`
+    var since = getMonoTime()
     var failed = ""
     var ink: MapInk
     var was: MapView
@@ -409,17 +410,17 @@ proc main() =
       if not started:
         steps[at].act(f)
         started = true
-        wait = 0
+        (wait, since) = (0, getMonoTime())
       else:
         inc wait
         if wait >= 2 and steps[at].done(f):
           inc at
           started = false
-        elif wait > 300:
+        elif overdue(wait, 300, since):
           failed = steps[at].name & " did not happen"
           f.stop()
 
-    let code = run(RunOptions(maxFrames: 6000, openPaths: @[sps.s, sps.r],
+    let code = run(RunOptions(openPaths: @[sps.s, sps.r],
       windowSize: (1600, 1000), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0, "run() exit code " & $code
@@ -435,7 +436,9 @@ proc linked() =
     let sps = fx.surveySps()
     let segy = fx.surveySegy()
     var stage = 0
-    var wait = 0
+    var wait = 0 # frames since the stage began, at `since`
+    let start = getMonoTime()
+    var since = start
     var ink: MapInk
     var traced = -1
     var done = false
@@ -461,7 +464,7 @@ proc linked() =
           doAssert ring, "no ring round the receiver"
           let plot = f.markOf("plot.data")
           f.moveMouse(vec2(plot.pos.x + plot.size.x * 0.3, plot.pos.y + plot.size.y / 2))
-          (stage, wait) = (1, 0)
+          (stage, wait, since) = (1, 0, getMonoTime())
       of 1:
         if wait > 4 and f.core.selection.hover >= 0 and f.pick.found:
           traced = f.core.selection.hover
@@ -477,10 +480,10 @@ proc linked() =
           if same(px, ink.hover):
             done = true
             f.stop()
-        if wait > 200: f.stop()
+        if overdue(wait, 200, since): f.stop()
       else: discard
-      if f.index > 3000: f.stop()
-    let code = run(RunOptions(maxFrames: 4000, openPaths: @[segy, sps.s, sps.r],
+      if overdue(f.index, 3000, start): f.stop()
+    let code = run(RunOptions(openPaths: @[segy, sps.s, sps.r],
       windowSize: (1600, 1000), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0
@@ -508,6 +511,7 @@ proc morgantown(dir: string) =
   var wait = 0
   var saved = 0
   var loads = 0
+  let start = getMonoTime()
   var at: Vec2
   proc onFrame(f: FrameInfo) =
     inc wait
@@ -564,9 +568,9 @@ proc morgantown(dir: string) =
           f.mapWindow.scaleText, "; ", f.mapCursor
         f.stop()
     else: discard
-    if f.index > 6000: f.stop()
+    if overdue(f.index, 6000, start): f.stop()
   let tmp = getTempDir() / ("viewseg-mapshots-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 7000, openPaths: @[record, base & ".sps", base & ".rps",
+  let code = run(RunOptions(openPaths: @[record, base & ".sps", base & ".rps",
     base & ".xps"], windowSize: (1600, 1000), theme: forceDark, indexCacheDir: some(tmp),
     userThemeDir: some(tmp / "no-user-themes"), onFrame: onFrame))
   removeDir(tmp)

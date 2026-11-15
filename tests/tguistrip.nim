@@ -16,10 +16,10 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[algorithm, options, os]
+import std/[algorithm, monotimes, options, os]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 const
   StripMarks = ["plot.Greyscale density", "plot.Time across", "plot.traces.Seismic",
@@ -53,35 +53,37 @@ withFixtures fx:
   let long = Processing(band: pbBandPass, f1: 12, f2: 20, f3: 60, f4: 80, dc: dcMean,
     notches: @[NotchFilter(hz: 50, harmonics: 3), NotchFilter(hz: 60)])
   var stage = 0
-  var waited = 0
+  var waited = 0 # frames since the stage began, at `since`
+  var since = getMonoTime()
   var seen: seq[(string, int, string)]
   proc measure(f: FrameInfo; what: string) =
     let (n, said) = f.lines()
     seen.add (what, n, said)
   proc onFrame(f: FrameInfo) =
     inc waited
+    template next(n: int) = (stage, waited, since) = (n, 0, getMonoTime())
     case stage
     of 0:
       if f.core.panels.len > 0 and f.answered and waited > 3:
         doAssert f.panel.layout.traces == 24
         f.measure("no filter")
         f.apply Command(kind: ckProcessing, panel: MainPanel, processing: long)
-        (stage, waited) = (1, 0)
+        next 1
     of 1:
       if f.answered and waited > 3:
         f.measure("filters: " & describe(f.panel.layers[0].processing))
         var raw = long
         raw.raw = true
         f.apply Command(kind: ckProcessing, panel: MainPanel, processing: raw)
-        (stage, waited) = (2, 0)
+        next 2
     of 2:
       if f.answered and waited > 3:
         f.measure("filters shown raw")
         stage = 3
         f.stop()
     else: discard
-    if f.index > 3000: f.stop()
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[fx.twoSetSegd()],
+    if overdue(waited, 3000, since): f.stop() # given up: the stage is said below
+  let code = run(RunOptions(openPaths: @[fx.twoSetSegd()],
     windowSize: (1280, 800), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code

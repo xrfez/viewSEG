@@ -41,7 +41,7 @@ import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/[displayheader, timeaxis]
 import viewSEG/ui/imgui/app
-import utils/[fixtures, plotref]
+import utils/[fixtures, plotref, waiting]
 
 type
   Step = object
@@ -62,7 +62,8 @@ proc main() =
     var steps: seq[Step]
     var at = 0
     var started = false
-    var wait = 0
+    var wait = 0 # frames since the step began, at `since`
+    var since = getMonoTime()
     var failed = ""
     var plot: Rect # the plot's data area, framebuffer pixels
     var q: Vec2 # a point over the plot
@@ -354,17 +355,17 @@ proc main() =
       if not started:
         steps[at].act(f)
         started = true
-        wait = 0
+        (wait, since) = (0, getMonoTime())
       else:
         inc wait
         if wait >= 2 and steps[at].done(f):
           inc at
           started = false
-        elif wait > 400:
+        elif overdue(wait, 400, since):
           failed = steps[at].name & " did not happen"
           f.stop()
 
-    let code = run(RunOptions(maxFrames: 8000, openPaths: @[path], windowSize: (1280, 900),
+    let code = run(RunOptions(openPaths: @[path], windowSize: (1280, 900),
       theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0, "run() exit code " & $code
@@ -397,8 +398,10 @@ proc realShots(path, name: string; view: Viewport; measure: bool) =
   var settle = 0
   var frames: seq[float64]
   var last = getMonoTime()
+  let start = last
   var times: array[Orientation, seq[float64]]
   proc onFrame(f: FrameInfo) =
+    if overdue(f.index, 3000, start): f.stop() # given up: the stage is said below
     let k = f.core.findPanel(MainPanel)
     let now = getMonoTime()
     let dt = float64((now - last).inNanoseconds) / 1e6
@@ -464,7 +467,7 @@ proc realShots(path, name: string; view: Viewport; measure: bool) =
       f.showView(view)
       stage = 3
     else: f.stop()
-  let code = run(RunOptions(maxFrames: 3000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onFrame))
   removeDir(tmp)

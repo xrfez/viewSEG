@@ -24,10 +24,10 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -48,7 +48,8 @@ proc runSteps(name: string; config, file: string; steps: seq[Step]) =
   ## Runs the program on `config`'s settings with `file` open, through `steps`.
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   proc onFrame(f: FrameInfo) =
     if at >= steps.len or failed.len > 0:
@@ -58,15 +59,16 @@ proc runSteps(name: string; config, file: string; steps: seq[Step]) =
       steps[at].act(f)
       started = true
       wait = 0
+      since = getMonoTime()
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 300:
+      elif overdue(wait, 300, since):
         failed = name & ": " & steps[at].name & " did not happen"
         f.stop()
-  let code = run(RunOptions(maxFrames: 4000, persist: true, configDir: some(config),
+  let code = run(RunOptions(persist: true, configDir: some(config),
     logDir: some(config / "logs"), openPaths: @[file], windowSize: (1400, 900),
     indexCacheDir: some(config / "cache"), onFrame: onFrame))
   doAssert code == 0, name & ": run() exit code " & $code

@@ -46,7 +46,7 @@ import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/[maplayers, plotink]
-import utils/[fixtures, plotref]
+import utils/[fixtures, plotref, waiting]
 
 type
   Step = object
@@ -148,10 +148,11 @@ proc counts(f: FrameInfo): Counts =
 
 proc drive(steps: seq[Step]; paths: seq[string]; dir: string) =
   ## Runs the program on `paths` and goes through `steps`, each until its
-  ## `done` holds (300 frames at most).
+  ## `done` holds (300 frames and a minute at most).
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   proc onFrame(f: FrameInfo) =
     if f.index == 0: f.moveMouse(vec2(4, 4))
@@ -161,16 +162,16 @@ proc drive(steps: seq[Step]; paths: seq[string]; dir: string) =
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if wait >= 3 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 300:
+      elif overdue(wait, 300, since):
         failed = steps[at].name & " did not happen"
         f.stop()
-  let code = run(RunOptions(maxFrames: 8000, openPaths: paths, windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: paths, windowSize: (1600, 1000),
     theme: forceDark, userThemeDir: some(dir / "no-user-themes"),
     indexCacheDir: some(dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
@@ -440,6 +441,7 @@ proc morgantown(dir: string) =
   var saved = 0
   var loads = 0
   var last = getMonoTime()
+  let start = last
   var idle, overPlot, overMap: seq[float64]
   var a, b: Vec2
   var rcv = mapPoint(NaN, NaN)
@@ -497,9 +499,9 @@ proc morgantown(dir: string) =
           "; ", f.core.selection.hoverTraces.len, " traces lit"
         f.stop()
     else: discard
-    if f.index > 8000: f.stop()
+    if overdue(f.index, 8000, start): f.stop()
   let tmp = getTempDir() / ("viewseg-linkshots-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 9000, openPaths: @[record, base & ".sps", base & ".rps",
+  let code = run(RunOptions(openPaths: @[record, base & ".sps", base & ".rps",
     base & ".xps"], windowSize: (1600, 1000), theme: forceDark, indexCacheDir: some(tmp),
     userThemeDir: some(tmp / "no-user-themes"), onFrame: onFrame))
   removeDir(tmp)

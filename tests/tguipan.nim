@@ -16,10 +16,10 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -74,7 +74,8 @@ withFixtures fx:
   var steps: seq[Step]
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   var paper = 0 # frames that showed paper since the step's key
   var paperFrames: seq[(string, int)]
@@ -159,17 +160,17 @@ withFixtures fx:
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if steps[at].done(f):
         inc at
         started = false
-      elif wait > 300:
+      elif overdue(wait, 300, since):
         failed = steps[at].name & " did not happen"
         f.stop()
 
-  let code = run(RunOptions(maxFrames: 6000, openPaths: @[path], windowSize: (1400, 900),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1400, 900),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code

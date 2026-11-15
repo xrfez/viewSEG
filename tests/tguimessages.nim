@@ -16,12 +16,12 @@
 ## Runs alone: it counts and clicks the lines of the Messages window, where
 ##   a debug build also warns of a frame over its 50-ms budget.
 
-import std/[math, options, os, strutils, times]
+import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, log]
 import viewSEG/core/state {.all.}
 import viewSEG/view/theme
 import viewSEG/ui/imgui/[app, shell]
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
@@ -37,12 +37,14 @@ withFixtures fx:
   createDir(exported.parentDir)
   var
     stage = 0
-    wait = 0
+    wait = 0 # frames since the stage began, at `since`
+    since = getMonoTime()
     at: Vec2
     reached: seq[string]
     before, hiddenErrors, shownAgain = -1
     kept, scrollOff, jumped, cleared, newShown, wrote = false
     lines: seq[Message]
+    stuck = ""
   proc onFrame(f: FrameInfo) =
     inc wait
     if f.index == 0: f.moveMouse(vec2(4, 4))
@@ -57,6 +59,7 @@ withFixtures fx:
       reached.add name
       inc stage
       wait = 0
+      since = getMonoTime()
     let k = f.core.findPanel(MainPanel)
     case stage
     of 0:
@@ -87,12 +90,14 @@ withFixtures fx:
         next "auto-scroll"
     of 5:
       if f.click("messages.last"):
+        # the gather is read by a job: waited for, not given a number of frames
         let i = f.core.shownFile(k)
-        if wait > 12 and i >= 0:
-          var sel: seq[int]
-          for t in f.core.selection.selected: sel.add t
-          jumped = f.core.panels[k].layers[0].source.gather == 1 and
-            sel == @[f.core.sessions[i].base + 30]
+        var sel: seq[int]
+        for t in f.core.selection.selected: sel.add t
+        let there = i >= 0 and f.core.panels[k].layers[0].source.gather == 1 and
+          sel == @[f.core.sessions[i].base + 30]
+        if wait > 12 and (there or overdue(wait, 400, since)):
+          jumped = there
           if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
             createDir(getEnv("VIEWSEG_SCREENSHOTS"))
             discard f.savePng(getEnv("VIEWSEG_SCREENSHOTS") / "messages.png")
@@ -116,14 +121,16 @@ withFixtures fx:
         next "export"
         f.stop()
     else: discard
-    if f.index > 3000:
+    if stage <= 8 and overdue(wait, 3000, since):
+      stuck = "nothing came at stage " & $stage & ", after " & $reached
       lines = f.messages
       f.stop()
 
-  let code = run(RunOptions(maxFrames: 3500, openPaths: @[survey], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[survey], windowSize: (1600, 1000),
     indexCacheDir: some(fx.dir / "cache"), theme: forceDark,
     userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
+  doAssert stuck.len == 0, stuck
   doAssert before > 2, "too few lines to start with: " & $before
   doAssert hiddenErrors == before - 1, "the errors toggle hid nothing: " & $hiddenErrors &
     " of " & $before

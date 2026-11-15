@@ -20,7 +20,7 @@
 import std/[monotimes, os, strutils, tables, times]
 import parseSEG
 import viewSEG/core/state
-import utils/[fixtures, waiting]
+import utils/[fixtures, owntime, waiting]
 
 const
   Lines = 40
@@ -62,9 +62,9 @@ proc readAll(st: var AppState; folder: string): tuple[listed, read: Duration; dr
   st.apply Command(kind: ckBrowse, paths: @[folder])
   var listed = Duration()
   let ok = waitUntil((
-    let d0 = getMonoTime()
+    let d0 = ownTime()
     discard st.drainInbox()
-    result.drain = max(result.drain, getMonoTime() - d0)
+    result.drain = max(result.drain, ownTime() - d0)
     if listed == Duration() and not st.fileList.scanning: listed = getMonoTime() - t0
     st.shots.shotFiles == Files and st.shots.pending.len == 0 and st.shots.job == NoJob),
     initDuration(seconds = 300))
@@ -114,9 +114,9 @@ withFixtures fx:
   var gone = Duration()
   let t2 = getMonoTime()
   doAssert waitUntil((
-    let d0 = getMonoTime()
+    let d0 = ownTime()
     discard later.drainInbox()
-    gone = max(gone, getMonoTime() - d0)
+    gone = max(gone, ownTime() - d0)
     later.shots.shotFiles == Files div 2), initDuration(seconds = 60)),
     $later.shots.shotFiles & " files' shots left"
   doAssert later.shots.pointRefs.len == Files div 2
@@ -132,10 +132,10 @@ withFixtures fx:
   var (again2, busy) = (Duration(), Duration())
   let t4 = getMonoTime()
   doAssert waitUntil((
-    let d0 = getMonoTime()
+    let d0 = ownTime()
     discard later.drainInbox()
-    again2 = max(again2, getMonoTime() - d0)
-    busy += getMonoTime() - d0
+    again2 = max(again2, ownTime() - d0)
+    busy += ownTime() - d0
     var fresh = 0
     for f in later.shots.files.values:
       if f.modified > t3: inc fresh

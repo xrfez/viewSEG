@@ -26,11 +26,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils, times]
+import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/[displayheader, plotink, theme, timeaxis]
 import viewSEG/ui/imgui/[app, symbols]
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -46,7 +46,8 @@ withFixtures fx:
   var steps: seq[Step]
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   var plot: Rect
   var looks = 0 # looks whose line and time were checked
@@ -222,16 +223,17 @@ withFixtures fx:
       steps[at].act(f)
       started = true
       wait = 0
+      since = getMonoTime()
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 300:
+      elif overdue(wait, 300, since):
         failed = steps[at].name & " did not happen"
         f.stop()
 
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
@@ -257,11 +259,13 @@ proc cursorShot(path, file: string; mode: DisplayMode; colours: PlotColours;
   let dir = getEnv("VIEWSEG_SCREENSHOTS")
   var stage = 0
   var wait = 0
+  var since = getMonoTime() # when the stage began
   var saved = false
   proc onFrame(f: FrameInfo) =
     let k = f.core.findPanel(MainPanel)
     let p = f.core.panels[k]
     inc wait
+    template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
     case stage
     of 0:
       if p.laidOut and p.layout.traces > 0:
@@ -274,7 +278,7 @@ proc cursorShot(path, file: string; mode: DisplayMode; colours: PlotColours;
         var d = p.layers[0].display
         (d.mode, d.colours) = (mode, colours)
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
-        (stage, wait) = (1, 0)
+        next 1
     of 1:
       let tiles = f.core.tiles(k)
       if wait > 10 and tiles.len > 0 and tiles[^1].request == p.pending:
@@ -282,15 +286,15 @@ proc cursorShot(path, file: string; mode: DisplayMode; colours: PlotColours;
         let at = p.view.screenAt(plot, DataPoint(x: traces.lo + traces.width / 3,
           tMs: timeMs.lo + 0.55 * timeMs.width))
         f.moveMouse(vec2(round(at.x), round(at.y)))
-        (stage, wait) = (2, 0)
+        next 2
     of 2:
       if wait > 8:
         saved = f.savePng(dir / file)
         f.stop()
     else: discard
-    if f.index > 3000: f.stop()
+    if overdue(f.index, 3000, since): f.stop()
   let tmp = getTempDir() / ("viewseg-cursorshot-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onFrame))
   removeDir(tmp)

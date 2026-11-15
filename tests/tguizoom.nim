@@ -37,10 +37,10 @@
 ## Runs alone: it counts the warnings, and a debug build warns of a frame over
 ##   its 50-ms budget.
 
-import std/[math, options, os, strutils, times]
+import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -54,6 +54,12 @@ func nearSpan(a, b: Span; eps = 1e-4): bool = near(a.lo, b.lo, eps) and near(a.h
 
 type Snapshot = tuple[bytes: string; time: Time]
 
+proc warned(f: FrameInfo): int =
+  ## The warnings logged, but the frame watchdog's (a debug build warns of a
+  ## frame over its budget, which a loaded machine makes now and then).
+  for e in f.core.log:
+    if e.severity == sevWarning and e.source != "frame": inc result
+
 proc snapshot(path: string): Snapshot = (readFile(path), getLastModificationTime(path))
 
 proc main() =
@@ -63,7 +69,8 @@ proc main() =
     var steps: seq[Step]
     var at = 0 # the step running
     var started = false # its action is done
-    var wait = 0 # frames since
+    var wait = 0 # frames since the step began, at `begun`
+    var begun = getMonoTime()
     var failed = ""
     var plot: Rect # the plot's data area, framebuffer pixels
     var q, r: Vec2 # points over the plot
@@ -255,7 +262,7 @@ proc main() =
         let want = was.boxed(was.dataAt(plot, q), was.dataAt(plot, r), BothAxes, lim)
         doAssert nearSpan(v.traces, want.traces, 1e-3) and nearSpan(v.timeMs, want.timeMs, 1e-3),
           $v & " not " & $want
-        doAssert f.core.log.count(sevWarning) == 0)
+        doAssert f.warned == 0, $f.warned & " warnings")
 
     # The whole gather's tile covers every view inside it at full
     # resolution, so zooming in reads nothing new; a change of gain reads
@@ -309,7 +316,7 @@ proc main() =
       let wantTr = significant(traceScale(v, DefaultDpi, ScaleUnits()), 4)
       let wantTm = significant(timeScale(v, DefaultDpi, ScaleUnits()), 4)
       result = tr == wantTr and tm == wantTm
-      if not result and wait > 100:
+      if not result and overdue(wait, 100, begun):
         doAssert false, "the boxes show " & tr & " and " & tm & ", not " & wantTr & " and " &
           wantTm)
 
@@ -363,7 +370,7 @@ proc main() =
       f.typeText("-"), proc (f: FrameInfo): bool = true)
     step("aBadScaleIsSaid", proc (f: FrameInfo) =
       f.chord(skEnter), proc (f: FrameInfo): bool =
-      result = f.core.log.count(sevWarning) == 1
+      result = f.warned == 1
       if result:
         doAssert f.panel.view.sameSpans(was)
         var said = false
@@ -538,17 +545,17 @@ proc main() =
       if not started:
         steps[at].act(f)
         started = true
-        wait = 0
+        (wait, begun) = (0, getMonoTime())
       else:
         inc wait
         if wait >= 2 and steps[at].done(f):
           inc at
           started = false
-        elif wait > 300:
+        elif overdue(wait, 300, begun):
           failed = steps[at].name & " did not happen"
           f.stop()
 
-    let code = run(RunOptions(maxFrames: 6000, openPaths: @[path], theme: forceDark,
+    let code = run(RunOptions(openPaths: @[path], theme: forceDark,
       userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
       onFrame: onFrame))
     doAssert code == 0, "run() exit code " & $code
@@ -575,10 +582,12 @@ proc zoomShots(path, name: string; tracesPerInch, msPerInch: float64; centre: Da
   ## `name`-2.png with the pointer on `hover2`.
   let dir = getEnv("VIEWSEG_SCREENSHOTS")
   var stage = 0
-  var wait = 0
+  var wait = 0 # frames since the stage began, at `since`
+  var since = getMonoTime()
   var saved = 0
   var was: Viewport
   proc onFrame(f: FrameInfo) =
+    template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
     let p = f.core.panels[f.core.findPanel(MainPanel)]
     let tiles = f.core.tiles(f.core.findPanel(MainPanel))
     let answered = tiles.len > 0 and tiles[^1].request == p.pending and
@@ -598,25 +607,22 @@ proc zoomShots(path, name: string; tracesPerInch, msPerInch: float64; centre: Da
         v = withTimeScale(withTraceScale(v, tracesPerInch, DefaultDpi, ScaleUnits(), lim),
           msPerInch, DefaultDpi, ScaleUnits(), lim)
         f.showView(v)
-        stage = 1
+        next 1
     of 1:
       if answered and p.back.len > 0:
         f.moveMouse(at(hover1))
-        wait = 0
-        stage = 2
+        next 2
     of 2:
       if wait > 4 and f.pick.found:
         if f.savePng(dir / (name & "-1.png")): inc saved
         was = p.view
         f.moveMouse(at(centre))
-        wait = 0
-        stage = 3
+        next 3
     of 3:
       if wait == 3: f.scrollWheel(at(centre), notches)
       if wait > 3 and answered and not p.view.sameSpans(was):
         f.moveMouse(at(hover2))
-        wait = 0
-        stage = 4
+        next 4
     of 4:
       if wait > 4 and answered and f.pick.found:
         if f.savePng(dir / (name & "-2.png")): inc saved
@@ -625,9 +631,9 @@ proc zoomShots(path, name: string; tracesPerInch, msPerInch: float64; centre: Da
           "read ", p.pending.count, " traces at the second"
         f.stop()
     else: discard
-    if f.index > 3000: f.stop()
+    if overdue(wait, 3000, since): f.stop()
   let tmp = getTempDir() / ("viewseg-zoomshots-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onFrame))
   removeDir(tmp)

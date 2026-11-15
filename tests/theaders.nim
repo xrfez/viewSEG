@@ -40,9 +40,6 @@ import viewSEG/core/[fielddocs, inspector, state]
 import viewSEG/view/headerviews
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 func valueOf(lines: openArray[SummaryLine]; label: string; nth = 0): string =
   ## The value of the `nth` line labelled `label`; "" when there is none.
   var k = 0

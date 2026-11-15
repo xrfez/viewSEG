@@ -37,12 +37,9 @@ import std/[monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/[filejobs, state, surveyjobs]
 import viewSEG/view/filetable
-import utils/[fixtures, waiting]
+import utils/[fixtures, owntime, waiting]
 when not defined(windows):
   from std/posix import nil
-
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
 
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
   for e in log:
@@ -213,9 +210,9 @@ block aCheckHoldsNoFrame:
       copyFile(fx.surveySegy(), fx.dir / name)
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.dir / name)
       doAssert waitUntil((
-        let t0 = getMonoTime()
+        let t0 = ownTime()
         discard st.drainInbox()
-        longest = max(longest, getMonoTime() - t0)
+        longest = max(longest, ownTime() - t0)
         st.sessions.len == 1 and st.sessions[0].name == name and st.jobs.active.len == 0))
     doAssert longest < initDuration(milliseconds = 20), "the open's frame took " &
       $longest.inMilliseconds & " ms"

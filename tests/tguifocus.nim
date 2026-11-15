@@ -14,11 +14,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils, times]
+import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, log]
 import viewSEG/core/state {.all.}
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -34,7 +34,8 @@ withFixtures fx:
   var steps: seq[Step]
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   var trace: Vec2
   template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
@@ -118,16 +119,17 @@ withFixtures fx:
       steps[at].act(f)
       started = true
       wait = 0
+      since = getMonoTime()
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 400:
+      elif overdue(wait, 400, since):
         failed = steps[at].name & " did not happen"
         f.stop()
 
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1280, 900),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1280, 900),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code

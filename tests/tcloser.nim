@@ -19,9 +19,6 @@ import utils/[fixtures, waiting]
 when not defined(linux):
   echo "tcloser: skipped (reads /proc/self)"
 else:
-  template settle(st: var AppState; cond: untyped): bool =
-    waitUntil((discard st.drainInbox(); cond))
-
   proc mapped(path: string): bool =
     ## Whether the process maps `path` now.
     for line in readFile("/proc/self/maps").splitLines:

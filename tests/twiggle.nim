@@ -40,9 +40,6 @@ import std/[math, random]
 import viewSEG/core/[geometry, state, wiggle]
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc main(st: AppState): lent Panel = st.panel(MainPanel)
 
 proc lastText(log: MessageLog): string = log[log.len - 1].text

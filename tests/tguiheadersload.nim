@@ -24,7 +24,7 @@
 import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 func median(xs: seq[float64]): float64 =
   var s = xs
@@ -38,7 +38,8 @@ proc timeScrolling(path: string; samples: int; cache: string) =
   ## Shows the one trace of `path`, its Data, and times the frames while
   ## the wheel scrolls it.
   var stage = 0
-  var wait = 0
+  var wait = 0 # frames since the stage began, at `since`
+  var since = getMonoTime()
   var last = getMonoTime()
   var idle, scrolling: seq[float64]
   var arrival = 0.0 # the frame that took the samples in
@@ -48,6 +49,7 @@ proc timeScrolling(path: string; samples: int; cache: string) =
     let ms = float64((now - last).inMicroseconds) / 1000
     last = now
     inc wait
+    template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
     case stage
     of 0: # the trace selected, the Trace tab's Data on screen
       let p = f.core.panels[f.core.findPanel(MainPanel)]
@@ -56,7 +58,8 @@ proc timeScrolling(path: string; samples: int; cache: string) =
         var s = f.core.settings
         (s.headers.tab, s.headers.traceTab) = (htTrace, ttData)
         f.apply Command(kind: ckSettings, settings: s)
-        (stage, wait) = (1, 0)
+        next 1
+      doAssert not overdue(wait, 2000, since), "the file was not shown"
     of 1: # the samples come
       let a = f.core.inspection.answer
       if a.traces.len == 1 and a.traces[0].samples.len == samples and
@@ -65,17 +68,17 @@ proc timeScrolling(path: string; samples: int; cache: string) =
         for i in [0, samples div 2, samples - 1]:
           doAssert a.traces[0].samples[i] == longSample(i), $i
         f.moveMouse(f.markOf("headers.data").centre)
-        (stage, wait) = (2, 0)
-      doAssert wait < 600, "the samples never came"
+        next 2
+      doAssert not overdue(wait, 600, since), "the samples never came"
     of 2: # idle frames over the table
       if wait > 5: idle.add ms
-      if wait == 40: (stage, wait) = (3, 0)
+      if wait == 40: next 3
     of 3: # the wheel: 30 notches a frame, down
       if wait > 1: scrolling.add ms
       f.scrollWheel(f.markOf("headers.data").centre, -30)
       if wait == 150:
         firstRow = f.core.inspection.answer.traces.len # (kept alive below)
-        (stage, wait) = (4, 0)
+        next 4
     of 4:
       # The rows in view moved on: row 0 is out of view (drawn above the
       # table, where the clipper measures a row, or not at all).
@@ -84,7 +87,7 @@ proc timeScrolling(path: string; samples: int; cache: string) =
         "the table did not scroll: " & $row & " in " & $f.markOf("headers.data")
       f.stop()
     else: discard
-  let code = run(RunOptions(maxFrames: 2000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     indexCacheDir: some(cache), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
   doAssert stage == 4, "stopped at stage " & $stage
@@ -100,7 +103,8 @@ proc timeHeld(path: string; samples, traces: int; cache: string): float64 =
   ## Shows the Data of all `traces` traces of `path` (each of `samples`
   ## samples) and returns the median frame time while it stays on screen.
   var stage = 0
-  var wait = 0
+  var wait = 0 # frames since the stage began, at `since`
+  var since = getMonoTime()
   var last = getMonoTime()
   var held: seq[float64]
   proc onFrame(f: FrameInfo) =
@@ -108,6 +112,7 @@ proc timeHeld(path: string; samples, traces: int; cache: string): float64 =
     let ms = float64((now - last).inMicroseconds) / 1000
     last = now
     inc wait
+    template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
     case stage
     of 0:
       let p = f.core.panels[f.core.findPanel(MainPanel)]
@@ -119,7 +124,8 @@ proc timeHeld(path: string; samples, traces: int; cache: string): float64 =
         (s.headers.tab, s.headers.traceTab) = (htTrace, ttData)
         f.apply Command(kind: ckSettings, settings: s)
         f.moveMouse(vec2(2, 2)) # off the plot: nothing hovered
-        (stage, wait) = (1, 0)
+        next 1
+      doAssert not overdue(wait, 5000, since), "the file was not shown"
     of 1:
       let a = f.core.inspection.answer
       var full = 0
@@ -127,15 +133,15 @@ proc timeHeld(path: string; samples, traces: int; cache: string): float64 =
         if d.samples.len == samples: inc full
       if full == traces and not f.core.inspection.waiting and
           f.markOf("headers.data 0 0").size.x > 0:
-        (stage, wait) = (2, 0)
-      doAssert wait < 3000, "the samples never came"
+        next 2
+      doAssert not overdue(wait, 3000, since), "the samples never came"
     of 2:
       if wait > 10: held.add ms
       if wait == 80:
         stage = 3
         f.stop()
     else: discard
-  let code = run(RunOptions(maxFrames: 5000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     indexCacheDir: some(cache), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
   doAssert stage == 3, "stopped at stage " & $stage

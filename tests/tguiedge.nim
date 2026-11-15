@@ -12,10 +12,10 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[options, os]
+import std/[monotimes, options, os]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 withFixtures fx:
   let path = fx.longRecordSegy()
@@ -24,6 +24,7 @@ withFixtures fx:
   var rects: seq[Rect]
   var stage = 0
   var wait = 0
+  var since = getMonoTime() # when the stage began
   template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
   proc answered(f: FrameInfo): bool =
     let p = f.panel
@@ -39,12 +40,11 @@ withFixtures fx:
         f.showView(v)
       if wait > 6 and f.answered and f.tracePanel.drawnView.timeMs.lo == spans[stage][0]:
         rects.add f.markOf("plot.data")
-        inc stage
-        wait = 0
+        (stage, wait, since) = (stage + 1, 0, getMonoTime())
       elif not f.panel.laidOut: wait = 0
     else: f.stop()
-    if f.index > 3000: f.stop()
-  let code = run(RunOptions(maxFrames: 3500, openPaths: @[path], windowSize: (1400, 900),
+    if overdue(f.index, 3000, since): f.stop()
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1400, 900),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code

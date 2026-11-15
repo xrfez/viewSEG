@@ -22,11 +22,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/[curveplot, spectrumview, theme]
 import viewSEG/ui/imgui/[app, icons]
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -168,7 +168,8 @@ withFixtures fx:
 
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   proc onFrame(f: FrameInfo) =
     if f.index == 0: f.moveMouse(vec2(4, 4))
@@ -178,16 +179,16 @@ withFixtures fx:
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 400:
+      elif overdue(wait, 400, since):
         failed = steps[at].name & " did not happen"
         f.stop()
-  let code = run(RunOptions(maxFrames: 6000, openPaths: @[fx.spectrumSegy()],
+  let code = run(RunOptions(openPaths: @[fx.spectrumSegy()],
     windowSize: (1400, 900), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code

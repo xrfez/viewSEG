@@ -29,10 +29,10 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, sequtils, strutils, times]
+import std/[math, monotimes, options, os, sequtils, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -66,7 +66,8 @@ withFixtures fx:
   var steps: seq[Step]
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   const killed = 5
   let shots = getEnv("VIEWSEG_SCREENSHOTS")
@@ -222,17 +223,17 @@ withFixtures fx:
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 400:
+      elif overdue(wait, 400, since):
         failed = steps[at].name & " did not happen"
         f.stop()
 
-  let code = run(RunOptions(maxFrames: 8000, persist: true, configDir: some(config),
+  let code = run(RunOptions(persist: true, configDir: some(config),
     logDir: some(fx.dir / "logs"), openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))

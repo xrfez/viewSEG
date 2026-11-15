@@ -57,9 +57,6 @@ import viewSEG/core/[settingsnif, state]
 import viewSEG/view/[curveplot, spectrumview, theme]
 import utils/[faultyfs, fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 block helpers:
   doAssert windowColumns(NaN, NaN, 0, 2, 100) == 0 .. 99
   doAssert windowColumns(10, 20, 0, 2, 100) == 5 .. 10

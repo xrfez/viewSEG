@@ -30,9 +30,6 @@ import viewSEG/core/[mapview, state]
 import viewSEG/view/maplayers
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc loaded(fx: Fixtures; name, gridUnits, factor: string): AppState =
   let sps = fx.mapSpsIn(name, gridUnits, factor)
   result = initAppState()

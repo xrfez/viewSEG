@@ -68,7 +68,7 @@
 ## `pilotSample` that of the pilot. Every value is computed in float64 and
 ## stored as float32, so the formula and the file agree exactly.
 
-import std/[algorithm, math, options, os, sequtils, strutils, tempfiles]
+import std/[algorithm, math, monotimes, options, os, sequtils, strutils, tempfiles, times]
 import parseSEG
 import parseSEG/io/diskio # openDiskSink, for a raw SEG-D record
 import parseSEG/segd/blocks # encoded, for its general and trace header blocks
@@ -148,8 +148,18 @@ proc newFixtures*(): Fixtures =
   Fixtures(dir: createTempDir("viewseg-fixtures-", ""))
 
 proc remove*(fx: Fixtures) =
-  ## Deletes the folder and everything written into it.
-  removeDir(fx.dir)
+  ## Deletes the folder and everything written into it. A thread the
+  ## program's quit left writing into it (a bounded quit does not wait for a
+  ## slow write) can make a file meanwhile ("Directory not empty" on a loaded
+  ## machine): it is tried again for up to a minute.
+  let deadline = getMonoTime() + initDuration(seconds = 60)
+  while true:
+    try:
+      removeDir(fx.dir)
+      return
+    except OSError:
+      if getMonoTime() > deadline: raise
+      sleep 50
 
 template withFixtures*(fx, body: untyped) =
   ## Runs `body` with `fx` a new `Fixtures`, removed afterwards.

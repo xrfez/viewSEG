@@ -31,10 +31,6 @@ import parseSEG
 import viewSEG/core/state {.all.}
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  ## Takes in the inbox every millisecond until `cond` holds.
-  waitUntil((discard st.drainInbox(); cond))
-
 type Snapshot = tuple[bytes: string; time: Time]
 
 proc snapshot(path: string): Snapshot = (readFile(path), getLastModificationTime(path))

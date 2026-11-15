@@ -141,8 +141,6 @@ block cleanedFields:
 
 block rawAmplitude:
   doAssert rfRawAmplitude notin DefaultReadout, "the raw amplitude is off by default"
-  template settle(st: var AppState; cond: untyped): bool =
-    waitUntil((discard st.drainInbox(); cond))
   proc answered(st: AppState): bool =
     let p = st.panel(MainPanel)
     let tiles = st.tiles(st.findPanel(MainPanel))

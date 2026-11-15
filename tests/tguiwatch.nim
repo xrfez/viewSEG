@@ -13,11 +13,11 @@
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves files-watch.png there (the new and the
 ## growing file marked).
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
@@ -47,23 +47,28 @@ withFixtures fx:
   let shots = getEnv("VIEWSEG_SCREENSHOTS")
   var
     stage = 0
-    wait = 0
+    wait = 0                # frames since the stage began, at `since`
+    since = getMonoTime()
     at: Vec2
     reached: seq[string]
     lines: seq[Message]
     written = 0
+    wroteAt = getMonoTime() # when `grow` wrote last
     grower: File
     stayed = true
     saved = false
   proc next(f: FrameInfo; what: string) =
     reached.add what
     inc stage
-    wait = 0
+    (wait, since) = (0, getMonoTime())
   proc grow(upTo: int) =
-    ## Another program writing shot5.sgy: 1 KB a frame, so it changes at
-    ## every look (a second apart) until the rest is written at once.
-    if written < upTo:
-      let n = min(1024, upTo - written)
+    ## Another program writing shot5.sgy: 256 bytes at a time, at most 20
+    ## times a second (over a minute for the whole file, however fast the
+    ## frames), so it changes at every look (a second apart, more on a
+    ## loaded machine) until the rest is written at once.
+    if written < upTo and getMonoTime() - wroteAt >= initDuration(milliseconds = 50):
+      wroteAt = getMonoTime()
+      let n = min(256, upTo - written)
       grower.write growing[written ..< written + n]
       grower.flushFile()
       written += n
@@ -116,11 +121,11 @@ withFixtures fx:
         f.next "off"
         f.stop()
     else: discard
-    if f.index > 3000:
+    if overdue(wait, 3000, since): # given up: the checks below say what is missing
       lines = f.messages
       f.stop()
 
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[dir], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[dir], windowSize: (1600, 1000),
     indexCacheDir: some(fx.dir / "cache"), theme: forceDark,
     userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFrame))
   if grower != nil: grower.close()

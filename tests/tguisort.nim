@@ -32,12 +32,12 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[algorithm, math, options, os, sequtils, times]
+import std/[algorithm, math, monotimes, options, os, sequtils, times]
 import parseSEG
 import viewSEG/core/[geometry, state]
 import viewSEG/view/[plotink, theme]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -77,7 +77,8 @@ proc main() =
     var steps: seq[Step]
     var at = 0 # the step running
     var started = false # its action is done
-    var wait = 0 # frames since
+    var wait = 0 # frames since the step began, at `since`
+    var since = getMonoTime()
     var failed = ""
     var plot: Rect # the plot's data area, framebuffer pixels
     var want: seq[int] # the order expected
@@ -258,17 +259,17 @@ proc main() =
       if not started:
         steps[at].act(f)
         started = true
-        wait = 0
+        (wait, since) = (0, getMonoTime())
       else:
         inc wait
         if wait >= 2 and steps[at].done(f):
           inc at
           started = false
-        elif wait > 300:
+        elif overdue(wait, 300, since):
           failed = steps[at].name & " did not happen"
           f.stop()
 
-    let code = run(RunOptions(maxFrames: 8000, openPaths: @[path], windowSize: (1600, 1000),
+    let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
       theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0, "run() exit code " & $code
@@ -287,7 +288,8 @@ block buttonsWithoutTheirKeys:
   # three buttons are greyed out, and a click on one changes nothing.
   withFixtures fx:
     var stage = 0
-    var wait = 0
+    var wait = 0 # frames since the stage began, at `since`
+    var since = getMonoTime()
     var clicks = 0
     var order: seq[SortKey] = @[SortKey(field: hfTrace)] # not what is checked for
     var b: Vec2
@@ -299,8 +301,7 @@ block buttonsWithoutTheirKeys:
         if p.laidOut and f.markOf("plot.sort.Line/Station").size.x > 0 and wait > 10:
           b = f.markOf("plot.sort.Line/Station").centre
           f.moveMouse(b)
-          wait = 0
-          stage = 1
+          (stage, wait, since) = (1, 0, getMonoTime())
       of 1:
         if wait == 3: # once: a second click on a selected button would undo it
           f.pressMouse(b, true)
@@ -310,8 +311,8 @@ block buttonsWithoutTheirKeys:
           order = p.layers[0].order
           f.stop()
       else: discard
-      if f.index > 1500: f.stop()
-    let code = run(RunOptions(maxFrames: 2000, openPaths: @[fx.surveySegy()],
+      if overdue(wait, 1500, since): f.stop()
+    let code = run(RunOptions(openPaths: @[fx.surveySegy()],
       theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0 and stage == 1 and clicks == 1, "stage " & $stage
@@ -340,10 +341,12 @@ proc sortShot(path, file: string; order: seq[SortKey]; header: seq[HeaderField];
   ## Custom... button when `popover`, and saves the frame.
   let dir = getEnv("VIEWSEG_SCREENSHOTS")
   var stage = 0
-  var wait = 0
+  var wait = 0 # frames since the stage began, at `since`
+  var since = getMonoTime()
   var saved = false
   var q: Vec2
   proc onFrame(f: FrameInfo) =
+    template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
     let p = f.core.panels[f.core.findPanel(MainPanel)]
     let tiles = f.core.tiles(f.core.findPanel(MainPanel))
     let answered = tiles.len > 0 and tiles[^1].request == p.pending and
@@ -361,7 +364,7 @@ proc sortShot(path, file: string; order: seq[SortKey]; header: seq[HeaderField];
           var v = p.view
           v.traces = traces
           f.showView(v)
-        stage = 1
+        next 1
     of 1:
       if answered and wait > 3 and (traces.hi <= traces.lo or
           f.tracePanel.drawnView.traces == traces):
@@ -369,29 +372,26 @@ proc sortShot(path, file: string; order: seq[SortKey]; header: seq[HeaderField];
           tMs: (p.view.timeMs.lo + p.view.timeMs.hi) / 3))
         q = vec2(round(v.x), round(v.y))
         f.moveMouse(q)
-        wait = 0
-        stage = if popover: 2 else: 5
+        next(if popover: 2 else: 5)
     of 2:
       if wait == 3:
         q = f.markOf("plot.sort.custom").centre
         f.moveMouse(q)
-        wait = 0
-        stage = 3
+        next 3
     of 3:
       if wait == 3: f.click(q)
       if wait > 6 and f.markOf("plot.sort keys").size.x > 0:
         let r = f.markOf("plot.sort keys")
         f.moveMouse(vec2(r.pos.x + r.size.x + 40, r.pos.y + r.size.y + 120)) # no hover
-        wait = 0
-        stage = 5
+        next 5
     of 5:
       if wait > 6:
         saved = f.savePng(dir / file)
         f.stop()
     else: discard
-    if f.index > 1500: f.stop()
+    if overdue(wait, 1500, since): f.stop()
   let tmp = getTempDir() / ("viewseg-sortshots-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 2000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onFrame))
   removeDir(tmp)

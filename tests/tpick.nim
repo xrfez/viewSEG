@@ -106,9 +106,6 @@ block screenPoints:
 
 # ------------------------------------------------- a fixture, three zooms --
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc main(st: AppState): lent Panel = st.panel(MainPanel)
 
 proc newest(st: AppState): Tile = st.tiles(st.findPanel(MainPanel))[^1]

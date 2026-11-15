@@ -40,9 +40,6 @@ import std/[os, sets, tables, times]
 import viewSEG/core/state
 import utils/[faultyfs, fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc sourcePoint(st: AppState; line, k: int): PointRef =
   for i in 0 ..< st.survey.layers.len:
     template l: untyped = st.survey.layers[i]

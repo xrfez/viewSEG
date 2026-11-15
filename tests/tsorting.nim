@@ -30,9 +30,6 @@ import parseSEG
 import viewSEG/core/[sorting, state]
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 type Snapshot = tuple[bytes: string; time: Time]
 
 proc snapshot(path: string): Snapshot = (readFile(path), getLastModificationTime(path))

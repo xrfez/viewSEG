@@ -18,12 +18,13 @@
 ## `tracePoints` not filling stations from the relations, `linksBothWays`
 ## found no survey point for the traces without stations.
 ##
-## Runs alone: it bounds the time a million traces take into a layer (2 s).
+## Runs alone: it bounds the time a million traces take into a layer (2 s,
+##   by `ownTime`: the thread's own time, not the time it waited for a core).
 
 import std/[math, monotimes, os, random, strutils, times]
 import parseSEG
 import viewSEG/core/[filekinds, session, spatial, survey]
-import utils/fixtures
+import utils/[fixtures, owntime]
 
 func near(a, b: float64): bool = abs(a - b) <= 1e-6 * max(1.0, abs(b))
 
@@ -308,12 +309,14 @@ block linksBothWays:
     doAssert sv.find(r) == -1 and sv.find(again) == 3 and sv.layers.len == 5
 
 proc measured(keys: openArray[TraceKeys]): (SurveyLayer, float64) =
-  let start = getMonoTime()
+  ## The layer of `keys`, and the seconds it took this thread (`ownTime`:
+  ## not the time it waited for a core on a loaded machine).
+  let start = ownTime()
   var b = initTraceLayerBuilder("/data/big.sgy", fkSegy, SessionId(1), 0, keys.len, 0)
   for i in countup(0, keys.high, 65_536):
     b.add(keys.toOpenArray(i, min(i + 65_535, keys.high)))
   let layer = b.finish()
-  (layer, (getMonoTime() - start).inMicroseconds.float64 / 1e6)
+  (layer, (ownTime() - start).inMicroseconds.float64 / 1e6)
 
 block millionTraces:
   # Land: 1000 shots of 1000 channels on a spread of 20 lines of 250

@@ -31,18 +31,15 @@
 import std/[monotimes, os, strutils, times]
 import viewSEG/core/[inbox, state, watch]
 import viewSEG/remote/tools
-import utils/[faultyfs, fixtures, waiting]
+import utils/[faultyfs, fixtures, owntime, waiting]
 
 const Budget = initDuration(milliseconds = 50) ## a frame's work, at most
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 template quick(body: untyped): Duration =
   ## How long `body` took.
-  let t0 = getMonoTime()
+  let t0 = ownTime()
   body
-  getMonoTime() - t0
+  ownTime() - t0
 
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
   for e in log:

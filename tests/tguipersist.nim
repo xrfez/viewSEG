@@ -19,11 +19,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/[app, symbols]
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
 
@@ -48,26 +48,28 @@ withFixtures fx:
   var arranged: (Rect, Rect) # the plot and the Headers window when the first run quit
   block firstRun:
     var stage = 0
-    var wait = 0
+    var wait = 0 # frames since the stage began, at `since`
+    var since = getMonoTime()
     var at: Vec2
     var tableBefore: Rect
     proc onFrame(f: FrameInfo) =
       inc wait
+      template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
       case stage
       of 0: # the file shown: click "density"
         if f.laidOut and wait > 3:
           doAssert f.mode == dmWiggle
           at = f.markOf("plot." & $syDensity).centre
           f.moveMouse(at)
-          (stage, wait) = (1, 0)
+          next 1
       of 1:
         if wait == 2: f.pressMouse(at, true)
         if wait == 3: f.pressMouse(at, false)
         if f.mode == dmDensity:
           f.chooseTheme("everforest-light")
           f.resizeWindow(wanted[0], wanted[1])
-          (stage, wait) = (2, 0)
-        doAssert wait < 60, "the click did not switch to density"
+          next 2
+        doAssert not overdue(wait, 60, since), "the click did not switch to density"
       of 2:
         if f.theme.mode == tmLight and f.windowSize == wanted and wait > 3:
           # The splitter: the gap between the plot window and the Headers window.
@@ -77,8 +79,8 @@ withFixtures fx:
           at = vec2(round((plot.pos.x + plot.size.x + tableBefore.pos.x) / 2),
             round(tableBefore.pos.y + tableBefore.size.y / 2))
           f.moveMouse(at)
-          (stage, wait) = (3, 0)
-        doAssert wait < 60, "no light theme, or no new size: " & $f.windowSize
+          next 3
+        doAssert not overdue(wait, 60, since), "no light theme, or no new size: " & $f.windowSize
       of 3: # drag it to the left, in steps, as a hand would
         if wait == 2: f.pressMouse(at, true)
         if wait in 3..8: f.moveMouse(vec2(at.x - drag * float32(wait - 2) / 6, at.y))
@@ -91,7 +93,8 @@ withFixtures fx:
           f.stop()
           stage = 4
       else: discard
-    doAssert run(RunOptions(maxFrames: 600, persist: true, configDir: some(config),
+      doAssert stage > 0 or not overdue(wait, 400, since), "the file was not shown"
+    doAssert run(RunOptions(persist: true, configDir: some(config),
       logDir: some(logs), openPaths: @[file], onFrame: onFrame)) == 0
     doAssert stage == 4, "the first run stopped at stage " & $stage
   let saved = readFile(config / SettingsFileName)
@@ -100,11 +103,13 @@ withFixtures fx:
   doAssert fileExists(config / LayoutFileName), "no layout saved"
   block secondRun:
     var stage = 0
-    var wait = 0
+    var wait = 0 # frames since the stage began, at `since`
+    var since = getMonoTime()
     var at: Vec2
     var reset: Rect
     proc onFrame(f: FrameInfo) =
       inc wait
+      template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
       case stage
       of 0:
         if wait == 3:
@@ -120,7 +125,7 @@ withFixtures fx:
         if wait == 5: f.pressMouse(at, true)
         if wait == 6:
           f.pressMouse(at, false)
-          (stage, wait) = (1, 0)
+          next 1
       of 1:
         if f.laidOut:
           doAssert f.core.sessions[0].path == file
@@ -129,8 +134,8 @@ withFixtures fx:
           f.apply Command(kind: ckLayout, arrangement: f.layoutText)
           f.apply Command(kind: ckSaveLayout, layoutName: "Mine")
           f.resetLayout()
-          (stage, wait) = (2, 0)
-        doAssert wait < 200, "the recent file did not open"
+          next 2
+        doAssert not overdue(wait, 200, since), "the recent file did not open"
       of 2:
         if wait == 4:
           reset = f.markOf("headers")
@@ -138,14 +143,15 @@ withFixtures fx:
             "the reset left the Headers window as it was: " & $reset
           doAssert f.core.layouts.len >= 1 and f.core.layouts[0].name == "Mine"
           f.apply Command(kind: ckLoadLayout, docPath: f.core.layouts[0].path)
-          (stage, wait) = (3, 0)
+          next 3
       of 3:
         if wait > 3 and near(f.markOf("headers"), arranged[1]):
           f.stop()
           stage = 4
-        doAssert wait < 100, "the loaded layout did not come back: " & $f.markOf("headers")
+        doAssert not overdue(wait, 100, since), "the loaded layout did not come back: " &
+          $f.markOf("headers")
       else: discard
-    doAssert run(RunOptions(maxFrames: 600, persist: true, configDir: some(config),
+    doAssert run(RunOptions(persist: true, configDir: some(config),
       logDir: some(logs), onFrame: onFrame)) == 0
     doAssert stage == 4, "the second run stopped at stage " & $stage
   # Both runs are in this process, perhaps in one second: one log file or two.

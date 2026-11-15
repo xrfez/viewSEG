@@ -24,9 +24,6 @@ import utils/[fixtures, waiting]
 
 var gates: array[2, Gate]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
   for e in log:
     if part in e.text and e.severity == severity: return true

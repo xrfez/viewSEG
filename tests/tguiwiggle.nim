@@ -54,7 +54,7 @@ import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state, wiggle]
 import viewSEG/view/[plotink, theme]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 const
   tolerance = 6     ## per channel: float rounding and 8-bit blending on the GPU
@@ -199,7 +199,8 @@ withFixtures fx:
   var amounts: seq[Amount]
   var reversed: Shot
   var stage = 0
-  var waited = 0
+  var waited = 0 # frames since the stage (or look) began, at `since`
+  var since = getMonoTime()
   var drawnBefore = 0
   # the gather, then the file, changed under a still pointer: frames whose
   # hover named a trace the plot did not show, and the hovers that came after
@@ -246,14 +247,14 @@ withFixtures fx:
               d.gain == dgNone:
             if waited > 3:
               shots.add f.capture
-              waited = 0
+              (waited, since) = (0, getMonoTime())
           else:
             f.show(want)
-            waited = 0
+            (waited, since) = (0, getMonoTime())
         else:
           f.show(looks[1])
           f.moveMouse(f.baselineAt(knownChannel - 1, 450))
-          waited = 0
+          (waited, since) = (0, getMonoTime())
           stage = 1
     of 1: # the pointer over the known trace
       if waited > 4 and f.core.selection.hover >= 0:
@@ -262,14 +263,14 @@ withFixtures fx:
         # a plain click on a selected trace leaves it the selection
         f.click(f.baselineAt(knownChannel - 1, 450))
         f.click(f.baselineAt(knownChannel - 1, 450))
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 2
     of 2: # clicked; the pointer moves on to trace 5
       if waited == 3: f.moveMouse(f.baselineAt(5, 450))
       if waited > 8:
         clicked = f.capture
         f.pressKey(skCtrl, true, {smCtrl}) # the event carries the modifier, as SDL's do
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 3
     of 3: # Ctrl + click on trace 5, then on to trace 17
       if waited == 2: f.click(f.baselineAt(5, 450))
@@ -279,25 +280,25 @@ withFixtures fx:
         added = f.capture
         f.pressKey(skEscape, true)
         f.pressKey(skEscape, false)
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 4
     of 4: # Esc cleared the selection; then density alone, over trace 11
       if waited > 4:
         cleared = f.capture
         f.show(looks[5])
         f.moveMouse(f.baselineAt(knownChannel - 1, 450))
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 5
-    of 5:
-      if waited > 6:
+    of 5: # drawn in density: its limits are not the wiggles', so it may read again
+      if waited > 6 and f.answered and f.tracePanel.drawnView.sameSpans(p.view):
         tinted = f.capture
         drawnBefore = f.tracePanel.imagesDrawn
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 6
     of 6: # nothing changes: nothing is drawn
       if waited > 6:
         idle = (drawnBefore, f.tracePanel.imagesDrawn)
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 7
     of 7: # each gain type, then +6.02 dB on top of it
       var d = p.layers[0].display.withGainDb(0)
@@ -311,13 +312,13 @@ withFixtures fx:
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
         f.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: true)
         stage = 10
-      waited = 0
+      (waited, since) = (0, getMonoTime())
     of 8:
       if f.answered and not p.reference.isNaN and waited > 3:
         amounts[^1].before = f.capture
         f.apply Command(kind: ckDisplay, panel: MainPanel,
           display: p.layers[0].display.withGainDb(20 * log10(2.0)))
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 9
     of 9:
       if waited > 3:
@@ -327,19 +328,19 @@ withFixtures fx:
       if f.answered and waited > 3:
         reversed = f.capture
         f.moveMouse(f.baselineAt(3, 450))
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 11
     of 11: # a trace hovered; then the next gather, the pointer still
       if waited > 3 and f.core.selection.hover >= 0:
         watching = true
         f.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 12
     of 12: # the new gather drawn, and a trace of it hovered; then another file
       if f.answered and waited > 3 and f.core.selection.hover >= 0:
         newGather = f.core.selection.hover
         f.apply Command(kind: ckOpen, paths: @[second])
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 13
     of 13:
       if f.core.sessions.len == 2 and p.layers[0].source.file == f.core.sessions[1].id and
@@ -348,8 +349,8 @@ withFixtures fx:
         stage = 14
         f.stop()
     else: discard
-    if f.index > 2500: f.stop() # given up: the checks below say what is missing
-  let code = run(RunOptions(maxFrames: 3000, openPaths: @[path], windowSize: (1280, 900),
+    if overdue(waited, 2500, since): f.stop() # given up: the checks below say what is missing
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1280, 900),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
@@ -560,7 +561,8 @@ proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
   ## their times.
   let dir = getEnv("VIEWSEG_SCREENSHOTS")
   var stage = 0
-  var wait = 0
+  var wait = 0 # frames since the stage began, at `since`
+  var since = getMonoTime()
   var saved = false
   var times: seq[float64]
   var last = getMonoTime()
@@ -584,8 +586,7 @@ proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
         var d = p.layers[0].display
         (d.mode, d.fills, d.colours) = (mode, fills, colours)
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
-        wait = 0
-        stage = 1
+        (stage, wait, since) = (1, 0, getMonoTime())
     of 1:
       let tiles = f.core.tiles(k)
       if wait > 10 and tiles.len > 0 and tiles[^1].request == p.pending:
@@ -595,8 +596,7 @@ proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
           selected = w.lo + 0.2 * w.width + 0.5
           hovered = w.lo + 0.5 * w.width + 0.5
         f.moveMouse(f.baselineAt(floor(selected), timeMs.lo + 0.4 * timeMs.width))
-        wait = 0
-        stage = 2
+        (stage, wait, since) = (2, 0, getMonoTime())
     of 2:
       # twice: the click that brings the window forward selects nothing
       if wait in [3, 9]: f.pressMouse(f.baselineAt(floor(selected), timeMs.lo + 0.4 *
@@ -606,8 +606,7 @@ proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
       if wait == 14: f.moveMouse(f.baselineAt(floor(hovered), timeMs.lo + 0.4 * timeMs.width))
       if wait > 20:
         saved = f.savePng(dir / file)
-        wait = 0
-        stage = 3
+        (stage, wait, since) = (3, 0, getMonoTime())
     of 3: # frame times while panning, a trace every other frame
       if wait > 1: times.add float64((now - last).inMicroseconds) / 1000
       if wait mod 2 == 0:
@@ -618,9 +617,9 @@ proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
       if wait > 121: f.stop()
     else: discard
     last = now
-    if f.index > 3000: f.stop()
+    if overdue(wait, 3000, since): f.stop()
   let tmp = getTempDir() / ("viewseg-wiggleshot-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onFrame))
   removeDir(tmp)

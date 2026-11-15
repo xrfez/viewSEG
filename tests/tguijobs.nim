@@ -16,7 +16,7 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves jobs-window.png there.
 
-import std/[math, options, os]
+import std/[math, monotimes, options, os]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
@@ -37,7 +37,8 @@ func centre(r: Rect): Vec2 =
 let tmp = getTempDir() / ("viewseg-tguijobs-" & $getCurrentProcessId())
 var
   stage = 0
-  wait = 0
+  wait = 0             # frames since the stage began, at `since`
+  since = getMonoTime()
   at: Vec2
   ids: array[4, JobId] # Hold, QC 1, QC 2, Open
   reached: seq[string]
@@ -65,6 +66,7 @@ proc onFrame(f: FrameInfo) =
     reached.add name
     inc stage
     wait = 0
+    since = getMonoTime()
   case stage
   of 0:
     let open = f.core.jobs.info(ids[3]).get
@@ -106,9 +108,9 @@ proc onFrame(f: FrameInfo) =
       cleared = left == 0
       next "clear"
   else: f.stop()
-  if f.index > 2000: f.stop()
+  if overdue(f.index, 2000, since): f.stop()
 
-let code = run(RunOptions(maxFrames: 2500, windowSize: (1600, 1000), theme: forceDark,
+let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
   indexCacheDir: some(tmp / "cache"), userThemeDir: some(tmp / "no-user-themes"),
   onFrame: onFrame))
 removeDir(tmp)

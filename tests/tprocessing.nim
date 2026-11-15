@@ -37,21 +37,23 @@
 ## of a replaced change clearing `relevel`, "the level after the drag is not
 ## of its last filters"; with `requestView` working out the filters' own
 ## margin (processSEG's `requiredMargin`), "the filters' margin is worked out
-## on this thread: 6759 ms for the change, 6781 ms for a view".
+## on this thread: 6759 ms for the change, 6781 ms for a view"; with the
+## reader made never to answer a filtered request past trace 300 of the
+## 2 000-trace file (a sleep before its plan), "no tile of the last view in
+## 240 s (a plan of the filters took 26434 ms here)", at a load of about 100.
+## Under load a plan of the 160 notches takes 10 to 26 s: the wait for the
+## last tile is timed by one, made here (a fixed 20 s failed now and then).
 ##
 ## Runs alone: it bounds the time a filter change and a view change take on
 ## the calling thread (50 ms, against seconds when the filters' margin is
 ## worked out there).
 
-import std/[os, strutils, times]
+import std/[monotimes, os, strutils, times]
 import parseSEG
 import processSEG/[adapters, pipeline]
 import processSEG/core/[types, workspace]
 import viewSEG/core/[processing, settings, settingsnif, state]
 import utils/[faultyfs, fixtures, waiting]
-
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
 
 proc answered(st: AppState): bool =
   let p = st.panel(MainPanel)
@@ -248,8 +250,10 @@ withFixtures fx:
     var f2 = 8.0
     var seen = zoomed.id
     var drawn: seq[Tile]
-    let until = getTime() + initDuration(seconds = 3)
-    while getTime() < until:
+    # Until three tiles of the run are drawn (counted, not three seconds of
+    # it: under load three seconds drew fewer), the changes going on.
+    let until = getMonoTime() + Patience
+    while drawn.len < 3 and getMonoTime() < until:
       f2 += 0.05
       st.process(Processing(band: pbBandPass, f1: 4, f2: f2, f3: 60, f4: 80))
       discard st.drainInbox()
@@ -278,7 +282,7 @@ withFixtures fx:
     st.apply Command(kind: ckView, panel: MainPanel, view: v)
     doAssert st.settle(st.answered)
     doAssert st.tiles(0)[^1].request.count > 300, $st.tiles(0)[^1].request.count
-    echo "tprocessing: ", drawn.len, " tiles drawn in 3 s of changes"
+    echo "tprocessing: ", drawn.len, " tiles drawn while the filters changed"
     st.shutdown()
 
   block aux:
@@ -334,6 +338,18 @@ withFixtures fx:
     var notched = Processing()
     for hz in [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 11.0]:
       notched.notches.add NotchFilter(hz: hz, widthHz: MinNotchWidthHz, harmonics: MaxHarmonics)
+    # The reader makes a plan of these filters for each request it answers
+    # (the change and five views: six), and a plan of them takes seconds on
+    # a loaded machine (10 s at a load of 60). So the wait for the last tile
+    # is a minute beyond twice six plans, timed here, now, under the same
+    # load; at most four minutes, so that a reader that never answers fails
+    # here, with this test's words, before the runner's time-out.
+    let lay = st.panel(MainPanel).layout
+    let p0 = getMonoTime()
+    discard notched.filterPipeline(lay.dtMs).compile(float32, lay.dtMs, lay.samples,
+      recordSamples = lay.samples)
+    let plan = getMonoTime() - p0
+    let patience = min(Patience + plan * 6 * 2, initDuration(minutes = 4))
     var t0 = getTime()
     st.process(notched)
     let changeMs = (getTime() - t0).inMilliseconds
@@ -344,10 +360,13 @@ withFixtures fx:
       st.apply Command(kind: ckView, panel: MainPanel, view: v)
       worstMs = max(worstMs, (getTime() - t0).inMilliseconds)
     echo "tprocessing: with 160 narrow notches, the change took ", changeMs,
-      " ms, a view change at most ", worstMs, " ms on this thread"
+      " ms, a view change at most ", worstMs, " ms on this thread; a plan of them ",
+      plan.inMilliseconds, " ms"
     doAssert changeMs < 50 and worstMs < 50, "the filters' margin is worked out on " &
       "this thread: " & $changeMs & " ms for the change, " & $worstMs & " ms for a view"
-    doAssert st.settle(st.answered)
+    doAssert waitUntil((discard st.drainInbox(); st.answered) and
+      (discard st.drainInbox(); st.answered), patience), "no tile of the last view in " &
+      $patience.inSeconds & " s (a plan of the filters took " & $plan.inMilliseconds & " ms here)"
     doAssert st.tiles(0)[^1].filtered > 0
     st.shutdown()
   block settingsFile:

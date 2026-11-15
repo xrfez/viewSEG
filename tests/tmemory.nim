@@ -95,7 +95,8 @@ import viewSEG/core/[diskio, filesystem, jobs, state]
 import utils/[faultyfs, fixtures, steps, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); st.persist(); cond)) # as a frame does
+  waitUntil((discard st.drainInbox(); st.persist(); cond) and
+    (discard st.drainInbox(); st.persist(); cond)) # as a frame does
 
 proc start(config: string): AppState =
   result = initAppState()

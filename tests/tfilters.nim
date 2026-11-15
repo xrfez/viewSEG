@@ -33,9 +33,6 @@ import processSEG/survey/patch
 import viewSEG/core/state
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc receiverOf(st: AppState; trace: int): (int, int) =
   ## The receiver line (0-based) and receiver (0-based along it) of
   ## survey-wide trace `trace`, from its file's own headers.

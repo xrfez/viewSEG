@@ -22,9 +22,6 @@ let tmp = getTempDir() / ("viewseg_tlayouts_" & $getCurrentProcessId())
 removeDir(tmp)
 createDir(tmp)
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
   for e in log:
     if part in e.text and e.severity == severity: return true

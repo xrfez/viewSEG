@@ -13,11 +13,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, mapview, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/maplayers
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -81,7 +81,8 @@ proc main() =
     step("not given", swap(none), bar("not given", "units", 1))
     var at = 0
     var started = false
-    var wait = 0
+    var wait = 0 # frames since the step began, at `since`
+    var since = getMonoTime()
     var failed = ""
     proc onFrame(f: FrameInfo) =
       if f.index == 0: f.moveMouse(vec2(4, 4))
@@ -91,17 +92,17 @@ proc main() =
       if not started:
         steps[at].act(f)
         started = true
-        wait = 0
+        (wait, since) = (0, getMonoTime())
       else:
         inc wait
         if wait >= 3 and steps[at].done(f):
           inc at
           started = false
-        elif wait > 600:
+        elif overdue(wait, 600, since):
           failed = steps[at].name & " did not happen (the bar says \"" &
             f.mapWindow.scaleText & "\")"
           f.stop()
-    let code = run(RunOptions(maxFrames: 6000, openPaths: @[metres.s, metres.r],
+    let code = run(RunOptions(openPaths: @[metres.s, metres.r],
       windowSize: (1200, 800), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0, "run() exit code " & $code

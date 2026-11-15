@@ -21,9 +21,6 @@ import processSEG/core/workspace
 import viewSEG/core/state
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc answered(st: AppState): bool =
   let p = st.panel(MainPanel)
   not p.pending.isEmpty and st.tiles(0).len > 0 and st.tiles(0)[^1].request == p.pending

@@ -22,7 +22,7 @@ import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
-import utils/[faultyfs, fixtures]
+import utils/[faultyfs, fixtures, waiting]
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
@@ -68,6 +68,7 @@ withFixtures fx:
     advanced = false
     saved = false
   let shots = getEnv("VIEWSEG_SCREENSHOTS")
+  let start = getMonoTime()
   proc next(f: FrameInfo; what: string) =
     reached.add what
     inc stage
@@ -186,11 +187,11 @@ withFixtures fx:
         f.next "everything hangs"
         f.stop()
     else: discard
-    if f.index > 3000 and stage < 12:
+    if overdue(f.index, 3000, start) and stage < 12:
       lines = f.messages
       f.stop()
 
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[far / "a.sgy"],
+  let code = run(RunOptions(openPaths: @[far / "a.sgy"],
     windowSize: (1600, 1000), indexCacheDir: some(fx.dir / "cache"), theme: forceDark,
     userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFrame))
   let quit = getMonoTime() - stoppedAt

@@ -17,10 +17,10 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[algorithm, math, options, os, sequtils, strutils]
+import std/[algorithm, math, monotimes, options, os, sequtils, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -33,7 +33,8 @@ withFixtures fx:
   var steps: seq[Step]
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
   proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
@@ -83,7 +84,8 @@ withFixtures fx:
     f.selected == @[f.traceAt(3)])
   clickAt("Ctrl + click adds", 7, {smCtrl}, proc (f: FrameInfo): bool =
     result = f.selected.len == 2
-    if not result and wait > 30: doAssert false, "Ctrl + click did not add: " & $f.selected
+    if not result and overdue(wait, 30, since):
+      doAssert false, "Ctrl + click did not add: " & $f.selected
     if result: doAssert f.selected == sorted(@[f.traceAt(3), f.traceAt(7)]))
   clickAt("Ctrl + click takes out", 3, {smCtrl}, proc (f: FrameInfo): bool =
     f.selected == @[f.traceAt(7)])
@@ -92,7 +94,8 @@ withFixtures fx:
     var want: seq[int]
     for k in 3 .. 11: want.add f.traceAt(k)
     result = f.selected == sorted(want)
-    if not result and wait > 30: doAssert false, "Shift + click selected " & $f.selected)
+    if not result and overdue(wait, 30, since):
+      doAssert false, "Shift + click selected " & $f.selected)
   clickAt("Shift + click the other way", 1, {smShift}, proc (f: FrameInfo): bool =
     # the anchor stays at position 3
     f.selected == sorted(@[f.traceAt(1), f.traceAt(2), f.traceAt(3)]))
@@ -107,17 +110,17 @@ withFixtures fx:
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 400:
+      elif overdue(wait, 400, since):
         failed = steps[at].name & " did not happen"
         f.stop()
 
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1280, 900),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1280, 900),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code

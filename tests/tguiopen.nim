@@ -15,7 +15,7 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves open-progress.png there.
 
-import std/[options, os, strutils, times]
+import std/[monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/[app, shell]
@@ -46,13 +46,14 @@ withFixtures fx:
   let before = (snapshot(survey), snapshot(segd))
   let cache = fx.dir / "cache" / "index"
   var
-    opened = -1 # the frame both files were open in
+    opened = -1           # the frame both files were open in
     scan = NoJob
     bar, cancel: Rect
     accent, barPixels = 0
     clickAt = -1
     posted = false
     cancelled = -1
+    since = getMonoTime() # when the frames the give-up counts began
     lines: seq[Message]
   proc onFrame(f: FrameInfo) =
     let k = f.core.findPanel(MainPanel)
@@ -63,6 +64,7 @@ withFixtures fx:
     if opened < 0 and shown >= 0 and f.core.sessions[shown].path == segd and
         f.core.sessions.len == 1 and f.messages.has("Opened " & survey.extractFilename):
       opened = f.index
+      since = getMonoTime()
       scan = f.core.jobs.submit(JobSpec(title: "Scan the folder", lane: jlBackground),
         scanning)
     elif scan != NoJob and clickAt < 0 and f.core.jobs.info(scan).get.state == jsRunning and
@@ -80,6 +82,7 @@ withFixtures fx:
         createDir(dir)
         doAssert f.savePng(dir / "open-progress.png")
       clickAt = f.index
+      since = getMonoTime()
       f.moveMouse(cancel.centre)
     elif clickAt >= 0 and f.index == clickAt + 2:
       f.pressMouse(cancel.centre, down = true)
@@ -87,14 +90,16 @@ withFixtures fx:
       f.pressMouse(cancel.centre, down = false)
     elif clickAt >= 0 and cancelled < 0 and f.core.jobs.info(scan).get.state == jsCancelled:
       cancelled = f.index
-    elif cancelled >= 0 and f.index > cancelled + 1:
+    elif cancelled >= 0 and f.index > cancelled + 1 and
+        f.messages.has("Scan the folder was cancelled."):
       lines = f.messages
       f.stop()
-    elif f.index > (if clickAt >= 0: clickAt elif opened >= 0: opened else: 0) + 600:
+    elif overdue(f.index - (if clickAt >= 0: clickAt elif opened >= 0: opened else: 0), 600,
+        since):
       lines = f.messages # given up: the checks below say what is missing
       f.stop()
 
-  let code = run(RunOptions(maxFrames: 3000, openPaths: @[survey], indexCacheDir: some(cache),
+  let code = run(RunOptions(openPaths: @[survey], indexCacheDir: some(cache),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
   doAssert opened >= 0, "the files did not both open: " & $lines.len

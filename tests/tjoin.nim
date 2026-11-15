@@ -56,9 +56,6 @@ import viewSEG/core/[filesystem, state]
 import viewSEG/view/maplayers
 import utils/[fixtures, steps, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 func near(a, b: float64; tol = 1e-6): bool = abs(a - b) <= tol * max(1.0, abs(b))
 
 proc sps(paths: varargs[string]): seq[JoinFile] =

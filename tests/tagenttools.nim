@@ -268,9 +268,6 @@ block pictures:
   doAssert pictureAnswer(picture, huge).isError and pictureAnswer(picture, broken).isError
   doAssert pictureAnswer(picture, nil).isError
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 withFixtures fx:
   let path = fx.surveySegy()
   let before = (readFile(path), getLastModificationTime(path))

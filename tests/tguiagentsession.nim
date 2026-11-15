@@ -27,10 +27,10 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[json, math, options, os, strutils]
+import std/[json, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, settingsnif, state]
 import viewSEG/ui/imgui/[app, symbols]
-import utils/[agentclient, fixtures]
+import utils/[agentclient, fixtures, waiting]
 
 func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
 
@@ -48,10 +48,17 @@ proc readBack(file: string): Settings =
   doAssert problems.len == 0, $problems
 
 const
+  WaitSeconds = Patience.inSeconds ## the agent's `wait` calls: as long as any test waits
+  WaitAnswer = Patience * 2        ## and how long it waits for their answers
   AgentOrder = @[SortKey(field: hfChannel, descending: true)]
   AgentHeader = @[hfChannel, hfRecord]
 
 # ---------------------------------------------------- the agent's thread --
+
+proc connected(c: var AgentClient; socket: string): bool =
+  ## Connects `c` to `socket` unless it is; whether it is now.
+  if c.fd < 0: c = connectAgent(socket)
+  c.fd >= 0
 
 type Scenario = tuple[socket, file: string]
 
@@ -66,11 +73,8 @@ proc agent(s: Scenario) {.thread.} =
   template check(r: JsonNode; what: string) =
     if r.failed: fail(what & ": " & (if r == nil: "no answer" else: $r))
   var c = connectAgent(s.socket)
-  for i in 0 ..< 200:
-    if c.fd < 0:
-      sleep 50
-      c = connectAgent(s.socket)
-  if c.fd < 0: fail("cannot connect to " & s.socket)
+  if not waitUntil(c.connected(s.socket)):
+    fail("cannot connect to " & s.socket)
   if c.initialize("test agent") == nil: fail("the agent's first call: no answer")
   check(c.call("command", %*{"kind": "display", "display": {"mode": "density",
     "gain": "normalized"}}), "display")
@@ -78,10 +82,10 @@ proc agent(s: Scenario) {.thread.} =
     "descending": true}]}), "sort")
   check(c.call("command", %*{"kind": "display header", "header": {"auto": false,
     "fields": ["channel", "FFID"]}}), "display header")
-  check(c.call("wait", %*{"timeout": 30}), "wait")
+  check(c.call("wait", %*{"timeout": WaitSeconds}, WaitAnswer), "wait")
   check(c.call("command", %*{"kind": "show file", "path": s.file, "listFolder": true}),
     "show file")
-  let r = c.call("wait", %*{"timeout": 30})
+  let r = c.call("wait", %*{"timeout": WaitSeconds}, WaitAnswer)
   check(r, "wait after show file")
   if not parseJson(r.text)["idle"].getBool: fail("not idle after the show: " & r.text)
   let st = c.call("state", %*{"parts": ["panels"]})
@@ -105,7 +109,8 @@ withFixtures fx:
     results.open()
     var thread: Thread[Scenario]
     var stage = 0
-    var wait = 0
+    var wait = 0 # frames since the stage began, at `since`
+    var since = getMonoTime()
     var at: Vec2
     var problem = ""
     proc onFrame(f: FrameInfo) =
@@ -113,6 +118,7 @@ withFixtures fx:
       template fail(why: string) =
         problem = why
         f.stop()
+      template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
       case stage
       of 0: # the user's file shown: the agent connects
         if f.laidOut and wait > 3:
@@ -120,7 +126,8 @@ withFixtures fx:
           doAssert before.recentFiles == @[mine],
             "the user's file is not among the recent files kept: " & $before.recentFiles
           createThread(thread, agent, (socket, theirs))
-          (stage, wait) = (1, 0)
+          next 1
+        elif overdue(wait, 400, since): fail("the user's file was not shown")
       of 1:
         let (ok, msg) = results.tryRecv()
         if ok and msg[0] == "problem": fail(msg[1])
@@ -141,8 +148,8 @@ withFixtures fx:
           at = f.markOf("plot." & $syWiggleDensity).centre
           doAssert at.x > 0, "no mode button"
           f.moveMouse(at)
-          (stage, wait) = (2, 0)
-        elif wait > 3000: fail("the agent did not finish")
+          next 2
+        elif overdue(wait, 3000, since): fail("the agent did not finish")
       of 2:
         if wait == 2: f.pressMouse(at, true)
         if wait == 3: f.pressMouse(at, false)
@@ -150,13 +157,13 @@ withFixtures fx:
           doAssert f.shownDisplay.gain == dgNormalized, "the click changed the gain"
           f.stop()
           stage = 3
-        elif wait > 60: fail("the click did not change the mode")
+        elif overdue(wait, 60, since): fail("the click did not change the mode")
       else: discard
     let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
       userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
       persist: true, configDir: some(config), logDir: some(logs), openPaths: @[mine],
-      agent: true, agentSocket: socket, maxFrames: 4000, onFrame: onFrame))
-    joinThread(thread)
+      agent: true, agentSocket: socket, onFrame: onFrame))
+    if stage > 0: joinThread(thread)
     results.close()
     doAssert code == 0 and problem.len == 0, problem
     doAssert stage == 3, "the first run stopped at stage " & $stage
@@ -185,10 +192,12 @@ withFixtures fx:
 
   block byHand:
     var stage = 0
-    var wait = 0
+    var wait = 0 # frames since the stage began, at `since`
+    var since = getMonoTime()
     var at: Vec2
     proc onFrame(f: FrameInfo) =
       inc wait
+      template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
       case stage
       of 0: # the start screen lists the user's file only
         if wait == 3:
@@ -201,7 +210,7 @@ withFixtures fx:
         if wait == 5: f.pressMouse(at, true)
         if wait == 6:
           f.pressMouse(at, false)
-          (stage, wait) = (1, 0)
+          next 1
       of 1: # as the user left the plot
         if f.laidOut:
           doAssert f.core.sessions[0].path == mine
@@ -218,18 +227,17 @@ withFixtures fx:
           f.apply Command(kind: ckHeader, panel: MainPanel,
             header: HeaderChoice(auto: false, fields: AgentHeader))
           f.apply Command(kind: ckShowFile, panel: MainPanel, path: theirs, listFolder: true)
-          (stage, wait) = (2, 0)
-        doAssert wait < 300, "the recent file did not open"
+          next 2
+        doAssert not overdue(wait, 300, since), "the recent file did not open"
       of 2:
         if f.core.sessions.len == 1 and f.core.sessions[0].path == theirs and f.laidOut:
           f.stop()
           stage = 3
-        doAssert wait < 300, "the file was not shown"
+        doAssert not overdue(wait, 300, since), "the file was not shown"
       else: discard
     doAssert run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
       userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-      persist: true, configDir: some(config), logDir: some(logs), maxFrames: 2000,
-      onFrame: onFrame)) == 0
+      persist: true, configDir: some(config), logDir: some(logs), onFrame: onFrame)) == 0
     doAssert stage == 3, "the second run stopped at stage " & $stage
   let second = readBack(settingsFile)
   doAssert second.plot.display.mode == dmDensity and

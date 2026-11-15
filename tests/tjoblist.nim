@@ -84,7 +84,7 @@ block queuedInTheirOrder:
 
 block noticesOfBackgroundJobs:
   var st = initAppState()
-  template settle(cond: untyped): bool = waitUntil((discard st.drainInbox(); cond))
+  template settle(cond: untyped): bool = st.settle(cond)
   discard st.jobs.submit(JobSpec(title: "Quick", lane: jlInteractive), gated(1))
   discard st.jobs.submit(JobSpec(title: "Export", lane: jlBackground), failing)
   discard st.jobs.submit(JobSpec(title: "Scan line 7", lane: jlBackground), gated(1))

@@ -21,10 +21,10 @@
 ## Runs alone: under the others' load the typed 0.5 did not take (2 of 4
 ##   parallel runs; never alone).
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
-import utils/[fixtures, plotref]
+import utils/[fixtures, plotref, waiting]
 
 type
   Step = object
@@ -53,7 +53,8 @@ withFixtures fx:
   var steps: seq[Step]
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   var images, quiet = 0
   template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
@@ -148,17 +149,17 @@ withFixtures fx:
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 400:
+      elif overdue(wait, 400, since):
         failed = steps[at].name & " did not happen"
         f.stop()
 
-  let code = run(RunOptions(maxFrames: 6000, openPaths: @[path], windowSize: (1280, 900),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1280, 900),
     theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code

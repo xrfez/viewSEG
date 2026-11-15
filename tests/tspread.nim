@@ -38,9 +38,6 @@ from processSEG/qc/record import rmFieldRecord, rmSourceStation
 import viewSEG/core/state
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 func near(a, b: float64): bool = abs(a - b) <= 1e-6 * max(1.0, abs(b))
 
 proc boundsOf(b: SpreadBox): Bounds =

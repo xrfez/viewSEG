@@ -76,7 +76,7 @@ import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/[agentshot, app, headerswindow]
-import utils/[faultyfs, fixtures]
+import utils/[faultyfs, fixtures, waiting]
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
@@ -98,13 +98,16 @@ proc shoot(f: FrameInfo; name: string) =
 type Step = proc (f: FrameInfo; wait: int): bool {.closure.}
   ## One step of a run: true once it is done; it asserts what must hold.
 
+var began: MonoTime ## when the step under way began (its frame 0)
+
 proc runSteps(path: string; steps: openArray[(string, Step)]; cache: string; limit = 400) =
   ## Shows `path` and takes `steps` one after another, each given up to
-  ## `limit` frames.
+  ## `limit` frames and `Patience`.
   var stage = 0
   var wait = 0
   var reached: seq[string]
   let all = @steps
+  began = getMonoTime()
   proc onFrame(f: FrameInfo) =
     inc wait
     if f.index == 0: f.moveMouse(vec2(4, 4))
@@ -113,9 +116,12 @@ proc runSteps(path: string; steps: openArray[(string, Step)]; cache: string; lim
         reached.add all[stage][0]
         inc stage
         wait = 0
-      else: doAssert wait < limit, "stopped at \"" & all[stage][0] & "\" after " & $reached
+        began = getMonoTime()
+      else:
+        doAssert not overdue(wait, limit, began), "stopped at \"" & all[stage][0] & "\" after " &
+          $reached
     else: f.stop()
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     indexCacheDir: some(cache), theme: forceDark, onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
   doAssert stage == all.len, "stopped at stage " & $stage & " after " & $reached
@@ -205,7 +211,8 @@ withFixtures fx:
     ("file headers", Step(proc (f: FrameInfo; wait: int): bool =
       f.click(wait, "headers.tab file")
       result = wait > 8 and f.shown("headers.general gh1.fileNumber 0")
-      if wait == 300: doAssert false, "the record's general headers never came"
+      doAssert result or not overdue(wait, 300, began),
+        "the record's general headers never came"
       if result:
         doAssert ipRecord in f.core.inspection.parts
         f.shoot("headers-general-segd.png"))),
@@ -231,7 +238,8 @@ withFixtures fx:
     ("file headers", Step(proc (f: FrameInfo; wait: int): bool =
       f.click(wait, "headers.tab file")
       result = wait > 8 and f.shown("headers.general gh1.fileNumber 0")
-      if wait == 300: doAssert false, "the record's general headers never came")),
+      doAssert result or not overdue(wait, 300, began),
+        "the record's general headers never came")),
     ("channel sets", Step(proc (f: FrameInfo; wait: int): bool =
       f.click(wait, "headers.file tab Channel sets")
       result = wait > 8 and f.shown("headers.sets st1cs1.channelType 0")

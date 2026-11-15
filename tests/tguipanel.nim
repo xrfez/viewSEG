@@ -26,11 +26,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, times]
+import std/[math, monotimes, options, os, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 const
   textureLimit = 64 # tiles of 24 x 500 values become 16 blocks
@@ -113,7 +113,8 @@ withFixtures fx:
   let path = fx.surveySegy()
   let before = snapshot(path)
   var stage = 0
-  var waited = 0
+  var waited = 0 # frames since the stage began, at `since`
+  var since = getMonoTime()
   var whole, zoomed, wider: Shot
   var theme: Theme
   type Amount = object
@@ -174,7 +175,7 @@ withFixtures fx:
         d.gain = DisplayGain(amounts.len)
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
         amounts.add Amount(gain: d.gain)
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 5
     of 5:
       if f.answered and not p.reference.isNaN and waited > 2:
@@ -183,7 +184,7 @@ withFixtures fx:
         amounts[^1].ids[0] = f.ids
         f.apply Command(kind: ckDisplay, panel: MainPanel,
           display: p.layers[0].display.withGainDb(20 * log10(2.0)))
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 6
     of 6:
       if waited > 1: # drawn with the new amount
@@ -197,7 +198,7 @@ withFixtures fx:
         button[1] = p.requestGen
         f.pressMouse(button[2], true)
         f.pressMouse(button[2], false)
-        waited = 0
+        (waited, since) = (0, getMonoTime())
         stage = 8
     of 8:
       if p.layers[0].display.gainDb != button[0]:
@@ -206,8 +207,8 @@ withFixtures fx:
         stage = 9
         f.stop()
     else: discard
-    if waited > 1500: f.stop() # given up: the checks below say what is missing
-  let code = run(RunOptions(maxFrames: 2000, openPaths: @[path], theme: forceDark,
+    if overdue(waited, 1500, since): f.stop() # given up: the checks below say what is missing
+  let code = run(RunOptions(openPaths: @[path], theme: forceDark,
     maxTextureSize: textureLimit, userThemeDir: some(fx.dir / "no-user-themes"),
     indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
@@ -291,13 +292,14 @@ withFixtures fx:
       "plot.sort.Line/Station", "plot.sort.By Flag", "plot.sort.By Component", "plot.sort.custom",
       "plot.Cursor time line", "plot.more"]
     var marks: seq[(string, Rect)]
+    let start = getMonoTime()
     proc onNarrow(f: FrameInfo) =
       if f.answered and f.markOf("plot.data").size.x > 0:
         for name in @strip & @["seismic", "plot.data"]:
           marks.add (name, f.markOf(name))
         f.stop()
-      if f.index > 1500: f.stop()
-    let code = run(RunOptions(maxFrames: 2000, openPaths: @[path], windowSize: (640, 720),
+      if overdue(f.index, 1500, start): f.stop()
+    let code = run(RunOptions(openPaths: @[path], windowSize: (640, 720),
       theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onNarrow))
     doAssert code == 0 and marks.len > 0, "the narrow window never showed the plot"
@@ -328,6 +330,7 @@ proc recordShot(path, file: string; traces = Span(); timeMs = Span(); light = fa
   let dir = getEnv("VIEWSEG_SCREENSHOTS")
   var stage = 0
   var saved = false
+  let start = getMonoTime()
   proc onFrame(f: FrameInfo) =
     let p = f.core.panels[f.core.findPanel(MainPanel)]
     if f.index == 0: f.moveMouse(vec2(4, 4)) # no trace hovered
@@ -344,9 +347,9 @@ proc recordShot(path, file: string; traces = Span(); timeMs = Span(); light = fa
     elif stage == 2:
       saved = f.savePng(dir / file)
       f.stop()
-    if f.index > 1500: f.stop()
+    if overdue(f.index, 1500, start): f.stop()
   let tmp = getTempDir() / ("viewseg-shots-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 2000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: (if light: forceLight else: forceDark), indexCacheDir: some(tmp),
     userThemeDir: some(tmp / "no-user-themes"), onFrame: onFrame))
   removeDir(tmp)
@@ -361,6 +364,7 @@ proc gainShot(path, file: string; gain: DisplayGain; gainDb: float64; traces, ti
   var wait = 0
   var saved = false
   var at: Vec2
+  let start = getMonoTime()
   proc onFrame(f: FrameInfo) =
     let p = f.core.panels[f.core.findPanel(MainPanel)]
     inc wait
@@ -392,9 +396,9 @@ proc gainShot(path, file: string; gain: DisplayGain; gainDb: float64; traces, ti
         saved = f.savePng(dir / file)
         f.stop()
     else: discard
-    if f.index > 1500: f.stop()
+    if overdue(f.index, 1500, start): f.stop()
   let tmp = getTempDir() / ("viewseg-gainshot-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 2000, openPaths: @[path], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onFrame))
   removeDir(tmp)

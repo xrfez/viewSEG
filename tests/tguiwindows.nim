@@ -38,11 +38,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, screens, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/theme
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -83,7 +83,8 @@ func rearranged(text: string; floating: openArray[(string, Rect)]; hidden: strin
       $int(r.size.x) & "," & $int(r.size.y) & "\nCollapsed=0\n\n"
   result.add "[viewSEG][Windows]\nHidden=" & hidden & "\n\n"
 
-var wait = 0 ## frames since the step began
+var wait = 0 ## frames since the step began, at `since`
+var since = getMonoTime()
 
 proc drive(steps: seq[Step]; opts: RunOptions) =
   var at = 0
@@ -97,13 +98,13 @@ proc drive(steps: seq[Step]; opts: RunOptions) =
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if wait >= 3 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 300:
+      elif overdue(wait, 300, since):
         failed = steps[at].name & " did not happen"
         f.stop()
   let code = run(o)
@@ -115,7 +116,7 @@ withFixtures fx:
   let path = fx.surveySegy()
   let config = fx.dir / "config"
   createDir(config)
-  let opts = RunOptions(maxFrames: 6000, openPaths: @[path], windowSize: (1400, 900),
+  let opts = RunOptions(openPaths: @[path], windowSize: (1400, 900),
     theme: forceDark, persist: true, configDir: some(config), logDir: some(fx.dir / "logs"),
     indexCacheDir: some(fx.dir / "cache"), userThemeDir: some(fx.dir / "no-user-themes"),
     assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]))
@@ -275,14 +276,16 @@ proc menuShots(dir: string) =
   let shots = [("menu.File", "menu.Import", "menus-import.png"),
     ("menu.File", "menu.Export", "menus-export.png"), ("menu.Window", "", "menus-window.png")]
   var stage = 0
-  var wait = 0
+  var wait = 0 # frames since the stage began, at `since`
+  var since = getMonoTime()
   var saved: seq[string]
   proc onFrame(f: FrameInfo) =
     inc wait
+    template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
     let k = f.core.findPanel(MainPanel)
     if stage == 0:
       if f.core.panels[k].laidOut and f.core.tiles(k).len > 0 and wait > 30:
-        (stage, wait) = (1, 0)
+        next 1
     elif stage <= shots.len:
       let (top, sub, file) = shots[stage - 1]
       if wait == 2: f.click(f.markOf(top).centre)
@@ -290,12 +293,12 @@ proc menuShots(dir: string) =
       if wait == 20:
         if f.savePng(dir / file): saved.add file
         f.click(f.markOf("statusbar").centre) # closes the menu
-      if wait == 30: (stage, wait) = (stage + 1, 0)
+      if wait == 30: next(stage + 1)
     else: f.stop()
-    if f.index > 3000: f.stop()
+    if overdue(wait, 3000, since): f.stop()
   let tmp = getTempDir() / ("viewseg-menushots-" & $getCurrentProcessId())
   # Kept settings, so that the presets are listed and a layout can be saved.
-  let code = run(RunOptions(maxFrames: 4000, openPaths: @[record], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[record], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     persist: true, configDir: some(tmp / "config"), logDir: some(tmp / "logs"),
     assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]), onFrame: onFrame))

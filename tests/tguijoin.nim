@@ -41,12 +41,12 @@
 ## (`join-morgantown-1.png`: the record beside its map, a trace hovered;
 ## `join-morgantown-2.png`: the window with what the join did).
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import parseSEG
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/theme
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 type
   Step = object
@@ -76,7 +76,8 @@ proc drive(steps: seq[Step]; paths: seq[string]; dir: string; size = (1400, 1000
     dialogs: DialogHook = nil) =
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step began, at `since`
+  var since = getMonoTime()
   var failed = ""
   proc onFrame(f: FrameInfo) =
     if f.index == 0: f.moveMouse(vec2(4, 4))
@@ -87,15 +88,16 @@ proc drive(steps: seq[Step]; paths: seq[string]; dir: string; size = (1400, 1000
       steps[at].act(f)
       started = true
       wait = 0
+      since = getMonoTime()
     else:
       inc wait
       if wait >= 3 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 600:
+      elif overdue(wait, 600, since):
         failed = steps[at].name & " did not happen"
         f.stop()
-  let code = run(RunOptions(maxFrames: 12000, openPaths: paths, windowSize: size,
+  let code = run(RunOptions(openPaths: paths, windowSize: size,
     theme: forceDark, userThemeDir: some(dir / "no-user-themes"),
     indexCacheDir: some(dir / "cache"), dialogs: dialogs, onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
@@ -313,10 +315,12 @@ proc morgantown(dir: string) =
   let preset = currentSourcePath().parentDir.parentDir / "assets" / "layouts" / "Plot and map.nif"
   var stage = 0
   var wait = 0
+  var since = getMonoTime() # when the stage began
   var saved = 0
   var loads = 0
   proc onFrame(f: FrameInfo) =
     inc wait
+    template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
     let k = f.core.findPanel(MainPanel)
     case stage
     of 0:
@@ -330,7 +334,7 @@ proc morgantown(dir: string) =
         f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: files,
           joinOptions: JoinOptions(coordinates: hcReplace), joinUnits: JoinUnits(
           survey: suUsFeet, file: suUsFeet))
-        (stage, wait) = (1, 0)
+        next 1
     of 1:
       if f.core.joinReport.serial > 0 and not f.core.importing and
           f.core.tiles(k).len > 0 and f.core.tiles(k)[^1].joined.len > 0 and wait > 20:
@@ -338,13 +342,13 @@ proc morgantown(dir: string) =
         let plot = f.markOf("plot.data")
         f.moveMouse(vec2(round(plot.pos.x + plot.size.x * 0.62), round(plot.pos.y +
           plot.size.y * 0.4)))
-        (stage, wait) = (2, 0)
+        next 2
     of 2:
       if wait == 30:
         if f.core.selection.hoverAt.len > 0 and f.savePng(dir / "join-morgantown-1.png"):
           inc saved
         f.moveMouse(vec2(4, 4))
-        (stage, wait) = (3, 0)
+        next 3
     of 3:
       if wait == 2:
         # The window, with what the join did.
@@ -369,9 +373,9 @@ proc morgantown(dir: string) =
           inc saved
         f.stop()
     else: discard
-    if f.index > 9000: f.stop()
+    if overdue(f.index, 9000, since): f.stop()
   let tmp = getTempDir() / ("viewseg-joinshots-" & $getCurrentProcessId())
-  let code = run(RunOptions(maxFrames: 10000, openPaths: @[record], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[record], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp),
     userThemeDir: some(tmp / "no-user-themes"), onFrame: onFrame))
   removeDir(tmp)

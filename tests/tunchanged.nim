@@ -41,13 +41,6 @@ proc listing(dir: string): seq[(string, int64)] =
     if kind == pcFile: result.add (path.extractFilename, getFileSize(path))
   result.sort()
 
-template settle(st: var AppState; cond: untyped): bool =
-  ## `cond` holds after a frame's drain, and still after the next: a job's
-  ## work posts what it made, then ends, so "no job active" can hold before
-  ## the frame takes what the open posted (the file not open yet); the
-  ## second drain takes it.
-  waitUntil((discard st.drainInbox(); cond) and (discard st.drainInbox(); cond))
-
 proc main(st: AppState): lent Panel = st.panel(MainPanel)
 
 proc answered(st: AppState): bool =

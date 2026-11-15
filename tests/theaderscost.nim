@@ -18,9 +18,6 @@ import std/[monotimes, times]
 import viewSEG/core/[inspector, state]
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 block hoversWithALargeSelection:
   const Traces = 200_000
   withFixtures fx:

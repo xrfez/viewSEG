@@ -29,9 +29,6 @@ import utils/[fixtures, waiting]
 when not defined(windows):
   from std/posix import nil
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 func has(log: MessageLog; part: string; severity = sevInfo): bool =
   for e in log:
     if part in e.text and e.severity == severity: return true

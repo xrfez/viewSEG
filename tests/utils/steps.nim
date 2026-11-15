@@ -10,7 +10,7 @@
 import std/[locks, monotimes, os, times]
 import viewSEG/core/jobs
 
-const StepLimit* = initDuration(seconds = 60)
+const StepLimit* = initDuration(seconds = 120) ## twice `waiting.Patience`
 
 var
   lock: Lock

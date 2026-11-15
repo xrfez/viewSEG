@@ -61,10 +61,10 @@
 ## pixels off the reference", one column tinted: 3 of 4 runs among the other
 ## tests, 1 of 8 alone under xvfb-run while other work loaded the machine).
 
-import std/[math, options, os, strutils, times]
+import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state, wiggle]
 import viewSEG/ui/imgui/app
-import utils/[fixtures, plotref]
+import utils/[fixtures, plotref, waiting]
 
 type
   Step = object
@@ -85,7 +85,8 @@ proc main() =
     var steps: seq[Step]
     var at = 0
     var started = false
-    var wait = 0
+    var wait = 0 # frames since the step began, at `since`
+    var since = getMonoTime()
     var failed = ""
     var plot: Rect
     var mid: Vec2
@@ -310,17 +311,17 @@ proc main() =
       if not started:
         steps[at].act(f)
         started = true
-        wait = 0
+        (wait, since) = (0, getMonoTime())
       else:
         inc wait
         if wait >= 2 and steps[at].done(f):
           inc at
           started = false
-        elif wait > 400:
+        elif overdue(wait, 400, since):
           failed = steps[at].name & " did not happen"
           f.stop()
 
-    let code = run(RunOptions(maxFrames: 8000, openPaths: @[path], windowSize: (760, 1000),
+    let code = run(RunOptions(openPaths: @[path], windowSize: (760, 1000),
       theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0, "run() exit code " & $code
@@ -341,7 +342,8 @@ proc edges() =
     var steps: seq[Step]
     var at = 0
     var started = false
-    var wait = 0
+    var wait = 0 # frames since the step began, at `since`
+    var since = getMonoTime()
     var failed = ""
     var images, quiet = 0
     var grab: Vec2
@@ -504,17 +506,17 @@ proc edges() =
       if not started:
         steps[at].act(f)
         started = true
-        wait = 0
+        (wait, since) = (0, getMonoTime())
       else:
         inc wait
         if wait >= 2 and steps[at].done(f):
           inc at
           started = false
-        elif wait > 400:
+        elif overdue(wait, 400, since):
           failed = steps[at].name & " did not happen"
           f.stop()
 
-    let code = run(RunOptions(maxFrames: 8000, openPaths: @[path], windowSize: (1280, 900),
+    let code = run(RunOptions(openPaths: @[path], windowSize: (1280, 900),
       theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0, "run() exit code " & $code

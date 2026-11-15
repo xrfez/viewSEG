@@ -22,11 +22,11 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/[plotink, theme]
 import viewSEG/ui/imgui/app
-import utils/[fixtures, plotref]
+import utils/[fixtures, plotref, waiting]
 
 type
   Step = object
@@ -55,7 +55,8 @@ proc runSteps(steps: seq[Step]; opts: RunOptions): string =
   ## happened, else the one that did not.
   var at = 0
   var started = false
-  var wait = 0
+  var wait = 0 # frames since the step's action, at `since`
+  var since = getMonoTime()
   var failed = ""
   proc onFrame(f: FrameInfo) =
     if at >= steps.len or failed.len > 0:
@@ -64,13 +65,13 @@ proc runSteps(steps: seq[Step]; opts: RunOptions): string =
     if not started:
       steps[at].act(f)
       started = true
-      wait = 0
+      (wait, since) = (0, getMonoTime())
     else:
       inc wait
       if wait >= 2 and steps[at].done(f):
         inc at
         started = false
-      elif wait > 400:
+      elif overdue(wait, 400, since):
         failed = steps[at].name & " did not happen"
         f.stop()
   var o = opts
@@ -191,7 +192,7 @@ withFixtures fx:
     result = d.colours == pcCustom
     if result:
       for k in 0 ..< keys.len: doAssert d.custom.colourOf(k) == wanted[k], keys[k] & " lost")
-  let failed = runSteps(steps, RunOptions(maxFrames: 6000, persist: true, configDir: some(config),
+  let failed = runSteps(steps, RunOptions(persist: true, configDir: some(config),
     logDir: some(logs), openPaths: @[path], windowSize: (1280, 900), theme: forceDark,
     userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache")))
   doAssert failed.len == 0, failed
@@ -209,7 +210,7 @@ withFixtures fx:
       doAssert bad == 0, "second run: " & $bad & " of " & $seen & " pixels off the reference"
       for k in 0 .. 3:
         doAssert s.found(wanted[k]) > 0, "second run: no pixel of the " & keys[k] & " colour")
-  let again = runSteps(steps, RunOptions(maxFrames: 3000, persist: true, configDir: some(config),
+  let again = runSteps(steps, RunOptions(persist: true, configDir: some(config),
     logDir: some(logs), openPaths: @[path], windowSize: (1280, 900), theme: forceDark,
     userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache")))
   doAssert again.len == 0, again

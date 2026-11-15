@@ -20,10 +20,10 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[options, os, strutils, tables]
+import std/[monotimes, options, os, strutils, tables]
 import viewSEG/core/state
 import viewSEG/ui/imgui/[app, icons]
-import utils/fixtures
+import utils/[fixtures, waiting]
 
 const saved = currentSourcePath().parentDir / "data" / "saved-0.1.0"
 
@@ -62,12 +62,15 @@ withFixtures fx:
   let old = readLayout(readFile(saved / LayoutFileName), LayoutFileName, problems).imgui
   doAssert problems.len == 0 and dockIds(old)["plot"] == "0x00000007", $problems
   var stage = 0
-  var wait = 0
+  var wait = 0 # frames since the stage began, at `since`
+  var since = getMonoTime()
   var loads = 0
+  var loadedAt = -1 # the frame of the stage the load was seen at
   var presets: seq[SavedLayout]
   var checked: seq[string]
   proc onFrame(f: FrameInfo) =
     inc wait
+    template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
     case stage
     of 0:
       if wait == 10:
@@ -82,10 +85,12 @@ withFixtures fx:
         checked.add "saved"
         for e in f.core.log:
           doAssert e.severity == sevInfo, "said at start: " & e.text
+      if wait >= 10: # the presets, listed by the disk thread
+        presets = @[]
         for l in f.core.layouts:
           if l.preset: presets.add l
-        doAssert presets.len >= 2, "the presets are not listed"
-        (stage, wait) = (1, 0)
+        if presets.len >= 2: next 1
+        else: doAssert not overdue(wait, 200, since), "the presets are not listed"
     of 1: # load the next preset
       if checked.len - 1 == presets.len:
         f.stop()
@@ -93,18 +98,20 @@ withFixtures fx:
       else:
         loads = f.core.layoutLoads
         f.apply Command(kind: ckLoadLayout, docPath: presets[checked.len - 1].path)
-        (stage, wait) = (2, 0)
-    of 2:
-      if f.core.layoutLoads > loads and wait > 6:
+        loadedAt = -1
+        next 2
+    of 2: # read by the disk thread, then arranged: checked a few frames later
+      if f.core.layoutLoads > loads and loadedAt < 0: loadedAt = wait
+      if loadedAt >= 0 and wait > loadedAt + 6:
         let l = presets[checked.len - 1]
         inPlace(f.layoutText, readLayout(readFile(l.path), l.path, problems).imgui,
           "the preset " & l.name)
         doAssert f.windowName("plot") == IconPlot & "  Seismic###plot"
         checked.add l.name
-        (stage, wait) = (1, 0)
-      doAssert wait < 200, "the preset did not load"
+        next 1
+      doAssert not overdue(wait, 200, since), "the preset did not load"
     else: discard
-  doAssert run(RunOptions(maxFrames: 1000, persist: true, configDir: some(config),
+  doAssert run(RunOptions(persist: true, configDir: some(config),
     logDir: some(fx.dir / "logs"), indexCacheDir: some(fx.dir / "cache"),
     assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]),
     userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFrame)) == 0

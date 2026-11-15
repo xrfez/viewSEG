@@ -47,7 +47,11 @@ import viewSEG/core/[geometry, state]
 import viewSEG/view/plotink
 import viewSEG/ui/imgui/app
 import viewSEG/remote/control
-import utils/[agentclient, fixtures]
+import utils/[agentclient, fixtures, waiting]
+
+const
+  WaitSeconds = Patience.inSeconds ## the agent's `wait` calls: as long as any test waits
+  WaitAnswer = Patience * 2        ## and how long it waits for their answers
 
 proc listeningSockets(): int =
   ## Unix-domain sockets this process listens on (Linux: /proc).
@@ -83,6 +87,11 @@ func close(a, b: Rgba): bool =
 
 # ---------------------------------------------------- the agent's thread --
 
+proc connected(c: var AgentClient; socket: string): bool =
+  ## Connects `c` to `socket` unless it is; whether it is now.
+  if c.fd < 0: c = connectAgent(socket)
+  c.fd >= 0
+
 type Scenario = tuple[socket, fixture: string]
 
 var results: Channel[(string, string)] ## what the agent found, for the main thread
@@ -96,23 +105,20 @@ proc agent(s: Scenario) {.thread.} =
   template check(r: JsonNode; what: string) =
     if r.failed: fail(what & ": " & (if r == nil: "no answer" else: $r))
   var c = connectAgent(s.socket)
-  for i in 0 ..< 200:
-    if c.fd < 0:
-      sleep 50
-      c = connectAgent(s.socket)
-  if c.fd < 0: fail("cannot connect to " & s.socket)
+  if not waitUntil(c.connected(s.socket)):
+    fail("cannot connect to " & s.socket)
   let init = c.initialize("test agent")
   if init == nil: fail("the agent's first call: no answer")
   if c.request("tools/list", nil){"result"}{"tools"}.len != 5: fail("not five tools")
   results.send(("connected", ""))
   var r = c.call("command", %*{"kind": "show file", "path": s.fixture})
   check(r, "show file")
-  check(c.call("wait", %*{"timeout": 30}), "wait")
+  check(c.call("wait", %*{"timeout": WaitSeconds}, WaitAnswer), "wait")
   check(c.call("command", %*{"kind": "display", "display": {"mode": "wiggle", "fills": [],
     "overlap": 0.5, "gain": "none"}}), "display")
   check(c.call("command", %*{"kind": "sort", "order": [{"field": "channel",
     "descending": true}]}), "sort")
-  r = c.call("wait", %*{"timeout": 30})
+  r = c.call("wait", %*{"timeout": WaitSeconds}, WaitAnswer)
   check(r, "wait after sort")
   if not parseJson(r.text)["idle"].getBool: fail("not idle after the sort: " & r.text)
   r = c.call("state", %*{"parts": ["panels"]})
@@ -121,12 +127,12 @@ proc agent(s: Scenario) {.thread.} =
   let trace = panel["positions"][3].getInt
   let id = panel["file"]["firstTrace"].getInt + trace
   check(c.call("command", %*{"kind": "select", "traces": [id], "mode": "replace"}), "select")
-  check(c.call("wait"), "wait after select")
+  check(c.call("wait", %*{"timeout": WaitSeconds}, WaitAnswer), "wait after select")
   r = c.call("screenshot", %*{"window": "plot", "maxSize": 4096})
   check(r, "screenshot before")
   results.send(("before", r["content"][0]["data"].getStr))
   check(c.call("command", %*{"kind": "edit traces", "edit": "killed"}), "kill")
-  r = c.call("wait", %*{"timeout": 30})
+  r = c.call("wait", %*{"timeout": WaitSeconds}, WaitAnswer)
   check(r, "wait after kill")
   if not parseJson(r.text)["idle"].getBool: fail("not idle after the kill: " & r.text)
   r = c.call("screenshot", %*{"window": "plot", "maxSize": 4096})
@@ -144,7 +150,7 @@ proc agent(s: Scenario) {.thread.} =
   # picture is turned
   check(c.call("command", %*{"kind": "display", "display": {"orientation": "time across"}}),
     "turn")
-  r = c.call("wait", %*{"timeout": 30})
+  r = c.call("wait", %*{"timeout": WaitSeconds}, WaitAnswer)
   check(r, "wait after the turn")
   r = c.call("state", %*{"parts": ["panels"]})
   check(r, "state after the turn")
@@ -171,13 +177,13 @@ proc agent(s: Scenario) {.thread.} =
   check(r, "screenshot of the map")
   results.send(("map shown", r["content"][0]["data"].getStr))
   check(c.call("command", %*{"kind": "map layer", "mapLayer": key, "shown": false}), "hide")
-  check(c.call("wait"), "wait after hiding")
+  check(c.call("wait", %*{"timeout": WaitSeconds}, WaitAnswer), "wait after hiding")
   r = c.call("screenshot", %*{"window": "map", "maxSize": 4096})
   check(r, "screenshot of the map without its receivers")
   results.send(("map hidden", r["content"][0]["data"].getStr))
   let asked = st["map"]["view"]["perPixel"].getFloat / 2
   check(c.call("command", %*{"kind": "map view", "mapView": {"perPixel": asked}}), "map view")
-  check(c.call("wait"), "wait after the map view")
+  check(c.call("wait", %*{"timeout": WaitSeconds}, WaitAnswer), "wait after the map view")
   r = c.call("state", %*{"parts": ["map"]})
   check(r, "state of the map after its view")
   results.send(("perPixel", $parseJson(r.text)["map"]["view"]["perPixel"].getFloat & " " &
@@ -202,36 +208,43 @@ withFixtures fx:
 
   block offByDefault:
     var frame = 0
+    var wait = 0 # frames since the stage began, at `since`
+    var since = getMonoTime()
     var problem = ""
     var stage = 0
     proc onFrame(f: FrameInfo) =
       inc frame
+      inc wait
       template fail(why: string) =
         problem = why
         f.stop()
-      if frame > 600: fail("stage " & $stage & " did not end")
-      elif stage == 0 and frame == 10:
+      template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
+      # The server starts and stops on threads of its own: stages 1 and 2
+      # wait for what they check, and fail with what still does not hold.
+      template waitFor(why: string) =
+        if overdue(wait, 600, since): fail(why)
+      if stage == 0 and frame == 10:
         if f.agentControl.running: fail("agent control is on by default")
         elif listeningSockets() != 0: fail("a listening socket by default")
         elif fileExists(socket) or symlinkExists(socket): fail("a socket by default")
         elif f.markOf("status.agent").size.x > 0: fail("a sign while off")
         else:
           f.setAgentControl(true)
-          stage = 1
-      elif stage == 1 and frame > 15:
-        if listeningSockets() != 1: fail("no listening socket after turning it on")
-        elif f.markOf("status.agent").size.x <= 0: fail("no sign while on")
-        elif f.markOf("status.agent connected").size.x > 0: fail("connected, with nobody")
-        elif not f.messages.anyIt("Agent control is on" in it.text): fail("not said")
+          next 1
+      elif stage == 1 and wait > 5:
+        if f.markOf("status.agent connected").size.x > 0: fail("connected, with nobody")
+        elif listeningSockets() != 1: waitFor("no listening socket after turning it on")
+        elif f.markOf("status.agent").size.x <= 0: waitFor("no sign while on")
+        elif not f.messages.anyIt("Agent control is on" in it.text): waitFor("not said")
         else:
           f.setAgentControl(false)
-          stage = 2
-      elif stage == 2 and frame > 20:
-        if listeningSockets() != 0 or f.agentControl.running: fail("still listening")
-        elif fileExists(socket) or symlinkExists(socket): fail("the socket is still there")
-        elif f.markOf("status.agent").size.x > 0: fail("a sign while off")
+          next 2
+      elif stage == 2 and wait > 5:
+        if listeningSockets() != 0 or f.agentControl.running: waitFor("still listening")
+        elif fileExists(socket) or symlinkExists(socket): waitFor("the socket is still there")
+        elif f.markOf("status.agent").size.x > 0: waitFor("a sign while off")
         else: f.stop()
-    let code = run(RunOptions(maxFrames: 2000, windowSize: (1200, 800), theme: forceDark,
+    let code = run(RunOptions(windowSize: (1200, 800), theme: forceDark,
       userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
       agentSocket: socket, onFrame: onFrame))
     doAssert code == 0 and problem.len == 0, problem
@@ -241,6 +254,7 @@ withFixtures fx:
     # a full status bar at 1280 pixels: every readout field (wider than the
     # window); the sign comes first, so it is in view
     var frame = 0
+    let since = getMonoTime()
     var problem = ""
     proc onFrame(f: FrameInfo) =
       inc frame
@@ -249,16 +263,21 @@ withFixtures fx:
         s.readout.setLen 0
         for x in ReadoutField: s.readout.add x
         f.apply Command(kind: ckSettings, settings: s)
-      elif frame == 10:
+      elif frame >= 10:
+        # the sign once the server, started on a thread of its own, listens
         let sign = f.markOf("status.agent")
         let bar = f.markOf("statusbar")
-        if sign.size.x <= 0: problem = "no sign"
-        elif bar.size.x <= 0: problem = "no status bar"
-        elif sign.pos.x < bar.pos.x or sign.pos.x + sign.size.x > bar.pos.x + bar.size.x:
-          problem = "the sign is out of view: it spans " & $sign.pos.x & " to " &
-            $(sign.pos.x + sign.size.x) & " in a bar " & $bar.size.x & " wide"
-        f.stop()
-    let code = run(RunOptions(maxFrames: 100, windowSize: (1280, 800), theme: forceDark,
+        if sign.size.x <= 0:
+          if overdue(frame, 10, since):
+            problem = "no sign"
+            f.stop()
+        else:
+          if bar.size.x <= 0: problem = "no status bar"
+          elif sign.pos.x < bar.pos.x or sign.pos.x + sign.size.x > bar.pos.x + bar.size.x:
+            problem = "the sign is out of view: it spans " & $sign.pos.x & " to " &
+              $(sign.pos.x + sign.size.x) & " in a bar " & $bar.size.x & " wide"
+          f.stop()
+    let code = run(RunOptions(windowSize: (1280, 800), theme: forceDark,
       userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
       agent: true, agentSocket: socket, onFrame: onFrame))
     doAssert code == 0 and problem.len == 0, problem
@@ -300,7 +319,7 @@ withFixtures fx:
           else: discard
       if connected and not done and f.markOf("status.agent connected").size.x > 0:
         signSeen = true
-      if getMonoTime() - since > initDuration(seconds = 120): # frames are fast under Xvfb
+      if getMonoTime() - since > Patience * 3: # frames are fast under Xvfb
         problem = "the agent did not finish"
         f.stop()
     # the agent names the fixture relative to the program's folder, as one in a

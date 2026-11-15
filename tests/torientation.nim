@@ -293,9 +293,6 @@ block swingMirrored:
       if a.a > 0 and i != 0: inc inked
   doAssert inked > 100 # the test drew something
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc main(st: AppState): lent Panel = st.panel(MainPanel)
 
 proc turn(st: var AppState; o: Orientation) =

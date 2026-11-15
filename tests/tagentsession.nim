@@ -109,9 +109,6 @@ proc flatten[T](x: T; at: string; into: var OrderedTable[string, string]) =
 proc flat(s: Settings): OrderedTable[string, string] =
   flatten(s, "", result)
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 func has(log: MessageLog; part: string): bool =
   for e in log:
     if part in e.text: return true

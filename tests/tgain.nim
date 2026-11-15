@@ -30,9 +30,6 @@ import viewSEG/core/state {.all.}
 import viewSEG/core/wiggle
 import utils/[fixtures, waiting]
 
-template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
-
 proc main(st: AppState): lent Panel = st.panel(MainPanel)
 
 proc shown(st: AppState): lent seq[Tile] = st.tiles(st.findPanel(MainPanel))
