@@ -128,17 +128,10 @@ proc learn(ui: var JoinUi; st: AppState; i: int) =
   let s = st.sessions[i]
   if ui.about == s.id: return
   ui.about = s.id
-  var text = ""
-  ui.crsFormat = ""
-  ui.fileUnits = suNotGiven
-  try:
-    let sum = s.file.summary
-    ui.fileUnits = unitOf(sum.coordinateUnits)
-    if sum.crsFormat != ctNone:
-      text = s.file.crsText
-      ui.crsFormat = $sum.crsFormat
-  except CatchableError:
-    discard # a file whose summary cannot be made says nothing of its units
+  # Read on the open job: nothing here reads the file (a network drive may hang).
+  let text = s.crs.text
+  ui.fileUnits = unitOf(s.crs.units)
+  ui.crsFormat = if s.crs.format == ctNone: "" else: $s.crs.format
   ui.crs = newSeq[char](text.len + 1)
   for k, c in text: ui.crs[k] = c
 

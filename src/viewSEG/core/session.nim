@@ -19,6 +19,16 @@ type
   SessionId* = distinct int
     ## Names an open file; never reused. `NoSession` (0) names none.
 
+  FileCrs* = object
+    ## What a file's headers say of its coordinates, read on the open job (a
+    ## file on a network drive may hang a read: never on the UI thread).
+    units*: CoordinateUnits
+      ## parseSEG's `summary.coordinateUnits`
+    format*: CrsTextFormat
+      ## the format of `text`; `ctNone` when the file gives none
+    text*: string
+      ## its coordinate reference system, as stored (`crsText`)
+
   Session* {.acyclic.} = ref object
     ## An open seismic file. A `ref`, so that workers can hold a stable
     ## `ptr SeismicFile` into it (docs/architecture.md, "Threads"); only the
@@ -33,6 +43,7 @@ type
     size: int64 ## the file's size when it was opened; -1 when not known
     modified: Time ## its modification time then
     checkedAgainst: string ## the relation file its records were checked against; "" none
+    crs: FileCrs ## what its headers say of its coordinates
 
 const NoSession* = SessionId(0)
 
@@ -48,6 +59,12 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   result.gathers = result.file.gathers
   result.records = recordRows(result.file, result.gathers)
   result.columns = columnsOf(result.records)
+  try:
+    let sum = result.file.summary
+    result.crs = FileCrs(units: sum.coordinateUnits, format: sum.crsFormat)
+    if sum.crsFormat != ctNone: result.crs.text = result.file.crsText
+  except CatchableError:
+    discard # a file whose summary cannot be made says nothing of its coordinates
 
 proc register*(s: Session; id: SessionId; base: int) =
   ## Gives `s` its id and the survey-wide id of its first trace (`AppState`
@@ -67,6 +84,8 @@ func records*(s: Session): lent seq[RecordRow] {.inline.} = s.records
   ## One row per gather, for the record list.
 func recordColumns*(s: Session): set[RecordColumn] {.inline.} = s.columns
   ## The record list's columns some row has a value for.
+func crs*(s: Session): lent FileCrs {.inline.} = s.crs
+  ## What the file's headers say of its coordinates: units and CRS text.
 func checkedAgainst*(s: Session): lent string {.inline.} = s.checkedAgainst
   ## The relation file the records' planned stations come from; "" for none.
 

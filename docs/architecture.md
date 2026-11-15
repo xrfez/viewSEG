@@ -466,8 +466,10 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    processSEG's `recordCompleteness` per gather, from the keys; `mkChecked`), again for a
    file opened later or another relation file loaded, and the check goes with the
    relation file. No sample is read for any of it. The progress hook is a
-   `gcsafe` closure on the job thread that calls `JobContext.progress`. Not yet: reading
-   `summary`, `channelSets` and `crsText` on the job.
+   `gcsafe` closure on the job thread that calls `JobContext.progress`. The job also reads
+   what the headers say of the coordinates (`summary.coordinateUnits`, `crsText`:
+   `Session.crs`, for the join window, which so reads nothing from the file); not yet
+   `channelSets`.
 2. **Show** (UI). Pointing a panel at a gather bumps its `requestGen` (and `sourceGen`),
    holds the file (`Jobs.hold`) and hands the panel's reader the file, the gather and
    the trace filter. The reader lets go of what it showed (closes its prefetcher, ends
@@ -612,7 +614,7 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 | `pool.apply(plan, raw, processed, meta)` | panel (blocks) | Writes the caller's `processed` |
 | `traceStatsInto`, `panelStats`, `moveoutColumnsInto`, `checkGeometryInto` | panel | Fill the caller's seqs; ticks and flags tagged with `keysRevision` |
 | `readTracesInto`, `traceKeysInto`, `traceFieldColumnInto` | any | Fill the caller's buffer |
-| `traceHeaders`, `recordHeaders`, `fileHeaders`, `copyBytes`, `textHeader`, `traceField`; `summary` and `crsText` (the join window) | UI | Owned copies |
+| `traceHeaders`, `recordHeaders`, `fileHeaders`, `copyBytes`, `textHeader`, `traceField` | UI | Owned copies |
 | `traceFieldColumnInto`, then `sortOrder` (a sorted view) | job | A `seq[int]` selection |
 | `rowsOf(list)` keys, then `sortOrder` (a panel's order, `core/sorting`) | panel reader, while it holds the file | Positions: a `seq[int]` of trace numbers |
 | `pool.pickInto`, `fitShot`, `traceAmplitudeInto`, `recordAmplitude`, `windowSnrInto`, `recordCompleteness`, `addFold`, `preplotFold` | job | The caller's seqs; a `FoldMap` (moved, never copied) |
@@ -683,6 +685,7 @@ type
                              # seismic traces the file declares for it; the stations a loaded
                              # relation file plans and those missing (`setChecks`)
     checkedAgainst: string   # the relation file the records were checked against
+    crs: FileCrs             # what its headers say of its coordinates: units, CRS text
 
   FileList = object          # core/filelist: what the Files window lists
     title, folder: string    # the folder listed ("" for files chosen one by one)

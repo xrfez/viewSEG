@@ -220,6 +220,7 @@ type
       joinFile*: SessionId ## the open file the survey files are joined to
       joinFiles*: seq[JoinFile] ## SPS, SEG P1 files and CSV tables
       joinOptions*: JoinOptions
+        ## the join's options: line names, components, the headers' coordinates
       joinUnits*: JoinUnits ## the units the user confirmed
     of ckSelectUnmatched:
       unmatchedOf*: SessionId

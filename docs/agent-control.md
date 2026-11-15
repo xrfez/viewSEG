@@ -130,6 +130,8 @@ schema (in the tool list) gives every field and value; the most used:
 | `map layer` | `mapLayer` (as `state` names it), `shown` | Shows or hides a layer of the map (`shown` defaults to true) |
 | `select points` | `points` (`layer`, `role`, `point`), `pointMode` | Selects points on the map, and their traces |
 | `hover points`, `show points' record` | `points` | Lights up the points' traces as the map's pointer does; shows the record of their traces |
+| `join geometry` | `joinFile` (a file's id, as `state` gives it), `joinFiles` (each `path`, `kind`: `SPS`, `SEG P1` or `CSV table`, and a table's `role`), `joinOptions`, `joinUnits` | Joins survey files to an open file's traces, in memory, as File > Join geometry does; `wait`, then `state`'s log says what it did |
+| `select unmatched` | `unmatchedOf` (the joined file's id) | Selects the traces the join left unmatched |
 | `undo edit`, `clear edits`, `reverse all`, `back`, `map back`, `hover`, `clear selection`, `close`, `load survey`, `unload survey`, `cancel job`, ... | | As in the windows |
 
 `panel` defaults to 1 (the Seismic window). A panel keeps whatever is not given:
