@@ -4223,7 +4223,7 @@ proc keepImport(state: var AppState) =
   p.doc.units = j.units
   p.doc.notes = j.survey.notes
   p.doc.imported = getTime()
-  if not j.geometry.isNil:
+  if not j.geometry.isNil and j.relations.isNil: # (stations and relations in one)
     p.geometry = j.geometry
     p.joinSurvey = j.survey
   state.projectChanged()
@@ -4350,7 +4350,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
         template last: untyped = state.joins[^1]
         p.doc.units = last.units
         p.doc.notes = last.survey.notes
-        if not last.geometry.isNil:
+        if not last.geometry.isNil and last.relations.isNil:
           p.geometry = last.geometry
           p.joinSurvey = last.survey
       p.doc.imported = getTime()

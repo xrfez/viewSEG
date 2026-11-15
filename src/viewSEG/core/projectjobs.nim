@@ -308,21 +308,21 @@ proc restoreWork*(dir: string; doc: ProjectDoc; layers: bool; to: Poster): JobWo
         var building = false
         var (rows, skipped) = (0, 0)
         var problems: seq[string] = @[]
-        readStore(dir.partOf(SurveyStoreName), ctx, StoreReader(
-          onFile: proc (f: StoredFile) =
+        proc onFile(f: StoredFile) =
           names.add f.name
           if layers and f.kind != jkCsv:
             b = initSurveyFileBuilder(dir.partOf(f.copy), f.fileKind, f.size, f.modified,
               naming, opts.trailingDigits)
-            building = true,
-          onSps: proc (f: StoredFile; part: SpsFile) =
+            building = true
+        proc onSps(f: StoredFile; part: SpsFile) =
           if building:
             for q in part.points:
               b.addPoint(roleOf(q.kind), b.lineOf(q.lineName, q.line), q.point,
                 pointIndex(q.index), q.easting, q.northing, q.elevation)
-            b.addRelations(part)
-          g[].addSps(part, relationDomainOf(f.copy)),
-          onP1: proc (f: StoredFile; pf: P1File) =
+            var rel = part # (`addRelations` takes the points out for a moment)
+            b.addRelations(rel)
+          g[].addSps(part, relationDomainOf(f.copy))
+        proc onP1(f: StoredFile; pf: P1File) =
           if building:
             for lf in pf.files:
               if lf.format == pfP1:
@@ -331,15 +331,17 @@ proc restoreWork*(dir: string; doc: ProjectDoc; layers: bool; to: Poster): JobWo
                   let index = if r.reshoot in {'A' .. 'Z'}: int16(ord(r.reshoot) - ord('A') + 2)
                               else: 0'i16
                   b.addPoint(prSource, line, r.point, index, r.easting, r.northing, NaN)
-          g[].addP1(pf),
-          onCsv: proc (f: StoredFile; text: string) =
-          rows += g[].addCsv(text, f.name, f.role, problems, skipped),
-          onEnd: proc (f: StoredFile) =
+          g[].addP1(pf)
+        proc onCsv(f: StoredFile; text: string) =
+          rows += g[].addCsv(text, f.name, f.role, problems, skipped)
+        proc onEnd(f: StoredFile) =
           if building:
             var l = b.finish()
             l.withLevels()
             built.add l
-            building = false))
+            building = false
+        readStore(dir.partOf(SurveyStoreName), ctx, StoreReader(onFile: onFile, onSps: onSps,
+          onP1: onP1, onCsv: onCsv, onEnd: onEnd))
         news.survey = surveyOf(g[], names)
         news.survey.notes = doc.notes
         (news.survey.csvRows, news.survey.csvSkipped) = (rows, skipped)
