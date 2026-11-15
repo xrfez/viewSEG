@@ -40,6 +40,7 @@ limits, and leaves it alone where it does not:
 | Text | windows, popups, bars, buttons and inputs, a selected or hovered item | contrast 4.5 (WCAG AA) |
 | Secondary text, the accent, ok, warning, error and information colours | the same | contrast 3 |
 | Disabled items | windows and popups | contrast 2 |
+| Ok, warning, error and information colours | each other; the text | a colour difference (CIE76) of 20; 15 |
 | A selected or hovered item | the window, popup or button it is on | contrast 1.08 |
 | The plot's traces, fills, a hovered and a selected trace | the plot, on paper and in the theme's colours | contrast 3 |
 | A hovered or a selected trace | the traces; each other | a colour difference (CIE76) of 25; 30 |
@@ -50,8 +51,9 @@ Text and status colours are lightened on a dark theme and darkened on a light on
 secondary text that is brighter than the text is dimmed; a selection that does not
 show is moved toward the text colour; a bar or popup of the other kind than the window
 (a dark bar in a light theme) is moved toward the window, and frames (an unticked
-checkbox) are kept apart from windows and popups, also in a theme of one colour. The marks (`selected`, `highlight`, `source`,
-`receiver`) are taken from the theme's other colours when its own are too close, and
+checkbox) are kept apart from windows and popups, also in a theme of one colour. The status colours (`ok`, `warning`, `error`, `info`)
+and the marks (`selected`, `highlight`, `source`, `receiver`) are taken from the
+theme's other colours when its own are too close, and
 from Everforest's (or a set of strong colours) when none of its colours will do, as
 in the grey themes (Vantablack, White). Each file says in its header which roles
 viewSEG moves in it. The seismic colour maps (grey, red-white-blue, viridis,

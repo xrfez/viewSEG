@@ -16,7 +16,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   highlight, warning, source, receiver
+#   highlight, warning, info, source, receiver
 
 name = "Last Horizon"
 mode = "dark"

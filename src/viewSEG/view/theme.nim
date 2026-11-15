@@ -335,6 +335,9 @@ const
     ## selected points (which are larger, and outlined)
   SitesApart* = 40.0
     ## `deltaE` of the map's receivers from its sources
+  StatusApart* = 20.0
+    ## `deltaE` of the status colours (ok, warning, error, info) from each other
+  StatusFromText* = 15.0 ## `deltaE` of a status colour from the text
 
 func lift(c: Rgba; on: openArray[Rgba]; ratio: float64): Rgba =
   ## `c` made `readable` on every colour of `on` (all light or all dark, as
@@ -386,11 +389,11 @@ func apart(c: Rgba; schemes: openArray[Scheme]; others: openArray[Apart];
 
 func signal(k: BaseColor): Rgba =
   ## A strong colour of `k`'s hue, to fall back on when neither palette has
-  ## one that is apart (from matplotlib's ten categorical colours).
+  ## one that is apart (matplotlib's categorical colours; an amber for yellow).
   case k
   of bcRed, bcBrightRed: rgb(0xd62728)
   of bcOrange, bcBrown: rgb(0xff7f0e)
-  of bcYellow, bcBrightYellow: rgb(0xbcbd22)
+  of bcYellow, bcBrightYellow: rgb(0xf0b000)
   of bcGreen, bcBrightGreen: rgb(0x2ca02c)
   of bcCyan, bcBrightCyan: rgb(0x17becf)
   of bcMagenta, bcBrightMagenta: rgb(0xe377c2)
@@ -468,6 +471,26 @@ func legible(r: var array[Role, Rgba]; p, builtin: Palette) =
   r[rlTextDisabled] = lift(r[rlTextDisabled], [window, r[rlPopup]], DisabledContrast)
   for role in [rlAccent, rlOk, rlWarning, rlError, rlInfo]:
     r[role] = lift(r[role], surfaces, DimContrast)
+  # The status colours apart from each other and from the text, where colour
+  # alone says which (a warning is not an error): the first of the
+  # palette's colours of the same kind that is, else the built-in theme's,
+  # else a strong one, each readable as above.
+  var said: seq[Rgba] = @[]
+  for (role, keys) in [(rlError, @[bcRed, bcBrightRed, bcMagenta, bcOrange]),
+      (rlWarning, @[bcYellow, bcBrightYellow, bcOrange, bcBrown]),
+      (rlOk, @[bcGreen, bcBrightGreen, bcCyan]),
+      (rlInfo, @[bcBlue, bcBrightBlue, bcCyan, bcAccent])]:
+    var candidates = @[r[role]]
+    for k in keys: candidates.add lift(p[k], surfaces, DimContrast)
+    for k in keys: candidates.add lift(builtin[k], surfaces, DimContrast)
+    for k in keys: candidates.add lift(signal(k), surfaces, DimContrast)
+    var (best, margin) = (r[role], -Inf)
+    for c in candidates:
+      var m = deltaE(c, r[rlText]) - StatusFromText
+      for o in said: m = min(m, deltaE(c, o) - StatusApart)
+      if margin < 0 and m > margin: (best, margin) = (c, m)
+    r[role] = best
+    said.add best
   # The theme's own plot: traces and fills show on its background.
   for role in [rlTrace, rlFillPositive, rlFillNegative]:
     r[role] = lift(r[role], [r[rlPlotBackground]], InkContrast)

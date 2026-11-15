@@ -18,6 +18,8 @@
 ##   40 from receivers; both 20 from the hovered and the selected points,
 ##   those 20 from each other; the record's receivers 12 from the others;
 ## - each file names, in its comment, the roles viewSEG moved to meet them;
+## - the status colours (ok, warning, error, info) 20 (deltaE) from each
+##   other and 15 from the text, where colour alone tells them apart;
 ## - a frame (an unticked checkbox) 12 (largest channel difference) from the
 ##   window and the popup;
 ## - the same of themes a user may drop in: all one colour (grey, black,
@@ -33,7 +35,9 @@
 ## ..., viewSEG moves ..."; with the user themes as `legible` took them
 ## before, 49 problems ("one grey dark: frame from window 0.00 < 12.0",
 ## selection 1.00 against window ...); with bars of the other kind left as
-## they are, "light, dark bar: text on bar 1.29 < 4.5".
+## they are, "light, dark bar: text on bar 1.29 < 4.5"; with the status
+## colours as the palettes give them, 28 problems ("Lumon: error from ok
+## 3.47 < 20.0", "Solitude: warning from text 5.41 < 15.0" ...).
 
 import std/[os, sequtils, strformat, strutils]
 import viewSEG/core/[geometry, panels, survey]
@@ -101,6 +105,12 @@ proc checkUi(t: Theme) =
   for role in [rlSelection, rlHover]:
     for where in [rlWindow, rlPopup, rlFrame]:
       atLeast(t.name & ": " & $role & " against " & $where, contrast(r[role], r[where]), 1.08)
+  let status = [rlOk, rlWarning, rlError, rlInfo]
+  for i in 0 ..< status.len: # where colour alone says it: a warning is not an error
+    atLeast(t.name & ": " & $status[i] & " from text", deltaE(r[status[i]], r[rlText]), 15)
+    for j in 0 ..< i:
+      atLeast(t.name & ": " & $status[i] & " from " & $status[j],
+        deltaE(r[status[i]], r[status[j]]), 20)
   for where in [rlWindow, rlPopup]: # an unticked checkbox is its frame alone
     atLeast(t.name & ": frame from " & $where, float64(distance(r[rlFrame], r[where])), 12)
 
