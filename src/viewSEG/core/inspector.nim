@@ -37,7 +37,9 @@
 ##   (`filters`, `flow`, as the panel's reader runs them): what the status bar's amplitude reads. As recorded:
 ##   the samples as the file holds them.
 ## - At most `MaxInspectedValues` samples in all are kept per answer; the
-##   rest of a trace is left out and its `cut` says how many.
+##   rest of a trace is left out and its `cut` says how many. As displayed,
+##   a trace cut so is filtered and processed whole first (up to
+##   `MaxProcessedValues`), so the samples kept are the plot's.
 
 import std/[heapqueue, intsets, locks, monotimes, os, strutils, times]
 import parseSEG
@@ -48,6 +50,9 @@ import edits, filesystem, headers, inbox, jobs, log, processing, selection, thre
 const
   MaxInspectedValues* = 32 * 1024 * 1024
     ## samples (128 MiB) one answer keeps at most, over all its traces
+  MaxProcessedValues* = 64 * 1024 * 1024
+    ## the samples of one trace read and processed whole for the samples as
+    ## displayed of a trace cut at `MaxInspectedValues`, at most
   MaxInspected* = 32 ## traces the Trace tab shows side by side, at most
 
 type
@@ -213,15 +218,19 @@ func usable(x: float64): bool {.inline.} = x > 0 and x < Inf
 proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
     req: InspectRequest; room: int; ws: var Workspace) =
   ## Trace `t`'s samples into `d`: at most `room`, as recorded or as
-  ## displayed.
+  ## displayed. As displayed, a trace with more samples than that is
+  ## filtered and processed whole (up to `MaxProcessedValues`), as the
+  ## plot's reader does, and then cut: the samples kept are the plot's.
   let n = f[].maxSamples([t.trace])
   let kept = min(n, max(room, 0))
   d.cut = n - kept
   if kept == 0: return
+  let processed = t.displayed and (req.filters.len > 0 or req.flow.len > 0)
+  let whole = if processed and kept < n: min(n, max(kept, MaxProcessedValues)) else: kept
   var log: DiagLog
-  let block1 = f[].readTraces([t.trace], 0 ..< kept, log)
-  d.samples = newSeq[float32](kept)
-  copyMem(addr d.samples[0], rowBlock(block1).rowPtr(0), kept * sizeof(float32))
+  let block1 = f[].readTraces([t.trace], 0 ..< whole, log)
+  d.samples = newSeq[float32](whole)
+  copyMem(addr d.samples[0], rowBlock(block1).rowPtr(0), whole * sizeof(float32))
   let failed = log.hasErrors # the trace could not be decoded: it reads as zeros
   if log.len > 0: d.problem = log[0].msg
   if not t.displayed: return
@@ -232,18 +241,22 @@ proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
   if not blank and teReversed in t.edits: reversePolarity(d.samples) # as the reader does
   let list = [t.trace]
   if not blank and req.filters.len > 0:
-    let plan = req.filters.compile(float32, d.dtMs, kept, recordSamples = n)
+    let plan = req.filters.compile(float32, d.dtMs, whole, recordSamples = n)
     ws.reserve(plan)
     var keys: seq[TraceKeys]
     var lengths: seq[int]
     let rows = if req.filterAux: f[].rowsOf(list).auxLiveRows(keys, lengths)
                else: f[].rowsOf(list)
-    plan.apply(rowBlock(d.samples, 1, kept), initChunkMeta(rows, d.dtMs, 0), ws)
+    plan.apply(rowBlock(d.samples, 1, whole), initChunkMeta(rows, d.dtMs, 0), ws)
   if not blank and req.flow.len > 0:
-    let plan = req.flow.compile(float32, d.dtMs, kept, recordSamples = n)
+    let plan = req.flow.compile(float32, d.dtMs, whole, recordSamples = n)
     ws.reserve(plan)
     let meta = initChunkMeta(f[].rowsOf(list), d.dtMs, 0)
-    plan.apply(rowBlock(d.samples, 1, kept), meta, ws)
+    plan.apply(rowBlock(d.samples, 1, whole), meta, ws)
+  if whole > kept:
+    d.samples.setLen kept # the part kept, of the trace processed whole
+  if whole < n and kept < n and processed:
+    d.problem = "processed on its first " & $whole & " samples only (it has " & $n & ")"
 
 proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
   ## Reads and posts what `req` asks for; false when a newer request came
