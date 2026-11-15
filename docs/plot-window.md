@@ -318,6 +318,19 @@ signals can start time across.
   time-down picture turned a quarter turn anticlockwise, "-90 degrees" taken literally)
   is asked. It is one constant (`FirstTraceAtTop`); either way a positive amplitude
   swings up.
+- **Speed** (software OpenGL, Mesa's llvmpipe, an optimised build, the machine busy with
+  other work at a load of about 65): turning costs nothing to draw. On the same plot, 400
+  traces of 2000 samples on 720 × 720 pixels, a whole wiggle image takes 36 to 42 ms time
+  across against 43 to 56 ms time down, and density 8 to 9 ms either way. In the default
+  layout, where the plot is wider than tall, a turn gives time more pixels and the traces
+  fewer: on Morgantown at the wiggle limit, the tiles then keep twice the samples (every
+  second sample's extremes, not every fourth's), and while the arrow key pans along the
+  traces the frames took a median of 51 to 83 ms time across against 45 to 67 ms time
+  down (three runs each; the same run varies by half from one to the next).
+
+Pictures (`docs/screenshots/turn-*.png`): Morgantown's first breaks near the source time
+down and time across, and the sweep pilot of `Sweep0.sgy` (Aux alone, normalized per
+trace) both ways.
 
 ## Wiggles
 

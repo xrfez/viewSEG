@@ -10,8 +10,10 @@
 ##   screenshots of the plot before and after: in the PNG, the killed
 ##   trace's band (within 0.4 of a trace spacing of its baseline) holds
 ##   nothing but the paper, and it held ink before; `state` says it is
-##   killed, `headers` gives its channel; a command that writes a file is
-##   refused, and the whole window can be taken;
+##   killed, `headers` gives its channel; turned time across, `state` says
+##   so and shows the same view, and in the plot's PNG the killed trace's
+##   band is a row of paper among inked ones; a command that writes a file
+##   is refused, and the whole window can be taken;
 ## - the agent names the fixture relative to the program's folder; it hides
 ##   the map's receivers (the Map window's picture changes) and halves the
 ##   map's scale (the map takes the view, as a zoom of the user's); `state`
@@ -33,7 +35,9 @@
 ## not taken"; with the sign drawn after the readout, "the sign is out of
 ## view: it spans 2632.0 to 2715.0 in a bar 1280.0 wide". With "headers"
 ## left out of the screenshot's targets, "screenshot of the Headers window:
-## ... window: one of window, plot, ...".
+## ... window: one of window, plot, ...". With the plot's image drawn time
+## down after the agent turned it, "turned: the killed trace's row 776"
+## (pixels of ink).
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -136,6 +140,19 @@ proc agent(s: Scenario) {.thread.} =
   r = c.call("headers", %*{"panel": 1, "position": 3})
   check(r, "headers")
   results.send(("channel", $parseJson(r.text)["keys"]["channel"].getFloat))
+  # the plot turned, time across: `state` says so, the view stays, the
+  # picture is turned
+  check(c.call("command", %*{"kind": "display", "display": {"orientation": "time across"}}),
+    "turn")
+  r = c.call("wait", %*{"timeout": 30})
+  check(r, "wait after the turn")
+  r = c.call("state", %*{"parts": ["panels"]})
+  check(r, "state after the turn")
+  let turned = parseJson(r.text)["panels"][0]
+  results.send(("turned", turned["display"]["orientation"].getStr & "|" & $turned["view"]))
+  r = c.call("screenshot", %*{"window": "plot", "maxSize": 4096})
+  check(r, "screenshot turned")
+  results.send(("turned shot", r["content"][0]["data"].getStr))
   r = c.call("command", %*{"kind": "export messages", "docPath": s.fixture & ".txt"})
   if not r.failed: fail("an export was carried out")
   r = c.call("screenshot")
@@ -301,7 +318,7 @@ withFixtures fx:
     doAssert signSeen, "no sign of the agent in the status bar"
     # every command; the calls that change nothing once each (the rest so
     # soon after are counted, not written)
-    doAssert commands == 8, "Messages holds " & $commands & " of the agent's 8 commands"
+    doAssert commands == 9, "Messages holds " & $commands & " of the agent's 9 commands"
     doAssert lines >= 12, "Messages holds " & $lines & " lines of the agent's calls"
     var found: Table[string, string]
     for (k, v) in got: found[k] = v
@@ -324,6 +341,28 @@ withFixtures fx:
       now, " after"
     doAssert seen > 1000 and was > 50, "the trace was blank before: " & $was
     doAssert now == 0, "the killed trace's band: " & $now & " pixels of ink"
+    # turned: the same view, time across, the killed trace's band a row
+    let parts = found["turned"].split('|')
+    doAssert parts[0] == "time across", found["turned"]
+    let tv = parseJson(parts[1])
+    doAssert tv["traces"] == view["traces"] and tv["timeMs"] == view["timeMs"],
+      "the turn moved the view: " & parts[1] & " was " & $view
+    proc inkedRows(png: string; position: float): (int, int) =
+      ## Pixels of `position`'s band, a row when time is across, that are not
+      ## the paper, of those looked at.
+      let (pixels, w, h) = decodedPng(decode(png))
+      let ppt = float(h) / (hi - lo)
+      let centre = (position - lo) * ppt - 0.5
+      for y in int(ceil(centre - 0.4 * ppt)) .. int(floor(centre + 0.4 * ppt)):
+        for x in 0 ..< w:
+          inc result[1]
+          if not close(pixels[y * w + x], ink.background): inc result[0]
+    let (killedRow, rowSeen) = inkedRows(found["turned shot"], 3)
+    let (nextRow, _) = inkedRows(found["turned shot"], 4)
+    echo "tguiagent: turned, position 3's row: ", killedRow, " of ", rowSeen,
+      " pixels inked, position 4's: ", nextRow
+    doAssert rowSeen > 1000 and killedRow == 0 and nextRow > 50,
+      "turned: the killed trace's row " & $killedRow & ", the next one's " & $nextRow
     let killed = found["killed"].splitWhitespace
     doAssert parseJson(killed[0]) == %*[parseInt(killed[1])], found["killed"]
     doAssert parseFloat(found["channel"]) == float(Channels - 3), found["channel"]

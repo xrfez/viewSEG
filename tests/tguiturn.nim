@@ -389,8 +389,8 @@ const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 proc realShots(path, name: string; view: Viewport; measure: bool) =
   ## Opens `path` in a 1600 x 1000 window, shows `view` and saves
   ## turn-`name`-down.png, turns the plot and saves turn-`name`-across.png;
-  ## with `measure`, holds the key that pans along the traces for 150 frames
-  ## in each orientation and prints the frame times.
+  ## or, with `measure`, holds the key that pans along the traces for 150
+  ## frames in each orientation and prints the frame times.
   let dir = getEnv("VIEWSEG_SCREENSHOTS")
   let tmp = getTempDir() / ("viewseg_tguiturn_" & $getCurrentProcessId())
   var stage = 0
@@ -422,7 +422,7 @@ proc realShots(path, name: string; view: Viewport; measure: bool) =
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
       elif p.laidOut and p.layout.traces > 0:
         f.showView(view)
-        if not measure: f.moveMouse(vec2(5, 5)) # off the plot: nothing hovered
+        f.moveMouse(vec2(5, 5)) # off the plot: nothing hovered (measuring, it clicks)
         stage = 1
     of 1, 3:
       if answered and f.tracePanel.drawnView.sameSpans(p.view):
@@ -435,16 +435,15 @@ proc realShots(path, name: string; view: Viewport; measure: bool) =
           f.pressMouse(at, false)
         if settle > 10:
           let c = f.markOf("plot.data")
-          if measure: # a trace under the pointer, read out in the status bar
-            f.moveMouse(vec2(round(c.pos.x + c.size.x * 0.4), round(c.pos.y + c.size.y * 0.3)))
           if stage == 1:
             echo "tguiturn: ", name, " time down: the plot ", c.size.x, " x ", c.size.y,
               " pixels, ", p.view.traces.width, " traces"
           else:
             echo "tguiturn: ", name, " time across: the plot ", c.size.x, " x ", c.size.y,
               " pixels, ", p.view.traces.width, " traces"
-          doAssert f.savePng(dir / ("turn-" & name & "-" & (if o == orTimeDown: "down" else:
-            "across") & ".png"))
+          if not measure:
+            doAssert f.savePng(dir / ("turn-" & name & "-" & (if o == orTimeDown: "down"
+              else: "across") & ".png"))
           settle = 0
           if measure:
             # pan along the traces: right when time is down, down when across
@@ -483,6 +482,9 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
   createDir(getEnv("VIEWSEG_SCREENSHOTS"))
   let morgantown = examples / "00000151_12900_11300.sgd"
   if fileExists(morgantown):
+    # lines 100 to 108 near the source: the first breaks and the ground roll
+    realShots(morgantown, "morgantown", Viewport(traces: Span(lo: 99.5, hi: 159.5),
+      timeMs: Span(lo: 0, hi: 1500)), measure = false)
     realShots(morgantown, "morgantown", Viewport(traces: Span(lo: 1000, hi: 1400),
       timeMs: Span(lo: 0, hi: 2000)), measure = true)
   let sweep = examples / "Sweep0.sgy"

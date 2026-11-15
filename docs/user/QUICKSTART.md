@@ -221,9 +221,9 @@ point by default): right-click them, or their names at the left, to choose its f
 | To | Mouse | Keys |
 |---|---|---|
 | Zoom in or out about the pointer | wheel | `+` / `-` |
-| Zoom in time only | Ctrl + wheel | Ctrl + Up / Down |
-| Zoom across the traces only | Shift + wheel, or the sideways wheel | Ctrl + Right / Left |
-| Pan | drag with the left or middle button | arrows (a tenth of the view; with Shift, a whole view) |
+| Zoom up and down only (time; the traces when time runs across) | Ctrl + wheel | Ctrl + Up / Down |
+| Zoom across only (the traces; time when it runs across) | Shift + wheel, or the sideways wheel | Ctrl + Right / Left |
+| Pan | drag with the left or middle button | arrows, the way they point (a tenth of the view; with Shift, a whole view) |
 | Pan with a scroll bar | drag its thumb; click the bar for a whole view; or the wheel over it | |
 | Zoom to a box | drag with the right button | |
 | Fit the whole record (in wiggles: as far as one pixel a trace, from the first) | the fit button | Ctrl+0 |
@@ -249,7 +249,8 @@ shows it larger, filling the plot.
 density, wiggles, or wiggles over density. Density is drawn only in the two modes that
 name it. Changing from density to wiggles while more traces are in view than the plot
 has pixels narrows the view to one pixel a trace, keeping its left edge. The two after them fill the wiggles' positive
-lobes (right of the trace) and negative lobes (left of it): either, both or none. Beside
+lobes (right of the trace; above it when time runs across) and negative lobes (left of
+it; below it): either, both or none. Beside
 them, **overlap** sets how far the strongest amplitudes swing a trace, in trace spacings
 (1 reaches the next trace; anything stronger is clipped there): type a value, or step it
 with - and +. The settings button (the gear) holds the overlap too, and the
@@ -338,9 +339,20 @@ the header fields to sort by, the first first, each ascending or descending, and
 Sort (Custom... is then highlighted; *File order* there goes back). Sorting never changes the file, and the display header and
 the status bar follow the order shown.
 
+**Time across.** The button after the cursor time line (a trace lying along an arrow)
+turns the plot: time runs from left to right, with its values along the bottom, the
+traces are stacked from the top down (the first at the top), and a positive amplitude
+swings up, as signals are drawn; click it again for time downwards. The plot shows the
+same traces and times after the turn and reads nothing again; everything follows it:
+the display header stands in columns left of the plot, time's scroll bar is under the
+plot and the traces' at its right, the scale boxes measure along the new directions, the
+mouse and the keys act the way you see (the arrows pan the way they point, Ctrl + wheel
+zooms up and down), and the strip's mode and fill symbols turn too. Each plot window
+keeps its own orientation, and viewSEG remembers it for the next plot.
+
 **Cursor time line.** The button after the fill buttons (a line drawn to an axis) turns
-on a thin line from the pointer across to the time axis, with the pointer's time written
-at the axis, so a time can be read off against the tick values, and the display
+on a thin line from the pointer across to the time axis (down to it when time runs
+across), with the pointer's time written at the axis, so a time can be read off against the tick values, and the display
 header's values of the trace under the pointer, each in a box over its row (also where
 the rows are thinned because the traces are close). It follows the pointer and goes when
 the pointer leaves the plot; viewSEG remembers whether it is on.
