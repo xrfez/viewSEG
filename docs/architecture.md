@@ -830,7 +830,7 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   the file's size, ends or modification time moved before or after the read). **The store**
   (`Store`) has one home at a time: `<config>/files/` (`rememberFilesIn`, which the
   frontend calls with the settings' folder; tests that do not call it remember nothing),
-  later a project's folder (3.0), through the same procs. It holds one NIF document per
+  a project's `files/` folder while a project is open (`project.md`), through the same procs. It holds one NIF document per
   identity (`<size>-<quick>-<n>.nif`, `n` telling apart files whose ends agree): the
   identity, the name and path last seen, when last opened, the file's modification time
   then, the lists by trace number from 1 in runs, `allReversed`; a reader keeps what it
@@ -884,6 +884,25 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   (`ckExportEdits`: CSV with each trace's record and channel from its keys, read on a job;
   or the NIF document) and back (`ckImportEdits`, read and taken apart on a job,
   `importEditsWork`, one step).
+- **The project** (design: `project.md`; not built yet). An optional folder the user
+  makes for one job: a NIF document (`<name>.viewseg`, versioned, every path kept
+  relative to the project folder and absolute, a missing one re-pointed by hand), the
+  store of file memory (`files/`, the store's home while the project is open), the survey
+  as imported (`survey/survey.bin`, a binary form of what parseSEG read from the survey
+  files, so that the map's layers, the joins and the spreads are made from it and the
+  survey files are read once in the project's life; checked against each survey file's
+  size, modification time and quick hash, and read again in the background when one
+  changed), and `cache/` (what can be made again). Data folders are never written to.
+  Every file opened in a project is joined with its survey without the import's window.
+  The document and the file documents are written by the disk thread as the settings
+  are (a temporary file, then a rename); `survey.bin` by a job on the background lane,
+  renamed only when whole and named in the document with its size and hash. One program
+  at a time writes a project: the first holds `.lock` (`fs.lockFile`) and names itself in
+  `owner.nif`; a second opens it read-only. What stays per user (the settings, recent
+  files, folders and projects, layouts, the program's own store) is unchanged. Modules:
+  `core/project`, `core/projectnif`, `core/surveystore`, `core/projectjobs`,
+  `ui/imgui/projectwindow`; agent control's `state` part `project` and the commands
+  `new project`, `open project`, `close project`, `project folder`.
 - **Layouts** (`core/layouts`): the toolkit's own layout text (Dear ImGui's `.ini` form,
   which `core` never reads) in a NIF document. The frontend reports the arrangement when
   Dear ImGui says it changed (`ckLayout`; `io.IniFilename` is nil, so ImGui writes no file
