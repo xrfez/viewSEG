@@ -16,14 +16,19 @@
 ## each trace it gave them to; the Headers reader is asked again once the
 ## join has changed the keys.
 ##
-## Seen to fail: with the summary's record taken from the first gather
+## Seen to fail: with the traces pointed at last not kept
+## (`chosenTraces` not returning `last`), "the trace pointed at last went";
+## with the summary's record taken from the first gather
 ## whatever is shown (`s.records[0]`), `summaryOfASegyFile` found no FFID
 ## 12 for the second record; with the inspector keeping its holds,
 ## `inspectorReadsTheRecordShown` found "the inspector's hold did not end".
 ## With the request not made again after a join (`joins` left out of the
 ## comparison in `followInspect`), `theJoinedValues` found "not read again
 ## after the join"; with every key of a joined group marked for every trace
-## (`row.joined[c] = true`), "@[true, true]".
+## (`row.joined[c] = true`), "@[true, true]"; with the trace table's
+## marks of differing values cleared (`r.differs = false` after
+## `fieldTable` in `traceTable`), "the channel sets that differ are not
+## marked".
 
 import std/[intsets, os, strutils]
 import parseSEG
@@ -193,6 +198,9 @@ block theJoinedValues:
     doAssert rcvX.joined == @[true, false], $rcvX.joined
     doAssert rcvX.values[0] == exactText(answer[0].keys.rcvX) and rcvX.differs, $rcvX
     doAssert row("keys.srcX").joined == @[true, true], "the source is joined for both"
+    # the header fields that differ between the two traces are marked, the others not
+    doAssert row("trace.channelSetNumber").differs, "the channel sets that differ are not marked"
+    doAssert not row("trace.fileNumber").differs, "the same file number is marked"
     # then the headers' own fields, as the file holds them, unmarked
     let own = row("ext1.receiverLineNumber")
     doAssert own.joined.len == 0 and own.values == @["100", "101"], $own

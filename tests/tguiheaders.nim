@@ -40,9 +40,14 @@
 ## headers never came". With the joined values drawn in the text colour
 ## (the accent's push taken out of `drawFieldTable`), "the joined receiver X
 ## is not in the accent colour: 0 pixels". With the line of what does not
-## answer not drawn
-## (`headersWait` not asked in `drawHeaders`), "stopped at \"a header read
-## hangs\"".
+## answer not drawn (`headersWait` not asked in `drawHeaders`), "stopped at
+## \"a header read hangs\"". With the traces pointed at last not kept when
+## the pointer leaves (`chosenTraces` not returning `last`), "the trace
+## pointed at went"; with the trace table's marks of differing values
+## cleared (`r.differs = false` after `fieldTable` in `traceTable`), "the
+## channels that differ are not marked" (with `fieldTable`'s marking taken
+## out for every table, the channel sets' check fails first: "the channel
+## types that differ are not marked").
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves headers-*.png there, and, with the
