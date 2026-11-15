@@ -609,6 +609,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   first is written). A release that is not portable may carry site defaults in its
   `config/settings.nif`. The exports (`ckExportSettings`, `ckExportLayout`, `ckExportLog`)
   never write over a seismic file the program has open, is opening or closing, or lists.
+  In the menus every import is under File > Import (the survey, settings, a layout) and
+  every export under File > Export (the messages, the settings, the layout), each there
+  only (the Messages window's own Export... button aside).
 - **Who changed it: what is saved.** Every `Command` carries where it came from
   (`origin`: `coWindow`, the default, or `coAgent`, which only agent control's `command`
   tool sets). A change from either changes what the program shows and uses; only the
@@ -638,7 +641,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   `<config>/layouts/<name>.nif`; `ckLoadLayout` and `ckImportLayout` read a file on the disk
   thread, and the frontend arranges its windows when `AppState.layoutLoads` goes up
   (`igClearIniSettings`, `igLoadIniSettingsFromMemory`, between frames); `ckExportLayout`
-  writes one anywhere. Presets ship in `assets/layouts/`; a user's layout of the same name
+  writes one anywhere (the frontend first reports the arrangement on screen, as for
+  `ckSaveLayout`). Presets ship in `assets/layouts/`; a user's layout of the same name
   hides a preset. The main window's own place is in the settings (`window`), not in a
   layout: at start it is opened there when a screen still holds its top edge, made to fit
   the screen it is on when no screen is as large, and opened in the middle of the primary

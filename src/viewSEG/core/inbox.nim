@@ -45,9 +45,9 @@ type
 
   ReadPurpose* = enum
     ## What a document is read for.
-    rpImportSettings ## settings to take in (File > Settings > Import)
-    rpLoadLayout     ## a layout to show (View > Layout > Load)
-    rpImportLayout   ## a layout to show and keep among the user's (View > Layout > Import)
+    rpImportSettings ## settings to take in (File > Import > Settings)
+    rpLoadLayout     ## a layout to show (Window: a preset, Load)
+    rpImportLayout   ## a layout to show and keep among the user's (File > Import > Layout)
     rpLayouts        ## the layouts there are: the user's and the presets, listed (`layouts`)
 
   Msg* = object

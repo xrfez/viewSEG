@@ -2,10 +2,12 @@
 ## ways, and its shortcut is shown in the menu and in the toolbar's tooltips.
 ## Drawing returns what the user asked for; the caller acts on it.
 ##
-## File opens, follows and closes files and holds the settings; View holds
-## the theme; Window puts the windows right (Reset the windows, Bring all
-## windows onto this screen), shows, hides and brings forward each window,
-## and loads and saves layouts.
+## File opens, follows and closes files, and holds every import (File >
+## Import: a survey, settings, a layout) and every export (File > Export:
+## the messages, the settings, the layout), each in that one place; View
+## holds the theme; Window puts the windows right (Reset the windows, Bring
+## all windows onto this screen), shows, hides and brings forward each
+## window, and loads and saves layouts.
 
 import std/os
 import imguin/cimgui
@@ -15,19 +17,23 @@ import icons, marks, windows
 
 type
   MenuAction* = enum
+    ## What a menu item, a shortcut or a button asks for; its name is how it
+    ## is marked ("menu." and the name), and what it is called outside a
+    ## submenu (`shownAs` in one).
     maOpenFile = "Open file...", maOpenFiles = "Open files...",
-    maOpenFolder = "Open folder...", maClose = "Close", maJoinGeometry = "Join geometry...",
+    maOpenFolder = "Open folder...", maClose = "Close",
+    maImportSurvey = "Import survey...", maImportSettings = "Import settings...",
+    maImportLayout = "Import layout...",
+    maExportLog = "Export messages...", maExportSettings = "Export settings...",
+    maExportLayout = "Export layout...",
+    maResetSettings = "Reset the settings",
     maQuit = "Quit",
     maToggleTheme = "Light / dark",
-    maExportSettings = "Export...", maImportSettings = "Import...",
-    maResetSettings = "Reset to defaults",
     maResetWindows = "Reset the windows",
     maBringWindows = "Bring all windows onto this screen",
     maSaveLayout = "Save layout as...",
-    maExportLayout = "Export layout...", maImportLayout = "Import layout...",
     maShowFiles = "Files", maShowRecords = "Records", maShowMap = "Map",
-    maShowHeaders = "Headers", maShowJobs = "Jobs", maShowMessages = "Messages",
-    maExportLog = "Export messages..."
+    maShowHeaders = "Headers", maShowJobs = "Jobs", maShowMessages = "Messages"
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
@@ -67,22 +73,23 @@ const
     maOpenFiles: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_O.cint,
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
-    maJoinGeometry: 0,
+    maImportSurvey: 0, maImportSettings: 0, maImportLayout: 0, maExportLog: 0,
+    maExportSettings: 0, maExportLayout: 0, maResetSettings: 0,
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
-    maToggleTheme: 0, maExportSettings: 0, maImportSettings: 0, maResetSettings: 0,
+    maToggleTheme: 0,
     maResetWindows: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_R.cint,
-    maBringWindows: 0, maSaveLayout: 0, maExportLayout: 0, maImportLayout: 0,
+    maBringWindows: 0, maSaveLayout: 0,
     maShowFiles: 0, maShowRecords: 0, maShowMap: 0, maShowHeaders: 0, maShowJobs: 0,
-    maShowMessages: 0, maExportLog: 0]
+    maShowMessages: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
-    maJoinGeometry: IconMap, maQuit: IconQuit, maToggleTheme: IconTheme,
-    maExportSettings: IconSave, maImportSettings: IconOpenFile, maResetSettings: IconClose,
+    maImportSurvey: IconMap, maImportSettings: IconSettings, maImportLayout: IconLayers,
+    maExportLog: IconLog, maExportSettings: IconSettings, maExportLayout: IconLayers,
+    maResetSettings: IconRefresh, maQuit: IconQuit, maToggleTheme: IconTheme,
     maResetWindows: IconRefresh, maBringWindows: IconFit, maSaveLayout: IconSave,
-    maExportLayout: IconExport, maImportLayout: IconOpenFile, maShowFiles: IconList,
-    maShowRecords: IconRecords, maShowMap: IconMap, maShowHeaders: IconTable,
-    maShowJobs: IconTasks, maShowMessages: IconLog, maExportLog: IconExport]
+    maShowFiles: IconList, maShowRecords: IconRecords, maShowMap: IconMap,
+    maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog]
@@ -96,8 +103,18 @@ proc shortcutName*(a: MenuAction): string =
   ## The shortcut of `a` as shown to the user ("Ctrl+O"), or "".
   if shortcuts[a] == 0: "" else: $igGetKeyChordName(shortcuts[a])
 
+func shownAs(a: MenuAction): string =
+  ## What `a` is called in its menu: in File > Import and File > Export,
+  ## what is imported or exported.
+  case a
+  of maImportSurvey: "Survey..."
+  of maImportSettings, maExportSettings: "Settings..."
+  of maImportLayout, maExportLayout: "Layout..."
+  of maExportLog: "Messages..."
+  else: $a
+
 proc label(a: MenuAction): string =
-  menuIcons[a] & "  " & $a
+  menuIcons[a] & "  " & shownAs(a)
 
 var marked: ptr Marks ## the frame's marks while the menu is drawn (`drawMainMenu`)
 
@@ -137,6 +154,35 @@ proc drawRecent(recent, folders: openArray[string]; res: var MenuResult) =
         res.clearRecent = true
     igEndMenu()
 
+proc drawImports(res: var MenuResult) =
+  ## File > Import: everything that is read in, each from here only.
+  let open = igBeginMenu((IconOpenFile & "  Import").cstring, true)
+  if marked != nil: marked[].mark("menu.Import")
+  if open:
+    item(maImportSurvey, res)
+    tip("Join survey files (SPS, SEG P1, a CSV table) to an open file's traces, so they " &
+      "have their sources' and receivers' coordinates; in memory only, the file is not changed")
+    item(maImportSettings, res)
+    tip("Take in the settings of a file exported before (here or on another computer); " &
+      "those it does not hold stay as they are")
+    item(maImportLayout, res)
+    tip("Arrange the windows as a layout file says, and keep it among your layouts " &
+      "(Window > Load)")
+    igEndMenu()
+
+proc drawExports(res: var MenuResult) =
+  ## File > Export: everything that is written out, each from here only.
+  let open = igBeginMenu((IconExport & "  Export").cstring, true)
+  if marked != nil: marked[].mark("menu.Export")
+  if open:
+    item(maExportLog, res)
+    tip("Write every message of this session to a text file of your choice")
+    item(maExportSettings, res)
+    tip("Write every setting to a file of your choice, to keep or to take to another computer")
+    item(maExportLayout, res)
+    tip("Write the windows' arrangement to a file of your choice")
+    igEndMenu()
+
 proc drawLayouts(input: MenuInput; res: var MenuResult) =
   ## Window's layouts: the presets, the user's own under Load, then saving,
   ## exporting and importing one.
@@ -163,12 +209,9 @@ proc drawLayouts(input: MenuInput; res: var MenuResult) =
       else: "The layouts you save are listed here")
   igBeginDisabled(not input.keepsLayouts)
   item(maSaveLayout, res)
-  tip("Keep the windows as they are now under a name, to load again")
+  tip("Keep the windows as they are now under a name, to load again (a layout file is " &
+    "written and read under File > Export and File > Import)")
   igEndDisabled()
-  item(maExportLayout, res)
-  tip("Write the windows' arrangement to a file of your choice")
-  item(maImportLayout, res)
-  tip("Arrange the windows as such a file says, and keep it among the layouts")
 
 proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
   ## Window: putting the windows right first, then each window with a tick,
@@ -191,7 +234,7 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
     tip(if w in AlwaysShown: "Always shown: a click brings it forward"
         else: "Ticked while shown. A click shows it in front when it is hidden or behind " &
           "another tab, and hides it when it is in sight")
-  if igMenuItem_Bool(label(maJoinGeometry).cstring, nil, input.joinShown, true):
+  if igMenuItem_Bool((IconMap & "  Join geometry").cstring, nil, input.joinShown, true):
     res.toggleJoin = true
   if marked != nil: marked[].mark("menu.window.join")
   tip("Ticked while open: a click opens it in front, or closes it")
@@ -232,21 +275,12 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
         "(its index and its first view), so that the next step does not wait for a slow " &
         "or network drive")
       igSeparator()
-      item(maJoinGeometry, result)
-      tip("Join survey files (SPS, SEG P1, a CSV table) to an open file's traces, so they " &
-        "have their sources' and receivers' coordinates; in memory only, the file is not changed")
+      drawImports(result)
+      drawExports(result)
+      item(maResetSettings, result)
+      tip("Every setting back to its default (the recent files and the window's place " &
+        "stay); the settings before are kept in a copy")
       igSeparator()
-      if igBeginMenu((IconSettings & "  Settings").cstring, true):
-        item(maExportSettings, result)
-        tip("Write every setting to a file of your choice, to keep or to take to " &
-          "another computer")
-        item(maImportSettings, result)
-        tip("Take in the settings of such a file; those it does not hold stay as they are")
-        igSeparator()
-        item(maResetSettings, result)
-        tip("Every setting back to its default (the recent files and the window's place " &
-          "stay); the settings before are kept in a copy")
-        igEndMenu()
       if igMenuItem_Bool((IconAgent & "  Agent control").cstring, nil, input.agentOn, true):
         result.toggleAgent = true
       tip("On: an AI agent (an MCP client) can operate viewSEG while you watch, through " &

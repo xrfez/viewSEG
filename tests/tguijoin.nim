@@ -3,7 +3,7 @@
 ## whose headers name stations but give (0, 0) coordinates, with the
 ## survey's S, R and X files loaded:
 ##
-## - File > Join geometry... opens the window; the loaded survey files are
+## - File > Import > Survey... opens the window; the loaded survey files are
 ##   listed, ticked; Tab moves between its controls;
 ## - Join joins them: the window says what it did in plain words, the file's
 ##   keys hold the survey's coordinates, the plot shows the joined record
@@ -119,10 +119,12 @@ proc joinWindow() =
     step("loaded", noop, proc (f: FrameInfo): bool =
       f.core.survey.layers.len == 4 and f.panel.laidOut and
         f.core.tiles(f.core.findPanel(MainPanel)).len > 0)
-    step("File > Join geometry...", proc (f: FrameInfo) = f.click(f.markOf("menu.File").centre),
-      proc (f: FrameInfo): bool =
-      let item = f.markOf("menu.Join geometry...")
+    step("File > Import > Survey...", proc (f: FrameInfo) =
+      f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
+      let item = f.markOf("menu.Import survey...")
       if item.size.x > 0: f.click(item.centre)
+      elif f.markOf("menu.Import").size.x > 0 and f.index mod 10 == 0:
+        f.click(f.markOf("menu.Import").centre)
       f.joinWindow.shown and f.markOf("join").size.x > 0)
     step("the loaded survey files are listed", noop, proc (f: FrameInfo): bool =
       result = f.markOf("join.run").size.x > 0
@@ -241,7 +243,12 @@ proc morgantown(dir: string) =
         f.pressMouse(m.centre, true)
         f.pressMouse(m.centre, false)
       if wait == 6:
-        let item = f.markOf("menu.Join geometry...")
+        let sub = f.markOf("menu.Import")
+        f.moveMouse(sub.centre)
+        f.pressMouse(sub.centre, true)
+        f.pressMouse(sub.centre, false)
+      if wait == 14:
+        let item = f.markOf("menu.Import survey...")
         if item.size.x > 0:
           f.moveMouse(item.centre)
           f.pressMouse(item.centre, true)

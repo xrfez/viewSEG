@@ -40,7 +40,7 @@ import ../../view/jobstatus
 import agentshot, chrome, dpi, filelist, fonts, headerswindow, icons, jobswindow, joindialog,
   mapwindow, menus, messages, recordlist, shell, style, tracepanel, windows
 
-export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow
+export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow, DialogKind
 
 const
   glslVersion = "#version 330"
@@ -106,6 +106,7 @@ type
     agent: AgentControl                        ## agent control: off until turned on
     agentSocket: string                        ## where it listens; "" until first needed
     version: string                            ## the program's version, for agents
+    dialogs: DialogHook                        ## `RunOptions.dialogs`
 
   FrameInfo* = object
     ## What a frame hook sees. The hook runs after the main window is drawn and
@@ -135,6 +136,10 @@ type
     logFile*: string ## where `text` was written; "" when it could not be
 
   FailureHook* = proc (failure: StartupFailure) {.closure.}
+
+  DialogHook* = proc (kind: DialogKind; location: string): seq[string] {.closure.}
+    ## Stands for the system's file dialogs (tests): given the dialog asked
+    ## for and where it starts, the paths chosen; none for a cancel.
 
   SimKey* = enum
     ## Keys a test can press (`pressKey`).
@@ -184,6 +189,8 @@ type
       ## on and off in any case
     agentSocket*: string
       ## the socket agent control listens on; "" for `paths.agentSocket()`
+    dialogs*: DialogHook
+      ## answers the file dialogs in place of the system's; nil shows them
     resetWindows*: bool
       ## start with the windows as at a first start (`--reset-windows`): the
       ## saved layout is not used, and the main window opens on the primary
@@ -577,6 +584,8 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
       ui.core.apply Command(kind: ckImportSettings, docPath: ev.paths[0])
     of dkExportLayout:
       let path = if ev.paths[0].splitFile.ext.len == 0: ev.paths[0] & ".nif" else: ev.paths[0]
+      # The arrangement on screen now, which Dear ImGui may not have said yet.
+      ui.core.apply Command(kind: ckLayout, arrangement: $igSaveIniSettingsToMemory(nil))
       ui.core.apply Command(kind: ckExportLayout, docPath: path)
     of dkImportLayout:
       ui.core.apply Command(kind: ckImportLayout, docPath: ev.paths[0])
@@ -597,6 +606,16 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     ui.system = ev.theme
     if ui.selected.len == 0 and resolveTheme(ui.choice, ev.theme) != ui.theme.mode:
       ui.setTheme()
+
+proc ask(ui: Ui; kind: DialogKind; location = "") =
+  ## Shows the file dialog `kind`, starting at `location`; its answer comes
+  ## as a shell event (from `RunOptions.dialogs` when a test gives one).
+  if ui.dialogs == nil:
+    showDialog(kind, SDL_GetWindowID(ui.window), location)
+  else:
+    let paths = ui.dialogs(kind, location)
+    postShellEvent(if paths.len > 0: ShellEvent(kind: sePathsChosen, dialog: kind,
+      paths: paths) else: ShellEvent(kind: seCancelled, dialog: kind))
 
 func everyWindow(): seq[string] =
   ## The ImGui IDs of the windows that can be outside the main window: the
@@ -674,34 +693,33 @@ proc offScreenCheck(ui: var Ui) =
       ui.offScreen.setLen 0
 
 proc onActions(ui: var Ui; actions: set[MenuAction]) =
-  let parent = SDL_GetWindowID(ui.window)
   let recent = ui.core.settings.recentFolders
   let folder = if recent.len > 0: recent[0] & DirSep else: ""
   for a in actions:
     case a
-    of maOpenFile: showDialog(dkOpenFile, parent, folder)
-    of maOpenFiles: showDialog(dkOpenFiles, parent, folder)
-    of maOpenFolder: showDialog(dkOpenFolder, parent, folder)
+    of maOpenFile: ui.ask(dkOpenFile, folder)
+    of maOpenFiles: ui.ask(dkOpenFiles, folder)
+    of maOpenFolder: ui.ask(dkOpenFolder, folder)
     of maClose:
       let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
       if i >= 0: ui.core.apply Command(kind: ckClose, file: ui.core.sessions[i].id)
-    of maJoinGeometry: ui.join.open()
+    of maImportSurvey: ui.join.open()
     of maQuit: ui.running = false
     of maToggleTheme: ui.toggleTheme()
     of maExportSettings:
       let dir = ui.core.settingsFile.parentDir
-      showDialog(dkExportSettings, parent,
+      ui.ask(dkExportSettings,
         (if dir.len > 0: dir / "viewSEG-settings.nif" else: "viewSEG-settings.nif"))
-    of maImportSettings: showDialog(dkImportSettings, parent)
+    of maImportSettings: ui.ask(dkImportSettings)
     of maResetSettings: ui.core.apply Command(kind: ckResetSettings)
     of maSaveLayout: ui.askLayoutName = true
     of maResetWindows: ui.resetWindows()
     of maBringWindows: ui.bringWindows()
     of maExportLayout:
       let dir = ui.core.settingsFile.parentDir
-      showDialog(dkExportLayout, parent,
+      ui.ask(dkExportLayout,
         (if dir.len > 0: dir / "viewSEG-layout.nif" else: "viewSEG-layout.nif"))
-    of maImportLayout: showDialog(dkImportLayout, parent)
+    of maImportLayout: ui.ask(dkImportLayout)
     of maShowFiles: ui.windows.bringForward(awFiles)
     of maShowRecords: ui.windows.bringForward(awRecords)
     of maShowMap: ui.windows.bringForward(awMap)
@@ -710,7 +728,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maShowMessages: ui.windows.bringForward(awMessages)
     of maExportLog:
       let dir = ui.core.settingsFile.parentDir
-      showDialog(dkExportLog, parent, (if dir.len > 0: dir / "viewSEG-messages.log"
+      ui.ask(dkExportLog, (if dir.len > 0: dir / "viewSEG-messages.log"
         else: "viewSEG-messages.log"))
 
 # ------------------------------------------------------------------- frame --
@@ -991,7 +1009,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   if join.addFiles:
     let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
     let folder = if i >= 0: ui.core.sessions[i].path.parentDir & DirSep else: ""
-    showDialog(dkJoinFiles, SDL_GetWindowID(ui.window), folder)
+    ui.ask(dkJoinFiles, folder)
   ui.drawSaveLayout()
   ui.drawDropHint()
   if ui.windows.shows(awJobs):
@@ -1265,8 +1283,8 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
     themes: themeFiles(themeDirs(userThemes, assets)), scale: windowScale(window),
     core: initAppState(indexCache = indexCache), pick: noPick(), dog: initFrameWatchdog(),
     slow: initSlowFrameDigest(), echoing: isatty(stdout), running: true,
-    agentSocket: opts.agentSocket, version: if opts.version.len > 0: opts.version
-                                           else: "unknown")
+    agentSocket: opts.agentSocket, dialogs: opts.dialogs,
+    version: if opts.version.len > 0: opts.version else: "unknown")
   if opts.version.len > 0:
     result.say("viewSEG " & opts.version)
   if opts.persist:

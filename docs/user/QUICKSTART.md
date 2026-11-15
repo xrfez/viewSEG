@@ -588,7 +588,8 @@ for all of it), jobs that failed. Its strip:
 - **Copy** puts the lines shown on the clipboard (right-click a line to copy only it).
 - **Clear** empties the window; the session's log file keeps everything.
 - **Export...** writes every message to a text file of your choice (never over a seismic
-  file viewSEG has open or lists: it refuses, and says so).
+  file viewSEG has open or lists: it refuses, and says so), as File > Export > Messages...
+  does.
 
 Click a message that names a trace (a damaged trace, say) to see that trace: its record is
 shown in the Seismic window with the trace selected, and its file is opened again if you have
@@ -616,7 +617,7 @@ toggles and columns. It is saved a second after a change and when you quit.
 | **Bring all windows onto this screen** | the windows you dragged out of the main window, wherever they are (another screen, a screen that is gone, past a screen's edge), and the main window itself, wholly onto the screen the main window is on |
 | Seismic, Files, Records, Map, Headers, Jobs, Messages | ticked while shown; a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown |
 | Wide plot, Side by side, Plot and map | the presets that ship with viewSEG |
-| Load, Save layout as..., Export layout..., Import layout... | your own layouts: saved under a name, loaded again, written to a file, read from one |
+| Load, Save layout as... | your own layouts: saved under a name, loaded again (a layout file is written and read under File > Export and File > Import) |
 
 A layout saved before a window existed (before the map came, say) docks that window beside
 its neighbours, and shows it. A window a layout puts off every screen (left on a monitor
@@ -631,10 +632,13 @@ default size. Every other setting stays as it is, and the arrangement is saved a
 from then on. Ctrl+Shift+R does the same in a running viewSEG, if the main window has the
 keyboard. Deleting `layout.nif` in the settings folder also works, with viewSEG closed.
 
-**File > Settings** exports them to a file of your choice (to keep, or to take to another
-computer), imports such a file (what it does not hold stays as it is), or resets them to
-the defaults (the recent files and the window's place stay; the settings before are kept
-in a copy).
+**File > Export > Settings...** writes them to a file of your choice (to keep, or to take
+to another computer), **File > Import > Settings...** takes such a file in (what it does
+not hold stays as it is), and **File > Reset the settings** puts them back to the defaults
+(the recent files and the window's place stay; the settings before are kept in a copy).
+
+Every import is under **File > Import** (a survey, settings, a layout) and every export
+under **File > Export** (the messages, the settings, the layout), each in that one place.
 
 `settings.nif` is a text file (NIF) you can read and edit while viewSEG is closed. If it
 is damaged, viewSEG says so in the Messages window, moves it aside as

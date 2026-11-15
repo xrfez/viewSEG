@@ -1,5 +1,5 @@
 ## The settings as a NIF document (`core/nif`), as `settings.nif` holds
-## them and File > Settings exports them:
+## them and File > Export > Settings writes them:
 ##
 ## ```
 ## (.nif27)
