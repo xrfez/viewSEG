@@ -65,6 +65,8 @@ type
     texts: Table[string, CachedText]
     applied: Table[string, set[HeaderColumn]] ## the columns each table was given
     setsPage: int ## the page of the Channel sets tab's columns shown
+    widths: Table[string, float32]
+      ## per table, the window's width its description was last fitted to
     sets: int ## how many channel sets the record shown has
 
   HeadersOutput* = object
@@ -167,7 +169,13 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
 
 # ------------------------------------------------------------ header tables --
 
-proc syncColumns(ui: var HeadersUi; id: string; st: AppState; output: var HeadersOutput) =
+func columnOf(c: HeaderColumn; values: int): cint =
+  ## The table column of `c` in a table of `values` value columns: the
+  ## description first, the values next, then the name, bytes and offset.
+  if c == hcDescription: 0 else: cint(values + ord(c))
+
+proc syncColumns(ui: var HeadersUi; id: string; values: int; st: AppState;
+    output: var HeadersOutput) =
   ## After the table's header row (its layout is made there): the settings'
   ## columns are given to a table that has not had them (its first frame,
   ## or the settings changed), from the next frame on; a column the user
@@ -175,10 +183,11 @@ proc syncColumns(ui: var HeadersUi; id: string; st: AppState; output: var Header
   let want = st.settings.headers.columns
   var now: set[HeaderColumn]
   for c in HeaderColumn:
-    if (igTableGetColumnFlags(cint(ord(c))) and ImGui_TableColumnFlags_IsEnabled.cint) != 0:
+    if (igTableGetColumnFlags(columnOf(c, values)) and
+        ImGui_TableColumnFlags_IsEnabled.cint) != 0:
       now.incl c
   if id notin ui.applied or ui.applied[id] != want:
-    for c in HeaderColumn: igTableSetColumnEnabled(cint(ord(c)), c in want)
+    for c in HeaderColumn: igTableSetColumnEnabled(columnOf(c, values), c in want)
     ui.applied[id] = want
   elif now != want:
     ui.applied[id] = now
@@ -204,9 +213,9 @@ proc valueMenu(table: FieldTable; column: int; value: string) =
 proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppState;
     fonts: Fonts; t: Theme; marks: var Marks; output: var HeadersOutput; height = 0'f32) =
   ## A header table: a row per field (titles between blocks), its
-  ## description, name, bytes and offset (the columns chosen), and a value
-  ## column per header; values that differ between the columns in the
-  ## warning colour. Only the rows in view are drawn.
+  ## description, a value column per header, and its name, bytes and
+  ## offset (the columns chosen); values that differ between the columns in
+  ## the warning colour. Only the rows in view are drawn.
   # (never more than Dear ImGui takes: a caller pages more, `pageOf`)
   let values = min(table.columns.len, MaxSideBySide)
   let n = int(HeaderColumn.high) + 1 + values
@@ -214,20 +223,32 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
     ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_Resizable.cint or
     ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_Hideable.cint or
     ImGui_TableFlags_SizingFixedFit.cint
-  if not igBeginTable(id.cstring, cint(n), flags, ImVec2_c(x: 0, y: height), 0): return
+  # The description is at most 18 em, and 40 % of the window, so
+  # that the first values show beside it in a narrow window (a long one is
+  # cut, and said whole when pointed at); it can be widened, until the
+  # window's width changes. (The columns' order changed: "v2", so a width
+  # Dear ImGui kept for the old order is not taken for another column.)
+  let avail = igGetContentRegionAvail().x
+  let describe = round(clamp(0.4 * avail, 8 * igGetFontSize(), 18 * igGetFontSize()))
+  if not igBeginTable((id & "##v2").cstring, cint(n), flags, ImVec2_c(x: 0, y: height), 0):
+    return
   igTableSetupScrollFreeze(1, 1)
-  # The description starts narrow enough for the values to show beside it
-  # (a long one is cut, and said whole when pointed at); it can be widened.
   igTableSetupColumn(($hcDescription).cstring, ImGui_TableColumnFlags_NoHide.cint or
-    ImGui_TableColumnFlags_WidthFixed.cint, 18 * igGetFontSize(), ImGuiID(ord(hcDescription)))
-  for c in hcName .. HeaderColumn.high:
-    igTableSetupColumn(($c).cstring, 0, 0, ImGuiID(ord(c)))
+    ImGui_TableColumnFlags_WidthFixed.cint, describe, ImGuiID(ord(hcDescription)))
   for k in 0 ..< values:
     igTableSetupColumn(table.columns[k].cstring, ImGui_TableColumnFlags_NoHide.cint, 0,
       ImGuiID(100 + k))
+  for c in hcName .. HeaderColumn.high:
+    igTableSetupColumn(($c).cstring, 0, 0, ImGuiID(ord(c)))
+  # The window's width changed since the description was fitted: fitted
+  # again. (Not in the table's first frame, which takes `describe` as it
+  # is set up, and before Dear ImGui has laid it out once.)
+  if igGetCurrentTable().MinColumnWidth > 0 and ui.widths.getOrDefault(id, avail) != avail:
+    igTableSetColumnWidth(0, describe)
+  ui.widths[id] = avail
   fonts.withFont(frHeading, 0):
     igTableHeadersRow()
-  ui.syncColumns(id, st, output)
+  ui.syncColumns(id, values, st, output)
   let warning = vec4(t.roles[rlWarning])
   # The cells are no stops of Tab (it moves between the window's controls,
   # not through every value); the arrow keys reach them.
@@ -248,7 +269,7 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
         if row.differs:
           igTableSetBgColor(ImGui_TableBgTarget_RowBg1.cint, u32(withAlpha(t.roles[rlWarning], 30)),
             -1)
-        if igTableSetColumnIndex(cint(ord(hcDescription))):
+        if igTableSetColumnIndex(columnOf(hcDescription, values)):
           igTextUnformatted(row.description.cstring, nil)
           if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
             igSetTooltip("%s", (row.description & "\n" & row.name & (if row.joined.len > 0:
@@ -256,19 +277,19 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
               (if row.differs: "\nThe values differ." else: "")).cstring)
         fonts.withFont(frMono, 0):
           igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-          if igTableSetColumnIndex(cint(ord(hcName))):
+          if igTableSetColumnIndex(columnOf(hcName, values)):
             igTextUnformatted(row.name.cstring, nil)
             if i < 40: marks.mark(id & " name " & row.name)
-          if igTableSetColumnIndex(cint(ord(hcBytes))):
+          if igTableSetColumnIndex(columnOf(hcBytes, values)):
             rightAlign(row.bytes)
             igTextUnformatted(row.bytes.cstring, nil)
-          if igTableSetColumnIndex(cint(ord(hcOffset))):
+          if igTableSetColumnIndex(columnOf(hcOffset, values)):
             rightAlign(row.offset)
             igTextUnformatted(row.offset.cstring, nil)
           igPopStyleColor(1)
           if row.differs: igPushStyleColor_Vec4(ImGui_Col_Text.cint, warning)
           for c, v in row.values:
-            if c < values and igTableSetColumnIndex(cint(ord(HeaderColumn.high) + 1 + c)):
+            if c < values and igTableSetColumnIndex(cint(1 + c)):
               igPushID_Int(cint(c))
               let joined = c < row.joined.len and row.joined[c] # (the join's accent colour)
               if joined: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))

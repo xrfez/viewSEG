@@ -13,7 +13,8 @@
 ##
 ## The Trace tab (SEG-Y): empty until a trace is chosen; the trace under the
 ## pointer in the plot, kept when the pointer goes to the Headers window; a
-## click selects a trace: its header fields in Header, its samples in Data,
+## click selects a trace: its header fields in Header (the first trace's
+## values in view in the default layout), its samples in Data,
 ## where the row at the plot's cursor time is marked and in view; Ctrl +
 ## click a second: two value columns, the fields that differ marked (the
 ## channel) and those that do not unmarked (the field record); the
@@ -51,6 +52,9 @@
 ## types that differ are not marked"). With the channel sets not paged
 ## (`pageOf` giving every set, `drawFieldTable` taking every column), Dear
 ## ImGui's check `columns_count < 512` stopped the program at 600 sets.
+## With the old layout of the header tables (the description 18 em wide and
+## the values after the bytes), "the first value is out of view" (x 1603 in a
+## window ending at 1596); either change alone brings it into view.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves headers-*.png there, and, with the
@@ -312,7 +316,14 @@ withFixtures fx:
           "the channels that differ are not marked"
         doAssert not f.shown("headers.trace differs trace.fieldRecord"),
           "the same field record is marked"
-        f.shoot("headers-trace-two-segy.png"))),
+        f.shoot("headers-trace-two-segy.png")
+        # The first trace's values in view in the default layout (the window
+        # docked at the bottom right, about 400 pixels wide), without
+        # scrolling sideways.
+        let w = f.markOf("headers")
+        let v = f.markOf("headers.trace trace.fieldRecord 0")
+        doAssert v.pos.x >= w.pos.x and v.pos.x + v.size.x <= w.pos.x + w.size.x,
+          "the first value is out of view: " & $v & " in the window " & $w)),
     ("cleared: the trace under the pointer", Step(proc (f: FrameInfo; wait: int): bool =
       f.clickAt(wait, f.pointAt(11)) # a focusing click: the plot gets the keys
       if wait == 8: f.pressKey(skEscape, true)

@@ -577,7 +577,7 @@ holds, read-only, in three tabs:
   plot (or the traces of the receiver under it on the map); the trace pointed at last
   stays while you move to the Headers window. A line at the top says which traces these
   are. **Header** lists every header field of each trace (extensions included): its
-  description, bytes and value, a value column per trace (at most 32 side by side), and the
+  description, a value column per trace (at most 32 side by side) and its bytes, and the
   fields whose values differ between them in the warning colour. After a survey import
   (File > Import > Survey), the table starts with **From the survey**: the stations,
   coordinates, offset and midpoint the survey gave, in the accent colour for each trace it
@@ -588,8 +588,9 @@ holds, read-only, in three tabs:
   bar's amplitude reads); the row at the time under the pointer in the plot is marked and
   kept in view.
 
-The header tables list each field's **Description** and **Bytes** (in its block, from 1, as
-the standards number them); right-click a table's header row to show its **Name** (as
+The header tables list each field's **Description** (cut to fit a narrow window: point at it
+to read it whole), its values and its **Bytes** (in its block, from 1, as the standards
+number them); right-click a table's header row to show its **Name** (as
 parseSEG and header patches name it, `trace.sourceX`) or its file **Offset**, or to hide
 one. Right-click a value to copy it, its column or the whole table (Ctrl+C copies the value
 with the keyboard's focus on it; a copy of the Data tab takes 200 000 samples at most: of a
