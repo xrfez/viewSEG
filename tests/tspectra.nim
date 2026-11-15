@@ -46,6 +46,8 @@
 ## - an open FFT window follows the plot's filters and its Aux toggle (the
 ##   samples at hand, nothing read), unless frozen, and again once not;
 ##   and the kills of its traces (an edit of another trace asks nothing);
+## - the plot's filters' reach counts the traces it shows: with the seismic
+##   ones killed and hidden, the auxiliary one alone is not reached;
 ## - the file is never changed.
 ##
 ## Seen to fail: with the killed traces not left out of the request
@@ -70,7 +72,9 @@
 ## answer, the band-pass's curves were only "raw" and "processed". With
 ## the words as before, "not processed: the plot's filters (low-cut 4-8 Hz)
 ## a low cut needs ..." (no verb). With `followFfts` blind to kills (as
-## before), "the FFT window did not take the kill in".
+## before), "the FFT window did not take the kill in". With the reach
+## counted from the record's totals (as before), "the hidden killed traces
+## counted as shown: seismic".
 
 import std/[math, os, sequtils, strutils]
 import parseSEG
@@ -644,6 +648,26 @@ withFixtures fx:
       four.spectra[w].filterText == "processed: notch 60 Hz",
       $(sp.filtered, sp.passedBy, sp.read) & " " & four.spectra[w].filterText
     doAssert four.spectra[w].filters == "notch 60 Hz" and four.spectra[w].processing == withAux
+    # The plot's reach counts the traces it shows: the four seismic ones
+    # killed and hidden, the auxiliary one is all it shows, and the filters
+    # (Aux off) reach none of them.
+    var hide = four.settings
+    hide.hideKilled = true
+    four.apply Command(kind: ckSettings, settings: hide)
+    four.apply Command(kind: ckFilter, panel: MainPanel,
+      filter: TraceFilter(seismic: true, auxiliary: true))
+    four.filters notch
+    four.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled,
+      edited: toSeq(b ..< b + 4), on: true)
+    doAssert ready(four.panel(MainPanel).laidOut and four.panel(MainPanel).shown == @[4])
+    doAssert four.filterReach(four.panel(MainPanel)) == frNoTrace,
+      "the hidden killed traces counted as shown: " & $four.filterReach(four.panel(MainPanel))
+    four.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled,
+      edited: toSeq(b ..< b + 4), on: false)
+    doAssert ready(four.panel(MainPanel).shown.len == 5)
+    doAssert four.filterReach(four.panel(MainPanel)) == frSeismic
+    four.filters withAux
+    doAssert ready(not four.spectra[w].waiting and sp.filterAux and sp.killed == 0)
     # Frozen, it keeps the filters it went through; the other follows.
     let fid = four.spectra[w].id
     four.apply Command(kind: ckSpectrumDisplay, spectrum: fid, frozen: true,
