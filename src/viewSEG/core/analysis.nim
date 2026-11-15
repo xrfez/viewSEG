@@ -382,7 +382,10 @@ type
     since*: uint64 ## answers to requests from before this are not its
     waiting*: bool ## an answer newer than `result` is on its way
     asks*: int ## requests made (for tests)
-    cursor*: PlotCursor ## where the keys hold its cursor (an image's: column, row)
+    cursor*: PlotCursor
+      ## where the keys hold its cursor: an image's column and row, a curve
+      ## plot's point and curve
+    cursorOn*: int ## the plot it is held in (curve views: 0 the top one)
     front*: int ## bumped when it is to be brought forward
     revision*: int ## bumped on every change
 

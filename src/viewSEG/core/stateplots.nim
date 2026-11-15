@@ -202,6 +202,7 @@ proc holdPlotCursor(state: var AppState; cmd: Command) =
     state.ignore(cmd, "there is no plot window " & $cmd.plot)
     return
   state.plots[w].cursor = cmd.plotCursor
+  state.plots[w].cursorOn = cmd.plotCursorOn
   inc state.plots[w].revision
 
 proc closePlot(state: var AppState; cmd: Command) =

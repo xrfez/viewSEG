@@ -609,8 +609,11 @@ Each window's first line holds its view's settings; a change works it out again.
 its exact value written on the axis, and the line under the image reads its time,
 frequency and dB. While the window has the focus (a click on it), the keys hold it:
 **Left / Right** a frame, **Up / Down** a frequency bin, **Home / End** the first or last
-frame; **Esc**, or moving the pointer over the image, lets it go. The curve views read
-the nearest point of each curve under the pointer, as the spectrum windows do.
+frame; **Esc**, or moving the pointer over the image, lets it go. The curve views take
+the spectrum windows' cursor: the nearest point of the curve under the pointer, lines to
+both axes with the exact values on them; the keys hold it in the plot last pointed at
+(**Left / Right** a sample, **Home / End** the ends, **Up / Down** another curve), at
+the same x in the plots that share its axis, the reading then marked "Held".
 
 Agent control: `open plot`, `plot display`, `plot cursor` and `close plot`
 (docs/agent-control.md); `state`'s `plots` gives each window and its numbers;

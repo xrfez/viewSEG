@@ -20,7 +20,7 @@ import std/[math, strutils, tables]
 import imguin/cimgui
 import ../../core/[colourmaps, plotcursor, state]
 import ../../view/[analysisview, curveplot, theme]
-import curveplot as curves, icons, marks, style
+import curveplot as curves, icons, marks, spectrumwindow, style
 
 const PlotSize = (640'f32, 620'f32) ## a window's first size, at 100 %
 
@@ -47,6 +47,21 @@ func markName*(w: AnalysisWindow): string =
 func windowTitle*(w: AnalysisWindow): string =
   ## Its ImGui title: its name, then its identity, which a layout keeps.
   IconPulse & "  " & w.title & "###newplot-" & $w.id
+
+type Keys = object
+  ## The cursor keys pressed this frame, while the window has the focus.
+  left, right, up, down, home, ending, escape: bool
+
+proc keysNow(focused: bool): Keys =
+  ## The keys that move a cursor (repeating while held, as the spectrum
+  ## windows' do); none while a box takes the keys or the window has no
+  ## focus.
+  if not focused or igGetIO_Nil().WantTextInput: return
+  template held(k: untyped): bool = igShortcut_Nil(k.cint, ImGui_InputFlags_Repeat.cint)
+  template once(k: untyped): bool = igShortcut_Nil(k.cint, 0)
+  Keys(left: held(ImGui_Key_LeftArrow), right: held(ImGui_Key_RightArrow),
+    up: held(ImGui_Key_UpArrow), down: held(ImGui_Key_DownArrow), home: once(ImGui_Key_Home),
+    ending: once(ImGui_Key_End), escape: once(ImGui_Key_Escape))
 
 proc numberBox(id: string; value: float64; width: float32; typed: var float64): bool =
   ## A box for a number: true once the user has finished typing into it.
@@ -245,19 +260,16 @@ proc drawImage(ui: var PlotWindowsUi; w: AnalysisWindow; name: string; t: Theme;
   ui.under[w.id] = under
   # The keys, while the window has the focus: a step from where the cursor
   # is held, else from the cell under the pointer.
-  if focused and not igGetIO_Nil().WantTextInput:
-    template pressed(k: untyped): bool = igIsKeyPressed_Bool(k.ImGuiKey, true)
-    let move = keyMove(pressed(ImGui_Key_UpArrow), pressed(ImGui_Key_DownArrow),
-      pressed(ImGui_Key_LeftArrow), pressed(ImGui_Key_RightArrow), pressed(ImGui_Key_Home),
-      pressed(ImGui_Key_End))
-    if move != cmNone:
-      let start = if w.cursor.held: w.cursor
-                  elif under.x >= 0: under
-                  else: PlotCursor()
-      res.commands.add Command(kind: ckPlotCursor, plot: w.id,
-        plotCursor: start.moved(move, [img.cols, img.rows]))
-    elif w.cursor.held and pressed(ImGui_Key_Escape):
-      res.commands.add Command(kind: ckPlotCursor, plot: w.id, plotCursor: PlotCursor())
+  let k = keysNow(focused)
+  let move = keyMove(k.up, k.down, k.left, k.right, k.home, k.ending)
+  if move != cmNone:
+    let start = if w.cursor.held: w.cursor
+                elif under.x >= 0: under
+                else: PlotCursor()
+    res.commands.add Command(kind: ckPlotCursor, plot: w.id,
+      plotCursor: start.moved(move, [img.cols, img.rows]))
+  elif w.cursor.held and k.escape:
+    res.commands.add Command(kind: ckPlotCursor, plot: w.id, plotCursor: PlotCursor())
   if w.cursor.held and under.x >= 0 and igGetIO_Nil().MouseDelta.x != 0:
     # the pointer moved over the image: it takes the cursor back
     res.commands.add Command(kind: ckPlotCursor, plot: w.id, plotCursor: PlotCursor())
@@ -293,12 +305,48 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     let gap = igGetStyle().ItemSpacing.y
     let each = max(60'f32, (avail.y - lineH - gap * float32(max(plots.len - 1, 0))) /
       float32(max(plots.len, 1)))
+    # The cursor: held by the keys in one plot (and at the same x in the
+    # plots that share its x axis), else under the pointer.
+    let on = clamp(w.cursorOn, 0, max(plots.len - 1, 0))
+    func sameXs(a, b: CurvePlot): bool =
+      a.xs.len == b.xs.len and (a.xs.len == 0 or (a.xs[0] == b.xs[0] and a.xs[^1] == b.xs[^1]))
+    var hoveredOn = -1
+    var under = PlotCursor(x: -1, y: -1)
+    var moved = false
     for i, p in plots:
       let key = $w.view & $i & $p.xs.len & (if p.xs.len > 0: $p.xs[0] & $p.xs[^1] else: "")
+      let held = if w.cursor.held and plots.len > 0 and (i == on or p.sameXs(plots[on])):
+                   PlotCursor(held: true, x: w.cursor.x, y: (if i == on: w.cursor.y else: 0))
+                 else: PlotCursor()
       let o = uis[i].drawCurvePlot(name & ".plot " & $i, p, t, ImVec2_c(x: avail.x, y: each),
-        key, marks)
-      if o.hovered: text = p.readoutText(o.reading)
+        key, marks, held)
+      if o.hovered:
+        (hoveredOn, under, moved) = (i, o.under, o.moved)
+        text = p.readoutText(o.reading)
+      elif held.held and i == on:
+        text = p.readoutText(o.reading)
     ui.curves[w.id] = uis
+    if w.cursor.held and text.len > 0: text = HeldNote & text
+    # The keys: Left / Right a point, Home / End the ends, Up / Down another
+    # curve, from where the cursor is held, else from under the pointer.
+    let k = keysNow(focused)
+    var move = cmNone
+    if k.left: move = cmPrevious
+    if k.right: move = cmNext
+    if k.home: move = cmFirst
+    if k.ending: move = cmLast
+    if k.up: move = cmUp
+    if k.down: move = cmDown
+    let at = if w.cursor.held: on elif hoveredOn >= 0: hoveredOn else: 0
+    if move != cmNone and at < plots.len and plots[at].xs.len > 0:
+      var start = if w.cursor.held: w.cursor
+                  elif hoveredOn >= 0 and under.x >= 0: under
+                  else: PlotCursor()
+      if start.y < 0: start.y = 0
+      res.commands.add Command(kind: ckPlotCursor, plot: w.id, plotCursorOn: at,
+        plotCursor: start.moved(move, [plots[at].xs.len, plots[at].curves.len]))
+    elif w.cursor.held and (k.escape or (hoveredOn >= 0 and moved)):
+      res.commands.add Command(kind: ckPlotCursor, plot: w.id, plotCursor: PlotCursor())
   ui.readout[w.id] = text
   igTextUnformatted((if text.len > 0: text else: " ").cstring, nil)
   marks.mark(name & ".readout")

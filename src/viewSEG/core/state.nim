@@ -374,6 +374,9 @@ type
         ## the phase's dB threshold, the reference trace, the lags, ...)
       plotFrozen*: bool ## ckPlotDisplay: it keeps what it shows
       plotCursor*: PlotCursor ## ckPlotCursor: where its cursor is held
+      plotCursorOn*: int
+        ## ckPlotCursor: the plot of the window it is held in (a curve view's:
+        ## 0 the top one), whose x and curve `plotCursor` counts
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are

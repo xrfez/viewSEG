@@ -263,6 +263,7 @@ proc prefill(state: AppState; given: Command; c: var Command) =
       c.plotParams = state.plots[w].params
       c.plotFrozen = state.plots[w].frozen
       c.plotCursor = state.plots[w].cursor
+      c.plotCursorOn = state.plots[w].cursorOn
   of ckClosePlot: c.plot = given.plot
   of ckSpectrumPanel: c.onScreen = true
   of ckJoin, ckSelectUnmatched:
@@ -531,6 +532,7 @@ proc plotJson(w: AnalysisWindow; limit: int): JsonNode =
   result = %*{"id": w.id, "title": w.title, "view": $w.view, "frozen": w.frozen,
     "params": toJson(w.params), "traces": clipped(w.traces, limit), "reference": w.reference,
     "filters": w.filters, "waiting": w.waiting, "cursor": toJson(w.cursor),
+    "cursorOn": w.cursorOn,
     "problem": r.problem, "note": r.note, "used": r.used, "leftOut": r.leftOut,
     "dtMs": toJson(r.dtMs), "plots": plots}
   if r.view == avCorrelation and r.plots.len > 0:

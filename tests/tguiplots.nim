@@ -8,13 +8,18 @@
 ## - its cursor, the window focused, steps a frame with Right and a
 ##   frequency bin with Up, held where the keys put it, and reads its time,
 ##   frequency and dB; Esc lets it go;
+## - an envelope window's curve plots take the same cursor: clicked, Right
+##   holds it a sample on in that plot, with the time written on the axis
+##   and the reading "Held · ...";
 ## - the plot's right-click menu > New plot > Cross-correlation opens a
 ##   window of the trace under the pointer against the record's pilot;
 ## - closed (`close plot`), a window goes.
 ##
 ## Seen to fail: with the image's keys not read (`keyMove` never called),
 ## "Right did not move the cursor"; with the menu's entry not sent
-## (`newPlot` dropped in the app), "Window > New plot did not open a window".
+## (`newPlot` dropped in the app), "Window > New plot did not open a window";
+## with a curve view's Right not read, "Right did not hold the curve plot's
+## cursor: (held: false, ...)".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -114,6 +119,30 @@ withFixtures fx:
   step("let go", noop, proc (f: FrameInfo): bool = not f.core.plots[0].cursor.held)
   # closed (it floats over the plot's middle), its number free again
   step("closed", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckClosePlot, plot: 1)),
+    proc (f: FrameInfo): bool = f.core.plots.len == 0)
+  # a curve view: the envelope; its cursor held by the keys in the plot
+  # clicked, with its values on the axes
+  step("an envelope", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[0])),
+    proc (f: FrameInfo): bool = f.core.plots.len == 1 and not f.core.plots[0].waiting and
+      f.markOf("new plot 1.plot 1.data").size.x > 0)
+  click("new plot 1.plot 1.data")
+  key("Right on the envelope", skRight)
+  step("held on the phase plot", noop, proc (f: FrameInfo): bool =
+    held = f.core.plots[0].cursor
+    doAssert held.held and f.core.plots[0].cursorOn == 1, "Right did not hold the curve " &
+      "plot's cursor: " & $held & " on " & $f.core.plots[0].cursorOn
+    true)
+  key("Right again on the envelope", skRight)
+  step("a sample on", noop, proc (f: FrameInfo): bool =
+    let c = f.core.plots[0].cursor
+    doAssert c.held and c.x == held.x + 1, $c & " after " & $held
+    let text = f.plotWindows.readoutOf(1)
+    doAssert text.startsWith("Held · ") and " ms" in text, text
+    doAssert f.markOf("new plot 1.plot 1.cursor x").size.x > 0, "no value on the time axis"
+    true)
+  step("the envelope closed", proc (f: FrameInfo) =
     f.apply(Command(kind: ckClosePlot, plot: 1)),
     proc (f: FrameInfo): bool = f.core.plots.len == 0)
   # the plot's menu over a trace: its cross-correlation against the pilot
