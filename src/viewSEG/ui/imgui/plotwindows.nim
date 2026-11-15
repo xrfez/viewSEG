@@ -20,7 +20,7 @@ import std/[math, strutils, tables]
 import imguin/cimgui
 import ../../core/[colourmaps, plotcursor, state]
 import ../../view/[analysisview, curveplot, theme]
-import curveplot as curves, icons, marks, spectrumwindow, style
+import curveplot as curves, icons, marks, placement, spectrumwindow, style
 
 const PlotSize = (640'f32, 620'f32) ## a window's first size, at 100 %
 
@@ -82,7 +82,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
   var typed = 0.0
   template label(text: string) =
     igAlignTextToFramePadding()
-    igTextUnformatted(text, nil)
+    igTextUnformatted(cstring(text), nil)
     igSameLine(0, -1)
   case w.view
   of avSpectrogram:
@@ -159,7 +159,13 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
     tip("The lags shown either side of 0, ms")
     igSameLine(0, -1)
     label("ms")
-  if w.view != avEnvelope: igSameLine(0, -1)
+  if w.view != avEnvelope:
+    # on this line when it fits, else the next
+    let wide = igGetFrameHeight() + igGetStyle().ItemInnerSpacing.x +
+      igCalcTextSize("Freeze", nil, false, -1).x
+    # (the cursor is on the next line: its start and the room to the right)
+    let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
+    if igGetItemRectMax().x + igGetStyle().ItemSpacing.x + wide <= right: igSameLine(0, -1)
   if igCheckbox("Freeze", addr frozen): changed = true
   marks.mark(name & ".freeze")
   tip("On: the window keeps what it shows. Off: it follows the Seismic window's filters " &
@@ -354,18 +360,16 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
 proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: float32;
     marks: var Marks; res: var PlotWindowsOutput) =
   ## The analysis windows, each with its close button; the first time one
-  ## of a number is shown, beside the middle of the main window, a little
-  ## lower and to the right for each number.
+  ## of a number is shown, beside the middle of the main window, a step
+  ## lower and to the right for each number, inside it (`placement`).
   var ids: seq[int] = @[]
+  block:
+    let vp = igGetMainViewport()
+    marks.markRect("new plots.room", vp.WorkPos, ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x,
+      y: vp.WorkPos.y + vp.WorkSize.y))
   for w in st.plots:
     ids.add w.id
-    let vp = igGetMainViewport()
-    let step = 28 * scale * float32((w.id - 1) mod 8)
-    igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x / 2 + step,
-      y: vp.WorkPos.y + vp.WorkSize.y / 2 + step), ImGui_Cond_FirstUseEver.cint,
-      ImVec2_c(x: 0.5, y: 0.5))
-    igSetNextWindowSize(ImVec2_c(x: PlotSize[0] * scale, y: PlotSize[1] * scale),
-      ImGui_Cond_FirstUseEver.cint)
+    placeNext(w.id, PlotSize, scale)
     var open = true
     if igBegin(w.windowTitle.cstring, addr open, 0):
       ui.drawBody(st, w, t, marks, res)

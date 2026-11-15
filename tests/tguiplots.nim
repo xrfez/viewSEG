@@ -13,13 +13,18 @@
 ##   and the reading "Held · ...";
 ## - the plot's right-click menu > New plot > Cross-correlation opens a
 ##   window of the trace under the pointer against the record's pilot;
-## - closed (`close plot`), a window goes.
+## - closed (`close plot`), a window goes;
+## - seven more windows each open inside the main window.
 ##
 ## Seen to fail: with the image's keys not read (`keyMove` never called),
 ## "Right did not move the cursor"; with the menu's entry not sent
 ## (`newPlot` dropped in the app), "Window > New plot did not open a window";
 ## with a curve view's Right not read, "Right did not hold the curve plot's
-## cursor: (held: false, ...)".
+## cursor: (held: false, ...)"; with the windows placed a step further for
+## each number from the middle, whether or not they fit (`placeNext` not
+## used), "new plot 5 at (pos: (x: 492.0, y: 272.0), size: (x: 640.0, y:
+## 620.0)) is not inside the main window's (pos: (x: 0.0, y: 67.0), size:
+## (x: 1400.0, y: 806.0))" (it opened as a window of its own, outside).
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -162,6 +167,23 @@ withFixtures fx:
       doAssert w.id == 1, "the number of the window closed is not taken again"
       doAssert w.traces == @[2] and w.result.problem == "" and "pilot" in w.reference,
         $w.traces & " " & w.result.problem & " " & w.reference)
+  # more windows, each placed a step lower and to the right: every one
+  # inside the main window (one past its edge would open as a window of its
+  # own, outside it, where nobody looks)
+  step("seven more", proc (f: FrameInfo) =
+    for n in 0 ..< 7:
+      f.apply(Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[0])),
+    proc (f: FrameInfo): bool =
+      result = f.core.plots.len == 8 and f.markOf("new plot 8").size.x > 0
+      if result:
+        let room = f.markOf("new plots.room")
+        doAssert room.size.x > 0, "the room the windows are placed in is not marked"
+        for w in f.core.plots:
+          let r = f.markOf("new plot " & $w.id)
+          doAssert r.size.x > 0 and r.pos.x >= room.pos.x and r.pos.y >= room.pos.y and
+            r.pos.x + r.size.x <= room.pos.x + room.size.x and
+            r.pos.y + r.size.y <= room.pos.y + room.size.y,
+            "new plot " & $w.id & " at " & $r & " is not inside the main window's " & $room)
 
   var at = 0
   var started = false

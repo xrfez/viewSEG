@@ -41,12 +41,12 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.12.1: capabilities | names | processSEG 0.5.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 40 (23 in part) | 102 | 23 (18 in part) | 99 |
+| `built` | 40 (23 in part) | 102 | 24 (18 in part) | 100 |
 | `internal` | 14 | 35 | 4 | 40 |
 | `planned` | 43 | 300 | 48 | 415 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 19 | 349 | 6 | 57 |
-| all | 118 | 796 | 82 | 616 |
+| `not applicable` | 19 | 349 | 6 | 56 |
+| all | 118 | 796 | 83 | 616 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -266,7 +266,8 @@ name, so these are building blocks for code that works on raw headers.
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Real FFT, batched | `initFftPlan`, `forward`, `inverse`, `forwardLanes`, `inverseLanes`, `nextFastLen`, `gatherLanes`, `scatterLanes`, `FftPlan` (`len`, `bins`, `workspaceSize`), `isFastLen`, `fftLanes` | Inside the spectra and filters; the f-k window takes an f-k transform of processSEG's own | not applicable (the spectrum, filter and f-k plans run them) |
+| Real FFT, batched | `initFftPlan`, `forward`, `inverse`, `forwardLanes`, `inverseLanes`, `gatherLanes`, `scatterLanes`, `FftPlan` (`len`, `bins`, `workspaceSize`), `isFastLen`, `fftLanes` | Inside the spectra and filters; the f-k window takes an f-k transform of processSEG's own | not applicable (the spectrum, filter and f-k plans run them) |
+| A fast FFT length | `nextFastLen` | The phase spectrum (New plot) zero-pads its trace to 4 times its length, rounded up to a fast length | built |
 | Averaged amplitude spectrum of a selection | `initSpectrumPlan`, `averageAmplitudeInto`, `toDbInto`, `binHz`, `SpectrumPlan` (`bins`, `windowLen`, `nfft`, `dtMs`, `workspaceSize`), `DbReference` | From the plot's menu, "FFT in a new window" (`F`): the spectrum of the trace under the pointer or of the selection (averaged), each in a window of its own; and the live Spectrum panel (the traces in view or selected), raw and through the plot's filters, in dB (`toDbInto` against one unit, moved to the larger peak, so the curves compare) or linear; killed traces left out | built |
 | Amplitude and phase of one trace | `amplitudeInto`, `amplitudePhaseInto` | The spectrum of one trace: its phase under its amplitude (Phase, `amplitudeInto`); compare pilots: phase difference | built (`amplitudeInto`: a one-trace spectrum's phase); planned (`amplitudePhaseInto`, the pilots' comparison) |
 

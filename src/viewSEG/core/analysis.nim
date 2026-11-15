@@ -21,7 +21,7 @@
 ## never raise (a problem is said in `problem`).
 
 import std/math
-import processSEG/fft/[hilbert, spectrogram, spectrum]
+import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/crosscorrelate
 import processSEG/core/workspace
 import colourmaps, panels, plotcursor, processing
@@ -229,19 +229,29 @@ func unwrapWhere*(phaseDeg: openArray[float64]; shown: openArray[bool]): seq[flo
       result[k] = phaseDeg[k] + offset
       last = result[k]
 
+const PhasePadding* = 4
+  ## the phase spectrum's transform is this many times the trace's length
+  ## (zero-padded): between bins `1/(PhasePadding·T)` apart the phase of
+  ## energy arriving at `t` steps `360°·t/(PhasePadding·T)`, at most a
+  ## quarter turn for `t` within the trace (length `T`), so the unwrap
+  ## cannot alias. Unpadded it does past `t = T/2`: a sweep's phase, which
+  ## falls all the way, turned and rose from there.
+
 proc phaseOf*(x: openArray[float32]; name: string; dtMs: float64;
     p: AnalysisParams): AnalysisResult =
   ## The amplitude (dB from its peak) and the phase (degrees, from the
-  ## trace's first sample) of the whole trace against frequency; the phase
-  ## where the amplitude is within `p.phaseWithinDb` of the peak only,
-  ## unwrapped along frequency when `p.unwrap`.
+  ## trace's first sample) of the whole trace against frequency, the trace
+  ## zero-padded to `PhasePadding` times its length; the phase where the
+  ## amplitude is within `p.phaseWithinDb` of the peak only, unwrapped along
+  ## frequency when `p.unwrap`.
   result = AnalysisResult(view: avPhase, dtMs: dtMs, used: 1)
   if x.len < 2:
     result.problem = "the trace has no samples"
     return
   var sp: SpectrumPlan[float32]
   try:
-    sp = initSpectrumPlan(float32, dtMs, x.len, taperFraction = 0.0, demean = false)
+    sp = initSpectrumPlan(float32, dtMs, x.len, taperFraction = 0.0,
+      nfft = nextFastLen(PhasePadding * x.len), demean = false)
   except ValueError as e:
     result.problem = e.msg
     return
@@ -271,7 +281,8 @@ proc phaseOf*(x: openArray[float32]; name: string; dtMs: float64;
     AnalysisPlot(title: "Phase", xLabel: "Frequency (Hz)", xUnit: "Hz",
       yLabel: "Phase (°)", yUnit: "°", xs: hz,
       curves: @[AnalysisCurve(name: name, ys: phase)])]
-  result.note = "Phase from the trace's first sample, " &
+  result.note = "Phase from the trace's first sample (the trace zero-padded to " &
+    $PhasePadding & " times its length), " &
     (if p.unwrap: "unwrapped along frequency, " else: "") &
     "where the amplitude is within " & $within & " dB of its peak"
 

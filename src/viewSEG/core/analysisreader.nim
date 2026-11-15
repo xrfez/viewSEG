@@ -268,6 +268,11 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 let n = answer.leftOut
                 answer = correlationOf(signals, refRows[0], refName, dtMs, a.params)
                 answer.leftOut = n
+                # a signal that is the reference itself: its autocorrelation
+                let own = if rf == f: keptList.find(rt) else: -1
+                if own in 0 ..< signals.len and answer.problem.len == 0:
+                  answer.note.add "; " & keptNames[own] & " is the reference itself: its " &
+                    "autocorrelation (a peak at 0 ms, 0 dB, 0°)"
           answer.gen = a.gen
           answer.id = a.id
           if through.len > 0 and answer.problem.len == 0:

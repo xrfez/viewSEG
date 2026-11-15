@@ -593,12 +593,16 @@ Each window's first line holds its view's settings; a change works it out again.
   peak** (20 dB at first): elsewhere it is noise. **Unwrapped** (on at first) joins it
   along frequency, so a delay is a straight line (`-360·f·τ` degrees); off, it stays
   within ±180°. The phase is from the trace's first sample, of the whole trace,
-  untapered.
+  untapered, **zero-padded to 4 times its length**: between bins the phase of energy
+  arriving at time t steps 360°·t/(4T), at most a quarter turn for any t within the
+  trace (length T), so the unwrap cannot alias. Unpadded, a step passes half a turn once
+  t is past T/2, and a sweep's phase (which falls all the way) turned and rose there.
 - **Cross-correlation:** the reference is **the record's pilot** (its first auxiliary
   trace) at first, else the first trace of the window; **The selected trace** makes the
   first selected trace the reference, in this file or another one open (Sweep0's pilot,
   say), sampled at the same interval. A trace that is the reference delayed by τ peaks at
-  +τ (the words under the title give each trace's peak). The amplitude ratio and the
+  +τ (the words under the title give each trace's peak). A trace that is the reference
+  itself is said to be: its curve is its autocorrelation (peak at 0, 0 dB, 0°). The amplitude ratio and the
   phase difference are given where the reference's amplitude is within the same N dB
   (20) of its peak. The lags shown: ±250 ms at first.
 - The **envelope** is the analytic signal's modulus; the instantaneous phase its

@@ -16,7 +16,7 @@ import std/[math, tables]
 import imguin/cimgui
 import ../../core/state
 import ../../view/[curveplot, spectrumview, theme]
-import curveplot as curves, icons, marks, style
+import curveplot as curves, icons, marks, placement, style
 
 const
   SpectrumWindowTitle* = IconPulse & "  Spectrum###spectrum"
@@ -259,19 +259,13 @@ proc drawLive*(ui: var SpectraUi; st: AppState; shown: bool; t: Theme; marks: va
 proc drawFfts*(ui: var SpectraUi; st: AppState; t: Theme; scale: float32; marks: var Marks;
     res: var SpectraOutput) =
   ## The FFT windows, each with its close button; the first time one of a
-  ## number is shown, beside the middle of the main window, a little lower
-  ## and to the right for each number.
+  ## number is shown, beside the middle of the main window, a step lower
+  ## and to the right for each number, inside it (`placement`).
   var ids: seq[int]
   for w in st.spectra:
     if w.id != LiveSpectrum:
       ids.add w.id
-      let vp = igGetMainViewport()
-      let step = 28 * scale * float32((w.id - 1) mod 8)
-      igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + vp.WorkSize.x / 2 + step,
-        y: vp.WorkPos.y + vp.WorkSize.y / 2 + step), ImGui_Cond_FirstUseEver.cint,
-        ImVec2_c(x: 0.5, y: 0.5))
-      igSetNextWindowSize(ImVec2_c(x: FftSize[0] * scale, y: FftSize[1] * scale),
-        ImGui_Cond_FirstUseEver.cint)
+      placeNext(w.id, FftSize, scale)
       var open = true
       if igBegin(w.fftTitle.cstring, addr open, 0):
         ui.drawBody(st, w, t, marks, res)

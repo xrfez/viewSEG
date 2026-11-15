@@ -5,7 +5,8 @@
 ## - a cross-correlation of the seismic traces takes the record's pilot as
 ##   its reference when none is chosen, and each trace peaks at its delay
 ##   (10, 20, 30, 40 ms); with a seismic trace chosen as the reference, the
-##   delays are from it;
+##   delays are from it, and the note says the reference is one of the
+##   signals (its autocorrelation);
 ## - a spectrogram of the pilot rises with the sweep; the envelope and the
 ##   phase spectrum of a trace come back with their curves;
 ## - not frozen, a window follows the plot it was opened from: new filters
@@ -21,7 +22,9 @@
 ## followed: 1 asks"; with the record's pilot not taken as the default
 ## reference (`firstAux`), `"pilot" in st.plots[0].reference` (the first
 ## trace asked about taken instead); with `showReplacing` not asking
-## `plotsUse`, "the pilot's file was closed under its window".
+## `plotsUse`, "the pilot's file was closed under its window"; without the
+## note of a signal that is the reference, "Against trace 2: trace 2 peaks
+## at 0.0 ms; trace 3 peaks at 10.0 ms; ...".
 
 import std/[math, os, strutils]
 import parseSEG
@@ -94,6 +97,9 @@ withFixtures fx:
     doAssert st.settle(st.answered(0) and st.plots[0].result.gen == st.plots[0].asked)
     doAssert abs(st.plots[0].result.peakLagMs(1) - Delay) < 1e-9,
       "the delays are from trace 2: " & $st.plots[0].result.peakLagMs(1) & " ms"
+    # trace 2 is one of the signals: the window says it is the reference itself
+    doAssert "trace 2 is the reference itself" in st.plots[0].result.note,
+      st.plots[0].result.note
 
   block aPilotOfAnotherFile:
     # the reference in another file (a pilot sweep's own file): chosen while
