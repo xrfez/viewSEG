@@ -29,11 +29,18 @@
 ## hover -1; with the value's selectable not drawn as chosen while its menu
 ## is open, "the value not highlighted while its menu was open".
 ##
+## Joined (`joined`): the survey's S, R and X files joined to its seismic
+## file, a receiver right-clicked on the map, where its point and the
+## file's own position lie on one spot with the same traces: the menu's
+## select item says as many traces as it selects. With each point's traces
+## added up (as the menu did), "the menu said "Select it and its 6
+## traces", and 3 were selected".
+##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves held-*.png there.
 
 import std/[math, monotimes, options, os]
-import viewSEG/core/[geometry, pick, state]
+import viewSEG/core/[geometry, join, pick, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/[maplayers, plotink]
 import utils/[fixtures, waiting]
@@ -292,4 +299,69 @@ proc main() =
     echo "tguiheld: ", steps.len, " steps: the map's and the plot's menus hold what was " &
       "under the pointer"
 
+proc joined() =
+  ## The survey's files joined to its seismic file: a receiver's point and
+  ## the file's own position on its spot, each with the same traces. The
+  ## menu's select item counts the traces it selects, each once.
+  withFixtures fx:
+    let sps = fx.surveySps()
+    let segy = fx.surveySegy()
+    var stage = 0
+    var wait = 0
+    var since = getMonoTime()
+    var at: Vec2
+    var said = ""
+    var problem = ""
+    proc onFrame(f: FrameInfo) =
+      inc wait
+      template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
+      if f.index == 0: f.moveMouse(vec2(4, 4))
+      let k = f.core.findPanel(MainPanel)
+      case stage
+      of 0:
+        if f.core.panels[k].laidOut and f.core.tiles(k).len > 0 and wait > 5:
+          var files: seq[JoinFile]
+          for path in [sps.s, sps.r, sps.x]: files.add JoinFile(path: path, kind: jkSps)
+          f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: files,
+            joinUnits: JoinUnits(survey: suMetres, file: suMetres))
+          next 1
+      of 1:
+        if f.core.joinReport.serial > 0 and not f.core.importing and
+            f.mapWindow.mapShown.isSet and wait > 20:
+          at = f.screen(rcvX(Channels), OriginY)
+          f.moveMouse(at)
+          next 2
+      of 2:
+        if wait == 4: f.pressMouse(at, true, button = 3)
+        if wait == 6: f.pressMouse(at, false, button = 3)
+        if wait > 8 and f.markOf("map menu.select").size.x > 0:
+          said = f.mapWindow.mapMenuSelect
+          doAssert f.mapWindow.hoveredPoints.len >= 2, "one point on the spot: " &
+            $f.mapWindow.hoveredPoints
+          next 3
+      of 3:
+        let m = f.markOf("map menu.select")
+        if wait == 2: f.moveMouse(m.centre)
+        if wait == 4: f.pressMouse(m.centre, true)
+        if wait == 6: f.pressMouse(m.centre, false)
+        if wait > 8 and f.markOf("map menu").size.x == 0:
+          let n = f.core.selection.selectedCount
+          let words = if n == 1: "Select it and its trace" else: "Select it and its " & $n &
+            " traces"
+          if n == 0 or said != words:
+            problem = "the menu said \"" & said & "\", and " & $n & " were selected"
+          next 4
+          f.stop()
+      else: f.stop()
+      if overdue(wait, 600, since):
+        problem = "stopped at stage " & $stage
+        f.stop()
+    let code = run(RunOptions(openPaths: @[segy], windowSize: (1600, 1000), theme: forceDark,
+      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+      onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert problem.len == 0, problem
+    echo "tguiheld: joined, the menu said \"", said, "\" and selected as many"
+
 main()
+joined()

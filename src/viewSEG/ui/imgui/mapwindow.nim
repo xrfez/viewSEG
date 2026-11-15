@@ -159,6 +159,7 @@ type
     menuPoints: seq[PointRef]
     menuTitle: string
     menuShows: bool ## the menu's point shows its record on a click
+    menuSelect: string ## its select item's words, as drawn last
     menuCursor: string ## the status bar's coordinates when it opened, held while it is open
     menuAt: ImVec2_c ## where the pointer was then
     menuRect: Rect ## where the menu was drawn last frame, ImGui's coordinates
@@ -218,6 +219,9 @@ func scaleBarShown*(mu: MapUi): ScaleBar {.inline.} = mu.scale
 
 func mapMenuTitle*(mu: MapUi): lent string {.inline.} = mu.menuTitle
   ## What the right-click menu said it acts on when it last opened (for tests).
+
+func mapMenuSelect*(mu: MapUi): lent string {.inline.} = mu.menuSelect
+  ## Its "Select it and its N traces" item, as drawn last (for tests).
 
 func mapImagesDrawn*(mu: MapUi): int {.inline.} = mu.renderer.imagesDrawn
   ## How many map images were drawn (an idle map draws none; for tests).
@@ -1068,8 +1072,7 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
     else:
       igTextDisabled("%s", mu.menuTitle.cstring)
       igSeparator()
-      var traces = 0
-      for p in mu.menuPoints: traces += st.survey.tracesAt(p).len
+      let traces = st.survey.tracesAt(mu.menuPoints).len # each once, as selected
       let selected = mu.menuPoints[0].key in st.selection.pointKeys
       var places: seq[ShotPlace] # the listed files that hold a source's shot
       for p in mu.menuPoints:
@@ -1093,6 +1096,7 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
                  elif traces == 1: "Select it and its trace"
                  else: "Select it and its " & $traces & " traces"
       let key: cstring = if mu.menuShows: nil else: "Click"
+      mu.menuSelect = what
       if igMenuItem_Bool(what.cstring, key, false, true):
         res.commands.add Command(kind: ckSelectPoints, points: mu.menuPoints,
           pointMode: smReplace)

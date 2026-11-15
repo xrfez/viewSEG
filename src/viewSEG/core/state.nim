@@ -5177,13 +5177,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
     let points = if cmd.pointMode != smRange or cmd.points.len == 0: cmd.points
                  elif state.survey.find(anchor.layer) < 0: @[cmd.points[0]]
                  else: state.survey.lineRange(anchor, cmd.points[0])
-    var traces: seq[int]
-    var seen: IntSet
-    for p in points:
-      for t in state.survey.tracesAt(p):
-        if t notin seen:
-          seen.incl t
-          traces.add t
+    let traces = state.survey.tracesAt(points)
     state.selection.selectPoints(points, cmd.pointMode)
     case cmd.pointMode
     of smReplace, smRange: # the points' own traces replace those selected

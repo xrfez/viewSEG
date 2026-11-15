@@ -734,6 +734,15 @@ func tracesAt*(s: Survey; at: PointRef): seq[int] =
     for m in s.layers:
       for t in m.stationTraces(at.role, st): result.add m.base + t
 
+func tracesAt*(s: Survey; points: openArray[PointRef]): seq[int] =
+  ## The traces recorded at any of `points`, each once (a survey file's
+  ## point and a file's own position on one spot have the same), in the
+  ## order found: what selecting the points selects.
+  var seen = initIntSet()
+  for p in points:
+    for t in s.tracesAt(p):
+      if not seen.containsOrIncl(t): result.add t
+
 # -------------------------------------------------------------- in words --
 
 func plural(n: int; one, many: string): string =
