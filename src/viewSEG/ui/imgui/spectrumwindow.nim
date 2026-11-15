@@ -95,13 +95,16 @@ proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var Sp
       elif w.spectrum.filters.len > 0: "No processed curve: " & w.filterText
       else: "The plot has no filters (Filters in the Seismic window's strip)")
   after("Response")
-  igBeginDisabled(w.spectrum.response.len == 0)
+  igBeginDisabled(not w.spectrum.hasResponse)
   if igCheckbox("Response", addr d.response): changed = true
   igEndDisabled()
   marks.mark(name & ".response")
-  tip(if w.spectrum.response.len > 0: "The plot's filters' own response (processSEG's " &
-        "design): their gain at each frequency, 0 dB at the top of the curves, so a notch " &
-        "shows at its true depth whatever the data"
+  tip(if w.spectrum.hasResponse: "Under the curves, the gain the plot's filters apply at " &
+        "each frequency (an impulse put through them, as the traces are), 0 dB at the top " &
+        "of the curves: what they do, where the processed curve shows what the data and " &
+        "the window make of it"
+      elif w.spectrum.response.len > 0: "The filters reached none of these traces: their " &
+        "response is not drawn"
       else: "The plot has no pass band or notch to draw")
   after("Visible time")
   var visible = d.time == stVisible

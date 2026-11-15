@@ -17,11 +17,15 @@
 ## - raw and processed differ as the filter predicts: a band-pass's ratio
 ##   is 0 below its first corner and above its last, 1 between the second
 ##   and third, a half at its ramps' middles; a notch's dip at its
-##   frequency, none either side; the filter's own response on the same
-##   bins is processSEG's (`response` at each bin's frequency), drawn as a
-##   third curve in dB (0 dB at the top) or linear (1 at the larger peak),
-##   read in dB, and hidden by its toggle; the visible time asked over that
-##   time; a narrow notch over it gives finer bins (`spectrumNfft`);
+##   frequency, none either side; the response the filter applies, on a
+##   grid of its own with the notch's centre on it, is processSEG's design
+##   wherever that passes more than 1 % and nearly 0 at the centre; it is
+##   drawn first, under the data, thinner and faint, at its true gain in dB
+##   (clamped at the floor only, its name saying so) or linear (1 at the
+##   larger peak), read in dB, and hidden by its toggle; a band-pass's stop
+##   band is what the filter leaves, not the design's 0; the visible time
+##   asked over that time; a narrow notch over it gives finer bins
+##   (`spectrumNfft`); a response the filters did not apply is not drawn;
 ## - several windows at once, each its own; one closed while it computes
 ##   takes no answer; another of the same traces reads nothing again;
 ## - the live panel works only while on screen and not frozen; follows the
@@ -74,7 +78,12 @@
 ## a low cut needs ..." (no verb). With `followFfts` blind to kills (as
 ## before), "the FFT window did not take the kill in". With the reach
 ## counted from the record's totals (as before), "the hidden killed traces
-## counted as shown: seismic".
+## counted as shown: seismic". With the response on the spectrum's bins
+## (as before), "the notch's centre is not on the response's grid"; drawn
+## after the data (as before), the curves were not response, raw,
+## processed; drawn when the filters reached no trace, "a response the
+## filters did not apply is drawn"; with the design's response, "the stop
+## band is the design's zero".
 
 import std/[math, os, sequtils, strutils]
 import parseSEG
@@ -324,7 +333,15 @@ withFixtures fx:
     for hz in [45.0, 85.0]: # the cos² ramps' middles
       doAssert abs(sp.ratio(hz) - 0.5) < 0.1, "the ramp at " & $hz & " Hz: " & $sp.ratio(hz)
     let plot = st.spectra[w].spectrumPlot(builtinTheme(tmLight))
-    doAssert plot.curves.mapIt(it.name) == @["raw", "processed", "filter response"]
+    doAssert plot.curves.mapIt(it.name)[1 .. 2] == @["raw", "processed"]
+    # Its stop band is what the filter leaves (the design's gain there is
+    # 0), drawn at that level when it is above the floor.
+    var k20 = 0
+    while sp.responseHz[k20] < 20: inc k20
+    doAssert sp.response[k20] > 0, "the stop band is the design's zero"
+    let leaves = 20 * log10(sp.response[k20])
+    doAssert leaves < -40 and (leaves < FloorDb or abs(plot.curves[0].ys[k20] - leaves) < 1e-9),
+      "the stop band at 20 Hz: " & $leaves & " dB, drawn at " & $plot.curves[0].ys[k20]
     # Shown raw, the plot's spectrum is still processed: the two compare.
     st.filters Processing(raw: true, band: pbBandPass, f1: 40, f2: 50, f3: 80, f4: 90)
     let v = st.fft(@[base])
@@ -340,25 +357,51 @@ withFixtures fx:
     doAssert sp.ratio(60) < 0.1, "no dip at 60 Hz: " & $sp.ratio(60)
     for hz in [50.0, 55.0, 65.0, 70.0, SpectrumSineHz]:
       doAssert abs(sp.ratio(hz) - 1) < 0.05, "the notch cuts " & $hz & " Hz: " & $sp.ratio(hz)
-    # The filter's own response, on the same bins: processSEG's design.
+    # The response the filter applies, on a grid of its own: the notch's
+    # centre is on it whatever the bins, and its gain there is the
+    # filter's (an impulse through it); elsewhere it is processSEG's design.
     let spec = bandPass(Corners(f1: 0, f2: 0, f3: Inf, f4: Inf)).withNotch(60, 4)
-    doAssert sp.response.len == sp.raw.len, "no response: " & $sp.response.len
-    for k in [0, 100, 240, 245, 246, 250, 300, 1000]:
-      doAssert abs(sp.response[k] - spec.response(float64(k) * sp.binHz, DtMs)) < 1e-12,
-        "the response at bin " & $k & " is not the filter's: " & $sp.response[k]
+    doAssert sp.response.len == sp.responseHz.len and sp.response.len > 1000,
+      "no response: " & $sp.response.len
+    let c60 = sp.responseHz.find(60.0)
+    doAssert c60 >= 0, "the notch's centre is not on the response's grid"
+    doAssert sp.response[c60] < 1e-3, "the notch's depth: " & $sp.response[c60]
+    for i, f in sp.responseHz:
+      let design = spec.response(f, DtMs)
+      if design > 0.01:
+        doAssert abs(sp.response[i] - design) <= 0.05 * design,
+          "the response at " & $f & " Hz is not the filter's: " & $sp.response[i] & " for " &
+          $design
     let plot = st.spectra[w].spectrumPlot(builtinTheme(tmLight))
-    doAssert plot.curves.mapIt(it.name) == @["raw", "processed", "filter response"]
-    let k60 = int(round(60 / sp.binHz))
-    doAssert plot.curves[2].ys[k60] < -40 and plot.curves[2].ys[100] == 0,
-      "the notch's depth in dB: " & $plot.curves[2].ys[k60]
-    doAssert plot.readoutText(plot.readingAt(float64(100) * sp.binHz)).endsWith(
-      "filter response 0 dB"), plot.readoutText(plot.readingAt(float64(100) * sp.binHz))
+    doAssert plot.curves.mapIt(it.name)[1 .. 2] == @["raw", "processed"] and
+      plot.curves[0].name.startsWith("filter response"),
+      "the response is not drawn first, under the data: " & $plot.curves.mapIt(it.name)
+    template resp: untyped = plot.curves[0]
+    doAssert resp.width < plot.curves[2].width and resp.colour.a < 255 and
+      resp.xs == sp.responseHz
+    # drawn at its true gain in dB, clamped at the floor only, which its name says
+    var below = false
+    for i, g in sp.response:
+      let d = 20 * log10(g)
+      doAssert abs(resp.reads[i] - max(d, -1000.0)) < 1e-9 and
+        abs(resp.ys[i] - max(d, FloorDb)) < 1e-9
+      if d < FloorDb: below = true
+    doAssert below == ("below" in resp.name), resp.name
+    # the reading is at a bin; the response's there, at its point nearest it
+    let r = plot.readingAt(60.0)
+    var j = 0
+    for i, f in sp.responseHz:
+      if abs(f - r.x) < abs(sp.responseHz[j] - r.x): j = i
+    doAssert r.values[0] == resp.reads[j] and r.drawn[0] == resp.ys[j],
+      "the reading at " & $r.x & " Hz is not the response's there"
     # linear: a gain of 1 at the larger peak, read in dB all the same
     var linear = st.spectra[w]
     linear.display.scale = ssLinear
     let lp = linear.spectrumPlot(builtinTheme(tmLight))
     let top = max(sp.raw.peakOf, sp.processed.peakOf)
-    doAssert abs(lp.curves[2].ys[100] - top) < 1e-12 and lp.curves[2].reads[100] == 0
+    let k20 = sp.responseHz.find(sp.responseHz[100])
+    doAssert abs(lp.curves[0].ys[k20] - sp.response[k20] * top) < 1e-12 and
+      abs(lp.curves[0].reads[k20] - 20 * log10(sp.response[k20])) < 1e-9
     linear.display.response = false
     doAssert linear.spectrumPlot(builtinTheme(tmLight)).curves.len == 2
     st.apply Command(kind: ckCloseSpectrum, spectrum: st.spectra[w].id)
@@ -627,7 +670,7 @@ withFixtures fx:
       "auxiliary trace is not filtered: Filters > Filter the Aux traces too is off)",
       four.spectra[w].filterText
     doAssert four.spectra[w].spectrumPlot(builtinTheme(tmLight)).curves.mapIt(it.name) ==
-      @["raw", "processed (4 of 5)", "filter response"], "the legend does not say of which"
+      @["filter response", "raw", "processed (4 of 5)"], "the legend does not say of which"
     # its processed curve is the seismic traces' alone: an FFT window of them
     let v = four.answer(toSeq(b ..< b + 4))
     template seismic: untyped = four.spectra[v].spectrum
@@ -704,7 +747,8 @@ withFixtures fx:
       pilot.filterText
     doAssert pilot.auxUnfiltered
     doAssert pilot.spectrumPlot(builtinTheme(tmLight)).curves.mapIt(it.name) ==
-      @["raw", "filter response (not applied)"]
+      @["raw"], "a response the filters did not apply is drawn"
+    doAssert not pilot.spectrum.hasResponse and pilot.spectrum.response.len > 0
     # A notch above Nyquist alone: no filter can run at this interval, said.
     five.filters Processing(aux: true, notches: @[NotchFilter(hz: 300, widthHz: 4)])
     let q = five.answer(@[five.sessions[0].base])

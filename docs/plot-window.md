@@ -1104,14 +1104,25 @@ compare by it; linear, in the file's sample units. The frequency axis can be
 logarithmic (0 Hz is then left out). A spectrum of one trace has its phase too (Phase:
 degrees, from the window's first sample, drawn under the amplitude).
 
-**The filter's response.** Over the curves, the plot's filters' own response
-(processSEG's `responseInto` on the same bins, for each filter, multiplied; never made
-by the viewer): their gain at each frequency, 0 dB at the top of the curves (linear: a
-gain of 1 at the larger peak), read in dB under the plot ("60 Hz ... filter response
--120 dB"). A notch shows at its true depth whatever the data, where the processed curve
-shows what the data and the window make of it. **Response** hides it; it is on by
-default and drawn whenever the filters have a pass band or a notch, named "(not
-applied)" when they reached none of the traces.
+**The filter's response.** Under the curves, a thin faint line over a fainter shade
+(the pass band reads as a lit area behind the data, which is drawn over it), the gain
+the plot's filters apply at each frequency: a unit impulse in the middle of a trace as
+long as these is put through their FFT filters (processSEG's plan, its padding, in
+float32), and its output's amplitude is taken at each frequency. So it is what they
+really do, not the design: a notch's centre is as deep as the plan's own frequency
+sampling leaves it (-56 dB for a 2 Hz notch at 50 Hz on a 4 s trace at 1 ms, -83 dB at
+60 Hz on Sweep0's 12 s, where the design says 0), the stop band their round-off
+(below -120 dB). The DC removal and the trend taken out before the filter depend on
+each trace's own mean and trend, are no gain, and are left out of it. It is drawn on a grid of its own, not the
+spectrum's bins: 1024 even steps to Nyquist, and dense across each notch (its very
+centre included) and each ramp, so a notch is drawn at its depth wherever it falls
+between bins. In dB, 0 dB is the top of the curves and the gain is clamped only at the
+plot's floor (its name then says "below -120 dB drawn at it"); linear, a gain of 1 is
+the larger peak; under the plot it reads in dB, at its point nearest the bin read.
+It shows what the filters do; the processed curve shows what the data and the window
+make of it. **Response** hides it; it is on by default and drawn whenever the filters
+have a pass band or a notch and reached some of the traces: when they reached none
+(auxiliary traces, the Aux box off) it is not drawn, so nothing looks filtered.
 
 **Why this window.** A narrow notch in a spectrum is filled in from its sides: by the
 taper's leakage, by bins too wide for it, and by the filter's own ringing near the

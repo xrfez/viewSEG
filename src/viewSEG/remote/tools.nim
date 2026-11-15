@@ -502,16 +502,21 @@ proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
       "peakAmplitude": toJson(amps.peakOf),
       "peakDb": toJson(if reference > 0 and amps.peakOf > 0: 20 * log10(amps.peakOf / reference)
                        else: NaN)}
-  proc gains(g: seq[float64]): JsonNode =
-    # the smallest of each run of `step` bins, so a notch is kept
-    if g.len == 0: return newJNull()
-    result = newJArray()
+  proc gains(hz, g: seq[float64]): JsonNode =
+    # on its own grid, at most `limit` points: the smallest of each run, at
+    # its frequency, so a notch is kept
+    if g.len == 0 or g.len != hz.len: return newJNull()
+    let run = max(1, (g.len + limit - 1) div max(limit, 1))
+    var at, gain = newJArray()
     var k = 0
     while k < g.len:
-      var least = Inf
-      for j in k ..< min(k + step, g.len): least = min(least, g[j])
-      result.add toJson(least)
-      k += step
+      var least = k
+      for j in k ..< min(k + run, g.len):
+        if g[j] < g[least]: least = j
+      at.add toJson(hz[least])
+      gain.add toJson(g[least])
+      k += run
+    result = %*{"hz": at, "gain": gain, "points": g.len}
   let reference = max(sp.raw.peakOf, sp.processed.peakOf)
   result = %*{"id": w.id, "title": w.title, "live": w.id == LiveSpectrum,
     "onScreen": (if w.id == LiveSpectrum: w.shown else: true), "frozen": w.frozen,
@@ -528,7 +533,7 @@ proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
       "processedWith": (if sp.processed.len > 0: sp.filters else: ""),
       "filtersAsked": sp.filters, "filterAux": sp.filterAux, "filtered": sp.filtered,
       "passedBy": sp.passedBy, "filterNote": sp.filterNote,
-      "filterProblem": sp.filterProblem, "response": gains(sp.response),
+      "filterProblem": sp.filterProblem, "response": gains(sp.responseHz, sp.response),
       "problem": sp.problem},
     "filterWords": w.filterText}
 

@@ -62,11 +62,19 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
     while first < p.xs.len and not (p.xs[first] > 0): inc first
   let width = max(1'f32, round(igGetIO_Nil().DisplayFramebufferScale.x))
   for c in p.curves:
-    let n = min(c.ys.len, p.xs.len) - first
+    let cxs = p.xsOf(c)
+    var from0 = if c.xs.len > 0: 0 else: first
+    if c.xs.len > 0 and p.logX:
+      while from0 < cxs.len and not (cxs[from0] > 0): inc from0
+    let n = min(c.ys.len, cxs.len) - from0
     if n > 0:
-      ImPlot_SetNextLineStyle(vec4(c.colour), 1.5 * width)
-      let xs = cast[ptr cdouble](unsafeAddr p.xs[first])
-      let ys = cast[ptr cdouble](unsafeAddr c.ys[first])
+      let xs = cast[ptr cdouble](unsafeAddr cxs[from0])
+      let ys = cast[ptr cdouble](unsafeAddr c.ys[from0])
+      if not turned and not c.shadeTo.isNaN:
+        ImPlot_SetNextFillStyle(vec4(c.colour), 0.16)
+        ImPlot_PlotShaded_doublePtrdoublePtrInt(c.name.cstring, xs, ys, cint(n),
+          c.shadeTo, 0, 0, cint(sizeof(float64)))
+      ImPlot_SetNextLineStyle(vec4(c.colour), c.width * width)
       if turned:
         ImPlot_PlotLine_doublePtrdoublePtr(c.name.cstring, ys, xs, cint(n), 0, 0,
           cint(sizeof(float64)))
@@ -91,8 +99,7 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
         ImDrawList_AddLine(dl, ImVec2_c(x: round(a.x), y: pos.y),
           ImVec2_c(x: round(a.x), y: pos.y + area.y), cross, width)
       for i, c in p.curves:
-        let j = result.reading.index # the dot on the curve as drawn
-        let v = if j < c.ys.len: c.ys[j] else: NaN
+        let v = result.reading.drawn[i] # the dot on the curve as drawn
         if v.classify notin {fcNan, fcInf, fcNegInf}:
           let q = if turned: ImPlot_PlotToPixels_double(v, at, ImAxis_X1.cint, ImAxis_Y1.cint)
                   else: ImPlot_PlotToPixels_double(at, v, ImAxis_X1.cint, ImAxis_Y1.cint)

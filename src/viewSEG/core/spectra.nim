@@ -8,8 +8,12 @@
 ## (more when the filters have a feature narrower than two bins:
 ## `spectrumNfft`) and transformed; the amplitudes are one-sided and
 ## corrected for the taper, so a sinusoid of amplitude A on a bin reads A.
-## The filters' own response (processSEG's `responseInto`) comes with the
-## answer, on the same bins, to be drawn over the curves. A spectrum of
+## The filters' response comes with the answer, on a grid of its own
+## (`responseGrid`: even steps, dense over each notch and ramp, so a
+## notch's centre is never between two points): the gain they apply,
+## measured by putting an impulse through them as the traces go
+## (`appliedResponse`), so its stop band is what they really leave, not
+## the design's zero. A spectrum of
 ## several traces is the power average (`averageAmplitudeInto`): the RMS
 ## amplitude over the traces, which the sum keeps across blocks of traces
 ## as Σ amplitude² · traces.
@@ -39,9 +43,11 @@
 ## The work runs on a thread of its own (`core/spectrumreader`); `AppState`
 ## keeps the windows (`SpectrumWindow`).
 
-import std/math
+import std/[algorithm, math, sequtils]
 import parseSEG
+import processSEG/pipeline
 import processSEG/fft/spectrum
+import processSEG/filter/[design, edges]
 import processSEG/core/[rows, types, workspace]
 import panels, processing, viewport
 
@@ -109,9 +115,11 @@ type
     filterProblem*: string
       ## why the filters cannot run on these traces, a clause ("none of them
       ## is below Nyquist"); "" when they did or there are none
+    responseHz*: seq[float64]
+      ## the frequencies `response` is at, ascending, 0 to Nyquist
+      ## (`responseGrid`): not the bins
     response*: seq[float64]
-      ## per bin, the filters' gain, 0 to 1 (processSEG's `responseInto`
-      ## for each FFT filter, multiplied): what they do whatever the data;
+      ## at each of `responseHz`, the gain the filters apply (`appliedResponse`);
       ## empty when they have no pass band or notch, or did not run
     problem*: string        ## why there is no spectrum; "" when there is one
 
@@ -273,6 +281,98 @@ func spectrumNfft*(windowLen: int; dtMs, narrowestHz: float64): int =
     while result < MaxSpectrumPadding * base and
         1000 / (float64(result) * dtMs) > narrowestHz / 2:
       result *= 2
+
+const
+  ResponseSteps* = 1024
+    ## a response's even points from 0 Hz to Nyquist, less one: the
+    ## features' own points come on top
+  FeaturePoints = 64 ## points over each notch (and 32 over each ramp), at most
+  MaxFeaturePoints = 2048 ## over all the features together, at most
+
+func responseGrid*(specs: openArray[FilterSpec]; nyquistHz: float64): seq[float64] =
+  ## The frequencies to draw `specs`' response at: 0 to `nyquistHz` in
+  ## `ResponseSteps` even steps, and densely over each feature: across each
+  ## notch (twice its width) and at its very centre, across each cos² ramp,
+  ## and the octave either side of a Butterworth corner; ascending, each
+  ## once.
+  result = newSeq[float64](ResponseSteps + 1)
+  for k in 0 .. ResponseSteps: result[k] = nyquistHz * float64(k) / float64(ResponseSteps)
+  var features = 0
+  for s in specs: features += s.notches.len + 2
+  let each = clamp(MaxFeaturePoints div max(features, 1), 8, FeaturePoints)
+  template across(a, b: float64; n: int) =
+    for j in 0 .. n: result.add a + (b - a) * float64(j) / float64(n)
+  for s in specs:
+    for n in s.notches:
+      across(n.freqHz - n.widthHz, n.freqHz + n.widthHz, each)
+      result.add n.freqHz
+    case s.kind
+    of rkTrapezoid:
+      let c = s.corners
+      if c.f2 > 0: across(c.f1, c.f2, each div 2)
+      if c.f3 < Inf: across(c.f3, c.f4, each div 2)
+    of rkButterworth:
+      if s.lowHz > 0: across(s.lowHz / 2, s.lowHz * 2, each div 2)
+      if s.highHz < Inf: across(s.highHz / 2, s.highHz * 2, each div 2)
+  result.keepItIf(it >= 0 and it <= nyquistHz)
+  result.sort()
+  var kept = newSeq[float64]()
+  for x in result:
+    if kept.len == 0 or x - kept[^1] > 1e-9 * max(1.0, nyquistHz): kept.add x
+  result = kept
+
+func filterSpecs*(filters: Pipeline): seq[FilterSpec] =
+  ## The responses of `filters`' FFT filters (a pass band, notches).
+  result = @[]
+  for op in filters:
+    if op.kind == opFilter: result.add op.filter.spec
+
+proc appliedResponse*(filters: Pipeline; dtMs: float64; samples: int;
+    hz: openArray[float64]): seq[float64] =
+  ## The gain `filters` apply at each of `hz` (Hz) to traces of `samples`
+  ## samples `dtMs` apart: a unit impulse in the middle of such a trace put
+  ## through them as the traces go (processSEG's plan, its edges and trend
+  ## handling, in float32), then its output's amplitude at each frequency
+  ## (a Fourier sum over the trace: the even points by folding it onto
+  ## `2·ResponseSteps` samples, the others directly). Raises `ValueError`
+  ## when the filters cannot run at `dtMs`.
+  let n = max(samples, 1)
+  var keys = @[initTraceKeys()]
+  keys[0].status = tsLive
+  keys[0].intervalUs = dtMs * 1000
+  var lengths = @[n]
+  var x = newSeq[float32](n)
+  x[n div 2] = 1
+  # The FFT filters alone, without the trend taken out before them: what
+  # depends on the trace's own trend or mean (a DC removal, the trend
+  # handling) is no gain an impulse can measure.
+  var alone = initPipeline()
+  for op in filters:
+    if op.kind == opFilter: alone.add filterOp(op.filter.spec, trend = trNone)
+  let plan = alone.compile(float32, dtMs, n, recordSamples = n)
+  var ws = initWorkspace()
+  ws.reserve(plan)
+  plan.apply(rowBlock(x, 1, n), initChunkMeta(rowsOf(keys, lengths), dtMs), ws)
+  result = newSeq[float64](hz.len)
+  let fold = 2 * ResponseSteps
+  var folded = newSeq[float64](fold) # the response sampled every 1 / (fold · dt)
+  for j in 0 ..< n: folded[j mod fold] += float64(x[j])
+  let nyq = nyquistHz(dtMs)
+  for i, f in hz:
+    let even = f * float64(ResponseSteps) / nyq
+    let k = int(round(even))
+    let (data, len) = if abs(even - float64(k)) < 1e-9: (0, fold) else: (1, n)
+    # the sum of x[j]·e^(-2πi·f·j·dt), by a rotation per sample
+    let w = -2 * PI * f * dtMs / 1000
+    let (cw, sw) = (cos(w), sin(w))
+    var (c, s) = (1.0, 0.0)
+    var (re, im) = (0.0, 0.0)
+    for j in 0 ..< len:
+      let v = if data == 0: folded[j] else: float64(x[j])
+      re += v * c
+      im += v * s
+      (c, s) = (c * cw - s * sw, c * sw + s * cw)
+    result[i] = sqrt(re * re + im * im)
 
 proc initSpectrumSum*(dtMs: float64; windowLen: int; nfft = 0): SpectrumSum =
   ## An empty sum of spectra of windows of `windowLen` samples `dtMs` apart,

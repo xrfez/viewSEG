@@ -3,7 +3,8 @@
 ## spectra, correlations or phases against time or frequency can draw
 ## (several curves, each named and coloured, with a legend).
 ##
-## The curves share their x values (`xs`, ascending). The plot is drawn
+## The curves share their x values (`xs`, ascending), unless a curve has
+## its own (`Curve.xs`: a response on a grid of its own). The plot is drawn
 ## with x across from the left (`along = saX`) or turned, x down from the
 ## top and the values across (`along = saY`), as a signal is drawn beside a
 ## seismic trace; the frontend lays its axes out by `along`, and
@@ -24,6 +25,12 @@ type
     name*: string
     colour*: Rgba
     ys*: seq[float64]
+    xs*: seq[float64]
+      ## its own x values, ascending, one per `ys`; empty: the plot's
+    width*: float32 = 1.5 ## its line's width, in points at 100 %
+    shadeTo*: float64 = NaN
+      ## the value it is shaded down (or up) to, faintly: an area under it,
+      ## drawn behind the lines (not when the plot is turned); NaN: none
     reads*: seq[float64]
       ## what the readout says per x, when it is not `ys` (a gain drawn
       ## against amplitudes reads in dB); empty: `ys`
@@ -44,7 +51,10 @@ type
     ## What the cursor reads at an x: the nearest point of each curve.
     index*: int              ## into `xs`; -1 for none
     x*: float64
-    values*: seq[float64]    ## per curve, NaN where it has none
+    values*: seq[float64]    ## per curve, what the readout says; NaN where it has none
+    drawn*: seq[float64]
+      ## per curve, its drawn value there (at its own nearest x for a curve
+      ## with its own); NaN where it has none
 
 func isEmpty*(p: CurvePlot): bool =
   ## Whether `p` has nothing to draw.
@@ -52,6 +62,25 @@ func isEmpty*(p: CurvePlot): bool =
   for c in p.curves:
     if c.ys.len > 0: return false
   true
+
+func xsOf*(p: CurvePlot; c: Curve): lent seq[float64] {.inline.} =
+  ## The x values of curve `c` of `p`: its own, else the plot's.
+  if c.xs.len > 0: c.xs else: p.xs
+
+func nearestIn(xs: openArray[float64]; x: float64; logX: bool): int =
+  ## The index of the value of `xs` (ascending) nearest `x`; -1 for none.
+  if xs.len == 0 or x.isNaN: return -1
+  var lo = 0
+  var hi = xs.high
+  while lo < hi:
+    let mid = (lo + hi) div 2
+    if xs[mid] < x: lo = mid + 1 else: hi = mid
+  result = lo
+  if result > 0:
+    let (u, v) = if logX and x > 0 and xs[result - 1] > 0: (ln(x / xs[result - 1]),
+                   ln(xs[result] / x))
+                 else: (x - xs[result - 1], xs[result] - x)
+    if u < v: dec result
 
 func firstShown(p: CurvePlot): int =
   ## The first point the x axis shows: on a logarithmic axis, the first
@@ -76,9 +105,11 @@ func yLimits*(p: CurvePlot): Span =
   var hi = -Inf
   let a = p.firstShown
   for c in p.curves:
-    for i in a ..< min(c.ys.len, p.xs.len):
+    let xs = p.xsOf(c)
+    for i in 0 ..< min(c.ys.len, xs.len):
       let y = c.ys[i]
-      if y.classify notin {fcNan, fcInf, fcNegInf}:
+      if (if c.xs.len > 0: not p.logX or xs[i] > 0 else: i >= a) and
+          y.classify notin {fcNan, fcInf, fcNegInf}:
         lo = min(lo, y)
         hi = max(hi, y)
   if not p.yFloor.isNaN and lo < p.yFloor: lo = p.yFloor
@@ -109,8 +140,10 @@ func readingAt*(p: CurvePlot; x: float64): Reading =
   if result.index >= 0:
     result.x = p.xs[result.index]
     for c in p.curves:
+      let j = if c.xs.len > 0: c.xs.nearestIn(result.x, p.logX) else: result.index
       let said = if c.reads.len > 0: c.reads else: c.ys
-      result.values.add(if result.index < said.len: said[result.index] else: NaN)
+      result.values.add(if j in 0 ..< said.len: said[j] else: NaN)
+      result.drawn.add(if j in 0 ..< c.ys.len: c.ys[j] else: NaN)
 
 func valueText*(x: float64; digits = 3): string =
   ## `x` with `digits` significant digits at least, and none past the point

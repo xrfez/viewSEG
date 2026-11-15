@@ -93,6 +93,8 @@ type
     session: int
     traces: Table[int, Held]
     values: int
+    responseOf: string ## the filters, interval and trace length `response` is of
+    responseHz, response: seq[float64]
 
 proc `=destroy`*(x: SpectrumReader)
 proc `=wasMoved`*(x: var SpectrumReader) = x.p = nil
@@ -181,7 +183,7 @@ proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Ca
   if given: result = -1
 
 proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
-    cache: Cache; answer: var Spectrum): bool =
+    cache: var Cache; answer: var Spectrum): bool =
   ## The raw and processed spectra of `list` (traces at hand, live, of one
   ## interval) into `answer`; false when a newer request came first.
   let f = a.file
@@ -207,23 +209,27 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
     if filters.len == 0:
       answer.filterProblem = "none of them is below Nyquist"
       filtering = false
-  # Finer bins for a narrow filter (`spectrumNfft`), and its own response on them.
+  # Finer bins for a narrow filter (`spectrumNfft`).
+  let specs = if filtering: filters.filterSpecs else: @[]
   var narrowest = Inf
-  if filtering:
-    for op in filters:
-      if op.kind == opFilter: narrowest = min(narrowest, op.filter.spec.narrowestRampHz)
+  for s in specs: narrowest = min(narrowest, s.narrowestRampHz)
   let nfft = spectrumNfft(window.len, dtMs, narrowest)
   var raw = initSpectrumSum(dtMs, window.len, nfft)
   var processed = initSpectrumSum(dtMs, window.len, nfft)
-  var response: seq[float64]
-  if filtering:
-    var gain = newSeq[float64](raw.bins)
-    for op in filters:
-      if op.kind == opFilter:
-        op.filter.spec.responseInto(dtMs, nfft, gain)
-        if response.len == 0: response = gain
-        else:
-          for k in 0 ..< response.len: response[k] *= gain[k]
+  # The response the filters apply to traces this long, on a grid of its
+  # own; computed again only for other filters, interval or length.
+  if specs.len > 0:
+    var key = $dtMs & "|" & $longest & "|"
+    for op in filters: key.add $op & ";"
+    if key != cache.responseOf:
+      try:
+        cache.responseHz = responseGrid(specs, nyquistHz(dtMs))
+        cache.response = appliedResponse(filters, dtMs, longest, cache.responseHz)
+        cache.responseOf = key
+      except ValueError:
+        cache.responseOf = ""
+        cache.responseHz.setLen 0
+        cache.response.setLen 0
   var plan: PipelinePlan[float32]
   var planCols = -1
   var ws = initWorkspace()
@@ -286,7 +292,7 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
     answer.filtered = processed.used
     if not pr.aux: answer.passedBy = raw.used - processed.used
     if processed.used > 0: answer.processed = processed.amplitudes
-    answer.response = move response
+    if specs.len > 0: (answer.responseHz, answer.response) = (cache.responseHz, cache.response)
   if answer.processed.len == 0: answer.processedPhase.setLen 0
   true
 

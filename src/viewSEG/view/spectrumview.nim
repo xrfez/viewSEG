@@ -1,9 +1,10 @@
 ## What a spectrum window draws (`core/spectra`): its curves as a
 ## `CurvePlot`, amplitude against frequency from 0 Hz to Nyquist, in dB
 ## (0 dB at the larger peak of the raw and processed curves, so the two
-## compare) or linear, and over them the filters' own response, its gain
-## 1 at that 0 dB (at the larger peak, linear), so a notch shows at its
-## true depth whatever the data; and its lines of words: what it is of,
+## compare) or linear, and under them, thin and faint, the response the
+## filters apply (on a grid of its own, measured through them: its gain 1
+## at that 0 dB, at the larger peak when linear), drawn only when they
+## reached some of the traces; and its lines of words: what it is of,
 ## what was left out, over which time.
 
 import std/[math, strutils]
@@ -21,10 +22,31 @@ func curveColours*(t: Theme): array[3, Rgba] =
   ## runs along.
   [t.roles[rlTextDim], t.roles[rlAccent], t.series[1]]
 
-func responseName*(sp: Spectrum): string =
-  ## The response curve's name in the legend: "filter response", and
-  ## "(not applied)" when the filters reached none of the traces.
-  if sp.filtered > 0: "filter response" else: "filter response (not applied)"
+func hasResponse*(sp: Spectrum): bool {.inline.} =
+  ## Whether `sp` has a filter response to draw: the filters have a pass
+  ## band or a notch and reached some of its traces (one they reached none
+  ## of is not drawn: the spectrum would seem filtered).
+  sp.response.len > 0 and sp.response.len == sp.responseHz.len and sp.filtered > 0
+
+func responseCurve(sp: Spectrum; db: bool; reference: float64; ink: Rgba): Curve =
+  ## The response, under the data: a thin faint line in the response
+  ## colour over a fainter shade down to the floor (its pass band reads as
+  ## a lit area behind the curves);
+  ## in dB its gain (0 dB at the top of the curves), clamped at the floor
+  ## (and its name says so), linear its gain times the larger peak; the
+  ## readout says its true gain in dB either way.
+  let gainDb = dbOf(sp.response, 1.0, -1000)
+  var ys = newSeq[float64](gainDb.len)
+  var clamped = false
+  for k in 0 ..< ys.len:
+    ys[k] = if db: max(gainDb[k], FloorDb) else: sp.response[k] * reference
+    if gainDb[k] < FloorDb: clamped = true
+  let name = if db and clamped: "filter response (below " & valueText(FloorDb) &
+                 " dB drawn at it)"
+             else: "filter response"
+  Curve(name: name, colour: Rgba(r: ink.r, g: ink.g, b: ink.b, a: 170), ys: ys,
+    xs: sp.responseHz, reads: gainDb, unit: "dB", width: 1.0,
+    shadeTo: (if db: FloorDb else: 0.0))
 
 func spectrumPlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
   ## Window `w`'s curves, as its display asks: the raw one, the processed
@@ -45,6 +67,9 @@ func spectrumPlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
   for k in 0 ..< sp.raw.len: result.xs[k] = float64(k) * sp.binHz
   let reference = max(sp.raw.peakOf, sp.processed.peakOf)
   let colours = curveColours(t)
+  # The response first, so the data is drawn over it.
+  if w.display.response and sp.hasResponse:
+    result.curves.add sp.responseCurve(db, reference, colours[2])
   template add(called: string; amps: seq[float64]; ink: Rgba) =
     result.curves.add Curve(name: called, colour: ink,
       ys: (if db: dbOf(amps, reference, FloorDb) else: amps))
@@ -55,15 +80,6 @@ func spectrumPlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
     let called = if sp.passedBy > 0: "processed (" & $sp.filtered & " of " & $sp.averaged & ")"
                  else: "processed"
     add(called, sp.processed, colours[1])
-  if w.display.response and sp.response.len == sp.raw.len:
-    # Its gain in dB, 0 dB at the top of the curves; linear, a gain of 1 at
-    # the larger peak. The readout says the gain in dB either way.
-    let gainDb = dbOf(sp.response, 1.0, FloorDb)
-    var ys = gainDb
-    if not db:
-      for k in 0 ..< ys.len: ys[k] = sp.response[k] * reference
-    result.curves.add Curve(name: sp.responseName, colour: colours[2], ys: ys,
-      reads: gainDb, unit: "dB")
   if result.curves.len == 0: result.note = "The curves are hidden: tick Raw, Processed or Response."
 
 func hasPhase*(w: SpectrumWindow): bool {.inline.} =
