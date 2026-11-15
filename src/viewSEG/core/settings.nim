@@ -11,7 +11,10 @@
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
 ## whole object, and the plot window's own commands (display, sort, display
 ## header), which the new plot window defaults follow. Saved as NIF
-## (`core/settingsnif`) by `AppState`.
+## (`core/settingsnif`) by `AppState`, which keeps two: those in effect for
+## the session, and those the user left by hand, which are saved (an
+## agent's changes are for the session only; `carried` takes the user's
+## change from one to the other).
 
 import std/math
 import join, log, panels, readout, scales
@@ -120,6 +123,27 @@ func remembered*(d: DisplaySettings): DisplaySettings =
   ## setting: `Layer.reversed`.)
   result = d
   result.visible = true
+
+func same[T](a, b: T): bool {.inline.} =
+  ## `a == b`, a value that is not a number equal to itself (as the settings
+  ## file has it).
+  when T is SomeFloat: a == b or (a.isNaN and b.isNaN)
+  else: a == b
+
+func carried*[T: Settings | PlotDefaults | DisplaySettings](kept, before, after: T): T =
+  ## `kept` with what changed from `before` to `after`: each setting that
+  ## differs, as `after` has it. A new plot's defaults and their display are
+  ## taken field by field (each is a choice of its own: a new display mode
+  ## leaves the gain as `kept` has it); every other setting whole (a list, a
+  ## placement, a group of toggles).
+  result = kept
+  for name, r in fieldPairs(result):
+    for key, b, a in fieldPairs(before, after):
+      when key == name:
+        when r is PlotDefaults or r is DisplaySettings:
+          r = carried(r, b, a)
+        else:
+          if not same(b, a): r = a
 
 proc addRecent*(list: var seq[string]; item: string; most: Positive) =
   ## Puts `item` first in `list`, once, keeping at most `most` items.

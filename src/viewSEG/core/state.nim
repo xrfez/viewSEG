@@ -62,6 +62,18 @@
 ## read a file of the user's, and `ckResetSettings` goes back to the
 ## defaults, keeping a copy.
 ##
+## **What is saved, and who changed it.** Every command says where it came
+## from (`Command.origin`): a window, or agent control. A change from
+## either changes what the program shows and uses, but only the user's own
+## reaches what is saved for the next run (`keeps`): the state holds the
+## settings in effect (`settings`) and those as the user left them by hand
+## (`keptSettings`, what is saved), and every change of the settings goes
+## through one template (`change`) that makes it on the second only when
+## `keeps` says so. What a command starts and a job finishes (an open's
+## recent file, a listing's recent folder, an import) carries its
+## command's origin until then. The window arrangement an agent reports is
+## not saved either. What an agent does is still written to the log.
+##
 ## **Edits to traces.** Killing a trace and reversing its polarity
 ## (`ckEdit`) change lists kept per file (`core/edits`), by the trace's
 ## index in the file, never the file: they hold for the session, through
@@ -165,8 +177,18 @@ type
     ckStopReading = "stop reading"       ## leave a panel's read that does not answer
     ckPrepare = "prepare"                ## the file the user is likely to step to next
 
+  CommandOrigin* = enum
+    ## Where a command came from: what decides whether its changes are
+    ## saved (`keeps`).
+    coWindow = "a window"
+      ## the user, in a window: saved as before
+    coAgent = "agent control"
+      ## an agent (`remote/tools`): for the session only
+
   Command* = object
     ## A user intent: the only way the UI changes the state.
+    origin*: CommandOrigin
+      ## where it came from: a window unless agent control says so
     case kind*: CommandKind
     of ckOpen, ckBrowse, ckLoadSurvey:
       paths*: seq[string]
@@ -277,6 +299,8 @@ type
     unwanted: bool   ## an open no longer wanted (another file was chosen): dropped when it comes
     follow: bool     ## an open "Follow the latest" made: shown only when the file is whole
     quiet: bool      ## a close of a file the plot stepped away from: not logged
+    by: CommandOrigin
+      ## an open: who asked for it (the user's goes to the recent files kept)
 
   Reopen = object
     ## A panel that showed a file another program changed: it shows the
@@ -420,8 +444,16 @@ type
     savedLayouts: seq[SavedLayout] ## the layouts saved by name this run, kept in the list
     defaults: Settings ## what a reset goes back to
     settingsRev: int ## bumped on every change of `settings`
-    savedRev: int ## the revision saved last
-    changedAt: MonoTime ## when `settings` last changed
+    kept: Settings ## the settings as the user left them by hand: what is saved (`keeps`)
+    keptRev: int ## bumped on every change of `kept`
+    savedRev: int ## the revision of `kept` saved last
+    changedAt: MonoTime ## when `kept` last changed
+    listedBy: CommandOrigin
+      ## who asked for the listing: its folder goes to the recent ones kept
+    openedBy: Table[string, CommandOrigin]
+      ## per file open: who asked for it (a reopen after it changed is theirs)
+    importsBy: seq[CommandOrigin]
+      ## who asked for each settings import being read, oldest first
     arrangement: string ## how the windows are arranged now (the toolkit's text)
     layoutRev, layoutSaved: int
     layoutAt: MonoTime ## when the arrangement last changed
@@ -520,11 +552,13 @@ proc keepSettingsIn*(state: var AppState; dir: string; loaded: LoadedSettings) =
   for (severity, text) in loaded.notes:
     state.log.add(severity, "settings", text)
   state.settings = cleaned(loaded.settings)[0]
+  state.kept = state.settings
   state.defaults = cleaned(loaded.defaults)[0]
   state.configDir = dir
   state.keepsSettings = loaded.saveable
   inc state.settingsRev
-  state.savedRev = if loaded.rewrite: state.settingsRev - 1 else: state.settingsRev
+  inc state.keptRev
+  state.savedRev = if loaded.rewrite: state.keptRev - 1 else: state.keptRev
   state.changedAt = getMonoTime()
   discard state.diskIo
 
@@ -568,8 +602,8 @@ func settingsRevision*(state: AppState): int {.inline.} =
 proc saveSettings(state: var AppState) =
   let file = state.settingsFile
   if file.len > 0:
-    state.disk.replace(file, settingsDocument(state.settings), "the settings")
-  state.savedRev = state.settingsRev
+    state.disk.replace(file, settingsDocument(state.kept), "the settings")
+  state.savedRev = state.keptRev
 
 proc saveArrangement(state: var AppState) =
   if state.configDir.len > 0 and state.arrangement.len > 0:
@@ -584,7 +618,7 @@ proc persist*(state: var AppState; now = getMonoTime()) =
   ## commands; it never waits.
   assertUiThread()
   state.writeLog()
-  if state.savedRev != state.settingsRev and now - state.changedAt >= SaveDelay:
+  if state.savedRev != state.keptRev and now - state.changedAt >= SaveDelay:
     state.saveSettings()
   if state.layoutSaved != state.layoutRev and now - state.layoutAt >= SaveDelay:
     state.saveArrangement()
@@ -594,7 +628,7 @@ proc flushFiles*(state: var AppState) =
   ## until the disk thread has written everything handed to it (tests).
   assertUiThread()
   state.writeLog()
-  if state.savedRev != state.settingsRev: state.saveSettings()
+  if state.savedRev != state.keptRev: state.saveSettings()
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
   state.disk.flush()
 
@@ -625,7 +659,7 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   for r in state.readers: r.askStop()
   state.watch.askStop()
   state.jobs.askStop()
-  if state.savedRev != state.settingsRev: state.saveSettings()
+  if state.savedRev != state.keptRev: state.saveSettings()
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
   state.writeLog()
   state.disk.askStop()
@@ -739,8 +773,14 @@ func indexCache*(state: AppState): lent string {.inline.} =
   state.indexCache
 
 func settings*(state: AppState): lent Settings {.inline.} =
-  ## The user's settings (`core/settings`).
+  ## The settings in effect (`core/settings`): the user's, with what agents
+  ## changed this session.
   state.settings
+
+func keptSettings*(state: AppState): lent Settings {.inline.} =
+  ## The settings as the user left them by hand: what is saved, and what
+  ## the next run starts with (`keeps`).
+  state.kept
 
 func defaultSettings*(state: AppState): lent Settings {.inline.} =
   ## What a reset of the settings goes back to.
@@ -959,13 +999,42 @@ proc refusedExport(state: var AppState; cmd: Command): bool =
       "viewSEG never writes over one; choose another name")
   else: result = false
 
-proc change(state: var AppState; s: sink Settings) =
-  ## Makes `s` the settings, noting a change when it is one (as saved:
-  ## a value that is not a number equals itself).
+func keeps*(origin: CommandOrigin): bool {.inline.} =
+  ## Whether a change a command from `origin` makes reaches what is saved
+  ## for the next run (the settings, the recent files and folders, the
+  ## window arrangement): the user's in a window does; an agent's is for
+  ## the session only (the user's decision). The one place that decides.
+  origin == coWindow
+
+proc takeSettings(state: var AppState; s: sink Settings) =
+  ## Makes `s` the settings in effect, noting a change when it is one (as
+  ## saved: a value that is not a number equals itself).
   if settingsDocument(s) != settingsDocument(state.settings):
     state.settings = s
     inc state.settingsRev
+
+proc keepSettings(state: var AppState; s: sink Settings) =
+  ## Makes `s` the settings kept for the next run, saved `SaveDelay` later.
+  if settingsDocument(s) != settingsDocument(state.kept):
+    state.kept = s
+    inc state.keptRev
     state.changedAt = getMonoTime()
+
+template change(state: var AppState; by: CommandOrigin; s, edit: untyped) =
+  ## Changes the settings by `edit`, made on `s`: those in effect, and,
+  ## when `keeps(by)`, those kept for the next run the same way. Every
+  ## change of the settings goes through here. `edit` runs on each copy in
+  ## turn, with the state as it was before, so it says what changes (a file
+  ## put first among the recent ones, the fields a window changed: `carried`
+  ## from `state.settings`), not what the settings become.
+  if keeps(by):
+    var s = state.kept
+    edit
+    state.keepSettings(s)
+  block:
+    var s = state.settings
+    edit
+    state.takeSettings(s)
 
 proc reader(state: var AppState; k: int): lent PanelReader =
   ## The reader of `panels[k]`, started when first needed.
@@ -1160,12 +1229,13 @@ proc reorder(state: var AppState; k: int) =
 
 func usable(x: float64): bool {.inline.} = x > 0 and x < Inf
 
-proc settleGain(state: var AppState; k: int) =
-  ## After a change of display, view or tiles of `panels[k]`: Fixed takes
-  ## its amplitude from the data shown when it has none yet (and the
-  ## settings keep it, for new plots and the next run), and Float
-  ## takes its level from the data now in view (keeping the one before
-  ## when no tile holds any of it yet).
+proc settleGain(state: var AppState; k: int; by: CommandOrigin) =
+  ## After a change of display, view or tiles of `panels[k]` (`by` whom: a
+  ## tile is the data's own): Fixed takes its amplitude from the data shown
+  ## when it has none yet (and the settings keep it, for new plots and the
+  ## next run, when they wait for one too), and Float takes its level from
+  ## the data now in view (keeping the one before when no tile holds any of
+  ## it yet).
   template p: untyped = state.panels[k]
   if p.layers.len == 0: return
   template d: untyped = state.panels[k].layers[0].display
@@ -1175,9 +1245,10 @@ proc settleGain(state: var AppState; k: int) =
       d.fixedClip = p.level.clip
       inc p.revision
       # kept for the next run too, as a typed amplitude is
-      var s = state.settings
-      s.plot.display = remembered(d)
-      state.change s
+      let clip = d.fixedClip
+      state.change(by, s):
+        if s.plot.display.gain == dgFixed and not usable(s.plot.display.fixedClip):
+          s.plot.display.fixedClip = clip
   of dgFloat:
     var values: seq[float32]
     for i in countdown(state.tiles[k].high, 0): # the newest tile that meets the view
@@ -1242,6 +1313,7 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
   if not keepLayers and state.files.chosen == s.path and
       state.shownFile(state.findPanel(MainPanel)) < 0:
     state.choose("")
+  if not keepLayers: state.openedBy.del s.path # kept for the file's reopen only
   state.closing.add Pending(job: job, path: s.path, session: s, quiet: quiet)
   state.watchOpen()
 
@@ -1655,13 +1727,14 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   var replacing = false # `ckShowFile`: in place of the file the panel shows
   var gather = 0
   var follow = false
+  var by = coWindow
   for p in state.opening:
     if p.job == job:
       if p.unwanted: # another file was chosen meanwhile
         state.release(s)
         return
       if p.panel != NoPanel: (panel, replacing) = (p.panel, true)
-      (gather, follow) = (p.gather, p.follow)
+      (gather, follow, by) = (p.gather, p.follow, p.by)
   if follow and s.file.kind != skUnknown and s.file.cutShort:
     # Not shown early: it ends before its last trace. Shown when it changes and is whole.
     state.mark(s.path, short = true, seen = false)
@@ -1689,10 +1762,10 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
     " in " & plural(s.gathers.len, "gather") &
     (if s.file.fromCache: " (index from the cache)." else: "."))
   gather = if s.gathers.len == 0: -1 else: clamp(gather, 0, s.gathers.high)
-  var st = state.settings
-  st.recentFiles.addRecent(s.path, MaxRecent)
-  st.recentFolders.addRecent(s.path.parentDir, MaxRecent)
-  state.change st
+  state.change(by, st):
+    st.recentFiles.addRecent(s.path, MaxRecent)
+    st.recentFolders.addRecent(s.path.parentDir, MaxRecent)
+  state.openedBy[s.path] = by
   state.checkEdits(s)
   let path = s.path
   let short = s.file.cutShort
@@ -1979,10 +2052,11 @@ proc preparedCurrent(state: AppState): bool =
   e >= 0 and state.files.entries[e].status == fsSteady and
     state.files.entries[e].size == s.size and state.files.entries[e].modified == s.modified
 
-proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = false) =
+proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = false;
+    by: CommandOrigin) =
   ## Shows the file at `path` (canonical) in `panels[k]`, in place of the
-  ## one it shows: at once when it is open, else once an open job opened it
-  ## (at `gather`; with `follow`, only if it is whole). An open started
+  ## one it shows, as `by` asked: at once when it is open, else once an open
+  ## job opened it (at `gather`; with `follow`, only if it is whole). An open started
   ## earlier for this panel and another file is no longer wanted: it is
   ## cancelled, and dropped if it comes all the same; so is the wait to show
   ## a changed file again.
@@ -2005,6 +2079,7 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
     if o >= 0:
       state.opening[o].panel = panel
       if not follow: state.opening[o].follow = false # the user's own choice: shown as it is
+      if keeps(by): state.opening[o].by = by # the user asked for it too
     elif not state.prepared.session.isNil and state.prepared.session.path == path and
         state.preparedCurrent():
       # Opened already, in the background, and not changed since: shown at once.
@@ -2012,7 +2087,7 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
       var s = move state.prepared.session
       state.prepared = (NoJob, nil)
       state.opening.add Pending(job: job, path: path, panel: panel, gather: gather,
-        follow: follow)
+        follow: follow, by: by)
       state.adopt(s, job)
       state.opening.keepItIf(it.job != job)
     else:
@@ -2023,16 +2098,18 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
         lane: jlInteractive, reads: @[path]), openFileWork(path, state.inbox.poster,
         indexCacheFile(state.indexCache, path), whole = follow))
       state.opening.add Pending(job: job, path: path, panel: panel, gather: gather,
-        follow: follow)
+        follow: follow, by: by)
 
-proc startListing(state: var AppState; paths: seq[string]; title, folder: string) =
+proc startListing(state: var AppState; paths: seq[string]; title, folder: string;
+    by: CommandOrigin) =
   ## Lists the files `paths` (canonical) name in the file list, in place of
-  ## what it listed: a scan on the background lane (`scanWork`). The file
-  ## chosen stays chosen.
+  ## what it listed, as `by` asked: a scan on the background lane
+  ## (`scanWork`). The file chosen stays chosen.
   if state.files.job != NoJob:
     discard state.jobs.cancel(state.files.job)
     state.oldScans.add state.files.job # it ends quietly
   state.watch.unwatch() # until the scan is done
+  state.listedBy = by
   let gen = state.files.gen + 1
   state.files = FileList(title: title, folder: folder, asked: paths, scanning: true, gen: gen,
     chosen: state.files.chosen, revision: state.files.revision + 1)
@@ -2048,9 +2125,7 @@ proc takeListed(state: var AppState; m: sink Msg) =
   if m.listFolder.len > 0:
     f.folder = m.listFolder
     f.title = m.listFolder
-    var st = state.settings
-    st.recentFolders.addRecent(m.listFolder, MaxRecent)
-    state.change st
+    state.change(state.listedBy, st): st.recentFolders.addRecent(m.listFolder, MaxRecent)
   for e in m.listed:
     if e.kind.isSurvey and e.path in state.loadNamed: state.loadSurvey(e.path, quiet = true)
   f.merge(m.listed)
@@ -2069,7 +2144,7 @@ proc takeListed(state: var AppState; m: sink Msg) =
     if target.len > 0 or m.listDone:
       let k = state.findPanel(state.showFound)
       state.showFound = NoPanel
-      if k >= 0 and target.len > 0: state.showPath(k, target)
+      if k >= 0 and target.len > 0: state.showPath(k, target, by = state.listedBy)
 
 proc followNewest(state: var AppState) =
   ## With "Follow the latest": shows in the main panel the newest file that
@@ -2092,7 +2167,7 @@ proc followNewest(state: var AppState) =
     let path = f.entries[best].path
     state.followed.incl path
     state.followedUpTo = f.entries[best].modified
-    state.showPath(k, path, follow = true)
+    state.showPath(k, path, follow = true, by = coWindow) # the user's own setting
 
 proc showAgain(state: var AppState; path: string) =
   ## Shows `path` again in the panels that wait for it (`reopens`).
@@ -2102,7 +2177,7 @@ proc showAgain(state: var AppState; path: string) =
   state.reopens.keepItIf(it.path != path)
   for r in waiting:
     let k = state.findPanel(r.panel)
-    if k >= 0: state.showPath(k, path, r.gather)
+    if k >= 0: state.showPath(k, path, r.gather, by = state.openedBy.getOrDefault(path))
 
 proc reopen(state: var AppState; i: int; now: bool) =
   ## Open file `sessions[i]` changed on disk: its panels let it go at once
@@ -2284,12 +2359,12 @@ proc retry(state: var AppState; k: int) =
     if not o.unwanted and (o.panel == p.id or (o.panel == NoPanel and p.id == MainPanel)):
       at = j
   if at >= 0:
-    let (path, gather, follow) = (state.opening[at].path, state.opening[at].gather,
-      state.opening[at].follow)
+    let (path, gather, follow, by) = (state.opening[at].path, state.opening[at].gather,
+      state.opening[at].follow, state.opening[at].by)
     state.opening[at].unwanted = true
     discard state.jobs.cancel(state.opening[at].job)
     state.log.add(sevInfo, path.extractFilename, "Opening " & path.extractFilename & " again.")
-    state.showPath(k, path, gather, follow)
+    state.showPath(k, path, gather, follow, by) # the same open: whoever asked for it
     return
   if state.shownFile(k) >= 0:
     if not state.readers[k].isNil and state.readers[k].silentFor >= StallAfter:
@@ -2349,7 +2424,7 @@ proc retryListing(state: var AppState) =
     state.watchOpen()
   let paths = if f.folder.len > 0: @[f.folder] else: f.asked
   state.log.add(sevInfo, "files", "Listing " & f.title & " again.")
-  state.startListing(paths, f.title, f.folder)
+  state.startListing(paths, f.title, f.folder, state.listedBy) # the same listing
 
 proc apply*(state: var AppState; cmd: Command) =
   ## Carries out `cmd`. Anything slow it starts runs as a job; `drainInbox`
@@ -2377,7 +2452,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
         let job = state.jobs.submit(JobSpec(title: "Open " & name, lane: jlInteractive,
           reads: @[path]), openFileWork(path, state.inbox.poster,
           indexCacheFile(state.indexCache, path)))
-        state.opening.add Pending(job: job, path: path)
+        state.opening.add Pending(job: job, path: path, by: cmd.origin)
   of ckBrowse:
     var paths: seq[string]
     for p in cmd.paths:
@@ -2387,7 +2462,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       # A copy: as an argument beside `paths`, `paths[0]` would be moved.
       let title = if paths.len == 1: paths[0] else: $paths.len & " chosen files"
       state.loadNamed = paths # the survey files among them are loaded once listed
-      state.startListing(paths, title, "")
+      state.startListing(paths, title, "", cmd.origin)
       state.quietScan = if cmd.quiet: state.files.job else: NoJob
       state.showFound = if cmd.showFirst: MainPanel else: NoPanel
   of ckShowTrace:
@@ -2404,7 +2479,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
         state.showTrace(k, i, cmd.traceIndex, cmd.recordIndex)
       else: # opened first, then shown
         state.jump = (path, cmd.traceIndex, cmd.recordIndex)
-        state.showPath(k, path)
+        state.showPath(k, path, by = cmd.origin)
   of ckExportLog:
     if not state.refusedExport(cmd):
       # The disk thread makes the lines: 10 000 of them take a tenth of a second.
@@ -2424,10 +2499,10 @@ proc applyCommand(state: var AppState; cmd: Command) =
       else:
         state.jump = ("", -1, -1) # another choice than a message's trace
         if cmd.panel == MainPanel: state.showFound = NoPanel # the user chose
-        state.showPath(k, path)
+        state.showPath(k, path, by = cmd.origin)
       let folder = path.parentDir
       if cmd.listFolder and state.files.folder != folder:
-        state.startListing(@[folder], folder, folder)
+        state.startListing(@[folder], folder, folder, cmd.origin)
   of ckClose:
     let i = state.findSession(cmd.file)
     if i < 0: state.ignore(cmd, $cmd.file & " is not open")
@@ -2481,7 +2556,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
         if cmd.remember: state.remember(k)
         state.panels[k].view = v
         state.requestView(k)
-        state.settleGain(k)
+        state.settleGain(k, cmd.origin)
   of ckBack:
     # Nothing to go back to is not a mistake: the control is only disabled.
     let k = state.findPanel(cmd.panel)
@@ -2495,7 +2570,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       inc p.jumps
       inc p.revision
       state.requestView(k)
-      state.settleGain(k)
+      state.settleGain(k, cmd.origin)
   of ckSettings:
     let (s, dropped) = cleaned(cmd.settings)
     if dropped > 0:
@@ -2504,23 +2579,28 @@ proc applyCommand(state: var AppState; cmd: Command) =
         "sort preset without a name or keys) and were left out.")
     let follow = s.files.followLatest and not state.settings.files.followLatest
     let raw = (rfRawAmplitude in s.readout) != (rfRawAmplitude in state.settings.readout)
-    state.change s
+    # The settings a window sends are those in effect with its change: only
+    # that change is the user's (what an agent changed meanwhile is not).
+    state.change(cmd.origin, x): x = carried(x, state.settings, s)
     if follow: state.followNewest() # the newest file whole now, at once
     state.prepareNext() # (turned on or off)
     if raw: # the tiles carry their raw samples, or no longer: made again from the samples held
       for k in 0 ..< state.panels.len: state.resample(k)
   of ckExportSettings:
     if not state.refusedExport(cmd):
-      state.diskIo.replace(cmd.docPath, settingsDocument(state.settings),
+      state.diskIo.replace(cmd.docPath, settingsDocument(state.kept),
         "the exported settings", done = "Settings exported to " & cmd.docPath & ".")
   of ckImportSettings:
     if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
-    else: state.diskIo.read(cmd.docPath, rpImportSettings, MaxNifBytes)
+    else:
+      state.diskIo.read(cmd.docPath, rpImportSettings, MaxNifBytes)
+      state.importsBy.add cmd.origin
   of ckLayout:
     if cmd.arrangement != state.arrangement:
       state.arrangement = cmd.arrangement
-      inc state.layoutRev
-      state.layoutAt = getMonoTime()
+      if keeps(cmd.origin):
+        inc state.layoutRev
+        state.layoutAt = getMonoTime()
   of ckSaveLayout:
     let why = layoutNameProblem(cmd.layoutName)
     if why.len > 0: state.ignore(cmd, why)
@@ -2540,24 +2620,25 @@ proc applyCommand(state: var AppState; cmd: Command) =
         name: cmd.docPath.splitFile.name, imgui: state.arrangement)), "the exported layout",
         done = "Layout exported to " & cmd.docPath & ".")
   of ckResetSettings:
-    var s = state.defaults
-    s.recentFiles = state.settings.recentFiles # memory, not preferences
-    s.recentFolders = state.settings.recentFolders
-    s.window = state.settings.window
     let file = state.settingsFile
     if file.len > 0:
       # Not a name asked for before: the disk thread may not have written
       # that backup yet, and a second reset must not write over the first's.
       # The disk thread picks a name no file has (`fresh`): this thread never
       # looks at the disk, and a second reset never writes over the first's.
-      state.diskIo.replace(backupName(file, now()), settingsDocument(state.settings),
+      state.diskIo.replace(backupName(file, now()), settingsDocument(state.kept),
         "a copy of the settings", done = "The settings before the reset are kept in ",
         fresh = true)
       state.log.add(sevInfo, "settings", "Settings reset to their defaults; a copy of the " &
         "settings before is kept beside them.")
     else:
       state.log.add(sevInfo, "settings", "Settings reset to their defaults.")
-    state.change s
+    state.change(cmd.origin, s):
+      let was = s
+      s = state.defaults
+      s.recentFiles = was.recentFiles # memory, not preferences
+      s.recentFolders = was.recentFolders
+      s.window = was.window
   of ckDisplay:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
@@ -2569,9 +2650,10 @@ proc applyCommand(state: var AppState; cmd: Command) =
       let d = cmd.display.bounded # whoever sent it: the settings file takes it as it is
       p.layers[0].display = d
       inc p.revision
-      var s = state.settings
-      s.plot.display = remembered(d)
-      state.change s
+      # what this command changed in the display; a new mode leaves the
+      # gain as the user had it, whatever an agent made it meanwhile
+      state.change(cmd.origin, s):
+        s.plot.display = carried(s.plot.display, state.settings.plot.display, remembered(d))
       # New limits (a wiggle mode's widest view, the margin of the overlap):
       # the view stays where it is, a wider one (from density) narrowed
       # keeping its left edge, and one that showed the whole record shows
@@ -2587,7 +2669,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
         state.refetch(k, keepTiles = false)
       else:
         state.requestView(k) # a new view, or the extremes wiggles need
-      state.settleGain(k)
+      state.settleGain(k, cmd.origin)
   of ckHeader:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
@@ -2598,9 +2680,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       for f in cmd.header.fields:
         if f notin header.fields: header.fields.add f
       state.panels[k].header = header
-      var s = state.settings
-      s.plot.header = header
-      state.change s
+      state.change(cmd.origin, s): s.plot.header = header
       state.refetch(k, keepTiles = true)
   of ckSort:
     let k = state.findPanel(cmd.panel)
@@ -2609,11 +2689,10 @@ proc applyCommand(state: var AppState; cmd: Command) =
     elif uniqueKeys(cmd.order) != state.panels[k].layers[0].order:
       let order = uniqueKeys(cmd.order) # each field once, as the sort dialog gives
       state.panels[k].layers[0].order = order
-      var s = state.settings
-      s.plot.order = order
-      if order.len > 0 and presetOf(order, s.sortPresets) < 0:
-        s.customOrder = order # the user's own keys, offered again
-      state.change s
+      state.change(cmd.origin, s):
+        s.plot.order = order
+        if order.len > 0 and presetOf(order, s.sortPresets) < 0:
+          s.customOrder = order # the user's own keys, offered again
       state.reorder(k)
   of ckReverseAll:
     let k = state.findPanel(cmd.panel)
@@ -2786,6 +2865,10 @@ proc takeIn(state: var AppState; m: Msg) =
     for l in state.savedLayouts: state.layoutList = state.layoutList.added(l)
   of rpLoadLayout, rpImportLayout: state.takeLayout(m)
   of rpImportSettings:
+    var by = coWindow # the disk thread answers in the order it was asked
+    if state.importsBy.len > 0:
+      by = state.importsBy[0]
+      state.importsBy.delete 0
     if m.readError.len > 0:
       state.log.add(sevError, "settings", "Cannot import the settings in " & m.readPath &
         ": " & m.readError & ".")
@@ -2793,9 +2876,10 @@ proc takeIn(state: var AppState; m: Msg) =
       var problems: seq[string]
       try:
         if m.docError.len > 0: raise newException(NifError, m.docError)
-        let s = readSettings(m.doc, name, state.settings, problems)
+        state.change(by, s): # read over each, as over the settings in effect before
+          problems.setLen 0
+          s = cleaned(readSettings(m.doc, name, s, problems))[0]
         state.logProblems("settings", problems)
-        state.change cleaned(s)[0]
         state.log.add(sevInfo, "settings", "Settings imported from " & m.readPath &
           (if problems.len > 0: ", except what is said above." else: "."))
       except NifError as e:
@@ -2878,7 +2962,7 @@ proc drainInbox*(state: var AppState): bool =
           values -= state.tiles[k][0].data.len + state.tiles[k][0].envelope.len
           state.tiles[k].delete(0)
         inc state.panels[k].revision
-        state.settleGain(k)
+        state.settleGain(k, coWindow) # the data's own: kept when the user's Fixed waits for it
         # The view may have moved on while the tile was read: the read-ahead
         # is filled again around it now.
         state.requestView(k)

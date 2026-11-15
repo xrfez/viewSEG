@@ -163,10 +163,18 @@ Turn agent control on for agents you would let do what you can do in the windows
   gives the paths of what is listed and open, the program's folder and working folder
   (your user name is often in them) and the newest messages; `screenshot` gives pictures
   of viewSEG's own window, nothing else on your screen.
-- **It changes the plot as you would,** and the program keeps it as it keeps yours: the
-  display, gain, display header and sort it sets become the defaults for new plots, the
-  files it opens are added to File > Open recent, and opening a file writes its index
-  cache. Numbers no control would take are brought within the controls' ranges.
+- **It changes the plot as you would, for this session only.** What it does shows and
+  acts exactly as if you had done it: the display, gain, display header and sort it sets
+  are what a new plot starts with until you quit, and the files and folders it opens are
+  in File > Open recent. Nothing of it is saved: not the defaults for new plots, not the
+  recent files and folders, nothing in `settings.nif` or `layout.nif`. What you change by
+  hand is saved as always, also while an agent is connected, and only your change: if an
+  agent set the gain and you then pick another display mode, the mode is saved and the
+  gain stays as you last set it. When viewSEG starts again, everything is as you last left
+  it by hand, whatever agents did. An export of the settings writes yours. Messages and
+  the session log still list every command an agent gave. Opening a file writes its index
+  cache, as when you open it. Numbers no control would take are brought within the
+  controls' ranges.
 
 ## What an agent cannot do
 

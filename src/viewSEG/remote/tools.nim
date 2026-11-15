@@ -230,8 +230,10 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
     applied: var bool): string =
   ## The `command` tool: decodes the command, fills what is not given from
   ## the state, and applies it as a window's command is (a view through the
-  ## frontend, which owns the plot's view, when it has one). `applied` is set
-  ## when it was. The answer says what the program logged meanwhile.
+  ## frontend, which owns the plot's view, when it has one), as agent
+  ## control's: it changes what is shown, and nothing that is saved.
+  ## `applied` is set when it was. The answer says what the program logged
+  ## meanwhile.
   var n: JsonNode
   var why = args(arguments, n)
   if why.len > 0: return refused([why])
@@ -255,6 +257,7 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
   of ckJoin:
     for f in c.joinFiles.mitems: f.path = fromProgram(f.path)
   else: discard
+  c.origin = coAgent # what it changes is for the session only: core decides (`keeps`)
   let before = state.log.nextSerial
   if kind == ckView and fe.showView != nil and fe.showView(c.panel, c.view):
     discard # the frontend moves its plot next frame and reports the view (ckView)

@@ -520,6 +520,26 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   first is written). A release that is not portable may carry site defaults in its
   `config/settings.nif`. The exports (`ckExportSettings`, `ckExportLayout`, `ckExportLog`)
   never write over a seismic file the program has open, is opening or closing, or lists.
+- **Who changed it: what is saved.** Every `Command` carries where it came from
+  (`origin`: `coWindow`, the default, or `coAgent`, which only agent control's `command`
+  tool sets). A change from either changes what the program shows and uses; only the
+  user's reaches what is saved for the next run, and one function decides it
+  (`keeps`). So `AppState` holds the settings twice: those in effect (`settings`, what
+  the windows read) and those as the user left them by hand (`keptSettings`, what is
+  saved and exported). Every change of the settings goes through one template
+  (`change`), which makes it on those in effect, and on those kept when `keeps` says so;
+  it is written as what changes (a file put first among the recent ones), so it can be
+  made on each. A window's `ckSettings` and `ckDisplay` send whole values built on what
+  is in effect, which holds what an agent changed: only what the command changed is
+  kept (`settings.carried`: a new plot's display field by field, every other setting
+  whole), so a new display mode chosen after an agent's gain keeps the user's gain.
+  What a command starts carries its origin to its end: an open's (`Pending.by`) to the
+  recent file it adds, a listing's to its recent folder and the file it shows first, a
+  file's open to its reopen after another program changed it, an import's to the
+  settings read. A Fixed gain's amplitude taken from the data is kept only when the kept
+  settings wait for one too. The arrangement an agent reports (`ckLayout`) is not saved.
+  `tagentsession` lists every setting the settings file holds and the agent command that
+  reaches each for the session, if any: a new setting fails it until it is decided on.
 - **Layouts** (`core/layouts`): the toolkit's own layout text (Dear ImGui's `.ini` form,
   which `core` never reads) in a NIF document. The frontend reports the arrangement when
   Dear ImGui says it changed (`ckLayout`; `io.IniFilename` is nil, so ImGui writes no file
@@ -823,6 +843,8 @@ type
     ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog,
     ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints,
     ckHoverPoints, ckShowPoints, ckJoin, ckSelectUnmatched
+  Command = object           # one of them: its kind and fields, and its origin
+    origin: CommandOrigin    # coWindow (the default) or coAgent: what is saved (`keeps`)
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId
@@ -870,7 +892,8 @@ type
     disk: DiskIo             # core/diskio: the session log, settings and layouts, off this thread
     watch: FolderWatch       # core/watch: the folder listed and the open files, looked at
     indexCache: string       # the folder of parseSEG's index caches; "" for none
-    settings: Settings       # what is remembered between runs; saved by `persist`
+    settings: Settings       # in effect: the user's, with what agents changed this session
+    kept: Settings           # as the user left them by hand: saved by `persist` (`keeps`)
     tiles: seq[seq[Tile]]    # per panel: the newest four, oldest first
     jobs: Jobs               # destroyed after the readers, before the sessions
     readers: seq[PanelReader] # per panel; declared last: they stop (and end their holds) first
@@ -1073,11 +1096,15 @@ over a **Unix-domain socket**.
   settings reset, which keeps a backup) and the user's preferences and window
   arrangement (`ckSettings`, `ckImportSettings`, `ckLayout`, `ckLoadLayout`). Trace
   edits are the lists beside the file (`core/edits`): a loaded file is never changed.
-  As for the windows' commands, `core` keeps what a panel's display, display header and
-  sort become as the defaults for new plots (the settings file), and an open adds to the
-  recent files; it brings a display's numbers within the ranges the controls and the
-  settings file take (`bounded`: a NaN or an infinity, which the settings file has no
-  literal for, ended the program) and takes a header field or sort key given twice once.
+  **For the session only:** the `command` tool marks each command it gives as an
+  agent's (`origin: coAgent`), and `core` changes nothing saved for it (`keeps`, under
+  "Settings" above): what a panel's display, display header and sort become is what new
+  plots start with until the program quits, and an open adds to the recent files of the
+  session, but neither reaches `settings.nif`; nothing reaches `layout.nif`. Messages and
+  the session log still list each command. `core` brings a display's numbers within the
+  ranges the controls and the settings file take (`bounded`: a NaN or an infinity, which
+  the settings file has no literal for, ended the program) and takes a header field or
+  sort key given twice once.
 - No AI code, key or network access is in viewSEG itself.
 
 ### The command tool's schema
