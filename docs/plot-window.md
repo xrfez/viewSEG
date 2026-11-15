@@ -678,7 +678,10 @@ what it was instead of):
    the files the user opens); what was found is kept beside the index cache (a small file
    per seismic file), so the folder listed again opens none of its files. A file that
    does not answer for 3 s is passed by and tried again a minute later, once that first
-   try has come back (each try that hangs holds a thread until the drive answers). A
+   try has come back (each try that hangs holds a thread until the drive answers); while
+   two such tries hang, no other file is tried (a share that stops answering would else
+   hold a thread per file): the Layers list says the folder does not answer, and the
+   reading goes on when the drive does. A
    source with a file is ringed in the outline colour; one without keeps its plain disc.
    A click on a ringed source shows the file in place of the one the plot shows, as a
    click in Files does.

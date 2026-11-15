@@ -18,12 +18,17 @@
 ##   is as it was (bytes and time).
 ## - A file that does not answer is not tried again while its first try
 ##   still hangs: each try that hangs holds a thread until the drive answers.
+## - A folder whose drive stops answering holds `MaxHanging` threads, not
+##   one a file: no job starts while that many given up still hang, the
+##   state says the folder does not answer, and the reading goes on (every
+##   file read) once the drive answers.
 ##
 ## Seen to fail: with the stalled job waited for (no give-up), "the rest
 ## read" timed out with 2 of 5 files read; with the shot cache not read,
 ## "listed again" found 3 mapped reads of shot-2.sgy; with a file tried again
 ## after `RetryAfter` whatever its first try was doing, "2 tries of the file
-## hang".
+## hang"; with no bound on the jobs given up that still hang, "3 files'
+## reads hang" in a folder that does not answer (the bound is 2).
 
 import std/[os, sets, tables, times]
 import viewSEG/core/state
@@ -129,6 +134,32 @@ withFixtures fx:
     doAssert waitUntil(hung() == 0)
     advanceFsClock(RetryAfter)
     doAssert st.settle(st.shots.done(5) and st.shots.later.len == 0), "tried again"
+    doAssert st.shots.pointRefs.len == 5
+    doAssert uiCalls().len == 0, $uiCalls()
+    st.shutdown()
+
+  block aFolderThatDoesNotAnswer:
+    removeDir(cache)
+    resetCounts()
+    var st = initAppState(indexCache = cache)
+    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+    fault(folder, fkHang, {foMapped}) # every file of the folder
+    st.apply Command(kind: ckBrowse, paths: @[folder])
+    doAssert st.settle(hung() == 1), "the first file does not answer"
+    for _ in 1 .. 6:
+      advanceFsClock(StallAfter + initDuration(seconds = 1))
+      discard waitUntil((discard st.drainInbox(); hung() > MaxHanging),
+        initDuration(milliseconds = 500))
+    doAssert hung() == MaxHanging, $hung() & " files' reads hang"
+    doAssert st.shots.waiting and st.shots.job == NoJob and st.shots.pending.len > 0,
+      "the folder does not answer: said"
+    release(folder)
+    doAssert waitUntil(hung() == 0)
+    for _ in 1 .. 3:
+      advanceFsClock(RetryAfter + initDuration(seconds = 1))
+      discard st.settle(st.shots.done(5) and st.shots.later.len == 0)
+    doAssert st.shots.done(5) and st.shots.later.len == 0 and not st.shots.waiting,
+      "read on: " & $st.shots.shotFiles & " of 5"
     doAssert st.shots.pointRefs.len == 5
     doAssert uiCalls().len == 0, $uiCalls()
     st.shutdown()

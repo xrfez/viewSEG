@@ -18,6 +18,10 @@
 ## (`mkShots`) and beats at each one; the state cancels a job that has not
 ## answered for `StallAfter` (`Jobs.tend` abandons it), puts the file it was
 ## on aside to be tried again after `RetryAfter`, and goes on with the rest.
+## Each job given up whose work still hangs holds a thread until the drive
+## answers, so while `MaxHanging` of them do, no job starts (`waiting`: the
+## folder does not answer), and the reading goes on when one comes back: a
+## share that stops answering holds `MaxHanging` threads, not one a file.
 ## Nothing on the UI thread reads a file.
 ##
 ## **Matched to the survey** (`ShotIndex.points`): a survey file's source is
@@ -38,6 +42,9 @@ const
   RetryAfter* = initDuration(seconds = 60)
     ## a file that did not answer is tried again after this long
   MaxShotsPerFile* = 100_000 ## records of one file kept, at most
+  MaxHanging* = 2
+    ## shots jobs given up whose work still runs (each a thread held by a
+    ## drive that does not answer) while no new one starts
 
 type
   ShotPlace* = tuple[path: string; gather: int; record: float64]
@@ -58,6 +65,12 @@ type
     jobPaths*: seq[string]           ## its files not yet answered, in its order
     queued*: HashSet[string]         ## the files in `pending`, `later` and `jobPaths`
     replaced*: seq[JobId]            ## jobs given up (a new listing, no answer): they end quietly
+    givenUp*: seq[JobId]
+      ## jobs given up whose work may still run (also after a new listing),
+      ## until it is back (`Jobs.workingOn`)
+    waiting*: bool
+      ## no job is started: `MaxHanging` jobs given up still hang (the
+      ## folder does not answer)
     listedRev*: int                  ## the file list's `entriesRev` the files to read were found from
     surveyRev*: int                  ## the survey's revision `points` were matched with
     points*: Table[int, seq[ShotPlace]]

@@ -402,6 +402,7 @@ proc mapJson(state: AppState; limit: int): JsonNode =
   template x: untyped = state.shots
   result["folderShots"] = %*{"shown": state.settings.map.folderShots, "filesRead": x.shotFiles,
     "toRead": x.pending.len + x.jobPaths.len, "notAnswering": x.later.len,
+    "folderNotAnswering": x.waiting,
     "sourcesWithFile": x.pointRefs.len}
   # The filters shown, on the record shown: what each found.
   if state.settings.map.filters != {}:

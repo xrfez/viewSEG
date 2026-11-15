@@ -558,7 +558,9 @@ The UI thread takes each file in and matches its records to the survey files' so
 again only when the survey changes; a job that has not answered for `StallAfter` is
 cancelled (`Jobs.tend` abandons it), the file it was on tried again after `RetryAfter` and
 not before that job's work is back (`ShotIndex.stuck`: a try that hangs holds a thread), the
-rest given to the next job; a new listing starts again (its jobs replaced end quietly); files
+rest given to the next job, unless `MaxHanging` jobs given up still hang
+(`ShotIndex.givenUp`, `waiting`: the folder does not answer, and a dead share holds two
+threads, not one a file); a new listing starts again (its jobs replaced end quietly); files
 taken out of the folder are forgotten together, with one match again.
 The map rings the matched sources and a click on one shows its file (`ckShowPoints` falls
 back to `showListedShot`, with the click's origin).

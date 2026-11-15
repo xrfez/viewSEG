@@ -2513,8 +2513,10 @@ proc followShots(state: var AppState) =
     if x.job != NoJob:
       discard state.jobs.cancel(x.job)
       x.replaced.add x.job
+      x.givenUp.add x.job
     x = ShotIndex(gen: state.files.gen, replaced: move x.replaced, stuck: move x.stuck,
-      revision: x.revision + 1, listedRev: -1, surveyRev: state.survey.revision)
+      givenUp: move x.givenUp, revision: x.revision + 1, listedRev: -1,
+      surveyRev: state.survey.revision)
   if x.surveyRev != state.survey.revision: x.match(state.survey)
   if not state.wantsShots: return
   state.queueShots()
@@ -2536,13 +2538,21 @@ proc followShots(state: var AppState) =
       # The file it is on does not answer: tried again later, the rest now.
       discard state.jobs.cancel(x.job)
       x.replaced.add x.job
+      x.givenUp.add x.job
       if x.jobPaths.len > 0:
         x.stuck.add (x.jobPaths[0], x.job)
         x.later.add (x.jobPaths[0], now + RetryAfter)
         x.pending.insert(x.jobPaths[1 .. ^1], 0)
       x.job = NoJob
       x.jobPaths.setLen 0
-  if x.job == NoJob and x.pending.len > 0:
+  # A job given up holds a thread while its drive does not answer: no more
+  # than `MaxHanging` of them; the next starts when one comes back.
+  if x.givenUp.len > 0: x.givenUp.keepItIf(state.jobs.workingOn(it))
+  let waiting = x.job == NoJob and x.pending.len > 0 and x.givenUp.len >= MaxHanging
+  if waiting != x.waiting:
+    x.waiting = waiting
+    inc x.revision
+  if x.job == NoJob and x.pending.len > 0 and not waiting:
     let n = min(ShotBatch, x.pending.len)
     x.jobPaths = x.pending[0 ..< n]
     x.pending.delete(0 ..< n)
@@ -2701,6 +2711,7 @@ proc endMapWork(state: var AppState; job: JobInfo): bool =
   if job.id == x.job:
     # Its files not answered (it failed, or was cancelled in the Jobs
     # window): tried again later.
+    if job.abandoned: x.givenUp.add job.id # its work still hangs
     x.job = NoJob
     for path in x.jobPaths: x.later.add (path, fs.now() + RetryAfter)
     x.jobPaths.setLen 0

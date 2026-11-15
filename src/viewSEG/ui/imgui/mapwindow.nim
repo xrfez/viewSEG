@@ -415,7 +415,9 @@ proc drawShotsRow(st: AppState; marks: var Marks; res: var MapOutput) =
     let left = x.pending.len + x.jobPaths.len
     if left > 0:
       wrapped("Reading the folder's files: " & $x.shotFiles & " read, " & $left & " to go.")
-    if x.later.len > 0:
+    if x.waiting:
+      wrapped("The folder does not answer: its files are read on once it does.")
+    elif x.later.len > 0:
       wrapped($x.later.len & (if x.later.len == 1: " file does" else: " files do") &
         " not answer: tried again in a minute.")
     igUnindent(0)
