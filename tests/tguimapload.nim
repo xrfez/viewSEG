@@ -5,13 +5,16 @@
 ## read, made into a layer with its levels of detail on a worker, and drawn;
 ## then the map is panned with the arrow keys and zoomed with the wheel, a
 ## step a frame, and the frames are timed: moving the map costs little
-## more than an idle frame (the times are printed; in an optimised build
-## they are measured by hand and written in the docs). The receivers are
+## more than an idle frame and stays under 33 ms, the floor for software
+## OpenGL (the times are printed; an optimised build's are in
+## docs/plot-window.md). The receivers are
 ## drawn (their colour at a receiver's pixel), and each frame draws far
 ## fewer points than the layer has.
 ##
 ## Seen to fail: with every point drawn whatever the scale (`levelFor`
-## always -1), "few points drawn" found 1 000 000 drawn at fit.
+## always -1), "few points drawn" found 1 000 000 drawn at fit; with the
+## map's view models looping over the survey's layers by value (a copy of
+## every layer, 100 MB, each frame), "the map lags" found 73 ms frames.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -124,8 +127,9 @@ proc main() =
     doAssert coloured, "no receiver drawn three quarters of the way into the survey"
     doAssert drawnAtFit < Lines * Points div 4, "few points drawn: " & $drawnAtFit
     # The suite runs files side by side, so a frame's time is noisy: what is
-    # held is that moving the map costs little more than an idle frame.
-    doAssert mz < mi + 15 and mp < mi + 15, "the map lags: zooming " & $mz & " ms, panning " &
-      $mp & " ms a frame, idle " & $mi
+    # held is that moving the map costs little more than an idle frame, and
+    # stays within the floor for software OpenGL (33 ms).
+    doAssert mz < mi + 15 and mp < mi + 15 and mz < 33 and mp < 33, "the map lags: zooming " &
+      $mz & " ms, panning " & $mp & " ms a frame, idle " & $mi
 
 main()

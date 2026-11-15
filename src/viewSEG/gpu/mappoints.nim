@@ -190,9 +190,9 @@ proc sync(r: var MapRenderer; s: Survey; draws: openArray[MapDraw]) =
   var kept: seq[LayerBuffer]
   for b in r.buffers.mitems:
     var live = false
-    for l in s.layers:
+    for i in 0 ..< s.layers.len: # by index: `for l in` would copy every layer
       for role in PointRole:
-        if keyOf(l.id, role) == b.key: live = true
+        if keyOf(s.layers[i].id, role) == b.key: live = true
     if live: kept.add move b
     else: b.freeBuffer()
   r.buffers = move kept

@@ -480,13 +480,12 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   index's cells to one cell for the whole layer, are made with the layer, on the worker
   that reads the file, and go to the GPU with it, so no pan or zoom waits for a level:
   each frame draws the level its scale needs, and only the rows of cells in view.
-- **Speed** (measured under software OpenGL, Mesa's llvmpipe, in an optimised build, on a
-  32-core machine busy with other work, load 30 to 38): a million receivers 5 m apart in a
-  square, as dense as a survey gets, are read, indexed and given their levels in about a
-  second; on a map of 400 × 560 pixels they draw about 63 000 points at fit and 100 000
-  zoomed in, and a frame of the whole window while the map pans or zooms took 1 to 7 ms
-  more than an idle one (medians 42 to 48 ms against 41 ms idle: on that machine at that
-  load the idle window alone took 41 ms). An idle map draws nothing.
+- **Speed** (measured under software OpenGL, Mesa's llvmpipe, in an optimised build): a
+  million receivers 5 m apart in a square, as dense as a survey gets, are read, indexed
+  and given their levels in about a second; on a map of 400 × 560 pixels they draw about
+  63 000 points at fit and 100 000 zoomed in, and a frame of the whole window takes 3.6 ms
+  idle, 3.7 ms (median) while the map pans and 4.3 ms while it zooms, the slowest 20 and
+  32 ms. An idle map draws nothing.
 
 ### The map's own choices
 

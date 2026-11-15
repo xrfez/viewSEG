@@ -1102,8 +1102,10 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
       # Field records often carry stations only: said once a folder, and not
       # once survey files are loaded.
       let folder = "no coordinates: " & path.parentDir
-      if folder notin state.saidPositions and
-          not state.survey.layers.anyIt(it.origin == loSurveyFile):
+      var surveyFiles = false # by index: `anyIt` would copy every layer
+      for i in 0 ..< state.survey.layers.len:
+        if state.survey.layers[i].origin == loSurveyFile: surveyFiles = true
+      if folder notin state.saidPositions and not surveyFiles:
         state.saidPositions.incl folder
         state.log.add(sevInfo, name, name & " carries no source or receiver coordinates" &
           (if stations > 0: " (its traces name their stations): load its survey files " &

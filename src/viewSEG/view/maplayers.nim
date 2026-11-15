@@ -89,18 +89,17 @@ func roleName(r: PointRole; many: bool): string =
 func mapLayers*(st: AppState; ink: MapInk): seq[MapLayerView] =
   ## The map's layers, in the order they are drawn (`mapLayers` above), the
   ## highlight last.
-  template add(l: SurveyLayer; r: PointRole) =
-    if l.points[r].len > 0:
-      let key = l.keyOf(r)
-      result.add MapLayerView(key: key, layer: l.id, role: r, file: l.name, points:
-        l.points[r].len, colour: ink.roles[r], shown: st.map.shown(key),
-        spacing: l.levels[r].spacing,
-        shape: (if l.origin == loTraces: msRing else: msDisc),
-        name: roleName(r, true) & (if l.origin == loTraces: " in " else: " of ") & l.name)
   for origin in [loSurveyFile, loTraces]:
     for r in [prReceiver, prSource]:
-      for l in st.survey.layers:
-        if l.origin == origin: add(l, r)
+      for i in 0 ..< st.survey.layers.len:
+        # An alias, not a copy: a layer of a million points is 100 MB.
+        template l: untyped = st.survey.layers[i]
+        if l.origin == origin and l.points[r].len > 0:
+          let key = l.keyOf(r)
+          result.add MapLayerView(key: key, layer: l.id, role: r, file: l.name,
+            points: l.points[r].len, colour: ink.roles[r], shown: st.map.shown(key),
+            spacing: l.levels[r].spacing, shape: (if origin == loTraces: msRing else: msDisc),
+            name: roleName(r, true) & (if origin == loTraces: " in " else: " of ") & l.name)
   result.add MapLayerView(key: HighlightKey, name: "Highlight: the trace under the " &
     "pointer, the selection", colour: ink.hover, shape: msDisc,
     shown: st.map.shown(HighlightKey))
@@ -125,7 +124,7 @@ func highlightOf*(st: AppState): MapHighlight =
   ## The points of the trace under the pointer in the plot, and those
   ## selected (on the map, and of the selected traces; at most
   ## `MaxHighlighted`), each once.
-  let sel = st.selection
+  template sel: untyped = st.selection # an alias: a `let` copies the selection
   if sel.hover >= 0: result.hovered = st.survey.tracePointsOf(sel.hover)
   var seen: IntSet
   for p in sel.points:
@@ -154,7 +153,8 @@ func pointsAt*(st: AppState; at: MapPoint; radius: float64): seq[PointRef] =
   ## receiver and the open file's own, say. None when no point is that near.
   var best = -1.0
   var found: seq[(float64, PointRef)]
-  for l in st.survey.layers:
+  for i in 0 ..< st.survey.layers.len:
+    template l: untyped = st.survey.layers[i] # (`for l in` would copy every layer)
     for r in PointRole:
       if st.map.shown(l.keyOf(r)):
         let q = l.points[r].index.nearest(at.x, at.y, radius)
@@ -175,7 +175,8 @@ func pointsAt*(st: AppState; at: MapPoint; radius: float64): seq[PointRef] =
 
 func pointsIn*(st: AppState; box: Bounds): seq[PointRef] =
   ## The points of the shown layers in `box` (survey coordinates).
-  for l in st.survey.layers:
+  for i in 0 ..< st.survey.layers.len:
+    template l: untyped = st.survey.layers[i]
     for r in PointRole:
       if st.map.shown(l.keyOf(r)):
         for q in l.points[r].index.within(box):
@@ -185,7 +186,8 @@ func unitsOf*(st: AppState): string =
   ## The survey's units as the status bar and the scale bar write them: the
   ## first survey file's that says ("ft", "US ft", "m", or its own words);
   ## "" when none does.
-  for l in st.survey.layers:
+  for i in 0 ..< st.survey.layers.len:
+    template l: untyped = st.survey.layers[i]
     if l.origin == loSurveyFile and l.gridUnit.known:
       let u = l.gridUnit
       if u.metres > 0:
@@ -298,7 +300,8 @@ proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
     result.lines.add "No trace of the open files"
   if l.origin == loSurveyFile and p.role == prSource and station.known:
     var records: seq[int64]
-    for m in st.survey.layers:
+    for k in 0 ..< st.survey.layers.len:
+      template m: untyped = st.survey.layers[k]
       if m.origin == loSurveyFile and m.relationRuns > 0:
         for r in m.relations[].recordsAt(stationKey(station.line, station.point,
             station.index)):

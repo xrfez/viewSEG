@@ -297,7 +297,10 @@ file, the open files' traces at it and their records, a source's field records f
 relation files, `recordsAt`), and the words of coordinates and lengths. **Selecting
 points** (`ckSelectPoints`) keeps them in `Selection.points` beside the traces and selects
 the traces recorded there (`Survey.tracesAt`); a trace selection made anew takes the points
-away, `ckClearSelection` takes both.
+away, `ckClearSelection` takes both. Code outside `core/survey` indexes the survey's layers
+(`template l: untyped = st.survey.layers[i]`): a `for l in st.survey.layers` over the
+accessor makes ARC copy the whole seq first, every layer (a hundred megabytes for a
+million points), each time.
 
 **Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
 severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`

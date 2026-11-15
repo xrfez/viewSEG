@@ -479,7 +479,8 @@ proc morgantown(dir: string) =
         let src = v.mapAt(f.mapWindow.mapPlot, at)
         var best = mapPoint(NaN, NaN)
         var bestD = Inf
-        for l in f.core.survey.layers:
+        for k in 0 ..< f.core.survey.layers.len:
+          template l: untyped = f.core.survey.layers[k]
           let q = l.points[prReceiver].index.nearest(src.x + 600, src.y - 300, Inf)
           if q >= 0:
             let d = hypot(l.points[prReceiver].index.x(q) - src.x - 600,
