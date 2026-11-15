@@ -4,8 +4,10 @@
 ##
 ## - the lists: a change gives or takes an edit from traces and keeps what
 ##   it changed for the undo, a trace given twice changes once, a change of
-##   nothing leaves the last change as it was, undo reverts once (no deeper
-##   history), clearing is undone the same way, each in words;
+##   nothing makes no step, undo goes back step by step and redo forward
+##   again, a new change drops what was undone, clearing and reversing all
+##   are steps too, each in words; what is kept (the user's) and what is
+##   shown (an agent's too) part and meet as the steps say;
 ## - a killed trace's row of the tile is zero and the tile says so; the
 ##   panel's level is taken again without it (the spike planted in it no
 ##   longer sets the peak), and so are the Float gain's level of the data
@@ -34,11 +36,12 @@
 ## 0.2076..., the other traces' 0.2121..."; with `relevel` not looked at in
 ## `drainInbox`, "the panel's level peak is 100.0 after the kill"; with
 ## `valuesInView` counting killed rows, "the Float level's RMS 0.2076...";
+## with `make` leaving the steps undone (`redos`), "a new change drops what
+## was undone"; with `undo` making its step on what is kept whatever
+## `keep` says, "an agent's undo reached what is kept";
 ## with the reversal left out of `prepare`, "trace 8 sample 66: 0.117537394
 ## in the tile, polarityOp gives -0.117537394"; with the samples held never
-## used, "the tile after the kill was read from the file"; with `undo`
-## keeping the change (a second undo would redo it), the check that nothing
-## is left to undo; with the lists kept as `IntSet`s (every query walking
+## used, "the tile after the kill was read from the file"; with the lists kept as `IntSet`s (every query walking
 ## them), "a frame's questions to the lists take 4987.1 µs with 200 000
 ## traces edited elsewhere"; with the dead trace drawn as recorded under
 ## None (the blanking only when something runs on the samples), "under
@@ -55,38 +58,110 @@ import utils/[fixtures, waiting]
 
 block lists:
   var e: FileEdits
-  doAssert e.isEmpty and not e.canUndo and e.last.kind == lkNone
+  doAssert e.isEmpty and not e.canUndo and not e.canRedo and e.nextUndo.kind == skNone
   doAssert e.change(teKilled, [3, 5, 3], true) == 2
   doAssert e.has(teKilled, 3) and e.has(teKilled, 5) and e.len(teKilled) == 2
-  doAssert e.last.kind == lkChange and e.last.traces == @[3, 5] and e.last.on
-  doAssert describe(e.last) == "2 traces killed"
+  doAssert e.nextUndo.kind == skChange and e.nextUndo.traces == @[3, 5] and e.nextUndo.on
+  doAssert describe(e.nextUndo) == "2 traces killed"
   doAssert e.change(teKilled, [5, 7], true) == 1 # 5 was killed already
-  doAssert e.last.traces == @[7] and describe(e.last) == "trace 8 killed"
+  doAssert e.nextUndo.traces == @[7] and describe(e.nextUndo) == "trace 8 killed"
   doAssert e.change(teKilled, [5], true) == 0
-  doAssert e.last.traces == @[7], "a change of nothing replaced the last change"
+  doAssert e.nextUndo.traces == @[7] and e.steps.undos == 2, "a change of nothing made a step"
   let r = e.revision
   let undone = e.undo()
-  doAssert undone.kind == lkChange and undone.traces == @[7] and not e.has(teKilled, 7)
-  doAssert e.revision > r and not e.canUndo
-  doAssert e.undo().kind == lkNone and e.len(teKilled) == 2, "a second undo changed the edits"
+  doAssert undone.kind == skChange and undone.traces == @[7] and not e.has(teKilled, 7)
+  doAssert e.revision > r and e.canUndo and e.canRedo
+  doAssert describe(e.nextRedo) == "trace 8 killed" and describe(e.nextUndo) == "2 traces killed"
+  doAssert e.redo().traces == @[7] and e.has(teKilled, 7) and not e.canRedo
+  discard e.undo()
+  discard e.undo()
+  doAssert e.isEmpty and not e.canUndo and e.steps.redos == 2
+  doAssert e.undo().kind == skNone and e.isEmpty, "an undo of nothing changed the edits"
+  discard e.redo()
+  doAssert e.len(teKilled) == 2 and e.steps == (1, 1)
   doAssert e.change(teReversed, [4], true) == 1
-  doAssert describe(e.last) == "polarity of trace 5 reversed"
+  doAssert not e.canRedo, "a new change drops what was undone"
+  doAssert describe(e.nextUndo) == "polarity of trace 5 reversed"
   doAssert e.change(teReversed, [3], true) == 1
   doAssert e.editsOf(3) == {teKilled, teReversed} and e.editsOf(4) == {teReversed}
   doAssert e.editsOf(6) == {}
   doAssert e.change(teReversed, [4], false) == 1
-  doAssert describe(e.last) == "polarity of trace 5 put back"
-  doAssert e.change(teKilled, [5], false) == 1 and describe(e.last) == "trace 6 restored"
+  doAssert describe(e.nextUndo) == "polarity of trace 5 put back"
+  doAssert e.change(teKilled, [5], false) == 1 and describe(e.nextUndo) == "trace 6 restored"
   doAssert e.listIn(teKilled, 0 .. 10) == @[3] and e.listIn(teReversed, 4 .. 10) == @[]
   doAssert e.anyIn(3 .. 3) and not e.anyIn(4 .. 10)
-  doAssert e.last.changedIn(5 .. 5) and not e.last.changedIn(0 .. 4)
-  doAssert e.last.touches(teKilled) and not e.last.touches(teReversed)
-  doAssert e.clearAll() and e.isEmpty and describe(e.last) == "all edits cleared"
-  doAssert e.last.touches(teKilled) and e.last.touches(teReversed) and e.last.changedIn(3 .. 3)
+  doAssert e.nextUndo.changedIn(5 .. 5) and not e.nextUndo.changedIn(0 .. 4)
+  doAssert e.nextUndo.touches(teKilled) and not e.nextUndo.touches(teReversed)
+  block all:
+    doAssert e.setAllReversed(true) and e.allReversed and not e.setAllReversed(true)
+    doAssert describe(e.nextUndo) == "polarity of all traces reversed"
+    doAssert e.nextUndo.changedIn(100 .. 100) and not e.nextUndo.touches(teKilled)
+    discard e.undo()
+    doAssert not e.allReversed
+    discard e.redo()
+    doAssert e.allReversed and e.kept.allReversed
+  doAssert e.clearAll() and e.isEmpty and not e.allReversed
+  doAssert describe(e.nextUndo) == "all edits cleared"
+  doAssert e.nextUndo.touches(teKilled) and e.nextUndo.touches(teReversed) and
+    e.nextUndo.changedIn(3 .. 3)
   doAssert not e.clearAll(), "a clear of nothing"
   discard e.undo()
-  doAssert e.editsOf(3) == {teKilled, teReversed} and e.len(teKilled) == 1
+  doAssert e.editsOf(3) == {teKilled, teReversed} and e.len(teKilled) == 1 and e.allReversed
   doAssertRaises ValueError: discard e.change(teKilled, [-1], true)
+
+block history:
+  # at most MaxSteps steps, the oldest dropped
+  var e: FileEdits
+  for t in 0 .. MaxSteps + 9: discard e.change(teKilled, [t], true)
+  doAssert e.steps.undos == MaxSteps
+  var n = 0
+  while e.canUndo:
+    discard e.undo()
+    inc n
+  doAssert n == MaxSteps and e.len(teKilled) == 10, $e.len(teKilled)
+
+block keptAndShown:
+  # A change an agent makes (`keep = false`) is shown, not kept; the user's
+  # is both. An agent's undo of the user's step is shown only; the user's
+  # undo or redo of an agent's step reaches what is kept as shown.
+  var e: FileEdits
+  doAssert e.change(teKilled, [1, 2], true) == 2 # the user
+  doAssert e.kept.lists[teKilled] == @[1, 2] and e.keptRevision == 1
+  doAssert e.change(teKilled, [8], true, keep = false) == 1 # an agent
+  doAssert e.has(teKilled, 8) and e.kept.lists[teKilled] == @[1, 2] and e.keptRevision == 1
+  doAssert e.setAllReversed(true, keep = false) and not e.kept.allReversed
+  discard e.undo(keep = false) # the agent takes back its own two
+  discard e.undo(keep = false)
+  discard e.undo(keep = false) # and the user's kill, for the session only
+  doAssert e.isEmpty and e.kept.lists[teKilled] == @[1, 2], "an agent's undo reached what is kept"
+  discard e.redo() # the user makes the kill of 1 and 2 again: as it was
+  discard e.redo() # and the agent's kill of 8, now the user's own action
+  doAssert e.kept.lists[teKilled] == @[1, 2, 8] and not e.kept.allReversed
+  doAssert e.clearAll(keep = false) and e.kept.lists[teKilled] == @[1, 2, 8]
+  discard e.undo(keep = false)
+  doAssert e.clearAll() and e.kept.isEmpty
+  discard e.undo()
+  doAssert e.kept.lists[teKilled] == @[1, 2, 8]
+
+block takeInAndRemembered:
+  var e: FileEdits
+  discard e.change(teKilled, [4], true)
+  var l: EditLists
+  l.lists[teKilled] = @[4, 6]
+  l.lists[teReversed] = @[1]
+  l.allReversed = true
+  doAssert e.takeIn(l, "list.csv") == 3 # 4 was killed already
+  doAssert describe(e.nextUndo) == "3 edits imported from list.csv"
+  doAssert e.listIn(teKilled, 0 .. 9) == @[4, 6] and e.allReversed and e.kept.allReversed
+  discard e.undo()
+  doAssert e.listIn(teKilled, 0 .. 9) == @[4] and not e.allReversed and e.len(teReversed) == 0
+  var f: FileEdits
+  discard f.change(teKilled, [9], true)
+  f.remembered(l)
+  doAssert f.listIn(teKilled, 0 .. 9) == @[4, 6, 9] and f.kept.lists[teKilled] == @[4, 6, 9]
+  doAssert f.steps.undos == 1, "what is remembered is no step"
+  f.forget()
+  doAssert f.isEmpty and f.kept.isEmpty and not f.canUndo
 
 block cost:
   # What the screen asks of a file's lists every frame (whether the gather
@@ -277,11 +352,24 @@ withFixtures fx:
     doAssert st.settle(st.answered)
     doAssert not st.tiles(0)[^1].rowOf(flipped).blank and st.traceEdits(base + flipped) ==
       {teReversed}
-    doAssert not st.editsOf(0).canUndo
-    let gen = st.panel(MainPanel).requestGen
+    doAssert st.editsOf(0).canUndo and st.editsOf(0).canRedo, "the steps before are kept"
+    st.apply Command(kind: ckRedoEdit, panel: MainPanel)
+    doAssert "Redone: trace 8 killed." in st.last, st.last
+    doAssert st.settle(st.answered)
+    doAssert st.tiles(0)[^1].rowOf(flipped).blank, "the redo did not kill it again"
     st.apply Command(kind: ckUndoEdit, panel: MainPanel)
-    doAssert st.last == "Nothing to undo." and st.panel(MainPanel).requestGen == gen,
-      "a second undo changed something"
+    doAssert st.settle(st.answered)
+    let gen = st.panel(MainPanel).requestGen
+    st.edit(teKilled, @[base + flipped], on = false) # no change: no step, the redo stays
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+    st.apply Command(kind: ckRedoEdit, panel: MainPanel)
+    doAssert st.settle(st.answered)
+    st.edit(teKilled, @[base + 20]) # a new step drops what was undone
+    doAssert st.settle(st.answered)
+    st.apply Command(kind: ckRedoEdit, panel: MainPanel)
+    doAssert st.last == "Nothing to redo." and not st.editsOf(0).canRedo, st.last
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+    doAssert st.settle(st.answered) and st.panel(MainPanel).requestGen > gen
     # undo of a reversal
     st.edit(teReversed, @[base + flipped], on = false)
     doAssert st.settle(st.answered)

@@ -13,7 +13,9 @@
 ##   agent asked for) and none of those kept; the settings file is as it
 ##   was, byte for byte, and a restart reads the settings from before; the
 ##   settings listed with none are not changed even for the session; the
-##   log still says what the agent's commands did;
+##   agent's trace edits (kill, reverse all, undo, redo) leave nothing in
+##   what is remembered about files; the log still says what the agent's
+##   commands did;
 ## - the same changes made through a window are kept, saved and read again
 ##   at the next start;
 ## - a window's change after an agent's is kept with the user's value only:
@@ -37,7 +39,8 @@
 ## bar fields kept the agent's sort"; with `settleGain` keeping the data's
 ## Fixed amplitude whatever the kept gain, "the agent's \"display\" reached
 ## plot.display.fixedClip"; with a field `gadget` added to `Settings`, "a
-## setting nobody has decided on: gadget".
+## setting nobody has decided on: gadget"; with `editTraces` keeping an
+## agent's edits (`keep = true`), "the agent's edits are remembered".
 
 import std/[json, math, os, sequtils, strutils, tables]
 import viewSEG/core/[geometry, settingsnif, state]
@@ -110,6 +113,12 @@ proc appIn(dir: string): AppState =
   ## A program that keeps its settings in `dir`, as one started again.
   result = initAppState()
   result.keepSettingsIn(dir, loadSettings(dir / SettingsFileName))
+  result.rememberFilesIn(dir)
+
+proc remembered(dir: string): seq[string] =
+  ## The documents of what is remembered about files.
+  if dirExists(dir / StoreFolder):
+    for kind, p in walkDir(dir / StoreFolder): result.add p
 
 const Everything = DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
   fills: {wfNegative}, colours: pcCustom,
@@ -225,6 +234,10 @@ withFixtures fx:
     st.agent(%*{"kind": "headers shown", "inspect": []})
     st.agent(%*{"kind": "edit traces", "edit": "killed"})
     st.agent(%*{"kind": "undo edit"})
+    st.agent(%*{"kind": "redo edit"})
+    st.agent(%*{"kind": "list file memory"})
+    st.flushFiles()
+    doAssert remembered(dir).len == 0, "the agent's edits are remembered: " & $remembered(dir)
     st.agent(%*{"kind": "clear edits"})
     st.agent(%*{"kind": "clear selection"})
     st.agent(%*{"kind": "join geometry", "joinFiles": [{"path": sps.s, "kind": "SPS"},
@@ -280,6 +293,7 @@ withFixtures fx:
     doAssert readFile(dir / SettingsFileName) == saved, "the settings file changed"
     st.shutdown()
     doAssert readFile(dir / SettingsFileName) == saved, "the settings file changed at the end"
+    doAssert remembered(dir).len == 0, "the agent's edits are remembered after the quit"
     let again = appIn(dir)
     doAssert flat(again.settings) == before, "a restart did not read the settings from before"
 

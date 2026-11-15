@@ -22,6 +22,9 @@
 ##   costs a few microseconds (the local time zone), so a full log is a
 ##   tenth of a second.
 ## - **Prune** keeps the newest files of a folder whose names match.
+## - **Remove** deletes one of the program's own files (a document of what
+##   is remembered about a file), and takes the place of a replace of it
+##   waiting to be written.
 ## - **Read** reads a whole file up to a size, and posts it (or why it could
 ##   not be read) for the UI thread, with its NIF tree (`parseNif`) or why
 ##   it is not NIF, so the UI thread only takes in a tree.
@@ -40,7 +43,7 @@ when not defined(windows):
 
 type
   TaskKind = enum
-    tkAppend, tkReplace, tkPrune, tkRead, tkList
+    tkAppend, tkReplace, tkPrune, tkRead, tkList, tkRemove
 
   Task = object
     kind: TaskKind
@@ -190,6 +193,13 @@ proc pruneDir(w: var Writer; t: Task) =
     except OSError:
       w.warn("Could not remove the old file " & names[i] & ": " & getCurrentExceptionMsg())
 
+proc removeFor(w: var Writer; t: Task) =
+  try:
+    if fs.fileExists(t.path): fs.removeFile(t.path)
+    if t.done.len > 0: w.say(sevInfo, t.done)
+  except OSError:
+    w.warn("Could not remove " & t.what & " (" & t.path & "): " & getCurrentExceptionMsg())
+
 proc readFor(w: var Writer; t: Task) =
   var msg = Msg(job: NoJob, kind: mkRead, purpose: t.purpose, readPath: t.path)
   try:
@@ -228,6 +238,7 @@ proc run(d: ptr DiskObj) {.thread.} =
       of tkReplace: w.replaceFile(t)
       of tkPrune: w.pruneDir(t)
       of tkRead: w.readFor(t)
+      of tkRemove: w.removeFor(t)
       of tkList:
         w.d.poster.post Msg(job: NoJob, kind: mkRead, purpose: rpLayouts, readPath: t.path,
           layouts: listLayouts(t.path, t.dirs))
@@ -299,9 +310,9 @@ proc leave(x: DiskIo; t: sink Task) =
   withLock x.p.lock:
     if x.p.quit: return
     case t.kind
-    of tkReplace: # only the newest document of a path is written
+    of tkReplace, tkRemove: # only the newest document of a path is written (or removed)
       for i in countdown(x.p.tasks.high, 0):
-        if x.p.tasks[i].kind == tkReplace and x.p.tasks[i].path == t.path:
+        if x.p.tasks[i].kind in {tkReplace, tkRemove} and x.p.tasks[i].path == t.path:
           x.p.tasks.delete(i)
     of tkAppend: # one write for a run of appends to one file
       if x.p.tasks.len > 0 and x.p.tasks[^1].kind == tkAppend and
@@ -344,6 +355,13 @@ proc append*(x: DiskIo; path: string; text: sink string; what: string;
   ## log").
   if x.p != nil and (text.len > 0 or entries.len > 0):
     x.leave Task(kind: tkAppend, path: path, text: text, what: what, entries: entries)
+
+proc remove*(x: DiskIo; path: string; what: string; done = "") =
+  ## Removes the file `path`, soon, in place of a replace of it waiting to
+  ## be written; `what` names it in a message, and `done`, when not "", is
+  ## logged once it is removed. A file that is not there is no problem.
+  if x.p != nil:
+    x.leave Task(kind: tkRemove, path: path, what: what, done: done)
 
 proc prune*(x: DiskIo; dir, prefix, suffix: string; keep: Natural; spare = "") =
   ## Removes the files of `dir` whose names start with `prefix` and end with

@@ -30,7 +30,7 @@ import protocol, schema
 const
   ToolNames* = ["command", "state", "headers", "screenshot", "wait"]
   StateParts* = ["program", "fileList", "files", "panels", "selection", "map", "jobs",
-    "messages", "survey", "headers"]
+    "messages", "survey", "headers", "memory"]
   ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "headers", "messages",
     "jobs", "toolbar", "statusbar"]
     ## what `screenshot` takes a picture of: the whole window, the Seismic
@@ -44,7 +44,7 @@ const
   MaxMessages = 1000
   DefaultWaitSeconds* = 30
   PanelKinds = {ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack,
-    ckShowFile, ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits, ckFilter}
+    ckShowFile, ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFilter}
     ## the kinds of `Command`'s branch with `panel`, a display, a view, a filter
 
 type
@@ -122,8 +122,9 @@ proc toolList*(): string =
        "each found, the points selected and hovered), the jobs, " &
        "the newest messages, the survey, and the Headers window (headers: the tab shown, " &
        "what it has on screen, the traces its Trace tab is about and what its reader read " &
-       "of them, and the facts its Summary gives of the file the plot shows). All parts " &
-       "unless some are named.",
+       "of them, and the facts its Summary gives of the file the plot shows), and what " &
+       "is remembered about files (memory: as the File memory window last listed it; the " &
+       "command \"list file memory\" reads it again). All parts unless some are named.",
      "inputSchema": {"type": "object", "properties": {
        "parts": {"type": "array", "items": {"type": "string", "enum": parts},
          "description": "the parts to give; all when not given"},
@@ -342,7 +343,14 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
     let all = 0 ..< state.sessions[i].len
     result["killed"] = clipped(e.listIn(teKilled, all), limit)
     result["reversedTraces"] = clipped(e.listIn(teReversed, all), limit)
+    result["allReversed"] = %e.allReversed
     result["canUndoEdit"] = %e.canUndo
+    result["canRedoEdit"] = %e.canRedo
+    result["undo"] = %describe(e.nextUndo)
+    result["redo"] = %describe(e.nextRedo)
+    let r = state.remembering(state.sessions[i].path)
+    result["remembered"] = %*{"identityKnown": r.known, "confirmed": r.confirmed,
+      "document": r.doc}
 
 proc fileListJson(state: AppState; limit: int): JsonNode =
   let l = state.fileList
@@ -540,6 +548,16 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
           "sources": toJson(l.counts[prSource]), "receivers": toJson(l.counts[prReceiver])}}
     r["survey"] = layers
   if "headers" in wanted: r["headers"] = state.headersJson(limit)
+  if "memory" in wanted:
+    let m = state.memoryList
+    var files = newJArray()
+    for i in 0 ..< min(m.records.len, limit):
+      let f = m.records[i]
+      files.add %*{"name": f.name, "path": f.path, "opened": $f.opened, "kept":
+        keptWords(f.edits), "size": f.identity.size, "bytes": f.bytes, "gone": f.gone,
+        "document": f.doc}
+    r["memory"] = %*{"listed": m.listed, "listing": m.listing, "count": m.records.len,
+      "files": files, "problems": m.problems}
   textResult($r)
 
 # ------------------------------------------------------------- headers --

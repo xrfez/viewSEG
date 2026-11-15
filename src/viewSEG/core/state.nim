@@ -103,12 +103,12 @@ import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, ti
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items
-import closer, diskio, edits, filejobs, filelist, filesystem, inbox, inspector, jobs, join, layouts,
-  log, mapstate, panels, persist, pick, reader, recordqc, selection, session, settings, shots,
-  spread, survey, surveyjobs, threads, tiles, watch, zoom
+import closer, diskio, edits, filejobs, filelist, filememory, filesystem, identity, inbox, inspector,
+  jobs, join, layouts, log, mapstate, memoryjobs, panels, persist, pick, reader, recordqc,
+  selection, session, settings, shots, spread, survey, surveyjobs, threads, tiles, watch, zoom
 
-export edits, filelist, inbox, jobs, join, layouts, log, mapstate, panels, persist, pick, recordqc,
-  selection, session, settings, shots, spread, survey, threads, tiles, zoom
+export edits, filelist, filememory, identity, inbox, jobs, join, layouts, log, mapstate, panels,
+  persist, pick, recordqc, selection, session, settings, shots, spread, survey, threads, tiles, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues
 export WatchInterval
 
@@ -160,8 +160,13 @@ type
     ckImportLayout = "import layout"     ## load such a file and keep it among the layouts
     ckExportLog = "export messages"      ## write the messages to a file of the user's
     ckEdit = "edit traces"               ## kill or restore traces, reverse their polarity or not
-    ckUndoEdit = "undo edit"             ## revert the last change to the edits of a panel's file
+    ckUndoEdit = "undo edit"             ## take back the newest change to the edits of a panel's file
+    ckRedoEdit = "redo edit"             ## make the change to its edits undone last again
     ckClearEdits = "clear edits"         ## take every edit of a panel's file away
+    ckExportEdits = "export edits"       ## write the edits of a panel's file to a file of the user's
+    ckImportEdits = "import edits"       ## take in edits for a panel's file from such a file
+    ckFileMemory = "list file memory"    ## read what is remembered about files, for its window
+    ckForgetFiles = "forget files"       ## remove what is remembered about some files
     ckHover = "hover"                    ## the trace under the cursor
     ckSelect = "select"                  ## change the selected traces
     ckClearSelection = "clear selection" ## no trace selected
@@ -201,8 +206,8 @@ type
       reordered*: JobId               ## the job's id
       position*: int                  ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
-        ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits, ckFilter, ckRetry, ckStopReading,
-        ckPrepare:
+        ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckExportEdits, ckImportEdits,
+        ckFilter, ckRetry, ckStopReading, ckPrepare:
       panel*: PanelId                 ## the panel's id (1: the Seismic window; 0 retries the folder)
       gather*: int                    ## ckGather: index into the file's gathers
       path*: string                   ## ckShowFile, ckShowTrace: the file to show; ckPrepare: the next
@@ -219,11 +224,16 @@ type
       edited*: seq[int]               ## ckEdit: survey-wide ids of traces of the panel's file
       on*: bool                       ## ckEdit: the edit given (true) or taken away
       filter*: TraceFilter            ## ckFilter: layer 0's traces (seismic, auxiliary)
+      listPath*: string
+        ## ckExportEdits, ckImportEdits: the list's file (`.nif`, or `.csv`)
     of ckHover: trace*: int           ## survey-wide trace id; -1 for none
     of ckSelect:
       traces*: seq[int]               ## survey-wide trace ids
       mode*: SelectMode               ## how they change the selection
-    of ckClearSelection, ckResetSettings: discard
+    of ckClearSelection, ckResetSettings, ckFileMemory: discard
+    of ckForgetFiles:
+      forget*: seq[string]
+        ## the store's documents (`FileRecord.doc`) whose files are forgotten
     of ckSettings: settings*: Settings
     of ckExportSettings, ckImportSettings, ckLoadLayout, ckExportLayout, ckImportLayout,
         ckExportLog:
@@ -427,6 +437,32 @@ type
       ## changes the keys the Trace tab shows (read here, never the file's
       ## `keysRevision`, which a join's job writes)
 
+  Remembered = object
+    ## An opened file's place in what is remembered (`core/filememory`).
+    path: string
+    identity: FileIdentity  ## known once `job` has posted it
+    known: bool             ## `identity` is known (the quick one at least)
+    modified: Time          ## the file's modification time as it was identified
+    size: int64             ## its size as the session opened it
+    job: JobId              ## the identification under way; `NoJob` for none
+    hashJob: JobId          ## the full hash under way; `NoJob` for none
+    hashed: bool            ## `identity.full` known
+    doc: string             ## the store's document its edits are kept in; "" for none yet
+    waiting: seq[FileRecord]
+      ## documents of its quick identity that wait for the full hash to say
+      ## whether they are about this file
+    savedRev: int           ## the edits' `keptRevision` written last
+    changedAt: MonoTime     ## when its kept edits changed last
+    opened: Time            ## when it was opened
+
+  MemoryList* = object
+    ## What the File memory window lists: every file the store remembers.
+    records*: seq[FileRecord] ## the newest opened first
+    problems*: seq[string]    ## documents that could not be read
+    listing*: bool            ## a listing is under way
+    listed*: bool             ## a listing came
+    revision*: int            ## bumped when it changes
+
   AppState* = object
     ## Everything the views show. Move-only.
     log: MessageLog
@@ -512,6 +548,20 @@ type
       ## per open file: what was said last of its changes
     editStamps: Table[string, tuple[size: int64; modified: Time]]
       ## per file with edits: its size and time when they were made
+    store: Store
+      ## where what is remembered about files is kept; nowhere until `rememberFilesIn`
+    remembered: seq[Remembered]
+      ## the files opened this run, by path, and where their edits are kept
+    knownDocs: Table[string, FileRecord]
+      ## the store's documents as this run last wrote or read them, by name
+      ## (newer than the disk until the disk thread has written them)
+    memoryList: MemoryList
+    memoryJob: JobId ## the listing under way; `NoJob` for none
+    memoryWork: seq[JobId]
+      ## the identifications and hashes under way: they end quietly
+    exports: seq[JobId] ## the exports of edits under way
+    editImports: seq[tuple[panel: PanelId; path: string; by: CommandOrigin]]
+      ## the imports of edits the disk thread reads, oldest first
     notices: seq[Notice] ## the newest `MaxNotices`
     nextNotice: int
     traceReads: seq[tuple[job: JobId; keys: TraceKeys; rows: seq[HeaderRow]]]
@@ -577,7 +627,7 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
     nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
     files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob,
-    preparing: (NoJob, ""), prepared: (NoJob, nil))
+    preparing: (NoJob, ""), prepared: (NoJob, nil), memoryJob: NoJob)
   result.panels.add Panel(id: MainPanel)
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
@@ -706,6 +756,94 @@ proc saveArrangement(state: var AppState) =
       layoutDocument(Layout(imgui: state.arrangement)), "the window layout")
   state.layoutSaved = state.layoutRev
 
+# ----------------------------------------------------------- file memory --
+
+proc rememberFilesIn*(state: var AppState; dir: string) =
+  ## From now on, remembers the trace edits of the files opened (the user's
+  ## own: `keeps`) in `dir`'s `StoreFolder` (`core/filememory`), by each
+  ## file's identity, and brings them back when a file of that identity is
+  ## opened again, under any name. Without it nothing is remembered.
+  assertUiThread()
+  state.store = Store(home: dir / StoreFolder)
+  discard state.diskIo
+
+func store*(state: AppState): lent Store {.inline.} =
+  ## Where what is remembered about files is kept.
+  state.store
+
+func rememberedAt(state: AppState; path: string): int =
+  for i, r in state.remembered:
+    if r.path == path: return i
+  -1
+
+func remembering*(state: AppState; path: string): tuple[known, confirmed, looking: bool;
+    doc: string; identity: FileIdentity] =
+  ## Where the file at `path` (opened this run) stands in what is
+  ## remembered: its identity `known` (the quick one), `confirmed` by the
+  ## hash of every byte, the jobs still `looking`, and the store's document
+  ## its edits are kept in ("" for none).
+  let i = state.rememberedAt(path)
+  if i >= 0:
+    let r = state.remembered[i]
+    result = (r.known, r.hashed, r.job != NoJob or r.hashJob != NoJob, r.doc, r.identity)
+
+func recordOf(state: AppState; i: int): FileRecord =
+  ## What the document of `remembered[i]` holds now: the file's identity,
+  ## where and when it was seen, and the edits kept.
+  let r = state.remembered[i]
+  result = FileRecord(identity: r.identity, name: r.path.extractFilename, path: r.path,
+    opened: r.opened, modified: r.modified, doc: r.doc)
+  if r.path in state.edits: result.edits = state.edits[r.path].kept
+
+proc hashFile(state: var AppState; i: int) =
+  ## Hashes every byte of `remembered[i]`'s file, on the background lane,
+  ## unless that is known or under way.
+  template r: untyped = state.remembered[i]
+  if r.known and not r.hashed and r.hashJob == NoJob:
+    let name = r.path.extractFilename
+    r.hashJob = state.jobs.submit(JobSpec(title: "Confirm what " & name & " holds",
+      lane: jlBackground), fullHashWork(r.path, FileIdentity(size: r.identity.size,
+      quick: r.identity.quick), state.inbox.poster))
+    state.memoryWork.add r.hashJob
+
+proc writeMemoryDoc(state: var AppState; i: int) =
+  ## Hands `remembered[i]`'s document to the disk thread, or its removal
+  ## when it keeps nothing.
+  template r: untyped = state.remembered[i]
+  let name = r.path.extractFilename
+  var rec = state.recordOf(i)
+  r.savedRev = if r.path in state.edits: state.edits[r.path].keptRevision else: 0
+  if rec.edits.isEmpty:
+    if r.doc.len > 0:
+      state.diskIo.remove(state.store.docPath(r.doc), "what is remembered about " & name)
+      state.knownDocs.del r.doc
+    return
+  if r.doc.len == 0:
+    var taken = r.waiting.mapIt(it.doc)
+    for x in state.remembered: taken.add x.doc
+    for d in state.knownDocs.keys: taken.add d
+    r.doc = freeDocName(r.identity, taken)
+    rec.doc = r.doc
+  state.knownDocs[r.doc] = rec
+  state.diskIo.replace(state.store.docPath(r.doc), memoryDocument(rec),
+    "what is remembered about " & name)
+  if not rec.identity.fullKnown: state.hashFile(i)
+
+proc saveMemory(state: var AppState; now: MonoTime; force: bool) =
+  ## Hands the disk thread the documents of the files whose kept edits
+  ## changed `SaveDelay` ago or more (with `force`, every one changed). A
+  ## file whose identity is not known yet waits for it.
+  if state.store.isNowhere: return
+  for i in 0 ..< state.remembered.len:
+    template r: untyped = state.remembered[i]
+    if r.known and r.path in state.edits:
+      let rev = state.edits[r.path].keptRevision
+      if rev != r.savedRev:
+        if r.changedAt == MonoTime(): r.changedAt = now
+        if force or now - r.changedAt >= SaveDelay:
+          state.writeMemoryDoc(i)
+          r.changedAt = MonoTime()
+
 proc persist*(state: var AppState; now = getMonoTime()) =
   ## Hands what is due to the disk thread: what was logged since the last
   ## call, and the settings and the arrangement once `SaveDelay` has passed
@@ -717,6 +855,7 @@ proc persist*(state: var AppState; now = getMonoTime()) =
     state.saveSettings()
   if state.layoutSaved != state.layoutRev and now - state.layoutAt >= SaveDelay:
     state.saveArrangement()
+  state.saveMemory(now, force = false)
 
 proc flushFiles*(state: var AppState) =
   ## Saves what is due now, without waiting for `SaveDelay`, and waits
@@ -725,6 +864,7 @@ proc flushFiles*(state: var AppState) =
   state.writeLog()
   if state.savedRev != state.keptRev: state.saveSettings()
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
+  state.saveMemory(getMonoTime(), force = true)
   state.disk.flush()
 
 const
@@ -761,6 +901,7 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   state.jobs.askStop()
   if state.savedRev != state.keptRev: state.saveSettings()
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
+  state.saveMemory(getMonoTime(), force = true)
   state.writeLog()
   state.disk.askStop()
   let deadline = getMonoTime() + wait
@@ -1134,15 +1275,19 @@ proc seismicAt(state: AppState; path: string): bool =
     state.closing.anyIt(it.path == p) or state.files.find(p) >= 0 or
     state.survey.findFile(p) >= 0
 
-proc refusedExport(state: var AppState; cmd: Command): bool =
-  ## Says why `cmd` (an export) writes nothing, when it may not: no file
-  ## named, or a seismic file named.
+proc refusedWrite(state: var AppState; cmd: Command; path: string): bool =
+  ## Says why `cmd` (an export) writes nothing to `path`, when it may not:
+  ## no file named, or a seismic file named.
   result = true
-  if cmd.docPath.len == 0: state.ignore(cmd, "no file was named")
-  elif state.seismicAt(cmd.docPath):
-    state.ignore(cmd, cmd.docPath & " is a seismic file viewSEG has open or lists, and " &
+  if path.len == 0: state.ignore(cmd, "no file was named")
+  elif state.seismicAt(path):
+    state.ignore(cmd, path & " is a seismic file viewSEG has open or lists, and " &
       "viewSEG never writes over one; choose another name")
   else: result = false
+
+proc refusedExport(state: var AppState; cmd: Command): bool =
+  ## `refusedWrite` of the document `cmd` names.
+  state.refusedWrite(cmd, cmd.docPath)
 
 func keeps*(origin: CommandOrigin): bool {.inline.} =
   ## Whether a change a command from `origin` makes reaches what is saved
@@ -1254,6 +1399,10 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
     state.panels[k].header = state.settings.plot.header
   else:
     state.panels[k].layers[0].source = LayerSource(kind: lsRecord, file: file, gather: gather)
+  # Reversing every trace is an edit of the file: each file shows its own.
+  let i = state.findSession(file)
+  state.panels[k].layers[0].reversed = i >= 0 and
+    state.edits.getOrDefault(state.sessions[i].path).allReversed
   state.newSource(k)
   state.selection.activeGather = GatherRef(file: file, gather: gather)
   inc state.selection.revision
@@ -1835,10 +1984,318 @@ proc checkEdits(state: var AppState; s: Session) =
   let now = (size: s.size, modified: s.modified)
   let was = state.editStamps.getOrDefault(s.path, now)
   state.editStamps[s.path] = now
-  if was != now and state.edits[s.path].clearAll():
+  if was != now and state.edits[s.path].clearAll(kind = skSetAside):
     state.log.add(sevWarning, s.name, s.name & " changed on disk after its traces were " &
       "edited, so its kills and polarity reversals are set aside: by trace number they may " &
-      "not fit the traces it holds now. Ctrl+Z (with the plot focused) brings them back.")
+      "not fit the traces it holds now. Edit > Undo (Ctrl+Z) brings them back. They stay " &
+      "remembered for the file as it was.")
+
+proc editsChanged(state: var AppState; path: string; step = EditStep(kind: skChange)) =
+  ## The panels that show the file at `path` follow its edits: its polarity
+  ## reversed or not as a whole, and their view's tiles made again when
+  ## `step` changed a trace of the gather they show (any step when it is
+  ## `skChange` with no traces: what is remembered came).
+  let e = state.edits.getOrDefault(path)
+  let any = step.kind == skChange and step.traces.len == 0
+  for j in 0 ..< state.panels.len:
+    let (i, traces) = state.shownTraces(j)
+    if i >= 0 and state.sessions[i].path == path:
+      template layer: untyped = state.panels[j].layers[0]
+      if layer.reversed != e.allReversed:
+        layer.reversed = e.allReversed
+        state.resample(j, relevel = any or step.touches(teKilled))
+      elif any or step.changedIn(traces):
+        state.resample(j, relevel = any or step.touches(teKilled))
+
+proc identify(state: var AppState; s: Session) =
+  ## Looks up what is remembered about the file `s` opened, by its
+  ## identity, on a job (`identifyWork`); a file identified before in this
+  ## run and unchanged since is known already.
+  if state.store.isNowhere: return
+  var i = state.rememberedAt(s.path)
+  if i >= 0 and state.remembered[i].known and state.remembered[i].size == s.size and
+      state.remembered[i].modified == s.modified:
+    state.remembered[i].opened = getTime()
+    return
+  if i < 0:
+    state.remembered.add Remembered(path: s.path, job: NoJob, hashJob: NoJob)
+    i = state.remembered.high
+  template r: untyped = state.remembered[i]
+  for j in [r.job, r.hashJob]:
+    if j != NoJob: discard state.jobs.cancel(j)
+  # Another file under this name, or the first look: nothing is written
+  # until its identity is known (the edits set aside stay with the file as
+  # it was).
+  r = Remembered(path: s.path, size: s.size, opened: getTime(), hashJob: NoJob,
+    savedRev: state.edits.getOrDefault(s.path).keptRevision)
+  r.job = state.jobs.submit(JobSpec(title: "Look up what is remembered about " & s.name,
+    lane: jlInteractive), identifyWork(s.path, state.store, state.inbox.poster))
+  state.memoryWork.add r.job
+
+proc applyRecord(state: var AppState; i: int; c: FileRecord) =
+  ## Brings back what document `c` remembers about `remembered[i]`'s file,
+  ## and says so.
+  template r: untyped = state.remembered[i]
+  let name = r.path.extractFilename
+  r.doc = c.doc
+  r.waiting.setLen 0
+  if c.identity.fullKnown and not r.hashed:
+    (r.identity.full, r.identity.fullKnown) = (c.identity.full, true)
+  state.knownDocs[c.doc] = c
+  r.savedRev = -1 # written again: seen now, under this name
+  if c.edits.isEmpty: return
+  state.edits.mgetOrPut(r.path, FileEdits()).remembered(c.edits)
+  var said = name & ": " & keptWords(c.edits) & ", as you left " &
+    (if c.name.len > 0 and c.name != name: "it as " & c.name else: "it")
+  if c.opened != Time(): said.add " (" & c.opened.local.format("yyyy-MM-dd HH:mm") & ")"
+  state.log.add(sevInfo, name, said & ". The file itself holds none of it.")
+  state.editsChanged(r.path)
+
+proc takeIdentified(state: var AppState; m: sink Msg) =
+  ## A file's quick identity and the documents of it: those that are about
+  ## it (the same quick identity, size and modification time: a file moved
+  ## or renamed keeps them) are brought back at once, and the hash of every
+  ## byte confirms them; the others wait for that hash.
+  let i = state.rememberedAt(m.identPath)
+  if i < 0 or state.remembered[i].job != m.job: return
+  template r: untyped = state.remembered[i]
+  r.job = NoJob
+  (r.identity, r.known, r.modified, r.hashed) = (m.identity, true, m.identModified, false)
+  let name = r.path.extractFilename
+  for p in m.memoryProblems:
+    state.log.add(sevWarning, name, "What is remembered about " & name & ": " & p & ".")
+  var cands: seq[FileRecord]
+  for c in m.candidates: # what this run wrote is newer than the disk
+    cands.add(if c.doc in state.knownDocs: state.knownDocs[c.doc] else: c)
+  for d, c in state.knownDocs:
+    if d notin m.taken and c.identity.size == r.identity.size and
+        c.identity.quick == r.identity.quick:
+      cands.add c
+  var at = -1
+  for j, c in cands:
+    if at < 0 and c.modified == r.modified: at = j
+  if at >= 0: state.applyRecord(i, cands[at])
+  else: r.waiting = cands
+  if cands.len > 0 or not state.edits.getOrDefault(r.path).kept.isEmpty: state.hashFile(i)
+
+proc takeHashed(state: var AppState; m: sink Msg) =
+  ## The hash of every byte of a file: what was brought back is confirmed,
+  ## or taken away again when it was another file's; what waited for it is
+  ## brought back when it is about this file.
+  let i = state.rememberedAt(m.hashedPath)
+  if i < 0 or state.remembered[i].hashJob != m.job: return
+  template r: untyped = state.remembered[i]
+  r.hashJob = NoJob
+  if not r.known or m.hashed.size != r.identity.size or m.hashed.quick != r.identity.quick:
+    return # another file under this name since
+  let name = r.path.extractFilename
+  if r.doc.len > 0 and r.identity.fullKnown and r.identity.full != m.hashed.full:
+    state.log.add(sevWarning, name, name & " begins and ends as the file remembered as " &
+      state.knownDocs.getOrDefault(r.doc).name & " did, but its content differs: the edits " &
+      "remembered for that file are taken away from it (they stay remembered for that file).")
+    state.knownDocs.del r.doc
+    r.doc = ""
+    state.edits.mgetOrPut(r.path, FileEdits()).forget()
+    r.savedRev = state.edits[r.path].keptRevision
+    state.editsChanged(r.path)
+  r.identity = m.hashed
+  r.hashed = true
+  if r.doc.len == 0:
+    let waiting = move r.waiting
+    for c in waiting:
+      if r.doc.len == 0 and c.identity.fullKnown and c.identity.full == r.identity.full:
+        state.applyRecord(i, c)
+  elif not state.knownDocs.getOrDefault(r.doc).identity.fullKnown:
+    r.savedRev = -1 # its document gets the hash
+  if r.doc.len == 0 and not state.edits.getOrDefault(r.path).kept.isEmpty:
+    r.savedRev = -1 # edits made before it was known: a document of its own
+
+proc endMemoryWork(state: var AppState; job: JobInfo): bool =
+  ## Says how a job of what is remembered ended (quietly when it did);
+  ## true when `job` was one.
+  let w = state.memoryWork.find(job.id)
+  if w >= 0: state.memoryWork.delete(w)
+  for r in state.remembered.mitems:
+    let name = r.path.extractFilename
+    if job.id == r.job:
+      r.job = NoJob
+      if job.state == jsFailed:
+        state.log.add(sevWarning, name, "What is remembered about " & name & " cannot be " &
+          "looked up: " & job.error & ". Its edits are kept for this session only, until " &
+          "it is opened again.")
+      return true
+    if job.id == r.hashJob:
+      r.hashJob = NoJob
+      if job.state == jsFailed:
+        state.log.add(sevInfo, name, name & " could not be read whole to confirm what it " &
+          "holds (" & job.error & "); it is known by its first and last bytes.")
+      return true
+  if w >= 0: return true # its message came: said then
+  if job.id == state.memoryJob:
+    state.memoryJob = NoJob
+    state.memoryList.listing = false
+    if job.state == jsFailed:
+      state.memoryList.problems.add "what is remembered cannot be read: " & job.error
+    inc state.memoryList.revision
+    return true
+  let x = state.exports.find(job.id)
+  if x >= 0:
+    state.exports.delete(x)
+    if job.state == jsFailed:
+      state.log.add(sevError, "edits", "Cannot export the edits: " & job.error & ".")
+    return true
+  false
+
+proc exportEdits(state: var AppState; cmd: Command) =
+  ## `ckExportEdits`: the edits shown of the file `cmd.panel` shows, written
+  ## to `cmd.listPath` (CSV when it ends in `.csv`, else NIF) by a job that
+  ## adds each trace's record and channel from the keys, then the disk
+  ## thread.
+  let k = state.findPanel(cmd.panel)
+  let i = if k >= 0: state.shownFile(k) else: -1
+  if i < 0:
+    state.ignore(cmd, $cmd.panel & " shows no file")
+    return
+  if state.refusedWrite(cmd, cmd.listPath): return
+  let s = state.sessions[i]
+  var r = FileRecord(name: s.name, path: s.path, opened: getTime(), modified: s.modified,
+    edits: state.edits.getOrDefault(s.path).shown)
+  let at = state.rememberedAt(s.path)
+  if at >= 0 and state.remembered[at].known: r.identity = state.remembered[at].identity
+  else: r.identity.size = s.size
+  state.exports.add state.jobs.submit(JobSpec(title: "Export the edits of " & s.name,
+    lane: jlInteractive, reads: @[s.path]), exportEditsWork(s.filePtr, r, cmd.listPath,
+    state.inbox.poster))
+
+proc takeEditsList(state: var AppState; m: sink Msg) =
+  ## An export's text, handed to the disk thread.
+  state.diskIo.replace(m.listDest, move m.listText, "the edits of " & m.listName,
+    done = "The edits of " & m.listName & " are written in " & m.listDest & ".")
+
+proc importEdits(state: var AppState; cmd: Command) =
+  ## `ckImportEdits`: reads `cmd.listPath` on the disk thread, for the file
+  ## `cmd.panel` shows (`takeImported`).
+  let k = state.findPanel(cmd.panel)
+  if k < 0 or state.shownFile(k) < 0:
+    state.ignore(cmd, $cmd.panel & " shows no file")
+  elif cmd.listPath.len == 0: state.ignore(cmd, "no file was named")
+  else:
+    state.editImports.add (cmd.panel, state.sessions[state.shownFile(k)].path, cmd.origin)
+    state.diskIo.read(cmd.listPath, rpImportEdits, MaxMemoryBytes)
+
+proc takeImported(state: var AppState; m: Msg) =
+  ## A file's list the disk thread read: its edits added to those of the
+  ## file it was asked for, as one step (undone at once with Ctrl+Z).
+  if state.editImports.len == 0: return
+  let (panel, path, by) = state.editImports[0]
+  state.editImports.delete 0
+  let name = m.readPath.extractFilename
+  let target = path.extractFilename
+  if m.readError.len > 0:
+    state.log.add(sevError, "edits", "Cannot import the edits in " & m.readPath & ": " &
+      m.readError & ".")
+    return
+  var problems: seq[string]
+  var id: FileIdentity
+  var hasId = false
+  var l: EditLists
+  try:
+    l = readEdits(m.content, name, m.doc, m.docError, problems, id, hasId)
+  except ValueError as e:
+    state.log.add(sevError, "edits", "Cannot import the edits in " & m.readPath & ": " &
+      e.msg & ". Nothing was changed.")
+    return
+  state.logProblems("edits", problems)
+  let i = block:
+    var at = -1
+    for j, s in state.sessions:
+      if s.path == path: at = j
+    at
+  if i < 0:
+    state.log.add(sevWarning, "edits", target & " was closed before its edits in " & name &
+      " were read: nothing was changed.")
+    return
+  let s = state.sessions[i]
+  var outside = 0
+  for edit in TraceEdit:
+    let before = l.lists[edit].len
+    l.lists[edit].keepItIf(it < s.len)
+    outside += before - l.lists[edit].len
+  if outside > 0:
+    state.log.add(sevWarning, "edits", plural(outside, "trace") & " of " & name &
+      " are past the last trace of " & target & " (" & $s.len & "): left out.")
+  let at = state.rememberedAt(path)
+  if hasId and at >= 0 and state.remembered[at].known and
+      not sameData(id, state.remembered[at].identity):
+    state.log.add(sevWarning, "edits", name & " was made on another file than " & target &
+      " (its size or its bytes differ): its edits are applied by trace number all the same; " &
+      "Edit > Undo (Ctrl+Z) takes them away.")
+  template e: untyped = state.edits.mgetOrPut(path, FileEdits())
+  let n = e.takeIn(l, name, keeps(by))
+  if n == 0:
+    state.log.add(sevInfo, "edits", "Every edit in " & name & " was on " & target & " already.")
+  else:
+    state.editStamps[path] = (s.size, s.modified)
+    state.log.add(sevInfo, target, describe(e.nextUndo).capitalizeAscii & ".")
+    state.editsChanged(path, e.nextUndo)
+  discard panel # the file it showed is the one asked for, wherever it is shown now
+
+proc listMemory(state: var AppState) =
+  ## `ckFileMemory`: lists what is remembered, on a job (`memoryList`).
+  if state.store.isNowhere:
+    state.memoryList = MemoryList(listed: true, revision: state.memoryList.revision + 1,
+      problems: @["nothing is remembered in this run (it keeps no settings)"])
+    return
+  if state.memoryJob != NoJob: return
+  state.memoryList.listing = true
+  inc state.memoryList.revision
+  state.memoryJob = state.jobs.submit(JobSpec(title: "List what is remembered about files",
+    lane: jlInteractive), listMemoryWork(state.store, state.inbox.poster))
+
+proc takeMemoryList(state: var AppState; m: sink Msg) =
+  ## What the listing read; the documents this run wrote are newer.
+  var records = move m.records
+  for r in records.mitems:
+    if r.doc in state.knownDocs:
+      let bytes = r.bytes
+      let gone = r.gone
+      r = state.knownDocs[r.doc]
+      (r.bytes, r.gone) = (bytes, gone)
+  state.memoryList = MemoryList(records: records, problems: move m.listProblems,
+    listed: true, revision: state.memoryList.revision + 1)
+
+func memoryList*(state: AppState): lent MemoryList {.inline.} =
+  ## What the File memory window lists (`ckFileMemory` reads it again).
+  state.memoryList
+
+proc forgetFiles(state: var AppState; cmd: Command) =
+  ## `ckForgetFiles`: the documents named are removed, each said in the
+  ## log; a file open now that they were about is shown as it is on disk.
+  if not keeps(cmd.origin):
+    state.ignore(cmd, "what is remembered about files is the user's: an agent cannot remove it")
+    return
+  for doc in cmd.forget:
+    if not doc.isDocName:
+      state.ignore(cmd, "\"" & doc & "\" is not a document of what is remembered")
+    else:
+      var rec = state.knownDocs.getOrDefault(doc)
+      for r in state.memoryList.records:
+        if r.doc == doc and rec.doc.len == 0: rec = r
+      for i in 0 ..< state.remembered.len:
+        template r: untyped = state.remembered[i]
+        if r.doc == doc:
+          r.doc = ""
+          if r.path in state.edits:
+            state.edits[r.path].forget()
+            r.savedRev = state.edits[r.path].keptRevision
+            state.editsChanged(r.path)
+      state.knownDocs.del doc
+      let name = if rec.name.len > 0: rec.name else: doc
+      state.diskIo.remove(state.store.docPath(doc), "what is remembered about " & name)
+      state.log.add(sevInfo, "file memory", "Forgot " & name & " (" & keptWords(rec.edits) &
+        (if rec.path.len > 0: ", last seen at " & rec.path else: "") & ").")
+      state.memoryList.records.keepItIf(it.doc != doc)
+      inc state.memoryList.revision
 
 proc readTraceHeaders*(state: var AppState; i, index: int): JobId =
   ## Reads trace `index` of open file `sessions[i]` on a job: its keys and
@@ -2073,6 +2530,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
     st.recentFolders.addRecent(s.path.parentDir, MaxRecent)
   state.openedBy[s.path] = by
   state.checkEdits(s)
+  state.identify(s)
   let path = s.path
   let short = s.file.cutShort
   state.onDiskSaid.del path
@@ -2817,6 +3275,7 @@ proc endMapWork(state: var AppState; job: JobInfo): bool =
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
   if state.endMapWork(job): return
+  if state.endMemoryWork(job): return
   if job.id == state.joining.job:
     case job.state
     of jsDone:
@@ -3177,20 +3636,25 @@ proc goToGather(state: var AppState; cmd: Command) =
     state.show(cmd.panel, shown.file, cmd.gather)
 
 proc editTraces(state: var AppState; cmd: Command) =
-  ## `ckEdit`, `ckUndoEdit`, `ckClearEdits` on the file `cmd.panel` shows;
-  ## the panels that show a gather the change touches make their view's
-  ## tiles again.
+  ## `ckEdit`, `ckReverseAll`, `ckUndoEdit`, `ckRedoEdit`, `ckClearEdits`
+  ## on the file `cmd.panel` shows: a step of its history, kept with the
+  ## file when `keeps(cmd.origin)` (an agent's is shown for the session
+  ## only); the panels that show a gather the step touches make their
+  ## view's tiles again.
   let k = state.findPanel(cmd.panel)
   let i = if k >= 0: state.shownFile(k) else: -1
   if k < 0:
     state.ignore(cmd, $cmd.panel & " does not exist")
     return
   if i < 0:
-    state.ignore(cmd, $cmd.panel & " shows no file")
+    state.ignore(cmd, $cmd.panel & (if cmd.kind == ckReverseAll: " shows nothing"
+                                    else: " shows no file"))
     return
   let s = state.sessions[i]
-  var changed = LastEdit()
+  let keep = keeps(cmd.origin)
+  var changed = EditStep()
   var said = ""
+  template e: untyped = state.edits.mgetOrPut(s.path, FileEdits())
   case cmd.kind
   of ckEdit:
     var traces: seq[int]
@@ -3200,29 +3664,37 @@ proc editTraces(state: var AppState; cmd: Command) =
     elif traces.len < cmd.edited.len:
       state.ignore(cmd, plural(cmd.edited.len - traces.len, "trace") & " of " &
         $cmd.edited.len & " are not in " & s.name)
-    if traces.len > 0:
-      template e: untyped = state.edits.mgetOrPut(s.path, FileEdits())
-      if e.change(cmd.edit, traces, cmd.on) > 0:
-        changed = e.last
-        said = describe(changed).capitalizeAscii & "."
-        state.editStamps[s.path] = (s.size, s.modified) # made on the file as it is now
+    if traces.len > 0 and e.change(cmd.edit, traces, cmd.on, keep) > 0:
+      changed = e.nextUndo
+      said = describe(changed).capitalizeAscii & "."
+      state.editStamps[s.path] = (s.size, s.modified) # made on the file as it is now
+  of ckReverseAll:
+    if e.setAllReversed(cmd.reverse, keep):
+      changed = e.nextUndo
+      said = describe(changed).capitalizeAscii & "."
+      state.editStamps[s.path] = (s.size, s.modified)
   of ckUndoEdit:
-    if s.path in state.edits: changed = state.edits[s.path].undo()
-    said = if changed.kind == lkNone: "Nothing to undo."
+    if s.path in state.edits: changed = state.edits[s.path].undo(keep)
+    said = if changed.kind == skNone: "Nothing to undo."
            else: "Undone: " & describe(changed) & "."
+  of ckRedoEdit:
+    if s.path in state.edits: changed = state.edits[s.path].redo(keep)
+    said = if changed.kind == skNone: "Nothing to redo."
+           else: "Redone: " & describe(changed) & "."
   of ckClearEdits:
-    if s.path in state.edits and state.edits[s.path].clearAll():
-      changed = state.edits[s.path].last
-      said = "All edits cleared: the traces are shown as the file has them (Ctrl+Z " &
-        "brings the edits back)."
+    if s.path in state.edits and state.edits[s.path].clearAll(keep):
+      changed = state.edits[s.path].nextUndo
+      said = "All edits cleared: the traces are shown as the file has them (Edit > Undo, " &
+        "Ctrl+Z, brings the edits back)."
     else: said = "No edits to clear."
   else: discard
-  if said.len > 0: state.log.add(sevInfo, s.name, said)
-  if changed.kind == lkNone: return
-  for j in 0 ..< state.panels.len:
-    let (shown, traces) = state.shownTraces(j)
-    if shown == i and changed.changedIn(traces):
-      state.resample(j, relevel = changed.touches(teKilled))
+  if said.len > 0:
+    state.log.add(sevInfo, s.name, said & (if keep or changed.kind == skNone: ""
+      else: " (For this session only: an agent's change is not remembered with the file.)"))
+  if changed.kind != skNone:
+    state.editsChanged(s.path, changed)
+    let at = state.rememberedAt(s.path)
+    if keep and at >= 0: state.hashFile(at) # its document will name every byte
 
 # ---------------------------------------------------------------- changes --
 
@@ -3580,16 +4052,13 @@ proc applyCommand(state: var AppState; cmd: Command) =
         if order.len > 0 and presetOf(order, s.sortPresets) < 0:
           s.customOrder = order # the user's own keys, offered again
       state.reorder(k)
-  of ckReverseAll:
-    let k = state.findPanel(cmd.panel)
-    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
-    elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
-    elif cmd.reverse != state.panels[k].layers[0].reversed:
-      # An operation on the data, so not a setting: a new plot starts as recorded.
-      state.panels[k].layers[0].reversed = cmd.reverse
-      state.resample(k)
-  of ckEdit, ckUndoEdit, ckClearEdits:
+  of ckEdit, ckReverseAll, ckUndoEdit, ckRedoEdit, ckClearEdits:
+    # Reversing every trace is an edit of the file, so not a setting: kept with it.
     state.editTraces(cmd)
+  of ckExportEdits: state.exportEdits(cmd)
+  of ckImportEdits: state.importEdits(cmd)
+  of ckFileMemory: state.listMemory()
+  of ckForgetFiles: state.forgetFiles(cmd)
   of ckHover:
     # The UI sends a hover on every move, so one on a trace of a file closed
     # in the same frame is no mistake the user could act on: it clears the
@@ -3753,6 +4222,7 @@ proc takeIn(state: var AppState; m: Msg) =
     state.layoutList = m.layouts
     for l in state.savedLayouts: state.layoutList = state.layoutList.added(l)
   of rpLoadLayout, rpImportLayout: state.takeLayout(m)
+  of rpImportEdits: state.takeImported(m)
   of rpImportSettings:
     var by = coWindow # the disk thread answers in the order it was asked
     if state.importsBy.len > 0:
@@ -3808,6 +4278,10 @@ proc drainInbox*(state: var AppState): bool =
     of mkSpreads: state.takeSpreads(move m)
     of mkShots: state.takeShots(move m)
     of mkRecordQc: state.takeRecordQc(move m)
+    of mkIdentified: state.takeIdentified(move m)
+    of mkHashed: state.takeHashed(move m)
+    of mkMemoryList: state.takeMemoryList(move m)
+    of mkEditsList: state.takeEditsList(move m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:

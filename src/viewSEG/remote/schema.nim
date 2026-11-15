@@ -20,14 +20,16 @@ import ../core/state
 
 const
   WritesAFile* = {ckExportSettings, ckExportLayout, ckExportLog, ckSaveLayout,
-    ckImportLayout, ckResetSettings}
-    ## refused: each writes a file (a reset keeps a backup of the settings)
+    ckImportLayout, ckResetSettings, ckExportEdits, ckImportEdits, ckForgetFiles}
+    ## refused: each writes a file (a reset keeps a backup of the settings;
+    ## edits imported are remembered with the file; forgetting files removes
+    ## what is remembered about them)
   Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout}
     ## refused: the user's preferences and the windows' arrangement
   Offered* = {ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
     ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckReverseAll, ckBack,
-    ckEdit, ckUndoEdit, ckClearEdits, ckHover, ckSelect, ckClearSelection, ckLoadSurvey,
-    ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
+    ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFileMemory, ckHover, ckSelect,
+    ckClearSelection, ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
     ckShowPoints, ckJoin, ckSelectUnmatched, ckRetry, ckStopReading, ckPrepare, ckInspect}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
@@ -36,7 +38,10 @@ const
     ## it changes the keys the program holds of an open file, in memory, as
     ## loading a survey file or killing a trace changes what it holds. What
     ## the Headers window has on screen (`ckInspect`) only says what its
-    ## reader reads, off the UI thread, for `state`'s `headers` to give
+    ## reader reads, off the UI thread, for `state`'s `headers` to give.
+    ## An agent's edits (kill, reverse, undo, redo, clear) are shown for the
+    ## session only, never remembered with the file; listing what is
+    ## remembered (`ckFileMemory`) only reads
 
 # ------------------------------------------------------------ to JSON --
 

@@ -9,10 +9,10 @@
 ## Both share one buffer, freed when the last of them goes, so a job that is
 ## still running when the program closes can post safely.
 
-import std/locks
+import std/[locks, times]
 import parseSEG
-import filelist, join, jobs, layouts, log, mapkinds, nif, panels, session, shotfiles, survey,
-  tiles
+import filelist, filememory, identity, join, jobs, layouts, log, mapkinds, nif, panels, session,
+  shotfiles, survey, tiles
 
 type
   MsgKind* = enum
@@ -37,6 +37,11 @@ type
       ## what the map's filters find in the record shown (`core/recordqc`)
     mkTraceRead
       ## one trace's keys and header fields, read on a job (`readTraceHeaders`)
+    mkIdentified
+      ## an opened file's quick identity and what is remembered about it (`core/memoryjobs`)
+    mkHashed     ## an opened file's identity with the hash of every byte
+    mkMemoryList ## every file the store remembers, for the File memory window
+    mkEditsList  ## a file's list of edits, as the text of the file it is exported to
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -51,6 +56,7 @@ type
     rpLoadLayout     ## a layout to show (Window: a preset, Load)
     rpImportLayout   ## a layout to show and keep among the user's (File > Import > Layout)
     rpLayouts        ## the layouts there are: the user's and the presets, listed (`layouts`)
+    rpImportEdits    ## a file's list of trace edits to take in (File > Import > Trace edits)
 
   Msg* = object
     ## One message for the UI thread.
@@ -170,6 +176,23 @@ type
         ## the trace's keys, as the index holds them
       headerRows*: seq[HeaderRow]
         ## the fields of its headers (parseSEG's), in file order
+    of mkIdentified:
+      identPath*: string             ## the file
+      identity*: FileIdentity        ## its quick identity
+      identModified*: Time           ## its modification time when it was read
+      candidates*: seq[FileRecord]   ## the store's documents of that quick identity
+      taken*: seq[string]            ## every document name of that quick identity
+      memoryProblems*: seq[string]   ## documents that could not be read, in plain words
+    of mkHashed:
+      hashedPath*: string            ## the file
+      hashed*: FileIdentity          ## its identity, `fullKnown`
+    of mkMemoryList:
+      records*: seq[FileRecord]      ## every document of the store, the newest opened first
+      listProblems*: seq[string]     ## documents that could not be read
+    of mkEditsList:
+      listText*: string              ## the text to write
+      listDest*: string              ## the file to write it to
+      listName*: string              ## the seismic file's name
 
   InboxObj = object
     lock: Lock

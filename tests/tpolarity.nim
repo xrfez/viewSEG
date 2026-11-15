@@ -5,8 +5,8 @@
 ## status bar's amplitude is the reversed one; the tiles from before stay
 ## until the first reversed tile comes, which replaces them; it stays on
 ## for the next gather; turned off, the samples are as recorded again; it
-## is never a setting, so a new plot starts as recorded; and the file is
-## never changed.
+## is never a setting but an edit of the file, so the file opened again is
+## reversed and another file is not; and the file is never changed.
 ##
 ## Seen to fail: with `displayPipeline` leaving `polarityOp` out, "trace 0
 ## sample 79: 0.27144045 in the tile, processSEG's polarityOp gives
@@ -114,6 +114,11 @@ withFixtures fx:
     doAssert st.settle(st.sessions.len == 0)
     st.apply Command(kind: ckOpen, paths: @[path])
     doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-    doAssert not st.panel(MainPanel).layers[0].reversed, "a new plot starts reversed"
+    doAssert st.panel(MainPanel).layers[0].reversed, "the file opened again is not reversed"
+    let other = fx.patchySegy()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: other)
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].path == other and
+      st.panel(MainPanel).laidOut)
+    doAssert not st.panel(MainPanel).layers[0].reversed, "another file is shown reversed"
   st.shutdown()
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"

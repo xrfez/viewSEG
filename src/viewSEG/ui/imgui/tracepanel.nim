@@ -1186,15 +1186,19 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.reverse all")
   igSeparator()
   template e: untyped = st.editsOf(k) # not copied
-  let undo = if e.canUndo: "Undo last edit (" & describe(e.last) & ")" else: "Undo last edit"
+  let undo = if e.canUndo: "Undo " & describe(e.nextUndo) else: "Undo"
   if igMenuItem_Bool(undo.cstring, "Ctrl+Z", false, e.canUndo):
     res.commands.add Command(kind: ckUndoEdit, panel: p.id)
   marks.mark("plot.menu.undo")
+  let redo = if e.canRedo: "Redo " & describe(e.nextRedo) else: "Redo"
+  if igMenuItem_Bool(redo.cstring, "Ctrl+Shift+Z", false, e.canRedo):
+    res.commands.add Command(kind: ckRedoEdit, panel: p.id)
+  marks.mark("plot.menu.redo")
   if igMenuItem_Bool("Clear all edits for this file", nil, false, not e.isEmpty):
     res.commands.add Command(kind: ckClearEdits, panel: p.id)
   marks.mark("plot.menu.clear")
-  tipAlways("Kills and polarity reversals are kept beside the file, never written into " &
-    "it;\nclearing them shows the traces as the file has them (Ctrl+Z brings them back).")
+  tipAlways("Kills and polarity reversals are remembered beside the file, never written " &
+    "into it;\nclearing them shows the traces as the file has them (Ctrl+Z brings them back).")
   igEndPopup()
 
 func stationCommand(st: AppState; k, under: int): Command =
@@ -1208,7 +1212,7 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
   ## The trace operations' keys, while the plot has the focus: `R` reverses
   ## the polarity of the trace under the pointer (or of the selection that
   ## holds it) or puts it back, `K` kills or restores it, `M` selects its
-  ## station on the map, Ctrl + Z undoes the last edit of the file shown.
+  ## station on the map. Undo and redo are the Edit menu's, from any window.
   if igGetIO_Nil().WantTextInput: return
   template p: untyped = st.panels[k]
   if under >= 0:
@@ -1219,8 +1223,6 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
     if igShortcut_Nil(ImGui_Key_M.cint, 0):
       let c = stationCommand(st, k, under)
       if c.points.len > 0: res.commands.add c
-  if igShortcut_Nil(ImGui_Mod_Ctrl.cint or ImGui_Key_Z.cint, 0) and st.editsOf(k).canUndo:
-    res.commands.add Command(kind: ckUndoEdit, panel: p.id)
 
 func holds(t: Tile; position: int): bool {.inline.} =
   ## Whether `t` has a row at `position`.
