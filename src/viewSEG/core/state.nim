@@ -2198,7 +2198,7 @@ proc takeImported(state: var AppState; m: Msg) =
   var problems: seq[string]
   var id: FileIdentity
   var hasId = false
-  var l: EditLists
+  var l = EditLists()
   try:
     l = readEdits(m.content, name, m.doc, m.docError, problems, id, hasId)
   except ValueError as e:
