@@ -314,6 +314,9 @@ type
       device, inode: uint64 ## the socket's, to remove only that one
     path: string
 
+const ServerStopWait* = initDuration(milliseconds = 500)
+  ## how long `stop` waits by default (on every system: callers name it)
+
 when not defined(windows):
   proc shutDown(hub: ptr HubObj; listener, wakeRead: cint; path: string;
       device, inode: uint64) =
@@ -369,9 +372,6 @@ when not defined(windows):
       joinThread(x.thread)
       `=destroy`(x[])
       deallocShared(x)
-
-  const ServerStopWait* = initDuration(milliseconds = 500)
-    ## how long `stop` waits by default
 
   proc stop*(s: var Server; deadline = getMonoTime() + ServerStopWait): bool {.discardable.} =
     ## Disconnects the clients, stops the thread and removes the socket,
