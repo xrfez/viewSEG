@@ -29,6 +29,7 @@ type
     raw*: float32 = NaN       ## the file's sample there, before anything; NaN when not held
     binned*: int = 1          ## samples behind `amplitude`: more than 1 zoomed out
     edits*: set[TraceEdit]    ## the trace's edits, as drawn: killed, reversed
+    joined*: set[JoinGroup]   ## the groups of its keys a geometry join gave
 
 func noPick*(): Pick =
   ## A point over nothing.
@@ -59,6 +60,7 @@ func pickAt*(tiles: openArray[Tile]; layout: PanelLayout; at: DataPoint): Pick =
   if row < t.traces.len: result.trace = t.traces[row]
   if row < t.keys.len: result.keys = t.keys[row]
   result.edits = t.editsAt(row)
+  result.joined = t.joinedAt(row)
   if full and t.columns > 0:
     let r = t.request
     let c = clamp(int(round((at.tMs - t.timeOf(0)) / (float64(r.decimation) * t.dtMs))), 0,

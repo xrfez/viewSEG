@@ -90,11 +90,12 @@
 import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
-import diskio, edits, filejobs, filelist, inbox, jobs, layouts, log, mapstate, panels, persist,
-  pick, reader, selection, session, settings, survey, surveyjobs, threads, tiles, watch, zoom
+import diskio, edits, filejobs, filelist, inbox, jobs, join, layouts, log, mapstate, panels,
+  persist, pick, reader, selection, session, settings, survey, surveyjobs, threads, tiles, watch,
+  zoom
 
-export edits, filelist, inbox, jobs, layouts, log, mapstate, panels, persist, pick, selection,
-  session, settings, survey, threads, tiles, zoom
+export edits, filelist, inbox, jobs, join, layouts, log, mapstate, panels, persist, pick,
+  selection, session, settings, survey, threads, tiles, zoom
 export WatchInterval
 
 const
@@ -149,6 +150,9 @@ type
     ckSelectPoints = "select points"     ## change the points selected on the map, and their traces
     ckHoverPoints = "hover points"       ## the points under the map's pointer, and their traces
     ckShowPoints = "show points' record" ## show the record of the traces recorded at map points
+    ckJoin = "join geometry"             ## join survey files to an open file's traces, in memory
+    ckSelectUnmatched = "select unmatched"
+      ## select the traces a join left unmatched
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -212,6 +216,14 @@ type
         ## ckSelectPoints: replace, add, toggle or remove, their traces
         ## likewise; or a range, from the point clicked last along its line
         ## to the first of `points`
+    of ckJoin:
+      joinFile*: SessionId ## the open file the survey files are joined to
+      joinFiles*: seq[JoinFile] ## SPS, SEG P1 files and CSV tables
+      joinOptions*: JoinOptions
+      joinUnits*: JoinUnits ## the units the user confirmed
+    of ckSelectUnmatched:
+      unmatchedOf*: SessionId
+        ## the joined file
 
   Notice* = object
     ## A brief notice: a background job ended (the frontend shows it for a
@@ -247,6 +259,57 @@ type
   Linked = tuple[survey, selection, loading: int; active: GatherRef]
     ## what the hover's links and note were found from
 
+  JoinStep* = enum
+    ## What a join is doing.
+    jpReading = "reading the survey files" ## and working out what joining them does
+    jpJoining = "joining"                  ## the readers stopped, the keys changed
+
+  Joining = object
+    ## The join under way (File > Join geometry): one at a time.
+    job: JobId = NoJob           ## the job of its step; `NoJob`: none under way
+    step: JoinStep
+    session: SessionId
+    path, name: string
+    files: seq[JoinFile]
+    options: JoinOptions
+    units: JoinUnits
+    geometry: ref SurveyGeometry ## once read: kept alive while the join reads it
+    plan: JoinPlan
+    survey: JoinSurvey
+    joined: bool                 ## the join's job said it was done (`mkJoined`)
+    held: int = -1               ## the holds on the file its job found: none (-1: it never ran)
+    paused: seq[PanelId]         ## the panels whose readers let go of the file for it
+
+  Joined* = object
+    ## An open file joined with survey files: what it was joined with and how.
+    session*: SessionId
+    files*: seq[JoinFile]
+    options*: JoinOptions
+    units*: JoinUnits
+    plan*: JoinPlan              ## what the join did, trace by trace counted
+    survey*: JoinSurvey          ## what the survey files gave
+    words*: seq[string]          ## `plan` in plain words
+    geometry: ref SurveyGeometry ## what its records are checked against
+
+  JoinOutcome* = enum
+    joNone = "none"
+    joJoined = "joined"           ## its keys hold the survey's values now
+    joNothing = "nothing matched" ## no trace matched: nothing changed
+    joCancelled = "cancelled"     ## nothing changed
+    joFailed = "failed"           ## nothing changed
+
+  JoinReport* = object
+    ## How the last join ended, for the dialog.
+    serial*: int        ## goes up with each join that ends
+    session*: SessionId
+    name*: string       ## the file's name
+    outcome*: JoinOutcome
+    words*: seq[string] ## what it did, or why not, in plain words
+    unmatched*: int     ## the traces it left unmatched
+    heldAtJoin*: int = -1
+      ## the holds on the file (readers) its keys were changed with: always
+      ## none; -1 when they were not changed
+
   AppState* = object
     ## Everything the views show. Move-only.
     log: MessageLog
@@ -259,6 +322,12 @@ type
     checking: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relations each record check reads in place, kept alive until it
       ## ends (destroyed after `jobs`, whose runners stop first)
+    joining: Joining
+      ## the join under way (its geometry, too, destroyed after `jobs`)
+    joins: seq[Joined]
+      ## the open files joined with survey files
+    joinReport: JoinReport
+      ## how the last join ended
     loadNamed: seq[string]
       ## the files the listing was asked for: loaded when it finds them survey files
     saidPositions: HashSet[string]
@@ -556,6 +625,26 @@ func notices*(state: AppState): lent seq[Notice] {.inline.} =
   ## when they ended. Each has its own `serial`.
   state.notices
 
+func joins*(state: AppState): lent seq[Joined] {.inline.} =
+  ## The open files joined with survey files, and how.
+  state.joins
+
+func joinedOf*(state: AppState; session: SessionId): int =
+  ## The index in `joins` of open file `session`'s join; -1 when it is not
+  ## joined.
+  for i in 0 ..< state.joins.len:
+    if state.joins[i].session == session: return i
+  -1
+
+func joinReport*(state: AppState): lent JoinReport {.inline.} =
+  ## How the last join ended (its `serial` goes up with each).
+  state.joinReport
+
+func joinUnderWay*(state: AppState): tuple[job: JobId; step: JoinStep; session: SessionId] =
+  ## The join under way: its job (`NoJob` for none), what it does, and the
+  ## file it joins to.
+  (state.joining.job, state.joining.step, state.joining.session)
+
 func indexCache*(state: AppState): lent string {.inline.} =
   ## The folder of parseSEG's index caches; "" for none.
   state.indexCache
@@ -778,6 +867,9 @@ proc newSource(state: var AppState; k: int) =
       if state.jobs.hold(s.path):
         src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path, size: s.size,
           traces: s.gathers[g].traces, filter: p.layers[0].filter, order: p.layers[0].order)
+      elif s.path == state.joining.path and state.joining.step == jpJoining:
+        busy = true # shown once the join is done
+        if p.id notin state.joining.paused: state.joining.paused.add p.id
       else:
         busy = true
         state.log.add(sevWarning, s.name, s.name & " is busy (a job needs it to itself), " &
@@ -962,6 +1054,8 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
         (s.path in job.spec.reads or s.path in job.spec.exclusive):
       discard state.jobs.cancel(job.id)
   state.selection.forget(s.id, s.traceIds)
+  let joined = state.joinedOf(s.id)
+  if joined >= 0: state.joins.delete(joined)
   let positions = state.survey.findTraces(s.id)
   if positions >= 0: discard state.survey.remove(state.survey.layers[positions].id)
   for k in 0 ..< state.panels.len:
@@ -1253,33 +1347,59 @@ func relationLayer(state: AppState): int =
     if l.origin == loSurveyFile and l.xRuns > 0: return i
   -1
 
+func joinedRelations(state: AppState; session: SessionId): int =
+  ## The index in `joins` of open file `session`'s join when its survey has
+  ## relation records (what its records are then checked against); -1 when not.
+  let j = state.joinedOf(session)
+  if j >= 0 and state.joins[j].survey.relations > 0: j else: -1
+
+func fileNames(files: openArray[JoinFile]): string =
+  var names: seq[string]
+  for f in files: names.add f.path.extractFilename
+  names.join(", ")
+
 proc checkRecords(state: var AppState; s: Session) =
-  ## Checks the records of open file `s` against the loaded relation file
-  ## on a job (the Records window's planned and missing stations), or
-  ## clears the check when none is loaded.
+  ## Checks the records of open file `s` on a job (the Records window's
+  ## planned and missing stations): against the survey it was joined with
+  ## when that has relation records, else against the loaded relation file;
+  ## or clears the check when there is neither.
+  var gathers = newSeq[Slice[int]](s.gathers.len)
+  for i, g in s.gathers: gathers[i] = g.traces
+  let j = state.joinedRelations(s.id)
+  let opts = state.settings.join
+  if j >= 0:
+    template x: untyped = state.joins[j]
+    let job = state.jobs.submit(JobSpec(title: "Check the records of " & s.name &
+      " against the survey joined", lane: jlBackground, reads: @[s.path]), checkWork(s.filePtr,
+      s.id, gathers, addr x.geometry[], fileNames(x.files), NoSurveyLayer, state.inbox.poster,
+      x.options.recordMatch, x.options.traceMatch))
+    state.checking.add (job, x.geometry)
+    return
   let r = state.relationLayer
   if r < 0:
     s.setChecks("", [], [])
     return
   template l: untyped = state.survey.layers[r]
-  var gathers = newSeq[Slice[int]](s.gathers.len)
-  for i, g in s.gathers: gathers[i] = g.traces
   # The job reads the layer's relations where they are (a copy of a large X
   # file's took a frame per file opened); they are kept until it ends, also
   # when the layer is unloaded meanwhile.
   let job = state.jobs.submit(JobSpec(title: "Check the records of " & s.name & " against " &
     l.name, lane: jlBackground, reads: @[s.path]), checkWork(s.filePtr, s.id, gathers,
-    addr l.relations[], l.name, l.id, state.inbox.poster))
+    addr l.relations[], l.name, l.id, state.inbox.poster, opts.recordMatch, opts.traceMatch))
   state.checking.add (job, l.relations)
 
 proc takeChecked(state: var AppState; m: sink Msg) =
-  ## An open file's records checked against a relation file that is still
-  ## the one loaded, with the file's keys as they were.
+  ## An open file's records checked against the survey it was joined with,
+  ## or against a relation file that is still the one loaded, with the
+  ## file's keys as they were.
   let i = state.findSession(m.checkedSession)
+  if i < 0 or state.sessions[i].file.keysRevision != m.keysRevision: return
+  let joined = state.joinedRelations(m.checkedSession) >= 0
   let r = state.relationLayer
-  if i >= 0 and r >= 0 and state.survey.layers[r].id == m.againstLayer and
-      state.sessions[i].file.keysRevision == m.keysRevision:
-    state.sessions[i].setChecks(m.against, m.planned, m.plannedMissing)
+  if (m.againstLayer == NoSurveyLayer and joined) or (not joined and r >= 0 and
+      state.survey.layers[r].id == m.againstLayer):
+    state.sessions[i].setChecks(m.against, m.planned, m.plannedMissing, m.unlisted,
+      m.duplicates)
 
 proc loadSurvey(state: var AppState; path: string; quiet = false) =
   ## Loads survey file `path` (canonical) on a job, unless it is being
@@ -1353,7 +1473,8 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
     state.log.add(if lost > 0: sevWarning else: sevInfo, name, text)
     let now = state.relationLayer
     if now >= 0 and state.survey.layers[now].id != wasId:
-      for s in state.sessions: state.checkRecords(s) # against the relation file now loaded
+      for s in state.sessions: # against the relation file now loaded
+        if state.joinedRelations(s.id) < 0: state.checkRecords(s)
 
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
   ## Takes in a file an open job opened, and shows its first gather (or the
@@ -1438,8 +1559,183 @@ proc notify(state: var AppState; severity: Severity; text: string) =
   inc state.nextNotice
   if state.notices.len > MaxNotices: state.notices.delete(0)
 
+# ------------------------------------------------------------------ join --
+
+proc startJoin(state: var AppState; i: int; cmd: Command) =
+  ## `ckJoin` on open file `sessions[i]`: the survey files are read and what
+  ## joining them does is worked out on a job (`joinReadWork`), while the
+  ## plot goes on reading the file.
+  let s = state.sessions[i]
+  var files: seq[JoinFile]
+  var reads = @[s.path]
+  for f in cmd.joinFiles:
+    if f.path.len > 0:
+      var c = f
+      c.path = canonical(f.path)
+      if c.path notin reads:
+        reads.add c.path
+        files.add c
+  if files.len == 0:
+    state.ignore(cmd, "no survey file was named")
+    return
+  let job = state.jobs.submit(JobSpec(title: "Join geometry to " & s.name, lane: jlInteractive,
+    reads: reads), joinReadWork(s.filePtr, s.id, files, cmd.joinOptions, state.inbox.poster))
+  state.joining = Joining(job: job, step: jpReading, session: s.id, path: s.path, name: s.name,
+    files: files, options: cmd.joinOptions, units: cmd.joinUnits)
+  state.log.add(sevInfo, s.name, "Joining " & fileNames(files) & " to " & s.name & ".")
+
+proc pauseReaders(state: var AppState; path: string) =
+  ## Has the readers of the panels that show `path` let go of it, for the
+  ## join that needs it to itself; their tiles stay drawn meanwhile.
+  for k in 0 ..< state.panels.len:
+    let i = state.shownFile(k)
+    if i >= 0 and state.sessions[i].path == path:
+      if state.panels[k].id notin state.joining.paused:
+        state.joining.paused.add state.panels[k].id
+      if not state.readers[k].isNil:
+        state.readers[k].show(ReaderSource(gen: state.panels[k].sourceGen))
+
+proc resumeReaders(state: var AppState) =
+  ## The panels the join paused show their file again: the same gather at
+  ## the same scales, the tiles from before drawn until the first new one
+  ## (made from the joined keys) comes.
+  for id in state.joining.paused:
+    let k = state.findPanel(id)
+    let i = if k >= 0: state.shownFile(k) else: -1
+    if i >= 0:
+      template p: untyped = state.panels[k]
+      let s = state.sessions[i]
+      let g = p.layers[0].source.gather
+      if p.laidOut and p.layout.traces > 0 and not state.readers[k].isNil and
+          g in 0 ..< s.gathers.len and state.jobs.hold(s.path):
+        if p.view.traces.width > 0:
+          p.carry = p.view
+          p.carryLayout = p.layout
+        inc p.requestGen
+        p.sourceGen = p.requestGen
+        p.samplesGen = p.requestGen # the first new tile replaces those from before
+        p.pending = ReadRequest()
+        inc p.revision
+        state.readers[k].show(ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path,
+          size: s.size, traces: s.gathers[g].traces, filter: p.layers[0].filter,
+          order: p.layers[0].order))
+      else:
+        state.newSource(k)
+  state.joining.paused.setLen 0
+
+proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
+  ## The join ends: the panels it paused read their file again, and what it
+  ## did, or why it did nothing, is said in the log and kept for the dialog.
+  ## A file joined keeps what it was joined with (its records are checked
+  ## against that survey) and has its positions read again from its keys.
+  template j: untyped = state.joining
+  state.resumeReaders()
+  let i = state.findSession(j.session)
+  var words: seq[string]
+  var unmatched = 0
+  case outcome
+  of joJoined, joNothing:
+    words = planWords(j.plan, j.survey, j.options, j.units.survey)
+    unmatched = j.plan.unmatched.len
+    if i >= 0:
+      let s = state.sessions[i]
+      let before = state.joinedOf(s.id)
+      if before >= 0: state.joins.delete(before)
+      if outcome == joJoined:
+        state.joins.add Joined(session: s.id, files: j.files, options: j.options,
+          units: j.units, plan: j.plan, survey: j.survey, words: words, geometry: j.geometry)
+        if j.plan.changes > 0: state.readPositions(s) # the map's, from the joined keys
+        state.checkRecords(s)
+      if j.survey.notes.len > 0:
+        state.log.add(sevInfo, s.name, "The survey files' headers say: " &
+          j.survey.notes.join("; ") & ".")
+      state.log.add(if outcome == joNothing: sevWarning else: sevInfo, s.name,
+        (if outcome == joNothing: "Nothing was joined to " else: "Joined to ") & s.name &
+        " (" & fileNames(j.files) & "): " & words.join(" "))
+  of joCancelled:
+    words = @["The join was cancelled: " & j.name & " is as it was."]
+    state.log.add(sevInfo, j.name, words[0])
+  of joFailed:
+    words = @["The join failed: " & error & ". " & j.name & " is as it was."]
+    state.log.add(sevError, j.name, words[0])
+  of joNone: discard
+  state.joinReport = JoinReport(serial: state.joinReport.serial + 1, session: j.session,
+    name: j.name, outcome: outcome, words: words, unmatched: unmatched, heldAtJoin: j.held)
+  state.joining = Joining()
+
+proc takeJoinPlan(state: var AppState; m: sink Msg) =
+  ## The survey files read and what joining them does: when it changes some
+  ## trace's keys, the readers of the file let go of it and the join's second
+  ## job (`joinApplyWork`, the file to itself) does it; else it ends here.
+  template j: untyped = state.joining
+  if m.job != j.job or j.step != jpReading: return # (a join no longer wanted)
+  let i = state.findSession(m.planSession)
+  if i < 0: return # closed meanwhile: the job's end says so
+  j.geometry = move m.geometry
+  j.plan = move m.plan
+  j.survey = move m.joinSurvey
+  if j.plan.changes == 0:
+    # Nothing to change (or nothing matched): the readers need not stop.
+    let nothing = j.plan.found[prSource] + j.plan.found[prReceiver] == 0
+    state.endJoin(if nothing: joNothing else: joJoined)
+  else:
+    let s = state.sessions[i]
+    state.pauseReaders(s.path)
+    let tableOnly = j.files.allIt(it.kind == jkCsv)
+    j.job = state.jobs.submit(JobSpec(title: "Join geometry to " & s.name, lane: jlInteractive,
+      exclusive: @[s.path]), joinApplyWork(s.filePtr, s.path, s.id, addr j.geometry[],
+      j.plan.replace, tableOnly, state.jobs.holdRelease, state.inbox.poster))
+    j.step = jpJoining
+
+proc takeJoined(state: var AppState; m: Msg) =
+  ## The join's second job did it (its end, `onFinished`, ends the join).
+  template j: untyped = state.joining
+  if m.job == j.job and j.step == jpJoining and m.joinedSession == j.session:
+    j.joined = true
+    j.held = m.heldAtJoin
+    if m.changed != j.plan.changes:
+      state.log.add(sevWarning, j.name, "The join changed " & plural(m.changed, "trace") &
+        " where " & $j.plan.changes & " were expected (parseSEG: " & $m.stats & ").")
+
+proc selectUnmatched(state: var AppState; cmd: Command) =
+  ## `ckSelectUnmatched`: the traces of a joined file the survey has no
+  ## source or receiver for become the selection; the main panel shows the
+  ## record of the first when it shows the file and none of them is on show.
+  let j = state.joinedOf(cmd.unmatchedOf)
+  let i = state.findSession(cmd.unmatchedOf)
+  if j < 0 or i < 0:
+    state.ignore(cmd, $cmd.unmatchedOf & " is not joined")
+    return
+  let s = state.sessions[i]
+  var ids = newSeqOfCap[int](state.joins[j].plan.unmatched.len)
+  for t in state.joins[j].plan.unmatched: ids.add s.base + t
+  state.selection.select(ids, smReplace)
+  let k = state.findPanel(MainPanel)
+  let (shown, gather) = state.shownTraces(k)
+  var onShow = 0
+  if shown == i:
+    for t in state.joins[j].plan.unmatched:
+      if t in gather: inc onShow
+  state.log.add(sevInfo, s.name, (if ids.len == 0: "No trace of " & s.name &
+    " is unmatched." else: plural(ids.len, "unmatched trace") & " of " & s.name &
+    " selected" & (if shown == i: ", " & $onShow & " in the record shown." else: ".")))
+  if shown == i and onShow == 0 and ids.len > 0:
+    let g = s.gatherOf(state.joins[j].plan.unmatched[0])
+    if g >= 0: state.show(MainPanel, s.id, g)
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
+  if job.id == state.joining.job:
+    case job.state
+    of jsDone:
+      if state.joining.step == jpJoining:
+        if state.joining.joined: state.endJoin(joJoined)
+        else: state.endJoin(joFailed, "it ended without joining")
+      else: state.endJoin(joCancelled) # the file was closed before its plan came
+    of jsCancelled: state.endJoin(joCancelled)
+    of jsFailed: state.endJoin(joFailed, job.error)
+    of jsQueued, jsRunning: discard
+    return
   state.checking.keepItIf(it.job != job.id) # the relations a check read
   for i in 0 ..< state.loading.len:
     if state.loading[i].job == job.id: # (one that posted its layer was let go of then)
@@ -2118,6 +2414,14 @@ proc applyCommand(state: var AppState; cmd: Command) =
       state.selection.setHoverPoints(points, traces)
   of ckShowPoints:
     state.showPoints(cmd)
+  of ckJoin:
+    let i = state.findSession(cmd.joinFile)
+    if i < 0: state.ignore(cmd, $cmd.joinFile & " is not open")
+    elif state.joining.job != NoJob: state.ignore(cmd, "a join is under way: one at a time")
+    elif cmd.joinFiles.len == 0: state.ignore(cmd, "no survey file was named")
+    else: state.startJoin(i, cmd)
+  of ckSelectUnmatched:
+    state.selectUnmatched(cmd)
   of ckUnloadSurvey:
     let i = state.survey.find(cmd.layer)
     if i < 0: state.ignore(cmd, $cmd.layer & " is not loaded")
@@ -2129,7 +2433,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
       discard state.survey.remove(cmd.layer)
       state.log.add(sevInfo, name, name & " was taken out of the survey.")
       if checked == i: # the records were checked against it
-        for s in state.sessions: state.checkRecords(s)
+        for s in state.sessions:
+          if state.joinedRelations(s.id) < 0: state.checkRecords(s)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept
@@ -2203,6 +2508,8 @@ proc drainInbox*(state: var AppState): bool =
     of mkWatched: state.takeWatched(move m)
     of mkSurvey: state.takeSurvey(move m.layer, m.job)
     of mkChecked: state.takeChecked(move m)
+    of mkJoining: state.takeJoinPlan(move m)
+    of mkJoined: state.takeJoined(m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:

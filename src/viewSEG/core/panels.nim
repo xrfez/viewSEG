@@ -314,6 +314,16 @@ func value*(k: TraceKeys; field: HeaderField; trace: int): float64 =
   of hfCrossline: k.crossline
   of hfTrace: float64(trace + 1)
 
+func joinGroupsOf*(field: HeaderField): set[JoinGroup] =
+  ## The groups of a trace's keys `field` shows: what a geometry join may
+  ## have given it (parseSEG's `joinedGroups`).
+  case field
+  of hfRcvLine, hfRcvPoint: {jgReceiverStation}
+  of hfSrcLine, hfSrcPoint: {jgSourceStation}
+  of hfComponent: {jgComponent}
+  of hfOffset: {jgDerived}
+  else: {}
+
 func defaultFields*(known: set[HeaderField]; kind = gkUnknown): seq[HeaderField] =
   ## The display header of a gather of `kind` whose traces have values for
   ## `known`, the first group that has any: for a shot gather receiver line

@@ -6,12 +6,13 @@ import std/os
 import imguin/cimgui
 import ../../core/layouts
 import ../../view/theme
-import icons
+import icons, marks
 
 type
   MenuAction* = enum
     maOpenFile = "Open file...", maOpenFiles = "Open files...",
-    maOpenFolder = "Open folder...", maClose = "Close", maQuit = "Quit",
+    maOpenFolder = "Open folder...", maClose = "Close", maJoinGeometry = "Join geometry...",
+    maQuit = "Quit",
     maToggleTheme = "Light / dark",
     maExportSettings = "Export...", maImportSettings = "Import...",
     maResetSettings = "Reset to defaults",
@@ -51,6 +52,7 @@ const
     maOpenFiles: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_O.cint,
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
+    maJoinGeometry: 0,
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
     maToggleTheme: 0, maExportSettings: 0, maImportSettings: 0, maResetSettings: 0,
     maSaveLayout: 0, maResetLayout: 0, maExportLayout: 0, maImportLayout: 0,
@@ -58,7 +60,7 @@ const
     maExportLog: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [IconOpenFile, IconOpenFiles, IconOpenFolder,
-    IconClose, IconQuit, IconTheme, IconSave, IconOpenFile, IconClose, IconSave, IconClose,
+    IconClose, IconMap, IconQuit, IconTheme, IconSave, IconOpenFile, IconClose, IconSave, IconClose,
     IconSave, IconOpenFile, IconList, IconRecords, IconMap, IconTasks, IconLog, IconExport]
 
 const FollowHelp* = "On: each file that appears in the folder listed is shown in the " &
@@ -73,9 +75,12 @@ proc shortcutName*(a: MenuAction): string =
 proc label(a: MenuAction): string =
   menuIcons[a] & "  " & $a
 
+var marked: ptr Marks ## the frame's marks while the menu is drawn (`drawMainMenu`)
+
 proc item(a: MenuAction; res: var MenuResult) =
   if igMenuItem_Bool(label(a).cstring, shortcutName(a).cstring, false, true):
     res.actions.incl a
+  if marked != nil: marked[].mark("menu." & $a)
 
 proc tip(text: string) =
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
@@ -136,10 +141,12 @@ proc drawLayoutMenu(input: MenuInput; res: var MenuResult) =
     tip("Arrange the windows as such a file says, and keep it among the layouts")
     igEndMenu()
 
-proc drawMainMenu*(input: MenuInput): MenuResult =
+proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
   ## The menu bar over the main window, plus the shortcuts, which work whether
-  ## or not a menu is open.
+  ## or not a menu is open. Its menus are marked "menu.File" and "menu.View",
+  ## its items "menu." and their names.
   result = MenuResult()
+  marked = addr marks
   for a in MenuAction:
     if shortcuts[a] != 0 and igShortcut_Nil(shortcuts[a], ImGui_InputFlags_RouteGlobal.cint):
       result.actions.incl a
@@ -147,7 +154,9 @@ proc drawMainMenu*(input: MenuInput): MenuResult =
   let open = igBeginMainMenuBar()
   igPopStyleVar(1)
   if open:
-    if igBeginMenu("File", true):
+    let file = igBeginMenu("File", true)
+    marks.mark("menu.File")
+    if file:
       for a in maOpenFile .. maOpenFolder:
         item(a, result)
       drawRecent(input.recent, input.recentFolders, result)
@@ -159,6 +168,10 @@ proc drawMainMenu*(input: MenuInput): MenuResult =
           input.followLatest, true):
         result.toggleFollow = true
       tip(FollowHelp)
+      igSeparator()
+      item(maJoinGeometry, result)
+      tip("Join survey files (SPS, SEG P1, a CSV table) to an open file's traces, so they " &
+        "have their sources' and receivers' coordinates; in memory only, the file is not changed")
       igSeparator()
       if igBeginMenu((IconSettings & "  Settings").cstring, true):
         item(maExportSettings, result)
@@ -180,7 +193,9 @@ proc drawMainMenu*(input: MenuInput): MenuResult =
       igSeparator()
       item(maQuit, result)
       igEndMenu()
-    if igBeginMenu("View", true):
+    let view = igBeginMenu("View", true)
+    marks.mark("menu.View")
+    if view:
       if igBeginMenu((IconTheme & "  Theme").cstring, true):
         if igMenuItem_Bool("Follow system", nil, input.theme.len == 0, true):
           (result.pickedTheme, result.theme) = (true, "")
@@ -201,3 +216,4 @@ proc drawMainMenu*(input: MenuInput): MenuResult =
       drawLayoutMenu(input, result)
       igEndMenu()
     igEndMainMenuBar()
+  marked = nil

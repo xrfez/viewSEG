@@ -1,6 +1,9 @@
 ## A loaded file is never changed: every fixture (the survey and each of its
-## planted defects, the SPS files, the four SEG-D records, the pilot,
-## parseSEG's demo files, and two damaged files) is opened, shown gather by
+## planted defects, the SPS files, the five SEG-D records, the pilot,
+## parseSEG's demo files, and two damaged files) is opened, joined with the
+## survey's S, R and X files and the SEG-D records' X file (File > Join
+## geometry: in memory only; the survey's SEG-Y files and two of the SEG-D
+## records join), shown gather by
 ## gather, zoomed, panned, box-zoomed, sent back, given every display gain,
 ## reversed polarity and other header rows, given an edited panel (traces
 ## killed and reversed, one change undone; the panel then sorted with them,
@@ -17,6 +20,7 @@
 ## second round found the modification times of the files moved.
 
 import std/[algorithm, os, strutils, times]
+import parseSEG
 import viewSEG/core/state
 import utils/[fixtures, waiting]
 
@@ -47,7 +51,7 @@ proc view(st: var AppState; v: Viewport; remember = false) =
 proc display(st: var AppState; d: DisplaySettings) =
   st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
 
-var driven, tiled, sorted, edited = 0
+var driven, tiled, sorted, edited, joined = 0
   # gathers worked with; of them, the ones with samples to show; sorted panels
   # read; edited panels read
 
@@ -126,13 +130,20 @@ proc drive(st: var AppState) =
   st.apply Command(kind: ckClearEdits, panel: MainPanel)
   doAssert st.settle(st.answered)
 
-proc showAll(st: var AppState; path: string) =
-  ## Opens `path`, shows each of its gathers and works with it, then closes it.
+proc showAll(st: var AppState; path: string; survey: seq[JoinFile]) =
+  ## Opens `path`, joins `survey` to it, shows each of its gathers and works
+  ## with it, then closes it.
   let name = path.extractFilename
   st.apply Command(kind: ckOpen, paths: @[path])
   doAssert st.settle(st.jobs.active.len == 0), "the open of " & name & " never ended"
   if st.sessions.len == 0: return # not a seismic file: said in the log
   let s = st.sessions[0]
+  if s.file.hasKeys:
+    let before = st.joinReport.serial
+    st.apply Command(kind: ckJoin, joinFile: s.id, joinFiles: survey)
+    doAssert st.settle(st.joinReport.serial > before and st.joinUnderWay.job == NoJob),
+      name & ": the join never ended"
+    if st.joinReport.outcome == joJoined and st.joinReport.heldAtJoin == 0: inc joined
   for g in 0 ..< s.gathers.len:
     if g > 0: st.apply Command(kind: ckGather, panel: MainPanel, gather: g)
     doAssert st.settle(st.main.laidOut), name & ": gather " & $g & " never laid out"
@@ -149,7 +160,11 @@ withFixtures fx:
   let sps = fx.surveySps()
   files.add [sps.s, sps.r, sps.x]
   files.add [fx.twoSetSegd(), fx.threeComponentSegd(), fx.mixedOrderSegd(), fx.stationsSegd(),
-    fx.pilotSegy()]
+    fx.recordOnlySegd(), fx.pilotSegy()]
+  let relation = fx.segdRelation()
+  files.add relation
+  var survey: seq[JoinFile]
+  for p in [sps.s, sps.r, sps.x, relation]: survey.add JoinFile(path: p, kind: jkSps)
   for name in demoFileNames:
     files.add fx.demoFile(name)
   let cut = fx.dir / "cut.sgy"
@@ -170,7 +185,7 @@ withFixtures fx:
   var st = initAppState(indexCache = cache)
   for round in 1 .. 2: # the second opens from the index cache
     for f in files:
-      st.showAll(f)
+      st.showAll(f, survey)
     for i, f in files:
       let now = snapshot(f)
       doAssert now.bytes == before[i].bytes, "round " & $round & ": " & f.extractFilename &
@@ -184,7 +199,10 @@ withFixtures fx:
     if "(index from the cache)" in e.text: inc cached
   doAssert cached > 0, "the second round read no index cache"
   echo "tunchanged: ", files.len, " files, ", driven, " gathers worked with, ", tiled,
-    " of them read, ", sorted, " sorted panels read, ", edited, " edited panels read"
+    " of them read, ", sorted, " sorted panels read, ", edited, " edited panels read, ", joined,
+    " files joined"
+  doAssert joined == 2 * (PlantedDefect.high.ord + 1 + 1 + 2), "the survey's SEG-Y files " &
+    "(and the one cut short) and two SEG-D records join in each round: " & $joined
   doAssert tiled >= 2 * (PlantedDefect.high.ord + 1) * Shots, $tiled
   doAssert sorted == tiled * (SortPresets.len + 2), $sorted
   doAssert edited == tiled, $edited

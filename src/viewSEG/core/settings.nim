@@ -4,7 +4,8 @@
 ## scales are stated, each monitor's calibration, the status bar's fields,
 ## the sort presets, the user's own sort keys, the Messages window's
 ## toggles, the plot's cursor time line, whether the Files window follows
-## the latest file and where the map shows the point under the pointer.
+## the latest file, where the map shows the point under the pointer, and
+## the geometry join's options (File > Join geometry).
 ## Every field has a default.
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
@@ -13,9 +14,9 @@
 ## (`core/settingsnif`) by `AppState`.
 
 import std/math
-import log, panels, readout, scales
+import join, log, panels, readout, scales
 
-export readout, scales
+export join, readout, scales
 
 type
   Calibration* = object
@@ -74,6 +75,7 @@ type
     cursorLine*: bool                             ## the plot's cursor time line is on
     files*: FilesView                             ## the Files window's toggles
     map*: MapOptions                              ## the map's own settings
+    join*: JoinOptions                            ## the geometry join's options, as set last
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not

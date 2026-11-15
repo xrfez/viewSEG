@@ -29,6 +29,9 @@
 ##   at all (`HostileSurvey`).
 ## - `twoSetSegd()`: SEG-D Rev 3.0, format 8058, one record: a time break, a
 ##   pilot, and two seismic channel sets (receiver lines 100 and 101).
+## - `recordOnlySegd()`: SEG-D Rev 3.0, one record whose headers give the
+##   record and channel numbers only (no station, no position), and
+##   `segdRelation()`, the X file that places its channels.
 ## - `threeComponentSegd()`: SEG-D Rev 3.0, one record: a time break and three
 ##   seismic channel sets, one per component (group index 1, 2, 3) at the same
 ##   stations.
@@ -668,21 +671,26 @@ func segdSample*(scale, line, channel: float64; i: int): float32 =
   let dy = (line - RcvLine) * 50
   float32(scale * float64(sample(sqrt(dx * dx + dy * dy), float64(i) * DtMs / 1000)))
 
-proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true) =
+proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stations = true;
+    positioned = true) =
   ## One Rev 3.0 record (file number `SegdRecordNo`, format 8058) with the
   ## channel sets `sets`: an auxiliary set holds one trace, a seismic set
   ## `SegdChannels`. The source is line 1, point 1001, at mid-spread; not
   ## `placed`, every position block holds (0, 0) (stations only, as field
-  ## records often have).
+  ## records often have). Without `stations`, the source and receiver
+  ## stations are 0 / 0 (none: record and channel numbers only); not
+  ## `positioned`, the record has no position blocks at all.
   let fmt = sd8058
   var r = SegdRecord(layout: slRev3, format: some(fmt),
     revision: SegdRevision(major: 3, minor: 0))
   r.generalBlocks.add blk(0x11, "viewSEG test record")
-  let src = SegdSourceDescription(extFileNumber: SegdRecordNo, sourceLineNumber: 1,
-    sourcePointNumber: 1001, sourcePointIndex: 1, sourceSetNumber: 1, blockType: 0x16)
+  let src = SegdSourceDescription(extFileNumber: SegdRecordNo,
+    sourceLineNumber: (if stations: 1 else: 0), sourcePointNumber: (if stations: 1001 else: 0),
+    sourcePointIndex: 1, sourceSetNumber: 1, blockType: 0x16)
   r.generalBlocks.add @(src.encoded)
-  r.generalBlocks.add @(if placed: position(SegdSourceX, OriginY, Elevation).encoded
-    else: position(0, 0, 0).encoded)
+  if positioned:
+    r.generalBlocks.add @(if placed: position(SegdSourceX, OriginY, Elevation).encoded
+      else: position(0, 0, 0).encoded)
   let nOpt = r.generalBlocks.len div 32
   r.gh1 = SegdGeneralHeader1(fileNumber: SegdRecordNo, formatCode: ord(fmt), year: 26,
     additionalGhBlocks: uint8(2 + nOpt), julianDay: 313, hour: 9, minute: 41, second: 7,
@@ -699,7 +707,8 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true) =
     descs.add SegdChannelSetDescriptorRev3(scanTypeNumber: 1, channelSetNumber: uint16(n + 1),
       channelType: s.channelType, endTime: endUs, numSamples: SegdSamples,
       descaleMultiplier: 1.0, channelsInSet: uint32(if seismic: SegdChannels else: 1),
-      samplingInterval: uint32(DtMs * 1000), traceHeaderExtensions: (if seismic: 4 else: 1),
+      samplingInterval: uint32(DtMs * 1000),
+      traceHeaderExtensions: (if seismic and positioned: 4 else: 1),
       verticalStack: 1, blockType1: 0x30, blockType2: 0x31, blockType3: 0x32)
   r.scanTypes = @[SegdScanType(layout: slRev3, descriptorsRev3: descs)]
   var traces: seq[SegdTrace]
@@ -709,16 +718,18 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true) =
       var t = SegdTrace(layout: slRev3, index: traces.len, numSamples: SegdSamples)
       t.header = SegdTraceHeader(fileNumber: SegdRecordNo, scanTypeNumber: 1,
         channelSetNumber: n + 1, traceNumber: tn,
-        traceHeaderExtensions: (if seismic: 4'u8 else: 1'u8))
+        traceHeaderExtensions: (if seismic and positioned: 4'u8 else: 1'u8))
+      let named = seismic and stations
       t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(
-        receiverLineNumber: (if seismic: int32(s.line) else: 0),
-        receiverPointNumber: (if seismic: int32(FirstRcvPoint) + int32(tn - 1) else: 0),
+        receiverLineNumber: (if named: int32(s.line) else: 0),
+        receiverPointNumber: (if named: int32(FirstRcvPoint) + int32(tn - 1) else: 0),
         receiverPointIndex: 1, groupIndex: s.group, numSamples: SegdSamples,
         sensorType: (if seismic: 2'u8 else: 0'u8), blockType: 0x40)
       var v = newSeq[float32](SegdSamples)
       if seismic:
-        t.extensions = @(if placed: position(OriginX + GroupM * float64(tn - 1), s.y,
-          Elevation).encoded else: position(0, 0, 0).encoded)
+        if positioned:
+          t.extensions = @(if placed: position(OriginX + GroupM * float64(tn - 1), s.y,
+            Elevation).encoded else: position(0, 0, 0).encoded)
         for i in 0 ..< SegdSamples:
           v[i] = segdSample(s.scale, s.line, float64(tn), i)
       elif s.channelType == 0x20:
@@ -758,6 +769,34 @@ proc stationsSegd*(fx: Fixtures): string =
     writeSegdRecord(result, [SetSpec(channelType: 0x20),
       SetSpec(channelType: 0x10, line: RcvLine, y: OriginY, scale: 1),
       SetSpec(channelType: 0x10, line: RcvLine + 1, y: OriginY + 50, scale: 1)], placed = false)
+
+proc recordOnlySegd*(fx: Fixtures): string =
+  ## A record whose headers give neither stations nor coordinates (no
+  ## position block), only the record (`SegdRecordNo`) and the channels: a
+  ## time break (trace 0), then channels 1 .. `SegdChannels` (traces 1 ..
+  ## 12), which `segdRelation`'s X record places at receiver line 100,
+  ## points 101 .. 112, from source line 1, point 1001.
+  result = fx.dir / "record-only.sgd"
+  if not fileExists(result):
+    writeSegdRecord(result, [SetSpec(channelType: 0x20),
+      SetSpec(channelType: 0x10, line: RcvLine, y: OriginY, scale: 1)], stations = false,
+      positioned = false)
+
+proc segdRelation*(fx: Fixtures): string =
+  ## An X file (SPS 2.1) with the one X record of the SEG-D records (field
+  ## record `SegdRecordNo`): channels 1 .. `SegdChannels` from source line 1,
+  ## point 1001 to receiver line 100, points 101 .. 112 (`surveySps`'s
+  ## stations).
+  result = fx.dir / "segd.x"
+  if fileExists(result): return
+  var x = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
+    data: "SPS 2.1;")])
+  x.relations.add SpsRelation(fieldRecord: SegdRecordNo, recordIncrement: 1,
+    instrumentCode: '1', srcLine: SrcLine, srcPoint: FirstSrcPoint, srcIndex: 1, fromChannel: 1,
+    toChannel: SegdChannels, channelIncrement: 1, rcvLine: RcvLine, fromReceiver: FirstRcvPoint,
+    toReceiver: FirstRcvPoint + float64(SegdChannels - 1), rcvIndex: 1)
+  let log = writeSps(x, result)
+  doAssert log.len == 0, $log
 
 proc threeComponentSegd*(fx: Fixtures): string =
   ## A record with a time break (set 1) and the three components of receiver

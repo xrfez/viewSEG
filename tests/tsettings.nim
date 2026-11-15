@@ -56,7 +56,10 @@ proc everyFieldSet(): Settings =
       SortPreset(name: "Channels", keys: @[SortKey(field: hfChannel)])],
     customOrder: @[SortKey(field: hfSrcPoint), SortKey(field: hfTrace, descending: true)],
     messages: MessagesView(autoScroll: false, hidden: {sevInfo, sevWarning}), cursorLine: true,
-    files: FilesView(followLatest: true), map: MapOptions(info: miStrip))
+    files: FilesView(followLatest: true), map: MapOptions(info: miStrip),
+    join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
+      recordMatch: rmFieldRecord, traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
+      line: 4960), LineName(name: "A line", line: 12.5)]))
   result.plot = PlotDefaults(
     display: DisplaySettings(mode: dmWiggleDensity, fills: {wfNegative}, colours: pcCustom,
       custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),
@@ -83,8 +86,19 @@ block savedByAnOlderBuild:
   doAssert not s.cursorLine and s.recentFiles.len == 1 and s.plot.display.mode == dmWiggle
   doAssert not s.files.followLatest, "a new setting takes its default"
   doAssert s.map.info == miPopup, "the map's settings take their defaults"
+  doAssert s.join == JoinOptions(), "the join's options take their defaults"
   doAssert s.plot.display.untilMs == 2000, "the Exponential gain's cutoff takes its default"
   doAssert cleaned(s)[1] == 0
+
+block joinOptions:
+  # The join's line names: those that cannot be used are said and passed by.
+  var problems: seq[string]
+  let s = readSettings("(settings (version 1) (join (trailingDigits true) (coordinates odd) " &
+    "(lineNames (line \"L1\" 1) (line 2 3) (line \"\" 4))))", "settings.nif", Settings(),
+    problems)
+  doAssert s.join.trailingDigits and s.join.coordinates == hcFill
+  doAssert s.join.lineNames == @[LineName(name: "L1", line: 1)], $s.join.lineNames
+  doAssert problems.len == 3, $problems
 
 block gainAmountTo300:
   # The gain amount reads from -300 to +300 dB (60 before: a file of an

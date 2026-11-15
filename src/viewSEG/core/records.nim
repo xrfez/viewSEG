@@ -43,6 +43,8 @@ type
       ## stations its X record plans for it (`recordCompleteness`); -1 when
       ## no relation file was checked, or none plans it
     plannedMissing*: int = -1 ## of those, the stations it has no trace of
+    unlisted*: int = -1 ## its traces at stations the plan does not list; -1 when not planned
+    duplicates*: int = -1 ## its stations recorded more than once; -1 when not planned
 
   RecordColumn* = enum
     ## The columns of the record list besides the record's place and size.

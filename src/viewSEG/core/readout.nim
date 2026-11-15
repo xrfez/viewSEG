@@ -151,6 +151,26 @@ proc text*(p: Pick; f: ReadoutField): string =
       of tsAuxiliary: "auxiliary"
     of rfTime, rfSample, rfAmplitude, rfRawAmplitude: "" # handled above
 
+func joinGroupsOf*(f: ReadoutField): set[JoinGroup] =
+  ## The groups of a trace's keys field `f` shows: what a geometry join may
+  ## have given it.
+  case f
+  of rfReceiver: {jgReceiverStation}
+  of rfSource: {jgSourceStation}
+  of rfOffset: {jgDerived}
+  of rfSourceXY: {jgSourceXy}
+  of rfReceiverXY: {jgReceiverXy}
+  of rfMidpointXY: {jgDerived}
+  of rfSourceZ: {jgSourceZ}
+  of rfReceiverZ: {jgReceiverZ}
+  of rfComponent: {jgComponent}
+  else: {}
+
+func joined*(p: Pick; f: ReadoutField): bool =
+  ## Whether the value field `f` shows at `p` was given by a geometry join
+  ## (not by the trace's header).
+  p.inside and p.found and (p.joined * joinGroupsOf(f)) != {}
+
 func editNote*(p: Pick): string =
   ## What the readout says of the trace at `p` beyond its fields: "dead"
   ## when the file marks it dead (it is drawn blank), then its edits,

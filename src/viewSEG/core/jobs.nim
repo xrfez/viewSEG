@@ -433,6 +433,13 @@ proc release*(h: HoldRelease; path: string): bool {.raises: [].} =
   ## `Jobs.release`, from any thread. False when `path` was not held.
   h.q != nil and h.q.endHold(path)
 
+proc held*(h: HoldRelease; path: string): int {.raises: [].} =
+  ## `Jobs.held`, from any thread: how many holds `path` has (a job that
+  ## needs the file to itself checks there are none).
+  if h.q != nil:
+    withLock h.q.lock:
+      result = h.q.holds.count(path)
+
 proc list*(jobs: Jobs): seq[JobInfo] =
   ## Every job listed, oldest first.
   let q = jobs.obj

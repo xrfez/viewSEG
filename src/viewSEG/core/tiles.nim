@@ -19,7 +19,7 @@
 ## reference the GPU is tested against, and what an export draws with.
 
 import std/[fenv, math]
-from parseSEG import TraceKeys
+from parseSEG import TraceKeys, JoinGroup
 from processSEG/gain/stats import percentileAbs, percentileWorkspace
 from processSEG/core/workspace import Workspace, reserve
 import edits, geometry, panels, viewport
@@ -53,6 +53,9 @@ type
     dead*: seq[bool]
       ## per row: the trace is marked dead in the file, so it is drawn blank;
       ## empty when none is
+    joined*: seq[set[JoinGroup]]
+      ## per row: the groups of its keys a geometry join filled or changed
+      ## (parseSEG's `joinedGroups`); empty when none was
 
   Quad* = object
     ## Where a block of a tile is drawn, in data coordinates (positions and
@@ -64,6 +67,10 @@ type
   Lut* = array[256, Rgba]
     ## A colour map: index 0 for the most negative amplitude, 255 for the
     ## most positive.
+
+func joinedAt*(t: Tile; row: int): set[JoinGroup] {.inline.} =
+  ## The groups of row `row`'s keys a geometry join gave.
+  if row in 0 ..< t.joined.len: t.joined[row] else: {}
 
 func editsAt*(t: Tile; row: int): set[TraceEdit] {.inline.} =
   ## The edits row `row`'s samples were made with.

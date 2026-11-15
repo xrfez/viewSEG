@@ -162,9 +162,10 @@ func valueChars(f: ReadoutField): int =
   of rfStatus: 9
 
 proc readoutField(fonts: Fonts; f: ReadoutField; value: string; t: Theme;
-    marks: var Marks) =
+    marks: var Marks; joined = false) =
   ## One field of the readout: its caption, dim, then its value in mono,
-  ## given room for `valueChars`.
+  ## given room for `valueChars`; a value a geometry join gave (`joined`) in
+  ## the accent colour.
   igSameLine(0, -1)
   igBeginGroup()
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
@@ -173,7 +174,9 @@ proc readoutField(fonts: Fonts; f: ReadoutField; value: string; t: Theme;
   igSameLine(0, 6)
   fonts.withFont(frMono, 0):
     let room = igCalcTextSize(repeat('0', valueChars(f)).cstring, nil, false, -1).x
+    if joined: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
     igTextUnformatted(value.cstring, nil)
+    if joined: igPopStyleColor(1)
     let used = igGetItemRectSize().x
     if used < room:
       igSameLine(0, 0)
@@ -182,7 +185,8 @@ proc readoutField(fonts: Fonts; f: ReadoutField; value: string; t: Theme;
   marks.mark("status." & $f)
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
     igTextUnformatted(($f & (if f == rfAmplitude: ", as displayed (after processing and " &
-      "gain)" else: "") & ". Right-click the bar to choose the fields.").cstring, nil)
+      "gain)" else: "") & (if joined: ", from the survey files (joined, not in the header)"
+      else: "") & ". Right-click the bar to choose the fields.").cstring, nil)
     igEndTooltip()
   igSameLine(0, 16)
 
@@ -320,7 +324,7 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
       igSameLine(0, 16)
     else:
       for f in fields:
-        readoutField(fonts, f, at.text(f), t, marks)
+        readoutField(fonts, f, at.text(f), t, marks, at.joined(f))
     let note = if mapCursor.len > 0: "" else: at.editNote # whatever the fields: the trace's edits
     if note.len > 0:
       igSameLine(0, -1)

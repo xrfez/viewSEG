@@ -242,20 +242,17 @@ func pointsIn*(st: AppState; box: Bounds): seq[PointRef] =
 
 func unitsOf*(st: AppState): string =
   ## The survey's units as the status bar and the scale bar write them: the
-  ## first survey file's that says ("ft", "US ft", "m", or its own words);
-  ## "" when none does.
+  ## units the user confirmed when joining a file with its survey files,
+  ## else the first survey file's that says ("ft", "US ft", "m", or its own
+  ## words); "" when none does.
+  for i in 0 ..< st.joins.len:
+    let u = st.joins[i].units.survey
+    if u != suNotGiven: return u.abbreviation
   for i in 0 ..< st.survey.layers.len:
     template l: untyped = st.survey.layers[i]
     if l.origin == loSurveyFile and l.gridUnit.known:
-      let u = l.gridUnit
-      if u.metres > 0:
-        if abs(u.metres - 1) <= 1e-9: return "m"
-        if abs(u.metres - 0.3048) <= 1e-9: return "ft"
-        if abs(u.metres - 1200 / 3937) <= 1e-9: return "US ft"
-      let n = u.name.strip.toLowerAscii
-      if n in ["m", "meter", "meters", "metre", "metres"]: return "m"
-      if n in ["ft", "foot", "feet"]: return "ft"
-      return u.name.strip
+      let u = unitOf(l.gridUnit)
+      return if u != suNotGiven: u.abbreviation else: l.gridUnit.name.strip
   ""
 
 func fixed(x: float64; decimals: int): string =

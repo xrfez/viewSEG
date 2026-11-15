@@ -70,19 +70,24 @@ func recordColumns*(s: Session): set[RecordColumn] {.inline.} = s.columns
 func checkedAgainst*(s: Session): lent string {.inline.} = s.checkedAgainst
   ## The relation file the records' planned stations come from; "" for none.
 
-proc setChecks*(s: Session; against: string; planned, missing: openArray[int]) =
+proc setChecks*(s: Session; against: string; planned, missing: openArray[int];
+    unlisted: openArray[int] = []; duplicates: openArray[int] = []) =
   ## The records checked against relation file `against` (its name): per
-  ## gather, the stations planned and those with no trace (-1 for a record
-  ## the file does not plan). An `against` of "" clears the check. Lists of
+  ## gather, the stations planned, those with no trace, the traces at
+  ## stations the plan does not list and the stations recorded twice (-1 for
+  ## a record the file does not plan; `unlisted` and `duplicates` may be
+  ## empty: not counted). An `against` of "" clears the check. Lists of
   ## another length than the records change nothing.
   if against.len == 0:
     s.checkedAgainst = ""
     for r in s.records.mitems:
-      (r.planned, r.plannedMissing) = (-1, -1)
+      (r.planned, r.plannedMissing, r.unlisted, r.duplicates) = (-1, -1, -1, -1)
   elif planned.len == s.records.len and missing.len == s.records.len:
     s.checkedAgainst = against
     for i, r in s.records.mpairs:
       (r.planned, r.plannedMissing) = (planned[i], missing[i])
+      r.unlisted = if unlisted.len == s.records.len: unlisted[i] else: -1
+      r.duplicates = if duplicates.len == s.records.len: duplicates[i] else: -1
 
 func len*(s: Session): int {.inline.} = s.file.len
   ## The number of traces.

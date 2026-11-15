@@ -70,12 +70,20 @@ proc tip(text: string) =
 func missingText(r: RecordRow; against: string): string =
   ## What a record's missing cell says when pointed at.
   case r.missingSource
-  of msSurvey: $r.plannedMissing & " of the " & $r.planned &
-    " stations its X record in " & against & " plans have no trace in it."
+  of msSurvey:
+    var text = $r.plannedMissing & " of the " & $r.planned & " stations its X record in " &
+      against & " plans have no trace in it."
+    if r.unlisted > 0:
+      text.add " " & $r.unlisted & (if r.unlisted == 1: " trace is" else: " traces are") &
+        " at stations it does not plan."
+    if r.duplicates > 0:
+      text.add " " & $r.duplicates & (if r.duplicates == 1: " station is" else: " stations are") &
+        " recorded more than once."
+    text
   of msFile: $r.missing & " of the " & $r.declared & " seismic traces the file declares " &
     "for it are not in it (it holds " & $r.seismic & ")."
   of msNone: "Nothing says how many traces it should hold: load the survey's relation " &
-    "file (SPS X) to check it against the plan."
+    "file (SPS X), or join it (File > Join geometry), to check it against the plan."
 
 func key(r: RecordRow; by: RecordSort; i: int): float64 =
   ## What row `i` (`r`) sorts by; the unknown (NaN) come last.

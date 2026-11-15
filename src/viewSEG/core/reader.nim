@@ -439,6 +439,10 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       if keys.status == tsDead:
         if tile.dead.len == 0: tile.dead = newSeq[bool](q.count)
         tile.dead[row] = true
+      let joined = rd.src.file[].index.joinedGroups(list[row])
+      if joined != {}:
+        if tile.joined.len == 0: tile.joined = newSeq[set[JoinGroup]](q.count)
+        tile.joined[row] = joined
       for i, field in req.fields:
         tile.header[i][row] = keys.value(field, list[row])
 

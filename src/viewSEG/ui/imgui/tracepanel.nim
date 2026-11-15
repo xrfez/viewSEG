@@ -327,6 +327,18 @@ func headerValue(tiles: openArray[Tile]; fields: openArray[HeaderField]; row,
       return (true, tiles[i].header[row][(position - r.first) div r.stride])
   (false, NaN)
 
+func headerJoined(tiles: openArray[Tile]; fields: openArray[HeaderField]; row,
+    position: int): bool =
+  ## Whether the value of header row `row` at `position` (as `headerValue`
+  ## finds it) was given by a geometry join, not by the trace's header.
+  for i in countdown(tiles.high, 0):
+    let r = tiles[i].request
+    if tiles[i].fields == fields and position >= r.first and position <= r.last and
+        (position - r.first) mod r.stride == 0:
+      return (tiles[i].joinedAt((position - r.first) div r.stride) *
+        joinGroupsOf(fields[row])) != {}
+  false
+
 proc button(label: string; t: Theme; marks: var Marks; mark: string): bool =
   result = igButton(label.cstring, ImVec2_c(x: 0, y: 0))
   marks.mark(mark)
@@ -967,6 +979,7 @@ proc drawHeader(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[
   let dl = igGetWindowDrawList()
   let lineH = igGetTextLineHeight()
   let ink = u32(t.roles[rlText])
+  let joinedInk = u32(t.roles[rlAccent]) # values a geometry join gave
   let dim = u32(t.roles[rlTextDim])
   let charW = igCalcTextSize("0", nil, false, -1).x
   let chars = tp.labelChars(tiles[^1])
@@ -991,7 +1004,8 @@ proc drawHeader(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[
           let w = igCalcTextSize(text.cstring, nil, false, -1).x
           let left = round(x - w / 2)
           if left >= plotPos.x and left + w <= plotPos.x + plotSize.x: # whole labels only
-            ImDrawList_AddText_Vec2(dl, ImVec2_c(x: left, y: y), ink, text.cstring, nil)
+            let colour = if headerJoined(tiles, fields, i, pos): joinedInk else: ink
+            ImDrawList_AddText_Vec2(dl, ImVec2_c(x: left, y: y), colour, text.cstring, nil)
     ImDrawList_PopClipRect(dl)
   ImDrawList_PopClipRect(dl)
   discard paper
@@ -1209,8 +1223,8 @@ proc drawCursorHeader(tp: var TracePanelUi; tiles: openArray[Tile];
       let hi = ImVec2_c(x: lo.x + ts.x + 6, y: lo.y + lineH + 1)
       ImDrawList_AddRectFilled(dl, lo, hi, u32(t.roles[rlWindow]), 0, 0)
       ImDrawList_AddRect(dl, lo, hi, u32(colour), 0, 1, 0)
-      ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + 3, y: lo.y + 1), u32(t.roles[rlText]),
-        text.cstring, nil)
+      let ink = if headerJoined(tiles, fields, i, position): t.roles[rlAccent] else: t.roles[rlText]
+      ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + 3, y: lo.y + 1), u32(ink), text.cstring, nil)
       marks.markRect("plot.cursor header " & $f, lo, hi)
 
 proc burst(tp: var TracePanelUi; g: Gesture): bool =

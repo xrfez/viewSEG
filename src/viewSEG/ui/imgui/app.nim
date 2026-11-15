@@ -37,8 +37,8 @@ import ../../core/[geometry, state, watchdog]
 import ../../platform/paths
 import ../../remote/control
 import ../../view/jobstatus
-import agentshot, chrome, dpi, filelist, fonts, icons, jobswindow, mapwindow, menus, messages,
-  recordlist, shell, style, tracepanel
+import agentshot, chrome, dpi, filelist, fonts, icons, jobswindow, joindialog, mapwindow, menus,
+  messages, recordlist, shell, style, tracepanel
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow
 
@@ -52,6 +52,7 @@ const
   filesTitle = IconList & "  Files###files"
   jobsTitle = IconTasks & "  Jobs###jobs"
   recordsTitle = IconRecords & "  Records###records"
+  joinTitle = IconMap & "  Join geometry###join"
   noticeSeconds = 5.0                     ## how long a notice stays on screen
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
 
@@ -74,6 +75,7 @@ type
     mapCursor: string                          ## the pointer's coordinates over the map last frame
     files: FileListUi                          ## the file list's window
     records: RecordListUi                      ## the record list's window
+    join: JoinUi                               ## the "Join geometry" window
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
     dropAt: float64                            ## when a drag was last seen over the window
     focus: set[MenuAction]                     ## windows to bring forward next frame (maShow...)
@@ -376,6 +378,15 @@ proc tracePanel*(frame: FrameInfo): lent TracePanelUi =
   ## `densityImage`.
   frame.ui.trace
 
+proc joinWindow*(frame: FrameInfo): lent JoinUi =
+  ## The "Join geometry" window's state (`shown`).
+  frame.ui.join
+
+proc addJoinFiles*(frame: FrameInfo; paths: openArray[string]) =
+  ## Adds `paths` to the survey files of the "Join geometry" window, as its
+  ## "Add files..." dialog does (tests cannot drive the system's dialog).
+  frame.ui.join.addFiles(paths)
+
 proc mapWindow*(frame: FrameInfo): lent MapUi =
   ## The map window's state as this frame drew it: `mapShown`,
   ## `hoveredPoints`, `pointTexts`, `rulerText`, `scaleText`.
@@ -511,6 +522,8 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
     of dkExportLog:
       let path = if ev.paths[0].splitFile.ext.len == 0: ev.paths[0] & ".log" else: ev.paths[0]
       ui.core.apply Command(kind: ckExportLog, docPath: path)
+    of dkJoinFiles:
+      ui.join.addFiles(ev.paths)
   of seCancelled:
     discard # the user closed the dialog: nothing to say
   of seDialogFailed:
@@ -536,6 +549,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maClose:
       let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
       if i >= 0: ui.core.apply Command(kind: ckClose, file: ui.core.sessions[i].id)
+    of maJoinGeometry: ui.join.open()
     of maQuit: ui.running = false
     of maToggleTheme: ui.toggleTheme()
     of maExportSettings:
@@ -750,7 +764,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,
     canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
     keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest,
-    agentOn: ui.agent.running, agentSocket: ui.agentSocket))
+    agentOn: ui.agent.running, agentSocket: ui.agentSocket), ui.marks)
   if menu.toggleAgent: ui.toggleAgent()
   if menu.loadLayout.len > 0:
     ui.core.apply Command(kind: ckLoadLayout, docPath: menu.loadLayout)
@@ -815,6 +829,13 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   ui.mapCursor = map.cursor
   for c in map.commands.mitems:
     ui.core.apply move c
+  var join = ui.join.drawJoin(joinTitle, ui.core, ui.theme, ui.marks)
+  for c in join.commands.mitems:
+    ui.core.apply move c
+  if join.addFiles:
+    let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
+    let folder = if i >= 0: ui.core.sessions[i].path.parentDir & DirSep else: ""
+    showDialog(dkJoinFiles, SDL_GetWindowID(ui.window), folder)
   ui.drawSaveLayout()
   ui.drawDropHint()
   if maShowJobs in ui.focus: bringForward(jobsTitle)

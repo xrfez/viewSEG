@@ -28,7 +28,7 @@
 import std/[os, strutils, times]
 import parseSEG
 import processSEG/qc/record
-import filejobs, filekinds, inbox, jobs, log, session, survey, threads
+import filejobs, filekinds, inbox, jobs, join, log, session, survey, threads
 
 const
   SurveyChunk* = 4 * 1024 * 1024 ## bytes of an SPS file parsed at a time
@@ -123,79 +123,90 @@ func cutAt(text: string; layout: TextLayout): int =
   if result < 0: result = text.rfind('\r')
   result = if result < 0: text.len else: result + 1
 
+proc eachSpsPart(path: string; f: File; size: int64; ctx: JobContext; p: var Problems;
+    onPart: proc (part: SpsFile)) =
+  ## Reads the SPS file `path` (open as `f`, `size` bytes) a chunk at a time
+  ## and hands each chunk's records to `onPart`, as parseSEG's `parseSps` reads
+  ## them (the first chunk's revision and layout kept for the rest); its
+  ## problems go to `p` by line.
+  var opts = SpsOptions(keepRaw: false)
+  var buf = newString(SurveyChunk)
+  var carry = ""
+  var (read, lineBase, junk, binary) = (0'i64, 0, 0, 0)
+  var layout = tlLines
+  var first = true
+  var stopped = -1'i64
+  while true:
+    let got = readBuffer(f, addr buf[0], SurveyChunk)
+    read += got
+    let eof = got < SurveyChunk
+    var text = move carry
+    text.append buf.toOpenArray(0, got - 1)
+    if first and text.len > 0:
+      layout = detectLayout(text.toOpenArray(0, min(text.high, 4095)))
+    let cut = if eof: text.len else: cutAt(text, layout)
+    carry = text[cut .. ^1]
+    text.setLen cut
+    if text.len > 0:
+      var blankedBytes = 0
+      let blanked = text.blankBinary(if layout == tlLines: 0 else: Card, blankedBytes)
+      binary += blanked
+      let part = parseSps(text, path, opts)
+      if first:
+        (opts.revision, opts.forceLayout, opts.layout) = (part.revision, true, part.layout)
+        first = false
+      onPart(part)
+      p.take(part.log, lineBase)
+      lineBase += part.order.len
+      # Mostly binary lines (or bytes: a chunk of binary data with no line
+      # end is one line, but many records to parseSEG), or lines that are no
+      # SPS record: not SPS.
+      var unknown = 0
+      for o in part.others:
+        if not o.isEmptyOrWhitespace: inc unknown
+      if (blanked + unknown) * 2 > part.order.len or blankedBytes * 2 > text.len: inc junk
+      else: junk = 0
+      if junk >= JunkChunks:
+        stopped = read - int64(carry.len)
+        break
+    if not ctx.progress(read, max(size, read)):
+      raise newException(JobCancelledError, "cancelled")
+    if eof: break
+  # Said whatever was said before: the reader needs to know why the
+  # numbers are what they are.
+  if binary > 0:
+    p.say(sevWarning, (if binary == 1: "1 line of " & p.name & " holds" else: $binary &
+      " lines of " & p.name & " hold") & " binary data (bytes no text holds), passed by.")
+  if stopped >= 0:
+    p.say(sevWarning, p.name & " turns into other data (" &
+      $(JunkChunks * SurveyChunk div (1024 * 1024)) & " MiB with no SPS records), so it " &
+      "was read up to byte " & $stopped & " only.")
+
 proc readSpsLayer(path: string; kind: FileKind; ctx: JobContext; p: var Problems): SurveyLayer =
   var f: File
   let info = checkedOpen(path, f)
   var b = initSurveyFileBuilder(path, kind, info.size, info.lastWriteTime)
   try:
-    var opts = SpsOptions(keepRaw: false)
-    var buf = newString(SurveyChunk)
-    var carry = ""
-    var (read, lineBase, junk, binary) = (0'i64, 0, 0, 0)
-    var layout = tlLines
-    var first = true
-    var stopped = -1'i64
-    while true:
-      let got = readBuffer(f, addr buf[0], SurveyChunk)
-      read += got
-      let eof = got < SurveyChunk
-      var text = move carry
-      text.append buf.toOpenArray(0, got - 1)
-      if first and text.len > 0:
-        layout = detectLayout(text.toOpenArray(0, min(text.high, 4095)))
-      let cut = if eof: text.len else: cutAt(text, layout)
-      carry = text[cut .. ^1]
-      text.setLen cut
-      if text.len > 0:
-        var blankedBytes = 0
-        let blanked = text.blankBinary(if layout == tlLines: 0 else: Card, blankedBytes)
-        binary += blanked
-        let part = parseSps(text, path, opts)
-        if first:
-          (opts.revision, opts.forceLayout, opts.layout) = (part.revision, true, part.layout)
-          first = false
-        for q in part.points:
-          b.addPoint(roleOf(q.kind), q.line, q.point, pointIndex(q.index), q.easting,
-            q.northing, q.elevation)
-        b.addRelations(part)
-        p.take(part.log, lineBase)
-        lineBase += part.order.len
-        # Mostly binary lines (or bytes: a chunk of binary data with no line
-        # end is one line, but many records to parseSEG), or lines that are no
-        # SPS record: not SPS.
-        var unknown = 0
-        for o in part.others:
-          if not o.isEmptyOrWhitespace: inc unknown
-        if (blanked + unknown) * 2 > part.order.len or blankedBytes * 2 > text.len: inc junk
-        else: junk = 0
-        if junk >= JunkChunks:
-          stopped = read - int64(carry.len)
-          break
-      if not ctx.progress(read, max(info.size, read)):
-        raise newException(JobCancelledError, "cancelled")
-      if eof: break
-    # Said whatever was said before: the reader needs to know why the
-    # numbers are what they are.
-    if binary > 0:
-      p.say(sevWarning, (if binary == 1: "1 line of " & p.name & " holds" else: $binary &
-        " lines of " & p.name & " hold") & " binary data (bytes no text holds), passed by.")
-    if stopped >= 0:
-      p.say(sevWarning, p.name & " turns into other data (" &
-        $(JunkChunks * SurveyChunk div (1024 * 1024)) & " MiB with no SPS records), so it " &
-        "was read up to byte " & $stopped & " only.")
+    eachSpsPart(path, f, info.size, ctx, p, proc (part: SpsFile) =
+      for q in part.points:
+        b.addPoint(roleOf(q.kind), q.line, q.point, pointIndex(q.index), q.easting,
+          q.northing, q.elevation)
+      b.addRelations(part))
   finally:
     close(f)
   p.take(b.relationsLog)
   result = b.finish()
 
-proc readP1Layer(path: string; kind: FileKind; ctx: JobContext; p: var Problems): SurveyLayer =
+proc readWhole(path: string; ctx: JobContext; what: string): (FileInfo, string) =
+  ## The text of the file at `path`, read whole up to `MaxP1Bytes` (a SEG P1
+  ## file, a CSV table: `what`), with progress and a cancel between pieces.
   var f: File
   let info = checkedOpen(path, f)
   var text: string
   try:
     if info.size > MaxP1Bytes:
-      raise newException(IOError, "it is " & $(info.size div (1024 * 1024)) & " MiB, and SEG " &
-        "P1 files of more than " & $(MaxP1Bytes div (1024 * 1024)) & " MiB are not read")
+      raise newException(IOError, "it is " & $(info.size div (1024 * 1024)) & " MiB, and " &
+        what & " of more than " & $(MaxP1Bytes div (1024 * 1024)) & " MiB are not read")
     var piece = newString(1024 * 1024)
     while true:
       let got = readBuffer(f, addr piece[0], piece.len)
@@ -207,6 +218,10 @@ proc readP1Layer(path: string; kind: FileKind; ctx: JobContext; p: var Problems)
       if got < piece.len: break
   finally:
     close(f)
+  (info, text)
+
+proc readP1Layer(path: string; kind: FileKind; ctx: JobContext; p: var Problems): SurveyLayer =
+  let (info, text) = readWhole(path, ctx, "SEG P1 files")
   let file = parseP1(text, path)
   p.take(file.log, 0)
   var b = initSurveyFileBuilder(path, kind, info.size, info.lastWriteTime)
@@ -267,26 +282,31 @@ proc openFileWork*(path: string; to: Poster; cache = "";
 
 proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[int]];
     relations: ptr SurveyGeometry; against: string; layer: SurveyLayerId;
-    to: Poster): JobWork =
+    to: Poster; recordMatch = rmAuto; traceMatch = tmAuto): JobWork =
   ## The work of a job that checks each of `gathers` of open file `session`
-  ## (`file`) against the X records of a loaded relation file (`relations`,
-  ## of layer `layer`, named `against`): processSEG's `recordCompleteness`,
-  ## from the keys alone, posted as the stations each record's X record
-  ## plans and those with no trace in it (`mkChecked`). Submitted with the
-  ## file in `reads`; `relations` is read where it is, never copied, and the
-  ## caller keeps it alive and unchanged until the job has finished.
+  ## (`file`) against the X records of a loaded relation file, or of the
+  ## survey files it was joined with (`relations`, of layer `layer`,
+  ## `NoSurveyLayer` for a join's; named `against`): processSEG's
+  ## `recordCompleteness`, from the keys alone, matching records and traces as
+  ## `recordMatch` and `traceMatch` say, posted as the stations each record's
+  ## X record plans, those with no trace in it, the traces at stations it
+  ## does not list and the stations recorded twice (`mkChecked`). Submitted
+  ## with the file in `reads`; `relations` is read where it is, never copied,
+  ## and the caller keeps it alive and unchanged until the job has finished.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "checking the records"
-    var planned, missing = newSeq[int](gathers.len)
+    var planned, missing, unlisted, duplicates = newSeq[int](gathers.len)
     var revision = 0
     {.cast(gcsafe).}:
       revision = file[].keysRevision
       for i, g in gathers:
-        (planned[i], missing[i]) = (-1, -1)
+        (planned[i], missing[i], unlisted[i], duplicates[i]) = (-1, -1, -1, -1)
         if g.len > 0:
           try:
-            let c = relations[].recordCompleteness(file[].rowsOf(g))
-            if c.xpsRecord >= 0: (planned[i], missing[i]) = (c.expected, c.missing)
+            let c = relations[].recordCompleteness(file[].rowsOf(g), recordMatch, traceMatch)
+            if c.xpsRecord >= 0:
+              (planned[i], missing[i], unlisted[i], duplicates[i]) = (c.expected, c.missing,
+                c.unlisted, c.duplicates)
           except ValueError:
             discard # no keys: nothing to check against
         if i mod 64 == 0 and not ctx.progress(i, gathers.len):
@@ -294,7 +314,8 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
     discard ctx.progress(1, 1)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkChecked, checkedSession: session, against: against,
-      againstLayer: layer, keysRevision: revision, planned: planned, plannedMissing: missing)
+      againstLayer: layer, keysRevision: revision, planned: planned, plannedMissing: missing,
+      unlisted: unlisted, duplicates: duplicates)
 
 proc positionsWork*(file: ptr SeismicFile; path: string; kind: FileKind; session: SessionId;
     base: int; to: Poster): JobWork =
@@ -322,3 +343,149 @@ proc positionsWork*(file: ptr SeismicFile; path: string; kind: FileKind; session
     discard ctx.progress(1, 1)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkSurvey, layer: move layer)
+
+# ------------------------------------------------------------------ join --
+
+proc lineNamesOf(part: SpsFile; g: SurveyGeometry; names: var seq[string];
+    records: var int) =
+  ## The line names of `part` that are not numbers and that `g` cannot make
+  ## numbers (no mapping, no trailing digits): the first few, and how many
+  ## records name one.
+  template check(name: string; value: float64) =
+    if value.isNaN and name.strip.len > 0 and g.resolveLine(name, NaN).isNone:
+      inc records
+      if names.len < 5 and name.strip notin names: names.add name.strip
+  for q in part.points: check(q.lineName, q.line)
+  for r in part.relations:
+    check(r.srcLineName, r.srcLine)
+    check(r.rcvLineName, r.rcvLine)
+
+const NotedHeaders = ["12", "13", "14", "17", "18", "19", "20", "201"]
+  ## the SPS header records said for the join: datum, projection, units
+
+proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFile];
+    opts: JoinOptions; to: Poster): JobWork =
+  ## The work of the first job of a join: reads `files` (SPS with parseSEG's
+  ## `addSps` a chunk at a time, SEG P1 with `addP1`, CSV tables with
+  ## `addCsv`) into one geometry with `opts`' line names, trailing digits and
+  ## components, saying each file's problems in the log; then works out what
+  ## joining it to open file `session` (`file`) does (`planJoin`), and posts
+  ## both (`mkJoining`). It reads the file's keys only: submitted with the
+  ## file in `reads`, while readers go on reading it. Progress and a cancel
+  ## between chunks.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    var g = new SurveyGeometry
+    var names, unresolved, notes: seq[string]
+    var (unresolvedRecords, rows, skipped) = (0, 0, 0)
+    var plan: JoinPlan
+    {.cast(gcsafe).}:
+      g[] = initSurveyGeometry()
+      g.trailingDigits = opts.trailingDigits
+      g.multiComponent = opts.multiComponent
+      for ln in opts.lineNames: g[].mapLine(ln.name, ln.line)
+      var taken = 0 # of `g.log`: what parseSEG's join said, file by file
+      for i, jf in files:
+        let name = jf.path.extractFilename
+        names.add name
+        var p = Problems(to: to, job: ctx.id, name: name)
+        ctx.setPhase "reading " & name & (if files.len > 1: " (" & $(i + 1) & " of " &
+          $files.len & ")" else: "")
+        # What it is, by its first bytes: the dialog's guess (by the name) may be wrong.
+        var kind = jf.kind
+        var info: FileInfo
+        try: info = getFileInfo(jf.path)
+        except OSError: raise newException(IOError, "there is no file " & jf.path)
+        if info.kind notin {pcFile, pcLinkToFile} or info.isSpecial:
+          raise newException(IOError, name & " is not a regular file (a named pipe, a device)")
+        if kind != jkCsv:
+          let sniffed = sniff(jf.path)
+          kind = if sniffed == fkP1: jkP1
+                 elif sniffed.isSurvey: jkSps
+                 else: raise newException(IOError, name & " is not an SPS or SEG P1 file")
+        case kind
+        of jkSps:
+          var f: File
+          let info = checkedOpen(jf.path, f)
+          let domain = relationDomainOf(jf.path)
+          var first = true
+          try:
+            eachSpsPart(jf.path, f, info.size, ctx, p, proc (part: SpsFile) =
+              if first:
+                first = false
+                for h in part.headers:
+                  let data = h.data.strip.strip(leading = false, chars = {';'}).strip
+                  if h.code in NotedHeaders and data.len > 0 and data != "N/A":
+                    let note = "H" & h.code & " " & h.description.strip & ": " & data
+                    if note notin notes: notes.add note # (every file of a survey says it)
+              lineNamesOf(part, g[], unresolved, unresolvedRecords)
+              g[].addSps(part, domain))
+          finally:
+            close(f)
+        of jkP1:
+          let (_, text) = readWhole(jf.path, ctx, "SEG P1 files")
+          let pf = parseP1(text, jf.path)
+          p.take(pf.log, 0)
+          for lf in pf.files:
+            for r in lf.records:
+              var numeric = NaN
+              try: numeric = parseFloat(r.lineName.strip)
+              except ValueError: discard
+              if r.lineName.strip.len > 0 and numeric.isNaN and
+                  g[].resolveLine(r.lineName, NaN).isNone:
+                inc unresolvedRecords
+                if unresolved.len < 5 and r.lineName.strip notin unresolved:
+                  unresolved.add r.lineName.strip
+          g[].addP1(pf)
+        of jkCsv:
+          let (_, text) = readWhole(jf.path, ctx, "CSV tables")
+          var problems: seq[string]
+          rows += g[].addCsv(text, name, jf.role, problems, skipped)
+          for t in problems: p.note(sevWarning, t)
+        # parseSEG's join's own words, but for the text line names, said once
+        # for all (`whyUnmatched`)
+        var told: DiagLog
+        template said: untyped = g[].log
+        for k in taken ..< said.len:
+          if "has no mapping" notin said[k].msg: told.add said[k]
+        taken = said.len
+        p.take(told)
+        p.finish()
+      ctx.setPhase "matching the traces"
+      plan = planJoin(file, g[], opts, proc (done, total: int): bool =
+        ctx.progress(done, total))
+    if plan.traces != file[].len: raise newException(JobCancelledError, "cancelled")
+    var survey = surveyOf(g[], names)
+    (survey.unresolved, survey.unresolvedRecords, survey.notes) =
+      (unresolved, unresolvedRecords, notes)
+    (survey.csvRows, survey.csvSkipped) = (rows, skipped)
+    discard ctx.progress(1, 1)
+    clearCycleRoots()
+    to.post Msg(job: ctx.id, kind: mkJoining, planSession: session, geometry: move g,
+      plan: move plan, joinSurvey: move survey)
+
+proc joinApplyWork*(file: ptr SeismicFile; path: string; session: SessionId;
+    g: ptr SurveyGeometry; replace, tableOnly: bool; holds: HoldRelease; to: Poster): JobWork =
+  ## The work of the second job of a join: joins `g` to open file `session`
+  ## (`file`, at `path`) in memory (parseSEG's `applySurvey`, or
+  ## `applyGeometry` of `g`'s table alone when no SPS or P1 file is in it),
+  ## replacing the headers' coordinates when `replace`, and posts what it
+  ## did (`mkJoined`). Submitted with the file in `exclusive`, so it starts
+  ## only once no job reads the file and no reader holds it; it says how many
+  ## holds it found (none), and refuses to join when there are any. A cancel
+  ## that comes before it joins stops it; the join itself is one step.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "joining"
+    ctx.checkCancelled()
+    let held = holds.held(path)
+    if held > 0:
+      raise newException(IOError, "a reader still reads the file, so it was not joined")
+    var stats: JoinStats
+    var (changed, revision) = (0, 0)
+    {.cast(gcsafe).}:
+      changed = if tableOnly: file[].applyGeometry(g[].table, replace)
+                else: file[].applySurvey(g[], stats, replace)
+      revision = file[].keysRevision
+    discard ctx.progress(1, 1)
+    clearCycleRoots()
+    to.post Msg(job: ctx.id, kind: mkJoined, joinedSession: session, stats: stats,
+      changed: changed, joinedRevision: revision, heldAtJoin: held)

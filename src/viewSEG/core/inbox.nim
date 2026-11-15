@@ -10,7 +10,8 @@
 ## still running when the program closes can post safely.
 
 import std/locks
-import filelist, jobs, log, nif, panels, session, survey, tiles
+import parseSEG
+import filelist, join, jobs, log, nif, panels, session, survey, tiles
 
 type
   MsgKind* = enum
@@ -24,6 +25,8 @@ type
     mkWatched ## what a look at the listed folder found changed
     mkSurvey  ## a survey layer: a survey file read, or an open file's positions
     mkChecked ## an open file's records checked against a relation file
+    mkJoining ## survey files read for a join, and what joining them does
+    mkJoined  ## a join done
 
   ReadPurpose* = enum
     ## What a document is read for.
@@ -83,6 +86,29 @@ type
         ## the file's keys the check was made with
       planned*, plannedMissing*: seq[int]
         ## per gather: the stations planned, and those with no trace; -1 where not planned
+      unlisted*, duplicates*: seq[int]
+        ## per gather: its traces at stations the plan does not list, and its
+        ## stations given more than once; -1 where not planned
+    of mkJoining:
+      planSession*: SessionId
+        ## the open file to join
+      geometry*: ref SurveyGeometry
+        ## the survey files read; moved, never shared
+      plan*: JoinPlan
+        ## what joining them does
+      joinSurvey*: JoinSurvey
+        ## what they gave
+    of mkJoined:
+      joinedSession*: SessionId
+        ## the open file joined
+      stats*: JoinStats
+        ## parseSEG's own count of what the join did
+      changed*: int
+        ## traces whose keys changed
+      joinedRevision*: int
+        ## the file's `keysRevision` after the join
+      heldAtJoin*: int
+        ## holds on the file when the join ran: none, as no reader may run
 
   InboxObj = object
     lock: Lock
