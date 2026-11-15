@@ -831,7 +831,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   for c in records.commands.mitems:
     ui.core.apply move c
   if maShowHeaders in ui.focus: bringForward(headersTitle)
-  var headers = ui.headers.drawHeaders(headersTitle, ui.core, ui.fonts, ui.theme, ui.marks)
+  # The pick is this frame's: the plot is drawn first.
+  var headers = ui.headers.drawHeaders(headersTitle, ui.core,
+    (if ui.pick.inside: ui.pick.at.tMs else: NaN), ui.pick.inside, ui.fonts, ui.theme, ui.marks)
   for c in headers.commands.mitems:
     ui.core.apply move c
   # A layout saved before the map came names no map: it joins the Headers

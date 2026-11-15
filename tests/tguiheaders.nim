@@ -7,8 +7,17 @@
 ## binary header's fields, without the Name column until the settings ask
 ## for it. A SEG-D record shown: its General tab lists the general headers
 ## (read off the UI thread), Channel sets puts the channel sets side by side
-## with the fields that differ marked, and External header shows the
-## external header's bytes.
+## with the fields that differ marked, and External shows the external
+## header's bytes.
+##
+## The Trace tab (SEG-Y): empty until a trace is chosen; the trace under the
+## pointer in the plot, kept when the pointer goes to the Headers window; a
+## click selects a trace: its header fields in Header, its samples in Data,
+## where the row at the plot's cursor time is marked and in view; Ctrl +
+## click a second: two value columns, the fields that differ marked (the
+## channel) and those that do not unmarked (the field record); the
+## selection cleared (Esc in the plot): the trace under the pointer again;
+## "Follow the pointer" off: empty, with the pointer over a trace.
 ##
 ## Seen to fail: with the tab chosen not put in the settings (no
 ## `ckSettings` when the tab changes), "the File headers tab was not
@@ -18,7 +27,10 @@
 ## headers never came".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
-## `VIEWSEG_SCREENSHOTS=<dir>` saves headers-*.png there.
+## `VIEWSEG_SCREENSHOTS=<dir>` saves headers-*.png there, and, with the
+## example files present (local only), each tab of a SEG-Y and a SEG-D
+## example (headers-inglewood-*.png, headers-morgantown-*.png), the Headers
+## window made larger by dragging its splitters.
 
 import std/[math, options, os, strutils]
 import viewSEG/core/[geometry, state]
@@ -42,7 +54,7 @@ proc shoot(f: FrameInfo; name: string) =
     doAssert f.savePng(shots / name), "cannot save " & name
     echo "tguiheaders: saved ", shots / name
 
-type Step = proc (f: FrameInfo; wait: int): bool {.nimcall.}
+type Step = proc (f: FrameInfo; wait: int): bool {.closure.}
   ## One step of a run: true once it is done; it asserts what must hold.
 
 proc runSteps(path: string; steps: openArray[(string, Step)]; cache: string) =
@@ -69,14 +81,46 @@ proc runSteps(path: string; steps: openArray[(string, Step)]; cache: string) =
   echo "tguiheaders: ", path.extractFilename, ": ", reached.join(", ")
 
 var at: Vec2
+proc clickAt(f: FrameInfo; wait: int; point: Vec2; twice = false; mods: set[SimMod] = {}) =
+  ## A click at `point` over frames 1 to 5 of a step (with `twice`, another
+  ## over frames 7 to 9: the first only focuses a window that had not the
+  ## focus), with `mods` held.
+  if wait == 1:
+    at = point
+    f.moveMouse(at)
+  for (down, up) in [(3, 5), (7, 9)]:
+    if wait == down and (down == 3 or twice):
+      if smCtrl in mods: f.pressKey(skCtrl, true, {smCtrl})
+      f.pressMouse(at, true)
+    if wait == up and (up == 5 or twice):
+      f.pressMouse(at, false)
+      if smCtrl in mods: f.pressKey(skCtrl, false)
+
 proc click(f: FrameInfo; wait: int; mark: string) =
   ## A click on `mark` over frames 1 to 5 of a step.
   if wait == 1:
-    at = f.markOf(mark).centre
-    doAssert at.x > 0, "nothing to click: " & mark
-    f.moveMouse(at)
-  if wait == 3: f.pressMouse(at, true)
-  if wait == 5: f.pressMouse(at, false)
+    doAssert f.markOf(mark).centre.x > 0, "nothing to click: " & mark
+  f.clickAt(wait, f.markOf(mark).centre)
+
+proc pointAt(f: FrameInfo; position: int): Vec2 =
+  ## The middle of the trace at `position` in the plot.
+  let r = f.markOf("plot.data")
+  let v = f.tracePanel.drawnView
+  vec2(round(r.pos.x + float32((float64(position) - v.traces.lo) / v.traces.width) * r.size.x),
+    round(r.pos.y + r.size.y / 2))
+
+proc idAt(f: FrameInfo; position: int): int =
+  ## The survey-wide id of the trace at `position` in the plot.
+  let p = f.core.panels[f.core.findPanel(MainPanel)]
+  f.core.sessions[0].base + p.shown[position]
+
+proc answered(f: FrameInfo; ids: openArray[int]): bool =
+  ## Whether the inspector's newest answer is about `ids`, read.
+  let a = f.core.inspection.answer
+  result = a.traces.len == ids.len and not f.core.inspection.waiting
+  if result:
+    for k, d in a.traces:
+      if d.id != ids[k]: result = false
 
 withFixtures fx:
   runSteps(fx.surveySegy(), [
@@ -137,3 +181,158 @@ withFixtures fx:
       result = wait > 8 and f.shown("headers.bytes external line 0")
       if result: f.shoot("headers-external-segd.png")))],
     fx.dir / "cache")
+
+  # The Trace tab: empty until a trace is chosen; the trace under the
+  # pointer, kept when the pointer leaves the plot; a click selects one, its
+  # header fields and samples; Ctrl + click a second, two columns and the
+  # fields that differ marked; cleared, the trace under the pointer again;
+  # "Follow the pointer" off, empty.
+  runSteps(fx.surveySegy(), [
+    ("shown", Step(proc (f: FrameInfo; wait: int): bool =
+      f.laidOut and f.core.panels[0].shown.len == Channels and wait > 3)),
+    ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
+      f.click(wait, "headers.tab trace")
+      result = wait > 8
+      if result:
+        doAssert f.core.settings.headers.tab == htTrace
+        doAssert f.shown("headers.chosen") and f.core.inspection.chosen.by == cbNone
+        doAssert not f.shown("headers.trace tab header"), "a trace is shown with none chosen"
+        doAssert f.core.inspection.parts == {}, "read for nothing: " &
+          $f.core.inspection.parts)),
+    ("the trace under the pointer", Step(proc (f: FrameInfo; wait: int): bool =
+      if wait == 1: f.moveMouse(f.pointAt(3))
+      result = wait > 4 and f.answered([f.idAt(3)]) and f.shown("headers.trace trace.fieldRecord 0")
+      if result:
+        doAssert f.core.inspection.chosen.by == cbPlotPointer
+        doAssert ipTraceHeaders in f.core.inspection.parts)),
+    ("kept when the pointer leaves", Step(proc (f: FrameInfo; wait: int): bool =
+      if wait == 1: f.moveMouse(f.markOf("headers.chosen").centre)
+      result = wait > 6
+      if result:
+        doAssert f.core.selection.hover == -1
+        doAssert f.core.inspection.chosen.traces == @[f.idAt(3)], "the trace pointed at went"
+        doAssert f.shown("headers.trace trace.fieldRecord 0"))),
+    ("a click selects a trace", Step(proc (f: FrameInfo; wait: int): bool =
+      f.clickAt(wait, f.pointAt(5), twice = true)
+      result = wait > 12 and f.answered([f.idAt(5)])
+      if result:
+        doAssert f.core.inspection.chosen.by == cbSelection
+        let d = f.core.inspection.answer.traces[0]
+        for r in d.rows:
+          if r.field == "traceNumberInField": doAssert r.value == "6", r.value
+        doAssert f.shown("headers.trace trace.traceNumberInField 0")
+        f.shoot("headers-trace-header-segy.png"))),
+    ("its samples", Step(proc (f: FrameInfo; wait: int): bool =
+      f.click(wait, "headers.trace tab data")
+      result = wait > 8 and f.shown("headers.data 0 0") and
+        f.core.inspection.answer.traces[0].samples.len == Samples
+      if result:
+        doAssert f.core.settings.headers.traceTab == ttData
+        doAssert ipTraceSamples in f.core.inspection.parts
+        let d = f.core.inspection.answer.traces[0]
+        for i in 0 ..< Samples: doAssert d.samples[i] == surveySample(0, 6, i), $i)),
+    ("the cursor's row", Step(proc (f: FrameInfo; wait: int): bool =
+      if wait == 1: f.moveMouse(f.pointAt(5))
+      result = wait > 6 and f.shown("headers.data cursor")
+      if result:
+        let r = f.markOf("headers.data cursor")
+        let table = f.markOf("headers.data")
+        doAssert r.pos.y >= table.pos.y and r.pos.y + r.size.y <= table.pos.y + table.size.y,
+          "the cursor's row is not in view: " & $r & " in " & $table
+        f.shoot("headers-trace-data-segy.png"))),
+    ("Ctrl + click a second", Step(proc (f: FrameInfo; wait: int): bool =
+      f.clickAt(wait, f.pointAt(9), twice = true, mods = {smCtrl}) # the plot had not the focus
+      result = wait > 12 and f.answered([f.idAt(5), f.idAt(9)]) and f.shown("headers.data 0 1")
+      if result:
+        doAssert f.core.inspection.answer.traces[1].samples[100] == surveySample(0, 10, 100))),
+    ("two columns, differences marked", Step(proc (f: FrameInfo; wait: int): bool =
+      f.click(wait, "headers.trace tab header")
+      result = wait > 8 and f.answered([f.idAt(5), f.idAt(9)]) and
+        f.shown("headers.trace trace.fieldRecord 0") and
+        f.core.inspection.answer.traces[1].rows.len > 0
+      if result:
+        doAssert f.shown("headers.trace differs trace.traceNumberInField"),
+          "the channels that differ are not marked"
+        doAssert not f.shown("headers.trace differs trace.fieldRecord"),
+          "the same field record is marked"
+        f.shoot("headers-trace-two-segy.png"))),
+    ("cleared: the trace under the pointer", Step(proc (f: FrameInfo; wait: int): bool =
+      f.clickAt(wait, f.pointAt(11)) # a focusing click: the plot gets the keys
+      if wait == 8: f.pressKey(skEscape, true)
+      if wait == 9: f.pressKey(skEscape, false)
+      result = wait > 12 and f.core.selection.selected.len == 0 and f.answered([f.idAt(11)])
+      if result: doAssert f.core.inspection.chosen.by == cbPlotPointer)),
+    ("Follow the pointer off: empty", Step(proc (f: FrameInfo; wait: int): bool =
+      f.click(wait, "headers.follow")
+      if wait == 10: f.moveMouse(f.pointAt(13))
+      result = wait > 16
+      if result:
+        doAssert not f.core.settings.headers.followPointer
+        doAssert f.core.selection.hover >= 0, "the pointer is not over a trace"
+        doAssert f.core.inspection.chosen.by == cbNone, $f.core.inspection.chosen
+        doAssert not f.shown("headers.trace tab header"), "a trace is still shown"
+        doAssert f.core.inspection.answer.traces.len == 0
+        f.shoot("headers-trace-none-segy.png")))],
+    fx.dir / "cache")
+
+# Screenshots of each tab on the example files (local only).
+const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
+
+proc drag(f: FrameInfo; wait: int; start: Vec2; by: Vec2) =
+  ## A drag from `start` by `by` over frames 2 to 12 of a step, as a hand
+  ## would.
+  if wait == 1: f.moveMouse(start)
+  if wait == 2: f.pressMouse(start, true)
+  if wait in 3 .. 9:
+    let k = float32(wait - 2) / 7
+    f.moveMouse(vec2(start.x + by.x * k, start.y + by.y * k))
+  if wait == 11: f.pressMouse(vec2(start.x + by.x, start.y + by.y), false)
+
+proc enlarge(): seq[(string, Step)] =
+  ## The Headers window made taller (its splitter with the map dragged up)
+  ## and wider (its column's splitter with the plot dragged left).
+  result.add ("taller", Step(proc (f: FrameInfo; wait: int): bool =
+    let r = f.markOf("headers")
+    if wait == 1: at = vec2(round(r.pos.x + r.size.x / 2), r.pos.y - 3)
+    f.drag(wait, at, vec2(0, -420))
+    wait > 16))
+  result.add ("wider", Step(proc (f: FrameInfo; wait: int): bool =
+    let r = f.markOf("headers")
+    if wait == 1: at = vec2(r.pos.x - 3, round(r.pos.y + r.size.y / 2))
+    f.drag(wait, at, vec2(-420, 0))
+    wait > 16))
+
+proc tabShot(name, mark, file: string): (string, Step) =
+  ## A click on the tab `mark`, then a screenshot as `file` once `name`'s
+  ## content shows.
+  (name, Step(proc (f: FrameInfo; wait: int): bool =
+    f.click(wait, mark)
+    result = wait > 20 and not f.core.inspection.waiting
+    if result: f.shoot(file)))
+
+if shots.len > 0 and dirExists(examples):
+  withFixtures fx:
+    for (example, name, segd) in [("BO_3D-Inglewood_rev21_v7.sgy", "inglewood", false),
+        ("00000151_12900_11300.sgd", "morgantown", true)]:
+      let path = examples / example
+      if fileExists(path):
+        var steps = @[("shown", Step(proc (f: FrameInfo; wait: int): bool =
+          f.laidOut and wait > 10))]
+        steps.add enlarge()
+        steps.add tabShot("summary", "headers.tab summary", "headers-" & name & "-summary.png")
+        steps.add tabShot("file headers", "headers.tab file", "headers-" & name & "-file.png")
+        if segd:
+          steps.add tabShot("channel sets", "headers.file tab Channel sets",
+            "headers-" & name & "-sets.png")
+        else:
+          steps.add tabShot("binary", "headers.file tab Binary", "headers-" & name & "-binary.png")
+        steps.add tabShot("trace", "headers.tab trace", "headers-" & name & "-trace-none.png")
+        steps.add ("select two traces", Step(proc (f: FrameInfo; wait: int): bool =
+          if wait < 20: f.clickAt(wait, f.pointAt(40), twice = true)
+          else: f.clickAt(wait - 20, f.pointAt(41), mods = {smCtrl})
+          wait > 40 and f.core.inspection.answer.traces.len == 2 and
+            not f.core.inspection.waiting))
+        steps.add tabShot("header", "headers.trace tab header",
+          "headers-" & name & "-trace-header.png")
+        steps.add tabShot("data", "headers.trace tab data", "headers-" & name & "-trace-data.png")
+        runSteps(path, steps, fx.dir / "cache")

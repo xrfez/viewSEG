@@ -1574,7 +1574,10 @@ proc followInspect(state: var AppState) =
   let basis = (state.selection.revision, view.followPointer)
   if basis != state.chosenFrom:
     state.chosenFrom = basis
-    let chosen = chosenTraces(state.selection, view.followPointer)
+    var chosen = chosenTraces(state.selection, view.followPointer, ins.chosen)
+    # (those pointed at last stay while their file is open)
+    chosen.traces.keepItIf(state.findTrace(it) >= 0)
+    if chosen.traces.len == 0: chosen = Chosen()
     if chosen != ins.chosen:
       ins.chosen = chosen
       inc ins.revision

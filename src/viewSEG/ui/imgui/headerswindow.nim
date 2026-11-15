@@ -24,9 +24,10 @@
 ## the whole summary or table. A click that only brings the window forward
 ## does nothing else (`focus`); Tab moves between its controls.
 
-import std/[strutils, tables]
+import std/[math, strutils, tables]
 import imguin/cimgui
-from parseSEG import SeismicKind, skSegy, skSegd, skSeg2, skUnknown
+from parseSEG import SeismicKind, skSegy, skSegd, skSeg2, skUnknown, HeaderBlock, hbSegdTrace,
+  hbSegdExt1, hbSegdExt1Rev3, hbSeg2Trace
 import ../../core/state
 import ../../view/[headerviews, theme]
 import chrome, focus, fonts, style
@@ -54,6 +55,10 @@ type
       ## the file it was picked in
     parts: set[InspectPart]
       ## what is on screen, as told to `core` last
+    shownTraceTab: TraceTab
+      ## the Trace tab's own tab the window last showed
+    selectingTrace: bool
+      ## the settings' Trace tab is to be selected
     told: bool
     tables: Table[string, CachedTable]
     texts: Table[string, CachedText]
@@ -104,40 +109,51 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
   for l in lines:
     if not l.heading:
       labelWidth = max(labelWidth, igCalcTextSize(l.label.cstring, nil, false, -1).x)
-  const flags = ImGui_TableFlags_ScrollY.cint or ImGui_TableFlags_RowBg.cint or
-    ImGui_TableFlags_BordersInnerV.cint
-  if igBeginTable("##summary", 2, flags, ImVec2_c(x: 0, y: 0), 0):
-    igTableSetupColumn("What", ImGui_TableColumnFlags_WidthFixed.cint,
-      labelWidth + igGetFontSize(), 0)
-    igTableSetupColumn("Value", ImGui_TableColumnFlags_WidthStretch.cint, 0, 1)
+  # A heading above each section's table, whole (a table's cell would cut
+  # it), and the tables in one scrolled child.
+  const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_BordersInnerV.cint
+  if igBeginChild_Str("##summary", ImVec2_c(x: 0, y: 0), 0, 0):
+    igPushItemFlag(ImGui_ItemFlags_NoTabStop.cint, true) # the lines are no stops of Tab
     let all = proc (): string = summaryText(lines)
+    var open = false
     for i, l in lines:
-      igTableNextRow(0, 0)
-      discard igTableNextColumn()
-      igPushID_Int(cint(i))
       if l.heading:
+        if open: igEndTable()
+        open = false
         fonts.withFont(frHeading, 0):
           igTextUnformatted(l.label.cstring, nil)
         if i == 0: marks.mark("headers.summary.heading")
       else:
-        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-        if igSelectable_Bool(l.label.cstring, ui.picked == i,
-            ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
-          ui.picked = i
-        igPopStyleColor(1)
-        copyMenu("##copy", l.value, all)
-        if igIsItemFocused() and igIsKeyPressed_Bool(ImGui_Key_C, false) and
-            igGetIO_Nil().KeyCtrl:
-          igSetClipboardText(l.value.cstring)
-        marks.mark("headers.summary " & l.label)
-        discard igTableNextColumn()
-        igPushTextWrapPos(0)
-        igTextUnformatted(l.value.cstring, nil)
-        igPopTextWrapPos()
-        marks.mark("headers.summary value " & l.label)
-      igPopID()
-    igEndTable()
-    marks.mark("headers.summary")
+        if not open:
+          open = igBeginTable(cstring("##section" & $i), 2, flags, ImVec2_c(x: 0, y: 0), 0)
+          if open:
+            igTableSetupColumn("What", ImGui_TableColumnFlags_WidthFixed.cint,
+              labelWidth + igGetFontSize(), 0)
+            igTableSetupColumn("Value", ImGui_TableColumnFlags_WidthStretch.cint, 0, 1)
+        if open:
+          igPushID_Int(cint(i))
+          igTableNextRow(0, 0)
+          discard igTableNextColumn()
+          igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+          if igSelectable_Bool(l.label.cstring, ui.picked == i,
+              ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
+            ui.picked = i
+          igPopStyleColor(1)
+          copyMenu("##copy", l.value, all)
+          if igIsItemFocused() and igIsKeyPressed_Bool(ImGui_Key_C, false) and
+              igGetIO_Nil().KeyCtrl:
+            igSetClipboardText(l.value.cstring)
+          marks.mark("headers.summary " & l.label)
+          discard igTableNextColumn()
+          igPushTextWrapPos(0)
+          igTextUnformatted(l.value.cstring, nil)
+          igPopTextWrapPos()
+          marks.mark("headers.summary value " & l.label)
+          igPopID()
+    if open: igEndTable()
+    igPopItemFlag()
+  igEndChild()
+  marks.mark("headers.summary")
   if ui.picked >= 0 and ui.picked < lines.len and igGetIO_Nil().KeyCtrl and
       igIsKeyPressed_Bool(ImGui_Key_C, false) and
       igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint):
@@ -205,6 +221,9 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
     igTableHeadersRow()
   ui.syncColumns(id, st, output)
   let warning = vec4(t.roles[rlWarning])
+  # The cells are no stops of Tab (it moves between the window's controls,
+  # not through every value); the arrow keys reach them.
+  igPushItemFlag(ImGui_ItemFlags_NoTabStop.cint, true)
   let clipper = ImGuiListClipper_ImGuiListClipper()
   ImGuiListClipper_Begin(clipper, cint(table.rows.len), -1)
   while ImGuiListClipper_Step(clipper):
@@ -253,6 +272,7 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
       igPopID()
   ImGuiListClipper_End(clipper)
   ImGuiListClipper_destroy(clipper)
+  igPopItemFlag()
   igEndTable()
   marks.mark(id)
 
@@ -417,16 +437,220 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
         igEndTabItem()
   igEndTabBar()
 
+# ------------------------------------------------------------------- trace --
+
+proc toggle(st: AppState; label, tip: string; on: bool; marks: var Marks; mark: string): bool =
+  ## A checkbox; true when it was clicked.
+  var v = on
+  result = igCheckbox(label.cstring, addr v)
+  marks.mark(mark)
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igPushTextWrapPos(igGetFontSize() * 30)
+    igTextUnformatted(tip.cstring, nil)
+    igPopTextWrapPos()
+    igEndTooltip()
+
+proc problems(traces: openArray[TraceDetail]; t: Theme) =
+  ## A line for each trace that could not be read whole.
+  for d in traces:
+    if d.problem.len > 0:
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+      igPushTextWrapPos(0)
+      igTextUnformatted(("Trace " & $(d.trace + 1) & " of " & d.file & ": " & d.problem).cstring,
+        nil)
+      igPopTextWrapPos()
+      igPopStyleColor(1)
+    if d.cut > 0:
+      dim(t, "Trace " & $(d.trace + 1) & ": its last " & $d.cut & " samples are left out " &
+        "(too many samples at once).")
+
+proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks: var Marks;
+    output: var HeadersOutput) =
+  ## Trace, Header: every header field of the traces, a value column each.
+  template answer: untyped = st.inspection.answer
+  var shown = 0
+  for d in answer.traces:
+    if d.rows.len > 0: inc shown
+  if shown == 0:
+    if st.inspection.waiting: igTextDisabled("Reading the trace headers...")
+    return
+  const id = "headers.trace"
+  let key = $answer.gen
+  if id notin ui.tables or ui.tables[id].key != key:
+    let withFile = answer.traces.manyFiles
+    var columns: seq[seq[FieldRow]]
+    var labels: seq[string]
+    var standard = skSegy
+    for d in answer.traces:
+      if d.rows.len > 0:
+        columns.add d.rows
+        labels.add traceLabel(d, withFile)
+        if d.rows[0].kind in {hbSegdTrace, hbSegdExt1, hbSegdExt1Rev3}: standard = skSegd
+        elif d.rows[0].kind == hbSeg2Trace: standard = skSeg2
+    ui.tables[id] = CachedTable(key: key, table: fieldTable(columns, labels, standard))
+  ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
+
+proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerInPlot: bool;
+    fonts: Fonts; t: Theme; marks: var Marks; output: var HeadersOutput) =
+  ## Trace, Data: the traces' samples, a row per sample: its index, its time
+  ## and a column per trace; the row at the plot's cursor time marked.
+  template answer: untyped = st.inspection.answer
+  let view = st.settings.headers
+  if st.toggle("As displayed", "The samples after the edits (kills, polarity reversals), " &
+      "the polarity of the plot and its gain's processing, as the status bar's amplitude " &
+      "reads them; off, as the file holds them.", view.asDisplayed, marks, "headers.displayed"):
+    var s = st.settings
+    s.headers.asDisplayed = not view.asDisplayed
+    output.commands.add Command(kind: ckSettings, settings: s)
+  var n = 0
+  var traces: seq[int] # the answer's traces with samples
+  for k, d in answer.traces:
+    if d.samples.len > 0:
+      traces.add k
+      n = max(n, d.samples.len)
+  if traces.len == 0:
+    if st.inspection.waiting: igTextDisabled("Reading the samples...")
+    return
+  let first = answer.traces[traces[0]]
+  var other = false
+  for k in traces:
+    if answer.traces[k].dtMs != first.dtMs or answer.traces[k].t0Ms != first.t0Ms: other = true
+  if other: dim(t, "The traces have other sample intervals or start times: the times are " &
+    "those of the first.")
+  let withFile = answer.traces.manyFiles
+  let cursor = if cursorMs.isNaN or first.dtMs <= 0: -1
+               else: int(round((cursorMs - first.t0Ms) / first.dtMs))
+  const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
+    ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_Resizable.cint or
+    ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingFixedFit.cint
+  if not igBeginTable("headers.data", cint(2 + traces.len), flags, ImVec2_c(x: 0, y: 0), 0):
+    return
+  igTableSetupScrollFreeze(2, 1)
+  igTableSetupColumn("Index", 0, 0, 0)
+  igTableSetupColumn("Time (ms)", 0, 0, 1)
+  for c, k in traces:
+    igTableSetupColumn((traceLabel(answer.traces[k], withFile) & (if answer.traces[k].displayed:
+      " as displayed" else: "")).cstring, 0, 0, ImGuiID(100 + c))
+  fonts.withFont(frHeading, 0):
+    igTableHeadersRow()
+  marks.mark("headers.data header")
+  let mark = u32(withAlpha(t.roles[rlHighlight], 70))
+  igPushItemFlag(ImGui_ItemFlags_NoTabStop.cint, true) # the samples are no stops of Tab
+  let clipper = ImGuiListClipper_ImGuiListClipper()
+  ImGuiListClipper_Begin(clipper, cint(n), -1)
+  if pointerInPlot and cursor in 0 ..< n: ImGuiListClipper_IncludeItemByIndex(clipper, cint(cursor))
+  fonts.withFont(frMono, 0):
+    while ImGuiListClipper_Step(clipper):
+      for i in clipper.DisplayStart ..< clipper.DisplayEnd:
+        igTableNextRow(0, 0)
+        igPushID_Int(cint(i))
+        if i == cursor:
+          igTableSetBgColor(ImGui_TableBgTarget_RowBg1.cint, mark, -1)
+        discard igTableNextColumn()
+        let index = $i
+        rightAlign(index)
+        igTextUnformatted(index.cstring, nil)
+        if i == cursor:
+          marks.mark("headers.data cursor")
+          if pointerInPlot and not igIsItemVisible(): igSetScrollHereY(0.5)
+        if i == clipper.DisplayStart: marks.mark("headers.data first")
+        discard igTableNextColumn()
+        let time = exactText(first.t0Ms + float64(i) * first.dtMs)
+        rightAlign(time)
+        igTextUnformatted(time.cstring, nil)
+        for c, k in traces:
+          if igTableNextColumn():
+            template d: untyped = answer.traces[k]
+            if i < d.samples.len:
+              let v = sampleText(d.samples[i])
+              igPushID_Int(cint(c))
+              rightAlign(v)
+              discard igSelectable_Bool((v & "##s").cstring, false, 0, ImVec2_c(x: 0, y: 0))
+              if i < 64: marks.mark("headers.data " & $i & " " & $c)
+              if igBeginPopupContextItem("##sample", ImGui_PopupFlags_MouseButtonRight.cint):
+                if igMenuItem_Bool("Copy", "Ctrl+C", false, true): igSetClipboardText(v.cstring)
+                if igMenuItem_Bool(("Copy the column of " & traceLabel(d, withFile)).cstring, nil,
+                    false, true):
+                  var only: seq[TraceDetail]
+                  for kk in traces: only.add answer.traces[kk]
+                  igSetClipboardText(dataText(only, c).cstring)
+                if igMenuItem_Bool("Copy the table", nil, false, true):
+                  var all: seq[TraceDetail]
+                  for kk in traces: all.add answer.traces[kk]
+                  igSetClipboardText(dataText(all).cstring)
+                igEndPopup()
+              if igIsItemFocused() and igGetIO_Nil().KeyCtrl and
+                  igIsKeyPressed_Bool(ImGui_Key_C, false):
+                igSetClipboardText(v.cstring)
+              igPopID()
+        igPopID()
+  ImGuiListClipper_End(clipper)
+  ImGuiListClipper_destroy(clipper)
+  igPopItemFlag()
+  igEndTable()
+  marks.mark("headers.data")
+
+proc drawTrace(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerInPlot: bool;
+    fonts: Fonts; t: Theme; marks: var Marks; output: var HeadersOutput;
+    parts: var set[InspectPart]) =
+  ## The Trace tab: the traces chosen (the selection, or the one under the
+  ## pointer), with Header and Data.
+  let view = st.settings.headers
+  if st.toggle("Follow the pointer", "With no trace selected, show the trace under the " &
+      "pointer in the plot (or the traces of the receiver under it on the map). Off: only " &
+      "the traces selected.", view.followPointer, marks, "headers.follow"):
+    var s = st.settings
+    s.headers.followPointer = not view.followPointer
+    output.commands.add Command(kind: ckSettings, settings: s)
+  dim(t, chosenLine(st, view.followPointer))
+  marks.mark("headers.chosen")
+  problems(st.inspection.answer.traces, t)
+  if st.inspection.chosen.traces.len == 0: return
+  if igBeginTabBar("##tracetabs", 0):
+    let wanted = view.traceTab
+    let select = ui.selectingTrace
+    ui.selectingTrace = false
+    var shown = ui.shownTraceTab
+    let headerFlags = if select and wanted == ttHeader: ImGui_TabItemFlags_SetSelected.cint
+                      else: 0.cint
+    let header = igBeginTabItem("Header", nil, headerFlags)
+    marks.mark("headers.trace tab header")
+    if header:
+      shown = ttHeader
+      parts.incl ipTraceHeaders
+      ui.drawTraceHeader(st, fonts, t, marks, output)
+      igEndTabItem()
+    let dataFlags = if select and wanted == ttData: ImGui_TabItemFlags_SetSelected.cint
+                    else: 0.cint
+    let data = igBeginTabItem("Data", nil, dataFlags)
+    marks.mark("headers.trace tab data")
+    if data:
+      shown = ttData
+      parts.incl ipTraceSamples
+      ui.drawTraceData(st, cursorMs, pointerInPlot, fonts, t, marks, output)
+      igEndTabItem()
+    igEndTabBar()
+    if select: ui.shownTraceTab = wanted
+    elif shown != ui.shownTraceTab:
+      ui.shownTraceTab = shown
+      var s = st.settings
+      s.headers.traceTab = shown
+      output.commands.add Command(kind: ckSettings, settings: s)
+
 # ------------------------------------------------------------------ window --
 
-proc drawHeaders*(ui: var HeadersUi; title: string; st: AppState; fonts: Fonts; t: Theme;
-    marks: var Marks): HeadersOutput =
+proc drawHeaders*(ui: var HeadersUi; title: string; st: AppState; cursorMs: float64;
+    pointerInPlot: bool; fonts: Fonts; t: Theme; marks: var Marks): HeadersOutput =
   ## The window, docked or floating like any other, titled `title` (its
-  ## ImGui ID stays `###headers`), for the file the main panel shows.
+  ## ImGui ID stays `###headers`), for the file the main panel shows;
+  ## `cursorMs` is the time under the pointer in the plot (NaN for none),
+  ## whose row the Data tab marks, and scrolls to while `pointerInPlot`.
   let view = st.settings.headers
   if not ui.started or view.tab != ui.shownTab:
     ui.selecting = true
-    ui.started = true
+  if not ui.started or view.traceTab != ui.shownTraceTab:
+    ui.selectingTrace = true
+  ui.started = true
   var parts: set[InspectPart]
   if igBegin(title.cstring, nil, 0):
     ui.focus.watch()
@@ -449,7 +673,7 @@ proc drawHeaders*(ui: var HeadersUi; title: string; st: AppState; fonts: Fonts; 
       if ui.tabItem(htTrace, view.tab):
         shown = htTrace
         marks.mark("headers.tab trace")
-        igTextDisabled("The headers and samples of the selected traces.")
+        ui.drawTrace(st, cursorMs, pointerInPlot, fonts, t, marks, result, parts)
         igEndTabItem()
       else: marks.mark("headers.tab trace")
       igEndTabBar()

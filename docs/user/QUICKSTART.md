@@ -489,6 +489,46 @@ then File > Join geometry..., Join: the Morgantown record's 3954 seismic traces 
 match by their headers' stations; its headers' coordinates agree with the survey's to
 0.1 ftUS (choose "replace those the headers give" to have the survey's).
 
+## Headers
+
+The **Headers** window (View > Windows > Headers) shows what the file in the Seismic window
+holds, read-only, in three tabs:
+
+- **Summary:** what the file is, in plain words: its standard and revision, byte order,
+  textual header's character set, sample format, how many traces and records, the field
+  record numbers, samples per trace, sample interval and record length, the coordinate
+  units and reference; then the record shown (what tells it apart: FFID, source,
+  receiver) with its counts (traces, seismic, auxiliary, dead, missing: the Records
+  window's), and for SEG-D that record's channel sets.
+- **File headers:** a tab per header block, as the format has them. SEG-Y: **Text** (the
+  textual header's 40 lines of 80 characters), **Binary** (the binary header's fields) and
+  **Extended** (the extended textual headers, when the file has them), and a tape label or
+  data trailer when it has one. SEG-D, of the record shown: **General** (its general
+  headers, typed blocks included), **Channel sets** (one column per channel set, so they
+  compare at a glance), and **Extended**, **External**, a skew or a trailer when the record
+  has them, shown as their bytes (offset, hexadecimal, text). SEG-2: **File**.
+- **Trace:** the selected traces (in the plot, or a receiver's on the map), or, with none
+  selected and **Follow the pointer** on (the default), the trace under the pointer in the
+  plot (or the traces of the receiver under it on the map); the trace pointed at last
+  stays while you move to the Headers window. A line at the top says which traces these
+  are. **Header** lists every header field of each trace (extensions included): its
+  description, bytes and value, a value column per trace (at most 32 side by side), and the
+  fields whose values differ between them in the warning colour. **Data** lists the
+  samples: index, time in ms and a column per trace, as the file holds them, or **As
+  displayed** (after kills, polarity reversals and the gain's processing: what the status
+  bar's amplitude reads); the row at the time under the pointer in the plot is marked and
+  kept in view.
+
+The header tables list each field's **Description** and **Bytes** (in its block, from 1, as
+the standards number them); right-click a table's header row to show its **Name** (as
+parseSEG and header patches name it, `trace.sourceX`) or its file **Offset**, or to hide
+one. Right-click a value to copy it, its column or the whole table (Ctrl+C copies the value
+with the keyboard's focus on it); right-click a Summary line to copy it or the whole
+summary. The tab shown, the toggles and the columns are remembered. Headers and samples
+are read in the background, only for the tab on screen, so the window never holds up the
+rest; the file is never written (changing header values will be a separate, explicit
+action).
+
 ## Messages
 
 The **Messages** window lists what viewSEG has to say, newest last: files opened, problems
@@ -517,8 +557,8 @@ type, also the ones not in use: the AGC window, Fixed's amplitude, Normalized's 
 Exponential's rate, power and cutoff; the sort order and the display header: a new plot
 starts as you left the last one; polarity is not kept), the cursor
 time line, scale units and screen calibrations, the status bar's fields, the sort buttons
-and your own sort keys, and the Messages window's toggles. It is saved a second after a
-change and when you quit.
+and your own sort keys, the Messages window's toggles, and the Headers window's tabs,
+toggles and columns. It is saved a second after a change and when you quit.
 
 **Layouts.** The windows open where they were when you quit (`layout.nif` beside the
 settings). **View > Layout** saves the arrangement on screen under a name (*Save as...*),

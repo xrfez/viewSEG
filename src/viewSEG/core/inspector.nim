@@ -118,10 +118,12 @@ func isNil*(x: Inspector): bool {.inline.} =
   ## Whether `x` was never started (a default `Inspector`).
   x.p == nil
 
-func chosenTraces*(sel: Selection; followPointer: bool): Chosen =
+func chosenTraces*(sel: Selection; followPointer: bool; last = Chosen()): Chosen =
   ## The traces the Trace tab is about: the selected ones; with none and
   ## `followPointer`, the trace under the plot's pointer, else those of the
-  ## point under the map's pointer; the first `MaxInspected` of them, by id.
+  ## point under the map's pointer, else those pointed at last (`last`, when
+  ## the pointer chose them), so that they stay while the pointer goes to
+  ## the Headers window; the first `MaxInspected` of them, by id.
   var all: seq[int]
   result = Chosen()
   if sel.selected.len > 0:
@@ -133,6 +135,8 @@ func chosenTraces*(sel: Selection; followPointer: bool): Chosen =
   elif followPointer and sel.hoverTraces.len > 0:
     result.by = cbMapPointer
     for t in sel.hoverTraces: all.add t
+  elif followPointer and last.by in {cbPlotPointer, cbMapPointer}:
+    return last
   all.sort()
   result.total = all.len
   if all.len > MaxInspected: all.setLen MaxInspected

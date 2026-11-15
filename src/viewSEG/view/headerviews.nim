@@ -239,6 +239,75 @@ func dumpLine*(bytes: openArray[byte]; base: int64; line: int): string =
     if i == a + 7: result.add ' '
   result.add ' ' & text
 
+func traceLabel*(d: TraceDetail; withFile: bool): string =
+  ## A trace's column: "Trace 13" (its place in its file, from 1), its
+  ## channel when its headers give one, and its file's name with
+  ## `withFile` (columns of several files).
+  result = (if withFile: d.file & " " else: "") & "Trace " & $(d.trace + 1)
+  if not d.keys.channel.isNaN and d.keys.channel > 0:
+    result.add " (ch " & exactText(d.keys.channel) & ")"
+
+func manyFiles*(traces: openArray[TraceDetail]): bool =
+  ## Whether `traces` are of more than one file.
+  for d in traces:
+    if d.file != traces[0].file: return true
+  false
+
+func listed(numbers: openArray[int]): string =
+  ## "13", "13 and 14", "13, 14 and 20".
+  for k, n in numbers:
+    if k > 0: result.add(if k == numbers.high: " and " else: ", ")
+    result.add $n
+
+proc chosenLine*(st: AppState; followPointer: bool): string =
+  ## The line at the top of the Trace tab: which traces it shows and what
+  ## chose them, or how to choose one.
+  let c = st.inspection.chosen
+  var files: seq[string]
+  var numbers: seq[int]
+  for t in c.traces:
+    let i = st.findTrace(t)
+    if i >= 0:
+      if st.sessions[i].name notin files: files.add st.sessions[i].name
+      numbers.add t - st.sessions[i].base + 1
+  let ofFile = if files.len == 1: " of " & files[0] else: ""
+  let traces = if numbers.len == 1: "Trace " & $numbers[0] & ofFile
+               elif numbers.len <= 8: "Traces " & listed(numbers) & ofFile
+               else: $numbers.len & " traces" & ofFile & " (" & $numbers[0] & " to " &
+                 $numbers[^1] & ")"
+  result = case c.by
+    of cbNone:
+      if followPointer: "No trace is selected or under the pointer: point at a trace in the " &
+        "plot or a receiver on the map, or click one to keep it here."
+      else: "No trace is selected: click a trace in the plot, or a receiver on the map, to " &
+        "see it here (Follow the pointer is off)."
+    of cbSelection: traces & ", selected."
+    of cbPlotPointer: traces & ", pointed at in the plot."
+    of cbMapPointer: traces & ", recorded at the receiver pointed at on the map."
+  if c.total > c.traces.len:
+    result.add " The first " & $c.traces.len & " of the " & $c.total & " are shown: at most " &
+      $MaxInspected & " side by side."
+
+func sampleText*(x: float32): string =
+  ## A sample in its shortest form.
+  $x
+
+func dataText*(traces: openArray[TraceDetail]; column = -1): string =
+  ## The Data tab's table as text, a line per sample, tab-separated: the
+  ## index, the time in ms and each trace's sample (only trace `column`'s
+  ## when it is not -1), as Copy puts it on the clipboard.
+  var n = 0
+  for d in traces: n = max(n, d.samples.len)
+  if traces.len == 0: return
+  let (dt, t0) = (traces[0].dtMs, traces[0].t0Ms)
+  for i in 0 ..< n:
+    result.add $i & '\t' & exactText(t0 + float64(i) * dt)
+    for c, d in traces:
+      if column < 0 or c == column:
+        result.add '\t'
+        if i < d.samples.len: result.add sampleText(d.samples[i])
+    result.add '\n'
+
 func summaryText*(lines: openArray[SummaryLine]): string =
   ## The lines as text, as Copy puts them on the clipboard: a heading on a
   ## line of its own, a value after its label and a tab.

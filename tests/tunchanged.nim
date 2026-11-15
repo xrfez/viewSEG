@@ -1,5 +1,5 @@
 ## A loaded file is never changed: every fixture (the survey and each of its
-## planted defects, the SPS files, the five SEG-D records, the pilot,
+## planted defects, the SPS files, the six SEG-D records, the pilot,
 ## parseSEG's demo files, and two damaged files) is opened, joined with the
 ## survey's S, R and X files and the SEG-D records' X file (File > Join
 ## geometry: in memory only; the survey's SEG-Y files and two of the SEG-D
@@ -9,7 +9,9 @@
 ## killed and reversed, one change undone; the panel then sorted with them,
 ## and the edits cleared after, so that the second round starts with none),
 ## linked to the map (a trace hovered, the points it was recorded at hovered
-## and their record shown), sorted by each sort button and by keys of the
+## and their record shown), read by the Headers window (the record's
+## headers, two traces' header fields and samples, as recorded and as
+## displayed), sorted by each sort button and by keys of the
 ## user's own, read to the newest tile, closed, and then opened again from
 ## the index cache. Each file's bytes and modification time are then as they
 ## were, and its folder holds the same files, of the same sizes, and nothing
@@ -117,6 +119,18 @@ proc drive(st: var AppState) =
     if at.len > 0: st.apply Command(kind: ckShowPoints, points: at)
     st.apply Command(kind: ckHover, trace: -1)
     st.apply Command(kind: ckHoverPoints, points: @[])
+    # the Headers window: the record's headers, two traces' header fields
+    # and samples, as recorded, then as displayed (with the edits)
+    st.apply Command(kind: ckSelect, traces: @[s.base + g.a, s.base + g.b], mode: smReplace)
+    st.apply Command(kind: ckInspect, inspect: {ipRecord, ipTraceHeaders, ipTraceSamples})
+    doAssert st.settle(not st.inspection.waiting and st.inspection.answer.traces.len > 0)
+    for displayed in [true, false]:
+      var settings = st.settings
+      settings.headers.asDisplayed = displayed
+      st.apply Command(kind: ckSettings, settings: settings)
+      doAssert st.settle(not st.inspection.waiting)
+    st.apply Command(kind: ckInspect, inspect: {})
+    st.apply Command(kind: ckClearSelection)
   # every sort button, keys of the user's own, then the file's order; each
   # sorted panel read to its newest tile
   var orders: seq[seq[SortKey]]
@@ -160,7 +174,7 @@ withFixtures fx:
   let sps = fx.surveySps()
   files.add [sps.s, sps.r, sps.x]
   files.add [fx.twoSetSegd(), fx.threeComponentSegd(), fx.mixedOrderSegd(), fx.stationsSegd(),
-    fx.recordOnlySegd(), fx.pilotSegy()]
+    fx.recordOnlySegd(), fx.areasSegd(), fx.pilotSegy()]
   let relation = fx.segdRelation()
   files.add relation
   var survey: seq[JoinFile]

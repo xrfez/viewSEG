@@ -14,9 +14,9 @@
 ## 12 for the second record; with the inspector keeping its holds,
 ## `inspectorReadsTheRecordShown` found "the inspector's hold did not end".
 
-import std/[os, strutils]
+import std/[intsets, os, strutils]
 import parseSEG
-import viewSEG/core/[fielddocs, state]
+import viewSEG/core/[fielddocs, inspector, state]
 import viewSEG/view/headerviews
 import utils/[fixtures, waiting]
 
@@ -224,6 +224,93 @@ block inspectorReadsTheRecordShown:
     doAssert waitUntil(st.jobs.held(path) == reader), "the inspector's hold did not end"
     st.apply Command(kind: ckInspect, inspect: {})
     doAssert st.inspection.answer.recordPath == "" and st.inspection.answer.traces.len == 0
+    st.shutdown()
+
+block whichTracesTheTraceTabShows:
+  # The selection; else the trace under the plot's pointer; else the traces
+  # of the receiver under the map's pointer; else those pointed at last
+  # (while "Follow the pointer" is on); the first 32, by id.
+  var sel = Selection()
+  doAssert chosenTraces(sel, true).by == cbNone
+  sel.hover = 7
+  doAssert chosenTraces(sel, true) == Chosen(by: cbPlotPointer, traces: @[7], total: 1)
+  doAssert chosenTraces(sel, false).by == cbNone
+  sel.hover = -1
+  sel.hoverTraces = toIntSet([5, 3])
+  doAssert chosenTraces(sel, true) == Chosen(by: cbMapPointer, traces: @[3, 5], total: 2)
+  sel.hoverTraces = initIntSet()
+  let last = Chosen(by: cbPlotPointer, traces: @[7], total: 1)
+  doAssert chosenTraces(sel, true, last) == last, "the trace pointed at last went"
+  doAssert chosenTraces(sel, false, last).by == cbNone
+  doAssert chosenTraces(sel, true, Chosen(by: cbSelection, traces: @[2], total: 1)).by == cbNone
+  for t in countdown(139, 100): sel.selected.incl t
+  let many = chosenTraces(sel, true, last)
+  doAssert many.by == cbSelection and many.total == 40 and many.traces.len == MaxInspected
+  doAssert many.traces[0] == 100 and many.traces[^1] == 100 + MaxInspected - 1
+
+block inspectorReadsTraces:
+  # The Trace tab on screen: the chosen traces' header fields and samples,
+  # read off the UI thread; as recorded, then as displayed (a kill blanks a
+  # trace, a reversal negates it, the display gain processes them).
+  withFixtures fx:
+    var st = initAppState()
+    let path = fx.surveySegy()
+    let s = st.shown(path)
+    let reader = st.jobs.held(path)
+    st.apply Command(kind: ckSelect, traces: @[s.base + 3, s.base + 7], mode: smReplace)
+    st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders, ipTraceSamples})
+    doAssert st.inspection.chosen.by == cbSelection
+    doAssert st.inspection.answer.traces.len == 0, "read on the UI thread"
+    doAssert st.settle(st.inspection.answer.traces.len == 2)
+    for (k, channel) in [(0, 4), (1, 8)]:
+      let d = st.inspection.answer.traces[k]
+      doAssert d.problem.len == 0, d.problem
+      doAssert d.id == s.base + channel - 1 and d.trace == channel - 1 and d.file == s.name
+      doAssert d.rows.rowOf("trace", "fieldRecord").value == $FirstRecord
+      doAssert d.rows.rowOf("trace", "fieldRecord").description ==
+        fieldDescription(hbSegyTrace, "fieldRecord")
+      doAssert d.samples.len == Samples and not d.displayed and d.dtMs == DtMs
+      for i in 0 ..< Samples:
+        doAssert d.samples[i] == surveySample(0, channel, i), $i
+    let traces = st.inspection.answer.traces
+    let table = fieldTable([traces[0].rows, traces[1].rows], ["4", "8"], skSegy)
+    for row in table.rows:
+      if row.name == "trace.fieldRecord": doAssert not row.differs, $row
+      if row.name == "trace.groupX": doAssert row.differs, $row
+    doAssert "Trace 4" in traceLabel(traces[0], false)
+    doAssert dataText(traces).startsWith("0\t0\t" & sampleText(surveySample(0, 4, 0)) & '\t')
+    doAssert waitUntil(st.jobs.held(path) == reader), "the inspector's hold did not end"
+    # As displayed, with no gain: the killed trace blank, the reversed one negated.
+    var d = st.panel(MainPanel).layers[0].display
+    d.gain = dgNone
+    st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[s.base + 3],
+      on: true)
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[s.base + 7],
+      on: true)
+    var settings = st.settings
+    settings.headers.asDisplayed = true
+    st.apply Command(kind: ckSettings, settings: settings)
+    doAssert st.settle(st.inspection.answer.traces.len == 2 and
+      st.inspection.answer.traces[0].displayed and not st.inspection.waiting)
+    let shown = st.inspection.answer.traces
+    for i in 0 ..< Samples:
+      doAssert shown[0].samples[i] == 0, "the killed trace's sample " & $i
+      doAssert shown[1].samples[i] == -surveySample(0, 8, i), "the reversed trace's sample " & $i
+    # AGC: processed, so other values than recorded, all finite.
+    d.gain = dgAgc
+    st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+    let before = st.inspection.answer.gen
+    doAssert st.settle(st.inspection.answer.gen > before and not st.inspection.waiting)
+    let agc = st.inspection.answer.traces[1]
+    var other = false
+    for i in 0 ..< Samples:
+      doAssert abs(agc.samples[i]) < Inf
+      if agc.samples[i] != -surveySample(0, 8, i): other = true
+    doAssert other, "AGC changed nothing"
+    # Off screen: nothing is kept, nothing is read.
+    st.apply Command(kind: ckInspect, inspect: {})
+    doAssert st.inspection.answer.traces.len == 0
     st.shutdown()
 
 block everyFieldDescribed:

@@ -102,13 +102,14 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 
 | Thread | Created and owned by | Runs |
 |---|---|---|
-| UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), reads one trace's headers, hex bytes or textual header, closes files, and makes every OpenGL call |
+| UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), closes files, and makes every OpenGL call; it reads no header and no sample from a file |
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, an open file's positions, survey files read, `ensureKeys`, survey joins, sorts across files |
 | Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, brute stack, conversions, exports and patches, queued workflows |
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; lists the layouts; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
 | Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
 | Agent server | `remote/server`, started only when agent control is turned on | Accepts MCP clients on the socket, reads and frames their messages, answers the handshake and the tool list itself, queues tool calls for the UI thread and writes the answers it is given; never reads or changes `AppState` |
+| Headers reader | `core/inspector`, started by `AppState` when the Headers window first has something on screen to read | Reads what the Headers window shows of the files' bytes: a SEG-D record's headers (`recordHeaders`, `copyBytes`), the chosen traces' header fields (`traceHeaders`) and samples (`readTraces`, then the edits and the display pipeline when shown as displayed, its own `Workspace`), and posts them (`mkInspected`); newest request wins |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
 | Pool workers | processSEG: one `ProcessPool`, made by `core` at start-up | The rows of `pool.apply`, `pool.pickInto` and `pool.traceAmplitudeInto`; destroyed at shutdown, once every caller has stopped |
 
@@ -457,6 +458,29 @@ nothing. Units are labels: the dialog starts each at what the headers say
 (`summary.coordinateUnits`, SPS H20 and H201) and shows the file's CRS text as read;
 datum and projection as values are a parseSEG request.
 
+**The Headers window** (`core/headers`, `core/fielddocs`, `core/inspector`,
+`view/headerviews`, `ui/imgui/headerswindow`). What a file is and its file-level headers
+are read by the open job with the session (`Session.facts`, `fileFacts`: parseSEG's
+`summary`, `channelSets`, `crsText`, `fileHeaders`, `textHeader`, `extendedTextHeaders`, and
+the bytes of the blocks without named fields), so the Summary tab and a SEG-Y file's File
+headers cost the UI thread nothing. What depends on the record or the traces shown is read
+by the Headers reader, a thread of its own (`core/inspector`, built like a panel's reader:
+a request replaces the one not yet taken, one being served is given up between traces for
+a newer, each file is held while it reads it, a file cut short is not read): a SEG-D
+record's headers, and the chosen traces' header fields and samples. The window tells
+`core` what it has on screen (`ckInspect`: the record's headers, the traces' fields, their
+samples), and after every command and drained inbox `followInspect` works out the traces
+the Trace tab is about (`chosenTraces`: the selection; else, with "Follow the pointer", the
+trace under the plot's pointer or the traces at the map's; else those pointed at last; the
+first `MaxInspected`) and asks the reader again when what is on screen, those traces, their
+edits or the plot's processing (as displayed) changed. Each answer newer than the one shown
+is taken in (`AppState.inspection`), the newest asked or not, so that a moving pointer
+shows each trace a request behind rather than nothing. Every field becomes a `FieldRow`
+(block, name, description in plain words from `fielddocs`, value as text and as a number,
+the bytes in its block from 1, the file offset); `fieldTable` sets header listings side by
+side (traces, a record's channel sets) and marks the fields whose values differ. Header
+text is Latin-1 in the files and made UTF-8 for the toolkit.
+
 **Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
 severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`
 (the file, the trace, and the SEG-D record it counts in, as parseSEG's `Location` has
@@ -574,8 +598,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    relation file. No sample is read for any of it. The progress hook is a
    `gcsafe` closure on the job thread that calls `JobContext.progress`. The job also reads
    what the headers say of the coordinates (`summary.coordinateUnits`, `crsText`:
-   `Session.crs`, for the join window, which so reads nothing from the file); not yet
-   `channelSets`.
+   `Session.crs`, for the join window, which so reads nothing from the file), and the
+   Headers window's facts of the file (`summary`, `channelSets`, `crsText`, the file
+   headers: `Session.facts`).
 2. **Show** (UI). Pointing a panel at a gather bumps its `requestGen` (and `sourceGen`),
    holds the file (`Jobs.hold`) and hands the panel's reader the file, the gather and
    the trace filter. The reader lets go of what it showed (closes its prefetcher, ends
@@ -722,7 +747,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 | `pool.apply(plan, raw, processed, meta)` | panel (blocks) | Writes the caller's `processed` |
 | `traceStatsInto`, `panelStats`, `moveoutColumnsInto`, `checkGeometryInto` | panel | Fill the caller's seqs; ticks and flags tagged with `keysRevision` |
 | `readTracesInto`, `traceKeysInto`, `traceFieldColumnInto` | any | Fill the caller's buffer |
-| `traceHeaders`, `recordHeaders`, `fileHeaders`, `copyBytes`, `textHeader`, `traceField` | UI | Owned copies |
+| `summary`, `channelSets`, `crsText`, `fileHeaders`, `textHeader`, `extendedTextHeaders`, `copyBytes` (the Headers window's facts of a file) | interactive job (open) | Owned copies, kept in the `Session` |
+| `traceHeaders`, `recordHeaders`, `copyBytes`, `readTraces`, `traceKeys` (the Headers window's record and traces) | Headers reader (`core/inspector`), holding the file | Owned copies, moved to the UI thread (`mkInspected`) |
+| `traceField` | UI | Owned copies |
 | `traceFieldColumnInto`, then `sortOrder` (a sorted view) | job | A `seq[int]` selection |
 | `rowsOf(list)` keys, then `sortOrder` (a panel's order, `core/sorting`) | panel reader, while it holds the file | Positions: a `seq[int]` of trace numbers |
 | `pool.pickInto`, `fitShot`, `traceAmplitudeInto`, `recordAmplitude`, `windowSnrInto`, `recordCompleteness`, `addFold`, `preplotFold` | job | The caller's seqs; a `FoldMap` (moved, never copied) |
@@ -794,6 +821,8 @@ type
                              # relation file plans and those missing (`setChecks`)
     checkedAgainst: string   # the relation file the records were checked against
     crs: FileCrs             # what its headers say of its coordinates: units, CRS text
+    facts: FileFacts         # core/headers: what the Headers window's Summary and File
+                             # headers show of it, read with it
 
   FileList = object          # core/filelist: what the Files window lists
     title, folder: string    # the folder listed ("" for files chosen one by one)
@@ -851,7 +880,8 @@ type
     ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
     ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog,
     ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints,
-    ckHoverPoints, ckShowPoints, ckJoin, ckSelectUnmatched
+    ckHoverPoints, ckShowPoints, ckJoin, ckSelectUnmatched, ckRetry, ckStopReading, ckPrepare,
+    ckInspect
   Command = object           # one of them: its kind and fields, and its origin
     origin: CommandOrigin    # coWindow (the default) or coAgent: what is saved (`keeps`)
 
@@ -882,6 +912,8 @@ type
       plannedMissing, unlisted, duplicates # an open file's records against relation records
     of mkJoining: planSession, geometry, plan, joinSurvey # survey files read for a join, its plan
     of mkJoined: joinedSession, stats, changed, joinedRevision, heldAtJoin # a join done
+    of mkInspected: inspected: Inspected # the Headers reader's answer: a SEG-D record's
+                                 # headers, the chosen traces' fields and samples; moved
     # to come: mkResult (FoldMap, StackResult, QC rows ...)
 
   AppState = object          # move-only; owned by the UI thread
@@ -904,8 +936,11 @@ type
     settings: Settings       # in effect: the user's, with what agents changed this session
     kept: Settings           # as the user left them by hand: saved by `persist` (`keeps`)
     tiles: seq[seq[Tile]]    # per panel: the newest four, oldest first
+    inspection: Inspection   # core/inspector: what the Headers window has on screen, the
+                             # traces its Trace tab is about, its reader's newest answer
     jobs: Jobs               # destroyed after the readers, before the sessions
-    readers: seq[PanelReader] # per panel; declared last: they stop (and end their holds) first
+    readers: seq[PanelReader] # per panel; they stop (and end their holds) before the jobs
+    inspector: Inspector     # the Headers reader; declared last: it stops first
 
   Settings = object          # core/settings: changed only by commands; settings.nif
     theme: string            # the theme file; "" follows the system
@@ -923,6 +958,8 @@ type
     map: MapOptions                # the map: where the point under the pointer is described,
                                    # the unit of its lengths (the survey's, or m, ft, ftUS)
     join: JoinOptions              # the geometry join's options, as set last
+    headers: HeadersView           # the Headers window: the tab and Trace tab shown, Follow
+                                   # the pointer, As displayed, the columns shown
 
   Pick = object              # core/pick: what lies under the pointer
     inside, found: bool      # over the plot; a tile holds the trace there
