@@ -28,10 +28,13 @@ const
     ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckReverseAll, ckBack,
     ckEdit, ckUndoEdit, ckClearEdits, ckHover, ckSelect, ckClearSelection, ckLoadSurvey,
     ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
-    ckShowPoints}
+    ckShowPoints, ckJoin, ckSelectUnmatched}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
-    ## until it is put here, or among those refused, on purpose
+    ## until it is put here, or among those refused, on purpose. The geometry
+    ## join is a user's in a window (File > Join geometry) and writes nothing:
+    ## it changes the keys the program holds of an open file, in memory, as
+    ## loading a survey file or killing a trace changes what it holds
 
 # ------------------------------------------------------------ to JSON --
 

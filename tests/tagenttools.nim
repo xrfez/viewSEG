@@ -181,6 +181,12 @@ block schemaFromCommand:
   doAssert takes(ckSelectPoints) == @["points", "pointMode"], $takes(ckSelectPoints)
   doAssert takes(ckHoverPoints) == @["points"] and takes(ckShowPoints) == @["points"],
     $takes(ckHoverPoints)
+  # the geometry join: a user's in a window, in memory, no file written
+  for k in [ckJoin, ckSelectUnmatched]:
+    doAssert k in Offered and $k in kinds and Docs.kinds.getOrDefault($k).len > 0, $k
+  doAssert takes(ckJoin) == @["joinFile", "joinFiles", "joinOptions", "joinUnits"],
+    $takes(ckJoin)
+  doAssert takes(ckSelectUnmatched) == @["unmatchedOf"], $takes(ckSelectUnmatched)
   # core's bounds, stated
   let gainDb = s["properties"]["display"]["properties"]["gainDb"]
   doAssert gainDb["maximum"].getFloat == MaxGainDb and gainDb["minimum"].getFloat == -MaxGainDb
@@ -280,6 +286,22 @@ withFixtures fx:
       "timeMs": {"lo": 0, "hi": 998}, "columns": 640, "rows": 1000}}).body["command"].getStr ==
       "view"
     doAssert st.panel(MainPanel).view.columns == 640, "the view was not taken"
+    doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
+
+  block theJoin:
+    # File > Join geometry through the command tool: the plot's file and the
+    # window's options when not given; in memory, no file written.
+    let sps = fx.surveySps()
+    let joined = st.run(%*{"kind": "join geometry", "joinFiles": [
+      {"path": sps.s, "kind": "SPS"}, {"path": sps.r, "kind": "SPS"},
+      {"path": sps.x, "kind": "SPS"}]})
+    doAssert applied and not joined.isError, joined
+    doAssert st.settle(st.joinReport.serial > 0 and st.joinUnderWay.job == NoJob)
+    doAssert st.joinReport.outcome == joJoined, $st.joinReport.words
+    doAssert st.joins[0].plan.matched == SurveyTraces
+    let unmatched = st.run(%*{"kind": "select unmatched"})
+    doAssert applied and not unmatched.isError, unmatched
+    doAssert st.selection.selected.len == 0 # none is unmatched
     doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
 
   block stateAnswers:

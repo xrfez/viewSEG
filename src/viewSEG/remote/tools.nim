@@ -204,6 +204,12 @@ proc prefill(state: AppState; given: Command; c: var Command) =
   of ckEdit: c.on = true
   of ckMapView: c.mapView = state.map.view
   of ckMapLayer: c.shown = true
+  of ckJoin, ckSelectUnmatched:
+    # the file the plot shows, and the join window's options
+    let i = state.shownFile(state.findPanel(MainPanel))
+    let file = if i >= 0: state.sessions[i].id else: NoSession
+    if c.kind == ckJoin: (c.joinFile, c.joinOptions) = (file, state.settings.join)
+    else: c.unmatchedOf = file
   else: discard
 
 proc fromProgram(path: string): string =
@@ -246,6 +252,8 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
   of ckOpen, ckBrowse, ckLoadSurvey:
     for p in c.paths.mitems: p = fromProgram(p)
   of ckShowFile, ckShowTrace: c.path = fromProgram(c.path)
+  of ckJoin:
+    for f in c.joinFiles.mitems: f.path = fromProgram(f.path)
   else: discard
   let before = state.log.nextSerial
   if kind == ckView and fe.showView != nil and fe.showView(c.panel, c.view):
