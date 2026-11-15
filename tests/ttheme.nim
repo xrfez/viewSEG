@@ -8,7 +8,9 @@
 ## `themeFiles` keeps each file's messages for when it is chosen. Seen to
 ## fail: with the size not checked, the 70 KiB file was parsed ("t ==
 ## EverforestDark" failed); with the messages not capped, "302 messages";
-## with the FIFO opened, the test hung until killed.
+## with the FIFO opened, the test hung until killed. A user's theme named as
+## a shipped one is listed under a title of its own (seen to fail with the
+## titles left the themes' names: "Everforest Dark" twice).
 
 import std/[os, strutils, times]
 import viewSEG/core/geometry
@@ -266,6 +268,18 @@ block themeDiscovery:
     doAssert names == @["a-mine", "everforest-dark", "b"], $names
     doAssert found[1].path == user / "everforest-dark.toml" # the user's copy wins
     doAssert themeFiles([assetThemes]).len >= 2
+  finally:
+    removeDir(root)
+  # A user's theme named as a shipped one is listed under a name of its own.
+  createDir(user)
+  try:
+    writeFile(user / "my-forest.toml", "name = \"Everforest Dark\"\nbackground = \"#203020\"\n")
+    var titles: seq[string]
+    for f in themeFiles([user, assetThemes]):
+      if f.name in ["my-forest", "everforest-dark"]: titles.add f.title
+    doAssert titles.len == 2 and titles[0] != titles[1], $titles
+    doAssert "Everforest Dark (everforest-dark)" in titles or
+      "Everforest Dark (my-forest)" in titles, $titles
   finally:
     removeDir(root)
   doAssert displayName("everforest-dark") == "Everforest Dark"

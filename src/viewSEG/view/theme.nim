@@ -125,6 +125,9 @@ type
       ## what it holds, read when it was found: its name, mode and colours,
       ## for the menu's swatch, its preview, and when it is chosen
     problems*: seq[string] ## what `loadTheme` said of it, said when it is chosen
+    title*: string
+      ## what View > Theme calls it: its theme's name, followed by its file
+      ## name when another theme found has the same name
     stamp*: tuple[size: int64; modified: Time]
       ## the file's size and time when read (`themeChanged`)
 
@@ -1126,6 +1129,11 @@ proc themeFiles*(dirs: openArray[string]): seq[ThemeFile] =
         found.stamp = themeStamp(f.path)
         found.problems = @[]
         found.theme = loadTheme(f.path, tmDark, found.problems)
-        if found.problems.len > 0 and found.theme.name == builtinTheme(tmDark).name:
-          found.theme.name = displayName(f.name) # unreadable: not "Everforest Dark" twice
+        if found.problems.len > 0 and found.theme == builtinTheme(tmDark):
+          found.theme.name = displayName(f.name) # unreadable: its file's name
         result.add found
+  for f in result.mitems:
+    f.title = f.theme.name
+    for g in result:
+      if g.name != f.name and g.theme.name == f.theme.name:
+        f.title = f.theme.name & " (" & f.name & ")"

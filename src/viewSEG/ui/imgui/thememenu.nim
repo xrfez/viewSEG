@@ -77,12 +77,12 @@ proc drawThemeMenu*(themes: openArray[ThemeFile]; current, follows: string; labe
     for mode in ThemeMode:
       var listed: seq[(string, int)]
       for i, f in themes:
-        if f.theme.mode == mode: listed.add (f.theme.name, i)
+        if f.theme.mode == mode: listed.add (f.title, i)
       listed.sort()
       if listed.len > 0:
         igSeparatorText(cstring(if mode == tmDark: "Dark" else: "Light"))
       for (_, i) in listed:
         let f = themes[i]
-        entry(f.theme.name & "##" & f.name, f.name, f.theme, f.name == current, room, result,
+        entry(f.title & "##" & f.name, f.name, f.theme, f.name == current, room, result,
           marks)
     igEndMenu()
