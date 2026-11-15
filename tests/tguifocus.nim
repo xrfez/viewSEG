@@ -1,17 +1,22 @@
 ## The click that brings a window forward does only that, in the running
 ## frontend, headless, with real clicks: in the Seismic window it selects
 ## no trace, in the Records window it shows no other record, in the Files
-## window it shows no other file; the next click in the same window does.
+## window it shows no other file, in the Messages window a line naming a
+## trace of another file shows no other file; the next click in the same
+## window does.
 ##
 ## Seen to fail: with the plot's click selecting whatever the focus (as it
 ## did), "a focusing click selected {5}"; with the Records rows acting on any
 ## click, "a focusing click showed record 2"; with the Files rows acting on
-## any click, "a focusing click showed long-spread.sgy".
+## any click, "a focusing click showed long-spread.sgy"; with the Messages
+## lines acting on any click (as they did), "a focusing click in Messages
+## showed survey-clean.sgy".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, options, os, strutils]
-import viewSEG/core/[geometry, state]
+import std/[math, options, os, strutils, times]
+import viewSEG/core/[geometry, log]
+import viewSEG/core/state {.all.}
 import viewSEG/ui/imgui/app
 import utils/fixtures
 
@@ -85,6 +90,20 @@ withFixtures fx:
   step("the next click shows it", proc (f: FrameInfo) =
     f.click(f.markOf("files.row long-spread.sgy").centre), proc (f: FrameInfo): bool =
       f.shownFile == "long-spread.sgy")
+  # the Files window has the focus: the Messages window does not
+  step("a message naming a trace", proc (f: FrameInfo) =
+    f.core.mailbox.post(Msg(kind: mkLog, entry: LogEntry(time: getTime(),
+      severity: sevWarning, source: "test", text: "A warning about trace 7",
+      loc: Location(file: path, trace: 7)))), proc (f: FrameInfo): bool =
+      f.markOf("messages.last").size.x > 0 and wait > 3)
+  clickSteps("a focusing click in Messages", "messages.last", proc (f: FrameInfo): bool =
+    result = wait > 6
+    if result:
+      doAssert f.shownFile == "long-spread.sgy", "a focusing click in Messages showed " &
+        f.shownFile)
+  step("the next click shows its trace", proc (f: FrameInfo) =
+    f.click(f.markOf("messages.last").centre), proc (f: FrameInfo): bool =
+      f.shownFile == path.extractFilename and f.core.selection.selected.len == 1)
 
   proc onFrame(f: FrameInfo) =
     if at >= steps.len or failed.len > 0:

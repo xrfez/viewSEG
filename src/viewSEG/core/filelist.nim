@@ -15,11 +15,13 @@
 ## the list marks it, and stepping (the arrow keys) goes on from it.
 ##
 ## **Changes.** The entries are changed only through `merge`, `insertEntry`,
-## `removeAt` and `changedAt`, which note each change (`changes`), so that
-## the file table (`view/filetable`) follows a scan's batches or a single new
-## file in the rows it already has, instead of sorting every row again.
+## `removeAt`, `changedAt` and `replaceEntries`, which note each change
+## (`changes`), so that the file table (`view/filetable`) follows a scan's
+## batches or a single new file in the rows it already has, instead of
+## sorting every row again. Many files gone or new at once (`replaceEntries`)
+## are one pass over the entries, and the table makes its rows again.
 
-import std/[os, strutils, times]
+import std/[algorithm, os, strutils, times]
 import filekinds, jobs
 
 export filekinds
@@ -28,6 +30,9 @@ const
   SniffBytes* = 4096 ## the bytes read from each file to tell its standard
   ListBatch* = 64    ## entries a scan posts at a time, at most
   MaxChanges* = 4096 ## changes of the entries kept for the file table, at most
+  ManyChanges* = 64
+    ## files gone or new in one look beyond which the entries are made again
+    ## in one pass (`replaceEntries`) rather than changed one by one
 
 type
   FileStatus* = enum
@@ -56,6 +61,10 @@ type
     modified*: Time
     changing*: bool ## it changed since the look before, or was not there then
     listed*: bool   ## one of the files the listing names (else an open file elsewhere)
+    unopened*: bool
+      ## it could not be opened to tell what it is (no permission): the watch
+      ## tries again at each look, as a change of its permissions changes
+      ## neither its size nor its time
 
   EntryChangeKind* = enum
     ecAppended ## `count` entries were added at the end, from `at`
@@ -188,6 +197,32 @@ proc removeAt*(list: var FileList; i: int) =
   ## Takes entry `i` out.
   list.entries.delete(i)
   list.note(ecRemoved, i)
+
+proc replaceEntries*(list: var FileList; removed: openArray[int]; added: sink seq[FileEntry]) =
+  ## Takes the entries at `removed` (indices, in any order) out and adds
+  ## `added` (files not listed yet) in their places, in one pass over the
+  ## entries: what a look that found many files gone or new does, where one
+  ## by one each would move every entry after it. Noted as a change the file
+  ## table does not follow, so it makes its rows again, once.
+  var gone = newSeq[bool](list.entries.len)
+  for i in removed:
+    if i in 0 ..< gone.len: gone[i] = true
+  added.sort(proc (a, b: FileEntry): int = entryCmp(a.name, a.path, b))
+  var next = newSeqOfCap[FileEntry](list.entries.len + added.len)
+  var a = 0
+  for i in 0 ..< list.entries.len:
+    if not gone[i]:
+      while a < added.len and entryCmp(added[a].name, added[a].path, list.entries[i]) < 0:
+        next.add move added[a]
+        inc a
+      next.add move list.entries[i]
+  while a < added.len:
+    next.add move added[a]
+    inc a
+  list.entries = move next
+  list.changes.setLen 0 # more than the table would follow one by one
+  inc list.entriesRev
+  inc list.revision
 
 proc changedAt*(list: var FileList; i: int) =
   ## Notes that entry `i` changed: its size, time or marks (`FileEntry`'s

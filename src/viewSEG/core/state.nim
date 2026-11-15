@@ -77,7 +77,7 @@
 ## by removing an entry; views have "back". None of these needs a general
 ## history of commands.
 
-import std/[math, monotimes, os, sequtils, sets, strutils, tables, times]
+import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 import diskio, edits, filejobs, filelist, inbox, jobs, layouts, log, panels, persist, pick,
@@ -214,6 +214,9 @@ type
     selection: Selection
     survey: Survey        ## the survey files loaded and the open files' positions
     loading: seq[Loading] ## the jobs that fill the survey
+    checking: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
+      ## the relations each record check reads in place, kept alive until it
+      ## ends (destroyed after `jobs`, whose runners stop first)
     loadNamed: seq[string]
       ## the files the listing was asked for: loaded when it finds them survey files
     saidPositions: HashSet[string]
@@ -221,50 +224,53 @@ type
     panels: seq[Panel]
     sessions: seq[Session]
     opening, closing: seq[Pending]
-    files: FileList       ## the file list
+    files: FileList ## the file list
     edits: Table[string, FileEdits]
       ## per file (its canonical path): the traces killed and reversed
-    noEdits: FileEdits    ## always empty: `editsOf` for a file with none
-    showFound: PanelId    ## show the first file the listing finds here; NoPanel for none
+    noEdits: FileEdits ## always empty: `editsOf` for a file with none
+    showFound: PanelId ## show the first file the listing finds here; NoPanel for none
     jump: tuple[path: string; trace, record: int]
       ## a trace to show once its file is open (`ckShowTrace`); "" for none
-    oldScans: seq[JobId]  ## scans replaced by a newer listing: they end quietly
+    oldScans: seq[JobId] ## scans replaced by a newer listing: they end quietly
     watch: FolderWatch
       ## looks at the listed folder and the open files; none until needed
-    watchEvery: Duration  ## the pause between its looks
-    reopens: seq[Reopen]  ## panels waiting for a changed file to stop changing
+    watchEvery: Duration ## the pause between its looks
+    reopens: seq[Reopen] ## panels waiting for a changed file to stop changing
     followed: HashSet[string]
       ## files "Follow the latest" opened (each is shown once)
+    followedUpTo: Time
+      ## the modification time of the file "Follow the latest" showed last:
+      ## an older one is never followed after it (it would step back in time)
     onDiskSaid: Table[string, string]
       ## per open file: what was said last of its changes
     editStamps: Table[string, tuple[size: int64; modified: Time]]
       ## per file with edits: its size and time when they were made
-    notices: seq[Notice]  ## the newest `MaxNotices`
+    notices: seq[Notice] ## the newest `MaxNotices`
     nextNotice: int
     mail: seq[Msg]
-    indexCache: string    ## the index cache folder; "" for none
+    indexCache: string ## the index cache folder; "" for none
     settings: Settings
     nextFile, nextPanel, nextBase: int
     tiles: seq[seq[Tile]] ## per panel, as `panels`: the newest last
     nextTile: uint64
-    scratch: Workspace    ## for the Float gain's level, on this thread
+    scratch: Workspace ## for the Float gain's level, on this thread
     inbox: Inbox
-    disk: DiskIo          ## writes the session log and the settings; none until needed
-    logFile: string       ## the session log; "" for none
-    logged: int           ## the log's serial the session log has reached
-    configDir: string     ## where the settings and layouts are saved; "" for nowhere
-    keepsSettings: bool   ## the settings are saved there; false: their file is left alone
-    backups: seq[string]  ## backups of the settings asked for this run: no name twice
-    defaults: Settings    ## what a reset goes back to
-    settingsRev: int      ## bumped on every change of `settings`
-    savedRev: int         ## the revision saved last
-    changedAt: MonoTime   ## when `settings` last changed
-    arrangement: string   ## how the windows are arranged now (the toolkit's text)
+    disk: DiskIo ## writes the session log and the settings; none until needed
+    logFile: string ## the session log; "" for none
+    logged: int ## the log's serial the session log has reached
+    configDir: string ## where the settings and layouts are saved; "" for nowhere
+    keepsSettings: bool ## the settings are saved there; false: their file is left alone
+    backups: seq[string] ## backups of the settings asked for this run: no name twice
+    defaults: Settings ## what a reset goes back to
+    settingsRev: int ## bumped on every change of `settings`
+    savedRev: int ## the revision saved last
+    changedAt: MonoTime ## when `settings` last changed
+    arrangement: string ## how the windows are arranged now (the toolkit's text)
     layoutRev, layoutSaved: int
-    layoutAt: MonoTime    ## when the arrangement last changed
+    layoutAt: MonoTime ## when the arrangement last changed
     layoutList: seq[SavedLayout]
-    loaded: Layout        ## the layout loaded last, for the frontend to show
-    loads: int            ## bumped each time a layout is loaded
+    loaded: Layout ## the layout loaded last, for the frontend to show
+    loads: int ## bumped each time a layout is loaded
     jobs: Jobs
       ## Fields are destroyed last to first: the runners stop before
       ## anything a running job uses is freed.
@@ -1006,8 +1012,9 @@ proc readPositions(state: var AppState; s: Session) =
 func relationLayer(state: AppState): int =
   ## The first loaded survey file with relations (X records): what the
   ## records of the open files are checked against; -1 for none.
-  for i, l in state.survey.layers:
-    if l.origin == loSurveyFile and l.relations.relationCount > 0: return i
+  for i in 0 ..< state.survey.layers.len: # indexed: a loop over the layers copies them
+    template l: untyped = state.survey.layers[i]
+    if l.origin == loSurveyFile and l.xRuns > 0: return i
   -1
 
 proc checkRecords(state: var AppState; s: Session) =
@@ -1021,9 +1028,13 @@ proc checkRecords(state: var AppState; s: Session) =
   template l: untyped = state.survey.layers[r]
   var gathers = newSeq[Slice[int]](s.gathers.len)
   for i, g in s.gathers: gathers[i] = g.traces
-  discard state.jobs.submit(JobSpec(title: "Check the records of " & s.name & " against " &
+  # The job reads the layer's relations where they are (a copy of a large X
+  # file's took a frame per file opened); they are kept until it ends, also
+  # when the layer is unloaded meanwhile.
+  let job = state.jobs.submit(JobSpec(title: "Check the records of " & s.name & " against " &
     l.name, lane: jlBackground, reads: @[s.path]), checkWork(s.filePtr, s.id, gathers,
-    l.relations, l.name, l.id, state.inbox.poster))
+    addr l.relations[], l.name, l.id, state.inbox.poster))
+  state.checking.add (job, l.relations)
 
 proc takeChecked(state: var AppState; m: sink Msg) =
   ## An open file's records checked against a relation file that is still
@@ -1191,6 +1202,7 @@ proc notify(state: var AppState; severity: Severity; text: string) =
 
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
+  state.checking.keepItIf(it.job != job.id) # the relations a check read
   for i in 0 ..< state.loading.len:
     if state.loading[i].job == job.id: # (one that posted its layer was let go of then)
       let x = state.loading[i]
@@ -1328,19 +1340,23 @@ proc followNewest(state: var AppState) =
   ## With "Follow the latest": shows in the main panel the newest file that
   ## appeared since the folder was listed and is steady, unless it was
   ## followed already (each is shown once, so a file the user stepped away
-  ## from is not forced back) or failed to open.
+  ## from is not forced back), failed to open, or is older than the file
+  ## followed last (new files that came with a newer one are not shown one
+  ## after another, back in time, as the looks go on).
   if not state.settings.files.followLatest: return
   template f: untyped = state.files
   var best = -1
   for i, e in f.entries:
     if e.kind.isSeismic and e.isNew and e.status == fsSteady and e.path != f.chosen and
         e.path notin state.followed and e.path notin f.failed and
+        e.modified > state.followedUpTo and
         (best < 0 or e.modified >= f.entries[best].modified):
       best = i
   let k = state.findPanel(MainPanel)
   if best >= 0 and k >= 0:
     let path = f.entries[best].path
     state.followed.incl path
+    state.followedUpTo = f.entries[best].modified
     state.showPath(k, path, follow = true)
 
 proc showAgain(state: var AppState; path: string) =
@@ -1414,16 +1430,21 @@ proc takeWatched(state: var AppState; m: sink Msg) =
         ". The list keeps what it had; the folder is looked at again until it can be read.")
     else:
       state.log.add(sevInfo, "files", "The folder " & f.title & " can be looked at again.")
+  # Files gone and new are taken out and put in after the look's changes:
+  # one by one when they are few, else in one pass (`replaceEntries`), as
+  # one by one each moves every entry after it.
+  var gone: seq[int]
+  var fresh: seq[FileEntry]
   for w in m.watched:
     if listing and w.listed:
       let i = f.find(w.path)
       if not w.exists:
-        if i >= 0: f.removeAt(i)
+        if i >= 0: gone.add i
         let failed = f.failed.find(w.path)
         if failed >= 0: f.failed.delete(failed)
       elif i < 0:
         if w.kind != fkUnknown:
-          discard f.insertEntry FileEntry(path: w.path, name: w.path.extractFilename,
+          fresh.add FileEntry(path: w.path, name: w.path.extractFilename,
             kind: w.kind, size: w.size, modified: w.modified,
             status: (if w.changing: fsWriting else: fsSteady), isNew: true)
       else:
@@ -1440,6 +1461,12 @@ proc takeWatched(state: var AppState; m: sink Msg) =
           e.status = fsSteady # (steady and the same: an incomplete file stays marked)
         f.changedAt(i)
     state.onDisk(w)
+  if gone.len + fresh.len > ManyChanges:
+    f.replaceEntries(gone, move fresh)
+  else:
+    gone.sort(Descending) # each index as it is before those after it go
+    for i in gone: f.removeAt(i)
+    for e in fresh.mitems: discard f.insertEntry(move e)
   state.followNewest()
 
 proc goToGather(state: var AppState; cmd: Command) =

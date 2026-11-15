@@ -11,8 +11,9 @@
 ## clipboard), **Clear** (empties the window; the session's log file keeps
 ## everything) and **Export...** (a text file). The toggles are settings.
 ## Clicking a line that names a trace shows that trace in the plot window,
-## selected (opening its file first when it is no longer open); a right
-## click copies the line.
+## selected (opening its file first when it is no longer open), unless the
+## click only brought the window forward (`focus`); a right click copies the
+## line, or shows its trace.
 ##
 ## `Messages` collects what the frontend's own parts (theme, fonts) say
 ## before it goes into the log.
@@ -21,7 +22,7 @@ import std/[os, strutils, times]
 import imguin/cimgui
 import ../../core/[geometry, log, settings]
 import ../../view/theme
-import icons, marks, style
+import focus, icons, marks, style
 
 type
   MessageLevel* = enum
@@ -37,11 +38,12 @@ type
 
   LogView* = object
     ## The window's own state between frames.
-    seen: int      ## the log's next serial when it was last drawn
-    cleared: int   ## the serial from which lines are shown (Clear)
-    rows: seq[int] ## the entries shown, as serials, oldest first
+    seen: int          ## the log's next serial when it was last drawn
+    cleared: int       ## the serial from which lines are shown (Clear)
+    rows: seq[int]     ## the entries shown, as serials, oldest first
     made: tuple[serial, cleared: int; hidden: set[Severity]]
       ## what `rows` was made for
+    focus: FocusClicks ## a click on a line acts only in a window that had the focus
 
   LogOutput* = object
     ## What the window asks for.
@@ -176,6 +178,7 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
     t.roles[rlError]]
   result = LogOutput(view: settings, showTrace: -1, showRecord: -1)
   if igBegin(title.cstring, nil, 0):
+    view.focus.watch()
     marks.markWindow("messages")
     view.strip(log, t, marks, result)
     view.update(log, result.view.hidden)
@@ -200,7 +203,8 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
           igSameLine(0, -1)
           let text = line(e)
           let jumps = e.loc.file.len > 0 and e.loc.trace >= 0
-          if igSelectable_Bool(text.cstring, false, 0, ImVec2_c(x: 0, y: 0)) and jumps:
+          if igSelectable_Bool(text.cstring, false, 0, ImVec2_c(x: 0, y: 0)) and jumps and
+              view.focus.acts:
             (result.showPath, result.showTrace, result.showRecord) = (e.loc.file, e.loc.trace,
               e.loc.record)
           if r == view.rows.high: marks.mark("messages.last")
@@ -220,4 +224,5 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
         igSetScrollHereY(1)
       view.seen = log.nextSerial
     igEndChild()
+    view.focus.settle()
   igEnd()

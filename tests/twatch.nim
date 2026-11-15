@@ -9,9 +9,12 @@
 ## reader itself reads nothing of a file shorter than it was opened, before
 ## the watch looks); a file rewritten under the same name is shown again as
 ## it is now, with its edits set aside (Ctrl+Z brings them back); a named
-## pipe in the folder and a folder that cannot be read hold nothing; a look
-## at a folder of 5 000 files costs a few milliseconds, on the watch's own
-## thread; the files listed are never changed.
+## pipe in the folder and a folder that cannot be read hold nothing, and a
+## file that cannot be read is listed once it can; with several new files
+## waiting, Follow shows the newest and stays on it; a look at a folder of
+## 5 000 files costs a few milliseconds, on the watch's own thread, and 4 000
+## files gone or new at once cost a few frames, not one each; the files
+## listed are never changed.
 ##
 ## Seen to fail: with the new file's entry not marked new (`isNew` false in
 ## `takeWatched`), `newFilesAreListed` found it unmarked; with the follow
@@ -26,10 +29,12 @@
 ## the original finding).
 ##
 ## Runs alone: it bounds the time the quit takes (3 s), a look at 5 000 files
-##   (250 ms) and the frame that takes in a new file (10 ms).
+##   (250 ms), the frame that takes in a new file (10 ms) and those that take
+##   in 4 000 (100 ms).
 
-import std/[monotimes, os, strutils, times]
+import std/[algorithm, monotimes, os, strutils, times]
 import viewSEG/core/state
+import viewSEG/view/filetable
 import utils/[fixtures, waiting]
 when not defined(windows):
   from std/posix import nil
@@ -109,6 +114,34 @@ block newFilesAreListed:
     doAssert st.settle(st.shownPath == dir / "shot4.sgy" and st.laidOut)
     doAssert st.fileList.entries.len == 4
     doAssert st.log.count(sevError) == 0 and st.log.count(sevWarning) == 0
+    st.shutdown()
+
+block followStaysOnTheNewest:
+  # Three new files wait, steady, when "Follow the latest" is turned on: the
+  # newest is shown, and stays shown as the looks go on; the older ones are
+  # not shown one after another, back in time. A newer file after it is.
+  # Seen to fail: with every new file not followed yet a candidate (as it
+  # was), "followed back to shotA.sgd" (then shotC).
+  withFixtures fx:
+    let dir = fx.listing("line 9")
+    var st = start(dir, fx)
+    let now = getTime()
+    for (name, ago) in [("shotA.sgd", 20), ("shotB.sgd", 5), ("shotC.sgd", 40)]:
+      copyFile(fx.twoSetSegd(), dir / name)
+      setLastModificationTime(dir / name, now - initDuration(seconds = ago))
+    doAssert st.settle(st.steady(dir / "shotA.sgd") and st.steady(dir / "shotB.sgd") and
+      st.steady(dir / "shotC.sgd"))
+    doAssert st.shownPath == dir / "shot1.sgy"
+    st.follow(true)
+    doAssert st.settle(st.shownPath == dir / "shotB.sgd" and st.laidOut)
+    let quiet = getMonoTime() + Look * 12
+    while getMonoTime() < quiet:
+      discard st.drainInbox()
+      doAssert st.fileList.chosen == dir / "shotB.sgd", "followed back to " &
+        st.fileList.chosen.extractFilename
+      sleep 5
+    copyFile(fx.threeComponentSegd(), dir / "shotD.sgd")
+    doAssert st.settle(st.shownPath == dir / "shotD.sgd" and st.laidOut)
     st.shutdown()
 
 block halfWrittenIsNotShownEarly:
@@ -271,6 +304,21 @@ when not defined(windows):
         doAssert st.settle(st.log.has("can be looked at again"))
         copyFile(fx.surveySegy(), dir / "shot4.sgy")
         doAssert st.settle(st.listed(dir / "shot4.sgy"))
+        # A file that cannot be read, then can (its permissions changed, not its
+        # size or time), is listed once it can. Seen to fail with the watch
+        # sniffing a file only when its size or time changes (as it did):
+        # "made readable, not listed".
+        copyFile(fx.twoSetSegd(), dir / "locked.sgd")
+        setFilePermissions(dir / "locked.sgd", {})
+        doAssert st.settle(st.listed(dir / "shot4.sgy") and
+          st.watchLook > initDuration()) # looked at since
+        let quiet = getMonoTime() + Look * 6
+        while getMonoTime() < quiet:
+          discard st.drainInbox()
+          sleep 5
+        doAssert not st.listed(dir / "locked.sgd"), "a file that cannot be read was listed"
+        setFilePermissions(dir / "locked.sgd", {fpUserRead, fpUserWrite})
+        doAssert st.settle(st.listed(dir / "locked.sgd")), "made readable, not listed"
       let t0 = getMonoTime()
       st.shutdown()
       doAssert getMonoTime() - t0 < initDuration(seconds = 3), "the quit waited"
@@ -303,4 +351,50 @@ block fiveThousandFiles:
       longest = max(longest, getMonoTime() - t0)
       st.listed(dir / "shot5000.sgd")))
     doAssert longest < initDuration(milliseconds = 10), $longest
+    st.shutdown()
+
+block manyAtOnce:
+  # A folder of 20 000 seismic files (links to one), its table kept as the
+  # Files window keeps it, sorted by size: 4 000 removed at once, then 4 000
+  # new ones, are taken in by frames of tens of milliseconds at most (the
+  # table's rows made again once), not one file's change at a time. Seen to
+  # fail with each file gone or new taken out or put in one by one (as it
+  # was): "4 000 gone: the longest frame took 576 ms" (debug; 35 ms now).
+  withFixtures fx:
+    let dir = fx.dir / "many"
+    createDir(dir)
+    let one = fx.twoSetSegd()
+    for i in 0 ..< 20_000: createHardlink(one, dir / ("shot" & align($i, 5, '0') & ".sgd"))
+    var st = initAppState(watchEvery = Look)
+    st.apply Command(kind: ckBrowse, paths: @[dir])
+    doAssert waitUntil((discard st.drainInbox(); not st.fileList.scanning and
+      st.fileList.entries.len == 20_000), initDuration(seconds = 60))
+    doAssert st.settle(st.watchLook > Duration()) # the first look done
+    var table: FileTable
+    table.update(st.fileList, "", FileOrder(column: fcSize, descending: true))
+    proc frames(st: var AppState; table: var FileTable; done: proc (st: AppState): bool): Duration =
+      ## The longest frame (the inbox and the table) until `done`.
+      doAssert waitUntil((
+        let t0 = getMonoTime()
+        discard st.drainInbox()
+        table.update(st.fileList, "", FileOrder(column: fcSize, descending: true))
+        result = max(result, getMonoTime() - t0)
+        done(st)), initDuration(seconds = 60))
+    for i in 0 ..< 4_000: removeFile(dir / ("shot" & align($(i * 5), 5, '0') & ".sgd"))
+    let removed = st.frames(table, proc (st: AppState): bool = st.fileList.entries.len == 16_000)
+    doAssert removed < initDuration(milliseconds = 100), "4 000 gone: the longest frame took " &
+      $removed.inMilliseconds & " ms"
+    doAssert table.rows.len == 16_000 and st.fileList.find(dir / "shot00005.sgd") < 0 and
+      st.fileList.find(dir / "shot00001.sgd") >= 0
+    for i in 0 ..< 4_000: createHardlink(one, dir / ("new" & align($i, 5, '0') & ".sgd"))
+    let added = st.frames(table, proc (st: AppState): bool = st.fileList.entries.len == 20_000)
+    doAssert added < initDuration(milliseconds = 100), "4 000 new: the longest frame took " &
+      $added.inMilliseconds & " ms"
+    var names: seq[string]
+    for e in st.fileList.entries: names.add e.name
+    doAssert names == names.sorted(proc (a, b: string): int = naturalCmp(a, b)), "out of order"
+    doAssert st.fileList.entries[0].name == "new00000.sgd" and st.fileList.entries[0].isNew
+    doAssert table.rows.len == 20_000
+    echo "  20 000 files: 4 000 gone in frames of at most ", removed.inMilliseconds,
+      " ms, 4 000 new in ", added.inMilliseconds, " ms"
     st.shutdown()

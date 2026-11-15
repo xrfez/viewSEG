@@ -128,6 +128,9 @@ type
     hsEmpty = "empty" ## no bytes, named as an S file
     hsHeadersOnly = "headers-only" ## SPS header records and nothing else, named as an R file
     hsNoLineEnds = "no-line-ends" ## an R file's records as 80-byte cards without line ends
+    hsBinaryTail = "binary-tail"
+      ## an R file of `JunkTailReceivers` records, then 24 MiB of control bytes
+      ## (1 to 8) and no line end
 
 proc newFixtures*(): Fixtures =
   ## A new, empty temporary folder.
@@ -511,7 +514,8 @@ const JunkTailReceivers* = 5 * Channels
 proc hostileSurvey*(fx: Fixtures; h: HostileSurvey): string =
   ## A survey file damaged as `h` says (written on first use).
   const names: array[HostileSurvey, string] = ["truncated.rps", "huge-line.rps",
-    "junk-tail.rps", "binary.rps", "empty.sps", "headers-only.rps", "no-line-ends.rps"]
+    "junk-tail.rps", "binary.rps", "empty.sps", "headers-only.rps", "no-line-ends.rps",
+    "binary-tail.rps"]
   result = fx.dir / "hostile" / names[h]
   if fileExists(result): return
   createDir(fx.dir / "hostile")
@@ -550,6 +554,16 @@ proc hostileSurvey*(fx: Fixtures; h: HostileSurvey): string =
       80) & "\n"
   of hsNoLineEnds:
     for c in cards: text.add alignLeft(c, 80)
+  of hsBinaryTail:
+    var more = SpsFile(headers: @[header])
+    for line in 0 ..< JunkTailReceivers div Channels:
+      for channel in 1 .. Channels:
+        more.points.add spsPoint(pkReceiver, RcvLine + float64(line), FirstRcvPoint +
+          float64(channel - 1), rcvX(channel), OriginY + 50 * float64(line))
+    text = spsText(more).text
+    let start = text.len
+    text.setLen start + 24 * 1024 * 1024
+    for i in start ..< text.len: text[i] = char(1 + (i mod 8))
   writeFile(result, text)
 
 # ---------------------------------------------------------------- SEG-D --

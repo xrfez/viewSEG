@@ -153,17 +153,21 @@ proc closeWork*(): JobWork =
   result = proc (ctx: JobContext) {.gcsafe.} =
     discard
 
-proc sniff*(path: string): FileKind =
+proc sniff*(path: string; opened: var bool): FileKind =
   ## What the file at `path` is, from its first `SniffBytes`
   ## (`filekinds.fileKindOf`: SEG-Y, SEG-D, SEG-2, SPS or P1); `fkUnknown`
-  ## when it is none, or cannot be read. Reads the file and changes nothing
-  ## in it. What is not a regular file (a named pipe, a socket, a device) is
-  ## not opened at all: opening a named pipe waits until something writes to
-  ## it, which may be never.
+  ## when it is none, or cannot be read, and then `opened` says whether it
+  ## could be opened at all (false: no permission, say, so it may be known
+  ## later). Reads the file and changes nothing in it. What is not a regular
+  ## file (a named pipe, a socket, a device) is not opened at all: opening a
+  ## named pipe waits until something writes to it, which may be never.
+  opened = true
   if not fileExists(path): return fkUnknown
   var head = newSeq[byte](SniffBytes)
   var f: File
-  if not open(f, path, fmRead): return fkUnknown
+  if not open(f, path, fmRead):
+    opened = false
+    return fkUnknown
   try:
     head.setLen readBuffer(f, addr head[0], SniffBytes)
   except IOError:
@@ -171,6 +175,12 @@ proc sniff*(path: string): FileKind =
   finally:
     close(f)
   fileKindOf(head, path.extractFilename, whole = head.len < SniffBytes)
+
+proc sniff*(path: string): FileKind =
+  ## What the file at `path` is (`sniff` above), whether it could be opened
+  ## or not.
+  var opened: bool
+  sniff(path, opened)
 
 proc listedNames(paths: openArray[string]): seq[string] =
   ## The files `paths` name: each folder's files (not its subfolders, nor
@@ -230,10 +240,12 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
         elif not fileExists(path): # a named pipe, a socket, a device: never opened
           inc batch.others
         else:
-          let kind = sniff(path)
+          var opened: bool
+          let kind = sniff(path, opened)
           looked.add WatchedFile(path: path, exists: true, kind: kind, size: info.size,
-            modified: info.lastWriteTime, listed: true)
-          if kind == fkUnknown: inc batch.others
+            modified: info.lastWriteTime, listed: true, unopened: not opened)
+          if not opened: inc batch.unreadable
+          elif kind == fkUnknown: inc batch.others
           else:
             batch.listed.add FileEntry(path: path, name: path.extractFilename, kind: kind,
               size: info.size, modified: info.lastWriteTime)

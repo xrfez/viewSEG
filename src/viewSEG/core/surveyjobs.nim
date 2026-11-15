@@ -6,9 +6,11 @@
 ##
 ## **SPS files** are read in chunks of `SurveyChunk` bytes, each cut after
 ## its last line end and read with parseSEG's `parseSps` (the revision and
-## the layout the first chunk shows are kept for the rest), so a file of
-## any size is read in bounded memory, with progress and a cancel between
-## chunks. parseSEG cuts a "line" longer than 64 KiB into records and says
+## the layout the first chunk shows are kept for the rest), so the text in
+## memory is one chunk whatever the file's size, with progress and a cancel
+## between chunks; the points and relations kept grow with the file's
+## records (about 340 bytes a point: an R file of 95 MB and 1.2 million
+## stations took about 410 MB). parseSEG cuts a "line" longer than 64 KiB into records and says
 ## so; a chunk with no line end at all is cut where it ends. A file whose
 ## chunks stop being SPS (`JunkChunks` in a row with binary bytes in them, or
 ## mostly lines that are no SPS record: a file that turns into other data)
@@ -91,11 +93,12 @@ proc checkedOpen(path: string; f: var File): FileInfo =
     raise newException(IOError, "it is not a regular file (a named pipe, a device)")
   if not open(f, path, fmRead): raise newException(IOError, "it cannot be read")
 
-proc blankBinary(text: var string; card: int): int =
+proc blankBinary(text: var string; card: int; bytes: var int): int =
   ## Blanks every line of `text` (every `card` bytes, for cards without line
   ## ends; 0 for lines) that holds a byte no text holds (a NUL, a control
   ## character) or is more than a quarter bytes above 127: binary data is
-  ## not read as records. The number of lines blanked.
+  ## not read as records. The number of lines blanked; `bytes`, of bytes.
+  bytes = 0
   var lo = 0
   while lo < text.len:
     var hi = lo
@@ -109,6 +112,7 @@ proc blankBinary(text: var string; card: int): int =
     if control or high * 4 > hi - lo:
       for i in lo ..< hi: text[i] = ' '
       inc result
+      bytes += hi - lo
     lo = if card > 0: hi else: hi + 1
 
 func cutAt(text: string; layout: TextLayout): int =
@@ -143,7 +147,8 @@ proc readSpsLayer(path: string; kind: FileKind; ctx: JobContext; p: var Problems
       carry = text[cut .. ^1]
       text.setLen cut
       if text.len > 0:
-        let blanked = text.blankBinary(if layout == tlLines: 0 else: Card)
+        var blankedBytes = 0
+        let blanked = text.blankBinary(if layout == tlLines: 0 else: Card, blankedBytes)
         binary += blanked
         let part = parseSps(text, path, opts)
         if first:
@@ -155,11 +160,14 @@ proc readSpsLayer(path: string; kind: FileKind; ctx: JobContext; p: var Problems
         b.addRelations(part)
         p.take(part.log, lineBase)
         lineBase += part.order.len
-        # Mostly binary lines, or lines that are no SPS record: not SPS.
+        # Mostly binary lines (or bytes: a chunk of binary data with no line
+        # end is one line, but many records to parseSEG), or lines that are no
+        # SPS record: not SPS.
         var unknown = 0
         for o in part.others:
           if not o.isEmptyOrWhitespace: inc unknown
-        if (blanked + unknown) * 2 > part.order.len: inc junk else: junk = 0
+        if (blanked + unknown) * 2 > part.order.len or blankedBytes * 2 > text.len: inc junk
+        else: junk = 0
         if junk >= JunkChunks:
           stopped = read - int64(carry.len)
           break
@@ -255,14 +263,15 @@ proc openFileWork*(path: string; to: Poster; cache = "";
     if sniff(path).isSurvey: load(ctx) else: open(ctx)
 
 proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[int]];
-    relations: sink SurveyGeometry; against: string; layer: SurveyLayerId;
+    relations: ptr SurveyGeometry; against: string; layer: SurveyLayerId;
     to: Poster): JobWork =
   ## The work of a job that checks each of `gathers` of open file `session`
   ## (`file`) against the X records of a loaded relation file (`relations`,
   ## of layer `layer`, named `against`): processSEG's `recordCompleteness`,
   ## from the keys alone, posted as the stations each record's X record
   ## plans and those with no trace in it (`mkChecked`). Submitted with the
-  ## file in `reads`.
+  ## file in `reads`; `relations` is read where it is, never copied, and the
+  ## caller keeps it alive and unchanged until the job has finished.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "checking the records"
     var planned, missing = newSeq[int](gathers.len)
@@ -273,7 +282,7 @@ proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[in
         (planned[i], missing[i]) = (-1, -1)
         if g.len > 0:
           try:
-            let c = relations.recordCompleteness(file[].rowsOf(g))
+            let c = relations[].recordCompleteness(file[].rowsOf(g))
             if c.xpsRecord >= 0: (planned[i], missing[i]) = (c.expected, c.missing)
           except ValueError:
             discard # no keys: nothing to check against

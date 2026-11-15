@@ -76,7 +76,8 @@ type
     kind: FileKind
     changing: bool
     listed: bool
-    turn: int ## the look that saw it last
+    unopened: bool ## it could not be opened to tell what it is: tried again each look
+    turn: int      ## the look that saw it last
 
   Watcher = object
     ## The thread's own state.
@@ -127,6 +128,7 @@ proc see(w: var Watcher; path: string; listed: bool; news: var seq[WatchedFile])
   if info.kind notin {pcFile, pcLinkToFile} or info.isSpecial: return
   let announced = w.announce.len > 0 and path in w.announce
   if announced: w.announce.excl path
+  var opened = true
   if path in w.seen:
     template s: untyped = w.seen[path]
     if s.turn == w.turn: return # a listed file that is also open
@@ -136,17 +138,24 @@ proc see(w: var Watcher; path: string; listed: bool; news: var seq[WatchedFile])
       let wasKnown = s.kind != fkUnknown
       s.size = info.size
       s.modified = info.lastWriteTime
-      if s.kind == fkUnknown: s.kind = sniff(path) # long enough to tell now?
+      if s.kind == fkUnknown: s.kind = sniff(path, opened) # long enough to tell now?
+      s.unopened = not opened
       s.changing = true
       if s.kind != fkUnknown or wasKnown or announced: news.add s.report(path)
+    elif s.unopened:
+      # Not readable when last looked at; its permissions may have changed.
+      s.kind = sniff(path, opened)
+      s.unopened = not opened
+      if s.kind != fkUnknown or announced: news.add s.report(path)
     elif s.changing:
       s.changing = false
       if s.kind != fkUnknown or announced: news.add s.report(path)
     elif announced:
       news.add s.report(path)
   else:
-    let s = Seen(size: info.size, modified: info.lastWriteTime, kind: sniff(path),
-      changing: true, listed: listed, turn: w.turn)
+    let kind = sniff(path, opened)
+    let s = Seen(size: info.size, modified: info.lastWriteTime, kind: kind,
+      changing: true, listed: listed, unopened: not opened, turn: w.turn)
     w.seen[path] = s
     if s.kind != fkUnknown or announced: news.add s.report(path)
 
@@ -198,7 +207,8 @@ proc take(w: var Watcher) =
       w.seen.clear()
       w.problem = ""
       for f in w.p.looked:
-        w.seen[f.path] = Seen(size: f.size, modified: f.modified, kind: f.kind, listed: true)
+        w.seen[f.path] = Seen(size: f.size, modified: f.modified, kind: f.kind, listed: true,
+          unopened: f.unopened)
       w.p.looked.setLen 0
     if w.p.openFresh:
       w.p.openFresh = false

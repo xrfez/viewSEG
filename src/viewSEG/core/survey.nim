@@ -112,10 +112,14 @@ type
     auxiliary*: int       ## traces: of those, not seismic (no position taken)
     points*: array[PointRole, PointSet]
     counts*: array[PointRole, Positions]
-    relations*: SurveyGeometry
+    relations*: ref SurveyGeometry
       ## survey files: the SPS relation records (X, O) as parseSEG's join reads
-      ## them; empty for none
+      ## them, empty for none; nil for a traces layer. On the heap, and never
+      ## changed once the layer is made, so that a job can read them where
+      ## they are (`checkWork`) while the UI thread keeps them alive: a copy
+      ## of a large X file's costs a frame
     relationRuns*: int ## X and O records kept
+    xRuns*: int ## of those, X records (the source domain's): what records are checked against
     relationRecords*: int ## field records they describe
     gridUnit*: GridUnit ## survey files: the unit the SPS header gives
     bounds*: Bounds ## of every point
@@ -386,9 +390,10 @@ proc initSurveyFileBuilder*(path: string; kind: FileKind; size: int64;
     modified: Time): SurveyFileBuilder =
   ## A builder for the survey file at `path`, of `kind`, read at `size`
   ## bytes and `modified`.
+  let relations = new SurveyGeometry
+  relations[] = initSurveyGeometry()
   SurveyFileBuilder(layer: SurveyLayer(origin: loSurveyFile, kind: kind, path: path,
-    name: path.extractFilename, size: size, modified: modified,
-    relations: initSurveyGeometry()))
+    name: path.extractFilename, size: size, modified: modified, relations: relations))
 
 proc addPoint*(b: var SurveyFileBuilder; r: PointRole; line, point: float64; index: int16;
     x, y, z: float64) =
@@ -426,12 +431,12 @@ proc addRelations*(b: var SurveyFileBuilder; f: SpsFile) =
   if f.relations.len > 0:
     var part = SpsFile(name: f.name, revision: f.revision, headers: f.headers,
       relations: f.relations)
-    b.layer.relations.addSps(part, relationDomainOf(f.name))
+    b.layer.relations[].addSps(part, relationDomainOf(f.name))
   if not b.layer.gridUnit.known: b.layer.gridUnit = f.gridUnit
 
 func relationsLog*(b: SurveyFileBuilder): lent DiagLog {.inline.} =
   ## What parseSEG's join said of the relations taken so far.
-  b.layer.relations.log
+  b.layer.relations[].log
 
 proc finish*(b: var SurveyFileBuilder): SurveyLayer =
   ## The layer: its points indexed and found by station.
@@ -446,11 +451,11 @@ proc finish*(b: var SurveyFileBuilder): SurveyLayer =
     points.ids = fitted(hashes)
     result.bounds.incl points.index.bounds
     result.points[r] = move points
-  result.relationRuns = result.relations.relationCount(rdSource) +
-    result.relations.relationCount(rdReceiver)
+  result.xRuns = result.relations[].relationCount(rdSource) # (a count walks them all)
+  result.relationRuns = result.xRuns + result.relations[].relationCount(rdReceiver)
   var records = 0
   for d in RelationDomain:
-    for _ in result.relations.records(d): inc records
+    for _ in result.relations[].records(d): inc records
   result.relationRecords = records
 
 # ------------------------------------------------------- finding points --
@@ -571,7 +576,7 @@ func tracePoints*(s: Survey; trace: int; keys: TraceKeys): seq[PointRef] =
   for l in s.layers:
     if l.relationRuns > 0 and (k.srcLine.isNaN or k.srcPoint.isNaN or k.rcvLine.isNaN or
         k.rcvPoint.isNaN):
-      discard joinStations(k, l.relations)
+      discard joinStations(k, l.relations[])
   let ends = [Station(line: k.srcLine, point: k.srcPoint, index: k.srcIndex),
     Station(line: k.rcvLine, point: k.rcvPoint, index: k.rcvIndex)]
   for l in s.layers:
@@ -611,7 +616,7 @@ proc joinGeometry*(s: Survey; ids: openArray[SurveyLayerId]): SurveyGeometry =
     let i = s.find(id)
     if i >= 0 and s.layers[i].origin == loSurveyFile and s.layers[i].relationRuns > 0 and
         not related:
-      result = s.layers[i].relations
+      result = s.layers[i].relations[]
       related = true
   for id in ids:
     let i = s.find(id)

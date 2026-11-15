@@ -26,9 +26,10 @@
 ## cards blanked as one line (the whole chunk), `fixedCardsWithABinaryCard`
 ## found no receiver.
 ##
-## Runs alone: it measures the time the Morgantown survey takes to load.
+## Runs alone: it measures the time the Morgantown survey takes to load, and
+## bounds the frame that takes in an opened file (20 ms).
 
-import std/[os, strutils, times]
+import std/[monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/[filejobs, state, surveyjobs]
 import viewSEG/view/filetable
@@ -181,6 +182,48 @@ block loadsWithProgress:
     doAssert [snapshot(sps.s), snapshot(sps.r), snapshot(sps.x), snapshot(p1)] == before,
       "loading changed a survey file"
 
+block aCheckHoldsNoFrame:
+  # With a relation file of 200 000 X records loaded, a file opened (as each
+  # step through a folder opens one) is checked against it on a job that
+  # reads the relations where they are: the frame that takes the file in
+  # holds no copy of them. Seen to fail: with `checkWork` given the layer's
+  # relations by value (a copy on this thread), "the open's frame took 470
+  # ms" (debug). And the layer can be unloaded while a check reads it.
+  withFixtures fx:
+    let xp = fx.dir / "big.x"
+    let header = SpsHeader(code: "00", description: "SPS format version num.",
+      data: "SPS 2.1;")
+    var x = SpsFile(headers: @[header])
+    for i in 0 ..< 200_000:
+      x.relations.add SpsRelation(fieldRecord: 1 + i, recordIncrement: 1, instrumentCode: '1',
+        srcLine: float(100 + i div 1000), srcPoint: float(1000 + i mod 1000), srcIndex: 1,
+        fromChannel: 1, toChannel: 240, channelIncrement: 1, rcvLine: 200, fromReceiver: 1000,
+        toReceiver: 1239, rcvIndex: 1)
+    doAssert writeSps(x, xp).len == 0
+    var st = initAppState()
+    st.load(xp)
+    doAssert st.settle(st.survey.layers.len == 1 and st.jobs.active.len == 0), st.log.lastLines
+    doAssert st.fileLayer(xp).relationRuns == 200_000
+    var longest = Duration()
+    for name in ["one.sgy", "two.sgy"]:
+      copyFile(fx.surveySegy(), fx.dir / name)
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.dir / name)
+      doAssert waitUntil((
+        let t0 = getMonoTime()
+        discard st.drainInbox()
+        longest = max(longest, getMonoTime() - t0)
+        st.sessions.len == 1 and st.sessions[0].name == name and st.jobs.active.len == 0))
+    doAssert longest < initDuration(milliseconds = 20), "the open's frame took " &
+      $longest.inMilliseconds & " ms"
+    # unloaded while a check of the next file is under way: it ends, and says nothing
+    copyFile(fx.surveySegy(), fx.dir / "three.sgy")
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.dir / "three.sgy")
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].name == "three.sgy")
+    st.apply Command(kind: ckUnloadSurvey, layer: st.fileLayer(xp).id)
+    doAssert st.settle(st.jobs.active.len == 0)
+    for e in st.log: doAssert e.severity != sevError, st.log.lastLines
+    st.shutdown()
+
 block openAndDropSurveyFiles:
   withFixtures fx:
     let sps = fx.surveySps()
@@ -277,6 +320,12 @@ block hostileFiles:
     doAssert st.log.has("junk-tail.rps turns into other data (16 MiB with no SPS records), " &
       "so it was read up to byte 1677", sevWarning), st.log.lastLines # (16 MiB, to its last line)
     doAssert st.log.has("lines of junk-tail.rps hold binary data", sevWarning)
+    # Binary bytes and no line end: read no further than the junk tail, either.
+    # Seen to fail with the junk counted in lines (each chunk one line, but 64
+    # records to parseSEG): read to its end, no word of where the read stopped.
+    doAssert layerOf(hsBinaryTail).points[prReceiver].len == JunkTailReceivers
+    doAssert st.log.said("binary-tail.rps turns into other data (16 MiB with no SPS " &
+      "records), so it was read up to byte"), st.log.lastLines
     doAssert layerOf(hsNoLineEnds).points[prReceiver].len == Channels
     doAssert layerOf(hsHeadersOnly).points[prReceiver].len == 0
     for h in [hsBinary, hsEmpty]:
