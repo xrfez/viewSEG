@@ -1083,8 +1083,8 @@ proc keepForStragglers(state: var AppState) =
   for c in state.qcHeld: GC_ref(c.relations)
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
 
-proc shutdown*(state: var AppState; wait = QuitWait;
-    diskLimit = DiskQuitLimit): bool {.discardable.} =
+proc shutdown*(state: var AppState; wait = QuitWait; diskLimit = DiskQuitLimit;
+    tick: proc () {.closure.} = nil): bool {.discardable.} =
   ## Asks every thread to end at once (the panels' readers, the watch, the
   ## jobs: every job is cancelled), hands what is left to save to the disk
   ## thread (the settings and the layout before what waits there, then the
@@ -1095,8 +1095,9 @@ proc shutdown*(state: var AppState; wait = QuitWait;
   ## true when all ended. A thread held by a drive that does not answer is
   ## left to end on its own, with what it may read (`keepForStragglers`), so
   ## the quit never waits for a drive; what the disk thread did not write is
-  ## said (the log, and standard error: the window is gone). Destroying the
-  ## state does this too.
+  ## said (the log, and standard error: the window is gone). `tick`, when
+  ## given, is called about every 16 ms while the disk thread is waited for
+  ## (the frontend draws). Destroying the state does this too.
   assertUiThread()
   state.spectrumReader.askStop()
   state.inspector.askStop()
@@ -1130,7 +1131,7 @@ proc shutdown*(state: var AppState; wait = QuitWait;
   # not be lost to a slow disk or a loaded machine), but not on a write a
   # drive does not answer.
   let began = deadline - wait
-  if not state.disk.stop(began + diskLimit, stuckAfter = wait):
+  if not state.disk.stop(began + diskLimit, stuckAfter = wait, tick = tick):
     result = false
     let held = state.disk.stuckOn
     let why = if getMonoTime() >= began + diskLimit:

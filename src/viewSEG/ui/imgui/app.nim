@@ -1334,6 +1334,47 @@ proc notePlacement(ui: var Ui) =
     s.window = p
     ui.core.apply Command(kind: ckSettings, settings: s)
 
+const SavingShownAfter = initDuration(milliseconds = 150)
+  ## a quit that waits this long for the disk says so in the window
+
+proc savingFrame(ui: var Ui; window: ptr SDL_Window; opts: RunOptions; frame: int) =
+  ## A frame of the quit while the settings are still being written (a slow
+  ## disk): the window's backdrop and what it waits for, nothing to act on;
+  ## the events are taken, so the desktop does not take the window for one
+  ## that hangs. The test hook sees it as frame `frame`.
+  var event: SDL_Event
+  while SDL_PollEvent(addr event):
+    discard ImGui_ImplSDL3_ProcessEvent(addr event)
+  ImGui_Impl_OpenGL3_NewFrame()
+  ImGui_ImplSDL3_NewFrame()
+  igNewFrame()
+  let vp = igGetMainViewport()
+  igSetNextWindowPos(ImVec2_c(x: vp.Pos.x + vp.Size.x / 2, y: vp.Pos.y + vp.Size.y / 2),
+    ImGui_Cond_Always.cint, ImVec2_c(x: 0.5, y: 0.5))
+  const flags = ImGui_WindowFlags_NoDecoration.cint or ImGui_WindowFlags_NoMove.cint or
+    ImGui_WindowFlags_NoSavedSettings.cint or ImGui_WindowFlags_NoInputs.cint or
+    ImGui_WindowFlags_AlwaysAutoResize.cint or ImGui_WindowFlags_NoDocking.cint
+  if igBegin("##saving", nil, flags):
+    igTextUnformatted("Saving the settings and the window layout...", nil)
+    ui.marks.markWindow("saving")
+  igEnd()
+  igRender()
+  var w, h: cint
+  discard SDL_GetWindowSizeInPixels(window, addr w, addr h)
+  glViewport(0, 0, w, h)
+  let bg = ui.theme.roles[rlBackdrop]
+  glClearColor(bg.r.float32 / 255, bg.g.float32 / 255, bg.b.float32 / 255, 1)
+  glClear(GL_COLOR_BUFFER_BIT)
+  ImGui_Impl_OpenGL3_RenderDrawData(igGetDrawData())
+  if opts.onFrame != nil:
+    opts.onFrame(FrameInfo(index: frame, width: w.int, height: h.int, theme: ui.theme,
+      scale: ui.scale, ui: addr ui))
+  let (backupWindow, backupContext) = (SDL_GL_GetCurrentWindow(), SDL_GL_GetCurrentContext())
+  igUpdatePlatformWindows()
+  igRenderPlatformWindowsDefault(nil, nil)
+  discard SDL_GL_MakeCurrent(backupWindow, backupContext)
+  discard SDL_GL_SwapWindow(window)
+
 proc noteLayout(ui: var Ui) =
   ## Tells `core` how the windows are arranged when Dear ImGui says it
   ## changed (it waits `IniSavingRate` after a change).
@@ -1622,5 +1663,13 @@ proc run*(opts = RunOptions()): int =
   ui.trace.stopGpu()
   ui.notePlacement()
   ui.core.apply Command(kind: ckLayout, arrangement: $igSaveIniSettingsToMemory(nil))
-  ui.core.shutdown() # saves the settings and the layout
+  # Saves the settings and the layout. A disk slow to write them is waited
+  # for (up to `DiskQuitLimit`); past a moment the window says so, and goes
+  # on drawing (tried against hiding the window at once: then a slow save,
+  # or one given up, was not seen at all).
+  let quitAt = getMonoTime()
+  ui.core.shutdown(tick = proc () =
+    if getMonoTime() - quitAt >= SavingShownAfter:
+      inc frame
+      ui.savingFrame(window, opts, frame))
   0

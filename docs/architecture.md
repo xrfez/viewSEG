@@ -291,7 +291,11 @@ for, let the user go on, and quit.
   held so, a helper thread of its own writes the settings and the layout, so a drive
   that held the thread since before the quit (a session log on a share) does not keep
   them from their folder. What was not written is said (the log, and standard error, as
-  the window is gone). The thread's memory follows the same
+  the window is gone). Meanwhile the window goes on drawing: past 150 ms of waiting it
+  shows only "Saving the settings and the window layout..." and takes its events
+  (`shutdown`'s `tick`), so a slow save is seen and the desktop does not take the window
+  for one that hangs (hiding the window at once was tried: a slow or abandoned save was
+  then not seen at all). The thread's memory follows the same
   rule as the others' (freed only once it has ended), so the model is unchanged. A reader left earlier (Retry, Stop, another file) is none
   of the panels' readers: the holds still taken (`Jobs.holdsLeft`) count it as left too.
 - **What the user sees.** `AppState.waiting` (a panel: an open or a read not answering,

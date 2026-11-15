@@ -525,18 +525,21 @@ proc askStop*(x: DiskIo) =
       signal(x.p.changed)
 
 proc stop*(x: DiskIo; deadline = getMonoTime() + DiskStopWait;
-    stuckAfter = DiskStopWait): bool {.discardable.} =
+    stuckAfter = DiskStopWait; tick: proc () {.closure.} = nil): bool {.discardable.} =
   ## Does what is left, then ends the thread, waiting for it until
   ## `deadline`, and no longer once a task whose folder has not answered
   ## (the module documentation) has been in hand for `stuckAfter`, after
   ## the tasks left `first` were given to the helper (`rescue`) and it is
   ## done or held too: true when it has ended; false when it is held by a
   ## drive that does not answer (or `deadline` came first), and it is then
-  ## left to end on its own. Idempotent; destroying the `DiskIo` does it.
+  ## left to end on its own. `tick`, when given, is called about every 16 ms
+  ## meanwhile (the caller draws). Idempotent; destroying the `DiskIo` does
+  ## it.
   if x.p == nil or not x.p.started: return true
   if x.p.abandoned: return false
   x.askStop()
   var ended = false
+  var ticked = getMonoTime()
   while true:
     var stuck, firsts, helped, helperDone = false
     let now = getMonoTime()
@@ -554,6 +557,9 @@ proc stop*(x: DiskIo; deadline = getMonoTime() + DiskStopWait;
           x.p.helperStarted = true
         createThread(x.p.helper, rescue, x.p)
       elif not helped or helperDone: break
+    if tick != nil and now - ticked >= initDuration(milliseconds = 16):
+      ticked = now
+      tick()
     sleep 1
   if ended:
     joinThread(x.p.thread)
