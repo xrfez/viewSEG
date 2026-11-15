@@ -34,6 +34,7 @@
 ## - File memory lists past an entry whose drive does not answer, which is
 ##   "not answering" and never gone;
 ## - a file rewritten in the middle while its hash runs is not confirmed;
+## - an export leaves out an agent's kill (for the session only), and says so;
 ## - the data file's bytes and modification time are as they were through
 ##   all of it, what is remembered of it forgotten (File memory) included.
 ##
@@ -58,7 +59,8 @@
 ## size and the ends only, "a file changed in the middle while it was
 ## hashed was confirmed"; with the hash on the background lane, "a
 ## background job waits behind a file's hash"; with the files looked at in
-## the listing's job, "the listing waits for a drive that does not answer".
+## the listing's job, "the listing waits for a drive that does not answer";
+## with the edits shown exported, "the export holds the agent's kill".
 
 import std/[atomics, os, strutils, times]
 import viewSEG/core/[jobs, state]
@@ -412,6 +414,26 @@ withFixtures fx:
       "a file changed in the middle while it was hashed was confirmed"
     st.shutdown()
     removeFile(c)
+  block exportLeavesOutTheAgents:
+    # an export is handed on and outlives the session: an agent's kill
+    # (shown for the session only) is left out of it, and said
+    var st = start(config)
+    st.showFile(b)
+    doAssert st.settle(st.remembering(b).known)
+    st.edit(teKilled, 3)
+    st.edit(teKilled, 6, by = coAgent)
+    let csv = fx.dir / "agent.csv"
+    st.apply Command(kind: ckExportEdits, panel: MainPanel, listPath: csv)
+    doAssert st.settle(fileExists(csv))
+    let text = readFile(csv)
+    doAssert "\n4,11,4,killed," in text and "\n7," notin text,
+      "the export holds the agent's kill: " & text
+    var said = false
+    for e in st.log:
+      if "leaves out 1 edit shown for this session only" in e.text: said = true
+    doAssert said, "the edit left out is not said"
+    st.apply Command(kind: ckClearEdits, panel: MainPanel)
+    st.shutdown()
   block listedPastAHungDrive:
     # File memory with an entry on a drive that does not answer: the
     # listing comes at once, the entries elsewhere are looked at, the one

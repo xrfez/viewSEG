@@ -1260,11 +1260,13 @@ func shownTraces(state: AppState; panelIndex: int): (int, Slice[int]) =
       result = (i, state.sessions[i].gathers[g].traces)
 
 func gatherEdited*(state: AppState; panelIndex: int): bool =
-  ## Whether a trace of the gather `panels[panelIndex]` shows has an edit:
-  ## then the display header has a row for them.
+  ## Whether a trace of the gather `panels[panelIndex]` shows has an edit,
+  ## shown or kept (an edit an agent hid for the session): then the display
+  ## header has a row for them.
   let (i, traces) = state.shownTraces(panelIndex)
   i >= 0 and state.sessions[i].path in state.edits and
-    state.edits[state.sessions[i].path].anyIn(traces)
+    (state.edits[state.sessions[i].path].anyIn(traces) or
+    state.edits[state.sessions[i].path].anyKeptIn(traces))
 
 proc missing(what: string) {.noinline, noreturn.} =
   raise newException(KeyError, what)
@@ -2274,10 +2276,11 @@ proc endMemoryWork(state: var AppState; job: JobInfo): bool =
   false
 
 proc exportEdits(state: var AppState; cmd: Command) =
-  ## `ckExportEdits`: the edits shown of the file `cmd.panel` shows, written
-  ## to `cmd.listPath` (CSV when it ends in `.csv`, else NIF) by a job that
-  ## adds each trace's record and channel from the keys, then the disk
-  ## thread.
+  ## `ckExportEdits`: the edits kept of the file `cmd.panel` shows (what
+  ## its memory holds: an agent's edits, for the session only, are left
+  ## out, and said), written to `cmd.listPath` (CSV when it ends in
+  ## `.csv`, else NIF) by a job that adds each trace's record and channel
+  ## from the keys, then the disk thread.
   let k = state.findPanel(cmd.panel)
   let i = if k >= 0: state.shownFile(k) else: -1
   if i < 0:
@@ -2285,8 +2288,22 @@ proc exportEdits(state: var AppState; cmd: Command) =
     return
   if state.refusedWrite(cmd, cmd.listPath): return
   let s = state.sessions[i]
+  template e: untyped = state.editsAt(s.path)
+  # What is kept, as the next run shows it: an export is handed on and
+  # outlives the session, which an agent's edit does not.
   var r = FileRecord(name: s.name, path: s.path, opened: getTime(), modified: s.modified,
-    edits: state.editsAt(s.path).shown)
+    edits: e.kept)
+  let left = e.shown.minus(e.kept).count
+  let hidden = e.kept.minus(e.shown).count
+  if left > 0 or hidden > 0:
+    var said = "The export of the edits of " & s.name
+    if left > 0:
+      said.add " leaves out " & plural(left, "edit") & " shown for this session only " &
+        "(made through agent control: not remembered; make them yourself to keep them)"
+    if hidden > 0:
+      said.add (if left > 0: ", and" else: "") & " holds " & plural(hidden, "remembered edit") &
+        " that agent control hid for this session"
+    state.log.add(sevInfo, s.name, said & ".")
   let at = state.rememberedAt(s.path)
   if at >= 0 and state.remembered[at].known: r.identity = state.remembered[at].identity
   else: r.identity.size = s.size

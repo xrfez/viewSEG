@@ -1241,7 +1241,11 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
   ## rows; a column next to the plot when time is across): over each edited
   ## trace in view, as the file's edits `e` are now, "K" (killed, in the
   ## theme's error colour) or "R" (reversed, in its accent colour), "KR" for
-  ## both; a thin bar where traces are too close for the letters.
+  ## both; a thin bar where traces are too close for the letters. An edit
+  ## shown but not remembered (an agent's, for the session) has a "*" after
+  ## it, its bar an outline; one remembered but hidden for the session (an
+  ## agent's undo of the user's) is in brackets, "(K)", in the dim text
+  ## colour: it comes back at the next run.
   let dl = igGetWindowDrawList()
   let lineH = igGetTextLineHeight()
   let ta = m.along[axTraces]
@@ -1270,9 +1274,17 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
         if tiles[j].holds(pos): newer = true
       let trace = tiles[k].traces[row]
       let has = if pos in vis and not newer: e.editsOf(trace) else: {}
-      if has != {}:
-        let text = (if teKilled in has: "K" else: "") & (if teReversed in has: "R" else: "")
-        let colour = u32(t.roles[if teKilled in has: rlError else: rlAccent])
+      let kept = if pos in vis and not newer: e.keptOf(trace) else: {}
+      if has != {} or kept != {}:
+        func letters(s: set[TraceEdit]): string =
+          (if teKilled in s: "K" else: "") & (if teReversed in s: "R" else: "")
+        let session = has - kept # shown, not remembered
+        let hidden = kept - has  # remembered, not shown
+        var text = letters(has)
+        if session != {}: text.add "*"
+        if hidden != {}: text.add "(" & letters(hidden) & ")"
+        let colour = if has == {}: u32(t.roles[rlTextDim])
+                     else: u32(t.roles[if teKilled in has: rlError else: rlAccent])
         let c = traceAt(view, m, plotPos, plotSize, float64(pos))
         let ts = igCalcTextSize(text.cstring, nil, false, -1)
         let w = ts.along(ta)
@@ -1286,9 +1298,12 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
           let half = max(0.5'f32, perPos / 2 - 0.5'f32)
           lo = vec(ta, c - half, bs + round(bz * 0.2))
           hi = vec(ta, c + half, bs + round(bz * 0.8))
-          ImDrawList_AddRectFilled(dl, lo, hi, colour, 0, 0)
+          if has == {} or session == has: ImDrawList_AddRect(dl, lo, hi, colour, 0, 1, 0)
+          else: ImDrawList_AddRectFilled(dl, lo, hi, colour, 0, 0)
         if marked < 200: # for tests
           marks.markRect("plot.header.edit " & $(trace + 1), lo, hi)
+          if session != {}: marks.markRect("plot.header.edit " & $(trace + 1) & " session", lo, hi)
+          if hidden != {}: marks.markRect("plot.header.edit " & $(trace + 1) & " hidden", lo, hi)
           inc marked
   ImDrawList_PopClipRect(dl)
 

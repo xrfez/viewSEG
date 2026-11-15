@@ -168,6 +168,19 @@ func allReversed*(e: FileEdits): bool {.inline.} = e.shown.allReversed
 func isEmpty*(e: FileEdits): bool {.inline.} = e.shown.isEmpty
   ## Whether no trace has an edit (as shown).
 
+func keptOf*(e: FileEdits; trace: int): set[TraceEdit] =
+  ## The edits trace `trace` has as kept (what the file's memory holds):
+  ## those of `editsOf` that are not are shown for the session only (an
+  ## agent's), and those that are not in `editsOf` are kept but hidden for
+  ## the session (an agent's undo of the user's).
+  for edit in TraceEdit:
+    if e.kept.lists[edit].binarySearch(trace) >= 0: result.incl edit
+
+func minus*(a, b: EditLists): EditLists =
+  ## The edits of `a` that `b` does not have (all reversed included).
+  for edit in TraceEdit: result.lists[edit] = difference(a.lists[edit], b.lists[edit])
+  result.allReversed = a.allReversed and not b.allReversed
+
 func shown*(e: FileEdits): lent EditLists {.inline.} = e.shown
   ## The edits as shown.
 
@@ -206,6 +219,12 @@ func anyIn*(e: FileEdits; traces: Slice[int]): bool =
   ## Whether a trace in `traces` has an edit (as shown).
   for edit in TraceEdit:
     if span(e.shown.lists[edit], traces).len > 0: return true
+  false
+
+func anyKeptIn*(e: FileEdits; traces: Slice[int]): bool =
+  ## Whether a trace in `traces` has an edit as kept.
+  for edit in TraceEdit:
+    if span(e.kept.lists[edit], traces).len > 0: return true
   false
 
 proc turn(l: var EditLists; added, removed: array[TraceEdit, seq[int]];

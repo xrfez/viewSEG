@@ -189,7 +189,9 @@ Turn agent control on for agents you would let do what you can do in the windows
   agent changed: a selection you kill that holds a trace the agent killed is remembered
   whole, and your "Clear all edits" clears what is remembered too, also what the agent's
   undo hid from the plot. Its edits are written nowhere: no entry of File memory is made,
-  changed or removed by an agent.
+  changed or removed by an agent, and an export of the file's trace edits (yours) leaves
+  them out and says how many. The plot's row of edits marks them: **K\*** for an edit
+  shown for the session only, **(K)** for one of yours an agent's undo hid.
 
 ## What an agent cannot do
 

@@ -21,6 +21,9 @@
 ## - the same in a panel sorted by channel, descending, where a position
 ##   is another trace: the menu names the trace drawn there, and the
 ##   header's mark stands over it;
+## - an agent's kill (shown for the session, not remembered) is marked so in
+##   the row of edits, and a kill of the user's that an agent undid
+##   (remembered, back at the next run) is shown there in brackets;
 ## - the file is never changed.
 ##
 ## With the Morgantown example present (local only), the time from a key to
@@ -37,7 +40,8 @@
 ## shortcuts), "Ctrl+Z did not happen"; with the display
 ## header's row of edits left out, "no mark of the edit over trace 10";
 ## with the status bar not saying the edits, "the status bar does not say
-## killed".
+## killed"; with the row drawing what is shown only, "the agent's kill is
+## not marked as for the session only".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ##
@@ -319,6 +323,35 @@ withFixtures fx:
     f.markOf("plot.header.edits").size.x == 0 and f.answered and wait > 4 and
       f.core.editsOf(0).isEmpty)
   shootStep("cleared density")
+  # what is shown but not remembered, and the reverse: an agent's kill
+  # (for the session only) has a "*", and the user's kill an agent undid
+  # (remembered, back at the next run) is in brackets
+  proc agentKill(f: FrameInfo) =
+    f.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[f.traceOf(5)],
+      on: true, origin: coAgent)
+  step("an agent's kill", agentKill, proc (f: FrameInfo): bool = true)
+  waitEdits("killed by the agent", 5, {teKilled})
+  keyStep("K (the user's)", 7, skK)
+  waitEdits("killed by the user", 7, {teKilled})
+  proc agentUndo(f: FrameInfo) =
+    f.apply Command(kind: ckUndoEdit, panel: MainPanel, origin: coAgent)
+  step("the agent undoes the user's kill", agentUndo, proc (f: FrameInfo): bool = true)
+  waitEdits("hidden by the agent", 7, {})
+  step("the row marks what is not remembered, and what is hidden", noop,
+    proc (f: FrameInfo): bool =
+    result = wait > 4
+    if result:
+      doAssert f.markOf("plot.header.edit 6 session").size.x > 0,
+        "the agent's kill is not marked as for the session only"
+      doAssert f.markOf("plot.header.edit 8 hidden").size.x > 0,
+        "the user's kill the agent hid is not marked"
+      doAssert f.markOf("plot.header.edit 8 session").size.x == 0 and
+        f.markOf("plot.header.edit 6 hidden").size.x == 0)
+  shootStep("session and hidden density")
+  menuStep("Clear all edits (the user's)", 3, "Trace 4", "clear")
+  step("nothing kept or shown", noop, proc (f: FrameInfo): bool =
+    f.markOf("plot.header.edits").size.x == 0 and f.answered and wait > 4 and
+      f.core.editsOf(0).isEmpty and f.core.editsOf(0).kept.isEmpty)
   # sorted by channel, descending: position p shows trace 23 - p
   step("sorted", proc (f: FrameInfo) =
     f.apply Command(kind: ckSort, panel: MainPanel,

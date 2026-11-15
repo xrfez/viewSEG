@@ -99,6 +99,10 @@
   marks each one over its trace, as the edits are now: **K** (killed, in the theme's
   error colour), **R** (reversed, in its accent colour), **KR** for both, a thin bar where
   traces are too close for the letters; the row goes when the record has no edit left.
+  What the row shows but viewSEG does not remember, an edit made through agent control
+  for the session only, has a **\*** after it (**K\***; its bar an outline); an edit
+  remembered but hidden for the session (an agent undid your kill: it comes back at the
+  next run) is in brackets, in the dim text colour: **(K)**.
   A right click on the header (its rows of values, or their names left of the plot)
   opens its own menu: automatic fields, or the fields ticked; the gear popover has the
   same.
@@ -881,7 +885,8 @@ brings back the rest, and is not written again until its edits change (so as not
 those parts): when its file was opened is kept beside it (`<entry>.seen`), so that File
 memory never lists a file in use as not opened for months; a later version's parts are
 kept as they are. Edits an agent makes
-through agent control are shown for the session only (docs/agent-control.md).
+through agent control are shown for the session only (docs/agent-control.md), marked so in
+the row of edits.
 
 **File > File memory...** lists what is remembered: the name a file was last seen under,
 when it was last opened, what is kept, the file's size and the entry's, and whether the
@@ -895,7 +900,10 @@ file is gone; each removal lists what it takes away and asks first (a listing th
 meanwhile does not change what it takes), and Messages names each entry forgotten.
 Nothing is ever dropped on its own.
 
-**Handing a list over.** File > Export > Trace edits... writes the edits of the file shown
+**Handing a list over.** File > Export > Trace edits... writes the edits of the file shown,
+as remembered: an edit shown for the session only (agent control's) is left out, since a
+list handed on outlives the session, and Messages says how many; one an agent hid for the
+session is in it,
 as a CSV table (`trace,record,channel,edit,file`: the trace's number in the file from 1,
 its field record and channel from the headers, `killed` or `reversed`, "all" for reverse
 all, and the name of the file the list is for on every row) or as viewSEG's own NIF
