@@ -39,16 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.11.0: capabilities | names | processSEG 0.4.0: capabilities | names |
+| Status | parseSEG 0.12.0: capabilities | names | processSEG 0.5.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 38 (22 in part) | 96 | 18 (14 in part) | 66 |
+| `built` | 39 (22 in part) | 96 | 18 (14 in part) | 66 |
 | `internal` | 14 | 35 | 4 | 37 |
-| `planned` | 38 | 285 | 45 | 331 |
+| `planned` | 44 | 304 | 53 | 449 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 19 | 353 | 6 | 61 |
-| all | 111 | 779 | 74 | 500 |
-
-In the next library release (below): parseSEG: 5 capabilities (5 planned); processSEG: 8 capabilities (4 planned, 4 to plan).
+| `not applicable` | 19 | 351 | 6 | 59 |
+| all | 118 | 796 | 82 | 616 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -58,13 +56,9 @@ In the next library release (below): parseSEG: 5 capabilities (5 planned); proce
 4. **Per-trace geometry keys, all or on demand** (parseSEG, Opening and indexing): a large file opened without keys, built when first needed with `ensureKeys`
 5. **A vibrator's source description in a SEG-D Rev 3 record** (parseSEG, Header objects and codecs): Vibroseis QC: each record's vibrator type, phase control and phase angle beside the vibrator plots
 6. **Receiver layout (azimuth, interval, line spacing)** (processSEG, Survey design): Survey summary in File properties; map in the layout frame
-7. **A file's own scales** (processSEG, next release): what the file says of its scales, also without a sensor table
-8. **Multiplexed SEG-D read transparently** (parseSEG, Opening and indexing): the open path takes such a file, and parseSEG's note goes to Messages, but no multiplexed file has been opened in the viewer yet
-9. **Logs as files** (parseSEG, Diagnostics): a file's problems saved as NIF and opened again, attached to the QC report
-10. **Location of each problem** (parseSEG, Diagnostics): a header field
-11. **Recorded values in physical units: sensors, masses and recorder scales** (processSEG, next release): Amplitudes in volts, m/s, m/s², Pa or N where the user sets up a sensor table (off otherwise): the readout's unit, the vibrator force plots
-12. **Calibration of recorded traces** (processSEG, next release): The sensor table's rules applied per trace, before any gain; what each trace was converted with, and what could not be
-13. **Calibration in a pipeline** (processSEG, next release): The display pipeline with the calibration first, its plots labelled in the unit
+7. **Multiplexed SEG-D read transparently** (parseSEG, Opening and indexing): the open path takes such a file, and parseSEG's note goes to Messages, but no multiplexed file has been opened in the viewer yet
+8. **Logs as files** (parseSEG, Diagnostics): a file's problems saved as NIF and opened again, attached to the QC report
+9. **Location of each problem** (parseSEG, Diagnostics): a header field
 
 <!-- end of summary -->
 
@@ -79,9 +73,11 @@ In the next library release (below): parseSEG: 5 capabilities (5 planned); proce
 | Index cache for instant reopening | `OpenOptions.cache`, `saveIndex`, `f.fromCache` | Instant stepping between files in the file browser: the open job reads and saves caches on the local disk (`<cache>/index`, never beside the file, kept under 4 GiB); the next file of the list is opened through it in the background ("Prepare the next file") | built (Files; File → Prepare the next file) |
 | Per-trace geometry keys, all or on demand | `keys = true`, `ensureKeys`, `traceKeys(traces)`, `traceKeysInto`, `hasKeys` | The open file's source and receiver positions in the survey (`traceKeysInto` on a job after each open), drawn on the map as rings; status bar, gathers (keys built when first needed); File > Export > Trace edits... (each edited trace's record and channel in the CSV table) | built (positions, map); to plan (priority 3: a large file opened without keys, built when first needed with `ensureKeys`) |
 | Open options: force the standard, verify every header, two's-complement mantissas (SEG-D 8015, SEG-2 format 3), demux folder | `OpenOptions(kind, verify: vfFull, twosComplement8015, demuxDir)`, `VerifyMode` | "Reopen with options…" (offered on a "not recognised" log entry) | planned |
+| Files on a network share read without a map | `FileAccess` (`faAuto`, `faMapped`, `faUnmapped`), `OpenOptions.access`, `DefaultAccess`, `f.access` | Every open (File → Open file..., Files, the next file prepared): `faAuto`, the default, reads a file on a network file system through parseSEG's block cache instead of a map, so a share that stops answering fails a read, which is tried again, instead of holding the program in a page fault; the Headers window's Summary tab says which access an open used | planned |
 | Multiplexed SEG-D read transparently | `openSeismic` (demux copy), `f.demuxPath`, `dcMultiplexed` | Opens like any file; a log note says a temporary copy is used | internal (`demuxPath`: a demultiplexed copy's index is not cached); to plan (priority 7: the open path takes such a file, and parseSEG's note goes to Messages, but no multiplexed file has been opened in the viewer yet) |
 | File facts in one summary | `summary` (`FileSummary`: standard, revision, byte order (`ByteOrder`), format, counts, interval, record length, `coordinateUnits`, `decodable`), `channelSets` (`ChannelSetSummary`), `crsText`, `recordCount`, `maxSamples`, `index.prefersFloat64` | Headers window, Summary tab: what the file is in plain words, the record shown with its counts and (SEG-D) its channel sets, read on the open job; "Reopen with options…" and About to come | built (Summary); planned (`prefersFloat64`) |
 | Coordinate reference text | `crsText`, `summary.crsFormat`, `CrsTextFormat` | File → Import → Survey: the file's CRS as it gives it (read-only); the Headers window's Summary tab; default CRS for the basemap | built (join, Summary); planned (basemap) |
+| Datum and projection as values | `crs` (an SPS file's, a seismic file's), `parseCrsText`, `CoordinateReference`, `CrsKind`, `GeodeticDatum`, `MapProjection`, `CrsParameter`, `parameter`, `kindOf`, `known` | File → Import → Survey: the survey files' and the seismic files' datum, ellipsoid, projection and zone in words, checked against each other beside the units the import confirms; the Headers window's Summary tab; the basemap's coordinate system | planned |
 | Coordinate units (metres, feet, degrees, arc seconds) | `summary.coordinateUnits`, `CoordinateUnits` | File → Import → Survey: the units the headers give, in a dropdown the user confirms or corrects; the Headers window's Summary tab; map refuses or converts angular units | built (join, Summary); planned (the rest) |
 | Library version | `PackageVersion` | `viewSEG --version` and agent control's server name give parseSEG's version; About box: parseSEG and processSEG versions | built (`viewSEG --version`, agent control); planned (the About box) |
 | The trace index | `f.index`, `TraceIndex`, `f.traceEntry(i)`, `TraceEntry`, `TraceCodec`, `NoChannelSet`, `sampleOffset`, `dataBytes`, `known` | internal: the Records window reads the format's own headers from `f.index` (the SEG-Y binary header, the SEG-D records), the plot the values a join gave | internal; not applicable (the entries' byte locations and codecs: the viewer reads samples through the prefetcher) |
@@ -94,7 +90,10 @@ In the next library release (below): parseSEG: 5 capabilities (5 planned); proce
 |---|---|---|---|
 | Ranges, selections and sample windows into reused buffers | `readTraces`, `readTracesInto` (window forms), `newTraceTensor`, `maxSamples(f, traces)` | Trace panel tiles, deep zoom: read through the prefetcher (below); `maxSamples` gives the tiles' height | internal (`maxSamples`); not applicable (the direct reads: the panels read through the prefetcher) |
 | Undecodable traces as zero rows, reported | `PrefetchChunk.failed`, `failedRows`, `log` | Failed traces drawn blank, and a warning in Messages: how many of the traces shown, and the first reason; marked on the trace axis to come | built (drawn blank, Messages); planned (marks on the trace axis) |
+| A file cut short while it is open, and a read that fails: no crash | `cutShort`, `readFailed` (`SeismicFile`, `MemFileSource`), `readable`, `dcIo`, `SegTruncatedError` | The viewer's own check before each read (a `stat` of the file) gives way to parseSEG's guard and its `cutShort` and `readFailed`: another program cutting the file shown no longer ends the program with "Bus error"; the traces past the cut drawn blank and said so in Messages; a share that stops answering fails its rows with `dcIo`, read again when it answers | planned |
 | Read-ahead on worker threads | `newPrefetcher`, `tryNext`, `next`, `seek`, `quickFirst`, `workers`, `maxRingBytes`, `atEnd`, `traceAt`, `Prefetcher`, `chunks`, `depth`, `DefaultRingBytes`, `close` | internal: each trace panel's reader thread; on a slow drive (its reads timed) further ahead, in chunks of 256 traces; the next file's first view read in the background | internal; not applicable (`tryNext`, `seek`, `atEnd`, `Prefetcher`, `DefaultRingBytes`: each view gets a prefetcher of its own, read with `nextInto` to its end) |
+| A read-ahead stopped in a hung read given up on | `close` (`closeTimeout`), `DefaultCloseTimeout`, `reapPrefetchers` | internal: a panel's reader closes its read-ahead within 2 s even while a worker is stuck in a read of a share that does not answer; what the worker holds is freed once its read returns (`reapPrefetchers` on the closer thread) | planned |
+| Sources released on any thread | `MemFileSource` (acyclic) | internal: files closed on the viewer's closer thread without the cycle collector's care (`clearCycleRoots` after each release) | planned |
 | Buffer recycling | `nextInto`, `tryNextInto`, `recycle` | internal: scrolling without allocation | internal; not applicable (`tryNextInto`: the reader waits with `nextInto`) |
 | Chunks of one channel set and interval | `newPrefetcher(uniform = true)`, `uniformRuns` | internal: one `dt` per processing call: each panel's reader asks for uniform chunks | internal; not applicable (`uniformRuns`: the uniform chunks give the runs) |
 | Processing on the decode worker | `ChunkTransform`, `user` | Background QC attribute passes | planned |
@@ -154,8 +153,9 @@ In the next library release (below): parseSEG: 5 capabilities (5 planned); proce
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Read SPS 1.0 / 2.1 (S, R, X, O) | `parseSps` (a file a 4 MiB chunk at a time, the revision and layout of the first kept: `SpsOptions`), `detectLayout`, `addSps` (the relations), `relationDomainOf`; `readSps`, `looksLikeSps` not used (the file list tells SPS also from a head of header records only) | File → Open file..., drag and drop, a click in Files: survey files are loaded into the survey on a job, with progress, and listed as SPS S / R / X; drawn on the map, a layer per file's sources or receivers; File → Import → Survey… reads them again with `addSps` a chunk at a time, with the join's options | built; planned (`readSps` and `looksLikeSps` when parseSEG's next release reads with progress and cancel, below) |
+| Read SPS 1.0 / 2.1 (S, R, X, O) | `parseSps` (a file a 4 MiB chunk at a time, the revision and layout of the first kept: `SpsOptions`), `detectLayout`, `addSps` (the relations), `relationDomainOf`; `readSps`, `looksLikeSps` not used (the file list tells SPS also from a head of header records only) | File → Open file..., drag and drop, a click in Files: survey files are loaded into the survey on a job, with progress, and listed as SPS S / R / X; drawn on the map, a layer per file's sources or receivers; File → Import → Survey… reads them again with `addSps` a chunk at a time, with the join's options | built; planned (`readSps` and `looksLikeSps`, which read with progress and cancel: below) |
 | Read SEG P1 | `parseP1` (whole, up to 64 MiB), `addP1`, `P1Options` (`angleUnit`) | Loaded into the survey as SPS files are (sources; a reshoot is a station of its own); File → Import → Survey joins P1 files (`addP1`, no implied decimals); the implied decimals as an option, to come | built (loading, join); to plan (priority 2: the implied decimals as an option) |
+| Survey files read with progress and cancel | `readSps(..., progress)`, `readP1(..., progress)`, `SpsOptions` (`skipBinary`, `maxJunkBytes`), `looksLikeSps` (a head of header records) | Loading survey files and File → Import → Survey: one call with parseSEG's progress and cancel, in place of the viewer's 4 MiB chunks and its own test of a head of header records | planned |
 | Survey-file problems | `SurveyGeometry.log`, `SpsFile.log`, `P1File.log` | Messages: each file's first 20 problems by line, then a count; what was left off the map (no coordinates, at (0, 0)) and stations given twice | built; not applicable (`P1File`: the type `parseP1` gives, never named) |
 | Station tables | `table`, `sourceCount`, `receiverCount`, `relationCount`, `records` | The survey's own layers (stations found by key as `lookup` finds them); `relationCount` and `records` give a relation file's counts; the map's layers, a point's station in what the map says of it | built; not applicable (`sourceCount`, `receiverCount`: the survey counts its own layers) |
 | Join by station, with statistics | `applySurvey(f, g, stats, overwrite)`, `joinStations`, `JoinStats`, `JoinMatch`, `stationKey` | File → Import → Survey: worked out on copies of the keys first (`joinStations` and `applySurvey` per trace), then joined with the readers stopped; matched and unmatched traces, how they matched, why none did, the headers' coordinates kept or replaced, in plain words and in Messages; linked highlighting fills the stations a hovered trace's headers lack from the loaded relation file | built |
@@ -222,6 +222,7 @@ In the next library release (below): parseSEG: 5 capabilities (5 planned); proce
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Problems as data with severity, code and location | `DiagLog`, `Diagnostic`, `Severity`, `DiagCode`, `Location`, `f.log` | The Messages window shows each file's diagnostics with their severity, and filters them by severity | built (Messages); not applicable (`Diagnostic`: an entry of a `DiagLog`, never named) |
+| A file that ends before its last trace, from its log | `dcTruncated` | With "Follow the latest", a newest file that ends before its last trace, as one still being written does, is not shown until it changes and is whole, and Messages says so (a click in Files shows it as it is) | built (Messages) |
 | Location of each problem | `Diagnostic.loc` (record, trace, field), `offset` | Click a log entry to go to its trace or header field: a click on a line of Messages that names a trace shows it | built (a trace); to plan (priority 9: a header field) |
 | Logs as files | `toNif`, `writeNif`, `readDiagnostics`, `parseDiagnostics` | Log window: save and open; attached to the QC report (Messages exports its own text, File → Export messages...) | to plan (priority 8: a file's problems saved as NIF and opened again, attached to the QC report) |
 | Exceptions turned into entries | `recordException`, `tryRecord`, `tryRecordFatal` | internal: jobs report failures to the log | not applicable (a job's failure goes to Messages in the viewer's own words) |
@@ -257,6 +258,9 @@ name, so these are building blocks for code that works on raw headers.
 | Top and bottom mutes (time, table, LMO) | `timeMute`, `tableMute`, `lmoMute`, `muteTop`, `muteBottom`, `muteTopOp`, `muteBottomOp`, `muteTimeMs`, `MuteKind`, `MuteCurve`, `kind` | Processing window: mutes, drawn as a line on the panel, table picked by clicking | planned |
 | Pad tapers | `cosTaperInto`, `taperPads` | processSEG's filters pad and taper with them | not applicable (inside processSEG's filters; for a caller's own padded kernels) |
 | Fractional shifts | `shiftSamples`, `ShiftInterp` | processSEG's statics, LMO and NMO shift with them | not applicable (inside processSEG's statics, LMO and NMO) |
+| Recorded values in physical units: sensors, masses and recorder scales | `AmplitudeUnit` (`auRecorded`, `auVolt`, `auVelocity`, `auAcceleration`, `auPressure`, `auForce`), `Sensitivity`, `SensitivityUnit`, `SensitivityForm`, `sensitivity`, `openCircuitSensitivity`, `form`, `unit`, `valueIn`, `voltsPerUnit`, `quantityOf`, `isSet`, `Mass`, `MassUnit`, `mass`, `kilograms`, `Descale`, `DescaleUnit`, `descale`, `voltsPerCount`, `FileScale`, `initFileScale`, `$` | Amplitudes in volts, m/s, m/s², Pa or N where the user sets up a sensor table (off otherwise): the readout's unit; the vibrator force plots in newtons (`auForce`, with the masses entered) | planned |
+| Calibration of recorded traces | `Calibration`, `CalibrationPlan`, `CalibrationRule`, `CalibrationStatus`, `CalibrationSummary`, `CalibrationTarget`, `FactorSource`, `FileFactors`, `RatioRange`, `RowCalibration`, `RuleMatch`, `calibrate`, `calibrateInto`, `initCalibration`, `initCalibrationPlan`, `ratioDbInto`, `resolveInto`, `scaleInto`, `scaleRows`, `scaleRowsInto`, `uncalibrate`, `uncalibrateInto`, `target`, `$` | The sensor table's rules applied per trace, before any gain; what each trace was converted with, and what could not be, in Messages | planned |
+| A file's own scales | `ScaleGroup`, `fileScalesInto`, `scaleReport`, `segyUnitOverrides`, `fileScale`, `hasFileScales`, `chunkMeta(..., scales)`, `$` | The Headers window's Summary tab: each channel set's recorder scale and units as the file gives them, to check against the sensor sheet, also without a sensor table | planned |
 
 ### Spectra
 
@@ -296,6 +300,7 @@ name, so these are building blocks for code that works on raw headers.
 |---|---|---|---|
 | Editable processing flow | `initPipeline`, `Op`, `add`, `insert`, `delete`, `compile`, `plan.apply(b, meta, ws)`, `PipelinePlan`, `generation`, `Pipeline` (`len`, `[]`, `[]=`, `items`, `pairs`, `clear`), `OpKind`, `recordSamples`, `workspaceSize` | Processing window: the flow list, live update; meanwhile each Seismic window's filters and display pipeline (polarity, then its gain type's op), compiled and applied by its reader | internal (the display pipeline); planned (the processing window) |
 | Raw kept, processed into a second buffer | `plan.apply(src, dst, meta, ws)` | Seismic window: Raw / processed (`P`, and the strip's Raw toggle): the reader keeps the decoded samples itself and processes a copy of them in place for each tile, so a toggle or a moved slider reads nothing | not applicable (the reader keeps the raw samples and copies the rows of each tile before processing them in place) |
+| Calibration in a pipeline | `calibrateOp`, `uncalibrateOp`, `OpKind` (`opCalibrate`, `opUncalibrate`), `PlanAmplitude`, `amplitudeUnits`, `calibration` | The display pipeline with the calibration first, before the filters and the gain, its readout and plots labelled in the unit | planned |
 | Plan parts for own threads | `checkApply`, `partCount`, `partNeedsPanel`, `panelFactorOf`, `runPart` | internal: not needed while the pool is used | not applicable (each panel's reader applies its plan whole; a per-panel level is the shader's) |
 | Worker pool | `newProcessPool`, `pool.apply`, `ping`, `ProcessPool`, `workers` | Seismic window: each panel's reader has a pool of its own (`newProcessPool`, up to 4 workers, made when first needed), on which it applies the filters and the display pipeline to each block of the tile's rows (`pool.apply`) | built (the Seismic window's filters and gain: `newProcessPool`, `apply`, `ProcessPool`, `workers`); not applicable (`ping`: a benchmark's measure of a job's overhead) |
 | The ops' parameters, edited in place | `factor`, `dB`, `clip`, `mute`, `filter`, `iir`, `agc`, `norm`, `gainCurve`, `ClipParams`, `MuteParams`, `FilterParams`, `IirParams`, `AgcParams`, `NormalizeParams`, `GainCurveParams` | Processing window: each op's settings (windows, corners, levels) changed in place, the panel following | planned |
@@ -356,6 +361,10 @@ name, so these are building blocks for code that works on raw headers.
 | Correlation of uncorrelated records | `initCorrelationPlan`, `correlateInto` (also on the pool), `correlate`, `CorrelationPlan` (`outSamples`, `pilotSamples`, `mode`), `checkCorrelate`, `CorrelationMode` | Correlate records for display | planned |
 | Sweep deconvolution | `initCorrelationPlan(mode = cmDeconvolve)` | Correlate records: deconvolve mode | planned |
 | Vertical and diversity stack of repeated sweeps | `initRecordStack`, `addRecord`, `RecordStackParams`, `recordStackMemory`, `RecordStack` (`countAt`), `RecordStackMode`, `DiversityWeight` | "Stack repeated sweeps" at a source point | planned |
+| Vibrator signature analysis: roles, ground force, polarity, limits | `analyzeVibrators`, `VibUnit`, `initVibUnit`, `VibRole`, `VibSignal`, `vibUnitsInOrder`, `defaultOrder`, `groundForceInto`, `Polarity` (`poAsRecorded`, `poReversed`, `poAutomatic`), `automaticPolarity`, `reversePolarity`, `VibLimits`, `LimitKind`, `limitFlagsInto`, `judgedInto`, `judgedPart`, `UnitSignature`, `TrackSummary`, `summarize`, `validate`, `vibratorWorkspace` | Vibrator signature analysis from the plot's selection: each trace's role (reference, ground force, mass, baseplate; by channel, in that order by default), the polarity per role, ground force recorded or made from mass and baseplate, limits drawn and a pass or fail table per unit when asked (off by default), the sweep's ends left out of the judgement | planned |
+| Phase, force and frequency against sweep time; harmonics and THD | `SweepTrack`, `SweepTrackPlan`, `initSweepTrack`, `initSweepTrackPlan`, `trackInto`, `compareTracksInto`, `distortionInto`, `harmonics`, `ThdHarmonics` (`thFixed`, `thAllThatFit`), `SweepReference`, `initSweepReference`, `referenceInto`, `SweepExtent`, `extent`, `flatSpan`, `cyclesAt`, `ThdReference`, `TrackParams`, `params`, `isMeasured`, `pointMs`, `points`, `span`, `stepSamples`, `wrapDeg`, `len`, `samples`, `dtMs`, `validate`, `workspaceSize` | Vibrator signature analysis: the QC analysis plots (phase to the reference, fundamental and peak force, frequency against time) and the distortion plots (each harmonic, THD) | planned |
+| Correlation with its envelope, spectrum and phase; comparisons | `CrossCorrelationPlan`, `initCrossCorrelationPlan`, `crossCorrelateInto`, `compareInto`, `lagSpectrumInto`, `CorrelationNorm`, `lagMs`, `lags`, `maxLag`, `binHz`, `bins`, `nfft`, `samples`, `dtMs`, `workspaceSize`, `HilbertPlan`, `initHilbertPlan`, `hilbertInto`, `envelopeInto` | Vibrator signature analysis: the correlation plots (raw, envelope, spectrum, phase) and the comparison plots (phase and amplitude of one signal against another) | planned |
+| Time-variant spectrum | `SpectrogramPlan`, `initSpectrogramPlan`, `spectrogramInto`, `frames`, `frameCol`, `hop`, `windowLen`, `binHz`, `bins`, `nfft`, `samples`, `dtMs`, `workspaceSize` | Vibrator signature analysis: the time-variant spectral analysis (a time-frequency picture) | planned |
 
 ### Continuous recordings
 
@@ -377,33 +386,11 @@ name, so these are building blocks for code that works on raw headers.
 
 ## In the next library release
 
-What the branches about to be released add, read from their working trees: parseSEG's next
-release after 0.11.0 and processSEG's after 0.4.0. The check holds these tables to the new
-names when a working tree of each is linked at `deps/next/parseSEG` and
-`deps/next/processSEG`.
-
-### parseSEG (after 0.11.0)
-
-| Capability | Library calls | Viewer feature | Status |
-|---|---|---|---|
-| A file cut short while it is open, and a read that fails: no crash | `cutShort`, `readFailed` (`SeismicFile`, `MemFileSource`), `readable`, `dcTruncated`, `dcIo` | The viewer's own `cutShort` (a `stat` before each read) gives way to parseSEG's: another program cutting the file shown no longer ends the program with "Bus error"; the traces past the cut drawn blank and said so; a share that stops answering fails its rows with `dcIo` | planned |
-| Datum and projection as values | `crs` (an SPS file's, a seismic file's), `parseCrsText`, `CoordinateReference`, `CrsKind`, `GeodeticDatum`, `MapProjection`, `CrsParameter`, `parameter`, `kindOf`, `known` | File → Import → Survey and File properties: the datum, ellipsoid, projection and zone in words, to check the survey files against the seismic files; the basemap's coordinate system | planned |
-| Survey files read with progress and cancel | `readSps(..., progress)`, `readP1(..., progress)`, `SpsOptions` (`skipBinary`, `maxJunkBytes`), `looksLikeSps` (a head of header records) | Loading survey files: one call with parseSEG's progress and cancel, in place of the viewer's 4 MiB chunks and its own test of a head of header records | planned |
-| Sources released on any thread | `openMemFileSource`, `MemFileSource` | Files closed on the viewer's closer thread without the cycle collector's care | planned |
-| A file on a network share opened without mapping it (being written, not on the branch yet) | `openSeismic`, `OpenOptions` | Files on a slow or failing share read by `pread`, as the viewer's reads of network drives want | planned |
-
-### processSEG (after 0.4.0)
-
-| Capability | Library calls | Viewer feature | Status |
-|---|---|---|---|
-| Recorded values in physical units: sensors, masses and recorder scales | `AmplitudeUnit` (`auRecorded`, `auVolt`, `auVelocity`, `auAcceleration`, `auPressure`, `auForce`), `Sensitivity`, `SensitivityUnit`, `SensitivityForm`, `sensitivity`, `openCircuitSensitivity`, `form`, `unit`, `valueIn`, `voltsPerUnit`, `quantityOf`, `isSet`, `Mass`, `MassUnit`, `mass`, `kilograms`, `Descale`, `DescaleUnit`, `descale`, `voltsPerCount`, `FileScale`, `initFileScale` | Amplitudes in volts, m/s, m/s², Pa or N where the user sets up a sensor table (off otherwise): the readout's unit, the vibrator force plots | to plan (priority 10) |
-| Calibration of recorded traces | `Calibration`, `CalibrationPlan`, `CalibrationRule`, `CalibrationStatus`, `CalibrationSummary`, `CalibrationTarget`, `FactorSource`, `FileFactors`, `RatioRange`, `RowCalibration`, `RuleMatch`, `calibrate`, `calibrateInto`, `initCalibration`, `initCalibrationPlan`, `ratioDbInto`, `resolveInto`, `scaleInto`, `scaleRows`, `scaleRowsInto`, `uncalibrate`, `uncalibrateInto` | The sensor table's rules applied per trace, before any gain; what each trace was converted with, and what could not be | to plan (priority 10) |
-| A file's own scales | `ScaleGroup`, `fileScalesInto`, `scaleReport`, `segyUnitOverrides`, `fileScale`, `hasFileScales` | File properties: each channel set's recorder scale and units as the file gives them, to check against the sensor sheet | to plan (priority 6: what the file says of its scales, also without a sensor table) |
-| Calibration in a pipeline | `calibrateOp`, `uncalibrateOp`, `OpKind` (`opCalibrate`, `opUncalibrate`), `PlanAmplitude`, `amplitudeUnits`, `calibration` | The display pipeline with the calibration first, its plots labelled in the unit | to plan (priority 10) |
-| Vibrator signature analysis: roles, ground force, limits | `analyzeVibrators`, `VibUnit`, `initVibUnit`, `VibRole`, `VibSignal`, `vibUnitsInOrder`, `defaultOrder`, `groundForceInto`, `VibLimits`, `LimitKind`, `limitFlagsInto`, `UnitSignature`, `TrackSummary`, `vibratorWorkspace` | Vibrator signature analysis: the selected traces' roles (reference, ground force, mass, baseplate), ground force from mass and baseplate, limits drawn when asked | planned |
-| Phase, force and frequency against sweep time; harmonics and THD | `SweepTrack`, `SweepTrackPlan`, `initSweepTrack`, `initSweepTrackPlan`, `trackInto`, `compareTracksInto`, `distortionInto`, `harmonics`, `SweepReference`, `initSweepReference`, `referenceInto`, `ThdReference`, `TrackParams`, `isMeasured`, `pointMs`, `points`, `span`, `stepSamples`, `wrapDeg` | Vibrator signature analysis: the QC analysis and distortion plots | planned |
-| Correlation with its envelope, spectrum and phase; comparisons | `CrossCorrelationPlan`, `initCrossCorrelationPlan`, `crossCorrelateInto`, `compareInto`, `lagSpectrumInto`, `CorrelationNorm`, `lagMs`, `lags`, `maxLag`, `HilbertPlan`, `initHilbertPlan`, `hilbertInto`, `envelopeInto` | Vibrator signature analysis: the correlation and comparison plots | planned |
-| Time-variant spectrum | `SpectrogramPlan`, `initSpectrogramPlan`, `spectrogramInto`, `frames`, `frameCol`, `hop` | Vibrator signature analysis: time-variant spectral analysis | planned |
+None at present: parseSEG 0.12.0 and processSEG 0.5.0, the releases this repository pins,
+are in the tables above. While a release is being prepared, a working tree of it can be
+linked at `deps/next/parseSEG` or `deps/next/processSEG`; the check then reads its committed
+`HEAD` and holds the tables of this section, `### parseSEG (after 0.12.0)` and
+`### processSEG (after 0.5.0)`, to the names it adds.
 
 ## Not exposed
 

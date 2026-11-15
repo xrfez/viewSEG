@@ -3,13 +3,13 @@
     "parseSEG": {
       "dir": "$deps/parseSEG",
       "url": "https://github.com/xrfez/parseSEG",
-      "commit": "773408d5ff07a9ed27eacd8b5cc5344ab0f689e9",
+      "commit": "be1a2af2667b7861ff02a692970431f24225afe4",
       "version": ""
     },
     "processSEG": {
       "dir": "$deps/processSEG",
       "url": "https://github.com/xrfez/processSEG",
-      "commit": "521f282d294758449831552b1d84aa978e604791",
+      "commit": "3273caec2310dc04ac707e0e0e779de1d5c8aa5b",
       "version": ""
     },
     "Arraymancer": {
@@ -128,8 +128,8 @@
       "# Dependencies",
       "",
       "requires \"nim >= 2.4.0\"",
-      "requires \"https://github.com/xrfez/parseSEG >= 0.11.0\"",
-      "requires \"https://github.com/xrfez/processSEG >= 0.4.0\"",
+      "requires \"https://github.com/xrfez/parseSEG >= 0.12.0\"",
+      "requires \"https://github.com/xrfez/processSEG >= 0.5.0\"",
       "requires \"https://github.com/dinau/imguin >= 1.92.9.0\"",
       "requires \"https://github.com/dinau/sdl3_nim >= 3.4.18.0\"",
       ""
