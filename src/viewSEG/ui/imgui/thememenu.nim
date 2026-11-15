@@ -18,11 +18,11 @@ import marks, style
 type
   ThemeMenu* = object
     ## What happened in the submenu this frame.
-    open*: bool        ## the submenu is open
-    picked*: bool      ## an entry was clicked
-    theme*: string     ## its file name; "" for "Follow system"
-    rests*: bool       ## the pointer rests on an entry
-    rested*: string    ## that entry's file name; "" for "Follow system"
+    open*: bool     ## the submenu is open
+    picked*: bool   ## an entry was clicked
+    theme*: string  ## its file name; "" for "Follow system"
+    rests*: bool    ## the pointer rests on an entry
+    rested*: string ## that entry's file name; "" for "Follow system"
 
 const SwatchLines = 2.4'f32 ## the swatch's width, in text lines
 

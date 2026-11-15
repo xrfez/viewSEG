@@ -360,7 +360,7 @@ type Scheme = tuple[background, line: Rgba]
 func ink(c: Rgba; s: Scheme): Rgba {.inline.} = readable(withAlpha(c, 255), s.background,
   InkContrast)
 
-type Apart = tuple[colour: Rgba, least: float64]
+type Apart = tuple[colour: Rgba; least: float64]
   ## a colour another must be apart from, and by how much (`deltaE`)
 
 func apart(c: Rgba; schemes: openArray[Scheme]; others: openArray[Apart];
