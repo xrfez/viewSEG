@@ -949,9 +949,11 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    polarity of every trace reversed, the tiles from before are drawn until the first
    one after the change comes, then dropped: `orderGen`, `samplesGen`; an edit of a
    trace in view is such a change); the first tile after a change of gather or processing
-   sets the panel's level: the level is taken over the record's first request
-   (`Panel.basis`: what its first view read, with the read-ahead), whatever the view
-   later, so the brightness holds while the user pans; so does a tile of that request
+   sets the panel's level: the level is taken over all of the record (`Panel.basis`:
+   its first request when that reads all of it, `wholeRecord`; else `recordRequest`,
+   every trace or every few, at most `MaxBasisTraces`, read by the reader once the first
+   view is drawn, the first tile standing in), whatever the view later, so the
+   brightness holds while the user pans; so does a tile of that request
    after a kill or a restore, a filter, a clip percentile or a gain that runs on the
    samples (`relevel`). The reader keeps the samples of that first request apart
    (`basisRaw`, up to `MaxBasisValues`). Zoomed in, the request is another:

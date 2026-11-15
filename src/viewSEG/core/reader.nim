@@ -516,6 +516,16 @@ proc levelWaits(r: ptr ReaderObj): bool =
     withLock r.lock:
       result = r.hasLevel
 
+proc levelSuperseded(r: ptr ReaderObj): bool =
+  ## Whether a read of the record's level's samples from the file is to be
+  ## given up: a new source or order, a stop, or a newer level (a view asked
+  ## for meanwhile waits for its few reads instead: begun again, they would
+  ## never end while the user pans).
+  result = r.superseded
+  if not result:
+    withLock r.lock:
+      result = r.hasLevel
+
 proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
     given: var bool): bool =
   ## Reads and processes the tile `req` asks for into `tile`; false when
@@ -683,7 +693,7 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
       tile.failed += c.failed
       if c.failed > 0 and firstError.len == 0 and c.log.len > 0:
         firstError = c.log[0].msg
-      if (if level: rd.r.levelWaits else: rd.r.interrupted):
+      if (if level: rd.r.levelSuperseded else: rd.r.interrupted):
         given = true
         break
       waitFrom = fs.now()

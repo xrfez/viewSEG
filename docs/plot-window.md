@@ -219,14 +219,17 @@
     under Normalized per trace brings each trace to it again), and the picture before
     stays until the new one is drawn; under Float the level of the data in view is taken
     again at once. Fixed takes it when its amplitude is taken from the record shown.
-    **The record's level is the record's, whatever is in view:** it is taken over what
-    the record's first view read (with its read-ahead: all of the record at the fit in
-    density), and stays taken over that when the view moves. A new clip percentile, a
-    kill or restore, a filter change or a gain that runs on the samples, made zoomed in,
-    has the panel's reader work it out again over those traces, once the view is drawn,
-    from their samples, which it keeps apart from the view's (up to 32 MiB; past that
-    they are read again): nothing is read from the file for it, and the level held stays
-    meanwhile.
+    **The record's level is the record's, whatever is in view:** it is taken over all
+    of the record. When the record's first view reads all of it (with its read-ahead:
+    the fit in density), over that; when it does not (the scales carried from the record
+    before, a wiggle mode's first screen), over every trace or every few, at most 256,
+    which the panel's reader reads once the first view is drawn (a few reads; that view's
+    own level stands in meanwhile, replaced once). A new clip percentile, a kill or
+    restore, a filter change or a gain that runs on the samples, made zoomed in, has the
+    reader work it out again over the same traces, from their samples, which it keeps
+    apart from the view's (up to 32 MiB): nothing is read from the file for it, and the
+    level held stays meanwhile. Over every few traces, a trace louder than its
+    neighbours can be missed: the drop-down then says which (every 4th trace, ...).
 
     **Exponential's cutoff** (the user: "with exponential the basemet gets pretty blown
     out. maybe there should be a cutoff time"): the gain rises with time until the time

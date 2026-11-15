@@ -625,6 +625,30 @@ func sameReach*(a, b: ReadRequest): bool =
   a.first == b.first and a.count == b.count and a.stride == b.stride and
     a.firstSample == b.firstSample and a.samples == b.samples and a.decimation == b.decimation
 
+const MaxBasisTraces* = 256
+  ## traces the record's level is taken over, at most, when the record's
+  ## first view is not all of it (`recordRequest`): a few reads
+
+func wholeRecord*(r: ReadRequest; layout: PanelLayout): bool =
+  ## Whether `r` reads all of the record `layout` lays out: from its first
+  ## position to its last (every `stride`-th) and every sample.
+  not r.isEmpty and r.first == 0 and r.last + r.stride >= layout.traces and
+    r.firstSample == 0 and r.samples >= layout.samples
+
+func recordRequest*(p: Panel; margin: int): ReadRequest =
+  ## What the record's level is taken over when the record's first view is
+  ## not all of it (zoomed, the scales carried from the record before; a
+  ## wiggle mode's first screen): every trace, or every `stride`-th so that
+  ## at most `MaxBasisTraces` are read, and every sample at the plot's
+  ## resolution in time. Empty while the plot's size is not known.
+  result = ReadRequest(stride: 1, decimation: 1)
+  if p.layers.len > 0 and p.layout.traces > 0 and p.view.columns > 0 and p.view.rows > 0:
+    var d = p.layers[0].display
+    d.mode = dmDensity # all of it: no wiggle mode's limit
+    let columns = min(p.view.columns, MaxBasisTraces)
+    result = requestFor(p.layout, fitted(viewLimits(p.layout, d, columns), columns,
+      p.view.rows), margin, readAhead = 0)
+
 func displayMargin*(flow: Pipeline; dtMs: float64): int =
   ## The samples `flow` needs beyond a window on each side; 0 when it
   ## cannot say (an invalid op: the reader reports it).

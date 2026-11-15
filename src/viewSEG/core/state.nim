@@ -1779,16 +1779,18 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     template e: untyped = state.edits[state.keyOf(state.sessions[i].path)]
     reversed = e.listIn(teReversed, traces)
     killed = e.listIn(teKilled, traces)
-  # The record's level is taken over its first request (`basis`), whatever
-  # the view later: a tile of it gives it, else the reader works it out once
-  # the view is drawn, from those samples, which it keeps.
+  # The record's level is taken over all of the record (`basis`), whatever
+  # the view later: its first request when that is all of it (a tile of it
+  # gives the level), else every trace or every few, a few reads
+  # (`recordRequest`): the reader works it out once the view is drawn, and
+  # its first tile stands in meanwhile. The reader keeps those samples.
   let first = p.basis.isEmpty
-  if first: p.basis = req
+  if first: p.basis = if req.wholeRecord(p.layout): req else: p.recordRequest(margin)
   let asked = ReaderRequest(read: req, fields: p.shownFields, flow: flow,
     filters: filters, filterAux: p.layers[0].processing.aux,
     clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
     raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0,
-    basis: first)
+    basis: first and req.sameReach(p.basis))
   if p.relevel and not p.levelAsked and not req.sameReach(p.basis):
     var whole = asked
     whole.read = p.basis
