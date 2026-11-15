@@ -182,6 +182,8 @@ second.
 | Flags, notes (per project, per file, per trace) | | yes |
 | First-break picks, QC and scan results, the folder scan's statistics | | yes |
 | The positions of every data file, for a map of the whole project; stepping across folders | | yes |
+| A data folder listed offers the project it belongs to; Save project as (a copy elsewhere) | | yes |
+| Notes and filters of one file (beside its kills) | | yes |
 
 **Every file opened in a project is matched to its survey.** The import is the one step
 the user takes; after it, each seismic file opened is matched to the project's survey with
