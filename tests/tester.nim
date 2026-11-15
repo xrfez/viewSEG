@@ -10,6 +10,7 @@
 ##   cores. `--jobs:1` takes one file after another (`nim testSerial`).
 ## - `--runs:N`: of those, at most N are test runs (default an eighth of the
 ##   jobs), the others compiles.
+## - `--once`: a failed run is not run again (below).
 ## - `--timeout:S` stops a test whose run takes more than S seconds (default
 ##   300), or whose compile takes more than four times that, and reports it as
 ##   failed.
@@ -38,7 +39,12 @@
 ##
 ## A file's output, the compiler's and the test's, is kept and printed whole
 ## when the file ends, under a line that says how it ended and how long it took.
-## The run ends by naming the failed files, with exit code 1 if there are any.
+## A run that fails is run again once, by itself, after all the others (on a
+## new display): a file that then passes is reported as **flaky** (its first
+## output is printed too), one that fails again as **failed**. The run ends
+## by naming the flaky files and the failed ones, the last line giving both
+## counts, with exit code 1 if any file failed. `--once` runs nothing again.
+## A file that does not compile is never run again.
 ## Ctrl+C stops every process the runner started. `bin/testtimes.txt` keeps how
 ## long each file took, so that the longest start first next time.
 ##
@@ -73,11 +79,13 @@ type
     alone: bool     ## runs by itself, after the others
     took: array[Step, Duration]
     failure: string ## why it failed; "" while it passes
+    first: string   ## why its first run failed, when it is run again
     done: bool      ## reported
 
   Options = object
     jobs, runs: int ## steps at a time, of which runs
     timeout: Duration
+    once: bool      ## a failed run is not run again
     flags, only: seq[string]
 
   Took = tuple[compile, run: float64] ## seconds
@@ -210,11 +218,48 @@ when defined(posix):
           result.add buf[i]
     result = result.strip
 
+  proc greets(n: int; timeout: Duration): bool =
+    ## Whether the X server of display `n` accepts a client within `timeout`:
+    ## a connection to its socket, and the server's "success" to the
+    ## connection setup (no authorization, as Xvfb started here asks none).
+    let path = "/tmp/.X11-unix/X" & $n
+    let deadline = getMonoTime() + timeout
+    while getMonoTime() < deadline:
+      let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+      if fd.cint < 0:
+        return false
+      var a: Sockaddr_un
+      a.sun_family = TSa_Family(AF_UNIX)
+      for i, c in path: a.sun_path[i] = c
+      var ok = false
+      if connect(fd, cast[ptr SockAddr](addr a), SockLen(sizeof(a))) == 0:
+        # little-endian, protocol 11.0, no authorization name or data
+        var setup = [byte 0x6c, 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        if write(fd.cint, addr setup, setup.len) == setup.len:
+          var p = TPollfd(fd: fd.cint, events: POLLIN)
+          let left = max(1, (deadline - getMonoTime()).inMilliseconds)
+          if poll(addr p, 1, cint(left)) > 0:
+            var answer: byte
+            ok = read(fd.cint, addr answer, 1) == 1 and answer == 1
+      discard close(fd)
+      if ok:
+        return true
+      sleep 50
+    false
+
   proc startDisplay(prefix: seq[string]; xvfb: string; env: seq[string];
       log: string): Display =
-    ## A new Xvfb server on a display nobody uses, once it takes clients. A
-    ## display another program takes at the same moment is lost in the race
-    ## (the second server cannot listen) and the next number is tried.
+    ## A new Xvfb server on a display nobody uses, once it takes clients: it
+    ## says so on `-displayfd`, and then answers a client's connection setup.
+    ## A display another program takes at the same moment is lost in the race
+    ## (the second server cannot listen) and the next number is tried, as is
+    ## one that does not answer in time.
+    ##
+    ## `-noreset`: by default an X server resets when its last client leaves,
+    ## and a client that connects meanwhile is refused. A test that opens the
+    ## window twice (`run` twice) connects again at once, and under load it
+    ## found no display ("x11,wayland not available", 11 of 300 connections
+    ## one after another at a load of 130, none with `-noreset`).
     var failures = 0
     while result.pid == 0:
       let n = nextDisplay
@@ -225,9 +270,10 @@ when defined(posix):
           raiseOSError(osLastError(), "a pipe for Xvfb")
         discard fcntl(fds[0], F_SETFD, FD_CLOEXEC)
         let pid = spawn(prefix & @[xvfb, ":" & $n, "-displayfd", $fds[1], "-screen", "0",
-          Screen, "-nolisten", "tcp"], env, log)
+          Screen, "-nolisten", "tcp", "-noreset"], env, log)
         discard close(fds[1])
-        let ready = readLine(fds[0], initDuration(seconds = 10)) == $n
+        let ready = readLine(fds[0], initDuration(seconds = 30)) == $n and
+          greets(n, initDuration(seconds = 30))
         discard close(fds[0])
         if ready:
           result = Display(pid: pid, number: n)
@@ -290,6 +336,7 @@ type
     jobs: seq[Job]
     slots, runSlots: int
     reported: int
+    rerun: bool             ## a failed run runs again alone, once
 
 proc parseOptions(params: seq[string]): Options =
   result = Options(jobs: countProcessors(), timeout: initDuration(seconds = DefaultTimeout))
@@ -301,6 +348,8 @@ proc parseOptions(params: seq[string]): Options =
       result.runs = parseInt(value)
     elif key == "--timeout":
       result.timeout = initDuration(seconds = parseInt(value))
+    elif p == "--once":
+      result.once = true
     elif p.startsWith("-"):
       result.flags.add p
     else:
@@ -353,7 +402,7 @@ proc writeTimes(r: Runner) =
 
 proc initRunner(opts: Options): Runner =
   let testDir = currentSourcePath().parentDir
-  result = Runner(opts: opts, nim: getCurrentCompilerExe(), testDir: testDir,
+  result = Runner(opts: opts, nim: getCurrentCompilerExe(), testDir: testDir, rerun: not opts.once,
     binDir: testDir.parentDir / "bin", logDir: createTempDir("viewseg-tests-", ""))
   result.files = testFiles(testDir, result.binDir, result.logDir, opts.only)
   if result.files.len == 0:
@@ -415,8 +464,11 @@ proc report(r: var Runner; f: var TestFile) =
   let took = if f.reject: ""
              else: " (compile " & seconds(f.took[compileStep]) & (if f.took[runStep] >
                Duration(): ", run " & seconds(f.took[runStep]) else: "") & ")"
-  echo "[", align($r.reported, len($r.files.len)), "/", r.files.len, "] ", f.name,
-    (if f.failure.len == 0: ": passed" else: ": FAILED, " & f.failure), took
+  let verdict =
+    if f.first.len == 0: (if f.failure.len == 0: ": passed" else: ": FAILED, " & f.failure)
+    elif f.failure.len == 0: ": FLAKY, passed alone (its first run: " & f.first & ")"
+    else: ": FAILED again alone, " & f.failure & " (its first run: " & f.first & ")"
+  echo "[", align($r.reported, len($r.files.len)), "/", r.files.len, "] ", f.name, verdict, took
   if output.len > 0:
     stdout.write output
     if not output.endsWith("\n"):
@@ -447,13 +499,30 @@ proc finish(r: var Runner; j: var Job; e: Ended) =
   elif j.step == compileStep:
     r.queue.insert((i, runStep), 0)
   else:
-    f.failure = e.failure
     let xlog = r.logDir / f.name & ".xvfb.log"
     if e.failure.len > 0 and fileExists(xlog) and readFile(xlog).len > 0:
       let output = open(f.log, fmAppend)
       output.write "Xvfb's output:\n" & readFile(xlog)
       output.close()
-    r.report(f)
+    if fileExists(xlog):
+      removeFile(xlog)
+    if e.failure.len > 0 and f.first.len == 0 and r.rerun:
+      # Run again by itself at the end: a file that fails only beside the
+      # others is flaky, one that fails twice a failure. Its output now, in
+      # full, so that a flaky file's failure is seen too.
+      f.first = e.failure
+      echo "[", align("", len($r.files.len) * 2 + 1), "] ", f.name, ": FAILED, ", e.failure,
+        " (", seconds(f.took[runStep]), "): it runs again alone at the end"
+      let output = if fileExists(f.log): readFile(f.log) else: ""
+      stdout.write output
+      if output.len > 0 and not output.endsWith("\n"):
+        stdout.write "\n"
+      removeFile(f.log)
+      flushFile(stdout)
+      r.later.add i
+    else:
+      f.failure = e.failure
+      r.report(f)
 
 proc next(r: Runner): int =
   ## Where in the queue the next step to start is: a run if one may start,
@@ -532,11 +601,17 @@ proc main() =
     "; the slowest: ", slowest[0 ..< min(3, slowest.len)].mapIt(it.name & " " &
       seconds(it.took[compileStep] + it.took[runStep])).join(", ")
   let failed = r.files.filterIt(it.failure.len > 0)
+  let flaky = r.files.filterIt(it.failure.len == 0 and it.first.len > 0)
+  for f in flaky:
+    echo "  FLAKY ", f.name, ": ", f.first, ", then passed alone"
   for f in failed:
-    echo "  FAILED ", f.name, ": ", f.failure
+    echo "  FAILED ", f.name, ": ", f.failure,
+      (if f.first.len > 0: " (twice: first " & f.first & ")" else: "")
+  let flakyText = $flaky.len & " flaky (failed, then passed alone)" &
+    (if flaky.len > 0: ": " & flaky.mapIt(it.name).join(", ") else: "")
   if failed.len > 0:
-    quit "FAILURE " & $failed.len & " of " & $r.files.len & " test files: " &
-      failed.mapIt(it.name).join(", ")
-  echo "All ", r.files.len, " test files passed."
+    quit "FAILURE " & $failed.len & " of " & $r.files.len & " test files failed: " &
+      failed.mapIt(it.name).join(", ") & "; " & flakyText
+  echo "All ", r.files.len, " test files passed; 0 failed, ", flakyText, "."
 
 main()
