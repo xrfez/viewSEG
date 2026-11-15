@@ -570,7 +570,7 @@ holds, read-only, in three tabs:
   **Extended** (the extended textual headers, when the file has them), and a tape label or
   data trailer when it has one. SEG-D, of the record shown: **General** (its general
   headers, typed blocks included), **Channel sets** (one column per channel set, so they
-  compare at a glance), and **Extended**, **External**, a skew or a trailer when the record
+  compare at a glance; 64 side by side, with Previous and Next for a record with more), and **Extended**, **External**, a skew or a trailer when the record
   has them, shown as their bytes (offset, hexadecimal, text). SEG-2: **File**.
 - **Trace:** the selected traces (in the plot, or a receiver's on the map), or, with none
   selected and **Follow the pointer** on (the default), the trace under the pointer in the

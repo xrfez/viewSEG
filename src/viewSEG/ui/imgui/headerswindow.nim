@@ -64,6 +64,8 @@ type
     tables: Table[string, CachedTable]
     texts: Table[string, CachedText]
     applied: Table[string, set[HeaderColumn]] ## the columns each table was given
+    setsPage: int ## the page of the Channel sets tab's columns shown
+    sets: int ## how many channel sets the record shown has
 
   HeadersOutput* = object
     commands*: seq[Command]
@@ -205,7 +207,9 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
   ## description, name, bytes and offset (the columns chosen), and a value
   ## column per header; values that differ between the columns in the
   ## warning colour. Only the rows in view are drawn.
-  let n = int(HeaderColumn.high) + 1 + table.columns.len
+  # (never more than Dear ImGui takes: a caller pages more, `pageOf`)
+  let values = min(table.columns.len, MaxSideBySide)
+  let n = int(HeaderColumn.high) + 1 + values
   const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
     ImGui_TableFlags_ScrollX.cint or ImGui_TableFlags_Resizable.cint or
     ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_Hideable.cint or
@@ -218,8 +222,8 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
     ImGui_TableColumnFlags_WidthFixed.cint, 18 * igGetFontSize(), ImGuiID(ord(hcDescription)))
   for c in hcName .. HeaderColumn.high:
     igTableSetupColumn(($c).cstring, 0, 0, ImGuiID(ord(c)))
-  for k, label in table.columns:
-    igTableSetupColumn(label.cstring, ImGui_TableColumnFlags_NoHide.cint, 0,
+  for k in 0 ..< values:
+    igTableSetupColumn(table.columns[k].cstring, ImGui_TableColumnFlags_NoHide.cint, 0,
       ImGuiID(100 + k))
   fonts.withFont(frHeading, 0):
     igTableHeadersRow()
@@ -264,7 +268,7 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
           igPopStyleColor(1)
           if row.differs: igPushStyleColor_Vec4(ImGui_Col_Text.cint, warning)
           for c, v in row.values:
-            if igTableSetColumnIndex(cint(ord(HeaderColumn.high) + 1 + c)):
+            if c < values and igTableSetColumnIndex(cint(ord(HeaderColumn.high) + 1 + c)):
               igPushID_Int(cint(c))
               let joined = c < row.joined.len and row.joined[c] # (the join's accent colour)
               if joined: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
@@ -361,6 +365,23 @@ func setLabel(blockName: string): string =
            elif parts[0] == "1": "Set " & parts[1]
            else: "Set " & parts[1] & " of scan type " & parts[0]
 
+proc drawSetsPage(ui: var HeadersUi; t: Theme; marks: var Marks) =
+  ## Above a record's channel sets when there are more than a table shows
+  ## side by side: buttons to the pages before and after, and which are shown.
+  let page = pageOf(ui.sets, ui.setsPage)
+  igBeginDisabled(page.a == 0)
+  if igSmallButton("Previous##setspage"): dec ui.setsPage
+  igEndDisabled()
+  marks.mark("headers.sets previous")
+  igSameLine(0, -1)
+  igBeginDisabled(page.b + 1 >= ui.sets)
+  if igSmallButton("Next##setspage"): inc ui.setsPage
+  igEndDisabled()
+  marks.mark("headers.sets next")
+  igSameLine(0, -1)
+  dim(t, "Sets " & $(page.a + 1) & " to " & $(page.b + 1) & " of " & $ui.sets)
+  marks.mark("headers.sets page")
+
 proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
     marks: var Marks; output: var HeadersOutput) =
   ## The File headers tab: a tab per header block of the file shown (of the
@@ -423,19 +444,30 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
         if r.rows[i].isSet: anySet = true
       if anySet and subTab("Channel sets", marks):
         const id = "headers.sets"
-        if ui.stale(id, key):
+        if ui.stale(id, key & "." & $ui.setsPage):
+          # The page's sets side by side (`MaxSideBySide` a page).
+          var count = 0
+          for i in 0 ..< r.rows.len:
+            if r.rows[i].isSet and (i == 0 or r.rows[i - 1].blockName != r.rows[i].blockName):
+              inc count
+          ui.sets = count
+          let page = pageOf(count, ui.setsPage)
+          ui.setsPage = page.a div MaxSideBySide
           var sets: seq[seq[FieldRow]]
           var names: seq[string]
-          var last = ""
-          for x in r.rows:
+          var k = -1
+          for i in 0 ..< r.rows.len:
+            template x: untyped = r.rows[i]
             if x.isSet:
-              if sets.len == 0 or last != x.blockName:
-                last = x.blockName
-                names.add setLabel(last)
-                sets.add @[]
-              sets[^1].add x
-          ui.tables[id] = CachedTable(key: key, table: fieldTable(sets, names, standard,
-            byBlock = false))
+              if i == 0 or r.rows[i - 1].blockName != x.blockName:
+                inc k
+                if k in page:
+                  names.add setLabel(x.blockName)
+                  sets.add @[]
+              if k in page: sets[^1].add x
+          ui.tables[id] = CachedTable(key: key & "." & $ui.setsPage, table: fieldTable(sets,
+            names, standard, byBlock = false))
+        if ui.sets > MaxSideBySide: ui.drawSetsPage(t, marks)
         ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
         igEndTabItem()
       for i in 0 ..< r.raw.len:

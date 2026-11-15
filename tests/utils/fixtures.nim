@@ -64,7 +64,7 @@
 ## `pilotSample` that of the pilot. Every value is computed in float64 and
 ## stored as float32, so the formula and the file agree exactly.
 
-import std/[algorithm, math, options, os, strutils, tempfiles]
+import std/[algorithm, math, options, os, sequtils, strutils, tempfiles]
 import parseSEG
 import parseSEG/io/diskio # openDiskSink, for a raw SEG-D record
 import parseSEG/segd/blocks # encoded, for its general and trace header blocks
@@ -866,14 +866,16 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stat
   r.gh1 = SegdGeneralHeader1(fileNumber: SegdRecordNo, formatCode: ord(fmt), year: 26,
     additionalGhBlocks: uint8(2 + nOpt), julianDay: 313, hour: 9, minute: 41, second: 7,
     manufacturerCode: 20, baseScanInterval16: 32, recordType: 8, recordLength: BcdAllF,
-    scanTypesPerRecord: 1, channelSetsPerScanType: sets.len, skewBlocks: 0,
-    extendedHeaderBlocks: (if areas: 1 else: 0), externalHeaderBlocks: (if areas: 2 else: 0))
+    scanTypesPerRecord: 1, channelSetsPerScanType: (if sets.len > 99: BcdAllF else: sets.len),
+    skewBlocks: 0, extendedHeaderBlocks: (if areas: 1 else: 0),
+    externalHeaderBlocks: (if areas: 2 else: 0))
   if areas:
     r.extended = areaBytes(SegdExtendedText, 1)
     r.external = areaBytes(SegdExternalText, 2)
   let endUs = int32(DtMs * 1000 * float64(SegdSamples - 1))
   r.gh2Rev3 = SegdGeneralHeader2Rev3(extFileNumber: SegdRecordNo, revisionMajor: 3,
-    extRecordLength: uint32(endUs), blockType: 2)
+    extRecordLength: uint32(endUs), blockType: 2,
+    extChannelSetsPerScanType: (if sets.len > 99: uint16(sets.len) else: 0))
   r.gh3 = SegdGeneralHeader3(timeZero: 1_478_000_000_000_000, blockType: 3)
   var descs: seq[SegdChannelSetDescriptorRev3]
   for n, s in sets:
@@ -891,7 +893,8 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stat
     for tn in 1 .. (if seismic: SegdChannels else: 1):
       var t = SegdTrace(layout: slRev3, index: traces.len, numSamples: SegdSamples)
       t.header = SegdTraceHeader(fileNumber: SegdRecordNo, scanTypeNumber: 1,
-        channelSetNumber: n + 1, traceNumber: tn,
+        channelSetNumber: (if n + 1 > 99: BcdAllF else: n + 1),
+        extChannelSetNumber: (if n + 1 > 99: uint16(n + 1) else: 0), traceNumber: tn,
         traceHeaderExtensions: (if seismic and positioned: 4'u8 else: 1'u8))
       let named = seismic and stations
       t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(
@@ -1069,6 +1072,15 @@ proc stationsSegd*(fx: Fixtures): string =
     writeSegdRecord(result, [SetSpec(channelType: 0x20),
       SetSpec(channelType: 0x10, line: RcvLine, y: OriginY, scale: 1),
       SetSpec(channelType: 0x10, line: RcvLine + 1, y: OriginY + 50, scale: 1)], placed = false)
+
+proc manySetsSegd*(fx: Fixtures; sets: int): string =
+  ## `writeSegdRecord`'s record with `sets` channel sets of one time-break
+  ## trace each (more than 99: counted in General Header #2, as parseSEG
+  ## reads up to 65 535 a scan type).
+  result = fx.dir / ("sets" & $sets & ".sgd")
+  if not fileExists(result):
+    writeSegdRecord(result, newSeqWith(sets, SetSpec(channelType: 0x20)), stations = false,
+      positioned = false)
 
 proc recordOnlySegd*(fx: Fixtures): string =
   ## A record whose headers give neither stations nor coordinates (no

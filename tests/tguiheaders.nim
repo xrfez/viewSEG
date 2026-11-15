@@ -8,7 +8,8 @@
 ## for it. A SEG-D record shown: its General tab lists the general headers
 ## (read off the UI thread), Channel sets puts the channel sets side by side
 ## with the fields that differ marked, and External shows the external
-## header's bytes.
+## header's bytes. A record of 600 channel sets shows them 64 side by side,
+## a page at a time (Next, to the last page).
 ##
 ## The Trace tab (SEG-Y): empty until a trace is chosen; the trace under the
 ## pointer in the plot, kept when the pointer goes to the Headers window; a
@@ -47,7 +48,9 @@
 ## cleared (`r.differs = false` after `fieldTable` in `traceTable`), "the
 ## channels that differ are not marked" (with `fieldTable`'s marking taken
 ## out for every table, the channel sets' check fails first: "the channel
-## types that differ are not marked").
+## types that differ are not marked"). With the channel sets not paged
+## (`pageOf` giving every set, `drawFieldTable` taking every column), Dear
+## ImGui's check `columns_count < 512` stopped the program at 600 sets.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves headers-*.png there, and, with the
@@ -208,6 +211,32 @@ withFixtures fx:
       f.click(wait, "headers.file tab External")
       result = wait > 8 and f.shown("headers.bytes external line 0")
       if result: f.shoot("headers-external-segd.png")))],
+    fx.dir / "cache")
+
+  # A record of 600 channel sets (more than the 512 columns a table can
+  # have): 64 side by side, a page at a time.
+  runSteps(fx.manySetsSegd(600), [
+    ("shown", Step(proc (f: FrameInfo; wait: int): bool = # (auxiliary traces only)
+      f.core.panels[f.core.findPanel(MainPanel)].laidOut and wait > 3)),
+    ("file headers", Step(proc (f: FrameInfo; wait: int): bool =
+      f.click(wait, "headers.tab file")
+      result = wait > 8 and f.shown("headers.general gh1.fileNumber 0")
+      if wait == 300: doAssert false, "the record's general headers never came")),
+    ("channel sets", Step(proc (f: FrameInfo; wait: int): bool =
+      f.click(wait, "headers.file tab Channel sets")
+      result = wait > 8 and f.shown("headers.sets st1cs1.channelType 0")
+      if result:
+        doAssert f.shown("headers.sets page") and f.shown("headers.sets next"),
+          "no line of the pages"
+        f.shoot("headers-sets-many-segd.png"))),
+    ("next page", Step(proc (f: FrameInfo; wait: int): bool =
+      f.click(wait, "headers.sets next")
+      # (a row is named by its first column's set: now set 65)
+      result = wait > 8 and f.shown("headers.sets st1cs65.channelType 0")
+      if result: f.shoot("headers-sets-many-next-segd.png"))),
+    ("last page", Step(proc (f: FrameInfo; wait: int): bool =
+      for k in 0 ..< 8: f.click(wait - 10 * k, "headers.sets next")
+      result = wait > 90 and f.shown("headers.sets st1cs577.channelType 0")))],
     fx.dir / "cache")
 
   # The Trace tab: empty until a trace is chosen; the trace under the

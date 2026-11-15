@@ -205,6 +205,18 @@ type
 func bytesOf(r: FieldRow): string =
   if r.last <= r.first: $r.first else: $r.first & "-" & $r.last
 
+const MaxSideBySide* = 64
+  ## value columns a header table shows side by side, at most (Dear ImGui
+  ## takes fewer than 512 columns; a SEG-D record may have 65 535 channel
+  ## sets a scan type): more come a page at a time (`pageOf`)
+
+func pageOf*(columns, page: int): Slice[int] =
+  ## The value columns of `columns` that page `page` shows, `MaxSideBySide`
+  ## a page (the last page for one past it).
+  let last = max(0, (columns - 1) div MaxSideBySide)
+  let first = clamp(page, 0, last) * MaxSideBySide
+  first ..< min(columns, first + MaxSideBySide)
+
 func fieldTable*(columns: openArray[seq[FieldRow]]; labels: openArray[string];
     standard: SeismicKind; byBlock = true): FieldTable =
   ## The rows of `columns` (each a header listing, in its order) side by
