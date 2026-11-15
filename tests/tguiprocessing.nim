@@ -1,6 +1,6 @@
 ## The Seismic window's filters, headless, with real clicks and keys, on a
 ## SEG-D record with a time break and a pilot beside its 24 seismic traces:
-## the strip says "Filters" and its Raw toggle is off and does
+## the strip has the filters' button and its Raw toggle is off and does
 ## nothing (nor does `P`) while there is no filter; the drop-down opens on a
 ## click and stays open while it is set: Band-pass gives the default
 ## corners and the plot is filtered (a tile whose reader filtered every

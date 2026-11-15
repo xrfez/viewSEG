@@ -272,8 +272,9 @@ seismic ones and the window is called **Seismic + Aux**; with Seismic off it sho
 auxiliary traces alone (**Aux**). One of them always stays on. The gain, the sorts, the
 edits, the display header and the status bar work on them too.
 
-**Filters.** The **Filters** drop-down in the strip, before the gain (it reads "Filters" while there is none)
-sets what the traces go through before the gain, and the plot follows as you move a
+**Filters.** The **Filters** button in the strip (a funnel, after the overlap; lit while
+filters are applied; its tooltip and the top of its drop-down say which) sets what the
+traces go through before the gain, and the plot follows as you move a
 slider:
 
 - **DC removal**: none, the mean, or the mean and a linear trend of each trace.

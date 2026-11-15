@@ -419,10 +419,10 @@ reversed.
 
 ## Filters
 
-The **Filters** drop-down in the strip, before the gain (the order the samples go
-through them), says what the traces go through ("Filters: 8-14-60-80 Hz, notch 60 Hz x3,
-DC"; "Filters" alone for none, short because the strip is full) and holds every setting, applied
-as it changes (a slider sends its value every frame it moves). The traces go through, in
+The **Filters** button in the strip (a funnel icon, lit while filters are applied), before
+the gain (the order the samples go through them), opens a drop-down that says what the
+traces go through ("Filters: 8-14-60-80 Hz, notch 60 Hz x3, DC"; "Filters: none"), as
+the button's tooltip does, and holds every setting, applied as it changes (a slider sends its value every frame it moves). The traces go through, in
 order: the **DC removal** (none, the mean: `demeanOp`, or the mean and a linear trend:
 `detrendOp`), then one zero-phase filter (processSEG's `filterOp`): a **low-cut**,
 **high-cut** or **band-pass** by its four corners (`f1` to `f2`, the low-cut ramp; `f3`
@@ -435,7 +435,7 @@ so whoever sends them), and end at the file's Nyquist frequency: a corner or not
 for a finer interval is cut at Nyquist or left out for this file, and the drop-down says
 so; the processing never stops for it.
 
-**Raw / processed:** the **Raw** toggle beside the drop-down, and `P` while the plot has
+**Raw / processed:** the **Raw** toggle beside the button, and `P` while the plot has
 the focus, show the traces without the filters, under the same gain, and filtered again;
 both are disabled while there is no filter. **The Aux traces** go through the filters
 only when "Filter the Aux traces too" is ticked (processSEG passes an auxiliary trace by

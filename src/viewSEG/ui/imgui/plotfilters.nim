@@ -1,6 +1,7 @@
-## The plot window's filters, in its strip: a drop-down that says what the
-## traces go through and holds every setting (DC removal, the pass band's
-## corners, notches, the Aux traces), and a Raw toggle beside it that shows
+## The plot window's filters, in its strip: a button one icon wide, lit while
+## they are applied, whose drop-down says what the traces go through and
+## holds every setting (DC removal, the pass band's corners, notches, the
+## Aux traces), and a Raw toggle beside it that shows
 ## the traces without the filters (`P`). Every change goes to `core` as it
 ## is made (`ckProcessing`): a slider moved sends a command each frame, the
 ## panel's reader filters the samples it holds again off this thread, and
@@ -10,7 +11,7 @@ import std/[math, strutils]
 import imguin/cimgui
 import ../../core/state
 import ../../view/theme
-import chrome, plotsort, style
+import chrome, icons, plotsort, style
 
 const
   bandNames: array[PassBand, string] = ["None", "Low-cut", "High-cut", "Band-pass"]
@@ -27,9 +28,9 @@ proc send(p: Panel; pr: Processing; cmds: var seq[Command]) =
   cmds.add Command(kind: ckProcessing, panel: p.id, processing: pr)
 
 func label*(pr: Processing): string =
-  ## What the drop-down says: "Filters: 4-8-60-80 Hz", "Filters" for none
-  ## (short: the strip is full), and "(raw)" while they are not applied.
-  if not pr.hasFilters: return "Filters"
+  ## What the filters' tooltip and drop-down say: "Filters: 4-8-60-80 Hz",
+  ## "Filters: none", and "(raw)" while they are not applied.
+  if not pr.hasFilters: return "Filters: none"
   result = "Filters: " & describe(pr)
   if pr.raw: result.add " (raw)"
 
@@ -171,25 +172,34 @@ proc drawSettings(p: Panel; pr: Processing; hasAux: bool; marks: var Marks;
   marks.mark("plot.filters none")
   tip("Takes every filter away (the corners and notches start from their defaults again)")
 
+const filtersId = "##filterspopup"
+
 proc drawFilterControls*(p: Panel; hasAux: bool; t: Theme; marks: var Marks;
     cmds: var seq[Command]) =
-  ## The filters' drop-down (their settings in it), then the Raw toggle.
+  ## The filters' button, lit while they are applied, which opens their
+  ## drop-down (what they are, then their settings), then the Raw toggle.
+  ## The button is one icon wide whatever the filters are, so the strip
+  ## keeps its lines: what they are is in its tooltip and the drop-down.
   let pr = p.layers[0].processing
   let text = label(pr)
-  let style = igGetStyle()
-  igSetNextItemWidth(round(igCalcTextSize(text.cstring, nil, false, -1).x +
-    igGetFrameHeight() + 3 * style.FramePadding.x))
-  if igBeginCombo("##filters", text.cstring, ImGui_ComboFlags_HeightLargest.cint):
+  if toggle(IconFilter & "##filters", pr.filtering, t):
+    igOpenPopup_Str(filtersId, 0)
+  let below = ImVec2_c(x: igGetItemRectMin().x, y: igGetItemRectMax().y)
+  marks.mark("plot.filters")
+  tip(text & "\nWhat the traces go through before the gain (DC removal, low-cut, " &
+    "high-cut, band-pass, notches): click to set them. The plot follows as you do.")
+  igSetNextWindowPos(below, ImGui_Cond_Appearing.cint, ImVec2_c(x: 0, y: 0))
+  if igBeginPopup(filtersId, 0):
+    marks.markWindow("plot.filters popup")
+    igTextUnformatted(text.cstring, nil)
+    marks.mark("plot.filters says")
     # the sliders' tracks and the boxes stand out from the popup they are on
     let raised = vec4(mix(t.roles[rlFrame], t.roles[rlText], 0.12))
     igPushStyleColor_Vec4(ImGui_Col_FrameBg.cint, raised)
     igPushStyleColor_Vec4(ImGui_Col_Button.cint, raised)
     drawSettings(p, pr, hasAux, marks, cmds)
     igPopStyleColor(2)
-    igEndCombo()
-  marks.mark("plot.filters")
-  tip("Filters: what the traces go through before the gain (DC removal, low-cut, " &
-    "high-cut, band-pass, notches). The plot follows as you set them.")
+    igEndPopup()
   igSameLine(0, 2)
   igBeginDisabled(not pr.hasFilters)
   if toggle("Raw##filtersraw", pr.raw and pr.hasFilters, t):
