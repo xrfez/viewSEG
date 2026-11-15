@@ -596,7 +596,8 @@ its shortcut shown there.
 | Arrow keys | Pan the way they point, by a tenth of the view; with Shift, by a whole view |
 | Ctrl + `0` | Fit all (also a button in the controls) |
 | `]` or keypad `*` / `[` or keypad `/` | More / less gain amount, 3 dB a step; with Shift, 12 dB |
-| Backspace, or Alt + Left | Back to the previous view |
+| Backspace | Back to the previous view |
+| Alt + Right / Alt + Left | Select the next / previous trace of the record (Alt + Down / Alt + Up when time is across); the plot scrolls to keep it in view |
 | Page Down / Page Up | Next / previous gather |
 | Home / End | First / last gather |
 | Ctrl + G | Go to a record number |
@@ -1192,11 +1193,34 @@ unticked). The live panel is over the visible time by default. How a window show
 spectrum (dB or linear, the axis, the curves, the time, the phase) is kept: a new FFT
 window starts as the last one changed, and the live panel as it was left.
 
-**Reading it.** The pointer over the plot puts a line at the nearest frequency and a dot
-on each curve; the line under the plot reads the frequency and each curve's level there
-("24.4 Hz   raw -3.1 dB   processed -40.2 dB"). The wheel zooms about the pointer, a
-drag pans, a right drag zooms to a box, a double click shows everything again; no view
-goes past the data. A click on a curve's name in the legend hides it.
+**Reading it: the cursor.** As the Seismic window's cursor: the pointer over the plot
+puts the cursor at the nearest frequency, on the curve nearest the pointer, with a dot on
+each curve and, from the cursor's point, a line to each axis with the exact frequency
+and level written on the axis over its tick labels. The line under the plot reads the
+frequency and each curve's level there ("24.4 Hz   raw -3.1 dB   processed -40.2 dB"),
+rounded as the axes need: the frequency to the spacing of the bins ("60.1" at 0.24 Hz,
+"60.00" at 0.06 Hz), dB and degrees to a tenth (never "-0.0"), linear amplitudes to
+four significant digits. **The keys** (the window has the focus once clicked): Left /
+Right move the cursor one frequency bin, Home / End to the first and last, Up / Down to
+another curve; the keys then hold it, and it stays where they put it when the pointer
+leaves the plot, so they can step it across a notch; the line under the plot starts
+"Held ·" (its tooltip says which keys move it and how to let it go), and moving the
+pointer over the plot, or Esc, lets it go.
+The cursor is `core/plotcursor`'s, made for an f-k plot too (Up / Down there step its
+second axis). The wheel zooms about the pointer, a drag pans, a right drag zooms to a
+box, a double click shows everything again; no view goes past the data. A click on a
+curve's name in the legend hides it.
+
+**Stepping through the record: Alt + arrows.** In the Seismic window, Alt + Right /
+Alt + Left select the next / previous trace of the record in the order shown (Alt + Down
+/ Alt + Up when time is across: the arrows along the traces, the first trace at the top),
+from the trace clicked last (else the selection's last, or first going back; else the
+trace under the pointer; else the first in view), the plot scrolled by as little as
+keeps it in view. Traces the trace filter hides are skipped; killed traces shown are not
+(they are there to step over). In an FFT window of one trace (or of a selection), Alt +
+Right / Left select the next / previous trace after its own, and the window shows it; in
+the Spectrum panel they step the plot's selection, which the panel follows. (Alt + Left
+was also "back" in the plot; back is Backspace now, so the user's request wins.)
 
 **Off the screen's thread.** The spectra are computed by a reader of their own (`core/
 spectrumreader`), which reads only the traces it does not already hold (as decoded, up
@@ -1262,7 +1286,8 @@ the draft had it; otherwise, what the user changed is what this page describes.
    colour**, each made readable on the plot's background. Confirmed, and both are the
    user's to set among the plot's six colours (22).
 6. **Fit all is Ctrl + `0`** (and a button); **back is Backspace or Alt + Left**.
-   Confirmed.
+   Confirmed. Later (2026-11-15) the user asked for Alt + arrows to step through the
+   record's traces, so in the plot back is Backspace alone (the map keeps Alt + Left).
 7. **A double-click does nothing extra.** Confirmed.
 8. **Ctrl + arrow keys zoom along one axis.** Confirmed.
 9. **The display gain starts automatic:** AGC over 500 ms on pre-stack records, none on

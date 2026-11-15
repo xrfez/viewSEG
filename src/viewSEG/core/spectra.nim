@@ -49,7 +49,9 @@ import processSEG/pipeline
 import processSEG/fft/spectrum
 import processSEG/filter/[design, edges]
 import processSEG/core/[rows, types, workspace]
-import panels, processing, viewport
+import panels, plotcursor, processing, viewport
+
+export plotcursor
 
 export DbReference
 
@@ -145,6 +147,9 @@ type
     panel*: PanelId           ## the plot it is of (the live panel: the Seismic window)
     filters*: string          ## the plot's filters, in words, when asked; "" for none
     processing*: Processing   ## them, as asked last (shown raw or not, alike)
+    cursor*: PlotCursor
+      ## its cursor when held by the keys or an agent: a bin along the
+      ## frequency axis, and the curve (as drawn) it reads (`core/plotcursor`)
     killed*: seq[int]         ## its traces killed when it asked last (indices in the file)
     editsSeen*: int           ## its file's edits' revision then
     spectrum*: Spectrum       ## the newest answer taken in

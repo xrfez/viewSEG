@@ -267,6 +267,13 @@ withFixtures fx:
     st.agent(%*{"kind": "spectrum display", "spectrum": 0, "spectrumShow": toJson(LiveShown),
       "frozen": true})
     doAssert st.spectra[0].frozen
+    st.agent(%*{"kind": "spectrum cursor", "spectrum": st.spectra[1].id,
+      "cursor": {"held": true, "x": 3, "y": 0}})
+    doAssert st.spectra[1].cursor.held and st.spectra[1].cursor.x == 3, "the agent's cursor"
+    st.agent(%*{"kind": "step trace", "spectrum": st.spectra[1].id, "stepBy": 1})
+    doAssert st.spectra[1].traces.len == 1 and st.spectra[1].traces != @[t] and
+      st.spectra[1].traces[0] in st.selection.selected, "the agent's step: " &
+      $st.spectra[1].traces
     st.agent(%*{"kind": "close spectrum", "spectrum": st.spectra[1].id})
     doAssert st.spectra.len == 1
     st.agent(%*{"kind": "edit traces", "edit": "killed"})

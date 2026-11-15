@@ -45,7 +45,7 @@ func responseCurve(sp: Spectrum; db: bool; reference: float64; ink: Rgba): Curve
                  " dB drawn at it)"
              else: "filter response"
   Curve(name: name, colour: Rgba(r: ink.r, g: ink.g, b: ink.b, a: 170), ys: ys,
-    xs: sp.responseHz, reads: gainDb, unit: "dB", width: 1.0,
+    xs: sp.responseHz, reads: gainDb, unit: "dB", short: "response", width: 1.0,
     shadeTo: (if db: FloorDb else: 0.0))
 
 func spectrumPlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =

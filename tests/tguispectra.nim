@@ -107,8 +107,9 @@ withFixtures fx:
         let pixel = 250 / float64(f.markOf("fft 1.data").size.x)
         doAssert abs(hz - SpectrumSineHz) <= pixel + w.spectrum.binHz,
           "the readout at 24.41 Hz: " & text
-        let db = w.spectrumPlot(builtinTheme(tmDark)).curves[0].ys[k]
-        doAssert text == valueText(hz) & " Hz   raw " & valueText(db) & " dB", text)
+        let plot = w.spectrumPlot(builtinTheme(tmDark))
+        let db = plot.curves[0].ys[k]
+        doAssert text == plot.xText(hz) & " Hz   raw " & yText(db, "dB") & " dB", text)
   # the plot's menu over a selected trace: the selection's FFT
   step("select three", proc (f: FrameInfo) =
     f.apply(Command(kind: ckSelect, traces: @[2, 3, 4], mode: smReplace)),

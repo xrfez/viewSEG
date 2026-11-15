@@ -10,7 +10,10 @@
 ## seismic trace; the frontend lays its axes out by `along`, and
 ## everything else here is the same either way. The view never shows
 ## anything past the data (`xLimits`, `yLimits`); the cursor reads the
-## nearest point of each curve (`readingAt`, `readoutText`).
+## nearest point of each curve (`readingAt`, `readingOf`, `readoutText`),
+## its numbers rounded as the axes need them (`xText`, `yText`): the x to
+## the spacing of the points, dB and degrees to a tenth, other values to
+## four significant digits.
 
 import std/[math, strutils]
 import ../core/[geometry, orientation, viewport]
@@ -35,6 +38,7 @@ type
       ## what the readout says per x, when it is not `ys` (a gain drawn
       ## against amplitudes reads in dB); empty: `ys`
     unit*: string ## the readout's unit of `reads`; "": the plot's `yUnit`
+    short*: string ## its name in the readout, when shorter than the legend's; "": `name`
 
   CurvePlot* = object
     ## Curves over one shared axis.
@@ -160,13 +164,42 @@ func valueText*(x: float64; digits = 3): string =
     if result.endsWith("."): result.setLen result.len - 1
   if result == "-0": result = "0"
 
+func readingOf*(p: CurvePlot; index: int): Reading =
+  ## What the cursor at point `index` of `xs` reads (`readingAt` of its x).
+  if index notin 0 ..< p.xs.len: Reading(index: -1, x: NaN)
+  else: p.readingAt(p.xs[index])
+
+func xText*(p: CurvePlot; x: float64): string =
+  ## `x` as the cursor says it, to the spacing of the plot's points (no more
+  ## decimals than tell two neighbours apart: "60.1" at 0.24 Hz, "60.00" at
+  ## 0.061 Hz, "60" at 1); "-" for NaN.
+  if x.isNaN: return "-"
+  let step = if p.xs.len > 1: abs(p.xs[1] - p.xs[0]) else: 0.0
+  let d = if step > 0 and step < Inf: clamp(int(ceil(-log10(step) - 1e-9)), 0, 9) else: 3
+  result = formatFloat(x, ffDecimal, d)
+  if result.endsWith('.'): result.setLen result.len - 1
+  if result.startsWith("-") and result.strip(chars = {'-', '0', '.'}).len == 0:
+    result = result[1 .. ^1]
+
+func yText*(y: float64; unit: string): string =
+  ## A value as the cursor says it: in dB and degrees to a tenth ("-23.4",
+  ## "0.0", never "-0.0"), others to four significant digits ("0.005513");
+  ## "-" for NaN.
+  if y.isNaN: return "-"
+  if y.classify in {fcInf, fcNegInf}: return valueText(y)
+  if unit in ["dB", "deg"]:
+    result = formatFloat(y, ffDecimal, 1)
+    if result == "-0.0": result = "0.0"
+  else: result = valueText(y, 4)
+
 func readoutText*(p: CurvePlot; r: Reading): string =
   ## A reading in words: "12.5 Hz   raw -23.4 dB   processed -40.1 dB"; ""
   ## for none.
   if r.index < 0: return ""
-  result = valueText(r.x) & (if p.xUnit.len > 0: " " & p.xUnit else: "")
+  result = p.xText(r.x) & (if p.xUnit.len > 0: " " & p.xUnit else: "")
   for i, c in p.curves:
     if i < r.values.len:
       let unit = if c.reads.len > 0 and c.unit.len > 0: c.unit else: p.yUnit
-      result.add "   " & c.name & " " & valueText(r.values[i]) &
+      result.add "   " & (if c.short.len > 0: c.short else: c.name) & " " &
+        yText(r.values[i], unit) &
         (if unit.len > 0: " " & unit else: "")

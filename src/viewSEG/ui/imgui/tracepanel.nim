@@ -1760,8 +1760,16 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
     after = fitted(lim, after.columns, after.rows)
     remember = true
     tp.gesture = gsNone
-  if once(ImGui_Key_Backspace.cint) or once(alt or ImGui_Key_LeftArrow.cint):
+  if once(ImGui_Key_Backspace.cint):
     res.commands.add Command(kind: ckBack, panel: p.id)
+  # Alt + the arrows along the traces: the next or previous trace selected
+  # (Left / Right, or Up / Down when time is across).
+  for (key, dx, dy) in [(ImGui_Key_LeftArrow, -1.0, 0.0), (ImGui_Key_RightArrow, 1.0, 0.0),
+      (ImGui_Key_UpArrow, 0.0, -1.0), (ImGui_Key_DownArrow, 0.0, 1.0)]:
+    let (alongTraces, _) = m.dataDelta(dx, dy)
+    if alongTraces != 0 and held(alt or key.cint):
+      res.commands.add Command(kind: ckStepTrace, spectrumOf: p.id,
+        stepBy: (if alongTraces > 0: 1 else: -1))
   # Records: Page Down / Up, Home / End, Ctrl+G.
   let (current, count) = record
   var to = current

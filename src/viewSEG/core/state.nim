@@ -198,6 +198,10 @@ type
       ## how a spectrum window shows its spectrum, over which time; the live panel frozen or not
     ckCloseSpectrum = "close spectrum"   ## close an FFT window
     ckSpectrumPanel = "spectrum panel"   ## the live spectrum panel on screen, or not
+    ckSpectrumCursor = "spectrum cursor"
+      ## hold a spectrum window's cursor at a frequency bin and curve, or let it go
+    ckStepTrace = "step trace"
+      ## select the next or previous trace of the record shown (Alt + arrow)
     ckDisplayPreset = "display preset"
       ## draw a panel as a named display says; keep, rename or forget one
     ckTheme = "theme"                    ## the theme the program is drawn in, as View > Theme picks it
@@ -317,13 +321,25 @@ type
         ## the samples of the traces its Trace tab is about (the selection,
         ## else the trace under the pointer); none when the window is hidden.
         ## Changes nothing else: what was read is in `state`'s `headers`
-    of ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel:
+    of ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel, ckSpectrumCursor,
+        ckStepTrace:
       spectrum*: int
-        ## ckSpectrumDisplay, ckCloseSpectrum: the window (0 the live
-        ## panel; FFT windows from 1, as `state`'s `spectra` lists them)
+        ## ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumCursor, ckStepTrace:
+        ## the window (0 the live panel; FFT windows from 1, as `state`'s
+        ## `spectra` lists them); ckStepTrace: an FFT window of one trace
+        ## steps from its trace and shows the new one, as does one of a
+        ## selection; 0 steps the plot's selection
       spectrumOf*: PanelId
-        ## ckSpectrum: the panel whose file, view and filters it is of (1:
-        ## the Seismic window)
+        ## ckSpectrum, ckStepTrace: the panel whose file, view and filters it
+        ## is of (1: the Seismic window)
+      stepBy*: int
+        ## ckStepTrace: 1 the next trace of the record in the order shown,
+        ## -1 the previous one (traces the trace filter hides are skipped,
+        ## killed ones shown are not)
+      cursor*: PlotCursor
+        ## ckSpectrumCursor: `held` true holds the cursor at `at`: [the
+        ## frequency bin (`state`'s spectra give `binHz`), the curve as drawn
+        ## (0 the first in the legend)]; false lets it go to the pointer
       spectrumTraces*: seq[int]
         ## ckSpectrum: survey-wide ids of traces of the panel's file; none:
         ## its selected traces there
@@ -4875,6 +4891,93 @@ proc displayPreset(state: var AppState; cmd: Command) =
       if why.len > 0: state.ignore(cmd, why)
       else: state.change(cmd.origin, s): s.displayPresets = deleted(s.displayPresets, name, why)
 
+proc holdCursor(state: var AppState; cmd: Command) =
+  ## `ckSpectrumCursor`: a spectrum window's cursor held at a bin (within
+  ## its spectrum's) and a curve, or let go.
+  let w = state.findSpectrum(cmd.spectrum)
+  if w < 0:
+    state.ignore(cmd, "there is no spectrum window " & $cmd.spectrum)
+    return
+  template sw: untyped = state.spectra[w]
+  var c = cmd.cursor
+  if c.held:
+    if sw.spectrum.raw.len == 0:
+      state.ignore(cmd, sw.title & " has no spectrum to put its cursor on")
+      return
+    c = c.clamped([sw.spectrum.raw.len, max(c.y + 1, 1)])
+  else: c = PlotCursor()
+  if c != sw.cursor:
+    sw.cursor = c
+    inc sw.revision
+
+proc stepTrace(state: var AppState; cmd: Command) =
+  ## `ckStepTrace`: the next (or previous) trace of the record, in the
+  ## order shown, selected alone, and the plot scrolled to keep it in view.
+  ## From an FFT window of one trace, or of a selection: from its trace (the
+  ## selection's), and the window shows the new trace. Else from the
+  ## selection (the trace clicked last; else its last, or its first going
+  ## back), else the trace under the pointer, else the first in view.
+  if cmd.stepBy == 0:
+    state.ignore(cmd, "a step of 0 traces")
+    return
+  let w = if cmd.spectrum != LiveSpectrum: state.findSpectrum(cmd.spectrum) else: 0
+  if w < 0:
+    state.ignore(cmd, "there is no FFT window " & $cmd.spectrum)
+    return
+  let panel = if w > 0: state.spectra[w].panel
+              elif cmd.spectrumOf == NoPanel: MainPanel
+              else: cmd.spectrumOf
+  let k = state.findPanel(panel)
+  let i = if k >= 0: state.shownFile(k) else: -1
+  if i < 0 or not state.panels[k].laidOut or state.panels[k].shown.len == 0:
+    state.ignore(cmd, "the plot shows no trace to step through")
+    return
+  template p: untyped = state.panels[k]
+  let s = state.sessions[i]
+  func at(p: Panel; trace: int): int = p.shown.find(trace) # a position, or -1
+  var start = -1
+  if w > 0 and state.spectra[w].traces.len == 1 and state.spectra[w].traces[0] in s:
+    start = p.at(state.spectra[w].traces[0] - s.base)
+  template sel: untyped = state.selection
+  if start < 0 and sel.anchor in sel.selected and sel.anchor in s:
+    start = p.at(sel.anchor - s.base)
+  if start < 0:
+    for t in sel.selected:
+      if t in s:
+        let q = p.at(t - s.base)
+        if q >= 0 and (start < 0 or (if cmd.stepBy > 0: q > start else: q < start)): start = q
+  if start < 0 and sel.hover in s: start = p.at(sel.hover - s.base)
+  let to = if start >= 0: start + cmd.stepBy
+           else: visiblePositions(p.layout, p.view).a
+  if to notin 0 ..< p.shown.len:
+    state.ignore(cmd, "the record " & (if to < 0: "starts" else: "ends") & " there")
+    return
+  let trace = s.base + p.shown[to]
+  state.selection.select([trace], smReplace)
+  # The plot keeps it in view: scrolled by as little as it takes.
+  var v = p.view
+  let width = v.traces.hi - v.traces.lo
+  if float64(to) - 0.5 < v.traces.lo: v.traces = Span(lo: float64(to) - 0.5,
+    hi: float64(to) - 0.5 + width)
+  elif float64(to) + 0.5 > v.traces.hi: v.traces = Span(lo: float64(to) + 0.5 - width,
+    hi: float64(to) + 0.5)
+  v = kept(v, p.viewLimits(v.columns))
+  if v != p.view:
+    p.view = v
+    inc p.jumps # set by `core`: the frontend follows
+    state.requestView(k)
+    state.settleGain(k, cmd.origin)
+  # The FFT window it was pressed in shows the new trace.
+  if w > 0 and not state.spectra[w].frozen:
+    template sw: untyped = state.spectra[w]
+    (sw.traces, sw.first, sw.chosen, sw.chosenCount) = (@[trace], p.shown[to], soTrace, 1)
+    sw.record = s.recordText(p.shown[to])
+    sw.since = state.spectrumGen + 1 # the previous trace's answers are not its
+    if not state.askAgain(w):
+      state.log.add(sevWarning, s.name, s.name & " is busy (a job needs it to itself): " &
+        sw.title & " shows its trace when it is free.")
+    inc sw.revision
+
 proc applyCommand(state: var AppState; cmd: Command) =
   case cmd.kind
   of ckOpen:
@@ -5316,6 +5419,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckSpectrum: state.openSpectrum(cmd)
   of ckSpectrumDisplay: state.showSpectrum(cmd)
   of ckCloseSpectrum: state.closeSpectrum(cmd)
+  of ckSpectrumCursor: state.holdCursor(cmd)
+  of ckStepTrace: state.stepTrace(cmd)
   of ckSpectrumPanel:
     template live: untyped = state.spectra[0]
     if cmd.onScreen != live.shown:

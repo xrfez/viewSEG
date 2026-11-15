@@ -248,7 +248,8 @@ proc prefill(state: AppState; given: Command; c: var Command) =
     if w >= 0:
       c.spectrumShow = state.spectra[w].display
       c.frozen = state.spectra[w].frozen
-  of ckCloseSpectrum: c.spectrum = given.spectrum
+  of ckCloseSpectrum, ckSpectrumCursor: c.spectrum = given.spectrum
+  of ckStepTrace: (c.spectrumOf, c.stepBy) = (MainPanel, 1)
   of ckSpectrumPanel: c.onScreen = true
   of ckJoin, ckSelectUnmatched:
     # the file the plot shows, and the join window's options
@@ -525,6 +526,15 @@ proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
       k += run
     result = %*{"hz": at, "gain": gain, "points": g.len}
   let reference = max(sp.raw.peakOf, sp.processed.peakOf)
+  proc atBin(amps: seq[float64]; k: int): JsonNode =
+    if k notin 0 ..< amps.len: newJNull()
+    else: %*{"amplitude": toJson(amps[k]), "db": toJson(if reference > 0 and amps[k] > 0:
+      20 * log10(amps[k] / reference) else: NaN)}
+  let k = w.cursor.x
+  let cursor = if not w.cursor.held: %*{"held": false}
+               else: %*{"held": true, "bin": k, "hz": toJson(float64(k) * sp.binHz),
+                 "curve": w.cursor.y, "raw": sp.raw.atBin(k),
+                 "processed": sp.processed.atBin(k)}
   result = %*{"id": w.id, "title": w.title, "live": w.id == LiveSpectrum,
     "onScreen": (if w.id == LiveSpectrum: w.shown else: true), "frozen": w.frozen,
     "display": toJson(w.display), "of": $w.chosen, "file": w.file, "record": w.record,
@@ -542,7 +552,7 @@ proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
       "passedBy": sp.passedBy, "filterNote": sp.filterNote,
       "filterProblem": sp.filterProblem, "response": gains(sp.responseHz, sp.response),
       "problem": sp.problem},
-    "filterWords": w.filterText}
+    "filterWords": w.filterText, "cursor": cursor}
 
 proc headersJson(state: AppState; limit: int): JsonNode =
   ## The Headers window: its tab and toggles, what it has on screen (what its

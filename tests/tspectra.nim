@@ -26,6 +26,11 @@
 ##   band is what the filter leaves, not the design's 0; the visible time
 ##   asked over that time; a narrow notch over it gives finer bins
 ##   (`spectrumNfft`); a response the filters did not apply is not drawn;
+## - stepping through the record (`ckStepTrace`, Alt + arrow): the next and
+##   previous trace in the order shown, killed ones too, not past its ends
+##   (said), the plot scrolled to keep it in view, an FFT window of one
+##   trace moved to the next; a window's cursor held within its bins and let
+##   go (`ckSpectrumCursor`);
 ## - several windows at once, each its own; one closed while it computes
 ##   takes no answer; another of the same traces reads nothing again;
 ## - the live panel works only while on screen and not frozen; follows the
@@ -172,7 +177,16 @@ block helpers:
     p.nearestIndex(50) == 4
   let r = p.readingAt(1.2)
   doAssert r.index == 1 and r.values == @[-20.0, -1.0]
-  doAssert p.readoutText(r) == "1 Hz   raw -20 dB   processed -1 dB", p.readoutText(r)
+  doAssert p.readoutText(r) == "1 Hz   raw -20.0 dB   processed -1.0 dB", p.readoutText(r)
+  # rounded as the axes need: dB and degrees to a tenth, never "-0.0" (it
+  # read "-0.00000192 dB"), others to four digits, x to its points' spacing
+  doAssert yText(-0.00000192, "dB") == "0.0" and yText(-23.449, "dB") == "-23.4" and
+    yText(179.96, "deg") == "180.0" and yText(0.0055132, "") == "0.005513" and
+    yText(1234.6, "") == "1235" and yText(NaN, "dB") == "-", yText(-0.00000192, "dB")
+  doAssert CurvePlot(xs: @[0.0, 0.244140625]).xText(60.0585) == "60.1" and
+    CurvePlot(xs: @[0.0, 0.06103515625]).xText(60.0) == "60.00" and
+    CurvePlot(xs: @[0.0, 1.0]).xText(61.0) == "61" and
+    CurvePlot(xs: @[0.0, 0.9765625]).xText(61.5234) == "61.5"
   p.logX = true # 0 Hz is left out
   doAssert p.xLimits == Span(lo: 1, hi: 4) and p.nearestIndex(0.1) == 1
   doAssert p.nearestIndex(1.9) == 2 # nearer on the screen: log(2/1.9) < log(1.9/1)
@@ -321,6 +335,69 @@ withFixtures fx:
     doAssert sw.asks == asks, "an edit of another trace asked again"
     st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base + 8], on: false)
     st.apply Command(kind: ckCloseSpectrum, spectrum: sw.id)
+
+  block stepTrace:
+    # Alt + arrow's command: the next or previous trace of the record in the
+    # order shown, selected alone; killed traces shown are stepped onto; the
+    # plot scrolls to keep it in view; an FFT window of one trace steps from
+    # its trace and shows the new one.
+    template step(by: int; window = 0) =
+      st.apply Command(kind: ckStepTrace, spectrum: window, stepBy: by)
+    template selectedNow: untyped = toSeq(st.selection.selected.items)
+    st.apply Command(kind: ckSelect, traces: @[base + 2], mode: smReplace)
+    step(1)
+    doAssert selectedNow == @[base + 3], "not the next trace: " & $selectedNow
+    step(-1)
+    step(-1)
+    doAssert selectedNow == @[base + 1]
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base + 2], on: true)
+    step(1)
+    doAssert selectedNow == @[base + 2], "a killed trace shown was skipped"
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base + 2], on: false)
+    st.apply Command(kind: ckSelect, traces: @[base + SpectrumTraces - 1], mode: smReplace)
+    let said = st.log.len
+    step(1)
+    doAssert selectedNow == @[base + SpectrumTraces - 1] and st.log.len > said,
+      "stepped past the record's end, or said nothing"
+    # scrolled into view, by as little as it takes
+    let lay = st.panel(MainPanel).layout
+    var v = fitAll(lay, 640, 512)
+    v.traces = Span(lo: -0.5, hi: 2.5)
+    st.apply Command(kind: ckView, panel: MainPanel, view: v)
+    let shown = st.panel(MainPanel).view.traces # (as the plot's limits keep it)
+    let last = int(shown.hi - 0.5) # the last trace wholly in view
+    doAssert last < SpectrumTraces - 1, $shown
+    st.apply Command(kind: ckSelect, traces: @[base + last], mode: smReplace)
+    step(1)
+    let width = shown.hi - shown.lo
+    doAssert st.panel(MainPanel).view.traces == Span(lo: float64(last) + 1.5 - width,
+      hi: float64(last) + 1.5),
+      "the plot did not scroll to the trace: " & $st.panel(MainPanel).view.traces & " from " &
+      $shown
+    st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 640, 512))
+    # an FFT window of one trace moves to the next
+    let w = st.fft(@[base + 5])
+    doAssert st.answered(w)
+    step(1, st.spectra[w].id)
+    doAssert st.spectra[w].traces == @[base + 6] and selectedNow == @[base + 6],
+      "the FFT window did not move to the next trace: " & $st.spectra[w].traces
+    doAssert ": trace 7 ·" in st.spectra[w].title, st.spectra[w].title
+    doAssert st.answered(w) and st.settle(st.spectra[w].spectrum.asked == 1 and
+      st.spectra[w].spectrum.raw.peakBin == SpectrumSineBin)
+    # its cursor, held by the keys or an agent: within its bins, let go
+    template sw: untyped = st.spectra[w]
+    st.apply Command(kind: ckSpectrumCursor, spectrum: sw.id,
+      cursor: PlotCursor(held: true, x: 5000, y: 1))
+    doAssert sw.cursor.held and sw.cursor.x == sw.spectrum.raw.high, $sw.cursor
+    doAssert PlotCursor(held: true, x: 3, y: 0).moved(cmNext, [10, 2]) ==
+      PlotCursor(held: true, x: 4, y: 0) and
+      PlotCursor(x: 3, y: 0).moved(cmLast, [10, 2]) == PlotCursor(held: true, x: 9, y: 0) and
+      PlotCursor(x: 0, y: 1).moved(cmPrevious, [10, 2]) == PlotCursor(held: true, x: 0, y: 1) and
+      PlotCursor(x: 0, y: 1).moved(cmDown, [10, 2]) == PlotCursor(held: true, x: 0, y: 1)
+    st.apply Command(kind: ckSpectrumCursor, spectrum: sw.id)
+    doAssert not sw.cursor.held
+    st.apply Command(kind: ckCloseSpectrum, spectrum: sw.id)
+    st.apply Command(kind: ckClearSelection)
 
   block bandPass:
     st.filters Processing(band: pbBandPass, f1: 40, f2: 50, f3: 80, f4: 90)
@@ -696,6 +773,12 @@ withFixtures fx:
     four.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.spectrumAuxSegy())
     doAssert ready(four.sessions.len == 1 and four.panel(MainPanel).laidOut)
     let b = four.sessions[0].base
+    # Stepping skips the auxiliary trace the trace filter hides (Seismic only).
+    four.apply Command(kind: ckSelect, traces: @[b + 3], mode: smReplace)
+    four.apply Command(kind: ckStepTrace, stepBy: 1)
+    doAssert toSeq(four.selection.selected.items) == @[b + 3],
+      "stepped onto a trace the filter hides: " & $toSeq(four.selection.selected.items)
+    four.apply Command(kind: ckClearSelection)
     four.filters notch
     let w = four.answer(toSeq(b ..< b + 5))
     template sp: untyped = four.spectra[w].spectrum

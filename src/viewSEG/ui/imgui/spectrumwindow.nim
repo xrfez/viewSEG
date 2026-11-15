@@ -153,6 +153,46 @@ proc drawFilterAux(st: AppState; w: SpectrumWindow; name: string; marks: var Mar
     "auxiliary traces go through the filters in the plot and in the spectra (untick it " &
     "there to undo)")
 
+const HeldNote* = "Held · "
+  ## before the readout while the keys hold the cursor (its tooltip says how
+  ## to let it go): first, so a narrow window does not cut it off
+
+proc cursorKeys(w: SpectrumWindow; p: CurvePlot; o: CurveOutput; res: var SpectraOutput) =
+  ## The window's keys, while it has the focus: Left / Right move the
+  ## cursor a frequency bin, Home / End to the ends, Up / Down to another
+  ## curve, each holding it (`ckSpectrumCursor`); Esc, or the pointer moved
+  ## over the plot, lets it go; Alt + Left / Right select the previous or
+  ## next trace of the record (`ckStepTrace`: an FFT window of one trace
+  ## shows the new one).
+  let io = igGetIO_Nil()
+  if io.WantTextInput or not igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint):
+    return
+  template held(chord: cint): bool = igShortcut_Nil(chord, ImGui_InputFlags_Repeat.cint)
+  template once(chord: cint): bool = igShortcut_Nil(chord, 0)
+  const alt = ImGui_Mod_Alt.cint
+  for (chord, by) in [(alt or ImGui_Key_LeftArrow.cint, -1), (alt or ImGui_Key_RightArrow.cint, 1)]:
+    if held(chord):
+      res.commands.add Command(kind: ckStepTrace, spectrum: w.id, stepBy: by)
+  var move = cmNone
+  if held(ImGui_Key_LeftArrow.cint): move = cmPrevious
+  if held(ImGui_Key_RightArrow.cint): move = cmNext
+  if once(ImGui_Key_Home.cint): move = cmFirst
+  if once(ImGui_Key_End.cint): move = cmLast
+  if held(ImGui_Key_UpArrow.cint): move = cmUp
+  if held(ImGui_Key_DownArrow.cint): move = cmDown
+  let counts = [p.xs.len, p.curves.len]
+  if move != cmNone and counts[0] > 0 and counts[1] > 0:
+    # from where it is held, else from under the pointer, else at the peak of
+    # the curve drawn on top
+    var start = if w.cursor.held: w.cursor
+                elif o.under.x >= 0: o.under
+                else: PlotCursor(x: max(w.spectrum.raw.peakBin, 0), y: counts[1] - 1)
+    if start.y < 0: start.y = counts[1] - 1
+    res.commands.add Command(kind: ckSpectrumCursor, spectrum: w.id,
+      cursor: start.moved(move, counts))
+  elif w.cursor.held and (once(ImGui_Key_Escape.cint) or (o.hovered and o.moved)):
+    res.commands.add Command(kind: ckSpectrumCursor, spectrum: w.id) # let go
+
 proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; marks: var Marks;
     res: var SpectraOutput) =
   ## A window's contents: its controls, its words (with a click that
@@ -179,18 +219,23 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
   let phased = w.display.phase and w.hasPhase
   let h = max(80'f32, avail.y - lineH)
   let o = ui.plots.mgetOrPut(w.id, CurvePlotUi()).drawCurvePlot(name, p, t,
-    ImVec2_c(x: avail.x, y: if phased: round(h * 0.6) else: h), key, marks)
-  var text = if o.hovered: p.readoutText(o.reading) else: ""
+    ImVec2_c(x: avail.x, y: if phased: round(h * 0.6) else: h), key, marks, w.cursor)
+  var text = p.readoutText(o.reading)
   if phased:
     let q = w.phasePlot(t)
     let po = ui.phases.mgetOrPut(w.id, CurvePlotUi()).drawCurvePlot(name & ".phase", q, t,
       ImVec2_c(x: avail.x, y: max(60'f32, h - round(h * 0.6) - igGetStyle().ItemSpacing.y)),
-      key, marks)
+      key, marks, (if w.cursor.held: PlotCursor(held: true, x: w.cursor.x, y: 0)
+                   else: PlotCursor()))
     if po.hovered: text = q.readoutText(po.reading)
+  if w.cursor.held and text.len > 0: text = HeldNote & text
   ui.readout[w.id] = text
-  ui.readAt[w.id] = if o.hovered: o.reading.index else: -1
+  ui.readAt[w.id] = o.reading.index
   igTextUnformatted((if text.len > 0: text else: " ").cstring, nil)
   marks.mark(name & ".readout")
+  if w.cursor.held: tip("The keys hold the cursor: Left / Right a frequency, Home / End the " &
+    "ends, Up / Down another curve. Move the pointer over the plot, or press Esc, to let it go")
+  cursorKeys(w, p, o, res)
 
 proc drawLive*(ui: var SpectraUi; st: AppState; shown: bool; t: Theme; marks: var Marks;
     res: var SpectraOutput) =
