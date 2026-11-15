@@ -36,7 +36,8 @@ attributes on its `HWND`:
   bar (viewSEG draws its own), so they get the dark mode and **square
   corners** only: Windows 11 would otherwise clip the corners viewSEG draws
   and add a second border inside its own.
-- **Again when the theme changes**, and when Windows switches light/dark
+- **Again when the theme changes** (also while View > Theme previews one), and
+  when Windows switches light/dark
   (SDL then resets every title bar to the system's mode itself; viewSEG sets
   the theme's again right after). A shown window is told to redraw its frame
   at once (`SWP_FRAMECHANGED`): Windows 10 repaints a changed title bar only

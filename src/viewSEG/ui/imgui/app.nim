@@ -583,7 +583,10 @@ proc pickTheme(ui: var Ui): Theme =
     (if path.len > 0: path else: "built in") & ")"
 
 proc restyle(ui: var Ui) =
+  ## The theme on every widget and on the frames the OS draws around the
+  ## windows (a theme set, a preview, a new display scale).
   applyStyle(ui.theme, ui.scale)
+  dressWindows(lookOf(ui.theme))
 
 proc say(ui: var Ui; text: string; level = mlInfo) =
   ## Puts one of the frontend's own messages in the log.
@@ -596,14 +599,12 @@ proc flushMessages(ui: var Ui) =
   ui.messages.items.setLen 0
 
 proc setTheme(ui: var Ui) =
-  ## Loads the theme `pickTheme` names, with its fonts, and restyles, the
-  ## windows' frames too.
+  ## Loads the theme `pickTheme` names, with its fonts, and restyles.
   ui.theme = ui.pickTheme()
   ui.previewing = false # what is set now replaces a preview
   ui.fonts.load(ui.theme, ui.fontDirs, ui.messages)
   ui.flushMessages()
   ui.restyle()
-  dressWindows(lookOf(ui.theme))
 
 proc followPreview(ui: var Ui) =
   ## Draws the theme View > Theme's pointer rests on, from the file as read
