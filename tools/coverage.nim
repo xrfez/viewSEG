@@ -46,8 +46,11 @@
 ##   in no row of the library's sections;
 ## - a row whose status is only `built` and `internal` names a library name that
 ##   the viewer's source (`src/`, its code: not its comments or strings) never
-##   names, or a row that is built in part names none of its names there;
-##   operators (`$`, `[]`) are taken as named, since a text search cannot tell;
+##   names, or a row that is built in part names none of its names there; an
+##   enum type is named where one of its values is, a setter (`revision=`) where
+##   its name is, and operators (`$`, `[]`) always, since a text search cannot
+##   tell. The search is by name, so it cannot tell a library's `len` or
+##   `classify` from another's: what a row claims stays the row's to make true;
 ## - a row names no name of its library, or its status cannot be read;
 ## - the summary between the page's summary marks is not the one the tables give.
 ##
@@ -156,65 +159,68 @@ func spanNames*(cell: string): seq[string] =
     if ids.len == 0 and span.len > 0: result.add span
     else: result.add ids
 
+func codeNames*(s: string): HashSet[string] =
+  ## The identifiers the Nim code `s` uses (comments, doc comments and string
+  ## and character literals left out), normalized.
+  result = initHashSet[string]()
+  var i = 0
+  while i < s.len:
+    let c = s[i]
+    if c == '#':
+      if i + 1 < s.len and s[i + 1] == '[' or i + 2 < s.len and s[i + 1] == '#' and
+          s[i + 2] == '[':
+        var depth = 0
+        while i < s.len:
+          if s.continuesWith("#[", i):
+            inc depth
+            i += 2
+          elif s.continuesWith("]#", i):
+            dec depth
+            i += 2
+            if depth == 0: break
+          else: inc i
+      else:
+        while i < s.len and s[i] != '\n': inc i
+    elif s.continuesWith("\"\"\"", i):
+      i += 3
+      while i < s.len and not s.continuesWith("\"\"\"", i): inc i
+      i += 3
+      while i < s.len and s[i] == '"': inc i
+    elif c == '"':
+      let raw = i > 0 and s[i - 1] in IdentChars
+      inc i
+      while i < s.len and s[i] != '"' and s[i] != '\n':
+        if s[i] == '\\' and not raw: inc i
+        inc i
+      inc i
+    elif c == '\'':
+      if i > 0 and s[i - 1] in IdentChars:
+        inc i # a literal's type suffix: 1'u8
+      else:
+        inc i
+        if i < s.len and s[i] == '\\': inc i
+        while i < s.len and s[i] != '\'' and s[i] != '\n': inc i
+        inc i
+    elif c == '`':
+      let e = s.find('`', i + 1)
+      if e < 0: i = s.len
+      else:
+        result.incl normName(s[i + 1 ..< e])
+        i = e + 1
+    elif c in IdentStartChars:
+      let start = i
+      while i < s.len and s[i] in IdentChars: inc i
+      result.incl normName(s[start ..< i])
+    elif c in Digits:
+      while i < s.len and s[i] in IdentChars: inc i
+    else:
+      inc i
+
 proc sourceNames*(dir: string): HashSet[string] =
-  ## The identifiers the code of every `.nim` file under `dir` uses (comments,
-  ## doc comments and string and character literals left out), normalized.
+  ## `codeNames` of every `.nim` file under `dir`.
   result = initHashSet[string]()
   for path in walkDirRec(dir):
-    if path.endsWith(".nim"):
-      let s = readFile(path)
-      var i = 0
-      while i < s.len:
-        let c = s[i]
-        if c == '#':
-          if i + 1 < s.len and s[i + 1] == '[' or i + 2 < s.len and s[i + 1] == '#' and
-              s[i + 2] == '[':
-            var depth = 0
-            while i < s.len:
-              if s.continuesWith("#[", i):
-                inc depth
-                i += 2
-              elif s.continuesWith("]#", i):
-                dec depth
-                i += 2
-                if depth == 0: break
-              else: inc i
-          else:
-            while i < s.len and s[i] != '\n': inc i
-        elif s.continuesWith("\"\"\"", i):
-          i += 3
-          while i < s.len and not s.continuesWith("\"\"\"", i): inc i
-          i += 3
-          while i < s.len and s[i] == '"': inc i
-        elif c == '"':
-          let raw = i > 0 and s[i - 1] in IdentChars
-          inc i
-          while i < s.len and s[i] != '"' and s[i] != '\n':
-            if s[i] == '\\' and not raw: inc i
-            inc i
-          inc i
-        elif c == '\'':
-          if i > 0 and s[i - 1] in IdentChars:
-            inc i # a literal's type suffix: 1'u8
-          else:
-            inc i
-            if i < s.len and s[i] == '\\': inc i
-            while i < s.len and s[i] != '\'' and s[i] != '\n': inc i
-            inc i
-        elif c == '`':
-          let e = s.find('`', i + 1)
-          if e < 0: i = s.len
-          else:
-            result.incl normName(s[i + 1 ..< e])
-            i = e + 1
-        elif c in IdentStartChars:
-          let start = i
-          while i < s.len and s[i] in IdentChars: inc i
-          result.incl normName(s[start ..< i])
-        elif c in Digits:
-          while i < s.len and s[i] in IdentChars: inc i
-        else:
-          inc i
+    if path.endsWith(".nim"): result.incl codeNames(readFile(path))
 
 # --------------------------------------------------------------- exports --
 
@@ -569,12 +575,26 @@ func cells(line: string): seq[string] =
       inc i
   result.add cur.strip
 
+func statusParts(cell: string): seq[string] =
+  ## `cell` split at the semicolons outside parentheses.
+  var depth = 0
+  var cur = ""
+  for c in cell:
+    if c == '(': inc depth
+    elif c == ')': dec depth
+    if c == ';' and depth <= 0:
+      result.add cur
+      cur = ""
+    else:
+      cur.add c
+  result.add cur
+
 func parseStatus*(cell: string, statuses: var seq[Status], priority: var int): bool =
   ## The status words of a status cell, in order; false when a part has none.
   statuses = @[]
   priority = 0
   result = cell.strip.len > 0
-  for part in cell.split(';'):
+  for part in statusParts(cell):
     let p = part.strip
     var found = false
     for s in Status:
@@ -647,7 +667,8 @@ func namedIn(row: Row, normNames: Table[string, string]): seq[string] =
       if key in normNames and normNames[key] notin result: result.add normNames[key]
 
 func usedBySource(name: string, src: HashSet[string]): bool =
-  ## Whether the viewer's source names `name` (a setter `x=` by `x`).
+  ## Whether the viewer's source names `name` (a setter `x=` by `x`; an enum
+  ## type by any of its values, which `check` adds to `src`).
   isOperator(name) or normName(name.strip(leading = false, chars = {'='})) in src
 
 func rowNameStatus(row: Row, name: string, src: HashSet[string]): Status =
@@ -680,6 +701,11 @@ proc check*(page: Page, libs, next: openArray[Library], src: HashSet[string]): C
       for n in nextLib.names: nextNorm[normName(n)] = n
       for v, _ in nextLib.enumValueOwners: nextNorm[normName(v)] = v
     var nextNamed = initHashSet[string]()
+    # An enum type is used where one of its values is.
+    var used = src
+    for x in [lib, nextLib]:
+      for v, owner in x.enumValueOwners:
+        if normName(v) in src: used.incl normName(owner)
     for row in page.rows:
       if row.lib == lib.name:
         let names = row.namedIn(if row.next: nextNorm else: norm)
@@ -697,20 +723,20 @@ proc check*(page: Page, libs, next: openArray[Library], src: HashSet[string]): C
           if claims.len == row.statuses.len:
             var unused: seq[string]
             for n in names:
-              if not usedBySource(n, src): unused.add n
+              if not usedBySource(n, used): unused.add n
             if unused.len > 0:
               result.problems.add where & ": says " & row.status & ", but src/ never names " &
                 unused.join(", ")
           elif claims.len > 0:
             var any = false
             for n in names:
-              if usedBySource(n, src): any = true
+              if usedBySource(n, used): any = true
             if not any:
               result.problems.add where & ": says " & $claims[0] &
                 " in part, but src/ names none of " & names.join(", ")
           if not row.next:
             for n in names:
-              let s = rowNameStatus(row, n, src)
+              let s = rowNameStatus(row, n, used)
               if n notin result.nameStatus[li] or s < result.nameStatus[li][n]:
                 result.nameStatus[li][n] = s
     var missing: seq[string]
@@ -730,11 +756,24 @@ proc check*(page: Page, libs, next: openArray[Library], src: HashSet[string]): C
             e.kind == "enum value" and e.owner in nextNamed and e.owner notin old
           if not covered:
             reported.incl e.name
-            result.problems.add lib.name & " " & nextLib.version & ": new " & e.kind & " `" &
-              e.name & "` (" & e.module & (if e.owner.len > 0: ", " & e.owner else: "") &
-              ") is named in no row"
+            result.problems.add lib.name & "'s next release (" & nextLib.source & "): new " &
+              e.kind & " `" & e.name & "` (" & e.module &
+              (if e.owner.len > 0: ", " & e.owner else: "") & ") is named in no row"
 
 # ------------------------------------------------------------ the summary --
+
+func toPlanRemark(status: string): string =
+  ## What the `to plan` part of `status` says, its priority left out: "a
+  ## selection per outcome" of `to plan (priority 9: a selection per outcome)`.
+  for part in statusParts(status):
+    let p = part.strip
+    if p.startsWith($stToPlan) and '(' in p and p.endsWith(")"):
+      var r = p[p.find('(') + 1 .. ^2].strip
+      if r.startsWith("priority "):
+        var j = "priority ".len
+        while j < r.len and r[j] in Digits: inc j
+        r = r[j .. ^1].strip(chars = {' ', ':', ','})
+      return r
 
 proc summary*(page: Page, libs: openArray[Library], cov: Coverage): string =
   ## The page's summary: counts per library, then what is still to plan.
@@ -757,7 +796,8 @@ proc summary*(page: Page, libs: openArray[Library], cov: Coverage): string =
         inc nextCaps[li][row.statuses[0]]
       else:
         inc caps[li][row.statuses[0]]
-        if row.statuses[0] == stBuilt and row.statuses.len > 1: inc partly[li]
+        if row.statuses[0] == stBuilt and
+            row.statuses.anyIt(it in {stPlanned, stToPlan}): inc partly[li]
   var t = "| Status | parseSEG " & versions[0] & ": capabilities | names | processSEG " &
     versions[1] & ": capabilities | names |\n|---|---:|---:|---:|---:|\n"
   for s in Status:
@@ -792,13 +832,14 @@ proc summary*(page: Page, libs: openArray[Library], cov: Coverage): string =
   todo.sort(proc (a, b: Row): int =
     cmp((a.priority == 0, a.priority, a.line), (b.priority == 0, b.priority, b.line)))
   result.add "**Still to plan, most useful first** (each a row below whose status says " &
-    "`to plan`):\n\n"
+    "`to plan`; \"in part\" above: built, with a part still planned or to plan):\n\n"
   var i = 0
   for row in todo:
     inc i
+    let what = toPlanRemark(row.status)
     result.add $i & ". **" & row.capability & "** (" & row.lib &
       (if row.next: ", next release" else: "") & (if row.group.len > 0: ", " & row.group else: "") &
-      "): " & row.feature & "\n"
+      "): " & (if what.len > 0: what else: row.feature) & "\n"
   if todo.len == 0: result.add "Nothing.\n"
   result.add "\n" & SummaryEnd
 
@@ -929,7 +970,33 @@ when isMainModule:
         for n in missing: echo "#   ", n
       finally:
         removeDir(dir)
+    of "uses":
+      # Each exported name the viewer's code names, with the files that do.
+      let dir = getTempDir() / "viewseg-coverage-" & $getCurrentProcessId()
+      removeDir(dir)
+      createDir(dir)
+      try:
+        var srcs: seq[LibSource]
+        for s in librarySources(root, dir):
+          if not s.next: srcs.add s
+        var files: seq[(string, HashSet[string])]
+        for path in walkDirRec(root / "src"):
+          if path.endsWith(".nim"):
+            files.add (path.relativePath(root), codeNames(readFile(path)))
+        for lib in readLibraries(srcs, nimCfgPaths(root), dir / "doc"):
+          var kinds: Table[string, seq[string]]
+          for e in lib.exports:
+            if e.name notin kinds: kinds[e.name] = @[]
+            if e.kind notin kinds[e.name]: kinds[e.name].add e.kind
+          for name, ks in kinds:
+            var where: seq[string]
+            for (f, names) in files:
+              if normName(name) in names: where.add f
+            if where.len > 0 or isOperator(name):
+              echo lib.name, "\t", name, "\t", ks.join(","), "\t", where.join(" ")
+      finally:
+        removeDir(dir)
     else:
-      quit "coverage: check | write | exports parseSEG|processSEG|<dir> [--next]"
+      quit "coverage: check | write | uses | exports parseSEG|processSEG|<dir> [--next]"
 
   main()
