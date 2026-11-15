@@ -23,9 +23,13 @@
 ## broadcasting, it timed out ("the last release left the runner asleep").
 ## With `hold` looking at the queued and running jobs only,
 ## `anAbandonedJobKeepsReadersOut` let a reader hold the file while the
-## abandoned job's work still ran ("a reader let in ...").
+## abandoned job's work still ran ("a reader let in ..."). With the runner
+## telling an abandoned job by the files it held, `anAbandonedJobThatNamesNoFile`
+## found it "listed as finished twice" (done, after it was said cancelled),
+## and, its record removed, the runner ended the program ("index -1 not in
+## 0 .. 1", IndexDefect).
 
-import std/[atomics, monotimes, os, strutils, times]
+import std/[atomics, monotimes, os, sequtils, strutils, times]
 import viewSEG/core/[jobs, threads]
 import utils/waiting
 
@@ -335,6 +339,46 @@ block anAbandonedJobKeepsReadersOut:
   doAssert waitUntil(ran[0].load == 1)
   doAssert waitUntil(jobs.hold("f.sgy")), "no hold once the work is back"
   doAssert jobs.release("f.sgy")
+
+proc stubborn(slot, gate: int): JobWork =
+  ## A job that no cancel reaches (a listing held by a folder that does not
+  ## answer), until `gate` opens.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    let deadline = getMonoTime() + Patience * 2
+    while not gates[gate].isOpen and getMonoTime() < deadline: sleep 1
+    ran[slot].atomicInc
+
+block anAbandonedJobThatNamesNoFile:
+  # A job that names no file (a folder's listing) is cancelled and, still
+  # running, abandoned: it is listed cancelled once, also when its work comes
+  # back, and also when its record went meanwhile (the Jobs window's remove,
+  # or the history's limit).
+  reset()
+  let jobs = initJobs()
+  let job = jobs.submit(spec("List a share"), stubborn(0, 0))
+  doAssert waitUntil(jobs.state(job) == jsRunning)
+  doAssert jobs.cancel(job)
+  doAssert jobs.tend(getMonoTime() + CancelGrace + initDuration(seconds = 1))
+  doAssert jobs.info(job).get.abandoned and jobs.state(job) == jsCancelled
+  doAssert jobs.workingOn(job), "its work is still out"
+  doAssert jobs.takeFinished().countIt(it.id == job) == 1
+  gates[0].open()
+  doAssert waitUntil(ran[0].load == 1 and not jobs.workingOn(job))
+  let after = jobs.submit(spec("Open a file"), fake(2))
+  doAssert waitUntil(jobs.state(after) == jsDone)
+  doAssert jobs.takeFinished().countIt(it.id == job) == 0, "listed as finished twice"
+  doAssert jobs.state(job) == jsCancelled
+  # Removed while its work is out: the runner, back, finds no record.
+  let gone = jobs.submit(spec("List another share"), stubborn(1, 1))
+  doAssert waitUntil(jobs.state(gone) == jsRunning)
+  doAssert jobs.cancel(gone)
+  doAssert jobs.tend(getMonoTime() + CancelGrace + initDuration(seconds = 1))
+  doAssert jobs.remove(gone), "a finished job is taken off the list"
+  gates[1].open()
+  doAssert waitUntil(ran[1].load == 1 and not jobs.workingOn(gone))
+  let last = jobs.submit(spec("Open another file"), fake(3))
+  doAssert waitUntil(jobs.state(last) == jsDone), "the lane goes on"
+  doAssert jobs.info(gone).isNone
 
 block destroyStopsRunningJobs:
   # Leaving the scope with a job running cancels it and waits for it: by

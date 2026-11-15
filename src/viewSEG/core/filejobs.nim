@@ -220,7 +220,7 @@ proc traceHeadersWork*(file: ptr SeismicFile; path: string; size: int64; index: 
       keys = file[].traceKeys([index])[0]
       rows = file[].traceHeaders(index)
     clearCycleRoots()
-    to.post Msg(job: ctx.id, kind: mkTraceRead, traceKeys: keys, headerRows: move rows)
+    to.post Msg(job: ctx.id, kind: mkTraceRead, readKeys: keys, headerRows: move rows)
 
 proc closeWork*(): JobWork =
   ## The work of a close job: none. Submitted with the file in `exclusive`,

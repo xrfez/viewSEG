@@ -1,19 +1,24 @@
 (stmts#Hypotheses: a job stuck in the file system that is abandoned (cancelled, its lane given a
  new runner) lets (H3) a close of its file run and the file be released while the stuck work
  still reads it, or (H2) its old runner, when the work comes back, run a second job of the
- lane beside the new runner.
+ lane beside the new runner, or (H4) its old runner, when the work comes back, finish the job
+ a second time (one that names no file, a listing: its record may be gone by then, and the
+ runner indexes it).
  Source: src/viewSEG/core/jobs.nim: runner (the lock-held pick, the unlocked work, the
  lock-held finish), tend (abandon, under the lock), pick (holds and running jobs).
  Jobs of one lane: A reads file F and gets stuck; B reads G, queued behind A; C needs F to
- itself (a close), submitted later; once C is done the UI thread releases F.
+ itself (a close), submitted later; once C is done the UI thread releases F. A names F, or
+ no file at all (aFiles 0: a folder's listing).
  Variables: aSt 0 queued, 1 running, 2 finished; bSt and cSt 0 not queued (C only), 1 queued,
  2 running, 3 done; r1 the first runner: 0 picking, 1 in A's work, 4 in B's work, 3 ended;
  r2 the runner tend starts: 0 none, 1 picking, 2 in C, 3 in B; cur the lane's runner;
  holdF the holds on F; closed: F released; err 1 the work read a released F,
- 2 two jobs of the lane ran at once.
+ 2 two jobs of the lane ran at once, 3 A finished twice.
  Switches: Fix (true = the code: holds kept, the old runner ends), Mut 1 = no hold at abandon,
- Mut 2 = the old runner picks again, Witness = C done after A was abandoned.#
-  (variables :aSt.0. :bSt.0. :cSt.0. :r1.0. :r2.0. :cur.0. :holdF.0. :closed.0. :aband.0. :err.0.)
+ Mut 2 = the old runner picks again, Mut 3 = the runner tells an abandoned job by the holds
+ it was given (none for a job that names no file), Witness = C done after A was abandoned.#
+  (variables :aSt.0. :bSt.0. :cSt.0. :r1.0. :r2.0. :cur.0. :holdF.0. :closed.0. :aband.0. :err.0.
+    :aFiles.0.)
   (assign Fix.0. (true))
   (assign Mut.0. 0)
   (assign Witness.0. (false))
@@ -21,7 +26,7 @@
   (def :Init.0.
     (and (prime aSt.0. 0) (prime bSt.0. 1) (prime cSt.0. 0) (prime r1.0. 0) (prime r2.0. 0)
       (prime cur.0. 1) (prime holdF.0. 0) (prime closed.0. (false)) (prime aband.0. (false))
-      (prime err.0. 0)))
+      (prime err.0. 0) (or (prime aFiles.0. 0) (prime aFiles.0. 1))))
 
   (def :Running.0.#Jobs of the lane running, by their records.#
     (plus (if (eq aSt.0. 1) 1 0) (plus (if (eq bSt.0. 2) 1 0) (if (eq cSt.0. 2) 1 0))))
@@ -32,13 +37,19 @@
         (and (eq bSt.0. 1) (prime bSt.0. 2) (prime r1.0. 4)))))
 
   (def :R1Touch.0.#A's work, unlocked: reads F through the map (stuck there, or slow).#
-    (and (eq err.0. 0) (eq r1.0. 1) closed.0. (prime err.0. 1)))
+    (and (eq err.0. 0) (eq r1.0. 1) (eq aFiles.0. 1) closed.0. (prime err.0. 1)))
+
+  (def :Skip.0.#runner, lock held: whether it takes A for abandoned (listed already): its flag
+ (the code), or (Mut 3) holds it was given at the abandon.#
+    (if (eq Mut.0. 3) (and aband.0. (eq aFiles.0. 1)) aband.0.))
 
   (def :R1Return.0.#runner, lock held after A's work came back: finish it unless abandoned;
  end the holds the abandon made; end unless still the lane's runner.#
     (and (eq err.0. 0) (eq r1.0. 1)
       (prime aSt.0. 2)
-      (prime holdF.0. (if (and aband.0. Fix.0. (not (eq Mut.0. 1))) (minus holdF.0. 1) holdF.0.))
+      (prime err.0. (if (and (eq aSt.0. 2) (not Skip.0.)) 3 0))
+      (prime holdF.0. (if (and aband.0. Fix.0. (not (eq Mut.0. 1)) (eq aFiles.0. 1))
+        (minus holdF.0. 1) holdF.0.))
       (prime r1.0. (if (or (eq cur.0. 1) (eq Mut.0. 2) (not Fix.0.)) 0 3))))
 
   (def :R1FinishB.0.#runner, lock held: B done.#
@@ -51,7 +62,8 @@
  held, a new runner for the lane.#
     (and (eq err.0. 0) (eq aSt.0. 1) (not aband.0.)
       (prime aSt.0. 2) (prime aband.0. (true)) (prime cur.0. 2) (prime r2.0. 1)
-      (prime holdF.0. (if (and Fix.0. (not (eq Mut.0. 1))) (plus holdF.0. 1) holdF.0.))))
+      (prime holdF.0. (if (and Fix.0. (not (eq Mut.0. 1)) (eq aFiles.0. 1)) (plus holdF.0. 1)
+        holdF.0.))))
 
   (def :R2Pick.0.#new runner, lock held: C when F is free (no hold, no running reader), else B.#
     (and (eq err.0. 0) (eq r2.0. 1)
@@ -78,5 +90,5 @@
     (and aband.0. closed.0. (eq err.0. 0) (eq r1.0. 3)))
 
   (spec (always-stutter Init.0. Next.0. (tuple aSt.0. bSt.0. cSt.0. r1.0. r2.0. cur.0. holdF.0.
-    closed.0. aband.0. err.0.)))
+    closed.0. aband.0. err.0. aFiles.0.)))
   (check (if Witness.0. (not Reached.0.) Safe.0.)))

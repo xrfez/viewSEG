@@ -153,6 +153,8 @@ type
     thread: Thread[RunnerArg]
     lane: JobLane
     job: JobId              ## the job it runs; `NoJob` while it picks
+    abandoned: bool
+      ## its job was abandoned (`tend`): listed cancelled already
     held: seq[string]       ## its job was abandoned: the holds to end when its work is back
     exclusive: seq[string]
       ## of those, the files its job needed to itself: no reader meanwhile
@@ -318,13 +320,16 @@ proc runner(arg: RunnerArg) {.thread.} =
 
     acquire q.lock
     me.job = JobId(-1)
-    if me.held.len > 0:
-      # Abandoned (`tend`): already listed as cancelled; its files are free now.
+    if me.abandoned:
+      # Abandoned (`tend`): already listed as cancelled, and its record may be
+      # gone since (removed, or past the history); its files are free now. A
+      # job that named no file (a listing) is abandoned too.
       for p in me.held:
         let h = q.holds.find(p)
         if h >= 0: q.holds.delete(h)
       me.held.setLen 0
       me.exclusive.setLen 0
+      me.abandoned = false
     else:
       let j = q.find(id) # a running job is never removed or pruned
       let state =
@@ -539,6 +544,7 @@ proc abandon(q: ptr JobsObj; r: ptr RunnerObj; i: int) =
     r.held.add p
     r.exclusive.add p
   q.holds.add r.held
+  r.abandoned = true
   info.abandoned = true
   q.finish(i, jsCancelled, "")
 
@@ -553,7 +559,7 @@ proc tend*(jobs: Jobs; now = fs.now()): bool {.discardable.} =
     while i < q.runners.len:
       let r = q.runners[i]
       inc i
-      if r.ended or r.held.len > 0 or int(r.job) < 0: continue
+      if r.ended or r.abandoned or int(r.job) < 0: continue
       let j = q.find(r.job)
       if j < 0 or q.recs[j].info.state != jsRunning: continue
       template info: untyped = q.recs[j].info
@@ -605,6 +611,23 @@ proc held*(jobs: Jobs; path: string): int =
   let q = jobs.obj
   withLock q.lock:
     result = q.holds.count(path)
+
+proc holdsLeft*(jobs: Jobs): int =
+  ## How many holds there are, of every file: once every reader the caller
+  ## knows of has ended, those of readers left to end on their own and of
+  ## abandoned jobs' work (which may still read the files).
+  let q = jobs.obj
+  withLock q.lock:
+    result = q.holds.len
+
+proc workingOn*(jobs: Jobs; id: JobId): bool =
+  ## Whether the work of job `id` still runs, also after the job was listed
+  ## cancelled because it did not stop (abandoned, `tend`): what the work
+  ## reads must stay until it is back.
+  let q = jobs.obj
+  withLock q.lock:
+    for r in q.runners:
+      if r.job == id and not r.ended: return true
 
 type
   HoldRelease* = object

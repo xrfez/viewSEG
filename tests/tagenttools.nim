@@ -421,6 +421,14 @@ withFixtures fx:
     let byId = st.headers("""{"trace":5}""").body
     doAssert byId["index"].getInt == 5 and byId["keys"]["channel"].getFloat == 6
     doAssert st.headers("""{"file":1,"index":30}""").body["gather"].getInt == 1
+    # The read's job ends after the frame's inbox was drained: its trace comes
+    # with the next frame, and is waited for, not said to be lost.
+    var late = st.askTraceHeaders("""{"trace":7}""")
+    doAssert waitUntil(st.jobs.info(late.job).get.state == jsDone)
+    doAssert not st.headersAnswer(late), "answered before its trace came: " & late.answer
+    discard st.drainInbox()
+    doAssert st.headersAnswer(late) and not late.answer.isError and
+      late.answer.body["index"].getInt == 7, late.answer
     for bad in ["{}", """{"trace":999999}""", """{"panel":9,"position":0}""",
         """{"panel":1,"position":24}""", """{"file":5,"index":0}""", """{"file":1,"index":72}""",
         """{"trace":-1}""", """{"trace":"5"}""", """{"color":1}"""]:

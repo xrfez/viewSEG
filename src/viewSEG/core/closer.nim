@@ -47,20 +47,24 @@ func isNil*(x: Closer): bool {.inline.} =
   ## Whether `x` is none.
   x.p == nil
 
+proc take(p: ptr CloserObj): Session =
+  ## The oldest file handed over, waiting for one; nil once `stop` asked
+  ## and none is left.
+  withLock p.lock:
+    while p.files.len == 0 and not p.quit:
+      wait(p.changed, p.lock)
+    if p.files.len > 0:
+      result = move p.files[0]
+      p.files.delete(0)
+
 proc run(p: ptr CloserObj) {.thread.} =
   markWorkerThread()
   while true:
-    var s: Session
-    var quit = false
-    withLock p.lock:
-      while p.files.len == 0 and not p.quit:
-        wait(p.changed, p.lock)
-      if p.files.len > 0:
-        s = move p.files[0]
-        p.files.delete(0)
-      else:
-        quit = true
-    if quit: break
+    # Taken by a call, not in place under the lock: Nim 2.4 compiles a
+    # `s = nil` after `s` was moved into inside `withLock`'s try as a plain
+    # store, which left every file open and mapped to the end of the run.
+    var s = p.take()
+    if s.isNil: break
     s = nil # unmapped and closed here
     clearCycleRoots()
   withLock p.lock:

@@ -258,7 +258,11 @@ for, let the user go on, and quit.
   waits behind it (it runs on, and its result is taken), and abandons it once cancelled
   and still silent (or after `CancelGrace`): listed as cancelled at once, its result
   dropped, its files held until its work comes back, so nothing it reads is closed under
-  it (`docs/models/jobsabandon.nif`). A panel's reader beats per chunk; a reader silent
+  it (`docs/models/jobsabandon.nif`; a job that names no file, a listing, is abandoned
+  alike: its runner knows it by a flag, not by its holds). What else such work reads in
+  place (the relations a record check reads) is kept until `Jobs.workingOn` says the work
+  is back. A step that must not be left halfway commits to its end (`JobContext.commit`:
+  a join's change of the keys). A panel's reader beats per chunk; a reader silent
   for `StallAfter` is left when its panel is given something else, or on Cancel, and a new
   one takes over; its late tiles answer an old request and are dropped. The Headers
   reader (`core/inspector`) beats before each call, naming the file; one silent for
@@ -268,7 +272,8 @@ for, let the user go on, and quit.
   `stop` waits until a deadline; `AppState.shutdown` asks them all at once and waits for
   them together at most `QuitWait` (0.8 s); a thread left keeps its memory, and the open
   files and relation files it may read, to the end of the process
-  (`docs/models/jobsquit.nif`).
+  (`docs/models/jobsquit.nif`). A reader left earlier (Retry, Stop, another file) is none
+  of the panels' readers: the holds still taken (`Jobs.holdsLeft`) count it as left too.
 - **What the user sees.** `AppState.waiting` (a panel: an open or a read not answering,
   or a file that cannot be read now, `mkUnread`) and `listingWait` (the listing, or the
   watch's look, not answering), worded by `words`; the plot and the Files window show them

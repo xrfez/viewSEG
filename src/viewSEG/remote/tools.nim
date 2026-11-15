@@ -544,9 +544,9 @@ type
     ## refused, else once the job that reads the trace has ended
     ## (`headersAnswer`).
     answer*: string ## the tool's answer; "" while the trace is read
-    job*: JobId     ## the job that reads it
-    head: JsonNode  ## what the answer says besides what the job reads
-    what: string    ## "trace 6 of shot.sgy", for an answer that it could not be read
+    job*: JobId ## the job that reads it
+    head: JsonNode ## what the answer says besides what the job reads
+    what: string ## "trace 6 of shot.sgy", for an answer that it could not be read
 
 proc askTraceHeaders*(state: var AppState; arguments: string): HeaderCall =
   ## The `headers` tool: one trace's keys and header fields. The trace's
@@ -623,10 +623,15 @@ proc headersAnswer*(state: var AppState; c: var HeaderCall): bool =
     c.answer = textResult($r)
     return true
   let info = state.jobs.info(c.job)
-  if info.isNone or info.get.state in {jsDone, jsFailed, jsCancelled}:
+  # Done, its trace not taken in yet: the job may have ended after this
+  # frame's inbox was drained, and what it posted comes with the next.
+  let late = info.isSome and info.get.state == jsDone and
+    getMonoTime() - info.get.finishedAt < initDuration(seconds = 2)
+  if not late and (info.isNone or info.get.state in {jsDone, jsFailed, jsCancelled}):
     let why = if info.isSome and info.get.error.len > 0: info.get.error else: "it was stopped"
     c.answer = textResult("cannot read the headers of " & c.what & ": " & why, isError = true)
     return true
+  if late: return false
   let silent = info.get.notAnsweringFor
   if silent > initDuration():
     discard state.jobs.cancel(c.job)

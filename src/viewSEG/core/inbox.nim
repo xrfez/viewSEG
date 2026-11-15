@@ -35,7 +35,8 @@ type
     mkShots   ## a listed file's shots, for the map (`core/shots`)
     mkRecordQc
       ## what the map's filters find in the record shown (`core/recordqc`)
-    mkTraceRead ## one trace's keys and header fields, read on a job (`readTraceHeaders`)
+    mkTraceRead
+      ## one trace's keys and header fields, read on a job (`readTraceHeaders`)
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -159,8 +160,10 @@ type
       qcHits*: array[MapFilter, FilterHits]
         ## what each filter of `TraceFilters` found
     of mkTraceRead:
-      traceKeys*: TraceKeys      ## the trace's keys, as the index holds them
-      headerRows*: seq[HeaderRow] ## the fields of its headers (parseSEG's), in file order
+      readKeys*: TraceKeys
+        ## the trace's keys, as the index holds them
+      headerRows*: seq[HeaderRow]
+        ## the fields of its headers (parseSEG's), in file order
 
   InboxObj = object
     lock: Lock

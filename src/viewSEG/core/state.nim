@@ -117,7 +117,8 @@ const
   MaxTiles* = 4         ## tiles kept per panel, newest last
   FloatValues* = 32_768 ## values in view the Float gain takes its level from, at most
   MaxNotices* = 20      ## notices kept
-  MaxTraceReads* = 16   ## traces read for agent control and not taken, kept at most
+  MaxTraceReads* = 16
+    ## traces read for agent control and not taken, kept at most
   MaxPanelValues* = 48 * 1024 * 1024
     ## the values (192 MiB, and as much on the GPU) a panel's tiles hold at
     ## most: the oldest are dropped first, the newest is always kept
@@ -439,6 +440,10 @@ type
     checking: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relations each record check reads in place, kept alive until it
       ## ends (destroyed after `jobs`, whose runners stop first)
+    leftChecks: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
+      ## those of checks (and of the map's record checks, `qcHeld`) listed
+      ## cancelled while their work still ran (abandoned, `Jobs.tend`): kept
+      ## until the work is back (`Jobs.workingOn`)
     joining: Joining
       ## the join under way (its geometry, too, destroyed after `jobs`)
     joins: seq[Joined]
@@ -720,6 +725,8 @@ proc keepForStragglers(state: var AppState) =
   for s in state.sessions: GC_ref(s)
   for p in state.closing: GC_ref(p.session)
   for c in state.checking: GC_ref(c.relations)
+  for c in state.leftChecks: GC_ref(c.relations)
+  for c in state.qcHeld: GC_ref(c.relations)
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
 
 proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
@@ -750,6 +757,10 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   state.watch.stop(deadline)
   if not state.jobs.stop(deadline): result = false
   if not state.disk.stop(deadline): result = false
+  # A reader left earlier to end on its own (stuck in a drive: Retry, Stop,
+  # another file) is none of `readers`, and an abandoned job's work may have
+  # ended its job: what they read is still held (their holds).
+  if state.jobs.holdsLeft > 0: result = false
   # The files are closed on the closer's thread (a share may hold a close),
   # unless a thread left may still read them.
   if not result: state.keepForStragglers()
@@ -2543,7 +2554,7 @@ proc followRecordQc(state: var AppState) =
   let s = state.sessions[i]
   let domain = state.shownDomain
   let (rel, against) = state.qcRelations(domain)
-  let key = (s.id, g.gather, s.file.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
+  let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
     domain)
   if key == q.key: return
   if q.job != NoJob:
@@ -2623,6 +2634,9 @@ proc followMapWork(state: var AppState) =
 proc endMapWork(state: var AppState; job: JobInfo): bool =
   ## A job of the map's ended: forgotten, a failure said; false when `job`
   ## is none of them.
+  if job.abandoned: # its work still runs, and reads them: kept until it is back
+    for c in state.qcHeld:
+      if c.job == job.id: state.leftChecks.add c
   state.qcHeld.keepItIf(it.job != job.id) # the relations it read
   template q: untyped = state.recordQc
   let gone = q.replaced.find(job.id)
@@ -2682,6 +2696,9 @@ proc onFinished(state: var AppState; job: JobInfo) =
     if job.state == jsFailed: state.prepareFailed = state.preparing.path
     state.preparing = (NoJob, "")
     return
+  if job.abandoned: # its work still runs, and reads them: kept until it is back
+    for c in state.checking:
+      if c.job == job.id: state.leftChecks.add c
   state.checking.keepItIf(it.job != job.id) # the relations a check read
   for i in 0 ..< state.loading.len:
     if state.loading[i].job == job.id: # (one that posted its layer was let go of then)
@@ -3680,7 +3697,7 @@ proc drainInbox*(state: var AppState): bool =
         state.unread.add (m.unreadPanel, m.cause, m.why)
         inc state.panels[k].revision
     of mkTraceRead:
-      state.traceReads.add (m.job, m.traceKeys, move m.headerRows)
+      state.traceReads.add (m.job, m.readKeys, move m.headerRows)
       if state.traceReads.len > MaxTraceReads: state.traceReads.delete(0) # never taken
     of mkTile:
       let k = state.findPanel(m.tile.panel)
@@ -3711,6 +3728,7 @@ proc drainInbox*(state: var AppState): bool =
   state.mail.setLen 0
   for job in finished:
     state.onFinished(job)
+  if state.leftChecks.len > 0: state.leftChecks.keepItIf(state.jobs.workingOn(it.job))
   state.prepareNext() # (once the main panel has its tile; or a prepare ended)
   state.map.followed(state.survey) # a layer came, or went with a file
   state.relink()

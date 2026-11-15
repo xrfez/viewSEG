@@ -7,14 +7,21 @@
 ##
 ## Seen to fail: `joinStep`, with `keepForStragglers` not keeping the survey
 ## a join's step applies (`joining.geometry`): "heap-use-after-free" in
-## parseSEG's `applySurvey`, under `joinApplyWork`.
+## parseSEG's `applySurvey`, under `joinApplyWork`. `leftReader`, with the
+## quit not counting the holds left (a reader left earlier is none of the
+## panels' readers): the quit said every thread had ended, and the file was
+## closed under the reader ("heap-use-after-free" in parseSEG's
+## `joinedGroups`, under the reader's `serve`). `leftCheck`, with the
+## relations of an abandoned check let go when it was listed cancelled:
+## "heap-use-after-free" in processSEG's `recordCompleteness`, under
+## `checkWork`.
 ##
 ## The probe's first build compiles the core with ASan (a minute or two);
 ## later runs reuse its cache.
 
 import std/[os, osproc, strutils]
 
-const Scenarios = ["joinStep"]
+const Scenarios = ["joinStep", "leftReader", "leftCheck"]
 
 when not defined(posix):
   echo "tstragglers: skipped (AddressSanitizer: gcc or clang on POSIX)"

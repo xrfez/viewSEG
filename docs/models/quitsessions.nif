@@ -1,0 +1,49 @@
+(stmts#Hypothesis: at the quit the open files are handed to the closer, which closes them, while
+ a panel reader left earlier to end on its own (Retry, Stop, another file: none of the panels'
+ readers any more) still reads one: its read comes back after the close.
+ Source: src/viewSEG/core/state.nim shutdown (every thread asked, then waited for together
+ until one deadline; the open files released to the closer when every thread waited for has
+ ended, else kept to the end of the process), core/reader.nim (a left reader keeps its hold on
+ the file until it ends: `letGo` before `ended`), core/jobs.nim holdsLeft.
+ Variables: cur the panel's reader now: 0 running, 2 ended; left the reader left earlier: 0 in
+ a read the drive holds, 1 back (reads the file), 2 ended (its hold ended); done: the quit
+ decided; closed: the file closed; err 1 a read of a closed file.
+ Switches: Fix (true = the code: holds left count as a thread left), Witness = the quit kept
+ the file and the left reader ended safely.#
+  (variables :cur.0. :left.0. :done.0. :closed.0. :err.0.)
+  (assign Fix.0. (true))
+  (assign Witness.0. (false))
+
+  (def :Init.0.
+    (and (prime cur.0. 0) (prime left.0. 0) (prime done.0. (false)) (prime closed.0. (false))
+      (prime err.0. 0)))
+
+  (def :CurEnd.0.#the panel's reader sees the quit and ends (its hold ended first).#
+    (and (eq err.0. 0) (eq cur.0. 0) (prime cur.0. 2)))
+
+  (def :LeftBack.0.#the drive answers: the left reader's read returns, unlocked.#
+    (and (eq err.0. 0) (eq left.0. 0) (prime left.0. 1)))
+
+  (def :LeftRead.0.#the left reader reads the file (its index, its map), then ends and lets go
+ of its hold.#
+    (and (eq err.0. 0) (eq left.0. 1) (if closed.0. (prime err.0. 1) (prime left.0. 2))))
+
+  (def :Ended.0.#what the quit waited for has ended: the panel's reader (and the jobs).#
+    (eq cur.0. 2))
+
+  (def :Holds.0.#the holds left (`Jobs.holdsLeft`): the left reader's, until it ends.#
+    (if (eq left.0. 2) 0 1))
+
+  (def :Quit.0.#UI, at the deadline: release the files to the closer, or keep them.#
+    (and (eq err.0. 0) (not done.0.) (prime done.0. (true))
+      (prime closed.0. (if Fix.0. (and Ended.0. (eq Holds.0. 0)) Ended.0.))))
+
+  (def :Next.0. (or CurEnd.0. LeftBack.0. LeftRead.0. Quit.0.))
+
+  (def :Safe.0. (eq err.0. 0))
+
+  (def :Reached.0.#Witness: kept at the quit, the left reader ended safely.#
+    (and done.0. (not closed.0.) (eq left.0. 2) (eq err.0. 0)))
+
+  (spec (always-stutter Init.0. Next.0. (tuple cur.0. left.0. done.0. closed.0. err.0.)))
+  (check (if Witness.0. (not Reached.0.) Safe.0.)))
