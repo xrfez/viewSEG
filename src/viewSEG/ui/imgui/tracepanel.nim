@@ -1727,7 +1727,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     of bePage: (if tp.burst(gsPage): remember = true)
     of beWheel: (if tp.burst(gsBarWheel): remember = true)
     tp.handleKeys(after, view, plot, turn, limNow, hovered, p,
-      st.selection.selected.len > 0, recordOf(st, p), remember, res)
+      st.selection.anySelected, recordOf(st, p), remember, res)
     tp.cursorText = ""
     tp.cursorHeader.setLen 0
     if hovered:

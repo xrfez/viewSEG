@@ -398,18 +398,36 @@ func longSample*(i: int): float32 =
   ## Sample `i` of `longTraceSegy`'s trace.
   float32(sin(float64(i) / 10))
 
-proc longTraceSegy*(fx: Fixtures; samples: int): string =
-  ## One record of one trace of `samples` samples at 1 ms (`longSample`):
-  ## a trace whose Data table has as many rows.
-  result = fx.dir / ("long-trace-" & $samples & ".sgy")
+proc longTraceSegy*(fx: Fixtures; samples: int; traces = 1): string =
+  ## One record of `traces` traces (channel 1 ..) of `samples` samples at 1
+  ## ms (`longSample`): traces whose Data table has as many rows.
+  result = fx.dir / ("long-trace-" & $samples & (if traces > 1: "x" & $traces else: "") &
+    ".sgy")
   if fileExists(result): return
   var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
-    text: @["C01 viewSEG test fixture: one trace of " & $samples & " samples"]))
+    text: @["C01 viewSEG test fixture: " & $traces & " traces of " & $samples & " samples"]))
   var buf = newSeq[float32](samples)
   for i in 0 ..< samples: buf[i] = longSample(i)
-  var k = initTraceKeys()
-  (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, 1.0, 0.0, 1000.0, tsLive)
-  w.writeTrace(k, buf)
+  for c in 1 .. traces:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(c), 0.0, 1000.0,
+      tsLive)
+    w.writeTrace(k, buf)
+  w.checkClose()
+
+proc manyTracesSegy*(fx: Fixtures; traces: int): string =
+  ## One record of `traces` traces of 4 samples each: a selection as large
+  ## as a survey's, in a small file.
+  result = fx.dir / ("many-traces-" & $traces & ".sgy")
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: " & $traces & " short traces"]))
+  let buf = [1'f32, -1, 0.5, 0]
+  for c in 1 .. traces:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(c), 0.0, 1000.0,
+      tsLive)
+    w.writeTrace(k, buf)
   w.checkClose()
 
 proc pilotSegy*(fx: Fixtures): string =

@@ -61,6 +61,12 @@ type
     revision*: int ## bumped on every change
     selectedRevision*: int ## bumped when `selected` or `points` changes
 
+func anySelected*(s: Selection): bool =
+  ## Whether a trace is selected, found at once however many are (an
+  ## `IntSet`'s `len` counts them all).
+  for _ in s.selected: return true
+  false
+
 func targets*(s: Selection; under: int): seq[int] =
   ## What a trace operation (kill, reverse polarity) acts on with the
   ## pointer over trace `under`: every selected trace when `under` is one of

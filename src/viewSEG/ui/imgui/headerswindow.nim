@@ -288,11 +288,11 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
   igEndTable()
   marks.mark(id)
 
-proc cachedTable(ui: var HeadersUi; id, key: string; make: proc (): FieldTable): lent FieldTable =
-  ## The table `id`, made again only when what it is made from (`key`) changed.
-  if id notin ui.tables or ui.tables[id].key != key:
-    ui.tables[id] = CachedTable(key: key, table: make())
-  ui.tables[id].table
+func stale(ui: HeadersUi; id, key: string): bool =
+  ## Whether table `id` is to be made again: what it is made from (`key`)
+  ## changed. (It is then made in place and drawn from there: nothing of it,
+  ## or of what it is made from, is copied a frame.)
+  id notin ui.tables or ui.tables[id].key != key
 
 proc drawText(ui: var HeadersUi; id, key: string; lines: proc (): string; fonts: Fonts;
     marks: var Marks) =
@@ -380,10 +380,11 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
       ui.drawText("##text", fileKey, proc (): string = facts.text.join("\n"), fonts, marks)
       igEndTabItem()
     if subTab("Binary", marks):
-      let table = ui.cachedTable("headers.binary", fileKey, proc (): FieldTable =
-        fieldTable([rowsOf(facts.rows, proc (r: FieldRow): bool = r.blockName == "binary")],
-          ["Value"], standard))
-      ui.drawFieldTable("headers.binary", table, st, fonts, t, marks, output)
+      const id = "headers.binary"
+      if ui.stale(id, fileKey):
+        ui.tables[id] = CachedTable(key: fileKey, table: fieldTable([rowsOf(facts.rows,
+          proc (r: FieldRow): bool = r.blockName == "binary")], ["Value"], standard))
+      ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
       igEndTabItem()
     if facts.extendedText.len > 0 and subTab("Extended", marks):
       ui.drawText("##extended", fileKey, proc (): string =
@@ -394,7 +395,7 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
         parts.join("\n\n"), fonts, marks)
       igEndTabItem()
   of skSegd:
-    let r = st.inspection.answer.record
+    template r: untyped = st.inspection.answer.record # not copied a frame
     let mine = st.inspection.answer.recordPath == ses.path and r.record >= 0 and
       gather in 0 ..< ses.gathers.len and
       r.record == ses.file.segdRecordOf(ses.gathers[gather].traces.a)
@@ -410,40 +411,51 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
       let key = fileKey & "." & $r.record & "." & $st.inspection.answer.gen
       if subTab("General", marks):
         if r.problem.len > 0: dim(t, r.problem)
-        let table = ui.cachedTable("headers.general", key, proc (): FieldTable =
-          fieldTable([rowsOf(r.rows, proc (x: FieldRow): bool = x.blockName.blockIs("gh"))],
-            ["Value"], standard))
-        ui.drawFieldTable("headers.general", table, st, fonts, t, marks, output)
+        const id = "headers.general"
+        if ui.stale(id, key):
+          ui.tables[id] = CachedTable(key: key, table: fieldTable([rowsOf(r.rows,
+            proc (x: FieldRow): bool = x.blockName.blockIs("gh"))], ["Value"], standard))
+        ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
         igEndTabItem()
-      var sets: seq[seq[FieldRow]]
-      var labels: seq[string]
-      for x in r.rows:
-        if x.blockName.blockIs("st") and "cs" in x.blockName:
-          if labels.len == 0 or labels[^1] != x.blockName:
-            labels.add x.blockName
-            sets.add @[]
-          sets[^1].add x
-      if sets.len > 0 and subTab("Channel sets", marks):
-        let table = ui.cachedTable("headers.sets", key, proc (): FieldTable =
+      func isSet(x: FieldRow): bool = x.blockName.blockIs("st") and "cs" in x.blockName
+      var anySet = false
+      for i in 0 ..< r.rows.len:
+        if r.rows[i].isSet: anySet = true
+      if anySet and subTab("Channel sets", marks):
+        const id = "headers.sets"
+        if ui.stale(id, key):
+          var sets: seq[seq[FieldRow]]
           var names: seq[string]
-          for l in labels: names.add setLabel(l)
-          fieldTable(sets, names, standard, byBlock = false))
-        ui.drawFieldTable("headers.sets", table, st, fonts, t, marks, output)
+          var last = ""
+          for x in r.rows:
+            if x.isSet:
+              if sets.len == 0 or last != x.blockName:
+                last = x.blockName
+                names.add setLabel(last)
+                sets.add @[]
+              sets[^1].add x
+          ui.tables[id] = CachedTable(key: key, table: fieldTable(sets, names, standard,
+            byBlock = false))
+        ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
         igEndTabItem()
-      for b in r.raw:
+      for i in 0 ..< r.raw.len:
+        template b: untyped = r.raw[i]
         # (an untyped general header block is a row of General)
         if not b.blockName.blockIs("gh") and subTab(tabName(b.blockName), marks):
           drawBytes("headers.bytes " & b.blockName, b, t, fonts, marks)
           igEndTabItem()
   of skSeg2:
     if subTab("File", marks):
-      let table = ui.cachedTable("headers.file", fileKey, proc (): FieldTable =
-        fieldTable([facts.rows], ["Value"], standard))
-      ui.drawFieldTable("headers.file", table, st, fonts, t, marks, output)
+      const id = "headers.file"
+      if ui.stale(id, fileKey):
+        ui.tables[id] = CachedTable(key: fileKey, table: fieldTable([facts.rows], ["Value"],
+          standard))
+      ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
       igEndTabItem()
   of skUnknown: discard
   if standard != skSeg2:
-    for b in facts.raw:
+    for i in 0 ..< ses.facts.raw.len:
+      template b: untyped = ses.facts.raw[i]
       if b.blockName notin ["text", "extended"] and subTab(tabName(b.blockName), marks):
         drawBytes("headers.bytes " & b.blockName, b, t, fonts, marks)
         igEndTabItem()
@@ -483,8 +495,8 @@ proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; ma
   ## first, the values a geometry join gave them, in the accent colour.
   template answer: untyped = st.inspection.answer
   var shown = 0
-  for d in answer.traces:
-    if d.rows.len > 0: inc shown
+  for k in 0 ..< answer.traces.len: # (an index: nothing of the answer is copied a frame)
+    if answer.traces[k].rows.len > 0: inc shown
   if shown == 0:
     if st.inspection.waiting: igTextDisabled("Reading the trace headers...")
     return
@@ -508,14 +520,14 @@ proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerIn
     output.commands.add Command(kind: ckSettings, settings: s)
   var n = 0
   var traces: seq[int] # the answer's traces with samples
-  for k, d in answer.traces:
-    if d.samples.len > 0:
+  for k in 0 ..< answer.traces.len: # (an index: nothing of the answer is copied a frame)
+    if answer.traces[k].samples.len > 0:
       traces.add k
-      n = max(n, d.samples.len)
+      n = max(n, answer.traces[k].samples.len)
   if traces.len == 0:
     if st.inspection.waiting: igTextDisabled("Reading the samples...")
     return
-  let first = answer.traces[traces[0]]
+  template first: untyped = answer.traces[traces[0]]
   var other = false
   for k in traces:
     if answer.traces[k].dtMs != first.dtMs or answer.traces[k].t0Ms != first.t0Ms: other = true

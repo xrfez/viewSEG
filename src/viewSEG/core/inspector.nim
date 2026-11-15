@@ -39,7 +39,7 @@
 ## - At most `MaxInspectedValues` samples in all are kept per answer; the
 ##   rest of a trace is left out and its `cut` says how many.
 
-import std/[algorithm, intsets, locks, monotimes, os, strutils, times]
+import std/[heapqueue, intsets, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
@@ -145,24 +145,27 @@ func chosenTraces*(sel: Selection; followPointer: bool; last = Chosen()): Chosen
   ## `followPointer`, the trace under the plot's pointer, else those of the
   ## point under the map's pointer, else those pointed at last (`last`, when
   ## the pointer chose them), so that they stay while the pointer goes to
-  ## the Headers window; the first `MaxInspected` of them, by id.
-  var all: seq[int]
+  ## the Headers window; the first `MaxInspected` of them, by id (found in
+  ## one pass, however many are selected: none of the others is sorted).
+  var first = initHeapQueue[int]() # the smallest so far, negated: the largest on top
+  template take(t: int) =
+    inc result.total
+    if first.len < MaxInspected: first.push -t
+    elif -t > first[0]: discard first.replace(-t)
   result = Chosen()
   if sel.selected.len > 0:
     result.by = cbSelection
-    for t in sel.selected: all.add t
+    for t in sel.selected: take(t)
   elif followPointer and sel.hover >= 0:
     result.by = cbPlotPointer
-    all.add sel.hover
+    take(sel.hover)
   elif followPointer and sel.hoverTraces.len > 0:
     result.by = cbMapPointer
-    for t in sel.hoverTraces: all.add t
+    for t in sel.hoverTraces: take(t)
   elif followPointer and last.by in {cbPlotPointer, cbMapPointer}:
     return last
-  all.sort()
-  result.total = all.len
-  if all.len > MaxInspected: all.setLen MaxInspected
-  result.traces = all
+  result.traces = newSeq[int](first.len)
+  for i in countdown(first.len - 1, 0): result.traces[i] = -first.pop()
 
 # ------------------------------------------------------------ the thread --
 

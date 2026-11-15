@@ -64,10 +64,14 @@ proc add(lines: var seq[SummaryLine]; label, value: string) =
 proc heading(lines: var seq[SummaryLine]; label: string) =
   lines.add SummaryLine(label: label, heading: true)
 
-func firstLine(text: string): string =
+func firstLine*(text: string): string =
+  ## The first line of `text`, at most 100 bytes of it (then "...").
   let i = text.find('\n')
   result = (if i >= 0: text[0 ..< i] else: text).strip
-  if result.len > 100: result = result[0 ..< 100] & "..."
+  if result.len > 100:
+    var cut = 100 # before a whole character (UTF-8), never inside one
+    while cut > 0 and (ord(result[cut]) and 0xC0) == 0x80: dec cut
+    result = result[0 ..< cut] & "..."
 
 func unitWords*(c: CoordinateUnits): string =
   ## The unit a file's headers give its coordinates in, in the words of the
@@ -235,7 +239,11 @@ func fieldTable*(columns: openArray[seq[FieldRow]]; labels: openArray[string];
 func tableText*(t: FieldTable; column = -1): string =
   ## The table as text, a line per row, tab-separated: the description and
   ## the values (only those of `column` when it is not -1), as Copy puts it
-  ## on the clipboard.
+  ## on the clipboard; first a line naming the columns.
+  result = "Description"
+  for c, label in t.columns:
+    if column < 0 or c == column: result.add '\t' & label
+  result.add '\n'
   for row in t.rows:
     if row.title.len > 0: result.add row.title & '\n'
     else:
@@ -253,7 +261,10 @@ func dumpLine*(bytes: openArray[byte]; base: int64; line: int): string =
   ## offset in hexadecimal, its 16 bytes in hexadecimal and as text, a dot
   ## for what is not printable ASCII.
   let a = line * 16
-  result = toHex(base + a, 8) & "  "
+  # eight hex digits, more past 4 GiB
+  var digits = 8
+  while digits < 16 and (base + a) shr (4 * digits) != 0: inc digits
+  result = toHex(base + a, digits) & "  "
   var text = ""
   for i in a ..< a + 16:
     if i < bytes.len:
@@ -407,10 +418,17 @@ func sampleText*(x: float32): string =
 func dataText*(traces: openArray[TraceDetail]; column = -1): string =
   ## The Data tab's table as text, a line per sample, tab-separated: the
   ## index, the time in ms and each trace's sample (only trace `column`'s
-  ## when it is not -1), as Copy puts it on the clipboard.
+  ## when it is not -1), as Copy puts it on the clipboard; first a line
+  ## naming the columns, as the table's header row does.
   var n = 0
   for d in traces: n = max(n, d.samples.len)
   if traces.len == 0: return
+  let withFile = traces.manyFiles
+  result = "Index\tTime (ms)"
+  for c, d in traces:
+    if column < 0 or c == column:
+      result.add '\t' & traceLabel(d, withFile) & (if d.displayed: " as displayed" else: "")
+  result.add '\n'
   let (dt, t0) = (traces[0].dtMs, traces[0].t0Ms)
   for i in 0 ..< n:
     result.add $i & '\t' & exactText(t0 + float64(i) * dt)

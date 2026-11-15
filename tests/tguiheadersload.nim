@@ -6,9 +6,15 @@
 ## in view are made, so a million rows cost what a hundred do). The rows
 ## shown follow the wheel, and the samples are the trace's.
 ##
+## Then 32 traces side by side: a frame costs what the rows in view cost,
+## whatever the traces hold: 32 traces of 1 000 000 samples each cost what
+## 32 of 1 000 do (nothing of the reader's answer is copied a frame).
+##
 ## Seen to fail: with every row of the table drawn (the clipper told to
 ## include them all), "the Data table lags": 229 ms a frame with 100 000
-## rows.
+## rows. With the answer's traces looped over by value (`for k, d in
+## answer.traces`, a copy of every sample a frame), "the Data tab's frames
+## grow with the samples held": 39.1 ms against 10.4 ms.
 ##
 ## Runs alone: it bounds the frame times while the table scrolls (under 33
 ## ms, and at most 15 ms over an idle frame).
@@ -90,6 +96,60 @@ proc timeScrolling(path: string; samples: int; cache: string) =
     formatFloat(scrolling.max, ffDecimal, 1), ")"
   doAssert ms < 33 and ms < mi + 15, "the Data table lags: " & $ms & " ms a frame, idle " & $mi
 
+proc timeHeld(path: string; samples, traces: int; cache: string): float64 =
+  ## Shows the Data of all `traces` traces of `path` (each of `samples`
+  ## samples) and returns the median frame time while it stays on screen.
+  var stage = 0
+  var wait = 0
+  var last = getMonoTime()
+  var held: seq[float64]
+  proc onFrame(f: FrameInfo) =
+    let now = getMonoTime()
+    let ms = float64((now - last).inMicroseconds) / 1000
+    last = now
+    inc wait
+    case stage
+    of 0:
+      let p = f.core.panels[f.core.findPanel(MainPanel)]
+      if p.laidOut and p.layout.traces == traces and wait > 3:
+        var all: seq[int]
+        for i in 0 ..< traces: all.add f.core.sessions[0].base + i
+        f.apply Command(kind: ckSelect, traces: all, mode: smReplace)
+        var s = f.core.settings
+        (s.headers.tab, s.headers.traceTab) = (htTrace, ttData)
+        f.apply Command(kind: ckSettings, settings: s)
+        f.moveMouse(vec2(2, 2)) # off the plot: nothing hovered
+        (stage, wait) = (1, 0)
+    of 1:
+      let a = f.core.inspection.answer
+      var full = 0
+      for d in a.traces:
+        if d.samples.len == samples: inc full
+      if full == traces and not f.core.inspection.waiting and
+          f.markOf("headers.data 0 0").size.x > 0:
+        (stage, wait) = (2, 0)
+      doAssert wait < 3000, "the samples never came"
+    of 2:
+      if wait > 10: held.add ms
+      if wait == 80:
+        stage = 3
+        f.stop()
+    else: discard
+  let code = run(RunOptions(maxFrames: 5000, openPaths: @[path], windowSize: (1600, 1000),
+    indexCacheDir: some(cache), onFrame: onFrame))
+  doAssert code == 0, "run() exit code " & $code
+  doAssert stage == 3, "stopped at stage " & $stage
+  median(held)
+
 withFixtures fx:
   for samples in [100_000, 1_000_000]:
     timeScrolling(fx.longTraceSegy(samples), samples, fx.dir / "cache")
+  # 32 traces side by side: a frame costs what the rows in view cost, not
+  # what the traces hold (nothing of the answer is copied a frame).
+  let small = timeHeld(fx.longTraceSegy(1_000, 32), 1_000, 32, fx.dir / "cache")
+  let large = timeHeld(fx.longTraceSegy(1_000_000, 32), 1_000_000, 32, fx.dir / "cache")
+  echo "tguiheadersload: 32 traces on screen: frames of 1 000 samples each, median ",
+    formatFloat(small, ffDecimal, 1), " ms; of 1 000 000 samples each, median ",
+    formatFloat(large, ffDecimal, 1), " ms"
+  doAssert large < max(1.5 * small, small + 5), "the Data tab's frames grow with the " &
+    "samples held: " & $large & " ms against " & $small & " ms"

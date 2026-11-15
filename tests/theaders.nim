@@ -354,7 +354,8 @@ block inspectorReadsTraces:
       if row.name == "trace.fieldRecord": doAssert not row.differs, $row
       if row.name == "trace.groupX": doAssert row.differs, $row
     doAssert "Trace 4" in traceLabel(traces[0], false)
-    doAssert dataText(traces).startsWith("0\t0\t" & sampleText(surveySample(0, 4, 0)) & '\t')
+    doAssert dataText(traces).splitLines()[1].startsWith("0\t0\t" &
+      sampleText(surveySample(0, 4, 0)) & '\t')
     doAssert waitUntil(st.jobs.held(path) == reader), "the inspector's hold did not end"
     # As displayed, with no gain: the killed trace blank, the reversed one negated.
     var d = st.panel(MainPanel).layers[0].display
@@ -388,6 +389,93 @@ block inspectorReadsTraces:
     st.apply Command(kind: ckInspect, inspect: {})
     doAssert st.inspection.answer.traces.len == 0
     st.shutdown()
+
+block aLateAnswerIsNotKept:
+  # The Trace tab asked for, then off screen at once (its tab or its window
+  # closed) while its reader reads: the answer that comes after is dropped,
+  # not kept off screen (up to 128 MiB of samples) or shown when the tab
+  # comes back for other traces.
+  withFixtures fx:
+    var st = initAppState()
+    let path = fx.surveySegy()
+    let s = st.shown(path)
+    let reader = st.jobs.held(path)
+    st.apply Command(kind: ckSelect, traces: @[s.base, s.base + 1], mode: smReplace)
+    st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders, ipTraceSamples})
+    st.apply Command(kind: ckInspect, inspect: {})
+    # its hold ends once it has posted its answer
+    doAssert waitUntil(st.jobs.held(path) == reader), "the inspector's hold did not end"
+    discard st.drainInbox()
+    doAssert st.inspection.answer.traces.len == 0,
+      "an answer taken off screen: " & $st.inspection.answer.traces.len & " traces"
+    doAssert not st.inspection.waiting
+    st.shutdown()
+
+block asDisplayedFollowsTheFileShown:
+  # "As displayed" is the plot's processing, so only traces of the file the
+  # plot shows are read so; a trace of another open file is read as
+  # recorded, and read again, as displayed, once its file is shown.
+  withFixtures fx:
+    var st = initAppState()
+    # two shots alike (the same gather kind and display: nothing else differs)
+    discard st.shown(fx.mapShotSegy(0, 0))
+    st.apply Command(kind: ckOpen, paths: @[fx.mapShotSegy(0, 1)])
+    let k = st.findPanel(MainPanel)
+    doAssert st.settle(st.sessions.len == 2 and st.panel(MainPanel).laidOut and
+      st.shownFile(k) >= 0), "not opened"
+    let notShown = 1 - st.shownFile(k) # (opening a file shows it)
+    let (other, base) = (st.sessions[notShown].path, st.sessions[notShown].base)
+    var settings = st.settings
+    settings.headers.asDisplayed = true
+    st.apply Command(kind: ckSettings, settings: settings)
+    st.apply Command(kind: ckSelect, traces: @[base], mode: smReplace)
+    st.apply Command(kind: ckInspect, inspect: {ipTraceSamples})
+    doAssert st.settle(st.inspection.answer.traces.len == 1 and not st.inspection.waiting)
+    doAssert not st.inspection.answer.traces[0].displayed
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: other)
+    doAssert st.settle(st.panel(MainPanel).laidOut and st.shownFile(k) >= 0 and
+      st.sessions[st.shownFile(k)].path == other), "not shown"
+    doAssert st.settle(st.inspection.answer.traces.len == 1 and
+      st.inspection.answer.traces[0].displayed and not st.inspection.waiting),
+      "not read again as displayed once its file is shown"
+    st.shutdown()
+
+block copiedTablesSayTheirColumns:
+  # A table copied (Copy the table, Copy the column) starts with a line
+  # naming its columns, so the values pasted elsewhere say which trace or
+  # header they are of.
+  let a = TraceDetail(trace: 3, file: "a.sgy", dtMs: 2, samples: @[1'f32, 2])
+  let b = TraceDetail(trace: 7, file: "a.sgy", dtMs: 2, samples: @[3'f32, 4], displayed: true)
+  let all = dataText([a, b])
+  doAssert all.startsWith("Index\tTime (ms)\t" & traceLabel(a, false) & "\t" &
+    traceLabel(b, false) & " as displayed\n0\t0\t1.0\t3.0\n"), all
+  doAssert dataText([a, b], 1).startsWith("Index\tTime (ms)\t" & traceLabel(b, false) &
+    " as displayed\n0\t0\t3.0\n")
+  doAssert dataText([a, TraceDetail(trace: 1, file: "b.sgy", dtMs: 2,
+    samples: @[5'f32])]).startsWith("Index\tTime (ms)\ta.sgy Trace 4\tb.sgy Trace 2\n")
+  let table = FieldTable(columns: @["4", "8"], rows: @[TableRow(title: "Trace header"),
+    TableRow(description: "Channel", name: "trace.channel", values: @["4", "8"])])
+  doAssert tableText(table) == "Description\t4\t8\nTrace header\nChannel\t4\t8\n",
+    tableText(table)
+  doAssert tableText(table, 1) == "Description\t8\nTrace header\nChannel\t8\n"
+
+block bytesPastFourGiB:
+  # A block's offsets past 4 GiB (a later record of a large SEG-D file, a
+  # SEG-Y trailer) whole, not their last eight hex digits.
+  let bytes = newSeq[byte](32)
+  doAssert dumpLine(bytes, 0x1_2345_6780'i64, 1).startsWith("123456790  "),
+    dumpLine(bytes, 0x1_2345_6780'i64, 1)
+  doAssert dumpLine(bytes, 0x10, 0).startsWith("00000010  ")
+
+block longTextCutWhole:
+  # A long first line (the CRS text in the Summary) is cut before a whole
+  # character, never inside one.
+  var text = ""
+  for i in 0 ..< 99: text.add 'a'
+  text.add "é" # two bytes, the 100th and 101st
+  text.add "bbbbbb"
+  let cut = firstLine(text)
+  doAssert cut == text[0 ..< 99] & "...", cut
 
 block everyFieldDescribed:
   # Every field parseSEG names has words of its own, short enough for a

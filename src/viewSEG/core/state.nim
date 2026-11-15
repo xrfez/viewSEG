@@ -405,6 +405,9 @@ type
     edits: seq[set[TraceEdit]]
       ## theirs, when shown as displayed
     displayed: bool
+    shown: SessionId
+      ## the file the plot shows, when traces are shown as displayed (only
+      ## its traces are read so); NoSession otherwise
     record: (SessionId, int)
       ## a SEG-D record: its file and index; (NoSession, -1) for none
     flow: (bool, int, GatherKind)
@@ -424,8 +427,10 @@ type
     linked: Linked
     inspect: Inspection
       ## what the Headers window shows of the files' bytes
-    chosenFrom: (int, bool)
-      ## the selection's revision and "Follow the pointer" `chosen` is of
+    chosenFrom: (int, int, bool)
+      ## what `chosen` is of: the selection's revision of its selected
+      ## traces, of its hover while none is selected (-1 while some are),
+      ## and "Follow the pointer"
     asked: Asked
       ## what its reader was asked for last
     inspectGen: uint64
@@ -1661,7 +1666,11 @@ proc followInspect(state: var AppState) =
   ## answered as busy. With nothing on screen, nothing is read.
   template ins: untyped = state.inspect
   let view = state.settings.headers
-  let basis = (state.selection.revision, view.followPointer)
+  # With traces selected, the tab is about them: the pointer moving (the
+  # selection's hover) changes nothing, and costs nothing, however many.
+  template sel: untyped = state.selection
+  let basis = (sel.selectedRevision, (if sel.anySelected: -1 else: sel.revision),
+    view.followPointer)
   if basis != state.chosenFrom:
     state.chosenFrom = basis
     var chosen = chosenTraces(state.selection, view.followPointer, ins.chosen)
@@ -1671,7 +1680,7 @@ proc followInspect(state: var AppState) =
     if chosen != ins.chosen:
       ins.chosen = chosen
       inc ins.revision
-  var want = Asked(parts: ins.parts, record: (NoSession, -1))
+  var want = Asked(parts: ins.parts, record: (NoSession, -1), shown: NoSession)
   let k = state.findPanel(MainPanel)
   let shown = state.shownFile(k)
   if ipRecord in ins.parts and shown >= 0:
@@ -1688,12 +1697,13 @@ proc followInspect(state: var AppState) =
     for t in want.traces: want.edits.add state.traceEdits(t)
     if shown >= 0:
       let layer = state.panels[k].layers[0]
+      want.shown = state.sessions[shown].id
       want.flow = (layer.reversed, layer.pipeline.len, state.gatherKind(layer))
       want.display = layer.display
   template was: untyped = state.asked
   if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
       want.joins == was.joins and want.displayed == was.displayed and
-      want.record == was.record and
+      want.shown == was.shown and want.record == was.record and
       want.flow == was.flow and want.display.sameProcessing(was.display, want.flow[2]):
     return
   state.asked = want
@@ -1702,6 +1712,8 @@ proc followInspect(state: var AppState) =
       ins.answer = Inspected()
       inc ins.revision
     ins.waiting = false
+    # an answer still on its way is of what is no longer on screen: dropped
+    state.answerGen = state.inspectGen
     return
   inc state.inspectGen
   var req = InspectRequest(gen: state.inspectGen, headers: ipTraceHeaders in ins.parts,
