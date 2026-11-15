@@ -6,7 +6,9 @@
 ## strip, or the right-click menu of one of its points).
 ##
 ## The window reads `core` and issues `Command`s; it never changes the
-## state itself. ImPlot only draws the axes: the window handles the mouse
+## state itself. ImPlot only frames the plot (its axes show no values: the
+## scale bar, the north arrow and the status bar's coordinates say what is
+## needed, and nothing resizes the plot area from frame to frame): the window handles the mouse
 ## and keys itself, with the plot window's gestures wherever they carry over
 ## (docs/plot-window.md, "The map"), and moves the view with `core/mapview`:
 ## wheel zoom about the pointer, `+` / `-`, drag to pan (left or middle
@@ -647,19 +649,13 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
   var menu = false
   let plotH = max(1'f32, avail.y - float32(infoRows) * lineH - (if infoRows > 0: 4 else: 0))
   if ImPlot_BeginPlot("##map", ImVec2_c(x: max(1, avail.x), y: plotH), flags):
-    # Tick values only, as wide as the survey's largest coordinate always,
-    # so the plot's edge stays put as the labels change.
+    # No values, ticks or titles on the axes (the scale bar, the north arrow
+    # and the status bar's coordinates say what is needed), so nothing sizes
+    # the plot area from one frame to the next: it is the plot's from the first.
+    const axis = ImPlot_AxisFlags_NoMenus.cint or ImPlot_AxisFlags_NoDecorations.cint
+    ImPlot_SetupAxis(ImAxis_X1.cint, nil, axis)
+    ImPlot_SetupAxis(ImAxis_Y1.cint, nil, axis)
     let b = lim.bounds
-    let digits = max(len($int64(min(max(abs(b.minY), abs(b.maxY)), 1e15))), 1)
-    let most = decimalsFor(lim.leastPerPixel * 100)
-    let d = min(decimalsFor(next.perPixel * 100), most)
-    let width = digits + (if most > 0: most + 1 else: 0) + (if b.minY < 0: 1 else: 0)
-    ImPlot_SetupAxis(ImAxis_X1.cint, nil, ImPlot_AxisFlags_NoMenus.cint or
-      ImPlot_AxisFlags_NoGridLines.cint)
-    ImPlot_SetupAxis(ImAxis_Y1.cint, nil, ImPlot_AxisFlags_NoMenus.cint or
-      ImPlot_AxisFlags_NoGridLines.cint)
-    ImPlot_SetupAxisFormat_Str(ImAxis_X1.cint, ("%." & $d & "f").cstring)
-    ImPlot_SetupAxisFormat_Str(ImAxis_Y1.cint, ("%" & $width & "." & $d & "f").cstring)
     let shown = if next.isSet: next.visible else: b
     ImPlot_SetupAxesLimits(shown.minX, shown.maxX, shown.minY, shown.maxY,
       ImPlot_Cond_Always.cint)

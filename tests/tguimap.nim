@@ -6,6 +6,8 @@
 ## - the survey files named on the command line are drawn at fit, every
 ##   source in the sources' colour and every receiver in the receivers' at
 ##   the pixel equal aspect puts it on, the background between them;
+## - the axes show no values: the margins beside and below the plot are a
+##   few pixels of one or two colours, and the plot area holds still;
 ## - the click that brings the window forward selects nothing;
 ## - the point under the pointer is described (station, coordinates with
 ##   units, its file) in a popup, drawn in the hover colour, and the status
@@ -27,7 +29,8 @@
 ## fit" found the background at the first source; with the wheel zooming
 ## about the view's centre, "wheel zooms about the pointer" found the source
 ## 112 pixels from where it was; with the box select's points not sent, "a
-## Shift drag selects" found no point selected.
+## Shift drag selects" found no point selected; with the axes' values back,
+## "no values on the axes" found a left margin of 94 px.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-*.png there.
@@ -118,6 +121,42 @@ proc main() =
       f.shot("map-fixture.png")
       true)
 
+    var held: seq[Rect]
+    step("no values on the axes, and the plot holds still", noop, proc (f: FrameInfo): bool =
+      # The map's plot area on ten frames in a row: the same. No axis values
+      # sit beside it: the margins between the map window's edges and the
+      # plot are a few pixels, of one or two colours (the frame), no text.
+      held.add f.markOf("map.data")
+      result = held.len >= 10
+      if result:
+        for r in held: doAssert r == held[0], "the plot moved: " & $held
+        let (w, d) = (f.markOf("map"), held[0])
+        doAssert d.pos.x - w.pos.x < 24, "a left margin of " & $(d.pos.x - w.pos.x) & " px"
+        doAssert w.pos.y + w.size.y - (d.pos.y + d.size.y) < 24,
+          "a bottom margin of " & $(w.pos.y + w.size.y - (d.pos.y + d.size.y)) & " px"
+        proc colours(x0, x1, y: int): int =
+          var seen: seq[Rgba]
+          for x in x0 ..< x1:
+            let c = f.readPixel(x, y)
+            var known = false
+            for o in seen:
+              if same(o, c): known = true
+            if not known: seen.add c
+          seen.len
+        for y in countup(int(d.pos.y) + 4, int(d.pos.y + d.size.y) - 4, 3):
+          let n = colours(int(w.pos.x) + 2, int(d.pos.x) - 1, y)
+          doAssert n <= 3, "row " & $y & " left of the plot holds " & $n & " colours (text)"
+        for x in countup(int(d.pos.x) + 4, int(d.pos.x + d.size.x) - 4, 3):
+          var seen: seq[Rgba]
+          for y in int(d.pos.y + d.size.y) + 1 ..< int(w.pos.y + w.size.y) - 2:
+            let c = f.readPixel(x, y)
+            var known = false
+            for o in seen:
+              if same(o, c): known = true
+            if not known: seen.add c
+          doAssert seen.len <= 3, "column " & $x & " below the plot holds " & $seen.len &
+            " colours (text)")
+
     step("a focusing click selects nothing", proc (f: FrameInfo) =
       let (x, y) = mapRcv(1, 10)
       p = f.screen(x, y)
@@ -153,7 +192,7 @@ proc main() =
     step("drawn in the selection colour", proc (f: FrameInfo) =
       let (x, y) = mapSrc(0, 4)
       q = f.screen(x, y)
-      f.moveMouse(q), proc (f: FrameInfo): bool =
+      f.moveMouse(vec2(round(q.x), round(q.y))), proc (f: FrameInfo): bool =
       result = wait > 4 and f.mapWindow.hoveredPoints.len > 0
       if result:
         doAssert same(f.pixel(p), ink.selected), $f.pixel(p) & " wanted " & $ink.selected
@@ -163,14 +202,20 @@ proc main() =
         backs = f.core.map.back.len)
 
     step("wheel zooms about the pointer", proc (f: FrameInfo) =
-      f.scrollWheel(q, 4), proc (f: FrameInfo): bool =
+      f.scrollWheel(vec2(round(q.x), round(q.y)), 4), proc (f: FrameInfo): bool =
       result = f.settled and not sameMapView(f.mapWindow.mapShown, was) and wait > 3
       if result:
         let v = f.mapWindow.mapShown
-        doAssert near(v.perPixel, was.perPixel / pow(1.25, 4), 1e-9), $v.perPixel
+        let k = pow(1.25, 4)
+        doAssert near(v.perPixel, was.perPixel / k, 1e-9), $v.perPixel
         let (x, y) = mapSrc(0, 4)
         let now = f.screen(x, y)
-        doAssert abs(now.x - q.x) < 1 and abs(now.y - q.y) < 1, $now & " was " & $q
+        # The survey point under the pointer (on a whole pixel) stays there; the
+        # source, a fraction of a pixel from it, moves k times as far from it.
+        let m = vec2(round(q.x), round(q.y))
+        let want = vec2(m.x + (q.x - m.x) * k, m.y + (q.y - m.y) * k)
+        doAssert abs(now.x - want.x) < 1 and abs(now.y - want.y) < 1, $now & " wanted " &
+          $want & " (it was at " & $q & ")"
         doAssert same(f.pixel(now), ink.hover)
         doAssert f.core.map.back.len == backs + 1
         was = v)

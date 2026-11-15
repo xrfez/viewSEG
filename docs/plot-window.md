@@ -472,10 +472,11 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   but a map that shows the whole survey goes on showing all of it (a map has no scroll
   bars to reach what a smaller plot would cut off). A survey file loaded or a file
   closed: a map that showed the whole survey shows the whole new one; another view stays.
-- **The axes** carry tick values only, as wide as the survey's largest coordinate always,
-  so the plot's edge stays put; the units are in the status bar, the scale bar and the
-  ruler, from the survey file's header (`H20`, `H201`: `ft`, `US ft`, `m`, or its own
-  words); "units" where nothing says.
+- **The axes carry no values** (the user: "the map does not need any x and y values on
+  the axis"): the scale bar, the north arrow and the pointer's coordinates in the status
+  bar say what is needed, and the plot area is the same from the first frame on. The
+  units are in the status bar, the scale bar and the ruler, from the survey file's header
+  (`H20`, `H201`: `ft`, `US ft`, `m`, or its own words); "units" where nothing says.
 - **A scale bar** (1, 2 or 5 times a power of ten, at most 150 pixels long) in the plot's
   bottom-left corner and a **north arrow** (grid north) in its top-right one.
 - **The strip:** Layers, zoom out, zoom in, fit, back, and the gear: where the point under
