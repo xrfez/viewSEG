@@ -38,7 +38,7 @@ import ../../platform/paths
 import ../../remote/control
 import ../../view/jobstatus
 import agentshot, chrome, dpi, filelist, fonts, headerswindow, icons, jobswindow, joindialog,
-  mapwindow, menus, messages, recordlist, shell, style, tracepanel, windows
+  mapwindow, memorywindow, menus, messages, recordlist, shell, style, tracepanel, windows
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow, DialogKind
 
@@ -53,6 +53,7 @@ const
   jobsTitle = IconTasks & "  Jobs###jobs"
   recordsTitle = IconRecords & "  Records###records"
   joinTitle = IconMap & "  Import survey###join"
+  memoryTitle = IconHistory & "  File memory###memory"
   noticeSeconds = 5.0                     ## how long a notice stays on screen
   CheckFrames = 8                         ## frames after a layout's arrival to look for windows off screen
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
@@ -78,6 +79,7 @@ type
     files: FileListUi                          ## the file list's window
     records: RecordListUi                      ## the record list's window
     join: JoinUi                               ## the "Import survey" window
+    memory: MemoryUi                           ## the "File memory" window
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
     dropAt: float64                            ## when a drag was last seen over the window
     windows: WindowsUi                         ## which windows are shown (the Window menu)
@@ -145,7 +147,7 @@ type
     ## Keys a test can press (`pressKey`).
     skEquals, skMinus, skKeypadPlus, skKeypadMinus, skLeft, skRight, skUp, skDown,
     skBackspace, skZero, skEscape, skEnter, skCtrl, skShift, skAlt, skTab, skHome, skEnd,
-    skPageUp, skPageDown, skW, skG, skR, skK, skZ, skLeftBracket, skRightBracket, skM
+    skPageUp, skPageDown, skW, skG, skR, skK, skZ, skLeftBracket, skRightBracket, skM, skY
 
   SimMod* = enum
     smCtrl, smShift, smAlt
@@ -374,7 +376,7 @@ proc pressKey*(frame: FrameInfo; key: SimKey; down: bool; mods: set[SimMod] = {}
     SDL_SCANCODE_LALT, SDL_SCANCODE_TAB, SDL_SCANCODE_HOME, SDL_SCANCODE_END,
     SDL_SCANCODE_PAGEUP, SDL_SCANCODE_PAGEDOWN, SDL_SCANCODE_W, SDL_SCANCODE_G, SDL_SCANCODE_R,
     SDL_SCANCODE_K, SDL_SCANCODE_Z, SDL_SCANCODE_LEFTBRACKET, SDL_SCANCODE_RIGHTBRACKET,
-    SDL_SCANCODE_M]
+    SDL_SCANCODE_M, SDL_SCANCODE_Y]
   var m = 0'u16
   if smCtrl in mods: m = m or uint16(SDL_KMOD_LCTRL)
   if smShift in mods: m = m or uint16(SDL_KMOD_LSHIFT)
@@ -598,6 +600,11 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
       ui.core.apply Command(kind: ckExportLog, docPath: path)
     of dkJoinFiles:
       ui.join.addFiles(ev.paths)
+    of dkExportEdits:
+      let path = if ev.paths[0].splitFile.ext.len == 0: ev.paths[0] & ".csv" else: ev.paths[0]
+      ui.core.apply Command(kind: ckExportEdits, panel: MainPanel, listPath: path)
+    of dkImportEdits:
+      ui.core.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: ev.paths[0])
   of seCancelled:
     discard # the user closed the dialog: nothing to say
   of seDialogFailed:
@@ -626,6 +633,7 @@ func everyWindow(): seq[string] =
   ## docked ones and the "Import survey" window.
   for w in AppWindow: result.add $w
   result.add "join"
+  result.add "memory"
 
 proc mainRect(ui: Ui): Rect =
   ## Where the main window is, in the desktop's coordinates.
@@ -662,6 +670,7 @@ proc resetWindows(ui: var Ui) =
   ui.windows.showAll()
   ui.layoutDone = false
   ui.join.placeAgain()
+  ui.memory.placeAgain()
   discard ui.placeMain(wholly = false)
   ui.say("The windows are back as at a first start.")
 
@@ -708,6 +717,21 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
       if i >= 0: ui.core.apply Command(kind: ckClose, file: ui.core.sessions[i].id)
     of maImportSurvey: ui.join.open()
+    of maUndo: ui.core.apply Command(kind: ckUndoEdit, panel: MainPanel)
+    of maRedo: ui.core.apply Command(kind: ckRedoEdit, panel: MainPanel)
+    of maClearEdits: ui.core.apply Command(kind: ckClearEdits, panel: MainPanel)
+    of maFileMemory:
+      if ui.memory.shown: ui.memory.shown = false else: ui.memory.open()
+    of maExportEdits:
+      let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
+      if i < 0: ui.say("Export trace edits: no file is shown.", mlWarning)
+      else:
+        let s = ui.core.sessions[i]
+        ui.ask(dkExportEdits, s.path.parentDir / s.path.splitFile.name & "-edits.csv")
+    of maImportEdits:
+      let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
+      if i < 0: ui.say("Import trace edits: no file is shown.", mlWarning)
+      else: ui.ask(dkImportEdits, ui.core.sessions[i].path.parentDir & DirSep)
     of maQuit: ui.running = false
     of maToggleTheme: ui.toggleTheme()
     of maExportSettings:
@@ -915,7 +939,11 @@ proc drawNotices(ui: var Ui) =
 
 proc drawUi(ui: var Ui): set[MenuAction] =
   ui.marks.setLen 0
-  let menu = drawMainMenu(MenuInput(themes: ui.themes, theme: ui.selected,
+  let shownAt = ui.core.shownFile(ui.core.findPanel(MainPanel))
+  template e: untyped = ui.core.editsOf(ui.core.findPanel(MainPanel))
+  let menu = drawMainMenu(MenuInput(undo: describe(e.nextUndo), redo: describe(e.nextRedo),
+    edited: not e.isEmpty, editedName: (if shownAt >= 0: ui.core.sessions[shownAt].name
+    else: ""), memoryShown: ui.memory.shown,themes: ui.themes, theme: ui.selected,
     recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,
     canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
     keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest,
@@ -1009,6 +1037,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
       ui.core.apply move c
   var join = ui.join.drawJoin(joinTitle, ui.core, ui.theme, ui.marks)
   for c in join.commands.mitems:
+    ui.core.apply move c
+  var memory = ui.memory.drawMemory(memoryTitle, ui.core, ui.theme, ui.marks)
+  for c in memory.commands.mitems:
     ui.core.apply move c
   if join.addFiles:
     let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
@@ -1295,6 +1326,7 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
     result.core.logTo(if opts.logDir.isSome: opts.logDir.get else: ctx.logDir)
     result.say("Session log: " & result.core.logFile)
     result.core.keepSettingsIn(configDir, loaded)
+    result.core.rememberFilesIn(configDir)
     result.core.keepLayoutsIn(configDir, assets)
     result.keepsLayouts = true
   result.appliedTheme = result.core.settings.theme

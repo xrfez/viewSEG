@@ -32,6 +32,8 @@ type
     dkImportLayout = "Import layout",     ## a NIF file to read
     dkExportLog = "Export messages"       ## a text file to write (a save dialog)
     dkJoinFiles = "Add survey files"      ## survey files to import: SPS, SEG P1, CSV tables
+    dkExportEdits = "Export trace edits"  ## a NIF or CSV file to write (a save dialog)
+    dkImportEdits = "Import trace edits"  ## a NIF or CSV file of trace edits to read
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -206,6 +208,12 @@ let joinFilters = [
   SDL_DialogFileFilter(name: "Tables of stations (*.csv, *.txt)", pattern: "csv;txt;tsv"),
   SDL_DialogFileFilter(name: "All files", pattern: "*")]
 
+let editsFilters = [
+  SDL_DialogFileFilter(name: "Trace edits (*.csv, *.nif)", pattern: "csv;nif"),
+  SDL_DialogFileFilter(name: "CSV table (*.csv)", pattern: "csv"),
+  SDL_DialogFileFilter(name: "viewSEG's own (*.nif)", pattern: "nif"),
+  SDL_DialogFileFilter(name: "All files", pattern: "*")]
+
 let logFilters = [
   SDL_DialogFileFilter(name: "Text (*.log, *.txt)", pattern: "log;txt"),
   SDL_DialogFileFilter(name: "All files", pattern: "*")]
@@ -260,6 +268,12 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   of dkJoinFiles:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr joinFilters[0],
       joinFilters.len.cint, at, true)
+  of dkExportEdits:
+    SDL_ShowSaveFileDialog(onDialogResult, userdata, parent, addr editsFilters[0],
+      editsFilters.len.cint, at)
+  of dkImportEdits:
+    SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr editsFilters[0],
+      editsFilters.len.cint, at, false)
 
 # ------------------------------------------------------------------ theme --
 

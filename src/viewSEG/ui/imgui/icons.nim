@@ -58,6 +58,8 @@ const
   IconWriting* = ""    ## nf-cod-edit
   IconFollow* = ""     ## nf-cod-debug_step_into
   IconAgent* = ""      ## nf-cod-robot
+  IconUndo* = "\u{EAE2}" ## nf-cod-discard
+  IconRedo* = "\u{EBB0}" ## nf-cod-redo
 
   AllIcons* = [IconOpenFile, IconOpenFiles, IconOpenFolder, IconFolder, IconSave,
     IconSettings, IconLog, IconMap, IconFilter, IconEye, IconEyeOff, IconZoomIn,
@@ -66,7 +68,7 @@ const
     IconLayers, IconTarget, IconLocation, IconRefresh, IconArrowUp, IconArrowDown, IconTrash,
     IconCopy, IconClearAll, IconTasks, IconList, IconGoTo, IconExport, IconHistory,
     IconRecordBack, IconRecordNext, IconRecords, IconNew, IconWriting, IconFollow,
-    IconAgent]
+    IconAgent, IconUndo, IconRedo]
     ## for tests: every glyph above must be in the UI font
 
 func codepoint*(icon: string): int =

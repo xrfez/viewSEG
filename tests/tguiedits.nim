@@ -4,7 +4,7 @@
 ## overlap 0.5 (so no neighbour reaches into a trace's own half spacing):
 ##
 ## - a right click on a trace opens the plot's menu with the trace
-##   operations, the polarity of every trace, Undo last edit and Clear all
+##   operations, the polarity of every trace, Undo, Redo and Clear all
 ##   edits for this file; Kill there kills it: the trace is blank (every
 ##   pixel within 0.4 of a trace spacing of its baseline is the paper), the
 ##   image is what the CPU reference draws from the tiles, the display
@@ -33,7 +33,8 @@
 ## trace's band are not the paper"; with the density shader not blanking
 ## them (mid grey), "killed density: 3072 of 76032 pixels off the
 ## reference"; with the menu's Kill sending nothing, "killed did not
-## happen"; with no `editKeys`, "Ctrl+Z did not happen"; with the display
+## happen"; with the Edit menu's Ctrl+Z left out (`drawMainMenu`'s
+## shortcuts), "Ctrl+Z did not happen"; with the display
 ## header's row of edits left out, "no mark of the edit over trace 10";
 ## with the status bar not saying the edits, "the status bar does not say
 ## killed".

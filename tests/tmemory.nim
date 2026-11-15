@@ -15,6 +15,9 @@
 ##   it is another file, with a warning);
 ## - edits taken away to nothing remove the document; Ctrl+Z writes it
 ##   again;
+## - a file's list exported as CSV (trace, record, channel, edit) and as
+##   NIF, never over the data file, and each imported again as one step; a
+##   table without a trace column refused;
 ## - a file whose drive does not answer when its identity is read: the plot
 ##   opens and draws, and the edits come once the drive answers;
 ## - the data file's bytes and modification time are as they were through
@@ -65,6 +68,10 @@ proc docs(config: string): seq[string] =
 proc lastWarning(st: AppState): string =
   for e in st.log:
     if e.severity == sevWarning: result = e.text
+
+proc lastError(st: AppState): string =
+  for e in st.log:
+    if e.severity == sevError: result = e.text
 
 proc quiet(st: AppState): bool =
   ## Nothing said of the identity's and the hash's jobs ending.
@@ -157,6 +164,36 @@ withFixtures fx:
     st.apply Command(kind: ckUndoEdit, panel: MainPanel)
     st.flushFiles()
     doAssert docs(config).len == 1, "the undo did not write it again"
+    st.shutdown()
+  block exportAndImport:
+    var st = start(config)
+    st.showFile(b)
+    doAssert st.settle(st.remembering(b).known and st.editsOf(0).has(teKilled, 3))
+    let csv = fx.dir / "list.csv"
+    let nif = fx.dir / "list.nif"
+    st.apply Command(kind: ckExportEdits, panel: MainPanel, listPath: csv)
+    st.apply Command(kind: ckExportEdits, panel: MainPanel, listPath: nif)
+    st.apply Command(kind: ckExportEdits, panel: MainPanel, listPath: b)
+    doAssert "never writes over" in st.lastWarning, st.lastWarning
+    doAssert st.settle(fileExists(csv) and fileExists(nif))
+    let text = readFile(csv)
+    doAssert text.startsWith(CsvHeader & "\nall,,,reversed\n4,11,4,killed\n6,11,6,reversed\n"),
+      text
+    doAssert "(killed \"4\")" in readFile(nif) and "renamed.sgy" in readFile(nif)
+    st.apply Command(kind: ckClearEdits, panel: MainPanel)
+    for list in [csv, nif]:
+      st.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: list)
+      doAssert st.settle(st.editsOf(0).has(teKilled, 3)), "not imported: " & list
+      doAssert st.editsOf(0).has(teReversed, 5) and st.editsOf(0).allReversed and
+        st.panel(MainPanel).layers[0].reversed
+      doAssert "3 edits imported from " & list.extractFilename in describe(st.editsOf(0).nextUndo)
+      st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+      doAssert st.editsOf(0).isEmpty, "the import is not one step"
+    writeFile(fx.dir / "bad.csv", "station,edit\n1,kill\n")
+    st.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: fx.dir / "bad.csv")
+    doAssert st.settle("Cannot import" in st.lastError), st.lastError
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel) # the clear: as before
+    doAssert st.editsOf(0).has(teKilled, 3)
     st.shutdown()
   block driveDoesNotAnswer:
     var st = start(config)

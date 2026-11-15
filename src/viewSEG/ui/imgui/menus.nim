@@ -2,12 +2,17 @@
 ## ways, and its shortcut is shown in the menu and in the toolbar's tooltips.
 ## Drawing returns what the user asked for; the caller acts on it.
 ##
-## File opens, follows and closes files, and holds every import (File >
-## Import: a survey, settings, a layout) and every export (File > Export:
-## the messages, the settings, the layout), each in that one place; View
-## holds the theme; Window puts the windows right (Reset the windows, Bring
-## all windows onto this screen), shows, hides and brings forward each
-## window, and loads and saves layouts.
+## File opens, follows and closes files, holds every import (File >
+## Import: a survey, settings, a layout, trace edits) and every export (File
+## > Export: the messages, the settings, the layout, trace edits), each in
+## that one place, and opens the File memory window (what is remembered
+## about files: it is about files on disk, so File, not Window, which only
+## arranges windows); Edit undoes, redoes and clears the trace edits of the
+## file the Seismic window shows, whichever window has the focus (Ctrl+Z,
+## Ctrl+Shift+Z and Ctrl+Y everywhere but in a text field, which keeps its
+## own undo); View holds the theme; Window puts the windows right (Reset the
+## windows, Bring all windows onto this screen), shows, hides and brings
+## forward each window, and loads and saves layouts.
 
 import std/os
 import imguin/cimgui
@@ -23,11 +28,13 @@ type
     maOpenFile = "Open file...", maOpenFiles = "Open files...",
     maOpenFolder = "Open folder...", maClose = "Close",
     maImportSurvey = "Import survey...", maImportSettings = "Import settings...",
-    maImportLayout = "Import layout...",
+    maImportLayout = "Import layout...", maImportEdits = "Import trace edits...",
     maExportLog = "Export messages...", maExportSettings = "Export settings...",
-    maExportLayout = "Export layout...",
+    maExportLayout = "Export layout...", maExportEdits = "Export trace edits...",
+    maFileMemory = "File memory...",
     maResetSettings = "Reset the settings",
     maQuit = "Quit",
+    maUndo = "Undo", maRedo = "Redo", maClearEdits = "Clear all edits for this file",
     maToggleTheme = "Light / dark",
     maResetWindows = "Reset the windows",
     maBringWindows = "Bring all windows onto this screen",
@@ -51,6 +58,12 @@ type
     shown*: set[AppWindow]      ## the windows ticked under Window
     seismicName*: string        ## what the Seismic window is called now (`windowTitle`)
     joinShown*: bool            ## the "Import survey" window is open
+    undo*, redo*: string
+      ## Edit > Undo and Redo: the step each makes, in words ("trace 21
+      ## killed"); "" when there is none
+    edited*: bool               ## the file shown has edits (Edit > Clear all edits)
+    editedName*: string         ## its name; "" when no file is shown
+    memoryShown*: bool          ## the File memory window is open
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -73,9 +86,13 @@ const
     maOpenFiles: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_O.cint,
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
-    maImportSurvey: 0, maImportSettings: 0, maImportLayout: 0, maExportLog: 0,
-    maExportSettings: 0, maExportLayout: 0, maResetSettings: 0,
+    maImportSurvey: 0, maImportSettings: 0, maImportLayout: 0, maImportEdits: 0,
+    maExportLog: 0, maExportSettings: 0, maExportLayout: 0, maExportEdits: 0,
+    maFileMemory: 0, maResetSettings: 0,
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
+    maUndo: ImGui_Mod_Ctrl.cint or ImGui_Key_Z.cint,
+    maRedo: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_Z.cint,
+    maClearEdits: 0,
     maToggleTheme: 0,
     maResetWindows: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_R.cint,
     maBringWindows: 0, maSaveLayout: 0,
@@ -85,8 +102,10 @@ const
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
     maImportSurvey: IconMap, maImportSettings: IconSettings, maImportLayout: IconLayers,
-    maExportLog: IconLog, maExportSettings: IconSettings, maExportLayout: IconLayers,
-    maResetSettings: IconRefresh, maQuit: IconQuit, maToggleTheme: IconTheme,
+    maImportEdits: IconWriting, maExportLog: IconLog, maExportSettings: IconSettings,
+    maExportLayout: IconLayers, maExportEdits: IconWriting, maFileMemory: IconHistory,
+    maResetSettings: IconRefresh, maQuit: IconQuit, maUndo: IconUndo, maRedo: IconRedo,
+    maClearEdits: IconClearAll, maToggleTheme: IconTheme,
     maResetWindows: IconRefresh, maBringWindows: IconFit, maSaveLayout: IconSave,
     maShowFiles: IconList, maShowRecords: IconRecords, maShowMap: IconMap,
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog]
@@ -111,6 +130,7 @@ func shownAs(a: MenuAction): string =
   of maImportSettings, maExportSettings: "Settings..."
   of maImportLayout, maExportLayout: "Layout..."
   of maExportLog: "Messages..."
+  of maImportEdits, maExportEdits: "Trace edits..."
   else: $a
 
 proc label(a: MenuAction): string =
@@ -169,6 +189,9 @@ proc drawImports(res: var MenuResult) =
     item(maImportLayout, res)
     tip("Arrange the windows as a layout file says, and keep it among your layouts " &
       "(Window > Load)")
+    item(maImportEdits, res)
+    tip("Kill and reverse traces of the file shown as a list says (a CSV table with a " &
+      "\"trace\" column, or a list exported here); one step, which Edit > Undo takes back")
     igEndMenu()
 
 proc drawExports(res: var MenuResult) =
@@ -182,6 +205,10 @@ proc drawExports(res: var MenuResult) =
     tip("Write every setting to a file of your choice, to keep or to take to another computer")
     item(maExportLayout, res)
     tip("Write the windows' arrangement to a file of your choice")
+    item(maExportEdits, res)
+    tip("Write the killed and reversed traces of the file shown to a file, to hand to " &
+      "processing: a CSV table (trace, record, channel, edit) or viewSEG's own (.nif), " &
+      "which Import reads again here or on another computer")
     igEndMenu()
 
 proc drawLayouts(input: MenuInput; res: var MenuResult) =
@@ -214,6 +241,34 @@ proc drawLayouts(input: MenuInput; res: var MenuResult) =
     "written and read under File > Export and File > Import)")
   igEndDisabled()
 
+proc drawEditMenu(input: MenuInput; res: var MenuResult) =
+  ## Edit: the trace edits of the file the Seismic window shows.
+  let on = input.editedName.len > 0
+  let undo = if input.undo.len > 0: "Undo " & input.undo else: "Undo"
+  if igMenuItem_Bool((menuIcons[maUndo] & "  " & undo).cstring, shortcutName(maUndo).cstring,
+      false, input.undo.len > 0):
+    res.actions.incl maUndo
+  if marked != nil: marked[].mark("menu." & $maUndo)
+  tip(if input.undo.len > 0: "Take back the last change to the edits of " &
+        input.editedName & ": " & input.undo
+      elif on: "Nothing to undo in this session for " & input.editedName
+      else: "No file is shown")
+  let redo = if input.redo.len > 0: "Redo " & input.redo else: "Redo"
+  if igMenuItem_Bool((menuIcons[maRedo] & "  " & redo).cstring,
+      (shortcutName(maRedo) & ", Ctrl+Y").cstring, false, input.redo.len > 0):
+    res.actions.incl maRedo
+  if marked != nil: marked[].mark("menu." & $maRedo)
+  tip(if input.redo.len > 0: "Make the change undone last again: " & input.redo
+      else: "Nothing undone to make again")
+  igSeparator()
+  if igMenuItem_Bool(label(maClearEdits).cstring, nil, false, input.edited):
+    res.actions.incl maClearEdits
+  if marked != nil: marked[].mark("menu." & $maClearEdits)
+  tip(if input.edited: "Take away every kill and polarity reversal of " & input.editedName &
+        ", so its traces are shown as the file holds them (Undo brings them back). The " &
+        "file itself is never changed"
+      else: "No edits to clear")
+
 proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
   ## Window: putting the windows right first, then each window with a tick,
   ## then the layouts.
@@ -243,14 +298,19 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
 
 proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
   ## The menu bar over the main window, plus the shortcuts, which work whether
-  ## or not a menu is open. Its menus are marked "menu.File", "menu.View" and
-  ## "menu.Window", its items "menu." and their names, the windows' entries
+  ## or not a menu is open. Its menus are marked "menu.File", "menu.Edit",
+  ## "menu.View" and "menu.Window", its items "menu." and their names, the windows' entries
   ## "menu.window." and their IDs, the presets "menu.layout." and their names.
   result = MenuResult()
   marked = addr marks
+  let typing = igGetIO_Nil().WantTextInput # a text field keeps its own Ctrl+Z
   for a in MenuAction:
-    if shortcuts[a] != 0 and igShortcut_Nil(shortcuts[a], ImGui_InputFlags_RouteGlobal.cint):
+    if shortcuts[a] != 0 and not (typing and a in {maUndo, maRedo}) and
+        igShortcut_Nil(shortcuts[a], ImGui_InputFlags_RouteGlobal.cint):
       result.actions.incl a
+  if not typing and igShortcut_Nil(ImGui_Mod_Ctrl.cint or ImGui_Key_Y.cint,
+      ImGui_InputFlags_RouteGlobal.cint):
+    result.actions.incl maRedo
   igPushStyleVar_Float(ImGui_StyleVar_WindowBorderSize.cint, 0) # one block with the toolbar
   let open = igBeginMainMenuBar()
   igPopStyleVar(1)
@@ -278,6 +338,12 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       igSeparator()
       drawImports(result)
       drawExports(result)
+      if igMenuItem_Bool(label(maFileMemory).cstring, nil, input.memoryShown, true):
+        result.actions.incl maFileMemory
+      marks.mark("menu." & $maFileMemory)
+      tip("What viewSEG remembers about the files you opened (their kills and polarity " &
+        "reversals, kept beside them, never in them): see it, and remove what is no " &
+        "longer wanted")
       item(maResetSettings, result)
       tip("Every setting back to its default (the recent files and the window's place " &
         "stay); the settings before are kept in a copy")
@@ -290,6 +356,11 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
         "Messages; it cannot write files. For this run only.")
       igSeparator()
       item(maQuit, result)
+      igEndMenu()
+    let edit = igBeginMenu("Edit", true)
+    marks.mark("menu.Edit")
+    if edit:
+      drawEditMenu(input, result)
       igEndMenu()
     let view = igBeginMenu("View", true)
     marks.mark("menu.View")
