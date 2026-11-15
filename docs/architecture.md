@@ -36,7 +36,7 @@ src/viewSEG/platform/         OS integration that needs raw OS APIs (Windows res
 | `core` | `AppState` (open files, panels and their layers, the selection, the message log, the survey: where sources and receivers are, with a spatial index), `Command`s (each user intent as data), jobs in three lanes (prefetch through parseSEG's `Prefetcher`, processing through processSEG plans and its pool; results posted to a main-thread inbox), thread guards and the frame watchdog, kernels (colour maps, decimation, picking, cursor readout), map maths (tiles, projections, hit-testing) | `ui`, `gpu`, `platform`, any toolkit, SDL, OpenGL |
 | `view` | View models such as `PanelView`, `TableModel`, `TreeModel`, `PlotSeries` and the map's `MapLayerView`. Each has plain-Nim geometry (`Vec2`, `Rect`, `Rgba`) and a `revision` counter that bumps on change | `ui`, `gpu`, `platform`, any toolkit |
 | `gpu` | OpenGL 3 objects behind small procs: upload a sample tile as `R32F` textures (`textures`), the density shader and its colour-map LUT (`density`), the wiggle shader (`wiggle`), the plot's image that draws a panel's tiles with them (`plotimage`), and the map's image of the survey's points (`mappoints`). It loads the GL functions it needs itself (`gpu/gl`), through a loader the frontend passes in (`SDL_GL_GetProcAddress`), so it imports no GL binding package | `ui`, any toolkit (OpenGL itself is allowed) |
-| `platform` | `winres` (compile-time manifest, icon, version info), window chrome (DWM attributes on a native window handle), config paths, and whatever else needs raw OS APIs. Services the windowing library already has (SDL3: file dialogs, system theme, tray) are wrapped in `ui/<toolkit>/shell` instead, because only `ui` may import SDL | `ui`, `core`, any toolkit |
+| `platform` | `winres` (compile-time manifest, icon, version info), window chrome (`chrome`: DWM attributes and icons on a native window handle), the tray's cleanup on a fatal signal (`trayguard`), config paths, and whatever else needs raw OS APIs. Services the windowing library already has (SDL3: file dialogs, system theme, tray) are wrapped in `ui/<toolkit>/shell` instead, because only `ui` may import SDL | `ui`, `core`, any toolkit |
 | `remote` | Agent control (below, "Agent control"): the Model Context Protocol subset, the server thread and its socket, the tools, the command schema made from `Command`, and the stdio bridge an MCP client starts. A front end beside the windows: it reads `AppState` and posts `Command`s, on the UI thread, when the frontend calls it once per frame | `ui`, `gpu`, `view`, `platform`, any toolkit |
 | `ui/imgui` | The frame loop, docking layout and viewports, widgets that draw view models, input → `Command`, and `shell` (SDL3's file dialog, system theme and tray; results come back as inbox messages); starts agent control and gives it the screenshot and the drawn view | (top layer) |
 
@@ -77,21 +77,28 @@ There are two parts, and both are needed. SDL and GLFW cannot supply the first.
   - It works with MinGW (`windres`), MSVC (`rc`) and zig (`zig rc`).
   - The zig path works from the Linux container: `nim winRelease`.
   - `-d:console` keeps a console for debugging.
-- **Run time** (`ui/imgui/shell` for what SDL3 provides, `platform/chrome` for the rest;
-  still to do). This reads the system light/dark setting and accent colour and follows
-  changes to them. On every window,
-  including each ImGui viewport window, it sets these DWM attributes:
-  - `DWMWA_USE_IMMERSIVE_DARK_MODE` (20);
-  - `DWMWA_SYSTEMBACKDROP_TYPE` (38) for Mica on Windows 11 22H2+;
-  - `DWMWA_WINDOW_CORNER_PREFERENCE` (33);
-  - caption and border colours (35, 34).
+- **Run time** (`ui/imgui/shell` for what SDL3 provides, `platform/chrome` and
+  `platform/trayguard` for the rest, `ui/imgui/frames` joining them; details and what to
+  check on a Windows machine: `windows.md`). On every window, including each ImGui
+  viewport window (the backend's `Platform_CreateWindow` is wrapped), and again when the
+  theme or the system's light/dark changes, `platform/chrome` sets these DWM attributes
+  from the theme, by Windows version (`RtlGetVersion`):
+  - `DWMWA_USE_IMMERSIVE_DARK_MODE` (20; 19 before 20H1) as the theme's mode;
+  - on Windows 11, caption, text and border colours (35, 36, 34) and the corners (33):
+    round on the main window, square on the frameless viewport windows, which draw their
+    own;
+  - not `DWMWA_SYSTEMBACKDROP_TYPE` (Mica): the client area is painted opaque, so it
+    could show only under the caption colour.
 
-  It also matches the ImGui style to the theme. SDL3 already follows the system theme for
-  the title bar; the module applies the rest. For window and taskbar icons, set the hints
-  `SDL_HINT_WINDOWS_INTRESOURCE_ICON` and `..._ICON_SMALL` to `"1"`.
-  - Tray: SDL3's tray API. In SDL 3.4.x on Linux it uses AppIndicator through GTK.
+  It also gives framed windows their icons at the DPI's exact sizes (`WM_SETICON`;
+  SDL's class icon is one size scaled), with the hints
+  `SDL_HINT_WINDOWS_INTRESOURCE_ICON` and `..._ICON_SMALL` set to `"1"` for SDL's own.
+  - Tray: SDL3's tray API (`shell.showTray`): Show viewSEG, Open file..., Quit, and
+    minimizing to it as a setting. In SDL 3.4.x on Linux it uses AppIndicator through
+    GTK. On Windows a fatal signal removes the icon first (`platform/trayguard`), so a
+    crash leaves no ghost icon.
   - Dialogs: `SDL_ShowOpenFileDialog` (since 3.2), which uses the native dialog on
-    Windows and XDG portals on Linux.
+    Windows (`IFileDialog`) and XDG portals on Linux.
 - **Linux:** a `.desktop` file plus hicolor icons for the launcher. The window icon comes
   from `SDL_SetWindowIcon` (embed a PNG with `staticRead`).
 

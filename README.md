@@ -24,7 +24,9 @@ nim winRelease          # cross-build bin/viewSEG.exe for Windows (zig)
 SDL3 is linked statically, so neither binary needs an SDL library at run time. On Linux
 it comes from `pkg-config sdl3` (`libSDL3.a`). For Windows, `nim winRelease` first
 cross-builds SDL 3.4.18 with zig (`tools/sdl3-windows.sh`: git, CMake, Ninja; once, into
-`~/.cache/viewSEG/`, or `$SDL3_WINDOWS_PREFIX`).
+`~/.cache/viewSEG/`, or `$SDL3_WINDOWS_PREFIX`). What makes the Windows build look and
+behave like a Windows program (title bar, icons, tray), and what to check on a Windows
+machine: `docs/windows.md`.
 
 `nim depsCheck` verifies that `atlas.lock`, `nim.cfg` and `deps/` agree
 (`tools/deps.nim`). `nim help` lists every task.
