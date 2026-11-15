@@ -10,8 +10,9 @@
 ## `LodPixels` pixels (every point when zoomed in closer), and only the runs
 ## of points the view touches (`runs`), one point sprite each: the fragment
 ## shader makes it a disc or a ring, its edge smoothed over a pixel. The
-## highlight (the hovered and selected points) is a small buffer of its own,
-## uploaded again when it changes, drawn last, larger and outlined.
+## highlight (the points of the gather on show, the selected and the
+## hovered ones) is a small buffer of its own, uploaded again when it
+## changes, drawn last, larger and outlined.
 ##
 ## Drawing is skipped when nothing it depends on changed since the last
 ## image (`MapFrame`): an idle map costs the GPU nothing.
@@ -62,7 +63,9 @@ type
     columns*, rows*: int          ## the image's size in pixels
     background*: Rgba
     draws*: seq[MapDraw]          ## the layers, the first drawn first
-    selected*, hovered*: MapStyle ## the highlight's points
+    active*: array[PointRole, MapStyle]
+      ## the highlight's points of the gather on show, sources and receivers
+    selected*, hovered*: MapStyle ## the highlight's other points
     highlight*: int               ## bumped by the caller whenever the highlighted points change
     survey*: int                  ## the survey's revision
 
@@ -77,7 +80,10 @@ type
     program: GLuint
     loc: array[MapUniform, GLint]
     buffers: seq[LayerBuffer]
-    hvbo, hvao: GLuint      ## the highlight: selected points, then hovered ones
+    hvbo, hvao: GLuint
+      ## the highlight: the gather's sources and receivers, the selected
+      ## points, then the hovered ones
+    hactive: array[PointRole, int]
     hselected, hhovered: int
     horigin: MapPoint
     fbo, target: GLuint
@@ -85,6 +91,7 @@ type
     ready: bool
     last: MapFrame
     drawn, pointsDrawn: int ## images drawn, points in the last one (for tests)
+    uploads: int ## layers' points uploaded (for tests)
 
 const
   vertexShader = """
@@ -147,6 +154,10 @@ func pointsDrawn*(r: MapRenderer): int {.inline.} = r.pointsDrawn
   ## How many points the last image drew (each level of detail's, not the
   ## layers' own counts).
 
+func layersUploaded*(r: MapRenderer): int {.inline.} = r.uploads
+  ## How many layers' points (with their levels of detail) went to the GPU:
+  ## each layer once (for tests: a hover uploads none).
+
 func gpuBytes*(r: MapRenderer): int =
   ## The GPU memory its layers' buffers take.
   for b in r.buffers: result += b.bytes
@@ -204,25 +215,34 @@ proc sync(r: var MapRenderer; s: Survey; draws: openArray[MapDraw]) =
     let i = s.find(d.layer)
     if not have and i >= 0 and s.layers[i].levels[d.role].xy.len > 0:
       r.buffers.add upload(s.layers[i], d.role)
+      inc r.uploads
 
-proc setHighlight*(r: var MapRenderer; origin: MapPoint; selected, hovered: openArray[MapPoint]) =
+proc setHighlight*(r: var MapRenderer; origin: MapPoint; active: array[PointRole, seq[MapPoint]];
+    selected, hovered: openArray[MapPoint]) =
   ## The highlighted points, relative to `origin` (anywhere near them): the
-  ## selected ones, drawn first, then the hovered ones over them. The vertex
-  ## array and buffer bound before are bound again.
+  ## gather on show's sources and receivers, drawn first, the selected ones
+  ## over them, then the hovered ones over those. The vertex array and buffer
+  ## bound before are bound again.
   var lastVao, lastBuf: GLint
   glGetIntegerv(GL_VERTEX_ARRAY_BINDING, addr lastVao)
   glGetIntegerv(GL_ARRAY_BUFFER_BINDING, addr lastBuf)
   if r.hvbo == 0: newArray(r.hvbo, r.hvao)
-  var data = newSeqOfCap[float32](2 * (selected.len + hovered.len))
+  var data = newSeqOfCap[float32](2 * (active[prSource].len + active[prReceiver].len +
+    selected.len + hovered.len))
   template add(list: openArray[MapPoint]) =
     for p in list:
       if not (p.x.isNaN or p.y.isNaN):
         data.add float32(p.x - origin.x)
         data.add float32(p.y - origin.y)
+  var before = 0
+  for role in PointRole:
+    add(active[role])
+    r.hactive[role] = data.len div 2 - before
+    before = data.len div 2
   add(selected)
-  r.hselected = data.len div 2
+  r.hselected = data.len div 2 - before
   add(hovered)
-  r.hhovered = data.len div 2 - r.hselected
+  r.hhovered = data.len div 2 - before - r.hselected
   r.horigin = origin
   glBindBuffer(GL_ARRAY_BUFFER, r.hvbo)
   if data.len > 0:
@@ -331,15 +351,17 @@ proc render*(r: var MapRenderer; f: MapFrame; s: Survey): GLuint =
       r.use(f, mapPoint(p.origin.x, p.origin.y), d.style)
       glBindVertexArray(r.buffers[b].vao)
       r.pointsDrawn += drawRuns(runs, r.buffers[b].starts[level + 1])
-  if r.hvao != 0 and r.hselected + r.hhovered > 0:
+  if r.hvao != 0:
     glBindVertexArray(r.hvao)
-    if r.hselected > 0:
-      r.use(f, r.horigin, f.selected)
-      glDrawArrays(GL_POINTS, 0, GLsizei(r.hselected))
-    if r.hhovered > 0:
-      r.use(f, r.horigin, f.hovered)
-      glDrawArrays(GL_POINTS, GLint(r.hselected), GLsizei(r.hhovered))
-    r.pointsDrawn += r.hselected + r.hhovered
+    var first = 0
+    for (n, style) in [(r.hactive[prSource], f.active[prSource]),
+        (r.hactive[prReceiver], f.active[prReceiver]), (r.hselected, f.selected),
+        (r.hhovered, f.hovered)]:
+      if n > 0:
+        r.use(f, r.horigin, style)
+        glDrawArrays(GL_POINTS, GLint(first), GLsizei(n))
+      first += n
+    r.pointsDrawn += first
   r.last = f
   inc r.drawn
 

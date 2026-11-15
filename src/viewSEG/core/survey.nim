@@ -41,7 +41,7 @@
 ## The map's levels of detail (`core/maplod`) are made with the layer, on the
 ## same worker (`withLevels`).
 
-import std/[math, os, strutils, times]
+import std/[algorithm, intsets, math, os, strutils, times]
 import parseSEG
 import filekinds, maplod, session, spatial
 
@@ -621,6 +621,78 @@ func tracePointsOf*(s: Survey; trace: int): seq[PointRef] =
         if m.origin == loSurveyFile:
           let p = m.stationPoint(r, st)
           if p >= 0: result.add PointRef(layer: m.id, role: r, point: p)
+
+proc recordPoints*(s: Survey; base: int; traces: Slice[int]; record = -1'i64): seq[PointRef] =
+  ## Where the traces `traces` (indices in the open file whose trace 0 is
+  ## survey-wide `base`: a gather) were recorded, each point once: their
+  ## points in the file's traces layer and the points of their stations in
+  ## each survey file's layer. Where none of them names a station (headers
+  ## with a record and a channel only), the stations the loaded relation
+  ## files give field record `record` (-1 for none) stand in for theirs.
+  ## None while the file's positions are not read.
+  var own = -1
+  for i in 0 ..< s.layers.len:
+    if s.layers[i].origin == loTraces and s.layers[i].base == base: own = i
+  if own < 0: return
+  var seen: IntSet
+  var stations: array[PointRole, seq[Station]]
+  var named: array[PointRole, IntSet]
+  template keep(p: PointRef) =
+    if p.key notin seen:
+      seen.incl p.key
+      result.add p
+  block:
+    template l: untyped = s.layers[own]
+    for t in max(traces.a, 0) .. min(traces.b, l.traces - 1):
+      for r in PointRole:
+        let at = l.pointOf[r][t]
+        if at >= 0: keep(PointRef(layer: l.id, role: r, point: int(at)))
+        let st = l.stationOf[r][t]
+        if st >= 0 and st notin named[r]:
+          named[r].incl st
+          stations[r].add asStation(l.stations[r].keys[st])
+  if stations[prSource].len + stations[prReceiver].len == 0 and record >= 0:
+    var given: array[PointRole, IntSet] # by station hash: each once
+    template plan(r: PointRole; k: StationKey) =
+      let h = int(stationHash(k) shr 1)
+      if h notin given[r]:
+        given[r].incl h
+        stations[r].add asStation(k)
+    for i in 0 ..< s.layers.len:
+      template m: untyped = s.layers[i]
+      if m.origin == loSurveyFile and m.relationRuns > 0:
+        for run in m.relations[].relationRuns(record):
+          plan(prSource, run.fixed)
+          for k in 0 ..< run.stations: plan(prReceiver, run.station(k))
+  for r in PointRole:
+    for st in stations[r]:
+      for i in 0 ..< s.layers.len:
+        if s.layers[i].origin == loSurveyFile:
+          let p = s.layers[i].stationPoint(r, st)
+          if p >= 0: keep(PointRef(layer: s.layers[i].id, role: r, point: p))
+
+proc lineRange*(s: Survey; a, b: PointRef): seq[PointRef] =
+  ## The points from `a` to `b` along their line: the points of `b`'s layer
+  ## and role whose station is on the line of both, its point between
+  ## theirs, in the order of the points (what a Shift + click from `a` to
+  ## `b` selects). `b` alone when the two are of other layers or roles, not
+  ## on one line, or either has no station.
+  result = @[b]
+  if a.layer != b.layer or a.role != b.role: return
+  let i = s.find(b.layer)
+  if i < 0: return
+  template ps: untyped = s.layers[i].points[b.role]
+  if a.point notin 0 ..< ps.len or b.point notin 0 ..< ps.len: return
+  let (sa, sb) = (ps.station[a.point], ps.station[b.point])
+  if not (sa.known and sb.known) or sa.line != sb.line: return
+  let (lo, hi) = (min(sa.point, sb.point), max(sa.point, sb.point))
+  var found: seq[(float64, int16, int)]
+  for j in 0 ..< ps.len:
+    let st = ps.station[j]
+    if st.line == sa.line and st.point >= lo and st.point <= hi: found.add (st.point, st.index, j)
+  found.sort()
+  result.setLen 0
+  for (_, _, j) in found: result.add PointRef(layer: b.layer, role: b.role, point: j)
 
 func tracesAt*(s: Survey; at: PointRef): seq[int] =
   ## The survey-wide ids of the open files' traces recorded at point `at`:

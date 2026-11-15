@@ -76,7 +76,7 @@ import std/[math, os, strutils, tables]
 import imguin/cimgui
 import ../../core/[geometry, state, wiggle]
 import ../../gpu/[plotimage, textures]
-import ../../view/[displayheader, plotink, theme, timeaxis]
+import ../../view/[displayheader, maplayers, plotink, theme, timeaxis]
 import chrome, dpi, focus, fonts, icons, menus, plotbars, plotgain, plotsort, style, symbols
 
 export PaperBackground, PaperInk
@@ -143,6 +143,7 @@ type
     uploads: int ## tiles uploaded so far (for tests)
     marks: int ## bumped whenever a tile's marks of selected traces change
     selected: seq[bool] ## scratch: a tile's selected rows
+    lit: seq[bool] ## scratch: a tile's rows the map's pointer lights up
     hovering: bool ## the selection's hover was set by this plot
     gpuError: string ## why it cannot draw; "" when it can
     started: bool
@@ -164,6 +165,8 @@ type
     goto: GoToUi
     menuTarget: string ## what the plot's menu acts on, said when it opened
     menuUnder: int = -1 ## the trace under the pointer when it opened (survey-wide); -1 for none
+    menuStations: Command = Command(kind: ckSelectPoints)
+      ## what its "Select its receiver on the map" sends, found when it opened
     cursorText: string ## the time the cursor's time line showed last; "" for none
     cursorHeader: seq[string] ## the header values it showed over the rows; none for none
     focus: FocusClicks ## a click selects only in a window that had the focus
@@ -263,8 +266,9 @@ func scaleTexts*(tp: TracePanelUi): (string, string) =
 proc sync(tp: var TracePanelUi; tiles: openArray[Tile]; base: int; sel: Selection) =
   ## Uploads the tiles the GPU does not have and frees the ones `core` no
   ## longer keeps, so `textures[i]` is the copy of `tiles[i]`; marks each
-  ## one's hovered and selected traces (`base`: the survey-wide id of the
-  ## file's first trace) when the selection has changed since.
+  ## one's hovered and selected traces, and those the map's pointer lights
+  ## up (`base`: the survey-wide id of the file's first trace), when the
+  ## selection or the map's hover has changed since.
   var kept: seq[TileTextures]
   for t in tiles:
     var found = -1
@@ -283,10 +287,13 @@ proc sync(tp: var TracePanelUi; tiles: openArray[Tile]; base: int; sel: Selectio
     if tt.hoverRevision != sel.revision:
       tt.hoverRow = t.hoverRow(base, sel.hover)
       tt.hoverRevision = sel.revision
-    if tt.selectionRevision != sel.selectedRevision:
+    if tt.selectionRevision != sel.selectedRevision or
+        tt.hoveredRevision != sel.hoveredRevision:
       t.selectedRowsInto(base, sel, tp.selected)
-      tt.setMarks(t, tp.selected)
+      t.hoveredRowsInto(base, sel, tp.lit)
+      tt.setMarks(t, tp.selected, tp.lit)
       tt.selectionRevision = sel.selectedRevision
+      tt.hoveredRevision = sel.hoveredRevision
       inc tp.marks
   var gone: seq[uint64]
   for id in tp.labelChars.keys:
@@ -1025,6 +1032,14 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.kill")
   discard igMenuItem_Bool("FFT in a new window  (not available yet)", "F", false, false)
   marks.mark("plot.menu.fft")
+  # Its station on the map: the receiver (in a receiver gather, the source).
+  let role = $st.stationRole(k)
+  let many = under >= 0 and under in st.selection.selected and st.selection.selected.len > 1
+  let station = if many: "Select their " & role & "s on the map" else: "Select its " & role &
+    " on the map"
+  if igMenuItem_Bool(station.cstring, "M", false, tp.menuStations.points.len > 0):
+    res.commands.add tp.menuStations
+  marks.mark("plot.menu.station")
   igSeparator()
   # An operation on the samples (processSEG's polarityOp), not a colour.
   let reversed = p.layers[0].reversed
@@ -1044,11 +1059,18 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     "it;\nclearing them shows the traces as the file has them (Ctrl+Z brings them back).")
   igEndPopup()
 
+func stationCommand(st: AppState; k, under: int): Command =
+  ## `M` over trace `under` (survey-wide): its station selected on the map
+  ## (with the station's traces), or those of the selection that holds it;
+  ## the receiver, or in a receiver gather the source.
+  Command(kind: ckSelectPoints, points: st.stationsOf(st.selection.targets(under),
+    st.stationRole(k)), pointMode: smReplace)
+
 proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
   ## The trace operations' keys, while the plot has the focus: `R` reverses
   ## the polarity of the trace under the pointer (or of the selection that
-  ## holds it) or puts it back, `K` kills or restores it, Ctrl + Z undoes
-  ## the last edit of the file shown.
+  ## holds it) or puts it back, `K` kills or restores it, `M` selects its
+  ## station on the map, Ctrl + Z undoes the last edit of the file shown.
   if igGetIO_Nil().WantTextInput: return
   template p: untyped = st.panels[k]
   if under >= 0:
@@ -1056,6 +1078,9 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
       res.commands.add editCommand(st, p, under, teReversed)
     if igShortcut_Nil(ImGui_Key_K.cint, 0):
       res.commands.add editCommand(st, p, under, teKilled)
+    if igShortcut_Nil(ImGui_Key_M.cint, 0):
+      let c = stationCommand(st, k, under)
+      if c.points.len > 0: res.commands.add c
   if igShortcut_Nil(ImGui_Mod_Ctrl.cint or ImGui_Key_Z.cint, 0) and st.editsOf(k).canUndo:
     res.commands.add Command(kind: ckUndoEdit, panel: p.id)
 
@@ -1520,6 +1545,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     if menu:
       tp.menuTarget = targetOf(under, res.pick, st.selection)
       tp.menuUnder = under
+      tp.menuStations = if under >= 0: stationCommand(st, k, under)
+                        else: Command(kind: ckSelectPoints)
     tp.cur = after
     if after != p.view:
       res.commands.add Command(kind: ckView, panel: p.id, view: after, remember: remember)

@@ -137,6 +137,8 @@ type
     ckMapBack = "map back"               ## the map's view before the last gesture
     ckMapLayer = "map layer"             ## show or hide a layer of the map
     ckSelectPoints = "select points"     ## change the points selected on the map, and their traces
+    ckHoverPoints = "hover points"       ## the points under the map's pointer, and their traces
+    ckShowPoints = "show points' record" ## show the record of the traces recorded at map points
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -187,9 +189,15 @@ type
     of ckMapLayer:
       mapLayer*: MapLayerKey
       shown*: bool                    ## drawn, or hidden
-    of ckSelectPoints:
+    of ckSelectPoints, ckHoverPoints, ckShowPoints:
       points*: seq[PointRef]
-      pointMode*: SelectMode          ## replace, add, toggle or remove; their traces likewise
+        ## ckSelectPoints: the points; ckHoverPoints: those under the
+        ## pointer (none: off every point); ckShowPoints: those on the spot
+        ## clicked, whose traces' record the main panel shows
+      pointMode*: SelectMode
+        ## ckSelectPoints: replace, add, toggle or remove, their traces
+        ## likewise; or a range, from the point clicked last along its line
+        ## to the first of `points`
 
   Notice* = object
     ## A brief notice: a background job ended (the frontend shows it for a
@@ -222,10 +230,15 @@ type
     path: string
     session: SessionId ## positions: the open file; `NoSession` for a survey file
 
+  Linked = tuple[survey, selection, loading: int; active: GatherRef]
+    ## what the hover's links and note were found from
+
   AppState* = object
     ## Everything the views show. Move-only.
     log: MessageLog
     selection: Selection
+    hoverNote: string     ## why the hover lights nothing up; "" when it does
+    linked: Linked
     survey: Survey        ## the survey files loaded and the open files' positions
     map: MapState         ## the map's view and hidden layers
     loading: seq[Loading] ## the jobs that fill the survey
@@ -471,6 +484,18 @@ func log*(state: AppState): lent MessageLog {.inline.} =
 func selection*(state: AppState): lent Selection {.inline.} =
   ## The trace under the cursor, the selected traces, the gather on show.
   state.selection
+
+func hoverNote*(state: AppState): lent string {.inline.} =
+  ## Why the hover lights nothing up in the other view, in plain words, for
+  ## the status bar: a trace with no place on the map, a point no trace of
+  ## the open files was recorded at, a point whose traces are in other
+  ## records. "" when the hover lights up what it should, or there is none.
+  state.hoverNote
+
+func tilesTaken*(state: AppState): int {.inline.} =
+  ## How many tiles the panels have taken in since the start: each is a read
+  ## (for tests: a hover reads nothing).
+  int(state.nextTile) - 1
 
 func panels*(state: AppState): lent seq[Panel] {.inline.} =
   ## The trace panels, `MainPanel` first.
@@ -995,6 +1020,184 @@ proc showTrace(state: var AppState; k: int; i: int; trace: int; record = -1) =
     if state.shownFile(k) != i: state.showReplacing(k, s.id, g)
     elif state.panels[k].layers[0].source.gather != g: state.show(state.panels[k].id, s.id, g)
     state.selection.select([s.base + trace], smReplace)
+
+# ---------------------------------------------------------------- linking --
+
+func keysOf(state: AppState; trace: int): (bool, TraceKeys) =
+  ## Survey-wide trace `trace`'s keys as a tile of a panel that shows its
+  ## file carries them (a copy); false when no tile holds it.
+  result = (false, initTraceKeys())
+  let i = state.findTrace(trace)
+  if i < 0: return
+  let t = trace - state.sessions[i].base
+  for k in 0 ..< state.panels.len:
+    if state.shownFile(k) == i:
+      for j in countdown(state.tiles[k].high, 0):
+        template tile: untyped = state.tiles[k][j]
+        for row in 0 ..< min(tile.traces.len, tile.keys.len):
+          if tile.traces[row] == t: return (true, tile.keys[row])
+
+func pointsOfTrace(state: AppState; trace: int): seq[PointRef] =
+  ## Where survey-wide trace `trace` was recorded, in every layer: from its
+  ## keys as a tile carries them, so that a loaded relation file fills the
+  ## stations they lack (`tracePoints`); else as its file's traces layer has
+  ## it. None for -1.
+  if trace < 0: return
+  let (has, keys) = state.keysOf(trace)
+  if has: state.survey.tracePoints(trace, keys) else: state.survey.tracePointsOf(trace)
+
+func stationWords(line, point: float64): string =
+  ## "line 100, point 105".
+  func num(x: float64): string =
+    if x == round(x) and abs(x) < 1e15: $int64(x) else: formatFloat(x, ffDecimal, 2)
+  "line " & num(line) & ", point " & num(point)
+
+func noPointNote(state: AppState): string =
+  ## Why the source or receiver of the trace under the plot's pointer is not
+  ## lit up on the map; "" when both are, or no trace is hovered.
+  template sel: untyped = state.selection
+  if sel.hover < 0: return ""
+  var found: set[PointRole]
+  for p in sel.hoverAt: found.incl p.role
+  if found == {prSource, prReceiver}: return ""
+  let i = state.findTrace(sel.hover)
+  if i < 0: return ""
+  let s = state.sessions[i]
+  let name = "Trace " & $(sel.hover - s.base + 1)
+  var (has, k) = state.keysOf(sel.hover)
+  let seismic = if has: k.isSeismic else: s.file.index.isSeismic(sel.hover - s.base)
+  if not seismic: return name & " is an auxiliary trace: it has no place on the map."
+  let own = state.survey.findTraces(s.id)
+  if own < 0:
+    return name & " is not on the map yet: the positions of " & s.name & " are being read."
+  var surveyFiles, relations = false
+  for j in 0 ..< state.survey.layers.len: # by index: `for l in` copies every layer
+    template l: untyped = state.survey.layers[j]
+    if l.origin == loSurveyFile:
+      surveyFiles = true
+      if l.relationRuns > 0:
+        relations = true
+        if has: discard joinStations(k, l.relations[])
+  var stations: array[PointRole, Station]
+  for r in PointRole:
+    stations[r] = if not has: state.survey.layers[own].stationOf(r, sel.hover - s.base)
+                  elif r == prSource: Station(line: k.srcLine, point: k.srcPoint, index: k.srcIndex)
+                  else: Station(line: k.rcvLine, point: k.rcvPoint, index: k.rcvIndex)
+  let missing = {prSource, prReceiver} - found
+  let unplaced = if relations: ", and the loaded relation file does not name its record " &
+                   "and channel" else: ""
+  proc reason(r: PointRole): string =
+    let st = stations[r]
+    if not st.known: "its header gives neither " & $r & " coordinates nor a " & $r & " station" &
+      unplaced
+    elif surveyFiles: "no loaded survey file has its " & $r & " station (" &
+      stationWords(st.line, st.point) & ")"
+    else: "its header gives no " & $r & " coordinates; load the survey's SPS or SEG P1 files " &
+      "to place it by its station (" & stationWords(st.line, st.point) & ")"
+  if missing.card == 2:
+    let (a, b) = (stations[prSource], stations[prReceiver])
+    let why = if not (a.known or b.known): "its headers give neither coordinates nor stations" &
+                unplaced
+              elif a.known and b.known and surveyFiles: "no loaded survey file has its stations " &
+                "(source " & stationWords(a.line, a.point) & "; receiver " &
+                stationWords(b.line, b.point) & ")"
+              elif a.known and b.known: "its headers give no coordinates; load the survey's SPS " &
+                "or SEG P1 files to place it by its stations"
+              else: reason(prSource) & "; " & reason(prReceiver)
+    result = name & " is not on the map: " & why & "."
+  else:
+    for r in missing:
+      result = name & "'s " & $r & " is not on the map: " & reason(r) & "."
+
+func noTraceNote(state: AppState): string =
+  ## Why no trace lights up in the plot for the points under the map's
+  ## pointer: none of the open files' traces was recorded there, or those
+  ## that were are in other records; "" when the plot shows one, or no point
+  ## is hovered.
+  template sel: untyped = state.selection
+  if sel.hoverPoints.len == 0: return ""
+  let role = $sel.hoverPoints[0].role
+  if sel.hoverTraces.len > 0:
+    let (i, traces) = state.shownTraces(state.findPanel(MainPanel))
+    if i < 0: return ""
+    let base = state.sessions[i].base
+    for t in sel.hoverTraces:
+      if t - base in traces: return ""
+    var records: seq[string]
+    var seen: IntSet
+    var looked = 0
+    for t in sel.hoverTraces:
+      if looked < 200 and records.len < 4:
+        inc looked
+        let j = state.findTrace(t)
+        if j >= 0:
+          let s = state.sessions[j]
+          let g = s.gatherOf(t - s.base)
+          if g >= 0 and j * 1_000_000_000 + g notin seen:
+            seen.incl j * 1_000_000_000 + g
+            let f = s.records[g].record
+            records.add (if abs(f) < 1e15: "FFID " & $int64(f) else: "record " & $(g + 1))
+    let named = if records.len > 3: records[0 .. 2].join(", ") & ", ..." else: records.join(", ")
+    return plural(sel.hoverTraces.len, "trace") & " recorded at this " & role &
+      ", none in the record shown" & (if named.len > 0: " (" & named & ")" else: "") & "."
+  if state.sessions.len == 0: return "No trace here: no seismic file is open."
+  if state.loading.anyIt(it.session != NoSession):
+    return "No trace here yet: the open files' positions are being read."
+  var stations = false
+  for j in 0 ..< state.survey.layers.len:
+    template l: untyped = state.survey.layers[j]
+    if l.origin == loTraces and l.stationCount(sel.hoverPoints[0].role) > 0: stations = true
+  if stations: "No trace of the open files was recorded at this " & role & "."
+  else: "No trace is matched to this " & role & ": the open files' headers give no " & role &
+    " stations."
+
+proc relink(state: var AppState) =
+  ## After every change: the hover's links found again once the survey has
+  ## changed (a layer came or went: a survey file, an open file's
+  ## positions), and the note on them made again when what it says of may
+  ## have changed (the hover, the record shown, the survey).
+  template sel: untyped = state.selection
+  let now: Linked = (state.survey.revision, sel.revision, state.loading.len, sel.activeGather)
+  if now == state.linked: return
+  if state.survey.revision != state.linked.survey:
+    sel.setHoverAt(state.pointsOfTrace(sel.hover))
+    var points: seq[PointRef]
+    var traces: IntSet
+    for p in sel.hoverPoints:
+      if state.survey.find(p.layer) >= 0:
+        points.add p
+        for t in state.survey.tracesAt(p): traces.incl t
+    sel.setHoverPoints(points, traces)
+  state.hoverNote = if sel.hover >= 0: state.noPointNote() else: state.noTraceNote()
+  state.linked = (state.survey.revision, sel.revision, state.loading.len, sel.activeGather)
+
+proc showPoints(state: var AppState; cmd: Command) =
+  ## `ckShowPoints`: the main panel shows the record of the traces recorded
+  ## at `cmd.points` (a source's shot record), in the file it shows when it
+  ## has some, else in the file that has the first; nothing changes when it
+  ## shows one of them already.
+  let k = state.findPanel(MainPanel)
+  var traces: seq[int]
+  for p in cmd.points: traces.add state.survey.tracesAt(p)
+  if traces.len == 0:
+    state.ignore(cmd, "no trace of the open files was recorded there")
+    return
+  let (shown, gather) = state.shownTraces(k)
+  var pick = -1
+  for t in traces:
+    if shown >= 0 and t in state.sessions[shown]:
+      if t - state.sessions[shown].base in gather: return # on show already
+      if pick < 0 or t < pick: pick = t
+  if pick < 0:
+    pick = traces[0]
+    for t in traces: pick = min(pick, t)
+  let i = state.findTrace(pick)
+  if i < 0: return
+  let s = state.sessions[i]
+  let g = s.gatherOf(pick - s.base)
+  if g < 0: return
+  if state.shownFile(k) != i: state.showReplacing(k, s.id, g)
+  else: state.show(MainPanel, s.id, g)
 
 proc mark(state: var AppState; path: string; short, seen: bool) =
   ## Marks the file list's entry of `path`: with `short`, as ending before
@@ -1566,6 +1769,7 @@ proc apply*(state: var AppState; cmd: Command) =
   assertUiThread()
   state.applyCommand(cmd)
   state.map.followed(state.survey) # a layer went (a file closed, a survey file unloaded)
+  state.relink()
 
 proc applyCommand(state: var AppState; cmd: Command) =
   case cmd.kind
@@ -1829,8 +2033,11 @@ proc applyCommand(state: var AppState; cmd: Command) =
     # The UI sends a hover on every move, so one on a trace of a file closed
     # in the same frame is no mistake the user could act on: it clears the
     # hover, and says nothing.
+    # The map lights up where it was recorded.
     let known = cmd.trace >= 0 and state.findTrace(cmd.trace) >= 0
-    discard state.selection.setHover(if known: cmd.trace else: -1)
+    let trace = if known: cmd.trace else: -1
+    if trace != state.selection.hover:
+      discard state.selection.setHover(trace, state.pointsOfTrace(trace))
   of ckSelect:
     var known: seq[int]
     for t in cmd.traces:
@@ -1855,23 +2062,44 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckMapLayer:
     state.map.show(cmd.mapLayer, cmd.shown)
   of ckSelectPoints:
+    # A range: the points along the line from the one clicked last.
+    let anchor = state.selection.pointAnchor
+    let points = if cmd.pointMode != smRange or cmd.points.len == 0: cmd.points
+                 elif state.survey.find(anchor.layer) < 0: @[cmd.points[0]]
+                 else: state.survey.lineRange(anchor, cmd.points[0])
     var traces: seq[int]
     var seen: IntSet
-    for p in cmd.points:
+    for p in points:
       for t in state.survey.tracesAt(p):
         if t notin seen:
           seen.incl t
           traces.add t
-    state.selection.selectPoints(cmd.points, cmd.pointMode)
+    state.selection.selectPoints(points, cmd.pointMode)
     case cmd.pointMode
     of smReplace, smRange: # the points' own traces replace those selected
       var keep = state.selection.points
       state.selection.select(traces, smReplace)
       state.selection.selectPoints(keep, smReplace)
+      # a range starts where the one before did
+      if cmd.pointMode == smRange and state.survey.find(anchor.layer) >= 0:
+        state.selection.pointAnchor = anchor
     of smAdd, smRemove: state.selection.select(traces, cmd.pointMode)
     of smToggle:
-      let added = cmd.points.len > 0 and cmd.points[0].key in state.selection.pointKeys
+      let added = points.len > 0 and points[0].key in state.selection.pointKeys
       state.selection.select(traces, if added: smAdd else: smRemove)
+  of ckHoverPoints:
+    # Every move over the map: the plot draws their traces as it draws its
+    # own hover. A point of a layer gone in the same frame is passed by.
+    if cmd.points != state.selection.hoverPoints:
+      var points: seq[PointRef]
+      var traces: IntSet
+      for p in cmd.points:
+        if state.survey.find(p.layer) >= 0:
+          points.add p
+          for t in state.survey.tracesAt(p): traces.incl t
+      state.selection.setHoverPoints(points, traces)
+  of ckShowPoints:
+    state.showPoints(cmd)
   of ckUnloadSurvey:
     let i = state.survey.find(cmd.layer)
     if i < 0: state.ignore(cmd, $cmd.layer & " is not loaded")
@@ -2008,3 +2236,4 @@ proc drainInbox*(state: var AppState): bool =
   for job in finished:
     state.onFinished(job)
   state.map.followed(state.survey) # a layer came, or went with a file
+  state.relink()

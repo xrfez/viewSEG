@@ -70,7 +70,7 @@ void main() {
     colour = texelFetch(lut, ivec2(i, 0), 0);
   }
   if (tint > 0.0) {
-    if (row == hoverRow) colour = mix(colour, hoverColour, tint);
+    if (row == hoverRow || (m & 4) != 0) colour = mix(colour, hoverColour, tint);
     else if ((m & 1) != 0) colour = mix(colour, selectedColour, tint);
   }
 }

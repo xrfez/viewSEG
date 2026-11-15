@@ -1,8 +1,9 @@
 ## The map's view models: the layers it draws, each with its colour and
 ## shape; the highlight (the points of the trace under the pointer in the
-## plot, and of the selection); the point under the map's own pointer and
-## what the map says of it; and the coordinates and units the status bar
-## shows. Toolkit-neutral: the frontend draws what these say.
+## plot, of the selection, and of the gather on show); the point under the
+## map's own pointer and what the map says of it; what a click on a point
+## does (shows its record, or selects it); and the coordinates and units the
+## status bar shows. Toolkit-neutral: the frontend draws what these say.
 ##
 ## **Layers** (`mapLayers`), drawn in this order: the survey files'
 ## receivers, then their sources, as filled discs (sources over receivers);
@@ -19,7 +20,7 @@
 ## accent colour, as in the plot.
 
 import std/[intsets, math, strutils]
-from parseSEG import known, recordsAt, stationKey
+from parseSEG import GatherKind, gkReceiver, gkUnknown, known, recordsAt, stationKey
 import ../core/[geometry, state]
 import plotink, theme
 
@@ -121,11 +122,12 @@ func ringSize*(spacing, pixel: float64): float32 =
     (MaxMarker - MinMarker)
 
 func highlightOf*(st: AppState): MapHighlight =
-  ## The points of the trace under the pointer in the plot, and those
-  ## selected (on the map, and of the selected traces; at most
-  ## `MaxHighlighted`), each once.
+  ## The points of the trace under the pointer in the plot (`hoverAt`, as
+  ## `core` found them), and those selected (on the map, and of the selected
+  ## traces; at most `MaxHighlighted`), each once.
   template sel: untyped = st.selection # an alias: a `let` copies the selection
-  if sel.hover >= 0: result.hovered = st.survey.tracePointsOf(sel.hover)
+  for p in sel.hoverAt:
+    if st.survey.find(p.layer) >= 0: result.hovered.add p
   var seen: IntSet
   for p in sel.points:
     if p.key notin seen and st.survey.find(p.layer) >= 0:
@@ -137,6 +139,57 @@ func highlightOf*(st: AppState): MapHighlight =
       if p.key notin seen:
         seen.incl p.key
         result.selected.add p
+
+proc activePoints*(st: AppState): array[PointRole, seq[PointRef]] =
+  ## Where the traces of the gather on show were recorded, by role, each
+  ## point once (`recordPoints`): in a shot record its source and the
+  ## receivers it recorded at, in every layer; for a record whose headers
+  ## name no station, the stations its relation file plans for it. The map
+  ## always marks them.
+  let g = st.selection.activeGather
+  let i = st.findSession(g.file)
+  if i < 0 or g.gather notin 0 ..< st.sessions[i].gathers.len: return
+  let s = st.sessions[i]
+  let f = s.records[g.gather].record
+  for p in st.survey.recordPoints(s.base, s.gathers[g.gather].traces,
+      (if f >= 0 and f < 1e15: int64(f) else: -1'i64)):
+    result[p.role].add p
+
+func recordKind(st: AppState; trace: int): (bool, GatherKind) =
+  ## The kind of the gather that holds survey-wide trace `trace`; false when
+  ## no open file has it.
+  let i = st.findTrace(trace)
+  if i < 0: return (false, gkUnknown)
+  let s = st.sessions[i]
+  let g = s.gatherOf(trace - s.base)
+  if g < 0: (false, gkUnknown) else: (true, s.gathers[g].kind)
+
+func opensRecord*(st: AppState; p: PointRef): bool =
+  ## Whether a click on map point `p` shows its record (`ckShowPoints`)
+  ## rather than selecting it: a source whose traces are in a record of an
+  ## open file that is not a receiver gather (its shot record), or a
+  ## receiver whose traces form a receiver gather.
+  let traces = st.survey.tracesAt(p)
+  if traces.len == 0: return false
+  let (found, kind) = st.recordKind(traces[0])
+  found and (if p.role == prSource: kind != gkReceiver else: kind == gkReceiver)
+
+func stationRole*(st: AppState; panelIndex: int): PointRole =
+  ## The station `M` selects on the map for a trace of `panels[panelIndex]`:
+  ## its receiver, or in a receiver gather its source.
+  if panelIndex >= 0 and st.panels[panelIndex].kind == gkReceiver: prSource else: prReceiver
+
+func stationsOf*(st: AppState; traces: openArray[int]; role: PointRole): seq[PointRef] =
+  ## The points of `role` that survey-wide traces `traces` were recorded at,
+  ## each once: the hovered trace's as `core` found them with its keys
+  ## (`hoverAt`), the others' as their files' traces layers have them.
+  var seen: IntSet
+  for t in traces:
+    let pts = if t == st.selection.hover: st.selection.hoverAt else: st.survey.tracePointsOf(t)
+    for p in pts:
+      if p.role == role and p.key notin seen:
+        seen.incl p.key
+        result.add p
 
 func positionOf*(st: AppState; p: PointRef): MapPoint =
   ## Where point `p` is; NaN when its layer is gone.

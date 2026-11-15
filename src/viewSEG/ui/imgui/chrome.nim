@@ -263,12 +263,13 @@ proc jobField(job: JobStatus; t: Theme; marks: var Marks; res: var StatusOutput)
 
 proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     fields: openArray[ReadoutField]; at: Pick; marks: var Marks;
-    mapCursor = ""): StatusOutput =
+    mapCursor = ""; linkNote = ""): StatusOutput =
   ## The status strip along the bottom of the main window: the running job,
   ## then the readout of `fields` at `at` (blank where a value is not known),
-  ## or, with the pointer over the map, its coordinates (`mapCursor`), the
-  ## theme and the scale on the right. A right click on it opens the menu
-  ## that chooses the fields.
+  ## or, with the pointer over the map, its coordinates (`mapCursor`); why
+  ## the hover lights nothing up in the other view (`linkNote`); the theme
+  ## and the scale on the right. A right click on it opens the menu that
+  ## chooses the fields.
   result = StatusOutput(cancel: NoJob)
   let style = igGetStyle()
   let height = round(igGetFontSize() + 2 * style.FramePadding.y + 2)
@@ -292,6 +293,12 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
       igTextUnformatted(note.cstring, nil)
       igPopStyleColor(1)
       marks.mark("status.edits")
+      igSameLine(0, 16)
+    if linkNote.len > 0:
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+      igTextUnformatted(linkNote.cstring, nil)
+      igPopStyleColor(1)
+      marks.mark("status.link")
       igSameLine(0, 16)
     let right = info.themeName & "   " & $int(round(info.scale * 100)) & " %"
     let w = igCalcTextSize(right.cstring, nil, false, -1).x

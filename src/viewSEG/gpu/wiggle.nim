@@ -9,8 +9,9 @@
 ## and the fills' coverage as `traceInk` does on the CPU, premultiplied, so
 ## that the quads blend over one another in the traces' order. Everything
 ## else is a uniform: the gain, the overlap, the colours, the hovered row;
-## the selected rows are the block's marks texture. So a change of any of
-## them draws again at once, and reads and uploads nothing.
+## the selected rows, and those the map's pointer lights up (drawn as the
+## hovered row), are the block's marks texture. So a change of any of them
+## draws again at once and reads nothing; only the marks are uploaded again.
 ##
 ## A second pass draws the hovered and selected traces again, on top: the
 ## quads of the other traces are collapsed in the vertex shader. A killed
@@ -62,7 +63,8 @@ void main() {
   int m = int(texelFetch(marks, ivec2(row, 0), 0).r * 255.0 + 0.5);
   bool selected = (m & 1) != 0;
   bool killed = (m & 2) != 0;
-  marked = row == hoverRow ? 2 : (selected ? 1 : 0);
+  bool lit = (m & 4) != 0; // lit up from the map: drawn as the hovered trace
+  marked = (row == hoverRow || lit) ? 2 : (selected ? 1 : 0);
   int corner = gl_VertexID;
   xOff = ((corner & 1) == 0 ? -1.0 : 1.0) * reach;
   tMs = (corner & 2) == 0 ? tSpan.x : tSpan.y;

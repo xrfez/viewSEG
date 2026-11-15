@@ -46,6 +46,10 @@ const
   boxMinPixels = 4'f32  ## a box narrower than this is no box
   pickRadius = 7'f32    ## how near the pointer a point is found, in pixels at 100 %
   ringWidth = 1.5'f32   ## an open file's ring, pixels at 100 %
+  activeReceiverSize = 6'f32
+    ## a receiver of the gather on show, pixels at 100 %
+  activeSourceSize = 10'f32
+    ## its source
   selectedSize = 8'f32
   hoveredSize = 12'f32
   scalePixels = 150'f32 ## the longest the scale bar may be, at 100 %
@@ -89,14 +93,23 @@ type
     focus: FocusClicks
     hovered: seq[PointRef] ## under the pointer: the nearest point, and others on its spot
     info: seq[PointInfo]   ## what the map says of them
+    sentHover: seq[PointRef]
+      ## the hover last sent to `core` (`ckHoverPoints`)
     highlight: MapHighlight
-    highlightFor: tuple[selected, hover, survey: int]
+    selectedFor: tuple[selected, survey: int]
       ## what `highlight` was made from
+    active: array[PointRole, seq[PointRef]]
+      ## the gather on show's points
+    activeFor: tuple[gather: GatherRef; survey: int]
+      ## what `active` was made from
     highlightRev: int
-    drawnHover: seq[PointRef]
-      ## the map's own hover the GPU's highlight holds
+    drawnHover, drawnPlotHover: seq[PointRef]
+      ## the map's own hover and the plot's hovered trace's points the GPU's
+      ## highlight holds
+    drawnHidden: bool ## the highlight was hidden when it was last made
     menuPoints: seq[PointRef]
     menuTitle: string
+    menuShows: bool ## the menu's point shows its record on a click
     stripWidths: array[4, float32]
     rulerText, scaleText: string
     plot: Rect
@@ -147,6 +160,12 @@ func mapImagesDrawn*(mu: MapUi): int {.inline.} = mu.renderer.imagesDrawn
 
 func mapPointsDrawn*(mu: MapUi): int {.inline.} = mu.renderer.pointsDrawn
   ## How many points the last image drew (for tests).
+
+func mapLayersUploaded*(mu: MapUi): int {.inline.} = mu.renderer.layersUploaded
+  ## How many layers' points went to the GPU (for tests: a hover uploads none).
+
+func activeMarked*(mu: MapUi): lent array[PointRole, seq[PointRef]] {.inline.} = mu.active
+  ## The points of the gather on show the map marks (for tests).
 
 proc mapImage*(mu: MapUi): (seq[Rgba], int, int) =
   ## The last map image, row by row from the top, and its size (for tests;
@@ -272,12 +291,19 @@ proc selectBox(st: AppState; view: MapView; plot: Rect; a, b: ImVec2_c; adding: 
   res.commands.add Command(kind: ckSelectPoints, points: st.pointsIn(box),
     pointMode: (if adding: smAdd else: smReplace))
 
+proc sendHover(mu: var MapUi; res: var MapOutput) =
+  ## The points under the pointer to `core` when they change (none: off
+  ## every point), so the plot lights up the traces recorded there.
+  if mu.hovered != mu.sentHover:
+    mu.sentHover = mu.hovered
+    res.commands.add Command(kind: ckHoverPoints, points: mu.sentHover)
+
 proc handleMouse(mu: var MapUi; st: AppState; after: var MapView; view: MapView; plot: Rect;
     lim: MapLimits; hovered: bool; t: Theme; remember, menu: var bool; click: var int;
     res: var MapOutput) =
   ## The wheel and the buttons over the map (the invisible button just drawn
   ## over it). A left press released where it went down is a click: `click`
-  ## 1, or 2 with Ctrl.
+  ## 1, 2 with Ctrl, 3 with Shift.
   let io = igGetIO_Nil()
   let mouse = io.MousePos
   # Equal aspect always: Ctrl, Shift and the sideways wheel zoom nothing.
@@ -334,6 +360,8 @@ proc handleMouse(mu: var MapUi; st: AppState; after: var MapView; view: MapView;
     if not down:
       if mu.drag.moved and abs(a.x - b.x) >= boxMinPixels and abs(a.y - b.y) >= boxMinPixels:
         selectBox(st, view, plot, a, b, mu.drag.adding, res)
+      elif not mu.drag.moved and hovered and mu.focus.acts:
+        click = 3 # Shift + click: a range along the line
       mu.drag = MapDrag()
   of mdMeasure:
     if mu.drag.moved:
@@ -387,26 +415,39 @@ proc handleKeys(mu: var MapUi; st: AppState; after: var MapView; view: MapView; 
       res.commands.add Command(kind: ckClearSelection)
 
 proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
-  ## The highlighted points on the GPU: the plot's hovered trace's, the
-  ## selection's and the map's own hover, made again when one changes.
-  let key = (st.selection.selectedRevision, st.selection.hover, st.survey.revision)
-  var changed = false
-  if key != mu.highlightFor:
+  ## The highlighted points on the GPU: the gather on show's, the
+  ## selection's, the plot's hovered trace's and the map's own hover, each
+  ## found again when what it comes from changes, and uploaded when one did.
+  var changed = mu.highlightRev == 0 or hidden != mu.drawnHidden
+  let selected = (st.selection.selectedRevision, st.survey.revision)
+  if selected != mu.selectedFor:
     mu.highlight = st.highlightOf
-    mu.highlightFor = key
+    mu.selectedFor = selected
+    changed = true
+  let active = (st.selection.activeGather, st.survey.revision)
+  if active != mu.activeFor:
+    mu.active = st.activePoints
+    mu.activeFor = active
+    changed = true
+  if st.selection.hoverAt != mu.drawnPlotHover:
+    mu.drawnPlotHover = st.selection.hoverAt
     changed = true
   if mu.hovered != mu.drawnHover:
     mu.drawnHover = mu.hovered
     changed = true
-  if changed or mu.highlightRev == 0:
-    var selected, hovered: seq[MapPoint]
+  if changed:
+    var gather: array[PointRole, seq[MapPoint]]
+    var chosen, hovered: seq[MapPoint]
     if not hidden:
-      for p in mu.highlight.selected: selected.add st.positionOf(p)
-      for p in mu.highlight.hovered: hovered.add st.positionOf(p)
+      for r in PointRole:
+        for p in mu.active[r]: gather[r].add st.positionOf(p)
+      for p in mu.highlight.selected: chosen.add st.positionOf(p)
+      for p in mu.drawnPlotHover: hovered.add st.positionOf(p)
       for p in mu.hovered: hovered.add st.positionOf(p)
     let b = st.survey.bounds
     let origin = if b.isEmpty: mapPoint(0, 0) else: mapPoint(b.minX, b.minY)
-    mu.renderer.setHighlight(origin, selected, hovered)
+    mu.renderer.setHighlight(origin, gather, chosen, hovered)
+    mu.drawnHidden = hidden
     inc mu.highlightRev
 
 proc drawScaleBar(mu: var MapUi; view: MapView; pos, size: ImVec2_c; fb: float32;
@@ -517,10 +558,15 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
       var traces = 0
       for p in mu.menuPoints: traces += st.survey.tracesAt(p).len
       let selected = mu.menuPoints[0].key in st.selection.pointKeys
+      if mu.menuShows:
+        if igMenuItem_Bool("Show its record", "Click", false, true):
+          res.commands.add Command(kind: ckShowPoints, points: mu.menuPoints)
+        marks.mark("map menu.show")
       let what = if traces == 0: "Select it"
                  elif traces == 1: "Select it and its trace"
                  else: "Select it and its " & $traces & " traces"
-      if igMenuItem_Bool(what.cstring, "Click", false, true):
+      let key: cstring = if mu.menuShows: nil else: "Click"
+      if igMenuItem_Bool(what.cstring, key, false, true):
         res.commands.add Command(kind: ckSelectPoints, points: mu.menuPoints,
           pointMode: smReplace)
       marks.mark("map menu.select")
@@ -602,6 +648,9 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       var frame = MapFrame(area: Bounds(minX: limits.X.Min, minY: limits.Y.Min,
         maxX: limits.X.Max, maxY: limits.Y.Max), columns: columns, rows: rows,
         background: ink.background, highlight: mu.highlightRev, survey: st.survey.revision,
+        active: [MapStyle(colour: ink.roles[prSource], edge: ink.outline,
+          size: activeSourceSize * s, edgeWidth: s), MapStyle(colour: ink.roles[prReceiver],
+          edge: ink.outline, size: activeReceiverSize * s, edgeWidth: s)],
         selected: MapStyle(colour: ink.selected, edge: ink.outline, size: selectedSize * s,
           edgeWidth: s),
         hovered: MapStyle(colour: ink.hover, edge: ink.outline, size: hoveredSize * s,
@@ -657,12 +706,22 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       mu.hovered = under
       mu.info.setLen 0
       for i in 0 ..< min(under.len, 3): mu.info.add st.pointInfo(under[i], units)
+    mu.sendHover(res)
+    # A click on a source shows its record (on a receiver in a file of
+    # receiver gathers, its gather); on any other point it selects the
+    # point and its traces. Ctrl + click adds or takes out; Shift + click
+    # selects the stations along the line from the point clicked last.
     if click > 0 and under.len > 0:
-      res.commands.add Command(kind: ckSelectPoints, points: under,
-        pointMode: (if click == 2: smToggle else: smReplace))
+      let c = if click == 3: Command(kind: ckSelectPoints, points: @[under[0]],
+                pointMode: smRange)
+              elif click == 2: Command(kind: ckSelectPoints, points: under, pointMode: smToggle)
+              elif st.opensRecord(under[0]): Command(kind: ckShowPoints, points: under)
+              else: Command(kind: ckSelectPoints, points: under, pointMode: smReplace)
+      res.commands.add c
     if menu:
       mu.menuPoints = under
       mu.menuTitle = if under.len > 0: mu.info[0].title else: "No point here"
+      mu.menuShows = under.len > 0 and st.opensRecord(under[0])
     if view.isSet:
       mu.drawRuler(view, plot, units, ink, t, marks)
       mu.drawScaleBar(view, pos, size, fb.x, units, ink, t, marks)
@@ -715,6 +774,7 @@ proc drawMap*(mu: var MapUi; id: string; st: AppState; t: Theme; marks: var Mark
   # the wheel zooms, so it does not scroll the window.
   const windowFlags = ImGui_WindowFlags_NoNavInputs.cint or
     ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoScrollbar.cint
+  var drawn = false
   if igBegin(title.cstring, nil, windowFlags):
     mu.focus.watch()
     igSetScrollX_Float(0)
@@ -736,5 +796,10 @@ proc drawMap*(mu: var MapUi; id: string; st: AppState; t: Theme; marks: var Mark
         t.roles[rlTextDim])
     else:
       mu.drawPlot(st, layers, ink, t, marks, result, ask)
+      drawn = true
   mu.focus.settle()
   igEnd()
+  # No map this frame (hidden behind another tab, nothing to draw): its
+  # pointer lights nothing up in the plot.
+  if not drawn: mu.hovered.setLen 0
+  mu.sendHover(result)

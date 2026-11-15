@@ -257,9 +257,21 @@ proc selectedRowsInto*(t: Tile; base: int; s: Selection; dst: var seq[bool]) =
   dst.setLen t.traces.len
   for row, trace in t.traces: dst[row] = (base + trace) in s.selected
 
-func markOf*(row, hover: int; selected: openArray[bool]): TraceMark {.inline.} =
-  ## The mark of `row`, given the hovered row and the selected ones.
-  if row == hover: tmHovered
+proc hoveredRowsInto*(t: Tile; base: int; s: Selection; dst: var seq[bool]) =
+  ## For each row of `t` (of a file whose trace 0 is `base`), whether its
+  ## trace was recorded at a point under the map's pointer (`hoverTraces`):
+  ## drawn as the hovered trace is. Empty when there is none.
+  if s.hoverTraces.len == 0:
+    dst.setLen 0
+    return
+  dst.setLen t.traces.len
+  for row, trace in t.traces: dst[row] = (base + trace) in s.hoverTraces
+
+func markOf*(row, hover: int; selected: openArray[bool];
+    hovered: openArray[bool] = []): TraceMark {.inline.} =
+  ## The mark of `row`, given the hovered row, the selected ones and those
+  ## the map's pointer lights up (`hovered`, drawn as the hovered row).
+  if row == hover or (row in 0 ..< hovered.len and hovered[row]): tmHovered
   elif row in 0 ..< selected.len and selected[row]: tmSelected
   else: tmNone
 
