@@ -594,6 +594,8 @@ withFixtures fx:
     doAssert four.spectra[w].filterText == "processed: notch 60 Hz, 4 of the 5 traces (the " &
       "auxiliary trace is not filtered: Filters > Filter the Aux traces too is off)",
       four.spectra[w].filterText
+    doAssert four.spectra[w].spectrumPlot(builtinTheme(tmLight)).curves.mapIt(it.name) ==
+      @["raw", "processed (4 of 5)", "filter response"], "the legend does not say of which"
     # its processed curve is the seismic traces' alone: an FFT window of them
     let v = four.answer(toSeq(b ..< b + 4))
     template seismic: untyped = four.spectra[v].spectrum

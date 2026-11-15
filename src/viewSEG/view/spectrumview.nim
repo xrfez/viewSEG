@@ -16,8 +16,10 @@ const
 func curveColours*(t: Theme): array[3, Rgba] =
   ## The raw curve's colour, the processed one's and the filters'
   ## response's: the theme's dimmed text, its accent, so the filtered curve
-  ## stands out, and its info colour.
-  [t.roles[rlTextDim], t.roles[rlAccent], t.roles[rlInfo]]
+  ## stands out, and its second series colour (distinct from the accent,
+  ## `deriveSeries`), so the response is told from the processed curve it
+  ## runs along.
+  [t.roles[rlTextDim], t.roles[rlAccent], t.series[1]]
 
 func responseName*(sp: Spectrum): string =
   ## The response curve's name in the legend: "filter response", and
@@ -47,7 +49,11 @@ func spectrumPlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
     result.curves.add Curve(name: called, colour: ink,
       ys: (if db: dbOf(amps, reference, FloorDb) else: amps))
   if w.display.raw: add("raw", sp.raw, colours[0])
-  if w.display.processed and sp.processed.len > 0: add("processed", sp.processed, colours[1])
+  if w.display.processed and sp.processed.len > 0:
+    # Of fewer traces than the raw curve when the filters passed some by:
+    # the legend says so, as the two then differ by those traces too.
+    add((if sp.passedBy > 0: "processed (" & $sp.filtered & " of " & $sp.averaged & ")"
+         else: "processed"), sp.processed, colours[1])
   if w.display.response and sp.response.len == sp.raw.len:
     # Its gain in dB, 0 dB at the top of the curves; linear, a gain of 1 at
     # the larger peak. The readout says the gain in dB either way.

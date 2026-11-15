@@ -1079,9 +1079,9 @@ at 60 Hz below the processed level at 55 to 58 and 62 to 65 Hz):
 
 | Data, window | Tukey 10 % (kept) | Tukey 25 % | Hann (50 %) | 10 %, bins halved |
 |---|---:|---:|---:|---:|
-| Morgantown, 20 traces, whole (4 s) | -27.3 dB | -20.0 dB | -20.5 dB | -27.3 dB |
-| Morgantown, 20 traces, 1 to 2 s | -11.8 dB | -8.7 dB | -8.7 dB | **-21.2 dB** |
-| Morgantown, 20 traces, 0.5 to 2.5 s | -19.6 dB | -13.1 dB | -10.8 dB | -19.7 dB |
+| Morgantown, traces 1 to 20 (3 auxiliary, filtered too), whole (4 s) | -27.3 dB | -20.0 dB | -20.5 dB | -27.3 dB |
+| the same, 1 to 2 s | -11.8 dB | -8.7 dB | -8.7 dB | **-21.2 dB** |
+| the same, 0.5 to 2.5 s | -19.6 dB | -13.1 dB | -10.8 dB | -19.7 dB |
 | Sweep0, Aux filtered, whole (12 s) | -94.2 dB | -94.7 dB | -41.3 dB | -94.2 dB |
 
 A wider taper widens the main lobe, which fills a notch a few bins wide: the 10 % taper
@@ -1099,7 +1099,8 @@ plot, and the words say so), and the processed curve is of the traces they reach
 only. An auxiliary trace goes through them only when "Filter the Aux traces too" is
 ticked, as in the plot: with it off, a record's auxiliary traces are in the raw curve
 and left out of the processed one ("processed: notch 60 Hz, 23 of the 24 traces (the
-auxiliary trace is not filtered: Filters > Filter the Aux traces too is off)"), and a
+auxiliary trace is not filtered: Filters > Filter the Aux traces too is off)"; the legend
+names it "processed (23 of 24)": the two curves then differ by those traces too), and a
 pilot shown alone has no processed curve at all ("not processed: the auxiliary trace is
 not filtered: ..."); nor has a spectrum whose filters cannot run at its interval
 (every notch past Nyquist, say). The words are the answer's own: they name what its
