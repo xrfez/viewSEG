@@ -179,6 +179,15 @@ proc mappedRead*(_: FileSystem; path: string; headers = false) {.raises: [OSErro
 
 # ---------------------------------------------------------------- write --
 
+proc writeBuffer*(_: FileSystem; f: File; path: string; buffer: pointer; len: Natural): int {.
+    raises: [IOError].} =
+  ## `writeBuffer` to `f`, opened here from `path`.
+  try:
+    enter(foWrite, path)
+  except OSError as e:
+    raise newException(IOError, e.msg)
+  writeBuffer(f, buffer, len)
+
 proc createDir*(_: FileSystem; dir: string) {.raises: [OSError, IOError].} =
   ## `os.createDir`.
   enter(foWrite, dir)

@@ -106,12 +106,13 @@ from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
 import analysis, analysisreader, closer, diskio, edits, filejobs, filelist, filememory,
   filesystem, identity, inbox, inspector, jobs, join, layouts, log, mapstate, memoryjobs,
-  panels, persist, pick, reader, recordqc, selection, session, settings, shots, spectra,
-  spectrumreader, spread, survey, surveyjobs, threads, tiles, watch, zoom
+  panels, persist, pick, project, projectjobs, projectnif, reader, recordqc, selection, session,
+  settings, shots, spectra, spectrumreader, spread, survey, surveyjobs, threads, tiles, watch,
+  zoom
 
 export analysis, edits, filelist, filememory, identity, inbox, jobs, join, layouts, log,
-  mapstate, panels, persist, pick, recordqc, selection, session, settings, shots, spectra,
-  spread, survey, threads, tiles, zoom
+  mapstate, panels, persist, pick, project, recordqc, selection, session, settings, shots,
+  spectra, spread, survey, threads, tiles, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues
 export WatchInterval
 
@@ -209,6 +210,17 @@ type
     ckDisplayPreset = "display preset"
       ## draw a panel as a named display says; keep, rename or forget one
     ckTheme = "theme"                    ## the theme the program is drawn in, as View > Theme picks it
+    ckNewProject = "new project"
+      ## make a project folder (File > New project) and open it: the session's files stay open
+    ckOpenProject = "open project"
+      ## open a project (its folder, or the project.nif in it): the files open and the survey
+      ## on the map are closed, and the project's opened
+    ckCloseProject = "close project"
+      ## close the project open: back to working without one (its files and survey closed)
+    ckProjectFolder = "project folder"
+      ## add or remove a data folder of the project open, or say where a missing one is now
+    ckUpdateSurvey = "update survey"
+      ## copy the project's survey files again from the originals that changed, and read them
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -377,6 +389,26 @@ type
       plotCursorOn*: int
         ## ckPlotCursor: the plot of the window it is held in (a curve view's:
         ## 0 the top one), whose x and curve `plotCursor` counts
+    of ckNewProject, ckOpenProject:
+      projectPath*: string
+        ## ckOpenProject: the project folder, or the project.nif in it;
+        ## ckNewProject: the folder to make, whose name is the project's
+      projectName*: string
+        ## ckNewProject: the project's name; "" for the folder's
+      dataFolders*: seq[string]
+        ## ckNewProject: its data folders; none: the folder the file list lists
+      useSurvey*: bool
+        ## ckNewProject: the survey files on the map now are imported into it
+      bringMemory*: bool
+        ## ckNewProject: what is remembered about the files of its data
+        ## folders (their kills and reversals) is copied into it
+      takePresets*: bool
+        ## ckNewProject: the display presets are copied into it
+    of ckProjectFolder:
+      folderAction*: FolderAction ## add, remove, or locate (found at `folderPath`)
+      folderPath*: string ## the folder added or removed, or where a missing one is now
+      folderWas*: string ## locate: the missing folder, as the project names it
+    of ckCloseProject, ckUpdateSurvey: discard
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -484,6 +516,8 @@ type
     revision: int ## the file's keys' revision after the join (`mkJoined`)
     held: int = -1 ## the holds on the file its job found: none (-1: it never ran)
     paused: seq[PanelId] ## the panels whose readers let go of the file for it
+    auto: bool ## a file opened in a project, matched to its survey without the window
+    by: CommandOrigin ## who asked for the import (the user's is kept in the project)
 
   Joined* = object
     ## An open file joined with survey files: what it was joined with and how.
@@ -498,6 +532,45 @@ type
     relations: ref SurveyGeometry
       ## the relation records it was joined with, when apart from `geometry`
       ## (a relation file's map layer's); what its records are checked against
+
+  SurveyRestore* = enum
+    ## Where a project's survey stands.
+    srNone = "none"       ## none imported
+    srLoading = "loading" ## being made from `survey.bin`
+    srLoaded = "loaded"   ## on the map, and every file opened is matched to it
+    srKeeping = "keeping" ## being copied into the project, `survey.bin` written
+    srFailed = "failed"   ## could not be made (`ProjectState.surveyNote` says why)
+
+  ProjectState* = object
+    ## The project open (`core/project`): none while `dir` is "".
+    dir*: string ## the project folder
+    doc*: ProjectDoc ## its document as this run has it
+    readOnly*: bool ## another program has it open, or it is of a newer version: nothing is written
+    whyReadOnly*: string
+    owner*: Owner ## who holds its lock, when this program does not
+    folders*: seq[PlaceLook] ## where each data folder was found
+    originals*: seq[OriginalLook] ## each survey file's original against its copy
+    offer*: bool ## originals changed since they were copied: "Update from the original" is offered
+    survey*: SurveyRestore
+    surveyNote*: string ## why the survey failed
+    restoreMs*: float64 ## how long its survey took to be made from `survey.bin` last
+    revision*: int ## bumped on every change
+    lock: FileLock
+    job: JobId = NoJob ## the open (or the making) of a project under way; `NoJob` for none
+    jobDir: string
+    jobBy: CommandOrigin
+    useSurvey: bool ## the project being made takes the session's survey once open
+    surveyJob: JobId = NoJob ## its survey's job (made, kept, updated)
+    lookJob: JobId = NoJob
+    geometry: ref SurveyGeometry ## its survey, as the joins read it; nil until made
+    joinSurvey: JoinSurvey
+    queue: seq[SessionId] ## files opened, to be matched to its survey
+    docRev, savedRev: int
+    changedAt: MonoTime
+    userArrangement: string ## the user's own window arrangement, back when the project closes
+    userPresets: seq[DisplayPreset] ## the presets in effect before it opened, back when it closes
+    userProcessing: Processing ## the plot's filters in effect before it opened, back when it closes
+    by: CommandOrigin ## who opened it
 
   JoinOutcome* = enum
     joNone = "none"
@@ -635,6 +708,11 @@ type
       ## the join under way (its geometry, too, destroyed after `jobs`)
     joins: seq[Joined]
       ## the open files joined with survey files
+    project: ProjectState
+      ## the project open, if any (`dir` "" for none)
+    userStore: string
+      ## the program's own store of what is remembered (`rememberFilesIn`),
+      ## its home without a project
     joinReport: JoinReport
       ## how the last join ended
     heads: seq[SurveyHead]
@@ -938,11 +1016,28 @@ proc saveSettings(state: var AppState; first = false) =
   state.savedRev = state.keptRev
 
 proc saveArrangement(state: var AppState; first = false) =
-  ## Hands the window layout to the disk thread; `first`: before what waits there.
-  if state.configDir.len > 0 and state.arrangement.len > 0:
-    state.disk.replace(state.configDir / LayoutFileName,
-      layoutDocument(Layout(imgui: state.arrangement)), "the window layout", first = first)
+  ## Hands the window layout to the disk thread; `first`: before what waits
+  ## there. While a project is open, it is the project's (in its folder).
+  if state.arrangement.len > 0:
+    if state.project.dir.len > 0:
+      if not state.project.readOnly:
+        state.diskIo.replace(state.project.dir / ProjectLayoutName,
+          layoutDocument(Layout(imgui: state.arrangement)), "the project's window layout",
+          first = first)
+    elif state.configDir.len > 0:
+      state.disk.replace(state.configDir / LayoutFileName,
+        layoutDocument(Layout(imgui: state.arrangement)), "the window layout", first = first)
   state.layoutSaved = state.layoutRev
+
+proc saveProject(state: var AppState; first = false) =
+  ## Hands the project's document to the disk thread, when it changed;
+  ## `first`: before what waits there. A project opened read-only is never
+  ## written.
+  template p: untyped = state.project
+  if p.dir.len > 0 and not p.readOnly and p.docRev != p.savedRev:
+    state.diskIo.replace(documentOf(p.dir), projectDocument(p.doc), "the project " &
+      p.doc.name, first = first)
+  p.savedRev = p.docRev
 
 # ----------------------------------------------------------- file memory --
 
@@ -955,6 +1050,7 @@ proc rememberFilesIn*(state: var AppState; dir: string) =
   ## (`DiskIo.sweep`).
   assertUiThread()
   state.store = Store(home: dir / StoreFolder)
+  state.userStore = state.store.home
   state.diskIo.sweep(state.store.home, ProgramStart) # what a write cut short left
 
 func store*(state: AppState): lent Store {.inline.} =
@@ -1076,8 +1172,9 @@ proc writeMemoryDoc(state: var AppState; i: int) =
 proc saveMemory(state: var AppState; now: MonoTime; force: bool) =
   ## Hands the disk thread the documents of the files whose kept edits
   ## changed `SaveDelay` ago or more (with `force`, every one changed). A
-  ## file whose identity is not known yet waits for it.
-  if state.store.isNowhere: return
+  ## file whose identity is not known yet waits for it. A project opened
+  ## read-only keeps them for the session.
+  if state.store.isNowhere or (state.project.dir.len > 0 and state.project.readOnly): return
   for i in 0 ..< state.remembered.len:
     template r: untyped = state.remembered[i]
     if not r.known and state.keyOf(r.path) in state.edits and
@@ -1106,6 +1203,9 @@ proc persist*(state: var AppState; now = getMonoTime()) =
     state.saveSettings()
   if state.layoutSaved != state.layoutRev and now - state.layoutAt >= SaveDelay:
     state.saveArrangement()
+  if state.project.docRev != state.project.savedRev and
+      now - state.project.changedAt >= SaveDelay:
+    state.saveProject()
   state.saveMemory(now, force = false)
 
 proc flushFiles*(state: var AppState) =
@@ -1115,6 +1215,7 @@ proc flushFiles*(state: var AppState) =
   state.writeLog()
   if state.savedRev != state.keptRev: state.saveSettings()
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
+  state.saveProject()
   state.saveMemory(getMonoTime(), force = true)
   state.disk.flush()
 
@@ -1141,6 +1242,7 @@ proc keepForStragglers(state: var AppState) =
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
   if not state.joining.relations.isNil: GC_ref(state.joining.relations)
   for r in state.joining.reused: GC_ref(r) # `joinReadWork` reads them
+  if not state.project.geometry.isNil: GC_ref(state.project.geometry) # `planWork` reads it
 
 proc shutdown*(state: var AppState; wait = QuitWait; diskLimit = DiskQuitLimit;
     tick: proc () {.closure, raises: [].} = nil): bool {.discardable.} =
@@ -1166,6 +1268,7 @@ proc shutdown*(state: var AppState; wait = QuitWait; diskLimit = DiskQuitLimit;
   state.jobs.askStop()
   if state.savedRev != state.keptRev: state.saveSettings(first = true)
   if state.layoutSaved != state.layoutRev: state.saveArrangement(first = true)
+  state.saveProject(first = true)
   state.saveMemory(getMonoTime(), force = true)
   for r in state.remembered:
     if not r.known and r.pending:
@@ -1194,6 +1297,7 @@ proc shutdown*(state: var AppState; wait = QuitWait; diskLimit = DiskQuitLimit;
   # not be lost to a slow disk or a loaded machine), but not on a write a
   # drive does not answer.
   let began = deadline - wait
+  if state.project.lock.locked: fs.unlock(state.project.lock) # (the quit lets it go anyway)
   if not state.disk.stop(began + diskLimit, stuckAfter = wait, tick = tick):
     result = false
     let held = state.disk.stuckOn
@@ -1315,6 +1419,18 @@ func notices*(state: AppState): lent seq[Notice] {.inline.} =
   ## The newest notices, oldest first: what background jobs had to say
   ## when they ended. Each has its own `serial`.
   state.notices
+
+func project*(state: AppState): lent ProjectState {.inline.} =
+  ## The project open; `dir` "" for none.
+  state.project
+
+func inProject*(state: AppState): bool {.inline.} =
+  ## Whether a project is open.
+  state.project.dir.len > 0
+
+func projectOpening*(state: AppState): string =
+  ## The project folder being opened (or made); "" for none.
+  if state.project.job != NoJob: state.project.jobDir else: ""
 
 func joins*(state: AppState): lent seq[Joined] {.inline.} =
   ## The open files joined with survey files, and how.
@@ -3580,6 +3696,8 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   let short = filejobs.cutShort(s.file)
   state.onDiskSaid.del path
   state.sessions.add s
+  if state.project.dir.len > 0 and state.project.doc.hasSurvey:
+    state.project.queue.add id # matched to the project's survey (`followProject`)
   state.readPositions(state.sessions[^1])
   if state.relationLayer >= 0: state.checkRecords(state.sessions[^1])
   state.watchOpen()
@@ -3668,7 +3786,7 @@ proc startJoin(state: var AppState; i: int; cmd: Command) =
         reused.add layer.relations
   if i < 0:
     state.joining = Joining(name: "the map", files: files, options: cmd.joinOptions,
-      units: cmd.joinUnits, loads: loads, waits: true, outcome: joMapOnly, words: @[
+      units: cmd.joinUnits, loads: loads, waits: true, outcome: joMapOnly, by: cmd.origin, words: @[
       "No seismic file is open, so no trace was matched: open one and import the survey " &
       "again to match it."])
     state.log.add(sevInfo, "survey", "Importing the survey (" & fileNames(files) & "): no " &
@@ -3681,7 +3799,7 @@ proc startJoin(state: var AppState; i: int; cmd: Command) =
       state.inbox.poster, layers, reuse))
     state.joining = Joining(job: job, step: jpReading, session: s.id, path: s.path,
       name: s.name, files: files, options: cmd.joinOptions, units: cmd.joinUnits, loads: loads,
-      reused: reused)
+      reused: reused, by: cmd.origin)
     state.log.add(sevInfo, s.name, "Importing the survey (" & fileNames(files) & ") for " &
       s.name & ".")
 
@@ -3743,13 +3861,17 @@ proc onTheMap(state: AppState; files: openArray[JoinFile]): string =
       tables.join(", ") & (if tables.len == 1: " is" else: " are") & " matched to the " &
       "traces but not drawn on the map yet."
 
+proc keepImport(state: var AppState)
+
 proc finishImport(state: var AppState) =
   ## The import ends once its match is over and its files are on the map:
   ## what it did, the points on the map and the traces matched, is said in
-  ## the log and kept for the dialog.
+  ## the log and kept for the dialog. The user's import while a project is
+  ## open is kept in the project (`keepImport`).
   template j: untyped = state.joining
+  if not j.auto: state.keepImport()
   var words = j.words
-  if j.outcome != joCancelled and j.outcome != joFailed:
+  if j.outcome != joCancelled and j.outcome != joFailed and not j.auto:
     words.insert(state.onTheMap(j.files), 0)
   let i = state.findSession(j.session)
   let unmatched = if j.outcome == joJoined: j.plan.unmatched.len else: 0
@@ -3759,6 +3881,8 @@ proc finishImport(state: var AppState) =
       let s = state.sessions[i]
       state.log.add(if j.outcome == joNothing: sevWarning else: sevInfo, s.name,
         (if j.outcome == joNothing: "The survey matches none of the traces of " & s.name
+          elif j.auto: "Matched " & s.name & " to the project's survey, without reading a " &
+            "survey file"
           else: "Survey imported for " & s.name) & " (" & fileNames(j.files) & "): " &
         words.join(" "))
   of joMapOnly:
@@ -3846,7 +3970,7 @@ proc takeJoinPlan(state: var AppState; m: sink Msg) =
   if m.job != j.job or j.step != jpReading: return # (a join no longer wanted)
   let i = state.findSession(m.planSession)
   if i < 0: return # closed meanwhile: the job's end says so
-  j.geometry = move m.geometry
+  if not m.geometry.isNil: j.geometry = move m.geometry # (a project's match keeps its own)
   j.relations = move m.relations
   if j.relations.isNil and m.reusedAt >= 0 and m.reusedAt < j.files.len:
     let l = state.survey.findFile(j.files[m.reusedAt].path)
@@ -3908,6 +4032,466 @@ proc selectUnmatched(state: var AppState; cmd: Command) =
   if shown == i and onShow == 0 and ids.len > 0:
     let g = s.gatherOf(state.joins[j].plan.unmatched[0])
     if g >= 0: state.show(MainPanel, s.id, g)
+
+# --------------------------------------------------------------- project --
+# A project (docs/project.md): the store's home, the survey kept and every
+# file opened matched to it, the presets, the filters and the windows' own
+# arrangement. Its jobs are `core/projectjobs`.
+
+proc startListing(state: var AppState; paths: seq[string]; title, folder: string;
+    by: CommandOrigin)
+
+proc projectChanged(state: var AppState) =
+  ## The project's document changed: written `SaveDelay` later.
+  inc state.project.docRev
+  inc state.project.revision
+  state.project.changedAt = getMonoTime()
+
+proc forgetFileMemory(state: var AppState) =
+  ## What is remembered about the files opened this run, written to the
+  ## store it came from, then forgotten here: the next store is another's.
+  state.saveMemory(getMonoTime(), force = true)
+  state.edits.clear()
+  state.editKey.clear()
+  state.remembered.setLen 0
+  state.knownDocs.clear()
+
+proc clearSession(state: var AppState) =
+  ## Every open file closed, the survey files taken off the map, an import
+  ## under way cancelled: a project begins, or ends, with nothing of before.
+  if state.joining.job != NoJob: discard state.jobs.cancel(state.joining.job)
+  for x in state.loading:
+    if x.session == NoSession:
+      discard state.jobs.cancel(x.job)
+      state.droppedLoads.add x.job
+  for o in state.opening.mitems: o.unwanted = true
+  while state.sessions.len > 0: state.closeSession(state.sessions.high, quiet = true)
+  var ids: seq[SurveyLayerId] = @[]
+  for i in 0 ..< state.survey.layers.len:
+    if state.survey.layers[i].origin == loSurveyFile: ids.add state.survey.layers[i].id
+  for id in ids: discard state.survey.remove(id)
+  state.map.followed(state.survey)
+
+proc releaseLock(state: var AppState) =
+  ## Lets the project's lock go, on a job (a close on a share may wait).
+  if state.project.lock.locked:
+    discard state.jobs.submit(JobSpec(title: "Let the project go", lane: jlInteractive,
+      cancellable: false), unlockWork(state.project.lock))
+    state.project.lock = FileLock()
+
+proc leaveProject(state: var AppState; restoreUser: bool) =
+  ## Writes what the project open has pending (its document, its files'
+  ## edits, its window arrangement), closes its files and survey, lets its
+  ## lock go and goes back to the program's own store, presets and filters;
+  ## with `restoreUser`, to the user's own window arrangement.
+  template p: untyped = state.project
+  if p.dir.len == 0: return
+  state.saveProject()
+  if state.layoutSaved != state.layoutRev: state.saveArrangement()
+  state.clearSession()
+  state.forgetFileMemory()
+  for job in [p.surveyJob, p.lookJob]:
+    if job != NoJob: discard state.jobs.cancel(job)
+  state.releaseLock()
+  state.store = Store(home: state.userStore)
+  var s = state.settings
+  if p.doc.hasPresets: s.displayPresets = p.userPresets
+  if p.doc.hasProcessing: s.plot.processing = p.userProcessing
+  state.takeSettings(s)
+  if restoreUser and p.userArrangement.len > 0:
+    state.loaded = Layout(imgui: p.userArrangement)
+    inc state.loads
+    state.arrangement = p.userArrangement
+    state.layoutSaved = state.layoutRev # the user's own, as saved
+  let (job, jobDir, jobBy) = (p.job, p.jobDir, p.jobBy)
+  state.project = ProjectState(job: job, jobDir: jobDir, jobBy: jobBy, surveyJob: NoJob,
+    lookJob: NoJob)
+
+proc openProject(state: var AppState; dir: string; by: CommandOrigin; make = false;
+    np = NewProject(); useSurvey = false) =
+  ## Opens (with `make`, first makes) the project in folder `dir`, on a job
+  ## (`openProjectWork`); `takeOpened` takes it in.
+  template p: untyped = state.project
+  if p.job != NoJob:
+    state.log.add(sevWarning, "project", "The project " & p.jobDir.untitled & " is being " &
+      "opened; " & dir.untitled & " waits until it is (one at a time).")
+    return
+  if not make and p.dir == dir:
+    state.log.add(sevInfo, "project", "The project " & p.doc.name & " is open already.")
+    return
+  p.job = state.jobs.submit(JobSpec(title: (if make: "Make the project " else:
+    "Open the project ") & dir.untitled, lane: jlInteractive),
+    openProjectWork(dir, state.inbox.poster, make, np))
+  (p.jobDir, p.jobBy, p.useSurvey) = (dir, by, useSurvey)
+
+proc restoreSurvey(state: var AppState; layers: bool) =
+  ## Makes the project's survey from its `survey.bin` (`restoreWork`), with
+  ## `layers` its map's layers too.
+  template p: untyped = state.project
+  p.survey = srLoading
+  p.surveyJob = state.jobs.submit(JobSpec(title: "Load the project's survey", lane: jlBackground),
+    restoreWork(p.dir, p.doc, layers, state.inbox.poster))
+  inc p.revision
+
+proc keepSurvey(state: var AppState; files: seq[JoinFile]) =
+  ## Copies survey files `files` into the project and writes its
+  ## `survey.bin` (`keepSurveyWork`).
+  template p: untyped = state.project
+  if p.surveyJob != NoJob: discard state.jobs.cancel(p.surveyJob)
+  p.survey = srKeeping
+  p.surveyJob = state.jobs.submit(JobSpec(title: "Keep the survey in the project",
+    lane: jlBackground), keepSurveyWork(p.dir, files, p.doc.survey, state.inbox.poster))
+  inc p.revision
+
+proc keepImport(state: var AppState) =
+  ## The import ending now, the user's, kept in the project open: its files
+  ## copied in, its options and units; its geometry joins the files opened
+  ## next.
+  template j: untyped = state.joining
+  template p: untyped = state.project
+  if p.dir.len == 0 or p.readOnly or not keeps(j.by) or
+      j.outcome notin {joJoined, joNothing, joMapOnly}:
+    return
+  p.doc.options = j.options
+  p.doc.units = j.units
+  p.doc.notes = j.survey.notes
+  p.doc.imported = getTime()
+  if not j.geometry.isNil:
+    p.geometry = j.geometry
+    p.joinSurvey = j.survey
+  state.projectChanged()
+  state.keepSurvey(j.files)
+  state.log.add(sevInfo, "project", "The survey (" & fileNames(j.files) & ") is copied into " &
+    "the project " & p.doc.name & ": it is not imported again.")
+
+proc lookAgain(state: var AppState) =
+  template p: untyped = state.project
+  if p.lookJob != NoJob: discard state.jobs.cancel(p.lookJob)
+  p.lookJob = state.jobs.submit(JobSpec(title: "Look at the project's folders",
+    lane: jlInteractive), lookWork(p.dir, p.doc, state.inbox.poster))
+
+proc sayOriginals(state: var AppState) =
+  ## Says which survey originals changed since they were copied in, and
+  ## offers "Update from the original" (never done unasked).
+  template p: untyped = state.project
+  var changed: seq[string] = @[]
+  for i, o in p.originals:
+    if o.state == osChanged and i < p.doc.survey.len: changed.add o.path.extractFilename
+  p.offer = changed.len > 0 and not p.readOnly
+  if changed.len > 0:
+    state.log.add(sevWarning, "project", (if changed.len == 1: changed[0] & " has" else:
+      changed.join(", ") & " have") & " changed since " & (if changed.len == 1: "it was" else:
+      "they were") & " copied into the project " & p.doc.name & "; the project uses its " &
+      "copy until you choose Update from the original (the Project window).")
+
+proc takeOpened(state: var AppState; m: sink Msg) =
+  ## A project opened (or made) by its job: the session becomes its own.
+  template p: untyped = state.project
+  template news: untyped = m.news
+  if m.job != p.job:
+    if news.lock.locked:
+      discard state.jobs.submit(JobSpec(title: "Let the project go", lane: jlInteractive,
+        cancellable: false), unlockWork(news.lock))
+    return
+  p.job = NoJob
+  let by = p.jobBy
+  let useSurvey = p.useSurvey
+  let dir = news.dir
+  if news.failure.len > 0:
+    state.log.add(sevError, "project", "Cannot " & (if news.created: "make" else: "open") &
+      " the project " & dir & ": " & news.failure & ".")
+    return
+  let wasIn = p.dir.len > 0
+  let userArrangement = if wasIn: p.userArrangement else: state.arrangement
+  let userPresets = if wasIn and p.doc.hasPresets: p.userPresets else: state.settings.displayPresets
+  let userProcessing = if wasIn and p.doc.hasProcessing: p.userProcessing
+                       else: state.settings.plot.processing
+  if wasIn: state.leaveProject(restoreUser = false)
+  elif not news.created:
+    state.saveProject()
+    if state.layoutSaved != state.layoutRev: state.saveArrangement() # the user's own
+    state.clearSession()
+    state.forgetFileMemory()
+  elif state.layoutSaved != state.layoutRev: state.saveArrangement()
+  if news.created and wasIn: discard
+  elif news.created: state.saveMemory(getMonoTime(), force = true)
+  p = ProjectState(dir: dir, doc: move news.doc, lock: news.lock, owner: news.owner,
+    folders: move news.folders, originals: move news.originals, by: by,
+    userArrangement: userArrangement, userPresets: userPresets,
+    userProcessing: userProcessing, surveyJob: NoJob, lookJob: NoJob, job: NoJob)
+  p.readOnly = not p.lock.locked or p.doc.version > ProjectVersion
+  p.whyReadOnly = if not p.lock.locked: news.owner.words & " has it open"
+                  elif p.doc.version > ProjectVersion: "a newer viewSEG made it"
+                  else: ""
+  inc p.revision
+  state.store = Store(home: dir / ProjectStoreFolder)
+  if not p.readOnly: state.diskIo.sweep(state.store.home, ProgramStart)
+  state.change(by, s):
+    s.recentProjects.addRecent(dir, MaxRecent)
+    s.lastProject = dir
+  var s = state.settings
+  if p.doc.hasPresets: s.displayPresets = p.doc.displayPresets
+  if p.doc.hasProcessing: s.plot.processing = p.doc.processing
+  state.takeSettings(s)
+  if news.layout.len > 0:
+    state.loaded = Layout(imgui: news.layout)
+    inc state.loads
+    state.arrangement = news.layout
+    state.layoutSaved = state.layoutRev
+  elif not p.readOnly and state.arrangement.len > 0:
+    inc state.layoutRev # the windows as they are, the project's own from now on
+    state.layoutAt = getMonoTime()
+  state.logProblems("project", news.problems)
+  state.log.add(sevInfo, "project", (if news.created: "Made the project " else:
+    "Opened the project ") & p.doc.name & " (" & dir & ")" &
+    (if p.readOnly: ", read-only: " & p.whyReadOnly & "; nothing is written to it" else: "") &
+    (if news.brought > 0: "; what is remembered about " & $news.brought &
+      (if news.brought == 1: " file" else: " files") & " was copied into it" else: "") & ".")
+  var missing: seq[string] = @[]
+  var first = ""
+  for i, f in p.folders:
+    if f.state == psFound and first.len == 0: first = f.path
+    elif f.state == psMissing and i < p.doc.data.len: missing.add p.doc.data[i].displayName
+  if missing.len > 0:
+    state.log.add(sevWarning, "project", "The data " & (if missing.len == 1: "folder " &
+      missing[0] & " is" else: "folders " & missing.join(", ") & " are") & " not where the " &
+      "project last found " & (if missing.len == 1: "it" else: "them") & ": Locate... in the " &
+      "Project window says where " & (if missing.len == 1: "it is" else: "they are") & " now.")
+  if not news.created and first.len > 0:
+    state.startListing(@[first], first, "", by)
+  state.sayOriginals()
+  if p.doc.hasSurvey:
+    if news.storeThere: state.restoreSurvey(layers = true)
+    else:
+      # The survey kept is not there (a copy without it): made again from the copies.
+      var files: seq[JoinFile] = @[]
+      for c in p.doc.survey:
+        files.add JoinFile(path: dir.partOf(c.copy), kind: c.kind, role: c.role)
+      if p.readOnly:
+        p.survey = srFailed
+        p.surveyNote = "survey.bin is not there, and the project is read-only"
+      else: state.keepSurvey(files)
+  if news.created and useSurvey:
+    var files: seq[JoinFile] = @[]
+    for i in 0 ..< state.survey.layers.len:
+      template l: untyped = state.survey.layers[i]
+      if l.origin == loSurveyFile:
+        files.add JoinFile(path: l.path, kind: if l.kind == fkP1: jkP1 else: jkSps)
+    if files.len > 0:
+      p.doc.options = state.settings.join
+      if state.joins.len > 0:
+        template last: untyped = state.joins[^1]
+        p.doc.units = last.units
+        p.doc.notes = last.survey.notes
+        if not last.geometry.isNil:
+          p.geometry = last.geometry
+          p.joinSurvey = last.survey
+      p.doc.imported = getTime()
+      state.projectChanged()
+      state.keepSurvey(files)
+  if news.created:
+    for s in state.sessions:
+      if p.doc.hasSurvey and state.joinedOf(s.id) < 0: p.queue.add s.id
+
+proc takeKept(state: var AppState; m: sink Msg) =
+  ## The survey copied into the project and `survey.bin` written.
+  template p: untyped = state.project
+  template news: untyped = m.news
+  if m.job != p.surveyJob or news.dir != p.dir: return
+  p.surveyJob = NoJob
+  inc p.revision
+  if news.keptFailure.len > 0:
+    p.survey = srFailed
+    p.surveyNote = news.keptFailure
+    state.log.add(sevError, "project", "The survey could not be kept in the project " &
+      p.doc.name & ": " & news.keptFailure & ".")
+    return
+  p.doc.survey = move news.copies
+  p.doc.store = news.store
+  state.projectChanged()
+  state.log.add(sevInfo, "project", (if news.updated: "The survey files that changed were " &
+    "copied into the project again; the survey" else: "The survey") & " is kept in the project " &
+    p.doc.name & " (" & $p.doc.survey.len & (if p.doc.survey.len == 1: " file" else: " files") &
+    ", " & formatSize(news.store.bytes, includeSpace = true) & ").")
+  state.lookAgain() # its originals, as copied now
+  if news.updated: state.restoreSurvey(layers = true)
+  elif p.geometry.isNil: state.restoreSurvey(layers = false)
+  else: p.survey = srLoaded
+  for s in state.sessions:
+    if state.joinedOf(s.id) < 0 and s.id notin p.queue: p.queue.add s.id
+
+proc takeRestored(state: var AppState; m: sink Msg) =
+  ## The project's survey made from `survey.bin`: every open file not
+  ## matched yet is matched to it.
+  template p: untyped = state.project
+  template news: untyped = m.news
+  if m.job != p.surveyJob or news.dir != p.dir: return
+  p.surveyJob = NoJob
+  inc p.revision
+  if news.surveyFailure.len > 0 or news.geometry.isNil:
+    p.survey = srFailed
+    p.surveyNote = news.surveyFailure
+    state.log.add(sevError, "project", "The survey kept in the project " & p.doc.name &
+      " could not be read: " & news.surveyFailure & ". Import the survey again.")
+    return
+  let updated = not p.geometry.isNil
+  p.geometry = move news.geometry
+  p.joinSurvey = move news.survey
+  p.survey = srLoaded
+  p.restoreMs = news.restoreMs
+  state.log.add(sevInfo, "project", "The project's survey is ready (" &
+    $p.joinSurvey.stations[prSource] & " sources, " & $p.joinSurvey.stations[prReceiver] &
+    " receivers, " & $p.joinSurvey.relations & " relation records), made from what the " &
+    "project keeps in " & formatFloat(p.restoreMs, ffDecimal, 1) & " ms: no survey file was read.")
+  for s in state.sessions:
+    if (updated or state.joinedOf(s.id) < 0) and s.id notin p.queue: p.queue.add s.id
+
+proc takeProject(state: var AppState; m: sink Msg) =
+  case m.news.kind
+  of pnOpened: state.takeOpened(move m)
+  of pnKept: state.takeKept(move m)
+  of pnSurvey: state.takeRestored(move m)
+  of pnLooked:
+    template p: untyped = state.project
+    if m.job == p.lookJob and m.news.dir == p.dir:
+      p.lookJob = NoJob
+      p.folders = move m.news.folders
+      p.originals = move m.news.originals
+      inc p.revision
+      state.sayOriginals()
+
+proc endProjectWork(state: var AppState; job: JobInfo): bool =
+  ## A project's job that ended without posting (failed or cancelled):
+  ## said, and forgotten.
+  template p: untyped = state.project
+  result = true
+  if job.id == p.job:
+    p.job = NoJob
+    if job.state == jsFailed:
+      state.log.add(sevError, "project", "Cannot open the project " & p.jobDir & ": " &
+        job.error & ".")
+  elif job.id == p.surveyJob:
+    p.surveyJob = NoJob
+    if job.state in {jsFailed, jsCancelled}:
+      p.survey = if job.state == jsFailed: srFailed else: srNone
+      p.surveyNote = job.error
+      inc p.revision
+      if job.state == jsFailed:
+        state.log.add(sevError, "project", "The project's survey: " & job.error & ".")
+  elif job.id == p.lookJob: p.lookJob = NoJob
+  else: result = false
+
+proc startAutoJoin(state: var AppState; i: int) =
+  ## Matches open file `sessions[i]` to the project's survey, as the import
+  ## does, from the geometry made already (`planWork`): no window, no survey
+  ## file read.
+  template p: untyped = state.project
+  let s = state.sessions[i]
+  var files: seq[JoinFile] = @[]
+  for c in p.doc.survey: files.add JoinFile(path: p.dir.partOf(c.copy), kind: c.kind, role: c.role)
+  let job = state.jobs.submit(JobSpec(title: "Match " & s.name & " to the project's survey",
+    lane: jlInteractive, reads: @[s.path]), planWork(s.filePtr, s.id, addr p.geometry[],
+    p.joinSurvey.files, p.doc.notes, p.doc.options, state.inbox.poster))
+  state.joining = Joining(job: job, step: jpReading, session: s.id, path: s.path, name: s.name,
+    files: files, options: p.doc.options, units: p.doc.units, geometry: p.geometry,
+    survey: p.joinSurvey, auto: true, by: coWindow)
+
+proc followProject(state: var AppState) =
+  ## After every command and drained inbox: the next file opened in the
+  ## project is matched to its survey, once no import runs.
+  template p: untyped = state.project
+  if p.dir.len == 0 or p.geometry.isNil or state.importing: return
+  while p.queue.len > 0:
+    let id = p.queue[0]
+    p.queue.delete(0)
+    let i = state.findSession(id)
+    if i >= 0:
+      state.startAutoJoin(i)
+      return
+
+proc newProject(state: var AppState; cmd: Command) =
+  ## `ckNewProject`: the folder made, with its document, and opened; the
+  ## session's files stay open and are its own.
+  if cmd.projectPath.len == 0:
+    state.ignore(cmd, "no folder was named for the project")
+    return
+  let dir = canonical(cmd.projectPath)
+  let name = if cmd.projectName.strip.len > 0: cmd.projectName.strip else: dir.untitled
+  let why = projectNameProblem(name)
+  if why.len > 0:
+    state.ignore(cmd, "the project's name cannot be \"" & name & "\": " & why)
+    return
+  var data: seq[string] = @[]
+  for d in cmd.dataFolders:
+    if d.len > 0 and canonical(d) notin data: data.add canonical(d)
+  if data.len == 0 and state.files.folder.len > 0: data.add state.files.folder
+  for d in data:
+    if dir.isInside(d):
+      state.log.add(sevWarning, "project", "A project cannot be made inside its data folder " &
+        d & ": data folders are never written to. Choose another place.")
+      return
+  let np = NewProject(name: name, data: data,
+    bringFrom: if cmd.bringMemory: state.userStore else: "",
+    presets: state.kept.displayPresets, takePresets: cmd.takePresets,
+    processing: state.settings.plot.processing, takeProcessing: true)
+  state.openProject(dir, cmd.origin, make = true, np = np, useSurvey = cmd.useSurvey)
+
+proc projectFolder(state: var AppState; cmd: Command) =
+  ## `ckProjectFolder`: a data folder added, removed or re-pointed.
+  template p: untyped = state.project
+  if p.dir.len == 0:
+    state.ignore(cmd, "no project is open")
+    return
+  if p.readOnly:
+    state.ignore(cmd, "the project is open read-only (" & p.whyReadOnly & ")")
+    return
+  let path = if cmd.folderPath.len > 0: canonical(cmd.folderPath) else: ""
+  case cmd.folderAction
+  of faAdd:
+    if path.len == 0: state.ignore(cmd, "no folder was named")
+    elif p.dir.isInside(path) or path.isInside(p.dir):
+      state.ignore(cmd, "a project's data folder cannot hold the project, nor be inside it")
+    elif p.folders.anyIt(it.path == path) or p.doc.data.anyIt(it.absolute == path):
+      state.ignore(cmd, path & " is a data folder of the project already")
+    elif p.doc.data.len >= MaxProjectData:
+      state.ignore(cmd, "a project has at most " & $MaxProjectData & " data folders")
+    else:
+      p.doc.data.add placeOf(p.dir, path)
+      state.log.add(sevInfo, "project", path & " is a data folder of the project " & p.doc.name &
+        " now.")
+  of faRemove:
+    var at = -1
+    for i, d in p.doc.data:
+      if d.absolute == path or (i < p.folders.len and p.folders[i].path == path): at = i
+    if at < 0: state.ignore(cmd, path & " is not a data folder of the project")
+    else:
+      p.doc.data.delete(at)
+      if at < p.folders.len: p.folders.delete(at)
+      state.log.add(sevInfo, "project", path & " is no longer a data folder of the project " &
+        p.doc.name & " (nothing in it was changed).")
+  of faLocate:
+    var at = -1
+    for i, d in p.doc.data:
+      if d.absolute == cmd.folderWas or d.path == cmd.folderWas or d.displayName == cmd.folderWas:
+        at = i
+    if at < 0 or path.len == 0:
+      state.ignore(cmd, "the project has no data folder " & cmd.folderWas)
+      return
+    let old = p.doc.data[at].absolute
+    p.doc.data[at] = placeOf(p.dir, path)
+    var moved = 0
+    if old.len > 0:
+      for i, d in p.doc.data.mpairs:
+        if i != at and (i >= p.folders.len or p.folders[i].state != psFound) and
+            d.absolute.isInside(old.parentDir):
+          d = placeOf(p.dir, d.moved(old.parentDir, path.parentDir).absolute)
+          inc moved
+    state.log.add(sevInfo, "project", p.doc.data[at].displayName & " is at " & path & " now" &
+      (if moved > 0: "; " & $moved & " more data " & (if moved == 1: "folder that was" else:
+        "folders that were") & " beside it " & (if moved == 1: "is" else: "are") &
+        " looked for beside it there" else: "") & ".")
+  state.projectChanged()
+  state.lookAgain()
 
 # ------------------------------------------------------- the map's work --
 # What the map shows besides the survey's layers, each made on a job that
@@ -4367,6 +4951,7 @@ proc endMapWork(state: var AppState; job: JobInfo): bool =
 
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
+  if state.endProjectWork(job): return
   if state.endMapWork(job): return
   if state.endMemoryWork(job): return
   for k, h in state.headJobs:
@@ -4563,6 +5148,11 @@ proc takeListed(state: var AppState; m: sink Msg) =
   ## file named) when asked to.
   if m.listGen != state.files.gen: return # a listing replaced since
   template f: untyped = state.files
+  if m.listProject.len > 0: # a project's folder, named as a folder: the project opens
+    f.scanning = false
+    inc f.revision
+    state.openProject(m.listProject, state.listedBy)
+    return
   if m.listFolder.len > 0:
     f.folder = m.listFolder
     f.title = m.listFolder
@@ -4894,12 +5484,22 @@ proc apply*(state: var AppState; cmd: Command) =
   state.followSpectrum()
   state.followPlots()
   state.followMapWork()
+  state.followProject()
 
 proc displayPreset(state: var AppState; cmd: Command) =
   ## A named display preset (`core/displaypresets`) applied to a panel, or
   ## saved, renamed or deleted: in the settings in effect, and in those kept
   ## when a window asks (`change`). What cannot be done is said, checked on
-  ## the presets in effect.
+  ## the presets in effect. While a project is open the presets are its
+  ## own: a window's change is kept in the project, not in the settings.
+  let inProject = state.inProject
+  let by = if inProject: coAgent else: cmd.origin # (in effect only: the project keeps them)
+  defer:
+    if inProject and keeps(cmd.origin) and not state.project.readOnly and
+        state.settings.displayPresets != state.project.doc.displayPresets:
+      state.project.doc.displayPresets = state.settings.displayPresets
+      state.project.doc.hasPresets = true
+      state.projectChanged()
   let k = state.findPanel(cmd.panel)
   var why = ""
   if cmd.presetAction in {paApply, paSave} and k < 0:
@@ -4920,17 +5520,17 @@ proc displayPreset(state: var AppState; cmd: Command) =
       let d = state.panels[k].layers[0].display
       discard saved(state.settings.displayPresets, name, d, why)
       if why.len > 0: state.ignore(cmd, why)
-      else: state.change(cmd.origin, s): s.displayPresets = saved(s.displayPresets, name, d, why)
+      else: state.change(by, s): s.displayPresets = saved(s.displayPresets, name, d, why)
     of paRename:
       discard renamed(state.settings.displayPresets, name, newName, why)
       if why.len > 0: state.ignore(cmd, why)
       else:
-        state.change(cmd.origin, s):
+        state.change(by, s):
           s.displayPresets = renamed(s.displayPresets, name, newName, why)
     of paDelete:
       discard deleted(state.settings.displayPresets, name, why)
       if why.len > 0: state.ignore(cmd, why)
-      else: state.change(cmd.origin, s): s.displayPresets = deleted(s.displayPresets, name, why)
+      else: state.change(by, s): s.displayPresets = deleted(s.displayPresets, name, why)
 
 proc holdCursor(state: var AppState; cmd: Command) =
   ## `ckSpectrumCursor`: a spectrum window's cursor held at a bin (within
@@ -5276,6 +5876,32 @@ proc applyCommand(state: var AppState; cmd: Command) =
         state.themeNames.join(", "))
     else:
       state.change(cmd.origin, s): s.theme = cmd.theme
+  of ckNewProject: state.newProject(cmd)
+  of ckOpenProject:
+    if cmd.projectPath.len == 0: state.ignore(cmd, "no project was named")
+    else: state.openProject(projectDirOf(canonical(cmd.projectPath)), cmd.origin)
+  of ckCloseProject:
+    if not state.inProject: state.ignore(cmd, "no project is open")
+    else:
+      let name = state.project.doc.name
+      state.leaveProject(restoreUser = true)
+      state.change(cmd.origin, s): s.lastProject = ""
+      state.log.add(sevInfo, "project", "Closed the project " & name & ".")
+  of ckProjectFolder: state.projectFolder(cmd)
+  of ckUpdateSurvey:
+    template p: untyped = state.project
+    if not state.inProject: state.ignore(cmd, "no project is open")
+    elif p.readOnly: state.ignore(cmd, "the project is open read-only (" & p.whyReadOnly & ")")
+    elif not p.originals.anyIt(it.state == osChanged):
+      state.ignore(cmd, "no survey file of the project changed since it was copied in")
+    else:
+      if p.surveyJob != NoJob: discard state.jobs.cancel(p.surveyJob)
+      p.offer = false
+      p.survey = srKeeping
+      p.surveyJob = state.jobs.submit(JobSpec(title: "Update the project's survey",
+        lane: jlBackground), updateSurveyWork(p.dir, p.doc.survey, p.originals,
+        state.inbox.poster))
+      inc p.revision
   of ckHeader:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
@@ -5311,7 +5937,14 @@ proc applyCommand(state: var AppState; cmd: Command) =
       if pr != was:
         p.layers[0].processing = pr
         inc p.revision
-        state.change(cmd.origin, s): s.plot.processing = remembered(pr)
+        if state.inProject: # the project's filters: kept in it, not in the settings
+          state.change(coAgent, s): s.plot.processing = remembered(pr)
+          if keeps(cmd.origin) and not state.project.readOnly:
+            state.project.doc.processing = remembered(pr)
+            state.project.doc.hasProcessing = true
+            state.projectChanged()
+        else:
+          state.change(cmd.origin, s): s.plot.processing = remembered(pr)
         # Only another set of filters (or of the traces they take) reads
         # again, from the samples at hand: the plot from before stays until
         # the first new tile, which sets the level again (a filter changes
@@ -5593,6 +6226,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkSurveyHead:
       let i = state.surveyHead(m.surveyHead.file.path)
       if i >= 0: state.heads[i] = move m.surveyHead
+    of mkProject: state.takeProject(move m)
     of mkSpreads: state.takeSpreads(move m)
     of mkShots: state.takeShots(move m)
     of mkRecordQc: state.takeRecordQc(move m)
@@ -5698,3 +6332,4 @@ proc drainInbox*(state: var AppState): bool =
   state.followPlots()
   state.followMapWork()
   state.followMemoryLook()
+  state.followProject()

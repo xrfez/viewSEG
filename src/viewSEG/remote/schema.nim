@@ -24,8 +24,11 @@ const
     ## refused: each writes a file (a reset keeps a backup of the settings;
     ## edits imported are remembered with the file; forgetting files removes
     ## what is remembered about them)
-  Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout}
-    ## refused: the user's preferences and the windows' arrangement
+  Preferences* = {ckSettings, ckImportSettings, ckLayout, ckLoadLayout, ckProjectFolder,
+    ckUpdateSurvey}
+    ## refused: the user's preferences and the windows' arrangement; a
+    ## project's data folders and its survey's update, which are written
+    ## into the project
   Offered* = {ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
     ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckProcessing,
     ckReverseAll, ckBack,
@@ -34,7 +37,8 @@ const
     ckShowPoints, ckJoin, ckSelectUnmatched, ckSurveyUnits, ckChooseUnit, ckRetry, ckStopReading,
     ckPrepare, ckInspect, ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel,
     ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckTheme, ckOpenPlot, ckPlotDisplay,
-    ckPlotCursor, ckClosePlot}
+    ckPlotCursor, ckClosePlot, ckNewProject, ckOpenProject,
+    ckCloseProject}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey
@@ -54,7 +58,9 @@ const
     ## and write nothing; how an agent shows them is for the session only. So
     ## are the display presets an agent saves, renames or deletes, and the
     ## theme it picks (`ckTheme`: the theme it draws in, not the user's
-    ## preferences as a whole)
+    ## preferences as a whole). An agent may make, open and close a
+    ## project (`ckNewProject` writes a new folder only, never data); its
+    ## trace edits and survey imports are not written into it
 
 # ------------------------------------------------------------ to JSON --
 

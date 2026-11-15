@@ -45,6 +45,8 @@ proc everyFieldSet(): Settings =
     window: WindowPlacement(x: -1200, y: 35, width: 1700, height: 950, maximized: true),
     recentFiles: @[r"C:\Data\shot (1).sgd", "/data/two.segy", "/données/trois.sgd"],
     recentFolders: @[r"\\server\share\line 7", "/data"],
+    recentProjects: @["/jobs/Morgantown 2026", r"D:\jobs\Line 7"],
+    lastProject: "/jobs/Morgantown 2026", reopenProject: false,
     scale: ScaleUnits(length: luCm, speed: true),
     calibrations: @[Calibration(monitor: "DELL U2720Q 3840x2160", ppi: 163.25),
       Calibration(monitor: "eDP-1 1920x1080", ppi: 141)],

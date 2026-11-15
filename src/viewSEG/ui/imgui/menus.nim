@@ -33,6 +33,8 @@ type
     maExportLog = "Export messages...", maExportSettings = "Export settings...",
     maExportLayout = "Export layout...", maExportEdits = "Export trace edits...",
     maFileMemory = "File memory...",
+    maNewProject = "New project...", maOpenProject = "Open project...",
+    maProject = "Project...", maCloseProject = "Close project",
     maResetSettings = "Reset the settings",
     maQuit = "Quit",
     maUndo = "Undo", maRedo = "Redo", maClearEdits = "Clear all edits for this file",
@@ -74,6 +76,9 @@ type
       ## Window > New plot: the selected traces of the file shown; 0: none
       ## (its views are then offered on the trace under the pointer, from
       ## the plot's menu)
+    recentProjects*: seq[string] ## File > Recent projects, newest first
+    projectName*: string        ## the project open; "" for none
+    projectShown*: bool         ## the Project window is open
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -94,6 +99,7 @@ type
     toggleTrayMinimize*: bool ## Window > Minimize to the tray was clicked
     newPlot*: bool        ## Window > New plot > a view was clicked: `newPlotView`
     newPlotView*: AnalysisView
+    openProject*: string  ## a recent project to open; "" for none
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
@@ -103,7 +109,8 @@ const
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
     maImportSurvey: 0, maImportSettings: 0, maImportLayout: 0, maImportEdits: 0,
     maExportLog: 0, maExportSettings: 0, maExportLayout: 0, maExportEdits: 0,
-    maFileMemory: 0, maResetSettings: 0,
+    maFileMemory: 0, maNewProject: 0, maOpenProject: 0, maProject: 0, maCloseProject: 0,
+    maResetSettings: 0,
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
     maUndo: ImGui_Mod_Ctrl.cint or ImGui_Key_Z.cint,
     maRedo: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_Z.cint,
@@ -119,6 +126,8 @@ const
     maImportSurvey: IconMap, maImportSettings: IconSettings, maImportLayout: IconLayers,
     maImportEdits: IconWriting, maExportLog: IconLog, maExportSettings: IconSettings,
     maExportLayout: IconLayers, maExportEdits: IconWriting, maFileMemory: IconHistory,
+    maNewProject: IconFolder, maOpenProject: IconOpenFolder, maProject: IconFolder,
+    maCloseProject: IconClose,
     maResetSettings: IconRefresh, maQuit: IconQuit, maUndo: IconUndo, maRedo: IconRedo,
     maClearEdits: IconClearAll, maToggleTheme: IconTheme,
     maResetWindows: IconRefresh, maBringWindows: IconFit, maSaveLayout: IconSave,
@@ -188,6 +197,39 @@ proc drawRecent(recent, folders: openArray[string]; res: var MenuResult) =
       if igMenuItem_Bool("Clear the list", nil, false, true):
         res.clearRecent = true
     igEndMenu()
+
+proc drawProjects(input: MenuInput; res: var MenuResult) =
+  ## File's project entries: New, Open, the recent ones, the Project window
+  ## and Close.
+  item(maNewProject, res)
+  tip("A folder of its own for this job: its files' edits, its survey (imported once, " &
+    "never again), its filters, presets and windows; copy the folder to hand it over")
+  item(maOpenProject, res)
+  tip("Open a project's folder (the folder that holds its project.nif)")
+  let open = igBeginMenu((IconHistory & "  Recent projects").cstring, true)
+  if marked != nil: marked[].mark("menu.Recent projects")
+  if open:
+    if input.recentProjects.len == 0: igTextDisabled("No project opened yet")
+    for i, path in input.recentProjects:
+      igPushID_Int(cint(2000 + i))
+      let name = path.extractFilename
+      if igMenuItem_Bool((IconFolder & "  " & (if name.len > 0: name else: path)).cstring, nil,
+          false, true):
+        res.openProject = path
+      if marked != nil: marked[].mark("menu.project." & $i)
+      tip(path)
+      igPopID()
+    igEndMenu()
+  if igMenuItem_Bool(label(maProject).cstring, nil, input.projectShown, true):
+    res.actions.incl maProject
+  if marked != nil: marked[].mark("menu." & $maProject)
+  tip(if input.projectName.len > 0: "The project " & input.projectName & ": its data " &
+        "folders and its survey" else: "No project is open")
+  igBeginDisabled(input.projectName.len == 0)
+  item(maCloseProject, res)
+  igEndDisabled()
+  tip("Go back to working without a project: its files and survey are closed, your own " &
+    "windows, presets and filters come back")
 
 proc drawImports(res: var MenuResult) =
   ## File > Import: everything that is read in, each from here only.
@@ -367,6 +409,9 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       for a in maOpenFile .. maOpenFolder:
         item(a, result)
       drawRecent(input.recent, input.recentFolders, result)
+      igSeparator()
+      drawProjects(input, result)
+      igSeparator()
       igBeginDisabled(not input.canClose)
       item(maClose, result)
       igEndDisabled()

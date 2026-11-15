@@ -20,6 +20,7 @@
 import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
 import filelist, filesystem, inbox, jobs, log, session, threads
+from project import ProjectFileName
 
 const
   IndexCacheExt* = ".pidx" ## the extension of an index cache file
@@ -301,6 +302,14 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
         asked = @[first.listFolder]
       else:
         raise newException(IOError, "there is no file or folder at " & paths[0])
+      # A project's folder (or its project.nif named) is opened as the project;
+      # a data folder never is, whatever it holds besides seismic files.
+      if fs.fileExists(first.listFolder / ProjectFileName) and
+          (first.listChosen.len == 0 or first.listChosen.extractFilename == ProjectFileName):
+        first.listProject = first.listFolder
+        first.listDone = true
+        to.post move first
+        return
       to.post move first
     let names = listedNames(asked)
     ctx.setPhase "looking at the files"

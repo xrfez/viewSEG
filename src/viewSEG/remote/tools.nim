@@ -30,7 +30,7 @@ import protocol, schema
 const
   ToolNames* = ["command", "state", "headers", "screenshot", "wait"]
   StateParts* = ["program", "fileList", "files", "panels", "selection", "map", "jobs",
-    "messages", "survey", "headers", "memory", "spectra", "displayPresets", "plots"]
+    "messages", "survey", "headers", "memory", "spectra", "displayPresets", "plots", "project"]
   ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "headers", "messages",
     "jobs", "toolbar", "statusbar", "spectrum", "fft"]
     ## what `screenshot` takes a picture of: the whole window, the Seismic
@@ -660,6 +660,32 @@ proc headersJson(state: AppState; limit: int): JsonNode =
         "changed": joined.plan.changes}
     result["file"] = f
 
+proc projectJson(state: AppState; limit: int): JsonNode =
+  ## The `project` part: the project open (`open` false for none), its data
+  ## folders, its survey and where it stands.
+  let p = state.project
+  if not state.inProject:
+    return %*{"open": false, "opening": state.projectOpening}
+  var folders = newJArray()
+  for i, d in p.doc.data:
+    let look = if i < p.folders.len: p.folders[i] else: PlaceLook()
+    folders.add %*{"name": d.displayName, "path": d.path, "absolute": d.absolute,
+      "state": $look.state, "foundAt": look.path}
+  var files = newJArray()
+  for i, c in p.doc.survey:
+    let o = if i < p.originals.len: p.originals[i] else: OriginalLook()
+    files.add %*{"copy": c.copy, "kind": $c.kind, "original": c.original.absolute,
+      "state": $o.state, "foundAt": o.path, "size": c.size}
+  result = %*{"open": true, "path": p.dir, "name": p.doc.name, "readOnly": p.readOnly,
+    "whyReadOnly": p.whyReadOnly, "version": p.doc.version, "dataFolders": folders,
+    "survey": {"files": files, "state": $p.survey, "note": p.surveyNote,
+      "updateOffered": p.offer, "options": toJson(p.doc.options), "units": toJson(p.doc.units),
+      "sources": p.doc.store.sources, "receivers": p.doc.store.receivers,
+      "relations": p.doc.store.relations, "storeBytes": p.doc.store.bytes,
+      "restoreMs": p.restoreMs},
+    "displayPresets": (if p.doc.hasPresets: p.doc.displayPresets.len else: -1),
+    "filters": p.doc.hasProcessing, "opening": state.projectOpening}
+
 proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
   ## The `state` tool.
   var n: JsonNode
@@ -747,7 +773,7 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
   if "plots" in wanted:
     var list = newJArray()
     for w in state.plots: list.add plotJson(w, limit)
-    r["plots"] = list
+    r["plots", "project"] = list
   if "memory" in wanted:
     let m = state.memoryList
     var files = newJArray()

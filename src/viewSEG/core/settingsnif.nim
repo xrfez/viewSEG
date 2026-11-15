@@ -10,6 +10,9 @@
 ##  (window (x 120) (y 80) (width 1280) (height 800) (maximized false))
 ##  (recentFiles "/data/shot1.sgd")
 ##  (recentFolders "/data")
+##  (recentProjects "/jobs/Morgantown 2026")
+##  (lastProject "/jobs/Morgantown 2026")
+##  (reopenProject true)
 ##  (plot
 ##   (orientation timeDown)
 ##   (mode wiggle)
@@ -217,6 +220,35 @@ proc spectrumDisplay(w: var NifWriter; tag: string; d: SpectrumDisplay) =
   w.value("phase", d.phase)
   w.close()
 
+proc writeJoinOptions*(w: var NifWriter; j: JoinOptions) =
+  ## The survey import's options in a `(join ...)` tree, as the settings
+  ## file holds them (a project keeps its import's the same way).
+  w.open("join")
+  w.value("trailingDigits", j.trailingDigits)
+  w.value("multiComponent", j.multiComponent)
+  w.choice("coordinates", CoordinateNames[j.coordinates])
+  w.choice("recordMatch", RecordMatchNames[j.recordMatch])
+  w.choice("traceMatch", TraceMatchNames[j.traceMatch])
+  w.open("lineNames")
+  for n in j.lineNames:
+    w.open("line")
+    w.add n.name
+    w.add n.line
+    w.close()
+  w.close()
+  w.close()
+
+proc writeDisplayPresets*(w: var NifWriter; presets: openArray[DisplayPreset]) =
+  ## Named displays in a `(displayPresets ...)` tree, as the settings file
+  ## holds them (a project keeps its own the same way).
+  w.open("displayPresets")
+  for p in presets:
+    w.open("preset")
+    w.add p.name
+    w.display(p.display, turned = false)
+    w.close()
+  w.close()
+
 proc settingsDocument*(s: Settings): string =
   ## `s` as a NIF document, every setting written (a calibration or a
   ## float that is not finite is not: `cleaned` drops them first).
@@ -238,6 +270,11 @@ proc settingsDocument*(s: Settings): string =
   w.open("recentFolders")
   for f in s.recentFolders: w.add f
   w.close()
+  w.open("recentProjects")
+  for f in s.recentProjects: w.add f
+  w.close()
+  w.value("lastProject", s.lastProject)
+  w.value("reopenProject", s.reopenProject)
   w.open("plot")
   w.display(s.plot.display)
   w.open("order")
@@ -305,20 +342,7 @@ proc settingsDocument*(s: Settings): string =
   w.value("crossline", s.map.spreadTemplate.crosslineHalf)
   w.close()
   w.close()
-  w.open("join")
-  w.value("trailingDigits", s.join.trailingDigits)
-  w.value("multiComponent", s.join.multiComponent)
-  w.choice("coordinates", CoordinateNames[s.join.coordinates])
-  w.choice("recordMatch", RecordMatchNames[s.join.recordMatch])
-  w.choice("traceMatch", TraceMatchNames[s.join.traceMatch])
-  w.open("lineNames")
-  for n in s.join.lineNames:
-    w.open("line")
-    w.add n.name
-    w.add n.line
-    w.close()
-  w.close()
-  w.close()
+  w.writeJoinOptions(s.join)
   w.open("headers")
   w.choice("tab", HeadersTabNames[s.headers.tab])
   w.choice("traceTab", TraceTabNames[s.headers.traceTab])
@@ -333,13 +357,7 @@ proc settingsDocument*(s: Settings): string =
   w.spectrumDisplay("window", s.spectrum.window)
   w.spectrumDisplay("live", s.spectrum.live)
   w.close()
-  w.open("displayPresets")
-  for p in s.displayPresets:
-    w.open("preset")
-    w.add p.name
-    w.display(p.display, turned = false)
-    w.close()
-  w.close()
+  w.writeDisplayPresets(s.displayPresets)
   w.open("tray")
   w.value("icon", s.tray.icon)
   w.value("minimize", s.tray.minimize)
@@ -685,6 +703,24 @@ proc spectrumDisplay(r: var Reading; n: NifNode; d: var SpectrumDisplay) =
     elif k.isTree("phase"): r.flag(k, d.phase)
     else: r.unknown(k, n.tag)
 
+proc readJoinOptions*(n: NifNode; name: string; base: JoinOptions;
+    problems: var seq[string]): JoinOptions =
+  ## The options a `(join ...)` tree written by `writeJoinOptions` holds,
+  ## over `base`; what cannot be used is said in `problems`.
+  var r = Reading(name: name)
+  result = base
+  r.join(n, result)
+  problems.add r.problems
+
+proc readDisplayPresets*(n: NifNode; name: string; problems: var seq[string]):
+    seq[DisplayPreset] =
+  ## The presets a `(displayPresets ...)` tree written by
+  ## `writeDisplayPresets` holds; what cannot be used is said in `problems`.
+  var r = Reading(name: name)
+  result = @[]
+  r.displayPresets(n, result)
+  problems.add r.problems
+
 proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
     problems: var seq[string]): Settings =
   ## The settings document `doc` (`parseNif`) taken over `base`: each
@@ -714,6 +750,9 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       of "window": r.window(c, result.window)
       of "recentFiles": r.strings(c, result.recentFiles)
       of "recentFolders": r.strings(c, result.recentFolders)
+      of "recentProjects": r.strings(c, result.recentProjects)
+      of "lastProject": r.text(c, result.lastProject, allowEmpty = true)
+      of "reopenProject": r.flag(c, result.reopenProject)
       of "plot": r.plot(c, result.plot)
       of "scale":
         for k in c.kids:

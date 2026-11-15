@@ -56,10 +56,13 @@ import utils/[fixtures, waiting]
 # also changes through the data it shows (`settleGain`). An agent's join
 # gives its own options: the join's settings are the window's. So are the
 # Headers window's (its tabs, toggles and columns): an agent's `headers
-# shown` says what its reader reads, which is no setting.
+# shown` says what its reader reads, which is no setting. The project open
+# at the quit (`lastProject`) is the agent's for the session, and its
+# `close project` takes it back.
 const Reached = {
   "theme": "theme", "window.x": "", "window.y": "", "window.width": "", "window.height": "",
   "window.maximized": "", "recentFiles": "open", "recentFolders": "browse",
+  "recentProjects": "new project", "lastProject": "", "reopenProject": "",
   "plot.display.visible": "", "plot.display.orientation": "display",
   "plot.display.mode": "display", "plot.display.fills": "display",
   "plot.display.colours": "display", "plot.display.custom.background": "display",
@@ -335,6 +338,13 @@ withFixtures fx:
     doAssert shown.mode == Everything.mode and shown.overlap == Everything.overlap,
       "what is shown is the agent's"
     st.agent(%*{"kind": "close", "file": int(st.sessions[0].id)})
+    st.agent(%*{"kind": "new project", "projectPath": fx.dir / "the agent's job",
+      "dataFolders": [agentDir]})
+    doAssert st.inProject and st.settings.lastProject == fx.dir / "the agent's job"
+    st.agent(%*{"kind": "close project"})
+    st.agent(%*{"kind": "open project", "projectPath": fx.dir / "the agent's job"})
+    doAssert st.inProject
+    st.agent(%*{"kind": "close project"})
     doAssert given == Offered, "not given: " & $(Offered - given)
     let session = flat(st.settings)
     let kept = flat(st.keptSettings)
@@ -376,6 +386,8 @@ withFixtures fx:
     st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
       spectrumTraces: @[st.firstTrace], spectrumShow: FftShown)
     st.apply Command(kind: ckSpectrumDisplay, spectrum: LiveSpectrum, spectrumShow: LiveShown)
+    st.apply Command(kind: ckNewProject, projectPath: fx.dir / "my job", dataFolders: @[agentDir])
+    doAssert st.settle(st.inProject and busy(st, fe).len == 0)
     var d = st.panel(MainPanel).layers[0].display
     d.gain = dgFixed
     d.fixedClip = NaN

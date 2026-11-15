@@ -50,6 +50,10 @@ type
     dkJoinFiles = "Add survey files"      ## survey files to import: SPS, SEG P1, CSV tables
     dkExportEdits = "Export trace edits"  ## a NIF or CSV file to write (a save dialog)
     dkImportEdits = "Import trace edits"  ## a NIF or CSV file of trace edits to read
+    dkOpenProject = "Open project"        ## a project's folder
+    dkProjectPlace = "Place of the project" ## the folder a new project is made in
+    dkProjectData = "Add a data folder"   ## a data folder of a project
+    dkLocateFolder = "Locate a data folder" ## where a project's missing data folder is now
 
   ShellEventKind* = enum
     sePathsChosen,  ## a dialog returned `paths` (at least one)
@@ -277,7 +281,7 @@ proc showDialog*(kind: DialogKind; parentWindowId = 0'u32; location = "") =
   of dkOpenFile, dkOpenFiles:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr seismicFilters[0],
       seismicFilters.len.cint, at, kind == dkOpenFiles)
-  of dkOpenFolder:
+  of dkOpenFolder, dkOpenProject, dkProjectPlace, dkProjectData, dkLocateFolder:
     SDL_ShowOpenFolderDialog(onDialogResult, userdata, parent, at, false)
   of dkImportSettings, dkImportLayout:
     SDL_ShowOpenFileDialog(onDialogResult, userdata, parent, addr nifFilters[0],

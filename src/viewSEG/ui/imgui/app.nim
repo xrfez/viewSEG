@@ -46,7 +46,8 @@ import ../../remote/control
 import ../../view/jobstatus
 import agentshot, chrome, dpi, filelist, fonts, frames, headerswindow, icons, jobswindow,
   joindialog,
-  mapwindow, memorywindow, menus, messages, plotwindows, recordlist, shell, spectrumwindow,
+  mapwindow, memorywindow, menus, messages, plotwindows, projectwindow, recordlist, shell,
+  spectrumwindow,
   style,
   tracepanel, windows
 
@@ -65,6 +66,8 @@ const
   recordsTitle = IconRecords & "  Records###records"
   joinTitle = IconMap & "  Import survey###join"
   memoryTitle = IconHistory & "  File memory###memory"
+  projectTitle = IconFolder & "  Project###project"
+  newProjectTitle = IconFolder & "  New project###newproject"
   noticeSeconds = 5.0                     ## how long a notice stays on screen
   CheckFrames = 8                         ## frames after a layout's arrival to look for windows off screen
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
@@ -93,6 +96,8 @@ type
     records: RecordListUi                      ## the record list's window
     join: JoinUi                               ## the "Import survey" window
     memory: MemoryUi                           ## the "File memory" window
+    project: ProjectUi                         ## the "Project" and "New project" windows
+    titled: string                             ## the main window's title, as set last
     spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
     plotWins: PlotWindowsUi                    ## the analysis windows (New plot)
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
@@ -502,6 +507,14 @@ proc joinWindow*(frame: FrameInfo): lent JoinUi =
   ## The "Import survey" window's state (`shown`).
   frame.ui.join
 
+proc projectWindows*(frame: FrameInfo): lent ProjectUi =
+  ## The "Project" and "New project" windows' state (`shown`, `making`).
+  frame.ui.project
+
+proc windowTitle*(frame: FrameInfo): string =
+  ## The main window's title, as set last.
+  frame.ui.titled
+
 proc addJoinFiles*(frame: FrameInfo; paths: openArray[string]) =
   ## Adds `paths` to the survey files of the "Import survey" window, as its
   ## "Add files..." dialog does (tests cannot drive the system's dialog).
@@ -770,6 +783,16 @@ proc onShellEvent(ui: var Ui; ev: ShellEvent) =
         ui.core.apply Command(kind: ckBrowse, paths: ev.paths, showFirst: true)
     of dkOpenFolder:
       ui.core.apply Command(kind: ckBrowse, paths: ev.paths, showFirst: true)
+    of dkOpenProject:
+      ui.core.apply Command(kind: ckOpenProject, projectPath: ev.paths[0])
+    of dkProjectPlace: ui.project.place = ev.paths[0]
+    of dkProjectData:
+      if ui.project.making: ui.project.addData(ev.paths[0])
+      else: ui.core.apply Command(kind: ckProjectFolder, folderAction: faAdd,
+        folderPath: ev.paths[0])
+    of dkLocateFolder:
+      ui.core.apply Command(kind: ckProjectFolder, folderAction: faLocate,
+        folderPath: ev.paths[0], folderWas: ui.project.locating)
     of dkExportSettings:
       # Not every desktop adds the extension the filter names.
       let path = if ev.paths[0].splitFile.ext.len == 0: ev.paths[0] & ".nif" else: ev.paths[0]
@@ -896,6 +919,20 @@ proc offScreenCheck(ui: var Ui) =
         "onto the main window's screen.")
       ui.offScreen.setLen 0
 
+proc projectsHome(): string =
+  ## Where New project makes a project by default: a folder the user sees
+  ## and can copy from.
+  when defined(windows): getHomeDir() / "Documents" / "viewSEG projects"
+  else: getHomeDir() / "viewSEG projects"
+
+proc followTitle(ui: var Ui) =
+  ## The main window's title names the project open.
+  let title = if ui.core.inProject: "viewSEG - " & ui.core.project.doc.name &
+      (if ui.core.project.readOnly: " (read-only)" else: "") else: "viewSEG"
+  if title != ui.titled:
+    ui.titled = title
+    discard SDL_SetWindowTitle(ui.window, title.cstring)
+
 proc onActions(ui: var Ui; actions: set[MenuAction]) =
   let recent = ui.core.settings.recentFolders
   let folder = if recent.len > 0: recent[0] & DirSep else: ""
@@ -913,6 +950,14 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maClearEdits: ui.core.apply Command(kind: ckClearEdits, panel: MainPanel)
     of maFileMemory:
       if ui.memory.shown: ui.memory.shown = false else: ui.memory.open()
+    of maNewProject:
+      ui.project.startNew(projectsHome(), ui.core.fileList.folder)
+    of maOpenProject:
+      let last = ui.core.settings.recentProjects
+      ui.ask(dkOpenProject, if last.len > 0: last[0].parentDir & DirSep else: projectsHome())
+    of maProject:
+      if ui.project.shown: ui.project.shown = false else: ui.project.open()
+    of maCloseProject: ui.core.apply Command(kind: ckCloseProject)
     of maExportEdits:
       let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
       if i < 0: ui.say("Export trace edits: no file is shown.", mlWarning)
@@ -1146,9 +1191,13 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     seismicName: ui.core.windowTitle(MainPanel), joinShown: ui.join.shown,
     trayIcon: ui.core.settings.tray.icon, trayMinimize: ui.core.settings.tray.minimize,
     trayProblem: ui.trayProblem, trayAvailable: trayShown(),
-    plotTraces: ui.core.selectedIn(shownAt)), ui.marks)
+    plotTraces: ui.core.selectedIn(shownAt), recentProjects: ui.core.settings.recentProjects,
+    projectName: (if ui.core.inProject: ui.core.project.doc.name else: ""),
+    projectShown: ui.project.shown), ui.marks)
   if menu.newPlot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)
+  if menu.openProject.len > 0:
+    ui.core.apply Command(kind: ckOpenProject, projectPath: menu.openProject)
   if menu.toggleAgent: ui.toggleAgent()
   if menu.toggleTrayIcon or menu.toggleTrayMinimize:
     var s = ui.core.settings
@@ -1269,6 +1318,15 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   var memory = ui.memory.drawMemory(memoryTitle, ui.core, ui.theme, ui.marks)
   for c in memory.commands.mitems:
     ui.core.apply move c
+  var project = ui.project.drawProjectWindows(projectTitle, newProjectTitle, ui.core, ui.theme,
+    ui.marks)
+  for c in project.commands.mitems:
+    ui.core.apply move c
+  case project.ask
+  of paNone: discard
+  of paPlace: ui.ask(dkProjectPlace, project.askAt)
+  of paData: ui.ask(dkProjectData, project.askAt)
+  of paLocate: ui.ask(dkLocateFolder, project.askAt)
   if join.addFiles:
     let i = ui.core.shownFile(ui.core.findPanel(MainPanel))
     let folder = if i >= 0: ui.core.sessions[i].path.parentDir & DirSep else: ""
@@ -1728,6 +1786,10 @@ proc run*(opts = RunOptions()): int =
   let (awake, asleep) = (frontendOf(addr ui, false), frontendOf(addr ui, true))
   if opts.openPaths.len > 0:
     ui.core.apply Command(kind: ckBrowse, paths: opts.openPaths, showFirst: true)
+  elif opts.persist and ui.core.settings.reopenProject and
+      ui.core.settings.lastProject.len > 0:
+    # The project open at the quit, opened again (it lists its own folder).
+    ui.core.apply Command(kind: ckOpenProject, projectPath: ui.core.settings.lastProject)
   elif opts.persist and ui.core.settings.recentFolders.len > 0:
     # The folder listed last, listed again; nothing is opened until chosen.
     # The listing finds out whether it is still there (a drive may not
@@ -1828,6 +1890,7 @@ proc run*(opts = RunOptions()): int =
         ui.notePlacement()
         ui.placed = false
       ui.followSettings()
+      ui.followTitle()
       ui.offScreenCheck()
       ui.noteLayout()
       ui.followLayouts()

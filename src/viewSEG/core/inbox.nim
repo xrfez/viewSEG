@@ -12,7 +12,7 @@
 import std/[locks, times]
 import parseSEG
 import analysis, edits, filelist, filememory, identity, join, jobs, layouts, log, mapkinds,
-  nif, panels, session, shotfiles, spectra, survey, tiles
+  nif, panels, project, session, shotfiles, spectra, survey, tiles
 
 type
   MsgKind* = enum
@@ -51,6 +51,7 @@ type
     mkSpectrum ## a spectrum window's spectrum, from the spectrum reader
     mkAnalysis ## an analysis window's numbers, from the analysis reader (New plot)
     mkSurveyHead ## what a survey file's headers say of its unit, for the import's window
+    mkProject ## what a project's job found (`core/projectjobs`)
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -100,6 +101,9 @@ type
       listDone*: bool               ## the scan's last message
       listFolder*: string           ## the folder listed, once known; "" for files chosen one by one
       listChosen*: string           ## the one file named, when only a file was named; "" otherwise
+      listProject*: string
+        ## the folder named is a project's (it holds a `project.nif`): it is
+        ## opened as one, not listed; "" otherwise
       listLooked*: seq[WatchedFile]
         ## with `listDone`: every file the scan looked at, seismic or not, as it
         ## found it: what the folder's watch starts from
@@ -238,6 +242,8 @@ type
       analysis*: AnalysisResult ## moved, never shared
     of mkSurveyHead:
       surveyHead*: SurveyHead
+    of mkProject:
+      news*: ProjectNews ## moved, never shared
 
   InboxObj = object
     lock: Lock

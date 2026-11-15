@@ -1,5 +1,6 @@
 ## The user's settings: everything the program remembers between runs.
-## The theme, where the main window was, the recent files and folders, what
+## The theme, where the main window was, the recent files, folders and
+## projects (and the project open at the quit, opened again at start), what
 ## a new plot window starts with (display, order, display header), how
 ## scales are stated, each monitor's calibration, the status bar's fields,
 ## the sort presets, the user's own sort keys, the Messages window's
@@ -142,6 +143,9 @@ type
     window*: WindowPlacement
     recentFiles*: seq[string]                     ## the files opened last, newest first
     recentFolders*: seq[string]                   ## their folders, newest first
+    recentProjects*: seq[string]                  ## the project folders opened last, newest first
+    lastProject*: string                          ## the project open at the quit; "" for none
+    reopenProject*: bool = true                   ## start with the project open at the quit
     plot*: PlotDefaults
     scale*: ScaleUnits                            ## per inch or cm; time as ms per length or speed
     calibrations*: seq[Calibration]               ## one per calibrated monitor
@@ -262,6 +266,7 @@ func cleaned*(s: Settings): (Settings, int) =
   r.plot.processing = remembered(bounded(s.plot.processing))
   r.recentFiles = uniqueItems(s.recentFiles)
   r.recentFolders = uniqueItems(s.recentFolders)
+  r.recentProjects = uniqueItems(s.recentProjects)
   if not (r.window.width > 0 and r.window.height > 0):
     r.window = WindowPlacement()
   r.map.spreadTemplate = bounded(s.map.spreadTemplate)
