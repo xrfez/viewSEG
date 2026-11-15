@@ -944,7 +944,8 @@ proc writeMemoryDoc(state: var AppState; i: int) =
   template r: untyped = state.remembered[i]
   let name = r.path.extractFilename
   var rec = state.recordOf(i)
-  r.savedRev = if state.keyOf(r.path) in state.edits: state.edits[state.keyOf(r.path)].keptRevision else: 0
+  let key = state.keyOf(r.path)
+  r.savedRev = if key in state.edits: state.edits[key].keptRevision else: 0
   if r.seenAside: # the document is written whole now: its own time
     state.diskIo.remove(state.store.docPath(r.doc).seenName, "when " & name & " was opened")
     r.seenAside = false
@@ -1697,7 +1698,8 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     reversed = e.listIn(teReversed, traces)
     killed = e.listIn(teKilled, traces)
   state.readers[k].request ReaderRequest(read: req, fields: p.shownFields, flow: flow,
-    filters: filters, filterAux: p.layers[0].processing.aux, clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
+    filters: filters, filterAux: p.layers[0].processing.aux,
+    clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
     raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0)
 
 proc remember(state: var AppState; k: int) =
@@ -3988,7 +3990,8 @@ func filterHits*(state: AppState): array[MapFilter, FilterHits] =
       if f in on:
         result[f] = FilterHits(state: fsDone, note: "traces")
         if state.keyOf(s.path) in state.edits:
-          for t in state.edits[state.keyOf(s.path)].listIn(edit, traces): result[f].traces.add s.base + t
+          for t in state.edits[state.keyOf(s.path)].listIn(edit, traces):
+            result[f].traces.add s.base + t
         result[f].count = result[f].traces.len
     if mfNoPosition in on:
       let role = if state.shownDomain == rdReceiver: prSource else: prReceiver
