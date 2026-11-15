@@ -14,14 +14,17 @@
 ## `joinedGroups`, under the reader's `serve`). `leftCheck`, with the
 ## relations of an abandoned check let go when it was listed cancelled:
 ## "heap-use-after-free" in processSEG's `recordCompleteness`, under
-## `checkWork`.
+## `checkWork`. `leftInspector` (the Headers window's reader left in a
+## drive, then the quit), with the jobs' memory freed at the destruction
+## although holds were left (`Jobs.=destroy` not counting them):
+## "heap-use-after-free" in `jobs.endHold`, under the inspector's `run`.
 ##
 ## The probe's first build compiles the core with ASan (a minute or two);
 ## later runs reuse its cache.
 
 import std/[os, osproc, strutils]
 
-const Scenarios = ["joinStep", "leftReader", "leftCheck"]
+const Scenarios = ["joinStep", "leftReader", "leftCheck", "leftInspector"]
 
 when not defined(posix):
   echo "tstragglers: skipped (AddressSanitizer: gcc or clang on POSIX)"

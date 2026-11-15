@@ -15,6 +15,10 @@
 ## - `leftCheck`: no quit: a record check is cancelled and, not stopping,
 ##   abandoned; the user unloads the relation file it reads; the check then
 ##   reads it.
+## - `leftInspector`: the Headers window's reader is stuck in a trace header
+##   read of the drive, a trace of another file is asked for (it is left,
+##   and a new reader started), then the quit; the left reader then reads
+##   the header, posts its answer and ends its holds (the jobs').
 
 import std/[os, strutils, times]
 import viewSEG/core/state
@@ -68,6 +72,26 @@ proc quitAfterALeftReader(far: string) =
   st.apply Command(kind: ckStopReading, panel: MainPanel) # the reader is left
   doAssert not st.shutdown(), "the quit leaves the reader, which still reads the file"
 
+proc quitAfterALeftInspector(far, near: string) =
+  ## Quits once the Headers window's reader, stuck in a trace header read
+  ## of `far`'s file, was left for a trace of `near`'s.
+  var st = initAppState(watchEvery = initDuration(seconds = 60))
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: far)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  st.apply Command(kind: ckOpen, paths: @[near]) # (not shown)
+  doAssert st.settle(st.sessions.len == 2)
+  let (a, b) = if st.sessions[0].path == far: (st.sessions[0], st.sessions[1])
+               else: (st.sessions[1], st.sessions[0])
+  fault(far, fkHang, {foHeaders})
+  st.apply Command(kind: ckSelect, traces: @[a.base + 3], mode: smReplace)
+  st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders})
+  doAssert st.settle(hung() == 1), "the inspector's header read hangs"
+  advanceFsClock(StallAfter + initDuration(seconds = 1))
+  st.apply Command(kind: ckSelect, traces: @[b.base + 1], mode: smReplace)
+  doAssert st.settle(st.inspection.answer.traces.len == 1 and
+    st.inspection.answer.traces[0].id == b.base + 1), "the other file's trace is read"
+  doAssert not st.shutdown(), "the quit leaves the stuck reader, which still holds the file"
+
 proc leaveACheck(fx: Fixtures): JobId =
   ## A record check cancelled and abandoned, then its relation file
   ## unloaded; returns the check's job, held in its first step.
@@ -109,6 +133,15 @@ of "leftReader":
     releaseAll()
     doAssert waitUntil(hung() == 0)
     sleep 500 # the reader reads on, then ends
+of "leftInspector":
+  withFixtures fx:
+    let far = fx.dir / "far"
+    createDir(far)
+    copyFile(fx.surveySegy, far / "a.sgy")
+    quitAfterALeftInspector(far / "a.sgy", fx.wideShotSegy)
+    releaseAll()
+    doAssert waitUntil(hung() == 0)
+    sleep 500 # the inspector reads on, posts, ends its holds, then ends
 of "leftCheck":
   withFixtures fx:
     discard leaveACheck(fx)
