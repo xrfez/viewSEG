@@ -37,8 +37,9 @@ limits, and leaves it alone where it does not:
 | Disabled items | windows and popups | contrast 2 |
 | A selected or hovered item | the window, popup or button it is on | contrast 1.08 |
 | The plot's traces, fills, a hovered and a selected trace | the plot, on paper and in the theme's colours | contrast 3 |
-| A hovered or a selected trace | the traces; each other | a colour difference (CIE76) of 25; 20 |
-| The map's sources, receivers, hovered and selected points | each other, on paper and in the theme's colours | a colour difference of 20 |
+| A hovered or a selected trace | the traces; each other | a colour difference (CIE76) of 25; 30 |
+| The map's sources | its receivers, on paper and in the theme's colours | a colour difference of 40 |
+| The map's sources and receivers | the hovered and the selected points (larger, outlined) | a colour difference of 20 |
 
 Text and status colours are lightened on a dark theme and darkened on a light one;
 secondary text that is brighter than the text is dimmed; a selection that does not

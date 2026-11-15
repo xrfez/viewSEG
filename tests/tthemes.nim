@@ -12,11 +12,11 @@
 ## - the plot, on paper and in the theme's colours: the traces, both fills, a
 ##   hovered and a selected trace 3 against the background (WCAG's ratio for
 ##   graphics); the hovered and the selected trace 25 (CIE76 deltaE) from
-##   the traces, and 20 from each other;
+##   the traces, and 30 from each other;
 ## - the map, on both backgrounds: sources, receivers, the record's receivers,
-##   the hovered and the selected points 3 against the background; sources,
-##   receivers, hovered and selected 20 from each other, the record's
-##   receivers 12 from the others;
+##   the hovered and the selected points 3 against the background; sources
+##   40 from receivers; both 20 from the hovered and the selected points,
+##   those 20 from each other; the record's receivers 12 from the others;
 ## - each file names, in its comment, the roles viewSEG moved to meet them.
 ##
 ## The limits are written here, not taken from `view/theme`, so that lowering
@@ -106,7 +106,7 @@ proc checkPlot(t: Theme) =
       atLeast(at & what & " on the plot", contrast(c, bg), 3.0)
     atLeast(at & "hovered trace from the traces", deltaE(w.hover, w.line), 25)
     atLeast(at & "selected trace from the traces", deltaE(w.selected, w.line), 25)
-    atLeast(at & "hovered from selected traces", deltaE(w.hover, w.selected), 20)
+    atLeast(at & "hovered from selected traces", deltaE(w.hover, w.selected), 30)
 
 proc checkMap(t: Theme) =
   for colours in [pcPaper, pcTheme]:
@@ -119,7 +119,7 @@ proc checkMap(t: Theme) =
     for i in 0 ..< points.len:
       for j in 0 ..< i:
         atLeast(at & points[i][0] & " from " & points[j][0], deltaE(points[i][1], points[j][1]),
-          20)
+          if i == 1 and j == 0: 40 else: 20)
     atLeast(at & "the record's receivers from the receivers",
       deltaE(ink.active, ink.roles[prReceiver]), 12)
 

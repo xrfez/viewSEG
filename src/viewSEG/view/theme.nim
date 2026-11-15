@@ -319,9 +319,13 @@ const
   MarkApart* = 25.0
     ## `deltaE` of a hovered or a selected trace from the traces around it,
     ## on paper and on the theme's own plot background
-  MarksApart* = 20.0
-    ## `deltaE` of the hovered from the selected, and of sources and
-    ## receivers on the map from each other and from both
+  MarksApart* = 30.0
+    ## `deltaE` of the hovered trace from the selected ones
+  PointsApart* = 20.0
+    ## `deltaE` of sources and receivers on the map from the hovered and
+    ## selected points (which are larger, and outlined)
+  SitesApart* = 40.0
+    ## `deltaE` of the map's receivers from its sources
 
 func lift(c: Rgba; on: openArray[Rgba]; ratio: float64): Rgba =
   ## `c` made `readable` on every colour of `on` (all light or all dark, as
@@ -356,37 +360,49 @@ type Scheme = tuple[background, line: Rgba]
 func ink(c: Rgba; s: Scheme): Rgba {.inline.} = readable(withAlpha(c, 255), s.background,
   InkContrast)
 
-func apart(c: Rgba; schemes: openArray[Scheme]; others: openArray[Rgba];
-    fromLine, fromOthers: float64): float64 =
+type Apart = tuple[colour: Rgba, least: float64]
+  ## a colour another must be apart from, and by how much (`deltaE`)
+
+func apart(c: Rgba; schemes: openArray[Scheme]; others: openArray[Apart];
+    fromLine: float64): float64 =
   ## How far `c` is from passing on every scheme: its least margin over
-  ## `fromLine` from the traces and over `fromOthers` from `others`, all as
-  ## drawn (`ink`). Zero or more passes.
+  ## `fromLine` from the traces and over each of `others`' least from it,
+  ## all as drawn (`ink`). Zero or more passes.
   result = Inf
   for s in schemes:
     let a = ink(c, s)
     result = min(result, deltaE(a, ink(s.line, s)) - fromLine)
     for o in others:
-      result = min(result, deltaE(a, ink(o, s)) - fromOthers)
+      result = min(result, deltaE(a, ink(o.colour, s)) - o.least)
 
-const Signal = [rgb(0xff7f0e), rgb(0x1f77b4), rgb(0xd62728), rgb(0x2ca02c),
-    rgb(0x9467bd), rgb(0x17becf), rgb(0xe377c2), rgb(0xbcbd22)]
-  ## strong colours to fall back on when neither palette has one that is
-  ## apart (matplotlib's ten categorical colours, the first eight)
+func signal(k: BaseColor): Rgba =
+  ## A strong colour of `k`'s hue, to fall back on when neither palette has
+  ## one that is apart (from matplotlib's ten categorical colours).
+  case k
+  of bcRed, bcBrightRed: rgb(0xd62728)
+  of bcOrange, bcBrown: rgb(0xff7f0e)
+  of bcYellow, bcBrightYellow: rgb(0xbcbd22)
+  of bcGreen, bcBrightGreen: rgb(0x2ca02c)
+  of bcCyan, bcBrightCyan: rgb(0x17becf)
+  of bcMagenta, bcBrightMagenta: rgb(0xe377c2)
+  else: rgb(0x1f77b4) # blue, and the accent
 
 func pick(first: Rgba; keys: openArray[BaseColor]; p, builtin: Palette;
-    schemes: openArray[Scheme]; others: openArray[Rgba]; fromLine: float64): Rgba =
+    schemes: openArray[Scheme]; others: openArray[Apart]; fromLine: float64): Rgba =
   ## `first` when it is `apart`, else the first of the palette's `keys`
-  ## that is, else the built-in palette's, else one of `Signal`; failing
-  ## all, the farthest apart.
+  ## that is, else the built-in palette's, else a `signal` colour, of theirs
+  ## first; failing all, the farthest apart.
   var candidates: seq[Rgba] = @[]
   for k in keys: candidates.add p[k]
   for k in keys: candidates.add builtin[k]
-  candidates.add Signal
+  for k in keys: candidates.add signal(k)
+  for k in [bcBlue, bcOrange, bcGreen, bcRed, bcMagenta, bcCyan, bcYellow]:
+    candidates.add signal(k) # the others too
   result = first
-  var best = apart(first, schemes, others, fromLine, MarksApart)
+  var best = apart(first, schemes, others, fromLine)
   for c in candidates:
     if best < 0:
-      let m = apart(c, schemes, others, fromLine, MarksApart)
+      let m = apart(c, schemes, others, fromLine)
       if m > best:
         (result, best) = (c, m)
 
@@ -417,13 +433,14 @@ func legible(r: var array[Role, Rgba]; p, builtin: Palette) =
   r[rlSelected] = pick(r[rlSelected], [bcAccent, bcBlue, bcCyan, bcMagenta, bcGreen,
     bcBrightBlue, bcBrightCyan, bcBrightMagenta], p, builtin, schemes, [], MarkApart)
   r[rlHighlight] = pick(r[rlHighlight], [bcOrange, bcYellow, bcRed, bcMagenta, bcBrightRed,
-    bcBrightYellow, bcBrightMagenta], p, builtin, schemes, [r[rlSelected]], MarkApart)
-  let marks = [r[rlSelected], r[rlHighlight]]
+    bcBrightYellow, bcBrightMagenta], p, builtin, schemes, [(r[rlSelected], MarksApart)],
+    MarkApart)
+  let marks = [(r[rlSelected], PointsApart), (r[rlHighlight], PointsApart)]
   r[rlSource] = pick(r[rlSource], [bcRed, bcOrange, bcMagenta, bcBrightRed, bcYellow,
     bcBrightMagenta], p, builtin, schemes, marks, -Inf)
   r[rlReceiver] = pick(r[rlReceiver], [bcBlue, bcGreen, bcCyan, bcBrightBlue,
-    bcBrightGreen, bcBrightCyan, bcMagenta], p, builtin, schemes, @marks & @[r[rlSource]],
-    -Inf)
+    bcBrightGreen, bcBrightCyan, bcMagenta], p, builtin, schemes,
+    @marks & @[(r[rlSource], SitesApart)], -Inf)
 
 func deriveRoles*(p: Palette; mode: ThemeMode): array[Role, Rgba] =
   ## The roles built from the palette. Backgrounds: `backdrop` is
