@@ -38,10 +38,20 @@
 ## exception: it comes with every move of the mouse, so a hover on a trace
 ## no open file has clears the hover and says nothing.
 ##
-## **Highlighting.** The trace under the pointer (`ckHover`) and the
-## selected traces (`ckSelect`, `ckClearSelection`) are survey-wide trace
-## ids in the `Selection`, so the plot and the map show the same ones. A
-## change of either only recolours traces: nothing is read again.
+## **Highlighting, linked.** The trace under the plot's pointer (`ckHover`)
+## and the selected traces (`ckSelect`, `ckClearSelection`) are survey-wide
+## trace ids in the `Selection`, so the plot and the map show the same
+## ones. A hovered trace comes with the points it was recorded at
+## (`hoverAt`: from its keys as a tile carries them, so that a loaded
+## relation file fills the stations its headers lack), which the map lights
+## up; the points under the map's pointer (`ckHoverPoints`) come with the
+## traces recorded there (`hoverTraces`), which the plot draws as it draws
+## its own hover. `ckShowPoints` shows the record of a source's traces;
+## `ckSelectPoints` selects points and their traces, or the stations along
+## a line from the point clicked last (a range). When the hover lights
+## nothing up in the other view, `hoverNote` says why. None of it reads a
+## trace or makes a layer again: both are found again only when the survey
+## changes (`relink`).
 ##
 ## **Settings.** The settings (`core/settings`) change only through
 ## commands: `ckSettings`, and the plot's display, order and display header,

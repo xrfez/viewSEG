@@ -338,7 +338,7 @@ its shortcut shown there.
 
 | Input | Action |
 |---|---|
-| Move the mouse | **Hover:** the trace under the cursor is drawn in the hover colour, its source and receiver light up on the map, and the status bar reads it out |
+| Move the mouse | **Hover:** the trace under the cursor is drawn in the hover colour, its source and receiver light up on the map (see [Linking the plot and the map](#linking-the-plot-and-the-map)), and the status bar reads it out; where the trace has no place on the map, the status bar says why |
 | Left click | **Select** that trace (replaces the selection) |
 | Ctrl + left click | Add the trace to the selection, or take it out; the rest stays |
 | Shift + left click | Select every trace from the one clicked last to this one, in the order shown (replaces the selection) |
@@ -371,7 +371,7 @@ its shortcut shown there.
 | `R` | Reverse the polarity of the hovered trace, or put it back (or the selection, when it holds that trace) |
 | `F` | Amplitude spectrum (FFT) of the hovered trace (or the selection) in a new window |
 | `H` | Show the trace's headers |
-| `M` | Select the trace's station on the map |
+| `M` | Select the trace's station on the map, with the station's traces: its receiver (in a receiver gather, its source); over a selected trace, those of the selection |
 | Ctrl + Z | Undo the last kill, restore or polarity change of the file shown (or its clearing) |
 | Esc | Cancel, innermost first: the drag in progress, else the ruler, else the selection |
 
@@ -382,14 +382,16 @@ The map uses the same gestures wherever the meaning carries over, always at equa
 
 | Input | Action |
 |---|---|
-| Move the mouse | **Hover:** the point under the cursor (within 7 pixels) is drawn in the hover colour and described: source or receiver, line and point, coordinates and elevation with their units, its file, the traces of the open files recorded there and their records, and for a survey file's source the field records the loaded relation file gives it; in a box beside the pointer or in a strip along the map's bottom, as the map's settings say. Points of other layers on the same spot (an SPS receiver and the open file's own) are described together. The status bar shows the cursor's coordinates with their units |
-| Left click on a point | **Select** it and its traces (replaces the selection); opening a source's record from a click, and a receiver's traces lighting up in the plot as the pointer passes over it, are still to come |
+| Move the mouse | **Hover:** the point under the cursor (within 7 pixels) is drawn in the hover colour and described: source or receiver, line and point, coordinates and elevation with their units, its file, the traces of the open files recorded there and their records, and for a survey file's source the field records the loaded relation file gives it; in a box beside the pointer or in a strip along the map's bottom, as the map's settings say. Points of other layers on the same spot (an SPS receiver and the open file's own) are described together. **The traces recorded there are drawn in the hover colour in the plot** (a receiver's trace; a source's whole record); where none is in the record shown, or none was recorded there, the status bar says why. The status bar shows the cursor's coordinates with their units |
+| Left click on a source | **Show its record** in the plot (in a file of receiver gathers it is the other way round: a click on a receiver shows its gather); a source no trace of the open files was recorded at is selected instead |
+| Left click on any other point | **Select** it and its traces (replaces the selection) |
 | Ctrl + left click | Add the point (and its traces) to the selection, or take it out |
+| Shift + left click | **Select a range:** the stations of the line from the point clicked last to this one (of the same file and role), and their traces, in place of the selection; the point clicked last stays where the next range starts |
 | Left drag | **Pan** |
 | Shift + left drag | **Box select:** every point of a shown layer in the box, and their traces (replaces the selection; with Ctrl too, adds to it) |
 | Ctrl + left drag | **Measure:** a line from press to release, its length (in the survey's units) and grid bearing beside it, until Esc |
 | Right drag | **Box zoom:** as close as shows the whole box, at equal aspect |
-| Right click | **The menu of the point under the cursor:** select it and its traces, add it to the selection or take it out, hide its layer; over no point, "No point here". Layers and fit are in the strip |
+| Right click | **The menu of the point under the cursor:** show its record (a source with traces), select it and its traces, add it to the selection or take it out, hide its layer; over no point, "No point here". Layers and fit are in the strip |
 | Middle drag | Pan |
 | Wheel | **Zoom** about the cursor |
 | `+` / `-` (main keys or keypad) | Zoom in or out about the cursor (or the centre) |
@@ -443,9 +445,12 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 - **Layers:** each loaded survey file's sources and receivers, as filled discs, sources
   over receivers; each open file's own sources and receivers (its trace headers'
   coordinates), as rings, so where the headers and the survey files agree each disc sits
-  in its ring and where they do not both show; and the **highlight** on top: the selected
-  points (the selection's colour) and the hovered ones (the hover colour), larger and
-  outlined. Each layer can be hidden (**Layers** in the strip, or the right-click menu of
+  in its ring and where they do not both show; and the **highlight** on top: **the points
+  of the record on show**, always (its receivers in a darker shade of the receivers'
+  colour, a pixel larger than the receivers around them, so the spread shows as a whole
+  and the sources inside it stay visible; its source larger and outlined), then the
+  selected points (the selection's colour) and the hovered ones (the hover colour),
+  larger and outlined. Each layer can be hidden (**Layers** in the strip, or the right-click menu of
   one of its points). A layer's points get smaller as they crowd on the screen (from 5
   pixels across down to 2, from how far apart its points typically are), so lines of
   stations stay lines when zoomed out; a ring that small is drawn as a disc.
@@ -454,7 +459,9 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   accent that marks the selection (as in the Everforest themes), each made readable on
   the background; the highlight in the plot's hover and selection colours. Hover and
   selection are shared with the plot: a selection made on the map selects the points'
-  traces, and the trace under the pointer in the plot lights up its source and receiver.
+  traces, the trace under the pointer in the plot lights up its source and receiver, and
+  the point under the pointer on the map lights up its traces in the plot ([Linking the
+  plot and the map](#linking-the-plot-and-the-map)).
 - **No basemap**, nothing fetched: survey coordinates as the files give them (SPS
   easting and northing, the trace headers' X and Y with their scalar).
 - **Equal aspect, always, and the survey never lost:** zoomed out as far as it goes, the
@@ -495,14 +502,77 @@ what it was instead of):
 1. **The point under the pointer is described beside it** by default (a box drawn in
    the map, kept inside it), the strip along the bottom a setting. (Either was asked
    for; the box is the one the eye is already at.)
-2. **A click on a point selects it and its traces**, whatever the point; the plot's
-   design had a click on a source open its record, which comes with the linking of the
-   map and the plot.
+2. **A click on a source shows its record; a click on a receiver selects it and its
+   traces** (in a file of receiver gathers, the other way round: a receiver's click
+   shows its gather). A source no open file has a trace of is selected. (Before the
+   linking, a click selected any point; the plot's design had a click on a source open
+   its record.)
 3. **A map that shows the whole survey keeps showing it when its window changes size**;
    any other view keeps its scale. (The plot keeps its scale always, but it has scroll
    bars.)
 4. **Sources are red, receivers blue** (green where the theme's blue is its accent); the
    open file's own positions are rings in the same colours.
+5. **Shift + click selects a range along a line**: the stations from the point clicked
+   last to this one, on their line, as Shift + click selects a range of traces in the
+   plot. (The linking's first plan had Shift + click add, which Ctrl + click does, as the
+   user decided for the plot.)
+6. **The record on show is marked** by its receivers in a darker shade of their colour
+   and its source as a larger, outlined disc. (Outlined receivers were tried first: on a
+   survey of thousands of receivers they merged into a black mass and hid the sources.)
+
+## Linking the plot and the map
+
+The plot and the map show one hover, one selection and one record on show, kept in the
+program's core: neither window talks to the other, each draws what the core holds.
+
+- **From the plot to the map.** The trace under the pointer lights up where it was
+  recorded, in the hover colour: its source and its receiver, in every layer (the open
+  file's own positions, and the survey files' points of its stations). In a shot record
+  every trace has the record's source, which is marked anyway, so the receiver is what
+  moves; in a receiver gather it is the other way round. `M` (or the plot's menu)
+  selects the trace's station, with the station's traces.
+- **From the map to the plot.** The traces of the open files recorded at the point under
+  the pointer are drawn in the plot as the hovered trace is (the hover colour, line and
+  fill; under density alone, their columns tinted): a receiver's trace (one per
+  component), a source's whole record. A click on a source shows its record; a click
+  on a receiver selects its traces; Ctrl + click adds or takes out, Shift + click
+  selects a range along a line, a Shift + drag box selects the traces of the points in
+  it, Esc clears (the map's table above).
+- **Always marked:** the points of the record on show (its receivers, its source).
+- **Says why:** where the hover lights nothing up in the other window, the status bar
+  says why, beside the readout or the coordinates: "Trace 1 is an auxiliary trace: it
+  has no place on the map", "Trace 18's receiver is not on the map: no loaded survey file
+  has its receiver station (line 101, point 105)", "No trace of the open files was
+  recorded at this receiver", "24 traces recorded at this source, none in the record
+  shown (FFID 12)", "No trace here: no seismic file is open".
+
+**Where the positions come from, before the survey files are joined to the seismic
+file** (the join, File > Join geometry, is still to come; it writes the survey's
+stations and coordinates into the file's keys, never into the file):
+
+| The trace headers give | Trace → map | Map → plot |
+|---|---|---|
+| Coordinates | its own source and receiver (rings) | from those rings |
+| Stations (line, point), with the survey's S and R files loaded | the survey files' points of its stations (discs) | from those discs, by station |
+| A record and a channel only, with the X (relation) file loaded | the survey files' points of the stations the X file gives that record's channel | **not yet**: a survey file's point finds no trace whose headers lack its station (the status bar says "No trace is matched to this receiver: the open files' headers give no receiver stations"); the open file's own ring on the same spot does, where the headers have coordinates |
+| None of these | nothing: the status bar says why | nothing |
+
+The record on show is marked the same ways: by its traces' own positions and stations,
+or, for a record whose headers name no station, by the stations its relation file
+plans for it. The selection's points come from the traces' own positions and stations
+(not through the relation file).
+
+**Cost.** A hover reads nothing, asks for no tile and makes no layer again (a test
+counts them); the plot's image is drawn again, and when the map's pointer lights other
+traces, each tile's marks (a byte a trace) go to the GPU again; the map uploads its
+highlight (the record's points, a few thousand, and the hovered ones). Measured on the
+Morgantown record (3 957 traces at a pixel a trace) with its S, R and X files, in the
+"Plot and map" layout under software OpenGL (llvmpipe, an optimised build, the machine
+busy with other work): with the pointer sweeping the map, 11 to 13 ms a frame (median;
+the frames that light another trace take as long as a hover in the plot); sweeping the
+plot, 40 to 49 ms, as before the linking: each hover draws the plot's whole image
+again, which at a pixel a trace on llvmpipe costs about 30 ms. A GPU draws it in a
+fraction of that.
 
 ## The plot's menu: functions on the data
 
@@ -520,6 +590,7 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 | Reverse polarity | `R` | that trace or the selection, 180 degrees out of phase; ticked while the trace under the pointer is reversed, and then it puts the polarity back |
 | Kill / Restore | `K` | drawn blank, left out of the processing and of the levels the gain computes over the record; "Restore" over a killed trace |
 | FFT in a new window | `F` | amplitude spectrum, raw and processed; several can be open (greyed out, "not available yet") |
+| Select its receiver on the map | `M` | the receiver the trace was recorded at (in a receiver gather, its source), or those of the selection, with their traces; greyed out where the trace has no place on the map |
 | Reverse polarity of all traces | | every trace of the window, ticked while on ([Polarity](#polarity)) |
 | Undo last edit (*what it was*) | Ctrl + Z | reverts the file's last kill, restore, polarity change or clearing |
 | Clear all edits for this file | | the traces as the file has them; Undo brings the edits back |
@@ -527,8 +598,8 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 On a selection, a trace operation does to every selected trace what it does to the one
 under the pointer: Kill kills them all (Restore, over a killed trace, restores them all),
 Reverse polarity reverses them all, or puts them all back when that trace is reversed.
-Later: show headers (`H`), select its station on the map (`M`), and, perhaps, a filter on
-one trace (as a layer of its own, with the overlays).
+Later: show headers (`H`) and, perhaps, a filter on one trace (as a layer of its own,
+with the overlays).
 
 ### Edits to traces
 

@@ -289,15 +289,34 @@ from the index's own runs, closer in), as point sprites made discs or rings in t
 shader, into an image the size of the plot, then the highlight; an image whose inputs did
 not change is not drawn again. So no pan or zoom waits for anything: 1 000 000 points draw
 about 60 000 at fit. The view models (`view/maplayers`) say what each layer is and its
-colour, the highlight (the points of the hovered trace and of the selection: `tracePointsOf`
-from a traces layer's stations, so it needs no keys), the points near a place
+colour, the highlight (the points of the record on show, `activePoints`: `recordPoints`, its
+traces' own points and stations, or the stations its relation runs plan when its headers name
+none; of the selection: `tracePointsOf` from a traces layer's stations, so it needs no keys;
+and of the plot's hovered trace, `Selection.hoverAt`), what a click on a point does
+(`opensRecord`: a source's click shows its record), the points near a place
 (`pointsAt`: the nearest within a radius and the others on its spot) and in a box
 (`pointsIn`), what the map says of a point (`pointInfo`: station, coordinates and units,
 file, the open files' traces at it and their records, a source's field records from the
 relation files, `recordsAt`), and the words of coordinates and lengths. **Selecting
 points** (`ckSelectPoints`) keeps them in `Selection.points` beside the traces and selects
-the traces recorded there (`Survey.tracesAt`); a trace selection made anew takes the points
-away, `ckClearSelection` takes both. Code outside `core/survey` indexes the survey's layers
+the traces recorded there (`Survey.tracesAt`), or, as a range, the stations along a line
+from the point clicked last (`lineRange`, `Selection.pointAnchor`); a trace selection made
+anew takes the points away, `ckClearSelection` takes both.
+
+**Linking the plot and the map** goes through the selection only. `ckHover` (the plot's
+pointer) finds where the trace was recorded, `Selection.hoverAt`: from a copy of its keys
+in the panel's tile (`tracePoints`, so a loaded relation file fills the stations the
+headers lack with `joinStations`), else from its file's traces layer. `ckHoverPoints` (the
+map's pointer) keeps the points and the traces of the open files recorded there,
+`Selection.hoverTraces` (`hoveredRevision` goes up when they change), which the plot draws
+as its hovered trace through a bit of each tile's marks. `ckShowPoints` shows, in the main
+panel, the record of a point's traces (the file shown first, nothing when one is on show).
+After every command and drained inbox, `relink` finds both again when the survey changed
+and words `hoverNote`, why the hover lights nothing up in the other view (no position, no
+station in a loaded file, no trace, traces only in other records), which the status bar
+shows. None of it reads a trace or makes a layer again. Without the join, a survey file's
+point finds the traces whose headers name its station; one whose headers name none is
+linked one way only, from the trace (through the relation file). Code outside `core/survey` indexes the survey's layers
 (`template l: untyped = st.survey.layers[i]`): a `for l in st.survey.layers` over the
 accessor makes ARC copy the whole seq first, every layer (a hundred megabytes for a
 million points), each time.
@@ -489,8 +508,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    tiles change.
 7. **Draw** (UI, `gpu/plotimage`). Each kept tile is uploaded once, as `R32F` textures
    cut to the GPU's size limit (`splitBlocks`), with its columns' extremes when it has
-   them and a small texture marking its selected traces and those it was made with
-   killed or that the file marks dead (drawn blank: the background, no wiggle). The tiles are drawn, oldest
+   them and a small texture marking its selected traces, those the map's pointer lights
+   up (drawn as the hovered trace), and those it was made with killed or that the file
+   marks dead (drawn blank: the background, no wiggle). The tiles are drawn, oldest
    first, into an RGBA image the size of the plot: each tile's area as density (nearest
    trace, linear in time, the scale as a uniform: the gain amount in dB over the
    reference, `displayScale`; a colour-map texture) or as the plot's background, then
@@ -504,7 +524,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    alone (`drawsDensity`, `drawsWiggles`), never on the trace spacing.
    Everything but the tiles is a uniform, so a change of gain amount, of a type that is
    a scale alone, of the mode, the fills, the overlap or the colours, and a hover, draws
-   again at once and reads nothing; a click uploads one byte per trace of each tile. An
+   again at once and reads nothing; a click, or a change of the traces the map's pointer
+   lights up, uploads one byte per trace of each tile. An
    image whose inputs did not change is not drawn again. The frontend shows the image
    in its plot. The CPU twins (`amplitudeAt`, `densityColour`, `traceInk`,
    `densityTint`) are what the shaders are tested against.
@@ -515,8 +536,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    the file. The status bar formats the fields the user chose (`Settings.readout`) from
    that `Pick`, blank where a value is not known, and says whether the trace is killed or
    reversed (`editNote`). The trace under the pointer becomes the selection's hover (`ckHover`, a
-   survey-wide id: the file's `base` plus the trace's index), and a click selects it
-   (`ckSelect`).
+   survey-wide id: the file's `base` plus the trace's index; `core` finds where it was
+   recorded, `hoverAt`, for the map), and a click selects it (`ckSelect`).
 
 | Work | Cancelled or dropped by |
 |---|---|
@@ -585,9 +606,14 @@ never reused; 0 (`NoSession`, `NoPanel`) names none.
 ```nim
 type
   Selection = object         # core/selection: read by the trace panel, the map, the header table
-    hover: int = -1          # survey-wide trace id under the cursor; -1: none
+    hover: int = -1          # survey-wide trace id under the plot's pointer; -1: none
+    hoverAt: seq[PointRef]   # where it was recorded: its source and receiver, every layer
+    hoverPoints: seq[PointRef] # the points under the map's pointer
+    hoverTraces: IntSet      # the open files' traces recorded there: the plot lights them up
+    hoveredRevision: int     # bumped when `hoverTraces` changes
     selected: IntSet         # survey-wide trace ids: the file's base + the trace's index
     anchor: int = -1         # the trace clicked last: where a Shift + click's range starts
+    pointAnchor: PointRef    # the point clicked last: where a range along its line starts
     activeGather: GatherRef  # (file: SessionId, gather: int = -1)
     revision: int            # bumped on every change
     points: seq[PointRef]    # points selected on the map (with `pointKeys` to find them)
@@ -662,7 +688,8 @@ type
     ckEdit, ckUndoEdit, ckClearEdits, ckHover, ckSelect,
     ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
     ckLayout, ckSaveLayout, ckLoadLayout, ckExportLayout, ckImportLayout, ckExportLog,
-    ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints
+    ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints,
+    ckHoverPoints, ckShowPoints
 
   JobInfo = object           # core/jobs: what the Jobs window and the status bar show
     id: JobId

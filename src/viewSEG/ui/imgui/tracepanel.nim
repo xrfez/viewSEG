@@ -42,7 +42,11 @@
 ## drawn in the highlight colour and the selected ones in the selection
 ## colour, line and fill (under density alone, their columns are tinted):
 ## a uniform and a small texture of marks per tile, so a hover reads and
-## uploads nothing.
+## uploads nothing. The traces recorded at the point under the map's pointer
+## (`Selection.hoverTraces`) are drawn as the hovered trace is, through a bit
+## of the same marks (a byte per trace uploaded when they change). `M` over
+## a trace selects its station on the map (the receiver; in a receiver
+## gather, the source), as does the plot's menu.
 ##
 ## **The cursor's time line** (a toggle in the strip, a setting): a thin
 ## line from the pointer across to the time axis and the pointer's time at

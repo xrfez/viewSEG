@@ -345,21 +345,45 @@ The gestures are the plot's:
 | Arrows (Shift: a whole view) | Pan |
 | Ctrl+0, or the fit button | The whole survey |
 | Backspace, Alt+Left, or the back button | The view before |
-| Point at a dot | What it is: source or receiver, line and point, coordinates and elevation, its file, the traces of the open file recorded there and their records, and for a source, the field records the relation (X) file gives it |
-| Click a dot (Ctrl+click) | Select it and its traces (add it, or take it out) |
+| Point at a dot | What it is: source or receiver, line and point, coordinates and elevation, its file, the traces of the open file recorded there and their records, and for a source, the field records the relation (X) file gives it; **its traces light up in the plot** |
+| Click a source | Show its record in the plot |
+| Click a receiver (Ctrl+click: any dot) | Select it and its traces (Ctrl: add it, or take it out) |
+| Shift+click a dot | Select the stations of its line from the dot you clicked last to this one |
 | Shift+drag | Select every dot in the box, and their traces (Ctrl+Shift+drag adds) |
 | Ctrl+drag | Measure: the distance and the grid bearing, until Esc |
-| Right-click a dot | Select it, add it to the selection or take it out, hide its layer |
+| Right-click a dot | Show its record (a source), select it, add it to the selection or take it out, hide its layer |
 | Esc | The drag going on, else the ruler, else the selection |
 
 The **status bar** shows the pointer's coordinates in the survey's units (from the SPS
 header: `ft`, `US ft`, `m`), and a **scale bar** and a north arrow stand in the map's
 corners. **Layers** in the map's strip shows or hides each layer: each survey file's
-sources or receivers, the open file's own, and the highlight (the selection, and the source
-and receiver of the trace under the pointer in the plot). The gear chooses where the
-description of the dot under the pointer goes: in a box beside the pointer (the default),
-or in a strip along the map's bottom. Opening a record by clicking its source, and the
-traces of a receiver lighting up in the plot as you point at it, are still to come.
+sources or receivers, the open file's own, and the highlight (the record on show, the
+selection, and the source and receiver of the trace under the pointer in the plot). The
+gear chooses where the description of the dot under the pointer goes: in a box beside the
+pointer (the default), or in a strip along the map's bottom.
+
+### The plot and the map, linked
+
+Move the pointer over a trace in the plot: its **source and receiver light up on the map**
+(orange, the plot's hover colour). Move it over a receiver on the map: **its trace lights
+up in the plot**, in the same colour; over a source, its whole record does. The record on
+show is always marked on the map: its receivers in a darker shade (the spread it was
+recorded on), its source larger and outlined. With the pointer on a trace, `M` selects its
+receiver on the map (the plot's right-click menu has it too). Try it on the Morgantown
+record with its survey files:
+
+```
+bin/viewSEG exampleFiles/00000151_12900_11300.sgd exampleFiles/sps/*.?ps
+```
+
+The positions come from the trace headers' coordinates, or from the survey files by the
+stations the headers name (line and point); a trace whose headers give only its record
+and channel finds its stations through the relation (X) file. When nothing lights up, the
+**status bar says why**: a trace with no place on the map (an auxiliary trace, a station
+no survey file has), a receiver no trace of the open files was recorded at, or a source
+whose traces are all in other records. Joining the survey files to the seismic file (to
+come) will also light a trace up from a survey file's dot when its headers name no
+station.
 
 The **Plot and map** layout (View > Layout > Load) puts the plot and the map side by side,
 as large as each other.

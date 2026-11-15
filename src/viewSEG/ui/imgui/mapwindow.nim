@@ -26,8 +26,18 @@
 ## popup beside the pointer or in a strip along the map's bottom, as the
 ## user chooses in the map's settings (the gear); the pointer's coordinates,
 ## with their units, go to the status bar. A scale bar and a north arrow
-## stand in the plot's corners. A click on a point selects it and its traces
-## (Ctrl + click adds or takes it out).
+## stand in the plot's corners.
+##
+## **Linked to the plot** (through `core`'s selection only): the points
+## under the pointer go to `core` (`ckHoverPoints`), and the plot draws the
+## traces recorded there in the hover colour; the plot's hovered trace's
+## source and receiver are drawn in it here (`Selection.hoverAt`), and the
+## points of the record on show are always marked (its receivers in a
+## darker shade, its source larger and outlined). A click on a source shows
+## its record (on a receiver of a file of receiver gathers, its gather); on
+## any other point it selects the point and its traces. Ctrl + click adds or
+## takes out; Shift + click selects the stations along the line from the
+## point clicked last.
 
 import std/[math, strutils]
 import imguin/cimgui
@@ -101,6 +111,10 @@ type
       ## what `highlight` was made from
     active: array[PointRole, seq[PointRef]]
       ## the gather on show's points
+    activeAt: array[PointRole, seq[MapPoint]]
+      ## where they are
+    selectedAt: seq[MapPoint]
+      ## where `highlight.selected` are
     activeFor: tuple[gather: GatherRef; survey: int]
       ## what `active` was made from
     highlightRev: int
@@ -418,16 +432,22 @@ proc handleKeys(mu: var MapUi; st: AppState; after: var MapView; view: MapView; 
 proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
   ## The highlighted points on the GPU: the gather on show's, the
   ## selection's, the plot's hovered trace's and the map's own hover, each
-  ## found again when what it comes from changes, and uploaded when one did.
+  ## found again (with where they are) only when what it comes from changes,
+  ## so a hover finds its own few points alone; uploaded when one changed.
   var changed = mu.highlightRev == 0 or hidden != mu.drawnHidden
   let selected = (st.selection.selectedRevision, st.survey.revision)
   if selected != mu.selectedFor:
     mu.highlight = st.highlightOf
+    mu.selectedAt.setLen 0
+    for p in mu.highlight.selected: mu.selectedAt.add st.positionOf(p)
     mu.selectedFor = selected
     changed = true
   let active = (st.selection.activeGather, st.survey.revision)
   if active != mu.activeFor:
     mu.active = st.activePoints
+    for r in PointRole:
+      mu.activeAt[r].setLen 0
+      for p in mu.active[r]: mu.activeAt[r].add st.positionOf(p)
     mu.activeFor = active
     changed = true
   if st.selection.hoverAt != mu.drawnPlotHover:
@@ -437,17 +457,15 @@ proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
     mu.drawnHover = mu.hovered
     changed = true
   if changed:
-    var gather: array[PointRole, seq[MapPoint]]
-    var chosen, hovered: seq[MapPoint]
-    if not hidden:
-      for r in PointRole:
-        for p in mu.active[r]: gather[r].add st.positionOf(p)
-      for p in mu.highlight.selected: chosen.add st.positionOf(p)
-      for p in mu.drawnPlotHover: hovered.add st.positionOf(p)
-      for p in mu.hovered: hovered.add st.positionOf(p)
+    var hovered: seq[MapPoint]
+    for p in mu.drawnPlotHover: hovered.add st.positionOf(p)
+    for p in mu.hovered: hovered.add st.positionOf(p)
     let b = st.survey.bounds
     let origin = if b.isEmpty: mapPoint(0, 0) else: mapPoint(b.minX, b.minY)
-    mu.renderer.setHighlight(origin, gather, chosen, hovered)
+    if hidden:
+      var none: array[PointRole, seq[MapPoint]]
+      mu.renderer.setHighlight(origin, none, [], [])
+    else: mu.renderer.setHighlight(origin, mu.activeAt, mu.selectedAt, hovered)
     mu.drawnHidden = hidden
     inc mu.highlightRev
 
