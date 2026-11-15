@@ -3,9 +3,8 @@
 ## whose last 10 traces are 10 times as loud in their last 100 samples, the same
 ## steps (a clip percentile of 98, back to 99, the loudest trace killed, a
 ## band-pass) taken zoomed into that loud corner and with the whole record
-## in view give the same level, the record's, each time; the reader takes
-## it from the record's own samples (every trace, as a plot of the whole
-## record would read them), not from the view's tile.
+## in view give the same level, the record's, each time: taken over what
+## the record's first view read, not over the view's tile.
 ##
 ## Seen to fail: with the level taken from the first tile after a change
 ## (the view's, as it was), "clip 98: zoomed 18.92659375, the whole record

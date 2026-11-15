@@ -1625,6 +1625,7 @@ proc newSource(state: var AppState; k: int) =
   p.relevel = true # the new record's
   p.levelSince = p.requestGen
   p.levelAsked = false
+  p.basis = ReadRequest()
   p.back.setLen 0
   inc p.revision
   state.tiles[k].setLen 0
@@ -1768,23 +1769,24 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     template e: untyped = state.edits[state.keyOf(state.sessions[i].path)]
     reversed = e.listIn(teReversed, traces)
     killed = e.listIn(teKilled, traces)
+  # The record's level is taken over its first request (`basis`), whatever
+  # the view later: a tile of it gives it, else the reader works it out once
+  # the view is drawn, from those samples, which it keeps.
+  let first = p.basis.isEmpty
+  if first: p.basis = req
   let asked = ReaderRequest(read: req, fields: p.shownFields, flow: flow,
     filters: filters, filterAux: p.layers[0].processing.aux,
     clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
-    raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0)
-  if p.relevel and not p.levelAsked:
-    # The record's level, whatever the view: this tile gives it when it is
-    # of the whole record, else the reader works it out once the view is
-    # drawn, from the record's own samples.
-    p.basis = p.recordRequest(margin)
-    if not p.basis.isEmpty and not req.sameReach(p.basis):
-      var whole = asked
-      whole.read = p.basis
-      whole.read.gen = req.gen
-      whole.fields.setLen 0
-      whole.raw = false
-      state.readers[k].askLevel(whole)
-      p.levelAsked = true
+    raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0,
+    basis: first)
+  if p.relevel and not p.levelAsked and not req.sameReach(p.basis):
+    var whole = asked
+    whole.read = p.basis
+    (whole.read.gen, whole.read.margin, whole.read.envelope) = (req.gen, req.margin, false)
+    whole.fields.setLen 0
+    (whole.raw, whole.basis) = (false, false)
+    state.readers[k].askLevel(whole)
+    p.levelAsked = true
   state.readers[k].request asked
 
 proc remember(state: var AppState; k: int) =
@@ -5406,7 +5408,7 @@ proc drainInbox*(state: var AppState): bool =
         state.timeRead(m.tile)
         m.tile.id = state.nextTile
         inc state.nextTile
-        # The record's level: a tile of the whole record gives it (one of
+        # The record's level: a tile of its basis gives it (one of
         # filters already replaced for now, and the newest request's again:
         # the level the plot keeps is of the filters it ends with); a tile
         # of a part of it stands in only while there is none.

@@ -122,6 +122,9 @@ type
     killed*: seq[int]         ## the gather's traces killed, ascending
     raw*: bool                ## the tile carries the samples as the file has them too
     chunkTraces*: int         ## traces per read from the file; 0: `ChunkTraces`
+    basis*: bool
+      ## the record's level is taken over these traces and samples: the
+      ## reader keeps them apart (`askLevel` reads nothing when it asks for them)
 
   ReaderObj = object
     lock: Lock
@@ -715,6 +718,9 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
     rd.note(sevWarning, $pr.notNumbers & " of the " & $q.count & " traces shown of " & rd.name &
       " hold samples that are not numbers (NaN or infinite), which are drawn as 0: the file " &
       "may hold a bad conversion or a damaged block.")
+  if req.basis and not level and rd.raw.samples.len <= MaxBasisValues and
+      heldRows(rd.raw, q, list, window).len > 0:
+    rd.basisRaw = rd.raw # the record's level is taken over them again, read once
   result = true
 
 proc serve(rd: var Reader; req: sink ReaderRequest) =
