@@ -32,7 +32,8 @@
 ##   progress (`progress`, `setPhase`) and checks `cancelled`, or calls
 ##   `checkCancelled`, which raises `JobCancelledError`. `progress` returns
 ##   false once a cancel is asked for, so it serves as parseSEG's `Progress`
-##   callback.
+##   callback. Work about to start a step that must not stop halfway calls
+##   `commit`: a cancel asked for later is refused.
 ## - **Outcome.** Work that returns is done. Work that raises a
 ##   `CatchableError` failed, with the exception's message, unless a cancel
 ##   was asked for first or it raised `JobCancelledError`: then it is
@@ -686,6 +687,21 @@ proc checkCancelled*(ctx: JobContext) =
   ## Raises `JobCancelledError` once a cancel was asked for.
   if ctx.cancelled:
     raise newException(JobCancelledError, "cancelled")
+
+proc commit*(ctx: JobContext): bool {.raises: [].} =
+  ## From now on the job runs to its end: a cancel asked for later is
+  ## refused, as for a job submitted not `cancellable`, so `tend` never
+  ## abandons it (`stop` still asks it to stop). For a step that changes
+  ## what others read and cannot stop halfway, such as a join's change of a
+  ## file's keys: abandoned there, it would be listed cancelled while its
+  ## work goes on changing them. False, and nothing changes, when a cancel
+  ## was asked for already: the work stops then.
+  withLock ctx.q.lock:
+    let i = ctx.q.find(ctx.id)
+    if i >= 0 and not ctx.q.recs[i].info.cancelRequested:
+      ctx.q.recs[i].info.spec.cancellable = false
+      inc ctx.q.revision
+      result = true
 
 proc progress*(ctx: JobContext; done, total: int64): bool {.raises: [].} =
   ## Reports `done` of `total` units; false once a cancel was asked for (so

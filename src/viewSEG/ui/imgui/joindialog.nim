@@ -406,7 +406,9 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
         if p.phase.len > 0: text = p.phase
       igProgressBar(fraction, ImVec2_c(x: igGetFontSize() * 12, y: 0), text.cstring)
       marks.marked("join.progress")
-      if underWay.job != NoJob:
+      # Once the keys are being changed the join runs to its end (a second or
+      # so a million traces): no Cancel then.
+      if underWay.job != NoJob and (info.isNone or info.get.spec.cancellable):
         igSameLine(0, -1)
         if igSmallButton((IconClose & " Cancel").cstring):
           result.commands.add Command(kind: ckCancelJob, job: underWay.job)

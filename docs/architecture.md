@@ -468,9 +468,11 @@ stops reading the file only for the moment its keys change:
    (`resumeReaders`: the same gather at the same scales; the tiles from before are drawn
    until the first new one comes, through `samplesGen`), so new prefetchers and `rowsOf`
    views see the joined keys. A panel shown the file meanwhile waits for the join quietly.
-   A join cancelled while it changes the keys (one step no cancel reaches) and abandoned
-   by `Jobs.tend` keeps readers out until its work is back (`hold` refuses the file of an
-   abandoned exclusive job). The protocol is modelled in `docs/models/joinreaders.nif`
+   The step that changes the keys reads no file and runs to its end: the job commits to
+   it (`JobContext.commit`), so a cancel then is refused and `Jobs.tend` never abandons
+   it (abandoned there, it was said cancelled, "as it was", while it still changed the
+   keys). An exclusive job abandoned before that keeps readers out until its work is back
+   (`hold` refuses the file of an abandoned exclusive job). The protocol is modelled in `docs/models/joinreaders.nif`
    (a reader near the file while its keys change is never reached; without that refusal,
    it is).
 

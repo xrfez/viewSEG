@@ -472,13 +472,16 @@ proc joinApplyWork*(file: ptr SeismicFile; path: string; session: SessionId;
   ## did (`mkJoined`). Submitted with the file in `exclusive`, so it starts
   ## only once no job reads the file and no reader holds it; it says how many
   ## holds it found (none), and refuses to join when there are any. A cancel
-  ## that comes before it joins stops it; the join itself is one step.
+  ## that comes before it joins stops it; the join itself is one step, which
+  ## no cancel stops (`commit`): it reads no file, and a join abandoned
+  ## halfway would be said cancelled while it still changed the keys.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.checkCancelled()
     let held = holds.held(path)
     if held > 0:
       raise newException(IOError, "a reader still reads the file, so its traces were not " &
         "matched")
+    if not ctx.commit(): raise newException(JobCancelledError, "cancelled")
     ctx.setPhase "matching" # the step: `g` and the file's keys are read and changed from here
     var stats: JoinStats
     var (changed, revision) = (0, 0)

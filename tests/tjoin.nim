@@ -27,6 +27,8 @@
 ## - a cancel while the survey files are read, and while the join waits for
 ##   the file, leaves the file as it was and the plot reading it again (also
 ##   a record shown meanwhile, which waits for the join without a warning);
+##   a cancel while the step changes the keys (held there by the job hook)
+##   is refused, and the step is never abandoned however long it takes;
 ## - the survey's units confirmed with the join label the map.
 ##
 ## Seen to fail: with the join's second job submitted with the file in
@@ -41,11 +43,11 @@
 ## cancelled import left on the map, "the map holds 2 survey files after the
 ## cancel".
 
-import std/[math, os, sequtils, strutils, tables]
+import std/[math, os, sequtils, strutils, tables, times]
 import parseSEG
-import viewSEG/core/state
+import viewSEG/core/[filesystem, state]
 import viewSEG/view/maplayers
-import utils/[fixtures, waiting]
+import utils/[fixtures, steps, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); cond))
@@ -387,5 +389,39 @@ block cancelled:
     st.join(sps(survey.s, survey.r))
     doAssert st.joinReport.outcome == joJoined and st.sessions[0].file.keysRevision == 1
     echo "tjoin: cancelled twice, then joined"
+
+block cancelInTheStep:
+  # The step that changes the keys runs to its end: a cancel then is refused,
+  # and the step is never left behind as cancelled while it still works.
+  withFixtures fx:
+    let path = fx.stationsSegd()
+    let survey = fx.surveySps()
+    var st = initAppState()
+    st.opened(path)
+    installSteps()
+    holdStep("matching") # the step, as a join of millions of traces holds it
+    let before = st.joinReport.serial
+    st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id,
+      joinFiles: sps(survey.s, survey.r, survey.x), joinUnits: JoinUnits(survey: suMetres))
+    doAssert st.settle(inStep("matching").len == 1), "the join's step runs"
+    let job = st.joinUnderWay.job
+    let said = st.log.len
+    st.apply Command(kind: ckCancelJob, job: job)
+    var refused = false
+    for e in said ..< st.log.len:
+      if "cannot be cancelled" in st.log[e].text: refused = true
+    doAssert refused, "the cancel is refused, and said so"
+    advanceFsClock(initDuration(seconds = 10)) # far past any grace: still not abandoned
+    for _ in 1 .. 3: discard st.drainInbox()
+    doAssert st.joinUnderWay.job == job and st.joinReport.serial == before,
+      "still joining: " & st.words
+    doAssert not st.jobs.info(job).get.abandoned
+    releaseStep("matching")
+    doAssert st.settle(st.joinReport.serial > before)
+    doAssert st.joinReport.outcome == joJoined, $st.joinReport.outcome & ": " & st.words
+    doAssert st.sessions[0].file.keysRevision == 1
+    doAssert st.readsAgain(path) and st.panel(MainPanel).laidOut,
+      "the panel reads the file again"
+    echo "tjoin: a cancel in the step refused, the join done"
 
 echo "tjoin: done"
