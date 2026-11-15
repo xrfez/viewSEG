@@ -1,6 +1,10 @@
 ## Variable-density drawing of trace tiles with OpenGL 3.3: one program,
 ## used by `gpu/plotimage` for each block of a tile.
 ##
+## A block is one quad, its corners placed through the plot's `Turn`
+## (`core/orientation`'s `ndcOf`), so a plot turned time across draws the
+## same texels transposed; the texture coordinates do not change.
+##
 ## The shader takes the nearest trace and interpolates linearly in time
 ## between column centres, scales by the display gain (a uniform) and looks
 ## the colour up in a 256-entry colour map: what `amplitudeAt` and
@@ -10,7 +14,7 @@
 ## background (`solidColour`), tinted as well. Drawn `solid`, the quad is
 ## painted in one colour instead: the paper under a tile's wiggles.
 
-import ../core/[geometry, tiles, viewport]
+import ../core/[geometry, orientation, tiles, viewport]
 import gl, textures
 
 type
@@ -112,11 +116,6 @@ proc initDensityProgram*(): (DensityProgram, string) =
   glBindBuffer(GL_ARRAY_BUFFER, GLuint(lastBuf))
   (d, "")
 
-func ndc*(s: Span; v: float64; flip: bool): float32 {.inline.} =
-  ## Data coordinate `v` of axis `s` in normalized device coordinates.
-  let f = (v - s.lo) / (s.hi - s.lo) * 2 - 1
-  float32(if flip: -f else: f)
-
 type DensityLook* = object
   ## How density is drawn: the scale, or one solid colour; the tint of
   ## marked traces.
@@ -142,17 +141,22 @@ proc use*(d: DensityProgram; look: DensityLook) =
   glBindVertexArray(d.vao)
   glBindBuffer(GL_ARRAY_BUFFER, d.vbo)
 
-proc draw*(d: DensityProgram; view: Viewport; t: Tile; tt: TileTextures; hoverRow: int) =
+proc draw*(d: DensityProgram; view: Viewport; m: Turn; t: Tile; tt: TileTextures;
+    hoverRow: int) =
   ## Draws the blocks of tile `t` (its GPU copy `tt`) as they fall in
-  ## `view`, after `use`; `hoverRow` is the tile's hovered row, -1 for none.
+  ## `view` on a plot turned as `m` says, after `use`; `hoverRow` is the
+  ## tile's hovered row, -1 for none.
   var v: array[24, float32]
   for k, b in tt.blocks:
     let q = t.quad(b)
-    let (x0, x1) = (view.traces.ndc(q.x0, false), view.traces.ndc(q.x1, false))
-    let (y0, y1) = (view.timeMs.ndc(q.t0, true), view.timeMs.ndc(q.t1, true))
+    # the corners: first position and earliest time, then round the block
+    let a = view.ndcOf(m, DataPoint(x: q.x0, tMs: q.t0))
+    let c = view.ndcOf(m, DataPoint(x: q.x1, tMs: q.t0))
+    let e = view.ndcOf(m, DataPoint(x: q.x1, tMs: q.t1))
+    let g = view.ndcOf(m, DataPoint(x: q.x0, tMs: q.t1))
     let (u0, u1, v0, v1) = (float32(q.u0), float32(q.u1), float32(q.v0), float32(q.v1))
-    v = [x0, y0, u0, v0, x1, y0, u1, v0, x1, y1, u1, v1,
-         x0, y0, u0, v0, x1, y1, u1, v1, x0, y1, u0, v1]
+    v = [a[0], a[1], u0, v0, c[0], c[1], u1, v0, e[0], e[1], u1, v1,
+         a[0], a[1], u0, v0, e[0], e[1], u1, v1, g[0], g[1], u0, v1]
     glBufferData(GL_ARRAY_BUFFER, sizeof(v), addr v[0], GL_STREAM_DRAW)
     glUniform1i(d.locHover, GLint(if hoverRow >= b.row and hoverRow < b.row + b.rows:
       hoverRow - b.row else: -1))

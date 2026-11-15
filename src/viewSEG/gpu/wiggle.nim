@@ -17,17 +17,26 @@
 ## quads of the other traces are collapsed in the vertex shader. A killed
 ## trace's quad is always collapsed: it is drawn blank.
 ##
-## Positions and times reach the shaders relative to the view's top-left
-## corner, taken in float64 here: in float32, position 10 000 000 is a
-## whole trace off and 20 000 ms a pixel off when zoomed in, so the
-## wiggles of a large gather or a long record would leave their traces.
+## Positions and times reach the shaders relative to the view's first
+## position and earliest time, taken in float64 here: in float32, position
+## 10 000 000 is a whole trace off and 20 000 ms a pixel off when zoomed
+## in, so the wiggles of a large gather or a long record would leave their
+## traces.
+##
+## The fragment shader works in the data's terms (trace spacings from the
+## baseline, ms), so it is the same whichever way the plot is turned: the
+## vertex shader places each quad through the plot's `Turn` (its affine
+## form, `ndcMap`), and the swing's sign (`WiggleStyle.swing`) mirrors a
+## wiggle about its baseline where a positive amplitude swings towards the
+## trace before (time across: up).
 
-import ../core/[panels, tiles, viewport, wiggle]
+import ../core/[orientation, panels, tiles, viewport, wiggle]
 import density, gl, textures
 
 type
   WiggleUniform = enum
-    wuSeries = "series", wuMarks = "marks", wuXMap = "xMap", wuTMap = "tMap",
+    wuSeries = "series", wuMarks = "marks", wuPosNdc = "posNdc", wuTimeNdc = "timeNdc",
+    wuNdcOrigin = "ndcOrigin", wuSwingSign = "swingSign",
     wuFirstPos = "firstPos", wuStride = "stride", wuReach = "reach", wuTSpan = "tSpan",
     wuHoverRow = "hoverRow", wuMarkedOnly = "markedOnly", wuCount = "count",
     wuFirstMs = "firstMs", wuStepMs = "stepMs", wuScale = "scale", wuOverlap = "overlap",
@@ -44,9 +53,12 @@ type
 const
   vertexShader = """
 #version 330 core
-// Positions and times are relative to the view's left and top edges.
-uniform vec2 xMap;       // ndc = position * xMap.x + xMap.y
-uniform vec2 tMap;       // ndc = ms * tMap.x + tMap.y
+// Positions and times are relative to the view's first position and
+// earliest time; the plot's turn places them: ndc = position * posNdc +
+// ms * timeNdc + ndcOrigin.
+uniform vec2 posNdc;
+uniform vec2 timeNdc;
+uniform vec2 ndcOrigin;
 uniform float firstPos;  // the position of the block's first trace
 uniform float stride;    // positions between its traces
 uniform float reach;     // how far a trace puts ink, in trace spacings
@@ -69,7 +81,7 @@ void main() {
   xOff = ((corner & 1) == 0 ? -1.0 : 1.0) * reach;
   tMs = (corner & 2) == 0 ? tSpan.x : tSpan.y;
   float x = firstPos + float(row) * stride + xOff;
-  vec2 p = vec2(x * xMap.x + xMap.y, tMs * tMap.x + tMap.y);
+  vec2 p = x * posNdc + tMs * timeNdc + ndcOrigin;
   if (killed || (markedOnly == 1 && marked == 0)) p = vec2(-2.0, -2.0); // collapsed: nothing drawn
   gl_Position = vec4(p, 0.0, 1.0);
 }
@@ -81,6 +93,7 @@ uniform sampler2D series;
 uniform int count;
 uniform float firstMs, stepMs; // times relative to the view's top edge, as tMs
 uniform float scale, overlap, pxPerPos, msPerPx, lineHalf, markedHalf;
+uniform float swingSign; // 1, or -1: the wiggle mirrored about its baseline
 uniform int fills;       // 1 positive, 2 negative
 uniform vec4 lineColour, positiveColour, negativeColour, hoverColour, selectedColour;
 flat in int row;
@@ -112,7 +125,7 @@ void main() {
   if (marked == 2) { line = hoverColour; positive = hoverColour; negative = hoverColour; }
   if (marked == 1) { line = selectedColour; positive = selectedColour; negative = selectedColour; }
   if (marked != 0) halfWidth = markedHalf;
-  float x = xOff * pxPerPos;
+  float x = swingSign * xOff * pxPerPos; // pixels towards a positive swing
   float x0 = x - 0.5, x1 = x + 0.5;
   vec4 ink = vec4(0.0);
   if (fills != 0) {
@@ -150,17 +163,20 @@ proc initWiggleProgram*(): (WiggleProgram, string) =
   glGenVertexArrays(1, addr w.vao)
   (w, "")
 
-proc use*(w: WiggleProgram; view: Viewport; st: WiggleStyle; ink: WiggleInk) =
-  ## Makes the program current for `view`, drawn in style `st` and colours
-  ## `ink`: the series on texture unit 0, the marks on 2.
+proc use*(w: WiggleProgram; view: Viewport; m: Turn; st: WiggleStyle; ink: WiggleInk) =
+  ## Makes the program current for `view` on a plot turned as `m` says,
+  ## drawn in style `st` and colours `ink`: the series on texture unit 0,
+  ## the marks on 2.
   glUseProgram(w.program)
   template loc(u: WiggleUniform): GLint = w.loc[u]
   glUniform1i(loc(wuSeries), 0)
   glUniform1i(loc(wuMarks), 2)
-  # ndc = (v - lo) / (hi - lo) * 2 - 1, time flipped (down the screen); `draw`
-  # passes v - lo
-  glUniform2f(loc(wuXMap), float32(2 / view.traces.width), -1)
-  glUniform2f(loc(wuTMap), float32(-2 / view.timeMs.width), 1)
+  # `draw` passes positions and times less the view's first and earliest
+  let n = view.ndcMap(m)
+  glUniform2f(loc(wuPosNdc), float32(n.xPerPos), float32(n.yPerPos))
+  glUniform2f(loc(wuTimeNdc), float32(n.xPerMs), float32(n.yPerMs))
+  glUniform2f(loc(wuNdcOrigin), float32(n.x0), float32(n.y0))
+  glUniform1f(loc(wuSwingSign), float32(st.swing))
   glUniform1f(loc(wuReach), float32(st.reach))
   glUniform1f(loc(wuScale), st.scale)
   glUniform1f(loc(wuOverlap), float32(st.overlap))

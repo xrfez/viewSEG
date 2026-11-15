@@ -1,6 +1,9 @@
 ## The plot's image: a panel's tiles drawn with OpenGL 3.3, as density,
 ## wiggles or wiggles over density, into an RGBA image the size of the
-## plot, which the frontend shows in its plot.
+## plot, which the frontend shows in its plot. The plot's `Turn`
+## (`core/orientation`) places everything: time down, or time across (the
+## image the other way round, its wiggles swung the other way); the tiles
+## and their textures are the same either way.
 ##
 ## Tiles are drawn oldest first, each over the ones before it: its area
 ## first (density, or the plot's background under wiggles alone), then its
@@ -13,7 +16,7 @@
 ## image (`PlotFrame`, the tiles and their marks): an idle plot costs the
 ## GPU nothing. **A hover** (the pointer moved to another trace) changes
 ## only the pixels of the trace it leaves and of the one it reaches: those
-## two stripes are drawn again, as the whole image is (cleared, every tile
+## two stripes (columns, or rows when time is across) are drawn again, as the whole image is (cleared, every tile
 ## in its order), with the rest of the image kept, so the image is the one a
 ## whole drawing makes, at the cost of two traces' columns instead of the
 ## plot's (on software OpenGL, a whole Morgantown record in wiggles took
@@ -23,7 +26,7 @@
 ## current. Objects are freed explicitly (`free`), never by a destructor.
 
 import std/[algorithm, math, strutils]
-import ../core/[geometry, panels, tiles, viewport, wiggle]
+import ../core/[geometry, orientation, panels, tiles, viewport, wiggle]
 import density, gl, textures, wiggle as gpuwiggle
 
 export GetProcAddress, GLuint
@@ -31,7 +34,8 @@ export GetProcAddress, GLuint
 type
   PlotFrame* = object
     ## What one image shows, and how.
-    view*: Viewport ## the data shown; `columns` × `rows` is the image's size
+    view*: Viewport ## the data shown, and the plot's pixels along each axis
+    turn*: Turn = TimeDown ## which way the plot is turned: the image is `screenSize`
     background*: Rgba
     density*: bool  ## greyscale density under everything
     wiggles*: bool
@@ -53,7 +57,9 @@ type
     lastTiles: seq[uint64]
     lastHover: seq[int]
     drawn: int      ## images drawn, for tests
-    columns: int    ## columns of the image the last drawing drew (all, or a hover's stripes)
+    columns: int
+      ## pixels along the traces the last drawing drew (all, or a hover's
+      ## stripes)
 
 var missing: seq[string]
 var loaded = false
@@ -119,8 +125,9 @@ func imagesDrawn*(r: PlotRenderer): int {.inline.} = r.drawn
   ## How many images it has drawn (an unchanged frame draws none).
 
 func columnsDrawn*(r: PlotRenderer): int {.inline.} = r.columns
-  ## How many of the image's columns the last drawing drew: all of them, or
-  ## the stripes of the traces a hover left and reached (for tests).
+  ## How many of the image's pixels along the traces (its columns, or its
+  ## rows when time is across) the last drawing drew: all of them, or the
+  ## stripes of the traces a hover left and reached (for tests).
 
 proc upload*(r: PlotRenderer; t: Tile): TileTextures =
   ## The GPU's copy of `t`.
@@ -148,10 +155,11 @@ const StripeRoom = 2 ## pixels a hover's stripe reaches past its trace's quad
 proc hoverStripes(r: PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
     textures: openArray[TileTextures]): seq[Slice[int]] =
   ## When the image shows `f` and `textures` but for the hovered rows: the
-  ## columns of the image that the rows a hover left and reached draw on
-  ## (each row's quad: its column under density, its wiggle's reach), merged
-  ## and in order. None when more than that changed, or when they would
-  ## cover half the image (a whole drawing is as cheap).
+  ## pixels along the traces (from the view's first position) that the
+  ## rows a hover left and reached draw on (each row's quad: its column
+  ## under density, its wiggle's reach), merged and in order. None when more
+  ## than that changed, or when they would cover half the image (a whole
+  ## drawing is as cheap).
   if r.target == 0 or f != r.last or textures.len != r.lastTiles.len or
       tiles.len < textures.len:
     return
@@ -182,11 +190,11 @@ proc hoverStripes(r: PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
 proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
     textures: openArray[TileTextures]): GLuint =
   ## Draws `tiles` (with their GPU copies `textures`, in the same order;
-  ## later ones over earlier ones) as `f` says, into an image of
-  ## `f.view.columns` × `f.view.rows` pixels, and returns that image's
-  ## texture: its first row is the view's bottom edge. The GL state the
+  ## later ones over earlier ones) as `f` says, into an image the size of
+  ## the plot (`screenSize` of its view and turn), and returns that image's
+  ## texture: its first row is the plot's bottom edge. The GL state the
   ## frontend had is restored. 0 when it cannot draw.
-  let (width, height) = (f.view.columns, f.view.rows)
+  let (width, height) = f.view.screenSize(f.turn)
   if not r.ready or width <= 0 or height <= 0 or not (f.view.traces.width > 0) or
       not (f.view.timeMs.width > 0):
     return 0
@@ -233,10 +241,10 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
         let tt = textures[i]
         glDisable(GL_BLEND)
         r.density.use(look)
-        r.density.draw(f.view, tiles[i], tt, tt.hoverRow)
+        r.density.draw(f.view, f.turn, tiles[i], tt, tt.hoverRow)
         if f.wiggles:
           glEnable(GL_BLEND)
-          r.wiggle.use(f.view, f.style, f.ink)
+          r.wiggle.use(f.view, f.turn, f.style, f.ink)
           r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = false)
           r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = true)
   if stripes.len > 0:
@@ -244,13 +252,15 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
     glEnable(GL_SCISSOR_TEST)
     r.columns = 0
     for s in stripes:
-      glScissor(GLint(s.a), 0, GLsizei(s.len), GLsizei(height))
+      let box = f.view.screenRect(f.turn, s) # from the top-left; GL counts from the bottom
+      glScissor(GLint(box.pos.x), GLint(float32(height) - box.pos.y - box.size.y),
+        GLsizei(box.size.x), GLsizei(box.size.y))
       drawAll()
       r.columns += s.len
     glDisable(GL_SCISSOR_TEST)
   else:
     drawAll()
-    r.columns = width
+    r.columns = f.view.columns
   r.last = f
   r.lastTiles.setLen 0
   r.lastHover.setLen 0
