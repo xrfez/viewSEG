@@ -30,14 +30,16 @@
 ## that cannot be read, a named pipe, are refused with a message (the job
 ## fails); everything else is read as far as it goes.
 
-import std/[locks, options, os, strutils, times]
+import std/[cpuinfo, locks, options, os, strutils, times]
 import parseSEG
 import processSEG/qc/record
 import filejobs, filekinds, filesystem, inbox, jobs, join, log, session, survey, threads
 
 const
   SurveyChunk* = 4 * 1024 * 1024 ## bytes of an SPS file parsed at a time
-  ParseAtOnce* = 4               ## workers that parse an SPS file's chunks, each on a thread
+  ParseAtOnce* = 8
+    ## at most this many workers parse an SPS file's chunks, each on a thread
+    ## (one fewer than the cores, at least one)
   JunkChunks* = 4                ## chunks in a row with no SPS record end the read of a file
   MaxP1Bytes* = 64 * 1024 * 1024 ## a SEG P1 file larger than this is not read
   MaxProblems* = 20              ## problems of one file logged one by one; the rest are counted
@@ -268,7 +270,8 @@ proc eachSpsPart(path: string; f: File; size: int64; ctx: JobContext; p: var Pro
     going = c.take(ctx, p)
     c = Chunk()
   # Then each next chunk parsed by one of the workers while those before it
-  # are handed on, in order: chunk i by worker i mod ParseAtOnce.
+  # are handed on, in order: chunk i by worker i mod `parsers`.
+  let parsers = clamp(countProcessors() - 1, 1, ParseAtOnce)
   var workers: array[ParseAtOnce, Parser]
   var threads: array[ParseAtOnce, Thread[ptr Parser]]
   var started = 0
@@ -289,12 +292,12 @@ proc eachSpsPart(path: string; f: File; size: int64; ctx: JobContext; p: var Pro
           w.state = psParse
           w.cond.signal()
         inc given
-    while started < ParseAtOnce and going and workers[started].give():
+    while started < parsers and going and workers[started].give():
       createThread(threads[started], parse, addr workers[started])
       inc started
     var taken = 0
     while going and taken < given:
-      let k = taken mod ParseAtOnce
+      let k = taken mod parsers
       template w: untyped = workers[k]
       withLock w.lock:
         while w.state != psParsed: w.cond.wait(w.lock)

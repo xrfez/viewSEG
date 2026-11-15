@@ -242,10 +242,10 @@ proc writeBigSurvey*(dir: string; b: BigSurvey): BigSurveyFiles =
   moveFile(result.x & ".part", result.x)
 
 func spreadShots*(b: BigSurvey; n: int): seq[(int, int)] =
-  ## `n` shots (source line, source) spread over the survey.
+  ## `n` shots (source line, source) spread over the survey, from its
+  ## south-west to its north-east.
   for s in 0 ..< n:
-    let at = (s * 2 + 1) * b.sources div (2 * n)
-    result.add (at div b.sPoints, at mod b.sPoints)
+    result.add ((2 * s + 1) * b.sLines div (2 * n), (2 * s + 1) * b.sPoints div (2 * n))
 
 proc writeBigSegy*(dir: string; b: BigSurvey; shots = 4): string =
   ## A SEG-Y file of `shots` of `b`'s shots (`spreadShots`), a trace per
