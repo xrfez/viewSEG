@@ -19,7 +19,7 @@
 ## decides when (`logTo`, `keepSettingsIn`, `persist`).
 
 import std/[algorithm, os, times]
-import log, nif, settings, settingsnif
+import filesystem, log, nif, settings, settingsnif
 
 export settingsnif
 
@@ -64,7 +64,7 @@ proc backupPath*(path: string; at = now(); taken: openArray[string] = []): strin
   let stem = path & "." & at.format("yyyyMMdd'-'HHmmss")
   result = stem & BackupSuffix
   var n = 2
-  while fileExists(result) or result in taken:
+  while fs.fileExists(result) or result in taken:
     result = stem & "-" & $n & BackupSuffix
     inc n
 
@@ -73,7 +73,7 @@ proc pruneBackups*(path: string; keep = KeptBackups) =
   ## that cannot be removed are left.
   var names: seq[string]
   let prefix = path.extractFilename & "."
-  for kind, f in walkDir(path.parentDir):
+  for kind, f in fs.walkDir(path.parentDir):
     let name = f.extractFilename
     if kind == pcFile and name.len > prefix.len + BackupSuffix.len and
         name[0 ..< prefix.len] == prefix and name[^BackupSuffix.len .. ^1] == BackupSuffix:
@@ -81,7 +81,7 @@ proc pruneBackups*(path: string; keep = KeptBackups) =
   names.sort() # by name: by time
   for i in 0 ..< names.len - keep:
     try:
-      removeFile(names[i])
+      fs.removeFile(names[i])
     except OSError:
       discard
 
@@ -90,11 +90,11 @@ proc readDocument*(path: string; text: var string): string =
   ## why not, in plain words. One larger than `MaxNifBytes` is not read.
   result = ""
   try:
-    let size = getFileSize(path)
+    let size = fs.getFileSize(path)
     if size > MaxNifBytes:
       result = "it is larger than " & $(MaxNifBytes shr 20) & " MB"
     else:
-      text = readFile(path)
+      text = fs.readFile(path)
   except IOError, OSError:
     result = getCurrentExceptionMsg()
     if result.len == 0: result = "it cannot be read"
@@ -114,7 +114,7 @@ proc loadSettings*(file: string; site = ""): LoadedSettings =
   ## that is not there: the built-in defaults), as the module documentation
   ## says. Never raises: what went wrong is in `notes`.
   result = LoadedSettings(saveable: true)
-  if site.len > 0 and fileExists(site):
+  if site.len > 0 and fs.fileExists(site):
     var text = ""
     let why = readDocument(site, text)
     if why.len > 0:
@@ -129,7 +129,7 @@ proc loadSettings*(file: string; site = ""): LoadedSettings =
         result.notes.add (sevWarning, "The site's default settings could not be read (" &
           e.msg & "); the built-in defaults stand in for them.")
   result.settings = result.defaults
-  if not fileExists(file): return
+  if not fs.fileExists(file): return
   var text = ""
   var why = readDocument(file, text)
   var problems: seq[string]
@@ -141,7 +141,7 @@ proc loadSettings*(file: string; site = ""): LoadedSettings =
   if why.len > 0:
     let backup = backupPath(file)
     try:
-      moveFile(file, backup)
+      fs.moveFile(file, backup)
       result.rewrite = true
       result.notes.add (sevWarning, "The settings could not be read: " & why & ". The " &
         "file was moved to " & backup & ", and this run starts from the default settings.")
@@ -154,7 +154,7 @@ proc loadSettings*(file: string; site = ""): LoadedSettings =
     let backup = backupPath(file)
     result.rewrite = true
     try:
-      copyFile(file, backup)
+      fs.copyFile(file, backup)
       result.notes.add (sevWarning, "Some of the settings in " & file & " could not be " &
         "used; a copy of the file as it was is in " & backup & ":")
     except OSError, IOError:

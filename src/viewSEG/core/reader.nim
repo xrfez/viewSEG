@@ -59,7 +59,7 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
 import processSEG/gain/stats
-import edits, inbox, jobs, log, panels, sorting, threads, tiles, viewport, wiggle
+import edits, filesystem, inbox, jobs, log, panels, sorting, threads, tiles, viewport, wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
@@ -364,7 +364,7 @@ proc cutShort(rd: var Reader): bool =
     result = false
     if rd.src.size >= 0:
       try:
-        result = getFileInfo(rd.src.path).size < rd.src.size
+        result = fs.getFileInfo(rd.src.path).size < rd.src.size
       except OSError:
         result = false
     if result and not rd.toldShort:
@@ -493,6 +493,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       firstSample = window.a, workers = DecodeWorkers, quickFirst = true, uniform = true)
     var c: PrefetchChunk[float32]
     while pf.nextInto(c):
+      fs.mappedRead(rd.src.path) # (tests: the chunk's pages come late, or never)
       let b = rowBlock(c.samples)
       if keep and c.count * cols > 0: # as read, before anything changes them
         copyMem(addr rd.raw.samples[c.first * cols], b.rowPtr(0), c.count * cols *

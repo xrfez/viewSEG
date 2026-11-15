@@ -28,7 +28,7 @@
 import std/[os, strutils, times]
 import parseSEG
 import processSEG/qc/record
-import filejobs, filekinds, inbox, jobs, join, log, session, survey, threads
+import filejobs, filekinds, filesystem, inbox, jobs, join, log, session, survey, threads
 
 const
   SurveyChunk* = 4 * 1024 * 1024 ## bytes of an SPS file parsed at a time
@@ -88,10 +88,10 @@ func pointIndex(i: int): int16 {.inline.} =
 proc checkedOpen(path: string; f: var File): FileInfo =
   ## Opens regular file `path` to read; raises `IOError` for anything else
   ## (a named pipe is never opened: it would wait for a writer).
-  result = getFileInfo(path)
+  result = fs.getFileInfo(path)
   if result.kind notin {pcFile, pcLinkToFile} or result.isSpecial:
     raise newException(IOError, "it is not a regular file (a named pipe, a device)")
-  if not open(f, path, fmRead): raise newException(IOError, "it cannot be read")
+  if not fs.open(f, path, fmRead): raise newException(IOError, "it cannot be read")
 
 proc blankBinary(text: var string; card: int; bytes: var int): int =
   ## Blanks every line of `text` (every `card` bytes, for cards without line
@@ -137,7 +137,7 @@ proc eachSpsPart(path: string; f: File; size: int64; ctx: JobContext; p: var Pro
   var first = true
   var stopped = -1'i64
   while true:
-    let got = readBuffer(f, addr buf[0], SurveyChunk)
+    let got = fs.readBuffer(f, path, addr buf[0], SurveyChunk)
     read += got
     let eof = got < SurveyChunk
     var text = move carry
@@ -209,7 +209,7 @@ proc readWhole(path: string; ctx: JobContext; what: string): (FileInfo, string) 
         what & " of more than " & $(MaxP1Bytes div (1024 * 1024)) & " MiB are not read")
     var piece = newString(1024 * 1024)
     while true:
-      let got = readBuffer(f, addr piece[0], piece.len)
+      let got = fs.readBuffer(f, path, addr piece[0], piece.len)
       text.append piece.toOpenArray(0, got - 1)
       if text.len > MaxP1Bytes: raise newException(IOError, "it grew past " &
         $(MaxP1Bytes div (1024 * 1024)) & " MiB while it was read")
@@ -245,7 +245,7 @@ proc readSurveyFile*(path: string; ctx: JobContext; to: Poster): SurveyLayer =
   ## be read, `JobCancelledError` at a cancel. Worker-only.
   assertWorkerThread()
   var info: FileInfo
-  try: info = getFileInfo(path)
+  try: info = fs.getFileInfo(path)
   except OSError: raise newException(IOError, "there is no such file")
   if info.kind notin {pcFile, pcLinkToFile} or info.isSpecial:
     raise newException(IOError, "it is not a regular file (a named pipe, a device)")
@@ -393,7 +393,7 @@ proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFil
         # What it is, by its first bytes: the dialog's guess (by the name) may be wrong.
         var kind = jf.kind
         var info: FileInfo
-        try: info = getFileInfo(jf.path)
+        try: info = fs.getFileInfo(jf.path)
         except OSError: raise newException(IOError, "there is no file " & jf.path)
         if info.kind notin {pcFile, pcLinkToFile} or info.isSpecial:
           raise newException(IOError, name & " is not a regular file (a named pipe, a device)")

@@ -36,7 +36,7 @@
 ##   the end of the process, with its memory.
 
 import std/[locks, monotimes, os, sets, strutils, tables, times]
-import filejobs, filelist, inbox, jobs, threads
+import filejobs, filelist, filesystem, inbox, jobs, threads
 
 export filelist
 
@@ -114,7 +114,7 @@ proc see(w: var Watcher; path: string; listed: bool; news: var seq[WatchedFile])
   ## Looks at `path` once this turn and adds what is news about it to `news`.
   var info: FileInfo
   try:
-    info = getFileInfo(path)
+    info = fs.getFileInfo(path)
   except OSError as e:
     # Gone: taken for gone below, when the look is whole. Not to be looked at
     # now (its folder's permissions changed during the look): kept as it was.
@@ -170,7 +170,7 @@ proc look(w: var Watcher): seq[WatchedFile] =
       else:
         try:
           var n = 0
-          for kind, name in walkDir(p, relative = true, checkDir = true):
+          for kind, name in fs.walkDir(p, relative = true, checkDir = true):
             # `p` is normalized, so `p / name` is the path the scan listed.
             if kind in {pcFile, pcLinkToFile} and not name.startsWith("."):
               w.see(p / name, true, result)
@@ -203,7 +203,7 @@ proc take(w: var Watcher) =
       w.gen = w.p.gen
       w.paths = w.p.paths
       w.isDir.setLen 0
-      for p in w.paths: w.isDir.add dirExists(p)
+      for p in w.paths: w.isDir.add fs.dirExists(p)
       w.seen.clear()
       w.problem = ""
       for f in w.p.looked:

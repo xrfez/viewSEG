@@ -19,7 +19,7 @@
 
 import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
-import filelist, inbox, jobs, log, session, threads
+import filelist, filesystem, inbox, jobs, log, session, threads
 
 const
   IndexCacheExt* = ".pidx" ## the extension of an index cache file
@@ -50,17 +50,17 @@ proc pruneIndexCache*(dir: string; budget: int64; keep = ""): seq[string] =
   ## (`openWork` sets its modification time).
   var caches: seq[tuple[used: Time; size: int64; path: string]]
   var total = 0'i64
-  for path in walkFiles(dir / "*" & IndexCacheExt):
+  for path in fs.walkFiles(dir / "*" & IndexCacheExt):
     try:
-      let size = getFileSize(path)
-      caches.add (getLastModificationTime(path), size, path)
+      let size = fs.getFileSize(path)
+      caches.add (fs.getLastModificationTime(path), size, path)
       total += size
     except OSError:
       discard # gone meanwhile
   caches.sort(proc (a, b: typeof(caches[0])): int = cmp(a.used, b.used))
   for c in caches:
     if total <= budget: break
-    if c.path != keep and tryRemoveFile(c.path):
+    if c.path != keep and fs.tryRemoveFile(c.path):
       total -= c.size
       result.add c.path
 
@@ -75,9 +75,10 @@ proc openSession*(path: string; progress: Progress = nil; cache = ""): Session =
   assertWorkerThread()
   # Checked here too, for a plainer message, and because parseSEG 0.11 loses
   # a small allocation when it cannot open the file it is given.
-  if not fileExists(path):
+  if not fs.fileExists(path):
     raise newException(IOError, "there is no such file")
-  let info = getFileInfo(path)
+  let info = fs.getFileInfo(path)
+  fs.mappedRead(path) # the walk of its headers reads the map
   # parseSEG's record sources are objects with methods, which Nim cannot
   # prove GC-safe. Opening touches no global GC'd memory: parseSEG's viewer
   # guide opens files on a job thread, as here.
@@ -105,7 +106,7 @@ proc saveCache(s: Session; cache: string; budget: int64; to: Poster; job: JobId)
   ## the same; the log says why.
   let name = s.name
   try:
-    createDir(cache.parentDir)
+    fs.createDir(cache.parentDir)
     {.cast(gcsafe).}:
       s.file.saveIndex(cache)
     discard pruneIndexCache(cache.parentDir, budget, keep = cache)
@@ -126,7 +127,7 @@ proc openWork*(path: string; to: Poster; cache = "";
   ## latest" made, which shows the file only when it is complete), a file
   ## cut short gets no cache: it is still being written.
   result = proc (ctx: JobContext) {.gcsafe.} =
-    let cached = cache.len > 0 and fileExists(cache)
+    let cached = cache.len > 0 and fs.fileExists(cache)
     ctx.setPhase(if cached: "reading the index cache" else: "indexing")
     let progress: Progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
       ctx.progress(done, total)
@@ -135,7 +136,7 @@ proc openWork*(path: string; to: Poster; cache = "";
     if cache.len > 0 and s.file.kind != skUnknown:
       if s.file.fromCache:
         try:
-          setLastModificationTime(cache, getTime()) # used now: pruned last
+          fs.setLastModificationTime(cache, getTime()) # used now: pruned last
         except OSError:
           discard
       elif s.file.demuxPath.len == 0 and not (whole and s.file.cutShort):
@@ -162,14 +163,14 @@ proc sniff*(path: string; opened: var bool): FileKind =
   ## file (a named pipe, a socket, a device) is not opened at all: opening a
   ## named pipe waits until something writes to it, which may be never.
   opened = true
-  if not fileExists(path): return fkUnknown
+  if not fs.fileExists(path): return fkUnknown
   var head = newSeq[byte](SniffBytes)
   var f: File
-  if not open(f, path, fmRead):
+  if not fs.open(f, path, fmRead):
     opened = false
     return fkUnknown
   try:
-    head.setLen readBuffer(f, addr head[0], SniffBytes)
+    head.setLen fs.readBuffer(f, path, addr head[0], SniffBytes)
   except IOError:
     head.setLen 0
   finally:
@@ -188,8 +189,8 @@ proc listedNames(paths: openArray[string]): seq[string] =
   ## in natural order of their names. Raises `OSError` when a folder cannot
   ## be read.
   for p in paths:
-    if dirExists(p):
-      for kind, path in walkDir(p, checkDir = true):
+    if fs.dirExists(p):
+      for kind, path in fs.walkDir(p, checkDir = true):
         if kind in {pcFile, pcLinkToFile} and not path.extractFilename.startsWith("."):
           result.add path.normalizedPath
     elif p.len > 0:
@@ -218,9 +219,9 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
     var asked = paths
     if paths.len == 1:
       var first = Msg(job: ctx.id, kind: mkListed, listGen: gen)
-      if dirExists(paths[0]):
+      if fs.dirExists(paths[0]):
         first.listFolder = paths[0]
-      elif fileExists(paths[0]):
+      elif fs.fileExists(paths[0]):
         (first.listFolder, first.listChosen) = (paths[0].parentDir, paths[0])
         asked = @[first.listFolder]
       else:
@@ -234,10 +235,10 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
     for i, path in names:
       if not ctx.progress(i, names.len): raise newException(JobCancelledError, "cancelled")
       try:
-        let info = getFileInfo(path)
+        let info = fs.getFileInfo(path)
         if info.kind notin {pcFile, pcLinkToFile}:
           inc batch.unreadable
-        elif not fileExists(path): # a named pipe, a socket, a device: never opened
+        elif not fs.fileExists(path): # a named pipe, a socket, a device: never opened
           inc batch.others
         else:
           var opened: bool

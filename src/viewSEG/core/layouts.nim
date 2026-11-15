@@ -23,7 +23,7 @@
 ## - `<assets>/layouts/*.nif`: presets that ship with the program.
 
 import std/[algorithm, os, strutils]
-import log, nif, persist
+import filesystem, log, nif, persist
 
 export nif
 
@@ -147,7 +147,7 @@ proc listLayouts*(configDir: string; presetDirs: openArray[string]): seq[SavedLa
   ## of its name. Reads only the folders.
   var mine, shipped: seq[SavedLayout]
   proc scan(dir: string; preset: bool; into: var seq[SavedLayout]) =
-    for kind, f in walkDir(dir):
+    for kind, f in fs.walkDir(dir):
       let (_, stem, ext) = f.splitFile
       if kind in {pcFile, pcLinkToFile} and ext.toLowerAscii == LayoutExt and stem.len > 0:
         into.add SavedLayout(name: stem, path: f, preset: preset)
@@ -167,7 +167,7 @@ proc loadLayoutFile*(path: string): LoadedLayout =
   ## usable one; a file that cannot be read is moved aside as a backup and
   ## the notes say so. Never raises.
   result = LoadedLayout()
-  if not fileExists(path): return
+  if not fs.fileExists(path): return
   var text = ""
   var why = readDocument(path, text)
   var problems: seq[string]
@@ -180,7 +180,7 @@ proc loadLayoutFile*(path: string): LoadedLayout =
   if why.len > 0:
     let backup = backupPath(path)
     try:
-      moveFile(path, backup)
+      fs.moveFile(path, backup)
       result.notes.add (sevWarning, "The window layout could not be read: " & why &
         ". The file was moved to " & backup & ", and the windows start as they are by " &
         "default.")

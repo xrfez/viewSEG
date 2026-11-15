@@ -30,7 +30,7 @@
 ## destroying the `DiskIo`) does what is left, then ends the thread.
 
 import std/[algorithm, locks, os, strutils, times]
-import inbox, jobs, log, nif, threads
+import filesystem, inbox, jobs, log, nif, threads
 
 when not defined(windows):
   import std/posix
@@ -104,9 +104,9 @@ proc body(t: Task): string =
 proc replaceFile(w: var Writer; t: Task) =
   let tmp = t.path & "." & $getCurrentProcessId() & ".tmp"
   try:
-    createDir(t.path.parentDir)
+    fs.createDir(t.path.parentDir)
     var f: File
-    if not open(f, tmp, fmWrite):
+    if not fs.open(f, tmp, fmWrite):
       raise newException(IOError, "it cannot be created")
     try:
       f.write t.body
@@ -114,12 +114,12 @@ proc replaceFile(w: var Writer; t: Task) =
       syncToDisk(f)
     finally:
       f.close()
-    moveFile(tmp, t.path)
+    fs.moveFile(tmp, t.path)
     if t.done.len > 0: w.say(sevInfo, t.done)
   except IOError, OSError:
     let why = getCurrentExceptionMsg()
     try:
-      removeFile(tmp)
+      fs.removeFile(tmp)
     except OSError:
       discard
     w.warn("Could not save " & t.what & " in " & t.path & ": " & why)
@@ -136,8 +136,8 @@ proc appendTo(w: var Writer; t: Task) =
     if t.path == w.failed: return # said once already
     w.failed = ""
     try:
-      createDir(t.path.parentDir)
-      if not open(w.log, t.path, fmAppend):
+      fs.createDir(t.path.parentDir)
+      if not fs.open(w.log, t.path, fmAppend):
         raise newException(IOError, "it cannot be opened")
       w.logPath = t.path
     except IOError, OSError:
@@ -159,7 +159,7 @@ proc appendTo(w: var Writer; t: Task) =
 proc pruneDir(w: var Writer; t: Task) =
   var names: seq[string]
   try:
-    for kind, path in walkDir(t.path):
+    for kind, path in fs.walkDir(t.path):
       let name = path.extractFilename
       if kind == pcFile and name.startsWith(t.text) and name.endsWith(t.suffix) and
           path != t.spare:
@@ -169,20 +169,20 @@ proc pruneDir(w: var Writer; t: Task) =
   names.sort()
   for i in 0 ..< names.len - t.keep:
     try:
-      removeFile(names[i])
+      fs.removeFile(names[i])
     except OSError:
       w.warn("Could not remove the old file " & names[i] & ": " & getCurrentExceptionMsg())
 
 proc readFor(w: var Writer; t: Task) =
   var msg = Msg(job: NoJob, kind: mkRead, purpose: t.purpose, readPath: t.path)
   try:
-    let size = getFileSize(t.path)
-    if not fileExists(t.path): # a named pipe would hold this thread until written to
+    let size = fs.getFileSize(t.path)
+    if not fs.fileExists(t.path): # a named pipe would hold this thread until written to
       msg.readError = "it is not a regular file"
     elif size > t.limit:
       msg.readError = "it is larger than " & $(t.limit shr 20) & " MB"
     else:
-      msg.content = readFile(t.path)
+      msg.content = fs.readFile(t.path)
   except IOError, OSError:
     msg.readError = getCurrentExceptionMsg()
     if msg.readError.len == 0: msg.readError = "it cannot be read"
