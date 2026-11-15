@@ -41,11 +41,11 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.12.0: capabilities | names | processSEG 0.5.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 39 (22 in part) | 96 | 18 (14 in part) | 66 |
-| `internal` | 14 | 35 | 4 | 37 |
-| `planned` | 44 | 304 | 53 | 449 |
+| `built` | 39 (22 in part) | 96 | 20 (15 in part) | 78 |
+| `internal` | 14 | 35 | 4 | 39 |
+| `planned` | 44 | 304 | 51 | 437 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 19 | 351 | 6 | 59 |
+| `not applicable` | 19 | 351 | 6 | 57 |
 | all | 118 | 796 | 82 | 616 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
@@ -267,8 +267,8 @@ name, so these are building blocks for code that works on raw headers.
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Real FFT, batched | `initFftPlan`, `forward`, `inverse`, `forwardLanes`, `inverseLanes`, `nextFastLen`, `gatherLanes`, `scatterLanes`, `FftPlan` (`len`, `bins`, `workspaceSize`), `isFastLen`, `fftLanes` | Inside the spectra and filters; the f-k window takes an f-k transform of processSEG's own | not applicable (the spectrum, filter and f-k plans run them) |
-| Averaged amplitude spectrum of a selection | `initSpectrumPlan`, `averageAmplitudeInto`, `toDbInto`, `binHz`, `SpectrumPlan` (`bins`, `windowLen`, `nfft`, `dtMs`, `workspaceSize`), `DbReference` | Spectrum panel, raw and processed | planned |
-| Amplitude and phase of one trace | `amplitudeInto`, `amplitudePhaseInto` | Compare pilots: phase difference; phase tab of the spectrum panel | planned |
+| Averaged amplitude spectrum of a selection | `initSpectrumPlan`, `averageAmplitudeInto`, `toDbInto`, `binHz`, `SpectrumPlan` (`bins`, `windowLen`, `nfft`, `dtMs`, `workspaceSize`), `DbReference` | From the plot's menu, "FFT in a new window" (`F`): the spectrum of the trace under the pointer or of the selection (averaged), each in a window of its own; and the live Spectrum panel (the traces in view or selected), raw and through the plot's filters, in dB (`toDbInto` against one unit, moved to the larger peak, so the curves compare) or linear; killed traces left out | built |
+| Amplitude and phase of one trace | `amplitudeInto`, `amplitudePhaseInto` | The spectrum of one trace: its phase under its amplitude (Phase, `amplitudeInto`); compare pilots: phase difference | built (`amplitudeInto`: a one-trace spectrum's phase); planned (`amplitudePhaseInto`, the pilots' comparison) |
 
 ### Filters
 

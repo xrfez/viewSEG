@@ -822,7 +822,7 @@ fraction of that.
 ## The plot's menu: functions on the data
 
 Right-click the plot. The menu holds only what acts on the data; how the plot looks is in
-the strip (display modes, gain, sort, zoom, fit, back) and in the gear popover (colours,
+the strip (display modes, gain, sort, zoom, fit, back) and in the gear popover (colours, killed traces hidden or blank,
 trace overlap, display header, scales), and the display header has its own menu (a right
 click on it).
 
@@ -833,8 +833,8 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 | Item | Key | |
 |---|---|---|
 | Reverse polarity | `R` | that trace or the selection, 180 degrees out of phase; ticked while the trace under the pointer is reversed, and then it puts the polarity back |
-| Kill / Restore | `K` | drawn blank, left out of the processing and of the levels the gain computes over the record; "Restore" over a killed trace |
-| FFT in a new window | `F` | amplitude spectrum, raw and processed; several can be open (greyed out, "not available yet") |
+| Kill / Restore | `K` | drawn blank (or left out of the plot: the gear popover's "Hide killed traces"), left out of the processing, of the levels the gain computes over the record and of spectra; "Restore" over a killed trace |
+| FFT in a new window | `F` | that trace's amplitude spectrum, or the selection's averaged, raw and through the plot's filters, in a window of its own ([Spectra](#spectra)); several can be open |
 | Select its receiver on the map | `M` | the receiver the trace was recorded at (in a receiver gather, its source), or those of the selection, with their traces; greyed out where the trace has no place on the map |
 | Reverse polarity of all traces | | every trace of the window, ticked while on ([Polarity](#polarity)) |
 | Undo *what it was* | Ctrl + Z | takes back the file's last kill, restore, polarity change or clearing, as Edit > Undo |
@@ -850,7 +850,11 @@ with the overlays).
 ### Edits to traces
 
 Killing a trace and reversing its polarity are edits: lists kept per file, by the trace's
-index in the file, beside the file and never in it (the file is opened read-only).
+index in the file, beside the file and never in it (the file is opened read-only). A
+killed trace is drawn blank (the plot's background, no wiggle); with "Hide killed traces"
+(the gear popover, a setting) it is left out of the plot instead, and the traces beside it
+close up: the record is laid out again without it, at the same scales and place, and
+again with it when it is restored or the setting is turned off.
 "Reverse polarity of all traces" is an edit of the file too: each file shows its own, and
 another file opened in the same window is shown as it was left. Messages lists every
 change.
@@ -934,6 +938,69 @@ nothing read from the file; the picture before stays until the new one is drawn 
 Morgantown record, zoomed in on 40 traces, about 30 ms from the key under software
 OpenGL). Otherwise only the view's tiles are made again. A kill, or a restore, also has
 the record's level taken again, so that the gain leaves the killed trace out.
+
+## Spectra
+
+**FFT windows.** "FFT in a new window" (the plot's menu, or `F` over a trace) opens the
+amplitude spectrum of the trace under the pointer, or of the selection when that trace is
+in it, in a window of its own: titled by what it shows ("FFT: trace 37 · FFID 151 ·
+shot.sgd", "FFT 2: 12 traces · ..."), floating beside the middle of the main window the
+first time, dockable anywhere like every window. Several can be open; each is a snapshot
+of the traces it was opened on and of the plot's filters then, and keeps it while the
+plot moves on. Closing one (its ×) drops its work if it is still being computed. A
+window's number is the lowest free one, so a window opened again takes the place the
+layout kept for that number; a layout that names FFT windows not open loads without a
+word.
+
+**The live Spectrum panel** (Window > Spectrum; a tab behind the map in the first
+layout) shows the same for what the Seismic window shows: the selected traces of its
+file when there are some, else the traces in view (at most 4096, spread evenly over
+them), over the visible time (or the whole trace). It follows the plot as you pan, zoom,
+select, step to another record or file, kill a trace or change a filter, asking again
+only when what it is of changed; an answer older than the one shown is dropped, and while
+a pan goes on each newer answer is shown as it comes. **Freeze** keeps what it shows. It
+works only while it is on screen: hidden, behind another tab or collapsed it asks for
+nothing. A layout saved before the panel came keeps it hidden.
+
+**What a spectrum is.** processSEG's spectrum (`SpectrumPlan`): each trace's window is
+demeaned, tapered (a sin² ramp over 10 % at each end) and zero-padded to the next power
+of two; amplitudes are one-sided and corrected for the taper, so a sine of amplitude A
+on a bin reads A. Several traces are averaged over power (the RMS amplitude across them).
+The frequency axis runs from 0 Hz to Nyquist (500 / interval in ms). Left out, and
+counted in the window's line of words: killed traces, traces the file marks dead, traces
+that cannot be read or hold a sample that is not a number, and traces at another sample
+interval than the first. Auxiliary traces count as seismic ones do (a pilot's spectrum).
+
+**Raw and processed.** The raw curve is the samples as the file has them; the processed
+one the same samples through the plot's filters (Filters in the strip), run on whole
+traces before the window is cut, also when the plot is shown raw, so the two compare. In
+dB both are on one scale, 0 dB at the larger peak of the two (a filter's cut shows as
+the gap between them); linear, in the file's sample units. The frequency axis can be
+logarithmic (0 Hz is then left out). A spectrum of one trace has its phase too (Phase:
+degrees, from the window's first sample, drawn under the amplitude).
+
+**Time.** An FFT window is over the whole trace by default; "Visible time" takes the
+time the Seismic window showed when it was opened (and the whole trace again when
+unticked). The live panel is over the visible time by default. How a window shows its
+spectrum (dB or linear, the axis, the curves, the time, the phase) is kept: a new FFT
+window starts as the last one changed, and the live panel as it was left.
+
+**Reading it.** The pointer over the plot puts a line at the nearest frequency and a dot
+on each curve; the line under the plot reads the frequency and each curve's level there
+("24.4 Hz   raw -3.1 dB   processed -40.2 dB"). The wheel zooms about the pointer, a
+drag pans, a right drag zooms to a box, a double click shows everything again; no view
+goes past the data. A click on a curve's name in the legend hides it.
+
+**Off the screen's thread.** The spectra are computed by a reader of their own (`core/
+spectrumreader`), which reads only the traces it does not already hold (as decoded, up
+to 128 MiB: a pan reads the traces it brings into view; a filter, a time window or
+another window of the same traces reads nothing), and gives up a request between blocks
+of traces when a newer one of its window comes or the window closes.
+
+**The plot itself** (`view/curveplot`, drawn by `ui/imgui/curveplot`) is a plot of named
+curves over one axis, each in its colour with a legend, that can be drawn turned (the
+axis down from the top and the values across, as a signal beside a seismic trace): the
+vibrator analysis's plots (signal, spectrum, correlation, phase) are made with it.
 
 ## Empty and first-run state
 

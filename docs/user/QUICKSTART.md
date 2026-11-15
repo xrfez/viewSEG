@@ -235,6 +235,7 @@ point by default): right-click them, or their names at the left, to choose its f
 | Cancel a drag, else clear the selection | | Esc |
 | Kill or restore the trace under the pointer (the selection, if it is in it) | right-click: Kill / Restore | `K` |
 | Reverse its polarity, or put it back | right-click: Reverse polarity | `R` |
+| Its amplitude spectrum (the selection's, averaged, if it is in it) in a window of its own | right-click: FFT in a new window | `F` |
 | Undo the last kill, restore or polarity change | Edit > Undo (or right-click: Undo) | Ctrl+Z, in any window |
 | Redo what was undone | Edit > Redo (or right-click: Redo) | Ctrl+Shift+Z or Ctrl+Y, in any window |
 | See the traces without the filters, or filtered again | the strip's Raw toggle | `P` |
@@ -311,8 +312,12 @@ selection when that trace is selected. Then:
 - **Kill** (`K`): the trace is drawn blank (the plot's background, in every display mode)
   and left out of whatever the gain computes over the record (Float, Normalized for the
   whole record, the automatic level), so a noisy trace stops setting the brightness. Over
-  a killed trace the item reads **Restore**.
-- **FFT in a new window** is listed, greyed out: it is not available yet.
+  a killed trace the item reads **Restore**. To have killed traces left out of the plot
+  altogether (the traces beside them close up), tick **Hide killed traces** in the gear
+  popover.
+- **FFT in a new window** (`F`): the trace's amplitude spectrum (of the selection: their
+  average) from 0 Hz to Nyquist, raw and through the strip's filters, in a window of its
+  own (see "Spectra" below). Killed traces are left out.
 - **Reverse polarity of all traces** (below).
 - **Undo** (Ctrl+Z) takes back the last kill, restore, polarity change or clearing (it
   names it), and **Redo** (Ctrl+Shift+Z, Ctrl+Y) makes it again, as far back as you have
@@ -585,6 +590,29 @@ files with Add files...): 5519 source points and 6385 receiver points are on the
 the Morgantown record's 3954 seismic traces all match by their headers' stations; its
 headers' coordinates agree with the survey's to 0.1 ftUS (choose "replace those the
 headers give" to have the survey's).
+
+## Spectra
+
+**FFT in a new window** (right-click a trace, or `F` over it) opens its amplitude
+spectrum in a window named for what it shows ("FFT: trace 37 · FFID 151 · shot.sgd");
+over a selected trace, the selection's, averaged ("FFT 2: 12 traces ..."). Open as many
+as you like and dock them anywhere; each keeps what it was opened on while you move on.
+Two curves: **raw**, the samples as recorded, and **processed**, through the filters of
+the strip (a band-pass shows as the processed curve falling away outside its corners, a
+notch as a dip at its frequency). In dB both are on one scale (0 dB at the larger peak);
+**Linear** shows the amplitude itself (a sine of amplitude A reads A). **Log frequency**
+spreads the low frequencies out. **Visible time** takes the spectrum over the time the
+plot showed when the window opened, instead of the whole trace. For one trace, **Phase**
+draws its phase under its amplitude. Point at the plot: the line under it reads the
+frequency and each curve's level. The wheel zooms, a drag pans, a double click shows it
+all again. The window's line of words says how many traces were averaged and what was
+left out (killed, dead, unreadable).
+
+**Window > Spectrum** is the same, docked and live (a tab beside the map at first): the
+spectrum of the traces the Seismic window shows (of the selection, when you have one),
+over the time it shows, updated as you pan, zoom, select, change record or file, or move
+a filter's slider. **Freeze** keeps what it shows. It costs nothing while it is hidden
+or behind another tab.
 
 ## Headers
 

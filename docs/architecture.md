@@ -110,6 +110,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits, runs the layer's filters and the display pipeline on each chunk on its own `ProcessPool`, cuts the tile and posts it |
 | Agent server | `remote/server`, started only when agent control is turned on | Accepts MCP clients on the socket, reads and frames their messages, answers the handshake and the tool list itself, queues tool calls for the UI thread and writes the answers it is given; never reads or changes `AppState` |
 | Headers reader | `core/inspector`, started by `AppState` when the Headers window first has something on screen to read | Reads what the Headers window shows of the files' bytes: a SEG-D record's headers (`recordHeaders`, `copyBytes`), the chosen traces' header fields (`traceHeaders`) and samples (`readTraces`, then the edits, the plot's filters and the display pipeline when shown as displayed, its own `Workspace`), and posts them (`mkInspected`); newest request wins; a `stat` of each file first, and every read marked (`fs.mappedRead`): one stuck in a drive is left for a new one (Network drives, below) |
+| Spectrum reader | `core/spectrumreader`, started by `AppState` when a spectrum is first asked for | Reads the traces the spectrum windows (the FFT windows, the live Spectrum panel) are of, through a prefetcher of its own, keeps their samples as decoded (up to 128 MiB, of the file read last), and computes their spectra raw and through the plot's filters (processSEG's `SpectrumPlan`, a filter plan on whole traces); one request per window, the newest wins, one given up between blocks of traces when a newer comes or its window closes; posts `mkSpectrum`. A `stat` of the file first, each read marked (`fs.mappedRead`): one stuck in a drive is left for a new one, as the Headers reader is |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
 | Pool workers | processSEG: a `ProcessPool` per panel reader (half the cores, at most 4 workers), made by the reader the first time it processes and ended with it | The rows of the reader's `pool.apply` (the filters, the display pipeline). One pool per reader, not one for the program: a pool runs one job at a time, so panels would wait for each other, and a reader stuck in a drive that does not answer outlives the program's state (it is left to end on its own), so a shared pool could be destroyed under it. QC passes will get pools of their own (`pool.pickInto`, `pool.traceAmplitudeInto`) |
 
@@ -934,6 +935,37 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 | Prefetch | `seek`, which drops the old chunks; a worker drops a stale chunk within 8 traces |
 | `pool.apply` | Nothing: a call takes a few ms per panel. The panel thread checks `requestGen` between chunks |
 | A panel's tile | A newer note to its reader (between chunks); `AppState` drops a tile whose `request.gen` is not the panel's `requestGen` |
+| A spectrum | A newer request of its window, or the window closed (`cancel`), between blocks of traces; `AppState` drops an answer older than the one its window shows, or from before the window was opened (`SpectrumWindow.since`) |
+
+### Spectra
+
+The FFT windows and the live Spectrum panel (`core/spectra`: `SpectrumWindow`, kept by
+`AppState`, the live panel first with id 0) ask the spectrum reader for their spectra:
+an FFT window once, when it is opened (`ckSpectrum`: the traces, the plot's filters and
+visible time then) and again when its time window changes (`ckSpectrumDisplay`); the
+live panel after every command and every drained inbox (`followSpectrum`, as
+`followInspect` does for the Headers window), only while the frontend says it is on
+screen (`ckSpectrumPanel`) and not frozen, and only when what it is of changed: the file,
+the traces (the selected ones of the file shown, else those in view, at most 4096), the
+time in view, the filters' steps, the killed traces among them. Each request holds its
+file (`Jobs.hold`); the reader ends the hold. The reader keeps the decoded samples of the
+traces it read, whole, so a filter or a time window changed, or another window of the
+same traces, reads nothing from the file, and a pan reads only the traces it brings in
+(`Spectrum.read` counts them). Killed traces are left out before anything is read (and
+counted); dead, unreadable and NaN-holding traces are left out by processSEG's average
+(counted). The processed curve runs the layer's filters (`filterPipeline`, shown raw or
+not) on whole traces, then cuts the window, so a window inside a trace never sees the
+filters' edges. The answer (`Spectrum`: amplitudes per bin, raw and processed, and a
+one-trace spectrum's phase) is plain seqs, moved through the inbox. The frontend turns a
+window into a `CurvePlot` (`view/spectrumview`: dB on one reference for both curves, or
+linear) and draws it with `ui/imgui/curveplot`, a plot of named curves over one axis that
+can be drawn turned (`CurvePlot.along`), for the vibrator analysis's plots too.
+
+**Killed traces hidden** (`Settings.hideKilled`): the reader leaves them out of the
+positions as it applies the trace filter (`ReaderSource.hidden`); after every change,
+`followHidden` compares each panel's gather's killed traces with those its reader leaves
+out (`Panel.hidden`) and shows the gather again when they differ (a kill, a restore, an
+undo, the setting), at the same scales and positions (`newSource`, `carried`).
 
 ### One mapping between data and screen
 
@@ -983,7 +1015,7 @@ ones in its next `ckView`; zoomed in, nothing new is read.
 | `traceFieldColumnInto`, then `sortOrder` (a sorted view) | job | A `seq[int]` selection |
 | `rowsOf(list)` keys, then `sortOrder` (a panel's order, `core/sorting`) | panel reader, while it holds the file | Positions: a `seq[int]` of trace numbers |
 | `pool.pickInto`, `fitShot`, `traceAmplitudeInto`, `recordAmplitude`, `windowSnrInto`, `recordCompleteness`, `addFold`, `preplotFold` | job | The caller's seqs; a `FoldMap` (moved, never copied) |
-| `initSpectrumPlan`, `averageAmplitudeInto` | panel or job | The caller's `amp` |
+| `initSpectrumPlan`, `averageAmplitudeInto`, `amplitudeInto`, `toDbInto` | spectrum reader (`toDbInto` on the UI thread, per frame, over a window's bins) | The caller's `amp`, `phase`, `db` |
 | `bruteStack(f, T, binning, velocity, opts, progress)` | job (blocks) | A `StackResult`, moved to the UI through the inbox |
 | `writeHeaderPatch`; `openEditor(move f)`, `release(move ed)` | job (the editor: exclusive) | A patch file; the editor owns the file until `release` |
 
