@@ -415,14 +415,27 @@ func sampleText*(x: float32): string =
   ## A sample in its shortest form.
   $x
 
+const MaxCopiedValues* = 200_000
+  ## samples a copy of the Data tab's table takes at most: the text (about
+  ## 3 MB) is made on the UI thread, in the frame of the click, in about
+  ## 20 ms; a copy of more traces than that takes their first rows
+
+func copiedRows*(rows, columns: int): int =
+  ## The rows a copy of the Data tab's table of `rows` rows takes, with
+  ## `columns` columns of samples: all of them, unless that would be more
+  ## than `MaxCopiedValues` samples.
+  min(rows, max(1, MaxCopiedValues div max(columns, 1)))
+
 func dataText*(traces: openArray[TraceDetail]; column = -1): string =
   ## The Data tab's table as text, a line per sample, tab-separated: the
   ## index, the time in ms and each trace's sample (only trace `column`'s
   ## when it is not -1), as Copy puts it on the clipboard; first a line
-  ## naming the columns, as the table's header row does.
-  var n = 0
-  for d in traces: n = max(n, d.samples.len)
+  ## naming the columns, as the table's header row does. At most
+  ## `MaxCopiedValues` samples: the first rows (`copiedRows`).
   if traces.len == 0: return
+  var rows = 0
+  for d in traces: rows = max(rows, d.samples.len)
+  let n = copiedRows(rows, if column >= 0: 1 else: traces.len)
   let withFile = traces.manyFiles
   result = "Index\tTime (ms)"
   for c, d in traces:

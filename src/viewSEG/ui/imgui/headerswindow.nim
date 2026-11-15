@@ -506,6 +506,14 @@ proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; ma
     ui.tables[id] = CachedTable(key: key, table: traceTable(answer.traces))
   ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
 
+func cutWords(rows, columns: int): string =
+  ## What a copy of the Data tab's `rows` rows of `columns` columns of
+  ## samples leaves out, said in its menu item: "" when it takes them all.
+  let n = copiedRows(rows, columns)
+  if n >= rows: ""
+  else: " (its first " & grouped(n) & " of " & grouped(rows) & " rows: " &
+    grouped(MaxCopiedValues) & " samples at most)"
+
 proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerInPlot: bool;
     fonts: Fonts; t: Theme; marks: var Marks; output: var HeadersOutput) =
   ## Trace, Data: the traces' samples, a row per sample: its index, its time
@@ -584,16 +592,20 @@ proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerIn
               discard igSelectable_Bool((v & "##s").cstring, false, 0, ImVec2_c(x: 0, y: 0))
               if i < 64: marks.mark("headers.data " & $i & " " & $c)
               if igBeginPopupContextItem("##sample", ImGui_PopupFlags_MouseButtonRight.cint):
+                marks.markWindow("headers.data menu")
                 if igMenuItem_Bool("Copy", "Ctrl+C", false, true): igSetClipboardText(v.cstring)
-                if igMenuItem_Bool(("Copy the column of " & traceLabel(d, withFile)).cstring, nil,
+                if igMenuItem_Bool(("Copy the column of " & traceLabel(d, withFile) &
+                    cutWords(n, 1)).cstring, nil, false, true):
+                  var all: seq[TraceDetail]
+                  for kk in traces: all.add answer.traces[kk]
+                  igSetClipboardText(dataText(all, c).cstring)
+                marks.mark("headers.data copy column")
+                if igMenuItem_Bool(("Copy the table" & cutWords(n, traces.len)).cstring, nil,
                     false, true):
-                  var only: seq[TraceDetail]
-                  for kk in traces: only.add answer.traces[kk]
-                  igSetClipboardText(dataText(only, c).cstring)
-                if igMenuItem_Bool("Copy the table", nil, false, true):
                   var all: seq[TraceDetail]
                   for kk in traces: all.add answer.traces[kk]
                   igSetClipboardText(dataText(all).cstring)
+                marks.mark("headers.data copy table")
                 igEndPopup()
               if igIsItemFocused() and igGetIO_Nil().KeyCtrl and
                   igIsKeyPressed_Bool(ImGui_Key_C, false):

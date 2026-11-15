@@ -28,9 +28,10 @@
 ## (`row.joined[c] = true`), "@[true, true]"; with the trace table's
 ## marks of differing values cleared (`r.differs = false` after
 ## `fieldTable` in `traceTable`), "the channel sets that differ are not
-## marked".
+## marked". With `dataText` taking every row (`copiedRows` not asked),
+## `copiesAreBounded` found "50001 lines".
 
-import std/[intsets, os, strutils]
+import std/[intsets, monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/[fielddocs, inspector, state]
 import viewSEG/view/headerviews
@@ -458,6 +459,26 @@ block copiedTablesSayTheirColumns:
   doAssert tableText(table) == "Description\t4\t8\nTrace header\nChannel\t4\t8\n",
     tableText(table)
   doAssert tableText(table, 1) == "Description\t8\nTrace header\nChannel\t8\n"
+
+block copiesAreBounded:
+  # A copy of the Data tab is made on the UI thread, in the frame of the
+  # click: it takes at most `MaxCopiedValues` samples, the first rows of a
+  # longer table (32 traces of a million samples were 400 MB of text).
+  var many: seq[TraceDetail]
+  for k in 0 ..< MaxInspected:
+    many.add TraceDetail(trace: k, file: "a.sgy", dtMs: 1, samples: newSeq[float32](50_000))
+  let t0 = getMonoTime()
+  let text = dataText(many)
+  let took = getMonoTime() - t0
+  let rows = MaxCopiedValues div MaxInspected
+  doAssert text.countLines - 1 == rows + 1, $(text.countLines - 1) & " lines" # and the names
+  doAssert copiedRows(50_000, MaxInspected) == rows and copiedRows(10, MaxInspected) == 10
+  doAssert dataText(many, 3).countLines - 1 == 50_000 + 1 # a column: all of it
+  many[3].samples.setLen 300_000
+  doAssert dataText(many, 3).countLines - 1 == MaxCopiedValues + 1
+  doAssert copiedRows(3, 1) == 3 and copiedRows(0, 0) == 0
+  echo "theaders: a copy of ", MaxCopiedValues, " samples: ", text.len div 1000, " kB in ",
+    took.inMilliseconds, " ms"
 
 block bytesPastFourGiB:
   # A block's offsets past 4 GiB (a later record of a large SEG-D file, a

@@ -592,7 +592,8 @@ The header tables list each field's **Description** and **Bytes** (in its block,
 the standards number them); right-click a table's header row to show its **Name** (as
 parseSEG and header patches name it, `trace.sourceX`) or its file **Offset**, or to hide
 one. Right-click a value to copy it, its column or the whole table (Ctrl+C copies the value
-with the keyboard's focus on it); right-click a Summary line to copy it or the whole
+with the keyboard's focus on it; a copy of the Data tab takes 200 000 samples at most: of a
+longer table its first rows, as the menu item says); right-click a Summary line to copy it or the whole
 summary. The tab shown, the toggles and the columns are remembered. Headers and samples
 are read in the background, only for the tab on screen, so the window never holds up the
 rest; the file is never written (changing header values will be a separate, explicit
