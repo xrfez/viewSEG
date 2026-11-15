@@ -364,28 +364,43 @@ proc spsHeadUnit(lines: openArray[string]): HeadUnit =
 
 func p1HeadUnit(lines: openArray[string]): HeadUnit =
   ## A UKOOA P1/90 file's grid units: its H2000 record (a unit code, the
-  ## unit's name and its factor to metres, from column 33).
+  ## unit's name and its factor to metres, from column 33; the code may be
+  ## written against the name, "1METRES", and the factor left out).
   for line in lines:
     if line.startsWith("H2000") and line.len > 32:
-      var names: seq[string]
+      var names: seq[string] = @[]
       var metres = NaN
-      for raw in line[32 .. ^1].splitWhitespace:
+      let words = line[32 .. ^1].splitWhitespace
+      for i, raw in words:
         var w = raw
-        if names.len == 0 and metres.isNaN:
-          var k = 0
-          while k < w.len and w[k] in Digits: inc k
-          if k > 0 and k < w.len: w = w[k .. ^1] # "1METRES": the code, then the name
-        var v = NaN
-        try: v = parseFloat(w)
-        except ValueError: discard
-        if v.isNaN: names.add w
-        elif v > 0 and v < Inf: metres = v
+        var k = 0
+        while k < w.len and w[k] in Digits: inc k
+        if i == 0 and k > 0:
+          w = w[k .. ^1] # the code: "1", or "1METRES" the code and the name
+        if w.len > 0:
+          var v = NaN
+          try: v = parseFloat(w)
+          except ValueError: discard
+          if v.isNaN: names.add w
+          elif v > 0 and v < Inf: metres = v
       let g = GridUnit(name: names.join(" "), metres: metres)
-      var said: seq[string]
+      var said: seq[string] = @[]
       if g.name.len > 0: said.add "\"" & g.name & "\""
       if g.metres > 0: said.add $g.metres & " m a unit"
       return HeadUnit(unit: unitOf(g), said: said.join(", ") & " (H2000)")
     if line.len > 0 and line[0] != 'H': return
+
+proc p111HeadUnit(lines: openArray[string]): HeadUnit =
+  ## An OGP P1/11 file's grid units: the unit of length its projection's
+  ## parameters are given in (HC,1,5,2 records, read by parseSEG's
+  ## `parseCrsText`).
+  var text = ""
+  for line in lines:
+    if line.startsWith("HC,"): text.add line & "\n"
+  var unit = ""
+  try: unit = lengthUnitOf(parseCrsText(text))
+  except CatchableError: discard # (a header that says nothing)
+  if unit.len > 0: result = HeadUnit(unit: unitNamed(unit), said: "\"" & unit & "\" (HC,1,5,2)")
 
 type CsvColumn = enum
   ccKind, ccLine, ccPoint, ccIndex, ccX, ccY, ccZ
@@ -448,11 +463,16 @@ proc headUnitOf*(head: string; kind: JoinFileKind; whole = false): HeadUnit =
   ## What the start of a survey file, `head` (its first `HeadBytes` or
   ## fewer), says of its coordinates' unit: SPS H20 and H201 (H201's factor
   ## names the foot: 0.3048006096 is the US survey foot, 0.3048 the
-  ## international), SEG P1's H2000, or a CSV table's comment or first row.
+  ## international), SEG P1's H2000 (OGP P1/11: its projection parameters'
+  ## unit), or a CSV table's comment or first row.
   ## `whole`: `head` is the whole file, so its last line is read even
   ## without a line end. Never raises: a file that says nothing gives
   ## `suNotGiven`.
   let lines = headLines(head, whole)
+  var ogp = false # an OGP P1/11 file, whatever its name made it
+  for line in lines:
+    if line.startsWith("HC,1,"): ogp = true
+  if ogp and kind != jkCsv: return p111HeadUnit(lines)
   case kind
   of jkSps: spsHeadUnit(lines)
   of jkP1: p1HeadUnit(lines)

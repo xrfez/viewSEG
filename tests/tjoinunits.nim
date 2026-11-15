@@ -11,7 +11,8 @@
 ##   80-byte cards without line ends; a last line without a line end when
 ##   the whole file was read), a SEG P1 file's H2000, a CSV table's
 ##   comment or its first row's x or y column ("x (m)", which the table is
-##   then read with; not an elevation's unit);
+##   then read with; not an elevation's unit); P1's H2000 with or without
+##   a factor, and OGP P1/11's projection parameters' unit;
 ## - the survey's unit as its files say it, and the files that disagree
 ##   named;
 ## - the seismic file's unit: the survey's where its headers say nothing, or
@@ -28,7 +29,9 @@
 ##   window's (`importUnits`, an agent's import); after an import the units
 ##   confirmed for the file label it.
 ##
-## Seen to fail: with a CSV unit taken from any column, "an elevation's
+## Seen to fail: with a P1 unit code taken for the factor, "1 FEET: (unit:
+## metres, ...)"; with P1/11 not read, "P1/11: (unit: not given, ...)"; with
+## a CSV unit taken from any column, "an elevation's
 ## unit taken: (unit: metres, ...)"; with the last line without a line end left out of a whole
 ## file, "a last line without a line end: (unit: feet, ...)"; with the unit
 ## words matched whole, as first written,
@@ -123,6 +126,22 @@ block p1Headers:
   doAssert headUnitOf("H2000GRID UNITS                   1METRES                   1.0\n",
     jkP1).unit == suMetres
   doAssert headUnitOf("H0100SURVEY AREA                  X\n", jkP1).unit == suNotGiven
+  # The unit code apart from the name, and no factor: the name says.
+  let feet = headUnitOf("H2000GRID UNITS                   1 FEET\n", jkP1)
+  doAssert feet.unit == suFeet and feet.said == "\"FEET\" (H2000)", "1 FEET: " & $feet
+  doAssert headUnitOf("H2000GRID UNITS                   2 US SURVEY FEET\n", jkP1).unit ==
+    suUsFeet
+  # OGP P1/11: the unit its projection's grid parameters are given in.
+  let p111 = "HC,1,0,0,Reference Systems Summary,2,1,2,1\n" &
+    "HC,1,4,0,CRS Number/EPSG Code/Type/Name,1,32050,1,projected,NAD27 / West Virginia North\n" &
+    "HC,1,5,0,Map Projection,1,15301,SPCS27 West Virginia North zone\n" &
+    "HC,1,5,1,Projection Method,1,9802,Lambert Conic Conformal (2SP),6\n" &
+    "HC,1,5,2,Latitude of false origin,1,8821,38.5,3,degree\n" &
+    "HC,1,5,2,Easting at false origin,1,8826,2000000,2,US survey foot\n" &
+    "HC,1,5,2,Northing at false origin,1,8827,0,2,US survey foot\n"
+  let ogp = headUnitOf(p111, jkP1)
+  doAssert ogp.unit == suUsFeet, "P1/11: " & $ogp
+  doAssert headUnitOf(p111, jkSps).unit == suUsFeet # whatever its name made it
 
 block csvHeaders:
   doAssert headUnitOf("# units: US survey feet\nline,point,x,y\n1,1,10,20\n", jkCsv).unit ==
