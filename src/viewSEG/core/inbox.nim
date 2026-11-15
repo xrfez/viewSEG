@@ -185,6 +185,12 @@ type
       candidates*: seq[FileRecord]   ## the store's documents of that quick identity
       taken*: seq[string]            ## every document name of that quick identity
       memoryProblems*: seq[string]   ## documents that could not be read, in plain words
+      pending*: FileRecord
+        ## the file's pending document (`pendingName`): edits made while its
+        ## identity was not known; `pending.doc` "" for none
+      pendingFits*: bool
+        ## `pending` was made on the file as it is (its size and time): its
+        ## edits are the file's
     of mkHashed:
       hashedPath*: string            ## the file
       hashed*: FileIdentity          ## its identity, `fullKnown`

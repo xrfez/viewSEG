@@ -705,10 +705,14 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   disk thread a second after they change (`SaveDelay`) and at the quit (`saveMemory`),
   atomically (`replace` of the record: the document is made on the disk thread); a file
   that keeps nothing has its document removed
-  (`DiskIo.remove`). `AppState.knownDocs` holds what this run wrote, newer than the disk
+  (`DiskIo.remove`). Edits made before the identity is known are kept by the path
+  instead (`pendingName`: the path, size and modification time; `writePending`), taken
+  in when that file is next identified unchanged (`takePending`) and the pending
+  document removed after its own is written. `AppState.knownDocs` holds what this run wrote, newer than the disk
   until it is written. **The File memory window** reads every document on a job
-  (`listMemoryWork`: `memoryList`, with whether each file is gone, or its folder not
-  reached) and removes those the
+  (`listMemoryWork`: `memoryList`), then looks at where each file is, folder by folder
+  (`lookWork`: gone, its folder not reached, or "not answering" once a folder's look has
+  been silent `StallAfter`, the folders after it looked at by a new job) and removes those the
   user confirms (`ckForgetFiles`, each said in the log). **A file's list** for processing
   (`ckExportEdits`: CSV with each trace's record and channel from its keys, read on a job;
   or the NIF document) and back (`ckImportEdits`, read and taken apart on a job,

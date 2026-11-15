@@ -22,6 +22,15 @@
 ##  (allReversed true))
 ## ```
 ##
+## **Pending documents.** Edits made on a file whose identity cannot be
+## read yet (a drive that does not give its first and last 64 KiB) are
+## kept by the file's path instead, in `pending-<hash of the path>.nif`
+## (`pendingName`), the same document with the file's size and
+## modification time and no quick hash. When that file's identity is next
+## read, unchanged, they are taken into its own document and the pending
+## one goes; a file that changed since does not take them, and they are
+## said.
+##
 ## A document with a part that cannot be read (edited by hand) is not
 ## written again until its edits change, so as not to drop that part; when
 ## such a file is opened, the time is kept beside it instead, in
@@ -117,10 +126,23 @@ const SeenSuffix* = ".seen"
 func seenName*(doc: string): string {.inline.} = doc & SeenSuffix
   ## The side file of document `doc`.
 
+const PendingPrefix* = "pending-"
+
+func pendingName*(path: string): string =
+  ## The pending document of the file at `path`: its edits while its
+  ## identity is not known.
+  PendingPrefix & hex(xxh64(path)) & MemorySuffix
+
+func isPendingName*(name: string): bool =
+  ## Whether `name` can be a pending document of the store.
+  name.len == PendingPrefix.len + 16 + MemorySuffix.len and name.startsWith(PendingPrefix) and
+    name.endsWith(MemorySuffix) and
+    name[PendingPrefix.len ..< PendingPrefix.len + 16].allCharsInSet(HexDigits)
+
 func isStoreName*(name: string): bool =
-  ## Whether `name` is one of the store's own files (a document, or a
-  ## document's side file).
-  name.isDocName or (name.endsWith(SeenSuffix) and
+  ## Whether `name` is one of the store's own files (a document, a pending
+  ## one, or a document's side file).
+  name.isDocName or name.isPendingName or (name.endsWith(SeenSuffix) and
     name[0 ..< name.len - SeenSuffix.len].isDocName)
 
 func freeDocName*(id: FileIdentity; taken: openArray[string]): string =

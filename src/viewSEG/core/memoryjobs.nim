@@ -36,6 +36,17 @@ proc identifyWork*(path: string; store: Store; to: Poster): JobWork =
       identModified: modified)
     try:
       msg.candidates = store.recordsOf(id, msg.taken, msg.memoryProblems)
+      # edits made when its identity could not be read, kept by its path
+      let pending = store.docPath(pendingName(path))
+      if fs.fileExists(pending):
+        try:
+          var p: seq[string]
+          msg.pending = readMemoryFile(pending, p)
+          msg.pending.doc = pendingName(path)
+          msg.pendingFits = msg.pending.path == path and msg.pending.identity.size == id.size and
+            msg.pending.modified == modified
+        except NifError, IOError, OSError:
+          msg.memoryProblems.add pendingName(path) & ": " & getCurrentExceptionMsg()
     except OSError as e:
       msg.memoryProblems.add "the folder " & store.home & " cannot be read: " & e.msg
     clearCycleRoots()

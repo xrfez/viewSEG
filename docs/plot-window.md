@@ -877,8 +877,10 @@ written beside the program's settings (`<config>/files/`, one small NIF document
 file), a second after a change and at the quit, each whole or not at all (a temporary
 file renamed over it; one that a write cut short leaves is removed at the next start);
 the data file's bytes and modification time are never touched. A file whose drive does not answer opens as always; its edits
-come when its identity can be read, and edits you make before that are said to wait for
-it (quit before, and they are lost: Messages says so). When a hash of every byte says
+come when its identity can be read, and edits you make before that are kept by the file's
+path, size and modification time (`pending-<hash of the path>.nif`) until it is: quit
+before, and the next run that opens the file unchanged shows them and remembers them with
+its identity (a file changed since does not take them: Messages lists them). When a hash of every byte says
 that a file taken at once for one remembered was another, the remembered file's entry is
 put back as it was. An entry with parts that cannot be read (edited by hand) says so and
 brings back the rest, and is not written again until its edits change (so as not to drop

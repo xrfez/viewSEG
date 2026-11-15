@@ -23,7 +23,9 @@
 ## - a copy (a time of its own) edited before the hash of every byte comes
 ##   gets what is remembered of the file all the same, in one document;
 ## - edits made while the drive does not answer are said to wait for the
-##   file's identity, and said lost at a quit before it came;
+##   file's identity, kept by the file's path at a quit before it came, and
+##   back the next run (then remembered with its identity); kept so for a
+##   file that changed since, they are said and not applied;
 ## - a document that cannot be read is said and never written over;
 ## - a document with a part that cannot be read keeps the time its file was
 ##   opened beside it, and File memory lists that time;
@@ -47,7 +49,10 @@
 ## the other file's document as it was brought, "the other file's document
 ## keeps what was written of the changed copy"; with no word of edits that
 ## wait for the file's identity, "an edit that waits for the file's
-## identity is not said" and "the lost edits are not said at the quit";
+## identity is not said"; with no pending document written (as before),
+## "the edits kept by the path are not said at the quit"; with it not read
+## at the next identification,
+## "the edits made before the identity was known did not come back";
 ## with the names of documents that could not be read left out of those
 ## taken (`Remembered.taken`), "the document that could not be read was
 ## written over"; with no side file for a damaged document, "a file opened
@@ -290,11 +295,45 @@ withFixtures fx:
     releaseStep("reading its first and last bytes")
     doAssert waitUntil(hung() == 1)
     st.edit(teKilled, 1)
-    doAssert "once viewSEG has read its first and last bytes" in st.lastWarning,
-      "an edit that waits for the file's identity is not said: " & st.lastWarning
+    proc lastInfo(st: AppState): string =
+      for e in st.log:
+        if e.severity == sevInfo: result = e.text
+    doAssert "kept by its path until viewSEG has read its first and last bytes" in st.lastInfo,
+      "an edit that waits for the file's identity is not said: " & st.lastInfo
     st.shutdown(wait = initDuration(milliseconds = 200))
-    doAssert "are not remembered" in st.lastWarning, "the lost edits are not said at the quit"
+    doAssert "kept by its path: viewSEG could not read" in st.lastInfo,
+      "the edits kept by the path are not said at the quit: " & st.lastInfo
+    doAssert fileExists(config / StoreFolder / pendingName(b)), "no pending document"
     release(b)
+    # the next run, the file unchanged and its drive answering: the edits
+    # are back, and remembered with the file's identity, the pending
+    # document gone
+    st = start(config)
+    st.showFile(b)
+    doAssert st.settle(st.remembering(b).known and st.editsOf(0).has(teKilled, 1)),
+      "the edits made before the identity was known did not come back"
+    doAssert st.settle(st.remembering(b).confirmed and not st.remembering(b).looking)
+    doAssert st.editsOf(0).has(teKilled, 3) and st.editsOf(0).has(teKilled, 1),
+      "what was remembered of it before did not come beside them"
+    st.flushFiles()
+    doAssert not fileExists(config / StoreFolder / pendingName(b)), "the pending document stays"
+    doAssert "(killed \"2 4\")" in readFile(config / StoreFolder / st.remembering(b).doc),
+      readFile(config / StoreFolder / st.remembering(b).doc)
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + 1],
+      on: false) # as it was for the next blocks
+    st.shutdown()
+    # a pending document of a file that changed since: not applied, said
+    # with its edits, removed
+    writeFile(config / StoreFolder / pendingName(b), memoryDocument(FileRecord(
+      identity: FileIdentity(size: getFileSize(b) + 1), name: "renamed.sgy", path: b,
+      opened: getTime(), modified: kept[1], edits: EditLists(lists: [@[], @[4, 5, 6]]))))
+    st = start(config)
+    st.showFile(b)
+    doAssert st.settle("are not applied: it changed since" in st.lastWarning), st.lastWarning
+    doAssert "killed 5-7" in st.lastWarning and not st.editsOf(0).has(teKilled, 4)
+    st.flushFiles()
+    doAssert not fileExists(config / StoreFolder / pendingName(b))
+    st.shutdown()
   block damagedNotWrittenOver:
     # a document of the file's quick identity that cannot be read is said,
     # and a new one is written beside it, never over it

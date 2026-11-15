@@ -470,6 +470,13 @@ type
       ## `doc` was made in this run for edits made before the hash of every
       ## byte came (not one brought back): a document waiting for that hash
       ## may still be this file's
+    openModified: Time      ## the file's modification time as the session opened it
+    pendingRev: int
+      ## the edits' `keptRevision` its pending document (`pendingName`) was
+      ## written with, while its identity is not known; -1 for none
+    pending: bool
+      ## its pending document is on disk (or handed to the disk thread):
+      ## removed once its edits are written in its own document
     seenAside: bool
       ## `doc` has parts that cannot be read, so it is not written again:
       ## when the file was opened is in its side file (`seenName`), removed
@@ -840,6 +847,30 @@ proc hashFile(state: var AppState; i: int) =
       quick: r.identity.quick), r.modified, state.inbox.poster))
     state.memoryWork.add r.hashJob
 
+proc dropPending(state: var AppState; i: int) =
+  ## Removes `remembered[i]`'s pending document, if it has one.
+  template r: untyped = state.remembered[i]
+  if r.pending:
+    state.diskIo.remove(state.store.docPath(pendingName(r.path)),
+      "the edits of " & r.path.extractFilename & " kept by its path")
+    r.pending = false
+
+proc writePending(state: var AppState; i: int) =
+  ## Keeps the edits of `remembered[i]`'s file, whose identity is not known
+  ## yet, by its path, size and modification time (`pendingName`), so that
+  ## a quit before the identity comes loses none of them.
+  template r: untyped = state.remembered[i]
+  if r.path notin state.edits: return
+  template e: untyped = state.edits[r.path]
+  r.pendingRev = e.keptRevision
+  if e.kept.isEmpty: state.dropPending(i)
+  else:
+    state.diskIo.replace(state.store.docPath(pendingName(r.path)), FileRecord(
+      identity: FileIdentity(size: r.size), name: r.path.extractFilename, path: r.path,
+      opened: r.opened, modified: r.openModified, edits: e.kept),
+      "the edits of " & r.path.extractFilename & " kept by its path")
+    r.pending = true
+
 proc writeMemoryDoc(state: var AppState; i: int) =
   ## Hands `remembered[i]`'s document to the disk thread, or its removal
   ## when it keeps nothing.
@@ -854,6 +885,7 @@ proc writeMemoryDoc(state: var AppState; i: int) =
     if r.doc.len > 0:
       state.diskIo.remove(state.store.docPath(r.doc), "what is remembered about " & name)
       state.knownDocs.del r.doc
+    state.dropPending(i)
     return
   if r.doc.len == 0:
     var taken = r.waiting.mapIt(it.doc) & r.taken
@@ -864,6 +896,7 @@ proc writeMemoryDoc(state: var AppState; i: int) =
     rec.doc = r.doc
   state.knownDocs[r.doc] = rec
   state.diskIo.replace(state.store.docPath(r.doc), move rec, "what is remembered about " & name)
+  state.dropPending(i) # written after the document: the edits are never on neither
   if not r.identity.fullKnown: state.hashFile(i)
 
 proc saveMemory(state: var AppState; now: MonoTime; force: bool) =
@@ -873,7 +906,14 @@ proc saveMemory(state: var AppState; now: MonoTime; force: bool) =
   if state.store.isNowhere: return
   for i in 0 ..< state.remembered.len:
     template r: untyped = state.remembered[i]
-    if r.known and r.path in state.edits:
+    if not r.known and r.path in state.edits and
+        state.edits[r.path].keptRevision != r.pendingRev and
+        state.edits[r.path].keptRevision != r.savedRev:
+      if r.changedAt == MonoTime(): r.changedAt = now
+      if force or now - r.changedAt >= SaveDelay:
+        state.writePending(i)
+        r.changedAt = MonoTime()
+    elif r.known and r.path in state.edits:
       let rev = state.edits[r.path].keptRevision
       if rev != r.savedRev:
         if r.changedAt == MonoTime(): r.changedAt = now
@@ -940,11 +980,11 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
   state.saveMemory(getMonoTime(), force = true)
   for r in state.remembered:
-    if not r.known and not state.store.isNowhere and
-        r.path in state.edits and not state.edits[r.path].kept.isEmpty:
+    if not r.known and r.pending:
       let name = r.path.extractFilename
-      state.log.add(sevWarning, name, "The edits of " & name & " are not remembered: " &
-        "viewSEG could not read its first and last bytes before the quit.")
+      state.log.add(sevInfo, name, "The edits of " & name & " are kept by its path: viewSEG " &
+        "could not read its first and last bytes before the quit. Opened again, unchanged, " &
+        "it shows them, and they are remembered with it then.")
   state.writeLog()
   state.disk.askStop()
   let deadline = getMonoTime() + wait
@@ -2085,9 +2125,9 @@ proc sayNotYetRemembered(state: var AppState; i: int) =
   if not r.known and r.job != NoJob and not r.saidWaiting:
     r.saidWaiting = true
     let name = r.path.extractFilename
-    state.log.add(sevWarning, name, "The edits of " & name & " are remembered with it once " &
-      "viewSEG has read its first and last bytes, which its drive has not given yet; " &
-      "if you quit before, they are lost (File > Export > Trace edits keeps them in a file).")
+    state.log.add(sevInfo, name, "The edits of " & name & " are kept by its path until " &
+      "viewSEG has read its first and last bytes, which its drive has not given yet; then " &
+      "they are remembered with it, under any name. A quit before keeps them for it.")
 
 proc identify(state: var AppState; s: Session) =
   ## Looks up what is remembered about the file `s` opened, by its
@@ -2108,8 +2148,10 @@ proc identify(state: var AppState; s: Session) =
   # Another file under this name, or the first look: nothing is written
   # until its identity is known (the edits set aside stay with the file as
   # it was).
+  let pending = r.pending
   r = Remembered(path: s.path, size: s.size, opened: getTime(), hashJob: NoJob,
-    savedRev: state.editsAt(s.path).keptRevision)
+    savedRev: state.editsAt(s.path).keptRevision, openModified: s.modified, pendingRev: -1,
+    pending: pending)
   r.job = state.jobs.submit(JobSpec(title: "Look up what is remembered about " & s.name,
     lane: jlInteractive), identifyWork(s.path, state.store, state.inbox.poster))
   state.memoryWork.add r.job
@@ -2144,6 +2186,32 @@ proc applyRecord(state: var AppState; i: int; c: FileRecord) =
   state.log.add(sevInfo, name, said & ". The file itself holds none of it.")
   state.editsChanged(r.path)
 
+proc takePending(state: var AppState; i: int; p: FileRecord; fits: bool) =
+  ## The edits kept by `remembered[i]`'s path in a run that could not read
+  ## its identity: taken, as kept (`fits`: the file is as it was then), and
+  ## written in its own document, then the pending one removed; or, the
+  ## file changed since, said in full and removed.
+  template r: untyped = state.remembered[i]
+  let name = r.path.extractFilename
+  r.pending = true # removed once its edits are written (`writeMemoryDoc`), or now
+  if fits:
+    state.edits.mgetOrPut(r.path, FileEdits()).remembered(p.edits)
+    r.savedRev = -1 # its own document takes them
+    state.log.add(sevInfo, name, name & ": " & keptWords(p.edits) & ", as you left it " &
+      "when its drive did not give its first and last bytes (" &
+      p.opened.local.format("yyyy-MM-dd HH:mm") & "); remembered with it now.")
+    state.editsChanged(r.path)
+  else:
+    var lists: seq[string]
+    for edit in [teKilled, teReversed]:
+      if p.edits.lists[edit].len > 0: lists.add $edit & " " & runsText(p.edits.lists[edit])
+    if p.edits.allReversed: lists.add "all reversed"
+    state.log.add(sevWarning, name, "The edits of " & name & " made when its drive did not " &
+      "give its first and last bytes (" & p.opened.local.format("yyyy-MM-dd HH:mm") &
+      ") are not applied: it changed since (its size or time is not the same). They were: " &
+      lists.join("; ") & ".")
+    state.dropPending(i)
+
 proc takeIdentified(state: var AppState; m: sink Msg) =
   ## A file's quick identity and the documents of it: those that are about
   ## it (the same quick identity, size and modification time: a file moved
@@ -2170,6 +2238,7 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
     if at < 0 and c.modified == r.modified: at = j
   if at >= 0: state.applyRecord(i, cands[at])
   else: r.waiting = cands
+  if m.pending.doc.len > 0: state.takePending(i, m.pending, m.pendingFits)
   if cands.len > 0 or not state.editsAt(r.path).kept.isEmpty: state.hashFile(i)
 
 proc takeHashed(state: var AppState; m: sink Msg) =
