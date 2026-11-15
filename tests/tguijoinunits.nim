@@ -29,10 +29,10 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves joinunits-*.png there.
 
-import std/[math, monotimes, options, os, strutils]
+import std/[math, monotimes, options, os]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/[app, joindialog]
-import viewSEG/view/[maplayers, theme]
+import viewSEG/view/maplayers
 import utils/[fixtures, waiting]
 
 type
