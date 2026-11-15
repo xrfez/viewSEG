@@ -22,6 +22,9 @@
 ## - while it is connected the status bar shows "agent connected", and
 ##   Messages holds a line for each of its commands and for its first call
 ##   of each other tool; the file is not changed;
+## - with every trace hidden by the trace filter, `wait` settles, `state`
+##   says the plot has nothing to draw, and a screenshot of the plot is
+##   refused with what the window says, not the last picture drawn;
 ## - the sign comes first in the status bar: in view at 1280 pixels with
 ##   every readout field chosen;
 ## - the sign names an agent's last call: "agent: command show file" in the
@@ -42,7 +45,10 @@
 ## ... window: one of window, plot, ...". With the plot's image drawn time
 ## down after the agent turned it, "turned: the killed trace's row 776"
 ## (pixels of ink). With the sign not lingering (`lingering` never set),
-## "no lingering sign after the agent went".
+## "no lingering sign after the agent went". With `pictureOf` not knowing a
+## panel with no trace to draw, "not idle with every trace hidden: ... not
+## drawn yet"; with the plot's last image given whatever the window shows,
+## "a screenshot of the plot with every trace hidden".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -203,6 +209,20 @@ proc agent(s: Scenario) {.thread.} =
   r = c.call("screenshot", %*{"window": "headers", "maxSize": 4096})
   check(r, "screenshot of the Headers window")
   results.send(("headers shot", r["content"][1]["text"].getStr))
+  # every trace hidden by the trace filter: `wait` settles, `state` says
+  # there is nothing to draw, and the plot's screenshot says the window
+  # shows no picture instead of giving the last one drawn
+  check(c.call("command", %*{"kind": "trace filter", "filter": {"seismic": false,
+    "auxiliary": true}}), "hide every trace")
+  r = c.call("wait", %*{"timeout": 10})
+  check(r, "wait with every trace hidden")
+  if not parseJson(r.text)["idle"].getBool: fail("not idle with every trace hidden: " & r.text)
+  r = c.call("state", %*{"parts": ["panels"]})
+  check(r, "state with every trace hidden")
+  results.send(("hidden picture", parseJson(r.text)["panels"][0]["picture"].getStr))
+  r = c.call("screenshot", %*{"window": "plot", "maxSize": 4096})
+  if r == nil or not r.failed: fail("a screenshot of the plot with every trace hidden")
+  results.send(("hidden shot", r.text))
   c.close()
   results.send(("done", ""))
 
@@ -452,7 +472,7 @@ withFixtures fx:
     doAssert signSeen, "no sign of the agent in the status bar"
     # every command; the calls that change nothing once each (the rest so
     # soon after are counted, not written)
-    doAssert commands == 9, "Messages holds " & $commands & " of the agent's 9 commands"
+    doAssert commands == 10, "Messages holds " & $commands & " of the agent's 10 commands"
     doAssert lines >= 12, "Messages holds " & $lines & " lines of the agent's calls"
     var found: Table[string, string]
     for (k, v) in got: found[k] = v
@@ -517,6 +537,8 @@ withFixtures fx:
     let size = found["headers shot"].splitWhitespace # "headers: W x H pixels"
     doAssert size[0] == "headers:" and parseInt(size[1]) > 100 and parseInt(size[3]) > 100,
       found["headers shot"]
+    doAssert found["hidden picture"] == "nothing to draw", found["hidden picture"]
+    doAssert "hides every trace" in found["hidden shot"], found["hidden shot"]
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
   doAssert not fileExists(path & ".txt"), "the export was written"
   echo "tguiagent: ok"

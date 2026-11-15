@@ -1154,9 +1154,13 @@ proc shoot(ui: var Ui; target: string): Shot =
   var pixels: seq[Rgba]
   var w, h = 0
   if target == "plot":
-    (pixels, w, h) = ui.trace.plotImage
+    # The image is the plot's last: not what the window shows when it shows
+    # no plot now (every trace hidden, a gather being read, behind a tab).
+    if ui.trace.plotShown: (pixels, w, h) = ui.trace.plotImage
     if w <= 0 or h <= 0:
-      return Shot(error: "the Seismic window shows no picture of traces now")
+      let why = ui.trace.instead
+      return Shot(error: "the Seismic window shows no picture of traces now" &
+        (if why.len > 0: ": it says \"" & why & "\"" else: ""))
   else:
     var fw, fh: cint
     discard SDL_GetWindowSizeInPixels(ui.window, addr fw, addr fh)

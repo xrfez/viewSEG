@@ -337,6 +337,8 @@ proc pictureOf(state: AppState; k: int; fe: Frontend): string =
       state.shownFile(k) < 0:
     result = "nothing shown"
   elif not p.laidOut: result = "laying out"
+  elif p.layout.traces == 0 or p.layout.samples == 0:
+    result = "nothing to draw" # the trace filter hides every trace, or none has samples
   elif state.sorting(k): result = "sorting"
   elif not p.pending.isEmpty and (p.pending.gen != p.requestGen or tiles.len == 0 or
       tiles[^1].request != p.pending):
@@ -857,7 +859,7 @@ proc busy*(state: AppState; fe: Frontend): seq[string] =
     if w.waiting: result.add w.title & ": its spectrum"
   for k in 0 ..< state.panels.len:
     let picture = state.pictureOf(k, fe)
-    if picture notin ["complete", "nothing shown"]:
+    if picture notin ["complete", "nothing shown", "nothing to draw"]:
       result.add state.windowTitle(state.panels[k].id) & " (" & $state.panels[k].id &
         "): " & picture
 

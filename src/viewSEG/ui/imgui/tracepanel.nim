@@ -156,6 +156,8 @@ type
     renderer: PlotRenderer
     textures: seq[TileTextures] ## the GPU copies of the panel's tiles, in their order
     uploads: int ## tiles uploaded so far (for tests)
+    plotted: bool ## the plot was drawn last frame (else nothing, or `instead`)
+    instead: string ## what the window said last frame in place of the plot
     marks: int ## bumped whenever a tile's marks of selected traces change
     selected: seq[bool] ## scratch: a tile's selected rows
     lit: seq[bool] ## scratch: a tile's rows the map's pointer lights up
@@ -263,6 +265,14 @@ func cursorHeader*(tp: TracePanelUi): lent seq[string] {.inline.} = tp.cursorHea
 func menuTarget*(tp: TracePanelUi): lent string {.inline.} = tp.menuTarget
   ## What the plot's menu said it acts on when it last opened: "Trace 12",
   ## "3 selected traces", "No trace here" (for tests).
+
+func plotShown*(tp: TracePanelUi): bool {.inline.} = tp.plotted
+  ## Whether the plot was drawn last frame: else its image is of an earlier
+  ## one, not what the window shows (`instead` says what it showed).
+
+func instead*(tp: TracePanelUi): lent string {.inline.} = tp.instead
+  ## What the window said last frame in place of the plot; "" when it
+  ## showed the start screen or was not on screen.
 
 proc plotImage*(tp: TracePanelUi): (seq[Rgba], int, int) =
   ## The last plot image, row by row from the top, and its size (for tests;
@@ -2042,6 +2052,11 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
   const windowFlags = ImGui_WindowFlags_NoNavInputs.cint or
     ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoScrollbar.cint
   var plotted = false
+  tp.instead = ""
+  template say(text: string; colour: Rgba) =
+    let words = text
+    tp.instead = words
+    centredText(words, colour)
   if igBegin(title.cstring, nil, windowFlags):
     tp.focus.watch()
     # The window never scrolls as a whole: the strip wraps and the plot fits.
@@ -2063,27 +2078,27 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
       let again = if s < 0: st.reopening(panel) else: ("", false)
       let wait = st.waiting(k)
       if tp.gpuError.len > 0:
-        centredText("The plot cannot be drawn: " & tp.gpuError, t.roles[rlError])
+        say("The plot cannot be drawn: " & tp.gpuError, t.roles[rlError])
       elif wait.kind != wkNone and not p.laidOut:
         drawWaiting(wait, panel, t, marks, result, centred = true)
       elif again.path.len > 0:
         let changed = again.path.extractFilename
-        centredText(if again.waiting: changed & " is being changed by another program: it " &
+        say(if again.waiting: changed & " is being changed by another program: it " &
             "is shown again once it stops changing."
           else: "Opening " & changed & " again...", t.roles[rlTextDim])
       elif not p.laidOut:
-        centredText("Reading " & name & "...", t.roles[rlTextDim])
+        say("Reading " & name & "...", t.roles[rlTextDim])
       elif s >= 0 and st.sessions[s].gathers.len == 0:
-        centredText(name & " has no traces to show (see Messages).", t.roles[rlTextDim])
+        say(name & " has no traces to show (see Messages).", t.roles[rlTextDim])
       elif p.layout.traces == 0:
         let f = p.layers[0].filter
         let which = if f.seismic and not f.auxiliary: " (it shows seismic traces only)"
                     elif f.auxiliary and not f.seismic: " (it shows auxiliary traces only)"
                     else: ""
-        centredText("The trace filter hides every trace of this gather" & which & ".",
+        say("The trace filter hides every trace of this gather" & which & ".",
           t.roles[rlTextDim])
       elif p.layout.samples == 0:
-        centredText("The traces of this gather have no samples (see Messages).",
+        say("The traces of this gather have no samples (see Messages).",
           t.roles[rlTextDim])
       else:
         if wait.kind != wkNone:
@@ -2092,6 +2107,7 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
         plotted = true
   tp.focus.settle()
   igEnd()
+  tp.plotted = plotted
   # No plot this frame (a new gather or file is being read, the window is
   # hidden): the trace this plot hovered is not shown, so it is not hovered.
   if not plotted and tp.hovering:
