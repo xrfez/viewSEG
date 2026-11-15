@@ -136,6 +136,37 @@ puts the new survey on the map; the files open are matched to it again. An origi
 is gone is no problem: the copy stands for it, and the Project window says the original
 was not found.
 
+## What identifies a file
+
+A project never goes by a file's name. Files are often output, found wrong, and output
+again under the same name; what was done to the first output must not land on the
+second.
+
+- **A data file is known by its content.** Its size and a hash of its first and last
+  64 KiB are read when it opens (a few milliseconds); a hash of every byte follows in
+  the background. Its kills and reversals are kept under that identity (`files/`), so a
+  file renamed or moved keeps them, and another file under the same name does not get
+  them. The path is kept only as a hint of where the file was last seen. (The project's
+  filters and presets are the project's, not a file's.)
+- **Brought back at once, then checked.** When the size, the ends and the modification
+  time are those the edits were made on, the edits are shown at once, and the plot's
+  title says "(edits being checked)" until the hash of every byte agrees. If it does not
+  (the same size and ends, one trace in the middle re-processed), they are taken off
+  again and Messages says so. With another modification time, they wait for that hash
+  and are never shown on another file.
+- **An earlier output is said, kept and listed.** When the file at a path is not the
+  one the edits there were made on, Messages says it once ("line7.sgy is not the file
+  your edits were made on (output again since 2026-11-14 10:32: other contents): its
+  12 killed, 3 reversed are not applied."), and the Project window lists the earlier
+  output's edits under the file, with **Apply them to this file** (one step: Edit > Undo
+  takes it back; offered only when the two have the same number of traces, and the
+  button says why when they do not) and **Forget them**. Nothing is moved onto the new
+  file by itself.
+- **Survey originals too.** An original is "changed" only when its content is: its
+  size or the hash of its first and last 64 KiB differ, or, when those agree but its
+  time moved, the hash of every byte differs from its copy's. A file touched or copied
+  with its content as it was is as copied.
+
 ## What a project holds
 
 | | v1 | Later |
@@ -289,3 +320,7 @@ Each choice the draft left open, with the user's answer (2026-11-15).
 15. **v1 holds** the defaults of the draft and, added by the user, **the plot's filters
     and the windows' arrangement**: a project restores its own windows; without one the
     user's layout is as always, and closing the project brings it back.
+16. **A file is known by its content, never its name** (the user: "It is common for
+    files to be output then an issue discovered and re-output. we wouldnt want to save
+    anything for files like that. the discriminator for a file needs to be more than just
+    its name."): [What identifies a file](#what-identifies-a-file).

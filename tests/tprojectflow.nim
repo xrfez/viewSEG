@@ -5,8 +5,9 @@
 ##   it (its files copied in, `survey.bin` written), the plot's filters and a
 ##   display preset kept in it, the run ended;
 ## - opened again in a new run: the survey is on the map and the file opened
-##   is matched to it **without the import and without a survey file opened**
-##   (the file system's calls counted), its kill back, its filters and
+##   is matched to it **without the import and without a survey file read**
+##   (the file system's calls counted: no copy opened, each original opened
+##   once for its first and last 64 KiB, to see whether it changed), its kill back, its filters and
 ##   preset back; the data folder's names and times unchanged;
 ## - a second program opening it meanwhile has it read-only and writes
 ##   nothing into it;
@@ -20,23 +21,23 @@
 ##   never does.
 ##
 ## Seen to fail: with `followProject` not called after the drained inbox,
-## "the file was not matched to the project's survey"; with the restore
-## reading the copies instead of `survey.bin` (`keepSurvey` on open), "a
-## survey file was opened: 3"; with `sayOriginals` taking the changed file
-## unasked, "the change was taken without asking".
-
+## "the file was not matched to the project's survey"; with the survey made
+## again from the copies instead of `survey.bin` at open, "the survey is not
+## on the map: 0" (the copies' new store, not their layers).
 import std/[atomics, os, sequtils, strutils, times]
 import parseSEG
 import viewSEG/core/[filesystem, state]
 import utils/[fixtures, waiting]
 
-var surveyOpens: Atomic[int]
+var surveyOpens, originalOpens: Atomic[int]
 var watched: string ## the survey files' names opened are counted
+var copies: string ## the project's copies of them
 
 proc countOpens(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
   {.cast(gcsafe).}:
     if op == foOpen and watched.len > 0 and path.extractFilename in watched.split(';'):
-      surveyOpens.atomicInc
+      if path.startsWith(copies): surveyOpens.atomicInc
+      else: originalOpens.atomicInc
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); st.persist(); cond) and
@@ -109,7 +110,9 @@ withFixtures fx:
 
   block reopened:
     watched = "survey.s;survey.r;survey.x"
+    copies = job / "survey"
     surveyOpens.store(0)
+    originalOpens.store(0)
     setFsHook(countOpens)
     var st = start(config)
     st.apply Command(kind: ckOpenProject, projectPath: job / "project.nif")
@@ -126,6 +129,9 @@ withFixtures fx:
       k.rcvX != 0, "the keys are not joined as before: " & $k.rcvX
     doAssert st.settle(st.editsOf(0).has(teKilled, 3)), "the kill is not back"
     doAssert surveyOpens.load == 0, "a survey file was opened: " & $surveyOpens.load
+    # each original looked at once, for its first and last 64 KiB (has it changed?)
+    doAssert originalOpens.load == 3, "the originals were opened " & $originalOpens.load &
+      " times"
     echo "tprojectflow: restored in ", st.project.restoreMs, " ms; ", st.joinReport.words[0]
     # a second program meanwhile: read-only
     var other = start(config)

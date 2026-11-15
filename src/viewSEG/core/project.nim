@@ -50,6 +50,7 @@ type
     size*: int64          ## the original's size, when copied
     modified*: Time       ## its modification time then
     quick*: uint64        ## its first and last 64 KiB's hash then (`quickIdentity`)
+    full*: uint64         ## the hash of every byte of its copy (`fullHash`); 0 when not known
 
   StoreInfo* = object
     ## `survey.bin` as written: none while `bytes` is 0.

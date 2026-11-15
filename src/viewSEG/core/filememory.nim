@@ -80,6 +80,7 @@ type
     opened*: Time     ## when it was last opened
     modified*: Time   ## its modification time then: a file moved keeps it
     edits*: EditLists ## what is kept, by trace index from 0
+    traces*: int      ## the file's traces when its edits were made; 0 when not known
     doc*: string      ## the document's file name in the store; "" until it has one
     bytes*: int64     ## the document's size (a listing)
     gone*: bool
@@ -279,6 +280,10 @@ proc memoryDocument*(r: FileRecord): string =
   w.add int64(r.modified.nanosecond)
   w.close
   w.close
+  if r.traces > 0:
+    w.open "traces"
+    w.add int64(r.traces)
+    w.close
   for edit in [teKilled, teReversed]:
     if r.edits.lists[edit].len > 0:
       w.open $edit
@@ -406,6 +411,10 @@ proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string
               raise e
           of "identity": readIdentity(k, result.identity, problems)
           of "seen": readSeen(k, result, problems)
+          of "traces":
+            if k.kids.len == 1 and k.kids[0].kind == nkInt and k.kids[0].intVal in 1 .. high(int32):
+              result.traces = int(k.kids[0].intVal)
+            else: problems.add "traces: not a count of traces"
           of "killed", "reversed", "allReversed": discard # readEditsIn
           else: result.later.add k # a later version's: kept as it is
       readEditsIn(n, result, problems, upTo, outside)
@@ -619,6 +628,52 @@ proc recordsOf*(s: Store; id: FileIdentity; taken: var seq[string];
           for x in p:
             problems.add name & ": " & x & " (passed by; the rest is brought back)"
           result.add r
+      except NifError, IOError, OSError:
+        problems.add name & ": " & getCurrentExceptionMsg()
+
+proc seenPathOf(path: string): string =
+  ## The path a document of the store last saw its file at, from its first
+  ## bytes only ("" when they do not say): `(seen ... (path "..."))` comes
+  ## before the lists, so a large document is not read whole.
+  var f: File
+  if not fs.open(f, path): return ""
+  var head = newString(8192)
+  try:
+    head.setLen fs.readBuffer(f, path, addr head[0], head.len)
+  except IOError:
+    head.setLen 0
+  finally:
+    close(f)
+  let at = head.find("(path ")
+  if at < 0: return ""
+  let tail = head[at + 6 .. ^1]
+  let close = tail.find(")")
+  if close < 0: return ""
+  try:
+    for n in parseNif("(path " & tail[0 .. close], "head"):
+      if n.isTree("path") and n.kids.len == 1 and n.kids[0].kind == nkString:
+        return n.kids[0].text
+  except NifError:
+    discard
+  ""
+
+proc earlierOutputs*(s: Store; path: string; id: FileIdentity;
+    problems: var seq[string]): seq[FileRecord] =
+  ## The documents of the store whose file was last seen at `path` but is
+  ## not the file of identity `id` (another size or other ends: a file
+  ## output again under the same name): earlier outputs, whose edits are
+  ## not this file's. Each document's first bytes are read for its path;
+  ## only those of `path` are read whole.
+  result = @[]
+  if s.isNowhere or not fs.dirExists(s.home): return
+  for kind, doc in fs.walkDir(s.home):
+    let name = doc.extractFilename
+    if kind == pcFile and name.isDocName and not name.startsWith(id.key & "-") and
+        seenPathOf(doc) == path:
+      try:
+        var p: seq[string] = @[]
+        let r = readMemoryFile(doc, p)
+        if r.path == path and not sameData(r.identity, id): result.add r
       except NifError, IOError, OSError:
         problems.add name & ": " & getCurrentExceptionMsg()
 

@@ -89,6 +89,21 @@ proc listMemoryWork*(store: Store; to: Poster): JobWork =
     clearCycleRoots()
     to.post move msg
 
+proc earlierWork*(store: Store; path: string; id: FileIdentity; to: Poster): JobWork =
+  ## Posts `mkEarlier`: the documents of `store` whose file was last seen at
+  ## `path` but is another file than the one of identity `id` there now (an
+  ## earlier output of that name: `earlierOutputs`).
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "looking for earlier outputs of " & path.extractFilename
+    var msg = Msg(job: ctx.id, kind: mkEarlier, earlierPath: path, earlierOf: id)
+    try:
+      msg.earlier = store.earlierOutputs(path, id, msg.earlierProblems)
+    except OSError as e:
+      msg.earlierProblems.add "the folder " & store.home & " cannot be read: " & e.msg
+    ctx.checkCancelled()
+    clearCycleRoots()
+    to.post move msg
+
 type
   LookFolder* = tuple
     folder: string

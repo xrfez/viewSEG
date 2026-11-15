@@ -906,6 +906,15 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   as the settings are; `survey.bin` by its job, renamed only when whole. One program at a
   time writes a project: the first holds `.lock` (`fs.lockFile`) and names itself in
   `owner.nif`; a second opens it read-only (`ProjectState.readOnly`: nothing is written).
+  **Earlier outputs** (with a project or without): once an opened file is identified, a
+  job on the background lane (`earlierWork`) looks in the store for documents last seen
+  at its path that are not of its quick identity (`earlierOutputs`: each document's first
+  bytes give its path, only those read whole); those of the same quick identity whose
+  full hash disagrees are found when the hash comes (`takeHashed`). Each is said once
+  (`sayEarlier`), kept as it is, and listed with the file (`earlierOf`), for the Project
+  window's Apply (an import of its document, `ckImportEdits`, offered when its `traces`
+  match) and Forget. Edits brought back before the full hash are marked in the plot's
+  title (`editsChecking`).
 - **Layouts** (`core/layouts`): the toolkit's own layout text (Dear ImGui's `.ini` form,
   which `core` never reads) in a NIF document. The frontend reports the arrangement when
   Dear ImGui says it changed (`ckLayout`; `io.IniFilename` is nil, so ImGui writes no file

@@ -710,6 +710,11 @@ type
       ## the open files joined with survey files
     project: ProjectState
       ## the project open, if any (`dir` "" for none)
+    earlier: Table[string, seq[FileRecord]]
+      ## per open file (by path): what is remembered about earlier outputs of
+      ## its name, other files whose edits are not its own
+    earlierSaid: HashSet[string]
+      ## the documents of earlier outputs said in the log, once each
     userStore: string
       ## the program's own store of what is remembered (`rememberFilesIn`),
       ## its home without a project
@@ -1084,6 +1089,8 @@ func recordOf(state: AppState; i: int): FileRecord =
   let r = state.remembered[i]
   result = FileRecord(identity: r.identity, name: r.path.extractFilename, path: r.path,
     opened: r.opened, modified: r.modified, doc: r.doc)
+  for s in state.sessions:
+    if s.path == r.path: result.traces = s.len
   if state.keyOf(r.path) in state.edits: result.edits = state.edits[state.keyOf(r.path)].kept
   if r.doc in state.knownDocs: result.later = state.knownDocs[r.doc].later # a later version's
 
@@ -2953,6 +2960,9 @@ proc applyRecord(state: var AppState; i: int; c: FileRecord) =
   var said = name & ": " & keptWords(c.edits) & ", as you left " &
     (if c.name.len > 0 and c.name != name: "it as " & c.name else: "it")
   if c.opened != Time(): said.add " (" & c.opened.local.format("yyyy-MM-dd HH:mm") & ")"
+  if not r.hashed:
+    said.add "; being checked: its whole content is compared with the file's they were " &
+      "made on, and they are taken back if it differs"
   state.log.add(sevInfo, name, said & ". The file itself holds none of it.")
   state.editsChanged(r.path)
 
@@ -3053,6 +3063,46 @@ proc linkSame(state: var AppState; i: int) =
         state.hashFile(i)
         state.hashFile(j)
 
+proc sayEarlier(state: var AppState; path: string; c: FileRecord) =
+  ## An earlier output of `path`'s name, whose edits are not this file's:
+  ## listed with the file, and said once.
+  let name = path.extractFilename
+  var list = state.earlier.getOrDefault(path)
+  var known = false
+  for x in list:
+    if x.doc == c.doc: known = true
+  if not known:
+    list.add c
+    state.earlier[path] = list
+  if c.doc notin state.earlierSaid and not c.edits.isEmpty:
+    state.earlierSaid.incl c.doc
+    state.log.add(sevWarning, name, name & " is not the file your edits were made on " &
+      "(output again since " & (if c.opened != Time(): c.opened.local.format(
+      "yyyy-MM-dd HH:mm") else: "it was last opened") & ": other contents): its " &
+      keptWords(c.edits) & " are not applied. They are kept as an earlier output of " & name &
+      ", to look at, apply or forget (File > Project...).")
+
+func earlierOf*(state: AppState; path: string): seq[FileRecord] =
+  ## What is remembered about earlier outputs of the name of open file
+  ## `path`: other files, whose edits are not its own.
+  state.earlier.getOrDefault(path)
+
+func editsChecking*(state: AppState; path: string): bool =
+  ## Whether the edits brought back for open file `path` are being checked:
+  ## taken on its size, ends and time, waiting for the hash of every byte.
+  let i = state.rememberedAt(path)
+  i >= 0 and state.remembered[i].known and not state.remembered[i].hashed and
+    state.remembered[i].brought.doc.len > 0
+
+proc takeEarlier(state: var AppState; m: sink Msg) =
+  ## Earlier outputs of an open file's name (`earlierWork`; its end is quiet,
+  ## `endMemoryWork`).
+  let i = state.rememberedAt(m.earlierPath)
+  if i < 0 or not sameData(state.remembered[i].identity, m.earlierOf): return
+  for p in m.earlierProblems:
+    state.log.add(sevWarning, m.earlierPath.extractFilename, "What is remembered: " & p & ".")
+  for c in m.earlier: state.sayEarlier(m.earlierPath, c)
+
 proc takeIdentified(state: var AppState; m: sink Msg) =
   ## A file's quick identity and the documents of it: those that are about
   ## it (the same quick identity, size and modification time: a file moved
@@ -3082,6 +3132,12 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
   if m.pending.doc.len > 0: state.takePending(i, m.pending, m.pendingFits)
   if cands.len > 0 or not state.editsAt(r.path).kept.isEmpty: state.hashFile(i)
   state.linkSame(i)
+  # Other files once at this path (output again under the same name): their
+  # edits are not this file's; listed and said.
+  if not state.store.isNowhere:
+    let job = state.jobs.submit(JobSpec(title: "Look for earlier outputs of " & name,
+      lane: jlBackground), earlierWork(state.store, r.path, r.identity, state.inbox.poster))
+    state.memoryWork.add job
 
 proc takeHashed(state: var AppState; m: sink Msg) =
   ## The hash of every byte of a file: what was brought back is confirmed,
@@ -3109,9 +3165,14 @@ proc takeHashed(state: var AppState; m: sink Msg) =
       state.editsChanged(r.path)
   if r.doc.len > 0 and r.identity.fullKnown and r.identity.full != m.hashed.full:
     state.unlink(r.path) # the other paths of the file keep their edits
+    let other = state.knownDocs.getOrDefault(r.doc)
     state.log.add(sevWarning, name, name & " begins and ends as the file remembered as " &
-      state.knownDocs.getOrDefault(r.doc).name & " did, but its content differs: the edits " &
-      "remembered for that file are taken away from it (they stay remembered for that file).")
+      other.name & " did, but its content differs: the edits remembered for that file, " &
+      "brought back while it was checked, are taken away from it (they stay remembered for " &
+      "that file).")
+    var was = if r.brought.doc == r.doc: r.brought else: other
+    if was.path == r.path:
+      state.sayEarlier(r.path, was)
     if r.seenAside: # the time this file was opened is not that one's
       state.diskIo.remove(state.store.docPath(r.doc).seenName, "when " & name & " was opened")
       r.seenAside = false
@@ -3140,6 +3201,8 @@ proc takeHashed(state: var AppState; m: sink Msg) =
       if (r.doc.len == 0 or r.ownDoc) and c.identity.fullKnown and
           c.identity.full == r.identity.full:
         state.applyRecord(i, c)
+      elif c.path == r.path and c.identity.fullKnown and c.identity.full != r.identity.full:
+        state.sayEarlier(r.path, c) # the same size and ends, other contents
     if own.len > 0 and r.doc != own:
       state.diskIo.remove(state.store.docPath(own), "what is remembered about " & name)
       state.knownDocs.del own
@@ -3439,6 +3502,10 @@ proc forgetFiles(state: var AppState; cmd: Command) =
       var rec = state.knownDocs.getOrDefault(doc)
       for r in state.memoryList.records:
         if r.doc == doc and rec.doc.len == 0: rec = r
+      for path, list in state.earlier.mpairs:
+        for x in list:
+          if x.doc == doc and rec.doc.len == 0: rec = x
+        list.keepItIf(it.doc != doc)
       for i in 0 ..< state.remembered.len:
         template r: untyped = state.remembered[i]
         if r.doc == doc:
@@ -6227,6 +6294,7 @@ proc drainInbox*(state: var AppState): bool =
       let i = state.surveyHead(m.surveyHead.file.path)
       if i >= 0: state.heads[i] = move m.surveyHead
     of mkProject: state.takeProject(move m)
+    of mkEarlier: state.takeEarlier(move m)
     of mkSpreads: state.takeSpreads(move m)
     of mkShots: state.takeShots(move m)
     of mkRecordQc: state.takeRecordQc(move m)

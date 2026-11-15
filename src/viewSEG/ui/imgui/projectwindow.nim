@@ -7,7 +7,7 @@
 ## comes forward by itself when an original changed, since the change is
 ## never taken unasked.
 
-import std/[os, strutils]
+import std/[os, strutils, times]
 import imguin/cimgui
 import ../../core/state
 import ../../view/theme
@@ -32,6 +32,7 @@ type
     takePresets*: bool = true
     locating*: string    ## the missing folder a Locate... is for
     wasOffered: bool     ## the project offered an update at the frame before
+    earlierSeen: int     ## earlier outputs of the file shown, at the frame before
     focus: FocusClicks   ## the New project window's
     focusProject: FocusClicks ## the Project window's
 
@@ -192,6 +193,47 @@ func originalWords(s: OriginalState): string =
   of osChanged: "changed since it was copied in"
   of osNotFound: "original not found: the copy is used"
 
+proc lastOpened(c: FileRecord): string =
+  if c.opened == Time(): "" else: " (last opened " & c.opened.utc.format("yyyy-MM-dd HH:mm") &
+    " UTC)"
+
+proc drawShownFile(ui: var ProjectUi; st: AppState; t: Theme; marks: var Marks;
+    res: var ProjectOutput) =
+  ## The file the plot shows: whether its edits are being checked, and the
+  ## earlier outputs of its name, whose edits are not its own.
+  let shown = st.shownFile(st.findPanel(MainPanel))
+  if shown < 0: return
+  let s = st.sessions[shown]
+  if st.editsChecking(s.path):
+    igTextColored(vec4(t.roles[rlWarning]), "%s", (IconWarning & "  The edits of " & s.name &
+      " are being checked: brought back on its size, first and last bytes and time, they " &
+      "are taken back if its whole content differs.").cstring)
+  let earlier = st.earlierOf(s.path)
+  if earlier.len == 0: return
+  igSeparatorText(("Earlier outputs of " & s.name).cstring)
+  t.dim(s.name & " is not the file these edits were made on (other contents under the same " &
+    "name): they are not applied to it. They are kept, to apply or to forget.")
+  for i, c in earlier:
+    igPushID_Int(cint(4000 + i))
+    igTextUnformatted(("Edits: " & keptWords(c.edits) & lastOpened(c)).cstring, nil)
+    marks.mark("project.earlier." & $i)
+    let fits = c.traces > 0 and c.traces == s.len
+    if button("Apply them to this file", "project.earlier.apply." & $i,
+        (if fits: "Apply the earlier output's edits to " & s.name & " by trace number, as " &
+          "one step: Edit > Undo takes it back"
+        elif c.traces == 0: "Not offered: how many traces the earlier output had is not " &
+          "known, so its trace numbers may not be these"
+        else: "Not offered: the earlier output had " & $c.traces & " traces, this file has " &
+          $s.len & ", so its trace numbers are not these"), fits and not st.project.readOnly,
+        marks) and ui.focusProject.acts:
+      res.commands.add Command(kind: ckImportEdits, panel: MainPanel,
+        listPath: st.store.docPath(c.doc))
+    igSameLine(0, -1)
+    if button("Forget them", "project.earlier.forget." & $i, "Remove what is remembered " &
+        "about the earlier output (said in Messages)", true, marks) and ui.focusProject.acts:
+      res.commands.add Command(kind: ckForgetFiles, forget: @[c.doc])
+    igPopID()
+
 proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks: var Marks;
     res: var ProjectOutput) =
   let p = st.project
@@ -200,6 +242,7 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
   if igBegin(title.cstring, addr open, ImGui_WindowFlags_NoDocking.cint):
     ui.focusProject.watch()
     marks.markWindow("project")
+    ui.drawShownFile(st, t, marks, res)
     if not st.inProject:
       let opening = st.projectOpening
       igTextDisabled((if opening.len > 0: "Opening " & opening & "..." else:
@@ -289,6 +332,10 @@ proc drawProjectWindows*(ui: var ProjectUi; projectTitle, newTitle: string; st: 
   let offered = st.inProject and st.project.offer
   if offered and not ui.wasOffered: ui.open()
   ui.wasOffered = offered
+  let shown = st.shownFile(st.findPanel(MainPanel))
+  let earlier = if shown >= 0: st.earlierOf(st.sessions[shown].path).len else: 0
+  if earlier > ui.earlierSeen: ui.open() # an earlier output said: shown where it can be acted on
+  ui.earlierSeen = earlier
   if ui.making: ui.drawNew(newTitle, st, t, marks, result)
   if ui.shown:
     if ui.bringUp: igSetWindowFocus_Str(projectTitle.cstring)

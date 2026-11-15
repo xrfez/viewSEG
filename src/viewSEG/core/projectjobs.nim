@@ -62,20 +62,22 @@ proc lookPlace*(p: ProjectPath; dir: string): PlaceLook =
     if fs.dirExists(c): return PlaceLook(state: psFound, path: c)
 
 proc lookOriginal*(c: SurveyCopy; dir: string): OriginalLook =
-  ## Where survey file `c`'s original is now, and whether it changed since
-  ## it was copied into the project in `dir`: its size, modification time
-  ## and quick hash.
+  ## Where survey file `c`'s original is now, and whether its content
+  ## changed since it was copied into the project in `dir`: by its size and
+  ## the hash of its first and last 64 KiB, and, when those agree but its
+  ## modification time moved, by the hash of every byte against the copy's.
+  ## A file touched, renamed or copied with its content as it was has not
+  ## changed; one whose content differs has, whatever its time says.
   result = OriginalLook(state: osNotFound)
   for path in c.original.candidates(dir):
     if path.len > 0 and fs.fileExists(path):
       try:
-        let info = fs.getFileInfo(path)
-        result = OriginalLook(state: osAsCopied, path: path, size: info.size,
-          modified: info.lastWriteTime)
-        if info.size != c.size or info.lastWriteTime != c.modified:
-          var t: Time
-          let id = quickIdentity(path, t)
-          if id.size != c.size or id.quick != c.quick: result.state = osChanged
+        var t: Time
+        let id = quickIdentity(path, t)
+        result = OriginalLook(state: osAsCopied, path: path, size: id.size, modified: t)
+        if id.size != c.size or id.quick != c.quick: result.state = osChanged
+        elif t != c.modified and c.full != 0 and fullHash(path) != c.full:
+          result.state = osChanged # the same ends, other content in between
         return
       except IOError, OSError:
         discard
@@ -223,9 +225,10 @@ proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy
             let id = quickIdentity(jf.path, t)
             let name = copyName(jf.path.extractFilename, taken)
             taken.add name
-            news.copies.add SurveyCopy(kind: jf.kind, role: jf.role,
-              copy: copyIn(dir, jf.path, name), original: placeOf(dir, jf.path),
-              size: id.size, modified: t, quick: id.quick)
+            let copy = copyIn(dir, jf.path, name)
+            news.copies.add SurveyCopy(kind: jf.kind, role: jf.role, copy: copy,
+              original: placeOf(dir, jf.path), size: id.size, modified: t, quick: id.quick,
+              full: fullHash(dir.partOf(copy)))
           if not ctx.progress(i + 1, files.len + 1):
             raise newException(JobCancelledError, "cancelled")
         news.store = writeStore(dir, news.copies, ctx)
@@ -259,6 +262,7 @@ proc updateSurveyWork*(dir: string; copies: seq[SurveyCopy]; originals: seq[Orig
             news.copies[i].size = id.size
             news.copies[i].modified = t
             news.copies[i].quick = id.quick
+            news.copies[i].full = fullHash(dir.partOf(c.copy))
             news.copies[i].original = placeOf(dir, src)
         news.store = writeStore(dir, news.copies, ctx)
       except JobCancelledError:

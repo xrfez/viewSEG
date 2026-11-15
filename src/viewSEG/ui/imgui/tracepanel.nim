@@ -2112,7 +2112,12 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
   ## under the mouse.
   result.pick = noPick()
   let name = st.windowTitle(panel)
-  let title = IconPlot & "  " & name & "###" & id
+  let shown = st.shownFile(st.findPanel(panel))
+  # Edits brought back on the file's size, ends and time are marked until
+  # the hash of every byte confirms they are this file's.
+  let checking = shown >= 0 and st.editsChecking(st.sessions[shown].path)
+  let title = IconPlot & "  " & name & (if checking: "  (edits being checked)" else: "") &
+    "###" & id
   # Arrow keys pan the plot, so they do not move ImGui's keyboard focus here;
   # the wheel zooms, so it does not scroll the window.
   const windowFlags = ImGui_WindowFlags_NoNavInputs.cint or

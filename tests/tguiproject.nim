@@ -16,8 +16,7 @@
 ##
 ## Seen to fail: with the Project window not brought forward when the
 ## project offers an update, "the Project window offers the update" did not
-## happen; with `lastProject` not read at start, "the project open at the
-## quit is opened again" did not happen.
+## happen (twice of two).
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -105,8 +104,8 @@ withFixtures fx:
       f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
       let it = f.markOf("menu." & item)
       if it.size.x > 0 and wait mod 5 == 0: f.click(it.centre)
-      elif sub.len > 0 and f.markOf("menu." & sub).size.x > 0 and wait mod 10 == 0:
-        f.click(f.markOf("menu." & sub).centre)
+      elif sub.len > 0 and f.markOf("menu." & sub).size.x > 0:
+        f.moveMouse(f.markOf("menu." & sub).centre) # resting on it opens the submenu
       then(f))
   proc press(mark: string; chosen: seq[string]; then: proc (f: FrameInfo): bool) =
     step("click " & mark, proc (f: FrameInfo) =

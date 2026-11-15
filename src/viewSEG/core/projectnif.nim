@@ -101,6 +101,7 @@ proc projectDocument*(d: ProjectDoc): string =
       w.value("size", f.size)
       w.modified f.modified
       w.value("quick", hex(f.quick))
+      if f.full != 0: w.value("full", hex(f.full))
       w.close
     w.writeJoinOptions(d.options)
     w.open "units"
@@ -214,6 +215,7 @@ proc surveyFile(r: var Reading; n: NifNode; d: var ProjectDoc) =
           f.modified = initTime(k.kids[0].intVal, int(k.kids[1].intVal))
         else: r.problem(k, "(modified) needs seconds and nanoseconds")
       of "quick": r.hash(k, f.quick)
+      of "full": r.hash(k, f.full)
       else: discard
   if f.copy.len == 0: r.problem(n, "a survey file names no copy; it is left out")
   else: d.survey.add f

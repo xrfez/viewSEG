@@ -664,8 +664,14 @@ proc projectJson(state: AppState; limit: int): JsonNode =
   ## The `project` part: the project open (`open` false for none), its data
   ## folders, its survey and where it stands.
   let p = state.project
+  var earlier = newJArray() # of the file the plot shows: other files once at its path
+  let shown = state.shownFile(state.findPanel(MainPanel))
+  if shown >= 0:
+    for c in state.earlierOf(state.sessions[shown].path):
+      earlier.add %*{"document": c.doc, "kept": keptWords(c.edits), "traces": c.traces,
+        "opened": $c.opened}
   if not state.inProject:
-    return %*{"open": false, "opening": state.projectOpening}
+    return %*{"open": false, "opening": state.projectOpening, "earlierOutputs": earlier}
   var folders = newJArray()
   for i, d in p.doc.data:
     let look = if i < p.folders.len: p.folders[i] else: PlaceLook()
@@ -684,7 +690,8 @@ proc projectJson(state: AppState; limit: int): JsonNode =
       "relations": p.doc.store.relations, "storeBytes": p.doc.store.bytes,
       "restoreMs": p.restoreMs},
     "displayPresets": (if p.doc.hasPresets: p.doc.displayPresets.len else: -1),
-    "filters": p.doc.hasProcessing, "opening": state.projectOpening}
+    "filters": p.doc.hasProcessing, "opening": state.projectOpening,
+    "earlierOutputs": earlier}
 
 proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
   ## The `state` tool.

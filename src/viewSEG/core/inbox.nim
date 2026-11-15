@@ -52,6 +52,7 @@ type
     mkAnalysis ## an analysis window's numbers, from the analysis reader (New plot)
     mkSurveyHead ## what a survey file's headers say of its unit, for the import's window
     mkProject ## what a project's job found (`core/projectjobs`)
+    mkEarlier ## what is remembered about earlier outputs of a file's name (`earlierOutputs`)
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -244,6 +245,11 @@ type
       surveyHead*: SurveyHead
     of mkProject:
       news*: ProjectNews ## moved, never shared
+    of mkEarlier:
+      earlierPath*: string ## the file
+      earlierOf*: FileIdentity ## its identity, which none of them is
+      earlier*: seq[FileRecord] ## the documents of earlier outputs of its name
+      earlierProblems*: seq[string]
 
   InboxObj = object
     lock: Lock
