@@ -100,6 +100,7 @@
 ## history of commands.
 
 import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
+from std/unicode import runeSubStr
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
@@ -5076,8 +5077,9 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckTheme:
     if cmd.theme.len > 64 or not cmd.theme.allCharsInSet({'a'..'z', 'A'..'Z', '0'..'9', '-', '_',
         ' ', '.'}) or ".." in cmd.theme:
+      let shown = if cmd.theme.len > 40: runeSubStr(cmd.theme, 0, 40) & "..." else: cmd.theme
       state.ignore(cmd, "a theme is named by its file's name (`tokyo-night`), not `" &
-        cmd.theme & "`")
+        shown & "`")
     elif cmd.theme.len > 0 and state.themeNames.len > 0 and cmd.theme notin state.themeNames:
       state.ignore(cmd, "there is no theme `" & cmd.theme & "`; there are " &
         state.themeNames.join(", "))

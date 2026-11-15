@@ -18,7 +18,9 @@
 ## removed, `removedOpenCanBeOpenedAgain` was told the file "is already being
 ## opened"; with paths compared as given, `oneFileManySpellings` made 3 opens.
 ## With `select` not counting a trace a toggle takes out, `selectionCounts`
-## found the count one too high at its first toggle.
+## found the count one too high at its first toggle. With an agent's
+## refused `theme` echoed whole, `themeRefusalsAreShort` found 100 077
+## characters in the log line.
 
 import std/[algorithm, monotimes, os, random, strutils, times]
 import viewSEG/core/state
@@ -328,3 +330,19 @@ block shutdownCancelsEverything:
     discard st.drainInbox()
     doAssert st.log.has("Opening " & path.extractFilename & " was cancelled.")
     doAssert st.sessions.len == 0
+
+block themeRefusalsAreShort:
+  # An agent's `theme` that is refused is named in the log in short: not
+  # 100 000 characters of it.
+  var st = initAppState()
+  let warnings = st.log.count(sevWarning)
+  st.apply Command(origin: coAgent, kind: ckTheme, theme: repeat("../x", 25_000))
+  doAssert st.log.count(sevWarning) == warnings + 1
+  doAssert st.log.lastText.len < 200, $st.log.lastText.len & " characters"
+  doAssert st.settings.theme == ""
+  st.offerThemes(@["nord"])
+  st.apply Command(origin: coAgent, kind: ckTheme, theme: "nope")
+  doAssert st.log.lastText.contains("nord") and st.log.lastText.len < 200, st.log.lastText
+  st.apply Command(origin: coAgent, kind: ckTheme, theme: "nord")
+  doAssert st.settings.theme == "nord"
+  st.shutdown()
