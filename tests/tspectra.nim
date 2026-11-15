@@ -115,6 +115,29 @@ block helpers:
     spectrumTraces(0) == MaxSpectrumTraces and spectrumTraces(high(int)) == 1,
     "a spectrum's traces are bounded by their samples"
   doAssert evenly(10, 5) == @[0, 2, 4, 6, 8]
+  # Where Alt + arrow steps from: one pass over the traces shown, so a
+  # selection of a whole record of 200 000 traces (Ctrl+A), in an order
+  # other than the file's, finds its last and first at once, and one none
+  # of whose traces is shown finds none. (Seen to fail with the search per
+  # selected trace as before: not done when killed after 300 s.)
+  block stepStart:
+    const n = 200_000
+    var shown = newSeq[int](n)
+    for q in 0 ..< n: shown[q] = n - 1 - q # sorted backwards
+    var sel = Selection()
+    for t in 0 ..< n: sel.selected.incl 1000 + t
+    let t0 = epochTime()
+    doAssert sel.stepStart(shown, 1000, 1) == n - 1 and sel.stepStart(shown, 1000, -1) == 0
+    var odd = Selection(hover: 1000 + 4)
+    for t in countup(1, n - 1, 2): odd.selected.incl 1000 + t
+    let evens = toSeq(countup(0, n - 1, 2))
+    doAssert odd.stepStart(evens, 1000, 1) == 2, "not the trace under the pointer"
+    odd.hover = -1
+    doAssert odd.stepStart(evens, 1000, -1) == -1
+    let took = epochTime() - t0
+    doAssert took < 0.5, "finding where to step from took " & $took & " s"
+    sel.anchor = 1000 + 7
+    doAssert sel.stepStart(shown, 1000, 1) == n - 1 - 7, "not from the trace clicked last"
   # a held cursor's bin, nearest its frequency
   doAssert nearestSample(24.41, 0.244140625, 1025) == 100 and
     nearestSample(24.41, 0.1220703125, 2049) == 200 and

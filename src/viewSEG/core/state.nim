@@ -5630,7 +5630,8 @@ proc stepTrace(state: var AppState; cmd: Command) =
   ## From an FFT window of one trace, or of a selection: from its trace (the
   ## selection's), and the window shows the new trace. Else from the
   ## selection (the trace clicked last; else its last, or its first going
-  ## back), else the trace under the pointer, else the first in view.
+  ## back: `stepStart`), else the trace under the pointer, else the first in
+  ## view.
   if cmd.stepBy == 0:
     state.ignore(cmd, "a step of 0 traces")
     return
@@ -5648,19 +5649,10 @@ proc stepTrace(state: var AppState; cmd: Command) =
     return
   template p: untyped = state.panels[k]
   let s = state.sessions[i]
-  func at(p: Panel; trace: int): int = p.shown.find(trace) # a position, or -1
   var start = -1
   if w > 0 and state.spectra[w].traces.len == 1 and state.spectra[w].traces[0] in s:
-    start = p.at(state.spectra[w].traces[0] - s.base)
-  template sel: untyped = state.selection
-  if start < 0 and sel.anchor in sel.selected and sel.anchor in s:
-    start = p.at(sel.anchor - s.base)
-  if start < 0:
-    for t in sel.selected:
-      if t in s:
-        let q = p.at(t - s.base)
-        if q >= 0 and (start < 0 or (if cmd.stepBy > 0: q > start else: q < start)): start = q
-  if start < 0 and sel.hover in s: start = p.at(sel.hover - s.base)
+    start = p.shown.find(state.spectra[w].traces[0] - s.base)
+  if start < 0: start = state.selection.stepStart(p.shown, s.base, cmd.stepBy)
   let to = if start >= 0: start + cmd.stepBy
            else: visiblePositions(p.layout, p.view).a
   if to notin 0 ..< p.shown.len:

@@ -85,6 +85,27 @@ func targets*(s: Selection; under: int): seq[int] =
     result.sort()
   else: result = @[under]
 
+func stepStart*(s: Selection; shown: openArray[int]; base, by: int): int =
+  ## Where Alt + arrow steps from, as a position in `shown` (a plot's traces
+  ## in the order shown, by their index in the file whose first survey-wide
+  ## id is `base`): the trace clicked last while it is selected and shown,
+  ## else the selected trace shown last (going on, `by` > 0) or first (going
+  ## back), else the trace under the pointer; -1 for none. One pass over
+  ## `shown` at most, a set lookup a trace, so a selection of a whole record
+  ## of 200 000 traces costs no more than one.
+  template at(t: int): int = (if t >= base: shown.find(t - base) else: -1)
+  if s.anchor in s.selected:
+    result = at(s.anchor)
+    if result >= 0: return
+  if s.anySelected:
+    if by > 0:
+      for q in countdown(shown.high, 0):
+        if base + shown[q] in s.selected: return q
+    else:
+      for q in 0 ..< shown.len:
+        if base + shown[q] in s.selected: return q
+  result = if s.hover >= 0: at(s.hover) else: -1
+
 proc setHover*(s: var Selection; trace: int; at: seq[PointRef] = @[]): bool =
   ## Puts the plot's pointer on `trace` (-1: none), recorded at points `at`;
   ## false when it already was there.
