@@ -370,6 +370,7 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
     result["order"] = toJson(layer.order)
     result["reversed"] = %layer.reversed
     result["processing"] = toJson(layer.processing)
+    result["filtersReach"] = %($state.filterReach(p))
     let note = layer.processing.limitNote(p.layout.dtMs)
     if note.len > 0: result["processingNote"] = %note
   result["positionCount"] = %p.shown.len

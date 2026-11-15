@@ -1,5 +1,7 @@
 ## The plot window's filters, in its strip: a button one icon wide, lit while
-## they are applied, whose drop-down says what the traces go through and
+## they are applied (drawn in the warning colour, not lit, when they are set
+## but reach none of the traces shown: auxiliary traces alone with the Aux
+## box off), whose drop-down says what the traces go through and
 ## holds every setting (DC removal, the pass band's corners, notches, the
 ## Aux traces), and a Raw toggle beside it that shows
 ## the traces without the filters (`P`). Every change goes to `core` as it
@@ -46,8 +48,18 @@ proc hertz(id: string; value: var float64; lo, hi: float64; width: float32): boo
     ImGui_SliderFlags_AlwaysClamp.cint).ImGuiSliderFlags)
   if result: value = float64(v)
 
-proc drawSettings(p: Panel; pr: Processing; hasAux: bool; marks: var Marks;
-    cmds: var seq[Command]) =
+func reachText*(reach: FilterReach): string =
+  ## What the filters' tooltip and drop-down say of the traces they do not
+  ## reach; "" when they reach every one shown.
+  case reach
+  of frNoTrace: "They reach none of the traces shown: every one is auxiliary, and " &
+    "\"Filter the Aux traces too\" is off."
+  of frSeismic: "The auxiliary traces shown are not filtered: \"Filter the Aux traces " &
+    "too\" is off."
+  of frNone, frAll: ""
+
+proc drawSettings(p: Panel; pr: Processing; hasAux: bool; reach: FilterReach;
+    t: Theme; marks: var Marks; cmds: var seq[Command]) =
   ## The settings in the drop-down; each control is marked "plot.filters
   ## <what>" for tests.
   let dt = p.layout.dtMs
@@ -162,6 +174,14 @@ proc drawSettings(p: Panel; pr: Processing; hasAux: bool; marks: var Marks;
   marks.mark("plot.filters aux")
   tip(if hasAux: "Off: the auxiliary traces (time breaks, pilots) are shown as recorded"
       else: "This record has no auxiliary traces")
+  let unreached = reachText(reach)
+  if unreached.len > 0:
+    igPushTextWrapPos(w * 2.5)
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+    igTextWrapped("%s", unreached.cstring)
+    igPopStyleColor(1)
+    igPopTextWrapPos()
+    marks.mark("plot.filters reach")
   let note = pr.limitNote(dt)
   if note.len > 0:
     igPushTextWrapPos(w * 2.5)
@@ -174,19 +194,26 @@ proc drawSettings(p: Panel; pr: Processing; hasAux: bool; marks: var Marks;
 
 const filtersId = "##filterspopup"
 
-proc drawFilterControls*(p: Panel; hasAux: bool; t: Theme; marks: var Marks;
-    cmds: var seq[Command]) =
+proc drawFilterControls*(p: Panel; hasAux: bool; reach: FilterReach; t: Theme;
+    marks: var Marks; cmds: var seq[Command]) =
   ## The filters' button, lit while they are applied, which opens their
   ## drop-down (what they are, then their settings), then the Raw toggle.
   ## The button is one icon wide whatever the filters are, so the strip
   ## keeps its lines: what they are is in its tooltip and the drop-down.
+  ## Set but reaching none of the traces shown (`reach`), it is not lit but
+  ## drawn in the warning colour, and both say why.
   let pr = p.layers[0].processing
   let text = label(pr)
-  if toggle(IconFilter & "##filters", pr.filtering, t):
+  let unreached = reach == frNoTrace
+  if unreached: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+  if toggle(IconFilter & "##filters", pr.filtering and not unreached, t):
     igOpenPopup_Str(filtersId, 0)
+  if unreached: igPopStyleColor(1)
   let below = ImVec2_c(x: igGetItemRectMin().x, y: igGetItemRectMax().y)
   marks.mark("plot.filters")
-  tip(text & "\nWhat the traces go through before the gain (DC removal, low-cut, " &
+  let why = reachText(reach)
+  tip(text & (if why.len > 0: "\n" & why else: "") &
+    "\nWhat the traces go through before the gain (DC removal, low-cut, " &
     "high-cut, band-pass, notches): click to set them. The plot follows as you do.")
   igSetNextWindowPos(below, ImGui_Cond_Appearing.cint, ImVec2_c(x: 0, y: 0))
   if igBeginPopup(filtersId, 0):
@@ -197,7 +224,7 @@ proc drawFilterControls*(p: Panel; hasAux: bool; t: Theme; marks: var Marks;
     let raised = vec4(mix(t.roles[rlFrame], t.roles[rlText], 0.12))
     igPushStyleColor_Vec4(ImGui_Col_FrameBg.cint, raised)
     igPushStyleColor_Vec4(ImGui_Col_Button.cint, raised)
-    drawSettings(p, pr, hasAux, marks, cmds)
+    drawSettings(p, pr, hasAux, reach, t, marks, cmds)
     igPopStyleColor(2)
     igEndPopup()
   igSameLine(0, 2)

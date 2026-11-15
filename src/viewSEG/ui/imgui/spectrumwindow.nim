@@ -123,9 +123,28 @@ proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var Sp
     res.commands.add Command(kind: ckSpectrumDisplay, spectrum: w.id, spectrumShow: d,
       frozen: frozen)
 
-proc drawBody(ui: var SpectraUi; w: SpectrumWindow; t: Theme; marks: var Marks;
+proc drawFilterAux(st: AppState; w: SpectrumWindow; name: string; marks: var Marks;
     res: var SpectraOutput) =
-  ## A window's contents: its controls, its words, its plot and reading.
+  ## When auxiliary traces of the spectrum were not filtered (the plot's Aux
+  ## toggle off) and the window follows the plot: a button that ticks the
+  ## toggle on the plot (`ckProcessing`), which the window then follows.
+  if not w.auxUnfiltered or w.frozen: return
+  let k = st.findPanel(w.panel)
+  if k < 0 or st.panels[k].layers.len == 0: return
+  var pr = st.panels[k].layers[0].processing
+  if pr.aux: return # ticked already: the answer is on its way
+  if igSmallButton("Filter the Aux traces too"):
+    pr.aux = true
+    res.commands.add Command(kind: ckProcessing, panel: w.panel, processing: pr)
+  marks.mark(name & ".filter aux")
+  tip("Ticks \"Filter the Aux traces too\" in the Seismic window's Filters, so its " &
+    "auxiliary traces go through the filters in the plot and in the spectra (untick it " &
+    "there to undo)")
+
+proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; marks: var Marks;
+    res: var SpectraOutput) =
+  ## A window's contents: its controls, its words (with a click that
+  ## filters the auxiliary traces when they were not), its plot and reading.
   let name = w.markName
   marks.markWindow(name)
   drawControls(w, name, marks, res)
@@ -136,6 +155,7 @@ proc drawBody(ui: var SpectraUi; w: SpectrumWindow; t: Theme; marks: var Marks;
   igTextWrapped("%s", words.cstring)
   igPopStyleColor(1)
   marks.mark(name & ".summary")
+  drawFilterAux(st, w, name, marks, res)
   let p = w.spectrumPlot(t)
   let lineH = igGetTextLineHeightWithSpacing()
   let avail = igGetContentRegionAvail()
@@ -174,7 +194,7 @@ proc drawLive*(ui: var SpectraUi; st: AppState; shown: bool; t: Theme; marks: va
     let open = igBegin(SpectrumWindowTitle.cstring, nil, 0)
     if open:
       visible = true
-      ui.drawBody(live, t, marks, res)
+      ui.drawBody(st, live, t, marks, res)
     igEnd()
   if visible != live.shown:
     res.commands.add Command(kind: ckSpectrumPanel, onScreen: visible)
@@ -197,7 +217,7 @@ proc drawFfts*(ui: var SpectraUi; st: AppState; t: Theme; scale: float32; marks:
         ImGui_Cond_FirstUseEver.cint)
       var open = true
       if igBegin(w.fftTitle.cstring, addr open, 0):
-        ui.drawBody(w, t, marks, res)
+        ui.drawBody(st, w, t, marks, res)
       igEnd()
       if not open: res.commands.add Command(kind: ckCloseSpectrum, spectrum: w.id)
   # The plots of windows that went.

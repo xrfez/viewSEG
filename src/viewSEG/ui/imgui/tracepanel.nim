@@ -1054,7 +1054,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     drawOverlapControls(p, t, marks, res)
   # the filters, then the gain: the order the samples go through them
   tp.stripGroup(10, right, 12, lift):
-    drawFilterControls(p, hasAux(st, p), t, marks, res.commands)
+    drawFilterControls(p, hasAux(st, p), st.filterReach(p), t, marks, res.commands)
   tp.stripGroup(2, right, 12, lift):
     drawGainControls(p, t, marks, res.commands, res.notes)
   # the scales

@@ -501,7 +501,17 @@ the focus, show the traces without the filters, under the same gain, and filtere
 both are disabled while there is no filter. **The Aux traces** go through the filters
 only when "Filter the Aux traces too" is ticked (processSEG passes an auxiliary trace by
 otherwise); the gain still leaves them as they are. A plot of auxiliary traces alone
-takes its level from them, so a pilot sweep shown alone is drawn.
+takes its level from them, so a pilot sweep shown alone is drawn. **Filters that reach no
+trace shown:** when every trace the plot shows is auxiliary (a pilot sweep file, or Aux
+alone) and the box is off, the filters set change nothing on screen, so the funnel is not
+lit but drawn in the warning colour, its tooltip says why, and the drop-down says it in
+the warning colour under the box ("They reach none of the traces shown: every one is
+auxiliary, and "Filter the Aux traces too" is off."); with seismic traces shown too, the
+button is lit and both say the auxiliary ones are not filtered. A spectrum window whose
+auxiliary traces were left unfiltered so offers **Filter the Aux traces too**, a click
+that ticks this box on the plot (untick it here to undo), which the plot and every
+spectrum window not frozen then follow. A file of auxiliary traces alone is not filtered
+by default: the box stays the one choice, as for any record.
 
 **The cost follows the view.** The panel's reader filters the tile's traces and samples
 only (and the margin the filters need around them), on a `ProcessPool` of its own, off

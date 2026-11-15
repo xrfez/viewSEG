@@ -71,6 +71,15 @@ type
     f4*: float64 = 80.0 ## Hz: the high-cut ramp ends (gain 0 above)
     notches*: seq[NotchFilter]
 
+  FilterReach* = enum
+    ## Which of the traces a plot shows its filters reach (`reach`).
+    frNone = "none"        ## no filter applied: none set, or shown raw
+    frAll = "all"          ## every trace shown goes through them
+    frSeismic = "seismic"
+      ## the seismic traces; the auxiliary ones shown are passed by (`aux` off)
+    frNoTrace = "no trace"
+      ## none: every trace shown is auxiliary, and `aux` is off
+
 const
   MaxFilterHz* = 10_000.0 ## a corner or notch stays within 0 and this
   MinRampHz* = 0.1        ## a ramp is at least this wide
@@ -124,6 +133,15 @@ func bounded*(p: Processing): Processing =
         hz: within(n.hz, MinNotchHz, MaxFilterHz, NotchFilter().hz),
         widthHz: within(n.widthHz, MinNotchWidthHz, MaxNotchWidthHz, NotchFilter().widthHz),
         harmonics: clamp(n.harmonics, 1, MaxHarmonics))
+
+func reach*(p: Processing; seismic, aux: int): FilterReach =
+  ## Which of a plot's traces `p` reaches, the plot showing `seismic`
+  ## seismic and `aux` auxiliary ones (an auxiliary trace goes through the
+  ## filters only with `aux`).
+  if not p.filtering: frNone
+  elif p.aux or aux == 0: frAll
+  elif seismic == 0: frNoTrace
+  else: frSeismic
 
 func remembered*(p: Processing): Processing =
   ## `p` as a new plot starts with it: processed (`raw` is how one plot is

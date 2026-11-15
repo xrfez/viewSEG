@@ -2190,6 +2190,26 @@ func spectrumFilters(p: Panel): Processing =
   result = p.layers[0].processing
   result.raw = false
 
+func shownKinds*(state: AppState; p: Panel): (int, int) =
+  ## The seismic and the auxiliary traces `p` shows of its record, as its
+  ## trace filter takes them (from the record list's counts; killed ones
+  ## counted); (0, 0) when it shows no record.
+  result = (0, 0)
+  if p.layers.len > 0 and p.layers[0].source.kind == lsRecord:
+    let i = state.findSession(p.layers[0].source.file)
+    let g = p.layers[0].source.gather
+    if i >= 0 and g in 0 ..< state.sessions[i].records.len:
+      let r = state.sessions[i].records[g]
+      let f = p.layers[0].filter
+      result = ((if f.seismic: r.seismic else: 0), (if f.auxiliary: r.aux else: 0))
+
+func filterReach*(state: AppState; p: Panel): FilterReach =
+  ## Which of the traces `p` shows its filters reach (`Processing.reach`):
+  ## `frNoTrace` when they are all auxiliary and the Aux toggle is off.
+  if p.layers.len == 0: return frNone
+  let (seismic, aux) = state.shownKinds(p)
+  p.layers[0].processing.reach(seismic, aux)
+
 func filtersText(pr: Processing): string =
   ## `pr` in words; "" for no filter.
   if pr.hasFilters: pr.describe else: ""

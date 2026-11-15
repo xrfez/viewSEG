@@ -5,7 +5,8 @@
 ##
 ## - the helpers: a time window in samples, traces spread evenly, the
 ##   lowest free FFT window number, dB on one reference, the curve plot's
-##   limits, nearest point and readout, a window's plot and words;
+##   limits, nearest point and readout, a window's plot and words; which of
+##   a plot's traces its filters reach;
 ## - an FFT window of one trace peaks on the sine's bin, at its amplitude,
 ##   from 0 Hz to Nyquist, with the sine's phase there, and says what it is
 ##   of; of the selection, the
@@ -94,6 +95,12 @@ block helpers:
   w.first = 3
   doAssert w.title == "FFT: trace 4 · FFID 5 · a.sgy", w.title
   doAssert SpectrumWindow(id: 0).title == "Spectrum"
+  # which of a plot's traces its filters reach
+  let n = Processing(notches: @[NotchFilter()])
+  doAssert Processing().reach(3, 1) == frNone and Processing(raw: true, dc: dcMean).reach(3, 1) ==
+    frNone
+  doAssert n.reach(3, 0) == frAll and n.reach(3, 1) == frSeismic and n.reach(0, 1) == frNoTrace
+  doAssert Processing(aux: true, dc: dcMean).reach(0, 1) == frAll and n.reach(0, 0) == frAll
   var many = SpectrumWindow(id: 3, chosen: soSelection, traces: @[0, 5], chosenCount: 10,
     spectrum: Spectrum(raw: @[1.0, 0.5], averaged: 2, binHz: 1, dtMs: 2, fromMs: 0, toMs: 6))
   doAssert many.summaryText == "2 traces averaged, spread evenly over the 10 selected · " &
