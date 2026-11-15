@@ -1479,11 +1479,14 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
                             else: (ReadAhead, KeepAhead, MaxAheadValues)
   let flow = p.layers[0].displayPipeline(state.gatherKind(p.layers[0]))
   let filters = p.layers[0].processing.filterPipeline(p.layout.dtMs)
-  var margin = displayMargin(flow, p.layout.dtMs) + displayMargin(filters, p.layout.dtMs)
   # While it filters, whole traces: a filter's margin grows as its ramp
   # narrows, and the samples the reader holds must still be enough after
-  # a slider has moved, so that it filters them again without a read.
-  if filters.len > 0: margin = max(margin, p.layout.samples)
+  # a slider has moved, so that it filters them again without a read. The
+  # filters' own margin is not worked out here: whole traces hold it, and
+  # working it out takes processSEG long for narrow notches (seconds for a
+  # few with many harmonics), on this thread, at every view.
+  let margin = if filters.len > 0: max(displayMargin(flow, p.layout.dtMs), p.layout.samples)
+               else: displayMargin(flow, p.layout.dtMs)
   let wiggles = p.layers[0].display.drawsWiggles
   if p.pending.gen == p.requestGen:
     # Enough on hand on every side: nothing to ask. The view itself on hand,
@@ -4443,7 +4446,10 @@ proc drainInbox*(state: var AppState): bool =
         inc state.nextTile
         if state.panels[k].level.clip.isNaN or state.panels[k].relevel:
           state.panels[k].level = m.tile.level
-          state.panels[k].relevel = false
+          # a tile of filters already replaced sets it for now, and the
+          # newest request's tile sets it again: the level the plot keeps
+          # is of the filters it ends with
+          if not following: state.panels[k].relevel = false
         # The first tile in a new order, or after the samples changed,
         # replaces every tile from before.
         let since = if following: m.tile.request.gen

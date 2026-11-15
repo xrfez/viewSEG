@@ -20,7 +20,10 @@
 ##   takes its level from it (none would draw nothing under most gains);
 ## - the filters stay on for the next record; the settings keep them for a
 ##   new plot (processed, not raw), written to the settings file and read
-##   back as they were, and the file is never changed.
+##   back as they were, and the file is never changed;
+## - after a drag, the level is that of the last filters;
+## - narrow notches with many harmonics (slow for processSEG to size) do not
+##   slow a filter change or a view change on the calling thread.
 ##
 ## Seen to fail: with `requestView` sending no filters, "0 traces filtered
 ## of 24"; with the panel's margin not taken to whole traces, "f1 and f4
@@ -30,7 +33,15 @@
 ## a plot that has no other, "no level for the auxiliary trace alone: (rms:
 ## nan, peak: nan, clip: nan)"; with `drainInbox` taking only the newest
 ## request's tile, "0 tiles drawn while the filters changed"; with the run's
-## requests reading ahead, "a tile of the run: 405 traces, ...".
+## requests reading ahead, "a tile of the run: 405 traces, ..."; with a tile
+## of a replaced change clearing `relevel`, "the level after the drag is not
+## of its last filters"; with `requestView` working out the filters' own
+## margin (processSEG's `requiredMargin`), "the filters' margin is worked out
+## on this thread: 6759 ms for the change, 6781 ms for a view".
+##
+## Runs alone: it bounds the time a filter change and a view change take on
+## the calling thread (50 ms, against seconds when the filters' margin is
+## worked out there).
 
 import std/[os, strutils, times]
 import parseSEG
@@ -250,7 +261,18 @@ withFixtures fx:
     for t in drawn[1 .. ^1]:
       doAssert t.request.count <= 102 and t.filtered == t.request.count and t.cached,
         "a tile of the run: " & $t.request.count & " traces, " & $t.filtered & " filtered"
+    let lastGen = st.panel(MainPanel).requestGen
     doAssert st.settle(st.answered)
+    # the level the plot keeps is that of the filters it ends with: the first
+    # tile asked for after the last change sets it, not one of a change
+    # replaced that came after it was asked for
+    var final = -1
+    for i, t in st.tiles(0):
+      if final < 0 and t.request.gen >= lastGen: final = i
+    doAssert final >= 0
+    doAssert st.panel(MainPanel).level == st.tiles(0)[final].level, "the level after the " &
+      "drag is not of its last filters: " & $st.panel(MainPanel).level & ", the last filters' " &
+      $st.tiles(0)[final].level
     # the next view brings the read-ahead back
     v.traces = Span(lo: 1010, hi: 1110)
     st.apply Command(kind: ckView, panel: MainPanel, view: v)
@@ -295,6 +317,38 @@ withFixtures fx:
     st.showAll()
     let lvl = st.panel(MainPanel).level
     doAssert lvl.clip > 0 and lvl.peak > 0, "no level for the auxiliary trace alone: " & $lvl
+    st.shutdown()
+  block marginOffThisThread:
+    # Narrow notches with many harmonics: processSEG takes long to work out
+    # their impulse's length, which a view change must not wait for (the
+    # panel asks for whole traces while it filters, so it needs none).
+    let many = fx.manyTracesSegy(2_000, samples = 1000)
+    var st = initAppState()
+    st.apply Command(kind: ckOpen, paths: @[many])
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    st.showAll()
+    var v = st.panel(MainPanel).view
+    v.traces = Span(lo: 0, hi: 100)
+    st.apply Command(kind: ckView, panel: MainPanel, view: v)
+    doAssert st.settle(st.answered)
+    var notched = Processing()
+    for hz in [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 11.0]:
+      notched.notches.add NotchFilter(hz: hz, widthHz: MinNotchWidthHz, harmonics: MaxHarmonics)
+    var t0 = getTime()
+    st.process(notched)
+    let changeMs = (getTime() - t0).inMilliseconds
+    var worstMs = 0'i64
+    for i in 1 .. 5: # each beyond what was read ahead: a new request
+      v.traces = Span(lo: v.traces.lo + 300, hi: v.traces.hi + 300)
+      t0 = getTime()
+      st.apply Command(kind: ckView, panel: MainPanel, view: v)
+      worstMs = max(worstMs, (getTime() - t0).inMilliseconds)
+    echo "tprocessing: with 160 narrow notches, the change took ", changeMs,
+      " ms, a view change at most ", worstMs, " ms on this thread"
+    doAssert changeMs < 50 and worstMs < 50, "the filters' margin is worked out on " &
+      "this thread: " & $changeMs & " ms for the change, " & $worstMs & " ms for a view"
+    doAssert st.settle(st.answered)
+    doAssert st.tiles(0)[^1].filtered > 0
     st.shutdown()
   block settingsFile:
     var s = Settings()
