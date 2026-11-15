@@ -28,7 +28,9 @@
 ## twenty colours is a whole theme. Data colours are not chrome colours: the
 ## greyscale density map stays neutral whatever the theme.
 
-import std/[algorithm, math, os, parseutils, strutils]
+import std/[algorithm, math, os, parseutils, strutils, times]
+when defined(posix):
+  from std/posix import Stat, stat, S_ISREG
 import ../core/geometry
 
 type
@@ -116,15 +118,22 @@ type
 
   ThemeFile* = object
     ## A theme file found on disk.
-    name*: string ## the file name without `.toml`
+    name*: string          ## the file name without `.toml`
     path*: string
     theme*: Theme
-      ## what it holds, read when it was found (its problems are said when
-      ## it is chosen): its name, mode and colours, for the menu's swatch
-      ## and its preview
+      ## what it holds, read when it was found: its name, mode and colours,
+      ## for the menu's swatch, its preview, and when it is chosen
+    problems*: seq[string] ## what `loadTheme` said of it, said when it is chosen
+    stamp*: tuple[size: int64; modified: Time]
+      ## the file's size and time when read (`themeChanged`)
 
 const
   ThemeExt* = ".toml"
+  MaxThemeBytes* = 64 * 1024
+    ## the largest theme file read (one is about 2 KB): a larger one, or
+    ## anything that is not a plain file, is not read
+  MaxThemeMessages* = 20
+    ## the most problems said of one file; one more line says how many more
   DefaultFonts*: array[FontRole, string] = [
     frUi: "JetBrainsMonoNerdFontPropo-Regular.ttf",
     frMono: "JetBrainsMonoNerdFontMono-Regular.ttf",
@@ -880,16 +889,71 @@ func displayName*(fileName: string): string =
     if result.len > 0: result.add ' '
     result.add word.capitalizeAscii
 
-proc loadTheme*(path: string; mode: ThemeMode; messages: var seq[string]): Theme =
-  ## The theme in file `path`. A file that cannot be read gives the built-in
-  ## theme for `mode`, with a message.
-  let stem = path.splitFile.name
+proc readThemeFile(path: string; text: var string): string =
+  ## Reads theme file `path` into `text`; returns why it was not read, or
+  ## "". Only a plain file of at most `MaxThemeBytes` is opened: a FIFO
+  ## would wait for a writer, and a huge file would take seconds to parse.
+  result = ""
+  text = ""
   try:
-    result = parseTheme(readFile(path), displayName(stem), messages, path)
+    when defined(posix):
+      var st: Stat
+      if stat(path.cstring, st) != 0:
+        raiseOSError(osLastError(), path)
+      if not S_ISREG(st.st_mode):
+        result = "not a file"
+      elif st.st_size > MaxThemeBytes:
+        result = "too large (" & $st.st_size & " bytes; a theme file is at most " &
+          $MaxThemeBytes & ")"
+    else:
+      let info = getFileInfo(path)
+      if info.kind != pcFile:
+        result = "not a file"
+      elif info.size > MaxThemeBytes:
+        result = "too large (" & $info.size & " bytes; a theme file is at most " &
+          $MaxThemeBytes & ")"
+    if result.len == 0:
+      var f: File
+      if not open(f, path):
+        raiseOSError(osLastError(), path)
+      try:
+        text = newString(MaxThemeBytes + 1)
+        text.setLen readBuffer(f, text[0].addr, text.len)
+      finally:
+        close(f)
+      if text.len > MaxThemeBytes: # it grew since
+        (result, text) = ("too large (over " & $MaxThemeBytes & " bytes)", "")
   except IOError, OSError:
-    messages.add path & ": cannot read the theme (" & getCurrentExceptionMsg() &
-      "); using the built-in " & builtinTheme(mode).name
+    result = "cannot read the theme (" & getCurrentExceptionMsg() & ")"
+
+proc loadTheme*(path: string; mode: ThemeMode; messages: var seq[string]): Theme =
+  ## The theme in file `path`. A file that cannot be read, is not a plain
+  ## file or is larger than `MaxThemeBytes` gives the built-in theme for
+  ## `mode`, with one message; at most `MaxThemeMessages` problems are said,
+  ## and how many more.
+  let stem = path.splitFile.name
+  var text = ""
+  let problem = readThemeFile(path, text)
+  if problem.len > 0:
+    messages.add path & ": " & problem & "; using the built-in " & builtinTheme(mode).name
     result = builtinTheme(mode)
+  else:
+    var said: seq[string] = @[]
+    result = parseTheme(text, displayName(stem), said, path)
+    for i, m in said:
+      if i < MaxThemeMessages: messages.add m
+    if said.len > MaxThemeMessages:
+      messages.add path & ": " & $(said.len - MaxThemeMessages) & " more problems not said"
+
+proc themeStamp*(path: string): tuple[size: int64; modified: Time] =
+  ## A theme file's size and time, to tell whether it changed since it was
+  ## read; zero when it cannot be had.
+  result = (0'i64, Time())
+  try:
+    let info = getFileInfo(path)
+    result = (info.size, info.lastWriteTime)
+  except OSError:
+    discard
 
 func toToml*(t: Theme): string =
   ## `t` as a theme file that `parseTheme` reads back equal: every base
@@ -942,9 +1006,10 @@ proc themeFiles*(dirs: openArray[string]): seq[ThemeFile] =
       for g in result:
         if g.name == f.name: seen = true
       if not seen:
-        var problems: seq[string]
         var found = f
-        found.theme = loadTheme(f.path, tmDark, problems)
-        if problems.len > 0 and found.theme.name == builtinTheme(tmDark).name:
+        found.stamp = themeStamp(f.path)
+        found.problems = @[]
+        found.theme = loadTheme(f.path, tmDark, found.problems)
+        if found.problems.len > 0 and found.theme.name == builtinTheme(tmDark).name:
           found.theme.name = displayName(f.name) # unreadable: not "Everforest Dark" twice
         result.add found

@@ -20,7 +20,10 @@ viewSEG tables. Any Omarchy theme's `colors.toml` works as it is, in either of i
   (in `../fonts/`) and sizes; `[metrics]` the rounding, padding and spacing.
   `everforest-dark.toml` explains each key.
 - **Mistakes never stop the program:** an unknown key, a bad value or a missing colour
-  is reported in the Messages window and replaced by the built-in Everforest value.
+  is reported in the Messages window (20 problems at most per file) and replaced by the
+  built-in Everforest value. A theme file is read when viewSEG starts (and again when
+  chosen, if it changed since); one over 64 KiB, or anything but a plain file, is not
+  read.
   Omarchy's keys for other programs (`hyprland_*`, `active_border_color`, ...) are
   ignored without a word.
 

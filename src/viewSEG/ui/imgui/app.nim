@@ -566,8 +566,9 @@ proc pickTheme(ui: var Ui): Theme =
   let mode = resolveTheme(ui.choice, ui.system)
   let wanted = if ui.selected.len > 0: ui.selected else: DefaultThemeNames[mode]
   var path = ""
-  for f in ui.themes:
-    if f.name == wanted: path = f.path
+  var listed = -1
+  for i, f in ui.themes:
+    if f.name == wanted: (path, listed) = (f.path, i)
   if path.len == 0 and fileExists(wanted):
     path = wanted
   if path.len == 0:
@@ -575,9 +576,15 @@ proc pickTheme(ui: var Ui): Theme =
     if ui.selected.len > 0:
       ui.messages.add "Theme `" & ui.selected & "` not found; using the built-in " &
         result.name & ".", mlWarning
+  elif listed >= 0 and themeStamp(path) == ui.themes[listed].stamp:
+    # As read at start, so a pick parses nothing on the UI thread; a file
+    # changed since (being edited) is read again below.
+    result = ui.themes[listed].theme
+    for p in ui.themes[listed].problems:
+      ui.messages.add p, mlWarning
   else:
-    var problems: seq[string]
-    result = loadTheme(path, mode, problems)
+    var problems: seq[string] = @[]
+    result = loadTheme(path, mode, problems) # at most `MaxThemeBytes`
     for p in problems:
       ui.messages.add p, mlWarning
   ui.messages.add "Theme: " & result.name & " (" &

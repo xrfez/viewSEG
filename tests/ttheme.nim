@@ -1,9 +1,20 @@
 ## `view/theme`: the built-in themes, the theme file format (Omarchy's
 ## colors.toml plus viewSEG's tables), its fallbacks, and theme discovery.
+##
+## Hostile theme files (`hostileFiles`): one over `MaxThemeBytes` (a real
+## one is about 2 KB) is not read, with one message; one full of mistakes
+## says at most `MaxThemeMessages` of them and how many more; a FIFO named
+## `*.toml` is not opened (it would wait for a writer for ever); and
+## `themeFiles` keeps each file's messages for when it is chosen. Seen to
+## fail: with the size not checked, the 70 KiB file was parsed ("t ==
+## EverforestDark" failed); with the messages not capped, "302 messages";
+## with the FIFO opened, the test hung until killed.
 
-import std/[os, strutils]
+import std/[os, strutils, times]
 import viewSEG/core/geometry
 import viewSEG/view/theme
+when defined(posix):
+  import std/posix
 
 const assetThemes = currentSourcePath().parentDir.parentDir / "assets" / "themes"
 
@@ -162,6 +173,38 @@ block missingFile:
   let t = loadTheme(getTempDir() / "no-such-theme.toml", tmLight, messages)
   doAssert t == EverforestLight
   doAssert messages.len == 1 and messages.has("cannot read the theme"), $messages
+
+block hostileFiles:
+  let dir = getTempDir() / ("viewseg_hostile_" & $getCurrentProcessId())
+  createDir(dir)
+  try:
+    var big = ""
+    while big.len <= MaxThemeBytes: big.add "x = 1\n"
+    writeFile(dir / "big.toml", big)
+    var messages: seq[string]
+    let started = epochTime()
+    let t = loadTheme(dir / "big.toml", tmDark, messages)
+    doAssert t == EverforestDark
+    doAssert messages.len == 1 and messages.has("too large"), $messages.len & " messages"
+    doAssert epochTime() - started < 1
+    var bad = ""
+    for i in 0 ..< 300: bad.add "key" & $i & " = 1\n"
+    writeFile(dir / "bad.toml", bad)
+    messages.setLen 0
+    discard loadTheme(dir / "bad.toml", tmDark, messages)
+    doAssert messages.len == MaxThemeMessages + 1, $messages.len & " messages"
+    doAssert messages[^1].contains("more"), messages[^1]
+    when defined(posix):
+      doAssert mkfifo(cstring(dir / "fifo.toml"), 0o600) == 0
+      messages.setLen 0
+      discard loadTheme(dir / "fifo.toml", tmDark, messages)
+      doAssert messages.len == 1 and messages.has("not a file"), $messages
+    let found = themeFiles([dir])
+    for f in found:
+      if f.name == "bad": doAssert f.problems.len == MaxThemeMessages + 1
+      if f.name == "big": doAssert f.problems.len == 1 and f.theme.name == "Big", f.theme.name
+  finally:
+    removeDir(dir)
 
 block omarchyTerminalForm:
   # The form of Omarchy's own themes (here catppuccin-latte): no `mode`, ANSI
