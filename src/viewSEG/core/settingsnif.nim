@@ -24,7 +24,7 @@
 ##  (messages (autoScroll true) (hide info))
 ##  (cursorLine false)
 ##  (files (followLatest false))
-##  (map (info popup))
+##  (map (info popup) (lengths survey))
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
 ##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960))))
 ## ```
@@ -61,6 +61,7 @@ const
   StatNames: array[NormStat, string] = ["peak", "rms", "percentile"]
   LengthNames: array[LengthUnit, string] = ["inch", "cm"]
   MapInfoNames: array[MapInfo, string] = ["popup", "strip"]
+  MapLengthNames: array[MapLengths, string] = ["survey", "metres", "feet", "usFeet"]
   CoordinateNames: array[HeaderCoordinates, string] = ["fill", "replace"]
   RecordMatchNames: array[RecordMatch, string] = ["auto", "source", "ffid"]
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
@@ -219,6 +220,7 @@ proc settingsDocument*(s: Settings): string =
   w.close()
   w.open("map")
   w.choice("info", MapInfoNames[s.map.info])
+  w.choice("lengths", MapLengthNames[s.map.lengths])
   w.close()
   w.open("join")
   w.value("trailingDigits", s.join.trailingDigits)
@@ -554,6 +556,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       of "map":
         for k in c.kids:
           if k.isTree("info"): r.choice(k, MapInfoNames, result.map.info)
+          elif k.isTree("lengths"): r.choice(k, MapLengthNames, result.map.lengths)
           else: r.unknown(k, "map")
       of "join": r.join(c, result.join)
       else: r.unknown(c, "settings")

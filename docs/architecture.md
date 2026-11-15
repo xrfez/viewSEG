@@ -360,7 +360,10 @@ A joined file keeps what it was joined with (`AppState.joins`: the files, option
 the plan, the geometry): its positions are read again from its keys (the map), its records
 are checked against the joined relation records (`checkWork` with the join's
 `RecordMatch` and `TraceMatch`, every relation file of the join merged, as a loaded layer
-cannot), the units the user confirmed label the map and the status bar (`unitsOf`), and
+cannot), the units the user confirmed label the map and the status bar first
+(`surveyUnit`: then a survey file's SPS H20 and H201, then a seismic file's headers; named
+exactly, `m`, `ft`, `ftUS`, and never guessed; `shownLengths` converts the scale bar's and
+the ruler's lengths when the map's settings ask for another unit), and
 **Select unmatched traces** (`ckSelectUnmatched`) selects the traces the survey lacks a
 station for. A tile carries the groups of each row's keys a join gave
 (`Tile.joined`, parseSEG's `joinedGroups`), so the display header, the cursor's header box
@@ -809,7 +812,8 @@ type
     messages: MessagesView         # the Messages window's toggles: auto-scroll, hidden severities
     cursorLine: bool               # the plot's cursor time line is on
     files: FilesView               # the Files window: followLatest
-    map: MapOptions                # the map: where the point under the pointer is described
+    map: MapOptions                # the map: where the point under the pointer is described,
+                                   # the unit of its lengths (the survey's, or m, ft, ftUS)
     join: JoinOptions              # the geometry join's options, as set last
 
   Pick = object              # core/pick: what lies under the pointer

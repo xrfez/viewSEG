@@ -240,20 +240,45 @@ func pointsIn*(st: AppState; box: Bounds): seq[PointRef] =
         for q in l.points[r].index.within(box):
           result.add PointRef(layer: l.id, role: r, point: q)
 
-func unitsOf*(st: AppState): string =
-  ## The survey's units as the status bar and the scale bar write them: the
-  ## units the user confirmed when joining a file with its survey files,
-  ## else the first survey file's that says ("ft", "US ft", "m", or its own
-  ## words); "" when none does.
+func surveyUnit*(st: AppState): SurveyUnit =
+  ## The unit of the survey's coordinates, as the data say it, never guessed:
+  ## the one the user confirmed when joining a file with its survey files,
+  ## else the first survey file's that says (SPS H20 and H201: `feet` with
+  ## 0.3048006096 m a unit is US survey feet), else the first open seismic
+  ## file's headers' (SEG-Y's measurement system, a CRS); not given when
+  ## nothing says.
   for i in 0 ..< st.joins.len:
     let u = st.joins[i].units.survey
-    if u != suNotGiven: return u.abbreviation
+    if u != suNotGiven: return u
   for i in 0 ..< st.survey.layers.len:
     template l: untyped = st.survey.layers[i]
     if l.origin == loSurveyFile and l.gridUnit.known:
       let u = unitOf(l.gridUnit)
-      return if u != suNotGiven: u.abbreviation else: l.gridUnit.name.strip
-  ""
+      if u != suNotGiven: return u
+  for s in st.sessions:
+    let u = unitOf(s.crs.units)
+    if u != suNotGiven: return u
+  suNotGiven
+
+func unitsOf*(st: AppState): string =
+  ## The survey's unit as the status bar writes coordinates: "m", "ft" or
+  ## "ftUS" (`surveyUnit`); "" when nothing says.
+  st.surveyUnit.abbreviation
+
+func shownLengths*(st: AppState): tuple[unit: SurveyUnit; factor: float64] =
+  ## The unit the scale bar and the ruler state lengths in, and what a length
+  ## in the survey's units is multiplied by to be in it: the survey's own
+  ## (1), or the one the map's settings choose, converted exactly (1 ft =
+  ## 0.3048 m, 1 ftUS = 1200/3937 m) when the survey's unit is a length; the
+  ## survey's own when it is not known (nothing to convert from).
+  let u = st.surveyUnit
+  let want = case st.settings.map.lengths
+    of dlSurvey: u
+    of dlMetres: suMetres
+    of dlFeet: suFeet
+    of dlUsFeet: suUsFeet
+  if want == u or metresPerUnit(u).isNaN: (u, 1.0)
+  else: (want, metresPerUnit(u) / metresPerUnit(want))
 
 func fixed(x: float64; decimals: int): string =
   if x.isNaN: ""

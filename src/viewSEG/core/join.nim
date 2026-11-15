@@ -191,10 +191,19 @@ func overlaps(a, b: Extent): bool {.inline.} =
 # ----------------------------------------------------------------- units --
 
 func abbreviation*(u: SurveyUnit): string =
-  ## How the status bar and the map write the unit: "m", "ft", "US ft"; ""
+  ## How the status bar and the map write the unit: "m", "ft", "ftUS"; ""
   ## when not given.
-  const words: array[SurveyUnit, string] = ["", "m", "ft", "US ft", "°", "″", "DMS"]
+  const words: array[SurveyUnit, string] = ["", "m", "ft", "ftUS", "°", "″", "DMS"]
   words[u]
+
+func metresPerUnit*(u: SurveyUnit): float64 =
+  ## How many metres one unit of `u` is, exactly (1 ft = 0.3048 m; 1 ftUS =
+  ## 1200/3937 m); NaN for a unit that is not a length, or not given.
+  case u
+  of suMetres: 1.0
+  of suFeet: 0.3048
+  of suUsFeet: 1200 / 3937
+  else: NaN
 
 func unitOf*(g: GridUnit): SurveyUnit =
   ## The unit an SPS header gives (H201's factor to metres, else H20's word).
@@ -205,7 +214,8 @@ func unitOf*(g: GridUnit): SurveyUnit =
   let n = g.name.strip.toLowerAscii
   if n in ["m", "meter", "meters", "metre", "metres"]: suMetres
   elif n in ["ft", "foot", "feet", "international feet"]: suFeet
-  elif n in ["us ft", "us feet", "us survey feet", "survey feet", "ftus"]: suUsFeet
+  elif n in ["us ft", "us feet", "us survey feet", "us survey foot", "survey feet", "ftus",
+      "us-ft"]: suUsFeet
   else: suNotGiven
 
 func unitOf*(c: CoordinateUnits): SurveyUnit =

@@ -158,7 +158,7 @@ block selectingPoints:
     let info = st.pointInfo(own, st.unitsOf)
     doAssert info.title == "Receiver, no station", info.title # the file's keys have none
     doAssert info.lines[0] == "E " & formatFloat(rcvX(5), ffDecimal, 1) & "   N 6000000.0   " &
-      "Z 100.0", $info.lines
+      "Z 100.0 m", $info.lines # metres: as the file's binary header says
     doAssert info.lines[1] == "In the traces of survey-clean.sgy", $info.lines
     doAssert info.lines[2] == "3 traces in 3 records: FFID 11, 12, 13", $info.lines
     # a selection made anew in the plot takes the points away; Esc takes all

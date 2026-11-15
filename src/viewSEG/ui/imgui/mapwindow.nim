@@ -129,6 +129,7 @@ type
     menuShows: bool ## the menu's point shows its record on a click
     stripWidths: array[4, float32]
     rulerText, scaleText: string
+    scale: ScaleBar ## the scale bar drawn last
     plot: Rect
       ## the plot's area last frame, framebuffer pixels
     wanted: MapView ## a view to give the map next frame (`show`)
@@ -175,6 +176,9 @@ func rulerText*(mu: MapUi): lent string {.inline.} = mu.rulerText
   ## What the ruler says ("1250.0 ft, bearing 090.0°"); "" with none (for tests).
 
 func scaleText*(mu: MapUi): lent string {.inline.} = mu.scaleText
+func scaleBarShown*(mu: MapUi): ScaleBar {.inline.} = mu.scale
+  ## The scale bar drawn last: its length (in the unit it names) and its
+  ## length in framebuffer pixels.
   ## What the scale bar says ("500 ft"); "" with none (for tests).
 
 func mapMenuTitle*(mu: MapUi): lent string {.inline.} = mu.menuTitle
@@ -278,7 +282,7 @@ proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; mar
     tip("Back to the view before (Backspace, Alt+Left)")
   mu.stripGroup(2, right, 14):
     if button(IconSettings & "##more", marks, "map.more"): igOpenPopup_Str(moreId, 0)
-    tip("Where the map describes the point under the pointer")
+    tip("Where the map describes the point under the pointer, and the unit of its lengths")
   if igBeginPopup(layersId, 0):
     drawLayers(st, layers, marks, res)
     igEndPopup()
@@ -292,6 +296,26 @@ proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; mar
         s.map.info = m
         res.commands.add Command(kind: ckSettings, settings: s)
       marks.mark("map.more." & $m)
+    igSeparatorText("Lengths (the scale bar, the ruler)")
+    let u = st.surveyUnit
+    let convertible = not metresPerUnit(u).isNaN
+    let own = if u == suNotGiven: "not given" else: $u & ", " & u.abbreviation
+    for (m, label) in [(dlSurvey, "As the survey gives them (" & own & ")"),
+        (dlMetres, "In metres (m)"), (dlFeet, "In feet (ft: 0.3048 m)"),
+        (dlUsFeet, "In US survey feet (ftUS: 1200/3937 m)")]:
+      igBeginDisabled(m != dlSurvey and not convertible)
+      let now = st.settings.map.lengths
+      if igRadioButton_Bool(label.cstring, now == m) and now != m:
+        var s = st.settings
+        s.map.lengths = m
+        res.commands.add Command(kind: ckSettings, settings: s)
+      igEndDisabled()
+      marks.mark("map.more." & $m)
+      if m != dlSurvey and not convertible and igIsItemHovered(
+          ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+        igTextUnformatted("Nothing says what the survey's unit is, so lengths cannot be " &
+          "converted (the scale bar says \"units\")", nil)
+        igEndTooltip()
     igEndPopup()
 
 func clampTo(p: ImVec2_c; r: Rect): ImVec2_c =
@@ -480,15 +504,17 @@ proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
     inc mu.highlightRev
 
 proc drawScaleBar(mu: var MapUi; view: MapView; pos, size: ImVec2_c; fb: float32;
-    units: string; ink: MapInk; t: Theme; marks: var Marks) =
-  ## The scale bar in the plot's bottom-left corner, and a north arrow in its
-  ## top-right one.
-  let bar = scaleBar(view.perPixel, float64(scalePixels * fb))
+    lengths: tuple[unit: SurveyUnit; factor: float64]; ink: MapInk; t: Theme;
+    marks: var Marks) =
+  ## The scale bar in the plot's bottom-left corner, in the unit the map
+  ## states lengths in (`shownLengths`), and a north arrow in its top-right one.
+  let bar = scaleBar(view.perPixel * lengths.factor, float64(scalePixels * fb))
   mu.scaleText = ""
+  mu.scale = bar
   if bar.length <= 0: return
   let dl = igGetWindowDrawList()
   let px = float32(bar.pixels) / fb # ImGui pixels
-  let text = lengthText(bar.length, units)
+  let text = lengthText(bar.length, lengths.unit.abbreviation)
   mu.scaleText = text
   let ts = igCalcTextSize(text.cstring, nil, false, -1)
   let pad = 6'f32
@@ -513,8 +539,9 @@ proc drawScaleBar(mu: var MapUi; view: MapView; pos, size: ImVec2_c; fb: float32
   marks.markRect("map.north", ImVec2_c(x: n.x - 7, y: n.y), ImVec2_c(x: n.x + 7,
     y: n.y + 18 + nt.y))
 
-proc drawRuler(mu: var MapUi; view: MapView; plot: Rect; units: string; ink: MapInk;
-    t: Theme; marks: var Marks) =
+proc drawRuler(mu: var MapUi; view: MapView; plot: Rect;
+    lengths: tuple[unit: SurveyUnit; factor: float64]; ink: MapInk; t: Theme;
+    marks: var Marks) =
   ## The distance measured, from its first point to its second, with its
   ## length and grid bearing beside it.
   mu.rulerText = ""
@@ -529,7 +556,7 @@ proc drawRuler(mu: var MapUi; view: MapView; plot: Rect; units: string; ink: Map
   ImDrawList_AddCircleFilled(dl, pb, 3.5, c, 12)
   let d = distance(mu.ruler.a, mu.ruler.b)
   let br = bearing(mu.ruler.a, mu.ruler.b)
-  mu.rulerText = lengthText(d, units) & (if br.isNaN: ""
+  mu.rulerText = lengthText(d * lengths.factor, lengths.unit.abbreviation) & (if br.isNaN: ""
     else: ", bearing " & align(formatFloat(br, ffDecimal, 1), 5, '0') & "°")
   let ts = igCalcTextSize(mu.rulerText.cstring, nil, false, -1)
   let pad = igGetStyle().FramePadding
@@ -639,7 +666,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
   of maZoomIn, maZoomOut:
     next = next.zoomedMap((if ask == maZoomIn: KeyStep else: 1 / KeyStep), next.centre, lim)
     if mu.burst(mgKeyZoom): remember = true
-  let units = st.unitsOf
+  let units = st.unitsOf # of coordinates
+  let lengths = st.shownLengths # of the scale bar and the ruler
   let infoRows = if st.settings.map.info == miStrip: 2 else: 0
   let lineH = igGetTextLineHeightWithSpacing()
   let avail = igGetContentRegionAvail()
@@ -758,8 +786,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       mu.menuTitle = if under.len > 0: mu.info[0].title else: "No point here"
       mu.menuShows = under.len > 0 and st.opensRecord(under[0])
     if view.isSet:
-      mu.drawRuler(view, plot, units, ink, t, marks)
-      mu.drawScaleBar(view, pos, size, fb.x, units, ink, t, marks)
+      mu.drawRuler(view, plot, lengths, ink, t, marks)
+      mu.drawScaleBar(view, pos, size, fb.x, lengths, ink, t, marks)
     if hovered and mu.info.len > 0 and st.settings.map.info == miPopup and
         mu.drag.kind == mdNone:
       drawInfoBox(mu.info, igGetIO_Nil().MousePos, pos, size, t, marks)

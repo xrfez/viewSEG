@@ -356,9 +356,13 @@ The gestures are the plot's:
 | Right-click a dot | Show its record (a source), select it, add it to the selection or take it out, hide its layer |
 | Esc | The drag going on, else the ruler, else the selection |
 
-The **status bar** shows the pointer's coordinates in the survey's units (from the SPS
-header: `ft`, `US ft`, `m`), and a **scale bar** and a north arrow stand in the map's
-corners. **Layers** in the map's strip shows or hides each layer: each survey file's
+The **status bar** shows the pointer's coordinates in the survey's unit, named exactly:
+`m` (metres), `ft` (international feet) or `ftUS` (US survey feet), as the SPS header says
+it (H20, and H201's factor: `feet` with 0.3048006096 m a unit is US survey feet), else as
+the seismic file's headers say, else as you confirmed it when joining; where nothing says,
+"units" (never a guess). A **scale bar** and a north arrow stand in the map's corners; the
+axes show no values. The gear's **Lengths** shows the scale bar's and the ruler's lengths
+in another unit instead, converted exactly (1 ft = 0.3048 m, 1 ftUS = 1200/3937 m). **Layers** in the map's strip shows or hides each layer: each survey file's
 sources or receivers, the open file's own, and the highlight (the record on show, the
 selection, and the source and receiver of the trace under the pointer in the plot). The
 gear chooses where the description of the dot under the pointer goes: in a box beside the
@@ -453,7 +457,7 @@ bin/viewSEG exampleFiles/00000151_12900_11300.sgd exampleFiles/sps/*.?ps
 
 then File > Join geometry..., Join: the Morgantown record's 3954 seismic traces all
 match by their headers' stations; its headers' coordinates agree with the survey's to
-0.1 US ft (choose "replace those the headers give" to have the survey's).
+0.1 ftUS (choose "replace those the headers give" to have the survey's).
 
 ## Messages
 

@@ -56,7 +56,7 @@ proc everyFieldSet(): Settings =
       SortPreset(name: "Channels", keys: @[SortKey(field: hfChannel)])],
     customOrder: @[SortKey(field: hfSrcPoint), SortKey(field: hfTrace, descending: true)],
     messages: MessagesView(autoScroll: false, hidden: {sevInfo, sevWarning}), cursorLine: true,
-    files: FilesView(followLatest: true), map: MapOptions(info: miStrip),
+    files: FilesView(followLatest: true), map: MapOptions(info: miStrip, lengths: dlUsFeet),
     join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
       recordMatch: rmFieldRecord, traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
       line: 4960), LineName(name: "A line", line: 12.5)]))
@@ -85,7 +85,8 @@ block savedByAnOlderBuild:
   doAssert problems.len == 0, $problems
   doAssert not s.cursorLine and s.recentFiles.len == 1 and s.plot.display.mode == dmWiggle
   doAssert not s.files.followLatest, "a new setting takes its default"
-  doAssert s.map.info == miPopup, "the map's settings take their defaults"
+  doAssert s.map.info == miPopup and s.map.lengths == dlSurvey,
+    "the map's settings take their defaults"
   doAssert s.join == JoinOptions(), "the join's options take their defaults"
   doAssert s.plot.display.untilMs == 2000, "the Exponential gain's cutoff takes its default"
   doAssert cleaned(s)[1] == 0

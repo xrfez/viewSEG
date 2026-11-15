@@ -501,15 +501,18 @@ func mapSrc*(line, k: int): (float64, float64) =
   (OriginX + MapRcvSpacing * (4.5 + 10 * float64(line)),
     OriginY - 50 + MapSrcSpacing * float64(k))
 
-proc mapSps*(fx: Fixtures): tuple[s, r: string] =
-  ## An S and an R file (SPS 2.1, grid units metres) of a small 3D land
-  ## spread: receiver lines running east, source lines running north across
-  ## them (`mapRcv`, `mapSrc`), so a source is never on a receiver.
-  result = (fx.dir / "map.s", fx.dir / "map.r")
+proc mapSpsIn*(fx: Fixtures; name, gridUnits, factor: string): tuple[s, r: string] =
+  ## `mapSps`'s S and R files with other grid units in their headers: H20
+  ## `gridUnits` and H201 `factor` (metres a unit), each left out when "".
+  result = (fx.dir / (name & ".s"), fx.dir / (name & ".r"))
   if fileExists(result.r): return
-  let headers = @[SpsHeader(code: "00", description: "SPS format version num.",
-    data: "SPS 2.1;"), SpsHeader(code: "20", description: "Description of grid units",
-    data: "Metres;"), SpsHeader(code: "201", description: "Factor to metres", data: "1.0;")]
+  var headers = @[SpsHeader(code: "00", description: "SPS format version num.",
+    data: "SPS 2.1;")]
+  if gridUnits.len > 0:
+    headers.add SpsHeader(code: "20", description: "Description of grid units",
+      data: gridUnits & ";")
+  if factor.len > 0:
+    headers.add SpsHeader(code: "201", description: "Factor to metres", data: factor & ";")
   var s, r = SpsFile(headers: headers)
   for i, line in MapRcvLines:
     for k in 0 ..< MapRcvPoints:
@@ -522,6 +525,12 @@ proc mapSps*(fx: Fixtures): tuple[s, r: string] =
   for (f, path) in [(s, result.s), (r, result.r)]:
     let log = writeSps(f, path)
     doAssert log.len == 0, $log
+
+proc mapSps*(fx: Fixtures): tuple[s, r: string] =
+  ## An S and an R file (SPS 2.1, grid units metres) of a small 3D land
+  ## spread: receiver lines running east, source lines running north across
+  ## them (`mapRcv`, `mapSrc`), so a source is never on a receiver.
+  fx.mapSpsIn("map", "Metres", "1.0")
 
 proc bigSps*(fx: Fixtures; lines, points: int; spacing = 5.0; gap = 50.0): string =
   ## An R file of `lines` × `points` receivers (lines `gap` apart running

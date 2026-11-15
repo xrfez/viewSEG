@@ -56,9 +56,19 @@ type
     miPopup = "popup" ## in a popup beside the pointer
     miStrip = "strip" ## in a strip along the map's bottom edge
 
+  MapLengths* = enum
+    ## The unit the map's scale bar and ruler state lengths in.
+    dlSurvey = "the survey's unit" ## as the survey's coordinates are
+    dlMetres = "metres"
+    dlFeet = "feet"                ## international feet: 0.3048 m
+    dlUsFeet = "US survey feet"    ## 1200/3937 m
+
   MapOptions* = object
     ## How the map shows what it shows.
     info*: MapInfo ## where the point under the pointer is described
+    lengths*: MapLengths
+      ## the unit of the scale bar's and the ruler's lengths, converted from
+      ## the survey's when another is chosen
 
   Settings* = object
     theme*: string                                ## the theme file's name; "" follows the system

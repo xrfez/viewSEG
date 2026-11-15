@@ -426,15 +426,13 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 ┌ Map ──────────────────────────────────────┐
 │ [Layers] [-][+][fit][<] [⚙]               │  controls (they wrap when narrow)
 ├───────────────────────────────────────────┤
-│ 446000 ┤ ·  ·  ·  ·  ·  ·  ·  ·  ·     ▲ │  survey coordinates, north up,
-│        │   •     •        •          N │  equal aspect; tick values only
-│ 445000 ┤ ·  ·  ◉  ·  ·  ·  ·  ·  ·       │  · receivers   • sources
-│        │ ┌──────────────────────┐        │  ◯ the open file's own positions
-│ 444000 ┤ │ Receiver, line 104, … │       │  the point under the pointer
-│        │ └──────────────────────┘        │
-│        │ 2000 US ft                      │  scale bar
-│        └┬──────┬──────┬──────┬───────────│
-│      1834000 1836000 1838000             │
+│ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·     ▲     │  survey coordinates, north up,
+│   •     •        •                N       │  equal aspect; no axis values
+│ ·  ·  ◉  ·  ·  ·  ·  ·  ·  ·  ·           │  · receivers   • sources
+│   ┌───────────────────────┐               │  ◯ the open file's own positions
+│   │ Receiver, line 104, … │               │  the point under the pointer
+│   └───────────────────────┘               │
+│ 2000 ftUS                                 │  scale bar
 └───────────────────────────────────────────┘
 ```
 
@@ -474,9 +472,13 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   closed: a map that showed the whole survey shows the whole new one; another view stays.
 - **The axes carry no values** (the user: "the map does not need any x and y values on
   the axis"): the scale bar, the north arrow and the pointer's coordinates in the status
-  bar say what is needed, and the plot area is the same from the first frame on. The
-  units are in the status bar, the scale bar and the ruler, from the survey file's header
-  (`H20`, `H201`: `ft`, `US ft`, `m`, or its own words); "units" where nothing says.
+  bar say what is needed, and the plot area is the same from the first frame on.
+- **The unit is named exactly** (the user: "the legend of distance by units should have
+  correct ft/survey ft/ meters"): `m`, `ft` (international feet, 0.3048 m) or `ftUS` (US
+  survey feet, 1200/3937 m) in the status bar's coordinates, the scale bar and the ruler,
+  from the units confirmed with a join, else the survey file's header (`H20`, `H201`), else
+  the seismic file's headers; "units" where nothing says, never a guess. The gear's
+  Lengths shows lengths in another of the three instead, converted exactly.
 - **A scale bar** (1, 2 or 5 times a power of ten, at most 150 pixels long) in the plot's
   bottom-left corner and a **north arrow** (grid north) in its top-right one.
 - **The strip:** Layers, zoom out, zoom in, fit, back, and the gear: where the point under
