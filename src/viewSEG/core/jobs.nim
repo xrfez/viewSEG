@@ -499,7 +499,8 @@ proc stop*(jobs: Jobs; deadline = getMonoTime() + JobStopWait): bool {.discardab
 proc notAnsweringFor*(info: JobInfo; now = fs.now()): Duration =
   ## How long running job `info` has not reported, once that is
   ## `StallAfter` or more; zero for a job that answers or does not run.
-  if info.state == jsRunning and not info.abandoned and now - info.beat >= StallAfter:
+  if info.state == jsRunning and not info.abandoned and info.beat != MonoTime() and
+      now - info.beat >= StallAfter:
     now - info.beat
   else: initDuration()
 

@@ -1575,6 +1575,47 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)
 
+proc drawWaiting(w: Waiting; panel: PanelId; t: Theme; marks: var Marks;
+    res: var PanelOutput; centred: bool) =
+  ## What the panel waits for that its drive does not answer, with Cancel
+  ## and Retry: in the middle of an empty plot (`centred`), else as a line
+  ## above the plot, which keeps what it showed: the buttons first, so a
+  ## narrow window wraps the words, never the buttons.
+  let text = IconWarning & "  " & w.words
+  let colour = if w.kind == wkUnreadable: t.roles[rlError] else: t.roles[rlWarning]
+  template words() =
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour))
+    igTextWrapped("%s", text.cstring)
+    igPopStyleColor(1)
+    marks.mark("plot.wait")
+  template buttons() =
+    if w.kind in {wkOpening, wkReading}:
+      if igSmallButton("Cancel##wait"):
+        res.commands.add(if w.kind == wkOpening: Command(kind: ckCancelJob, job: w.job)
+                         else: Command(kind: ckStopReading, panel: panel))
+      marks.mark("plot.wait.cancel")
+      tip(if w.kind == wkOpening: "Stop opening the file: the plot stays as it was"
+          else: "Stop waiting for this read: the plot keeps what it shows")
+      igSameLine(0, -1)
+    if igSmallButton((IconRefresh & " Retry##wait").cstring):
+      res.commands.add Command(kind: ckRetry, panel: panel)
+    marks.mark("plot.wait.retry")
+    tip("Try the drive again")
+  if centred:
+    let avail = igGetContentRegionAvail()
+    let at = igGetCursorPos()
+    let width = min(avail.x, igCalcTextSize(text.cstring, nil, false, -1).x)
+    igSetCursorPos(ImVec2_c(x: at.x + max(0, (avail.x - width) / 2), y: at.y + avail.y / 2 - 20))
+    igPushTextWrapPos(igGetCursorPosX() + width)
+    words()
+    igPopTextWrapPos()
+    igSetCursorPosX(at.x + max(0, avail.x / 2 - 4 * igGetFontSize()))
+    buttons()
+  else:
+    buttons()
+    igSameLine(0, -1)
+    words()
+
 proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: PanelId;
     t: Theme; fonts: Fonts; marks: var Marks): PanelOutput =
   ## The plot window of `panel`, titled for what it shows ("Seismic", "Aux":
@@ -1610,8 +1651,11 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
       let s = if source.kind == lsRecord: st.findSession(source.file) else: -1
       let name = if s >= 0: st.sessions[s].name else: "the file"
       let again = if s < 0: st.reopening(panel) else: ("", false)
+      let wait = st.waiting(k)
       if tp.gpuError.len > 0:
         centredText("The plot cannot be drawn: " & tp.gpuError, t.roles[rlError])
+      elif wait.kind != wkNone and not p.laidOut:
+        drawWaiting(wait, panel, t, marks, result, centred = true)
       elif again.path.len > 0:
         let changed = again.path.extractFilename
         centredText(if again.waiting: changed & " is being changed by another program: it " &
@@ -1632,6 +1676,8 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
         centredText("The traces of this gather have no samples (see Messages).",
           t.roles[rlTextDim])
       else:
+        if wait.kind != wkNone:
+          drawWaiting(wait, panel, t, marks, result, centred = false)
         tp.drawPlot(st, k, t, fonts, marks, result, ask, ppi)
         plotted = true
   tp.focus.settle()

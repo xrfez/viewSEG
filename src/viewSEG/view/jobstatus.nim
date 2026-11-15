@@ -18,6 +18,7 @@ type
     timeLeft*: string  ## "about 12 s left"; "" until an estimate is sound
     cancellable*: bool ## the bar offers Cancel
     cancelling*: bool  ## a cancel was asked for and the job has not stopped yet
+    silent*: Duration  ## how long it has not answered (its drive); zero while it answers
     otherRunning*: int ## running jobs besides the one shown
     queued*: int       ## jobs waiting, in both lanes
 
@@ -38,9 +39,10 @@ func shownFirst(a, b: JobInfo): bool =
   if a.spec.lane != b.spec.lane: a.spec.lane == jlInteractive
   else: a.startedAt < b.startedAt
 
-func jobStatus*(active: openArray[JobInfo]; now: MonoTime): JobStatus =
+func jobStatus*(active: openArray[JobInfo]; now: MonoTime; drives = now): JobStatus =
   ## The status bar's job field for `active` (`Jobs.active`: the running
-  ## and queued jobs) at time `now`.
+  ## and queued jobs) at time `now`; `drives` is `fs.now`, the clock jobs
+  ## that do not answer are timed on.
   result = JobStatus(job: NoJob, fraction: -1)
   var best = -1
   for i, j in active:
@@ -61,6 +63,7 @@ func jobStatus*(active: openArray[JobInfo]; now: MonoTime): JobStatus =
   result.phase = j.progress.phase
   result.cancellable = j.spec.cancellable
   result.cancelling = j.cancelRequested
+  result.silent = j.notAnsweringFor(drives)
   let p = j.progress
   if p.total > 0:
     let f = clamp(p.done.float / p.total.float, 0.0, 1.0)
@@ -79,6 +82,8 @@ func text*(s: JobStatus): string =
   if s.percent.len > 0:
     result.add (if s.phase.len > 0: " " else: ": ") & s.percent
   if s.timeLeft.len > 0: result.add ", " & s.timeLeft
+  if s.silent > initDuration():
+    result.add " (not answering for " & $max(1, s.silent.inSeconds) & " s)"
   if s.cancelling: result.add " (cancelling)"
 
 func others*(s: JobStatus): string =

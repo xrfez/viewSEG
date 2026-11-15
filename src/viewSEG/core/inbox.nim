@@ -27,6 +27,7 @@ type
     mkChecked ## an open file's records checked against a relation file
     mkJoining ## survey files read for a join, and what joining them does
     mkJoined  ## a join done
+    mkUnread  ## a panel's file cannot be read now (its drive went away, or fails), from its reader
 
   ReadPurpose* = enum
     ## What a document is read for.
@@ -111,6 +112,10 @@ type
         ## the file's `keysRevision` after the join
       heldAtJoin*: int
         ## holds on the file when the join ran: none, as no reader may run
+    of mkUnread:
+      unreadPanel*: PanelId
+      unreadGen*: uint64 ## the panel's `sourceGen` it is about
+      why*: string       ## in plain words
 
   InboxObj = object
     lock: Lock

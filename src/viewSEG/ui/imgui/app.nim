@@ -33,7 +33,7 @@ import asserts # before imguin: Nim keys its cache of imguin's C++ objects on th
 import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
-import ../../core/[geometry, state, watchdog]
+import ../../core/[filesystem, geometry, state, watchdog]
 import ../../platform/paths
 import ../../remote/control
 import ../../view/jobstatus
@@ -782,7 +782,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     s.recentFolders.setLen 0
     ui.core.apply Command(kind: ckSettings, settings: s)
   result.incl drawToolbar(ui.theme, ui.marks)
-  let job = jobStatus(ui.core.jobs.active, getMonoTime())
+  let job = jobStatus(ui.core.jobs.active, getMonoTime(), fs.now())
   # The readout is last frame's pick: the bar is drawn before the plot.
   let status = drawStatusBar(ui.fonts, ui.theme,
     ChromeInfo(themeName: ui.theme.name, scale: ui.scale, agent: AgentSign(

@@ -90,8 +90,8 @@
 import std/[algorithm, math, monotimes, os, sequtils, sets, strutils, tables, times]
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
-import diskio, edits, filejobs, filelist, inbox, jobs, join, layouts, log, mapstate, panels,
-  persist, pick, reader, selection, session, settings, survey, surveyjobs, threads, tiles, watch,
+import diskio, edits, filejobs, filelist, filesystem, inbox, jobs, join, layouts, log, mapstate,
+  panels, persist, pick, reader, selection, session, settings, survey, surveyjobs, threads, tiles, watch,
   zoom
 
 export edits, filelist, inbox, jobs, join, layouts, log, mapstate, panels, persist, pick,
@@ -153,6 +153,8 @@ type
     ckJoin = "join geometry"             ## join survey files to an open file's traces, in memory
     ckSelectUnmatched = "select unmatched"
       ## select the traces a join left unmatched
+    ckRetry = "retry"                    ## open, read or list again what does not answer
+    ckStopReading = "stop reading"       ## leave a panel's read that does not answer
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -172,8 +174,10 @@ type
       reordered*: JobId               ## the job's id
       position*: int                  ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
-        ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits, ckFilter:
-      panel*: PanelId                 ## the panel's id (1: the Seismic window)
+        ckShowTrace, ckEdit, ckUndoEdit, ckClearEdits, ckFilter, ckRetry, ckStopReading:
+      panel*: PanelId
+        ## the panel's id (1: the Seismic window); ckRetry: `NoPanel` for the file
+        ## list's folder
       gather*: int                    ## ckGather: index into the file's gathers
       path*: string                   ## ckShowFile, ckShowTrace: the file to show
       traceIndex*: int                ## ckShowTrace: the trace's index (in its record)
@@ -235,6 +239,24 @@ type
     severity*: Severity
     text*: string
     serial*: int ## counts up from 0, never reused
+
+  WaitKind* = enum
+    ## What does not answer (`waiting`, `listingWait`).
+    wkNone = "none"
+    wkOpening = "opening"       ## the open of the file a panel is to show
+    wkReading = "reading"       ## a panel's read of the file it shows
+    wkUnreadable = "unreadable" ## the file a panel shows cannot be read now (its drive went away)
+    wkListing = "listing"       ## the listing of the folder
+    wkWatching = "watching"     ## a look at the folder listed
+
+  Waiting* = object
+    ## Something the user waits for that the drive does not answer: what the
+    ## plot and the Files window say, with Cancel and Retry.
+    kind*: WaitKind
+    path*: string     ## the file or the folder
+    silent*: Duration ## how long it has not answered (on `fs.now`)
+    job*: JobId       ## the job Cancel stops (an open, a listing); `NoJob` for none
+    why*: string      ## wkUnreadable: why, in plain words
 
   Pending = object
     ## An open or close job the state waits for.
@@ -348,6 +370,8 @@ type
       ## a trace to show once its file is open (`ckShowTrace`); "" for none
     oldScans: seq[JobId] ## scans replaced by a newer listing: they end quietly
     quietScan: JobId     ## a listing of the folder listed last: a missing folder is said quietly
+    unread: seq[tuple[panel: PanelId; why: string]]
+      ## the panels whose file cannot be read now, and why (`mkUnread`)
     watch: FolderWatch
       ## looks at the listed folder and the open files; none until needed
     watchEvery: Duration ## the pause between its looks
@@ -727,6 +751,58 @@ func reopening*(state: AppState; panel: PanelId): tuple[path: string; waiting: b
       if o.panel == panel and not o.unwanted: return (o.path, false)
   ("", false)
 
+proc waiting*(state: AppState; panelIndex: int; now = fs.now()): Waiting =
+  ## What `panels[panelIndex]` waits for that its drive does not answer: the
+  ## open of the file it is to show, or its read, once either has been
+  ## silent `StallAfter`; or why its file cannot be read now. None
+  ## otherwise. Each frame: a few locks taken briefly.
+  template p: untyped = state.panels[panelIndex]
+  result = Waiting(job: NoJob)
+  for o in state.opening:
+    if not o.unwanted and (o.panel == p.id or (o.panel == NoPanel and p.id == MainPanel)):
+      let info = state.jobs.info(o.job)
+      if info.isSome:
+        let silent = info.get.notAnsweringFor(now)
+        if silent > initDuration():
+          return Waiting(kind: wkOpening, path: o.path, silent: silent, job: o.job)
+  let i = state.shownFile(panelIndex)
+  if i < 0: return
+  let silent = state.readers[panelIndex].silentFor(now)
+  if silent >= StallAfter:
+    return Waiting(kind: wkReading, path: state.sessions[i].path, silent: silent, job: NoJob)
+  for u in state.unread:
+    if u.panel == p.id:
+      return Waiting(kind: wkUnreadable, path: state.sessions[i].path, job: NoJob, why: u.why)
+
+func words*(w: Waiting): string =
+  ## What the plot or the Files window says of `w`, in plain words; "" for
+  ## none.
+  let name = w.path.extractFilename
+  let silent = "not answering for " & $max(1, w.silent.inSeconds) & " s"
+  case w.kind
+  of wkNone: ""
+  of wkOpening: "Opening " & name & ": " & silent & " (its drive may be slow, or gone)."
+  of wkReading: "Reading " & name & ": " & silent & " (its drive may be slow, or gone). " &
+    "The plot shows what was read before."
+  of wkUnreadable: w.why
+  of wkListing: "Listing " & name & ": " & silent & " (its drive may be slow, or gone)."
+  of wkWatching: name & ": " & silent & "; the list is as it was read last."
+
+proc listingWait*(state: AppState; now = fs.now()): Waiting =
+  ## What the file list waits for that its drive does not answer: the
+  ## listing of the folder, or a look at it once listed. None otherwise.
+  result = Waiting(job: NoJob)
+  let title = if state.files.folder.len > 0: state.files.folder else: state.files.title
+  if state.files.job != NoJob:
+    let info = state.jobs.info(state.files.job)
+    if info.isSome:
+      let silent = info.get.notAnsweringFor(now)
+      if silent > initDuration():
+        return Waiting(kind: wkListing, path: title, silent: silent, job: state.files.job)
+  let look = state.watch.lookingFor(now)
+  if look >= StallAfter:
+    result = Waiting(kind: wkWatching, path: title, silent: look, job: NoJob)
+
 func findSession*(state: AppState; id: SessionId): int =
   ## The index of open file `id` in `sessions`; -1 when it is not open.
   for i, s in state.sessions:
@@ -883,6 +959,11 @@ proc newSource(state: var AppState; k: int) =
   p.back.setLen 0
   inc p.revision
   state.tiles[k].setLen 0
+  state.unread.keepItIf(it.panel != p.id)
+  # A reader stuck in a drive that does not answer would never take the new
+  # source: it is left to end on its own, and a new one takes it.
+  if not state.readers[k].isNil and state.readers[k].silentFor >= StallAfter:
+    state.readers[k].abandon()
   var src = ReaderSource(gen: p.sourceGen)
   var busy = false
   if p.layers.len > 0 and p.layers[0].source.kind == lsRecord:
@@ -2102,6 +2183,42 @@ proc editTraces(state: var AppState; cmd: Command) =
 
 proc applyCommand(state: var AppState; cmd: Command)
 
+proc retry(state: var AppState; k: int) =
+  ## Opens or reads again what `panels[k]` waits for: a new open of the file
+  ## it is to show (the one before, cancelled, is left by its lane when it
+  ## does not answer), or a new reader for the file it shows.
+  template p: untyped = state.panels[k]
+  var at = -1
+  for j, o in state.opening:
+    if not o.unwanted and (o.panel == p.id or (o.panel == NoPanel and p.id == MainPanel)):
+      at = j
+  if at >= 0:
+    let (path, gather, follow) = (state.opening[at].path, state.opening[at].gather,
+      state.opening[at].follow)
+    state.opening[at].unwanted = true
+    discard state.jobs.cancel(state.opening[at].job)
+    state.log.add(sevInfo, path.extractFilename, "Opening " & path.extractFilename & " again.")
+    state.showPath(k, path, gather, follow)
+    return
+  if state.shownFile(k) >= 0:
+    if not state.readers[k].isNil and state.readers[k].silentFor >= StallAfter:
+      state.readers[k].abandon()
+    state.newSource(k) # read again, at the same scales
+
+proc retryListing(state: var AppState) =
+  ## Lists the folder again: its listing, or the watch's look at it, did
+  ## not answer. A look that does not answer leaves its thread to end on its
+  ## own; a new watch takes over.
+  template f: untyped = state.files
+  if f.title.len == 0: return
+  if state.watch.lookingFor >= StallAfter:
+    state.watch.stop(getMonoTime()) # left: its memory stays with it
+    state.watch = FolderWatch()
+    state.watchOpen()
+  let paths = if f.folder.len > 0: @[f.folder] else: f.asked
+  state.log.add(sevInfo, "files", "Listing " & f.title & " again.")
+  state.startListing(paths, f.title, f.folder)
+
 proc apply*(state: var AppState; cmd: Command) =
   ## Carries out `cmd`. Anything slow it starts runs as a job; `drainInbox`
   ## takes in the result.
@@ -2454,6 +2571,30 @@ proc applyCommand(state: var AppState; cmd: Command) =
     else: state.startJoin(i, cmd)
   of ckSelectUnmatched:
     state.selectUnmatched(cmd)
+  of ckRetry:
+    if cmd.panel == NoPanel: state.retryListing()
+    else:
+      let k = state.findPanel(cmd.panel)
+      if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+      else: state.retry(k)
+  of ckStopReading:
+    let k = state.findPanel(cmd.panel)
+    if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")
+    elif not state.readers[k].isNil:
+      # Its late tiles answer an old request and are dropped; nothing is read
+      # until Retry, another gather or another file.
+      let name = state.windowTitle(cmd.panel)
+      state.readers[k].abandon()
+      inc state.panels[k].requestGen
+      state.panels[k].pending = ReadRequest()
+      inc state.panels[k].revision
+      let i = state.shownFile(k)
+      let file = if i >= 0: state.sessions[i].name else: "the file"
+      state.unread.keepItIf(it.panel != cmd.panel)
+      state.unread.add (cmd.panel, "Not reading " & file & ": the plot stopped waiting for " &
+        "its drive, and shows what it had read.")
+      state.log.add(sevInfo, "files", "The " & name & " window stopped waiting for the drive " &
+        "of " & file & ": it shows what it had read. Retry reads again.")
   of ckUnloadSurvey:
     let i = state.survey.find(cmd.layer)
     if i < 0: state.ignore(cmd, $cmd.layer & " is not loaded")
@@ -2571,9 +2712,16 @@ proc drainInbox*(state: var AppState): bool =
       if k >= 0 and m.orderGen == max(state.panels[k].sourceGen, state.panels[k].orderGen):
         state.panels[k].shown = move m.positions
         inc state.panels[k].revision
+    of mkUnread:
+      let k = state.findPanel(m.unreadPanel)
+      if k >= 0 and m.unreadGen == state.panels[k].sourceGen:
+        state.unread.keepItIf(it.panel != m.unreadPanel)
+        state.unread.add (m.unreadPanel, m.why)
+        inc state.panels[k].revision
     of mkTile:
       let k = state.findPanel(m.tile.panel)
       if k >= 0 and m.tile.request.gen == state.panels[k].requestGen:
+        state.unread.keepItIf(it.panel != m.tile.panel) # read again
         m.tile.id = state.nextTile
         inc state.nextTile
         if state.panels[k].level.clip.isNaN or state.panels[k].relevel:

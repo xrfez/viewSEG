@@ -380,11 +380,17 @@ proc cutShort(rd: var Reader): bool =
       why = rd.name & " is shorter than when it was opened: another program has cut it " &
         "short or is writing it again, so it is not read until it is opened again."
   except OSError as e:
-    why = rd.name & " cannot be read now (" & (if e.msg.len > 0: e.msg else: "its drive " &
+    var msg = e.msg # its first line: the system's words
+    let cut = msg.find('\n')
+    if cut >= 0: msg.setLen cut
+    why = rd.name & " cannot be read now (" & (if msg.len > 0: msg else: "its drive " &
       "does not answer") & "): its drive went away or fails, so it is not read; the plot " &
       "keeps what it showed."
   result = why.len > 0
   if not result: rd.toldShort = false # (said again if it fails again)
+  if result:
+    rd.r.poster.post Msg(job: NoJob, kind: mkUnread, unreadPanel: rd.r.panel,
+      unreadGen: rd.src.gen, why: why)
   if result and not rd.toldShort:
     rd.toldShort = true
     rd.note(sevWarning, why)
@@ -589,6 +595,9 @@ proc run(r: ptr ReaderObj) {.thread.} =
         rd.serve(req)
     except CatchableError as e:
       rd.note(sevError, "Cannot read " & rd.name & ": " & e.msg)
+      if rd.src.file != nil:
+        r.poster.post Msg(job: NoJob, kind: mkUnread, unreadPanel: r.panel,
+          unreadGen: rd.src.gen, why: "Cannot read " & rd.name & ": " & e.msg & ".")
       clearCycleRoots()
     withLock r.lock:
       r.busy = false

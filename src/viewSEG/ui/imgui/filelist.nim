@@ -321,6 +321,23 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
     ui.drawRows(st, f, t, marks, result)
     footer(f, ui.table.rows.len, t)
     marks.mark("files.footer")
+    let wait = st.listingWait()
+    if wait.kind != wkNone:
+      # The folder's drive does not answer: said, with Cancel and Retry.
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+      igTextWrapped("%s", (IconWarning & "  " & wait.words).cstring)
+      igPopStyleColor(1)
+      marks.mark("files.wait")
+      if wait.job != NoJob:
+        if igSmallButton("Cancel##filewait"):
+          result.commands.add Command(kind: ckCancelJob, job: wait.job)
+        marks.mark("files.wait.cancel")
+        tip("Stop listing the folder")
+        igSameLine(0, -1)
+      if igSmallButton((IconRefresh & " Retry##filewait").cstring):
+        result.commands.add Command(kind: ckRetry, panel: NoPanel)
+      marks.mark("files.wait.retry")
+      tip("List the folder again")
     ui.handleKeys(f, result)
   ui.focus.settle()
   igEnd()
