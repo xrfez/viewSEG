@@ -11,10 +11,12 @@ const
     "stb_image"]
   # layer -> sibling layers (directories under src/viewSEG) it must not import
   forbidden = [
-    ("core", @["ui", "gpu", "view", "platform"]),
-    ("view", @["ui", "gpu", "platform"]),
-    ("gpu", @["ui", "platform"]),
-    ("platform", @["ui", "core", "view", "gpu"])]
+    ("core", @["ui", "gpu", "view", "platform", "remote"]),
+    ("view", @["ui", "gpu", "platform", "remote"]),
+    ("gpu", @["ui", "platform", "remote"]),
+    ("platform", @["ui", "core", "view", "gpu", "remote"]),
+    # agent control: a front end on core alone; only the frontend starts it
+    ("remote", @["ui", "gpu", "view", "platform"])]
 
 proc imports(text: string): seq[string] =
   ## The module paths named by the import/from/include statements in `text`,
@@ -69,3 +71,7 @@ block checkerCatchesViolations:
   doAssert violations("view", "v.nim", "import sdl3_nim\nimport imguin/glad/gl\n", []).len == 2
   doAssert violations("core", "ok.nim", "import std/[os, strutils]\nimport geometry\n",
     ["ui"]).len == 0
+  doAssert violations("remote", "r.nim", "import ../core/state\nimport ../ui/imgui/app\n",
+    ["ui", "gpu", "view", "platform"]).len == 2 # the layer and the toolkit
+  doAssert violations("core", "c.nim", "from ../remote/tools import busy\n",
+    ["remote"]).len == 1
