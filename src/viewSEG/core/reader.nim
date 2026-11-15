@@ -50,11 +50,18 @@
 ##   the same traces and samples among them (after an edit, or a new gain,
 ##   on the same view, or on one a little shorter) is made from them, with
 ##   no read from the file.
+## - **A drive that does not answer.** The reader *beats* (`fs.now`) as it
+##   takes each chunk; one that is busy and has not beaten for a while is
+##   stuck in the file system (`silentFor`), where no note reaches it. The
+##   UI thread then leaves it (`abandon`) and starts a new reader: the old
+##   one ends on its own once the drive answers, posting nothing that is
+##   still taken (its tiles answer an old request), and keeps its hold on
+##   the file until then. `stop` waits for the thread until a deadline only.
 ## - **Threads and ORC.** The reader is a worker (`core/threads`); it
 ##   empties its list of cycle roots after closing a prefetcher, before it
 ##   ends a hold, and before it exits. A tile holds no `ref`.
 
-import std/[algorithm, locks, math, os, times]
+import std/[algorithm, locks, math, monotimes, os, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
@@ -101,6 +108,10 @@ type
     poster: Poster
     holds: HoldRelease
     started: bool
+    busy: bool         ## serving a note
+    beat: MonoTime     ## when it last showed it is alive (`fs.now`)
+    ended: bool        ## the thread is done
+    abandoned: bool    ## left to end on its own: its memory stays with it
     thread: Thread[ptr ReaderObj]
 
   PanelReader* = object
@@ -161,7 +172,10 @@ proc note(rd: Reader; severity: Severity; text: string) =
 
 proc interrupted(r: ptr ReaderObj): bool =
   ## Whether a newer note is waiting: then the current work is given up.
+  ## A sign of life too.
+  let now = fs.now()
   withLock r.lock:
+    r.beat = now
     result = r.quit or r.hasSource or r.hasOrder or r.hasRequest
 
 proc superseded(r: ptr ReaderObj): bool {.raises: [].} =
@@ -352,25 +366,28 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
     pr.processing = false
 
 proc cutShort(rd: var Reader): bool =
-  ## Whether the file is shorter now than when it was opened (another
-  ## program cut it short, or is writing it again): reading it then would
-  ## touch pages of the map past its end, which ends the program (SIGBUS),
-  ## so nothing is read. Said once; the UI closes the file when the folder's
-  ## watch sees the change. A file that cannot be looked at is read as
-  ## before. Windows does not let a mapped file be cut.
-  when defined(windows):
-    result = false
-  else:
-    result = false
-    if rd.src.size >= 0:
-      try:
-        result = fs.getFileInfo(rd.src.path).size < rd.src.size
-      except OSError:
-        result = false
-    if result and not rd.toldShort:
-      rd.toldShort = true
-      rd.note(sevWarning, rd.name & " is shorter than when it was opened: another program " &
-        "has cut it short or is writing it again, so it is not read until it is opened again.")
+  ## Whether the file cannot be read now: it is shorter than when it was
+  ## opened (another program cut it short, or is writing it again), or it
+  ## cannot be looked at (its drive went away, or fails). Reading the map
+  ## then would touch pages that are not there, which ends the program
+  ## (SIGBUS; an in-page error on Windows), so nothing is read. Said once;
+  ## the UI closes a file cut short when the folder's watch sees the change.
+  result = false
+  var why = ""
+  try:
+    let size = fs.getFileInfo(rd.src.path).size
+    if rd.src.size >= 0 and size < rd.src.size:
+      why = rd.name & " is shorter than when it was opened: another program has cut it " &
+        "short or is writing it again, so it is not read until it is opened again."
+  except OSError as e:
+    why = rd.name & " cannot be read now (" & (if e.msg.len > 0: e.msg else: "its drive " &
+      "does not answer") & "): its drive went away or fails, so it is not read; the plot " &
+      "keeps what it showed."
+  result = why.len > 0
+  if not result: rd.toldShort = false # (said again if it fails again)
+  if result and not rd.toldShort:
+    rd.toldShort = true
+    rd.note(sevWarning, why)
 
 proc serve(rd: var Reader; req: sink ReaderRequest) =
   ## Reads, processes and posts the tile `req` asks for, unless a newer note
@@ -557,6 +574,8 @@ proc run(r: ptr ReaderObj) {.thread.} =
       r.hasSource = false
       r.hasOrder = false
       r.hasRequest = false
+      r.busy = not quit
+      r.beat = fs.now()
     if gotSource or quit:
       rd.letGo()
     if quit:
@@ -571,21 +590,32 @@ proc run(r: ptr ReaderObj) {.thread.} =
     except CatchableError as e:
       rd.note(sevError, "Cannot read " & rd.name & ": " & e.msg)
       clearCycleRoots()
+    withLock r.lock:
+      r.busy = false
   rd.letGo()
   clearCycleRoots()
+  withLock r.lock:
+    r.busy = false
+    r.ended = true
 
 # --------------------------------------------------------------- the UI side --
 
+const ReaderStopWait* = initDuration(milliseconds = 800)
+  ## how long `stop` waits for the thread by default
+
+proc stop*(x: PanelReader; deadline = getMonoTime() + ReaderStopWait): bool {.discardable, raises: [].}
+
 proc `=destroy`*(x: PanelReader) =
   if x.p != nil:
+    var abandoned = false
     withLock x.p.lock:
-      x.p.quit = true
-      signal(x.p.changed)
-    if x.p.started: joinThread(x.p.thread)
-    deinitCond(x.p.changed)
-    deinitLock(x.p.lock)
-    `=destroy`(x.p[])
-    deallocShared(x.p)
+      abandoned = x.p.abandoned
+    if not abandoned: discard x.stop()
+    if not x.p.started: # else the thread still runs: its memory stays with it
+      deinitCond(x.p.changed)
+      deinitLock(x.p.lock)
+      `=destroy`(x.p[])
+      deallocShared(x.p)
 
 proc newPanelReader*(panel: PanelId; poster: sink Poster; holds: HoldRelease): PanelReader =
   ## Starts the reader of `panel`, which posts through `poster` and ends its
@@ -636,12 +666,57 @@ proc request*(x: PanelReader; req: sink ReaderRequest) =
     x.p.hasRequest = true
     signal(x.p.changed)
 
-proc stop*(x: PanelReader) =
-  ## Stops the thread and waits for it: it lets go of its file first.
-  ## Idempotent; destroying the reader does it.
-  if x.p != nil and x.p.started:
+proc askStop*(x: PanelReader) =
+  ## Asks the thread to end, without waiting (`stop` waits).
+  if x.p != nil:
     withLock x.p.lock:
       x.p.quit = true
       signal(x.p.changed)
+
+proc stop*(x: PanelReader; deadline = getMonoTime() + ReaderStopWait): bool {.discardable, raises: [].} =
+  ## Stops the thread and waits for it until `deadline`: it lets go of its
+  ## file first. True when it has ended; false when it is stuck (in a drive
+  ## that does not answer), and it is then left to end on its own.
+  ## Idempotent; destroying the reader does it.
+  if x.p == nil or not x.p.started: return true
+  x.askStop()
+  var ended = false
+  while true:
+    withLock x.p.lock:
+      ended = x.p.ended
+    if ended or getMonoTime() >= deadline: break
+    sleep 1
+  if ended:
     joinThread(x.p.thread)
     x.p.started = false
+  else:
+    withLock x.p.lock:
+      x.p.abandoned = true
+  ended
+
+proc abandon*(x: var PanelReader) =
+  ## Leaves the thread to end on its own (it is stuck in a drive that does
+  ## not answer): asked to stop, never waited for; `x` is none afterwards.
+  ## Its hold on the file stays until it ends.
+  if x.p != nil:
+    withLock x.p.lock:
+      x.p.quit = true
+      x.p.abandoned = true
+      signal(x.p.changed)
+    var ended = false
+    withLock x.p.lock:
+      ended = x.p.ended
+    if ended: discard x.stop() # it had ended meanwhile: joined and freed below
+    if not x.p.started:
+      deinitCond(x.p.changed)
+      deinitLock(x.p.lock)
+      `=destroy`(x.p[])
+      deallocShared(x.p)
+    x.p = nil
+
+proc silentFor*(x: PanelReader; now = fs.now()): Duration =
+  ## How long the reader has been busy without a sign of life (a read that
+  ## the drive does not answer); zero when it is idle or none.
+  if x.p != nil:
+    withLock x.p.lock:
+      if x.p.busy: result = now - x.p.beat

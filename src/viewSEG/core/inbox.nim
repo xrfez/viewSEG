@@ -11,7 +11,7 @@
 
 import std/locks
 import parseSEG
-import filelist, join, jobs, log, nif, panels, session, survey, tiles
+import filelist, join, jobs, layouts, log, nif, panels, session, survey, tiles
 
 type
   MsgKind* = enum
@@ -33,6 +33,7 @@ type
     rpImportSettings ## settings to take in (File > Settings > Import)
     rpLoadLayout     ## a layout to show (View > Layout > Load)
     rpImportLayout   ## a layout to show and keep among the user's (View > Layout > Import)
+    rpLayouts        ## the layouts there are: the user's and the presets, listed (`layouts`)
 
   Msg* = object
     ## One message for the UI thread.
@@ -57,6 +58,7 @@ type
       readError*: string         ## why it could not be read; "" when it was
       doc*: seq[NifNode]         ## `content` as NIF, read on the disk thread
       docError*: string          ## why `content` is not NIF; "" when it is (or was not read)
+      layouts*: seq[SavedLayout] ## `rpLayouts`: what `listLayouts` found
     of mkListed:
       listGen*: uint64           ## the file list's `gen` it answers
       listed*: seq[FileEntry]    ## seismic files, in natural order

@@ -35,10 +35,23 @@
 ##   `CatchableError` failed, with the exception's message, unless a cancel
 ##   was asked for first or it raised `JobCancelledError`: then it is
 ##   cancelled. A `Defect` is a bug and ends the program.
+## - **Work that does not answer** (a network drive that stopped answering
+##   holds its thread in the kernel, where no cancel reaches it). A running
+##   job *beats* each time it reports (`progress`, `setPhase`); one that has
+##   not beaten for `StallAfter` is not answering (`notAnsweringFor`), timed
+##   on `fs.now`. `tend`, once a frame, gives its lane a new runner when work
+##   waits behind it (the job stays running, and its result is taken if it
+##   comes), and *abandons* it once a cancel was asked for and it has not
+##   stopped within `CancelGrace` (or at once when it does not answer): it is
+##   cancelled, its result dropped, and its files stay held until its work
+##   comes back, so that nothing that reads them is closed under it. A runner
+##   left so ends after that job.
 ##
 ## `Jobs` belongs to the UI thread: call its procs from there. They hold one
 ## lock for a few microseconds and never wait for a job, except `stop`, which
-## waits for the running jobs to see their cancel. The work runs on the
+## waits for the running jobs to see their cancel until a deadline, then
+## leaves those that do not (`stop` returns false; their memory stays with
+## them to the end of the process). The work runs on the
 ## lane's thread, which is marked as a worker (`core/threads`). The work
 ## closure is moved to that thread and destroyed there, so it must not share
 ## a `ref` with the UI thread: move what it needs into it. Work that hands
@@ -46,12 +59,19 @@
 ## runner calls it after every job (`core/threads`, "Handing objects to
 ## another thread").
 
-import std/[locks, monotimes, options, sequtils]
-import threads
+import std/[locks, monotimes, options, os, sequtils, times]
+import filesystem, threads
 
 export monotimes, options
 
-const DefaultJobHistory* = 100 ## finished jobs kept by `initJobs()`
+const
+  DefaultJobHistory* = 100 ## finished jobs kept by `initJobs()`
+  StallAfter* = initDuration(seconds = 3)
+    ## a running job that has not reported for this long is not answering
+  CancelGrace* = initDuration(seconds = 1)
+    ## how long a cancelled job that still answers has to stop before it is abandoned
+  JobStopWait* = initDuration(milliseconds = 800)
+    ## how long `stop` waits, by default, for the running jobs to see their cancel
 
 type
   JobId* = distinct int
@@ -94,6 +114,11 @@ type
     error*: string                               ## why it failed; "" otherwise
     cancelRequested*: bool                       ## a cancel was asked for while it ran
     queuedAt*, startedAt*, finishedAt*: MonoTime ## zero until they happen
+    cancelAt*: MonoTime ## when the cancel was asked for (`fs.now`); zero for none
+    beat*: MonoTime
+      ## when the running work last reported (`fs.now`): `notAnsweringFor`
+    abandoned*: bool
+      ## cancelled while it did not answer: left to end on its own, its result dropped
 
   JobCancelledError* = object of CatchableError
     ## Raised by `checkCancelled`; a job that raises it is cancelled.
@@ -112,9 +137,19 @@ type
     info: JobInfo
     work: JobWork ## nil once taken by the runner, or once the job finished
 
+  RunnerObj = object
+    ## A lane's runner thread, in shared memory of its own: a runner left to
+    ## its job (`tend`) outlives its place in the lane. Fields under the
+    ## jobs' lock.
+    thread: Thread[RunnerArg]
+    lane: JobLane
+    job: JobId              ## the job it runs; `NoJob` while it picks
+    held: seq[string]       ## its job was abandoned: the holds to end when its work is back
+    ended, joined: bool
+
   RunnerArg = object
     q: ptr JobsObj
-    lane: JobLane
+    me: ptr RunnerObj
 
   JobsObj = object
     ## Shared by the UI thread and the runners; every field under `lock`.
@@ -128,8 +163,9 @@ type
     revision: int
     historyLimit: int
     stopping: bool
-    started: bool
-    runners: array[JobLane, Thread[RunnerArg]]
+    waited: bool                           ## `stop` has waited once: a second stop does not
+    current: array[JobLane, ptr RunnerObj] ## the runner each lane's next job runs on
+    runners: seq[ptr RunnerObj]            ## every runner started, until joined
 
 func `==`*(a, b: JobId): bool {.borrow.}
 func `$`*(id: JobId): string = "job " & $int(id)
@@ -201,23 +237,45 @@ proc unqueue(q: ptr JobsObj; i: int) =
 
 # ------------------------------------------------------------------ runner --
 
+proc runner(arg: RunnerArg) {.thread.}
+
+proc startRunner(q: ptr JobsObj; lane: JobLane): bool =
+  ## Starts a runner for `lane` and makes it the lane's; lock held. False
+  ## when no thread can be made (the lane keeps the runner it has).
+  let r = cast[ptr RunnerObj](allocShared0(sizeof(RunnerObj)))
+  r.lane = lane
+  r.job = JobId(-1)
+  try:
+    createThread(r.thread, runner, RunnerArg(q: q, me: r))
+  except ResourceExhaustedError:
+    deallocShared(r)
+    return false
+  q.runners.add r
+  q.current[lane] = r
+  true
+
 proc runner(arg: RunnerArg) {.thread.} =
-  ## A lane's thread: runs that lane's jobs one at a time until `stop`.
+  ## A lane's thread: runs that lane's jobs one at a time until `stop`, or,
+  ## once another runner has the lane (`tend`), until its job is done.
   markWorkerThread()
   let q = arg.q
+  let me = arg.me
+  let lane = me.lane
   acquire q.lock
-  while true:
-    var at = q.pick(arg.lane)
-    while at < 0 and not q.stopping:
+  while q.current[lane] == me:
+    var at = q.pick(lane)
+    while at < 0 and not q.stopping and q.current[lane] == me:
       wait(q.changed, q.lock)
-      at = q.pick(arg.lane)
+      at = q.pick(lane)
     if at < 0: break # stopping: `stop` cancelled what was queued
-    let id = q.queue[arg.lane][at]
-    q.queue[arg.lane].delete(at)
+    let id = q.queue[lane][at]
+    q.queue[lane].delete(at)
     let i = q.find(id)
     q.recs[i].info.state = jsRunning
     q.recs[i].info.startedAt = getMonoTime()
     q.recs[i].info.progress.since = q.recs[i].info.startedAt
+    q.recs[i].info.beat = fs.now()
+    me.job = id
     inc q.revision
     var work = move q.recs[i].work
     release q.lock
@@ -234,37 +292,74 @@ proc runner(arg: RunnerArg) {.thread.} =
     clearCycleRoots() # e.g. a caught exception; nothing this thread listed outlives the job
 
     acquire q.lock
-    let j = q.find(id) # a running job is never removed or pruned
-    let state =
-      if gaveUp or (error.len > 0 and q.recs[j].info.cancelRequested): jsCancelled
-      elif error.len > 0: jsFailed
-      else: jsDone
-    q.finish(j, state, if state == jsFailed: error else: "")
+    me.job = JobId(-1)
+    if me.held.len > 0:
+      # Abandoned (`tend`): already listed as cancelled; its files are free now.
+      for p in me.held:
+        let h = q.holds.find(p)
+        if h >= 0: q.holds.delete(h)
+      me.held.setLen 0
+    else:
+      let j = q.find(id) # a running job is never removed or pruned
+      let state =
+        if gaveUp or (error.len > 0 and q.recs[j].info.cancelRequested): jsCancelled
+        elif error.len > 0: jsFailed
+        else: jsDone
+      q.finish(j, state, if state == jsFailed: error else: "")
     broadcast(q.changed) # its files are free: a job in the other lane may start
   release q.lock
   clearCycleRoots() # and free the list before the thread ends
-
-proc shutdown(q: ptr JobsObj) =
-  ## Cancels every queued job, asks the running ones to stop, and waits for
-  ## both runners to end. Idempotent.
-  var doomed: seq[JobWork]
   withLock q.lock:
-    if not q.stopping:
-      q.stopping = true
-      for lane in JobLane:
-        for id in q.queue[lane]:
-          let i = q.find(id)
-          doomed.add move(q.recs[i].work)
-          q.finish(i, jsCancelled, "")
-        q.queue[lane].setLen 0
-      for r in q.recs.mitems:
-        if r.info.state == jsRunning: r.info.cancelRequested = true
-      inc q.revision
-      broadcast(q.changed)
+    me.ended = true
+
+proc ask(q: ptr JobsObj): seq[JobWork] =
+  ## Lock held: from now on no job starts; the queued ones are cancelled
+  ## (their work returned, to be destroyed outside the lock) and the
+  ## running ones asked to stop.
+  if not q.stopping:
+    q.stopping = true
+    for lane in JobLane:
+      for id in q.queue[lane]:
+        let i = q.find(id)
+        result.add move(q.recs[i].work)
+        q.finish(i, jsCancelled, "")
+      q.queue[lane].setLen 0
+    for r in q.recs.mitems:
+      if r.info.state == jsRunning and not r.info.cancelRequested:
+        r.info.cancelRequested = true
+        r.info.cancelAt = fs.now()
+    inc q.revision
+    broadcast(q.changed)
+
+proc shutdown(q: ptr JobsObj; deadline: MonoTime): bool =
+  ## Cancels every queued job, asks the running ones to stop, and waits for
+  ## the runners to end until `deadline`; joins those that did. True when
+  ## every runner has ended. Idempotent.
+  var doomed: seq[JobWork]
+  var deadline = deadline
+  withLock q.lock:
+    doomed = q.ask()
+    if q.waited: deadline = getMonoTime() # those left then are left for good
+    q.waited = true
   doomed.setLen 0 # destroyed outside the lock
-  if q.started:
-    joinThreads(q.runners)
-    q.started = false
+  while true:
+    var all = true
+    withLock q.lock:
+      for r in q.runners:
+        if not r.ended: all = false
+    if all or getMonoTime() >= deadline:
+      result = all
+      break
+    sleep 1
+  var gone: seq[ptr RunnerObj]
+  withLock q.lock:
+    var kept: seq[ptr RunnerObj]
+    for r in q.runners:
+      if r.ended: gone.add r else: kept.add r
+    q.runners = kept
+  for r in gone:
+    joinThread(r.thread)
+    deallocShared(r)
 
 # -------------------------------------------------------------------- Jobs --
 
@@ -275,11 +370,17 @@ type
 
 proc `=destroy`*(jobs: Jobs) =
   if jobs.p != nil:
-    shutdown(jobs.p)
-    deinitCond(jobs.p.changed)
-    deinitLock(jobs.p.lock)
-    `=destroy`(jobs.p[])
-    deallocShared(jobs.p)
+    let all = shutdown(jobs.p, getMonoTime() + JobStopWait)
+    var held = 0
+    withLock jobs.p.lock:
+      held = jobs.p.holds.len
+    # A runner left to its job, or a reader that still holds a file, may use
+    # the shared state later: then it stays, to the end of the process.
+    if all and held == 0:
+      deinitCond(jobs.p.changed)
+      deinitLock(jobs.p.lock)
+      `=destroy`(jobs.p[])
+      deallocShared(jobs.p)
 
 proc `=wasMoved`*(jobs: var Jobs) =
   jobs.p = nil
@@ -299,9 +400,10 @@ proc initJobs*(historyLimit: Natural = DefaultJobHistory): Jobs =
   initCond q.changed
   q.historyLimit = historyLimit
   result = Jobs(p: q)
-  for lane in JobLane:
-    createThread(q.runners[lane], runner, RunnerArg(q: q, lane: lane))
-  q.started = true
+  withLock q.lock:
+    for lane in JobLane:
+      if not q.startRunner(lane):
+        raise newException(ResourceExhaustedError, "cannot start the job runners")
 
 proc submit*(jobs: Jobs; spec: sink JobSpec; work: sink JobWork): JobId =
   ## Queues `work` at the end of its lane. After `stop`, the job is listed
@@ -342,6 +444,7 @@ proc cancel*(jobs: Jobs; id: JobId): bool =
     of jsRunning:
       if not q.recs[i].info.cancelRequested:
         q.recs[i].info.cancelRequested = true
+        q.recs[i].info.cancelAt = fs.now()
         inc q.revision
       result = true
     of jsDone, jsFailed, jsCancelled:
@@ -379,10 +482,63 @@ proc remove*(jobs: Jobs; id: JobId): bool =
     inc q.revision
     result = true
 
-proc stop*(jobs: Jobs) =
+proc askStop*(jobs: Jobs) =
+  ## Cancels every queued job and asks the running ones to stop, without
+  ## waiting: `stop` waits. Later submissions never run.
+  var doomed: seq[JobWork]
+  withLock jobs.obj.lock:
+    doomed = jobs.obj.ask()
+
+proc stop*(jobs: Jobs; deadline = getMonoTime() + JobStopWait): bool {.discardable.} =
   ## Cancels every queued job, asks the running ones to stop, and waits for
-  ## them. Later submissions never run. Idempotent; destroying `jobs` does it.
-  shutdown(jobs.obj)
+  ## them until `deadline`: true when all have ended; the others are left to
+  ## end on their own (a drive that does not answer). Later submissions
+  ## never run. Idempotent; destroying `jobs` does it.
+  shutdown(jobs.obj, deadline)
+
+proc notAnsweringFor*(info: JobInfo; now = fs.now()): Duration =
+  ## How long running job `info` has not reported, once that is
+  ## `StallAfter` or more; zero for a job that answers or does not run.
+  if info.state == jsRunning and not info.abandoned and now - info.beat >= StallAfter:
+    now - info.beat
+  else: initDuration()
+
+proc abandon(q: ptr JobsObj; r: ptr RunnerObj; i: int) =
+  ## Lock held: job `i`, run by `r`, cancelled and not answering, is listed
+  ## as cancelled now; its files stay held until its work comes back.
+  template info: untyped = q.recs[i].info
+  for p in info.spec.reads: r.held.add p
+  for p in info.spec.exclusive: r.held.add p
+  q.holds.add r.held
+  info.abandoned = true
+  q.finish(i, jsCancelled, "")
+
+proc tend*(jobs: Jobs; now = fs.now()): bool {.discardable.} =
+  ## Once a frame: gives a lane whose job does not answer a new runner when
+  ## work waits behind that job, and abandons a cancelled job that has not
+  ## stopped (the module documentation). True when anything changed.
+  let q = jobs.obj
+  withLock q.lock:
+    if q.stopping: return false
+    var i = 0
+    while i < q.runners.len:
+      let r = q.runners[i]
+      inc i
+      if r.ended or r.held.len > 0 or int(r.job) < 0: continue
+      let j = q.find(r.job)
+      if j < 0 or q.recs[j].info.state != jsRunning: continue
+      template info: untyped = q.recs[j].info
+      let silent = now - info.beat >= StallAfter
+      let lane = info.spec.lane
+      if info.cancelRequested and (silent or now - info.cancelAt >= CancelGrace):
+        if q.current[lane] == r and not q.startRunner(lane): continue
+        q.abandon(r, j)
+        broadcast(q.changed)
+        result = true
+      elif silent and q.current[lane] == r and q.pick(lane) >= 0:
+        if q.startRunner(lane): # it goes on alone; the next job starts beside it
+          inc q.revision
+          result = true
 
 proc hold*(jobs: Jobs; path: string): bool {.raises: [].} =
   ## Marks `path` as read by something that is not a job, such as a trace
@@ -508,6 +664,7 @@ proc progress*(ctx: JobContext; done, total: int64): bool {.raises: [].} =
     if i >= 0:
       ctx.q.recs[i].info.progress.done = done
       ctx.q.recs[i].info.progress.total = total
+      ctx.q.recs[i].info.beat = fs.now()
       inc ctx.q.revision
       result = not ctx.q.recs[i].info.cancelRequested
 
@@ -518,4 +675,5 @@ proc setPhase*(ctx: JobContext; phase: string) {.raises: [].} =
     let i = ctx.q.find(ctx.id)
     if i >= 0:
       ctx.q.recs[i].info.progress = JobProgress(phase: phase, since: getMonoTime())
+      ctx.q.recs[i].info.beat = fs.now()
       inc ctx.q.revision

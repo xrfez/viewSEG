@@ -30,10 +30,15 @@
 ## - **A folder that cannot be read** (gone, no permission, a share that went
 ##   away) is said once (`watchProblem`), and nothing in it is taken for
 ##   gone; it is looked at again at each turn.
+## - **A share that does not answer.** No call on the file system is made
+##   under the lock the UI thread takes (a `stat` there held every open and
+##   close while a share did not answer): the thread copies its notes out,
+##   then looks. A look under way says since when (`lookingFor`), so the UI
+##   can say that the folder does not answer.
 ## - **Stop.** `stop` (and destroying the watch) asks the thread to end and
-##   waits for it at most `StopWait`: a look held by a network share that no
-##   longer answers would otherwise hold the quit. Such a thread is left to
-##   the end of the process, with its memory.
+##   waits for it until a deadline (`StopWait` by default): a look held by
+##   a network share that no longer answers would otherwise hold the quit.
+##   Such a thread is left to the end of the process, with its memory.
 
 import std/[locks, monotimes, os, sets, strutils, tables, times]
 import filejobs, filelist, filesystem, inbox, jobs, threads
@@ -42,7 +47,7 @@ export filelist
 
 const
   WatchInterval* = initDuration(seconds = 1) ## the pause between looks, at least
-  StopWait* = initDuration(seconds = 2)      ## how long `stop` waits for a look to end
+  StopWait* = initDuration(milliseconds = 800) ## how long `stop` waits for a look to end
   SlowFactor = 10                            ## a slow look: the pause is this many looks
   Nap = 20                                   ## ms the thread sleeps between checks of its notes
 
@@ -61,6 +66,7 @@ type
     gaveUp: bool             ## `stop` waited `StopWait` in vain: the thread is left
     interval: Duration
     lastLook: Duration       ## how long the last look took
+    lookStart: MonoTime      ## when the look under way started (`fs.now`); zero between looks
     poster: Poster
     thread: Thread[ptr WatchObj]
     started: bool
@@ -196,19 +202,17 @@ proc look(w: var Watcher): seq[WatchedFile] =
     result.setLen 0
 
 proc take(w: var Watcher) =
-  ## Takes the notes the UI thread left: a new listing, new open files.
+  ## Takes the notes the UI thread left: a new listing, new open files. The
+  ## notes are copied under the lock; the folders are looked at after it.
+  var fresh = false
+  var looked: seq[WatchedFile]
   withLock w.p.lock:
     if w.p.fresh:
+      fresh = true
       w.p.fresh = false
       w.gen = w.p.gen
       w.paths = w.p.paths
-      w.isDir.setLen 0
-      for p in w.paths: w.isDir.add fs.dirExists(p)
-      w.seen.clear()
-      w.problem = ""
-      for f in w.p.looked:
-        w.seen[f.path] = Seen(size: f.size, modified: f.modified, kind: f.kind, listed: true,
-          unopened: f.unopened)
+      looked = move w.p.looked
       w.p.looked.setLen 0
     if w.p.openFresh:
       w.p.openFresh = false
@@ -216,6 +220,14 @@ proc take(w: var Watcher) =
         if p notin w.open: w.announce.incl p
       w.open = w.p.open
     w.p.lookNow = false
+  if fresh:
+    w.isDir.setLen 0
+    for p in w.paths: w.isDir.add fs.dirExists(p)
+    w.seen.clear()
+    w.problem = ""
+    for f in looked:
+      w.seen[f.path] = Seen(size: f.size, modified: f.modified, kind: f.kind, listed: true,
+        unopened: f.unopened)
 
 proc run(p: ptr WatchObj) {.thread.} =
   markWorkerThread()
@@ -230,6 +242,8 @@ proc run(p: ptr WatchObj) {.thread.} =
     if not due and getMonoTime() < next:
       sleep Nap
     else:
+      withLock p.lock:
+        p.lookStart = fs.now()
       w.take()
       if w.gen != 0 or w.open.len > 0:
         let t0 = getMonoTime()
@@ -241,8 +255,11 @@ proc run(p: ptr WatchObj) {.thread.} =
         withLock p.lock:
           pause = p.interval
           p.lastLook = took
+          p.lookStart = MonoTime()
         next = getMonoTime() + max(pause, took * SlowFactor)
       else:
+        withLock p.lock:
+          p.lookStart = MonoTime()
         next = getMonoTime() + initDuration(days = 1) # nothing to watch until a note comes
   clearCycleRoots()
   withLock p.lock:
@@ -250,13 +267,17 @@ proc run(p: ptr WatchObj) {.thread.} =
 
 # ------------------------------------------------------------- the handle --
 
-proc stop*(x: FolderWatch) =
+proc askStop*(x: FolderWatch) =
+  ## Asks the thread to end, without waiting (`stop` waits).
+  if x.p != nil:
+    withLock x.p.lock:
+      x.p.quit = true
+
+proc stop*(x: FolderWatch; deadline = getMonoTime() + StopWait) =
   ## Ends the thread: at once, or after the look under way, waiting for it
-  ## at most `StopWait`. Idempotent; destroying the watch does it.
+  ## until `deadline`. Idempotent; destroying the watch does it.
   if x.p == nil or not x.p.started or x.p.gaveUp: return
-  withLock x.p.lock:
-    x.p.quit = true
-  let deadline = getMonoTime() + StopWait
+  x.askStop()
   var ended = false
   while not ended and getMonoTime() < deadline:
     withLock x.p.lock:
@@ -312,6 +333,13 @@ proc watchOpen*(x: FolderWatch; paths: seq[string]) =
     withLock x.p.lock:
       x.p.open = paths
       x.p.openFresh = true
+
+proc lookingFor*(x: FolderWatch; now = fs.now()): Duration =
+  ## How long the look under way has taken so far (a folder that does not
+  ## answer holds it); zero between looks.
+  if x.p != nil:
+    withLock x.p.lock:
+      if x.p.lookStart != MonoTime(): result = now - x.p.lookStart
 
 proc lookTime*(x: FolderWatch): Duration =
   ## How long the last look took; zero before the first (or with none).

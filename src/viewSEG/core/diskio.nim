@@ -26,18 +26,21 @@
 ##   not be read) for the UI thread, with its NIF tree (`parseNif`) or why
 ##   it is not NIF, so the UI thread only takes in a tree.
 ##
-## `flush` waits until everything left so far is done; `stop` (and
-## destroying the `DiskIo`) does what is left, then ends the thread.
+## `flush` waits until everything left so far is done (tests); `stop` (and
+## destroying the `DiskIo`) does what is left, then ends the thread, waiting
+## for it until a deadline only: a configuration or log folder on a drive
+## that does not answer must not hold the quit (the thread is then left to
+## end on its own, with its memory, and what it had left is not written).
 
-import std/[algorithm, locks, os, strutils, times]
-import filesystem, inbox, jobs, log, nif, threads
+import std/[algorithm, locks, monotimes, os, strutils, times]
+import filesystem, inbox, jobs, layouts, log, nif, threads
 
 when not defined(windows):
   import std/posix
 
 type
   TaskKind = enum
-    tkAppend, tkReplace, tkPrune, tkRead
+    tkAppend, tkReplace, tkPrune, tkRead, tkList
 
   Task = object
     kind: TaskKind
@@ -49,14 +52,16 @@ type
     suffix: string         ## a prune: the names' end
     spare: string          ## a prune: a file never removed
     done: string           ## a replace: what to say once it is written ("" for nothing)
+    fresh: bool            ## a replace: under a name no file has (`-2`, `-3` ... before the extension)
     purpose: ReadPurpose   ## a read: what for
     limit: int             ## a read: the largest file read, in bytes
+    dirs: seq[string]      ## a list of the layouts: the folders of the presets
 
   DiskObj = object
     lock: Lock
     changed, idle: Cond
     tasks: seq[Task]
-    busy, quit, started: bool
+    busy, quit, started, ended, abandoned: bool
     poster: Poster
     thread: Thread[ptr DiskObj]
 
@@ -101,7 +106,19 @@ proc body(t: Task): string =
   result = t.text
   for e in t.entries: result.add fileLine(e)
 
+proc freshName(path: string): string =
+  ## `path`, or, when a file has that name, the first of `<stem>-2<ext>`,
+  ## `<stem>-3<ext>` ... that none has.
+  result = path
+  let (dir, name, ext) = path.splitFile
+  var n = 2
+  while fs.fileExists(result):
+    result = dir / name & "-" & $n & ext
+    inc n
+
 proc replaceFile(w: var Writer; t: Task) =
+  var t = t
+  if t.fresh: t.path = freshName(t.path)
   let tmp = t.path & "." & $getCurrentProcessId() & ".tmp"
   try:
     fs.createDir(t.path.parentDir)
@@ -115,7 +132,7 @@ proc replaceFile(w: var Writer; t: Task) =
     finally:
       f.close()
     fs.moveFile(tmp, t.path)
-    if t.done.len > 0: w.say(sevInfo, t.done)
+    if t.done.len > 0: w.say(sevInfo, if t.fresh: t.done & t.path & "." else: t.done)
   except IOError, OSError:
     let why = getCurrentExceptionMsg()
     try:
@@ -211,6 +228,9 @@ proc run(d: ptr DiskObj) {.thread.} =
       of tkReplace: w.replaceFile(t)
       of tkPrune: w.pruneDir(t)
       of tkRead: w.readFor(t)
+      of tkList:
+        w.d.poster.post Msg(job: NoJob, kind: mkRead, purpose: rpLayouts, readPath: t.path,
+          layouts: listLayouts(t.path, t.dirs))
     work.setLen 0
     withLock d.lock:
       d.busy = false
@@ -218,28 +238,51 @@ proc run(d: ptr DiskObj) {.thread.} =
   w.closeLog()
   clearCycleRoots() # e.g. a caught exception's; and free the list before the thread ends
   withLock d.lock:
+    d.ended = true
     broadcast(d.idle)
 
 # ------------------------------------------------------------- the handle --
 
-proc stop*(x: DiskIo) =
-  ## Does what is left, then ends the thread and waits for it. Idempotent;
-  ## destroying the `DiskIo` does it.
-  if x.p != nil and x.p.started:
+const DiskStopWait* = initDuration(milliseconds = 800)
+  ## how long `stop` waits for the thread by default
+
+proc askStop*(x: DiskIo) =
+  ## Asks the thread to end once it has done what is left, without waiting.
+  if x.p != nil:
     withLock x.p.lock:
       x.p.quit = true
       signal(x.p.changed)
+
+proc stop*(x: DiskIo; deadline = getMonoTime() + DiskStopWait): bool {.discardable.} =
+  ## Does what is left, then ends the thread, waiting for it until
+  ## `deadline`: true when it has ended; false when it is held by a drive
+  ## that does not answer, and it is then left to end on its own.
+  ## Idempotent; destroying the `DiskIo` does it.
+  if x.p == nil or not x.p.started: return true
+  if x.p.abandoned: return false
+  x.askStop()
+  var ended = false
+  while true:
+    withLock x.p.lock:
+      ended = x.p.ended
+    if ended or getMonoTime() >= deadline: break
+    sleep 1
+  if ended:
     joinThread(x.p.thread)
     x.p.started = false
+  else:
+    x.p.abandoned = true
+  ended
 
 proc `=destroy`*(x: DiskIo) =
   if x.p != nil:
-    x.stop()
-    deinitCond(x.p.changed)
-    deinitCond(x.p.idle)
-    deinitLock(x.p.lock)
-    `=destroy`(x.p[])
-    deallocShared(x.p)
+    discard x.stop()
+    if not x.p.started: # else the thread still runs: its memory stays with it
+      deinitCond(x.p.changed)
+      deinitCond(x.p.idle)
+      deinitLock(x.p.lock)
+      `=destroy`(x.p[])
+      deallocShared(x.p)
 
 proc newDiskIo*(poster: sink Poster): DiskIo =
   ## Starts the disk thread; it reports through `poster`.
@@ -271,19 +314,21 @@ proc leave(x: DiskIo; t: sink Task) =
         if t.text.len == 0:
           last.entries.add t.entries
           return
-    of tkPrune, tkRead: discard
+    of tkPrune, tkRead, tkList: discard
     x.p.tasks.add t
     signal(x.p.changed)
 
 proc replace*(x: DiskIo; path: string; text: sink string; what: string; done = "";
-    entries: sink seq[LogEntry] = @[]) =
+    entries: sink seq[LogEntry] = @[]; fresh = false) =
   ## Writes `text`, then each of `entries` as a line (`fileLine`), to `path`
   ## atomically, soon (the module documentation); `what` names the document
   ## in a message ("the settings"), and `done`, when not "", is logged once
-  ## it is written.
+  ## it is written. With `fresh`, never over a file: under the first name
+  ## no file has (`path`, or `-2`, `-3` ... before its extension), and
+  ## `done` is followed by that path and a full stop.
   if x.p != nil:
     x.leave Task(kind: tkReplace, path: path, text: text, what: what, done: done,
-      entries: entries)
+      entries: entries, fresh: fresh)
 
 proc read*(x: DiskIo; path: string; purpose: ReadPurpose; limit: int) =
   ## Reads `path`, soon, and posts it as an `mkRead` message for `purpose`,
@@ -306,6 +351,13 @@ proc prune*(x: DiskIo; dir, prefix, suffix: string; keep: Natural; spare = "") =
   if x.p != nil:
     x.leave Task(kind: tkPrune, path: dir, text: prefix, suffix: suffix, keep: keep,
       spare: spare)
+
+proc listLayouts*(x: DiskIo; configDir: string; presetDirs: seq[string]) =
+  ## Lists the layouts in `configDir` and the presets in `presetDirs`
+  ## (`layouts.listLayouts`), soon, and posts them as an `mkRead` message
+  ## (`rpLayouts`).
+  if x.p != nil:
+    x.leave Task(kind: tkList, path: configDir, dirs: presetDirs)
 
 proc flush*(x: DiskIo) =
   ## Waits until everything left so far is done.

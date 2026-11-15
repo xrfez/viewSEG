@@ -161,6 +161,9 @@ type
       paths*: seq[string]
         ## relative or absolute: one file opens once, however it is named
       showFirst*: bool                ## ckBrowse: show the first file found in the main panel
+      quiet*: bool
+        ## ckBrowse: a folder that is not there (any more) is said quietly, not
+        ## as an error (the folder listed last, listed again at start)
     of ckClose: file*: SessionId
       ## the open file's id
     of ckCancelJob, ckRemoveJob: job*: JobId
@@ -344,6 +347,7 @@ type
     jump: tuple[path: string; trace, record: int]
       ## a trace to show once its file is open (`ckShowTrace`); "" for none
     oldScans: seq[JobId] ## scans replaced by a newer listing: they end quietly
+    quietScan: JobId     ## a listing of the folder listed last: a missing folder is said quietly
     watch: FolderWatch
       ## looks at the listed folder and the open files; none until needed
     watchEvery: Duration ## the pause between its looks
@@ -372,7 +376,7 @@ type
     logged: int ## the log's serial the session log has reached
     configDir: string ## where the settings and layouts are saved; "" for nowhere
     keepsSettings: bool ## the settings are saved there; false: their file is left alone
-    backups: seq[string] ## backups of the settings asked for this run: no name twice
+    savedLayouts: seq[SavedLayout] ## the layouts saved by name this run, kept in the list
     defaults: Settings ## what a reset goes back to
     settingsRev: int ## bumped on every change of `settings`
     savedRev: int ## the revision saved last
@@ -404,7 +408,7 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
   result = AppState(log: initMessageLog(logCapacity), inbox: initInbox(),
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
     nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
-    files: FileList(job: NoJob), watchEvery: watchEvery)
+    files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob)
   result.panels.add Panel(id: MainPanel)
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
@@ -481,6 +485,7 @@ proc saveNamed(state: var AppState; name, imgui: string) =
   state.diskIo.replace(path, layoutDocument(Layout(name: name, imgui: imgui)),
     "the layout \"" & name & "\"", done = "Layout \"" & name & "\" saved in " & path & ".")
   state.layoutList = state.layoutList.added(SavedLayout(name: name, path: path))
+  state.savedLayouts.add SavedLayout(name: name, path: path)
 
 proc keepLayoutsIn*(state: var AppState; dir: string; presetDirs: openArray[string]) =
   ## From now on, saves the arrangement in `dir`'s `LayoutFileName` (a
@@ -488,8 +493,7 @@ proc keepLayoutsIn*(state: var AppState; dir: string; presetDirs: openArray[stri
   ## `layouts/`; lists those and the presets in `presetDirs`' `layouts/`.
   assertUiThread()
   if state.configDir.len == 0: state.configDir = dir
-  state.layoutList = listLayouts(dir, presetDirs)
-  discard state.diskIo
+  state.diskIo.listLayouts(dir, @presetDirs) # off this thread: the folders may be slow
 
 func layouts*(state: AppState): lent seq[SavedLayout] {.inline.} =
   ## The layouts that can be loaded: the user's, then the presets.
@@ -545,19 +549,41 @@ proc flushFiles*(state: var AppState) =
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
   state.disk.flush()
 
-proc shutdown*(state: var AppState) =
-  ## Stops the panels' readers, cancels every job and waits for the running
-  ## ones to stop, then writes what is left to the session log. Destroying
-  ## the state does this too.
+const QuitWait* = initDuration(milliseconds = 800)
+  ## how long `shutdown` waits, at most, for the threads to end
+
+proc keepForStragglers(state: var AppState) =
+  ## A thread left running at the quit (held by a drive that does not
+  ## answer) may still read an open file's map or a relation file: they
+  ## stay, to the end of the process, instead of being released under it.
+  for s in state.sessions: GC_ref(s)
+  for p in state.closing: GC_ref(p.session)
+  for c in state.checking: GC_ref(c.relations)
+
+proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
+  ## Asks every thread to end at once (the panels' readers, the watch, the
+  ## jobs: every job is cancelled), hands what is left to save to the disk
+  ## thread (the settings, the layout, the session log), and waits for them
+  ## all, together, at most `wait`: true when all ended. A thread held by a
+  ## drive that does not answer is left to end on its own, with what it may
+  ## read (`keepForStragglers`), so the quit never waits for a drive.
+  ## Destroying the state does this too.
   assertUiThread()
-  for r in state.readers:
-    r.stop()
-  state.watch.stop()
-  state.jobs.stop()
+  for r in state.readers: r.askStop()
+  state.watch.askStop()
+  state.jobs.askStop()
   if state.savedRev != state.settingsRev: state.saveSettings()
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
   state.writeLog()
-  state.disk.stop()
+  state.disk.askStop()
+  let deadline = getMonoTime() + wait
+  result = true
+  for r in state.readers:
+    if not r.stop(deadline): result = false
+  state.watch.stop(deadline)
+  if not state.jobs.stop(deadline): result = false
+  if not state.disk.stop(deadline): result = false
+  if not result: state.keepForStragglers()
 
 # --------------------------------------------------------------- reading --
 
@@ -1774,7 +1800,9 @@ proc onFinished(state: var AppState; job: JobInfo) =
     case job.state
     of jsFailed:
       state.files.error = job.error
-      state.log.add(sevError, "files", "Cannot list " & state.files.title & ": " & job.error &
+      # The folder listed last, gone since (a drive not there at start): said, not an error.
+      let severity = if job.id == state.quietScan: sevInfo else: sevError
+      state.log.add(severity, "files", "Cannot list " & state.files.title & ": " & job.error &
         ".")
     of jsCancelled: state.files.error = "the listing was stopped before the end"
     else: discard
@@ -2111,6 +2139,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       let title = if paths.len == 1: paths[0] else: $paths.len & " chosen files"
       state.loadNamed = paths # the survey files among them are loaded once listed
       state.startListing(paths, title, "")
+      state.quietScan = if cmd.quiet: state.files.job else: NoJob
       state.showFound = if cmd.showFirst: MainPanel else: NoPanel
   of ckShowTrace:
     let k = state.findPanel(cmd.panel)
@@ -2269,11 +2298,13 @@ proc applyCommand(state: var AppState; cmd: Command) =
     if file.len > 0:
       # Not a name asked for before: the disk thread may not have written
       # that backup yet, and a second reset must not write over the first's.
-      let backup = backupPath(file, taken = state.backups)
-      state.backups.add backup
-      state.diskIo.replace(backup, settingsDocument(state.settings), "a copy of the settings")
-      state.log.add(sevInfo, "settings", "Settings reset to their defaults; the settings " &
-        "before are kept in " & backup & ".")
+      # The disk thread picks a name no file has (`fresh`): this thread never
+      # looks at the disk, and a second reset never writes over the first's.
+      state.diskIo.replace(backupName(file, now()), settingsDocument(state.settings),
+        "a copy of the settings", done = "The settings before the reset are kept in ",
+        fresh = true)
+      state.log.add(sevInfo, "settings", "Settings reset to their defaults; a copy of the " &
+        "settings before is kept beside them.")
     else:
       state.log.add(sevInfo, "settings", "Settings reset to their defaults.")
     state.change s
@@ -2472,6 +2503,10 @@ proc takeIn(state: var AppState; m: Msg) =
   ## A document the disk thread read: settings to import, a layout to load.
   let name = m.readPath.extractFilename
   case m.purpose
+  of rpLayouts:
+    # Listed before the layouts saved since were written: they are kept.
+    state.layoutList = m.layouts
+    for l in state.savedLayouts: state.layoutList = state.layoutList.added(l)
   of rpLoadLayout, rpImportLayout: state.takeLayout(m)
   of rpImportSettings:
     if m.readError.len > 0:
@@ -2495,6 +2530,8 @@ proc drainInbox*(state: var AppState): bool =
   ## per job. Call it once per frame; it never waits. True when anything
   ## came in.
   assertUiThread()
+  # A job that does not answer: its lane goes on without it, a cancelled one is left.
+  state.jobs.tend()
   # Finished jobs first: a job posts before it finishes, so every message of
   # a job seen finishing here is in the mail drained next.
   let finished = state.jobs.takeFinished()

@@ -57,12 +57,17 @@ proc sessionLogPath*(dir: string): string =
   ## Where this run's log goes in `dir`.
   dir / sessionLogName(now(), getCurrentProcessId())
 
+func backupName*(path: string; at: DateTime): string =
+  ## The name of a backup of `path` made at `at`, whether a file has it or
+  ## not: "settings.nif.20261114-153012.bak". Touches no disk.
+  path & "." & at.format("yyyyMMdd'-'HHmmss") & BackupSuffix
+
 proc backupPath*(path: string; at = now(); taken: openArray[string] = []): string =
   ## A name for a backup of `path` that no file has yet, nor is one of
   ## `taken` (backups asked for but perhaps not written yet):
   ## "settings.nif.20261114-153012.bak", then "...-2.bak" and on.
   let stem = path & "." & at.format("yyyyMMdd'-'HHmmss")
-  result = stem & BackupSuffix
+  result = backupName(path, at)
   var n = 2
   while fs.fileExists(result) or result in taken:
     result = stem & "-" & $n & BackupSuffix

@@ -1,0 +1,51 @@
+(stmts#Hypothesis: at the quit the jobs' shared state is freed while a thread left in a drive
+ that does not answer still uses it: a runner whose work comes back (it finishes its job
+ under the jobs' lock), or a panel reader that ends its hold on the file (`endHold`).
+ Source: src/viewSEG/core/jobs.nim: shutdown (waits for the runners until a deadline), the
+ destructor (frees only when every runner ended and no hold is left), the runner's end
+ (lock-held: ended), HoldRelease.release (lock-held: one hold ended); core/state.nim
+ shutdown (every thread asked, then waited for together).
+ Variables: rs the runner: 0 stuck in its work, 1 back (about to take the lock), 2 ended;
+ ds the reader: 0 stuck holding the file, 1 back, 2 released; done: the destructor ran;
+ freed: the state was freed; err 1 a thread used freed state.
+ Switches: Fix (true = the code), Mut 1 = free once the runners ended, holds or not,
+ Mut 2 = free once no hold is left, runners or not, Witness = a straggler came back after a
+ quit that kept the state.#
+  (variables :rs.0. :ds.0. :done.0. :freed.0. :err.0.)
+  (assign Fix.0. (true))
+  (assign Mut.0. 0)
+  (assign Witness.0. (false))
+
+  (def :Init.0.
+    (and (prime rs.0. 0) (prime ds.0. 0) (prime done.0. (false)) (prime freed.0. (false))
+      (prime err.0. 0)))
+
+  (def :RunnerBack.0.#the drive answers: the work returns, unlocked.#
+    (and (eq err.0. 0) (eq rs.0. 0) (prime rs.0. 1)))
+
+  (def :RunnerEnd.0.#runner, lock held: finishes the job, sets ended.#
+    (and (eq err.0. 0) (eq rs.0. 1) (if freed.0. (prime err.0. 1) (prime rs.0. 2))))
+
+  (def :ReaderBack.0.#the reader's read comes back, unlocked.#
+    (and (eq err.0. 0) (eq ds.0. 0) (prime ds.0. 1)))
+
+  (def :ReaderRelease.0.#reader, HoldRelease.release: the jobs' lock, one hold ended.#
+    (and (eq err.0. 0) (eq ds.0. 1) (if freed.0. (prime err.0. 1) (prime ds.0. 2))))
+
+  (def :Destroy.0.#UI, at the deadline (lock-held reads of ended and holds): free or keep.#
+    (and (eq err.0. 0) (not done.0.) (prime done.0. (true))
+      (prime freed.0.
+        (if (not Fix.0.) (true)
+          (if (eq Mut.0. 1) (eq rs.0. 2)
+            (if (eq Mut.0. 2) (eq ds.0. 2)
+              (and (eq rs.0. 2) (eq ds.0. 2))))))))
+
+  (def :Next.0. (or RunnerBack.0. RunnerEnd.0. ReaderBack.0. ReaderRelease.0. Destroy.0.))
+
+  (def :Safe.0. (eq err.0. 0))
+
+  (def :Reached.0.#Witness: kept at the quit, then both stragglers ended safely.#
+    (and done.0. (not freed.0.) (eq rs.0. 2) (eq ds.0. 2) (eq err.0. 0)))
+
+  (spec (always-stutter Init.0. Next.0. (tuple rs.0. ds.0. done.0. freed.0. err.0.)))
+  (check (if Witness.0. (not Reached.0.) Safe.0.)))

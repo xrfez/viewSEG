@@ -1177,11 +1177,12 @@ proc run*(opts = RunOptions()): int =
   defer: ImGui_Impl_OpenGL3_Shutdown()
   installDpiScaling(window)
 
+  # The windows as they were at the last exit: read, as the settings were,
+  # before this thread becomes the UI thread, which never reads a file.
+  let last = if opts.persist: loadLayoutFile(configDir / LayoutFileName) else: LoadedLayout()
   var ui = initUi(window, opts, loaded, configDir)
-  if opts.persist: # the windows as they were at the last exit
-    let last = loadLayoutFile(configDir / LayoutFileName)
-    for (severity, text) in last.notes: ui.core.report(severity, "layouts", text)
-    if last.found: ui.arrange(last.layout.imgui)
+  for (severity, text) in last.notes: ui.core.report(severity, "layouts", text)
+  if last.found: ui.arrange(last.layout.imgui)
   ui.setTheme()
   let gpuError = ui.trace.startGpu(glProc, opts.maxTextureSize)
   if gpuError.len > 0:
@@ -1193,10 +1194,12 @@ proc run*(opts = RunOptions()): int =
   let (awake, asleep) = (frontendOf(addr ui, false), frontendOf(addr ui, true))
   if opts.openPaths.len > 0:
     ui.core.apply Command(kind: ckBrowse, paths: opts.openPaths, showFirst: true)
-  elif opts.persist and ui.core.settings.recentFolders.len > 0 and
-      dirExists(ui.core.settings.recentFolders[0]):
+  elif opts.persist and ui.core.settings.recentFolders.len > 0:
     # The folder listed last, listed again; nothing is opened until chosen.
-    ui.core.apply Command(kind: ckBrowse, paths: @[ui.core.settings.recentFolders[0]])
+    # The listing finds out whether it is still there (a drive may not
+    # answer: nothing here looks), and says so quietly when it is not.
+    ui.core.apply Command(kind: ckBrowse, paths: @[ui.core.settings.recentFolders[0]],
+      quiet: true)
   var
     frame = 0
     event: SDL_Event
