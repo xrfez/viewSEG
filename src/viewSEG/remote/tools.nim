@@ -636,7 +636,8 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
       working = getCurrentDir()
     except OSError:
       discard
-    r["program"] = %*{"folder": getAppDir(), "workingFolder": working}
+    r["program"] = %*{"folder": getAppDir(), "workingFolder": working,
+      "theme": state.settings.theme, "themes": state.themeNames}
   if "map" in wanted: r["map"] = state.mapJson(limit)
   if "survey" in wanted:
     var layers = newJArray()

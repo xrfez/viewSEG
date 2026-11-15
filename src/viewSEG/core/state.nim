@@ -197,6 +197,7 @@ type
     ckSpectrumPanel = "spectrum panel"   ## the live spectrum panel on screen, or not
     ckDisplayPreset = "display preset"
       ## draw a panel as a named display says; keep, rename or forget one
+    ckTheme = "theme"                    ## the theme the program is drawn in, as View > Theme picks it
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -262,6 +263,9 @@ type
     of ckLayout: arrangement*: string ## the toolkit's layout text
     of ckSaveLayout: layoutName*: string
       ## the name to keep it under
+    of ckTheme: theme*: string
+      ## the theme file's name, as View > Theme lists them (`tokyo-night`,
+      ## without `.toml`); "" follows the system (Everforest Dark or Light)
     of ckUnloadSurvey: layer*: SurveyLayerId
       ## the survey layer's id
     of ckMapView:
@@ -673,6 +677,7 @@ type
     configDir: string ## where the settings and layouts are saved; "" for nowhere
     keepsSettings: bool ## the settings are saved there; false: their file is left alone
     savedLayouts: seq[SavedLayout] ## the layouts saved by name this run, kept in the list
+    themeNames: seq[string] ## the theme files the frontend found (`offerThemes`)
     defaults: Settings ## what a reset goes back to
     settingsRev: int ## bumped on every change of `settings`
     kept: Settings ## the settings as the user left them by hand: what is saved (`keeps`)
@@ -829,6 +834,15 @@ proc keepLayoutsIn*(state: var AppState; dir: string; presetDirs: openArray[stri
   assertUiThread()
   if state.configDir.len == 0: state.configDir = dir
   state.diskIo.listLayouts(dir, @presetDirs) # off this thread: the folders may be slow
+
+proc offerThemes*(state: var AppState; names: seq[string]) =
+  ## The themes the frontend can draw in (its theme files' names, as View >
+  ## Theme lists them): `ckTheme` takes one of them, and agents are told.
+  state.themeNames = names
+
+func themeNames*(state: AppState): lent seq[string] {.inline.} =
+  ## The themes `offerThemes` gave; none when no frontend said.
+  state.themeNames
 
 func layouts*(state: AppState): lent seq[SavedLayout] {.inline.} =
   ## The layouts that can be loaded: the user's, then the presets.
@@ -5034,6 +5048,16 @@ proc applyCommand(state: var AppState; cmd: Command) =
         state.requestView(k) # a new view, or the extremes wiggles need
       state.settleGain(k, cmd.origin)
   of ckDisplayPreset: state.displayPreset(cmd)
+  of ckTheme:
+    if cmd.theme.len > 64 or not cmd.theme.allCharsInSet({'a'..'z', 'A'..'Z', '0'..'9', '-', '_',
+        ' ', '.'}) or ".." in cmd.theme:
+      state.ignore(cmd, "a theme is named by its file's name (`tokyo-night`), not `" &
+        cmd.theme & "`")
+    elif cmd.theme.len > 0 and state.themeNames.len > 0 and cmd.theme notin state.themeNames:
+      state.ignore(cmd, "there is no theme `" & cmd.theme & "`; there are " &
+        state.themeNames.join(", "))
+    else:
+      state.change(cmd.origin, s): s.theme = cmd.theme
   of ckHeader:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")

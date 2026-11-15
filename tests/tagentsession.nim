@@ -58,7 +58,7 @@ import utils/[fixtures, waiting]
 # Headers window's (its tabs, toggles and columns): an agent's `headers
 # shown` says what its reader reads, which is no setting.
 const Reached = {
-  "theme": "", "window.x": "", "window.y": "", "window.width": "", "window.height": "",
+  "theme": "theme", "window.x": "", "window.y": "", "window.width": "", "window.height": "",
   "window.maximized": "", "recentFiles": "open", "recentFolders": "browse",
   "plot.display.visible": "", "plot.display.orientation": "display",
   "plot.display.mode": "display", "plot.display.fills": "display",
@@ -244,6 +244,7 @@ withFixtures fx:
     st.agent(%*{"kind": "back"})
     st.agent(%*{"kind": "display", "display": toJson(Everything)})
     st.agent(%*{"kind": "display preset", "presetAction": "save", "presetName": "The agent's"})
+    st.agent(%*{"kind": "theme", "theme": "tokyo-night"})
     doAssert st.settings.displayPresets.len == 1 and st.keptSettings.displayPresets.len == 0
     st.agent(%*{"kind": "display header", "header": toJson(Header)})
     st.agent(%*{"kind": "sort", "order": toJson(Keys)})
@@ -345,6 +346,7 @@ withFixtures fx:
     st.apply Command(kind: ckDisplay, panel: MainPanel, display: Everything)
     st.apply Command(kind: ckDisplayPreset, panel: MainPanel, presetAction: paSave,
       presetName: "Mine")
+    st.apply Command(kind: ckTheme, theme: "nord")
     st.apply Command(kind: ckHeader, panel: MainPanel, header: Header)
     st.apply Command(kind: ckSort, panel: MainPanel, order: Keys)
     st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Filters)
