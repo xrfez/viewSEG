@@ -14,16 +14,19 @@
 ##
 ## - a hovered or a selected trace's column under density alone is tinted
 ##   towards colours off its map (`highlights`): far from every colour the
-##   map draws, and from each other.
+##   map draws (on grey by 20 at least: a hue), and from each other, in
+##   every theme viewSEG ships and in a theme of greys only.
 ##
 ## Seen to fail: with every map tinted in the plot's own hover and
 ## selection colours (as it was), "red-white-blue (Everforest Dark,
 ## paper): the tinted hover 36, ..."; with viridis the polynomial fit it was before (up to 4 of
 ## 255 off the table), "viridis at 0: 3 off #440154"; with the zero entry at 127
 ## (`ZeroEntry`), `grey` found another grey there than the zero amplitude
-## is drawn with.
+## is drawn with; with grey keeping the plot's own colours whatever they
+## are (as it did), "grey (Everforest Dark, paper): the tinted hover 23, the
+## selection 13 off the map" (White's and Vantablack's selection: 0).
 
-import std/strutils
+import std/[os, strutils]
 import viewSEG/core/[colourmaps, geometry, panels, tiles, wiggle]
 import viewSEG/view/[plotink, theme]
 
@@ -93,7 +96,14 @@ block readableTints:
   # tinted colour is far from every colour the map draws, so it never reads
   # as an amplitude, and the hover and the selection never look alike. Grey
   # keeps the plot's own colours, which show on grey.
-  for theme in [EverforestDark, EverforestLight]:
+  var themes = @[EverforestDark, EverforestLight]
+  for f in themeFiles([currentSourcePath().parentDir.parentDir / "assets" / "themes"]):
+    themes.add f.theme
+  var grey: Palette
+  for k in BaseColor: grey[k] = rgb(0x808080)
+  (grey[bcBackground], grey[bcForeground]) = (rgb(0x202020), rgb(0xd0d0d0))
+  themes.add makeTheme("greys", tmDark, grey)
+  for theme in themes:
     for colours in [pcPaper, pcTheme]:
       let ink = plotInk(theme, DisplaySettings(colours: colours)).wiggle
       for m in ColourMap:
@@ -108,7 +118,7 @@ block readableTints:
             nearS = min(nearS, gap(s, l[k]))
           worst = (min(worst.hover, nearH), min(worst.selected, nearS),
             min(worst.apart, gap(h, s)))
-        let off = if m == cmGrey: 10 else: 50
+        let off = if m == cmGrey: 20 else: 50
         doAssert worst.hover >= off and worst.selected >= off and worst.apart >= 40,
           $m & " (" & theme.name & ", " & $colours & "): the tinted hover " & $worst.hover &
           ", the selection " & $worst.selected & " off the map, " & $worst.apart & " apart"

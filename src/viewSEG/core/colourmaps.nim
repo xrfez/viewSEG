@@ -114,15 +114,56 @@ const Luts = block:
 func lutOf*(m: ColourMap): Lut {.inline.} = Luts[m]
   ## The 256 colours of map `m`.
 
+const
+  GreySpread* = 90
+    ## the least spread of red, green and blue (`spread`) of the colours a
+    ## column is tinted towards on the grey map: tinted about half way, it
+    ## stays 20 off every grey of the map
+  GreyHover = Rgba(r: 255, g: 140, b: 0, a: 255)
+    ## the hover's tint on grey when the plot's own is a grey
+  GreySelected = Rgba(r: 30, g: 120, b: 255, a: 255)
+    ## the selection's tint on grey when the plot's own is a grey, or too
+    ## close to the hover's
+
+func spread(c: Rgba): int =
+  ## How far `c` is from a grey: its largest channel less its smallest.
+  int(max(c.r, max(c.g, c.b))) - int(min(c.r, min(c.g, c.b)))
+
+func gap(a, b: Rgba): int =
+  max(abs(int(a.r) - int(b.r)), max(abs(int(a.g) - int(b.g)), abs(int(a.b) - int(b.b))))
+
+func offGrey(c, fallback: Rgba): Rgba =
+  ## `c` with its hue kept and its colour made strong enough to show on the
+  ## grey map (`GreySpread`); `fallback` for a grey, which has no hue.
+  if spread(c) >= GreySpread:
+    result = c
+  elif spread(c) < 12:
+    result = fallback
+  else:
+    let mean = (float64(c.r) + float64(c.g) + float64(c.b)) / 3
+    result = c
+    var k = 1.0
+    while spread(result) < GreySpread and k < 40:
+      k *= 1.15
+      func ch(x: uint8): uint8 = uint8(clamp(round(mean + (float64(x) - mean) * k), 0, 255))
+      result = Rgba(r: ch(c.r), g: ch(c.g), b: ch(c.b), a: 255)
+    if spread(result) < GreySpread: result = fallback
+
 func highlights*(m: ColourMap; hover, selected: Rgba): tuple[hover, selected: Rgba] =
   ## The colours a hovered and a selected trace's column are tinted towards
   ## under density alone in map `m`, given the plot's own (`hover`,
   ## `selected`): colours off the map's hues, so a tinted column never reads
-  ## as an amplitude of the map. Grey keeps the plot's own (a colour shows
-  ## on grey); red-white-blue takes green and black, viridis magenta and
-  ## white, red-black green and blue.
+  ## as an amplitude of the map. Grey keeps the plot's own hues, made strong
+  ## enough to show (`GreySpread`; orange and blue for a theme's greys) and
+  ## apart from each other; red-white-blue takes green and black, viridis
+  ## magenta and white, red-black green and blue.
   case m
-  of cmGrey: (hover, selected)
+  of cmGrey:
+    let h = offGrey(hover, GreyHover)
+    var s = offGrey(selected, GreySelected)
+    if gap(h, s) < GreySpread:
+      s = if gap(h, GreySelected) >= GreySpread: GreySelected else: GreyHover
+    (h, s)
   of cmRedWhiteBlue: (Rgba(r: 0, g: 160, b: 80, a: 255), Black)
   of cmViridis: (Rgba(r: 255, g: 0, b: 255, a: 255), White)
   of cmRedBlack: (Rgba(r: 64, g: 255, b: 0, a: 255), Rgba(r: 0, g: 64, b: 255, a: 255))
