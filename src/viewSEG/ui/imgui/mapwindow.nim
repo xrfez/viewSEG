@@ -42,7 +42,7 @@
 ## takes out; Shift + click selects the stations along the line from the
 ## point clicked last.
 
-import std/[math, strutils]
+import std/[intsets, math, strutils]
 import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../gpu/mappoints
@@ -126,7 +126,11 @@ type
     activeAt: array[PointRole, seq[MapPoint]]
       ## where they are
     selectedAt: seq[MapPoint]
-      ## where `highlight.selected` are
+    selectedDrawn: seq[MapPoint]
+      ## of `selectedAt`, those drawn: all, or one a cell of `thinCell` when
+      ## there are more than `ThinAbove` (`thinned`)
+    thinCell: float64 ## survey units; 0: not thinned
+                        ## where `highlight.selected` are
     activeFor: tuple[gather: GatherRef; survey: int]
       ## what `active` was made from
     visibleFor: tuple[hidden: seq[MapLayerKey]; groups: set[MapGroup]]
@@ -222,6 +226,10 @@ func mapMenuTitle*(mu: MapUi): lent string {.inline.} = mu.menuTitle
 
 func mapMenuSelect*(mu: MapUi): lent string {.inline.} = mu.menuSelect
   ## Its "Select it and its N traces" item, as drawn last (for tests).
+
+func mapSelectedDrawn*(mu: MapUi): int {.inline.} = mu.selectedDrawn.len
+  ## The selected points the highlight draws: all of them, or about one a
+  ## pixel and a half when there are many (for tests).
 
 func mapImagesDrawn*(mu: MapUi): int {.inline.} = mu.renderer.imagesDrawn
   ## How many map images were drawn (an idle map draws none; for tests).
@@ -800,6 +808,23 @@ proc addShownAt(dst: var seq[MapPoint]; st: AppState; points: openArray[PointRef
       dst.add mapPoint(ix[].x(p.point), ix[].y(p.point))
     else: dst.add mapPoint(NaN, NaN)
 
+const ThinAbove = 50_000
+  ## more selected points than this are drawn one a cell of about a pixel
+  ## and a half: half a million highlighted discs took llvmpipe 100-250 ms a
+  ## drawing
+
+proc thinned(dst: var seq[MapPoint]; points: openArray[MapPoint]; origin: MapPoint;
+    cell: float64) =
+  ## `points`, one a `cell`-wide square of the survey (the first in it).
+  dst.setLen 0
+  var seen = initIntSet()
+  for p in points:
+    if not (p.x.isNaN or p.y.isNaN):
+      let (cx, cy) = (int64((p.x - origin.x) / cell), int64((p.y - origin.y) / cell))
+      if cx in 0'i64 ..< (1'i64 shl 30) and cy in 0'i64 ..< (1'i64 shl 30):
+        if not seen.containsOrIncl(int((cx shl 30) or cy)): dst.add p
+      else: dst.add p
+
 proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
   ## The highlighted points on the GPU: the gather on show's, the
   ## selection's, the plot's hovered trace's and the map's own hover, each
@@ -817,6 +842,21 @@ proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
     mu.highlight = st.highlightOf
     mu.selectedAt.addShownAt(st, mu.highlight.selected)
     mu.selectedFor = selected
+    mu.thinCell = -1 # thinned again below
+    changed = true
+  # Many points selected: drawn about one a pixel and a half at this scale,
+  # thinned again when the scale changes by half or more.
+  if mu.selectedAt.len > ThinAbove and mu.cur.perPixel > 0:
+    let cell = 1.5 * mu.cur.perPixel
+    if mu.thinCell <= 0 or cell > 1.5 * mu.thinCell or cell < mu.thinCell / 1.5:
+      let b = st.survey.bounds
+      mu.selectedDrawn.thinned(mu.selectedAt, (if b.isEmpty: mapPoint(0, 0)
+        else: mapPoint(b.minX, b.minY)), cell)
+      mu.thinCell = cell
+      changed = true
+  elif mu.thinCell != 0:
+    mu.selectedDrawn = mu.selectedAt
+    mu.thinCell = 0
     changed = true
   let active = (st.selection.activeGather, st.survey.revision)
   if active != mu.activeFor:
@@ -841,7 +881,7 @@ proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
     if hidden:
       var none: array[PointRole, seq[MapPoint]]
       mu.renderer.setHighlight(origin, none, [], [])
-    else: mu.renderer.setHighlight(origin, mu.activeAt, mu.selectedAt, hovered)
+    else: mu.renderer.setHighlight(origin, mu.activeAt, mu.selectedDrawn, hovered)
     mu.drawnHidden = hidden
     inc mu.highlightRev
 

@@ -11,10 +11,15 @@
 ## drawn (their colour at a receiver's pixel), and each frame draws far
 ## fewer points than the layer has.
 ##
+## Then a box over most of the map selects hundreds of thousands of points,
+## and their highlight is drawn about one a pixel and a half, not each.
+##
 ## Seen to fail: with every point drawn whatever the scale (`levelFor`
 ## always -1), "few points drawn" found 1 000 000 drawn at fit; with the
-## map's view models looping over the survey's layers by value (a copy of
-## every layer, 100 MB, each frame), "the map lags" found 73 ms frames.
+## highlight never thinned (`ThinAbove` fifty million), "highlighted" found
+## 842 000 of 842 000; with the map's view models looping over the survey's
+## layers by value (a copy of every layer, 100 MB, each frame), "the map
+## lags" found 73 ms frames.
 ##
 ## Runs alone: it bounds the frame times while the map moves (under 33 ms, and
 ## at most 15 ms over an idle frame).
@@ -53,7 +58,8 @@ proc main() =
     var loadStart = getMonoTime()
     var loadMs = 0'i64
     var idle, panning, zooming: seq[float64]
-    var drawnAtFit, drawnClose = 0
+    var drawnAtFit, drawnClose, selectedPoints, selectedDrawn = 0
+    var selectedFrames: seq[float64]
     var at: Vec2
     var coloured = false
     var loads = 0
@@ -111,6 +117,25 @@ proc main() =
           f.pressKey(skRight, false)
         if wait == 64:
           drawnClose = f.mapWindow.mapPointsDrawn
+          f.scrollWheel(at, -3)
+          (stage, wait) = (4, 0)
+      of 4: # Shift + drag a box over most of the map: hundreds of thousands selected
+        let (a, b) = (vec2(round(at.x - mapSize.x * 0.4), round(at.y - mapSize.y * 0.4)),
+          vec2(round(at.x + mapSize.x * 0.4), round(at.y + mapSize.y * 0.4)))
+        case wait
+        of 20: f.moveMouse(a)
+        of 22: f.pressKey(skShift, true, {smShift})
+        of 23: f.pressMouse(a, true)
+        of 24 .. 33:
+          let t = float32(wait - 23) / 10
+          f.moveMouse(vec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t))
+        of 34: f.pressMouse(b, false)
+        of 35: f.pressKey(skShift, false)
+        else: discard
+        if wait in 40 ..< 70: selectedFrames.add ms
+        if wait == 70:
+          (selectedPoints, selectedDrawn) = (f.core.selection.points.len,
+            f.mapWindow.mapSelectedDrawn)
           f.stop()
       else: discard
       if overdue(f.index, 4000, loadStart): f.stop()
@@ -118,7 +143,7 @@ proc main() =
       theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
     doAssert code == 0
-    doAssert stage == 3, "stopped at stage " & $stage
+    doAssert stage == 4, "stopped at stage " & $stage
     let (mi, mz, mp) = (median(idle), median(zooming), median(panning))
     echo "tguimapload: ", Lines * Points, " points on a ", int(mapSize.x), " x ", int(mapSize.y),
       " map: file written in ", written, " ms, loaded ",
@@ -126,7 +151,9 @@ proc main() =
       " ms, zooming median ", formatFloat(mz, ffDecimal, 1), " (slowest ",
       formatFloat(zooming.max, ffDecimal, 1), "), panning median ",
       formatFloat(mp, ffDecimal, 1), " (slowest ", formatFloat(panning.max, ffDecimal, 1),
-      "); points drawn at fit ", drawnAtFit, ", zoomed in ", drawnClose
+      "); points drawn at fit ", drawnAtFit, ", zoomed in ", drawnClose, "; ", selectedPoints,
+      " selected, ", selectedDrawn, " of them highlighted, frames ",
+      formatFloat(median(selectedFrames), ffDecimal, 1), " ms"
     doAssert coloured, "no receiver drawn three quarters of the way into the survey"
     doAssert drawnAtFit < Lines * Points div 4, "few points drawn: " & $drawnAtFit
     # The suite runs files side by side, so a frame's time is noisy: what is
@@ -134,5 +161,10 @@ proc main() =
     # stays within the floor for software OpenGL (33 ms).
     doAssert mz < mi + 15 and mp < mi + 15 and mz < 33 and mp < 33, "the map lags: zooming " &
       $mz & " ms, panning " & $mp & " ms a frame, idle " & $mi
+    # A selection of hundreds of thousands of points is highlighted about one
+    # a pixel and a half, not every one of them.
+    doAssert selectedPoints > 100_000, $selectedPoints & " points selected"
+    doAssert selectedDrawn > 1000 and selectedDrawn < selectedPoints div 2,
+      $selectedDrawn & " of " & $selectedPoints & " highlighted"
 
 main()

@@ -40,11 +40,11 @@ const
   ParseAtOnce* = 8
     ## at most this many workers parse an SPS file's chunks, each on a thread
     ## (one fewer than the cores, at least one)
-  JunkChunks* = 4                ## chunks in a row with no SPS record end the read of a file
+  JunkChunks* = 4 ## chunks in a row with no SPS record end the read of a file
   MaxP1Bytes* = 64 * 1024 * 1024 ## a SEG P1 file larger than this is not read
-  MaxProblems* = 20              ## problems of one file logged one by one; the rest are counted
-  KeysChunk = 65_536             ## traces whose keys are copied at a time
-  Card = 80                      ## bytes of a fixed card without a line end
+  MaxProblems* = 20 ## problems of one file logged one by one; the rest are counted
+  KeysChunk = 65_536 ## traces whose keys are copied at a time
+  Card = 80 ## bytes of a fixed card without a line end
 
 type Problems = object
   ## A file's problems, posted as they come: the first `MaxProblems`, then
@@ -141,8 +141,8 @@ type
     ## A chunk of an SPS file and its records, parsed on a thread of its own.
     text, path: string
     opts: SpsOptions
-    card: int    ## 80 for cards without line ends, else 0 (`blankBinary`)
-    until: int64 ## the file's bytes read up to the end of this chunk
+    card: int      ## 80 for cards without line ends, else 0 (`blankBinary`)
+    until: int64   ## the file's bytes read up to the end of this chunk
     part: SpsFile
     blanked, blankedBytes: int
     failed: string ## why it could not be parsed; "" when it was
@@ -169,11 +169,11 @@ proc parseChunk(c: ptr Chunk) {.thread.} =
 
 type
   ParserState = enum
-    psIdle    ## waiting for a chunk
-    psParse   ## given one
-    psParsed  ## done: the reader takes it
-    psTaken   ## the reader has it
-    psQuit    ## to end
+    psIdle   ## waiting for a chunk
+    psParse  ## given one
+    psParsed ## done: the reader takes it
+    psTaken  ## the reader has it
+    psQuit   ## to end
 
   Parser = object
     ## A worker that parses the chunks it is given, one at a time.

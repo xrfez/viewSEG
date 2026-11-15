@@ -75,8 +75,8 @@ proc geometry(paths: seq[string]) =
 type Watch = object
   ## What the UI thread sees of the jobs while it waits for them.
   start: MonoTime
-  uiMs: float64           ## the longest drain
-  quietMs: float64        ## the longest a running job went without new progress
+  uiMs: float64                  ## the longest drain
+  quietMs: float64               ## the longest a running job went without new progress
   phases: seq[(string, float64)] ## each job phase seen, and when (ms from the start)
   seen: Table[JobId, (JobProgress, MonoTime)]
 
