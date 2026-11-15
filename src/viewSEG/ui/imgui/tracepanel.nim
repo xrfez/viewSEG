@@ -206,6 +206,8 @@ type
     picking: int ## the colour whose picker is open (as `colourKeys` lists them)
     hex: array[12, char] ## what the picker's `#rrggbb` box holds
     presetBox: array[4 * MaxPresetName + 1, char]
+    renameBox: array[4 * MaxPresetName + 1, char]
+      ## a preset's right-click menu's name box: its new name
       ## the Display presets section's name box: UTF-8, up to 4 bytes a character
     presetPicked: string ## the preset clicked last there: Rename and Delete act on it
     moreSize: ImVec2_c ## the gear popover's size, as drawn last
@@ -974,12 +976,29 @@ proc drawPresets(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
       marks.markWindow("plot.preset menu")
       if igMenuItem_Bool("Apply", nil, false, true): command(paApply, q.name)
       marks.mark("plot.preset menu apply")
-      let to = if typed.len > 0 and typed != q.name: "Rename to \"" & typed & "\""
-               else: "Rename (type the new name in the box first)"
-      if igMenuItem_Bool(to.cstring, nil, false, typed.len > 0 and typed != q.name):
-        command(paRename, q.name, typed)
-        tp.presetPicked = typed
+      # its new name typed in the menu itself: one trip
+      if igIsWindowAppearing():
+        zeroMem(addr tp.renameBox[0], tp.renameBox.len)
+        copyMem(addr tp.renameBox[0], q.name.cstring, min(q.name.len, tp.renameBox.len - 1))
+      igAlignTextToFramePadding()
+      igTextUnformatted("Rename to", nil)
+      igSameLine(0, -1)
+      igSetNextItemWidth(round(igCalcTextSize("A preset's long name", nil, false, -1).x +
+        2 * igGetStyle().FramePadding.x))
+      let renamed = igInputText("##presetrename", cast[cstring](addr tp.renameBox[0]),
+        csize_t(tp.renameBox.len), (ImGui_InputTextFlags_EnterReturnsTrue.cint or
+        ImGui_InputTextFlags_AutoSelectAll.cint).ImGuiInputTextFlags, nil, nil)
+      marks.mark("plot.preset menu name")
+      let newName = ($cast[cstring](addr tp.renameBox[0])).strip
+      igSameLine(0, -1)
+      igBeginDisabled(newName.len == 0 or newName == q.name)
+      let clicked = igButton("Rename##presetmenu", ImVec2_c(x: 0, y: 0))
+      igEndDisabled()
       marks.mark("plot.preset menu rename")
+      if (clicked or renamed) and newName.len > 0 and newName != q.name:
+        command(paRename, q.name, newName)
+        tp.presetPicked = newName
+        igCloseCurrentPopup()
       if igMenuItem_Bool(("Delete \"" & q.name & "\"").cstring, nil, false, true):
         command(paDelete, q.name)
         tp.presetPicked = ""

@@ -10,7 +10,8 @@
 ## - an unticked checkbox in it ("Hide killed traces") shows: its box is
 ##   drawn in a colour of its own, not the popover's background;
 ## - a preset is deleted, and another renamed, from its right-click menu
-##   without the plot being drawn as it first: the display stays as it was.
+##   without the plot being drawn as it first: the display stays as it was;
+##   the new name is typed into the menu itself (one trip).
 ##
 ## Seen to fail: with the popover in its three columns (as it was), held
 ## to the window's size, "Look: 1152.0 x 605.0, cut to the window" (the
@@ -18,7 +19,9 @@
 ## frames the colour of the popover in the dark theme (as they were), "the
 ## unticked box: 0 of 729 pixels off the popover's background"; with a
 ## right-click applying the preset (`command(paApply, ...)` when the menu
-## opens), "deleted from its menu: the display changed".
+## opens), "deleted from its menu: the display changed"; with the menu's
+## Rename taking the name from the box below (as it was), "plot.preset menu
+## name is not shown".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -169,9 +172,9 @@ withFixtures fx:
   step("deleted from its menu", noop, proc (f: FrameInfo): bool =
     result = f.presetNames == @["Second"]
     if result: doAssert f.display.sameLook(before), "deleted from its menu: the display changed")
-  typeInto("plot.preset name", "Third", enter = false)
+  # renamed in one trip: the new name typed into the menu itself, Enter
   click("plot.preset.Second", button = 3)
-  click("plot.preset menu rename")
+  typeInto("plot.preset menu name", "Third", enter = true)
   step("renamed from its menu", noop, proc (f: FrameInfo): bool =
     result = f.presetNames == @["Third"]
     if result: doAssert f.display.sameLook(before), "renamed from its menu: the display changed")
