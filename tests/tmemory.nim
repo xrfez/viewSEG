@@ -20,15 +20,32 @@
 ##   table without a trace column refused;
 ## - a file whose drive does not answer when its identity is read: the plot
 ##   opens and draws, and the edits come once the drive answers;
+## - a copy (a time of its own) edited before the hash of every byte comes
+##   gets what is remembered of the file all the same, in one document;
+## - edits made while the drive does not answer are said to wait for the
+##   file's identity, and said lost at a quit before it came;
+## - a document that cannot be read is said and never written over;
+## - a user's edit while the hash is under way, on a file taken at once for
+##   one remembered, is not left in that file's document when the hash says
+##   it was another;
 ## - the data file's bytes and modification time are as they were through
-##   all of it.
+##   all of it, what is remembered of it forgotten (File memory) included.
 ##
 ## Seen to fail: with `applyRecord` not called for a document whose time
 ## matches (only after the hash), "the edits came at once" (they came only
 ## with the hash); with the kept lists written from what is shown,
 ## "the agent's kill was remembered"; with `takeHashed` not looking at the
 ## full hash of what it brought back, "the changed copy shows the edits
-## of the file it was copied from".
+## of the file it was copied from"; with `takeHashed` not writing back
+## the other file's document as it was brought, "the other file's document
+## keeps what was written of the changed copy"; with no word of edits that
+## wait for the file's identity, "an edit that waits for the file's
+## identity is not said" and "the lost edits are not said at the quit";
+## with the names of documents that could not be read left out of those
+## taken (`Remembered.taken`), "the document that could not be read was
+## written over"; with `takeHashed` looking at what waited only when the
+## file had no document yet, "what is remembered for the file did not come
+## to its copy edited before the hash".
 
 import std/[os, strutils, times]
 import viewSEG/core/state
@@ -140,12 +157,16 @@ withFixtures fx:
     let c2 = fx.dir / "changed-same-time.sgy"
     writeFile(c2, bytes)
     setLastModificationTime(c2, kept[1])
+    let docBefore = readFile(docs(config)[0])
     st = start(config)
     holdStep("reading every byte") # a large file: its hash comes later
     st.showFile(c2)
     doAssert st.settle(st.remembering(c2).known)
     doAssert st.editsOf(0).has(teKilled, 3), "a file of the same size, ends and time is " &
       "taken for the file at once"
+    st.edit(teKilled, 9) # the user's, while the hash is under way: written a second later
+    st.flushFiles()
+    doAssert "changed-same-time" in readFile(docs(config)[0])
     releaseStep("reading every byte")
     doAssert st.settle(st.remembering(c2).confirmed and not st.remembering(c2).looking)
     doAssert st.editsOf(0).isEmpty and not st.panel(MainPanel).layers[0].reversed,
@@ -154,6 +175,8 @@ withFixtures fx:
     doAssert st.quiet, "the jobs of what is remembered were said to end"
     st.shutdown()
     doAssert docs(config).len == 1, "the copies made documents of their own: " & $docs(config)
+    doAssert readFile(docs(config)[0]) == docBefore, "the other file's document keeps what " &
+      "was written of the changed copy: " & readFile(docs(config)[0])
   block clearedAndBack:
     var st = start(config)
     st.showFile(b)
@@ -177,8 +200,8 @@ withFixtures fx:
     doAssert "never writes over" in st.lastWarning, st.lastWarning
     doAssert st.settle(fileExists(csv) and fileExists(nif))
     let text = readFile(csv)
-    doAssert text.startsWith(CsvHeader & "\nall,,,reversed\n4,11,4,killed\n6,11,6,reversed\n"),
-      text
+    doAssert text.startsWith(CsvHeader & "\nall,,,reversed,renamed.sgy\n" &
+      "4,11,4,killed,renamed.sgy\n6,11,6,reversed,renamed.sgy\n"), text
     doAssert "(killed \"4\")" in readFile(nif) and "renamed.sgy" in readFile(nif)
     st.apply Command(kind: ckClearEdits, panel: MainPanel)
     for list in [csv, nif]:
@@ -211,6 +234,81 @@ withFixtures fx:
     release(b)
     doAssert st.settle(st.remembering(b).known and st.editsOf(0).has(teKilled, 3)),
       "the edits did not come once the drive answered"
+    st.shutdown()
+  block copyEditedBeforeHash:
+    # a copy of the file (a time of its own, so what is remembered waits for
+    # the hash of every byte), edited before that hash comes: the edits
+    # remembered for the file come all the same, beside the new one, in one
+    # document
+    let c = fx.dir / "copy.sgy"
+    writeFile(c, readFile(b))
+    var st = start(config)
+    holdStep("reading every byte")
+    st.showFile(c)
+    doAssert st.settle(st.remembering(c).known)
+    doAssert st.editsOf(0).isEmpty, "a copy with a time of its own waits for the hash"
+    st.edit(teKilled, 9)
+    st.flushFiles()
+    doAssert docs(config).len == 2 # the edit's own, for now
+    releaseStep("reading every byte")
+    doAssert st.settle(st.remembering(c).confirmed and not st.remembering(c).looking)
+    doAssert st.editsOf(0).has(teKilled, 9) and st.editsOf(0).has(teKilled, 3),
+      "what is remembered for the file did not come to its copy edited before the hash"
+    st.flushFiles()
+    let d = docs(config)
+    doAssert d.len == 1, "two documents for one file: " & $d
+    doAssert "(killed \"4 10\")" in readFile(d[0]), readFile(d[0])
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel) # as it was for the next blocks
+    st.shutdown()
+    removeFile(c)
+  block editedBeforeKnown:
+    # edits made while the drive does not give the file's first and last
+    # bytes are said to wait for them, and said lost at a quit before
+    var st = start(config)
+    holdStep("reading its first and last bytes")
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: b)
+    doAssert waitUntil((discard st.drainInbox(); inStep("reading its first and last bytes").len == 1))
+    doAssert st.settle(st.panel(MainPanel).laidOut)
+    fault(b, fkHang, {foOpen, foRead})
+    releaseStep("reading its first and last bytes")
+    doAssert waitUntil(hung() == 1)
+    st.edit(teKilled, 1)
+    doAssert "once viewSEG has read its first and last bytes" in st.lastWarning,
+      "an edit that waits for the file's identity is not said: " & st.lastWarning
+    st.shutdown(wait = initDuration(milliseconds = 200))
+    doAssert "are not remembered" in st.lastWarning, "the lost edits are not said at the quit"
+    release(b)
+  block damagedNotWrittenOver:
+    # a document of the file's quick identity that cannot be read is said,
+    # and a new one is written beside it, never over it
+    var bytes = readFile(b)
+    bytes[0] = char(ord(bytes[0]) xor 1)
+    let d = fx.dir / "other-header.sgy"
+    writeFile(d, bytes)
+    var t: Time
+    let id = quickIdentity(d, t)
+    let damaged = config / StoreFolder / docName(id, 1)
+    writeFile(damaged, "(fileMemory (version 1) (killed \"2 3")
+    var st = start(config)
+    st.showFile(d)
+    doAssert st.settle(st.remembering(d).known)
+    doAssert docName(id, 1) in st.lastWarning, st.lastWarning
+    st.edit(teKilled, 2)
+    st.flushFiles()
+    doAssert readFile(damaged) == "(fileMemory (version 1) (killed \"2 3",
+      "the document that could not be read was written over"
+    doAssert fileExists(config / StoreFolder / docName(id, 2))
+    st.shutdown()
+  block pruned:
+    # what is remembered of the file forgotten: the data file still as it was
+    var st = start(config)
+    st.showFile(b)
+    doAssert st.settle(st.remembering(b).known and st.editsOf(0).has(teKilled, 3))
+    let doc = st.remembering(b).doc
+    st.apply Command(kind: ckForgetFiles, forget: @[doc])
+    doAssert st.editsOf(0).isEmpty
+    st.flushFiles()
+    doAssert not fileExists(config / StoreFolder / doc)
     st.shutdown()
   doAssert (readFile(b), getLastModificationTime(b)) == kept, "the data file changed"
 echo "tmemory: ok"

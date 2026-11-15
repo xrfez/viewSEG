@@ -10,6 +10,7 @@
 ## A floating window, as "Import survey" is; it reads the store again
 ## (`ckFileMemory`) when it opens and on Refresh.
 
+import std/sequtils
 import imguin/cimgui
 import ../../core/state
 import ../../view/[memorylist, theme]
@@ -29,8 +30,12 @@ type
     selected: string     ## the selected entry's document; "" for none
     days*: int32 = 90    ## "not opened for" this many days
     asked: Removal       ## a removal waiting for its confirmation
-    going: seq[int]      ## its rows
+    going: seq[MemoryRow]
+      ## the entries it takes away, as they were listed when it was asked
+      ## for (a listing that comes meanwhile changes the rows, not these)
     popup: bool          ## open the confirmation next frame
+    rows: seq[MemoryRow] ## the listing's rows, made again when it changes
+    rowsRev: int = -1    ## the listing's revision they were made from
 
   MemoryOutput* = object
     commands*: seq[Command]
@@ -62,8 +67,7 @@ proc button(label, mark, help: string; enabled: bool; marks: var Marks): bool =
 
 const confirmId = "Remove from the file memory?###memory.confirm"
 
-proc drawConfirm(ui: var MemoryUi; rows: openArray[MemoryRow]; res: var MemoryOutput;
-    marks: var Marks) =
+proc drawConfirm(ui: var MemoryUi; res: var MemoryOutput; marks: var Marks) =
   ## The confirmation: what the removal asked for takes away, then Remove or
   ## Cancel.
   if ui.popup:
@@ -77,7 +81,7 @@ proc drawConfirm(ui: var MemoryUi; rows: openArray[MemoryRow]; res: var MemoryOu
       " files are forgotten:").cstring)
     let shownRows = min(n, 12)
     for j in 0 ..< shownRows:
-      let r = rows[ui.going[j]]
+      let r = ui.going[j]
       igBulletText("%s", (r.name & "  (" & r.kept & ")").cstring)
     if n > shownRows: igBulletText("%s", ("and " & $(n - shownRows) & " more").cstring)
     igTextWrapped("%s", ("Their kills and polarity reversals are no longer brought back " &
@@ -85,7 +89,7 @@ proc drawConfirm(ui: var MemoryUi; rows: openArray[MemoryRow]; res: var MemoryOu
     igSeparator()
     if igButton((IconTrash & "  Remove").cstring, ImVec2_c(x: 0, y: 0)):
       var docs: seq[string]
-      for i in ui.going: docs.add rows[i].doc
+      for r in ui.going: docs.add r.doc
       res.commands.add Command(kind: ckForgetFiles, forget: docs)
       if ui.selected in docs: ui.selected = ""
       ui.going.setLen 0
@@ -121,7 +125,10 @@ proc drawMemory*(ui: var MemoryUi; title: string; st: AppState; t: Theme;
     ui.focus.watch()
     marks.markWindow("memory")
     let list = st.memoryList
-    let rows = memoryRows(list.records)
+    if ui.rowsRev != list.revision: # not every frame: thousands of entries in words
+      ui.rows = memoryRows(list.records)
+      ui.rowsRev = list.revision
+    template rows: untyped = ui.rows
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
     igTextWrapped("%s", ("What viewSEG remembers about the files you opened: their kills " &
       "and polarity reversals, kept by each file's content (so a file renamed or moved " &
@@ -146,33 +153,43 @@ proc drawMemory*(ui: var MemoryUi; title: string; st: AppState; t: Theme;
       igTableSetupColumn("Entry", ImGui_TableColumnFlags_WidthFixed.cint, 0, 0)
       igTableSetupColumn("Where", ImGui_TableColumnFlags_WidthFixed.cint, 0, 0)
       igTableHeadersRow()
-      for i, r in rows:
-        igPushID_Int(cint(i))
-        igTableNextRow(0, 0)
-        discard igTableNextColumn()
-        if igSelectable_Bool(r.name.cstring, r.doc == ui.selected,
-            ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
-          ui.selected = if r.doc == ui.selected: "" else: r.doc
-        marks.mark("memory.row." & $i)
-        tip(r.path)
-        discard igTableNextColumn()
-        igTextUnformatted(r.opened.cstring, nil)
-        discard igTableNextColumn()
-        igTextUnformatted(r.kept.cstring, nil)
-        discard igTableNextColumn()
-        igTextUnformatted(r.size.cstring, nil)
-        discard igTableNextColumn()
-        igTextUnformatted(r.entry.cstring, nil)
-        discard igTableNextColumn()
-        if r.gone:
-          igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-          igTextUnformatted("gone", nil)
-          igPopStyleColor(1)
-          tip("No file of this size is at " & r.path & " any more (moved, renamed or " &
-            "deleted). A file moved keeps what is remembered: open it to bring it back")
-        else:
-          igTextDisabled("in place")
-        igPopID()
+      let clipper = ImGuiListClipper_ImGuiListClipper() # only the rows in view
+      ImGuiListClipper_Begin(clipper, cint(rows.len), -1)
+      while ImGuiListClipper_Step(clipper):
+        for i in clipper.DisplayStart ..< clipper.DisplayEnd:
+          template r: untyped = rows[i]
+          igPushID_Int(cint(i))
+          igTableNextRow(0, 0)
+          discard igTableNextColumn()
+          if igSelectable_Bool(r.name.cstring, r.doc == ui.selected,
+              ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and ui.focus.acts:
+            ui.selected = if r.doc == ui.selected: "" else: r.doc
+          marks.mark("memory.row." & $i)
+          tip(r.path)
+          discard igTableNextColumn()
+          igTextUnformatted(r.opened.cstring, nil)
+          discard igTableNextColumn()
+          igTextUnformatted(r.kept.cstring, nil)
+          discard igTableNextColumn()
+          igTextUnformatted(r.size.cstring, nil)
+          discard igTableNextColumn()
+          igTextUnformatted(r.entry.cstring, nil)
+          discard igTableNextColumn()
+          if r.gone:
+            igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+            igTextUnformatted("gone", nil)
+            igPopStyleColor(1)
+            tip("No file of this size is at " & r.path & " any more (moved, renamed or " &
+              "deleted). A file moved keeps what is remembered: open it to bring it back")
+          elif r.unreached:
+            igTextDisabled("not found")
+            tip("The folder " & r.path & " was in is not there or does not answer (a " &
+              "network drive not connected?), so this is not counted as gone")
+          else:
+            igTextDisabled("in place")
+          igPopID()
+      ImGuiListClipper_End(clipper)
+      ImGuiListClipper_destroy(clipper)
       igEndTable()
     let at = block:
       var x = -1
@@ -182,13 +199,13 @@ proc drawMemory*(ui: var MemoryUi; title: string; st: AppState; t: Theme;
     let enabled = not list.listing
     if button(IconTrash & "  Remove", "memory.remove", "Forget the file selected in the " &
         "list", enabled and at >= 0, marks) and ui.focus.acts:
-      (ui.asked, ui.going, ui.popup) = (rmSelected, @[at], true)
+      (ui.asked, ui.going, ui.popup) = (rmSelected, @[rows[at]], true)
     igSameLine(0, -1)
     let gone = goneRows(rows)
     if button(IconTrash & "  Remove the gone (" & $gone.len & ")", "memory.gone",
         "Forget the files that are not where they were last seen", enabled and gone.len > 0,
         marks) and ui.focus.acts:
-      (ui.asked, ui.going, ui.popup) = (rmGone, gone, true)
+      (ui.asked, ui.going, ui.popup) = (rmGone, gone.mapIt(rows[it]), true)
     igSameLine(0, -1)
     if button(IconRefresh & "  Refresh", "memory.refresh", "Read the file memory again",
         enabled, marks):
@@ -197,13 +214,13 @@ proc drawMemory*(ui: var MemoryUi; title: string; st: AppState; t: Theme;
     if button(IconTrash & "  Remove those not opened for", "memory.old",
         "Forget the files not opened for this many days or more (" & $old.len & " now)",
         enabled and old.len > 0, marks) and ui.focus.acts:
-      (ui.asked, ui.going, ui.popup) = (rmOld, old, true)
+      (ui.asked, ui.going, ui.popup) = (rmOld, old.mapIt(rows[it]), true)
     igSameLine(0, -1)
     igSetNextItemWidth(igGetFontSize() * 6)
     discard igInputInt("days", addr ui.days, 1, 30, 0)
     ui.days = clamp(ui.days, 0, 100_000)
     marks.mark("memory.days")
-    ui.drawConfirm(rows, result, marks)
+    ui.drawConfirm(result, marks)
     ui.focus.settle()
   igEnd()
   if not open: ui.shown = false

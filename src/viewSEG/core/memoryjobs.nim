@@ -9,14 +9,17 @@
 ##   window.
 ## - `exportEditsWork`: a file's list, with each edited trace's record and
 ##   channel from the open file's keys, as NIF or CSV text.
+## - `importEditsWork`: a file's list the user imports, read and taken
+##   apart here (a CSV of a million rows is half a second's work), so the UI
+##   thread only adds its edits.
 ##
 ## None of them is given the file in `reads`: they open it themselves (or
 ## read only the keys in memory), so a close or a step to another file
 ## never waits for a hash of a large file.
 
-import std/[strutils, times]
+import std/[algorithm, os, strutils, times]
 import parseSEG
-import filememory, identity, inbox, jobs, threads
+import edits, filememory, filesystem, identity, inbox, jobs, nif, threads
 
 proc identifyWork*(path: string; store: Store; to: Poster): JobWork =
   ## Posts `mkIdentified`: the quick identity of the file at `path` and the
@@ -87,9 +90,46 @@ proc exportEditsWork*(file: ptr SeismicFile; r: FileRecord; dest: string; to: Po
           (records[i + j], channels[i + j]) = (keys[j].record, keys[j].channel)
         i += n
         if not ctx.progress(i, rows.len): raise newException(JobCancelledError, "cancelled")
-      text = editsCsv(r.edits, records, channels)
+      text = editsCsv(r.edits, records, channels, r.name)
     else:
       text = memoryDocument(r)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkEditsList, listText: move text, listDest: dest,
       listName: r.name)
+
+proc importEditsWork*(path: string; traces: int; to: Poster): JobWork =
+  ## Posts `mkEditsRead`: the edits of the list at `path` (a NIF document
+  ## when its name ends in `.nif`, else a CSV table: `readEdits`) on the
+  ## first `traces` traces (`importOutside` counts those past them, left
+  ## out), what in it could not be used, or why none of it could.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "reading the list"
+    var msg = Msg(job: ctx.id, kind: mkEditsRead, importedList: path)
+    try:
+      let size = fs.getFileSize(path)
+      if not fs.fileExists(path): # a named pipe would hold this thread until written to
+        msg.importFailure = "it is not a regular file"
+      elif size > MaxMemoryBytes:
+        msg.importFailure = "it is larger than " & $(MaxMemoryBytes shr 20) & " MB"
+      else:
+        let text = fs.readFile(path)
+        let name = path.extractFilename
+        var doc: seq[NifNode]
+        var docError = ""
+        if name.toLowerAscii.endsWith(".nif"):
+          try: doc = parseNif(text, name, MaxMemoryBytes)
+          except NifError as e: docError = e.msg
+        msg.importedEdits = readEdits(text, name, doc, docError, msg.importProblems,
+          msg.importIdentity, msg.importHasIdentity)
+        for edit in TraceEdit:
+          template l: untyped = msg.importedEdits.lists[edit]
+          let inside = l.lowerBound(traces) # ascending
+          msg.importOutside += l.len - inside
+          l.setLen inside
+    except ValueError as e: # a NifError too
+      msg.importFailure = e.msg
+    except IOError, OSError:
+      msg.importFailure = getCurrentExceptionMsg()
+      if msg.importFailure.len == 0: msg.importFailure = "it cannot be read"
+    clearCycleRoots()
+    to.post move msg

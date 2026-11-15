@@ -11,7 +11,7 @@
 
 import std/[locks, times]
 import parseSEG
-import filelist, filememory, identity, join, jobs, layouts, log, mapkinds, nif, panels, session,
+import edits, filelist, filememory, identity, join, jobs, layouts, log, mapkinds, nif, panels, session,
   shotfiles, survey, tiles
 
 type
@@ -42,6 +42,7 @@ type
     mkHashed     ## an opened file's identity with the hash of every byte
     mkMemoryList ## every file the store remembers, for the File memory window
     mkEditsList  ## a file's list of edits, as the text of the file it is exported to
+    mkEditsRead  ## a file's list of edits the user imports, read
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -56,7 +57,6 @@ type
     rpLoadLayout     ## a layout to show (Window: a preset, Load)
     rpImportLayout   ## a layout to show and keep among the user's (File > Import > Layout)
     rpLayouts        ## the layouts there are: the user's and the presets, listed (`layouts`)
-    rpImportEdits    ## a file's list of trace edits to take in (File > Import > Trace edits)
 
   Msg* = object
     ## One message for the UI thread.
@@ -193,6 +193,14 @@ type
       listText*: string              ## the text to write
       listDest*: string              ## the file to write it to
       listName*: string              ## the seismic file's name
+    of mkEditsRead:
+      importedList*: string          ## the list's file
+      importedEdits*: EditLists      ## its edits; none when it could not be read
+      importProblems*: seq[string]   ## what in it could not be used, in plain words
+      importFailure*: string         ## why nothing of it could be used; "" when it could
+      importIdentity*: FileIdentity  ## the identity of the file it was made on (NIF)
+      importHasIdentity*: bool       ## it names one
+      importOutside*: int            ## its traces past the file's last, left out
 
   InboxObj = object
     lock: Lock

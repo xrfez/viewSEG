@@ -23,8 +23,14 @@
 ## draws) and those kept, what the user made by hand and the file's memory
 ## holds. Each change says whether it is kept (`keep`: a change an agent
 ## makes is shown for the session only); a step given or taken back by a
-## kept command reaches both, by the same additions and removals, so an
-## agent's change undone or made again by the user is then kept as shown.
+## kept command reaches both, so an agent's change undone or made again by
+## the user is then kept as shown. Where an agent's change has made the two
+## differ, a step says what it does to each (a user's kill of a selection
+## that holds a trace an agent killed kills it in what is kept too; the
+## user's "clear all" clears what is kept, also what an agent's undo hid).
+## At most `MaxSteps` steps are kept, and at most `MaxHeldTraces` traces
+## over all of them (a few changes of a million traces each), the oldest
+## dropped first.
 ##
 ## **Cost.** The lists are kept ascending, so what the screen asks for
 ## every frame or every new view (whether a gather has an edit, its edited
@@ -37,7 +43,12 @@
 
 import std/algorithm
 
-const MaxSteps* = 1000 ## steps kept per file for undo, the oldest dropped first
+const
+  MaxSteps* = 1000 ## steps kept per file for undo, the oldest dropped first
+  MaxHeldTraces* = 20_000_000
+    ## the traces the steps of one file's history name at most, all told
+    ## (about 160 MB), the oldest steps dropped first; the newest is kept
+    ## whatever its size
 
 type
   TraceEdit* = enum
@@ -53,6 +64,12 @@ type
     skImport = "import"       ## edits taken in from a file
     skSetAside = "set aside"  ## every edit taken away: the file changed on disk
 
+  ListsChange = object
+    ## What a step does to the lists kept, where that is not what it does
+    ## to those shown.
+    added, removed: array[TraceEdit, seq[int]]
+    allChanged, allBefore, allAfter: bool
+
   EditStep* = object
     ## One change of a file's edits: what it gave and took away.
     kind*: StepKind
@@ -60,10 +77,12 @@ type
     on*: bool                            ## skChange: given (true); skAllReversed: reversed after
     traces*: seq[int]                    ## skChange: the traces it changed, ascending
     added*, removed*: array[TraceEdit, seq[int]]
-      ## the traces each list gained and lost, ascending
+      ## the traces each list gained and lost, ascending (as shown)
     source*: string                      ## skImport: the file's name
     allChanged*: bool                    ## the polarity of all traces changed with it
     allBefore*, allAfter*: bool          ## all reversed before and after it
+    keptOwn: bool                        ## what is kept changes by `keptChange`
+    keptChange: ListsChange              ## what it does to what is kept, with `keptOwn`
 
   EditLists* = object
     ## A file's edits: each list ascending, each trace once.
@@ -76,6 +95,7 @@ type
     shown: EditLists
     kept: EditLists
     undos, redos: seq[EditStep] ## the newest last
+    held: int                   ## the traces the steps name, all told (`MaxHeldTraces`)
     revision: int               ## bumped on every change of what is shown
     keptRevision: int           ## bumped on every change of what is kept
 
@@ -111,6 +131,12 @@ func count*(l: EditLists): int =
 
 func sortedTraces*(traces: openArray[int]): seq[int] =
   ## `traces` ascending, each once. Raises `ValueError` for a negative one.
+  var ascending = traces.len == 0 or traces[0] >= 0
+  for i in 1 ..< traces.len:
+    if traces[i] <= traces[i - 1]:
+      ascending = false
+      break
+  if ascending: return @traces # the lists read and kept are so already
   result = newSeqOfCap[int](traces.len)
   for t in traces:
     if t < 0: raise newException(ValueError, "a trace index must not be negative, got " & $t)
@@ -182,76 +208,133 @@ func anyIn*(e: FileEdits; traces: Slice[int]): bool =
     if span(e.shown.lists[edit], traces).len > 0: return true
   false
 
-proc forward(l: var EditLists; s: EditStep) =
+proc turn(l: var EditLists; added, removed: array[TraceEdit, seq[int]];
+    allChanged, allTo: bool) =
+  ## Takes `removed` away from `l` and gives it `added`, and all reversed
+  ## `allTo` when `allChanged`.
   for edit in TraceEdit:
-    if s.removed[edit].len > 0: l.lists[edit] = difference(l.lists[edit], s.removed[edit])
-    if s.added[edit].len > 0: l.lists[edit] = union(l.lists[edit], s.added[edit])
-  if s.allChanged: l.allReversed = s.allAfter
+    if removed[edit].len > 0: l.lists[edit] = difference(l.lists[edit], removed[edit])
+    if added[edit].len > 0: l.lists[edit] = union(l.lists[edit], added[edit])
+  if allChanged: l.allReversed = allTo
 
-proc backward(l: var EditLists; s: EditStep) =
+proc turnShown(l: var EditLists; s: EditStep; back: bool) =
+  if back: l.turn(s.removed, s.added, s.allChanged, s.allBefore)
+  else: l.turn(s.added, s.removed, s.allChanged, s.allAfter)
+
+proc turnKept(l: var EditLists; s: EditStep; back: bool) =
+  if not s.keptOwn: l.turnShown(s, back)
+  else:
+    template c: untyped = s.keptChange
+    if back: l.turn(c.removed, c.added, c.allChanged, c.allBefore)
+    else: l.turn(c.added, c.removed, c.allChanged, c.allAfter)
+
+func size(s: EditStep): int =
+  ## The traces `s` names, all told.
+  result = s.traces.len
   for edit in TraceEdit:
-    if s.added[edit].len > 0: l.lists[edit] = difference(l.lists[edit], s.added[edit])
-    if s.removed[edit].len > 0: l.lists[edit] = union(l.lists[edit], s.removed[edit])
-  if s.allChanged: l.allReversed = s.allBefore
+    result += s.added[edit].len + s.removed[edit].len +
+      s.keptChange.added[edit].len + s.keptChange.removed[edit].len
+
+proc keptChanges(s: var EditStep; c: sink ListsChange) =
+  ## `c` is what `s` does to what is kept; noted apart only where it is not
+  ## what `s` does to what is shown.
+  if c.added != s.added or c.removed != s.removed or c.allChanged != s.allChanged or
+      (c.allChanged and (c.allBefore, c.allAfter) != (s.allBefore, s.allAfter)):
+    s.keptOwn = true
+    s.keptChange = c
 
 proc make(e: var FileEdits; s: sink EditStep; keep: bool) =
   ## Makes the new step `s`, on what is kept too with `keep`, and drops the
-  ## steps undone.
-  e.shown.forward(s)
+  ## steps undone, and the oldest beyond `MaxSteps` or `MaxHeldTraces`.
+  e.shown.turnShown(s, back = false)
   inc e.revision
   if keep:
     let was = e.kept
-    e.kept.forward(s)
+    e.kept.turnKept(s, back = false)
     if e.kept != was: inc e.keptRevision
+  for r in e.redos: e.held -= r.size
   e.redos.setLen 0
+  e.held += s.size
   e.undos.add s
-  if e.undos.len > MaxSteps: e.undos.delete(0)
+  var drop = 0
+  while e.undos.len - drop > 1 and (e.undos.len - drop > MaxSteps or e.held > MaxHeldTraces):
+    e.held -= e.undos[drop].size
+    inc drop
+  if drop > 0: e.undos = e.undos[drop .. ^1]
+
+func keptHas(e: FileEdits; edit: TraceEdit; trace: int): bool {.inline.} =
+  e.kept.lists[edit].binarySearch(trace) >= 0
 
 proc change*(e: var FileEdits; edit: TraceEdit; traces: openArray[int]; on: bool;
     keep = true): int =
   ## Gives every trace of `traces` edit `edit` (`on`) or takes it away, as a
-  ## step of the history (kept with `keep`). Returns how many changed; a
-  ## change of none makes no step. Raises `ValueError` for a negative trace
-  ## index.
-  var changed: seq[int]
+  ## step of the history (kept with `keep`: then every trace of `traces` is
+  ## so in what is kept, also one an agent's change made so as shown
+  ## already). Returns how many changed; a change of none makes no step.
+  ## Raises `ValueError` for a negative trace index.
+  var changed, keptChanged: seq[int]
   for t in sortedTraces(traces):
     if e.has(edit, t) != on: changed.add t
+    if e.keptHas(edit, t) != on: keptChanged.add t
   result = changed.len
+  if keep and result == 0: result = keptChanged.len
   if result > 0:
-    var s = EditStep(kind: skChange, edit: edit, on: on, traces: changed)
-    if on: s.added[edit] = move changed
-    else: s.removed[edit] = move changed
+    var s = EditStep(kind: skChange, edit: edit, on: on,
+      traces: if changed.len > 0: changed else: keptChanged)
+    var c = ListsChange()
+    if on: (s.added[edit], c.added[edit]) = (move changed, move keptChanged)
+    else: (s.removed[edit], c.removed[edit]) = (move changed, move keptChanged)
+    s.keptChanges(c)
     e.make(s, keep)
 
 proc clearAll*(e: var FileEdits; keep = true; kind = skClear): bool =
   ## Takes every edit away (as a step: `undo` brings them back), the file
-  ## then shown as it is on disk. False when there were none. `kind` is
-  ## `skSetAside` when the file changed on disk.
-  result = not e.shown.isEmpty
+  ## then shown as it is on disk, and with `keep` nothing kept either. False
+  ## when there were none. `kind` is `skSetAside` when the file changed on
+  ## disk.
+  result = not e.shown.isEmpty or (keep and not e.kept.isEmpty)
   if result:
     var s = EditStep(kind: kind, allChanged: e.shown.allReversed, allBefore: true)
     s.removed = e.shown.lists
+    s.keptChanges(ListsChange(removed: e.kept.lists, allChanged: e.kept.allReversed,
+      allBefore: true))
     e.make(s, keep)
 
 proc setAllReversed*(e: var FileEdits; on: bool; keep = true): bool =
-  ## Reverses the polarity of every trace (`on`) or puts it back, as a step.
-  ## False when it was so already.
-  result = e.shown.allReversed != on
+  ## Reverses the polarity of every trace (`on`) or puts it back, as a step
+  ## (in what is kept too with `keep`). False when it was so already.
+  let shownToo = e.shown.allReversed != on
+  let keptToo = e.kept.allReversed != on
+  result = shownToo or (keep and keptToo)
   if result:
-    e.make(EditStep(kind: skAllReversed, on: on, allChanged: true, allBefore: not on,
-      allAfter: on), keep)
+    var s = EditStep(kind: skAllReversed, on: on, allChanged: shownToo, allBefore: not on,
+      allAfter: on)
+    s.keptChanges(ListsChange(allChanged: keptToo, allBefore: not on, allAfter: on))
+    e.make(s, keep)
 
 proc takeIn*(e: var FileEdits; l: EditLists; source: string; keep = true): int =
   ## Adds the edits of `l` (a file's list imported: `source` names it) as
-  ## one step; returns how many were not there yet.
+  ## one step (in what is kept too with `keep`); returns how many were not
+  ## there yet.
   var s = EditStep(kind: skImport, source: source)
+  var c = ListsChange()
+  var kept = 0
   for edit in TraceEdit:
-    s.added[edit] = difference(sortedTraces(l.lists[edit]), e.shown.lists[edit])
+    let list = sortedTraces(l.lists[edit])
+    s.added[edit] = difference(list, e.shown.lists[edit])
+    c.added[edit] = difference(list, e.kept.lists[edit])
     result += s.added[edit].len
+    kept += c.added[edit].len
   if l.allReversed and not e.shown.allReversed:
     (s.allChanged, s.allAfter) = (true, true)
     inc result
-  if result > 0: e.make(s, keep)
+  if l.allReversed and not e.kept.allReversed:
+    (c.allChanged, c.allAfter) = (true, true)
+    inc kept
+  if keep and result == 0: result = kept
+  if result > 0:
+    s.keptChanges(c)
+    e.make(s, keep)
 
 proc remembered*(e: var FileEdits; l: EditLists) =
   ## Adds what the file's memory holds (`l`) to what is shown and kept, as
@@ -274,20 +357,18 @@ proc forget*(e: var FileEdits) =
   e.kept = EditLists()
   e.undos.setLen 0
   e.redos.setLen 0
-
-proc turn(l: var EditLists; s: EditStep; back: bool) {.inline.} =
-  if back: l.backward(s) else: l.forward(s)
+  e.held = 0
 
 proc undo*(e: var FileEdits; keep = true): EditStep =
   ## Takes the newest step back (on what is kept too with `keep`) and keeps
   ## it for `redo`; returns it, `skNone` when there was none.
   if e.undos.len == 0: return EditStep()
   result = e.undos.pop()
-  e.shown.turn(result, back = true)
+  e.shown.turnShown(result, back = true)
   inc e.revision
   if keep:
     let was = e.kept
-    e.kept.turn(result, back = true)
+    e.kept.turnKept(result, back = true)
     if e.kept != was: inc e.keptRevision
   e.redos.add result
 
@@ -296,13 +377,16 @@ proc redo*(e: var FileEdits; keep = true): EditStep =
   ## returns it, `skNone` when there was none.
   if e.redos.len == 0: return EditStep()
   result = e.redos.pop()
-  e.shown.turn(result, back = false)
+  e.shown.turnShown(result, back = false)
   inc e.revision
   if keep:
     let was = e.kept
-    e.kept.turn(result, back = false)
+    e.kept.turnKept(result, back = false)
     if e.kept != was: inc e.keptRevision
   e.undos.add result
+
+func held*(e: FileEdits): int {.inline.} = e.held
+  ## The traces the steps of the history name, all told (`MaxHeldTraces`).
 
 func touches*(s: EditStep; edit: TraceEdit): bool =
   ## Whether step `s` changed edit `edit` of some trace.
@@ -333,9 +417,22 @@ func describe*(s: EditStep): string =
   of skImport:
     var n = ord(s.allChanged)
     for edit in TraceEdit: n += s.added[edit].len
+    if n == 0 and s.keptOwn: # shown already (an agent's), kept by the import
+      n = ord(s.keptChange.allChanged)
+      for edit in TraceEdit: n += s.keptChange.added[edit].len
     $n & (if n == 1: " edit" else: " edits") & " imported from " & s.source
   of skChange:
     let what = tracesText(s.traces)
     case s.edit
     of teKilled: what & (if s.on: " killed" else: " restored")
     of teReversed: "polarity of " & what & (if s.on: " reversed" else: " put back")
+
+func undoText*(e: FileEdits): string =
+  ## `describe` of the step `undo` takes back, without a copy of it (the
+  ## Edit menu asks every frame); "" for none.
+  if e.undos.len > 0: describe(e.undos[e.undos.high]) else: ""
+
+func redoText*(e: FileEdits): string =
+  ## `describe` of the step `redo` makes again, without a copy of it; ""
+  ## for none.
+  if e.redos.len > 0: describe(e.redos[e.redos.high]) else: ""

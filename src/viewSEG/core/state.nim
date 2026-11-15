@@ -455,9 +455,21 @@ type
     waiting: seq[FileRecord]
       ## documents of its quick identity that wait for the full hash to say
       ## whether they are about this file
+    taken: seq[string]
+      ## every document name of its quick identity in the store, read or not
+      ## (one that could not be read is never written over)
+    brought: FileRecord
+      ## the document `doc` as it was brought back before the hash of every
+      ## byte confirmed it: written back as it was when the hash says it
+      ## was another file's
     savedRev: int           ## the edits' `keptRevision` written last
     changedAt: MonoTime     ## when its kept edits changed last
     opened: Time            ## when it was opened
+    saidWaiting: bool       ## said that its edits wait for its identity
+    ownDoc: bool
+      ## `doc` was made in this run for edits made before the hash of every
+      ## byte came (not one brought back): a document waiting for that hash
+      ## may still be this file's
 
   MemoryList* = object
     ## What the File memory window lists: every file the store remembers.
@@ -564,8 +576,8 @@ type
     memoryWork: seq[JobId]
       ## the identifications and hashes under way: they end quietly
     exports: seq[JobId] ## the exports of edits under way
-    editImports: seq[tuple[panel: PanelId; path: string; by: CommandOrigin]]
-      ## the imports of edits the disk thread reads, oldest first
+    editImports: seq[tuple[job: JobId; path: string; by: CommandOrigin]]
+      ## the imports of edits under way: each job, and the file it is for
     notices: seq[Notice] ## the newest `MaxNotices`
     nextNotice: int
     traceReads: seq[tuple[job: JobId; keys: TraceKeys; rows: seq[HeaderRow]]]
@@ -798,6 +810,7 @@ func recordOf(state: AppState; i: int): FileRecord =
   result = FileRecord(identity: r.identity, name: r.path.extractFilename, path: r.path,
     opened: r.opened, modified: r.modified, doc: r.doc)
   if r.path in state.edits: result.edits = state.edits[r.path].kept
+  if r.doc in state.knownDocs: result.later = state.knownDocs[r.doc].later # a later version's
 
 proc hashFile(state: var AppState; i: int) =
   ## Hashes every byte of `remembered[i]`'s file, on the background lane,
@@ -823,15 +836,15 @@ proc writeMemoryDoc(state: var AppState; i: int) =
       state.knownDocs.del r.doc
     return
   if r.doc.len == 0:
-    var taken = r.waiting.mapIt(it.doc)
+    var taken = r.waiting.mapIt(it.doc) & r.taken
     for x in state.remembered: taken.add x.doc
     for d in state.knownDocs.keys: taken.add d
     r.doc = freeDocName(r.identity, taken)
+    r.ownDoc = true
     rec.doc = r.doc
   state.knownDocs[r.doc] = rec
-  state.diskIo.replace(state.store.docPath(r.doc), memoryDocument(rec),
-    "what is remembered about " & name)
-  if not rec.identity.fullKnown: state.hashFile(i)
+  state.diskIo.replace(state.store.docPath(r.doc), move rec, "what is remembered about " & name)
+  if not r.identity.fullKnown: state.hashFile(i)
 
 proc saveMemory(state: var AppState; now: MonoTime; force: bool) =
   ## Hands the disk thread the documents of the files whose kept edits
@@ -906,6 +919,12 @@ proc shutdown*(state: var AppState; wait = QuitWait): bool {.discardable.} =
   if state.savedRev != state.keptRev: state.saveSettings()
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
   state.saveMemory(getMonoTime(), force = true)
+  for r in state.remembered:
+    if not r.known and not state.store.isNowhere and
+        r.path in state.edits and not state.edits[r.path].kept.isEmpty:
+      let name = r.path.extractFilename
+      state.log.add(sevWarning, name, "The edits of " & name & " are not remembered: " &
+        "viewSEG could not read its first and last bytes before the quit.")
   state.writeLog()
   state.disk.askStop()
   let deadline = getMonoTime() + wait
@@ -1192,6 +1211,13 @@ func traceEdits*(state: AppState; trace: int): set[TraceEdit] =
   if i >= 0 and state.sessions[i].path in state.edits:
     result = state.edits[state.sessions[i].path].editsOf(trace - state.sessions[i].base)
 
+func editsAt(state: AppState; path: string): lent FileEdits =
+  ## The edits of the file at `path`; none when it has none. Not a copy
+  ## (`getOrDefault` copies the lists and the whole history).
+  if path in state.edits:
+    return state.edits[path]
+  state.noEdits
+
 func editsOf*(state: AppState; panelIndex: int): lent FileEdits =
   ## The edits of the file `panels[panelIndex]` shows; none when it shows
   ## none or the file has none. Not a copy: the screen asks every frame, so
@@ -1407,7 +1433,7 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
   # Reversing every trace is an edit of the file: each file shows its own.
   let i = state.findSession(file)
   state.panels[k].layers[0].reversed = i >= 0 and
-    state.edits.getOrDefault(state.sessions[i].path).allReversed
+    state.editsAt(state.sessions[i].path).allReversed
   state.newSource(k)
   state.selection.activeGather = GatherRef(file: file, gather: gather)
   inc state.selection.revision
@@ -2015,7 +2041,7 @@ proc editsChanged(state: var AppState; path: string; step = EditStep(kind: skCha
   ## reversed or not as a whole, and their view's tiles made again when
   ## `step` changed a trace of the gather they show (any step when it is
   ## `skChange` with no traces: what is remembered came).
-  let e = state.edits.getOrDefault(path)
+  template e: untyped = state.editsAt(path)
   let any = step.kind == skChange and step.traces.len == 0
   for j in 0 ..< state.panels.len:
     let (i, traces) = state.shownTraces(j)
@@ -2026,6 +2052,17 @@ proc editsChanged(state: var AppState; path: string; step = EditStep(kind: skCha
         state.resample(j, relevel = any or step.touches(teKilled))
       elif any or step.changedIn(traces):
         state.resample(j, relevel = any or step.touches(teKilled))
+
+proc sayNotYetRemembered(state: var AppState; i: int) =
+  ## Says once, when the user edits `remembered[i]`'s file before its
+  ## identity is known, that the edits are not remembered until it is.
+  template r: untyped = state.remembered[i]
+  if not r.known and r.job != NoJob and not r.saidWaiting:
+    r.saidWaiting = true
+    let name = r.path.extractFilename
+    state.log.add(sevWarning, name, "The edits of " & name & " are remembered with it once " &
+      "viewSEG has read its first and last bytes, which its drive has not given yet; " &
+      "if you quit before, they are lost (File > Export > Trace edits keeps them in a file).")
 
 proc identify(state: var AppState; s: Session) =
   ## Looks up what is remembered about the file `s` opened, by its
@@ -2047,7 +2084,7 @@ proc identify(state: var AppState; s: Session) =
   # until its identity is known (the edits set aside stay with the file as
   # it was).
   r = Remembered(path: s.path, size: s.size, opened: getTime(), hashJob: NoJob,
-    savedRev: state.edits.getOrDefault(s.path).keptRevision)
+    savedRev: state.editsAt(s.path).keptRevision)
   r.job = state.jobs.submit(JobSpec(title: "Look up what is remembered about " & s.name,
     lane: jlInteractive), identifyWork(s.path, state.store, state.inbox.poster))
   state.memoryWork.add r.job
@@ -2058,11 +2095,15 @@ proc applyRecord(state: var AppState; i: int; c: FileRecord) =
   template r: untyped = state.remembered[i]
   let name = r.path.extractFilename
   r.doc = c.doc
+  r.ownDoc = false
   r.waiting.setLen 0
   if c.identity.fullKnown and not r.hashed:
     (r.identity.full, r.identity.fullKnown) = (c.identity.full, true)
+  r.brought = if r.hashed: FileRecord() else: c
   state.knownDocs[c.doc] = c
-  r.savedRev = -1 # written again: seen now, under this name
+  # Written again (seen now, under this name), unless it had parts that
+  # could not be read: those stay on disk until the user changes the edits.
+  if not c.damaged: r.savedRev = -1
   if c.edits.isEmpty: return
   state.edits.mgetOrPut(r.path, FileEdits()).remembered(c.edits)
   var said = name & ": " & keptWords(c.edits) & ", as you left " &
@@ -2081,6 +2122,7 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
   template r: untyped = state.remembered[i]
   r.job = NoJob
   (r.identity, r.known, r.modified, r.hashed) = (m.identity, true, m.identModified, false)
+  r.taken = move m.taken
   let name = r.path.extractFilename
   for p in m.memoryProblems:
     state.log.add(sevWarning, name, "What is remembered about " & name & ": " & p & ".")
@@ -2088,7 +2130,7 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
   for c in m.candidates: # what this run wrote is newer than the disk
     cands.add(if c.doc in state.knownDocs: state.knownDocs[c.doc] else: c)
   for d, c in state.knownDocs:
-    if d notin m.taken and c.identity.size == r.identity.size and
+    if d notin r.taken and c.identity.size == r.identity.size and
         c.identity.quick == r.identity.quick:
       cands.add c
   var at = -1
@@ -2096,7 +2138,7 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
     if at < 0 and c.modified == r.modified: at = j
   if at >= 0: state.applyRecord(i, cands[at])
   else: r.waiting = cands
-  if cands.len > 0 or not state.edits.getOrDefault(r.path).kept.isEmpty: state.hashFile(i)
+  if cands.len > 0 or not state.editsAt(r.path).kept.isEmpty: state.hashFile(i)
 
 proc takeHashed(state: var AppState; m: sink Msg) =
   ## The hash of every byte of a file: what was brought back is confirmed,
@@ -2113,21 +2155,38 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     state.log.add(sevWarning, name, name & " begins and ends as the file remembered as " &
       state.knownDocs.getOrDefault(r.doc).name & " did, but its content differs: the edits " &
       "remembered for that file are taken away from it (they stay remembered for that file).")
-    state.knownDocs.del r.doc
+    if r.brought.doc == r.doc:
+      # What was written of this file meanwhile (its name, its edits) went
+      # into the other file's document: that one is put back as it was.
+      state.knownDocs[r.doc] = r.brought
+      state.diskIo.replace(state.store.docPath(r.doc), r.brought,
+        "what is remembered about " & r.brought.name)
+    else: state.knownDocs.del r.doc
+    r.brought = FileRecord()
     r.doc = ""
     state.edits.mgetOrPut(r.path, FileEdits()).forget()
     r.savedRev = state.edits[r.path].keptRevision
     state.editsChanged(r.path)
   r.identity = m.hashed
   r.hashed = true
-  if r.doc.len == 0:
+  r.brought = FileRecord() # confirmed
+  if r.doc.len == 0 or r.ownDoc:
+    # What waited for the hash; also when edits made meanwhile have a
+    # document of their own already: that one then gives way to the one
+    # brought back, which takes them.
+    let own = if r.ownDoc: r.doc else: ""
     let waiting = move r.waiting
     for c in waiting:
-      if r.doc.len == 0 and c.identity.fullKnown and c.identity.full == r.identity.full:
+      if (r.doc.len == 0 or r.ownDoc) and c.identity.fullKnown and
+          c.identity.full == r.identity.full:
         state.applyRecord(i, c)
+    if own.len > 0 and r.doc != own:
+      state.diskIo.remove(state.store.docPath(own), "what is remembered about " & name)
+      state.knownDocs.del own
+    elif own.len > 0: r.savedRev = -1 # its document gets the hash
   elif not state.knownDocs.getOrDefault(r.doc).identity.fullKnown:
     r.savedRev = -1 # its document gets the hash
-  if r.doc.len == 0 and not state.edits.getOrDefault(r.path).kept.isEmpty:
+  if r.doc.len == 0 and not state.editsAt(r.path).kept.isEmpty:
     r.savedRev = -1 # edits made before it was known: a document of its own
 
 proc endMemoryWork(state: var AppState; job: JobInfo): bool =
@@ -2158,6 +2217,12 @@ proc endMemoryWork(state: var AppState; job: JobInfo): bool =
       state.memoryList.problems.add "what is remembered cannot be read: " & job.error
     inc state.memoryList.revision
     return true
+  for j, x in state.editImports:
+    if x.job == job.id:
+      if job.state == jsFailed:
+        state.log.add(sevError, "edits", "Cannot import the edits: " & job.error & ".")
+      if job.state != jsDone: state.editImports.delete j # its message never comes
+      return true
   let x = state.exports.find(job.id)
   if x >= 0:
     state.exports.delete(x)
@@ -2179,7 +2244,7 @@ proc exportEdits(state: var AppState; cmd: Command) =
   if state.refusedWrite(cmd, cmd.listPath): return
   let s = state.sessions[i]
   var r = FileRecord(name: s.name, path: s.path, opened: getTime(), modified: s.modified,
-    edits: state.edits.getOrDefault(s.path).shown)
+    edits: state.editsAt(s.path).shown)
   let at = state.rememberedAt(s.path)
   if at >= 0 and state.remembered[at].known: r.identity = state.remembered[at].identity
   else: r.identity.size = s.size
@@ -2193,38 +2258,37 @@ proc takeEditsList(state: var AppState; m: sink Msg) =
     done = "The edits of " & m.listName & " are written in " & m.listDest & ".")
 
 proc importEdits(state: var AppState; cmd: Command) =
-  ## `ckImportEdits`: reads `cmd.listPath` on the disk thread, for the file
-  ## `cmd.panel` shows (`takeImported`).
+  ## `ckImportEdits`: reads and takes apart `cmd.listPath` on a job
+  ## (`importEditsWork`), for the file `cmd.panel` shows (`takeImported`).
   let k = state.findPanel(cmd.panel)
   if k < 0 or state.shownFile(k) < 0:
     state.ignore(cmd, $cmd.panel & " shows no file")
   elif cmd.listPath.len == 0: state.ignore(cmd, "no file was named")
   else:
-    state.editImports.add (cmd.panel, state.sessions[state.shownFile(k)].path, cmd.origin)
-    state.diskIo.read(cmd.listPath, rpImportEdits, MaxMemoryBytes)
+    let job = state.jobs.submit(JobSpec(title: "Import the edits in " &
+      cmd.listPath.extractFilename, lane: jlInteractive), importEditsWork(cmd.listPath,
+      state.sessions[state.shownFile(k)].len, state.inbox.poster))
+    state.editImports.add (job, state.sessions[state.shownFile(k)].path, cmd.origin)
 
-proc takeImported(state: var AppState; m: Msg) =
-  ## A file's list the disk thread read: its edits added to those of the
-  ## file it was asked for, as one step (undone at once with Ctrl+Z).
-  if state.editImports.len == 0: return
-  let (panel, path, by) = state.editImports[0]
-  state.editImports.delete 0
-  let name = m.readPath.extractFilename
+proc takeImported(state: var AppState; m: sink Msg) =
+  ## A file's list a job read: its edits added to those of the file it was
+  ## asked for, as one step (undone at once with Ctrl+Z).
+  var w = -1
+  for j, x in state.editImports:
+    if x.job == m.job: w = j
+  if w < 0: return
+  let (_, path, by) = state.editImports[w]
+  state.editImports.delete w
+  let name = m.importedList.extractFilename
   let target = path.extractFilename
-  if m.readError.len > 0:
-    state.log.add(sevError, "edits", "Cannot import the edits in " & m.readPath & ": " &
-      m.readError & ".")
+  if m.importFailure.len > 0:
+    state.log.add(sevError, "edits", "Cannot import the edits in " & m.importedList & ": " &
+      m.importFailure & ". Nothing was changed.")
     return
-  var problems: seq[string]
-  var id: FileIdentity
-  var hasId = false
-  var l = EditLists()
-  try:
-    l = readEdits(m.content, name, m.doc, m.docError, problems, id, hasId)
-  except ValueError as e:
-    state.log.add(sevError, "edits", "Cannot import the edits in " & m.readPath & ": " &
-      e.msg & ". Nothing was changed.")
-    return
+  var problems = move m.importProblems
+  let id = m.importIdentity
+  let hasId = m.importHasIdentity
+  var l = move m.importedEdits
   state.logProblems("edits", problems)
   let i = block:
     var at = -1
@@ -2236,8 +2300,8 @@ proc takeImported(state: var AppState; m: Msg) =
       " were read: nothing was changed.")
     return
   let s = state.sessions[i]
-  var outside = 0
-  for edit in TraceEdit:
+  var outside = m.importOutside # left out by the job: past the last trace
+  for edit in TraceEdit: # a file of that name opened again since, shorter
     let before = l.lists[edit].len
     l.lists[edit].keepItIf(it < s.len)
     outside += before - l.lists[edit].len
@@ -2256,9 +2320,8 @@ proc takeImported(state: var AppState; m: Msg) =
     state.log.add(sevInfo, "edits", "Every edit in " & name & " was on " & target & " already.")
   else:
     state.editStamps[path] = (s.size, s.modified)
-    state.log.add(sevInfo, target, describe(e.nextUndo).capitalizeAscii & ".")
+    state.log.add(sevInfo, target, e.undoText.capitalizeAscii & ".")
     state.editsChanged(path, e.nextUndo)
-  discard panel # the file it showed is the one asked for, wherever it is shown now
 
 proc listMemory(state: var AppState) =
   ## `ckFileMemory`: lists what is remembered, on a job (`memoryList`).
@@ -3714,7 +3777,9 @@ proc editTraces(state: var AppState; cmd: Command) =
   if changed.kind != skNone:
     state.editsChanged(s.path, changed)
     let at = state.rememberedAt(s.path)
-    if keep and at >= 0: state.hashFile(at) # its document will name every byte
+    if keep and at >= 0:
+      state.hashFile(at) # its document will name every byte
+      state.sayNotYetRemembered(at)
 
 # ---------------------------------------------------------------- changes --
 
@@ -4267,7 +4332,6 @@ proc takeIn(state: var AppState; m: Msg) =
     state.layoutList = m.layouts
     for l in state.savedLayouts: state.layoutList = state.layoutList.added(l)
   of rpLoadLayout, rpImportLayout: state.takeLayout(m)
-  of rpImportEdits: state.takeImported(m)
   of rpImportSettings:
     var by = coWindow # the disk thread answers in the order it was asked
     if state.importsBy.len > 0:
@@ -4327,6 +4391,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkHashed: state.takeHashed(move m)
     of mkMemoryList: state.takeMemoryList(move m)
     of mkEditsList: state.takeEditsList(move m)
+    of mkEditsRead: state.takeImported(move m)
     of mkLayout:
       let k = state.findPanel(m.panel)
       if k >= 0 and m.sourceGen == state.panels[k].sourceGen:

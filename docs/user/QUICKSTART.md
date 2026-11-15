@@ -702,7 +702,7 @@ it, when you last opened it, what is kept, its size, the entry's size, and wheth
 file is still where it was. Remove the entry you select, those not opened for a number of
 days, or those whose file is gone: each asks first, listing what goes, and Messages names
 each one. **File > Export > Trace edits...** writes the edits of the file shown as a CSV
-table (`trace,record,channel,edit`, for a processing system) or as viewSEG's own `.nif`;
+table (`trace,record,channel,edit,file`, for a processing system) or as viewSEG's own `.nif`;
 **File > Import > Trace edits...** takes either back in (here or on another computer;
 one step that Undo takes back).
 

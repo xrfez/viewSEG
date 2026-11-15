@@ -2,7 +2,8 @@
 ## no temporary file left and only the newest of a burst written; appends
 ## keep their order; a prune keeps the newest names and the file it spares;
 ## a file that cannot be written is said once, through the inbox; a named
-## pipe is never read; `stop` writes what was left. `AppState` writes each
+## pipe is never read; `stop` writes what was left; two writes under a
+## name no file has (two backups asked for under one name) are both kept. `AppState` writes each
 ## log entry to this run's
 ## session log, one line each, the entries logged before `logTo` first,
 ## prunes the old session logs, and writes the last entries at shutdown.
@@ -15,11 +16,16 @@
 ## thread ending without `clearCycleRoots`, LeakSanitizer found the thread's
 ## list of cycle roots (16 KB, made by the exceptions `unwritable` causes)
 ## never freed; with `readFor` reading whatever it is given, `pipeIsNotRead`
-## found the thread stuck in a named pipe's open (it waits for a writer).
+## found the thread stuck in a named pipe's open (it waits for a writer);
+## with a `fresh` write taken for an older document of its path (the
+## newest-only rule of `leave`), `freshNeverDropped` found "a backup was
+## dropped: @["second"]" (the cause of `tsettings`'s `twoResetsKeepBoth`
+## failing about one run in nine under load: one backup, the settings before
+## the first reset lost).
 
 import std/[os, sequtils, strutils, times]
 import viewSEG/core/[diskio, inbox, log, nif, persist, state]
-import utils/waiting
+import utils/[faultyfs, waiting]
 when not defined(windows):
   from std/posix import nil
 
@@ -202,6 +208,29 @@ block lastWords:
   st.report(sevError, "x", "the last thing said")
   st.shutdown() # no persist after the report: shutdown writes it
   doAssert readFile(st.logFile).contains("error    [x] the last thing said")
+
+block freshNeverDropped:
+  # Two writes under a name no file has (`fresh`, as two resets in one
+  # second ask for one backup name) while the disk thread is busy: both are
+  # kept, neither drops the other as an older document of the path.
+  let box = initInbox()
+  var d = newDiskIo(box.poster)
+  let dir = tmp / "fresh"
+  createDir(dir)
+  install()
+  fault(dir / "busy", fkHang, {foOpen})
+  d.replace(dir / "busy", "x", "a file the disk thread is held on")
+  doAssert waitUntil(hung() == 1)
+  d.replace(dir / "settings.nif.bak", "first", "a copy", fresh = true)
+  d.replace(dir / "settings.nif.bak", "second", "a copy", fresh = true)
+  release(dir / "busy")
+  d.flush()
+  var kept: seq[string]
+  for kind, f in walkDir(dir):
+    if "settings" in f.extractFilename: kept.add readFile(f)
+  doAssert kept.len == 2 and "first" in kept and "second" in kept,
+    "a backup was dropped: " & $kept
+  releaseAll()
 
 block entryWithLocation:
   var e = LogEntry(time: getTime(), severity: sevWarning, source: "a.sgy", text: "short",

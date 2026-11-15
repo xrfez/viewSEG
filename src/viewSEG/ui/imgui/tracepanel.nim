@@ -1190,11 +1190,11 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.reverse all")
   igSeparator()
   template e: untyped = st.editsOf(k) # not copied
-  let undo = if e.canUndo: "Undo " & describe(e.nextUndo) else: "Undo"
+  let undo = if e.canUndo: "Undo " & e.undoText else: "Undo"
   if igMenuItem_Bool(undo.cstring, "Ctrl+Z", false, e.canUndo):
     res.commands.add Command(kind: ckUndoEdit, panel: p.id)
   marks.mark("plot.menu.undo")
-  let redo = if e.canRedo: "Redo " & describe(e.nextRedo) else: "Redo"
+  let redo = if e.canRedo: "Redo " & e.redoText else: "Redo"
   if igMenuItem_Bool(redo.cstring, "Ctrl+Shift+Z", false, e.canRedo):
     res.commands.add Command(kind: ckRedoEdit, panel: p.id)
   marks.mark("plot.menu.redo")

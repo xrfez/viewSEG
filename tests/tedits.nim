@@ -28,6 +28,9 @@
 ##   with the traces edited elsewhere in the file;
 ## - a trace marked dead in the file is blank under every gain, reversed or
 ##   not, and the status bar says "dead";
+## - the user's own change of traces an agent changed says what is kept of
+##   each; the history holds at most `MaxHeldTraces` traces; the Edit menu's
+##   words and a step to another record copy no step and no history;
 ## - the file is never changed.
 ##
 ## Seen to fail: with the reader not blanking killed rows (`prepare`
@@ -45,7 +48,16 @@
 ## them), "a frame's questions to the lists take 4987.1 µs with 200 000
 ## traces edited elsewhere"; with the dead trace drawn as recorded under
 ## None (the blanking only when something runs on the samples), "under
-## None the dead-marked trace is drawn".
+## None the dead-marked trace is drawn"; with a step's change of what is
+## kept taken as its change of what is shown (`keptChanges` not called),
+## "the user's kill of the selection is kept without the agent's trace:
+## @[3, 4, 6, 7]", and in `clearAll`, "the user's clear left what is kept";
+## with the history bounded by its steps alone, "24000000 traces held in 12
+## steps"; with the Edit menu's words made from a copy of the step (`^1`, as
+## `nextUndo` does), "the Edit menu's words take 4904.85 µs a frame"; with
+## `show` asking the file's edits through `getOrDefault` (a copy of the
+## lists and the history), "a step to another record allocates 4158 times
+## more with a history of a thousand steps (24 with none)".
 ##
 ## Runs alone: it bounds the time a frame's questions to the lists take (50 µs).
 
@@ -142,6 +154,92 @@ block keptAndShown:
   doAssert e.clearAll() and e.kept.isEmpty
   discard e.undo()
   doAssert e.kept.lists[teKilled] == @[1, 2, 8]
+
+block userOverAgent:
+  # Where an agent's change made what is shown and what is kept differ, the
+  # user's own change says what is kept, for every trace it names.
+  block selection: # the user kills a selection that holds a trace an agent killed
+    var e: FileEdits
+    discard e.change(teKilled, [5], true, keep = false)
+    doAssert e.change(teKilled, [3, 4, 5, 6, 7], true) == 4
+    doAssert e.kept.lists[teKilled] == @[3, 4, 5, 6, 7],
+      "the user's kill of the selection is kept without the agent's trace: " &
+      $e.kept.lists[teKilled]
+    discard e.undo()
+    doAssert e.kept.isEmpty and e.shown.lists[teKilled] == @[5], "the undo is not as before"
+    discard e.redo()
+    doAssert e.kept.lists[teKilled] == @[3, 4, 5, 6, 7]
+  block onlyKept: # the user kills the one trace an agent killed: no change shown
+    var e: FileEdits
+    discard e.change(teKilled, [5], true, keep = false)
+    doAssert e.change(teKilled, [5], true) == 1 and e.kept.lists[teKilled] == @[5]
+  block clear: # the user clears all after an agent's undo hid the user's kill
+    var e: FileEdits
+    discard e.change(teKilled, [5], true)
+    discard e.setAllReversed(true)
+    discard e.undo(keep = false)
+    discard e.undo(keep = false)
+    doAssert e.isEmpty and e.kept.lists[teKilled] == @[5] and e.kept.allReversed
+    doAssert e.clearAll(), "nothing to clear for the user"
+    doAssert e.kept.isEmpty, "the user's clear left what is kept: " & $e.kept
+    discard e.undo()
+    doAssert e.kept.lists[teKilled] == @[5] and e.kept.allReversed and e.isEmpty
+  block allReversed: # the user reverses all after an agent put it back
+    var e: FileEdits
+    discard e.setAllReversed(true, keep = false)
+    discard e.setAllReversed(false) # the user puts it back: nothing kept
+    doAssert not e.kept.allReversed
+    discard e.setAllReversed(true) # the user's own
+    doAssert e.kept.allReversed and e.allReversed
+  block imported: # the user imports a list with a trace an agent killed
+    var e: FileEdits
+    discard e.change(teKilled, [5], true, keep = false)
+    var l: EditLists
+    l.lists[teKilled] = @[5, 6]
+    doAssert e.takeIn(l, "list.csv") == 1
+    doAssert e.kept.lists[teKilled] == @[5, 6], "the import is kept without the agent's trace"
+    var f: FileEdits
+    discard f.change(teKilled, [5], true, keep = false)
+    l.lists[teKilled] = @[5]
+    doAssert f.takeIn(l, "list.csv") == 1 and f.kept.lists[teKilled] == @[5]
+    doAssert describe(f.nextUndo) == "1 edit imported from list.csv", describe(f.nextUndo)
+
+block heldBound:
+  # The history holds at most `MaxHeldTraces` traces all told: a selection
+  # of a million traces killed and restored again and again drops the
+  # oldest steps, never the newest.
+  var e: FileEdits
+  var all = newSeq[int](1_000_000)
+  for i, t in all.mpairs: t = i
+  for k in 0 ..< 12: doAssert e.change(teKilled, all, k mod 2 == 0) == all.len
+  doAssert e.held <= MaxHeldTraces and e.steps.undos in 2 ..< 12,
+    $e.held & " traces held in " & $e.steps.undos & " steps"
+  doAssert e.len(teKilled) == 0
+  discard e.undo()
+  doAssert e.len(teKilled) == all.len
+  doAssert e.change(teKilled, [1], false) == 1 # drops the step undone
+  var held = 0
+  while e.canUndo:
+    discard e.undo()
+    inc held
+  doAssert held == e.steps.redos and e.held <= MaxHeldTraces
+
+block menuWords:
+  # What the Edit menu asks every frame (the newest step in words) does not
+  # copy the step: a change of a million traces.
+  var e: FileEdits
+  var all = newSeq[int](1_000_000)
+  for i, t in all.mpairs: t = i
+  discard e.change(teKilled, all, true)
+  discard e.change(teReversed, all, true)
+  discard e.undo()
+  const calls = 50
+  let start = getMonoTime()
+  var n = 0
+  for i in 0 ..< calls: n += e.undoText.len + e.redoText.len
+  let us = float64((getMonoTime() - start).inNanoseconds) / 1000 / calls
+  doAssert n == calls * ("1000000 traces killed".len + "polarity of 1000000 traces reversed".len)
+  doAssert us < 50, "the Edit menu's words take " & $us & " µs a frame"
 
 block takeInAndRemembered:
   var e: FileEdits
@@ -515,5 +613,34 @@ block deadMarked:
     st.display(d)
     doAssert st.settle(st.answered)
     doAssert st.tiles(0)[^1].rowOf(dead).blank, "under AGC the dead-marked trace is drawn"
+    st.shutdown()
+
+block historyNotCopied:
+  # Stepping to another record of a file with a long history does not copy
+  # its edits and their history (a thousand steps): it allocates as many
+  # times as with none.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    doAssert st.sessions[0].gathers.len >= 2
+    proc allocs(): int = cast[tuple[allocs, deallocs: int]](getAllocStats()).allocs
+    proc stepAllocs(st: var AppState): int =
+      ## The allocations of two steps to another record and back, the least of three.
+      result = high(int)
+      for k in 0 ..< 3:
+        let a0 = allocs()
+        st.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
+        st.apply Command(kind: ckGather, panel: MainPanel, gather: 0)
+        result = min(result, allocs() - a0)
+        doAssert st.settle(st.panel(MainPanel).laidOut)
+    let none = st.stepAllocs()
+    let base = st.sessions[0].base
+    for k in 0 ..< MaxSteps: st.edit(teKilled, @[base + 3], on = k mod 2 == 0)
+    doAssert st.editsOf(0).steps.undos == MaxSteps
+    let many = st.stepAllocs()
+    doAssert many - none < 500, "a step to another record allocates " & $(many - none) &
+      " times more with a history of a thousand steps (" & $none & " with none)"
     st.shutdown()
   echo "tedits: ok"

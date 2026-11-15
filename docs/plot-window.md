@@ -853,7 +853,8 @@ change.
 
 **History.** Every change is a step: Edit > Undo (Ctrl + Z) takes back the last, Edit >
 Redo (Ctrl + Shift + Z, Ctrl + Y) makes it again, as far back as the session goes (a
-thousand steps a file); a new change drops what was undone. The Edit menu names the step
+thousand steps a file, fewer when they are changes of millions of traces: twenty million
+traces named over all its steps); a new change drops what was undone. The Edit menu names the step
 ("Undo trace 21 killed") and works whichever window has the focus, on the file the
 Seismic window shows; the plot's menu has the same items. "Clear all edits for this file"
 is a step too. The history is for the session: it is forgotten at the quit, the edits are
@@ -870,24 +871,33 @@ once is taken away again when the hash tells them apart, with a warning). They a
 written beside the program's settings (`<config>/files/`, one small NIF document per
 file), a second after a change and at the quit; the data file's bytes and modification
 time are never touched. A file whose drive does not answer opens as always; its edits
-come when its identity can be read. Edits an agent makes through agent control are shown
-for the session only (docs/agent-control.md).
+come when its identity can be read, and edits you make before that are said to wait for
+it (quit before, and they are lost: Messages says so). When a hash of every byte says
+that a file taken at once for one remembered was another, the remembered file's entry is
+put back as it was. An entry with parts that cannot be read (edited by hand) says so and
+brings back the rest; a later version's parts are kept as they are. Edits an agent makes
+through agent control are shown for the session only (docs/agent-control.md).
 
 **File > File memory...** lists what is remembered: the name a file was last seen under,
 when it was last opened, what is kept, the file's size and the entry's, and whether the
-file is gone from where it was. It removes the entry selected, those not opened for a
-number of days (90 to begin with), or those whose file is gone; each removal lists what
-it takes away and asks first, and Messages names each entry forgotten. Nothing is ever
-dropped on its own.
+file is gone from where it was ("not found" when its folder is not there or does not
+answer, as a network drive not connected: that is not counted as gone). It removes the
+entry selected, those not opened for a number of days (90 to begin with), or those whose
+file is gone; each removal lists what it takes away and asks first (a listing that comes
+meanwhile does not change what it takes), and Messages names each entry forgotten.
+Nothing is ever dropped on its own.
 
 **Handing a list over.** File > Export > Trace edits... writes the edits of the file shown
-as a CSV table (`trace,record,channel,edit`: the trace's number in the file from 1, its
-field record and channel from the headers, `killed` or `reversed`; "all" for reverse all)
-or as viewSEG's own NIF document (with the file's identity), for processing. File >
-Import > Trace edits... reads either (a CSV table needs a `trace` column; without an
-`edit` column every trace listed is killed) onto the file shown, as one step that Undo
-takes back; a list made on another file is applied by trace number all the same, with a
-warning.
+as a CSV table (`trace,record,channel,edit,file`: the trace's number in the file from 1,
+its field record and channel from the headers, `killed` or `reversed`, "all" for reverse
+all, and the name of the file the list is for on every row) or as viewSEG's own NIF
+document (with the file's identity), for processing. File > Import > Trace edits... reads
+either (a CSV table needs a header naming a `trace` column, within its first lines;
+without an `edit` column every trace listed is killed; a table saved by a spreadsheet,
+with a byte order mark, quoted cells, `;` or tabs, reads as well) onto the file shown, as
+one step that Undo takes back, read off the screen's thread (lists of up to 64 MB);
+traces past the file's last are left out and said; a list made on another file is
+applied by trace number all the same, with a warning.
 
 An edit must show at once. The window's reader keeps the samples it last read from the
 file (as decoded, up to 128 MiB), so an edit of traces in view, a gain change, or a

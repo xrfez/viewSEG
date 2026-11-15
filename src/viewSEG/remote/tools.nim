@@ -351,8 +351,8 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
     result["allReversed"] = %e.allReversed
     result["canUndoEdit"] = %e.canUndo
     result["canRedoEdit"] = %e.canRedo
-    result["undo"] = %describe(e.nextUndo)
-    result["redo"] = %describe(e.nextRedo)
+    result["undo"] = %e.undoText
+    result["redo"] = %e.redoText
     let r = state.remembering(state.sessions[i].path)
     result["remembered"] = %*{"identityKnown": r.known, "confirmed": r.confirmed,
       "document": r.doc}
@@ -559,7 +559,7 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
     for i in 0 ..< min(m.records.len, limit):
       let f = m.records[i]
       files.add %*{"name": f.name, "path": f.path, "opened": $f.opened, "kept":
-        keptWords(f.edits), "size": f.identity.size, "bytes": f.bytes, "gone": f.gone,
+        keptWords(f.edits), "size": f.identity.size, "bytes": f.bytes, "gone": f.gone, "unreached": f.unreached,
         "document": f.doc}
     r["memory"] = %*{"listed": m.listed, "listing": m.listing, "count": m.records.len,
       "files": files, "problems": m.problems}

@@ -154,6 +154,29 @@ proc add*(w: var NifWriter; b: bool) =
   ## Writes `true` or `false`.
   w.ident(if b: "true" else: "false")
 
+proc add*(w: var NifWriter; n: NifNode) =
+  ## Writes `n`, a node as `parseNif` read it (a node of a later version a
+  ## reader keeps to write back): it reads back as the same node.
+  case n.kind
+  of nkTree:
+    if isNifIdent(n.tag): w.open n.tag
+    else: # no tag, or a directive's: as it was read
+      if w.depth <= w.breakDepth:
+        w.text.add '\n'
+        w.text.add repeat(' ', w.depth)
+      else: w.separate()
+      w.text.add '('
+      w.text.add n.tag
+      inc w.depth
+    for k in n.kids: w.add k
+    w.close
+  of nkIdent:
+    w.separate()
+    w.text.add n.text
+  of nkString: w.add n.text
+  of nkInt: w.add n.intVal
+  of nkFloat: w.add n.floatVal
+
 func finish*(w: NifWriter): string =
   ## The document, with a final line break. Every node must be closed.
   assert w.depth == 0, $w.depth & " nodes are still open"
@@ -304,12 +327,13 @@ proc node(p: var Parser; depth: int): NifNode {.gcsafe.} =
     p.fail("unexpected character " & escape($p.s[p.pos]) &
       " (line information and other NIF suffixes are not read here)")
 
-proc parseNif*(text: string; name: string): seq[NifNode] =
+proc parseNif*(text: string; name: string; most = MaxNifBytes): seq[NifNode] =
   ## The top-level nodes of the document `text`, directives first as
   ## written; error messages call it `name`. Raises `NifError` for anything
-  ## that is not NIF within the bounds above, whatever `text` holds.
-  if text.len > MaxNifBytes:
-    var e = newException(NifError, name & " is larger than " & $(MaxNifBytes shr 20) &
+  ## that is not NIF within the bounds above (a document of at most `most`
+  ## bytes), whatever `text` holds.
+  if text.len > most:
+    var e = newException(NifError, name & " is larger than " & $(most shr 20) &
       " MB, so it is not read")
     raise e
   var p = Parser(s: text, line: 1, name: name)

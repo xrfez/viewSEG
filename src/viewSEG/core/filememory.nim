@@ -37,13 +37,15 @@
 ## store may be on a drive that does not answer. Every call goes through
 ## `fs`.
 
-import std/[algorithm, os, parseutils, strutils, times]
+import std/[algorithm, math, os, parseutils, strutils, times]
 import edits, filesystem, identity, nif
 
 const
   StoreFolder* = "files"         ## the store's folder in the configuration folder
   MemoryVersion* = 1             ## the documents' version
-  MaxMemoryBytes* = MaxNifBytes  ## the largest document read
+  MaxMemoryBytes* = 64 shl 20
+    ## the largest document read, and the largest list imported: a document
+    ## of a million traces killed one in two is about 7.5 MB, its CSV 25 MB
   MemorySuffix* = ".nif"
 
 type
@@ -62,7 +64,16 @@ type
     doc*: string      ## the document's file name in the store; "" until it has one
     bytes*: int64     ## the document's size (a listing)
     gone*: bool
-      ## a listing: no file at `path` any more, or one of another size
+      ## a listing: no file at `path` any more (in a folder that is there),
+      ## or one of another size
+    unreached*: bool
+      ## a listing: the folder of `path` is not there or does not answer (a
+      ## network drive not connected): not counted as gone
+    damaged*: bool
+      ## the document had parts that could not be read (said as problems)
+    later*: seq[NifNode]
+      ## what the document holds that this version does not know (a later
+      ## version's), written back as it was
 
 func isNowhere*(s: Store): bool {.inline.} = s.home.len == 0
   ## Whether nothing is remembered (tests, a run without settings).
@@ -181,6 +192,7 @@ proc memoryDocument*(r: FileRecord): string =
     w.open "allReversed"
     w.add true
     w.close
+  for n in r.later: w.add n
   w.close
   w.finish
 
@@ -248,6 +260,7 @@ proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string
   ## a later version that this one cannot read; what else it cannot use is
   ## a problem.
   result = FileRecord(doc: name)
+  let before = problems.len
   var found = false
   for n in doc:
     if n.isTree("fileMemory") and not found:
@@ -264,10 +277,12 @@ proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string
               raise e
           of "identity": readIdentity(k, result.identity, problems)
           of "seen": readSeen(k, result, problems)
-          else: discard
+          of "killed", "reversed", "allReversed": discard # readEditsIn
+          else: result.later.add k # a later version's: kept as it is
       readEditsIn(n, result, problems)
   if not found:
     raise newException(NifError, name & " holds no trace edits (no fileMemory node)")
+  result.damaged = problems.len > before
 
 proc readMemoryFile*(path: string; problems: var seq[string]): FileRecord =
   ## The record in the store's document at `path`. Raises `NifError` for a
@@ -278,13 +293,48 @@ proc readMemoryFile*(path: string; problems: var seq[string]): FileRecord =
     raise newException(NifError, path.extractFilename & " is larger than " &
       $(MaxMemoryBytes shr 20) & " MB")
   text = fs.readFile(path)
-  result = readMemory(parseNif(text, path.extractFilename), path.extractFilename, problems)
+  result = readMemory(parseNif(text, path.extractFilename, MaxMemoryBytes), path.extractFilename,
+    problems)
   result.bytes = text.len
 
 # ----------------------------------------------------------------- CSV --
 
-const CsvHeader* = "trace,record,channel,edit"
-  ## the first line of a file's list as CSV
+const
+  CsvHeader* = "trace,record,channel,edit,file"
+    ## the first line of a file's list as CSV
+  HeaderSearch = 20 ## the lines a table's header is looked for in (title rows above it)
+
+func csvCell(s: string): string =
+  ## `s` as a CSV cell: quoted when it holds a separator, a quote or a line
+  ## break.
+  if s.contains({',', ';', '\t', '"', '\n', '\r'}): "\"" & s.replace("\"", "\"\"") & "\""
+  else: s
+
+func csvCells*(line: string; sep: char): seq[string] =
+  ## The cells of the CSV line `line`, separated by `sep`: a cell in double
+  ## quotes may hold `sep` and doubled quotes, as spreadsheets write them;
+  ## each cell stripped of the blanks around it.
+  var cell = ""
+  var quoted = false
+  var i = 0
+  while i < line.len:
+    let c = line[i]
+    if quoted:
+      if c == '"':
+        if i + 1 < line.len and line[i + 1] == '"':
+          cell.add '"'
+          inc i
+        else: quoted = false
+      else: cell.add c
+    elif c == '"' and cell.strip.len == 0:
+      cell.setLen 0
+      quoted = true
+    elif c == sep:
+      result.add cell.strip
+      cell.setLen 0
+    else: cell.add c
+    inc i
+  result.add cell.strip
 
 proc rowsOf(l: EditLists): seq[(int, TraceEdit)] =
   ## A row per trace and edit: by trace, a kill before a reversal.
@@ -293,52 +343,79 @@ proc rowsOf(l: EditLists): seq[(int, TraceEdit)] =
   result.sort(proc (a, b: (int, TraceEdit)): int =
     if a[0] != b[0]: cmp(a[0], b[0]) else: cmp(a[1] == teReversed, b[1] == teReversed))
 
-proc editsCsv*(l: EditLists; records, channels: openArray[float64]): string =
+proc editsCsv*(l: EditLists; records, channels: openArray[float64]; file: string): string =
   ## `l` as a CSV table: a row per trace and edit, ascending; `records`
   ## and `channels` are each edited trace's field record number and channel
-  ## (in the order of the rows, NaN for none), as the file's keys have them.
-  ## A file whose every trace is reversed has a row with trace "all".
+  ## (in the order of the rows, NaN for none), as the file's keys have them,
+  ## and every row names the file the list is for (`file`, its name), so a
+  ## table handed on says what it is about. A file whose every trace is
+  ## reversed has a row with trace "all".
+  let f = csvCell(file)
   result = CsvHeader & "\n"
-  if l.allReversed: result.add "all,,,reversed\n"
+  if l.allReversed: result.add "all,,,reversed," & f & "\n"
   for i, (t, edit) in rowsOf(l):
     let rec = if i < records.len and records[i] == records[i]: $int64(records[i]) else: ""
     let chan = if i < channels.len and channels[i] == channels[i]: $int64(channels[i]) else: ""
-    result.add $(t + 1) & "," & rec & "," & chan & "," & $edit & "\n"
+    result.add $(t + 1) & "," & rec & "," & chan & "," & $edit & "," & f & "\n"
 
 proc csvRows*(l: EditLists): seq[int] =
   ## The traces of the rows `editsCsv` writes, in their order.
   for (t, _) in rowsOf(l): result.add t
 
+func csvTrace(t: string; v: var int): bool =
+  ## Whether `t` is a trace number from 1 ("12", or "12.0" as a spreadsheet
+  ## may write it), into `v`.
+  if t.len == 0: return false
+  if t.parseInt(v) == t.len: return v >= 1 and v <= high(int32)
+  var x: float
+  if t.parseFloat(x) == t.len and x >= 1 and x <= float(high(int32)) and x == x.trunc:
+    v = int(x)
+    return true
+  false
+
 proc readEditsCsv*(text, name: string; problems: var seq[string]): EditLists =
-  ## The edits of a CSV table (`editsCsv`'s, or one made by hand): a header
-  ## line naming a `trace` column (the trace's number in the file, from 1,
-  ## or "all") and an `edit` column (`killed` or `reversed`; "kill" and
-  ## "reverse" too); without an `edit` column every trace listed is killed.
-  ## Lines it cannot use are problems.
+  ## The edits of a CSV table (`editsCsv`'s, or one made by hand or saved
+  ## from a spreadsheet: a UTF-8 byte order mark, CRLF line ends, cells in
+  ## quotes, `;` or tabs between them, title rows above the header and
+  ## columns it does not know are all fine): a header line naming a `trace`
+  ## column (the trace's number in the file, from 1, or "all") and an
+  ## `edit` column (`killed` or `reversed`; "kill" and "reverse" too);
+  ## without an `edit` column every trace listed is killed. Lines it cannot
+  ## use are problems.
   var lines = text.splitLines
+  if lines.len > 0 and lines[0].startsWith("\xEF\xBB\xBF"): lines[0] = lines[0][3 .. ^1]
   var traceCol, editCol = -1
-  var first = 0
-  while first < lines.len and lines[first].strip.len == 0: inc first
-  if first < lines.len:
-    let names = lines[first].split({',', ';', '\t'})
-    for i, c in names:
-      case c.strip.toLowerAscii
-      of "trace", "traceno", "trace number": traceCol = i
-      of "edit", "action": editCol = i
-      else: discard
+  var sep = ','
+  var first = -1
+  var looked = 0
+  var n = 0
+  while first < 0 and n < lines.len and looked < HeaderSearch:
+    if lines[n].strip.len > 0:
+      inc looked
+      for s in [',', ';', '\t']:
+        if first < 0:
+          let names = csvCells(lines[n], s)
+          for i, c in names:
+            case c.toLowerAscii
+            of "trace", "traceno", "trace number": traceCol = i
+            of "edit", "action": editCol = i
+            else: discard
+          if traceCol >= 0: (first, sep) = (n, s)
+          else: editCol = -1
+    inc n
   if traceCol < 0:
-    problems.add name & ": the first line names no \"trace\" column"
+    problems.add name & ": no line at its start names a \"trace\" column"
     return
   var lists: array[TraceEdit, seq[int]]
   for n in first + 1 ..< lines.len:
     let line = lines[n].strip
     if line.len > 0 and not line.startsWith('#'):
-      let cells = line.split({',', ';', '\t'})
+      let cells = csvCells(line, sep)
       let at = name & " line " & $(n + 1)
       var edit = teKilled
       var ok = true
       if editCol >= 0:
-        let e = if editCol < cells.len: cells[editCol].strip.toLowerAscii else: ""
+        let e = if editCol < cells.len: cells[editCol].toLowerAscii else: ""
         case e
         of "killed", "kill", "k": edit = teKilled
         of "reversed", "reverse", "r", "polarity": edit = teReversed
@@ -346,11 +423,10 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]): EditLists =
           ok = false
           if problems.len < WordedProblems: problems.add at & ": \"" & e & "\" is not an edit"
       if ok:
-        let t = if traceCol < cells.len: cells[traceCol].strip else: ""
+        let t = if traceCol < cells.len: cells[traceCol] else: ""
         var v: int
         if t.toLowerAscii == "all" and edit == teReversed: result.allReversed = true
-        elif t.parseInt(v) == t.len and t.len > 0 and v >= 1 and v <= high(int32):
-          lists[edit].add v - 1
+        elif csvTrace(t, v): lists[edit].add v - 1
         elif problems.len < WordedProblems:
           problems.add at & ": \"" & t & "\" is not a trace number"
   for edit in TraceEdit: result.lists[edit] = sortedTraces(lists[edit])
@@ -391,15 +467,20 @@ proc recordsOf*(s: Store; id: FileIdentity; taken: var seq[string];
       try:
         var p: seq[string]
         let r = readMemoryFile(path, p)
-        if r.identity.size == id.size and r.identity.quick == id.quick: result.add r
+        if r.identity.size == id.size and r.identity.quick == id.quick:
+          for x in p:
+            problems.add name & ": " & x & " (passed by; the rest is brought back)"
+          result.add r
       except NifError, IOError, OSError:
         problems.add name & ": " & getCurrentExceptionMsg()
 
 proc listRecords*(s: Store; problems: var seq[string];
     progress: proc (done, total: int): bool {.gcsafe.} = nil): seq[FileRecord] =
   ## Every document of the store, read, each with whether its file is gone
-  ## (`gone`: nothing at the path it was last seen at, or a file of another
-  ## size), the newest opened first. A document that cannot be read is a
+  ## (`gone`: nothing at the path it was last seen at, in a folder that is
+  ## there, or a file of another size; `unreached`: the folder is not there
+  ## or does not answer, as a network drive not connected), the newest
+  ## opened first. A document that cannot be read is a
   ## problem. Raises `OSError` when the folder cannot be listed.
   if s.isNowhere or not fs.dirExists(s.home): return
   var names: seq[string]
@@ -411,11 +492,15 @@ proc listRecords*(s: Store; problems: var seq[string];
     try:
       var p: seq[string]
       var r = readMemoryFile(path, p)
+      for x in p:
+        if problems.len < WordedProblems: problems.add path.extractFilename & ": " & x
       try:
-        r.gone = r.path.len == 0 or not fs.fileExists(r.path) or
-          fs.getFileSize(r.path) != r.identity.size
+        if r.path.len == 0: r.gone = true
+        elif fs.fileExists(r.path): r.gone = fs.getFileSize(r.path) != r.identity.size
+        elif fs.dirExists(r.path.parentDir): r.gone = true
+        else: r.unreached = true # a drive not connected is no file gone
       except OSError:
-        r.gone = true
+        r.unreached = true
       result.add r
     except NifError, IOError, OSError:
       problems.add path.extractFilename & ": " & getCurrentExceptionMsg()

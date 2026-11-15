@@ -2,13 +2,24 @@
 ## document read back as written (identity, where and when the file was
 ## seen, the lists, all reversed), trace numbers from 1 in runs, a damaged
 ## or later document said and never raising anything else, the documents
-## of one quick identity found and the rest left, the listing with a file
-## gone, and a file's list as CSV read back, with one made by hand.
+## of one quick identity found and the rest left (a part edited by hand
+## that cannot be read said, the rest brought back), a later version's
+## parts written back as they were, the listing with a file gone and one
+## whose folder is not there (not gone), and a file's list as CSV read back
+## (naming its file on every row), with one made by hand and one as a
+## spreadsheet saves it.
 ##
 ## Seen to fail: with `runsText` writing trace indices from 0, "the runs
 ## are 2 6-9 119"; with `recordsOf` taking every document of the folder (by
 ## neither its name nor its identity),
-## "another file's document was found".
+## "another file's document was found"; with the problems of a document
+## read dropped in `recordsOf`, "a part not read was not said"; with
+## `later` not written, "a later version's part is dropped"; with a missing
+## folder taken as a file gone, "a file on a drive not connected counts as
+## gone"; with the byte order mark left on the header, "a byte order mark:
+## no line at its start names a trace column"; the old reader (cells split
+## at every `,`, `;` and tab, no quotes) took the spreadsheet's table as
+## having no trace column.
 
 import std/[os, sequtils, strutils, times]
 import viewSEG/core/[edits, filememory, identity, nif]
@@ -57,6 +68,17 @@ try:
       "(killed \"1 two 3\" 7) (allReversed maybe) (later (things 1)))", "x"), "x", problems)
     doAssert r.edits.lists[teKilled] == @[0, 2, 6] and not r.edits.allReversed
     doAssert problems.len == 4, $problems
+  block later:
+    # what a later version adds to a document is written back as it was
+    var problems: seq[string]
+    let text = memoryDocument(rec).replace("(allReversed true)",
+      "(allReversed true)\n (processing (band lowCut) (corners 4.5 8 \"x\" (f bad)))")
+    let r = readMemory(parseNif(text, "x"), "x", problems)
+    doAssert problems.len == 0 and not r.damaged, $problems
+    let again = memoryDocument(r)
+    doAssert "(processing (band lowCut) (corners 4.5 8 \"x\" (f bad)))" in again,
+      "a later version's part is dropped: " & again
+    doAssert memoryDocument(readMemory(parseNif(again, "x"), "x", problems)) == again
   block names:
     doAssert docName(id, 2) == "1e240-123456789abcdef0-2.nif"
     doAssert docName(id, 1).isDocName and not "settings.nif".isDocName and
@@ -79,6 +101,17 @@ try:
     let found = s.recordsOf(id, taken, problems)
     doAssert found.len == 1 and found[0].edits == rec.edits, "another file's document was found"
     doAssert taken.len == 2 and problems.len == 1 and docName(id, 2) in problems[0], $problems
+    # a document edited by hand with a part that is not a trace number: the
+    # rest is brought back, the part said, the document marked damaged
+    var hand = memoryDocument(rec).replace("(killed \"3 7-9 120\")", "(killed \"3 7-9 x 120\")")
+    writeFile(s.docPath(rec.doc), hand)
+    problems.setLen 0
+    taken.setLen 0
+    let handFound = s.recordsOf(id, taken, problems)
+    doAssert handFound.len == 1 and handFound[0].edits.lists[teKilled] == @[2, 6, 7, 8, 119]
+    doAssert handFound[0].damaged and problems.len == 2 and
+      problems.anyIt("\"x\"" in it and rec.doc in it), "a part not read was not said: " & $problems
+    writeFile(s.docPath(rec.doc), memoryDocument(rec))
     problems.setLen 0
     writeFile(rec.path, newString(123_456))
     let listed = s.listRecords(problems)
@@ -88,14 +121,37 @@ try:
       doAssert r.bytes > 0
     writeFile(rec.path, "shorter")
     doAssert s.listRecords(problems).allIt(it.gone), "a file of another size is not this one"
+    # a file in a folder that is not there (a network drive not connected)
+    # is not gone: "Remove the gone" must not take it
+    var away = rec
+    away.path = dir / "share not connected" / "shot 12.sgd"
+    away.doc = docName(id, 3)
+    writeFile(s.docPath(away.doc), memoryDocument(away))
+    let three = s.listRecords(problems)
+    doAssert three.len == 3
+    for r in three:
+      if r.doc == away.doc:
+        doAssert not r.gone and r.unreached, "a file on a drive not connected counts as gone"
+    removeFile(s.docPath(away.doc))
   block csv:
     let l = lists([2, 6], [6], all = true)
     doAssert csvRows(l) == @[2, 6, 6]
-    let text = editsCsv(l, [1001.0, 1001, 1001], [3.0, 7, 7])
-    doAssert text == CsvHeader & "\nall,,,reversed\n3,1001,3,killed\n7,1001,7,killed\n" &
-      "7,1001,7,reversed\n", text
+    let text = editsCsv(l, [1001.0, 1001, 1001], [3.0, 7, 7], "shot, 12.sgd")
+    doAssert text == CsvHeader & "\nall,,,reversed,\"shot, 12.sgd\"\n" &
+      "3,1001,3,killed,\"shot, 12.sgd\"\n7,1001,7,killed,\"shot, 12.sgd\"\n" &
+      "7,1001,7,reversed,\"shot, 12.sgd\"\n", "the export does not name its file: " & text
     var problems: seq[string]
     doAssert readEditsCsv(text, "a.csv", problems) == l and problems.len == 0, $problems
+    # as a spreadsheet saves it: a byte order mark, CRLF, every cell quoted,
+    # a title row above the header, a column of notes with commas in them
+    let sheet = "\xEF\xBB\xBF\"Bad traces, line 7\",,\r\n\"Trace\",\"Note\",\"Edit\"\r\n" &
+      "\"3\",\"noisy, \"\"very\"\"\",\"killed\"\r\n7.0,,Reversed\r\n"
+    let fromSheet = readEditsCsv(sheet, "sheet.csv", problems)
+    doAssert problems.len == 0 and fromSheet.lists[teKilled] == @[2] and
+      fromSheet.lists[teReversed] == @[6], "a spreadsheet's table: " & $problems & " " & $fromSheet
+    doAssert csvCells("a;\"b;c\";d", ';') == @["a", "b;c", "d"]
+    let bom = readEditsCsv("\xEF\xBB\xBFtrace,edit\r\n4,kill\r\n", "bom.csv", problems)
+    doAssert problems.len == 0 and bom.lists[teKilled] == @[3], "a byte order mark: " & $problems
     let hand = "Trace;Edit\n5;kill\n6;R\n\n# a note\n9;mute\nx;kill\n"
     let h = readEditsCsv(hand, "hand.csv", problems)
     doAssert h.lists[teKilled] == @[4] and h.lists[teReversed] == @[5]

@@ -683,23 +683,31 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   later a project's folder (3.0), through the same procs. It holds one NIF document per
   identity (`<size>-<quick>-<n>.nif`, `n` telling apart files whose ends agree): the
   identity, the name and path last seen, when last opened, the file's modification time
-  then, the lists by trace number from 1 in runs, `allReversed`; a reader skips what it
-  does not know, so later fields fit beside them. **At open**, the documents of the quick
+  then, the lists by trace number from 1 in runs, `allReversed`; a reader keeps what it
+  does not know (`FileRecord.later`) and writes it back, so later fields fit beside them;
+  a part it cannot read is said and the rest brought back (`damaged`: not written again
+  until the edits change), and a document that cannot be read at all is never written
+  over (`Remembered.taken`). Documents and imported lists are read up to 64 MB
+  (`MaxMemoryBytes`). **At open**, the documents of the quick
   identity are read with it (`recordsOf`); one whose size and modification time are the
   file's (a file renamed or moved keeps them) is brought back at once
   (`FileEdits.remembered`, no step of the history) and the full hash confirms it, or takes
-  it away again with a warning when the content differs; the others wait for the full
+  it away again with a warning when the content differs (and writes the other file's
+  document back as it was brought: `Remembered.brought`); the others wait for the full
   hash (`Remembered.waiting`). A file is hashed whole only when something is remembered
   of its quick identity or the user edits it, so stepping through a folder reads no
   more than its ends. **Writing**: the kept lists (`FileEdits.kept`) are handed to the
   disk thread a second after they change (`SaveDelay`) and at the quit (`saveMemory`),
-  atomically (`replace`); a file that keeps nothing has its document removed
+  atomically (`replace` of the record: the document is made on the disk thread); a file
+  that keeps nothing has its document removed
   (`DiskIo.remove`). `AppState.knownDocs` holds what this run wrote, newer than the disk
   until it is written. **The File memory window** reads every document on a job
-  (`listMemoryWork`: `memoryList`, with whether each file is gone) and removes those the
+  (`listMemoryWork`: `memoryList`, with whether each file is gone, or its folder not
+  reached) and removes those the
   user confirms (`ckForgetFiles`, each said in the log). **A file's list** for processing
   (`ckExportEdits`: CSV with each trace's record and channel from its keys, read on a job;
-  or the NIF document) and back (`ckImportEdits`, read on the disk thread, one step).
+  or the NIF document) and back (`ckImportEdits`, read and taken apart on a job,
+  `importEditsWork`, one step).
 - **Layouts** (`core/layouts`): the toolkit's own layout text (Dear ImGui's `.ini` form,
   which `core` never reads) in a NIF document. The frontend reports the arrangement when
   Dear ImGui says it changed (`ckLayout`; `io.IniFilename` is nil, so ImGui writes no file

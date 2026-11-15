@@ -185,8 +185,11 @@ Turn agent control on for agents you would let do what you can do in the windows
   edits as you last left them by hand. The rule, as built: a change keeps (is
   remembered) when it comes from a window, and is shown only when it comes from agent
   control; your own Undo or Redo of a step, the agent's included, is yours, and what it
-  then shows is remembered for the traces it touches. Its edits are written nowhere: no
-  entry of File memory is made, changed or removed by an agent.
+  then shows is remembered for the traces it touches. So is your own edit of a trace an
+  agent changed: a selection you kill that holds a trace the agent killed is remembered
+  whole, and your "Clear all edits" clears what is remembered too, also what the agent's
+  undo hid from the plot. Its edits are written nowhere: no entry of File memory is made,
+  changed or removed by an agent.
 
 ## What an agent cannot do
 

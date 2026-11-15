@@ -941,7 +941,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   ui.marks.setLen 0
   let shownAt = ui.core.shownFile(ui.core.findPanel(MainPanel))
   template e: untyped = ui.core.editsOf(ui.core.findPanel(MainPanel))
-  let menu = drawMainMenu(MenuInput(undo: describe(e.nextUndo), redo: describe(e.nextRedo),
+  let menu = drawMainMenu(MenuInput(undo: e.undoText, redo: e.redoText,
     edited: not e.isEmpty, editedName: (if shownAt >= 0: ui.core.sessions[shownAt].name
     else: ""), memoryShown: ui.memory.shown,themes: ui.themes, theme: ui.selected,
     recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,

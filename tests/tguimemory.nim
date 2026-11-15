@@ -11,13 +11,18 @@
 ##   one whose file is gone); "Remove those not opened for 90 days" asks
 ##   first, naming the entry, then removes it, and Messages says so; "Remove
 ##   the gone" the same; the file shown, selected and removed, is shown as
-##   the file has it, and its entry goes;
+##   the file has it, and its entry goes; the store listed again while a
+##   confirmation is open (an entry more, first) changes nothing of what
+##   the confirmation takes away;
 ## - the data file is never changed.
 ##
 ## Seen to fail: with the Edit menu's shortcuts left out (Ctrl+Z only in
 ## the focused plot, as before), "Ctrl+Z in Messages did not happen"; with
 ## the removals not asking first (`ckForgetFiles` at the button), "Remove
-## those not opened for 90 days did not happen" (no confirmation came).
+## those not opened for 90 days did not happen" (no confirmation came);
+## with the confirmation keeping row numbers (the window before), "Remove
+## those not opened for 90 days: remove did not happen" (it removed the
+## gone file's entry, the row that had moved under it).
 ##
 ## With `VIEWSEG_SCREENSHOTS=<dir>`, the Edit menu, the window and a
 ## confirmation are saved there as PNG files.
@@ -108,9 +113,20 @@ withFixtures fx:
       f.markOf("menu." & item).size.x > 0)
     clickOn(name, "menu." & item, done)
 
-  proc removal(name, button: string; goes: string) =
+  # an entry the store gets while a confirmation is open (another file's
+  # edits written, then the store listed again, as an agent's "list file
+  # memory" does): the newest, so the rows move under the confirmation
+  let newerFile = fx.dir / "newer.sgy"
+  writeFile(newerFile, newString(9000))
+  var newer = FileRecord(identity: FileIdentity(size: 9000, quick: 3), name: "newer.sgy",
+    path: newerFile, opened: getTime() + initDuration(hours = 1))
+  newer.edits.lists[teKilled] = @[4]
+  newer.doc = docName(newer.identity, 1)
+
+  proc removal(name, button: string; goes: string; relist = false) =
     ## A click in the window (it acts only once focused), the button, the
-    ## confirmation naming what goes, then Remove.
+    ## confirmation naming what goes, then Remove; with `relist`, the store
+    ## listed again with an entry more while the confirmation is open.
     clickOn(name & ": the window", "memory", proc (f: FrameInfo): bool = wait > 3)
     clickOn(name, button, proc (f: FrameInfo): bool =
       result = f.markOf("memory.confirm").size.x > 0 and wait > 4
@@ -121,11 +137,21 @@ withFixtures fx:
       if result:
         doAssert f.core.memoryList.records.len > 0 and
           f.core.store.docPath(goes).fileExists, "the removal did not ask first")
+    if relist:
+      step(name & ": listed again meanwhile", proc (f: FrameInfo) =
+        writeFile(f.core.store.docPath(newer.doc), memoryDocument(newer))
+        f.apply(Command(kind: ckFileMemory, origin: coAgent)), proc (f: FrameInfo): bool =
+        f.core.memoryList.listed and not f.core.memoryList.listing and
+          f.core.memoryList.records.anyIt(it.doc == newer.doc))
     clickOn(name & ": remove", "memory.confirm.remove", proc (f: FrameInfo): bool =
       f.markOf("memory.confirm").size.x == 0 and
         f.core.memoryList.records.allIt(it.doc != goes))
     step(name & ": removed from the store", noop, proc (f: FrameInfo): bool =
-      not fileExists(f.core.store.docPath(goes)))
+      result = not fileExists(f.core.store.docPath(goes))
+      if result and relist:
+        doAssert fileExists(f.core.store.docPath(gone.doc)) and
+          fileExists(f.core.store.docPath(newer.doc)),
+          "the confirmation removed another entry than the one it named")
 
   step("shown", noop, proc (f: FrameInfo): bool =
     f.panel.laidOut and f.core.sessions.len == 1 and f.core.remembering(path).known)
@@ -164,8 +190,10 @@ withFixtures fx:
       doAssert f.core.memoryList.records.len == 3, $f.core.memoryList.records.len
       doAssert f.core.memoryList.records[0].path == path, "the newest opened is not first"
       if shots.len > 0: doAssert f.savePng(shots / "file-memory.png"))
-  removal("Remove those not opened for 90 days", "memory.old", old.doc)
+  removal("Remove those not opened for 90 days", "memory.old", old.doc, relist = true)
   removal("Remove the gone", "memory.gone", gone.doc)
+  clickOn("the newer, selected", "memory.row.0", proc (f: FrameInfo): bool = wait > 3)
+  removal("Remove the newer, selected", "memory.remove", newer.doc)
   clickOn("the file shown, selected", "memory.row.0", proc (f: FrameInfo): bool = wait > 3)
   var shownDoc = ""
   step("its entry", noop, proc (f: FrameInfo): bool =
@@ -182,8 +210,9 @@ withFixtures fx:
     var said: seq[string]
     for m in f.messages:
       if "Forgot " in m.text: said.add m.text
-    doAssert said.len == 3, $said
-    doAssert "old.sgy (2 killed" in said[0] and "gone.sgy (all reversed" in said[1], $said
+    doAssert said.len == 4, $said
+    doAssert "old.sgy (2 killed" in said[0] and "gone.sgy (all reversed" in said[1] and
+      "newer.sgy (1 killed" in said[2], $said
     true)
 
   proc onFrame(f: FrameInfo) =

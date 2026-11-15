@@ -36,7 +36,7 @@
 ## end on its own, with its memory, and what it had left is not written).
 
 import std/[algorithm, locks, monotimes, os, strutils, times]
-import filesystem, inbox, jobs, layouts, log, nif, threads
+import filememory, filesystem, inbox, jobs, layouts, log, nif, threads
 
 when not defined(windows):
   import std/posix
@@ -59,6 +59,8 @@ type
     purpose: ReadPurpose   ## a read: what for
     limit: int             ## a read: the largest file read, in bytes
     dirs: seq[string]      ## a list of the layouts: the folders of the presets
+    memory: FileRecord     ## a replace with `render`: the document's record
+    render: bool           ## a replace: the text is `memoryDocument(memory)`, made here
 
   DiskObj = object
     lock: Lock
@@ -105,8 +107,9 @@ proc syncToDisk(f: File) =
     discard fsync(getFileHandle(f))
 
 proc body(t: Task): string =
-  ## What `t` writes: its text, then its log entries, a line each.
-  result = t.text
+  ## What `t` writes: its text (or its record's document), then its log
+  ## entries, a line each.
+  result = if t.render: memoryDocument(t.memory) else: t.text
   for e in t.entries: result.add fileLine(e)
 
 proc freshName(path: string): string =
@@ -311,9 +314,14 @@ proc leave(x: DiskIo; t: sink Task) =
     if x.p.quit: return
     case t.kind
     of tkReplace, tkRemove: # only the newest document of a path is written (or removed)
-      for i in countdown(x.p.tasks.high, 0):
-        if x.p.tasks[i].kind in {tkReplace, tkRemove} and x.p.tasks[i].path == t.path:
-          x.p.tasks.delete(i)
+      # ... but a write under a name no file has (`fresh`: a backup) is a
+      # file of its own, whatever name it was asked under: two resets in one
+      # second ask for one name and must keep two backups
+      if not t.fresh:
+        for i in countdown(x.p.tasks.high, 0):
+          if x.p.tasks[i].kind in {tkReplace, tkRemove} and not x.p.tasks[i].fresh and
+              x.p.tasks[i].path == t.path:
+            x.p.tasks.delete(i)
     of tkAppend: # one write for a run of appends to one file
       if x.p.tasks.len > 0 and x.p.tasks[^1].kind == tkAppend and
           x.p.tasks[^1].path == t.path:
@@ -340,6 +348,13 @@ proc replace*(x: DiskIo; path: string; text: sink string; what: string; done = "
   if x.p != nil:
     x.leave Task(kind: tkReplace, path: path, text: text, what: what, done: done,
       entries: entries, fresh: fresh)
+
+proc replace*(x: DiskIo; path: string; record: sink FileRecord; what: string) =
+  ## Writes `record`'s document (`memoryDocument`, made on the disk thread:
+  ## a list of a million traces is tens of milliseconds' work) to `path` as
+  ## `replace` writes a text.
+  if x.p != nil:
+    x.leave Task(kind: tkReplace, path: path, memory: record, render: true, what: what)
 
 proc read*(x: DiskIo; path: string; purpose: ReadPurpose; limit: int) =
   ## Reads `path`, soon, and posts it as an `mkRead` message for `purpose`,
