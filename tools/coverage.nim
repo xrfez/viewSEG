@@ -862,6 +862,10 @@ type Result* = object
   page*: Page
   coverage*: Coverage
   summary*: string ## What the page's summary must be.
+  calledNotBuilt*: seq[string]
+    ## "library: name (status)" for each name the viewer's source names whose
+    ## rows say planned, to plan or not applicable: a row that may be stale (or
+    ## a name the viewer uses of its own, a text search cannot tell).
 
 proc run*(root: string, work = ""): Result =
   ## Reads the libraries, the page and the viewer's source of the repository
@@ -876,7 +880,13 @@ proc run*(root: string, work = ""): Result =
     for i, s in srcs:
       if s.next: result.next.add libs[i] else: result.libs.add libs[i]
     result.page = parsePage(readFile(root / PageFile))
-    result.coverage = check(result.page, result.libs, result.next, sourceNames(root / "src"))
+    let src = sourceNames(root / "src")
+    result.coverage = check(result.page, result.libs, result.next, src)
+    for lib in result.libs:
+      for name, st in result.coverage.nameStatus[libIndex(lib.name)]:
+        if st > stInternal and not isOperator(name) and normName(name) in src:
+          result.calledNotBuilt.add lib.name & ": " & name & " (" & $st & ")"
+    result.calledNotBuilt.sort()
     result.summary = summary(result.page, result.libs, result.coverage)
     if currentSummary(result.page.text) != result.summary:
       result.coverage.problems.add PageFile & ": the summary is not the tables' (run `nim coverage`)"
@@ -928,6 +938,9 @@ when isMainModule:
         problems = problems.filterIt(not it.endsWith("(run `nim coverage`)"))
       elif cmd == "write":
         problems.add PageFile & ": no summary marks (" & SummaryStart & ")"
+      if r.calledNotBuilt.len > 0:
+        echo "coverage: named in src/ but not built or internal on the page (check these rows): ",
+          r.calledNotBuilt.join(", ")
       for p in problems: echo "coverage: ", p
       if problems.len > 0:
         quit "coverage: " & $problems.len & " problems", 1

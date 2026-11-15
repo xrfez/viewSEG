@@ -34,10 +34,10 @@ next part's.
 
 | Status | parseSEG 0.11.0: capabilities | names | processSEG 0.4.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 37 (21 in part) | 93 | 6 (4 in part) | 27 |
-| `internal` | 13 | 33 | 4 | 37 |
-| `planned` | 39 | 287 | 58 | 370 |
-| `to plan` | 3 | 11 | 1 | 6 |
+| `built` | 37 (21 in part) | 94 | 6 (4 in part) | 27 |
+| `internal` | 14 | 34 | 4 | 38 |
+| `planned` | 39 | 286 | 58 | 369 |
+| `to plan` | 2 | 10 | 1 | 6 |
 | `not applicable` | 19 | 355 | 5 | 60 |
 | all | 111 | 779 | 74 | 500 |
 
@@ -52,7 +52,7 @@ In the next library release (below): parseSEG: 5 capabilities (5 planned); proce
 5. **A vibrator's source description in a SEG-D Rev 3 record** (parseSEG, Header objects and codecs): Vibroseis QC: each record's vibrator type, phase control and phase angle beside the vibrator plots
 6. **Receiver layout (azimuth, interval, line spacing)** (processSEG, Survey design): Survey summary in File properties; map in the layout frame
 7. **A file's own scales** (processSEG, next release): what the file says of its scales, also without a sensor table
-8. **Multiplexed SEG-D read transparently** (parseSEG, Opening and indexing): the open path takes such a file already, parseSEG's note goes to Messages and the copy's index is not cached, but no multiplexed file has been opened in the viewer yet
+8. **Multiplexed SEG-D read transparently** (parseSEG, Opening and indexing): the open path takes such a file, and parseSEG's note goes to Messages, but no multiplexed file has been opened in the viewer yet
 9. **Logs as files** (parseSEG, Diagnostics): a file's problems saved as NIF and opened again, attached to the QC report
 10. **Location of each problem** (parseSEG, Diagnostics): a header field
 11. **Recorded values in physical units: sensors, masses and recorder scales** (processSEG, next release): Amplitudes in volts, m/s, m/s², Pa or N where the user sets up a sensor table (off otherwise): the readout's unit, the vibrator force plots
@@ -72,7 +72,7 @@ In the next library release (below): parseSEG: 5 capabilities (5 planned); proce
 | Index cache for instant reopening | `OpenOptions.cache`, `saveIndex`, `f.fromCache` | Instant stepping between files in the file browser: the open job reads and saves caches on the local disk (`<cache>/index`, never beside the file, kept under 4 GiB); the next file of the list is opened through it in the background ("Prepare the next file") | built (Files; File → Prepare the next file) |
 | Per-trace geometry keys, all or on demand | `keys = true`, `ensureKeys`, `traceKeys(traces)`, `traceKeysInto`, `hasKeys` | The open file's source and receiver positions in the survey (`traceKeysInto` on a job after each open), drawn on the map as rings; status bar, gathers (keys built when first needed) | built (positions, map); to plan (priority 3: a large file opened without keys, built when first needed with `ensureKeys`) |
 | Open options: force the standard, verify every header, two's-complement mantissas (SEG-D 8015, SEG-2 format 3), demux folder | `OpenOptions(kind, verify: vfFull, twosComplement8015, demuxDir)`, `VerifyMode` | "Reopen with options…" (offered on a "not recognised" log entry) | planned |
-| Multiplexed SEG-D read transparently | `openSeismic` (demux copy), `f.demuxPath`, `dcMultiplexed` | Opens like any file; a log note says a temporary copy is used | to plan (priority 7: the open path takes such a file already, parseSEG's note goes to Messages and the copy's index is not cached, but no multiplexed file has been opened in the viewer yet) |
+| Multiplexed SEG-D read transparently | `openSeismic` (demux copy), `f.demuxPath`, `dcMultiplexed` | Opens like any file; a log note says a temporary copy is used | internal (`demuxPath`: a demultiplexed copy's index is not cached); to plan (priority 7: the open path takes such a file, and parseSEG's note goes to Messages, but no multiplexed file has been opened in the viewer yet) |
 | File facts in one summary | `summary` (`FileSummary`: standard, revision, byte order (`ByteOrder`), format, counts, interval, record length, `coordinateUnits`, `decodable`), `channelSets` (`ChannelSetSummary`), `crsText`, `recordCount`, `maxSamples`, `index.prefersFloat64` | Headers window, Summary tab: what the file is in plain words, the record shown with its counts and (SEG-D) its channel sets, read on the open job; "Reopen with options…" and About to come | built (Summary); planned (`prefersFloat64`) |
 | Coordinate reference text | `crsText`, `summary.crsFormat`, `CrsTextFormat` | File → Import → Survey: the file's CRS as it gives it (read-only); the Headers window's Summary tab; default CRS for the basemap | built (join, Summary); planned (basemap) |
 | Coordinate units (metres, feet, degrees, arc seconds) | `summary.coordinateUnits`, `CoordinateUnits` | File → Import → Survey: the units the headers give, in a dropdown the user confirms or corrects; the Headers window's Summary tab; map refuses or converts angular units | built (join, Summary); planned (the rest) |
@@ -125,7 +125,7 @@ In the next library release (below): parseSEG: 5 capabilities (5 planned); proce
 | Vendor header blocks decoded by maps | `loadVendorMaps`, `vendorSearchPath`, `decodeVendorAreas`, `VendorRegistry`, `checkVendorMap`, `registerVendorDecoder` | Header inspector shows decoded vendor blocks; Settings → vendor map folders | planned |
 | Starting maps for undecoded vendor blocks | `scaffoldVendorMap`, `toNif` | "Create vendor map for this file…" | planned |
 | Byte-level codecs (endians, BCD, IBM float, EBCDIC) | `parseSEG/codecs`, `getNum`, `loadNum`, `loadU24`, `beU8`, `beU16`, `beU24`, `beU32`, `beU64`, `beI8`, `beI16`, `beI24`, `beI32`, `beI64`, `beF32`, `beF64`, `hostOrder`, `swapBytes` | Hex pane value inspector (selected bytes as int, IBM, IEEE, BCD) | planned |
-| Field values by kind | `FieldValueKind`, `HeaderScope`, `BlockRef`, `toFieldValue`, `toFloat`, `$` | The header tables show each value by its kind (integer, real, text, bytes): the Headers window's File headers and Trace > Header | built (the Headers window); not applicable (`HeaderScope`, `BlockRef`, `toFieldValue`, `toFloat`: the header rows give the values) |
+| Field values by kind | `FieldValue`, `FieldValueKind`, `HeaderScope`, `BlockRef`, `toFieldValue`, `toFloat`, `$` | The header tables show each value by its kind (integer, real, text, bytes): the Headers window's File headers and Trace > Header | built (the Headers window); not applicable (`HeaderScope`, `BlockRef`, `toFieldValue`, `toFloat`: the header rows give the values) |
 | SEG-2 strings by keyword, typed | `Seg2String`, `value`, `contains`, `find`, `number`, `numbers`, `integer`, `sampleInterval`, `delay`, `channelNumber`, `receiverLocation`, `sourceLocation`, `Seg2Location`, `traceType`, `Seg2TraceType`, `traceSort`, `Seg2TraceSort`, `units`, `Seg2Units`, `acquisitionTime` | Header inspector: a SEG-2 file's strings with their typed values (interval, delay, locations, trace type, units, time) | planned |
 | A stanza's text and user data | `stanzaText`, `stanzaBytes`, `isBinary`, `isEndText`, `isUserData`, `key`, `userDataBytes`, `isRetained`, `UserDataItem` | Textual header window: stanza list, user data tab (with the stanzas above) | planned |
 | A decoded vendor block | `VendorRegistry.addMap`, `loadVendorMap`, `VendorMap`, `decode`, `VendorBlock` (`[]`, `contains`), `VendorField`, `VendorValue`, `VendorValueKind`, `applies`, `vendorContext`, `VendorContext`, `VendorArea`, `VendorDecoder`, `decodeTarget` | Header inspector: a decoded vendor block's fields and values (with `decodeVendorAreas`, above) | planned |
@@ -287,7 +287,7 @@ name, so these are building blocks for code that works on raw headers.
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Editable processing flow | `initPipeline`, `Op`, `add`, `insert`, `delete`, `compile`, `PipelinePlan`, `generation`, `Pipeline` (`len`, `[]`, `[]=`, `items`, `pairs`, `clear`), `OpKind`, `recordSamples`, `workspaceSize` | Processing window: the flow list, live update; meanwhile each Seismic window's display pipeline (polarity, then its gain type's op), compiled and applied by its reader | internal (the display pipeline); planned (the processing window) |
+| Editable processing flow | `initPipeline`, `Op`, `add`, `insert`, `delete`, `compile`, `plan.apply(b, meta, ws)`, `PipelinePlan`, `generation`, `Pipeline` (`len`, `[]`, `[]=`, `items`, `pairs`, `clear`), `OpKind`, `recordSamples`, `workspaceSize` | Processing window: the flow list, live update; meanwhile each Seismic window's display pipeline (polarity, then its gain type's op), compiled and applied by its reader | internal (the display pipeline); planned (the processing window) |
 | Raw kept, processed into a second buffer | `plan.apply(src, dst, meta, ws)` | Raw / processed toggle key | planned |
 | Plan parts for own threads | `checkApply`, `partCount`, `partNeedsPanel`, `panelFactorOf`, `runPart` | internal: not needed while the pool is used | not applicable (each panel's reader applies its plan whole; a per-panel level is the shader's) |
 | Worker pool | `newProcessPool`, `pool.apply`, `ping`, `ProcessPool`, `workers` | Live processing on all cores (the processing window); each panel's reader applies its plan on its own thread meanwhile | planned |
