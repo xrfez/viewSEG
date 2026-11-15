@@ -302,8 +302,10 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
   of ckShowFile, ckShowTrace: c.path = fromProgram(c.path)
   of ckJoin:
     for f in c.joinFiles.mitems: f.path = fromProgram(f.path)
-    # As the window shows them when nobody chose any.
-    if not n.hasKey("joinUnits"): c.joinUnits = state.importUnits(c.joinFile, c.joinFiles)
+    # Not given: what the headers say, worked out by the import as it reads
+    # the files (as the window does for a unit nobody chose).
+    if not n.hasKey("joinUnits"):
+      c.joinUnits = JoinUnits(surveyFromHeaders: true, fileFromHeaders: true)
   of ckSurveyUnits:
     for f in c.unitsOf.mitems: f.path = fromProgram(f.path)
   else: discard

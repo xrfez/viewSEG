@@ -561,7 +561,8 @@ seismic file's at what its own headers say, but where they say nothing, or only 
 takes the survey's unit, and a dim line says so ("The headers say feet; taken as US
 survey feet, as the survey says"); a CRS in the file that names its unit (US survey foot)
 settles it too. Only units that cannot both be right (metres against feet) are a warning.
-**Confirm, or correct** when the headers are wrong: a unit you choose is kept for the
+You need not wait for the reading: a unit you did not choose is taken from the headers
+as the import reads the files. **Confirm, or correct** when the headers are wrong: a unit you choose is kept for the
 session and no later reading replaces it; choosing another file in the seismic file's box
 shows that file's unit. Nothing is converted; the units label the map's scale bar and the
 status bar's coordinates.

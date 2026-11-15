@@ -1520,25 +1520,6 @@ proc canonical*(path: string): string =
   except OSError, ValueError:
     path.normalizedPath
 
-proc importUnits*(state: AppState; session: SessionId; files: openArray[JoinFile]): JoinUnits =
-  ## The units an import of `files` for open file `session` is made with
-  ## when nobody chose any, as the Import survey window shows them: the
-  ## survey's as the files' headers say (read with their layers, or for the
-  ## window: `heads`), and the file's own headers' following it
-  ## (`fileUnitOf`).
-  var heads: seq[SurveyHead]
-  for f in files:
-    let l = state.survey.findFile(canonical(f.path))
-    if l >= 0 and state.survey.layers[l].gridUnit.known:
-      let g = state.survey.layers[l].gridUnit
-      heads.add SurveyHead(file: f, done: true, head: headUnitOf(g))
-    else:
-      let h = state.surveyHead(f.path)
-      if h >= 0: heads.add state.heads[h]
-  result.survey = surveyUnitsSaid(heads).unit
-  let i = state.findSession(session)
-  if i >= 0: result.file = fileUnitOf(headerUnitOf(state.sessions[i].crs), result.survey).unit
-
 proc ignore(state: var AppState; cmd: Command; why: string) =
   state.log.add(sevWarning, "commands", "Ignored \"" & $cmd.kind & "\": " & why & ".")
 
@@ -3700,7 +3681,7 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
   of joJoined, joNothing:
     # The distances in the unit confirmed, else the survey files' or the file's.
     let unit = wordsUnit(j.units.survey, (if j.geometry.isNil: initSurveyGeometry()
-      else: j.geometry[]), (if i >= 0: unitOf(state.sessions[i].crs.units) else: suNotGiven))
+      else: j.geometry[]), (if i >= 0: headerUnitOf(state.sessions[i].crs) else: suNotGiven))
     words = planWords(j.plan, j.survey, j.options, unit)
     if i >= 0:
       let s = state.sessions[i]
@@ -3758,6 +3739,8 @@ proc takeJoinPlan(state: var AppState; m: sink Msg) =
   j.geometry = move m.geometry
   j.plan = move m.plan
   j.survey = move m.joinSurvey
+  # The units not chosen: what the headers say, as the import read them.
+  j.units = j.units.resolved(j.survey.heads, headerUnitOf(state.sessions[i].crs))
   if j.plan.changes == 0:
     # Nothing to change (or nothing matched): the readers need not stop.
     let nothing = j.plan.found[prSource] + j.plan.found[prReceiver] == 0
@@ -3816,13 +3799,15 @@ proc selectUnmatched(state: var AppState; cmd: Command) =
 func unitSources*(state: AppState): seq[tuple[what: string; unit: SurveyUnit]] =
   ## Each unit the data name for the survey's coordinates, in the order the
   ## map takes them (the first is the map's): the units confirmed with an
-  ## import, then each survey file's (SPS H20, H201), then each open seismic
-  ## file's: the unit confirmed for it with an import, else its headers'
-  ## (SEG-Y's measurement system, a CRS: `headerUnitOf`).
+  ## import (or worked out by it from the headers), then each survey file's
+  ## (SPS H20, H201), then each open seismic file's: the unit it was
+  ## imported with, else its headers' (SEG-Y's measurement system, a CRS:
+  ## `headerUnitOf`).
   for j in state.joins:
     if j.units.survey != suNotGiven:
       let i = state.findSession(j.session)
-      result.add ("the units confirmed for " & (if i >= 0: state.sessions[i].name
+      result.add ((if j.units.surveyFromHeaders: "the survey imported for "
+        else: "the units confirmed for ") & (if i >= 0: state.sessions[i].name
         else: "an import"), j.units.survey)
   for i in 0 ..< state.survey.layers.len:
     template l: untyped = state.survey.layers[i]
@@ -3831,7 +3816,8 @@ func unitSources*(state: AppState): seq[tuple[what: string; unit: SurveyUnit]] =
   for s in state.sessions:
     let j = state.joinedOf(s.id)
     if j >= 0 and state.joins[j].units.file != suNotGiven:
-      result.add ("the units confirmed for " & s.name & "'s headers", state.joins[j].units.file)
+      result.add ((if state.joins[j].units.fileFromHeaders: s.name & "'s headers, as imported"
+        else: "the units confirmed for " & s.name & "'s headers"), state.joins[j].units.file)
     else:
       let u = headerUnitOf(s.crs)
       if u != suNotGiven: result.add (s.name & "'s headers", u)

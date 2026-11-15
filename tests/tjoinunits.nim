@@ -30,11 +30,14 @@
 ##   again), on a lane of their own: a file on a drive that does not answer
 ##   holds no seismic file's open;
 ## - SEG-Y "feet" against a survey in US survey feet is no disagreement for
-##   the map; the units an import takes when nobody chose any are the
-##   window's (`importUnits`, an agent's import); after an import the units
-##   confirmed for the file label it.
+##   the map; an import whose units nobody chose works them out from the
+##   files it reads (an agent's with none given, the window's while it still
+##   reads), never from a guess made before; after an import the units it
+##   was made with label the file.
 ##
-## Seen to fail: with the units' reads on the interactive lane, "the
+## Seen to fail: with the import's units taken as sent (not worked out
+## from the files it read), "the import's units, read by it: (survey: not
+## given, ...)"; with the units' reads on the interactive lane, "the
 ## seismic file waited for the survey file's headers: 3003 ms"; with an H20 and H201 that contradict each other passed
 ## over, "no warning for Metres + 0.3048006096"; with a P1 unit code taken for the factor, "1 FEET: (unit:
 ## metres, ...)"; with P1/11 not read, "P1/11: (unit: not given, ...)"; with
@@ -286,15 +289,12 @@ block unitsOnTheMap:
     doAssert st.settle(st.survey.findFile(sps.s) >= 0 and st.survey.findFile(sps.r) >= 0)
     doAssert st.unitsOf == "ftUS", st.unitsOf
     doAssert st.unitsDisagree == "", "the units disagree: " & st.unitsDisagree
-    # Imported with the units the window shows (an agent's import with none
-    # given takes them too): the file's confirmed.
+    # Imported with the units chosen by hand: the file's confirmed.
     let files = @[JoinFile(path: sps.s, kind: jkSps), JoinFile(path: sps.r, kind: jkSps),
       JoinFile(path: sps.x, kind: jkSps)]
-    let units = st.importUnits(st.sessions[0].id, files)
-    doAssert units == JoinUnits(survey: suUsFeet, file: suUsFeet), $units
     let before = st.joinReport.serial
     st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: files,
-      joinUnits: units)
+      joinUnits: JoinUnits(survey: suUsFeet, file: suUsFeet))
     doAssert st.settle(st.joinReport.serial > before and st.joinUnderWay.job == NoJob)
     doAssert st.joinedOf(st.sessions[0].id) >= 0, $st.joinReport.words
     var named: seq[string]
@@ -307,6 +307,33 @@ block unitsOnTheMap:
     st.apply Command(kind: ckLoadSurvey, paths: @[ms])
     doAssert st.settle(st.survey.findFile(ms) >= 0)
     doAssert st.unitsDisagree.len > 0
+
+block notReadFirst:
+  withFixtures fx:
+    # An import whose units nobody chose (an agent's with none given, or the
+    # window's Import while the files are still being read), for survey
+    # files neither on the map nor read: the import works the units out from
+    # the files it reads. A SEG-Y file's "feet" is then US survey feet, as
+    # the survey says, and nothing disagrees.
+    let segy = fx.surveySegy(measurementSystem = 2)
+    let sps = fx.surveySpsIn("unread", "feet", "0.3048006096")
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: segy)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    doAssert st.heads.len == 0 and st.survey.findFile(sps.s) < 0
+    st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: @[JoinFile(
+      path: sps.s, kind: jkSps), JoinFile(path: sps.r, kind: jkSps), JoinFile(path: sps.x,
+      kind: jkSps)], joinUnits: JoinUnits(surveyFromHeaders: true, fileFromHeaders: true))
+    doAssert st.settle(st.joinReport.serial > 0 and st.joinUnderWay.job == NoJob)
+    let j = st.joinedOf(st.sessions[0].id)
+    doAssert j >= 0, $st.joinReport.words
+    let u = st.joins[j].units
+    doAssert u.survey == suUsFeet and u.file == suUsFeet and u.surveyFromHeaders and
+      u.fileFromHeaders, "the import's units, read by it: " & $u
+    doAssert st.unitsOf == "ftUS" and st.unitsDisagree == "", st.unitsDisagree
+    var named: seq[string]
+    for (what, unit) in st.unitSources: named.add what & ": " & $unit
+    doAssert segy.extractFilename & "'s headers, as imported: US survey feet" in named, $named
 
 block aHungShare:
   # A survey file on a drive that does not answer holds only the units'

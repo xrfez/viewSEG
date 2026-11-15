@@ -417,6 +417,10 @@ proc lineNamesOf(part: SpsFile; g: SurveyGeometry; names: var seq[string];
 const NotedHeaders = ["12", "13", "14", "17", "18", "19", "20", "201"]
   ## the SPS header records said for the join: datum, projection, units
 
+func headOf(text: string): string {.inline.} =
+  ## The start of a file's text read whole: what its headers are read from.
+  text[0 ..< min(text.len, HeadBytes)]
+
 proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFile];
     opts: JoinOptions; to: Poster): JobWork =
   ## The work of the first job of a join: reads `files` (SPS with parseSEG's
@@ -429,7 +433,8 @@ proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFil
   ## between chunks.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var g = new SurveyGeometry
-    var names, unresolved, notes: seq[string]
+    var names, unresolved, notes: seq[string] = @[]
+    var heads: seq[SurveyHead] = @[] # what each file says of its unit, read here
     var (unresolvedRecords, rows, skipped) = (0, 0, 0)
     var plan: JoinPlan
     {.cast(gcsafe).}:
@@ -466,6 +471,8 @@ proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFil
             eachSpsPart(jf.path, f, info.size, ctx, p, proc (part: SpsFile) =
               if first:
                 first = false
+                heads.add SurveyHead(file: JoinFile(path: jf.path, kind: jkSps, role: jf.role),
+                  done: true, head: headUnitOf(part.gridUnit))
                 for h in part.headers:
                   let data = h.data.strip.strip(leading = false, chars = {';'}).strip
                   if h.code in NotedHeaders and data.len > 0 and data != "N/A":
@@ -477,6 +484,8 @@ proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFil
             close(f)
         of jkP1:
           let (_, text) = readWhole(jf.path, ctx, "SEG P1 files")
+          heads.add SurveyHead(file: JoinFile(path: jf.path, kind: jkP1), done: true,
+            head: headUnitOf(text.headOf, jkP1, whole = text.len <= HeadBytes))
           let pf = parseP1(text, jf.path)
           p.take(pf.log, 0)
           for lf in pf.files:
@@ -490,7 +499,9 @@ proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFil
           g[].addP1(pf)
         of jkCsv:
           let (_, text) = readWhole(jf.path, ctx, "CSV tables")
-          var problems: seq[string]
+          heads.add SurveyHead(file: jf, done: true,
+            head: headUnitOf(text.headOf, jkCsv, whole = text.len <= HeadBytes))
+          var problems: seq[string] = @[]
           rows += g[].addCsv(text, name, jf.role, problems, skipped)
           for t in problems: p.note(sevWarning, t)
         # parseSEG's join's own words, but for the text line names, said once
@@ -510,6 +521,7 @@ proc joinReadWork*(file: ptr SeismicFile; session: SessionId; files: seq[JoinFil
     (survey.unresolved, survey.unresolvedRecords, survey.notes) =
       (unresolved, unresolvedRecords, notes)
     (survey.csvRows, survey.csvSkipped) = (rows, skipped)
+    survey.heads = move heads
     discard ctx.progress(1, 1)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkJoining, planSession: session, geometry: move g,

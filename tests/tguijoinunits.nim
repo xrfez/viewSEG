@@ -97,7 +97,8 @@ proc unitsOnce() =
     proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
       steps.add Step(name: name, act: act, done: done)
     proc noop(f: FrameInfo) = discard
-    let both = JoinUnits(survey: suUsFeet, file: suUsFeet)
+    let both = JoinUnits(survey: suUsFeet, file: suUsFeet, surveyFromHeaders: true,
+      fileFromHeaders: true)
     step("the record shown", noop, proc (f: FrameInfo): bool =
       f.core.sessions.len == 1 and f.core.panels[f.core.findPanel(MainPanel)].laidOut)
     step("the SEG-Y file open too", proc (f: FrameInfo) =
@@ -114,7 +115,8 @@ proc unitsOnce() =
       result = f.markOf("join.file units").size.x > 0
       if result:
         # The plot shows the SEG-Y file, opened last: the window is about it.
-        doAssert f.joinWindow.units == JoinUnits(file: suFeet), "before: " & $f.joinWindow.units
+        doAssert f.joinWindow.units == JoinUnits(file: suFeet,
+          surveyFromHeaders: true, fileFromHeaders: true), "before: " & $f.joinWindow.units
         doAssert f.joinWindow.fileNote == "", f.joinWindow.fileNote
         f.shot("joinunits-1-empty.png"))
     var frames = 0
@@ -196,7 +198,8 @@ proc morgantown(dir: string) =
     frames > 8)
   steps.add Step(name: "the units read", act: proc (f: FrameInfo) = f.moveMouse(vec2(4, 4)),
     done: proc (f: FrameInfo): bool =
-    result = f.joinWindow.units == JoinUnits(survey: suUsFeet, file: suUsFeet) and
+    result = f.joinWindow.units == JoinUnits(survey: suUsFeet, file: suUsFeet,
+      surveyFromHeaders: true, fileFromHeaders: true) and
       f.markOf("join.survey said").size.x > 0
     if result:
       echo "tguijoinunits: Morgantown: ", f.joinWindow.fileNote

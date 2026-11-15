@@ -314,6 +314,9 @@ withFixtures fx:
     doAssert st.settle(st.joinReport.serial > 0 and st.joinUnderWay.job == NoJob)
     doAssert st.joinReport.outcome == joJoined, $st.joinReport.words
     doAssert st.joins[0].plan.matched == SurveyTraces
+    # No units given: the import worked them out from the headers it read.
+    doAssert st.joins[0].units.surveyFromHeaders and st.joins[0].units.fileFromHeaders,
+      $st.joins[0].units
     # The survey is on the map, as the map part of `state` says: the S file's
     # sources and the R file's receivers beside the file's own points.
     var points: Table[string, int]

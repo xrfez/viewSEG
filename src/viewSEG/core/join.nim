@@ -100,9 +100,34 @@ type
     suDms = "degrees, minutes and seconds"
 
   JoinUnits* = object
-    ## The units of a join's coordinates, as the user confirmed them.
+    ## The units of a join's coordinates: as the user chose them, or what
+    ## the headers say, worked out by the import from the files it reads
+    ## (`...FromHeaders`: never a guess made before they were read).
     survey*: SurveyUnit ## the survey files': the coordinates the join gives
-    file*: SurveyUnit   ## the seismic file's own: the coordinates its headers give
+    file*: SurveyUnit ## the seismic file's own: the coordinates its headers give
+    surveyFromHeaders*: bool
+      ## `survey` is what the survey files' headers say (`surveyUnitsSaid`),
+      ## not the user's: the import works it out as it reads them
+    fileFromHeaders*: bool
+      ## `file` is what the file's headers say, following the survey's where
+      ## they say nothing or only feet (`fileUnitOf`), not the user's
+
+  HeadUnit* = object
+    ## What a survey file's headers say of its coordinates' unit.
+    unit*: SurveyUnit
+    said*: string
+      ## what they say, as written: "\"feet\" (H20), 0.3048006096 m a unit
+      ## (H201)"; "" when they say nothing of it
+    warning*: string
+      ## what in them contradicts itself (H20's name against H201's factor),
+      ## in words; "" when nothing does
+
+  SurveyHead* = object
+    ## What one survey file's headers say, as read for the import's window.
+    file*: JoinFile
+    done*: bool      ## read (or failed); false while its job runs
+    head*: HeadUnit
+    problem*: string ## why it could not be read, in plain words; "" when it was
 
   Extent* = object
     ## The smallest and largest of some numbers; empty while `lo > hi`.
@@ -134,6 +159,8 @@ type
       ## rows taken from CSV tables
     csvSkipped*: int
       ## rows of CSV tables that could not be used
+    heads*: seq[SurveyHead]
+      ## what each file's headers say of its unit, as the join read them
 
   JoinPlan* = object
     ## What a join does to a file's traces, worked out on copies of their keys.
@@ -290,23 +317,6 @@ const HeadBytes* = 64 * 1024
   ## the bytes at the start of a survey file read for what its headers say
 
 type
-  HeadUnit* = object
-    ## What a survey file's headers say of its coordinates' unit.
-    unit*: SurveyUnit
-    said*: string
-      ## what they say, as written: "\"feet\" (H20), 0.3048006096 m a unit
-      ## (H201)"; "" when they say nothing of it
-    warning*: string
-      ## what in them contradicts itself (H20's name against H201's factor),
-      ## in words; "" when nothing does
-
-  SurveyHead* = object
-    ## What one survey file's headers say, as read for the import's window.
-    file*: JoinFile
-    done*: bool      ## read (or failed); false while its job runs
-    head*: HeadUnit
-    problem*: string ## why it could not be read, in plain words; "" when it was
-
   SurveyUnitsSaid* = object
     ## The survey's unit as its files' headers say it.
     unit*: SurveyUnit
@@ -326,6 +336,8 @@ type
     conflict*: string
       ## a warning: the headers and the survey give units that cannot both
       ## be right (metres and feet); "" when they agree
+    byHand*: bool
+      ## the user chose it
 
   ImportUnits* = object
     ## The units the user chose by hand in the Import survey window, kept
@@ -544,6 +556,7 @@ func fileUnitOf*(headers, survey: SurveyUnit; chosen = suNotGiven; byHand = fals
   ## says US survey feet. Units that cannot both be right (metres and feet,
   ## a length and degrees) are a conflict, said in words; feet against US
   ## survey feet only a note.
+  result.byHand = byHand
   if byHand:
     result.unit = chosen
     if headers != suNotGiven and headers != chosen:
@@ -575,6 +588,15 @@ func fileUnit*(u: ImportUnits; path: string; headers, survey: SurveyUnit): FileU
   for (p, unit) in u.files:
     if p == path: return fileUnitOf(headers, survey, unit, byHand = true)
   fileUnitOf(headers, survey)
+
+func resolved*(u: JoinUnits; heads: openArray[SurveyHead]; headers: SurveyUnit): JoinUnits =
+  ## `u` with the units to be worked out from the headers worked out: the
+  ## survey's from `heads` (as the import read its files), the seismic
+  ## file's from what its own headers say (`headers`), following the
+  ## survey's (`fileUnitOf`). What the user chose stays as it is.
+  result = u
+  if u.surveyFromHeaders: result.survey = surveyUnitsSaid(heads).unit
+  if u.fileFromHeaders: result.file = fileUnitOf(headers, result.survey).unit
 
 proc choose*(u: var ImportUnits; unit: SurveyUnit) =
   ## The user chose the survey's unit.

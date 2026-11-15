@@ -350,14 +350,19 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
         wrapped(h.file.path.extractFilename & ": " & h.problem & ".", t.roles[rlWarning])
     if reading > 0:
       dim("Reading what " & (if reading == 1: "a survey file's headers say"
-        else: $reading & " survey files' headers say") & " of the unit...", t)
+        else: $reading & " survey files' headers say") & " of the unit... Import need " &
+        "not wait: it takes the units from the headers as it reads the files.", t)
+      marks.marked("join.survey reading")
     if said.disagree.len > 0:
       wrapped(said.disagree, t.roles[rlWarning])
       marks.marked("join.survey disagree")
     for w in said.warnings:
       wrapped(w, t.roles[rlWarning])
       marks.marked("join.survey warning")
-    var units = JoinUnits(survey: surveyUnit, file: suNotGiven)
+    # A unit nobody chose is the headers': the import works it out from the
+    # files it reads, never from what this window had read so far.
+    var units = JoinUnits(survey: surveyUnit, file: suNotGiven,
+      surveyFromHeaders: not ui.units.surveyChosen, fileFromHeaders: true)
     ui.drawnNote = ""
     # -- the seismic file
     igSeparatorText("Seismic file")
@@ -391,6 +396,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
       if unitCombo("##fileunits", fileUnit, marks, "join.file units"):
         ui.units.choose(key, fileUnit)
       units.file = fileUnit
+      units.fileFromHeaders = not (fu.byHand or fileUnit != fu.unit)
       ui.drawnNote = fu.note
       tip("What the file's headers say: " & $ui.fileUnits & (if fu.note.len > 0: ". " &
         fu.note else: ".") & " Change it when it is wrong; nothing is converted.")

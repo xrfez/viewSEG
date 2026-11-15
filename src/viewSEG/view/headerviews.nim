@@ -128,7 +128,9 @@ proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = []): seq[
   let said = unitWords(s.crs.units)
   if joined >= 0:
     let confirmed = $joins[joined].units.file
-    result.add "Units", confirmed & " (confirmed when the survey was imported" &
+    result.add "Units", confirmed & (if joins[joined].units.fileFromHeaders:
+      " (from the headers when the survey was imported" else:
+      " (confirmed when the survey was imported") &
       (if confirmed != $unitOf(s.crs.units): "; the headers say " & said else: "") & ")"
   else:
     result.add "Units", said
