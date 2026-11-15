@@ -81,7 +81,10 @@
 ## act on the trace under the pointer, or on the whole selection when that
 ## trace is in it (`ckEdit`); Ctrl + Z undoes the file's last edit. The
 ## edited traces are marked in a row of the display header that is there
-## only while the gather has an edit: "K" killed, "R" reversed.
+## only while the gather has an edit: "K" killed, "R" reversed. Killed
+## traces are drawn blank, or left out of the plot (the gear popover's
+## "Hide killed traces", a setting). "FFT in a new window" (`F`) opens the
+## amplitude spectrum of the same traces (`ckSpectrum`, `spectrumwindow`).
 
 import std/[math, os, strutils, tables]
 import imguin/cimgui
@@ -1009,12 +1012,21 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
   tp.stripGroup(8, right, 8, lift):
     if button(IconSettings & "##more", t, marks, "plot.more"):
       igOpenPopup_Str(moreId, 0)
-    tip("Colours, display header, scale units and screen calibration")
+    tip("Colours, killed traces, display header, scale units and screen calibration")
   if igBeginPopup(moreId, 0):
     igSeparatorText("Colours")
     tp.drawColours(p, t, marks, res)
     igSeparatorText("Wiggles")
     drawWiggleSettings(p, res)
+    igSeparatorText("Killed traces")
+    var hide = st.settings.hideKilled
+    if igCheckbox("Hide killed traces", addr hide):
+      var s = st.settings
+      s.hideKilled = hide
+      res.commands.add Command(kind: ckSettings, settings: s)
+    marks.mark("plot.more.hide killed")
+    tip("On: killed traces are left out of the plot, the traces beside them close up. " &
+      "Off: they are drawn blank. Either way they are left out of the levels and spectra.")
     igSeparatorText("Display header")
     drawHeaderChoice(p, marks, "plot.more.header.", res)
     igSeparatorText("Scales")
@@ -1150,12 +1162,18 @@ func editCommand(st: AppState; p: Panel; under: int; edit: TraceEdit): Command =
   Command(kind: ckEdit, panel: p.id, edit: edit, edited: st.selection.targets(under),
     on: edit notin st.traceEdits(under))
 
+func fftCommand(st: AppState; p: Panel; under: int): Command =
+  ## An FFT window of what a trace operation acts on with the pointer over
+  ## trace `under`: the selection when `under` is in it, else `under`.
+  Command(kind: ckSpectrum, spectrumOf: p.id, spectrumTraces: st.selection.targets(under),
+    spectrumShow: st.settings.spectrum.window)
+
 proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     res: var PanelOutput) =
   ## The plot's right-click menu: functions on the data only. Its first
   ## line says what the trace operations act on; then the operations on
-  ## that trace or the selection (FFT not built yet: shown disabled), those
-  ## on every trace, and the undo and clearing of the file's edits.
+  ## that trace or the selection (its FFT in a new window), those on every
+  ## trace, and the undo and clearing of the file's edits.
   template p: untyped = st.panels[k]
   if not igBeginPopup(menuId, 0): return
   marks.markWindow("plot.menu")
@@ -1172,8 +1190,11 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
       under >= 0):
     res.commands.add editCommand(st, p, under, teKilled)
   marks.mark("plot.menu.kill")
-  discard igMenuItem_Bool("FFT in a new window  (not available yet)", "F", false, false)
+  if igMenuItem_Bool("FFT in a new window", "F", false, under >= 0):
+    res.commands.add fftCommand(st, p, under)
   marks.mark("plot.menu.fft")
+  tip("The amplitude spectrum of this trace (of the selection: their average), raw and " &
+    "through the filters, in a window of its own; killed traces are left out")
   # Its station on the map: the receiver (in a receiver gather, the source).
   let role = $st.stationRole(k)
   let many = under >= 0 and under in st.selection.selected and st.selection.selectedCount > 1
@@ -1216,7 +1237,8 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
   ## The trace operations' keys, while the plot has the focus: `R` reverses
   ## the polarity of the trace under the pointer (or of the selection that
   ## holds it) or puts it back, `K` kills or restores it, `M` selects its
-  ## station on the map. Undo and redo are the Edit menu's, from any window.
+  ## station on the map, `F` opens its FFT window. Undo and redo are the
+  ## Edit menu's, from any window.
   if igGetIO_Nil().WantTextInput: return
   template p: untyped = st.panels[k]
   if under >= 0:
@@ -1227,6 +1249,8 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
     if igShortcut_Nil(ImGui_Key_M.cint, 0):
       let c = stationCommand(st, k, under)
       if c.points.len > 0: res.commands.add c
+    if igShortcut_Nil(ImGui_Key_F.cint, 0):
+      res.commands.add fftCommand(st, p, under)
 
 func holds(t: Tile; position: int): bool {.inline.} =
   ## Whether `t` has a row at `position`.

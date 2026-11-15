@@ -111,7 +111,7 @@ const
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
-    awMessages: IconLog]
+    awMessages: IconLog, awSpectrum: IconPulse]
 
 const FollowHelp* = "On: each file that appears in the folder listed is shown in the " &
   "plot once it is completely written (its size has stopped changing and it is whole). " &

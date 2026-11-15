@@ -3,6 +3,7 @@
 ## turning the wheel through a large gather.
 ##
 ##   nim c -d:release -r tools/panbench.nim <seismic file> [traces on screen] [frames] [pan|zoom]
+##     [spectrum]
 ##
 ## Run it under `xvfb-run -a -s "-screen 0 1920x1080x24"` for software
 ## OpenGL (Mesa llvmpipe), the floor the viewer must stay usable on. The
@@ -14,7 +15,9 @@
 ## real wheel's do. It prints the time between frames (median, 95th
 ## percentile, worst), how many frames showed a tile covering the whole
 ## view at the resolution it needs, the samples read, and for `zoom` the
-## range of traces on screen and asked for.
+## range of traces on screen and asked for. With `spectrum`, the live
+## Spectrum panel is on screen meanwhile, following the view; it prints
+## the spectra asked for and answered, and the traces they read.
 
 import std/[algorithm, math, monotimes, options, os, strutils, times]
 import ../src/viewSEG/core/[geometry, state]
@@ -27,6 +30,11 @@ proc main() =
   let visible = if paramCount() >= 2: parseInt(paramStr(2)) else: 600
   let frames = if paramCount() >= 3: parseInt(paramStr(3)) else: 600
   let zooming = paramCount() >= 4 and paramStr(4) == "zoom"
+  let spectrum = paramCount() >= 5 and paramStr(5) == "spectrum"
+  var answers = 0
+  var answered = 0'u64
+  var spectrumRead = 0
+  var requests = 0
   var shown = (high(int), 0)
   var asked = (high(int), 0)
   var stage = 0
@@ -57,6 +65,8 @@ proc main() =
         var v = p.view
         v.traces = Span(lo: -0.5, hi: float64(visible) - 0.5)
         f.showView(v)
+        if spectrum:
+          f.apply(Command(kind: ckSpectrumPanel, onScreen: true, origin: coAgent))
         stage = 2
     of 2:
       if tiles.len > 0 and tiles[^1].request == p.pending and p.view.traces.lo == -0.5:
@@ -70,6 +80,13 @@ proc main() =
       if tiles.len > 0 and tiles[^1].request.covers(p.layout, drawn,
           tiles[^1].request.margin):
         inc complete
+      if spectrum:
+        let live = f.core.spectra[0]
+        requests = live.asks
+        if live.spectrum.gen > answered:
+          answered = live.spectrum.gen
+          inc answers
+          spectrumRead += live.spectrum.read
       for t in tiles:
         if t.id > seenTile:
           seenTile = t.id
@@ -114,5 +131,8 @@ proc main() =
   if zooming:
     echo "  traces on screen from ", shown[0], " to ", shown[1], "; asked for from ", asked[0],
       " to ", asked[1]
+  if spectrum:
+    echo "  the live spectrum panel: ", requests, " requests, ", answers,
+      " answers shown; traces read for them: ", spectrumRead
 
 main()

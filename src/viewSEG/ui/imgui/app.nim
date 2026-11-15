@@ -38,9 +38,11 @@ import ../../platform/paths
 import ../../remote/control
 import ../../view/jobstatus
 import agentshot, chrome, dpi, filelist, fonts, headerswindow, icons, jobswindow, joindialog,
-  mapwindow, memorywindow, menus, messages, recordlist, shell, style, tracepanel, windows
+  mapwindow, memorywindow, menus, messages, recordlist, shell, spectrumwindow, style,
+  tracepanel, windows
 
-export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow, DialogKind
+export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow, DialogKind,
+  SpectraUi, readoutOf
 
 const
   glslVersion = "#version 330"
@@ -80,6 +82,7 @@ type
     records: RecordListUi                      ## the record list's window
     join: JoinUi                               ## the "Import survey" window
     memory: MemoryUi                           ## the "File memory" window
+    spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
     dropAt: float64                            ## when a drag was last seen over the window
     windows: WindowsUi                         ## which windows are shown (the Window menu)
@@ -147,7 +150,7 @@ type
     ## Keys a test can press (`pressKey`).
     skEquals, skMinus, skKeypadPlus, skKeypadMinus, skLeft, skRight, skUp, skDown,
     skBackspace, skZero, skEscape, skEnter, skCtrl, skShift, skAlt, skTab, skHome, skEnd,
-    skPageUp, skPageDown, skW, skG, skR, skK, skZ, skLeftBracket, skRightBracket, skM, skY, skP
+    skPageUp, skPageDown, skW, skG, skR, skK, skZ, skLeftBracket, skRightBracket, skM, skY, skP, skF
 
   SimMod* = enum
     smCtrl, smShift, smAlt
@@ -376,7 +379,7 @@ proc pressKey*(frame: FrameInfo; key: SimKey; down: bool; mods: set[SimMod] = {}
     SDL_SCANCODE_LALT, SDL_SCANCODE_TAB, SDL_SCANCODE_HOME, SDL_SCANCODE_END,
     SDL_SCANCODE_PAGEUP, SDL_SCANCODE_PAGEDOWN, SDL_SCANCODE_W, SDL_SCANCODE_G, SDL_SCANCODE_R,
     SDL_SCANCODE_K, SDL_SCANCODE_Z, SDL_SCANCODE_LEFTBRACKET, SDL_SCANCODE_RIGHTBRACKET,
-    SDL_SCANCODE_M, SDL_SCANCODE_Y, SDL_SCANCODE_P]
+    SDL_SCANCODE_M, SDL_SCANCODE_Y, SDL_SCANCODE_P, SDL_SCANCODE_F]
   var m = 0'u16
   if smCtrl in mods: m = m or uint16(SDL_KMOD_LCTRL)
   if smShift in mods: m = m or uint16(SDL_KMOD_LSHIFT)
@@ -451,6 +454,10 @@ proc addJoinFiles*(frame: FrameInfo; paths: openArray[string]) =
   ## Adds `paths` to the survey files of the "Import survey" window, as its
   ## "Add files..." dialog does (tests cannot drive the system's dialog).
   frame.ui.join.addFiles(paths)
+
+proc spectraWindows*(frame: FrameInfo): lent SpectraUi =
+  ## The spectrum windows' frontend state (tests: what each read under the pointer).
+  frame.ui.spectra
 
 proc headersWindow*(frame: FrameInfo): lent HeadersUi =
   ## The Headers window's state as this frame drew it: `summaryPicked`.
@@ -628,12 +635,14 @@ proc ask(ui: Ui; kind: DialogKind; location = "") =
     postShellEvent(if paths.len > 0: ShellEvent(kind: sePathsChosen, dialog: kind,
       paths: paths) else: ShellEvent(kind: seCancelled, dialog: kind))
 
-func everyWindow(): seq[string] =
+func everyWindow(core: AppState): seq[string] =
   ## The ImGui IDs of the windows that can be outside the main window: the
-  ## docked ones and the "Import survey" window.
+  ## docked ones, the "Import survey" window and the FFT windows.
   for w in AppWindow: result.add $w
   result.add "join"
   result.add "memory"
+  for w in core.spectra:
+    if w.id != LiveSpectrum: result.add "fft-" & $w.id
 
 proc mainRect(ui: Ui): Rect =
   ## Where the main window is, in the desktop's coordinates.
@@ -683,7 +692,7 @@ proc bringWindows(ui: var Ui) =
     ui.say("The screens are not known: no window was moved.", mlWarning)
   else:
     let moved = bringOnto(screens[main.homeScreen(screens, primary)], false, screens,
-      everyWindow())
+      everyWindow(ui.core))
     ui.say(if moved.len > 0: "Brought onto this screen: " & moved.join(", ") & "."
            else: "Every window is on this screen already.")
 
@@ -697,7 +706,7 @@ proc offScreenCheck(ui: var Ui) =
     let (screens, primary) = screensNow()
     if screens.len > 0:
       for name in bringOnto(screens[ui.mainRect.homeScreen(screens, primary)], true, screens,
-          everyWindow()):
+          everyWindow(ui.core)):
         if name notin ui.offScreen: ui.offScreen.add name
     if ui.checkPlaces == 0 and ui.offScreen.len > 0:
       ui.core.report(sevWarning, "layouts", "The layout put " & ui.offScreen.join(", ") &
@@ -801,6 +810,7 @@ proc buildLayout(ui: var Ui; dockId: ImGuiID; size: ImVec2_c) =
   igDockBuilderDockWindow(filesTitle, files)
   igDockBuilderDockWindow(recordsTitle, records)
   igDockBuilderDockWindow("###" & plotId, top)
+  igDockBuilderDockWindow(SpectrumWindowTitle, map) # a tab behind the map
   igDockBuilderDockWindow("###" & mapId, map)
   igDockBuilderDockWindow(headersTitle, table)
   igDockBuilderDockWindow(jobsTitle, bottom)
@@ -1035,6 +1045,14 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.mapCursor = map.cursor
     for c in map.commands.mitems:
       ui.core.apply move c
+  # The live spectrum panel (it works only while on screen) and the FFT windows.
+  if ui.windows.shows(awSpectrum): ui.windows.beforeDrawing(awSpectrum)
+  var spectra = SpectraOutput()
+  ui.spectra.drawLive(ui.core, ui.windows.shows(awSpectrum), ui.theme, ui.marks, spectra)
+  ui.spectra.drawFfts(ui.core, ui.theme, ui.scale, ui.marks, spectra)
+  if spectra.bringForward: ui.windows.bringForward(awSpectrum)
+  for c in spectra.commands.mitems:
+    ui.core.apply move c
   var join = ui.join.drawJoin(joinTitle, ui.core, ui.theme, ui.marks)
   for c in join.commands.mitems:
     ui.core.apply move c
@@ -1143,8 +1161,11 @@ proc shoot(ui: var Ui; target: string): Shot =
     discard SDL_GetWindowSizeInPixels(ui.window, addr fw, addr fh)
     var r = Rect(pos: vec2(0, 0), size: vec2(fw.float32, fh.float32))
     if target != "window":
-      let name = if target == "seismic": ui.core.windowTitle(MainPanel).toLowerAscii
+      var name = if target == "seismic": ui.core.windowTitle(MainPanel).toLowerAscii
                  else: target
+      if target == "fft": # the FFT window opened last
+        name = ""
+        if ui.core.spectra.len > 1: name = "fft " & $ui.core.spectra[^1].id
       r = Rect()
       for (n, m) in ui.marks:
         if n == name: r = m

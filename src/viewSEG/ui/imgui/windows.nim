@@ -18,7 +18,10 @@
 ##
 ## A layout without it (a preset, one written by an earlier build) shows
 ## every window, and so does one that does not name a window (one a later
-## build added): a window is hidden only when a layout says so.
+## build added): a window is hidden only when a layout says so. The one
+## exception is the live spectrum panel (`OffUnlessNamed`): it works while
+## it is on screen, so a layout from before it came keeps it hidden until
+## the Window menu shows it.
 
 import std/strutils
 import sdl3_nim
@@ -30,7 +33,7 @@ type
     ## The windows the main window docks, in the Window menu's order, by
     ## the IDs their titles end with (`"###plot"`): what layouts store.
     awSeismic = "plot", awFiles = "files", awRecords = "records", awMap = "map",
-    awHeaders = "headers", awJobs = "jobs", awMessages = "Messages"
+    awHeaders = "headers", awJobs = "jobs", awMessages = "Messages", awSpectrum = "spectrum"
 
   WindowsUi* = object
     ## The windows' state between frames.
@@ -41,14 +44,16 @@ type
 
 const
   WindowNames*: array[AppWindow, string] = ["Seismic", "Files", "Records", "Map", "Headers",
-    "Jobs", "Messages"]
+    "Jobs", "Messages", "Spectrum"]
     ## what the Window menu calls them (the Seismic window's title follows
     ## what it shows: `windowTitle`)
   AlwaysShown* = {awSeismic} ## the plot: brought forward, never hidden
+  OffUnlessNamed* = {awSpectrum}
+    ## hidden when a layout does not name them (it was written before they came)
   SectionHeader = "[viewSEG][Windows]"
   neighbours: array[AppWindow, seq[AppWindow]] = [awSeismic: @[], awFiles: @[awRecords],
     awRecords: @[awFiles], awMap: @[awHeaders], awHeaders: @[awMap], awJobs: @[awMessages],
-    awMessages: @[awJobs]]
+    awMessages: @[awJobs], awSpectrum: @[awMap, awHeaders]]
     ## where a window a layout does not know is docked (as a tab): beside
     ## the first of these that is docked, as in the default layout; else
     ## beside the plot
@@ -157,7 +162,9 @@ proc arranged*(ws: var WindowsUi; text: string; docked: bool) =
   ws.unknown = {}
   if docked:
     for w in AppWindow:
-      if not text.named(w): ws.unknown.incl w
+      if not text.named(w):
+        if w in OffUnlessNamed: ws.hidden.incl w
+        ws.unknown.incl w
 
 proc dockIdOf(w: AppWindow): ImGuiID =
   ## The dock node `w` is in, or was put in by the layout; 0 for none.
