@@ -5,8 +5,9 @@
 ## settings, the order and the scales it had, closes the file stepped away
 ## from, and reads the index cache when it comes back; a file chosen while
 ## another is still opening replaces it; one file named lists its folder; a
-## folder that does not exist is reported; a named pipe in a folder is never
-## opened; the files are never changed, not even by an export named after one.
+## folder that does not exist is reported, with its full path; a named pipe
+## in a folder is never opened; the files are never changed, not even by an
+## export named after one.
 ##
 ## Seen to fail: with `showReplacing` not closing the file it replaces,
 ## `stepThroughAFolder` found 2 files open after the first step; with
@@ -19,7 +20,8 @@
 ## `namedPipesAreNotOpened` found the scan stuck in the pipe's open (and
 ## with it the background lane and the quit); with exports not checking the
 ## path, `exportsNeverGoOverSeismicFiles` saw the messages export accepted
-## over the file shown.
+## over the file shown; with the scan's error not naming the path,
+## `chosenFilesAndMissingFolders` read "there is no such file or folder".
 
 import std/[os, strutils, times]
 import viewSEG/core/[filejobs, state]
@@ -211,6 +213,9 @@ block chosenFilesAndMissingFolders:
     doAssert st.settle(not st.fileList.scanning and st.fileList.error.len > 0)
     doAssert st.fileList.entries.len == 0
     doAssert st.log.has("Cannot list " & missing, sevError), $st.log.count(sevError)
+    # the Files window says "Listing stopped: " and this: the full path looked at
+    doAssert st.fileList.error == "there is no file or folder at " & missing,
+      st.fileList.error
     st.apply Command(kind: ckBrowse, paths: @[])
     doAssert st.log.has("no file or folder was named", sevWarning)
     # A newer listing replaces one still running, quietly.

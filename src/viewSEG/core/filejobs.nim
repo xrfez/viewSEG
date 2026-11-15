@@ -224,7 +224,7 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
         (first.listFolder, first.listChosen) = (paths[0].parentDir, paths[0])
         asked = @[first.listFolder]
       else:
-        raise newException(IOError, "there is no such file or folder")
+        raise newException(IOError, "there is no file or folder at " & paths[0])
       to.post move first
     let names = listedNames(asked)
     ctx.setPhase "looking at the files"
