@@ -1132,7 +1132,7 @@ func targetOf(under: int; pick: Pick; sel: Selection): string =
   ## under the pointer (`under`, survey-wide) is in it, else that trace.
   if under < 0: "No trace here"
   elif under in sel.selected:
-    let n = sel.selected.len
+    let n = sel.selectedCount
     if n == 1: "1 selected trace" else: $n & " selected traces"
   else: "Trace " & $(pick.trace + 1)
 
@@ -1169,7 +1169,7 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.fft")
   # Its station on the map: the receiver (in a receiver gather, the source).
   let role = $st.stationRole(k)
-  let many = under >= 0 and under in st.selection.selected and st.selection.selected.len > 1
+  let many = under >= 0 and under in st.selection.selected and st.selection.selectedCount > 1
   let station = if many: "Select their " & role & "s on the map" else: "Select its " & role &
     " on the map"
   if igMenuItem_Bool(station.cstring, "M", false, tp.menuStations.points.len > 0):

@@ -17,8 +17,10 @@
 ## heap-use-after-free); with `ckRemoveJob` not forgetting the open it
 ## removed, `removedOpenCanBeOpenedAgain` was told the file "is already being
 ## opened"; with paths compared as given, `oneFileManySpellings` made 3 opens.
+## With `select` not counting a trace a toggle takes out, `selectionCounts`
+## found the count one too high at its first toggle.
 
-import std/[algorithm, monotimes, os, strutils, times]
+import std/[algorithm, monotimes, os, random, strutils, times]
 import viewSEG/core/state
 import utils/[fixtures, waiting]
 
@@ -48,6 +50,23 @@ proc jobTitled(st: AppState; title: string): JobInfo =
 type Snapshot = tuple[bytes: string; time: Time]
 
 proc snapshot(path: string): Snapshot = (readFile(path), getLastModificationTime(path))
+
+block selectionCounts:
+  # The selection's size is kept as it changes (the plot's menu says it
+  # every frame it is open, however many are selected): it is what the
+  # set holds after every kind of change.
+  var sel = Selection()
+  var r = initRand(20261115)
+  for round in 0 ..< 2000:
+    var traces: seq[int]
+    for _ in 0 .. r.rand(5): traces.add r.rand(40)
+    case r.rand(9)
+    of 0: sel.clear()
+    of 1: sel.forget(SessionId(1), r.rand(20) .. r.rand(20) + r.rand(10))
+    else: sel.select(traces, SelectMode(r.rand(ord(SelectMode.high))))
+    doAssert sel.selectedCount == sel.selected.len, "round " & $round & ": " &
+      $sel.selectedCount & " counted, " & $sel.selected.len & " selected"
+    doAssert sel.anySelected == (sel.selected.len > 0)
 
 block openShowsTheFirstGather:
   withFixtures fx:

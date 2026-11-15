@@ -153,7 +153,7 @@ func chosenTraces*(sel: Selection; followPointer: bool; last = Chosen()): Chosen
     if first.len < MaxInspected: first.push -t
     elif -t > first[0]: discard first.replace(-t)
   result = Chosen()
-  if sel.selected.len > 0:
+  if sel.anySelected:
     result.by = cbSelection
     for t in sel.selected: take(t)
   elif followPointer and sel.hover >= 0:

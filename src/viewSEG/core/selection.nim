@@ -47,7 +47,10 @@ type
       ## the open files' traces recorded at `hoverPoints`, which the plot
       ## draws as it draws `hover`
     hoveredRevision*: int ## bumped when `hoverTraces` changes
-    selected*: IntSet ## the selected traces
+    selected*: IntSet
+      ## the selected traces; changed through `select`, `clear` and
+      ## `forget`, which keep their count (`selectedCount`)
+    count: int ## how many `selected` holds
     anchor*: int = -1
       ## the trace clicked last (`smReplace` or `smToggle` of one trace),
       ## where a Shift + click's range starts; -1 for none
@@ -66,6 +69,11 @@ func anySelected*(s: Selection): bool =
   ## `IntSet`'s `len` counts them all).
   for _ in s.selected: return true
   false
+
+func selectedCount*(s: Selection): int {.inline.} =
+  ## How many traces are selected, kept as the selection changes (an
+  ## `IntSet`'s `len` counts them one by one).
+  s.count
 
 func targets*(s: Selection; under: int): seq[int] =
   ## What a trace operation (kill, reverse polarity) acts on with the
@@ -108,12 +116,14 @@ proc select*(s: var Selection; traces: openArray[int]; mode: SelectMode) =
   ## A new selection (`smReplace`, `smRange`) takes the map's points away.
   if mode in {smReplace, smRange}:
     s.selected.clear()
+    s.count = 0
     s.points.setLen 0
     s.pointKeys.clear()
   if mode in {smReplace, smToggle} and traces.len == 1: s.anchor = traces[0]
   for t in traces:
-    if mode == smRemove or (mode == smToggle and t in s.selected): s.selected.excl t
-    else: s.selected.incl t
+    if mode == smRemove or (mode == smToggle and t in s.selected):
+      if not s.selected.missingOrExcl(t): dec s.count
+    elif not s.selected.containsOrIncl(t): inc s.count
   inc s.revision
   inc s.selectedRevision
 
@@ -146,8 +156,9 @@ proc selectPoints*(s: var Selection; points: openArray[PointRef]; mode: SelectMo
 
 proc clear*(s: var Selection) =
   ## Selects nothing: no trace, no point.
-  if s.selected.len > 0 or s.points.len > 0:
+  if s.anySelected or s.points.len > 0:
     s.selected.clear()
+    s.count = 0
     s.points.setLen 0
     s.pointKeys.clear()
     inc s.revision
@@ -165,6 +176,7 @@ proc forget*(s: var Selection; file: SessionId; traces: Slice[int]) =
   for t in s.selected:
     if t in traces: gone.add t
   for t in gone: s.selected.excl t
+  s.count -= gone.len
   if gone.len > 0: inc s.selectedRevision
   var hovered: seq[int]
   for t in s.hoverTraces:

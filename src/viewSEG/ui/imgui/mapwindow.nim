@@ -756,7 +756,7 @@ proc handleKeys(mu: var MapUi; st: AppState; after: var MapView; view: MapView; 
       if mu.drag.kind == mdMeasure: mu.ruler = Ruler()
       mu.drag = MapDrag()
     elif mu.ruler.shown: mu.ruler = Ruler()
-    elif st.selection.selected.len > 0 or st.selection.points.len > 0:
+    elif st.selection.anySelected or st.selection.points.len > 0:
       res.commands.add Command(kind: ckClearSelection)
 
 func shownAt(st: AppState; p: PointRef): MapPoint =
