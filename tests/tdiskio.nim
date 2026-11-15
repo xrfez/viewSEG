@@ -27,7 +27,10 @@
 ## write cut short left stays". On a slow disk at the quit (`slowDiskAtTheQuit`):
 ## with the disk thread waited for no longer than the other threads (0.8 s),
 ## "4 of the 8 named layouts written"; and with the settings and the layout
-## not handed first either, settings.nif was not there.
+## not handed first either, settings.nif was not there. With every write
+## given 0.8 s whether its folder answers or not (as it was),
+## `oneSlowWriteAtTheQuit` found "the settings were not written: the quit
+## gave up after 800 ms".
 
 import std/[monotimes, os, sequtils, strutils, times]
 import viewSEG/core/[diskio, filememory, identity, inbox, layouts, log, nif, persist, state]
@@ -274,6 +277,28 @@ block slowDiskAtTheQuit:
   doAssert ended, "the disk thread was left"
   doAssert took < DiskQuitLimit, "the quit took " & $took
   echo "tdiskio: a quit on a slow disk wrote its 10 documents in ", took.inMilliseconds, " ms"
+
+block oneSlowWriteAtTheQuit:
+  # One write that answers, but slowly: the settings' file opens in 1.5 s
+  # (twice the 0.8 s a drive that does not answer is given). The folder
+  # answers (its folder is looked at at once): the quit waits for it.
+  let config = tmp / "slowone"
+  createDir(config)
+  var st = initAppState()
+  st.keepSettingsIn(config, LoadedSettings(saveable: true))
+  fault(config, fkDelay, {foOpen}, delay = initDuration(milliseconds = 1500))
+  var s = st.settings
+  s.theme = "one slow write"
+  st.apply Command(kind: ckSettings, settings: s)
+  let began = getMonoTime()
+  let ended = st.shutdown()
+  let took = getMonoTime() - began
+  fault(config, fkNone)
+  doAssert fileExists(config / SettingsFileName) and
+    "one slow write" in readFile(config / SettingsFileName),
+    "the settings were not written: the quit gave up after " & $took.inMilliseconds & " ms"
+  doAssert ended, "the disk thread was left"
+  echo "tdiskio: a quit waited ", took.inMilliseconds, " ms for one slow write of the settings"
 
 block leftoverTemporaryFiles:
   # the temporary files of the store's documents that a write cut short

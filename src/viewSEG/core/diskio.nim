@@ -50,11 +50,14 @@
 ##
 ## `flush` waits until everything left so far is done (tests); `stop` (and
 ## destroying the `DiskIo`) does what is left, then ends the thread, waiting
-## for it until a deadline only, and no longer than `stuckAfter` for any one
-## task: a slow disk that goes on writing is waited for, but a configuration
-## or log folder on a drive that does not answer must not hold the quit (the
-## thread is then left to end on its own, with its memory, and what it had
-## left is not written: `stuckOn` says what it was held on).
+## for it until a deadline only: a slow disk that goes on writing is waited
+## for, but a configuration or log folder on a drive that does not answer
+## must not hold the quit. A drive answers when, before a task, the thread
+## looks at the task's folder and the look comes back (or a task in that
+## folder ended before); a task whose folder has not answered is given only
+## `stuckAfter`. The thread is then left to end on its own, with its memory,
+## and what it had left is not written (`stuckOn` says what it was held
+## on).
 
 import std/[algorithm, locks, monotimes, os, strutils, tables, times]
 import edits, filememory, filesystem, inbox, jobs, layouts, log, nif, threads
@@ -97,6 +100,8 @@ type
     busy, quit, started, ended, abandoned: bool
     since: MonoTime ## `busy`: when the task in hand was taken
     current: string ## `busy`: what it writes, and where ("the settings (/home/...)")
+    answering: bool ## `busy`: the task's folder answered (`answered`, or a look just now)
+    answered: seq[string] ## the folders a task ended in, this run
     poster: Poster
     thread: Thread[ptr DiskObj]
 
@@ -389,6 +394,27 @@ func named(t: Task): string =
   ## What `t` is about, and where, for a message.
   (if t.what.len > 0: t.what else: $t.kind) & " (" & t.path & ")"
 
+func folder(t: Task): string =
+  ## The folder `t` works in.
+  if t.kind in {tkPrune, tkList, tkSweep}: t.path else: t.path.parentDir
+
+proc take(d: ptr DiskObj; t: Task) =
+  ## Before a task (the thread's): whether its folder answers, by a look at
+  ## it, unless a task ended there before. Under the lock only for the flag.
+  var known = false
+  withLock d.lock:
+    known = t.folder in d.answered
+    d.answering = known
+  if not known:
+    discard fs.dirExists(t.folder) # what it says does not matter: that it came back
+    withLock d.lock:
+      d.answering = true
+
+proc answeredIn(d: ptr DiskObj; t: Task) =
+  ## After a task (the thread's): its folder answered.
+  withLock d.lock:
+    if t.folder notin d.answered: d.answered.add t.folder
+
 proc run(d: ptr DiskObj) {.thread.} =
   markWorkerThread()
   var w = Writer(d: d)
@@ -404,6 +430,7 @@ proc run(d: ptr DiskObj) {.thread.} =
       d.busy = true
       d.since = getMonoTime()
       d.current = t.named
+    d.take(t)
     case t.kind
     of tkAppend: w.appendTo(t)
     of tkReplace: w.replaceFile(t)
@@ -414,6 +441,7 @@ proc run(d: ptr DiskObj) {.thread.} =
     of tkList:
       w.d.poster.post Msg(job: NoJob, kind: mkRead, purpose: rpLayouts, readPath: t.path,
         layouts: listLayouts(t.path, t.dirs))
+    d.answeredIn(t)
     withLock d.lock:
       d.busy = false
       if d.tasks.len == 0: broadcast(d.idle)
@@ -438,10 +466,11 @@ proc askStop*(x: DiskIo) =
 proc stop*(x: DiskIo; deadline = getMonoTime() + DiskStopWait;
     stuckAfter = DiskStopWait): bool {.discardable.} =
   ## Does what is left, then ends the thread, waiting for it until
-  ## `deadline`, and no longer once one task has been in hand for
-  ## `stuckAfter`: true when it has ended; false when it is held by a drive
-  ## that does not answer (or `deadline` came first), and it is then left to
-  ## end on its own. Idempotent; destroying the `DiskIo` does it.
+  ## `deadline`, and no longer once a task whose folder has not answered
+  ## (the module documentation) has been in hand for `stuckAfter`: true
+  ## when it has ended; false when it is held by a drive that does not
+  ## answer (or `deadline` came first), and it is then left to end on its
+  ## own. Idempotent; destroying the `DiskIo` does it.
   if x.p == nil or not x.p.started: return true
   if x.p.abandoned: return false
   x.askStop()
@@ -451,7 +480,7 @@ proc stop*(x: DiskIo; deadline = getMonoTime() + DiskStopWait;
     let now = getMonoTime()
     withLock x.p.lock:
       ended = x.p.ended
-      stuck = x.p.busy and now - x.p.since >= stuckAfter
+      stuck = x.p.busy and not x.p.answering and now - x.p.since >= stuckAfter
     if ended or stuck or now >= deadline: break
     sleep 1
   if ended:
