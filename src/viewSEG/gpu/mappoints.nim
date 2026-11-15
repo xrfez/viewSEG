@@ -24,9 +24,13 @@ import ../core/[geometry, mapview, maplod, survey]
 import density, gl, textures
 
 const
-  LodPixels* = 1.5
+  LodPixels* = 2.0
     ## the widest cell, in pixels, a level of detail may draw a point for:
-    ## its points fall on that pixel and its neighbours anyway
+    ## its points fall on that pixel and its neighbours anyway, under a
+    ## marker at least 2 pixels across
+  JoinGap = 32
+    ## runs of points no more than this many points apart are drawn as one
+    ## (fewer draws; the points between are off the view, and few)
 
 type
   MapUniform = enum
@@ -256,7 +260,7 @@ proc drawRuns(runs: openArray[Slice[int]]; base: int): int =
   var counts: seq[GLsizei]
   for run in runs:
     let a = base + run.a
-    if firsts.len > 0 and a - (firsts[^1] + counts[^1]) <= 256:
+    if firsts.len > 0 and a - (firsts[^1] + counts[^1]) <= JoinGap:
       counts[^1] = GLsizei(base + run.b + 1 - firsts[^1])
     else:
       firsts.add GLint(a)

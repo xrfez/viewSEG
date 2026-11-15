@@ -216,7 +216,7 @@ func lengthText*(length: float64; units: string): string =
   let u = if units.len > 0: units else: "units"
   if units == "m" and length >= 1000:
     let km = length / 1000
-    (if km == round(km): $int(km) else: formatFloat(km, ffDecimal, 2)) & " km"
+    (if km == round(km) and km < 1e15: $int64(km) else: formatFloat(km, ffDecimal, 2)) & " km"
   elif length == round(length) and abs(length) < 1e15: $int64(length) & " " & u
   else: formatFloat(length, ffDecimal, (if length >= 10: 1 else: 2)) & " " & u
 
@@ -244,7 +244,7 @@ proc recordsText(st: AppState; traces: openArray[int]): string =
         inc records
         if names.len < InfoRecords:
           let f = s.records[g].record
-          names.add (if f.isNaN: (false, "record " & $(g + 1)) else: (true, $int64(f)))
+          names.add (if abs(f) < 1e15: (true, $int64(f)) else: (false, "record " & $(g + 1)))
   result = plural(traces.len, "trace", "traces")
   if records > 0:
     var all = true

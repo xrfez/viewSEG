@@ -571,7 +571,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     # Tick values only, as wide as the survey's largest coordinate always,
     # so the plot's edge stays put as the labels change.
     let b = lim.bounds
-    let digits = max(len($int64(max(abs(b.minY), abs(b.maxY)))), 1)
+    let digits = max(len($int64(min(max(abs(b.minY), abs(b.maxY)), 1e15))), 1)
     let most = decimalsFor(lim.leastPerPixel * 100)
     let d = min(decimalsFor(next.perPixel * 100), most)
     let width = digits + (if most > 0: most + 1 else: 0) + (if b.minY < 0: 1 else: 0)

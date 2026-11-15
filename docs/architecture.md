@@ -284,7 +284,7 @@ cell (the first of the cell, a real position), each kept row by row so the point
 are a run per row (`runs`), the positions as `float32` relative to the layer's corner; and
 how far apart its points typically are (`spacing`), from which the frontend sizes the
 markers. `gpu/mappoints` uploads a layer's points and levels once, and each frame draws, per
-layer, the coarsest level whose cells are no wider than a pixel and a half (every point,
+layer, the coarsest level whose cells are no wider than two pixels (every point,
 from the index's own runs, closer in), as point sprites made discs or rings in the fragment
 shader, into an image the size of the plot, then the highlight; an image whose inputs did
 not change is not drawn again. So no pan or zoom waits for anything: 1 000 000 points draw

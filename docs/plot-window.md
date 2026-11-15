@@ -475,7 +475,7 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   the pointer is described, beside the pointer (the default) or in a strip along the map's
   bottom (kept when nothing is pointed at, so the map does not change size).
 - **Levels of detail.** When the points outnumber the pixels, the map draws a point per
-  cell of a grid no wider than a pixel and a half (the first point of the cell, a real
+  cell of a grid no wider than two pixels (the first point of the cell, a real
   position), and every point once zoomed in closer. The grids, from twice the spatial
   index's cells to one cell for the whole layer, are made with the layer, on the worker
   that reads the file, and go to the GPU with it, so no pan or zoom waits for a level:
