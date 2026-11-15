@@ -8,7 +8,8 @@
 ## next frame, so they see it drawn; one screenshot a frame. A `wait` is
 ## kept and looked at every frame until it holds on two frames in a row
 ## (what a job that ended meanwhile posted is then taken in) or its time is
-## up.
+## up. A `headers` call is kept until the job reading its trace has ended
+## (the file's map may be on a drive that does not answer).
 ##
 ## What agents do goes to the log (source `agent`) without burying the
 ## user's own messages: every command, with what it said, and every
@@ -51,6 +52,8 @@ type
     version: string    ## for the start under way
     queue: seq[Call] ## taken, not answered yet
     waits: seq[Waiting]
+    reading: seq[tuple[call: Call; ask: HeaderCall; written: bool]]
+      ## `headers` calls whose trace is being read
     calls: seq[Call] ## scratch
     events: seq[Event] ## scratch
     frame: int ## `serve` calls so far
@@ -137,6 +140,7 @@ proc stop*(c: var AgentControl; state: var AppState; deadline = getMonoTime() + 
     c.server.stop(deadline)
     c.queue.setLen 0
     c.waits.setLen 0
+    c.reading.setLen 0
     c.names.clear()
     c.announced.clear()
     c.countsDue(state, getMonoTime(), all = true)
@@ -244,7 +248,10 @@ proc serve*(c: var AgentControl; state: var AppState; fe: Frontend; now = getMon
       if applied: c.commandFrame = c.frame
       c.respond(state, call, answer)
     of "state": c.respond(state, call, state.stateReport(fe, call.arguments), written)
-    of "headers": c.respond(state, call, state.traceHeaderReport(call.arguments), written)
+    of "headers":
+      var ask = state.askTraceHeaders(call.arguments)
+      if ask.answer.len > 0: c.respond(state, call, ask.answer, written)
+      else: c.reading.add (call, ask, written)
     of "screenshot":
       shot = true
       var picture: Picture
@@ -260,6 +267,13 @@ proc serve*(c: var AgentControl; state: var AppState; fe: Frontend; now = getMon
           initDuration(milliseconds = int(seconds * 1000)))
     else:
       c.respond(state, call, textResult("no tool " & call.tool, isError = true), written)
+  var r = 0
+  while r < c.reading.len:
+    if state.headersAnswer(c.reading[r].ask):
+      c.respond(state, c.reading[r].call, c.reading[r].ask.answer, c.reading[r].written)
+      c.reading.delete r
+    else:
+      inc r
   c.countsDue(state, now)
   # Idle on two frames in a row: a job that ended between this frame's
   # inbox and now has what it posted taken in by the next frame's.

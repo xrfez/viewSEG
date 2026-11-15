@@ -3,10 +3,11 @@
 ## A `Session` is made on a job thread (`filejobs.openSession`), moved to the
 ## UI thread through the inbox, and kept by `AppState`, which gives it a
 ## `SessionId` and the survey-wide number of its first trace. Its fields do not
-## change after that, apart from the file being closed and its records'
-## check against a loaded relation file (`setChecks`). What the Headers
-## window's Summary and File headers tabs show of the file (`facts`,
-## `core/headers`) is read with it, on the same thread.
+## change after that, apart from the file being closed, its records'
+## check against a loaded relation file (`setChecks`) and the revision of
+## its keys after a join (`setKeysRevision`). What the Headers window's
+## Summary and File headers tabs show of the file (`facts`, `core/headers`)
+## is read with it, on the same thread.
 ##
 ## Trace ids are survey-wide: `base + index`. Bases are never reused, so an id
 ## kept by a view never names a trace of a file opened later.
@@ -47,6 +48,8 @@ type
     checkedAgainst: string ## the relation file its records were checked against; "" none
     crs: FileCrs ## what its headers say of its coordinates
     facts: FileFacts ## its summary and file headers, for the Headers window
+    keysRevision: int
+      ## its keys' revision (parseSEG's `keysRevision`) as the UI thread knows it
 
 const NoSession* = SessionId(0)
 
@@ -76,6 +79,7 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
     if cut >= 0: msg.setLen cut
     result.facts.problems.add "the file's headers cannot be read now (" & msg & "): its " &
       "drive went away or fails; open the file again once it answers"
+  result.keysRevision = result.file.keysRevision
   try:
     let sum = result.file.summary
     result.crs = FileCrs(units: sum.coordinateUnits, format: sum.crsFormat)
@@ -111,6 +115,15 @@ func facts*(s: Session): lent FileFacts {.inline.} = s.facts
   ## What the Headers window shows of the file: its summary and file headers.
 func checkedAgainst*(s: Session): lent string {.inline.} = s.checkedAgainst
   ## The relation file the records' planned stations come from; "" for none.
+func keysRevision*(s: Session): int {.inline.} = s.keysRevision
+  ## The revision of the file's keys (parseSEG's `keysRevision`) when it was
+  ## opened, or after the join that changed them last: what a layer or a
+  ## check made from the keys is compared with. Kept here, so the UI thread
+  ## never reads the file's own, which a join's step changes on its job.
+
+proc setKeysRevision*(s: Session; revision: int) =
+  ## A join changed the file's keys: their revision is now `revision`.
+  s.keysRevision = revision
 
 proc setChecks*(s: Session; against: string; planned, missing: openArray[int];
     unlisted: openArray[int] = []; duplicates: openArray[int] = []) =

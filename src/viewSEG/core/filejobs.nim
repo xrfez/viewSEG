@@ -200,6 +200,28 @@ proc prepareWork*(path: string; to: Poster; cache: string; positions: Slice[int]
     clearCycleRoots() # the UI thread may release the file's objects at once
     to.post Msg(job: ctx.id, kind: mkOpened, session: move s)
 
+proc traceHeadersWork*(file: ptr SeismicFile; path: string; size: int64; index: int;
+    to: Poster): JobWork =
+  ## The work of a job that reads trace `index` of open file `file` (at
+  ## `path`, `size` bytes when it was opened): its keys and the fields of its
+  ## headers, read from the file's map (`mkTraceRead`). A drive that does
+  ## not answer holds this job, never the UI thread. Submitted with the file
+  ## in `reads`, so no join changes its keys meanwhile and no close takes it
+  ## away. A file shorter than it was opened is not read: its map's pages
+  ## past the end would end the program.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "reading a trace's headers"
+    if size >= 0 and fs.getFileInfo(path).size < size:
+      raise newException(IOError, "the file is shorter than when it was opened")
+    fs.mappedRead(path, headers = true) # (tests: the drive holds the thread here)
+    var keys: TraceKeys
+    var rows: seq[HeaderRow]
+    {.cast(gcsafe).}:
+      keys = file[].traceKeys([index])[0]
+      rows = file[].traceHeaders(index)
+    clearCycleRoots()
+    to.post Msg(job: ctx.id, kind: mkTraceRead, traceKeys: keys, headerRows: move rows)
+
 proc closeWork*(): JobWork =
   ## The work of a close job: none. Submitted with the file in `exclusive`,
   ## the job starts only once no job reads it, and when it has finished

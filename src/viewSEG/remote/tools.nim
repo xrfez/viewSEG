@@ -7,7 +7,9 @@
 ##   order, the traces at each position, the edits), the selection, the jobs,
 ##   the newest messages, the survey, the Headers window (its tab, the traces
 ##   it is about and what its reader read of them, the file's facts);
-## - `headers`: one trace's keys and header fields;
+## - `headers`: one trace's keys and header fields, read on a job (the
+##   file's map may be on a drive that does not answer): `askTraceHeaders`,
+##   then `headersAnswer` in later frames (`remote/control` keeps the call);
 ## - `screenshot`: a PNG of the window or a part of it: the frontend reads
 ##   the pixels back (`Frontend.shoot`, the only part on the UI thread);
 ##   `pictureAnswer` scales them down and encodes them on the server thread,
@@ -536,11 +538,27 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
 
 # ------------------------------------------------------------- headers --
 
-proc traceHeaderReport*(state: AppState; arguments: string): string =
-  ## The `headers` tool: one trace's keys and header fields.
+type
+  HeaderCall* = object
+    ## A `headers` call (`askTraceHeaders`): answered at once when it is
+    ## refused, else once the job that reads the trace has ended
+    ## (`headersAnswer`).
+    answer*: string ## the tool's answer; "" while the trace is read
+    job*: JobId     ## the job that reads it
+    head: JsonNode  ## what the answer says besides what the job reads
+    what: string    ## "trace 6 of shot.sgy", for an answer that it could not be read
+
+proc askTraceHeaders*(state: var AppState; arguments: string): HeaderCall =
+  ## The `headers` tool: one trace's keys and header fields. The trace's
+  ## headers are read from the file's map on a job, never here: a call
+  ## that names a trace is answered by `headersAnswer` once the job has read
+  ## it; one that does not is refused at once (`answer`).
+  result = HeaderCall(job: NoJob)
   var n: JsonNode
   let why = args(arguments, n)
-  if why.len > 0: return refused([why])
+  if why.len > 0:
+    result.answer = refused([why])
+    return
   var problems: seq[string]
   for key, _ in n.pairs:
     if key notin ["trace", "panel", "position", "file", "index"]:
@@ -574,23 +592,48 @@ proc traceHeaderReport*(state: AppState; arguments: string): string =
   else:
     problems.add "name the trace: \"trace\", or \"panel\" and \"position\", or \"file\" " &
       "and \"index\""
-  if problems.len > 0 or session < 0 or index < 0: return refused(problems)
+  if problems.len > 0 or session < 0 or index < 0:
+    result.answer = refused(problems)
+    return
   let s = state.sessions[session]
   var r = %*{"trace": s.base + index, "file": int(s.id), "path": s.path, "index": index,
     "edits": toJson(state.traceEdits(s.base + index))}
   for g, gather in s.gathers:
     if index in gather.traces: r["gather"] = %g
-  try:
-    r["keys"] = toJson(s.file.traceKeys([index])[0])
-    var rows = newJArray()
-    for h in s.file.traceHeaders(index):
-      rows.add %*{"block": h.blockName, "field": h.field, "value": $h.value,
+  result.head = r
+  result.what = "trace " & $(index + 1) & " of " & s.name
+  result.job = state.readTraceHeaders(session, index)
+
+proc headersAnswer*(state: var AppState; c: var HeaderCall): bool =
+  ## Whether `headers` call `c` is answered now (`c.answer`): its job has
+  ## read the trace, or failed, or its drive has not answered for
+  ## `StallAfter` (then the job is cancelled: an agent is not kept waiting
+  ## on a drive that may never answer). Once a frame, after `drainInbox`.
+  if c.answer.len > 0: return true
+  var keys: TraceKeys
+  var rows: seq[HeaderRow]
+  if state.takeTraceRead(c.job, keys, rows):
+    var r = c.head
+    r["keys"] = toJson(keys)
+    var list = newJArray()
+    for h in rows:
+      list.add %*{"block": h.blockName, "field": h.field, "value": $h.value,
         "offset": h.offset, "size": h.size}
-    r["headers"] = rows
-  except CatchableError as e:
-    return textResult("cannot read the headers of trace " & $(index + 1) & " of " & s.name &
-      ": " & e.msg, isError = true)
-  textResult($r)
+    r["headers"] = list
+    c.answer = textResult($r)
+    return true
+  let info = state.jobs.info(c.job)
+  if info.isNone or info.get.state in {jsDone, jsFailed, jsCancelled}:
+    let why = if info.isSome and info.get.error.len > 0: info.get.error else: "it was stopped"
+    c.answer = textResult("cannot read the headers of " & c.what & ": " & why, isError = true)
+    return true
+  let silent = info.get.notAnsweringFor
+  if silent > initDuration():
+    discard state.jobs.cancel(c.job)
+    c.answer = textResult("cannot read the headers of " & c.what & " now: its drive has not " &
+      "answered for " & $max(1, silent.inSeconds) & " s", isError = true)
+    return true
+  false
 
 # ---------------------------------------------------------- screenshot --
 

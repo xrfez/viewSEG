@@ -102,7 +102,7 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 
 | Thread | Created and owned by | Runs |
 |---|---|---|
-| UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), closes files, and makes every OpenGL call; it reads no header and no sample from a file |
+| UI (main) | `src/viewSEG.nim`; `initAppState` marks it | The frame loop: drains the inbox once per frame (`drainInbox`), applies `Command`s to `AppState` (`apply`), hands the files it lets go of to the closer, and makes every OpenGL call; it reads no header and no sample from a file (a trace's headers for an agent are read on a job: Network drives, below) |
 | Interactive jobs | `core/jobs`: a runner started by `initAppState`, with its own queue | Short work the user is waiting on: open and index, an open file's positions, survey files read, `ensureKeys`, survey joins, sorts across files |
 | Background jobs | `core/jobs`: a second runner and queue | Long work: whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, the listed files' shots (`shotsWork`), the map's planned spreads (`spreadWork`), the record shown for the map's filters (`recordQcWork`), brute stack, conversions, exports and patches, queued workflows |
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; lists the layouts; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
@@ -164,7 +164,8 @@ its cancel: parseSEG's walk stops at the next progress call, and a cancel that c
 after the walk still closes the file on the job's thread and posts nothing. A close
 takes the file out of every view at once, cancels the jobs that use it, and queues a
 close job that needs the file exclusively; when that job ends (after every job that read
-the file, and every hold on it), the UI thread closes the file. The close job cannot be
+the file, and every hold on it), the UI thread hands the file to the closer's thread
+(`core/closer`, Network drives below). The close job cannot be
 cancelled or removed: until it has run, a job may still be reading the file. Paths are
 made absolute and normalized when a file is opened, so every job names a file the same
 way and one file is never opened twice.

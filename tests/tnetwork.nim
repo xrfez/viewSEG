@@ -10,6 +10,9 @@
 ## with its open, leave the file open without them when the drive fails, and
 ## hold the open (said, cancelled) when it hangs.
 ##
+## An agent's `headers` call reads the trace on a job too, and is told when
+## the drive does not answer.
+##
 ## Seen to fail: with the watch's `dirExists` back under its lock,
 ## `watchStatsOutsideItsLock` found `watchOpen` held as long as the stat hung
 ## (60 s, the fault's limit); with `tend` not called from `drainInbox`,
@@ -27,6 +30,7 @@
 
 import std/[monotimes, os, strutils, times]
 import viewSEG/core/[inbox, state, watch]
+import viewSEG/remote/tools
 import utils/[faultyfs, fixtures, waiting]
 
 const Budget = initDuration(milliseconds = 50) ## a frame's work, at most
@@ -269,6 +273,35 @@ withFixtures fx:
     discard again.drainInbox()
     doAssert again.sessions.len == 0, "the cancelled open is dropped"
     again.shutdown()
+
+  block anAgentAsksForHeaders:
+    # An agent asks for a trace's headers while the file's drive does not
+    # answer: the map is read on a job, never on the UI thread, every call
+    # stays quick, and the agent is told the drive does not answer; once it
+    # answers, the headers come.
+    var st = initAppState(watchEvery = initDuration(seconds = 30))
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: far / "a.sgy")
+    doAssert st.settle(st.main.laidOut)
+    let args = """{"file":""" & $int(st.sessions[0].id) & ""","index":3}"""
+    fault(far, fkHang, {foHeaders})
+    var ask: HeaderCall
+    var t = quick: ask = st.askTraceHeaders(args)
+    doAssert t < Budget, "the call took " & $t
+    doAssert ask.answer.len == 0, "answered at once, so read on the UI thread: " & ask.answer
+    doAssert waitUntil(hung() == 1), "the trace's read hangs, on a job"
+    t = quick: discard st.headersAnswer(ask)
+    doAssert t < Budget and ask.answer.len == 0
+    silent()
+    doAssert st.settle(st.headersAnswer(ask))
+    doAssert "\"isError\":true" in ask.answer and "has not answered for" in ask.answer,
+      ask.answer
+    release(far)
+    doAssert waitUntil(hung() == 0)
+    var again = st.askTraceHeaders(args)
+    doAssert st.settle(st.headersAnswer(again))
+    doAssert "\"isError\":true" notin again.answer and "\\\"headers\\\":[{" in again.answer,
+      again.answer.substr(0, 300)
+    st.shutdown()
 
   block quitWithin:
     # Everything hangs at once: an open, a read, the listing, the watch and

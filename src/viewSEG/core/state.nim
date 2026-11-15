@@ -117,6 +117,7 @@ const
   MaxTiles* = 4         ## tiles kept per panel, newest last
   FloatValues* = 32_768 ## values in view the Float gain takes its level from, at most
   MaxNotices* = 20      ## notices kept
+  MaxTraceReads* = 16   ## traces read for agent control and not taken, kept at most
   MaxPanelValues* = 48 * 1024 * 1024
     ## the values (192 MiB, and as much on the GPU) a panel's tiles hold at
     ## most: the oldest are dropped first, the newest is always kept
@@ -359,6 +360,7 @@ type
     plan: JoinPlan
     survey: JoinSurvey
     joined: bool                 ## the join's job said it was done (`mkJoined`)
+    revision: int                ## the file's keys' revision after the join (`mkJoined`)
     held: int = -1               ## the holds on the file its job found: none (-1: it never ran)
     paused: seq[PanelId]         ## the panels whose readers let go of the file for it
 
@@ -491,6 +493,8 @@ type
       ## per file with edits: its size and time when they were made
     notices: seq[Notice] ## the newest `MaxNotices`
     nextNotice: int
+    traceReads: seq[tuple[job: JobId; keys: TraceKeys; rows: seq[HeaderRow]]]
+      ## traces read for agent control (`readTraceHeaders`), oldest first, until taken
     mail: seq[Msg]
     indexCache: string ## the index cache folder; "" for none
     settings: Settings
@@ -1795,6 +1799,28 @@ proc checkEdits(state: var AppState; s: Session) =
       "edited, so its kills and polarity reversals are set aside: by trace number they may " &
       "not fit the traces it holds now. Ctrl+Z (with the plot focused) brings them back.")
 
+proc readTraceHeaders*(state: var AppState; i, index: int): JobId =
+  ## Reads trace `index` of open file `sessions[i]` on a job: its keys and
+  ## the fields of its headers, from the file's map, which may be on a drive
+  ## that does not answer (never on this thread). `takeTraceRead` gives what
+  ## it read once its job has posted it.
+  let s = state.sessions[i]
+  state.jobs.submit(JobSpec(title: "Read the headers of trace " & $(index + 1) & " of " & s.name,
+    lane: jlInteractive, reads: @[s.path]), traceHeadersWork(s.filePtr, s.path, s.size, index,
+    state.inbox.poster))
+
+proc takeTraceRead*(state: var AppState; job: JobId; keys: var TraceKeys;
+    rows: var seq[HeaderRow]): bool =
+  ## What job `job` of `readTraceHeaders` read, once it has posted it (then
+  ## it is given once); false until then, and for any other job.
+  for i in 0 ..< state.traceReads.len:
+    if state.traceReads[i].job == job:
+      keys = state.traceReads[i].keys
+      rows = move state.traceReads[i].rows
+      state.traceReads.delete(i)
+      return true
+  false
+
 proc readPositions(state: var AppState; s: Session) =
   ## Reads the source and receiver positions of open file `s` on a job: its
   ## layer of the survey.
@@ -1857,7 +1883,7 @@ proc takeChecked(state: var AppState; m: sink Msg) =
   ## or against a relation file that is still the one loaded, with the
   ## file's keys as they were.
   let i = state.findSession(m.checkedSession)
-  if i < 0 or state.sessions[i].file.keysRevision != m.keysRevision: return
+  if i < 0 or state.sessions[i].keysRevision != m.keysRevision: return
   let joined = state.joinedRelations(m.checkedSession) >= 0
   let r = state.relationLayer
   if (m.againstLayer == NoSurveyLayer and joined) or (not joined and r >= 0 and
@@ -1897,7 +1923,7 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
   case layer.origin
   of loTraces:
     let i = state.findSession(layer.session)
-    if i < 0 or state.sessions[i].file.keysRevision != layer.keysRevision: return
+    if i < 0 or state.sessions[i].keysRevision != layer.keysRevision: return
     let placed = layer.points[prSource].len + layer.points[prReceiver].len
     let stations = layer.stationCount(prSource) + layer.stationCount(prReceiver)
     discard state.survey.add(layer)
@@ -2188,6 +2214,7 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
       let before = state.joinedOf(s.id)
       if before >= 0: state.joins.delete(before)
       if outcome == joJoined:
+        if j.joined: s.setKeysRevision(j.revision) # before the jobs below read the keys
         state.joins.add Joined(session: s.id, files: j.files, options: j.options,
           units: j.units, plan: j.plan, survey: j.survey, words: words, geometry: j.geometry)
         if j.plan.changes > 0: state.readPositions(s) # the map's, from the joined keys
@@ -2251,6 +2278,7 @@ proc takeJoined(state: var AppState; m: Msg) =
   if m.job == j.job and j.step == jpJoining and m.joinedSession == j.session:
     j.joined = true
     j.held = m.heldAtJoin
+    j.revision = m.joinedRevision
     if m.changed != j.plan.changes:
       state.log.add(sevWarning, j.name, "The import changed " & plural(m.changed, "trace") &
         " where " & $j.plan.changes & " were expected (parseSEG: " & $m.stats & ").")
@@ -3651,6 +3679,9 @@ proc drainInbox*(state: var AppState): bool =
         state.unread.keepItIf(it.panel != m.unreadPanel)
         state.unread.add (m.unreadPanel, m.cause, m.why)
         inc state.panels[k].revision
+    of mkTraceRead:
+      state.traceReads.add (m.job, m.traceKeys, move m.headerRows)
+      if state.traceReads.len > MaxTraceReads: state.traceReads.delete(0) # never taken
     of mkTile:
       let k = state.findPanel(m.tile.panel)
       if k >= 0 and m.tile.request.gen == state.panels[k].requestGen:

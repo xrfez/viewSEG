@@ -59,6 +59,14 @@ proc body(answer: string): JsonNode =
 
 proc isError(answer: string): bool = parseJson(answer)["isError"].getBool
 
+proc headers(st: var AppState; arguments: string): string =
+  ## The `headers` tool's answer: at once when refused, else once its job
+  ## has read the trace (the frames meanwhile drain the inbox).
+  var ask = st.askTraceHeaders(arguments)
+  doAssert waitUntil((discard st.drainInbox(); st.headersAnswer(ask))), "no answer to " &
+    arguments
+  ask.answer
+
 block lines:
   var b = initLineBuffer(10)
   var l: string
@@ -403,20 +411,21 @@ withFixtures fx:
     doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
 
   block headersAnswer:
-    let h = st.traceHeaderReport("""{"panel":1,"position":0}""").body
+    let h = st.headers("""{"panel":1,"position":0}""").body
     doAssert h["index"].getInt == Channels - 1 and h["keys"]["channel"].getFloat == Channels,
       $h["keys"]
     doAssert h["gather"].getInt == 0 and h["headers"].len > 50
     var fields: seq[string]
     for row in h["headers"]: fields.add row["field"].getStr
     doAssert "fieldRecord" in fields or "FFID" in fields or fields.len > 50, $fields
-    let byId = st.traceHeaderReport("""{"trace":5}""").body
+    let byId = st.headers("""{"trace":5}""").body
     doAssert byId["index"].getInt == 5 and byId["keys"]["channel"].getFloat == 6
-    doAssert st.traceHeaderReport("""{"file":1,"index":30}""").body["gather"].getInt == 1
+    doAssert st.headers("""{"file":1,"index":30}""").body["gather"].getInt == 1
     for bad in ["{}", """{"trace":999999}""", """{"panel":9,"position":0}""",
         """{"panel":1,"position":24}""", """{"file":5,"index":0}""", """{"file":1,"index":72}""",
         """{"trace":-1}""", """{"trace":"5"}""", """{"color":1}"""]:
-      doAssert st.traceHeaderReport(bad).isError, bad
+      var ask = st.askTraceHeaders(bad)
+      doAssert ask.answer.len > 0 and ask.answer.isError and ask.job == NoJob, bad
 
   block theHeadersWindow:
     # What the Headers window has on screen is read by its reader, and
