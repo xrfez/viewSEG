@@ -363,8 +363,10 @@ model, two sources of positions, each a `SurveyLayer`:
   command line and a click in Files all reach them: the open job reads a file's first
   bytes and loads a survey file into the survey instead of opening it (`openFileWork`),
   and the plot stays as it is. An SPS file is read in 4 MiB chunks (`parseSps`, the
-  revision and layout of the first chunk kept), each cut after its last line end, so
-  any size is read in bounded memory, with progress and a cancel between chunks; lines
+  revision and layout of the first chunk kept), each cut after its last line end and
+  parsed by one of up to eight workers while the chunks before it are taken in, in
+  order (`eachSpsPart`; "Survey scale" below), so any size is read in bounded memory,
+  with progress and a cancel between chunks; lines
   that hold binary bytes are passed by, and a file that turns into other data (16 MiB in
   a row of binary lines or of lines that are no record) is read no further. A P1 file is
   read whole, up to 64 MiB. Text line names (SPS 1.0, P1) become numbers as the import's
@@ -481,11 +483,14 @@ million points), each time.
 **The survey import** (`core/join`, `ckJoin`, File > Import > Survey...; `ui/imgui/joindialog`,
 the "Import survey" window). The user imports a survey; the code keeps parseSEG's word for
 what it does, a join. Its SPS and P1 files not on the map yet, or read with other line
-names than the import's options, are loaded onto it as File > Open loads them
-(`loadSurvey` with those options, each a layer; their loads are `Joining.loads`), while the
-join below runs; the import ends, and its report and log line are made (`finishImport`:
-the points on the map, then the join's words), when both are done. With no file open
-(`joinFile` none) it is the loads alone (`joMapOnly`). A cancel or a failure cancels the
+names than the import's options, are put on it from what the join below reads (each a
+layer, posted as soon as its file is read; a relation file's with the plan), so each
+file is read once; a relation file on the map as it is now is not read again: the join
+uses its layer's relation records where they are (`joinReadWork`'s `reuse`, kept alive
+in `Joining.reused`). The import ends, and its report and log line are made
+(`finishImport`: the points on the map, then the join's words), when the join is done.
+With no file open (`joinFile` none) it is loads alone, as File > Open loads the files
+(`loadSurvey` with the import's options; `Joining.loads`, `joMapOnly`). A cancel or a failure cancels the
 loads and takes the layers they gave off the map again (a layer a cancelled load still
 posts is dropped: `droppedLoads`). A CSV table is joined, not drawn: it has no layer yet.
 Survey files (SPS S, R and X with parseSEG's `addSps`, SEG P1 with `addP1`, CSV tables of
@@ -496,7 +501,11 @@ stops reading the file only for the moment its keys change:
 1. **Read and plan** (`joinReadWork`, interactive lane, the file and the survey files in
    `reads`): the survey files are read into one `SurveyGeometry` with the join's options
    (`mapLine`, `trailingDigits`, `multiComponent`), SPS a chunk at a time as the survey
-   loads them (`eachSpsPart`), each file's problems logged; then the join is worked out on
+   loads them (`eachSpsPart`), each file's problems logged. With parseSEG's join of two
+   geometries (`SharedRelations`, one component a station) the relation records are kept
+   apart: they are the relation file's new layer's own (or a loaded layer's), passed with
+   the plan (`mkJoining.relations`, after that layer), so the map and the join share one
+   copy; two relation files are read once more into one geometry for the join. Then the join is worked out on
    copies of the keys (`planJoin`, `traceKeysInto` a chunk at a time, with progress and a
    cancel): per trace, `joinStations` and `applySurvey` on the copy, so the plan is what
    the join will do, trace for trace: how each matched, which stations the survey has,
@@ -524,7 +533,7 @@ stops reading the file only for the moment its keys change:
    it is).
 
 A joined file keeps what it was joined with (`AppState.joins`: the files, options, units,
-the plan, the geometry): its positions are read again from its keys (the map), its records
+the plan, the geometry and the relation records when they are apart): its positions are read again from its keys (the map), its records
 are checked against the joined relation records (`checkWork` with the join's
 `RecordMatch` and `TraceMatch`, every relation file of the join merged, as a loaded layer
 cannot), the units the user confirmed label the map and the status bar first

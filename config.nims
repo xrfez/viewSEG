@@ -260,6 +260,18 @@ task coverage, "Rewrite docs/coverage.md's summary, then check the page against 
   ## checks; tests/tcoverage.nim does that.
   selfExec "r --hints:off --warnings:off tools/coverage.nim write"
 
+# -------------------------------------------------------------- benchmarks --
+task surveyBench, "Time survey files at real scale: read, load, import, cancel, memory":
+  ## tools/surveybench.nim in a release build: surveys of tests/utils/bigsurvey
+  ## at a hundredth and a tenth of a real 3D survey (R 200 000, S 2 000 000,
+  ## X about 30 million records at 1) written to a temporary folder, each
+  ## measurement in a process of its own. For other sizes (0.3, 1: 2.5 GB of
+  ## files and about 4 GB of memory) run the tool itself:
+  ## `<bin> all <dir> 0.1 0.3 1`; the map's frames: tools/mapbench.nim.
+  selfExec "c -d:release --hints:off --warnings:off -o:bin/surveybench tools/surveybench.nim"
+  exec "bin" / "surveybench" & " all " & quoteShell(getTempDir() / "viewseg-surveybench") &
+    " 0.01 0.1"
+
 # --------------------------------------------------------------- libraries --
 # deps/parseSEG and deps/processSEG are the real repositories (bind mounts).
 # Use `git -C deps/<lib>` for them. Their suites run from their own directory
