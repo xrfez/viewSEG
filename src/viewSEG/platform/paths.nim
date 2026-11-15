@@ -26,6 +26,7 @@ import std/[os, strutils]
 
 const
   AppName* = "viewSEG"
+  AgentSocketName* = "viewSEG.sock" ## agent control's socket, unless a path is given
   VendorPathVar* = "PARSESEG_VENDOR_PATH"
     ## Extra directories of parseSEG vendor header maps, separated like `PATH`.
 
@@ -172,6 +173,18 @@ proc vendorMapDirs*(c: PathContext): seq[string] =
   candidates.add join(c.os, parentOf(c.os, c.appDir), "vendormaps")
   c.existing(candidates)
 
+proc agentSocket*(c: PathContext): string =
+  ## Where agent control's socket goes unless a path is given: next to the
+  ## executable when that folder is writable (a build in a repository, a
+  ## portable folder: whoever shares the folder, a container too, finds it
+  ## there); else in the user's runtime folder (`$XDG_RUNTIME_DIR/viewSEG`,
+  ## Linux and macOS); else in the cache folder.
+  let runtime = c.env("XDG_RUNTIME_DIR")
+  if c.isWritableDir(c.appDir): join(c.os, c.appDir, AgentSocketName)
+  elif c.os != ofWindows and isAbsolute(c.os, runtime): join(c.os, runtime, AppName,
+    AgentSocketName)
+  else: join(c.os, c.cacheDir, AgentSocketName)
+
 # ------------------------------------------------------------ real environment
 
 proc appDir*(): string =
@@ -224,3 +237,8 @@ proc assetDirs*(): seq[string] =
 proc vendorMapDirs*(): seq[string] =
   ## The vendor header map search list of this process.
   currentContext().vendorMapDirs
+
+proc agentSocket*(): string =
+  ## Agent control's default socket for this process (`agentSocket(c)`);
+  ## nothing is created.
+  currentContext().agentSocket

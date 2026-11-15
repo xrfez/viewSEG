@@ -57,6 +57,7 @@ const
   IconNew* = ""        ## nf-cod-circle_filled
   IconWriting* = ""    ## nf-cod-edit
   IconFollow* = ""     ## nf-cod-debug_step_into
+  IconAgent* = ""      ## nf-cod-robot
 
   AllIcons* = [IconOpenFile, IconOpenFiles, IconOpenFolder, IconFolder, IconSave,
     IconSettings, IconLog, IconMap, IconFilter, IconEye, IconEyeOff, IconZoomIn,
@@ -64,7 +65,8 @@ const
     IconError, IconInfo, IconClose, IconCheck, IconTheme, IconTable, IconPlot, IconPulse,
     IconLayers, IconTarget, IconLocation, IconRefresh, IconArrowUp, IconArrowDown, IconTrash,
     IconCopy, IconClearAll, IconTasks, IconList, IconGoTo, IconExport, IconHistory,
-    IconRecordBack, IconRecordNext, IconRecords, IconNew, IconWriting, IconFollow]
+    IconRecordBack, IconRecordNext, IconRecords, IconNew, IconWriting, IconFollow,
+    IconAgent]
     ## for tests: every glyph above must be in the UI font
 
 func codepoint*(icon: string): int =

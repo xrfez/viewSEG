@@ -24,10 +24,18 @@ const IconScale* = 1.3'f32
   ## toolbar icons and symbols, relative to the text size
 
 type
+  AgentSign* = object
+    ## Agent control, as the status bar shows it.
+    on*: bool           ## the server listens
+    clients*: int       ## agents connected
+    names*: seq[string] ## what they said they are
+    socket*: string     ## where they connect
+
   ChromeInfo* = object
     ## Facts the status bar shows.
     themeName*: string
     scale*: float32
+    agent*: AgentSign
 
   StatusOutput* = object
     ## What the status bar asks for.
@@ -261,6 +269,28 @@ proc jobField(job: JobStatus; t: Theme; marks: var Marks; res: var StatusOutput)
     if igIsItemClicked(0): res.showJobs = true
   igSameLine(0, 18)
 
+proc agentField(a: AgentSign; t: Theme; marks: var Marks) =
+  ## The sign that agent control is on: dim while no agent is connected, in
+  ## the warning colour while one is (it may change what is shown).
+  let text = if a.clients == 0: IconAgent & " agents: on"
+             elif a.clients == 1: IconAgent & " agent connected"
+             else: IconAgent & " " & $a.clients & " agents connected"
+  igSameLine(0, -1)
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[if a.clients > 0: rlWarning
+    else: rlTextDim]))
+  igTextUnformatted(text.cstring, nil)
+  igPopStyleColor(1)
+  marks.mark("status.agent")
+  if a.clients > 0: marks.mark("status.agent connected")
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igTextUnformatted(("Agent control is on: MCP clients connect through\n" & a.socket).cstring,
+      nil)
+    if a.names.len > 0:
+      igTextUnformatted(("Connected: " & a.names.join(", ")).cstring, nil)
+    igTextDisabled("Every call an agent makes is in Messages. File > Agent control turns it off.")
+    igEndTooltip()
+  igSameLine(0, 16)
+
 proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
     fields: openArray[ReadoutField]; at: Pick; marks: var Marks;
     mapCursor = ""; linkNote = ""): StatusOutput =
@@ -300,6 +330,8 @@ proc drawStatusBar*(fonts: Fonts; t: Theme; info: ChromeInfo; job: JobStatus;
       igPopStyleColor(1)
       marks.mark("status.link")
       igSameLine(0, 16)
+    if info.agent.on:
+      agentField(info.agent, t, marks)
     let right = info.themeName & "   " & $int(round(info.scale * 100)) & " %"
     let w = igCalcTextSize(right.cstring, nil, false, -1).x
     let avail = igGetContentRegionAvail().x

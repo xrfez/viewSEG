@@ -1,10 +1,15 @@
 ## The command line: files to open, the options that print and exit, `--`
-## for a file named like an option, and a bad option refused.
+## for a file named like an option, and a bad option refused; agent
+## control's options (`--mcp`, `--mcp-stdio`, `--mcp-call` with its tool,
+## arguments and `--png`) and the socket `--paths` reports.
 ##
 ## Seen to fail: with `--` not ending the options, `dashDash` refused
-## "-odd.sgy" as an unknown argument.
+## "-odd.sgy" as an unknown argument; with `--mcp-call`'s arguments read as
+## files, `agentOptions` saw "unknown argument --png=shot.png".
 
+import std/strutils
 import viewSEG
+import viewSEG/platform/paths
 
 block files:
   let c = parseCommandLine(["shot.sgd", "../data/survey.sgy"])
@@ -26,3 +31,27 @@ block dashDash:
 block badOption:
   let c = parseCommandLine(["--open", "a.sgy"])
   doAssert c.action == caError and c.error == "unknown argument --open", $c
+
+block agentOptions:
+  let on = parseCommandLine(["--mcp", "a.sgy"])
+  doAssert on.action == caRun and on.agent and on.socket == "" and on.files == @["a.sgy"], $on
+  let at = parseCommandLine(["a.sgy", "--mcp=/run/v.sock"])
+  doAssert at.action == caRun and at.agent and at.socket == "/run/v.sock", $at
+  doAssert not parseCommandLine(["a.sgy"]).agent, "agent control is off by default"
+  doAssert parseCommandLine(["--mcp="]).action == caError
+  doAssert parseCommandLine(["--mcpx"]).action == caError
+  doAssert parseCommandLine(["--", "--mcp"]).files == @["--mcp"]
+  let bridge = parseCommandLine(["--mcp-stdio"])
+  doAssert bridge.action == caMcpStdio and bridge.socket == ""
+  doAssert parseCommandLine(["--mcp-stdio=/s.sock", "x"]).socket == "/s.sock"
+  let call = parseCommandLine(["--mcp-call=/s.sock", "state", """{"parts":["jobs"]}""",
+    "--png=shot.png"])
+  doAssert call.action == caMcpCall and call.socket == "/s.sock" and call.tool == "state" and
+    call.arguments == """{"parts":["jobs"]}""" and call.png == "shot.png", $call
+  doAssert parseCommandLine(["--mcp-call", "wait"]).arguments == ""
+  for bad in [@["--mcp-call"], @["--mcp-call", "a", "{}", "c"], @["--mcp-call", "a", "--x"]]:
+    doAssert parseCommandLine(bad).action == caError, $bad
+
+block pathsReportsTheSocket:
+  let report = pathsReport(currentContext())
+  doAssert "\nagent socket: " in report and "viewSEG.sock\n" in report, report

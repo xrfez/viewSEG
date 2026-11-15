@@ -31,6 +31,8 @@ type
     layouts*: seq[SavedLayout]  ## View > Layout > Load: the user's, then the presets
     keepsLayouts*: bool         ## layouts can be saved by name (the program keeps its settings)
     followLatest*: bool         ## File > Follow the latest file is checked
+    agentOn*: bool              ## File > Agent control is checked
+    agentSocket*: string        ## where agents connect; "" while not known yet
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -41,6 +43,7 @@ type
     clearRecent*: bool    ## "Clear the list" under File > Open recent
     loadLayout*: string   ## a layout file to load; "" for none
     toggleFollow*: bool   ## File > Follow the latest file was clicked
+    toggleAgent*: bool    ## File > Agent control was clicked
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
@@ -168,6 +171,12 @@ proc drawMainMenu*(input: MenuInput): MenuResult =
         tip("Every setting back to its default (the recent files and the window's place " &
           "stay); the settings before are kept in a copy")
         igEndMenu()
+      if igMenuItem_Bool((IconAgent & "  Agent control").cstring, nil, input.agentOn, true):
+        result.toggleAgent = true
+      tip("On: an AI agent (an MCP client) can operate viewSEG while you watch, through " &
+        (if input.agentSocket.len > 0: input.agentSocket else: "a socket next to the " &
+        "program (viewSEG --paths says where)") & ". Every call it makes is written in " &
+        "Messages; it cannot write files. For this run only.")
       igSeparator()
       item(maQuit, result)
       igEndMenu()

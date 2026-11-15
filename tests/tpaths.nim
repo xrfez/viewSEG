@@ -1,5 +1,9 @@
 ## The path rules of `platform/paths` for every OS, run on any host through
-## `PathContext`: portable mode, per-user directories, fallbacks, search lists.
+## `PathContext`: portable mode, per-user directories, fallbacks, search lists,
+## agent control's socket.
+##
+## Seen to fail: with the socket's first rule (next to the program) left
+## out, a build's socket went to "/run/user/1000/viewSEG/viewSEG.sock".
 
 import std/[os, strutils, tables]
 import viewSEG/platform/paths
@@ -117,6 +121,21 @@ block vendorMapDirsDevelopmentFallback:
     dirs = ["/repo/vendormaps", "/x", "/repo/bin/vendormaps"])
   doAssert c.vendorMapDirs == @["/repo/bin/vendormaps", "/x", "/repo/vendormaps"],
     $c.vendorMapDirs
+
+block agentSocket:
+  # next to the program when its folder is writable (a build, a portable folder)
+  let built = context(ofLinux, "/home/u/viewSEG/bin", {"HOME": "/home/u",
+    "XDG_RUNTIME_DIR": "/run/user/1000"}, writable = ["/home/u/viewSEG/bin"])
+  doAssert built.agentSocket == "/home/u/viewSEG/bin/viewSEG.sock", built.agentSocket
+  # else the user's runtime folder, else the cache folder
+  let installed = context(ofLinux, "/usr/bin", {"HOME": "/home/u",
+    "XDG_RUNTIME_DIR": "/run/user/1000"})
+  doAssert installed.agentSocket == "/run/user/1000/viewSEG/viewSEG.sock",
+    installed.agentSocket
+  let noRuntime = context(ofLinux, "/usr/bin", {"HOME": "/home/u", "XDG_RUNTIME_DIR": "rel"})
+  doAssert noRuntime.agentSocket == "/home/u/.cache/viewSEG/viewSEG.sock", noRuntime.agentSocket
+  let mac = context(ofMacos, "/Applications/viewSEG.app/Contents/MacOS", {"HOME": "/Users/u"})
+  doAssert mac.agentSocket == "/Users/u/Library/Caches/viewSEG/viewSEG.sock", mac.agentSocket
 
 block realEnvironment:
   # The host's own context: directories are created on demand under a

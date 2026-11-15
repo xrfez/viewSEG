@@ -35,9 +35,10 @@ import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
 import ../../core/[geometry, state, watchdog]
 import ../../platform/paths
+import ../../remote/control
 import ../../view/jobstatus
-import chrome, dpi, filelist, fonts, icons, jobswindow, mapwindow, menus, messages, recordlist,
-  shell, style, tracepanel
+import agentshot, chrome, dpi, filelist, fonts, icons, jobswindow, mapwindow, menus, messages,
+  recordlist, shell, style, tracepanel
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow
 
@@ -95,6 +96,9 @@ type
     placed: bool                               ## the main window moved or changed size this frame
     layoutDone: bool
     running: bool
+    agent: AgentControl                        ## agent control: off until turned on
+    agentSocket: string                        ## where it listens; "" until first needed
+    version: string                            ## the program's version, for agents
 
   FrameInfo* = object
     ## What a frame hook sees. The hook runs after the main window is drawn and
@@ -168,6 +172,11 @@ type
     maxTextureSize*: int
       ## the largest texture side the plot uses; 0 for the GPU's limit
       ## (tests set a small one, so that tiles are cut into blocks)
+    agent*: bool
+      ## start with agent control on (`--mcp`); File > Agent control turns it
+      ## on and off in any case
+    agentSocket*: string
+      ## the socket agent control listens on; "" for `paths.agentSocket()`
     simulate: set[StartupStep] ## tests: these steps fail without being tried
 
 proc readPixel*(frame: FrameInfo; x, y: int): Rgba =
@@ -384,6 +393,23 @@ proc showView*(frame: FrameInfo; v: Viewport) =
 proc apply*(frame: FrameInfo; cmd: Command) =
   ## Applies `cmd` as a control of the window would (for tests).
   frame.ui.core.apply cmd
+
+proc agentControl*(frame: FrameInfo): lent AgentControl =
+  ## Agent control as this frame left it: `running`, `clients`, `path`.
+  frame.ui.agent
+
+proc toggleAgent(ui: var Ui) =
+  ## Turns agent control on or off, as File > Agent control does. The
+  ## default socket is found only now: finding it tries the program's folder.
+  if ui.agent.running:
+    ui.agent.stop(ui.core)
+  else:
+    if ui.agentSocket.len == 0: ui.agentSocket = agentSocket()
+    discard ui.agent.start(ui.core, ui.agentSocket, ui.version)
+
+proc setAgentControl*(frame: FrameInfo; on: bool) =
+  ## Turns agent control on or off, as File > Agent control does.
+  if on != frame.ui.agent.running: frame.ui[].toggleAgent()
 
 # ------------------------------------------------------------------ themes --
 
@@ -723,7 +749,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   let menu = drawMainMenu(MenuInput(themes: ui.themes, theme: ui.selected,
     recent: ui.core.settings.recentFiles, recentFolders: ui.core.settings.recentFolders,
     canClose: ui.core.shownFile(ui.core.findPanel(MainPanel)) >= 0, layouts: ui.core.layouts,
-    keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest))
+    keepsLayouts: ui.keepsLayouts, followLatest: ui.core.settings.files.followLatest,
+    agentOn: ui.agent.running, agentSocket: ui.agentSocket))
+  if menu.toggleAgent: ui.toggleAgent()
   if menu.loadLayout.len > 0:
     ui.core.apply Command(kind: ckLoadLayout, docPath: menu.loadLayout)
   result = menu.actions
@@ -743,8 +771,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   let job = jobStatus(ui.core.jobs.active, getMonoTime())
   # The readout is last frame's pick: the bar is drawn before the plot.
   let status = drawStatusBar(ui.fonts, ui.theme,
-    ChromeInfo(themeName: ui.theme.name, scale: ui.scale), job, ui.core.settings.readout,
-    ui.pick, ui.marks, ui.mapCursor, ui.core.hoverNote)
+    ChromeInfo(themeName: ui.theme.name, scale: ui.scale, agent: AgentSign(
+      on: ui.agent.running, clients: ui.agent.clients, names: ui.agent.clientNames,
+      socket: ui.agent.path)), job, ui.core.settings.readout, ui.pick, ui.marks,
+    ui.mapCursor, ui.core.hoverNote)
   if status.cancel != NoJob:
     ui.core.apply Command(kind: ckCancelJob, job: status.cancel)
   if status.showJobs: ui.focus.incl maShowJobs
@@ -867,6 +897,55 @@ proc fail(opts: RunOptions; step: StartupStep; reason: string): int =
 
 proc sdlError(): string = $SDL_GetError()
 
+proc shoot(ui: var Ui; target: string; maxSide: int): Shot =
+  ## A PNG of `target` (`ShotTargets`) as this frame drew it, for agent
+  ## control: the plot's own image, or a part of the frame's back buffer.
+  var pixels: seq[Rgba]
+  var w, h = 0
+  if target == "plot":
+    (pixels, w, h) = ui.trace.plotImage
+    if w <= 0 or h <= 0:
+      return Shot(error: "the Seismic window shows no picture of traces now")
+  else:
+    var fw, fh: cint
+    discard SDL_GetWindowSizeInPixels(ui.window, addr fw, addr fh)
+    var r = Rect(pos: vec2(0, 0), size: vec2(fw.float32, fh.float32))
+    if target != "window":
+      let name = if target == "seismic": ui.core.windowTitle(MainPanel).toLowerAscii
+                 else: target
+      r = Rect()
+      for (n, m) in ui.marks:
+        if n == name: r = m
+      if r.size.x < 1 or r.size.y < 1:
+        return Shot(error: "the " & target & " window is not on screen (closed, behind " &
+          "another tab, or in a window of its own)")
+    let x0 = clamp(int(r.pos.x), 0, fw.int)
+    let y0 = clamp(int(r.pos.y), 0, fh.int)
+    w = clamp(int(r.pos.x + r.size.x), 0, fw.int) - x0
+    h = clamp(int(r.pos.y + r.size.y), 0, fh.int) - y0
+    if w <= 0 or h <= 0:
+      return Shot(error: "the " & target & " window is outside the main window")
+    pixels = readRegion(fh.int, x0, y0, w, h)
+  let (small, sw, sh) = scaledDown(pixels, w, h, maxSide)
+  let (png, why) = encodePng(small, sw, sh)
+  Shot(png: png, width: sw, height: sh, error: why)
+
+proc frontendOf(ui: ptr Ui; minimized: bool): Frontend =
+  ## What agent control may ask of this frontend: the main window's
+  ## pictures (none while minimized), the main plot's drawn view, and views
+  ## shown in it as the user's pan or zoom would.
+  result.drawnView = proc (panel: PanelId; view: var Viewport): bool =
+    result = panel == MainPanel
+    if result: view = ui.trace.drawnView
+  result.showView = proc (panel: PanelId; view: Viewport): bool =
+    result = panel == MainPanel
+    if result: ui.trace.show(view)
+  if minimized:
+    result.shoot = proc (target: string; maxSide: int): Shot =
+      Shot(error: "the window is minimized")
+  else:
+    result.shoot = proc (target: string; maxSide: int): Shot = ui[].shoot(target, maxSide)
+
 proc glProc(name: cstring): pointer {.cdecl, gcsafe, raises: [].} =
   ## The GL loader the GPU layer uses.
   cast[pointer](SDL_GL_GetProcAddress(name))
@@ -986,7 +1065,9 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
   result = Ui(window: window, choice: choice, system: systemTheme(), selected: selected,
     themes: themeFiles(themeDirs(userThemes, assets)), scale: windowScale(window),
     core: initAppState(indexCache = indexCache), pick: noPick(), dog: initFrameWatchdog(),
-    slow: initSlowFrameDigest(), echoing: isatty(stdout), running: true)
+    slow: initSlowFrameDigest(), echoing: isatty(stdout), running: true,
+    agentSocket: opts.agentSocket, version: if opts.version.len > 0: opts.version
+                                           else: "unknown")
   if opts.version.len > 0:
     result.say("viewSEG " & opts.version)
   if opts.persist:
@@ -1085,6 +1166,8 @@ proc run*(opts = RunOptions()): int =
   let mapError = ui.map.startGpu()
   if mapError.len > 0:
     ui.say("The map cannot be drawn: " & mapError, mlError)
+  if opts.agent: ui.toggleAgent()
+  let (awake, asleep) = (frontendOf(addr ui, false), frontendOf(addr ui, true))
   if opts.openPaths.len > 0:
     ui.core.apply Command(kind: ckBrowse, paths: opts.openPaths, showFirst: true)
   elif opts.persist and ui.core.settings.recentFolders.len > 0 and
@@ -1131,6 +1214,8 @@ proc run*(opts = RunOptions()): int =
     ui.mark "inbox"
     discard ui.core.drainInbox()
     if (SDL_GetWindowFlags(window) and SDL_WINDOW_MINIMIZED) != 0:
+      ui.mark "agents"
+      ui.agent.serve(ui.core, asleep)
       ui.mark("minimized", idle = true)
       SDL_Delay(10)
     else:
@@ -1151,6 +1236,8 @@ proc run*(opts = RunOptions()): int =
       glClearColor(bg.r.float32 / 255, bg.g.float32 / 255, bg.b.float32 / 255, 1)
       glClear(GL_COLOR_BUFFER_BIT)
       ImGui_Impl_OpenGL3_RenderDrawData(igGetDrawData())
+      ui.mark "agents" # what agents asked, answered from this frame
+      ui.agent.serve(ui.core, awake)
       if opts.onFrame != nil:
         ui.mark("test hook", idle = true) # not the program's own work
         opts.onFrame(FrameInfo(index: frame, width: w.int, height: h.int, theme: ui.theme,
@@ -1191,6 +1278,7 @@ proc run*(opts = RunOptions()): int =
         ui.core.report(sevWarning, "frame", report.get)
     ui.echoNewLog()
     ui.core.persist()
+  ui.agent.stop(ui.core)
   ui.map.stopGpu() # while the GL context is current
   ui.trace.stopGpu()
   ui.notePlacement()
