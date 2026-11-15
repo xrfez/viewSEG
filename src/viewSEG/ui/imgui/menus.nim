@@ -175,7 +175,8 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
   ## then the layouts.
   item(maResetWindows, res)
   tip("Every window shown and docked in the main window, as at a first start (the " &
-    "default layout); the main window is brought onto a screen when it is off every one")
+    "default layout); the main window is brought onto a screen when it is off every one. " &
+    "When the menus cannot be reached, start viewSEG with --reset-windows")
   item(maBringWindows, res)
   tip("The windows dragged out of the main window, wherever they are (on another screen, " &
     "on one that is gone, or past a screen's edge), and the main window itself, brought " &

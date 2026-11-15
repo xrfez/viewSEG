@@ -620,7 +620,16 @@ toggles and columns. It is saved a second after a change and when you quit.
 
 A layout saved before a window existed (before the map came, say) docks that window beside
 its neighbours, and shows it. A window a layout puts off every screen (left on a monitor
-that is not plugged in now) is brought onto the main window's screen, and Messages says so.
+that is not plugged in now) is brought onto the main window's screen, and Messages says so;
+so is the main window, when its place is off every screen (it opens in the middle of the
+primary screen) or larger than any screen (it is made to fit the screen it was on).
+
+**When the menus cannot be reached** (the main window somewhere you cannot see it, say),
+start viewSEG with `--reset-windows`: the windows are as at a first start (every window
+shown and docked) and the main window opens in the middle of the primary screen at its
+default size. Every other setting stays as it is, and the arrangement is saved as usual
+from then on. Ctrl+Shift+R does the same in a running viewSEG, if the main window has the
+keyboard. Deleting `layout.nif` in the settings folder also works, with viewSEG closed.
 
 **File > Settings** exports them to a file of your choice (to keep, or to take to another
 computer), imports such a file (what it does not hold stays as it is), or resets them to
@@ -653,8 +662,10 @@ them.
 ## Command line
 
 ```
-viewSEG --version     the version
-viewSEG --paths       the folders in use (settings, logs, cache, assets, vendor maps)
+viewSEG --version         the version
+viewSEG --paths           the folders in use (settings, logs, cache, assets, vendor maps)
+viewSEG --help            the options, each with what it does
+viewSEG --reset-windows   start with the windows as at a first start (see Layouts)
 ```
 
 On Windows these print only when the output is redirected, for example

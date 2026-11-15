@@ -12,6 +12,11 @@
 ## MCP client can operate the program through a socket, `--mcp=<socket>` or
 ## the one `--paths` names.
 ##
+## `--reset-windows` starts with the windows as at a first start, for when
+## they are arranged so that the menus cannot be reached: the default layout
+## (every window shown and docked in the main window) and the main window on
+## the primary screen at its default size; every other setting is as saved.
+##
 ## Options that print and exit without opening a window:
 ## - `--version`: the version of viewSEG and parseSEG;
 ## - `--paths` (or `--where`): the directories in use, one `name: path` per line.
@@ -36,10 +41,31 @@ proc nimbleVersion(): string {.compileTime.} =
 
 const
   ViewSEGVersion* = nimbleVersion() ## from viewSEG.nimble
-  Usage = "usage: viewSEG [--version] [--paths | --where] [--help] [--mcp[=<socket>]] " &
-    "[--] [file ...]\n" &
+  Usage = "usage: viewSEG [--version] [--paths | --where] [--help] [--reset-windows] " &
+    "[--mcp[=<socket>]] [--] [file ...]\n" &
     "       viewSEG --mcp-stdio[=<socket>]\n" &
     "       viewSEG --mcp-call[=<socket>] <tool> [<arguments as JSON>] [--png=<file>]"
+  Help* = """
+Opens the window, and the seismic and survey files and folders named.
+
+Options:
+  --reset-windows     Start with the windows as at a first start: every window
+                      shown and docked in the main window, and the main window on
+                      the primary screen at its default size. For when the
+                      windows are arranged so that the menus cannot be reached;
+                      Window > Reset the windows (Ctrl+Shift+R) does the same in
+                      a running viewSEG. Every other setting stays as saved.
+  --mcp[=<socket>]    Turn agent control on for this run: an MCP client can
+                      operate viewSEG through the socket (--paths names the
+                      default one).
+  --version, -v       Print the versions of viewSEG and parseSEG.
+  --paths, --where    Print the folders in use (settings, logs, cache, assets).
+  --help, -h          Print this.
+  --                  End the options: what follows names files.
+  --mcp-stdio         Serve an MCP client on stdio, through a running viewSEG's
+                      socket.
+  --mcp-call          Make one call to a running viewSEG's agent control and
+                      print its answer."""
 
 when frontend == "imgui":
   import viewSEG/ui/imgui/app
@@ -62,6 +88,7 @@ type
     files*: seq[string]       ## seismic files to open, as given
     error*: string
     agent*: bool              ## caRun: agent control on (`--mcp`)
+    resetWindows*: bool       ## caRun: the windows as at a first start (`--reset-windows`)
     socket*: string           ## agent control's socket, as given; "" for the default
     tool*, arguments*: string ## caMcpCall: the tool and its arguments (JSON text)
     png*: string              ## caMcpCall: where an image the answer holds goes; "" for nowhere
@@ -88,8 +115,9 @@ func parseMcpCall(args: openArray[string]; socket: string): CommandLine =
 func parseCommandLine*(args: openArray[string]): CommandLine =
   ## Reads the program's arguments: options first wins (`--version`,
   ## `--paths`, `--help`, `--mcp-stdio`, `--mcp-call` and what follows it);
-  ## `--mcp` turns agent control on; anything else not starting with `-`
-  ## names a file; after `--` every argument names a file.
+  ## `--mcp` turns agent control on and `--reset-windows` starts with the
+  ## windows as at a first start; anything else not starting with `-` names
+  ## a file; after `--` every argument names a file.
   result = CommandLine(action: caRun)
   var options = true
   for i, arg in args:
@@ -105,6 +133,7 @@ func parseCommandLine*(args: openArray[string]): CommandLine =
       if socket.len > 0: result.socket = socket
     elif options and arg.startsWith("-") and arg != "-":
       case arg
+      of "--reset-windows": result.resetWindows = true
       of "--version", "-v": return CommandLine(action: caVersion)
       of "--paths", "--where": return CommandLine(action: caPaths)
       of "--help", "-h": return CommandLine(action: caHelp)
@@ -141,7 +170,7 @@ when isMainModule:
   of caPaths:
     stdout.write pathsReport(currentContext())
   of caHelp:
-    echo versionLine(), "\n", Usage
+    echo versionLine(), "\n", Usage, "\n\n", Help
   of caError:
     stderr.writeLine "viewSEG: ", cmd.error, "\n", Usage
     quit QuitFailure
@@ -155,4 +184,5 @@ when isMainModule:
     echo versionLine()
     quit run(RunOptions(openPaths: cmd.files, persist: true,
       version: ViewSEGVersion & " (parseSEG " & parseSEG.PackageVersion & ")",
-      agent: cmd.agent, agentSocket: if cmd.socket.len > 0: absolutePath(cmd.socket) else: ""))
+      agent: cmd.agent, agentSocket: if cmd.socket.len > 0: absolutePath(cmd.socket) else: "",
+      resetWindows: cmd.resetWindows))

@@ -56,7 +56,10 @@ OS; `nim packageTest` packages, then checks `dist/` and runs the packaged Linux 
 writes everything (settings, `logs/`, `cache/`) inside its own folder. Without it, or in a
 read-only location such as `Program Files`, it uses the per-user directories of the OS.
 `viewSEG --paths` prints the directories in use and exits; `viewSEG --version` prints the
-version.
+version; `viewSEG --help` lists the options. `viewSEG --reset-windows` starts with the
+windows as at a first start and the main window on the primary screen, for when they are
+arranged so that the menus cannot be reached (Window > Reset the windows, Ctrl+Shift+R, in
+a running viewSEG).
 
 ## Agent control
 

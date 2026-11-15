@@ -1,11 +1,14 @@
 ## The command line: files to open, the options that print and exit, `--`
 ## for a file named like an option, and a bad option refused; agent
 ## control's options (`--mcp`, `--mcp-stdio`, `--mcp-call` with its tool,
-## arguments and `--png`) and the socket `--paths` reports.
+## arguments and `--png`) and the socket `--paths` reports; `--reset-windows`,
+## and what `--help` says of it.
 ##
 ## Seen to fail: with `--` not ending the options, `dashDash` refused
 ## "-odd.sgy" as an unknown argument; with `--mcp-call`'s arguments read as
-## files, `agentOptions` saw "unknown argument --png=shot.png".
+## files, `agentOptions` saw "unknown argument --png=shot.png"; before
+## `--reset-windows` was known, `resetWindows` saw "unknown argument
+## --reset-windows".
 
 import std/strutils
 import viewSEG
@@ -51,6 +54,16 @@ block agentOptions:
   doAssert parseCommandLine(["--mcp-call", "wait"]).arguments == ""
   for bad in [@["--mcp-call"], @["--mcp-call", "a", "{}", "c"], @["--mcp-call", "a", "--x"]]:
     doAssert parseCommandLine(bad).action == caError, $bad
+
+block resetWindows:
+  let c = parseCommandLine(["--reset-windows", "a.sgy"])
+  doAssert c.action == caRun and c.resetWindows and c.files == @["a.sgy"], $c
+  doAssert not parseCommandLine(["a.sgy"]).resetWindows, "off by default"
+  doAssert parseCommandLine(["a.sgy", "--reset-windows", "--mcp"]).resetWindows
+  let after = parseCommandLine(["--", "--reset-windows"])
+  doAssert not after.resetWindows and after.files == @["--reset-windows"], $after
+  doAssert "--reset-windows" in Help and "primary screen" in Help and
+    "Window > Reset the windows" in Help, Help
 
 block pathsReportsTheSocket:
   let report = pathsReport(currentContext())

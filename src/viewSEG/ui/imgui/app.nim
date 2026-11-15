@@ -184,6 +184,10 @@ type
       ## on and off in any case
     agentSocket*: string
       ## the socket agent control listens on; "" for `paths.agentSocket()`
+    resetWindows*: bool
+      ## start with the windows as at a first start (`--reset-windows`): the
+      ## saved layout is not used, and the main window opens on the primary
+      ## screen at its default size; every other setting is as saved
     simulate: set[StartupStep] ## tests: these steps fail without being tried
 
 proc readPixel*(frame: FrameInfo; x, y: int): Rgba =
@@ -1132,48 +1136,60 @@ func simulating(opts: RunOptions; steps: set[StartupStep]): RunOptions =
   result = opts
   result.simulate = steps
 
-proc displayUnder(x, y, w: int): SDL_Rect =
-  ## The usable area of the display that holds most of the top of a window
-  ## at (`x`, `y`), `w` wide: at least 100 x 20 of its title bar; an empty
-  ## rectangle when none does (the display it was on has gone).
-  result = SDL_Rect()
-  var count: cint
-  let displays = SDL_GetDisplays(addr count)
-  if displays != nil:
-    let list = cast[ptr UncheckedArray[SDL_DisplayID]](displays)
-    var best = 0
-    for i in 0 ..< count.int:
-      var b: SDL_Rect
-      if SDL_GetDisplayUsableBounds(list[i], addr b):
-        let across = min(x + w, b.x.int + b.w.int) - max(x, b.x.int)
-        let down = min(y + 40, b.y.int + b.h.int) - max(y, b.y.int)
-        if across >= 100 and down >= 20 and across * down > best:
-          best = across * down
-          result = b
-    SDL_free(displays)
+type
+  MainPlace = object
+    ## Where the main window was opened, and what was corrected.
+    window: ptr SDL_Window
+    moved: bool  ## not where the settings say: to be saved as it is now
+    note: string ## what was corrected, for the log; "" for nothing
+    severity: Severity
 
-proc createMainWindow(size: (int, int); placed: WindowPlacement): ptr SDL_Window =
-  ## The main window: `size` (pixels at 100 %) when given, else where and as
-  ## large as it was (`placed`) when that is still on a display, else at the
-  ## default size for the primary display's scale.
+proc createMainWindow(size: (int, int); placed: WindowPlacement; reset: bool): MainPlace =
+  ## The main window: `size` (pixels at 100 %) when given; else where and as
+  ## large as it was (`placed`) when a screen still holds its top edge (made
+  ## to fit the screen it is on when no screen is that large); else, and
+  ## with `reset` (`--reset-windows`), at the default size in the middle of
+  ## the primary screen; at the default size where the desktop puts it when
+  ## it was never saved.
   const flags = SDL_WINDOW_OPENGL or SDL_WINDOW_RESIZABLE or SDL_WINDOW_HIGH_PIXEL_DENSITY
-  let back = if size[0] > 0 or placed.width <= 0: SDL_Rect()
-             else: displayUnder(placed.x, placed.y, placed.width)
-  if back.w > 0:
+  result = MainPlace(severity: sevInfo)
+  let (screens, primary) = screensNow()
+  let home = if primary >= 0: screens[primary] elif screens.len > 0: screens[0] else: Rect()
+  let wanted = if size[0] > 0 and size[1] > 0: size else: defaultSize
+  let (w, h) = scaledWindowSize(wanted, primaryDisplayScale(), (int(home.size.x),
+    int(home.size.y)))
+  var at = Rect()
+  if size[0] <= 0 and (reset or placed.width > 0):
+    let saved = rect(placed.x, placed.y, placed.width, placed.height)
+    let (r, how) = if reset: (Rect(), spOffScreen) else: mainWindowAtStart(saved, screens)
+    at = r
+    if reset:
+      result.note = "Started with --reset-windows: the windows are as at a first start " &
+        "(every window shown and docked), and the main window is on the primary screen at " &
+        "its default size; the other settings are as they were."
+    elif how == spOffScreen:
+      result.note = "The main window's saved place (" & $placed.x & ", " & $placed.y & ", " &
+        $placed.width & " × " & $placed.height & ") is off every screen (on a monitor " &
+        "that is not there now?): it opens on the primary screen at its default size."
+      result.severity = sevWarning
+    elif how == spShrunk:
+      result.note = "The main window's saved size (" & $placed.width & " × " &
+        $placed.height & ") is larger than any screen: it opens at " & $int(r.size.x) &
+        " × " & $int(r.size.y) & " on the screen it was on."
+      result.severity = sevWarning
+    if at.size.x <= 0 and home.size.x > 0:
+      at = vec2(float32(w), float32(h)).centredOn(home)
+    result.moved = how != spKept or reset
+  if at.size.x > 0:
     # Hidden until it is in place, so it does not jump.
-    result = SDL_CreateWindow("viewSEG", cint(min(placed.width, back.w)),
-      cint(min(placed.height, back.h)), flags or SDL_WINDOW_HIDDEN)
-    if result != nil:
-      discard SDL_SetWindowPosition(result, cint(placed.x), cint(placed.y))
-      if placed.maximized: discard SDL_MaximizeWindow(result)
-      discard SDL_ShowWindow(result)
+    result.window = SDL_CreateWindow("viewSEG", cint(at.size.x), cint(at.size.y),
+      flags or SDL_WINDOW_HIDDEN)
+    if result.window != nil:
+      discard SDL_SetWindowPosition(result.window, cint(at.pos.x), cint(at.pos.y))
+      if placed.maximized and not result.moved: discard SDL_MaximizeWindow(result.window)
+      discard SDL_ShowWindow(result.window)
   else:
-    var usable: SDL_Rect
-    if not SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), addr usable):
-      usable = SDL_Rect()
-    let wanted = if size[0] > 0 and size[1] > 0: size else: defaultSize
-    let (w, h) = scaledWindowSize(wanted, primaryDisplayScale(), (usable.w.int, usable.h.int))
-    result = SDL_CreateWindow("viewSEG", w.cint, h.cint, flags)
+    result.window = SDL_CreateWindow("viewSEG", w.cint, h.cint, flags)
 
 proc placement(ui: Ui): WindowPlacement =
   ## Where the main window is now: its place and size, kept from before
@@ -1295,8 +1311,9 @@ proc run*(opts = RunOptions()): int =
     # A release that is not portable may carry site defaults in its config/.
     let site = if ctx.isPortable: "" else: ctx.appDir / "config" / SettingsFileName
     loaded = loadSettings(configDir / SettingsFileName, site)
-  let window = if ssWindow in opts.simulate: nil
-               else: createMainWindow(opts.windowSize, loaded.settings.window)
+  let place = if ssWindow in opts.simulate: MainPlace()
+              else: createMainWindow(opts.windowSize, loaded.settings.window, opts.resetWindows)
+  let window = place.window
   if window.isNil:
     return opts.fail(ssWindow, sdlError())
   defer: SDL_DestroyWindow(window)
@@ -1339,9 +1356,13 @@ proc run*(opts = RunOptions()): int =
 
   # The windows as they were at the last exit: read, as the settings were,
   # before this thread becomes the UI thread, which never reads a file.
-  let last = if opts.persist: loadLayoutFile(configDir / LayoutFileName) else: LoadedLayout()
+  # With --reset-windows the windows start as at a first start: no layout.
+  let last = if opts.persist and not opts.resetWindows: loadLayoutFile(configDir /
+      LayoutFileName) else: LoadedLayout()
   var ui = initUi(window, opts, loaded, configDir)
   ui.windows.installHandler() # before a layout is read: it says which windows are hidden
+  if place.note.len > 0: ui.core.report(place.severity, "window", place.note)
+  ui.placed = place.moved # its place now is saved after the first frame
   for (severity, text) in last.notes: ui.core.report(severity, "layouts", text)
   if last.found: ui.arrange(last.layout.imgui)
   ui.setTheme()

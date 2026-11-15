@@ -639,7 +639,13 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   thread, and the frontend arranges its windows when `AppState.layoutLoads` goes up
   (`igClearIniSettings`, `igLoadIniSettingsFromMemory`, between frames); `ckExportLayout`
   writes one anywhere. Presets ship in `assets/layouts/`; a user's layout of the same name
-  hides a preset. **Which windows are hidden** is in the toolkit's text too, in a section
+  hides a preset. The main window's own place is in the settings (`window`), not in a
+  layout: at start it is opened there when a screen still holds its top edge, made to fit
+  the screen it is on when no screen is as large, and opened in the middle of the primary
+  screen at its default size when it is off every screen (`core/screens.mainWindowAtStart`;
+  the log says what was corrected, and the place it then has is saved). `--reset-windows`
+  (`RunOptions.resetWindows`) reads no layout and opens the main window that last way;
+  the settings are read as always. **Which windows are hidden** is in the toolkit's text too, in a section
   of the frontend's own (`[viewSEG][Windows]`, `Hidden=` and the windows' IDs), which Dear
   ImGui writes and reads through a settings handler (`ui/imgui/windows`): a layout without
   it (a preset, an earlier build's), or one that does not name a window, shows it.
