@@ -278,8 +278,9 @@ record, to the same level), Exponential (more gain later in the record: dB per s
 or a power of time, rising until the time in its "until" box, 2 000 ms at first, and
 held after it, so the deep part of the record is not blown out), Float (the scale
 follows what is in view) and AGC. Beside it, the
-gain amount in dB works with every type: type a value, click - or +, or press `]` and
-`[` (keypad `*` and `/`); the picture brightens or darkens at once. A trace the file
+gain amount in dB works with every type, from -300 to +300 dB: type a value, click - or
++, or press `]` and `[` (keypad `*` and `/`), 3 dB a step or 12 dB with Shift; the
+buttons and keys repeat while held, and the picture brightens or darkens at once. A trace the file
 marks dead is never drawn, whatever the gain: it is blank, like a killed trace, it does
 not count in the brightness, and the status bar says "dead" over it.
 

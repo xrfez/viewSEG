@@ -85,6 +85,27 @@ block savedByAnOlderBuild:
   doAssert s.plot.display.untilMs == 2000, "the Exponential gain's cutoff takes its default"
   doAssert cleaned(s)[1] == 0
 
+block gainAmountTo300:
+  # The gain amount reads from -300 to +300 dB (60 before: a file of an
+  # earlier build holds less and reads as it is); past that it keeps the
+  # base's, with a line. Seen to fail with the reader's bound at 60:
+  # "(gainDb) needs a number from -60.0 to 60.0, not the number 250.0".
+  for (text, want) in [("250.0", 250.0), ("-300", -300.0), ("12.5", 12.5)]:
+    var problems: seq[string]
+    let s = readSettings("(settings (version 1) (plot (gainDb " & text & ")))", "settings.nif",
+      Settings(), problems)
+    doAssert problems.len == 0, $problems
+    doAssert s.plot.display.gainDb == want, "(gainDb " & text & ") read as " &
+      $s.plot.display.gainDb
+  var problems: seq[string]
+  let s = readSettings("(settings (version 1) (plot (gainDb 300.5)))", "settings.nif",
+    Settings(), problems)
+  doAssert s.plot.display.gainDb == 0 and problems.len == 1 and
+    "(gainDb) needs a number from -300.0 to 300.0" in problems[0], $problems
+  var top = Settings()
+  top.plot.display.gainDb = 300
+  doAssert roundTrip(top)[0].plot.display.gainDb == 300
+
 block everyField:
   let s = everyFieldSet()
   # Every field is away from its default, so a field the writer forgets

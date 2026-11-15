@@ -254,11 +254,12 @@ type
 
 const
   NoPanel* = PanelId(0)
-  MinOverlap* = 0.1 ## the trace overlap's range, in trace spacings
+  MinOverlap* = 0.1       ## the trace overlap's range, in trace spacings
   MaxOverlap* = 10.0
-  MaxBack* = 50     ## earlier views a panel remembers
-  GainStepDb* = 3.0 ## the gain amount's - and + buttons and keys
-  MaxGainDb* = 60.0 ## the gain amount stays within ± this
+  MaxBack* = 50           ## earlier views a panel remembers
+  GainStepDb* = 3.0       ## the gain amount's - and + buttons and keys
+  GainShiftStepDb* = 12.0 ## the same with Shift held
+  MaxGainDb* = 300.0      ## the gain amount stays within ± this (a factor of 1e15)
   SortPresets* = [
     SortPreset(name: "Line/Station",
       keys: @[SortKey(field: hfRcvLine), SortKey(field: hfRcvPoint)]),

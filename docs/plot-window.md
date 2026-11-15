@@ -151,8 +151,12 @@
     pixels);
   - the **display gain**: a gain type, with its own settings in the same drop-down,
     and a **gain amount in dB** that every type has: a box, - and + buttons (3 dB a
-    step) and keys (`]` or keypad `*` for more, `[` or keypad `/` for less), from -60 to
-    +60 dB. The amount rescales the drawing at once and never reads or processes again.
+    step, 12 dB with Shift; held, they repeat) and keys (`]` or keypad `*` for more, `[`
+    or keypad `/` for less; the same steps, repeating while held), from -300 to +300 dB
+    (a factor of 10^15 either way: raw records span far more than 60 dB between the
+    first breaks and the late times). The amount rescales the drawing at once and never
+    reads or processes again; where the scale passes what the GPU's numbers hold, every
+    sample that is not 0 is drawn full black or white.
     A *reference* amplitude is drawn full black (or white) at 0 dB; the types differ
     in what they do to the samples and in where the reference comes from:
 
@@ -184,7 +188,7 @@
     | Normalized | each trace, to its clip percentile |
     | Exponential | 6 dB per second (the power of time: 2), until 2 000 ms |
     | Clip percentile | 99 (of \|x\|) |
-    | Gain amount | 0 dB, in steps of 3 dB |
+    | Gain amount | 0 dB, in steps of 3 dB (12 dB with Shift), -300 to +300 dB |
 
     **Exponential's cutoff** (the user: "with exponential the basemet gets pretty blown
     out. maybe there should be a cutoff time"): the gain rises with time until the time
@@ -357,7 +361,7 @@ its shortcut shown there.
 | Ctrl + Right / Ctrl + Left | Zoom in / out in traces only |
 | Arrow keys | Pan by a tenth of the view; with Shift, by a whole view |
 | Ctrl + `0` | Fit all (also a button in the controls) |
-| `]` or keypad `*` / `[` or keypad `/` | More / less gain amount, 3 dB a step |
+| `]` or keypad `*` / `[` or keypad `/` | More / less gain amount, 3 dB a step; with Shift, 12 dB |
 | Backspace, or Alt + Left | Back to the previous view |
 | Page Down / Page Up | Next / previous gather |
 | Home / End | First / last gather |

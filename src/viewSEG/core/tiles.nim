@@ -240,6 +240,11 @@ func gainFactor*(db: float64): float64 {.inline.} =
 func displayScale*(reference: float64; gainDb = 0.0): float32 =
   ## The display gain: `reference` (`Panel.reference`), raised or lowered by
   ## `gainDb`, maps to full black or white. 0 when the reference is unknown
-  ## or 0, or the scale is past what a float32 holds (everything mid grey).
+  ## or 0 (everything mid grey). A scale past what a float32 holds is the
+  ## largest float32, so more gain never draws less: every sample that is not
+  ## 0 is drawn full black or white (`a * scale` may then overflow to an
+  ## infinity, which the clip to ±1 takes, on the GPU as here).
   let f = if reference > 0 and reference < Inf: gainFactor(gainDb) / reference else: 0.0
-  if f < maximumPositiveValue(float32): float32(f) else: 0'f32 # high() is Inf
+  if f < maximumPositiveValue(float32): float32(f)
+  elif f >= maximumPositiveValue(float32): maximumPositiveValue(float32) # high() is Inf
+  else: 0'f32

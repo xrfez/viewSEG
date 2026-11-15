@@ -16,7 +16,8 @@ import chrome
 
 const
   gainTypes = [dgAuto, dgNone, dgFixed, dgNormalized, dgExponential, dgFloat, dgAgc]
-  dbKeysTip = "] or keypad * for more, [ or keypad / for less"
+  dbKeysTip = "] or keypad * for more, [ or keypad / for less; with Shift, " &
+    "12 dB a step"
 
 proc label(d: DisplaySettings; kind: GatherKind): string =
   ## What the type control says: the type in use and its main setting.
@@ -186,36 +187,43 @@ proc drawGainControls*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Comma
     igEndCombo()
   marks.mark("plot.gain")
   tip("Gain type: how amplitudes are scaled for display. Its settings are in this list.")
-  # the amount
+  # the amount: the buttons repeat while held, 12 dB a step with Shift
+  let step = if igGetIO_Nil().KeyShift: GainShiftStepDb else: GainStepDb
   igSameLine(0, 8)
+  igPushItemFlag(ImGui_ItemFlags_ButtonRepeat.cint, true)
   if igButton("-##gainless", ImVec2_c(x: 0, y: 0)):
-    p.send(d.withGainDb(d.gainDb - GainStepDb), cmds)
+    p.send(d.withGainDb(d.gainDb - step), cmds)
   marks.mark("plot.gain less")
-  tip("Less gain, " & significant(GainStepDb, 2) & " dB (" & dbKeysTip & ")")
+  tip("Less gain, " & significant(GainStepDb, 2) & " dB; held, it repeats (" & dbKeysTip & ")")
   igSameLine(0, 2)
   var db = cdouble(d.gainDb)
-  igSetNextItemWidth(round(igCalcTextSize("+00.0", nil, false, -1).x + 2 * style.FramePadding.x))
+  igSetNextItemWidth(round(igCalcTextSize("+000.0", nil, false, -1).x + 2 * style.FramePadding.x))
   if igInputDouble("##gaindb", addr db, 0, 0, "%+.1f", 0) and float64(db) != d.gainDb:
     p.send(d.withGainDb(float64(db)), cmds) # live: a scale only, nothing is read
   marks.mark("plot.gain dB")
-  tip("Gain amount in dB, on top of any gain type: it rescales the display at once (" &
-    dbKeysTip & ")")
+  tip("Gain amount in dB, -" & significant(MaxGainDb) & " to +" & significant(MaxGainDb) &
+    ", on top of any gain type: it rescales the display at once (" & dbKeysTip & ")")
   igSameLine(0, 2)
   if igButton("+##gainmore", ImVec2_c(x: 0, y: 0)):
-    p.send(d.withGainDb(d.gainDb + GainStepDb), cmds)
+    p.send(d.withGainDb(d.gainDb + step), cmds)
   marks.mark("plot.gain more")
-  tip("More gain, " & significant(GainStepDb, 2) & " dB (" & dbKeysTip & ")")
+  tip("More gain, " & significant(GainStepDb, 2) & " dB; held, it repeats (" & dbKeysTip & ")")
+  igPopItemFlag()
   igSameLine(0, 4)
   igTextUnformatted("dB", nil)
 
 proc gainKeys*(p: Panel; cmds: var seq[Command]) =
   ## The gain amount's keys, while the plot window has the focus: `]` or
-  ## keypad `*` for more, `[` or keypad `/` for less.
-  template pressed(key: untyped): bool =
-    igShortcut_Nil(key.cint, ImGui_InputFlags_Repeat.cint)
+  ## keypad `*` for more, `[` or keypad `/` for less, repeating while held;
+  ## with Shift, 12 dB a step.
+  template pressed(key: untyped; mods = 0): bool =
+    igShortcut_Nil(cint(mods) or key.cint, ImGui_InputFlags_Repeat.cint)
   let d = p.layers[0].display
-  var steps = 0.0
-  if pressed(ImGui_Key_RightBracket) or pressed(ImGui_Key_KeypadMultiply): steps += 1
-  if pressed(ImGui_Key_LeftBracket) or pressed(ImGui_Key_KeypadDivide): steps -= 1
-  if steps != 0:
-    p.send(d.withGainDb(d.gainDb + steps * GainStepDb), cmds)
+  var db = 0.0
+  for (mods, step) in [(0, GainStepDb), (ImGui_Mod_Shift.int, GainShiftStepDb)]:
+    if pressed(ImGui_Key_RightBracket, mods) or pressed(ImGui_Key_KeypadMultiply, mods):
+      db += step
+    if pressed(ImGui_Key_LeftBracket, mods) or pressed(ImGui_Key_KeypadDivide, mods):
+      db -= step
+  if db != 0:
+    p.send(d.withGainDb(d.gainDb + db), cmds)

@@ -16,10 +16,11 @@
 ## changed; with the exponential curve in dB per millisecond,
 ## `exponentialGain` found trace 0's sample 79 at 0.271 where 0.303 is due.
 
-import std/[algorithm, math, os, sequtils, strutils]
+import std/[algorithm, fenv, math, os, sequtils, strutils]
 import parseSEG
 import processSEG/gain/curves
 import viewSEG/core/state {.all.}
+import viewSEG/core/wiggle
 import utils/[fixtures, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
@@ -123,9 +124,37 @@ block whatReadsAgain:
   doAssert layer.displayPipeline(gkShot).len == 0
 
 block gainAmountLimits:
-  doAssert DisplaySettings().withGainDb(200).gainDb == MaxGainDb
-  doAssert DisplaySettings().withGainDb(-200).gainDb == -MaxGainDb
+  # ±300 dB, a factor of 1e15 either way. Seen to fail: with `displayScale`
+  # giving 0 past what a float32 holds (as it did), "+300 dB on a
+  # reference of 1e-30: scale 0.0" (more gain drew mid grey).
+  doAssert MaxGainDb == 300
+  doAssert DisplaySettings().withGainDb(250).gainDb == 250
+  doAssert DisplaySettings().withGainDb(1000).gainDb == MaxGainDb
+  doAssert DisplaySettings().withGainDb(-1000).gainDb == -MaxGainDb
+  doAssert DisplaySettings().withGainDb(Inf).gainDb == MaxGainDb
   doAssert DisplaySettings().withGainDb(NaN).gainDb == 0
+  # At both ends the scale is a finite float32 and every swing a finite
+  # number within the overlap; where the scale passes a float32 (+300 dB on
+  # a reference of 1e-30) every sample but 0 is full black or white, `a *
+  # scale` overflowing to an infinity that the clip takes.
+  let lut = greyLut()
+  for reference in [1e-30, 1e-12, 1.0, 1e12, 1e30]:
+    for db in [-MaxGainDb, MaxGainDb]:
+      let scale = displayScale(reference, db)
+      doAssert scale.classify in {fcNormal, fcSubnormal, fcZero}, $db & " dB on a reference of " &
+        $reference & ": scale " & $scale
+      for a in [-3e38'f32, -1e-30'f32, 0'f32, 1e-30'f32, 3e38'f32]:
+        let d = swing(a, scale, 2)
+        doAssert d.classify in {fcNormal, fcSubnormal, fcZero, fcNegZero} and abs(d) <= 2,
+          $db & " dB on a reference of " & $reference & ", " & $a & ": swing " & $d
+  let top = displayScale(1e-30, MaxGainDb)
+  doAssert top == maximumPositiveValue(float32), "+300 dB on a reference of 1e-30: scale " & $top
+  for a in [1e-30'f32, 1'f32, 3e38'f32]:
+    doAssert lut.densityColour(a, top) == lut[255] and lut.densityColour(-a, top) == lut[0]
+    doAssert swing(a, top, 2) == 2 and swing(-a, top, 2) == -2
+  doAssert lut.densityColour(0, top) == lut[128] and swing(0, top, 2) == 0
+  doAssert lut.densityColour(3e38, displayScale(1e30, -MaxGainDb)) == lut[128],
+    "-300 dB on a reference of 1e30: not mid grey"
 
 block amountRescalesWithNoRead:
   # Under every gain type: +6 dB doubles the scale (20 log10 2 = 6.02),
