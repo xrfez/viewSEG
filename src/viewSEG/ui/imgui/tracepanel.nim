@@ -1615,11 +1615,13 @@ func clampTo(p: ImVec2_c; r: Rect): Vec2 =
   vec2(clamp(p.x, r.pos.x, r.pos.x + r.size.x), clamp(p.y, r.pos.y, r.pos.y + r.size.y))
 
 proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot: Rect;
-    m: Turn; lim: ViewLimits; hovered: bool; t: Theme; remember, menu: var bool;
+    m: Turn; lim: ViewLimits; hovered, held: bool; t: Theme; remember, menu: var bool;
     click: var ClickKind) =
   ## The wheel and the buttons over the plot (the invisible button just
   ## drawn over it), turned as `m` says. A left press released where it went
-  ## down is a click.
+  ## down is a click. A right press on the plot while its menu is open
+  ## (`held`), which closes the menu, starts a right click there too, as on
+  ## a desktop: released where it went down, the menu opens again there.
   let io = igGetIO_Nil()
   let mouse = io.MousePos
   if hovered:
@@ -1636,6 +1638,10 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
       if tp.drag.kind == dkNone and igIsMouseClicked_Bool(b.cint, false):
         tp.drag = Drag(kind: (if b == ImGui_MouseButton_Right: dkBox else: dkPan),
           button: b.cint, press: mouse, start: after)
+  elif held and tp.drag.kind == dkNone and
+      igIsMouseClicked_Bool(ImGui_MouseButton_Right.cint, false) and
+      igIsItemHovered(ImGui_HoveredFlags_AllowWhenBlockedByPopup.cint):
+    tp.drag = Drag(kind: dkBox, button: ImGui_MouseButton_Right.cint, press: mouse, start: after)
   if tp.drag.kind == dkNone: return
   let moved = vec2(mouse.x - tp.drag.press.x, mouse.y - tp.drag.press.y)
   if not tp.drag.moved and max(abs(moved.x), abs(moved.y)) > io.MouseDragThreshold:
@@ -1951,7 +1957,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     tp.turned = turn.orientation
     tp.headerExtent = headerExtent
     var click = clNone
-    tp.handleMouse(after, view, plot, turn, limNow, hovered, t, remember, menu, click)
+    tp.handleMouse(after, view, plot, turn, limNow, hovered, held, t, remember, menu, click)
     case tp.bars.drawScrollBars(after, view, pos, size, barsUnder, limNow, turn, t, marks)
     of beNone, beDrag: discard
     of beGrab:

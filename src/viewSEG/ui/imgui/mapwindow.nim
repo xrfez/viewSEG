@@ -648,11 +648,13 @@ proc sendHover(mu: var MapUi; res: var MapOutput) =
     res.commands.add Command(kind: ckHoverPoints, points: mu.sentHover)
 
 proc handleMouse(mu: var MapUi; st: AppState; after: var MapView; view: MapView; plot: Rect;
-    lim: MapLimits; hovered: bool; t: Theme; remember, menu: var bool; click: var int;
+    lim: MapLimits; hovered, held: bool; t: Theme; remember, menu: var bool; click: var int;
     res: var MapOutput) =
   ## The wheel and the buttons over the map (the invisible button just drawn
   ## over it). A left press released where it went down is a click: `click`
-  ## 1, 2 with Ctrl, 3 with Shift.
+  ## 1, 2 with Ctrl, 3 with Shift. A right press on the map while its menu is
+  ## open (`held`), which closes the menu, starts a right click there too, as
+  ## on a desktop: released where it went down, the menu opens again there.
   let io = igGetIO_Nil()
   let mouse = io.MousePos
   # Equal aspect always: Ctrl, Shift and the sideways wheel zoom nothing.
@@ -673,6 +675,11 @@ proc handleMouse(mu: var MapUi; st: AppState; after: var MapView; view: MapView;
                    else: mdPan
         mu.drag = MapDrag(kind: kind, button: b.cint, press: mouse, start: after,
           adding: io.KeyCtrl and io.KeyShift)
+  elif held and mu.drag.kind == mdNone and
+      igIsMouseClicked_Bool(ImGui_MouseButton_Right.cint, false) and
+      igIsItemHovered(ImGui_HoveredFlags_AllowWhenBlockedByPopup.cint):
+    mu.drag = MapDrag(kind: mdZoom, button: ImGui_MouseButton_Right.cint, press: mouse,
+      start: after)
   if mu.drag.kind == mdNone: return
   let moved = vec2(mouse.x - mu.drag.press.x, mouse.y - mu.drag.press.y)
   if not mu.drag.moved and max(abs(moved.x), abs(moved.y)) > io.MouseDragThreshold:
@@ -1247,7 +1254,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     let dl = igGetWindowDrawList()
     ImDrawList_PushClipRect(dl, pos, ImVec2_c(x: pos.x + size.x, y: pos.y + size.y), true)
     var click = 0
-    mu.handleMouse(st, after, view, plot, lim, hovered, t, remember, menu, click, res)
+    mu.handleMouse(st, after, view, plot, lim, hovered, held, t, remember, menu, click, res)
     mu.handleKeys(st, after, view, plot, lim, hovered, remember, res)
     # The point under the pointer, and what the map says of it. While the
     # map's menu is open, what was under the pointer at the right click is

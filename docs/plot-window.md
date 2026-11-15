@@ -654,7 +654,9 @@ While a right-click menu is open, what was under the pointer at the right click 
 highlighted and its read-outs stay as they were then, wherever the pointer goes over the
 menu (the user: "when i right click i want the highlighting and the values for x,y axis
 just as if i was not in the right click menu");
-when the menu closes, chosen or dismissed, the highlight follows the pointer again.
+when the menu closes, chosen or dismissed, the highlight follows the pointer again. A
+right click elsewhere in the window while the menu is open opens it there, for what is
+under the pointer then, as desktop programs do.
 
 | Window | Held while its menu is open |
 |---|---|

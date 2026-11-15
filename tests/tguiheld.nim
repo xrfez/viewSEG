@@ -29,6 +29,15 @@
 ## hover -1; with the value's selectable not drawn as chosen while its menu
 ## is open, "the value not highlighted while its menu was open".
 ##
+## A right click elsewhere while a menu is open opens it there, as on a
+## desktop: on the map (an empty spot: "No point here", its coordinates),
+## on the plot (another trace: the hover, the read-out and the menu its),
+## on a Headers table (another value, drawn chosen). Seen to fail with the
+## right press on the map or the plot while its menu is open left to close
+## the menu only (as it was): "a right click elsewhere on the map opens the
+## menu there did not happen", "a right click on another trace opens the
+## menu there did not happen".
+##
 ## Joined (`joined`): the survey's S, R and X files joined to its seismic
 ## file, a receiver right-clicked on the map, where its point and the
 ## file's own position lie on one spot with the same traces: the menu's
@@ -177,6 +186,18 @@ proc main() =
         inc frames
       result = frames >= 8
       if result: f.shot("held-map.png"))
+    step("a right click elsewhere on the map opens the menu there", proc (f: FrameInfo) =
+      # (above the line: below it, and along it, the menu covers the map)
+      let d = f.markOf("map.data")
+      p = vec2(round(d.pos.x + d.size.x / 2), round(d.pos.y + d.size.y * 0.15))
+      f.moveMouse(p), proc (f: FrameInfo): bool =
+      f.rightClick(p)
+      result = wait > 8 and f.markOf("map menu").size.x > 0 and
+        f.mapWindow.mapMenuTitle == "No point here"
+      if result:
+        doAssert f.mapWindow.hoveredPoints.len == 0, "the hover is still the receiver"
+        doAssert f.mapCursor != cursor and f.mapCursor.len > 0, "the coordinates: " &
+          f.mapCursor)
     var away: Vec2
     step("a click away closes it: the hover follows the pointer", proc (f: FrameInfo) =
       # an empty spot of the map, above the line
@@ -227,6 +248,18 @@ proc main() =
         inc frames
       result = frames >= 8
       if result: f.shot("held-plot.png"))
+    step("a right click on another trace opens the menu there", proc (f: FrameInfo) =
+      let d = f.markOf("plot.data")
+      # (above the first menu, which opens below the pointer)
+      p = vec2(round(d.pos.x + d.size.x * 0.6), round(d.pos.y + d.size.y * 0.15))
+      f.moveMouse(p), proc (f: FrameInfo): bool =
+      f.rightClick(p)
+      result = wait > 8 and f.markOf("plot.menu.kill").size.x > 0 and
+        f.core.selection.hover >= 0 and f.core.selection.hover != hover
+      if result:
+        doAssert f.tracePanel.menuTarget == "Trace " & $(f.pick.trace + 1),
+          "the menu: " & f.tracePanel.menuTarget & ", the trace " & $f.pick.trace
+        doAssert f.pick.position != picked.position, "the read-out: " & $f.pick.position)
     step("Esc closes it: the hover follows the pointer", proc (f: FrameInfo) =
       f.pressKey(skEscape, true)
       f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
@@ -262,6 +295,16 @@ proc main() =
       if result:
         heldInk = f.commonest(f.markOf(cell).leftHalf)
         f.shot("held-headers.png"))
+    const other = "headers.binary binary.reelNumber 0"
+    step("a right click on another value opens its menu", proc (f: FrameInfo) =
+      p = f.markOf(other).centre
+      f.moveMouse(p), proc (f: FrameInfo): bool =
+      f.rightClick(p)
+      result = wait > 8 and f.markOf("headers.value menu").size.x > 0
+      if result:
+        let now = f.commonest(f.markOf(other).leftHalf)
+        doAssert distance(now, heldInk) <= 12, "the other value is not highlighted: " &
+          $now & ", the first was " & $heldInk)
     step("Esc closes it: the value as the others", proc (f: FrameInfo) =
       f.pressKey(skEscape, true)
       f.pressKey(skEscape, false)
