@@ -13,26 +13,34 @@
 ##   reaching is what is checked), and a window dragged out of the main
 ##   window (a viewport window of its own) gets it when it is made;
 ## - the tray's Quit ends the run, and the icon is gone after it;
-## - without `RunOptions.tray` (every other test) there is no icon.
+## - without `RunOptions.tray` (every other test) there is no icon;
+## - a desktop whose bar shows no tray icons (a session bus without a
+##   StatusNotifier watcher, as plain GNOME): no tray is made, Messages says
+##   so once, Window > Minimize to the tray cannot be ticked, and a minimize
+##   with the setting on (from an older settings file) hides nothing.
 ##
-## Under Xvfb SDL's AppIndicator tray has no bar to show in (and no D-Bus
-## session: GLib warns on stderr), but its menu exists and its entries click
-## (`SDL_ClickTrayEntry`). Where SDL cannot make a tray at all (no
-## libayatana-appindicator3), the tray steps are skipped and the frames
-## steps still run. What the icon looks like, and Windows' frames, are not
-## seen here: docs/windows.md lists what to check on Windows.
+## The tray runs on a session bus of the test's own with a StatusNotifier
+## watcher that says a host is registered (`utils/fakewatcher`): AppIndicator
+## registers its item there, and SDL's menu entries click
+## (`SDL_ClickTrayEntry`). Without `dbus-daemon`, or where SDL cannot make a
+## tray at all (no libayatana-appindicator3), the tray steps are skipped and
+## the frames steps still run. What the icon looks like, and Windows'
+## frames, are not seen here: docs/windows.md lists what to check on
+## Windows.
 ##
 ## Seen to fail: with `hideInTray` not hiding, "minimized: hidden in the tray,
 ## Show brings it back did not happen"; with the frames' `onCreateWindow`
 ## not installed, "a window dragged out gets its frame did not happen"; with
 ## `followTray` not taking the icon away, "Icon in the tray off did not
-## happen".
+## happen"; with the tray made whatever the session bus says (as before the
+## bus was asked), "no tray: said once did not happen" (SDL made a tray
+## that nothing shows, and a minimize hid the window for good).
 
 import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, settings, state]
 import viewSEG/ui/imgui/[app, frames, shell]
 import viewSEG/view/theme
-import utils/[fixtures, waiting]
+import utils/[fakewatcher, fixtures, waiting]
 
 type
   Step = object
@@ -80,6 +88,13 @@ proc drive(steps: seq[Step]; opts: RunOptions): int =
 withFixtures fx:
   let config = fx.dir / "config"
   createDir(config)
+  # A desktop with a tray bar: a session bus of the test's own with a watcher.
+  let bus = startBus(fx.dir)
+  defer: stopBus(bus)
+  putEnv("DBUS_SESSION_BUS_ADDRESS", bus.address)
+  if bus.address.len == 0 or not startWatcher(bus.address, host = true):
+    echo "tguitray: no session bus of the test's own (dbus-daemon): no tray here"
+  defer: stopWatcher()
   var asked: seq[DialogKind]
   let opts = RunOptions(windowSize: (1280, 800), theme: forceDark, persist: true,
     configDir: some(config), logDir: some(fx.dir / "logs"),
@@ -184,5 +199,43 @@ withFixtures fx:
     if trayShown(): seen = true
   doAssert run(o) == 0
   doAssert not seen, "a tray icon without RunOptions.tray"
+
+  # A desktop whose bar shows no tray icons: the bus, no watcher.
+  stopWatcher()
+  var noTray: seq[Step]
+  proc noTrayStep(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+    noTray.add Step(name: name, act: act, done: done)
+  proc said(f: FrameInfo): int =
+    for e in f.core.log:
+      if "No icon in the system tray" in e.text: inc result
+  noTrayStep("no tray: said once", noop, proc (f: FrameInfo): bool =
+    result = f.trayProblem.len > 0
+    if result:
+      doAssert not trayShown(), "a tray made with nothing to show it"
+      doAssert "no tray icons" in f.trayProblem or "no D-Bus" in f.trayProblem, f.trayProblem
+      doAssert f.said == 1, "said " & $f.said & " times")
+  noTrayStep("Minimize to the tray: Window", proc (f: FrameInfo) =
+    f.click(f.markOf("menu.Window").centre),
+    proc (f: FrameInfo): bool = f.markOf("menu.tray.minimize").size.x > 0)
+  noTrayStep("Minimize to the tray cannot be ticked", proc (f: FrameInfo) =
+    f.click(f.markOf("menu.tray.minimize").centre),
+    proc (f: FrameInfo): bool =
+    result = wait > 6
+    if result: doAssert not f.core.settings.tray.minimize, "ticked with no tray")
+  noTrayStep("on from an older settings file", proc (f: FrameInfo) =
+    var s = f.core.settings
+    s.tray.minimize = true
+    f.apply(Command(kind: ckSettings, settings: s)),
+    proc (f: FrameInfo): bool = f.core.settings.tray.minimize)
+  noTrayStep("minimized: not hidden with no way back", proc (f: FrameInfo) = f.sayMinimized(),
+    proc (f: FrameInfo): bool =
+    result = wait > 6
+    if result:
+      doAssert f.trayHides == 0 and not f.inTray and not f.mainWindowHidden,
+        "hidden with no tray to bring it back"
+      doAssert f.said == 1, "said again: " & $f.said)
+  var o2 = opts
+  o2.persist = false
+  doAssert drive(noTray, o2) == noTray.len
 
 echo "tguitray: ok"

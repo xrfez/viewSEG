@@ -69,6 +69,7 @@ type
     trayIcon*: bool             ## Window > Icon in the tray is checked
     trayMinimize*: bool         ## Window > Minimize to the tray is checked
     trayProblem*: string        ## why the tray icon cannot be shown; "" when it can
+    trayAvailable*: bool        ## the icon is in a tray that is seen (minimizing to it can work)
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -295,11 +296,13 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
         "The tray icon cannot be shown here: " & input.trayProblem
       else: "viewSEG's icon in the system tray, with a menu: Show viewSEG, Open file..., Quit")
   if igMenuItem_Bool((IconMinimize & "  Minimize to the tray").cstring, nil,
-      input.trayMinimize, input.trayIcon):
+      input.trayMinimize and input.trayAvailable, input.trayAvailable):
     res.toggleTrayMinimize = true
   if marked != nil: marked[].mark("menu.tray.minimize")
-  tip(if input.trayIcon: "On: minimizing the main window hides it, and its windows, in the " &
-        "tray instead of the taskbar; the tray icon's Show viewSEG brings it back"
+  tip(if input.trayAvailable: "On: minimizing the main window hides it, and its windows, " &
+        "in the tray instead of the taskbar; the tray icon's Show viewSEG brings it back"
+      elif input.trayIcon and input.trayProblem.len > 0: "Not here: " & input.trayProblem
+      elif input.trayIcon: "Needs the icon in a tray that is seen"
       else: "Needs the icon in the tray")
   igSeparatorText("Windows")
   for w in AppWindow:

@@ -76,8 +76,13 @@ Alt+Tab and Explorer read the same resource (`res/viewSEG.ico`: 16, 24, 32,
   nothing runs in the program then.
 - On Linux the same tray uses AppIndicator (libayatana-appindicator3 through
   GTK), shown by bars with a StatusNotifier host (waybar, KDE, GNOME with
-  the AppIndicator extension). A desktop without one says so once in
-  Messages.
+  the AppIndicator extension). SDL makes its tray whether or not anything
+  will show it, so viewSEG first asks the session bus (off the UI thread)
+  whether the StatusNotifier watcher is there with a host. With none (no
+  session bus, or plain GNOME), no tray is made, Messages says once that
+  there is no tray icon, Window > Minimize to the tray cannot be ticked, and
+  a minimize never hides the window: it is asked again at each minimize, so
+  a bar that went away is noticed too.
 
 ### The first window
 

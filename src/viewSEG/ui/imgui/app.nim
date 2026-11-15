@@ -41,7 +41,7 @@ import sdl3_nim
 import imguin/[cimgui, impl_sdl3, impl_opengl]
 import imguin/glad/gl
 import ../../core/[filesystem, geometry, screens, state, watchdog]
-import ../../platform/[paths, trayguard]
+import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import ../../view/jobstatus
 import agentshot, chrome, dpi, filelist, fonts, frames, headerswindow, icons, jobswindow,
@@ -132,6 +132,7 @@ type
     trayAllowed: bool                          ## `RunOptions.tray`
     trayProblem: string                        ## why the tray icon could not be shown; "" for none
     trayTried: bool                            ## the icon was asked for since the setting last changed
+    trayAsked: bool                            ## the session bus was asked about a tray since then
     inTray: bool                               ## the main window is hidden in the tray
     trayHides: int                             ## times it was hidden there (tests)
 
@@ -681,24 +682,43 @@ proc showMain(ui: var Ui) =
 
 proc hideInTray(ui: var Ui) =
   ## Minimizing with Window > Minimize to the tray on: the main window and its
-  ## children hidden, off the taskbar, while the tray icon is there.
-  if ui.core.settings.tray.minimize and trayShown() and not ui.inTray:
+  ## children hidden, off the taskbar, while the tray icon is there and seen.
+  ## On Linux the session bus is asked again first (a few milliseconds; the
+  ## bar may have gone): a window is never hidden with no icon to bring it
+  ## back.
+  if ui.core.settings.tray.minimize and trayShown() and not ui.inTray and
+      probeTrayHost(timeoutMs = 300) == thPresent:
     discard SDL_HideWindow(ui.window)
     ui.inTray = true
     if (SDL_GetWindowFlags(ui.window) and SDL_WINDOW_HIDDEN) != 0: inc ui.trayHides
 
 proc followTray(ui: var Ui) =
-  ## The tray icon shown or taken away as the settings say; a desktop
-  ## without a tray is said once, until the setting changes.
+  ## The tray icon shown or taken away as the settings say. First the
+  ## session bus is asked whether anything shows tray icons here (off this
+  ## thread); with nothing, no tray is made (no GTK loaded either), Messages
+  ## says so once, and Window > Minimize to the tray stays off, until the
+  ## setting changes.
   let want = ui.trayAllowed and ui.core.settings.tray.icon
   if want and not trayShown() and not ui.trayTried:
-    ui.trayTried = true
-    ui.trayProblem = showTray()
-    if ui.trayProblem.len > 0:
-      ui.core.report(sevWarning, "tray", "The icon cannot be put in the system tray: " &
-        ui.trayProblem & (when defined(linux): " (a tray in Linux needs " &
-          "libayatana-appindicator3 and a bar that shows StatusNotifier items)" else: ""))
+    let answer = if ui.trayAsked: trayHostAnswer() else: none(TrayHost)
+    if not ui.trayAsked:
+      forgetTrayHost() # an answer from before (another run, the setting on before) is old
+      askTrayHost()
+      ui.trayAsked = true
+    elif answer.isSome:
+      ui.trayTried = true
+      if answer.get != thPresent:
+        ui.trayProblem = $answer.get
+        ui.core.report(sevInfo, "tray", "No icon in the system tray: " & ui.trayProblem &
+          ". Window > Minimize to the tray is off while there is none.")
+      else:
+        ui.trayProblem = showTray()
+        if ui.trayProblem.len > 0:
+          ui.core.report(sevWarning, "tray", "The icon cannot be put in the system tray: " &
+            ui.trayProblem & (when defined(linux): " (a tray in Linux needs " &
+              "libayatana-appindicator3)" else: ""))
   elif not want:
+    ui.trayAsked = false
     ui.trayTried = false
     ui.trayProblem = ""
     if trayShown():
@@ -1096,7 +1116,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     shown: {AppWindow.low .. AppWindow.high} - ui.windows.hidden,
     seismicName: ui.core.windowTitle(MainPanel), joinShown: ui.join.shown,
     trayIcon: ui.core.settings.tray.icon, trayMinimize: ui.core.settings.tray.minimize,
-    trayProblem: ui.trayProblem), ui.marks)
+    trayProblem: ui.trayProblem, trayAvailable: trayShown()), ui.marks)
   if menu.toggleAgent: ui.toggleAgent()
   if menu.toggleTrayIcon or menu.toggleTrayMinimize:
     var s = ui.core.settings

@@ -18,15 +18,19 @@
 ## entry's callback on the main thread, while events are pumped (Windows:
 ## the tray's window procedure; Linux: GTK's loop), so it queues the event
 ## directly. On Linux SDL uses AppIndicator (libayatana-appindicator through
-## GTK), which needs a StatusNotifier host in the desktop's bar to be seen.
+## GTK), which needs a StatusNotifier host in the desktop's bar to be seen;
+## SDL makes the tray whether or not one is there, so `askTrayHost` asks the
+## session bus first (`platform/trayhost`), off the UI thread.
 ## The icon goes when the tray is hidden and at `SDL_Quit`; on Windows a
 ## fatal signal also removes it (`platform/trayguard`), so a crash leaves no
 ## ghost icon in the notification area.
 
-import std/[locks, strutils]
+import std/[atomics, locks, options, strutils, typedthreads]
 from std/os import getEnv
 import sdl3_nim
-import ../../platform/trayguard
+import ../../platform/[trayguard, trayhost]
+
+export TrayHost
 
 type
   SystemTheme* = enum
@@ -350,14 +354,47 @@ proc dropTrayIcons() {.nimcall, gcsafe, raises: [].} =
   ## The last thing done on a fatal signal: the tray icon taken away.
   discard removeTrayIcons()
 
+var
+  hostThread: Thread[void]
+  hostAnswer: Atomic[int] ## -2 never asked, -1 asking, else a `TrayHost`
+  hostThreadUsed = false
+hostAnswer.store -2
+
+proc askHost() {.thread.} =
+  hostAnswer.store ord(probeTrayHost())
+
+proc askTrayHost*() =
+  ## Starts asking whether a tray icon would be seen (`platform/trayhost`),
+  ## off this thread; `trayHostAnswer` gives the answer. Nothing when a
+  ## question is still out. On Windows the answer is there at once.
+  if hostAnswer.load != -1:
+    when defined(windows) or defined(macosx):
+      hostAnswer.store ord(thPresent)
+    else:
+      if hostThreadUsed: joinThread(hostThread) # the last question's, long done
+      hostAnswer.store -1
+      createThread(hostThread, askHost)
+      hostThreadUsed = true
+
+proc trayHostAnswer*(): Option[TrayHost] =
+  ## The answer to the last `askTrayHost`; none while it is out or never asked.
+  let a = hostAnswer.load
+  if a >= 0: some(TrayHost(a)) else: none(TrayHost)
+
+proc forgetTrayHost*() =
+  ## Drops the last answer: `trayHostAnswer` is none until the next
+  ## `askTrayHost` answers (the bar may have come or gone since).
+  if hostAnswer.load >= 0: hostAnswer.store -2
+
 proc trayShown*(): bool =
   ## The tray icon is there.
   not tray.isNil
 
 proc showTray*(): string =
   ## Puts the program's icon in the tray, with its menu (`TrayAction`);
-  ## nothing when it is there. Returns "" or why it cannot be shown (no tray
-  ## on this desktop, no AppIndicator library). Main thread.
+  ## nothing when it is there. Returns "" or why it cannot be shown (no
+  ## AppIndicator library). Main thread. Ask `askTrayHost` first: SDL makes a
+  ## tray on Linux whether or not anything will show it.
   result = ""
   if tray.isNil:
     # Windows takes the icon from the executable (`setIconHints`); elsewhere
