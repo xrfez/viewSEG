@@ -30,7 +30,11 @@
 ## with the clip percentile box's value not sent (`p.send` left out),
 ## "clip at 95 did not happen"; with the presets left out of the settings
 ## file, "saved did not happen" (a change the settings file does not hold
-## is none).
+## is none). The second run starts with the pointer where the first left it
+## (an X server not reset between runs keeps it), over trace 5, whose edge
+## falls on a pixel's centre, drawn as either trace row by row: with that
+## allowed for in `utils/plotref` left out, "second run: 67 of 35258 pixels
+## off the reference" (the column on the edge).
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 

@@ -71,13 +71,14 @@ func row*(s: Shot; tMs: float64): int =
   ## The image row holding `tMs`.
   int(floor((tMs - s.view.timeMs.lo) / s.view.timeMs.width * float64(s.h)))
 
-proc expected*(s: Shot; i, j: int): Rgba =
+proc expected*(s: Shot; i, j: int; nudge = 0.0): Rgba =
   ## What image pixel (`i`, `j`) should show: the tiles oldest first (but
   ## for those a newer one covers in view: `hidden`), each its area
   ## (density, blank on a killed trace, or the background) then its wiggles
   ## (none for a killed trace), the marked traces (hovered, selected, lit up
-  ## from the map) again on top.
-  let (x, t) = (s.xOf(i), s.tOf(j))
+  ## from the map) again on top. `nudge`: positions added to the pixel's
+  ## centre along the traces.
+  let (x, t) = (s.xOf(i) + nudge, s.tOf(j))
   result = s.ink.background
   for k, tile in s.tiles:
     if not s.tiles.hidden(k, s.view):
@@ -107,14 +108,21 @@ proc expected*(s: Shot; i, j: int): Rgba =
 
 func close*(a, b: Rgba; tol = Tolerance): bool = distance(a, b) <= tol
 
+const Edge = 1e-6
+  ## positions: a pixel whose centre is this close to the edge between two
+  ## traces may be drawn as either (the GPU's float32 decides, row by row)
+
 proc mismatches*(s: Shot; step = 2; columns = 0 .. int.high): (int, int) =
   ## Image pixels on a grid (every `step`-th row and column, of `columns`)
-  ## that differ from `expected`, and the pixels looked at.
+  ## that differ from `expected`, and the pixels looked at. A pixel whose
+  ## centre lies on the edge between two traces matches either trace's
+  ## colour.
   for j in countup(0, s.h - 1, step):
     for i in countup(max(columns.a, 0), min(columns.b, s.w - 1), step):
       inc result[1]
       let want = s.expected(i, j)
-      if not close(s.at(i, j), want):
+      if not close(s.at(i, j), want) and not close(s.at(i, j), s.expected(i, j, -Edge)) and
+          not close(s.at(i, j), s.expected(i, j, Edge)):
         if result[0] < 5:
           echo "  pixel (", i, ", ", j, "): ", toHex(s.at(i, j)), ", expected ", toHex(want)
         inc result[0]
