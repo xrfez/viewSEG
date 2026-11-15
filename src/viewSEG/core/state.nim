@@ -2260,11 +2260,46 @@ func liveTraces(state: AppState; k, i: int): (seq[int], SpectrumOf, int) =
   list.spread(p.layout.samples)
   (list, chosen, count)
 
+proc askAgain(state: var AppState; w: int): bool =
+  ## FFT window `spectra[w]` asked again for its traces over its time, with
+  ## the filters it has (`processing`); false when its file is not open any
+  ## more or cannot be held now.
+  template sw: untyped = state.spectra[w]
+  let i = state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1)
+  if i < 0: return false
+  let s = state.sessions[i]
+  let window = if sw.display.time == stVisible and sw.visibleMs.hi > sw.visibleMs.lo:
+                 (sw.visibleMs.lo, sw.visibleMs.hi)
+               else: (NaN, NaN)
+  var traces: seq[int]
+  for t in sw.traces:
+    if t in s: traces.add t - s.base
+  state.askSpectrum(w, i, traces, window, sw.processing)
+
+proc followFfts(state: var AppState) =
+  ## After every change: each FFT window not frozen follows the filters of
+  ## the plot it was opened from (and its Aux toggle; shown raw or not
+  ## alike), asked again from the samples at hand when they changed. Its
+  ## traces and time stay those it was opened on.
+  for w in 0 ..< state.spectra.len:
+    template sw: untyped = state.spectra[w]
+    if sw.id != LiveSpectrum and not sw.frozen:
+      let k = state.findPanel(sw.panel)
+      if k >= 0 and state.panels[k].layers.len > 0:
+        let pr = spectrumFilters(state.panels[k])
+        if pr != sw.processing:
+          let was = sw.processing
+          sw.processing = pr
+          if state.askAgain(w): sw.filters = filtersText(pr)
+          else: sw.processing = was # asked again once it can be
+
 proc followSpectrum(state: var AppState) =
-  ## After every change: the live panel, while on screen and not frozen,
+  ## After every change: the FFT windows follow the plot's filters
+  ## (`followFfts`); the live panel, while on screen and not frozen,
   ## asked again when what it is of changed (the traces in view or
   ## selected, the record, the file, the time in view, the filters, a
   ## kill). Nothing is asked while it is hidden.
+  state.followFfts()
   template live: untyped = state.spectra[0]
   if live.display != state.settings.spectrum.live:
     live.display = state.settings.spectrum.live
@@ -2373,10 +2408,11 @@ proc openSpectrum(state: var AppState; cmd: Command) =
       ": left out of the spectrum.")
 
 proc showSpectrum(state: var AppState; cmd: Command) =
-  ## `ckSpectrumDisplay`: how a window shows its spectrum. A new time
-  ## window asks again (an FFT window over the time it was opened on); the
-  ## live panel keeps it for the next run, a new FFT window starts as the
-  ## last one changed.
+  ## `ckSpectrumDisplay`: how a window shows its spectrum, and whether it is
+  ## frozen. A new time window asks again (an FFT window over the time it
+  ## was opened on); the live panel keeps it for the next run, a new FFT
+  ## window starts as the last one changed. A frozen FFT window keeps the
+  ## filters it went through; unfrozen, it follows the plot's again.
   let w = state.findSpectrum(cmd.spectrum)
   if w < 0:
     state.ignore(cmd, "there is no spectrum window " & $cmd.spectrum)
@@ -2391,24 +2427,16 @@ proc showSpectrum(state: var AppState; cmd: Command) =
       x.spectrum.live = cmd.spectrumShow
     return # `followSpectrum` asks again
   sw.display = cmd.spectrumShow
+  sw.frozen = cmd.frozen # unfrozen, `followFfts` asks again if the filters changed
   inc sw.revision
   state.change(cmd.origin, x):
     x.spectrum.window = cmd.spectrumShow
   if was.time != sw.display.time:
-    let i = state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1)
-    if i < 0:
+    if state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1) < 0:
       state.log.add(sevWarning, "spectrum", "The file of " & sw.title & " is not " &
         "open any more: its spectrum stays over the time it had.")
       return
-    let s = state.sessions[i]
-    let window = if sw.display.time == stVisible and sw.visibleMs.hi > sw.visibleMs.lo:
-                   (sw.visibleMs.lo, sw.visibleMs.hi)
-                 else: (NaN, NaN)
-    var traces: seq[int]
-    for t in sw.traces:
-      if t in s: traces.add t - s.base
-    # the filters it was opened with: a snapshot
-    discard state.askSpectrum(w, i, traces, window, sw.processing)
+    discard state.askAgain(w) # the filters it has (frozen or not)
 
 proc closeSpectrum(state: var AppState; cmd: Command) =
   ## `ckCloseSpectrum`: the FFT window goes, its work with it.

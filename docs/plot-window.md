@@ -1007,8 +1007,12 @@ amplitude spectrum of the trace under the pointer, or of the selection when that
 in it, in a window of its own: titled by what it shows ("FFT: trace 37 · FFID 151 ·
 shot.sgd", "FFT 2: 12 traces · ..."), floating beside the middle of the main window the
 first time, dockable anywhere like every window. Several can be open; each is a snapshot
-of the traces it was opened on and of the plot's filters then, and keeps them while the
-plot moves on (another time window too is taken through those filters). Closing one (its ×) drops its work if it is still being computed. A
+of the traces it was opened on (and of the visible time then), and keeps them while the
+plot moves on; it follows the plot's filters, its Aux toggle too, as they change (shown
+raw or not alike: both curves are drawn), computed again from the samples at hand, so
+the file is not read again. **Freeze** (off by default) keeps the filters it went
+through while the plot's change, to compare one setting with the next; unticked, it
+follows the plot again. Closing one (its ×) drops its work if it is still being computed. A
 window's number is the lowest free one, so a window opened again takes the place the
 layout kept for that number; a layout that names FFT windows not open loads without a
 word.

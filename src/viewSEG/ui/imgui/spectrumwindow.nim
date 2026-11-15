@@ -5,7 +5,7 @@
 ##
 ## Each shows a line of controls (dB or linear, the frequency axis
 ## logarithmic, the raw and processed curves, the whole trace or the time
-## the plot showed; the live panel's Freeze), what the spectrum is of and
+## the plot showed; Freeze), what the spectrum is of and
 ## what was left out, the plot (`curveplot`), and what the pointer reads.
 ## The windows read `core` and issue `Command`s: `ckSpectrumDisplay` for a
 ## control, `ckCloseSpectrum` when an FFT window is closed,
@@ -112,11 +112,13 @@ proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var Sp
   tip(if w.hasPhase: "The phase of this trace (degrees, from the window's first sample), " &
         "under its amplitude"
       else: "The phase is drawn for the spectrum of one trace")
-  if w.id == LiveSpectrum:
-    after("Freeze")
-    if igCheckbox("Freeze", addr frozen): changed = true
-    marks.mark(name & ".freeze")
-    tip("Keep this spectrum while the Seismic window moves on")
+  after("Freeze")
+  if igCheckbox("Freeze", addr frozen): changed = true
+  marks.mark(name & ".freeze")
+  tip(if w.id == LiveSpectrum: "Keep this spectrum while the Seismic window moves on"
+      else: "Keep the filters this spectrum went through while the plot's change; off: " &
+        "it follows the plot's filters and its Aux toggle (its traces stay those it was " &
+        "opened on)")
   if changed:
     res.commands.add Command(kind: ckSpectrumDisplay, spectrum: w.id, spectrumShow: d,
       frozen: frozen)

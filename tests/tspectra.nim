@@ -38,6 +38,8 @@
 ##   (counted as passed by, and said), a pilot alone has none (and the
 ##   words say why), and filters none of which is below Nyquist give none;
 ##   with the toggle on, every trace;
+## - an open FFT window follows the plot's filters and its Aux toggle (the
+##   samples at hand, nothing read), unless frozen, and again once not;
 ## - the file is never changed.
 ##
 ## Seen to fail: with the killed traces not left out of the request
@@ -54,7 +56,9 @@
 ## averaged"; with the reader giving up after its last chunk and block,
 ## "the first answer ... was dropped for the newer request (1 answer
 ## taken)". With the processed sum taking the auxiliary rows as live again
-## (as before), "the auxiliary trace counted as processed: (5, 5, 0)".
+## (as before), "the auxiliary trace counted as processed: (5, 5, 0)";
+## with the FFT windows keeping the filters they were opened with (as
+## before), "the FFT window did not follow the plot's filters".
 
 import std/[math, os, sequtils, strutils]
 import parseSEG
@@ -547,13 +551,35 @@ withFixtures fx:
     for k in 0 ..< sp.processed.len:
       doAssert abs(sp.processed[k] - seismic.processed[k]) <= 1e-6 * max(1.0, seismic.raw[k]),
         "the unfiltered auxiliary trace is in the processed curve at bin " & $k
-    # the Aux toggle on: all five
+    # The Aux toggle ticked on the plot: the open FFT windows follow, all
+    # five through the filters now, from the samples at hand.
     var withAux = notch
     withAux.aux = true
+    let asks = four.spectra[w].asks
     four.filters withAux
-    let u = four.answer(toSeq(b ..< b + 5))
-    doAssert four.spectra[u].spectrum.filtered == 5 and four.spectra[u].spectrum.passedBy == 0 and
-      four.spectra[u].spectrum.filterAux and four.spectra[u].filterText == "processed: notch 60 Hz"
+    doAssert four.spectra[w].asks == asks + 1, "the FFT window did not follow the plot's filters"
+    doAssert ready(not four.spectra[w].waiting and sp.filterAux)
+    doAssert sp.filtered == 5 and sp.passedBy == 0 and sp.read == 0 and
+      four.spectra[w].filterText == "processed: notch 60 Hz",
+      $(sp.filtered, sp.passedBy, sp.read) & " " & four.spectra[w].filterText
+    doAssert four.spectra[w].filters == "notch 60 Hz" and four.spectra[w].processing == withAux
+    # Frozen, it keeps the filters it went through; the other follows.
+    let fid = four.spectra[w].id
+    four.apply Command(kind: ckSpectrumDisplay, spectrum: fid, frozen: true,
+      spectrumShow: four.spectra[w].display)
+    doAssert four.spectra[w].frozen
+    var fifty = withAux
+    fifty.notches[0].hz = 50
+    let frozenAsks = four.spectra[w].asks
+    four.filters fifty
+    doAssert four.spectra[w].asks == frozenAsks, "the frozen FFT window asked again"
+    doAssert ready(not four.spectra[v].waiting and seismic.filters == "notch 50 Hz")
+    doAssert sp.filters == "notch 60 Hz"
+    # Unfrozen, it follows again.
+    four.apply Command(kind: ckSpectrumDisplay, spectrum: fid, frozen: false,
+      spectrumShow: four.spectra[w].display)
+    doAssert four.spectra[w].asks == frozenAsks + 1 and not four.spectra[w].frozen
+    doAssert ready(not four.spectra[w].waiting and sp.filters == "notch 50 Hz")
     four.shutdown()
     # A pilot alone with the toggle off: no processed curve, and why.
     var five = initAppState()
