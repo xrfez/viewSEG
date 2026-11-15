@@ -55,6 +55,9 @@ block helpers:
   doAssert windowColumns(300, 400, 0, 2, 100).len == 0
   doAssert windowColumns(10, 20, 4, 2, 100) == 3 .. 8 # from the trace's own first time
   doAssert evenly(5, 10) == @[0, 1, 2, 3, 4]
+  doAssert spectrumTraces(4001) == MaxSpectrumTraces and spectrumTraces(60001) == 559 and
+    spectrumTraces(0) == MaxSpectrumTraces and spectrumTraces(high(int)) == 1,
+    "a spectrum's traces are bounded by their samples"
   doAssert evenly(10, 5) == @[0, 2, 4, 6, 8]
   doAssert freeSpectrumId([SpectrumWindow(id: 0), SpectrumWindow(id: 1),
     SpectrumWindow(id: 3)]) == 2
@@ -71,6 +74,10 @@ block helpers:
   w.first = 3
   doAssert w.title == "FFT: trace 4 · FFID 5 · a.sgy", w.title
   doAssert SpectrumWindow(id: 0).title == "Spectrum"
+  var many = SpectrumWindow(id: 3, chosen: soSelection, traces: @[0, 5], chosenCount: 10,
+    spectrum: Spectrum(raw: @[1.0, 0.5], averaged: 2, binHz: 1, dtMs: 2, fromMs: 0, toMs: 6))
+  doAssert many.summaryText == "2 traces averaged, spread evenly over the 10 selected · " &
+    "0 to 6 ms · 2 ms, Nyquist 250 Hz", many.summaryText
   # the curve plot
   var p = CurvePlot(xs: @[0.0, 1, 2, 3, 4], xUnit: "Hz", yUnit: "dB",
     curves: @[Curve(name: "raw", ys: @[-10.0, -20, NaN, -5, -120]),

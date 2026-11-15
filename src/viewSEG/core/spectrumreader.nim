@@ -37,8 +37,6 @@ import processSEG/core/[rows, types, workspace]
 import filesystem, inbox, jobs, log, processing, spectra, threads
 
 const
-  MaxSpectrumSamples* = 32 * 1024 * 1024
-    ## decoded samples (128 MiB) the reader keeps at hand, at most
   ReadTraces = 64  ## traces per prefetch chunk
   BlockTraces = 256 ## traces put through the FFT (and the filters) at a time
 

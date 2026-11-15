@@ -946,21 +946,26 @@ amplitude spectrum of the trace under the pointer, or of the selection when that
 in it, in a window of its own: titled by what it shows ("FFT: trace 37 · FFID 151 ·
 shot.sgd", "FFT 2: 12 traces · ..."), floating beside the middle of the main window the
 first time, dockable anywhere like every window. Several can be open; each is a snapshot
-of the traces it was opened on and of the plot's filters then, and keeps it while the
-plot moves on. Closing one (its ×) drops its work if it is still being computed. A
+of the traces it was opened on and of the plot's filters then, and keeps them while the
+plot moves on (another time window too is taken through those filters). Closing one (its ×) drops its work if it is still being computed. A
 window's number is the lowest free one, so a window opened again takes the place the
 layout kept for that number; a layout that names FFT windows not open loads without a
 word.
 
 **The live Spectrum panel** (Window > Spectrum; a tab behind the map in the first
 layout) shows the same for what the Seismic window shows: the selected traces of its
-file when there are some, else the traces in view (at most 4096, spread evenly over
-them), over the visible time (or the whole trace). It follows the plot as you pan, zoom,
+file when there are some, else the traces in view, over the visible time (or the whole
+trace). It follows the plot as you pan, zoom,
 select, step to another record or file, kill a trace or change a filter, asking again
 only when what it is of changed; an answer older than the one shown is dropped, and while
 a pan goes on each newer answer is shown as it comes. **Freeze** keeps what it shows. It
 works only while it is on screen: hidden, behind another tab or collapsed it asks for
 nothing. A layout saved before the panel came keeps it hidden.
+
+**How many traces.** A spectrum takes at most 4096 traces, and no more than 128 MiB of
+their samples (559 traces of 60 s at 1 ms): more selected or in view are taken evenly
+spread over them, and its line of words says so ("64 traces averaged, spread evenly over
+the 12 000 selected").
 
 **What a spectrum is.** processSEG's spectrum (`SpectrumPlan`): each trace's window is
 demeaned, tapered (a sin² ramp over 10 % at each end) and zero-padded to the next power

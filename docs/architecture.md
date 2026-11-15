@@ -946,7 +946,8 @@ visible time then) and again when its time window changes (`ckSpectrumDisplay`);
 live panel after every command and every drained inbox (`followSpectrum`, as
 `followInspect` does for the Headers window), only while the frontend says it is on
 screen (`ckSpectrumPanel`) and not frozen, and only when what it is of changed: the file,
-the traces (the selected ones of the file shown, else those in view, at most 4096), the
+the traces (the selected ones of the file shown, else those in view, at most 4096 and
+128 MiB of samples, spread evenly: `spectrumTraces`), the
 time in view, the filters' steps, the killed traces among them. Each request holds its
 file (`Jobs.hold`); the reader ends the hold. The reader keeps the decoded samples of the
 traces it read, whole, so a filter or a time window changed, or another window of the

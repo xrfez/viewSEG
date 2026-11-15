@@ -2208,10 +2208,20 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
     filtersText: filtersText, filterAux: aux)
   true
 
-func liveTraces(state: AppState; k, i: int): (seq[int], SpectrumOf) =
+func spread(list: var seq[int]; samples: int) =
+  ## `list` (ascending) cut to the traces a spectrum takes of traces of
+  ## `samples` samples (`spectrumTraces`), spread evenly over it.
+  let most = spectrumTraces(samples)
+  if list.len > most:
+    var kept = newSeq[int]()
+    for j in evenly(list.len, most): kept.add list[j]
+    list = kept
+
+func liveTraces(state: AppState; k, i: int): (seq[int], SpectrumOf, int) =
   ## What the live panel is of: the selected traces of the file `panels[k]`
-  ## shows (`sessions[i]`), else the traces in its view; at most
-  ## `MaxSpectrumTraces`, spread evenly; indices in the file, ascending.
+  ## shows (`sessions[i]`), else the traces in its view; at most what a
+  ## spectrum takes (`spectrumTraces`), spread evenly; indices in the
+  ## file, ascending; and how many were chosen.
   template p: untyped = state.panels[k]
   let s = state.sessions[i]
   var list: seq[int]
@@ -2225,11 +2235,9 @@ func liveTraces(state: AppState; k, i: int): (seq[int], SpectrumOf) =
     for pos in vis: list.add p.shown[pos]
     if list.len > 0: chosen = soVisible
   list.sort()
-  if list.len > MaxSpectrumTraces:
-    var kept = newSeq[int]()
-    for j in evenly(list.len, MaxSpectrumTraces): kept.add list[j]
-    list = kept
-  (list, chosen)
+  let count = list.len
+  list.spread(p.layout.samples)
+  (list, chosen, count)
 
 proc followSpectrum(state: var AppState) =
   ## After every change: the live panel, while on screen and not frozen,
@@ -2245,11 +2253,12 @@ proc followSpectrum(state: var AppState) =
   let i = if k >= 0: state.shownFile(k) else: -1
   var key = LiveKey(session: NoSession)
   var chosen = soNothing
+  var count = 0
   var filters = initPipeline()
   var filtersText = ""
   if i >= 0 and state.panels[k].layers.len > 0:
     template p: untyped = state.panels[k]
-    (key.traces, chosen) = state.liveTraces(k, i)
+    (key.traces, chosen, count) = state.liveTraces(k, i)
     key.session = state.sessions[i].id
     key.window = if live.display.time == stVisible and p.view.timeMs.hi > p.view.timeMs.lo:
                    (p.view.timeMs.lo, p.view.timeMs.hi)
@@ -2285,6 +2294,7 @@ proc followSpectrum(state: var AppState) =
     live.record = s.recordText(key.traces[0])
     live.traces = key.traces.mapIt(it + s.base)
     live.first = key.traces[0]
+    live.chosenCount = count
     live.filters = filtersText
     live.visibleMs = state.panels[k].view.timeMs
   else:
@@ -2318,6 +2328,8 @@ proc openSpectrum(state: var AppState; cmd: Command) =
     else: inc outside
   traces.sort()
   traces = deduplicate(traces, isSorted = true)
+  let count = traces.len
+  traces.spread(state.panels[k].layout.samples)
   if traces.len == 0:
     state.ignore(cmd, if ids.len == 0: "no trace is selected in " & s.name
                              else: "none of the traces is in " & s.name)
@@ -2326,9 +2338,10 @@ proc openSpectrum(state: var AppState; cmd: Command) =
   template p: untyped = state.panels[k]
   var w = SpectrumWindow(id: freeSpectrumId(state.spectra), display: cmd.spectrumShow,
     chosen: chosen, file: s.name, record: s.recordText(traces[0]),
-    traces: traces.mapIt(it + s.base), first: traces[0], visibleMs: p.view.timeMs)
+    traces: traces.mapIt(it + s.base), first: traces[0], chosenCount: count,
+    visibleMs: p.view.timeMs)
   let (filters, text, aux) = spectrumFilters(p)
-  w.filters = text
+  (w.filters, w.pipeline, w.filterAux) = (text, filters, aux)
   state.spectra.add w
   let window = if w.display.time == stVisible and p.view.timeMs.hi > p.view.timeMs.lo:
                  (p.view.timeMs.lo, p.view.timeMs.hi)
@@ -2368,8 +2381,7 @@ proc showSpectrum(state: var AppState; cmd: Command) =
     x.spectrum.window = cmd.spectrumShow
   if was.time != sw.display.time:
     let i = state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1)
-    let k = state.findPanel(MainPanel)
-    if i < 0 or k < 0 or state.panels[k].layers.len == 0:
+    if i < 0:
       state.log.add(sevWarning, "spectrum", "The file of " & sw.title & " is not " &
         "open any more: its spectrum stays over the time it had.")
       return
@@ -2380,8 +2392,8 @@ proc showSpectrum(state: var AppState; cmd: Command) =
     var traces: seq[int]
     for t in sw.traces:
       if t in s: traces.add t - s.base
-    let (filters, text, aux) = spectrumFilters(state.panels[k])
-    discard state.askSpectrum(w, i, traces, window, filters, text, aux)
+    # the filters it was opened with: a snapshot
+    discard state.askSpectrum(w, i, traces, window, sw.pipeline, sw.filters, sw.filterAux)
 
 proc closeSpectrum(state: var AppState; cmd: Command) =
   ## `ckCloseSpectrum`: the FFT window goes, its work with it.

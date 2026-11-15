@@ -79,8 +79,9 @@ func summaryText*(w: SpectrumWindow): string =
   if sp.failed > 0: left.add $sp.failed & " unreadable or empty"
   if sp.atOtherInterval > 0: left.add $sp.atOtherInterval & " at another interval"
   if left.len > 0: result.add " (" & left.join(", ") & " left out)"
-  if w.chosen == soVisible and w.traces.len >= MaxSpectrumTraces:
-    result.add ", spread over those in view"
+  if w.chosenCount > w.traces.len:
+    result.add ", spread evenly over the " & $w.chosenCount & " " &
+      (if w.chosen == soVisible: "in view" else: "selected")
   result.add " · " & timeText(sp)
   result.add " · " & valueText(sp.dtMs) & " ms, Nyquist " & valueText(500 / sp.dtMs) & " Hz"
   if w.waiting: result.add " · updating..."

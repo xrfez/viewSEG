@@ -30,6 +30,7 @@
 
 import std/math
 import parseSEG
+import processSEG/pipeline
 import processSEG/fft/spectrum
 import processSEG/core/[rows, types, workspace]
 import viewport
@@ -102,9 +103,14 @@ type
     record*: string           ## the record's FFID, or its place in the file
     traces*: seq[int]         ## survey-wide ids of the traces it is of, ascending
     first*: int               ## the first one's index in its file
+    chosenCount*: int
+      ## the traces chosen (selected, in view); `traces` spreads over them
+      ## evenly when they are more than a spectrum takes (`spectrumTraces`)
     visibleMs*: Span
       ## the plot's visible time when the window was opened (FFT), or now (live)
     filters*: string          ## the plot's filters, in words, when asked; "" for none
+    pipeline*: Pipeline       ## an FFT window's filters, as when it was opened
+    filterAux*: bool          ## with the auxiliary traces through them
     spectrum*: Spectrum       ## the newest answer taken in
     asked*: uint64            ## the newest request's gen; 0 for none
     since*: uint64
@@ -125,7 +131,10 @@ type
 const
   LiveSpectrum* = 0 ## the live panel's id
   MaxSpectrumTraces* = 4096
-    ## traces a spectrum averages at most: more visible are taken evenly
+    ## traces a spectrum averages at most: more chosen are taken evenly
+  MaxSpectrumSamples* = 32 * 1024 * 1024
+    ## decoded samples (128 MiB) a spectrum's traces hold at most, whole,
+    ## and its reader keeps at hand: fewer traces of long records
   MaxSpectrumWindows* = 32 ## FFT windows open at once, at most
 
 func label*(w: SpectrumWindow): string =
@@ -167,6 +176,10 @@ func windowColumns*(fromMs, toMs, t0Ms, dtMs: float64; samples: int): Slice[int]
   let a = max(0.0, ceil((fromMs - t0Ms) / dtMs - 1e-9))
   let b = min(float64(samples - 1), floor((toMs - t0Ms) / dtMs + 1e-9))
   if a > b: 0 .. -1 else: int(a) .. int(b)
+
+func spectrumTraces*(samples: int): int =
+  ## The traces of `samples` samples a spectrum takes at most.
+  clamp(MaxSpectrumSamples div max(samples, 1), 1, MaxSpectrumTraces)
 
 func evenly*(n, most: int): seq[int] =
   ## Indices into `n` items, at most `most` of them, spread evenly from the
