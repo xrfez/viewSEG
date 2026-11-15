@@ -18,9 +18,9 @@
 ## change from one to the other).
 
 import std/math
-import join, log, panels, readout, scales
+import join, log, mapkinds, panels, readout, scales
 
-export join, readout, scales
+export join, mapkinds, readout, scales
 
 type
   Calibration* = object
@@ -77,6 +77,8 @@ type
     lengths*: MapLengths
       ## the unit of the scale bar's and the ruler's lengths, converted from
       ## the survey's when another is chosen
+    hiddenGroups*: set[MapGroup]
+      ## the groups of layers hidden as a whole (the Preplot, the Recorded)
 
   HeadersTab* = enum
     ## The Headers window's tabs.

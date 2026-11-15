@@ -397,11 +397,21 @@ it (H20, and H201's factor: `feet` with 0.3048006096 m a unit is US survey feet)
 the seismic file's headers say, else as you confirmed it when joining; where nothing says,
 "units" (never a guess). A **scale bar** and a north arrow stand in the map's corners; the
 axes show no values. The gear's **Lengths** shows the scale bar's and the ruler's lengths
-in another unit instead, converted exactly (1 ft = 0.3048 m, 1 ftUS = 1200/3937 m). **Layers** in the map's strip shows or hides each layer: each survey file's
-sources or receivers, the open file's own, and the highlight (the record on show, the
-selection, and the source and receiver of the trace under the pointer in the plot). The
-gear chooses where the description of the dot under the pointer goes: in a box beside the
-pointer (the default), or in a strip along the map's bottom.
+in another unit instead, converted exactly (1 ft = 0.3048 m, 1 ftUS = 1200/3937 m).
+
+**Layers** in the map's strip lists the layers in two groups, each with its own tick:
+
+- **Preplot**: the survey files (SPS, SEG P1), what the survey planned: each file's
+  sources and receivers (dots);
+- **Recorded**: what the seismic files say of themselves: each open file's own sources and
+  receivers, as its trace headers give them, or as a join made them ("(joined)"), as rings.
+
+Untick a group to hide all of it (its layers keep their own ticks, greyed out, for when it
+comes back), or a layer to hide that layer alone; the highlight (the record on show, the
+selection, and the source and receiver of the trace under the pointer in the plot) has its
+own tick, and a hidden layer's points are not highlighted either. The groups you hide are
+remembered. The gear chooses where the description of the dot under the pointer goes: in
+a box beside the pointer (the default), or in a strip along the map's bottom.
 
 ### The plot and the map, linked
 

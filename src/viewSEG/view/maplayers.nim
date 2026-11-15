@@ -10,7 +10,11 @@
 ## the open files' own receivers and sources (their traces' coordinates), as
 ## rings, so where they
 ## agree with the survey files each disc sits in a ring and where they do
-## not both show; the highlight on top. Each can be hidden.
+## not both show; the highlight on top. Each can be hidden, and so can each
+## group of them as a whole: the survey files are the **Preplot** (what the
+## survey planned), the open files' own positions the **Recorded** (what
+## the seismic files say, as their headers give them or as a join made
+## them), so that planned against recorded reads at a glance.
 ##
 ## **Colours** (`mapInk`): the plot's background (paper by default, or the
 ## theme's, as the plot window's colour scheme says), sources in the theme's
@@ -46,12 +50,14 @@ type
     key*: MapLayerKey
     layer*: SurveyLayerId ## `NoSurveyLayer` for the highlight
     role*: PointRole
+    group*: MapGroup      ## its group in the Layers list (the highlight: none, `mgPreplot`)
     name*: string         ## "Receivers of line3.rps"
     file*: string         ## the file's name; "" for the highlight
     points*: int
     colour*: Rgba
     shape*: MapShape
-    shown*: bool
+    shown*: bool          ## drawn: its own toggle on and its group shown
+    own*: bool            ## its own toggle (the Layers list's tick, also while its group is hidden)
     spacing*: float64     ## how far apart its points typically are (`core/maplod`)
 
   MapHighlight* = object
@@ -92,9 +98,17 @@ func roleName(r: PointRole; many: bool): string =
   of prSource: (if many: "Sources" else: "Source")
   of prReceiver: (if many: "Receivers" else: "Receiver")
 
+func layerShown*(st: AppState; l: SurveyLayer; r: PointRole): bool {.inline.} =
+  ## Whether the map draws role `r` of survey layer `l` (and finds its
+  ## points under the pointer and in a box): its own toggle on, its group
+  ## (Preplot, Recorded) not hidden.
+  st.map.drawn(st.settings.map.hiddenGroups, l, r)
+
 func mapLayers*(st: AppState; ink: MapInk): seq[MapLayerView] =
   ## The map's layers, in the order they are drawn (`mapLayers` above), the
-  ## highlight last.
+  ## highlight last. Each is in its group: the survey files' points in the
+  ## Preplot, the open files' own positions (as their headers give them, or
+  ## as a join made them) in the Recorded.
   for origin in [loSurveyFile, loTraces]:
     for r in [prReceiver, prSource]:
       for i in 0 ..< st.survey.layers.len:
@@ -102,13 +116,16 @@ func mapLayers*(st: AppState; ink: MapInk): seq[MapLayerView] =
         template l: untyped = st.survey.layers[i]
         if l.origin == origin and l.points[r].len > 0:
           let key = l.keyOf(r)
-          result.add MapLayerView(key: key, layer: l.id, role: r, file: l.name,
-            points: l.points[r].len, colour: ink.roles[r], shown: st.map.shown(key),
+          let joined = origin == loTraces and st.joinedOf(l.session) >= 0
+          result.add MapLayerView(key: key, layer: l.id, role: r, group: l.groupOf,
+            file: l.name, points: l.points[r].len, colour: ink.roles[r],
+            shown: st.layerShown(l, r), own: st.map.shown(key),
             spacing: l.levels[r].spacing, shape: (if origin == loTraces: msRing else: msDisc),
-            name: roleName(r, true) & (if origin == loTraces: " in " else: " of ") & l.name)
+            name: roleName(r, true) & (if origin == loTraces: " in " else: " of ") & l.name &
+              (if joined: " (joined)" else: ""))
   result.add MapLayerView(key: HighlightKey, name: "Highlight: the trace under the " &
     "pointer, the selection", colour: ink.hover, shape: msDisc,
-    shown: st.map.shown(HighlightKey))
+    shown: st.map.shown(HighlightKey), own: st.map.shown(HighlightKey))
 
 func markerSize*(spacing, pixel: float64): float32 =
   ## The diameter, in pixels at 100 %, of a survey file's point whose
@@ -214,7 +231,7 @@ func pointsAt*(st: AppState; at: MapPoint; radius: float64): seq[PointRef] =
   for i in 0 ..< st.survey.layers.len:
     template l: untyped = st.survey.layers[i] # (`for l in` would copy every layer)
     for r in PointRole:
-      if st.map.shown(l.keyOf(r)):
+      if st.layerShown(l, r):
         let q = l.points[r].index.nearest(at.x, at.y, radius)
         if q >= 0:
           let d = hypot(l.points[r].index.x(q) - at.x, l.points[r].index.y(q) - at.y)
@@ -236,7 +253,7 @@ func pointsIn*(st: AppState; box: Bounds): seq[PointRef] =
   for i in 0 ..< st.survey.layers.len:
     template l: untyped = st.survey.layers[i]
     for r in PointRole:
-      if st.map.shown(l.keyOf(r)):
+      if st.layerShown(l, r):
         for q in l.points[r].index.within(box):
           result.add PointRef(layer: l.id, role: r, point: q)
 

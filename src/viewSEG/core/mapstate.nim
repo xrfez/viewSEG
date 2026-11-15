@@ -6,15 +6,19 @@
 ## has points (a survey file's sources or receivers, an open file's own
 ## sources or receivers) and the highlight on top. A hidden layer is named
 ## by its file and role (`MapLayerKey`), not by the survey layer's id, so it
-## stays hidden when its file is loaded again.
+## stays hidden when its file is loaded again. The layers are in groups
+## (`core/mapkinds`): the survey files' are the Preplot, the open files' own
+## positions the Recorded; a group hidden as a whole (the settings'
+## `map.hiddenGroups`) hides its layers whatever their own toggles say
+## (`drawn`).
 ##
 ## **The survey changes** (a file loaded, one closed): a map that showed the
 ## whole survey shows the whole new one; another view stays where it is,
 ## kept within the new bounds (`followed`).
 
-import mapview, survey
+import mapkinds, mapview, survey
 
-export mapview
+export mapkinds, mapview
 
 const MaxMapBack* = 50 ## views kept for back
 
@@ -47,8 +51,19 @@ func keyOf*(l: SurveyLayer; r: PointRole): MapLayerKey =
     role: r)
 
 func shown*(m: MapState; key: MapLayerKey): bool =
-  ## Whether the map draws the layer `key` names.
+  ## Whether the layer `key` names is shown by its own toggle (its group's
+  ## may still hide it: `drawn`).
   key notin m.hidden
+
+func groupOf*(l: SurveyLayer): MapGroup {.inline.} =
+  ## The group of the Layers list survey layer `l` is in: a survey file's
+  ## points are the Preplot, an open file's own positions the Recorded.
+  if l.origin == loSurveyFile: mgPreplot else: mgRecorded
+
+func drawn*(m: MapState; hiddenGroups: set[MapGroup]; l: SurveyLayer; r: PointRole): bool =
+  ## Whether the map draws (and finds points in) role `r` of survey layer
+  ## `l`: its own toggle on and its group not hidden.
+  l.groupOf notin hiddenGroups and m.shown(l.keyOf(r))
 
 proc show*(m: var MapState; key: MapLayerKey; on: bool) =
   ## Shows or hides layer `key`.

@@ -449,7 +449,16 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   and the sources inside it stay visible; its source larger and outlined), then the
   selected points (the selection's colour) and the hovered ones (the hover colour),
   larger and outlined. Each layer can be hidden (**Layers** in the strip, or the right-click menu of
-  one of its points). A layer's points get smaller as they crowd on the screen (from 5
+  one of its points). **The Layers list is in groups** (the user: "When a survey can be
+  loaded it should display as a preplot layer"): the **Preplot**, the survey files' sources
+  and receivers, what the survey planned; the **Recorded**, what the seismic files say of
+  themselves, their own positions as the headers give them or as a join made them (named
+  "(joined)"); then the highlight. Each group has its tick, which hides all of it (its
+  layers keep their own ticks, greyed out meanwhile), and each layer its own; a hidden
+  layer is neither drawn, nor found under the pointer or in a box, nor highlighted. The
+  groups hidden are kept in the settings (`map.hiddenGroups`); a layer hidden on its own is
+  kept while the program runs (with the file's identity across runs: what is remembered
+  about a file). A layer's points get smaller as they crowd on the screen (from 5
   pixels across down to 2, from how far apart its points typically are), so lines of
   stations stay lines when zoomed out; a ring that small is drawn as a disc.
 - **Colours:** the plot's background (the plot window's colour scheme: paper by default);
@@ -522,6 +531,12 @@ what it was instead of):
 6. **The record on show is marked** by its receivers in a darker shade of their colour
    and its source as a larger, outlined disc. (Outlined receivers were tried first: on a
    survey of thousands of receivers they merged into a black mass and hid the sources.)
+7. **A group's tick hides its layers without changing theirs**, so ticking it again
+   brings back what was shown; and **a hidden layer's points are not highlighted** (the
+   record on show, the selection, the plot's hovered trace), so hiding the Preplot shows
+   the Recorded alone. (Before the groups, the highlight was drawn over a hidden layer.)
+   The groups hidden are remembered between runs; a layer hidden on its own only while
+   the program runs, as it names a file.
 
 ## Linking the plot and the map
 

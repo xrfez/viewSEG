@@ -367,7 +367,9 @@ survey: never zoomed out past the whole survey, never past its bounds by more th
 aspect needs (`keptMap`). The frontend moves the view itself and reports it (`ckMapView`,
 with `mapRemember` at a gesture's start, for `ckMapBack`); `AppState.map` (`MapState`)
 holds it, the views before it and the layers hidden (`ckMapLayer`, by file and role, so a
-file loaded again stays hidden), and follows the survey after every command and every
+file loaded again stays hidden; the groups of layers, Preplot and Recorded, `core/mapkinds`,
+are hidden as a whole through the settings, `map.hiddenGroups`, and `drawn` says whether a
+layer is drawn, found under the pointer and highlighted), and follows the survey after every command and every
 drained inbox (`followed`): a map that showed the whole survey fits the new one, another
 view is kept within the new bounds and the frontend follows `jumps`. **Levels of detail**
 are made with each layer, on the worker that reads it (`SurveyLayer.levels`, `withLevels`:

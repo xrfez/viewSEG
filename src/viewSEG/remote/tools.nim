@@ -111,8 +111,10 @@ proc toolList*(): string =
        "(program), the file list (fileList), the open files (files), the panels " &
        "(panels: the file, record, layout, view, display and gain, display header, " &
        "order, trace filter, polarity, the traces at each position, the edits, whether " &
-       "the picture is complete), the selection, the map (its view, its layers, shown " &
-       "or hidden, with their points, and the points selected and hovered), the jobs, " &
+       "the picture is complete), the selection, the map (its view, its layers, each " &
+       "in its group, Preplot (the survey files) or Recorded (the seismic files' own " &
+       "positions), shown or hidden by its own toggle and drawn or not, the groups " &
+       "hidden, the points selected and hovered), the jobs, " &
        "the newest messages, the survey, and the Headers window (headers: the tab shown, " &
        "what it has on screen, the traces its Trace tab is about and what its reader read " &
        "of them, and the facts its Summary gives of the file the plot shows). All parts " &
@@ -363,15 +365,20 @@ proc mapJson(state: AppState; limit: int): JsonNode =
   ## The map: its view, its layers (each role of each survey layer, shown or
   ## hidden, with its points), the points selected and hovered.
   let m = state.map
+  let hiddenGroups = state.settings.map.hiddenGroups
+  var groups = newJArray()
+  for g in hiddenGroups: groups.add %($g)
   result = %*{"view": toJson(m.view), "canGoBack": m.back.len > 0,
-    "highlightShown": m.shown(HighlightKey)}
+    "highlightShown": m.shown(HighlightKey), "groupsHidden": groups}
   var layers = newJArray()
-  for l in state.survey.layers:
+  for i in 0 ..< state.survey.layers.len: # by index: `for l in` copies every layer
+    template l: untyped = state.survey.layers[i]
     for role in PointRole:
       if l.points[role].len > 0:
         let key = l.keyOf(role)
         layers.add %*{"layer": int(l.id), "name": l.name, "kind": $l.kind,
-          "mapLayer": toJson(key), "points": l.points[role].len, "shown": m.shown(key)}
+          "group": $l.groupOf, "mapLayer": toJson(key), "points": l.points[role].len,
+          "shown": m.shown(key), "drawn": m.drawn(hiddenGroups, l, role)}
   result["layers"] = layers
   var selected = newJArray()
   for i in 0 ..< min(state.selection.points.len, limit):

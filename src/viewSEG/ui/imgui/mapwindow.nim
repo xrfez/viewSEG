@@ -1,9 +1,10 @@
 ## The map window: the survey's sources and receivers in survey
 ## coordinates, north up, always at equal aspect, with no basemap (nothing
 ## is fetched from anywhere). One layer per loaded survey file's sources and
-## receivers (discs), the open file's own positions (rings) and the
-## highlight on top (`view/maplayers`); each can be hidden ("Layers" in the
-## strip, or the right-click menu of one of its points).
+## receivers (discs: the Preplot group), the open file's own positions
+## (rings: the Recorded group) and the highlight on top (`view/maplayers`);
+## each layer and each group can be hidden ("Layers" in the strip; a layer
+## also from the right-click menu of one of its points).
 ##
 ## The window reads `core` and issues `Command`s; it never changes the
 ## state itself. ImPlot only frames the plot (its axes show no values: the
@@ -119,6 +120,8 @@ type
       ## where `highlight.selected` are
     activeFor: tuple[gather: GatherRef; survey: int]
       ## what `active` was made from
+    visibleFor: tuple[hidden: seq[MapLayerKey]; groups: set[MapGroup]]
+      ## the layers and groups hidden when the highlight's places were found
     highlightRev: int
     drawnHover, drawnPlotHover: seq[PointRef]
       ## the map's own hover and the plot's hovered trace's points the GPU's
@@ -241,30 +244,89 @@ proc swatch(c: Rgba; id: string) =
   discard igColorButton(id.cstring, vec4(c), ImGui_ColorEditFlags_NoTooltip.cint or
     ImGui_ColorEditFlags_NoPicker.cint, ImVec2_c(x: s, y: s))
 
+proc layerRow(l: MapLayerView; i: int; marks: var Marks; res: var MapOutput) =
+  ## One layer of the popover: its colour, its own toggle and its points.
+  igPushID_Int(cint(i))
+  swatch(l.colour, "##colour")
+  igSameLine(0, -1)
+  var on = l.own
+  let label = l.name & (if l.points > 0: "  (" & $l.points & ")" else: "")
+  if igCheckbox(label.cstring, addr on):
+    res.commands.add Command(kind: ckMapLayer, mapLayer: l.key, shown: on)
+  marks.mark("map.layer " & (if l.key.kind == mlHighlight: "highlight"
+    else: l.file & " " & roleWord(l.role)))
+  igPopID()
+
+const groupTips: array[MapGroup, string] = [
+  "The survey files (SPS, SEG P1): the sources and receivers the survey planned",
+  "What the seismic files say: their traces' own positions, as their headers give " &
+    "them or as a join with the survey files made them"]
+
 proc drawLayers(st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     res: var MapOutput) =
-  ## The layers popover: each layer with its colour, shown or not.
-  for i, l in layers:
-    igPushID_Int(cint(i))
-    swatch(l.colour, "##colour")
-    igSameLine(0, -1)
-    var on = l.shown
-    let label = l.name & (if l.points > 0: "  (" & $l.points & ")" else: "")
+  ## The layers popover, in groups: the Preplot (the survey files), then the
+  ## Recorded (the open files' own positions), each with its own toggle and
+  ## its layers under it (each with its colour and toggle; greyed out while
+  ## the group is hidden), then the highlight.
+  for g in MapGroup:
+    var on = g notin st.settings.map.hiddenGroups
+    let label = $g & (if g == mgPreplot: ": the survey files" else: ": the seismic files")
     if igCheckbox(label.cstring, addr on):
-      res.commands.add Command(kind: ckMapLayer, mapLayer: l.key, shown: on)
-    marks.mark("map.layer " & (if l.key.kind == mlHighlight: "highlight"
-      else: l.file & " " & roleWord(l.role)))
-    igPopID()
+      var s = st.settings
+      if on: s.map.hiddenGroups.excl g else: s.map.hiddenGroups.incl g
+      res.commands.add Command(kind: ckSettings, settings: s)
+    marks.mark("map.group " & ($g).toLowerAscii)
+    tip(groupTips[g])
+    igIndent(0)
+    var any = false
+    igBeginDisabled(not on)
+    for i, l in layers:
+      if l.key.kind != mlHighlight and l.group == g:
+        any = true
+        layerRow(l, i, marks, res)
+    igEndDisabled()
+    if not any:
+      let none = if g == mgPreplot: "No survey file loaded (open SPS or SEG P1 files)"
+                 else: "No seismic file whose traces carry positions is open"
+      igTextDisabled("%s", none.cstring)
+    igUnindent(0)
+  igSeparator()
+  for i, l in layers:
+    if l.key.kind == mlHighlight: layerRow(l, i, marks, res)
+
+proc widest(texts: openArray[string]): float32 =
+  for t in texts: result = max(result, igCalcTextSize(t.cstring, nil, false, -1).x)
+
+proc placePopover(at: ImVec2_c; width: float32) =
+  ## Opens the next popup with its top-left corner at `at`, moved left as
+  ## far as needed for a popup `width` wide (its widest line) to stay inside
+  ## the main window: past its edge it would become a window of its own,
+  ## which takes the keyboard focus.
+  let vp = igGetMainViewport()
+  let room = width + 2 * igGetStyle().WindowPadding.x + 3 * igGetFrameHeight()
+  let x = max(vp.WorkPos.x, min(at.x, vp.WorkPos.x + vp.WorkSize.x - room))
+  igSetNextWindowPos(ImVec2_c(x: x, y: at.y), ImGui_Cond_Always.cint, ImVec2_c(x: 0, y: 0))
+
+proc layersWidth(layers: openArray[MapLayerView]): float32 =
+  ## The widest line of the Layers popover.
+  var lines = @[$mgPreplot & ": the survey files",
+    "No survey file loaded (open SPS or SEG P1 files)",
+    "No seismic file whose traces carry positions is open"]
+  for l in layers: lines.add l.name & "  (" & $l.points & ")"
+  widest(lines) + igGetStyle().IndentSpacing
 
 proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; marks: var Marks;
     res: var MapOutput; ask: var MapAskKind) =
   ## The strip at the top of the window, in groups that wrap.
   let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
+  var under: array[2, ImVec2_c] # below the Layers button and below the gear
   mu.stripGroup(0, right, 0):
     if button(IconLayers & "  Layers##layers", marks, "map.layers"):
       igOpenPopup_Str(layersId, 0)
-    tip("Show or hide each layer: the survey files' sources and receivers, the open " &
-      "file's own positions, the highlight")
+    under[0] = ImVec2_c(x: igGetItemRectMin().x, y: igGetItemRectMax().y)
+    tip("Show or hide each group of layers and each layer: the Preplot (the survey " &
+      "files' sources and receivers), the Recorded (the seismic files' own positions), " &
+      "the highlight")
   mu.stripGroup(1, right, 14):
     if button(IconZoomOut & "##zoomout", marks, "map.zoom out"): ask = maZoomOut
     tip("Zoom out (-, or the wheel)")
@@ -282,10 +344,14 @@ proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; mar
     tip("Back to the view before (Backspace, Alt+Left)")
   mu.stripGroup(2, right, 14):
     if button(IconSettings & "##more", marks, "map.more"): igOpenPopup_Str(moreId, 0)
+    under[1] = ImVec2_c(x: igGetItemRectMin().x, y: igGetItemRectMax().y)
     tip("Where the map describes the point under the pointer, and the unit of its lengths")
+  placePopover(under[0], layersWidth(layers))
   if igBeginPopup(layersId, 0):
     drawLayers(st, layers, marks, res)
     igEndPopup()
+  placePopover(under[1], widest(["In US survey feet (ftUS: 1200/3937 m)",
+    "As the survey gives them (US survey feet, ftUS)", "In a strip along the map's bottom"]))
   if igBeginPopup(moreId, 0):
     igSeparatorText("The point under the pointer")
     let now = st.settings.map.info
@@ -466,17 +532,31 @@ proc handleKeys(mu: var MapUi; st: AppState; after: var MapView; view: MapView; 
     elif st.selection.selected.len > 0 or st.selection.points.len > 0:
       res.commands.add Command(kind: ckClearSelection)
 
+func shownAt(st: AppState; p: PointRef): MapPoint =
+  ## Where point `p` is drawn: NaN (not drawn) while its layer or its
+  ## layer's group is hidden, so the highlight of a hidden layer is hidden
+  ## too.
+  let i = st.survey.find(p.layer)
+  if i >= 0 and st.layerShown(st.survey.layers[i], p.role): st.positionOf(p)
+  else: mapPoint(NaN, NaN)
+
 proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
   ## The highlighted points on the GPU: the gather on show's, the
   ## selection's, the plot's hovered trace's and the map's own hover, each
   ## found again (with where they are) only when what it comes from changes,
   ## so a hover finds its own few points alone; uploaded when one changed.
-  var changed = mu.highlightRev == 0 or hidden != mu.drawnHidden
+  ## Points of a hidden layer are not drawn.
+  let visible = (st.map.hidden, st.settings.map.hiddenGroups)
+  var changed = mu.highlightRev == 0 or hidden != mu.drawnHidden or visible != mu.visibleFor
+  if visible != mu.visibleFor:
+    mu.visibleFor = visible
+    mu.selectedFor = (-1, -1) # where the points are drawn, found again
+    mu.activeFor.survey = -1
   let selected = (st.selection.selectedRevision, st.survey.revision)
   if selected != mu.selectedFor:
     mu.highlight = st.highlightOf
     mu.selectedAt.setLen 0
-    for p in mu.highlight.selected: mu.selectedAt.add st.positionOf(p)
+    for p in mu.highlight.selected: mu.selectedAt.add st.shownAt(p)
     mu.selectedFor = selected
     changed = true
   let active = (st.selection.activeGather, st.survey.revision)
@@ -484,7 +564,7 @@ proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
     mu.active = st.activePoints
     for r in PointRole:
       mu.activeAt[r].setLen 0
-      for p in mu.active[r]: mu.activeAt[r].add st.positionOf(p)
+      for p in mu.active[r]: mu.activeAt[r].add st.shownAt(p)
     mu.activeFor = active
     changed = true
   if st.selection.hoverAt != mu.drawnPlotHover:
@@ -495,7 +575,7 @@ proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
     changed = true
   if changed:
     var hovered: seq[MapPoint]
-    for p in mu.drawnPlotHover: hovered.add st.positionOf(p)
+    for p in mu.drawnPlotHover: hovered.add st.shownAt(p)
     for p in mu.hovered: hovered.add st.positionOf(p)
     let b = st.survey.bounds
     let origin = if b.isEmpty: mapPoint(0, 0) else: mapPoint(b.minX, b.minY)

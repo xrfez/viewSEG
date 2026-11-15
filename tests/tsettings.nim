@@ -57,7 +57,7 @@ proc everyFieldSet(): Settings =
     customOrder: @[SortKey(field: hfSrcPoint), SortKey(field: hfTrace, descending: true)],
     messages: MessagesView(autoScroll: false, hidden: {sevInfo, sevWarning}), cursorLine: true,
     files: FilesView(followLatest: true, prepareNext: false),
-    map: MapOptions(info: miStrip, lengths: dlUsFeet),
+    map: MapOptions(info: miStrip, lengths: dlUsFeet, hiddenGroups: {mgRecorded}),
     join: JoinOptions(trailingDigits: true, multiComponent: true, coordinates: hcReplace,
       recordMatch: rmFieldRecord, traceMatch: tmChannel, lineNames: @[LineName(name: "CLT4960",
       line: 4960), LineName(name: "A line", line: 12.5)]),
@@ -89,7 +89,7 @@ block savedByAnOlderBuild:
   doAssert not s.cursorLine and s.recentFiles.len == 1 and s.plot.display.mode == dmWiggle
   doAssert not s.files.followLatest, "a new setting takes its default"
   doAssert s.files.prepareNext, "preparing the next file is on by default"
-  doAssert s.map.info == miPopup and s.map.lengths == dlSurvey,
+  doAssert s.map.info == miPopup and s.map.lengths == dlSurvey and s.map.hiddenGroups == {},
     "the map's settings take their defaults"
   doAssert s.join == JoinOptions(), "the join's options take their defaults"
   doAssert s.headers == HeadersView(), "the Headers window's settings take their defaults"

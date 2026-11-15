@@ -24,7 +24,7 @@
 ##  (messages (autoScroll true) (hide info))
 ##  (cursorLine false)
 ##  (files (followLatest false) (prepareNext true))
-##  (map (info popup) (lengths survey))
+##  (map (info popup) (lengths survey) (hide recorded))
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
 ##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960)))
 ##  (headers (tab summary) (traceTab header) (followPointer true) (asDisplayed false)
@@ -64,6 +64,7 @@ const
   LengthNames: array[LengthUnit, string] = ["inch", "cm"]
   MapInfoNames: array[MapInfo, string] = ["popup", "strip"]
   MapLengthNames: array[MapLengths, string] = ["survey", "metres", "feet", "usFeet"]
+  MapGroupNames: array[MapGroup, string] = ["preplot", "recorded"]
   CoordinateNames: array[HeaderCoordinates, string] = ["fill", "replace"]
   RecordMatchNames: array[RecordMatch, string] = ["auto", "source", "ffid"]
   TraceMatchNames: array[TraceMatch, string] = ["auto", "station", "channel"]
@@ -228,6 +229,9 @@ proc settingsDocument*(s: Settings): string =
   w.open("map")
   w.choice("info", MapInfoNames[s.map.info])
   w.choice("lengths", MapLengthNames[s.map.lengths])
+  w.open("hide")
+  for g in s.map.hiddenGroups: w.ident MapGroupNames[g]
+  w.close()
   w.close()
   w.open("join")
   w.value("trailingDigits", s.join.trailingDigits)
@@ -574,6 +578,12 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
         for k in c.kids:
           if k.isTree("info"): r.choice(k, MapInfoNames, result.map.info)
           elif k.isTree("lengths"): r.choice(k, MapLengthNames, result.map.lengths)
+          elif k.isTree("hide"):
+            var hidden: set[MapGroup]
+            for v in k.kids:
+              var g = mgPreplot
+              if r.pick(v, MapGroupNames, "hide", g): hidden.incl g
+            result.map.hiddenGroups = hidden
           else: r.unknown(k, "map")
       of "join": r.join(c, result.join)
       of "headers":
