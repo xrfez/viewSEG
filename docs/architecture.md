@@ -358,9 +358,10 @@ point by station as parseSEG's join finds one (the same index, then any index, t
 first position). **Links:** `tracePoints` gives the points a trace was recorded at in
 every layer (its own file's by trace; the survey files' by its stations, filled from the
 loaded relations with `joinStations` when its keys lack them), and `tracesAt` the traces
-of the open files at a point. **The join:** `joinGeometry` makes parseSEG's
-`SurveyGeometry` from loaded survey files (the first relation file's relations and every
-file's stations) for `applySurvey`, so a join reads no file again. Layers are made off
+of the open files at a point. **The join** is parseSEG's: the import reads the survey
+files again into one `SurveyGeometry` with `addSps` and `addP1` (`core/surveyjobs`), which
+merge them with the library's own warnings (a station given twice, units that differ), and
+matches with `applySurvey`. Layers are made off
 the UI thread and never change once made: a file loaded again, or keys changed by a
 join, make a new layer in place of the old (each layer's `keysRevision` says which keys
 it was made from). A million traces become a layer in about 0.1 s (land) to 0.25 s

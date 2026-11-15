@@ -6,10 +6,8 @@
 ## SPS files and the P1 file give the stations, the duplicates and the
 ## counts the fixtures say; a trace finds its points in every layer (its
 ## file's, by trace; the survey files', by station, filled from the X
-## relations when its keys have none) and a point its traces; the join
-## geometry made from the loaded layers joins the survey fixture as
-## parseSEG's own reading of the files does; and a million traces are made
-## into a layer in under a second.
+## relations when its keys have none) and a point its traces; and a
+## million traces are made into a layer in under a second.
 ##
 ## Seen to fail: with `nearest`'s rings stopping one ring early (`k *
 ## cell` for `(k - 1) * cell`), `indexAgreesWithBruteForce` found a farther
@@ -308,37 +306,6 @@ block linksBothWays:
     # A layer of the same file takes the place of the one before.
     let again = sv.add fileLayer(paths.r, fkSpsReceiver)
     doAssert sv.find(r) == -1 and sv.find(again) == 3 and sv.layers.len == 5
-
-block joinFromTheLayers:
-  # The geometry made from the loaded layers joins as parseSEG's own
-  # reading of the files does.
-  withFixtures fx:
-    let paths = fx.surveySps()
-    var sv: Survey
-    var ids: seq[SurveyLayerId]
-    for (path, kind) in [(paths.s, fkSpsSource), (paths.r, fkSpsReceiver),
-        (paths.x, fkSpsRelation)]:
-      ids.add sv.add fileLayer(path, kind)
-    let mine = sv.joinGeometry(ids)
-    var theirs = initSurveyGeometry()
-    for path in [paths.s, paths.r, paths.x]: theirs.addSps(path)
-    doAssert mine.sourceCount == theirs.sourceCount and
-      mine.receiverCount == theirs.receiverCount and
-      mine.relationCount == theirs.relationCount
-    var f = openSeismic(fx.surveySegy(), keys = true)
-    var a, b: seq[TraceKeys]
-    for i in 0 ..< f.len:
-      var k = f.traceKeys(i)
-      (k.srcX, k.srcY, k.rcvX, k.rcvY) = (NaN, NaN, NaN, NaN)
-      a.add k
-      b.add k
-    f.close()
-    for i in 0 ..< a.len:
-      doAssert applySurvey(a[i], mine) == applySurvey(b[i], theirs)
-      doAssert a[i].rcvLine == b[i].rcvLine and a[i].rcvPoint == b[i].rcvPoint
-      doAssert near(a[i].srcX, b[i].srcX) and near(a[i].rcvX, b[i].rcvX) and
-        near(a[i].rcvY, b[i].rcvY), $i
-      doAssert near(a[i].rcvX, rcvX(i mod Channels + 1))
 
 proc measured(keys: openArray[TraceKeys]): (SurveyLayer, float64) =
   let start = getMonoTime()

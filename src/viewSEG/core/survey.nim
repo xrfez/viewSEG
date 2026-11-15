@@ -32,9 +32,9 @@
 ## trace was recorded at in every layer (its own file's, by trace; the
 ## survey files', by its stations, filled from the files' relations when
 ## its keys lack them, as parseSEG's join fills them); `tracesAt` gives the
-## traces of the open files recorded at a point. **The join**:
-## `joinGeometry` gives parseSEG's `SurveyGeometry` of loaded survey files,
-## for `applySurvey`.
+## traces of the open files recorded at a point. **The join** is
+## parseSEG's own: the import reads the survey files into one
+## `SurveyGeometry` with `addSps` / `addP1` (`core/surveyjobs`).
 ##
 ## Layers are made off the UI thread (the builders below) and do not change
 ## once made: a changed file, or keys changed by a join, make a new layer.
@@ -708,39 +708,6 @@ func tracesAt*(s: Survey; at: PointRef): seq[int] =
     let st = l.points[at.role].station[at.point]
     for m in s.layers:
       for t in m.stationTraces(at.role, st): result.add m.base + t
-
-proc joinGeometry*(s: Survey; ids: openArray[SurveyLayerId]): SurveyGeometry =
-  ## parseSEG's geometry of the survey files `ids` (others are passed by),
-  ## for `applySurvey`: the relations of the first that has any, and the
-  ## stations of all of them with their coordinates (where two give one
-  ## station, the later one's), so a join needs no file read again.
-  ## Relations of a second file are not merged into the first's (parseSEG
-  ## cannot merge two geometries' relations): read such files with `addSps`.
-  ## Stations at (0, 0), and points without a station, are left out, as the
-  ## map leaves them out.
-  result = initSurveyGeometry()
-  var related = false
-  for id in ids:
-    let i = s.find(id)
-    if i >= 0 and s.layers[i].origin == loSurveyFile and s.layers[i].relationRuns > 0 and
-        not related:
-      result = s.layers[i].relations[]
-      related = true
-  for id in ids:
-    let i = s.find(id)
-    if i >= 0 and s.layers[i].origin == loSurveyFile:
-      template l: untyped = s.layers[i]
-      if not result.gridUnit.known: result.gridUnit = l.gridUnit
-      for r in PointRole:
-        template p: untyped = l.points[r]
-        for j in 0 ..< p.len:
-          let st = p.station[j]
-          if st.known:
-            if r == prSource:
-              result.addSource(st.line, st.point, st.index, p.index.x(j), p.index.y(j), p.z[j])
-            else:
-              result.addReceiver(st.line, st.point, st.index, p.index.x(j), p.index.y(j),
-                p.z[j])
 
 # -------------------------------------------------------------- in words --
 
