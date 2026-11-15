@@ -48,6 +48,9 @@ import std/math
 from processSEG/pipeline import decodeWindow
 
 const
+  MaxBasisValues* = 8 * 1024 * 1024
+    ## decoded samples (32 MiB) the record's level is taken over at most
+    ## (`panels.recordRequest`), and a reader keeps of them
   ReadAhead* = 1.5
     ## positions (and samples) read beyond the view on each side, as a
     ## fraction of the visible count: a whole view and a half, so a step of

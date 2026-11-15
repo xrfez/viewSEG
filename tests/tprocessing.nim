@@ -21,7 +21,7 @@
 ## - the filters stay on for the next record; the settings keep them for a
 ##   new plot (processed, not raw), written to the settings file and read
 ##   back as they were, and the file is never changed;
-## - after a drag, the level is that of the last filters;
+## - after a drag, zoomed in, the level is the record's of the last filters;
 ## - narrow notches with many harmonics (slow for processSEG to size) do not
 ##   slow a filter change or a view change on the calling thread.
 ##
@@ -71,6 +71,11 @@ proc showAll(st: var AppState) =
   let lay = st.panel(MainPanel).layout
   st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 640, 2 * lay.samples))
   doAssert st.settle(st.answered)
+
+proc wholeView(st: AppState): Viewport =
+  ## The whole record, on the panel's plot as it is.
+  let v = st.panel(MainPanel).view
+  fitAll(st.panel(MainPanel).layout, v.columns, v.rows)
 
 proc expected(path: string; t: Tile; dtMs: float64; pr: Processing; aux = false): Tensor[float32] =
   ## The tile's traces as processSEG's plan of `pr` makes them, whole.
@@ -265,18 +270,25 @@ withFixtures fx:
     for t in drawn[1 .. ^1]:
       doAssert t.request.count <= 102 and t.filtered == t.request.count and t.cached,
         "a tile of the run: " & $t.request.count & " traces, " & $t.filtered & " filtered"
-    let lastGen = st.panel(MainPanel).requestGen
+    let last = st.panel(MainPanel).layers[0].processing
+    doAssert st.settle(st.answered and not st.panel(MainPanel).relevel)
+    # the level the plot keeps is the record's of the filters it ends with,
+    # zoomed in as it is: as the whole record in view gives it for them (a
+    # clip percentile changed and back has it taken again), not one of a
+    # change replaced, nor the view's
+    let after = st.panel(MainPanel).level
+    let zoomedIn = st.panel(MainPanel).view
+    st.apply Command(kind: ckView, panel: MainPanel, view: st.wholeView)
     doAssert st.settle(st.answered)
-    # the level the plot keeps is that of the filters it ends with: the first
-    # tile asked for after the last change sets it, not one of a change
-    # replaced that came after it was asked for
-    var final = -1
-    for i, t in st.tiles(0):
-      if final < 0 and t.request.gen >= lastGen: final = i
-    doAssert final >= 0
-    doAssert st.panel(MainPanel).level == st.tiles(0)[final].level, "the level after the " &
-      "drag is not of its last filters: " & $st.panel(MainPanel).level & ", the last filters' " &
-      $st.tiles(0)[final].level
+    var d = st.panel(MainPanel).layers[0].display
+    for pct in [98.0, 99.0]:
+      d.clipPercentile = pct
+      st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+      doAssert st.settle(st.answered and not st.panel(MainPanel).relevel)
+    doAssert st.panel(MainPanel).layers[0].processing == last
+    doAssert st.panel(MainPanel).level == after, "the level after the drag is not the " &
+      "record's of its last filters: " & $after & ", the record's " & $st.panel(MainPanel).level
+    v = zoomedIn
     # the next view brings the read-ahead back
     v.traces = Span(lo: 1010, hi: 1110)
     st.apply Command(kind: ckView, panel: MainPanel, view: v)

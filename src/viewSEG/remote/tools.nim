@@ -343,6 +343,7 @@ proc pictureOf(state: AppState; k: int; fe: Frontend): string =
   elif not p.pending.isEmpty and (p.pending.gen != p.requestGen or tiles.len == 0 or
       tiles[^1].request != p.pending):
     result = "reading"
+  elif p.relevel and p.levelAsked: result = "taking the record's level"
   else:
     var drawn: Viewport
     if fe.drawnView != nil and fe.drawnView(p.id, drawn) and not drawn.sameSpans(p.view):

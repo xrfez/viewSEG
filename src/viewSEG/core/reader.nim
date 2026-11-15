@@ -132,6 +132,8 @@ type
     order: seq[SortKey]
     orderGen: uint64
     request: ReaderRequest
+    hasLevel: bool          ## a level asked for, not taken yet
+    level: ReaderRequest
     poster: Poster
     holds: HoldRelease
     started: bool
@@ -172,6 +174,9 @@ type
     orderGen: uint64     ## requests from before the newest order are not served
     layout: PanelLayout
     raw: RawCache
+    owed: ReaderRequest  ## the record's level to work out when nothing else waits
+    hasOwed: bool
+    basisRaw: RawCache   ## the samples of the traces `owed` reads, as decoded
     ws: Workspace
     pool: ProcessPool    ## the processing's workers; none until first needed
     toldShort: bool      ## the file was found shorter than when it was opened: said once
@@ -234,6 +239,9 @@ proc letGo(rd: var Reader) =
   rd.sorted = false
   rd.layout = PanelLayout()
   rd.raw = RawCache()
+  rd.owed = ReaderRequest()
+  rd.hasOwed = false
+  rd.basisRaw = RawCache()
   rd.toldShort = false
   rd.toldNotNumbers = false
 
@@ -480,28 +488,42 @@ proc cutShort(rd: var Reader): bool =
     rd.toldShort = true
     rd.note(sevWarning, why)
 
-func heldRows(rd: Reader; q: ReadRequest; list: seq[int]; window: Slice[int]): seq[int] =
+func heldRows(raw: RawCache; q: ReadRequest; list: seq[int]; window: Slice[int]): seq[int] =
   ## Where each row of request `q` (its traces `list`, its samples `window`)
-  ## is in the raw samples at hand: when they hold every one of its traces
+  ## is in the raw samples `raw`: when they hold every one of its traces
   ## (the same view, or a part of it: fewer traces, every second one, ...,
   ## as a turn or a zoom out to a coarser stride asks) and its samples;
   ## none otherwise.
-  if not rd.raw.valid or rd.raw.stride <= 0 or window.a < rd.raw.window.a or
-      window.b > rd.raw.window.b:
+  if not raw.valid or raw.stride <= 0 or window.a < raw.window.a or
+      window.b > raw.window.b:
     return
   result = newSeq[int](q.count)
   for row in 0 ..< q.count:
-    let d = q.position(row) - rd.raw.first
-    let i = d div rd.raw.stride
-    if d < 0 or d mod rd.raw.stride != 0 or i >= rd.raw.list.len or rd.raw.list[i] != list[row]:
+    let d = q.position(row) - raw.first
+    let i = d div raw.stride
+    if d < 0 or d mod raw.stride != 0 or i >= raw.list.len or raw.list[i] != list[row]:
       return @[] # not held, or another trace there now (a sort)
     result[row] = i
 
-proc serve(rd: var Reader; req: sink ReaderRequest) =
-  ## Reads, processes and posts the tile `req` asks for, unless a newer note
-  ## comes first. The samples come from the file through a prefetcher, or,
-  ## when the last request read from the file had the same traces and these
-  ## samples among its own, from what it read (`RawCache`).
+proc levelWaits(r: ptr ReaderObj): bool =
+  ## Whether a work out of the record's level is to be given up: any newer
+  ## note, a newer level among them.
+  result = r.interrupted
+  if not result:
+    withLock r.lock:
+      result = r.hasLevel
+
+proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
+    given: var bool): bool =
+  ## Reads and processes the tile `req` asks for into `tile`; false when
+  ## there is none (`given`: a newer note came first). The samples come from
+  ## the file through a prefetcher, or, when the last request read from the
+  ## file had the same traces and these samples among its own, from what it
+  ## read (`RawCache`). For the record's `level` (`askLevel`), from those of
+  ## the level asked for before when they hold them (`basisRaw`, else what
+  ## was read last), else read into them; given up for any newer note.
+  result = false
+  given = false
   let q = req.read
   let f = rd.src.file
   if q.isEmpty or q.first < 0 or q.last >= rd.positions.len: return
@@ -526,7 +548,10 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
     except ValueError as e:
       rd.note(sevError, "The display processing cannot run on " & rd.name & ": " & e.msg)
       pr.processing = false
-  var tile = Tile(panel: rd.r.panel, request: q, dtMs: rd.layout.dtMs, t0Ms: rd.layout.t0Ms,
+  if level and rd.r.levelWaits: # (compiling the filters can take long)
+    given = true
+    return
+  tile = Tile(panel: rd.r.panel, request: q, dtMs: rd.layout.dtMs, t0Ms: rd.layout.t0Ms,
     columns: q.columns, fields: req.fields)
   tile.data = newSeq[float32](q.count * tile.columns)
   if q.envelope: tile.envelope = newSeq[float32](q.count * 2 * tile.columns)
@@ -579,15 +604,18 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
         tile.header[i][row] = keys.value(field, list[row])
 
   var failed: seq[int]
-  var given = false
-  let at = rd.heldRows(q, list, window)
+  var atHand = addr rd.raw # the samples at hand that hold the request's, if any
+  var at = heldRows(rd.raw, q, list, window)
+  if level:
+    let inBasis = heldRows(rd.basisRaw, q, list, window)
+    if inBasis.len > 0: (atHand, at) = (addr rd.basisRaw, inBasis)
   if at.len > 0:
     # The samples are at hand: nothing is read from the file.
-    let held = rd.raw.window.len
-    let offset = window.a - rd.raw.window.a
+    let held = atHand[].window.len
+    let offset = window.a - atHand[].window.a
     tile.cached = true
-    var heldFailed = newSeq[bool](rd.raw.list.len)
-    for r in rd.raw.failed: heldFailed[r] = true
+    var heldFailed = newSeq[bool](atHand[].list.len)
+    for r in atHand[].failed: heldFailed[r] = true
     for row in 0 ..< q.count:
       if heldFailed[at[row]]: failed.add row
     tile.failed = failed.len
@@ -600,7 +628,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       work.setLen n * cols
       if cols > 0:
         for k in 0 ..< n:
-          copyMem(addr work[k * cols], addr rd.raw.samples[at[a + k] * held + offset],
+          copyMem(addr work[k * cols], addr atHand[].samples[at[a + k] * held + offset],
             cols * sizeof(float32))
       let b = rowBlock(work, n, cols)
       var partFailed: seq[int]
@@ -615,21 +643,22 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       # every frame, which would otherwise stop every tile before its end
       # and draw none until the slider stops. A new source or order, or a
       # stop, still ends it.
-      if rd.r.interrupted and rd.r.superseded:
+      if (if level: rd.r.levelWaits else: rd.r.interrupted and rd.r.superseded):
         given = true
         break
   elif rd.cutShort: return
   else:
-    let keep = q.count * cols <= MaxRawSamples
+    let into = if level: addr rd.basisRaw else: addr rd.raw
+    let keep = q.count * cols <= (if level: MaxBasisValues else: MaxRawSamples)
     if keep: # its buffer reused
-      rd.raw.valid = false
-      rd.raw.first = q.first
-      rd.raw.stride = q.stride
-      rd.raw.list = list
-      rd.raw.window = window
-      rd.raw.samples.setLen q.count * cols
-      rd.raw.failed.setLen 0
-    else: rd.raw = RawCache() # too large to keep: the one before goes too
+      into[].valid = false
+      into[].first = q.first
+      into[].stride = q.stride
+      into[].list = list
+      into[].window = window
+      into[].samples.setLen q.count * cols
+      into[].failed.setLen 0
+    else: into[] = RawCache() # too large to keep: the one before goes too
     var firstError = ""
     var waitFrom = fs.now()
     let chunk = if req.chunkTraces > 0: req.chunkTraces else: ChunkTraces
@@ -646,7 +675,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       inc tile.chunks
       let b = rowBlock(c.samples)
       if keep and c.count * cols > 0: # as read, before anything changes them
-        copyMem(addr rd.raw.samples[c.first * cols], b.rowPtr(0), c.count * cols *
+        copyMem(addr into[].samples[c.first * cols], b.rowPtr(0), c.count * cols *
           sizeof(float32))
       cutRaw(b, c.first)
       rd.prepare(pr, b, c.rows, c.first, c.failedRows)
@@ -655,7 +684,7 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       tile.failed += c.failed
       if c.failed > 0 and firstError.len == 0 and c.log.len > 0:
         firstError = c.log[0].msg
-      if rd.r.interrupted:
+      if (if level: rd.r.levelWaits else: rd.r.interrupted):
         given = true
         break
       waitFrom = fs.now()
@@ -664,8 +693,8 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
       discard
     clearCycleRoots()
     if keep and not given:
-      rd.raw.failed = failed
-      rd.raw.valid = true
+      into[].failed = failed
+      into[].valid = true
     if not given and tile.failed > 0:
       rd.note(sevWarning, $tile.failed & " of the " & $q.count & " traces shown could not " &
         "be read and are drawn blank" & (if firstError.len > 0: ": " & firstError else: "") &
@@ -686,18 +715,48 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
     rd.note(sevWarning, $pr.notNumbers & " of the " & $q.count & " traces shown of " & rd.name &
       " hold samples that are not numbers (NaN or infinite), which are drawn as 0: the file " &
       "may hold a bad conversion or a damaged block.")
-  rd.r.poster.post Msg(job: NoJob, kind: mkTile, tile: move tile)
+  result = true
+
+proc serve(rd: var Reader; req: sink ReaderRequest) =
+  ## Reads, processes and posts the tile `req` asks for, unless a newer note
+  ## comes first.
+  var tile: Tile
+  var given = false
+  if rd.make(req, level = false, tile, given):
+    rd.r.poster.post Msg(job: NoJob, kind: mkTile, tile: move tile)
+
+proc serveLevel(rd: var Reader) =
+  ## Works out the record's level owed (`askLevel`) and posts it, as a tile
+  ## that holds no samples (`levelOnly`), unless a newer note comes first:
+  ## then it is still owed, for when nothing else waits. When there is none
+  ## (the file cannot be read now, or the read fails), a tile that asks for
+  ## nothing says so, and the panel keeps the level it has.
+  var tile: Tile
+  var given, made = false
+  rd.hasOwed = false
+  try:
+    made = rd.make(rd.owed, level = true, tile, given)
+  finally:
+    if given: rd.hasOwed = true
+    elif made:
+      rd.r.poster.post Msg(job: NoJob, kind: mkTile, tile: Tile(panel: tile.panel,
+        request: tile.request, dtMs: tile.dtMs, t0Ms: tile.t0Ms, level: tile.level,
+        cached: tile.cached, levelOnly: true))
+    else:
+      rd.r.poster.post Msg(job: NoJob, kind: mkTile, tile: Tile(panel: rd.r.panel,
+        request: ReadRequest(gen: rd.owed.read.gen), levelOnly: true))
 
 proc run(r: ptr ReaderObj) {.thread.} =
   markWorkerThread()
   var rd = Reader(r: r, ws: initWorkspace())
   while true:
     var src: ReaderSource
-    var req: ReaderRequest
+    var req, lvl: ReaderRequest
     var order: seq[SortKey]
-    var gotSource, gotOrder, gotRequest, quit = false
+    var gotSource, gotOrder, gotRequest, gotLevel, quit = false
+    let owing = rd.hasOwed and rd.src.file != nil and rd.sorted
     withLock r.lock:
-      while not (r.quit or r.hasSource or r.hasOrder or r.hasRequest):
+      while not (r.quit or r.hasSource or r.hasOrder or r.hasRequest or r.hasLevel or owing):
         wait(r.changed, r.lock)
       quit = r.quit
       gotSource = r.hasSource
@@ -708,9 +767,12 @@ proc run(r: ptr ReaderObj) {.thread.} =
         order = move r.order
         rd.orderGen = r.orderGen
       if gotRequest: req = move r.request
+      gotLevel = r.hasLevel
+      if gotLevel: lvl = move r.level
       r.hasSource = false
       r.hasOrder = false
       r.hasRequest = false
+      r.hasLevel = false
       r.busy = not quit
       r.beat = fs.now()
     if gotSource or quit:
@@ -721,9 +783,16 @@ proc run(r: ptr ReaderObj) {.thread.} =
     try:
       if gotSource: rd.adopt(src)
       if gotOrder and rd.src.file != nil: rd.arrange(order)
+      if gotLevel and rd.src.file != nil and lvl.read.gen >= rd.src.gen:
+        rd.owed = move lvl
+        rd.hasOwed = true
       if gotRequest and rd.src.file != nil and rd.sorted and
           req.read.gen >= max(rd.src.gen, rd.orderGen):
         rd.serve(req)
+      # The record's level once nothing else waits: a view asked for comes
+      # first, so the plot follows the user.
+      if rd.hasOwed and rd.src.file != nil and rd.sorted and not r.levelWaits:
+        rd.serveLevel()
     except CatchableError as e:
       rd.note(sevError, "Cannot read " & rd.name & ": " & e.msg)
       if rd.src.file != nil:
@@ -785,6 +854,7 @@ proc show*(x: PanelReader; source: sink ReaderSource) =
     x.p.hasSource = true
     x.p.hasOrder = false # the source carries the layer's order
     x.p.hasRequest = false
+    x.p.hasLevel = false
     signal(x.p.changed)
   if dropped.len > 0: discard x.p.holds.release(dropped)
 
@@ -805,6 +875,19 @@ proc request*(x: PanelReader; req: sink ReaderRequest) =
   withLock x.p.lock:
     x.p.request = req
     x.p.hasRequest = true
+    signal(x.p.changed)
+
+proc askLevel*(x: PanelReader; req: sink ReaderRequest) =
+  ## Asks for the record's level: the tile `req` asks for (every trace of
+  ## the record, at most `MaxBasisValues` decoded), processed as it says,
+  ## of which only the level is posted (`Tile.levelOnly`), once no view
+  ## asked for waits; replaces a level asked for before. Its samples are
+  ## kept apart from the view's, so a level asked for again (another clip
+  ## percentile, a kill, a filter) reads nothing from the file.
+  assert x.p != nil
+  withLock x.p.lock:
+    x.p.level = req
+    x.p.hasLevel = true
     signal(x.p.changed)
 
 proc askStop*(x: PanelReader) =

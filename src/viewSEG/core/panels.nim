@@ -239,7 +239,10 @@ type
     view*: Viewport           ## what the plot shows
     back*: seq[Viewport]      ## earlier views, newest last, for "back"; at most `MaxBack`
     pending*: ReadRequest     ## the request sent last; empty for none
-    level*: Level             ## the first tile's since the source or the processing changed
+    level*: Level
+      ## the record's (`relevel`): a tile's of the whole record, or the one
+      ## its reader works out for it; a tile's of part of it stands in only
+      ## while there is none
     viewLevel*: Level         ## Float: the data in view, since the view last changed
     orderGen*: uint64
       ## `requestGen` when layer 0's order last changed: tiles from before
@@ -255,8 +258,16 @@ type
       ## the plot follows the slider; 0 for none
     filterGen*: uint64 ## `requestGen` after the newest filter change
     relevel*: bool
-      ## the first tile to come sets `level` again: a trace was killed or
-      ## restored, so the level held from before counts it wrongly
+      ## `level` is to be taken again (a new record, a kill or a restore, the
+      ## filters, a clip percentile, a gain that runs on the samples), from
+      ## the record, whatever is in view: from a tile of the whole record
+      ## (`basis`), or from the reader's work out of it (`askLevel`)
+    levelSince*: uint64  ## `requestGen` when `relevel` was last set
+    levelAsked*: bool    ## the reader was asked for the record's level since
+    basis*: ReadRequest
+      ## what the record's level is taken over: every trace (every
+      ## `stride`-th, as a plot of the whole record reads them) and every
+      ## sample (`recordRequest`)
     jumps*: int
       ## bumped when `core` sets the view itself (the whole gather when it
       ## is first laid out, back): the UI follows
@@ -607,6 +618,31 @@ func rangeOf*(p: Panel; base, anchor, to: int): seq[int] =
   let b = p.shown.find(to - base)
   if anchor < 0 or a < 0 or b < 0: return @[to]
   for k in min(a, b) .. max(a, b): result.add base + p.shown[k]
+
+func sameReach*(a, b: ReadRequest): bool =
+  ## Whether `a` and `b` read the same traces and samples, at the same
+  ## resolution (whatever their `gen`, margin or extremes).
+  a.first == b.first and a.count == b.count and a.stride == b.stride and
+    a.firstSample == b.firstSample and a.samples == b.samples and a.decimation == b.decimation
+
+func recordRequest*(p: Panel; margin: int): ReadRequest =
+  ## What `p`'s record's level is taken over: the whole record as density
+  ## reads it on the plot (every trace, or every `stride`-th past one a
+  ## pixel column; every sample, at most two a pixel row), at most
+  ## `MaxBasisValues` decoded (a coarser stride past them); empty while the
+  ## plot's size or the record is not known.
+  result = ReadRequest(stride: 1, decimation: 1)
+  if p.layers.len == 0 or p.layout.traces == 0 or p.view.columns <= 0 or p.view.rows <= 0:
+    return
+  var d = p.layers[0].display
+  d.mode = dmDensity # all of it: no wiggle mode's limit
+  var columns = p.view.columns
+  while true:
+    let v = fitted(viewLimits(p.layout, d, columns), columns, p.view.rows)
+    result = requestFor(p.layout, v, margin, readAhead = 0)
+    if result.isEmpty or result.count * p.layout.samples <= MaxBasisValues or columns <= 8:
+      break
+    columns = columns div 2
 
 func displayMargin*(flow: Pipeline; dtMs: float64): int =
   ## The samples `flow` needs beyond a window on each side; 0 when it

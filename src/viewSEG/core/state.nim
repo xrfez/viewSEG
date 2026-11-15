@@ -1622,7 +1622,9 @@ proc newSource(state: var AppState; k: int) =
   p.pending = ReadRequest()
   p.level = Level()
   p.viewLevel = Level()
-  p.relevel = false
+  p.relevel = true # the new record's
+  p.levelSince = p.requestGen
+  p.levelAsked = false
   p.back.setLen 0
   inc p.revision
   state.tiles[k].setLen 0
@@ -1766,10 +1768,24 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
     template e: untyped = state.edits[state.keyOf(state.sessions[i].path)]
     reversed = e.listIn(teReversed, traces)
     killed = e.listIn(teKilled, traces)
-  state.readers[k].request ReaderRequest(read: req, fields: p.shownFields, flow: flow,
+  let asked = ReaderRequest(read: req, fields: p.shownFields, flow: flow,
     filters: filters, filterAux: p.layers[0].processing.aux,
     clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
     raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0)
+  if p.relevel and not p.levelAsked:
+    # The record's level, whatever the view: this tile gives it when it is
+    # of the whole record, else the reader works it out once the view is
+    # drawn, from the record's own samples.
+    p.basis = p.recordRequest(margin)
+    if not p.basis.isEmpty and not req.sameReach(p.basis):
+      var whole = asked
+      whole.read = p.basis
+      whole.read.gen = req.gen
+      whole.fields.setLen 0
+      whole.raw = false
+      state.readers[k].askLevel(whole)
+      p.levelAsked = true
+  state.readers[k].request asked
 
 proc remember(state: var AppState; k: int) =
   ## Keeps `panels[k]`'s view for back, unless it is the one kept last or
@@ -1790,6 +1806,7 @@ proc refetch(state: var AppState; k: int; keepTiles: bool) =
     state.tiles[k].setLen 0
     p.level = Level()
     p.viewLevel = Level()
+    (p.relevel, p.levelSince, p.levelAsked) = (true, p.requestGen, false)
   inc p.revision
   state.requestView(k)
 
@@ -1802,7 +1819,7 @@ proc resample(state: var AppState; k: int; relevel = false; readAhead = true) =
   template p: untyped = state.panels[k]
   inc p.requestGen
   p.samplesGen = p.requestGen
-  if relevel: p.relevel = true
+  if relevel: (p.relevel, p.levelSince, p.levelAsked) = (true, p.requestGen, false)
   p.pending = ReadRequest()
   inc p.revision
   state.requestView(k, readAhead)
@@ -1837,7 +1854,8 @@ proc settleGain(state: var AppState; k: int; by: CommandOrigin) =
   template d: untyped = state.panels[k].layers[0].display
   case d.effectiveGain(p.kind)
   of dgFixed:
-    if not usable(d.fixedClip) and usable(p.level.clip):
+    # (the record's: not one that stands in for it while it is worked out)
+    if not usable(d.fixedClip) and usable(p.level.clip) and not p.relevel:
       d.fixedClip = p.level.clip
       inc p.revision
       # kept for the next run too, as a typed amplitude is
@@ -5375,17 +5393,27 @@ proc drainInbox*(state: var AppState): bool =
         m.tile.request.gen >= state.panels[k].filterRun and
         m.tile.request.gen < state.panels[k].requestGen and
         state.tiles[k].allIt(it.request.gen < m.tile.request.gen)
-      if k >= 0 and (m.tile.request.gen == state.panels[k].requestGen or following):
+      if k >= 0 and m.tile.levelOnly:
+        # the record's level, from its reader, for the changes since it was asked for
+        template p: untyped = state.panels[k]
+        if p.relevel and m.tile.request.gen >= p.levelSince:
+          if not m.tile.request.isEmpty: p.level = m.tile.level # (else none could be had)
+          p.relevel = false
+          inc p.revision
+          state.settleGain(k, coWindow)
+      elif k >= 0 and (m.tile.request.gen == state.panels[k].requestGen or following):
         state.unread.keepItIf(it.panel != m.tile.panel) # read again
         state.timeRead(m.tile)
         m.tile.id = state.nextTile
         inc state.nextTile
-        if state.panels[k].level.clip.isNaN or state.panels[k].relevel:
+        # The record's level: a tile of the whole record gives it (one of
+        # filters already replaced for now, and the newest request's again:
+        # the level the plot keeps is of the filters it ends with); a tile
+        # of a part of it stands in only while there is none.
+        let whole = m.tile.request.sameReach(state.panels[k].basis)
+        if state.panels[k].level.clip.isNaN or (state.panels[k].relevel and whole):
           state.panels[k].level = m.tile.level
-          # a tile of filters already replaced sets it for now, and the
-          # newest request's tile sets it again: the level the plot keeps
-          # is of the filters it ends with
-          if not following: state.panels[k].relevel = false
+          if whole and not following: state.panels[k].relevel = false
         # The first tile in a new order, or after the samples changed,
         # replaces every tile from before.
         let since = if following: m.tile.request.gen

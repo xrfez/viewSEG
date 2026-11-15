@@ -219,6 +219,14 @@
     under Normalized per trace brings each trace to it again), and the picture before
     stays until the new one is drawn; under Float the level of the data in view is taken
     again at once. Fixed takes it when its amplitude is taken from the record shown.
+    **The record's level is the record's, whatever is in view:** it is taken over every
+    trace of the record (every few, past one a pixel column, as a plot of the whole
+    record reads them) and all its samples, at most 8 Mi samples. When the view is the
+    whole record its tile gives it; zoomed in, the panel's reader works it out once the
+    view is drawn, from the record's own samples, which it keeps apart from the view's,
+    so a new clip percentile, a kill or a filter change while zoomed reads the file at
+    most once. Meanwhile the level held stays (a new record's first tile stands in for
+    it until the record's comes).
 
     **Exponential's cutoff** (the user: "with exponential the basemet gets pretty blown
     out. maybe there should be a cutoff time"): the gain rises with time until the time
