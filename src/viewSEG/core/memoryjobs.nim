@@ -39,18 +39,25 @@ proc identifyWork*(path: string; store: Store; to: Poster): JobWork =
     clearCycleRoots()
     to.post move msg
 
-proc fullHashWork*(path: string; id: FileIdentity; to: Poster): JobWork =
-  ## Posts `mkHashed`: `id` (the quick identity of the file at `path`)
-  ## with the hash of every byte. Raises `IOError` when the file cannot be
-  ## read, or it is no longer of `id`'s size; stops at a cancel.
+proc fullHashWork*(path: string; id: FileIdentity; modified: Time; to: Poster): JobWork =
+  ## Posts `mkHashed`: `id` (the quick identity of the file at `path`, read
+  ## when its modification time was `modified`) with the hash of every
+  ## byte. Raises `IOError` when the file cannot be read, or when it is not
+  ## as it was identified, before or after the read: another size, other
+  ## ends or another modification time (`identity`'s documentation says
+  ## what that does and does not see); stops at a cancel.
   result = proc (ctx: JobContext) {.gcsafe.} =
+    proc same(path: string; id: FileIdentity; modified: Time): bool =
+      var now: Time
+      quickIdentity(path, now) == id and now == modified
+    if not same(path, id, modified): # changed since it was opened
+      raise newException(IOError, "it changed since it was opened")
     ctx.setPhase "reading every byte"
     var full = id
     full.full = fullHash(path, proc (done, total: int64): bool =
       ctx.progress(done, total))
     full.fullKnown = true
-    var modified: Time
-    if quickIdentity(path, modified) != id: # changed while it was read
+    if not same(path, id, modified): # changed while it was read
       raise newException(IOError, "it changed while it was read")
     to.post Msg(job: ctx.id, kind: mkHashed, hashedPath: path, hashed: full)
 

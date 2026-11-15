@@ -13,6 +13,22 @@
 ##   which confirms the quick identity or tells the files apart. Read in
 ##   1 MiB pieces with progress and a cancel between them.
 ##
+## **A file changed while it is hashed** (another program rewriting it in
+## place) would give a hash of mixed content. The job that hashes it
+## (`memoryjobs.fullHashWork`) looks at the file before and after the read:
+## its size, its quick identity and its modification time must be those it
+## was identified with, else nothing is confirmed. That sees every change
+## made through the file system's own writes, which move the modification
+## time, wherever in the file it is. It does not see a change whose writer
+## sets the modification time back (`touch -r`, a copy that keeps times
+## over the file in place) and keeps the size and the ends, nor one made
+## within the time stamp's own step of the time identified (2 s on FAT, a
+## change at the very moment the file was opened). Sampled blocks were
+## measured and left out: 16 blocks of 64 KiB read again after the hash
+## cost 132 us on a local 1 GiB file (a stat costs 2.6 us, the quick
+## identity again 90 us) and on a share a round trip each, and find a
+## one-block change in 0.1 % of cases on that file.
+##
 ## The hash is XXH64 (seed 0), written here so that it never changes with
 ## the compiler's own `hash`: an identity is kept on disk between versions.
 ## Every read goes through `fs` (`core/filesystem`), so a drive that does

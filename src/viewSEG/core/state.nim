@@ -820,7 +820,7 @@ proc hashFile(state: var AppState; i: int) =
     let name = r.path.extractFilename
     r.hashJob = state.jobs.submit(JobSpec(title: "Confirm what " & name & " holds",
       lane: jlBackground), fullHashWork(r.path, FileIdentity(size: r.identity.size,
-      quick: r.identity.quick), state.inbox.poster))
+      quick: r.identity.quick), r.modified, state.inbox.poster))
     state.memoryWork.add r.hashJob
 
 proc writeMemoryDoc(state: var AppState; i: int) =

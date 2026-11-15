@@ -28,6 +28,7 @@
 ## - a user's edit while the hash is under way, on a file taken at once for
 ##   one remembered, is not left in that file's document when the hash says
 ##   it was another;
+## - a file rewritten in the middle while its hash runs is not confirmed;
 ## - the data file's bytes and modification time are as they were through
 ##   all of it, what is remembered of it forgotten (File memory) included.
 ##
@@ -45,7 +46,9 @@
 ## taken (`Remembered.taken`), "the document that could not be read was
 ## written over"; with `takeHashed` looking at what waited only when the
 ## file had no document yet, "what is remembered for the file did not come
-## to its copy edited before the hash".
+## to its copy edited before the hash"; with the hash's after-check on the
+## size and the ends only, "a file changed in the middle while it was
+## hashed was confirmed".
 
 import std/[os, strutils, times]
 import viewSEG/core/state
@@ -310,5 +313,28 @@ withFixtures fx:
     st.flushFiles()
     doAssert not fileExists(config / StoreFolder / doc)
     st.shutdown()
+  block changedWhileHashed:
+    # a file rewritten in place while its hash runs, a byte in the middle
+    # (its size and its ends as they were): nothing is confirmed
+    let c = fx.dir / "rewritten.sgy"
+    writeFile(c, readFile(b))
+    var st = start(config)
+    holdStep("reading every byte")
+    st.showFile(c)
+    doAssert st.settle(st.remembering(c).known)
+    st.edit(teKilled, 2) # the user's: the file is hashed whole
+    doAssert waitUntil(inStep("reading every byte").len == 1)
+    var f = open(c, fmReadWriteExisting)
+    f.setFilePos(getFileSize(c) div 2)
+    f.write "x"
+    f.close()
+    releaseStep("reading every byte")
+    proc said(st: AppState; text: string): bool =
+      for e in st.log:
+        if text in e.text: return true
+    doAssert st.settle(st.said("it changed while it was read")),
+      "a file changed in the middle while it was hashed was confirmed"
+    st.shutdown()
+    removeFile(c)
   doAssert (readFile(b), getLastModificationTime(b)) == kept, "the data file changed"
 echo "tmemory: ok"
