@@ -13,7 +13,7 @@
 ## `blocksAreSeamless` found a gap no block covers; with `decimatePeakInto`
 ## keeping the first sample of each bin, `peakDecimation` lost the trough.
 
-import std/[math, random]
+import std/[fenv, math, random]
 import parseSEG
 import viewSEG/core/[geometry, panels, tiles, viewport]
 
@@ -203,7 +203,8 @@ block greyDensity:
   # the gain amount: +6.02 dB doubles the scale, -20 dB is a tenth
   doAssert abs(displayScale(2.0, 20 * log10(2.0)) - 1) < 1e-6
   doAssert abs(displayScale(2.0, -20) - 0.05) < 1e-7
-  doAssert displayScale(1e-300, 60) == 0 # past a float32: drawn mid grey, not Inf
+  # past a float32: the largest, never Inf (more gain never draws less)
+  doAssert displayScale(1e-300, 60) == maximumPositiveValue(float32)
   doAssert lut.densityColour(2, scale) == lut[255] and lut.densityColour(-1, scale) == lut[64]
 
 block headerDefaults:
