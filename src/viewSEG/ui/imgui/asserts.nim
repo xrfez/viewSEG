@@ -7,12 +7,13 @@
 ## count), and the frame loop shows new ones in the Messages window. ImGui's
 ## recoverable errors (`IM_ASSERT_USER_ERROR`) end up here too.
 
-import std/[os, strutils]
+import std/os
 
 const RoutedChecks* = defined(release) or defined(danger)
   ## true when failed ImGui checks are recorded instead of aborting
 
 when RoutedChecks:
+  import std/strutils # only to find imassert.h beside this file
   # Joined with "/" by hand: cross-compiling for Windows, `/` and `parentDir`
   # use the target's `\`, which a Linux shell drops.
   const
