@@ -65,9 +65,11 @@ proc pruneIndexCache*(dir: string; budget: int64; keep = ""): seq[string] =
       total -= c.size
       result.add c.path
 
-proc openSession*(path: string; progress: Progress = nil; cache = ""): Session =
+proc openSession*(path: string; progress: Progress = nil; cache = "";
+    choice = OpenChoice()): Session =
   ## Opens `path` read-only, with its keys and gathers, reading its index
-  ## from the index cache file `cache` when that is current. Worker-only: it
+  ## from the index cache file `cache` when that is current, with the
+  ## options `choice` (which may leave the cache alone: `usesCache`). Worker-only: it
   ## reads the file. Raises `IOError` or `OSError` when the file cannot be
   ## opened, and parseSEG's `SegCancelledError` when `progress` returns
   ## false; problems with the data are in the file's log instead. The
@@ -85,7 +87,7 @@ proc openSession*(path: string; progress: Progress = nil; cache = ""): Session =
   # guide opens files on a job thread, as here.
   {.cast(gcsafe).}:
     result = newSession(path, openSeismic(path, keys = true, progress = progress,
-      opts = OpenOptions(cache: cache)), info.size, info.lastWriteTime)
+      opts = openOptions(choice, cache)), info.size, info.lastWriteTime, choice)
 
 func cutShort*(f: SeismicFile): bool =
   ## Whether the file ends before a structure it announces is complete
@@ -119,9 +121,11 @@ proc saveCache(s: Session; cache: string; budget: int64; to: Poster; job: JobId)
       "file again.")
 
 proc openCached(path: string; ctx: JobContext; to: Poster; cache: string; budget: int64;
-    whole: bool): Session =
-  ## Opens `path` on job `ctx`, through the index cache `cache` (read when
-  ## current, saved after a walk; see `openWork`).
+    whole: bool; choice = OpenChoice()): Session =
+  ## Opens `path` on job `ctx` with `choice`, through the index cache
+  ## `cache` (read when current, saved after a walk; see `openWork`), when
+  ## `choice` may use it.
+  let cache = if choice.usesCache: cache else: ""
   let cached = cache.len > 0 and fs.fileExists(cache)
   ctx.setPhase(if cached: "reading the index cache" else: "indexing")
   let progress: Progress = proc (done, total: int64): bool {.gcsafe, raises: [].} =
@@ -130,7 +134,7 @@ proc openCached(path: string; ctx: JobContext; to: Poster; cache: string; budget
     except OSError:
       discard # a real drive that fails here ends the walk in parseSEG
     ctx.progress(done, total)
-  result = openSession(path, progress, if cached: cache else: "")
+  result = openSession(path, progress, if cached: cache else: "", choice)
   ctx.checkCancelled() # the file closes here, on the thread that opened it
   if cache.len > 0 and result.file.kind != skUnknown:
     if result.file.fromCache:
@@ -145,16 +149,18 @@ proc openCached(path: string; ctx: JobContext; to: Poster; cache: string; budget
       ctx.checkCancelled()
 
 proc openWork*(path: string; to: Poster; cache = "";
-    cacheBudget = DefaultIndexCacheBudget; whole = false): JobWork =
+    cacheBudget = DefaultIndexCacheBudget; whole = false; choice = OpenChoice()): JobWork =
   ## The work of a job that opens `path` and posts its session (`mkOpened`).
   ## With a `cache` file (`indexCacheFile`), a current cache is read instead
   ## of walking the file, and a file that had none gets one. A cancel asked
   ## for at any point before the session is posted closes the file again and
   ## posts nothing. With `whole` (an open the file list's "Follow the
   ## latest" made, which shows the file only when it is complete), a file
-  ## cut short gets no cache: it is still being written.
+  ## cut short gets no cache: it is still being written. `choice` gives the
+  ## options of "Reopen with options" (`core/openchoice`); one that changes
+  ## how the index is made leaves the cache alone.
   result = proc (ctx: JobContext) {.gcsafe.} =
-    var s = openCached(path, ctx, to, cache, cacheBudget, whole)
+    var s = openCached(path, ctx, to, cache, cacheBudget, whole, choice)
     clearCycleRoots() # the UI thread may release the file's objects at once
     to.post Msg(job: ctx.id, kind: mkOpened, session: move s)
 

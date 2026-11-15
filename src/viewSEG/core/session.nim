@@ -74,10 +74,11 @@ func lengthUnitOf*(c: CoordinateReference): string =
       return u
 
 proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
-    modified = Time()): Session =
+    modified = Time(); choice = OpenChoice()): Session =
   ## A session for `file`, opened from `path`, with its gathers and the
   ## record list's rows, its coordinates and what the Headers window shows of
-  ## it (`facts`); `size` and `modified` are the file's as it was opened. On
+  ## it (`facts`, with how it was opened with `choice`); `size` and
+  ## `modified` are the file's as it was opened. On
   ## the thread that opened the file: the file's own headers are read from
   ## its map here (`fs.mappedRead`), so a drive that does not answer holds
   ## this thread, never the UI's, and one that fails leaves them unread, said
@@ -109,6 +110,9 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   result.facts = fileFacts(result.file, headers = readable)
   problems.add result.facts.problems
   result.facts.problems = move problems
+  if readable: result.facts.opened = openFacts(result.file, choice, size)
+  else: result.facts.opened = OpenFacts(choice: choice, kind: result.file.kind,
+    detected: result.file.kind)
 
 proc register*(s: Session; id: SessionId; base: int) =
   ## Gives `s` its id and the survey-wide id of its first trace (`AppState`

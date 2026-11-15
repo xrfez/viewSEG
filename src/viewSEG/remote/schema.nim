@@ -39,7 +39,7 @@ const
     ckPrepare, ckInspect, ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel,
     ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckTheme, ckOpenPlot, ckPlotDisplay,
     ckPlotCursor, ckClosePlot, ckNewProject, ckOpenProject,
-    ckCloseProject}
+    ckCloseProject, ckReopen}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey
@@ -61,7 +61,10 @@ const
     ## theme it picks (`ckTheme`: the theme it draws in, not the user's
     ## preferences as a whole). An agent may make, open and close a
     ## project (`ckNewProject` writes a new folder only, never data); its
-    ## trace edits and survey imports are not written into it
+    ## trace edits and survey imports are not written into it. A file opened
+    ## again with other options (`ckReopen`) is read as before, read-only, for
+    ## the session; a folder for a demultiplexed copy, which would be written
+    ## there, is refused
 
 # ------------------------------------------------------------ to JSON --
 

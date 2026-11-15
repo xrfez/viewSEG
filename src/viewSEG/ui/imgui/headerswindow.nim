@@ -123,7 +123,7 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
   let key = $int(ses.id) & "." & $gather & "." & $ses.keysRevision & "." & $st.joins.len
   let now = getMonoTime()
   if key != ui.summaryKey or now - ui.summaryAt > initDuration(milliseconds = 500):
-    ui.summary = summaryLines(ses, gather, st.joins)
+    ui.summary = summaryLines(ses, gather, st.joins, st.unitChoices)
     ui.summaryKey = key
     ui.summaryAt = now
   template lines: untyped = ui.summary

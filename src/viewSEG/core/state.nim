@@ -221,6 +221,9 @@ type
       ## add or remove a data folder of the project open, or say where a missing one is now
     ckUpdateSurvey = "update survey"
       ## copy the project's survey files again from the originals that changed, and read them
+    ckReopen = "reopen"
+      ## open a file again with other options (its standard, its headers all checked,
+      ## two's-complement mantissas, mapped or not), in the panels that show it
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -289,6 +292,13 @@ type
     of ckTheme: theme*: string
       ## the theme file's name, as View > Theme lists them (`tokyo-night`,
       ## without `.toml`); "" follows the system (Everforest Dark or Light)
+    of ckReopen:
+      reopenPath*: string
+        ## the file: one open is closed and opened again in the panels that
+        ## show it; another is opened and shown in the Seismic window
+      openChoice*: OpenChoice
+        ## the options it is opened with from now on, this run (the defaults
+        ## detect everything; given in part, the rest are the defaults)
     of ckUnloadSurvey: layer*: SurveyLayerId
       ## the survey layer's id
     of ckMapView:
@@ -788,6 +798,9 @@ type
       ## looks at the listed folder and the open files; none until needed
     watchEvery: Duration ## the pause between its looks
     reopens: seq[Reopen] ## panels waiting for a changed file to stop changing
+    openChoices: Table[string, OpenChoice]
+      ## per file: the options "Reopen with options" gave it, used by every
+      ## later open of it this run; a file not in it opens with the defaults
     followed: HashSet[string]
       ## files "Follow the latest" opened (each is shown once)
     followedUpTo: Time
@@ -5392,7 +5405,7 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
       if not follow: state.opening[o].follow = false # the user's own choice: shown as it is
       if keeps(by): state.opening[o].by = by # the user asked for it too
     elif not state.prepared.session.isNil and state.prepared.session.path == path and
-        state.preparedCurrent():
+        state.preparedCurrent() and path notin state.openChoices:
       # Opened already, in the background, and not changed since: shown at once.
       let job = state.prepared.job
       var s = move state.prepared.session
@@ -5407,7 +5420,8 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
         state.prepared = (NoJob, nil)
       let job = state.jobs.submit(JobSpec(title: "Open " & path.extractFilename,
         lane: jlInteractive, reads: @[path]), openFileWork(path, state.inbox.poster,
-        indexCacheFile(state.indexCache, path), whole = follow, lines = state.settings.join))
+        indexCacheFile(state.indexCache, path), whole = follow, lines = state.settings.join,
+        choice = state.openChoices.getOrDefault(path)))
       state.opening.add Pending(job: job, path: path, panel: panel, gather: gather,
         follow: follow, by: by)
 
@@ -5535,6 +5549,35 @@ proc reopen(state: var AppState; i: int; now: bool) =
       state.reopens.add Reopen(path: path, panel: p.id, gather: p.layers[0].source.gather)
   state.closeSession(i, quiet = true, keepLayers = true)
   if now: state.showAgain(path)
+
+proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: CommandOrigin) =
+  ## "Reopen with options": `path` (canonical) opened anew with `choice`,
+  ## which its later opens this run take too, in the panels that show it
+  ## (keeping their display, view and record), or in the main panel when
+  ## none does. An open of it under way is no longer wanted.
+  if choice.isDefault: state.openChoices.del path
+  else: state.openChoices[path] = choice
+  let name = path.extractFilename
+  state.log.add(sevInfo, name, name & " is opened again with " & choiceText(choice) & ".")
+  for o in state.opening.mitems:
+    if o.path == path and not o.unwanted:
+      o.unwanted = true
+      discard state.jobs.cancel(o.job)
+  if not state.prepared.session.isNil and state.prepared.session.path == path:
+    state.release(move state.prepared.session) # opened with the options before
+    state.prepared = (NoJob, nil)
+  var i = -1
+  for j, s in state.sessions:
+    if s.path == path: i = j
+  var shown = false
+  if i >= 0:
+    let id = state.sessions[i].id
+    shown = state.panels.anyIt(it.layers.len > 0 and it.layers[0].shows(id))
+    if keeps(by): state.openedBy[path] = by
+    state.reopen(i, now = true)
+  if not shown:
+    let k = state.findPanel(MainPanel)
+    if k >= 0: state.showPath(k, path, by = by)
 
 proc onDisk(state: var AppState; w: WatchedFile) =
   ## What the watch saw of a file that is open, or that a panel waits for:
@@ -5747,7 +5790,8 @@ proc prepareNext(state: var AppState) =
   if want.len == 0 or want == state.prepareFailed or state.preparing.job != NoJob or
       not state.prepared.session.isNil:
     return
-  if state.sessions.anyIt(it.path == want) or state.opening.anyIt(not it.unwanted):
+  if state.sessions.anyIt(it.path == want) or state.opening.anyIt(not it.unwanted) or
+      want in state.openChoices: # (opened as its options say when it is shown)
     return
   let e = state.files.find(want)
   if e < 0 or not state.files.entries[e].kind.isSeismic or
@@ -5949,7 +5993,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
       else:
         let job = state.jobs.submit(JobSpec(title: "Open " & name, lane: jlInteractive,
           reads: @[path]), openFileWork(path, state.inbox.poster,
-          indexCacheFile(state.indexCache, path), lines = state.settings.join))
+          indexCacheFile(state.indexCache, path), lines = state.settings.join,
+          choice = state.openChoices.getOrDefault(path)))
         state.opening.add Pending(job: job, path: path, by: cmd.origin)
   of ckBrowse:
     var paths: seq[string]
@@ -6178,6 +6223,13 @@ proc applyCommand(state: var AppState; cmd: Command) =
         state.requestView(k) # a new view, or the extremes wiggles need
       state.settleGain(k, cmd.origin)
   of ckDisplayPreset: state.displayPreset(cmd)
+  of ckReopen:
+    if cmd.reopenPath.len == 0: state.ignore(cmd, "no file was named")
+    elif cmd.origin == coAgent and cmd.openChoice.demuxDir.len > 0:
+      state.ignore(cmd, "agent control writes no file, and a demultiplexed copy is one: " &
+        "its folder is the user's to choose")
+    else:
+      state.reopenWith(canonical(cmd.reopenPath), cmd.openChoice, cmd.origin)
   of ckTheme:
     if cmd.theme.len > 64 or not cmd.theme.allCharsInSet({'a'..'z', 'A'..'Z', '0'..'9', '-', '_',
         ' ', '.'}) or ".." in cmd.theme:

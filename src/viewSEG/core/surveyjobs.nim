@@ -473,14 +473,16 @@ proc surveyHeadWork*(file: JoinFile; to: Poster): JobWork =
     to.post Msg(job: ctx.id, kind: mkSurveyHead, surveyHead: h)
 
 proc openFileWork*(path: string; to: Poster; cache = "";
-    cacheBudget = DefaultIndexCacheBudget; whole = false; lines = JoinOptions()): JobWork =
+    cacheBudget = DefaultIndexCacheBudget; whole = false; lines = JoinOptions();
+    choice = OpenChoice()): JobWork =
   ## The work of a job that opens what the user named: a survey file is
   ## loaded into the survey (`mkSurvey`, its line names as `lines` says),
-  ## anything else opened as a seismic file (`openWork`, `mkOpened`).
-  let open = openWork(path, to, cache, cacheBudget, whole)
+  ## anything else opened as a seismic file (`openWork`, `mkOpened`) with
+  ## the options `choice`.
+  let open = openWork(path, to, cache, cacheBudget, whole, choice)
   let load = surveyWork(path, to, lines)
   result = proc (ctx: JobContext) {.gcsafe.} =
-    if sniff(path).isSurvey: load(ctx) else: open(ctx)
+    if choice.standard == scDetect and sniff(path).isSurvey: load(ctx) else: open(ctx)
 
 proc checkWork*(file: ptr SeismicFile; session: SessionId; gathers: seq[Slice[int]];
     relations: ptr SurveyGeometry; against: string; layer: SurveyLayerId;

@@ -23,9 +23,9 @@
 
 import std/[math, strutils]
 import parseSEG
-import fielddocs
+import fielddocs, openchoice
 
-export FileSummary, ChannelSetSummary, JoinGroup
+export FileSummary, ChannelSetSummary, JoinGroup, openchoice
 
 const
   MaxRawBytes* = 1024 * 1024 ## the bytes of a block without named fields kept to show, at most
@@ -63,6 +63,7 @@ type
     rows*: seq[FieldRow] ## the file-level header blocks, in file order
     raw*: seq[RawBlock] ## those without named fields
     problems*: seq[string] ## what could not be read, in plain words
+    opened*: OpenFacts ## how it was opened (`core/openchoice`)
 
   RecordHeaders* = object
     ## The headers of one SEG-D record.
