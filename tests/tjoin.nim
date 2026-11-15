@@ -18,7 +18,8 @@
 ##   headers', line names that are text, which the trailing digits then
 ##   match), and changes nothing;
 ## - a cancel while the survey files are read, and while the join waits for
-##   the file, leaves the file as it was and the plot reading it again;
+##   the file, leaves the file as it was and the plot reading it again (also
+##   a record shown meanwhile, which waits for the join without a warning);
 ## - the survey's units confirmed with the join label the map.
 ##
 ## Seen to fail: with the join's second job submitted with the file in
@@ -26,7 +27,9 @@
 ## refused ("a reader still reads the file"), so "joined" failed; with
 ## `resumeReaders` left out, "the panel reads the file again" did not
 ## happen; with the automatic replacement of coordinates at (0, 0) left out,
-## the join changed nothing and "no reader held the file" found it never ran.
+## the join changed nothing and "no reader held the file" found it never ran;
+## with a panel shown the file during the join not waiting for it, the log
+## said "busy".
 
 import std/[math, os, sequtils, strutils, tables]
 import parseSEG
@@ -298,12 +301,21 @@ block cancelled:
       "the panel's reader let go of the file"
     let k = st.findPanel(MainPanel)
     doAssert st.tiles(k).len > 0, "the tiles stay drawn meanwhile"
+    # The record shown again meanwhile (its auxiliary trace too): it waits for
+    # the join, quietly.
+    let said = st.log.len
+    st.apply Command(kind: ckFilter, panel: MainPanel,
+      filter: TraceFilter(seismic: true, auxiliary: true))
+    doAssert not st.panel(MainPanel).laidOut
+    for e in said ..< st.log.len:
+      doAssert "busy" notin st.log[e].text, st.log[e].text
     st.apply Command(kind: ckCancelJob, job: st.joinUnderWay.job)
     doAssert st.settle(st.joinUnderWay.job == NoJob)
     doAssert st.joinReport.outcome == joCancelled
     doAssert st.sessions[0].file.keysRevision == 0
     doAssert st.keysOf(1).rcvX == 0, "the keys as they were"
-    doAssert st.readsAgain(path), "the panel reads the file again"
+    doAssert st.readsAgain(path) and st.panel(MainPanel).laidOut,
+      "the panel reads the file again"
     gate.open()
     # The same join, let through, does it.
     st.join(sps(survey.s, survey.r))
