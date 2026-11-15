@@ -46,8 +46,9 @@ const
   boxMinPixels = 4'f32  ## a box narrower than this is no box
   pickRadius = 7'f32    ## how near the pointer a point is found, in pixels at 100 %
   ringWidth = 1.5'f32   ## an open file's ring, pixels at 100 %
-  activeReceiverSize = 6'f32
-    ## a receiver of the gather on show, pixels at 100 %
+  activeReceiverRoom = 1'f32
+    ## how much larger than the receivers drawn a receiver of the gather on
+    ## show is (a darker disc), pixels at 100 %
   activeSourceSize = 10'f32
     ## its source
   selectedSize = 8'f32
@@ -649,13 +650,19 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
         maxX: limits.X.Max, maxY: limits.Y.Max), columns: columns, rows: rows,
         background: ink.background, highlight: mu.highlightRev, survey: st.survey.revision,
         active: [MapStyle(colour: ink.roles[prSource], edge: ink.outline,
-          size: activeSourceSize * s, edgeWidth: s), MapStyle(colour: ink.roles[prReceiver],
-          edge: ink.outline, size: activeReceiverSize * s, edgeWidth: s)],
+          size: activeSourceSize * s, edgeWidth: s), MapStyle(colour: ink.active)],
         selected: MapStyle(colour: ink.selected, edge: ink.outline, size: selectedSize * s,
           edgeWidth: s),
         hovered: MapStyle(colour: ink.hover, edge: ink.outline, size: hoveredSize * s,
           edgeWidth: 1.5 * s))
+      # The record's receivers a pixel larger than the receivers drawn, so
+      # the spread darkens what is there and covers nothing else.
       let pixel = view.perPixel * float64(s) # survey units a pixel at 100 %
+      var receivers = MinMarker
+      for l in layers:
+        if l.shown and l.key.kind != mlHighlight and l.role == prReceiver:
+          receivers = max(receivers, markerSize(l.spacing, pixel))
+      frame.active[prReceiver].size = (receivers + activeReceiverRoom) * s
       for l in layers:
         if l.shown and l.key.kind != mlHighlight:
           let disc = markerSize(l.spacing, pixel)

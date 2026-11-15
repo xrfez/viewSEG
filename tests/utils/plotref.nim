@@ -65,27 +65,29 @@ proc expected*(s: Shot; i, j: int): Rgba =
   ## What image pixel (`i`, `j`) should show: the tiles oldest first (but
   ## for those a newer one covers in view: `hidden`), each its area
   ## (density, blank on a killed trace, or the background) then its wiggles
-  ## (none for a killed trace), the marked traces again on top.
+  ## (none for a killed trace), the marked traces (hovered, selected, lit up
+  ## from the map) again on top.
   let (x, t) = (s.xOf(i), s.tOf(j))
   result = s.ink.background
   for k, tile in s.tiles:
     if not s.tiles.hidden(k, s.view):
       let hover = tile.hoverRow(0, s.hover)
-      var selected: seq[bool]
+      var selected, lit: seq[bool]
       tile.selectedRowsInto(0, s.selection, selected)
+      tile.hoveredRowsInto(0, s.selection, lit) # the traces the map's pointer lights up
       if tile.contains(x, t):
         result = s.ink.background
         if s.density:
           let c = tile.densityAt(greyLut(), x, t, s.scale, s.ink.background)
           result = if s.wiggles: c
-                   else: densityTint(c, markOf(tile.rowAt(x), hover, selected), s.ink.wiggle,
-                     DensityTint)
+                   else: densityTint(c, markOf(tile.rowAt(x), hover, selected, lit),
+                     s.ink.wiggle, DensityTint)
       let (_, ts) = tile.span
       if s.wiggles and t >= ts.lo and t < ts.hi:
         let ser = tile.series
         for pass in 0 .. 1:
           for r in 0 ..< tile.request.count:
-            let m = markOf(r, hover, selected)
+            let m = markOf(r, hover, selected, lit)
             let pos = float64(tile.request.position(r))
             if (pass == 0 or m != tmNone) and abs(x - pos) <= s.style.reach:
               let ink = tile.traceInk(ser, r, (x - pos) * s.style.pixelsPerTrace, t, s.style,

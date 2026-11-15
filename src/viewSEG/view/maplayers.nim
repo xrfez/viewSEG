@@ -17,7 +17,8 @@
 ## red and receivers in its blue (its green where the blue is the accent,
 ## which marks the selection), each made readable on the background; the
 ## hovered points in the highlight colour and the selected ones in the
-## accent colour, as in the plot.
+## accent colour, as in the plot; the receivers of the record on show in a
+## darker shade of the receivers' colour, its source larger and outlined.
 
 import std/[intsets, math, strutils]
 from parseSEG import GatherKind, gkReceiver, gkUnknown, known, recordsAt, stationKey
@@ -36,6 +37,9 @@ type
     hover*: Rgba                   ## the points under the pointer, in the map or in the plot
     selected*: Rgba                ## the selected points
     outline*: Rgba                 ## round the highlighted points: the background's opposite
+    active*: Rgba
+      ## the receivers of the record on show: the receivers' colour, darker
+      ## (lighter on a dark background), so the spread shows as a whole
 
   MapLayerView* = object
     ## One layer of the map, as the frontend draws and lists it.
@@ -78,6 +82,7 @@ func mapInk*(t: Theme; colours: PlotColours; custom = CustomColours()): MapInk =
     outline: (if luminance(bg) > 0.18: PaperInk else: PaperBackground))
   result.roles[prSource] = readableOn(t.roles[rlError], bg)
   result.roles[prReceiver] = readableOn(blue, bg)
+  result.active = mix(result.roles[prReceiver], result.outline, 0.45)
 
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)
