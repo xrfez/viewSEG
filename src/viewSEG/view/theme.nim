@@ -86,6 +86,10 @@ type
     rlSelected = "selected" ## selected traces, and their points on the map
     rlSource = "source" ## sources on the map
     rlReceiver = "receiver" ## receivers on the map
+    rlFlagFailed = "flag_failed" ## the map's marks of failed traces (dead, not decodable, ...)
+    rlFlagAmplitude = "flag_amplitude" ## the map's marks of amplitude flags (noisy, clipped, ...)
+    rlFlagEdited = "flag_edited" ## the map's marks of the user's edits (killed, reversed)
+    rlFlagSpread = "flag_spread" ## the map's marks of the spread (missing from the template, ...)
     rlTextSelection = "text_selection" ## behind selected text in an input
 
   FontRole* = enum
@@ -319,6 +323,10 @@ func plainRoles(p: Palette; mode: ThemeMode): array[Role, Rgba] =
   result[rlSelected] = p[bcAccent]
   result[rlSource] = p[bcRed]
   result[rlReceiver] = if distance(p[bcBlue], p[bcAccent]) < 40: p[bcGreen] else: p[bcBlue]
+  result[rlFlagFailed] = p[bcMagenta]
+  result[rlFlagAmplitude] = p[bcYellow]
+  result[rlFlagEdited] = p[bcCyan]
+  result[rlFlagSpread] = p[bcBrown]
   result[rlTextSelection] = mix(result[rlFrame], p[bcAccent], 0.35)
 
 const
@@ -345,6 +353,10 @@ const
     ## selected points (which are larger, and outlined)
   SitesApart* = 40.0
     ## `deltaE` of the map's receivers from its sources
+  FlagsApart* = 20.0
+    ## `deltaE` of the map's marks of what its filters found (`flag_failed`,
+    ## `flag_amplitude`, `flag_edited`, `flag_spread`) from its points and from
+    ## each other
   StatusApart* = 20.0
     ## `deltaE` of the status colours (ok, warning, error, info) from each other
   StatusFromText* = 15.0 ## `deltaE` of a status colour from the text
@@ -418,17 +430,28 @@ func signal(k: BaseColor): Rgba =
   of bcMagenta, bcBrightMagenta: rgb(0xe377c2)
   else: rgb(0x1f77b4) # blue, and the accent
 
+const FlagFallbacks = [rgb(0x9467bd), rgb(0x8c564b), rgb(0xbcbd22), rgb(0xe377c2),
+  rgb(0x7b4173), rgb(0x637939), rgb(0x843c39), rgb(0x3182bd), rgb(0xe6550d), rgb(0x31a354),
+  rgb(0x000090), rgb(0x700000), rgb(0x005000), rgb(0x500070), rgb(0x604000), rgb(0x004858),
+  rgb(0xffc8ff), rgb(0xc8ffc8), rgb(0xc8f0ff), rgb(0xffff90), rgb(0xffd098)]
+  ## more strong colours for the map's marks of findings, when a palette and
+  ## the built-in one have too few kept apart (matplotlib's and d3's, then
+  ## deep and pale ones that stay colours when a mid-grey map darkens or
+  ## lightens them to read)
+
 func pick(first: Rgba; keys: openArray[BaseColor]; p, builtin: Palette;
-    schemes: openArray[Scheme]; others: openArray[Apart]; fromLine: float64): Rgba =
+    schemes: openArray[Scheme]; others: openArray[Apart]; fromLine: float64;
+    extra: openArray[Rgba] = []): Rgba =
   ## `first` when it is `apart`, else the first of the palette's `keys`
   ## that is, else the built-in palette's, else a `signal` colour, of theirs
-  ## first; failing all, the farthest apart.
+  ## first, else one of `extra`; failing all, the farthest apart.
   var candidates: seq[Rgba] = @[]
   for k in keys: candidates.add p[k]
   for k in keys: candidates.add builtin[k]
   for k in keys: candidates.add signal(k)
   for k in [bcBlue, bcOrange, bcGreen, bcRed, bcMagenta, bcCyan, bcYellow]:
     candidates.add signal(k) # the others too
+  for c in extra: candidates.add c
   result = first
   var best = apart(first, schemes, others, fromLine)
   for c in candidates:
@@ -566,6 +589,36 @@ func legible(r: var array[Role, Rgba]; p, builtin: Palette) =
   r[rlReceiver] = pick(r[rlReceiver], [bcBlue, bcGreen, bcCyan, bcBrightBlue,
     bcBrightGreen, bcBrightCyan, bcMagenta], p, builtin, schemes,
     @marks & @[(r[rlSource], SitesApart)], -Inf)
+  # The marks of the map's filters, a colour for each kind of finding: apart
+  # from the points (and from the record's receivers, the receivers darkened
+  # or lightened) and from each other.
+  # Picked one after another, in the order that keeps them farthest apart
+  # (the first that keeps them all apart: the roles' own order first).
+  let points = @marks & @[(r[rlSource], FlagsApart), (r[rlReceiver], FlagsApart),
+    (mix(r[rlReceiver], Black, 0.45), FlagsApart), (mix(r[rlReceiver], White, 0.45), FlagsApart)]
+  const flags = [(rlFlagFailed, @[bcMagenta, bcBrightMagenta, bcBrightRed, bcRed]),
+    (rlFlagAmplitude, @[bcYellow, bcBrightYellow, bcBrown, bcOrange]),
+    (rlFlagEdited, @[bcCyan, bcBrightCyan, bcBrightBlue, bcBlue, bcGreen]),
+    (rlFlagSpread, @[bcBrown, bcBrightGreen, bcGreen, bcBrightMagenta, bcMagenta])]
+  var order = [0, 1, 2, 3]
+  var best: array[4, Rgba]
+  var bestMargin = -Inf
+  while true:
+    var others = points
+    var chosen: array[4, Rgba]
+    for i in order:
+      chosen[i] = pick(r[flags[i][0]], flags[i][1], p, builtin, schemes, others, -Inf,
+        FlagFallbacks)
+      others.add (chosen[i], FlagsApart)
+    var margin = Inf
+    for i in 0 ..< 4:
+      var rest = points
+      for j in 0 ..< 4:
+        if j != i: rest.add (chosen[j], FlagsApart)
+      margin = min(margin, apart(chosen[i], schemes, rest, -Inf))
+    if margin > bestMargin: (best, bestMargin) = (chosen, margin)
+    if bestMargin >= 0 or not order.nextPermutation: break
+  for i in 0 ..< 4: r[flags[i][0]] = best[i]
 
 func deriveRoles*(p: Palette; mode: ThemeMode): array[Role, Rgba] =
   ## The roles built from the palette. Backgrounds: `backdrop` is

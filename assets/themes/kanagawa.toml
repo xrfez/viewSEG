@@ -7,7 +7,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   error, selected, receiver, text_selection
+#   error, selected, receiver, flag_failed, flag_edited, text_selection
 
 name = "Kanagawa"
 mode = "dark"

@@ -48,13 +48,14 @@ limits, and leaves it alone where it does not:
 | A hovered or a selected trace | the traces; each other | a colour difference (CIE76) of 25; 30 |
 | The map's sources | its receivers, on paper and in the theme's colours | a colour difference of 40 |
 | The map's sources and receivers | the hovered and the selected points (larger, outlined) | a colour difference of 20 |
+| The map's marks of what its filters find: failed traces, amplitude flags, your edits, the spread (`flag_failed`, `flag_amplitude`, `flag_edited`, `flag_spread`) | the map, on paper and in the theme's colours; its sources, receivers, the record's receivers, the hovered and selected points; each other | contrast 3; a colour difference of 20 |
 
 Text and status colours are lightened on a dark theme and darkened on a light one;
 secondary text that is brighter than the text is dimmed; a selection that does not
 show is moved toward the text colour; a bar or popup of the other kind than the window
 (a dark bar in a light theme) is moved toward the window, and frames (an unticked
 checkbox) are kept apart from windows and popups, also in a theme of one colour. The status colours (`ok`, `warning`, `error`, `info`)
-and the marks (`selected`, `highlight`, `source`, `receiver`) are taken from the
+and the marks (`selected`, `highlight`, `source`, `receiver`, the `flag_` colours) are taken from the
 theme's other colours when its own are too close, and
 from Everforest's (or a set of strong colours) when none of its colours will do, as
 in the grey themes (Vantablack, White). Each file says in its header which roles

@@ -7,7 +7,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   text_dim, text_disabled, selection, hover, active, text_selection
+#   text_dim, text_disabled, selection, hover, active, flag_failed, text_selection
 
 name = "Tokyo Night"
 mode = "dark"

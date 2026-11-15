@@ -746,7 +746,7 @@ under the pointer then, as desktop programs do.
   sources have a file, and how far the reading is. **Filters** (the user: "filters for
   failed traces, missing traces from template, any other relevent items", and "perhaps
   noisy as well, clipped"), under "Filters: the record shown" in the Layers list, each a
-  tick with its count and its colour, none on by default: traces dead in the headers, not
+  tick with its count and its mark, none on by default: traces dead in the headers, not
   decodable, killed; the amplitude flags of processSEG's `qc/amplitude` with its default
   thresholds (noisy, clipped, spiky, constant, weak, DC offset, all zero, not a number);
   missing from the template (the stations the X record plans that the record has no trace
@@ -754,11 +754,27 @@ under the pointer then, as desktop programs do.
   stations the X record does not list), recorded twice; auxiliary; without a position;
   reversed; and, survey-wide, **spread not the template**: the shots whose X record agrees
   with the template the X records describe far less than the survey's shots typically do
-  (`compareRelations`' Jaccard index under the median less three robust deviations). A
-  filter's points are ringed in its colour (where points crowd, a disc a little larger than
-  theirs); its tooltip says what it counts or why it is not checked; Select selects its
-  traces in the plot; the point under the pointer says which filters mark it ("Marked:
-  noisy"). The record is read on a background job when one of the filters that need it is
+  (`compareRelations`' Jaccard index under the median less three robust deviations).
+  **Marks** (the user: "the map needs more pronounced overlay for filters and they
+  shouldnt be lost at max scalling"): a filter's points are marked with a glyph of its own,
+  an outline round the station with a halo of the map's background round it, drawn over
+  the stations, the lines and the highlight. Its colour says the kind of finding (a role of
+  the theme each: `flag_failed` for dead, not decodable, all zero, not a number;
+  `flag_amplitude` for noisy, clipped, spiky, constant, weak, DC offset; `flag_edited` for
+  killed and reversed; `flag_spread` for missing, not in the template, twice, spread not the
+  template), its shape the filter within the kind: dead a square, killed an X, noisy a
+  circle, missing from the template a triangle, reversed a diamond (the rest:
+  `core/mapkinds`' `FilterMarks`, no two alike). The colours meet the themes' rules: 3
+  against the map's background and 20 (deltaE) from the sources, the receivers, the
+  record's receivers, the hovered and selected points, and from each other. A mark keeps
+  its size on the screen at every zoom (22, 18, 26 and 14 pixels across at 100 % for the
+  four kinds, so marks of two kinds on one station nest), and every marked point is drawn
+  however far out the map is (none thinned, unlike the stations); where marks fall on one
+  another, the point under the pointer says how many of each lie under it ("Marked here: 1
+  dead in the headers, 3 noisy, 2 missing from the template"). In the Layers list each
+  filter shows its mark as the map draws it, and its tooltip names the shape and the kind;
+  Select selects its traces in the plot; the point under the pointer says which filters
+  mark it ("Marked: noisy"). The record is read on a background job when one of the filters that need it is
   on and the record shown changes (a chunk of 512 traces at a time); the rest come from the
   state at once. For a file of receiver gathers the template is the O record of the
   receiver, and the filters mark the gather's sources. A layer's points get smaller as they crowd on the screen (from 5
@@ -877,7 +893,8 @@ what it was instead of):
    out from the survey's own agreement with its template: on Morgantown, whose records are
    irregular (a median Jaccard index of 0.78 against the 23 × 129 template its X records
    describe), 26 of 5519; on a regular survey, every shot that is not its template. A
-   filter's colour is one of the theme's palette, made readable on the map.
+   filter's mark is its kind's colour, a role of the theme, made readable on the map, in a
+   shape of its own.
 
 ## Linking the plot and the map
 

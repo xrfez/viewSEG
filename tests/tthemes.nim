@@ -18,6 +18,9 @@
 ##   the hovered and the selected points 3 against the background; sources
 ##   40 from receivers; both 20 from the hovered and the selected points,
 ##   those 20 from each other; the record's receivers 12 from the others;
+##   the marks of the map's filters (a colour for failed traces, amplitude
+##   flags, edits and the spread) 3 against the background, 20 from all of
+##   those and from each other;
 ## - each file names, in its comment, the roles viewSEG moved to meet them;
 ## - text 4.5 on a pressed item (`active`) and on selected text in an input
 ##   (`text_selection`, itself 1.08 off the frame); secondary and status text
@@ -48,7 +51,7 @@
 ## on text_selection 4.17 < 4.5" ...).
 
 import std/[os, sequtils, strformat, strutils]
-import viewSEG/core/[geometry, panels, survey]
+import viewSEG/core/[geometry, mapkinds, panels, survey]
 import viewSEG/view/[maplayers, plotink, theme]
 
 const
@@ -165,6 +168,19 @@ proc checkMap(t: Theme) =
           if i == 1 and j == 0: 40 else: 20)
     atLeast(at & "the record's receivers from the receivers",
       deltaE(ink.active, ink.roles[prReceiver]), 12)
+    # the marks of the map's filters, a colour for each kind of finding (a
+    # failed trace, an amplitude flag, an edit, the spread): each 3 against
+    # the background, 20 from the points and from each other
+    let flags = [("failed traces' marks", filterInk(t, mfDead, ink.background)),
+      ("amplitude flags' marks", filterInk(t, mfNoisy, ink.background)),
+      ("edits' marks", filterInk(t, mfKilled, ink.background)),
+      ("the spread's marks", filterInk(t, mfMissing, ink.background))]
+    for i, (what, c) in flags:
+      atLeast(at & what & " on the map", contrast(c, ink.background), 3.0)
+      for (other, o) in @points & @[("the record's receivers", ink.active)]:
+        atLeast(at & what & " from " & other, deltaE(c, o), 20)
+      for j in 0 ..< i:
+        atLeast(at & what & " from " & flags[j][0], deltaE(c, flags[j][1]), 20)
 
 block readable:
   for (file, _, _) in Shipped:

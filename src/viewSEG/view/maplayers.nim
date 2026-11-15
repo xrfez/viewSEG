@@ -24,7 +24,7 @@
 ## `selected` colour, as in the plot; the receivers of the record on show in a
 ## darker shade of the receivers' colour, its source larger and outlined.
 
-import std/[intsets, math, os, strutils]
+import std/[hashes, intsets, math, os, strutils]
 from parseSEG import GatherKind, gkReceiver, gkUnknown, known, recordsAt, stationKey
 import ../core/[geometry, state]
 import plotink, theme
@@ -433,15 +433,14 @@ proc pointInfo*(st: AppState; p: PointRef; units: string): PointInfo =
 
 # ------------------------------------------------------------- filters --
 
-const FilterInks: array[MapFilter, BaseColor] = [bcDarkForeground, bcRed, bcBrown,
-  bcOrange, bcYellow, bcBrightMagenta, bcBrightCyan, bcBlue, bcBrightYellow, bcLightForeground,
-  bcBrightRed, bcMagenta, bcCyan, bcBrightGreen, bcMuted, bcDarkForeground, bcGreen, bcBrightBlue]
-  ## each filter's colour in the theme's palette (made readable on the map)
+const FlagRoles*: array[FlagFamily, Role] = [rlFlagFailed, rlFlagAmplitude, rlFlagEdited,
+  rlFlagSpread]
+  ## the theme's role for each kind of finding's marks
 
 func filterInk*(t: Theme; f: MapFilter; background: Rgba): Rgba =
-  ## The colour the map marks filter `f`'s points in: its own in the
-  ## theme's palette, readable on `background`.
-  readableOn(t.palette[FilterInks[f]], background)
+  ## The colour the map marks filter `f`'s points in: its kind of finding's
+  ## role in the theme (`FilterMarks`), readable on `background`.
+  readableOn(t.roles[FlagRoles[FilterMarks[f].family]], background)
 
 func filterRole*(st: AppState): PointRole =
   ## The role a filter's traces are marked at on the map: where the record
@@ -449,24 +448,53 @@ func filterRole*(st: AppState): PointRole =
   ## gather).
   if st.shownDomain == rdReceiver: prSource else: prReceiver
 
-proc filterPlaces*(st: AppState; f: MapFilter; h: FilterHits): seq[MapPoint] =
+type MarkPlace* = tuple[at: MapPoint; key: int64]
+  ## where a filter marks something, and what: a trace's id (0 or more), or
+  ## a station's (less than 0); one thing may be marked at two places (its
+  ## file's own position and its survey station's)
+
+proc filterPlaces*(st: AppState; f: MapFilter; h: FilterHits): seq[MarkPlace] =
   ## Where the map marks what filter `f` found (`h`): its traces at their
   ## points of `filterRole` (their file's own and the survey files' of
   ## their station), its stations at the survey files' points of them, its
   ## sources at the survey files' sources. A trace the map cannot place
   ## (an auxiliary trace, one without a position) is counted, not marked.
+  result = @[]
   let role = st.filterRole
   for t in h.traces:
     for p in st.survey.tracePointsOf(t):
-      if p.role == role: result.add st.positionOf(p)
+      if p.role == role: result.add (st.positionOf(p), int64(t))
   template station(r: PointRole; k: StationKey) =
+    let key = -1 - int64(abs(hash((ord(r), k.line, k.point, k.index))) shr 1)
     for i in 0 ..< st.survey.layers.len:
       template l: untyped = st.survey.layers[i]
       if l.origin == loSurveyFile:
         let p = l.stationPoint(r, Station(line: k.line, point: k.point, index: k.index))
-        if p >= 0: result.add st.positionOf(PointRef(layer: l.id, role: r, point: p))
+        if p >= 0: result.add (st.positionOf(PointRef(layer: l.id, role: r, point: p)), key)
   for k in h.stations: station(plannedRole(st.shownDomain), k)
   for k in h.sources: station(prSource, k)
+
+func markedHere*(marks: openArray[(MapFilter, seq[MarkPlace])]; at: MapPoint;
+    reach: proc (f: MapFilter): float64 {.noSideEffect.}): seq[(MapFilter, int)] =
+  ## How many things each filter marks with a mark that covers `at` (its
+  ## glyph `reach(f)` survey units round its place), each thing once: where
+  ## marks crowd onto one spot of the screen, what lies there.
+  result = @[]
+  for (f, places) in marks:
+    let r = reach(f)
+    var keys: seq[int64] = @[]
+    for p in places:
+      if abs(p.at.x - at.x) <= r and abs(p.at.y - at.y) <= r and
+          hypot(p.at.x - at.x, p.at.y - at.y) <= r and p.key notin keys:
+        keys.add p.key
+    if keys.len > 0: result.add (f, keys.len)
+
+func markedHereText*(counts: openArray[(MapFilter, int)]): string =
+  ## "Marked here: 1 dead in the headers, 2 noisy" ("" for nothing).
+  if counts.len == 0: return ""
+  var parts: seq[string] = @[]
+  for (f, n) in counts: parts.add $n & " " & $f
+  "Marked here: " & parts.join(", ")
 
 func filterLabel*(f: MapFilter; h: FilterHits): string =
   ## A filter's line in the Layers list: its name and what it found,

@@ -66,11 +66,16 @@ const
     ## its source
   selectedSize = 8'f32
   shotRing = 6'f32
-  filterRing = 8'f32
-    ## how much wider than the receivers drawn the ring round a point a filter
-    ## marks is, pixels at 100 %
     ## how much wider than its source's disc the ring round a source with a
     ## file in the folder is, pixels at 100 %
+  MarkSizes: array[FlagFamily, float32] = [22'f32, 18, 26, 14]
+    ## the marks of each kind of finding (failed, amplitude, edits, the
+    ## spread), pixels across at 100 %: apart, so marks of two kinds on one
+    ## station nest
+  MarkStroke = 2.5'f32
+    ## their outlines' width
+  MarkHalo = 1.5'f32
+    ## the halo on each side of it
   hoveredSize = 12'f32
   menuShots = 20 ## files that hold a source's shot named one by one in its menu
   scalePixels = 150'f32 ## the longest the scale bar may be, at 100 %
@@ -152,6 +157,10 @@ type
       ## what each filter found, as the marks show it
     hitIndex: FilterIndex
       ## `hits`' traces as sets
+    markPlaces: seq[(MapFilter, seq[MarkPlace])]
+      ## what each filter shown marks, and where (`followMarks`)
+    near: seq[(MapFilter, int)]
+      ## what the marks under the pointer mark (`markedHere`), when the info was made
     marked: seq[seq[MapPoint]]
       ## the marked points: the sources with a file in the folder listed
     marksRev: int
@@ -298,6 +307,31 @@ proc swatch(c: Rgba; id: string) =
   let s = igGetFrameHeight() * 0.6
   discard igColorButton(id.cstring, vec4(c), ImGui_ColorEditFlags_NoTooltip.cint or
     ImGui_ColorEditFlags_NoPicker.cint, ImVec2_c(x: s, y: s))
+
+proc glyphIcon(c, background: Rgba; shape: FlagShape; id: string) =
+  ## A filter's mark as the map draws it, on the map's background, the size
+  ## of a swatch: the legend of the filters' marks.
+  let s = igGetFrameHeight() * 0.8
+  let at = igGetCursorScreenPos()
+  discard igInvisibleButton(id.cstring, ImVec2_c(x: s, y: s), 0)
+  let dl = igGetWindowDrawList()
+  ImDrawList_AddRectFilled(dl, at, ImVec2_c(x: at.x + s, y: at.y + s), u32(background), 2, 0)
+  let (cx, cy, r) = (at.x + s / 2, at.y + s / 2, s / 2 - 2.5)
+  let (col, w) = (u32(c), 2'f32)
+  template p(dx, dy: float32): ImVec2_c = ImVec2_c(x: cx + dx, y: cy + dy)
+  case shape
+  of shCircle: ImDrawList_AddCircle(dl, p(0, 0), r, col, 0, w)
+  of shSquare: ImDrawList_AddRect(dl, p(-0.82 * r, -0.82 * r), p(0.82 * r, 0.82 * r), col, 0, w, 0)
+  of shDiamond: ImDrawList_AddQuad(dl, p(0, -r), p(r, 0), p(0, r), p(-r, 0), col, w)
+  of shTriangle: ImDrawList_AddTriangle(dl, p(0, -r), p(0.866 * r, 0.5 * r),
+    p(-0.866 * r, 0.5 * r), col, w)
+  of shPlus:
+    ImDrawList_AddLine(dl, p(-r, 0), p(r, 0), col, w)
+    ImDrawList_AddLine(dl, p(0, -r), p(0, r), col, w)
+  of shCross:
+    let k = 0.75 * r
+    ImDrawList_AddLine(dl, p(-k, -k), p(k, k), col, w)
+    ImDrawList_AddLine(dl, p(-k, k), p(k, -k), col, w)
 
 proc layerRow(l: MapLayerView; i: int; marks: var Marks; res: var MapOutput) =
   ## One layer of the popover: its colour, its own toggle and its points.
@@ -468,7 +502,9 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
   let ink = mapInk(t, st.settings.plot.display.colours, st.settings.plot.display.custom)
   for f in MapFilter:
     igPushID_Int(cint(ord(f) + 1000))
-    swatch(filterInk(t, f, ink.background), "##colour")
+    # its mark, as the map draws it: a shape of its own, the colour of its kind
+    glyphIcon(filterInk(t, f, ink.background), ink.background, FilterMarks[f].shape, "##mark")
+    marks.mark("map.filter mark " & $f)
     igSameLine(0, -1)
     var on = f in st.settings.map.filters
     let h = if on: hits[f] else: FilterHits()
@@ -478,7 +514,9 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
       res.commands.add Command(kind: ckSettings, settings: s)
     marks.mark("map.filter " & $f)
     tip(filterTips[f] & (if h.note.len > 0 and h.state == fsNotChecked: ".\nNot checked: " &
-      h.note & "." elif h.note.len > 0 and h.state == fsDone: " (" & h.note & ")." else: "."))
+      h.note & "." elif h.note.len > 0 and h.state == fsDone: " (" & h.note & ")." else: ".") &
+      "\nMarked on the map with a " & $FilterMarks[f].shape & " in the colour of " &
+      $FilterMarks[f].family & ".")
     if on and h.traces.len > 0:
       igSameLine(0, -1)
       if igSmallButton("Select"):
@@ -905,8 +943,14 @@ proc followMarks(mu: var MapUi; st: AppState) =
     for p in st.shots.pointRefs: mu.marked[0].add st.shownAt(p)
   mu.hits = st.filterHits
   mu.hitIndex = filterIndex(mu.hits)
+  mu.markPlaces.setLen 0
   for f in MapFilter:
-    if f in st.settings.map.filters: mu.marked.add st.filterPlaces(f, mu.hits[f])
+    if f in st.settings.map.filters:
+      let places = st.filterPlaces(f, mu.hits[f])
+      var at = newSeqOfCap[MapPoint](places.len)
+      for p in places: at.add p.at
+      mu.marked.add at
+      mu.markPlaces.add (f, places)
   let b = st.survey.bounds
   mu.renderer.setMarks(if b.isEmpty: mapPoint(0, 0) else: mapPoint(b.minX, b.minY), mu.marked)
   inc mu.marksRev
@@ -1181,6 +1225,13 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
         marks.mark("map menu.hide")
     igEndPopup()
 
+func markStyle(t: Theme; f: MapFilter; ink: MapInk; scale: float32): MapStyle =
+  ## How filter `f`'s points are marked, at UI scale `scale`.
+  let (family, shape) = FilterMarks[f]
+  MapStyle(colour: filterInk(t, f, ink.background), edge: ink.background,
+    size: MarkSizes[family] * scale, edgeWidth: MarkStroke * scale, halo: MarkHalo * scale,
+    glyph: GlyphKind(ord(shape) + 1))
+
 proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink: MapInk;
     t: Theme; marks: var Marks; res: var MapOutput; ask: MapAskKind) =
   ## The map's plot and the mouse and keys over it.
@@ -1268,15 +1319,12 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
           sources = max(sources, markerSize(l.spacing, pixel))
       frame.marks = @[MapStyle(colour: ink.outline, edge: ink.outline,
         size: (sources + shotRing) * s, edgeWidth: 1.5 * s, shape: skRing)]
-      # A point a filter marks: ringed in the filter's colour; where the
-      # points crowd (smaller than the largest marker), a disc a little larger
-      # than theirs instead, as rings so close would merge into a mass.
+      # A point a filter marks: its glyph (`FilterMarks`) in its kind's colour,
+      # of a size on the screen that holds at every zoom, over the highlight,
+      # with a halo of the background round it so it reads over the stations.
+      frame.marksAbove = frame.marks.len
       for f in MapFilter: # (in the order `followMarks` gives their sets)
-        if f in st.settings.map.filters:
-          let c = filterInk(t, f, ink.background)
-          frame.marks.add(if receivers >= MaxMarker: MapStyle(colour: c, edge: c,
-              size: (receivers + filterRing) * s, edgeWidth: 2 * s, shape: skRing)
-            else: MapStyle(colour: c, size: (receivers + 1) * s))
+        if f in st.settings.map.filters: frame.marks.add markStyle(t, f, ink, s)
       frame.marked = mu.marksRev
       for l in layers:
         if l.shown and l.key.kind != mlHighlight:
@@ -1320,26 +1368,43 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     # the plot), and what the map says of them and the status bar's
     # coordinates are what they were then, wherever the pointer goes over
     # the menu.
-    var under: seq[PointRef]
+    var under: seq[PointRef] = @[]
+    var near: seq[(MapFilter, int)] = @[] # what the marks under the pointer mark
     if held:
       under = mu.menuPoints
+      near = mu.near
       res.cursor = mu.menuCursor
     elif hovered and mu.drag.kind in {mdNone, mdMeasure}:
       let m = igGetIO_Nil().MousePos
       let at = view.mapAt(plot, v2(m))
       res.cursor = coordinatesText(at, view.perPixel, units)
       under = st.pointsAt(at, float64(pickRadius) * view.width / float64(max(size.x, 1)))
+      # survey units of half a pixel at 100 %
+      let perMark = view.perPixel * float64(fb.x) / 2
+      near = markedHere(mu.markPlaces, at, proc (f: MapFilter): float64 =
+        float64(MarkSizes[FilterMarks[f].family]) * perMark)
     elif hovered:
       res.cursor = coordinatesText(view.mapAt(plot, v2(igGetIO_Nil().MousePos)),
         view.perPixel, units)
     let infoFor = (st.survey.revision, st.shots.revision, st.sessions.len, mu.marksRev)
-    if under != mu.hovered or infoFor != mu.infoFor: # (what it says may have changed too)
+    if under != mu.hovered or infoFor != mu.infoFor or near != mu.near:
+      # (what it says may have changed too)
       mu.hovered = under
       mu.infoFor = infoFor
+      mu.near = near
       mu.info.setLen 0
       for i in 0 ..< min(under.len, 3):
         mu.info.add st.pointInfo(under[i], units)
         mu.info[^1].lines.add st.filterLines(under[i], mu.hits, mu.hitIndex)
+      # Where marks crowd onto one spot (zoomed out), how many of each lie
+      # under the pointer, when that is more than the point described says.
+      var things = 0
+      for (_, n) in near: things += n
+      let said = if under.len > 0: st.filterLines(under[0], mu.hits, mu.hitIndex) else: @[]
+      let named = if said.len > 0: said[0].count(", ") + 1 else: 0
+      if things > named:
+        if mu.info.len == 0: mu.info.add PointInfo(title: "Marks here")
+        mu.info[0].lines.add markedHereText(near)
     mu.sendHover(res)
     # A click on a source shows its record (on a receiver in a file of
     # receiver gathers, its gather); on any other point it selects the

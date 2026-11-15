@@ -685,6 +685,18 @@ proc mapSpsIn*(fx: Fixtures; name, gridUnits, factor: string): tuple[s, r: strin
     let log = writeSps(f, path)
     doAssert log.len == 0, $log
 
+proc mapFarSps*(fx: Fixtures; east = 60_000.0): string =
+  ## An R file (SPS 2.1) of one receiver, line 900 point 101, `east` metres
+  ## east of `mapSps`'s spread: loaded with it, the map's fit holds both, and
+  ## the spread's stations crowd into a few pixels.
+  result = fx.dir / "far.r"
+  if fileExists(result): return
+  var r = SpsFile(headers: @[SpsHeader(code: "00", description: "SPS format version num.",
+    data: "SPS 2.1;")])
+  r.points.add spsPoint(pkReceiver, 900, 101, OriginX + east, OriginY)
+  let log = writeSps(r, result)
+  doAssert log.len == 0, $log
+
 proc mapSps*(fx: Fixtures): tuple[s, r: string] =
   ## An S and an R file (SPS 2.1, grid units metres) of a small 3D land
   ## spread: receiver lines running east, source lines running north across

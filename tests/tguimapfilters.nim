@@ -4,10 +4,11 @@
 ##
 ## - In the Layers popover, under "Filters: the record shown", ticking
 ##   "dead in the headers", "noisy" and "missing from the template" marks
-##   their points with a ring in each filter's colour, and each line says
-##   its count once the record is read: the receiver marked dead, the noisy
-##   one, and the two receivers the template plans that the record lacks;
-##   a receiver beside them is not ringed.
+##   their points with a mark in each filter's colour (a square, a circle, a
+##   triangle), and each line says its count once the record is read:
+##   the receiver marked dead, the noisy one, and the two receivers the
+##   template plans that the record lacks; a receiver further along the
+##   dead one's line is not marked.
 ## - The point under the pointer says which filters mark it.
 ## - Select selects the filter's traces in the plot.
 ##
@@ -109,7 +110,7 @@ proc main() =
           doAssert f.ring(f.receiver(d), c) >= 6, $m & " not ringed at " & $d & ": " &
             $f.ring(f.receiver(d), c)
         let c = filterInk(f.theme, mfDead, ink.background)
-        doAssert f.ring(f.receiver((1, 3)), c) == 0, "a receiver beside it ringed"
+        doAssert f.ring(f.receiver((1, 12)), c) == 0, "a receiver along its line ringed"
         f.shot("map-filters-ringed.png"))
     step("the point under the pointer says so", proc (f: FrameInfo) =
       f.moveMouse(f.receiver(MapDefectAt[mdDead])), proc (f: FrameInfo): bool =

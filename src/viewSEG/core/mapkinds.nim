@@ -28,6 +28,12 @@
 ## spread differs from the template (processSEG's `compareRelations`). What
 ## each finds is a `FilterHits`: today for the record shown (and the
 ## survey-wide spread check); the survey-wide QC passes fill the same.
+##
+## **Marks** (`FilterMark`): each filter marks its stations on the map with
+## a glyph of its own: a colour for its kind of finding (`FlagFamily`: a
+## failed trace, an amplitude flag, the user's edit, the spread; the theme
+## gives each its role) and a shape within the kind (`FlagShape`), so no two
+## filters mark alike.
 
 import parseSEG
 
@@ -80,6 +86,25 @@ type
     mfSpreadDiffers = "spread not the template"
       ## shots whose listed receivers differ from those the template plans
 
+  FlagFamily* = enum
+    ## What kind of finding a filter's mark says, in its colour.
+    ffFailed = "failed traces" ## dead, not decodable, all zero, not a number
+    ffAmplitude = "amplitude"  ## noisy, clipped, spiky, constant, weak, DC offset
+    ffEdited = "your edits"    ## killed, reversed
+    ffSpread = "the spread"    ## missing, not in the template, twice, ... spread differs
+
+  FlagShape* = enum
+    ## The glyph a filter's mark is drawn as, round its station.
+    shCircle = "circle"
+    shSquare = "square"
+    shDiamond = "diamond"
+    shTriangle = "triangle"
+    shPlus = "plus"
+    shCross = "cross"
+
+  FilterMark* = tuple[family: FlagFamily; shape: FlagShape]
+    ## how a filter's points are marked on the map
+
   FilterState* = enum
     ## How far a filter's finding is.
     fsOff = "off"                ## not asked for
@@ -97,10 +122,21 @@ type
     note*: string              ## what it counts, or why it is not checked
 
 const
+  FilterMarks*: array[MapFilter, FilterMark] = [(ffFailed, shSquare), (ffFailed, shPlus),
+    (ffEdited, shCross), (ffAmplitude, shCircle), (ffAmplitude, shSquare),
+    (ffAmplitude, shTriangle), (ffAmplitude, shDiamond), (ffAmplitude, shPlus),
+    (ffAmplitude, shCross), (ffFailed, shDiamond), (ffFailed, shTriangle), (ffSpread, shTriangle),
+    (ffSpread, shSquare), (ffSpread, shDiamond), (ffSpread, shPlus), (ffSpread, shCross),
+    (ffEdited, shDiamond), (ffSpread, shCircle)]
+    ## each filter's mark, in `MapFilter`'s order: no two alike, and the
+    ## filters most used of different shapes too (dead a square, killed an X
+    ## over its station, noisy a circle, missing from the template a
+    ## triangle, reversed a diamond); auxiliary traces and those without a
+    ## position are counted, not marked
   TraceFilters* = {mfDead, mfUndecodable, mfNoisy, mfClipped, mfSpiky, mfConstant, mfWeak,
     mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted, mfDuplicate, mfAuxiliary}
     ## the filters found by reading the record shown on a job (`core/recordqc`)
-  MaxTemplateLines* = 1000       ## a patch's lines, at most
+  MaxTemplateLines* = 1000 ## a patch's lines, at most
   MaxTemplateChannels* = 100_000 ## a patch's stations on a line, at most
 
 func bounded*(t: TemplateSpec): TemplateSpec =

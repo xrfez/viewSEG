@@ -12,7 +12,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   selection, hover, text_selection
+#   selection, hover, flag_amplitude, flag_edited, flag_spread, text_selection
 
 name = "Everforest Dark"
 mode = "dark"                    # "dark" or "light"; guessed from background if absent
@@ -80,4 +80,5 @@ scrollbar_size = 12
 # Roles: backdrop window popup bar frame text text_dim text_disabled border
 # selection hover active accent highlight ok warning error info
 # plot_background plot_grid trace fill_positive fill_negative crosshair
-# selected source receiver text_selection
+# selected source receiver flag_failed flag_amplitude flag_edited flag_spread
+# text_selection

@@ -7,7 +7,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   active
+#   active, flag_edited
 
 name = "Ethereal"
 mode = "dark"
