@@ -22,7 +22,9 @@
 ## - the seismic file's unit: the survey's where its headers say nothing, or
 ##   only "feet" while the survey says US survey feet (with a dim line that
 ##   says so); metres against feet a conflict; a unit the user chose by hand
-##   never replaced by a later derivation, per file;
+##   never replaced by a later derivation, kept per survey (its set of
+##   files) and per seismic file, taken back to the headers on request, in
+##   the state (`ckChooseUnit`);
 ## - a seismic file's headers made exact by the unit of length its CRS text
 ##   names (parseSEG's `crs`);
 ## - `ckSurveyUnits` reads the headers of the files it names on jobs (a file
@@ -35,7 +37,9 @@
 ##   reads), never from a guess made before; after an import the units it
 ##   was made with label the file.
 ##
-## Seen to fail: with the import's units taken as sent (not worked out
+## Seen to fail: with a hand choice kept for every survey (keyed by no
+## file), "another survey shows the first one's hand choice"; with the
+## import's units taken as sent (not worked out
 ## from the files it read), "the import's units, read by it: (survey: not
 ## given, ...)"; with the units' reads on the interactive lane, "the
 ## seismic file waited for the survey file's headers: 3003 ms"; with an H20 and H201 that contradict each other passed
@@ -226,19 +230,45 @@ block fileUnits:
   doAssert fileUnitOf(suNotGiven, suUsFeet, suMetres, byHand = true).conflict.len > 0
 
 block byHand:
+  # A unit chosen by hand is the survey's of those files, and the seismic
+  # file's of that path: another survey shows what its headers say, and a
+  # choice taken back is the headers' again.
   var u = ImportUnits()
   let usFeet = SurveyUnitsSaid(unit: suUsFeet)
-  doAssert u.surveyUnit(usFeet) == suUsFeet
-  doAssert u.surveyUnit(SurveyUnitsSaid()) == suNotGiven
-  u.choose(suMetres)
-  doAssert u.surveyUnit(usFeet) == suMetres, "the user's survey unit replaced"
-  u.choose(suNotGiven) # "not given" chosen on purpose stays so
-  doAssert u.surveyUnit(usFeet) == suNotGiven
-  u.choose("/d/a.sgy", suFeet)
+  let a = @["/d/a.s", "/d/a.r"]
+  doAssert u.surveyUnit(a, usFeet) == suUsFeet
+  doAssert u.surveyUnit(a, SurveyUnitsSaid()) == suNotGiven
+  u.choose(UnitChoice(survey: a, unit: suMetres, byHand: true))
+  doAssert u.surveyUnit(a, usFeet) == suMetres, "the user's survey unit replaced"
+  doAssert u.surveyUnit(@["/d/a.r", "/d/a.s"], usFeet) == suMetres # any order
+  doAssert u.surveyUnit(@["/d/b.s", "/d/b.r"], usFeet) == suUsFeet,
+    "another survey shows the first one's hand choice"
+  doAssert u.surveyUnit(a & "/d/a.x", usFeet) == suUsFeet # another set of files
+  var unit = suNotGiven
+  doAssert u.chosenFor(a, unit) and unit == suMetres
+  u.choose(UnitChoice(survey: a, unit: suNotGiven, byHand: true)) # "not given" on purpose
+  doAssert u.surveyUnit(a, usFeet) == suNotGiven and u.surveys.len == 1
+  u.choose(UnitChoice(survey: a, byHand: false)) # back to the headers
+  doAssert u.surveyUnit(a, usFeet) == suUsFeet and not u.chosenFor(a, unit)
+  u.choose(UnitChoice(file: "/d/a.sgy", unit: suFeet, byHand: true))
   doAssert u.fileUnit("/d/a.sgy", suNotGiven, suUsFeet).unit == suFeet
+  doAssert u.fileUnit("/d/a.sgy", suNotGiven, suUsFeet).byHand
   doAssert u.fileUnit("/d/b.sgy", suNotGiven, suUsFeet).unit == suUsFeet # another file
-  u.choose("/d/a.sgy", suMetres)
+  u.choose(UnitChoice(file: "/d/a.sgy", unit: suMetres, byHand: true))
   doAssert u.fileUnit("/d/a.sgy", suFeet, suUsFeet).unit == suMetres and u.files.len == 1
+  u.choose(UnitChoice(file: "/d/a.sgy", byHand: false))
+  doAssert u.fileUnit("/d/a.sgy", suFeet, suUsFeet).unit == suUsFeet and u.files.len == 0
+  # Bounded.
+  for i in 0 .. MaxUnitChoices:
+    u.choose(UnitChoice(survey: @["/d/" & $i], unit: suFeet, byHand: true))
+  doAssert u.surveys.len == MaxUnitChoices and u.surveyUnit(@["/d/0"], usFeet) == suUsFeet
+  # In the state, by a command (a project keeps them with it).
+  var st = initAppState()
+  st.apply Command(kind: ckChooseUnit, unitChoice: UnitChoice(survey: a, unit: suFeet,
+    byHand: true))
+  doAssert st.unitChoices.surveyUnit(a, usFeet) == suFeet
+  st.apply Command(kind: ckChooseUnit, unitChoice: UnitChoice(survey: a, byHand: false))
+  doAssert st.unitChoices.surveys.len == 0
 
 block crsUnits:
   doAssert headerUnitOf(FileCrs(units: cuFeet, lengthUnit: "US survey foot")) == suUsFeet

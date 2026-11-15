@@ -37,7 +37,7 @@
 ## headers give them (SPS H20 and H201, the seismic file's own) and as the
 ## user confirms them.
 
-import std/[math, os, strutils, tables]
+import std/[algorithm, math, os, strutils, tables]
 import parseSEG
 import processSEG/qc/record
 import session, survey
@@ -339,12 +339,25 @@ type
     byHand*: bool
       ## the user chose it
 
+  UnitChoice* = object
+    ## A unit the user chose in the Import survey window, or took back.
+    survey*: seq[string]
+      ## the survey's files (their paths, in any order): the unit is the
+      ## survey's; empty: it is seismic file `file`'s
+    file*: string
+      ## the seismic file (its path), when `survey` is empty
+    unit*: SurveyUnit
+    byHand*: bool
+      ## true: `unit` is the user's; false: back to what the headers say
+
   ImportUnits* = object
-    ## The units the user chose by hand in the Import survey window, kept
-    ## for as long as the program runs; what the headers say never replaces
-    ## them. The survey's, and each seismic file's (by its path).
-    survey*: SurveyUnit
-    surveyChosen*: bool
+    ## The units the user chose by hand (`UnitChoice`), kept while the
+    ## program runs (a project keeps them with it): a survey's, by its set of
+    ## files, and a seismic file's, by its path. What the headers say never
+    ## replaces them; a survey of other files has its own (none: the
+    ## headers'). At most `MaxUnitChoices` of each, the oldest dropped.
+    surveys*: seq[tuple[files: seq[string]; unit: SurveyUnit]]
+      ## the files sorted
     files*: seq[tuple[path: string; unit: SurveyUnit]]
 
 func gridConflict(g: GridUnit; nameAt, factorAt: string): string =
@@ -578,9 +591,29 @@ func fileUnitOf*(headers, survey: SurveyUnit; chosen = suNotGiven; byHand = fals
     result.conflict = "The headers' coordinates are in " & $a & " and the survey's in " & $b &
       ": one of them is wrong, and the import converts nothing. Choose what each is in."
 
-func surveyUnit*(u: ImportUnits; said: SurveyUnitsSaid): SurveyUnit =
-  ## The survey's unit the window shows: the user's, else its headers'.
-  if u.surveyChosen: u.survey else: said.unit
+const MaxUnitChoices* = 64 ## hand choices kept, of surveys and of files each
+
+func surveyKey(files: openArray[string]): seq[string] =
+  ## A survey's files as its choice is kept by: sorted, each once.
+  result = @[]
+  for f in files:
+    if f notin result: result.add f
+  result.sort()
+
+func chosenFor*(u: ImportUnits; survey: openArray[string]; unit: var SurveyUnit): bool =
+  ## Whether the user chose the unit of the survey of files `survey` (any
+  ## order); `unit` then.
+  let key = surveyKey(survey)
+  for (files, chosen) in u.surveys:
+    if files == key:
+      unit = chosen
+      return true
+
+func surveyUnit*(u: ImportUnits; survey: openArray[string]; said: SurveyUnitsSaid): SurveyUnit =
+  ## The unit the window shows for the survey of files `survey`: the
+  ## user's, else what their headers say.
+  result = said.unit
+  discard u.chosenFor(survey, result)
 
 func fileUnit*(u: ImportUnits; path: string; headers, survey: SurveyUnit): FileUnit =
   ## The unit the window shows for seismic file `path`, whose `headers` say
@@ -598,17 +631,26 @@ func resolved*(u: JoinUnits; heads: openArray[SurveyHead]; headers: SurveyUnit):
   if u.surveyFromHeaders: result.survey = surveyUnitsSaid(heads).unit
   if u.fileFromHeaders: result.file = fileUnitOf(headers, result.survey).unit
 
-proc choose*(u: var ImportUnits; unit: SurveyUnit) =
-  ## The user chose the survey's unit.
-  (u.survey, u.surveyChosen) = (unit, true)
-
-proc choose*(u: var ImportUnits; path: string; unit: SurveyUnit) =
-  ## The user chose seismic file `path`'s unit.
-  for f in u.files.mitems:
-    if f.path == path:
-      f.unit = unit
-      return
-  u.files.add (path, unit)
+proc choose*(u: var ImportUnits; c: UnitChoice) =
+  ## Keeps the user's choice `c`, in place of one for the same survey or
+  ## file; takes it away when `c` is back to the headers (`byHand` false).
+  if c.survey.len > 0:
+    let key = surveyKey(c.survey)
+    for i in 0 ..< u.surveys.len:
+      if u.surveys[i].files == key:
+        u.surveys.delete(i)
+        break
+    if c.byHand:
+      u.surveys.add (key, c.unit)
+      if u.surveys.len > MaxUnitChoices: u.surveys.delete(0)
+  elif c.file.len > 0:
+    for i in 0 ..< u.files.len:
+      if u.files[i].path == c.file:
+        u.files.delete(i)
+        break
+    if c.byHand:
+      u.files.add (c.file, c.unit)
+      if u.files.len > MaxUnitChoices: u.files.delete(0)
 
 # ------------------------------------------------------------ line names --
 

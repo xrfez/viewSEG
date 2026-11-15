@@ -538,9 +538,14 @@ the files that disagree. A seismic file's own unit is `headerUnitOf(Session.crs)
 makes the import's unit for the file: the survey's where the headers say nothing or say
 "feet" while the survey says US survey feet (SEG-Y's measurement system 2 cannot tell
 them apart), with a note; a conflict only for units that cannot both be right. What the
-user chooses by hand is `ImportUnits` (the survey's, each file's by path), held by the
-window and never replaced by a derivation; the units an import was made with are
-`Joined.units`, the one place they are kept. After an import, the file's confirmed unit
+user chooses by hand is the state's (`ckChooseUnit`, `AppState.unitChoices`, an
+`ImportUnits`): a survey's by its set of files, a seismic file's by its path, at most 64 of
+each; never replaced by a derivation, and taken back by "As the headers say". A unit
+nobody chose is sent to the import as the headers' (`JoinUnits.surveyFromHeaders`,
+`fileFromHeaders`): the join's own read records what each file says (`JoinSurvey.heads`)
+and the plan resolves them (`resolved`), so neither an agent's import nor an Import
+clicked while the window still reads records a guess. The units an import was made with
+are `Joined.units`, with where each came from. After an import, the file's confirmed unit
 stands for its headers' in `unitSources`, and a seismic file's bare "feet" beside a survey
 in US survey feet is no disagreement (`unitsDisagree`).
 

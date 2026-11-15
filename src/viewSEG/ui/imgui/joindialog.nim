@@ -22,8 +22,10 @@
 ## nothing, or only "feet" (SEG-Y cannot tell the US survey foot from the
 ## international), so the user enters a unit once at most; a metres-against-
 ## feet conflict is a warning. The options are remembered (the settings); the
-## units the user chose by hand (`ImportUnits`) are kept while the program
-## runs, and nothing the headers say replaces them.
+## units the user chose by hand are the state's (`ckChooseUnit`,
+## `unitChoices`): a survey's by its files, a seismic file's by its path;
+## nothing the headers say replaces them, and "As the headers say" in the
+## dropdown takes one back.
 ##
 ## A floating window like any other: Tab moves between its controls, and
 ## the click that brings it forward does only that (Import and Select act only
@@ -46,7 +48,6 @@ type
     session: SessionId          ## the file chosen; `NoSession`: the one the plot shows
     added: seq[JoinFile]        ## the files added with "Add files..."
     unticked: seq[string]       ## loaded survey files left out (their paths)
-    units: ImportUnits          ## the units the user chose by hand
     asked: seq[string]          ## survey files whose headers were asked for (`ckSurveyUnits`)
     drawn: JoinUnits            ## the units the window showed last
     drawnNote: string           ## and the dim line under the seismic file's
@@ -130,14 +131,22 @@ proc marked(marks: var Marks; name: string) =
   marks.mark(name)
   if igIsItemFocused(): marks.mark("join.focused " & name)
 
-proc unitCombo(id: string; u: var SurveyUnit; marks: var Marks; name: string): bool =
-  ## A dropdown of the units; true when the user chose one.
-  igSetNextItemWidth(igGetFontSize() * 14)
-  if igBeginCombo(id.cstring, ($u).cstring, 0):
+proc unitCombo(id: string; shown, headers: SurveyUnit; chosen: bool; marks: var Marks;
+    name: string): tuple[picked, byHand: bool; unit: SurveyUnit] =
+  ## A dropdown of the units, `shown` now (`chosen`: by the user), with "as
+  ## the headers say" (`headers`) first, which takes a choice back; what the
+  ## user picked, if anything.
+  igSetNextItemWidth(igGetFontSize() * 16)
+  let preview = $shown & (if chosen: "  (yours)" else: "")
+  if igBeginCombo(id.cstring, preview.cstring, 0):
+    if igSelectable_Bool(("As the headers say: " & $headers).cstring, not chosen, 0,
+        ImVec2_c(x: 0, y: 0)):
+      result = (true, false, headers)
+    marks.mark(name & " headers")
     for v in SurveyUnit:
-      if igSelectable_Bool(($v).cstring, v == u, 0, ImVec2_c(x: 0, y: 0)):
-        u = v
-        result = true
+      if igSelectable_Bool(($v).cstring, chosen and v == shown, 0, ImVec2_c(x: 0, y: 0)):
+        result = (true, true, v)
+      marks.mark(name & " " & $v)
     igEndCombo()
   marks.marked(name)
 
@@ -330,12 +339,20 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     igAlignTextToFramePadding()
     igTextUnformatted("Their coordinates are in", nil)
     igSameLine(0, -1)
-    var surveyUnit = ui.units.surveyUnit(said)
-    if unitCombo("##surveyunits", surveyUnit, marks, "join.survey units"):
-      ui.units.choose(surveyUnit)
-    tip(if ui.units.surveyChosen: "As you chose. The headers say " & (if said.unit ==
-          suNotGiven: "nothing of it" else: $said.unit) & "; nothing is converted: the map " &
-          "and the status bar label the coordinates with it."
+    var paths: seq[string] = @[] # the survey: its hand choice is of these files
+    for f in files: paths.add f.path
+    var surveyUnit = said.unit
+    let surveyChosen = st.unitChoices.chosenFor(paths, surveyUnit)
+    let pick = unitCombo("##surveyunits", surveyUnit, said.unit, surveyChosen, marks,
+      "join.survey units")
+    if pick.picked and paths.len > 0:
+      result.commands.add Command(kind: ckChooseUnit, unitChoice: UnitChoice(survey: paths,
+        unit: pick.unit, byHand: pick.byHand))
+      surveyUnit = pick.unit
+    tip(if surveyChosen: "As you chose, for these files. The headers say " & (if said.unit ==
+          suNotGiven: "nothing of it" else: $said.unit) & ": \"As the headers say\" takes " &
+          "your choice back. Nothing is converted: the map and the status bar label the " &
+          "coordinates with it."
         elif said.unit != suNotGiven: "What the survey files' headers say. Change it when " &
           "they are wrong; nothing is converted: the map and the status bar label the " &
           "coordinates with it."
@@ -343,6 +360,10 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
           "and the status bar label them with it; nothing is converted.")
     for w in said.words: dim(w, t)
     if said.words.len > 0: marks.marked("join.survey said")
+    if surveyChosen and surveyUnit != said.unit and said.unit != suNotGiven:
+      dim("You chose " & $surveyUnit & " for these files; their headers say " & $said.unit &
+        ".", t)
+      marks.marked("join.survey yours")
     var reading = 0
     for h in heads:
       if not h.done: inc reading
@@ -362,7 +383,8 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     # A unit nobody chose is the headers': the import works it out from the
     # files it reads, never from what this window had read so far.
     var units = JoinUnits(survey: surveyUnit, file: suNotGiven,
-      surveyFromHeaders: not ui.units.surveyChosen, fileFromHeaders: true)
+      surveyFromHeaders: not (surveyChosen or pick.picked and pick.byHand),
+      fileFromHeaders: true)
     ui.drawnNote = ""
     # -- the seismic file
     igSeparatorText("Seismic file")
@@ -388,15 +410,20 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
       if joinedAt >= 0:
         dim("A survey was imported for it already (" & $st.joins[joinedAt].files.len &
           " files): importing again starts from its keys as they are now.", t)
-      let fu = ui.units.fileUnit(key, ui.fileUnits, surveyUnit)
+      let fu = st.unitChoices.fileUnit(key, ui.fileUnits, surveyUnit)
       igAlignTextToFramePadding()
       igTextUnformatted("Its headers' coordinates are in", nil)
       igSameLine(0, -1)
       var fileUnit = fu.unit
-      if unitCombo("##fileunits", fileUnit, marks, "join.file units"):
-        ui.units.choose(key, fileUnit)
+      let filePick = unitCombo("##fileunits", fileUnit, fileUnitOf(ui.fileUnits,
+        surveyUnit).unit, fu.byHand, marks, "join.file units")
+      var fileByHand = fu.byHand
+      if filePick.picked:
+        result.commands.add Command(kind: ckChooseUnit, unitChoice: UnitChoice(file: key,
+          unit: filePick.unit, byHand: filePick.byHand))
+        (fileUnit, fileByHand) = (filePick.unit, filePick.byHand)
       units.file = fileUnit
-      units.fileFromHeaders = not (fu.byHand or fileUnit != fu.unit)
+      units.fileFromHeaders = not fileByHand
       ui.drawnNote = fu.note
       tip("What the file's headers say: " & $ui.fileUnits & (if fu.note.len > 0: ". " &
         fu.note else: ".") & " Change it when it is wrong; nothing is converted.")

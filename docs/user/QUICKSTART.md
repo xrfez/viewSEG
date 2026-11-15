@@ -563,8 +563,10 @@ survey feet, as the survey says"); a CRS in the file that names its unit (US sur
 settles it too. Only units that cannot both be right (metres against feet) are a warning.
 You need not wait for the reading: a unit you did not choose is taken from the headers
 as the import reads the files. **Confirm, or correct** when the headers are wrong: a unit you choose is kept for the
-session and no later reading replaces it; choosing another file in the seismic file's box
-shows that file's unit. Nothing is converted; the units label the map's scale bar and the
+session, for those survey files (or that seismic file), and no later reading replaces it;
+it is shown as "(yours)", a survey of other files shows what its own headers say, and
+**As the headers say**, the first entry of the dropdown, takes your choice back. Choosing
+another file in the seismic file's box shows that file's unit. Nothing is converted; the units label the map's scale bar and the
 status bar's coordinates.
 
 **Options** (remembered): **Use the trailing digits of line names** (SPS 1.0 and P1 files

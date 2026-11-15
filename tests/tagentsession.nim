@@ -281,6 +281,10 @@ withFixtures fx:
     st.agent(%*{"kind": "select unmatched"})
     st.agent(%*{"kind": "read survey units", "unitsOf": [{"path": sps.s, "kind": "SPS"}]})
     doAssert st.surveyHead(sps.s) >= 0 and st.heads[st.surveyHead(sps.s)].done
+    st.agent(%*{"kind": "choose unit", "unitChoice": {"survey": [sps.s, sps.r], "unit": "metres",
+      "byHand": true}})
+    var chosen = suNotGiven
+    doAssert st.unitChoices.chosenFor([sps.r, sps.s], chosen) and chosen == suMetres
     st.agent(%*{"kind": "load survey", "paths": [sps.s, sps.r, sps.x]})
     doAssert st.survey.layers.len >= 3, $st.survey.layers.len
     var layer = NoSurveyLayer

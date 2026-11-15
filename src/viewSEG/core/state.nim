@@ -186,6 +186,8 @@ type
       ## select the traces a join left unmatched
     ckSurveyUnits = "read survey units"
       ## read what survey files' headers say of their unit, for the import's window
+    ckChooseUnit = "choose unit"
+      ## the unit of a survey's or a seismic file's coordinates, chosen by hand or taken back
     ckRetry = "retry"                    ## open, read or list again what does not answer
     ckStopReading = "stop reading"       ## leave a panel's read that does not answer
     ckPrepare = "prepare"                ## the file the user is likely to step to next
@@ -297,6 +299,10 @@ type
     of ckSelectUnmatched:
       unmatchedOf*: SessionId
         ## the joined file
+    of ckChooseUnit:
+      unitChoice*: UnitChoice
+        ## the survey (its files) or the seismic file, and its unit by hand
+        ## or back to what the headers say
     of ckSurveyUnits:
       unitsOf*: seq[JoinFile]
         ## survey files whose headers are read (from their first bytes, on a
@@ -585,6 +591,8 @@ type
       ## import's window (`ckSurveyUnits`), by the path it named
     headJobs: seq[tuple[job: JobId; path: string]]
       ## the job reading each of `heads` that is not done
+    unitChoices: ImportUnits
+      ## the units the user chose by hand in the import's window
     spreads: Spreads
       ## relation records made for the map's planned spreads (`core/spread`)
     shots: ShotIndex
@@ -1276,6 +1284,11 @@ func surveyHead*(state: AppState; path: string): int =
   for i in 0 ..< state.heads.len:
     if state.heads[i].file.path == path: return i
   -1
+
+func unitChoices*(state: AppState): lent ImportUnits {.inline.} =
+  ## The units the user chose by hand (`ckChooseUnit`): per survey (its
+  ## files) and per seismic file; what the headers say never replaces them.
+  state.unitChoices
 
 func heads*(state: AppState): lent seq[SurveyHead] {.inline.} =
   ## What survey files' headers say of their unit (`ckSurveyUnits`); `done`
@@ -5205,6 +5218,10 @@ proc applyCommand(state: var AppState; cmd: Command) =
     else: state.startJoin(i, cmd)
   of ckSelectUnmatched:
     state.selectUnmatched(cmd)
+  of ckChooseUnit:
+    if cmd.unitChoice.survey.len == 0 and cmd.unitChoice.file.len == 0:
+      state.ignore(cmd, "it names no survey file and no seismic file")
+    else: state.unitChoices.choose(cmd.unitChoice)
   of ckSurveyUnits:
     for f in cmd.unitsOf:
       if f.path.len == 0: state.ignore(cmd, "a file name was empty")

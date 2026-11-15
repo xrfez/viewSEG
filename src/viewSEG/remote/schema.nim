@@ -31,8 +31,9 @@ const
     ckReverseAll, ckBack,
     ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFileMemory, ckHover, ckSelect,
     ckClearSelection, ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
-    ckShowPoints, ckJoin, ckSelectUnmatched, ckSurveyUnits, ckRetry, ckStopReading, ckPrepare, ckInspect,
-    ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel, ckDisplayPreset, ckTheme}
+    ckShowPoints, ckJoin, ckSelectUnmatched, ckSurveyUnits, ckChooseUnit, ckRetry, ckStopReading,
+    ckPrepare, ckInspect, ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel,
+    ckDisplayPreset, ckTheme}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey
@@ -42,7 +43,9 @@ const
     ## the Headers window has on screen (`ckInspect`) only says what its
     ## reader reads, off the UI thread, for `state`'s `headers` to give; so
     ## does reading what survey files' headers say of their unit
-    ## (`ckSurveyUnits`), the first bytes of each, for the import's window.
+    ## (`ckSurveyUnits`), the first bytes of each, for the import's window;
+    ## a unit chosen for the import (`ckChooseUnit`) is a label for the
+    ## session, as the window's choice is.
     ## An agent's edits (kill, reverse, undo, redo, clear) are shown for the
     ## session only, never remembered with the file; listing what is
     ## remembered (`ckFileMemory`) only reads. The spectrum windows (an FFT window opened, shown

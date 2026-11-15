@@ -11,6 +11,10 @@
 ##   typed, the survey's row reads US survey feet with "The SPS headers say
 ##   ..." under it, and the SEG-Y file's US survey feet with "The headers say
 ##   feet; taken as US survey feet, as the survey says";
+## - metres chosen by hand for the survey: the box says so ("yours"), the
+##   choice is the state's for those files, and the SEG-Y file's row keeps
+##   its headers' feet (a conflict); "As the headers say" takes it back to US
+##   survey feet;
 ## - the record chosen in the window's file box: its row reads US survey
 ##   feet, with "The headers do not say; taken as US survey feet, as the
 ##   survey says";
@@ -19,7 +23,9 @@
 ##   disagree; the files imported, now on the map, are listed once (with
 ##   the loaded files, ticked), no longer also as added.
 ##
-## Seen to fail: with the added files' headers never asked for
+## Seen to fail: with the dropdown's "As the headers say" left out,
+## "taken back: as the headers say" did not happen; with the added files'
+## headers never asked for
 ## (`ckSurveyUnits` not sent), "the units read US survey feet" did not
 ## happen (the survey's row stayed at "not given"); with the seismic file's
 ## row taken from its headers alone (`fileUnitOf` not following the
@@ -136,6 +142,27 @@ proc unitsOnce() =
         doAssert f.markOf("join.survey disagree").size.x == 0
         doAssert f.markOf("join.file conflict").size.x == 0
         f.shot("joinunits-2-read.png"))
+    proc pickIn(f: FrameInfo; combo, item: string): bool =
+      ## Opens dropdown `combo` and clicks its `item`; true once it is shut.
+      let at = f.markOf(combo & " " & item)
+      if at.size.x > 0 and f.index mod 4 == 0: f.click(at.centre)
+      elif at.size.x == 0 and f.index mod 8 == 0: f.click(f.markOf(combo).centre)
+      at.size.x == 0
+    step("metres chosen by hand for the survey", noop, proc (f: FrameInfo): bool =
+      discard f.pickIn("join.survey units", $suMetres)
+      result = f.joinWindow.units.survey == suMetres and f.markOf("join.survey yours").size.x > 0
+      if result:
+        doAssert not f.joinWindow.units.surveyFromHeaders
+        var unit = suNotGiven
+        doAssert f.core.unitChoices.chosenFor([sps.s, sps.r, sps.x], unit) and unit == suMetres
+        # The record follows the survey, as nobody chose its unit.
+        doAssert f.joinWindow.units.file == suFeet # (its headers' feet: metres conflicts)
+        f.shot("joinunits-2b-yours.png"))
+    step("taken back: as the headers say", noop, proc (f: FrameInfo): bool =
+      discard f.pickIn("join.survey units", "headers")
+      result = f.joinWindow.units == both and f.markOf("join.survey yours").size.x == 0
+      if result:
+        doAssert f.core.unitChoices.surveys.len == 0, $f.core.unitChoices)
     step("the record chosen", proc (f: FrameInfo) =
       f.click(f.markOf("join.file").centre), proc (f: FrameInfo): bool =
       let item = f.markOf("join.file " & record.extractFilename)

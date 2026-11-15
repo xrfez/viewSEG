@@ -308,6 +308,9 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
       c.joinUnits = JoinUnits(surveyFromHeaders: true, fileFromHeaders: true)
   of ckSurveyUnits:
     for f in c.unitsOf.mitems: f.path = fromProgram(f.path)
+  of ckChooseUnit:
+    for p in c.unitChoice.survey.mitems: p = fromProgram(p)
+    if c.unitChoice.file.len > 0: c.unitChoice.file = fromProgram(c.unitChoice.file)
   else: discard
   c.origin = coAgent # what it changes is for the session only: core decides (`keeps`)
   let before = state.log.nextSerial
