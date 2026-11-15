@@ -2264,7 +2264,15 @@ proc link(state: var AppState; i, j: int) =
   for p, k in state.editKey:
     if k == was: moved.add p
   var mine: FileEdits
-  if state.edits.pop(was, mine): state.edits.mgetOrPut(key, FileEdits()).merge(move mine)
+  if state.edits.pop(was, mine):
+    # Taken in only when this path has edits of its own: what it brought
+    # back from the file's document is the other's already (and may be
+    # older than what the other shows and keeps now).
+    let brought = if state.remembered[i].doc.len > 0:
+        state.knownDocs.getOrDefault(state.remembered[i].doc).edits
+      else: EditLists()
+    if mine.steps != (0, 0) or mine.kept != brought:
+      state.edits.mgetOrPut(key, FileEdits()).merge(move mine)
   for p in moved: state.editKey[p] = key
   state.editKey.del key
   # One document for the file: the one its other path has, else this one's.

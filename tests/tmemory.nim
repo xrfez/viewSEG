@@ -71,7 +71,8 @@
 ## the listing's job, "the listing waits for a drive that does not answer";
 ## with the edits shown exported, "the export holds the agent's kill"; with
 ## the edits kept by path (`keyOf` the path itself), "the link does not share
-## the edits"; with the disk thread writing over another program's change
+## the edits"; with `link` merging what a path only brought back from the
+## document, "a kill taken back came back with the link"; with the disk thread writing over another program's change
 ## (no `mergeOthers`), "a write dropped the other's edit".
 
 import std/[atomics, os, strutils, times]
@@ -530,9 +531,14 @@ withFixtures fx:
     st.showFile(b)
     doAssert st.settle(st.remembering(b).known)
     st.edit(teKilled, 4)
+    st.edit(teKilled, 12)
+    st.flushFiles() # the document has 12 killed ...
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + 12],
+      on: false) # ... and the user takes it back, not written yet
     st.showFile(l)
     doAssert st.settle(st.remembering(l).known)
     doAssert st.editsOf(0).has(teKilled, 4), "the link does not share the edits"
+    doAssert not st.editsOf(0).has(teKilled, 12), "a kill taken back came back with the link"
     st.edit(teKilled, 8)
     st.showFile(b)
     doAssert st.editsOf(0).has(teKilled, 8), "the file does not share its link's edit"
