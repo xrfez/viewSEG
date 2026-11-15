@@ -80,10 +80,11 @@ func clipSource(p: Panel; d: DisplaySettings): string =
 proc drawClip(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Command];
     notes: var seq[string]) =
   ## The clip percentile: a box, what it is taken of, and the amplitude it
-  ## gives now (drawn full black at 0 dB).
+  ## gives now (drawn at full scale at 0 dB: the colour map's ends, a
+  ## wiggle's full swing).
   igSeparatorText("Clip")
   let source = clipSource(p, d)
-  igTextUnformatted("Full black at the", nil)
+  igTextUnformatted("Full scale at the", nil)
   igSameLine(0, -1)
   var typed = 0.0
   let w = round(igCalcTextSize("000.00", nil, false, -1).x + 2 * igGetStyle().FramePadding.x)
@@ -97,7 +98,9 @@ proc drawClip(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Comm
       notes.add "The clip percentile needs " & significant(MinClipPercentile) & " to 100, not " &
         significant(typed) & "."
   marks.mark("plot.gain clip percentile")
-  tip("The percentile of |x| drawn full black at 0 dB: 98 clips harder than 99, 100 is the " &
+  tip("The percentile of |x| drawn at full scale at 0 dB (the colour map's ends: black and " &
+    "white in grey, blue and red in red-white-blue; a wiggle's full swing): 98 clips harder " &
+    "than 99, 100 is the " &
     "peak (" & significant(MinClipPercentile) & " to 100). A new value reads nothing from " &
     "the file.")
   igSameLine(0, -1)
@@ -136,9 +139,9 @@ proc settings(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Comm
       igTextUnformatted("Stacked data is shown with no gain.", nil)
   of dgNone:
     igTextUnformatted(("Amplitudes past the record's " & pct & " of |x|\n" &
-      "are drawn full black or white.").cstring, nil)
+      "are drawn at full scale (the colour map's ends).").cstring, nil)
   of dgFixed:
-    igTextUnformatted("Full black at |x| =", nil)
+    igTextUnformatted("Full scale at |x| =", nil)
     igSameLine(0, -1)
     if numberBox("##fixedclip", d.fixedClip, "%.4g", w, typed):
       if typed > 0 and typed < Inf:
@@ -167,7 +170,7 @@ proc settings(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Comm
         nd.normStat = stat
         p.send(nd, cmds)
       marks.mark("plot.gain " & $stat)
-    igTextUnformatted("drawn full black.", nil)
+    igTextUnformatted("drawn at full scale.", nil)
   of dgExponential:
     if igRadioButton_Bool("dB per second", d.timeGain == tgDbPerSecond) and
         d.timeGain != tgDbPerSecond:
@@ -210,7 +213,8 @@ proc settings(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Comm
     igTextUnformatted("ms, then held", nil)
   of dgFloat:
     igTextUnformatted(("Amplitudes past the " & pct & " of |x| of the data in view\n" &
-      "are drawn full black or white, so the scale changes as you pan and zoom.").cstring, nil)
+      "are drawn at full scale (the colour map's ends), so the scale changes as you pan " &
+      "and zoom.").cstring, nil)
   of dgAuto: discard # effectiveGain never gives it
   drawClip(p, d, marks, cmds, notes)
 

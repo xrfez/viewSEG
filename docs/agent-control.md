@@ -124,7 +124,7 @@ schema (in the tool list) gives every field and value; the most used:
 | `show file` | `path`, `panel` | Shows a file in a panel |
 | `go to gather` | `gather` | Shows another record of the file shown |
 | `view` | `view` (`traces` and `timeMs`, each `lo` and `hi`) | Zooms and pans, as you would |
-| `display` | `display` (`orientation`: `time down` or `time across`; `mode`, `fills`, `overlap`, `gain`, `gainDb`, `agcWindowMs`, `clipPercentile` (the percentile of \|x\| drawn full black, 50 to 100), `colourMap` (density's: `grey`, `red-white-blue`, `viridis`, `red-black`), colours ...) | How the traces are drawn, and which way the plot is turned. A new `clipPercentile` or `colourMap` reads nothing from the file |
+| `display` | `display` (`orientation`: `time down` or `time across`; `mode`, `fills`, `overlap`, `gain`, `gainDb`, `agcWindowMs`, `clipPercentile` (the percentile of \|x\| drawn at full scale, the colour map's ends, 50 to 100), `colourMap` (density's: `grey`, `red-white-blue`, `viridis`, `red-black`), colours ...) | How the traces are drawn, and which way the plot is turned. A new `clipPercentile` or `colourMap` reads nothing from the file |
 | `display preset` | `presetAction` (`apply`, `save`, `rename`, `delete`), `presetName`, `presetNewName` (rename) | Draws the panel as a named display preset says (its orientation kept), keeps the panel's display under a name (replacing one so named), renames or deletes one, as the gear's Display presets section does; for the session only. `state`'s `displayPresets` lists them, and each panel's `displayPreset` names the one it shows |
 | `sort` | `order` (`field`, `descending`) | The traces' order; `[]` is the file's |
 | `trace filter` | `filter` (`seismic`, `auxiliary`) | Which traces are shown |

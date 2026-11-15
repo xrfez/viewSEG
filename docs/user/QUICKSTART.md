@@ -362,8 +362,9 @@ record, to the same level), Exponential (more gain later in the record: dB per s
 or a power of time, rising until the time in its "until" box, 2 000 ms at first, and
 held after it, so the deep part of the record is not blown out), Float (the scale
 follows what is in view) and AGC. At the bottom of the list, **Clip at the ... th
-percentile** sets which amplitude is drawn full black: 99 % of |x| at first; 98 clips
-harder (more of the record full black), 100 is the peak. Beside it stands the amplitude
+percentile** sets which amplitude is drawn at full scale (the colour map's ends: black
+and white in grey; a wiggle's full swing): 99 % of |x| at first; 98 clips harder (more
+of the record at full scale), 100 is the peak. Beside it stands the amplitude
 that gives now. It never reads the file again. Beside the drop-down, the
 gain amount in dB works with every type, from -300 to +300 dB: type a value, click - or
 +, or press `]` and `[` (keypad `*` and `/`), 3 dB a step or 12 dB with Shift; the

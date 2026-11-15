@@ -709,7 +709,8 @@ proc drawWiggleSettings(p: Panel; res: var PanelOutput) =
       res.notes.add "The trace overlap needs " & significant(MinOverlap) & " to " &
         significant(MaxOverlap) & " trace spacings, not " & significant(float64(v)) & "."
   tip("The largest swing of a wiggle, in trace spacings (1 reaches the next trace):\n" &
-    "amplitudes drawn full black in density swing this far, and none further.")
+    "amplitudes drawn at full scale (the colour map's ends) swing this far, and none " &
+    "further.")
   igSameLine(0, -1)
   igTextUnformatted("trace spacings", nil)
 

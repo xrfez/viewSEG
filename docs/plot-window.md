@@ -173,11 +173,14 @@
     (a factor of 10^15 either way: raw records span far more than 60 dB between the
     first breaks and the late times). The amount rescales the drawing at once and never
     reads or processes again; where the scale passes what the GPU's numbers hold, every
-    sample that is not 0 is drawn full black or white.
-    A *reference* amplitude is drawn full black (or white) at 0 dB; the types differ
+    sample that is not 0 is drawn at full scale.
+    A *reference* amplitude is drawn at **full scale** at 0 dB: at the ends of the
+    density colour map (black for positive and white for negative in grey, blue and red
+    in red-white-blue, yellow and dark purple in viridis), and a wiggle's full swing (the
+    trace overlap); the types differ
     in what they do to the samples and in where the reference comes from:
 
-    | Type | On the samples | Reference (full black at 0 dB) | Settings |
+    | Type | On the samples | Reference (full scale at 0 dB) | Settings |
     |---|---|---|---|
     | Automatic (default) | AGC on shot and receiver records, nothing on stacked data | as AGC or None | the AGC window |
     | None | nothing | the record's clip percentile of \|x\| (99 by default), held while panning | |
@@ -208,7 +211,7 @@
     | Gain amount | 0 dB, in steps of 3 dB (12 dB with Shift), -300 to +300 dB |
 
     **The clip percentile** is the drop-down's last setting, under every type's own: a
-    box for the percentile of |x| drawn full black (99 by default, from 50 to 100: 98
+    box for the percentile of |x| drawn at full scale (99 by default, from 50 to 100: 98
     clips harder, 100 is the peak), with the amplitude it gives now beside it and what
     it is taken from (the record, the data in view under Float, each trace under
     Normalized per trace). A new percentile never reads the file: the panel's reader
