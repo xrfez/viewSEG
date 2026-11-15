@@ -193,6 +193,8 @@ type
       ## how a spectrum window shows its spectrum, over which time; the live panel frozen or not
     ckCloseSpectrum = "close spectrum"   ## close an FFT window
     ckSpectrumPanel = "spectrum panel"   ## the live spectrum panel on screen, or not
+    ckDisplayPreset = "display preset"
+      ## draw a panel as a named display says; keep, rename or forget one
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -215,7 +217,7 @@ type
       position*: int                  ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
         ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckExportEdits, ckImportEdits,
-        ckFilter, ckRetry, ckStopReading, ckPrepare, ckProcessing:
+        ckFilter, ckRetry, ckStopReading, ckPrepare, ckProcessing, ckDisplayPreset:
       panel*: PanelId                 ## the panel's id (1: the Seismic window; 0 retries the folder)
       gather*: int                    ## ckGather: index into the file's gathers
       path*: string                   ## ckShowFile, ckShowTrace: the file to show; ckPrepare: the next
@@ -237,6 +239,12 @@ type
       processing*: Processing
         ## ckProcessing: layer 0's filters (DC removal, pass band, notches),
         ## shown raw or processed, the auxiliary traces filtered or not
+      presetAction*: PresetAction
+        ## ckDisplayPreset: draw the panel as the preset says (its orientation
+        ## kept), save the panel's display under the name (replacing a preset
+        ## so named), rename the preset, or delete it
+      presetName*: string             ## ckDisplayPreset: the preset's name, in any case
+      presetNewName*: string          ## ckDisplayPreset: the new name, to rename
     of ckHover: trace*: int           ## survey-wide trace id; -1 for none
     of ckSelect:
       traces*: seq[int]               ## survey-wide trace ids
@@ -4585,6 +4593,43 @@ proc apply*(state: var AppState; cmd: Command) =
   state.followSpectrum()
   state.followMapWork()
 
+proc displayPreset(state: var AppState; cmd: Command) =
+  ## A named display preset (`core/displaypresets`) applied to a panel, or
+  ## saved, renamed or deleted: in the settings in effect, and in those kept
+  ## when a window asks (`change`). What cannot be done is said, checked on
+  ## the presets in effect.
+  let k = state.findPanel(cmd.panel)
+  var why = ""
+  if cmd.presetAction in {paApply, paSave} and k < 0:
+    state.ignore(cmd, $cmd.panel & " does not exist")
+  elif cmd.presetAction in {paApply, paSave} and state.panels[k].layers.len == 0:
+    state.ignore(cmd, $cmd.panel & " shows nothing")
+  else:
+    let (name, newName) = (cmd.presetName, cmd.presetNewName)
+    case cmd.presetAction
+    of paApply:
+      let i = state.settings.displayPresets.find(name)
+      if i < 0: state.ignore(cmd, "no display preset is named \"" & cleanName(name) & "\"")
+      else:
+        state.applyCommand Command(origin: cmd.origin, kind: ckDisplay, panel: cmd.panel,
+          display: withPreset(state.panels[k].layers[0].display,
+          state.settings.displayPresets[i].display))
+    of paSave:
+      let d = state.panels[k].layers[0].display
+      discard saved(state.settings.displayPresets, name, d, why)
+      if why.len > 0: state.ignore(cmd, why)
+      else: state.change(cmd.origin, s): s.displayPresets = saved(s.displayPresets, name, d, why)
+    of paRename:
+      discard renamed(state.settings.displayPresets, name, newName, why)
+      if why.len > 0: state.ignore(cmd, why)
+      else:
+        state.change(cmd.origin, s):
+          s.displayPresets = renamed(s.displayPresets, name, newName, why)
+    of paDelete:
+      discard deleted(state.settings.displayPresets, name, why)
+      if why.len > 0: state.ignore(cmd, why)
+      else: state.change(cmd.origin, s): s.displayPresets = deleted(s.displayPresets, name, why)
+
 proc applyCommand(state: var AppState; cmd: Command) =
   case cmd.kind
   of ckOpen:
@@ -4830,6 +4875,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
       else:
         state.requestView(k) # a new view, or the extremes wiggles need
       state.settleGain(k, cmd.origin)
+  of ckDisplayPreset: state.displayPreset(cmd)
   of ckHeader:
     let k = state.findPanel(cmd.panel)
     if k < 0: state.ignore(cmd, $cmd.panel & " does not exist")

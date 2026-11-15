@@ -369,8 +369,8 @@ block clipPercentileFromTheSamples:
           doAssert near(l.clip, 1, 0.01), "trace " & $row & ": " & $l.clip
       else:
         let want = levelOf(t.data, 90, ws).clip
-        doAssert near(st.main.reference, want, (if g == dgFloat: 0.03 else: 0.01)), $g & ": " & $st.main.reference &
-          " for " & $want
+        doAssert near(st.main.reference, want, (if g == dgFloat: 0.03 else: 0.01)),
+          $g & ": " & $st.main.reference & " for " & $want
         doAssert st.main.reference < 0.9 * before, $g & ": " & $before & " to " &
           $st.main.reference
     st.shutdown()

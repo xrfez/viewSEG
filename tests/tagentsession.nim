@@ -95,7 +95,8 @@ const Reached = {
   "spectrum.window.processed": "open spectrum", "spectrum.window.phase": "open spectrum",
   "spectrum.live.phase": "spectrum display", "spectrum.live.scale": "spectrum display",
   "spectrum.live.logFrequency": "spectrum display", "spectrum.live.time": "spectrum display",
-  "spectrum.live.raw": "spectrum display", "spectrum.live.processed": "spectrum display"}.toTable
+  "spectrum.live.raw": "spectrum display", "spectrum.live.processed": "spectrum display",
+  "displayPresets": "display preset"}.toTable
 
 proc flatten[T](x: T; at: string; into: var OrderedTable[string, string]) =
   ## Every setting in `x` by its path ("plot.display.mode"), with its value
@@ -244,6 +245,8 @@ withFixtures fx:
     st.agent(%*{"kind": "view", "view": {"traces": {"lo": 2.5, "hi": 12.5}}})
     st.agent(%*{"kind": "back"})
     st.agent(%*{"kind": "display", "display": toJson(Everything)})
+    st.agent(%*{"kind": "display preset", "presetAction": "save", "presetName": "The agent's"})
+    doAssert st.settings.displayPresets.len == 1 and st.keptSettings.displayPresets.len == 0
     st.agent(%*{"kind": "display header", "header": toJson(Header)})
     st.agent(%*{"kind": "sort", "order": toJson(Keys)})
     st.agent(%*{"kind": "trace filter", "filter": {"seismic": true, "auxiliary": true}})
@@ -340,6 +343,8 @@ withFixtures fx:
     st.apply Command(kind: ckOpen, paths: @[other])
     doAssert st.settle(st.sessions.len == 2)
     st.apply Command(kind: ckDisplay, panel: MainPanel, display: Everything)
+    st.apply Command(kind: ckDisplayPreset, panel: MainPanel, presetAction: paSave,
+      presetName: "Mine")
     st.apply Command(kind: ckHeader, panel: MainPanel, header: Header)
     st.apply Command(kind: ckSort, panel: MainPanel, order: Keys)
     st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Filters)

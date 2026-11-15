@@ -258,8 +258,8 @@
     the same scales as the one before (the same positions and times; the whole record
     along an axis that showed the whole record), with the same display, gain and order;
   - zoom out, zoom in, fit all, back to the view before the last gesture, and a "more"
-    popover: the colours, density's colour map, the trace overlap again, the display
-    header's fields, the scale units and the screen calibration.
+    popover: the display presets, the colours, density's colour map, the trace overlap
+    again, the display header's fields, the scale units and the screen calibration.
   - The strip's groups wrap as the window narrows: two lines in the default layout on a
     1920-pixel screen, three on a 1366-pixel laptop screen.
 - **The status bar** (the main window's bottom edge) reads out what lies under the
@@ -429,6 +429,29 @@ trace) both ways.
   background shows where the trace was, in every mode (no line and no fill among wiggles,
   no grey under density), with only the hover's tint under density alone. Hiding them instead (the traces closing up) is a
   setting to come.
+
+## Display presets
+
+A **display preset** keeps a whole display under a name, to put it back with one click:
+the mode, the fills, the trace overlap, the colours (the scheme and the six), density's
+colour map, the gain type with every setting of its drop-down, the gain amount and the
+clip percentile. Not the orientation: applying a preset leaves the plot turned as it is.
+They are the first section of the gear popover, **Display presets**:
+
+- the presets, in the order they were made, each a line to click: the plot is drawn as
+  it says at once (as if each control had been set; only what changes the samples, a
+  gain type that runs on them, reads again, from the samples at hand). The preset the
+  plot shows now is drawn selected;
+- a box for a name and **Save**: the display shown kept under that name (a name already
+  there, in any case, is replaced in its place); **Rename** gives the preset picked last
+  the name in the box; **Delete** forgets it. A name is not empty and at most 64
+  characters; at most 32 presets are kept. What cannot be done (no such preset, a name
+  taken) is said in the Messages window.
+
+The presets are kept in the settings (`displayPresets` in `settings.nif`), so they come
+back in the next run; a settings file of an earlier build has none, and reads without a
+word. An agent can apply, save, rename and delete them too (the `display preset`
+command), for the session only, as with every other setting it changes.
 
 ## Polarity
 

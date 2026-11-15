@@ -633,9 +633,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   plot window starts with (display mode, fills, overlap, colours, density's colour map,
   gain type, amount and settings, clip percentile, order, display header: whatever the
   user chose last; polarity is not kept), scale units, per-monitor calibrations, the
-  status bar's fields, the sort presets, the user's own sort keys and the cursor time
-  line. Changed only by commands: `ckSettings`, and the plot window's
-  `ckDisplay`, `ckSort` and `ckHeader`, which the plot defaults follow; `ckExportSettings`,
+  status bar's fields, the sort presets, the user's own sort keys, the cursor time line
+  and the named display presets. Changed only by commands: `ckSettings`, and the plot window's
+  `ckDisplay`, `ckSort` and `ckHeader`, which the plot defaults follow, `ckDisplayPreset`; `ckExportSettings`,
   `ckImportSettings` (read on the disk thread, taken in as an `mkRead` message) and
   `ckResetSettings`. Kept as NIF in `<config>/settings.nif` (`core/settingsnif`, through
   the small reader and writer `core/nif`), read at start before the window opens
@@ -1246,6 +1246,7 @@ type
     join: JoinOptions              # the geometry join's options, as set last
     headers: HeadersView           # the Headers window: the tab and Trace tab shown, Follow
                                    # the pointer, As displayed, the columns shown
+    displayPresets: seq[DisplayPreset] # core/displaypresets: named displays, in the order made
 
   Pick = object              # core/pick: what lies under the pointer
     inside, found: bool      # over the plot; a tile holds the trace there

@@ -69,7 +69,11 @@ proc everyFieldSet(): Settings =
     spectrum: SpectrumOptions(window: SpectrumDisplay(scale: ssLinear, logFrequency: true,
       time: stVisible, raw: false, processed: false, phase: true), live: SpectrumDisplay(
       scale: ssLinear, logFrequency: true, time: stWhole, raw: false, processed: false,
-      phase: true)))
+      phase: true)),
+    displayPresets: @[DisplayPreset(name: "Section", display: DisplaySettings(mode: dmDensity,
+      colourMap: cmViridis, gain: dgFixed, fixedClip: 0.5, clipPercentile: 97)),
+      DisplayPreset(name: "Wiggles", display: DisplaySettings(fills: {}, overlap: 3,
+      fixedClip: 2))])
   result.plot = PlotDefaults(
     display: DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
       fills: {wfNegative}, colours: pcCustom,
@@ -107,7 +111,8 @@ block savedByAnOlderBuild:
   doAssert s.plot.display.untilMs == 2000, "the Exponential gain's cutoff takes its default"
   doAssert not s.hideKilled and s.spectrum == SpectrumOptions(),
     "the spectrum windows' settings take their defaults"
-  doAssert s.plot.display.colourMap == cmGrey, "density's colour map takes its default"
+  doAssert s.plot.display.colourMap == cmGrey and s.displayPresets.len == 0,
+    "density's colour map and the display presets take their defaults"
   doAssert cleaned(s)[1] == 0
 
 block joinOptions:

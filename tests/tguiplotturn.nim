@@ -122,7 +122,8 @@ proc expected(t: Tile; p: Picture; i, j: int): Rgba =
 
 proc frameOf(p: Picture; m: Turn): PlotFrame =
   PlotFrame(view: p.view, turn: m, background: paper, density: p.display.drawsDensity,
-    colourMap: p.display.colourMap, wiggles: p.display.drawsWiggles, scale: 1, style: p.style, ink: ink, tint: DensityTint)
+    colourMap: p.display.colourMap, wiggles: p.display.drawsWiggles, scale: 1, style: p.style,
+    ink: ink, tint: DensityTint)
 
 proc draw(r: var PlotRenderer; t: Tile; tt: var TileTextures; f: PlotFrame;
     p: Picture): seq[Rgba] =

@@ -6,8 +6,8 @@
 ## toggles, the plot's cursor time line, whether the Files window follows
 ## the latest file, where the map shows the point under the pointer, the
 ## survey import's options (File > Import > Survey), the Headers window's
-## tabs, toggles and columns, whether killed traces are hidden, and how the
-## spectrum windows show their spectra.
+## tabs, toggles and columns, whether killed traces are hidden, how the
+## spectrum windows show their spectra, and the named display presets.
 ## Every field has a default.
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
@@ -19,9 +19,9 @@
 ## change from one to the other).
 
 import std/math
-import join, log, mapkinds, panels, readout, scales, spectra
+import displaypresets, join, log, mapkinds, panels, readout, scales, spectra
 
-export join, mapkinds, readout, scales, spectra
+export displaypresets, join, mapkinds, readout, scales, spectra
 
 type
   Calibration* = object
@@ -150,6 +150,7 @@ type
       ## killed traces are left out of the plot (the traces beside them close
       ## up); off: drawn blank
     spectrum*: SpectrumOptions                    ## the spectrum windows' display
+    displayPresets*: seq[DisplayPreset]           ## named displays, in the order made
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not
@@ -181,10 +182,11 @@ func remembered*(d: DisplaySettings): DisplaySettings =
   result = d
   result.visible = true
 
-func same[T](a, b: T): bool {.inline.} =
+func same[T](a, b: T): bool =
   ## `a == b`, a value that is not a number equal to itself (as the settings
-  ## file has it).
+  ## file has it), also inside a list of objects (the display presets).
   when T is SomeFloat: a == b or (a.isNaN and b.isNaN)
+  elif T is seq[DisplayPreset]: samePresets(a, b)
   else: a == b
 
 func carried*[T: Settings | PlotDefaults | DisplaySettings](kept, before, after: T): T =
@@ -225,7 +227,8 @@ func uniqueItems(list: openArray[string]): seq[string] =
 func cleaned*(s: Settings): (Settings, int) =
   ## `s` without what cannot be used (a calibration that is not positive
   ## and finite, a monitor calibrated twice: the last one counts, a field
-  ## listed twice, a sort preset without a name or keys, or named twice),
+  ## listed twice, a sort preset without a name or keys, or named twice, a
+## display preset that cannot be named so, or named twice),
   ## and how many entries were dropped. A recent file listed twice, or a
   ## sort key given twice in one order, is kept once without counting.
   var r = s
@@ -253,5 +256,6 @@ func cleaned*(s: Settings): (Settings, int) =
   if not (r.window.width > 0 and r.window.height > 0):
     r.window = WindowPlacement()
   r.map.spreadTemplate = bounded(s.map.spreadTemplate)
+  r.displayPresets = cleaned(s.displayPresets)
   (r, s.calibrations.len - r.calibrations.len + s.readout.len - r.readout.len +
-    s.sortPresets.len - r.sortPresets.len)
+    s.sortPresets.len - r.sortPresets.len + s.displayPresets.len - r.displayPresets.len)

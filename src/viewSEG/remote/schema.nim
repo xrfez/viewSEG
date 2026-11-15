@@ -32,7 +32,7 @@ const
     ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFileMemory, ckHover, ckSelect,
     ckClearSelection, ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer, ckSelectPoints, ckHoverPoints,
     ckShowPoints, ckJoin, ckSelectUnmatched, ckRetry, ckStopReading, ckPrepare, ckInspect,
-    ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel}
+    ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel, ckDisplayPreset}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey
@@ -45,7 +45,8 @@ const
     ## session only, never remembered with the file; listing what is
     ## remembered (`ckFileMemory`) only reads. The spectrum windows (an FFT window opened, shown
     ## otherwise, closed; the live panel on screen) read off the UI thread
-    ## and write nothing; how an agent shows them is for the session only
+    ## and write nothing; how an agent shows them is for the session only. So
+    ## are the display presets an agent saves, renames or deletes
 
 # ------------------------------------------------------------ to JSON --
 

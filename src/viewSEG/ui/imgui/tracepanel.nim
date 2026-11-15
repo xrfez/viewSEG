@@ -197,6 +197,8 @@ type
     bandKey: (uint64, seq[HeaderField])
     picking: int ## the colour whose picker is open (as `colourKeys` lists them)
     hex: array[12, char] ## what the picker's `#rrggbb` box holds
+    presetBox: array[MaxPresetName + 1, char] ## the Display presets section's name box
+    presetPicked: string ## the preset clicked last there: Rename and Delete act on it
 
   PanelOutput* = object
     ## What the plot window asks for.
@@ -922,6 +924,62 @@ proc drawGoTo(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
       igTextDisabled("%s", tp.goto.problem.cstring)
     igEndPopup()
 
+proc drawPresets(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
+    res: var PanelOutput) =
+  ## The display presets: each a line to click, which draws the plot as it
+  ## says (the one shown now drawn selected); a box for a name, Save (the
+  ## display shown, under that name), Rename and Delete (the preset clicked
+  ## last).
+  let presets = st.settings.displayPresets
+  let shown = presets.shownPreset(p.layers[0].display)
+  template command(action: PresetAction; name: string; newName = "") =
+    res.commands.add Command(kind: ckDisplayPreset, panel: p.id, presetAction: action,
+      presetName: name, presetNewName: newName)
+  if presets.len == 0:
+    igTextUnformatted("None yet: name the display shown and Save it.", nil)
+  for i, q in presets:
+    if igSelectable_Bool((q.name & "##preset" & $i).cstring, i == shown,
+        ImGui_SelectableFlags_NoAutoClosePopups.cint, ImVec2_c(x: 0, y: 0)):
+      tp.presetPicked = q.name
+      zeroMem(addr tp.presetBox[0], tp.presetBox.len)
+      copyMem(addr tp.presetBox[0], q.name.cstring, min(q.name.len, tp.presetBox.len - 1))
+      command(paApply, q.name)
+    marks.mark("plot.preset." & q.name)
+    tip("Draw the plot as \"" & q.name & "\" says (it stays turned as it is)")
+  igSetNextItemWidth(round(igCalcTextSize("A preset's long name", nil, false, -1).x +
+    2 * igGetStyle().FramePadding.x))
+  let entered = igInputTextWithHint("##presetname", "a name", cast[cstring](addr tp.presetBox[0]),
+    csize_t(tp.presetBox.len), ImGui_InputTextFlags_EnterReturnsTrue.cint, nil, nil)
+  marks.mark("plot.preset name")
+  tip("The name to save the display shown under, or to give the preset clicked last")
+  let typed = ($cast[cstring](addr tp.presetBox[0])).strip
+  igSameLine(0, -1)
+  igBeginDisabled(typed.len == 0)
+  if igButton("Save##preset", ImVec2_c(x: 0, y: 0)) or (entered and typed.len > 0):
+    command(paSave, typed)
+    tp.presetPicked = typed
+  igEndDisabled()
+  marks.mark("plot.preset save")
+  tipAlways("Keep the display shown under the name in the box (a preset so named is replaced)")
+  let known = presets.find(tp.presetPicked) >= 0
+  igSameLine(0, -1)
+  igBeginDisabled(not known or typed.len == 0 or typed == tp.presetPicked)
+  if igButton("Rename##preset", ImVec2_c(x: 0, y: 0)):
+    command(paRename, tp.presetPicked, typed)
+    tp.presetPicked = typed
+  igEndDisabled()
+  marks.mark("plot.preset rename")
+  tipAlways(if known: "Give \"" & tp.presetPicked & "\" the name in the box"
+            else: "Click a preset first, then type its new name")
+  igSameLine(0, -1)
+  igBeginDisabled(not known)
+  if igButton("Delete##preset", ImVec2_c(x: 0, y: 0)):
+    command(paDelete, tp.presetPicked)
+    tp.presetPicked = ""
+  igEndDisabled()
+  marks.mark("plot.preset delete")
+  tipAlways(if known: "Forget \"" & tp.presetPicked & "\"" else: "Click a preset first")
+
 proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks: var Marks;
     res: var PanelOutput; ask: var ViewAsk; ppi: float64; mon: MonitorInfo) =
   ## The strip at the top of the window, in groups that wrap onto more lines
@@ -1058,8 +1116,8 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
   tp.stripGroup(8, right, 8, lift):
     if button(IconSettings & "##more", t, marks, "plot.more"):
       igOpenPopup_Str(moreId, 0)
-    tip("Colours, density's colour map, killed traces, display header, scale units and " &
-      "screen calibration")
+    tip("Display presets, colours, density's colour map, killed traces, display header, " &
+      "scale units and screen calibration")
   if igBeginPopup(moreId, 0):
     marks.markWindow("plot.more popover")
     # in columns, so the popover fits a laptop's screen: how the traces
@@ -1073,6 +1131,8 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         igSameLine(0, 0)
         igBeginGroup()
     if table: discard igTableNextColumn()
+    igSeparatorText("Display presets")
+    tp.drawPresets(st, p, marks, res)
     igSeparatorText("Colours")
     tp.drawColours(p, t, marks, res)
     igSeparatorText("Density colour map")
@@ -1776,7 +1836,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       let width = max(1.0, round(float64(fb.x)))
       let tex = tp.renderer.render(PlotFrame(view: shown, turn: turn,
         background: ink.background, density: d.drawsDensity, colourMap: d.colourMap,
-        wiggles: d.drawsWiggles, scale: scale, style: d.styleFor(shown, scale, width, 2 * width), ink: ink.wiggle,
+        wiggles: d.drawsWiggles, scale: scale,
+        style: d.styleFor(shown, scale, width, 2 * width), ink: ink.wiggle,
         tint: DensityTint, marks: tp.marks), tiles, tp.textures)
       tp.drawn = shown
       if tex != 0:

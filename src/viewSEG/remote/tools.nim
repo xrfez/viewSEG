@@ -30,7 +30,7 @@ import protocol, schema
 const
   ToolNames* = ["command", "state", "headers", "screenshot", "wait"]
   StateParts* = ["program", "fileList", "files", "panels", "selection", "map", "jobs",
-    "messages", "survey", "headers", "memory", "spectra"]
+    "messages", "survey", "headers", "memory", "spectra", "displayPresets"]
   ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "headers", "messages",
     "jobs", "toolbar", "statusbar", "spectrum", "fft"]
     ## what `screenshot` takes a picture of: the whole window, the Seismic
@@ -46,7 +46,8 @@ const
   MaxMessages = 1000
   DefaultWaitSeconds* = 30
   PanelKinds = {ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack,
-    ckShowFile, ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFilter, ckProcessing}
+    ckShowFile, ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFilter, ckProcessing,
+    ckDisplayPreset}
     ## the kinds of `Command`'s branch with `panel`, a display, a view, a filter
 
 type
@@ -93,7 +94,8 @@ proc toolList*(): string =
   let tools = %*[
     {"name": "command",
      "description": "Do one thing the windows do: open or list files, show a file, a " &
-       "record or a trace, change a panel's view, display, gain, filters (\"processing\": " &
+       "record or a trace, change a panel's view, display, gain, clip percentile, density " &
+       "colour map, display presets, filters (\"processing\": " &
        "DC removal, low-cut, high-cut, band-pass, notches; raw or processed; Aux filtered " &
        "or not), display header, sort or trace filter, kill or reverse traces (kept beside the file, which is never " &
        "changed), select traces, load survey files, move the map, show or hide its " &
@@ -127,7 +129,9 @@ proc toolList*(): string =
        "what it has on screen, the traces its Trace tab is about and what its reader read " &
        "of them, and the facts its Summary gives of the file the plot shows), and what " &
        "is remembered about files (memory: as the File memory window last listed it; the " &
-       "command \"list file memory\" reads it again). All parts unless some are named.",
+       "command \"list file memory\" reads it again), and the named display presets " &
+       "(displayPresets: each one's name and display; each panel's displayPreset names the " &
+       "one it shows, \"\" for none). All parts unless some are named.",
      "inputSchema": {"type": "object", "properties": {
        "parts": {"type": "array", "items": {"type": "string", "enum": parts},
          "description": "the parts to give; all when not given"},
@@ -360,6 +364,8 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
         if g in 0 ..< state.sessions[i].records.len:
           result["record"] = toJson(state.sessions[i].records[g])
     result["display"] = toJson(layer.display)
+    let shown = state.settings.displayPresets.shownPreset(layer.display)
+    result["displayPreset"] = %(if shown >= 0: state.settings.displayPresets[shown].name else: "")
     result["filter"] = toJson(layer.filter)
     result["order"] = toJson(layer.order)
     result["reversed"] = %layer.reversed
@@ -614,6 +620,11 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
           "sources": toJson(l.counts[prSource]), "receivers": toJson(l.counts[prReceiver])}}
     r["survey"] = layers
   if "headers" in wanted: r["headers"] = state.headersJson(limit)
+  if "displayPresets" in wanted:
+    var list = newJArray()
+    for p in state.settings.displayPresets:
+      list.add %*{"name": p.name, "display": toJson(p.display)}
+    r["displayPresets"] = list
   if "spectra" in wanted:
     var list = newJArray()
     for w in state.spectra: list.add spectrumJson(w, limit)

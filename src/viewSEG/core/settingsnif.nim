@@ -39,7 +39,9 @@
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
 ##    (phase false))
 ##   (live (scale db) (logFrequency false) (time visible) (raw true) (processed true)
-##    (phase false))))
+##    (phase false)))
+##  (displayPresets
+##   (preset "Section" (mode density) (colourMap viridis) (gain none) ...)))
 ## ```
 ##
 ## Reading is forgiving where it can be and says what it did: a setting that
@@ -110,7 +112,8 @@ type
 func persistedNames*(): seq[seq[string]] =
   ## Every table of names written for a choice (for tests: each must be a
   ## NIF identifier and unique in its table).
-  @[@ModeNames, @BandNames, @DcNames, @FillNames, @ColourNames, @ColourMapNames, @GainNames, @TimeGainNames, @ScopeNames,
+  @[@ModeNames, @BandNames, @DcNames, @FillNames, @ColourNames, @ColourMapNames, @GainNames,
+    @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
     @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames]
 
@@ -154,8 +157,10 @@ proc keys(w: var NifWriter; order: openArray[SortKey]) =
     if k.descending: w.ident "descending"
     w.close()
 
-proc display(w: var NifWriter; d: DisplaySettings) =
-  w.choice("orientation", OrientationNames[d.orientation])
+proc display(w: var NifWriter; d: DisplaySettings; turned = true) =
+  ## `d`'s settings; its orientation only when `turned` (a display preset
+  ## has none).
+  if turned: w.choice("orientation", OrientationNames[d.orientation])
   w.choice("mode", ModeNames[d.mode])
   w.open("fills")
   for f in d.fills: w.ident FillNames[f]
@@ -325,6 +330,13 @@ proc settingsDocument*(s: Settings): string =
   w.open("spectrum")
   w.spectrumDisplay("window", s.spectrum.window)
   w.spectrumDisplay("live", s.spectrum.live)
+  w.close()
+  w.open("displayPresets")
+  for p in s.displayPresets:
+    w.open("preset")
+    w.add p.name
+    w.display(p.display, turned = false)
+    w.close()
   w.close()
   w.close()
   w.finish
@@ -604,6 +616,26 @@ proc presets(r: var Reading; n: NifNode; x: var seq[SortPreset]) =
       r.unusable(c, "sortPresets", "(preset \"name\" (key field) ...)")
   if got.len > 0 or n.kids.len == 0: x = got
 
+proc displayPresets(r: var Reading; n: NifNode; x: var seq[DisplayPreset]) =
+  ## `(displayPresets (preset "name" (mode ...) ...) ...)`: a preset that
+  ## is not one, or whose name is taken, is left out and said.
+  var got: seq[DisplayPreset]
+  for c in n.kids:
+    if c.isTree("preset") and c.kids.len >= 1 and c.kids[0].kind == nkString and
+        nameProblem(c.kids[0].text).len == 0:
+      var rest = NifNode(kind: nkTree, line: c.line, tag: "preset")
+      for i in 1 ..< c.kids.len: rest.kids.add c.kids[i]
+      var d = DisplaySettings()
+      r.display(rest, d)
+      if got.find(c.kids[0].text) >= 0:
+        r.problem(c, "the display preset \"" & c.kids[0].text & "\" is given twice; the " &
+          "first counts.")
+      elif got.len < MaxDisplayPresets:
+        got.add DisplayPreset(name: cleanName(c.kids[0].text), display: asPreset(d))
+    else:
+      r.unusable(c, "displayPresets", "(preset \"name\" (mode ...) ...)")
+  x = got
+
 proc join(r: var Reading; n: NifNode; x: var JoinOptions) =
   for k in n.kids:
     if k.kind != nkTree: r.unknown(k, "join")
@@ -748,6 +780,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           if k.isTree("window"): r.spectrumDisplay(k, result.spectrum.window)
           elif k.isTree("live"): r.spectrumDisplay(k, result.spectrum.live)
           else: r.unknown(k, "spectrum")
+      of "displayPresets": r.displayPresets(c, result.displayPresets)
       else: r.unknown(c, "settings")
   if version == 0:
     r.problem(doc[root], "(settings) gives no (version); read as version " &
