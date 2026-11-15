@@ -2584,7 +2584,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
         return
       if p.panel != NoPanel: (panel, replacing) = (p.panel, true)
       (gather, follow, by) = (p.gather, p.follow, p.by)
-  if follow and s.file.kind != skUnknown and s.file.cutShort:
+  if follow and s.file.kind != skUnknown and filejobs.cutShort(s.file):
     # Not shown early: it ends before its last trace. Shown when it changes and is whole.
     state.mark(s.path, short = true, seen = false)
     state.log.add(sevInfo, s.name, s.name & " is not shown yet: it ends before its last " &
@@ -2618,7 +2618,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   state.checkEdits(s)
   state.identify(s)
   let path = s.path
-  let short = s.file.cutShort
+  let short = filejobs.cutShort(s.file)
   state.onDiskSaid.del path
   state.sessions.add s
   state.readPositions(state.sessions[^1])

@@ -195,7 +195,8 @@ proc prepareWork*(path: string; to: Poster; cache: string; positions: Slice[int]
             n += c.count
             pf.recycle(move c)
             if not ctx.progress(n, list.len): break
-          pf.close()
+          pf.close() # false when a worker stuck in a read is left to finish
+          discard
       ctx.checkCancelled()
     clearCycleRoots() # the UI thread may release the file's objects at once
     to.post Msg(job: ctx.id, kind: mkOpened, session: move s)

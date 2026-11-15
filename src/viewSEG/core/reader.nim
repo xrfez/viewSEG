@@ -618,8 +618,12 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
     var firstError = ""
     var waitFrom = fs.now()
     let chunk = if req.chunkTraces > 0: req.chunkTraces else: ChunkTraces
-    var pf = newPrefetcher[float32](f[], list, chunkTraces = chunk, cols = cols,
-      firstSample = window.a, workers = DecodeWorkers, quickFirst = true, uniform = true)
+    # parseSEG's prefetcher keeps the readers it gave up on in a list of its
+    # own, under a lock, which makes `newPrefetcher` and `close` not gcsafe.
+    var pf = block:
+      {.cast(gcsafe).}:
+        newPrefetcher[float32](f[], list, chunkTraces = chunk, cols = cols,
+          firstSample = window.a, workers = DecodeWorkers, quickFirst = true, uniform = true)
     var c: PrefetchChunk[float32]
     while pf.nextInto(c):
       fs.mappedRead(rd.src.path) # (tests: the chunk's pages come late, or never)
@@ -640,7 +644,9 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
         given = true
         break
       waitFrom = fs.now()
-    pf.close()
+    {.cast(gcsafe).}:
+      pf.close() # false when a worker stuck in a read is left to finish
+      discard
     clearCycleRoots()
     if keep and not given:
       rd.raw.failed = failed
