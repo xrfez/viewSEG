@@ -619,8 +619,10 @@ proc presets(r: var Reading; n: NifNode; x: var seq[SortPreset]) =
 
 proc displayPresets(r: var Reading; n: NifNode; x: var seq[DisplayPreset]) =
   ## `(displayPresets (preset "name" (mode ...) ...) ...)`: a preset that
-  ## is not one, or whose name is taken, is left out and said.
+  ## is not one, or whose name is taken, is left out and said, as are those
+  ## past `MaxDisplayPresets`.
   var got: seq[DisplayPreset]
+  var over = 0
   for c in n.kids:
     if c.isTree("preset") and c.kids.len >= 1 and c.kids[0].kind == nkString and
         nameProblem(c.kids[0].text).len == 0:
@@ -633,8 +635,13 @@ proc displayPresets(r: var Reading; n: NifNode; x: var seq[DisplayPreset]) =
           "first counts.")
       elif got.len < MaxDisplayPresets:
         got.add DisplayPreset(name: cleanName(c.kids[0].text), display: asPreset(d))
+      else:
+        inc over
     else:
       r.unusable(c, "displayPresets", "(preset \"name\" (mode ...) ...)")
+  if over > 0:
+    r.problem(n, "at most " & $MaxDisplayPresets & " display presets are kept; the " &
+      $over & " after the " & $MaxDisplayPresets & "th are left out.")
   x = got
 
 proc join(r: var Reading; n: NifNode; x: var JoinOptions) =

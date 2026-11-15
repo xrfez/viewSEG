@@ -8,12 +8,12 @@
 ## orientation (a preset says how amplitudes look, not how the plot is
 ## laid out). They are kept in the settings (`Settings.displayPresets`),
 ## in the order they were made; names are unique, compared without case
-## and surrounding spaces.
+## (Unicode's, so "ä" and "Ä" are one name) and surrounding spaces.
 ##
 ## The procs here are pure: `core/state` applies them for the `display
 ## preset` command, and says in the log what one could not do.
 
-import std/[math, strutils]
+import std/[math, strutils, unicode]
 import panels
 
 type
@@ -31,7 +31,7 @@ type
 
 const
   MaxDisplayPresets* = 32 ## presets kept, at most
-  MaxPresetName* = 64     ## the longest name, in bytes
+  MaxPresetName* = 64     ## the longest name, in characters (Unicode code points)
 
 func asPreset*(d: DisplaySettings): DisplaySettings =
   ## What a preset keeps of `d`: all of it, shown, the orientation left at
@@ -68,29 +68,33 @@ func samePresets*(a, b: openArray[DisplayPreset]): bool =
     if a[i].name != b[i].name or not sameValue(a[i].display, b[i].display): return false
   true
 
-func cleanName*(name: string): string = name.strip
+func cleanName*(name: string): string = strutils.strip(name)
   ## `name` as a preset is named: without the spaces around it.
 
 func find*(presets: openArray[DisplayPreset]; name: string): int =
-  ## The index of the preset named `name` (case and surrounding spaces
-  ## ignored); -1 for none.
+  ## The index of the preset named `name` (case, in Unicode, and
+  ## surrounding spaces ignored); -1 for none.
   let n = cleanName(name)
   for i, p in presets:
-    if cmpIgnoreCase(p.name, n) == 0: return i
+    if cmpRunesIgnoreCase(p.name, n) == 0: return i
   -1
 
 func shownPreset*(presets: openArray[DisplayPreset]; d: DisplaySettings): int =
   ## The index of the first preset that draws as `d` does (`sameLook`); -1
-  ## for none.
+  ## for none. A preset with no Fixed amplitude (its gain takes it from the
+  ## record shown) is shown whatever amplitude the record gave.
   for i, p in presets:
-    if sameLook(p.display, d): return i
+    var shown = d
+    if p.display.fixedClip.isNaN: shown.fixedClip = NaN
+    if sameLook(p.display, shown): return i
   -1
 
 func nameProblem*(name: string): string =
   ## Why `name` cannot name a preset; "" when it can.
   let n = cleanName(name)
   if n.len == 0: "a display preset needs a name"
-  elif n.len > MaxPresetName: "a display preset's name is at most " & $MaxPresetName &
+  elif validateUtf8(n) >= 0: "a display preset's name is not text (not UTF-8)"
+  elif n.runeLen > MaxPresetName: "a display preset's name is at most " & $MaxPresetName &
     " characters long"
   elif n.contains({'\0'..'\31', '\127'}): "a display preset's name holds no control characters"
   else: ""

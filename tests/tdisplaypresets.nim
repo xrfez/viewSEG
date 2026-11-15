@@ -3,7 +3,7 @@
 ##
 ## - saved under a name (a name given again, in any case, replaces that
 ##   preset in its place), renamed (never onto another's name), deleted;
-##   names without spaces round them, not empty, at most 64 bytes; at most
+##   names without spaces round them, not empty, at most 64 characters; at most
 ##   32 kept;
 ## - applied to a plot: everything a preset holds is drawn (mode, fills,
 ##   colours, colour map, gain and its settings, amount, clip), the plot's
@@ -13,7 +13,15 @@
 ##   problem, the rest kept) and by `AppState`: a window's preset is saved
 ##   and read at the next start; what could not be done is said in the log.
 ##
-## Seen to fail: with `withPreset` taking the preset's orientation, "the plot
+## Names are compared without case in Unicode ("ä" is "Ä"), counted in
+## characters (40 Cyrillic letters are a name), and presets past the 32nd in
+## the settings file are said when it is read.
+##
+## Seen to fail: with `find` comparing in ASCII (`cmpIgnoreCase`), "ä and Ä
+## are two presets: 2"; with `nameProblem` counting bytes, "a 40-letter
+## Cyrillic name: a display preset's name is at most 64 characters long";
+## with the presets past the 32nd dropped silently, "@[]" (no problem).
+## With `withPreset` taking the preset's orientation, "the plot
 ## was turned"; with `find` comparing case, "Mine and mine are two presets";
 ## with the presets left out of `settingsDocument`, "the presets did not
 ## come back".
@@ -57,6 +65,46 @@ block pureLists:
   let c = cleaned(@[DisplayPreset(name: "a", display: Look), DisplayPreset(name: ""),
     DisplayPreset(name: "A", display: other), DisplayPreset(name: " b ", display: other)])
   doAssert c.len == 2 and c[0].display.mode == dmDensity and c[1].name == "b"
+
+block unicodeNames:
+  # case compared in Unicode; the limit counted in characters, as said
+  var why = ""
+  var l = saved(newSeq[DisplayPreset](), "ä", Look, why)
+  l = saved(l, "Ä", Look, why)
+  doAssert why == "" and l.len == 1, "ä and Ä are two presets: " & $l.len
+  doAssert l.find("Ä") == 0 and l.find("ÄÖ") < 0
+  let cyrillic = repeat("ж", 40) # 80 bytes
+  l = saved(l, cyrillic, Look, why)
+  doAssert why == "" and l.len == 2, "a 40-letter Cyrillic name: " & why
+  doAssert saved(l, repeat("ж", MaxPresetName + 1), Look, why).len == 2 and
+    "characters" in why, why
+  doAssert saved(l, "bad \xff byte", Look, why).len == 2 and why.len > 0
+
+block fixedFromTheRecord:
+  # a preset of gain Fixed with no amplitude stays the one shown once the
+  # amplitude is taken from the record (seen to fail with the amplitude
+  # compared: "-1")
+  var fixed = Look
+  fixed.gain = dgFixed
+  let l = @[DisplayPreset(name: "a", display: asPreset(DisplaySettings())),
+    DisplayPreset(name: "fixed", display: asPreset(fixed))]
+  var d = withPreset(DisplaySettings(), fixed)
+  doAssert d.fixedClip.isNaN and l.shownPreset(d) == 1
+  d.fixedClip = 0.31 # taken from the record shown
+  doAssert l.shownPreset(d) == 1, $l.shownPreset(d)
+  fixed.fixedClip = 0.25 # a preset with its own amplitude is that amplitude
+  doAssert @[DisplayPreset(name: "f", display: asPreset(fixed))].shownPreset(d) == -1
+
+block tooManyInTheFile:
+  # presets past the 32nd are said when the settings are read, not dropped
+  # without a word
+  var s = Settings()
+  for i in 0 .. MaxDisplayPresets:
+    s.displayPresets.add DisplayPreset(name: "p" & $i, display: asPreset(Look))
+  var problems: seq[string]
+  let back = readSettings(settingsDocument(s), "settings.nif", Settings(), problems)
+  doAssert back.displayPresets.len == MaxDisplayPresets
+  doAssert problems.len == 1 and "at most 32 display presets" in problems[0], $problems
 
 block appliedKeepsTheTurn:
   var shown = DisplaySettings(orientation: orTimeAcross, mode: dmWiggle)
