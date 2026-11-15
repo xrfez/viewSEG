@@ -128,6 +128,14 @@ type
         ## the open file to join
       geometry*: ref SurveyGeometry
         ## the survey files read; moved, never shared
+      relations*: ref SurveyGeometry
+        ## their relation records, kept apart from `geometry`
+        ## (`SharedRelations`): the map layer's of the relation file, posted
+        ## with it just before; nil when they are in `geometry`, or are a
+        ## loaded layer's (`reusedAt`)
+      reusedAt*: int
+        ## the survey file (an index in the import's files) whose loaded
+        ## layer's relation records the join uses; -1 for none
       plan*: JoinPlan
         ## what joining them does
       joinSurvey*: JoinSurvey

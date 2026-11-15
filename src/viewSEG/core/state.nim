@@ -431,6 +431,12 @@ type
     options: JoinOptions
     units: JoinUnits
     geometry: ref SurveyGeometry ## once read: kept alive while the join reads it
+    relations: ref SurveyGeometry
+      ## its relation records, when kept apart from `geometry`
+      ## (`SharedRelations`): a relation file's map layer's; nil for none
+    reused: seq[ref SurveyGeometry]
+      ## the loaded layers' relations its read uses where they are: kept
+      ## alive until it ends
     plan: JoinPlan
     survey: JoinSurvey
     joined: bool ## the join's job said it was done (`mkJoined`)
@@ -447,7 +453,10 @@ type
     plan*: JoinPlan              ## what the join did, trace by trace counted
     survey*: JoinSurvey          ## what the survey files gave
     words*: seq[string]          ## `plan` in plain words
-    geometry: ref SurveyGeometry ## what its records are checked against
+    geometry: ref SurveyGeometry ## the stations it was joined with
+    relations: ref SurveyGeometry
+      ## the relation records it was joined with, when apart from `geometry`
+      ## (a relation file's map layer's); what its records are checked against
 
   JoinOutcome* = enum
     joNone = "none"
@@ -1083,6 +1092,8 @@ proc keepForStragglers(state: var AppState) =
   for c in state.leftChecks: GC_ref(c.relations)
   for c in state.qcHeld: GC_ref(c.relations)
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
+  if not state.joining.relations.isNil: GC_ref(state.joining.relations)
+  for r in state.joining.reused: GC_ref(r) # `joinReadWork` reads them
 
 proc shutdown*(state: var AppState; wait = QuitWait; diskLimit = DiskQuitLimit;
     tick: proc () {.closure, raises: [].} = nil): bool {.discardable.} =
@@ -3334,11 +3345,12 @@ proc checkRecords(state: var AppState; s: Session) =
   let opts = state.settings.join
   if j >= 0:
     template x: untyped = state.joins[j]
+    let g = if x.relations.isNil: x.geometry else: x.relations
     let job = state.jobs.submit(JobSpec(title: "Check the records of " & s.name &
       " against the survey imported", lane: jlBackground, reads: @[s.path]), checkWork(s.filePtr,
-      s.id, gathers, addr x.geometry[], fileNames(x.files), NoSurveyLayer, state.inbox.poster,
+      s.id, gathers, addr g[], fileNames(x.files), NoSurveyLayer, state.inbox.poster,
       x.options.recordMatch, x.options.traceMatch))
-    state.checking.add (job, x.geometry)
+    state.checking.add (job, g)
     return
   let r = state.relationLayer
   if r < 0:
@@ -3552,12 +3564,14 @@ proc notify(state: var AppState; severity: Severity; text: string) =
 proc finishImport(state: var AppState)
 
 proc startJoin(state: var AppState; i: int; cmd: Command) =
-  ## `ckJoin`, the survey import: its SPS and P1 files not on the map yet
-  ## are loaded onto it, as File > Open loads them (`loadSurvey`); with an
-  ## open file `sessions[i]`, the files are read again and what matching
-  ## them to its traces does is worked out on a job (`joinReadWork`), while
-  ## the plot goes on reading the file. With none (`i` -1), the survey is
-  ## put on the map only.
+  ## `ckJoin`, the survey import. With an open file `sessions[i]`, the files
+  ## are read once, on a job (`joinReadWork`), while the plot goes on reading
+  ## the file: those not on the map yet (or read with other line names) are
+  ## put on it from what that read reads, a relation file on it as it is now
+  ## is not read again (its records are used where they are), and what
+  ## matching them to its traces does is worked out. With none (`i` -1),
+  ## the survey is put on the map only: its SPS and P1 files not on it yet
+  ## are loaded, as File > Open loads them (`loadSurvey`).
   var files: seq[JoinFile]
   var reads = if i >= 0: @[state.sessions[i].path] else: @[]
   for f in cmd.joinFiles:
@@ -3571,14 +3585,31 @@ proc startJoin(state: var AppState; i: int; cmd: Command) =
     state.ignore(cmd, "no survey file was named")
     return
   var loads: seq[JobId]
-  for f in files:
+  var layers = newSeq[bool](files.len) # made by the import's read (a file open)
+  var reuse = newSeq[ptr SurveyGeometry](files.len)
+  var reused: seq[ref SurveyGeometry]
+  for k, f in files:
     # Not on the map yet, or read with other line names than the import's.
-    let i = state.survey.findFile(f.path)
-    if f.kind != jkCsv and (i < 0 or not state.survey.layers[i].readAs(cmd.joinOptions)) and
+    let l = state.survey.findFile(f.path)
+    if f.kind != jkCsv and (l < 0 or not state.survey.layers[l].readAs(cmd.joinOptions)) and
         not state.surveyLoading(f.path):
-      state.loadSurvey(f.path, quiet = true, lines = cmd.joinOptions)
-      if state.loading.len > 0 and state.loading[^1].path == f.path:
-        loads.add state.loading[^1].job
+      if i >= 0: layers[k] = true # its layer is made from what the join reads
+      else:
+        state.loadSurvey(f.path, quiet = true, lines = cmd.joinOptions)
+        if state.loading.len > 0 and state.loading[^1].path == f.path:
+          loads.add state.loading[^1].job
+    elif SharedRelations and f.kind == jkSps and l >= 0 and not cmd.joinOptions.multiComponent:
+      # A relation file on the map as it is now: the join uses its records
+      # where they are, and does not read it again.
+      template layer: untyped = state.survey.layers[l]
+      let e = state.files.find(f.path)
+      if layer.relationRuns > 0 and layer.points[prSource].len + layer.points[prReceiver].len +
+          layer.counts[prSource].given + layer.counts[prReceiver].given == 0 and
+          layer.readAs(cmd.joinOptions) and e >= 0 and
+          state.files.entries[e].size == layer.size and
+          state.files.entries[e].modified == layer.modified:
+        reuse[k] = addr layer.relations[]
+        reused.add layer.relations
   if i < 0:
     state.joining = Joining(name: "the map", files: files, options: cmd.joinOptions,
       units: cmd.joinUnits, loads: loads, waits: true, outcome: joMapOnly, words: @[
@@ -3591,9 +3622,10 @@ proc startJoin(state: var AppState; i: int; cmd: Command) =
     let s = state.sessions[i]
     let job = state.jobs.submit(JobSpec(title: "Import the survey for " & s.name,
       lane: jlInteractive, reads: reads), joinReadWork(s.filePtr, s.id, files, cmd.joinOptions,
-      state.inbox.poster))
+      state.inbox.poster, layers, reuse))
     state.joining = Joining(job: job, step: jpReading, session: s.id, path: s.path,
-      name: s.name, files: files, options: cmd.joinOptions, units: cmd.joinUnits, loads: loads)
+      name: s.name, files: files, options: cmd.joinOptions, units: cmd.joinUnits, loads: loads,
+      reused: reused)
     state.log.add(sevInfo, s.name, "Importing the survey (" & fileNames(files) & ") for " &
       s.name & ".")
 
@@ -3709,7 +3741,8 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
       if outcome == joJoined:
         if j.joined: s.setKeysRevision(j.revision) # before the jobs below read the keys
         state.joins.add Joined(session: s.id, files: j.files, options: j.options,
-          units: j.units, plan: j.plan, survey: j.survey, words: words, geometry: j.geometry)
+          units: j.units, plan: j.plan, survey: j.survey, words: words, geometry: j.geometry,
+          relations: j.relations)
         if j.plan.changes > 0: state.readPositions(s) # the map's, from the joined keys
         state.checkRecords(s)
       if j.survey.notes.len > 0:
@@ -3746,6 +3779,8 @@ proc loaded(state: var AppState; job: JobId; layer: SurveyLayerId) =
     j.loads.delete(at)
     if layer != NoSurveyLayer: j.added.add layer
     if j.loads.len == 0 and j.waits: state.finishImport()
+  elif job != NoJob and job == j.job and layer != NoSurveyLayer:
+    j.added.add layer # a layer the import's read made (taken out again at a cancel)
 
 proc takeJoinPlan(state: var AppState; m: sink Msg) =
   ## The survey files read and what joining them does: when it changes some
@@ -3756,6 +3791,12 @@ proc takeJoinPlan(state: var AppState; m: sink Msg) =
   let i = state.findSession(m.planSession)
   if i < 0: return # closed meanwhile: the job's end says so
   j.geometry = move m.geometry
+  j.relations = move m.relations
+  if j.relations.isNil and m.reusedAt >= 0 and m.reusedAt < j.files.len:
+    let l = state.survey.findFile(j.files[m.reusedAt].path)
+    for r in j.reused: # (the one the read used, kept alive since)
+      if l >= 0 and state.survey.layers[l].relations == r: j.relations = r
+    if j.relations.isNil and j.reused.len == 1: j.relations = j.reused[0]
   j.plan = move m.plan
   j.survey = move m.joinSurvey
   # The units not chosen: what the headers say, as the import read them.
@@ -3768,9 +3809,11 @@ proc takeJoinPlan(state: var AppState; m: sink Msg) =
     let s = state.sessions[i]
     state.pauseReaders(s.path)
     let tableOnly = j.files.allIt(it.kind == jkCsv)
+    let relations = if j.relations.isNil: nil else: addr j.relations[]
     j.job = state.jobs.submit(JobSpec(title: "Import the survey for " & s.name,
       lane: jlInteractive, exclusive: @[s.path]), joinApplyWork(s.filePtr, s.path, s.id,
-      addr j.geometry[], j.plan.replace, tableOnly, state.jobs.holdRelease, state.inbox.poster))
+      addr j.geometry[], j.plan.replace, tableOnly, state.jobs.holdRelease, state.inbox.poster,
+      relations))
     j.step = jpJoining
 
 proc takeJoined(state: var AppState; m: Msg) =

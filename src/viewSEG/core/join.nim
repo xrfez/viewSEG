@@ -791,15 +791,29 @@ func usable(x, y: float64): bool {.inline.} =
   ## Coordinates that place a point: finite, and not (0, 0).
   abs(x) < Inf and abs(y) < Inf and not (x == 0 and y == 0)
 
-const PlanChunk = 65_536 ## traces whose keys are copied at a time
+const
+  PlanChunk = 65_536 ## traces whose keys are copied at a time
+  SharedRelations* = compiles((var k = initTraceKeys();
+    discard k.applySurvey(initSurveyGeometry(), initSurveyGeometry())))
+    ## parseSEG joins with the stations of one geometry and the relations of
+    ## another: an import uses the relation file the map has read, not a
+    ## copy of it (one read, one copy in memory)
 
-proc planJoin*(file: ptr SeismicFile; g: SurveyGeometry; opts: JoinOptions;
+proc applyBoth(k: var TraceKeys; g, relations: SurveyGeometry; overwrite: bool): bool =
+  ## `applySurvey` with the stations of `g` and the relations of `relations`
+  ## (`g`'s own when parseSEG cannot keep them apart: then they are one).
+  when SharedRelations: k.applySurvey(g, relations, overwrite)
+  else: k.applySurvey(g, overwrite)
+
+proc planJoin*(file: ptr SeismicFile; g, relations: SurveyGeometry; opts: JoinOptions;
     progress: proc (done, total: int): bool): JoinPlan =
-  ## Works out what joining `g` to the open file `file` does, on copies of
-  ## its keys (a chunk at a time, so any file takes bounded memory): reads
-  ## only, so readers may go on reading the file meanwhile. `progress` is
-  ## asked between chunks; false stops it (a cancel) with an empty plan.
-  ## Raises `ValueError` for a file opened without keys.
+  ## Works out what joining `g` (its relation records those of `relations`:
+  ## `SharedRelations`; else `g` holds both and is passed twice) to the open
+  ## file `file` does, on copies of its keys (a chunk at a time, so any file
+  ## takes bounded memory): reads only, so readers may go on reading the
+  ## file meanwhile. `progress` is asked between chunks; false stops it (a
+  ## cancel) with an empty plan. Raises `ValueError` for a file opened
+  ## without keys.
   let n = file[].len
   result = JoinPlan(traces: n, differ: [NaN, NaN])
   var keys = newSeq[TraceKeys](min(n, PlanChunk))
@@ -836,10 +850,10 @@ proc planJoin*(file: ptr SeismicFile; g: SurveyGeometry; opts: JoinOptions;
     for i in 0 ..< m:
       let k = keys[i]
       var s = k
-      let match = s.joinStations(g)
+      let match = s.joinStations(relations)
       inc result.matches[match]
       var j = k
-      if j.applySurvey(g, result.replace): inc result.changes
+      if j.applyBoth(g, relations, result.replace): inc result.changes
       if match != jmAuxiliary and k.isSeismic:
         var both = true
         let ends = [(prSource, s.srcLine, s.srcPoint, s.srcIndex, k.srcX, k.srcY, j.srcX,
@@ -867,8 +881,15 @@ proc planJoin*(file: ptr SeismicFile; g: SurveyGeometry; opts: JoinOptions;
     t += m
     if not progress(n + t, 2 * n): return JoinPlan()
 
-proc surveyOf*(g: SurveyGeometry; files: openArray[string]): JoinSurvey =
-  ## What geometry `g`, read from `files`, holds.
+proc planJoin*(file: ptr SeismicFile; g: SurveyGeometry; opts: JoinOptions;
+    progress: proc (done, total: int): bool): JoinPlan =
+  ## `planJoin` of a geometry that holds the stations and the relations.
+  planJoin(file, g, g, opts, progress)
+
+proc surveyOf*(g: SurveyGeometry; files: openArray[string];
+    relations: ptr SurveyGeometry = nil): JoinSurvey =
+  ## What geometry `g`, read from `files`, holds; its relation records those
+  ## of `relations` when given (kept apart: `SharedRelations`).
   result = JoinSurvey(files: @files, gridUnit: g.gridUnit)
   # (by address: an array of the tables would copy them)
   for (r, table) in [(prSource, addr g.table.sources), (prReceiver, addr g.table.receivers)]:
@@ -877,9 +898,10 @@ proc surveyOf*(g: SurveyGeometry; files: openArray[string]): JoinSurvey =
         inc result.stations[r]
         result.lines[r].incl k.line
         result.points[r].incl k.point
+  let r = if relations.isNil: addr g else: relations
   for d in RelationDomain:
-    result.relations += g.relationCount(d)
-    for rec in g.records(d): result.records.incl float64(rec)
+    result.relations += r[].relationCount(d)
+    for rec in r[].records(d): result.records.incl float64(rec)
 
 # ------------------------------------------------------------ in words --
 

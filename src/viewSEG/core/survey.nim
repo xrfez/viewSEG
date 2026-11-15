@@ -457,15 +457,23 @@ proc addPoint*(b: var SurveyFileBuilder; r: PointRole; line, point: float64; ind
       discard p.ids.findOrAdd(mix(uint64(p.xs.len) + 0x9E3779B97F4A7C15'u64), false,
         (p.xs.add x; p.ys.add y; p.zs.add z; p.stations.add noStation()))
 
-proc addRelations*(b: var SurveyFileBuilder; f: SpsFile) =
+proc addRelations*(b: var SurveyFileBuilder; f: var SpsFile) =
   ## The relation records (X, O) of `f`, part of an SPS file, as parseSEG's
   ## join reads them (its point records are left alone: `addPoint` takes
-  ## them); and its grid unit, when it gives one.
+  ## them; they are out of `f` meanwhile, not copied); and its grid unit,
+  ## when it gives one.
   if f.relations.len > 0:
-    var part = SpsFile(name: f.name, revision: f.revision, headers: f.headers,
-      relations: f.relations)
-    b.layer.relations[].addSps(part, relationDomainOf(f.name))
+    var points = move f.points
+    try: b.layer.relations[].addSps(f, relationDomainOf(f.name))
+    finally: f.points = move points
   if not b.layer.gridUnit.known: b.layer.gridUnit = f.gridUnit
+
+proc reserveRelations*(b: var SurveyFileBuilder; records: int; domain = rdSource) =
+  ## Room for about `records` more relation records (a large X file's,
+  ## guessed from its size), where parseSEG can make it: the memory of a
+  ## list that grows by copies stays with the program.
+  when compiles(b.layer.relations[].reserveRelations(records, domain)):
+    b.layer.relations[].reserveRelations(records, domain)
 
 func relationsLog*(b: SurveyFileBuilder): lent DiagLog {.inline.} =
   ## What parseSEG's join said of the relations taken so far.
@@ -488,7 +496,10 @@ proc finish*(b: var SurveyFileBuilder): SurveyLayer =
   result.relationRuns = result.xRuns + result.relations[].relationCount(rdReceiver)
   var records = 0
   for d in RelationDomain:
-    for _ in result.relations[].records(d): inc records
+    when compiles(result.relations[].recordCount(d)):
+      records += result.relations[].recordCount(d)
+    else:
+      for _ in result.relations[].records(d): inc records # (sorts them)
   result.relationRecords = records
 
 proc withLevels*(l: var SurveyLayer) =

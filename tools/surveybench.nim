@@ -34,9 +34,16 @@ proc statusKb(field: string): int =
     if line.startsWith(field & ":"):
       return parseInt(line.split(':')[1].strip.split(' ')[0])
 
+when defined(useMalloc):
+  proc mallocTrim(pad: csize_t): cint {.importc: "malloc_trim", header: "<malloc.h>".}
+
 proc peakMB(): int = statusKb("VmHWM") div 1024
 proc heldMB(): int =
+  ## The memory the process holds. Nim's allocator keeps what was freed; built
+  ## with `-d:useMalloc`, the free memory is given back first, so this is
+  ## about what is in use.
   GC_fullCollect()
+  when defined(useMalloc): discard mallocTrim(0)
   statusKb("VmRSS") div 1024
 
 proc fmt1(x: float64): string = formatFloat(x, ffDecimal, 1)

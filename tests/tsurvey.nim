@@ -210,7 +210,7 @@ proc fileLayer(path: string; kind: FileKind): SurveyLayer =
         let index = if r.reshoot in {'A' .. 'Z'}: int16(ord(r.reshoot) - ord('A') + 2) else: 0'i16
         b.addPoint(prSource, parseFloat(r.lineName), r.point, index, r.easting, r.northing, NaN)
   else:
-    let f = readSps(path)
+    var f = readSps(path)
     doAssert f.log.count(sevError) + f.log.count(sevFatal) == 0, $f.log
     for p in f.points:
       b.addPoint(if p.kind == pkSource: prSource else: prReceiver, p.line, p.point,
