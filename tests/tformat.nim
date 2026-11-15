@@ -21,7 +21,7 @@ const
     "src/viewSEG/core/settings.nim", "src/viewSEG/core/shots.nim", "src/viewSEG/core/spectra.nim",
     "src/viewSEG/core/spectrumreader.nim", "src/viewSEG/core/spread.nim",
     "src/viewSEG/core/tiles.nim", "src/viewSEG/core/watch.nim", "src/viewSEG/remote/control.nim",
-    "src/viewSEG/remote/schema.nim", "src/viewSEG/remote/tools.nim",
+    "src/viewSEG/remote/tools.nim",
     "src/viewSEG/ui/imgui/app.nim", "src/viewSEG/ui/imgui/headerswindow.nim",
     "src/viewSEG/ui/imgui/icons.nim", "src/viewSEG/ui/imgui/memorywindow.nim",
     "src/viewSEG/ui/imgui/menus.nim", "src/viewSEG/ui/imgui/spectrumwindow.nim",
