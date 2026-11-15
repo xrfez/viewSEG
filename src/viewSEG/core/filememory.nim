@@ -22,6 +22,11 @@
 ##  (allReversed true))
 ## ```
 ##
+## A document with a part that cannot be read (edited by hand) is not
+## written again until its edits change, so as not to drop that part; when
+## such a file is opened, the time is kept beside it instead, in
+## `<document>.seen` (`seenDocument`), which the listing reads.
+##
 ## Trace numbers are the file's, from 1, written as runs (`7-9`) so that a
 ## long list stays short. `full` is left out until the whole file has been
 ## hashed. A reader skips what it does not know, so later versions can add
@@ -99,9 +104,18 @@ func isDocName*(name: string): bool =
     parts[1].len == 16 and parts[1].allCharsInSet(HexDigits) and
     parts[2].len in 1..6 and parts[2].allCharsInSet(Digits)
 
+const SeenSuffix* = ".seen"
+  ## a document's side file: when its file was last opened, for a document
+  ## that is not written again (`seenDocument`)
+
+func seenName*(doc: string): string {.inline.} = doc & SeenSuffix
+  ## The side file of document `doc`.
+
 func isStoreName*(name: string): bool =
-  ## Whether `name` is one of the store's own files (a document).
-  name.isDocName
+  ## Whether `name` is one of the store's own files (a document, or a
+  ## document's side file).
+  name.isDocName or (name.endsWith(SeenSuffix) and
+    name[0 ..< name.len - SeenSuffix.len].isDocName)
 
 func freeDocName*(id: FileIdentity; taken: openArray[string]): string =
   ## The first document name of `id` that none of `taken` has.
@@ -241,6 +255,30 @@ proc memoryDocument*(r: FileRecord): string =
   for n in r.later: w.add n
   w.close
   w.finish
+
+proc seenDocument*(opened: Time): string =
+  ## The side file of a document not written again: when its file was last
+  ## opened.
+  var w = initNifWriter(breakDepth = 1)
+  w.open "fileSeen"
+  w.open "opened"
+  w.add timeText(opened)
+  w.close
+  w.close
+  w.finish
+
+proc readSeenFile(path: string): Time =
+  ## When a document's side file says its file was last opened; zero when
+  ## it cannot be read.
+  try:
+    if fs.getFileSize(path) <= 4096:
+      for n in parseNif(fs.readFile(path), path.extractFilename):
+        if n.isTree("fileSeen"):
+          for k in n.kids:
+            if k.isTree("opened") and k.kids.len == 1 and k.kids[0].kind == nkString:
+              discard parseTimeText(k.kids[0].text, result)
+  except NifError, IOError, OSError:
+    discard
 
 proc hexValue(s: string; x: var uint64): bool =
   s.len == 16 and s.allCharsInSet(HexDigits) and (x = fromHex[uint64](s); true)
@@ -555,10 +593,12 @@ proc listRecords*(s: Store; problems: var seq[string];
   ## opened first. A document that cannot be read is a
   ## problem. Raises `OSError` when the folder cannot be listed.
   if s.isNowhere or not fs.dirExists(s.home): return
-  var names: seq[string]
+  var names, seen: seq[string]
   for kind, path in fs.walkDir(s.home):
     if kind == pcFile and path.extractFilename.isDocName: names.add path
+    elif kind == pcFile and path.endsWith(SeenSuffix): seen.add path
   names.sort()
+  seen.sort()
   for i, path in names:
     if progress != nil and not progress(i, names.len): break
     try:
@@ -566,6 +606,8 @@ proc listRecords*(s: Store; problems: var seq[string];
       var r = readMemoryFile(path, p)
       for x in p:
         if problems.len < WordedProblems: problems.add path.extractFilename & ": " & x
+      if seen.binarySearch(path.seenName) >= 0: # opened since, not written again
+        r.opened = max(r.opened, readSeenFile(path.seenName))
       try:
         if r.path.len == 0: r.gone = true
         elif fs.fileExists(r.path): r.gone = fs.getFileSize(r.path) != r.identity.size

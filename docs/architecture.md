@@ -690,7 +690,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   then, the lists by trace number from 1 in runs, `allReversed`; a reader keeps what it
   does not know (`FileRecord.later`) and writes it back, so later fields fit beside them;
   a part it cannot read is said and the rest brought back (`damaged`: not written again
-  until the edits change), and a document that cannot be read at all is never written
+  until the edits change, not even for the full hash; when its file was opened is
+  written beside it, `<document>.seen`, which the listing reads), and a document that cannot be read at all is never written
   over (`Remembered.taken`). Documents and imported lists are read up to 64 MB
   (`MaxMemoryBytes`). **At open**, the documents of the quick
   identity are read with it (`recordsOf`); one whose size and modification time are the

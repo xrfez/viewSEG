@@ -877,7 +877,10 @@ come when its identity can be read, and edits you make before that are said to w
 it (quit before, and they are lost: Messages says so). When a hash of every byte says
 that a file taken at once for one remembered was another, the remembered file's entry is
 put back as it was. An entry with parts that cannot be read (edited by hand) says so and
-brings back the rest; a later version's parts are kept as they are. Edits an agent makes
+brings back the rest, and is not written again until its edits change (so as not to drop
+those parts): when its file was opened is kept beside it (`<entry>.seen`), so that File
+memory never lists a file in use as not opened for months; a later version's parts are
+kept as they are. Edits an agent makes
 through agent control are shown for the session only (docs/agent-control.md).
 
 **File > File memory...** lists what is remembered: the name a file was last seen under,

@@ -25,6 +25,8 @@
 ## - edits made while the drive does not answer are said to wait for the
 ##   file's identity, and said lost at a quit before it came;
 ## - a document that cannot be read is said and never written over;
+## - a document with a part that cannot be read keeps the time its file was
+##   opened beside it, and File memory lists that time;
 ## - a user's edit while the hash is under way, on a file taken at once for
 ##   one remembered, is not left in that file's document when the hash says
 ##   it was another;
@@ -45,7 +47,10 @@
 ## identity is not said" and "the lost edits are not said at the quit";
 ## with the names of documents that could not be read left out of those
 ## taken (`Remembered.taken`), "the document that could not be read was
-## written over"; with `takeHashed` looking at what waited only when the
+## written over"; with no side file for a damaged document, "a file opened
+## in the run before is listed as opened months ago"; with the hash of every
+## byte writing its document again (for the hash), "the damaged document was
+## written"; with `takeHashed` looking at what waited only when the
 ## file had no document yet, "what is remembered for the file did not come
 ## to its copy edited before the hash"; with the hash's after-check on the
 ## size and the ends only, "a file changed in the middle while it was
@@ -305,6 +310,53 @@ withFixtures fx:
     doAssert readFile(damaged) == "(fileMemory (version 1) (killed \"2 3",
       "the document that could not be read was written over"
     doAssert fileExists(config / StoreFolder / docName(id, 2))
+    st.shutdown()
+  block damagedKeepsItsTime:
+    # a document with a part that cannot be read (edited by hand) is not
+    # written again when its file is opened, so as not to drop that part:
+    # when it was opened is kept beside it, and File memory lists it as
+    # opened now, in this run and the next, never as months ago
+    var bytes = readFile(b)
+    bytes[1] = char(ord(bytes[1]) xor 1)
+    let d = fx.dir / "hand-edited.sgy"
+    writeFile(d, bytes)
+    var t: Time
+    let id = quickIdentity(d, t)
+    let months = getTime() - initDuration(days = 200)
+    let doc = docName(id, 1)
+    let text = memoryDocument(FileRecord(identity: id, name: "hand-edited.sgy", path: d,
+      opened: months, modified: t, edits: EditLists(lists: [@[], @[2]]))).replace(
+      "(killed \"3\")", "(killed \"3 x\")")
+    writeFile(config / StoreFolder / doc, text)
+    proc listedOpened(st: var AppState): Time =
+      st.apply Command(kind: ckFileMemory)
+      doAssert st.settle(st.memoryList.listed and not st.memoryList.listing)
+      for r in st.memoryList.records:
+        if r.doc == doc: result = r.opened
+    block opened:
+      var st = start(config)
+      st.showFile(d)
+      doAssert st.settle(st.remembering(d).known and st.editsOf(0).has(teKilled, 2))
+      doAssert st.settle(st.remembering(d).confirmed and not st.remembering(d).looking)
+      st.flushFiles()
+      doAssert readFile(config / StoreFolder / doc) == text,
+        "the damaged document was written: " & readFile(config / StoreFolder / doc)
+      doAssert getTime() - st.listedOpened < initDuration(minutes = 5),
+        "a file opened now is listed as opened months ago"
+      st.shutdown()
+    block nextRun: # not opened: the time comes from beside the document
+      var st = start(config)
+      doAssert getTime() - st.listedOpened < initDuration(minutes = 5),
+        "a file opened in the run before is listed as opened months ago"
+      st.shutdown()
+    var st = start(config) # once its edits change, the document is whole again
+    st.showFile(d)
+    doAssert st.settle(st.remembering(d).known)
+    st.edit(teKilled, 5)
+    st.flushFiles()
+    doAssert "x" notin readFile(config / StoreFolder / doc).split("(killed")[1].split(")")[0]
+    doAssert not fileExists(config / StoreFolder / doc.seenName), "the side file stays"
+    st.apply Command(kind: ckForgetFiles, forget: @[doc])
     st.shutdown()
   block pruned:
     # what is remembered of the file forgotten: the data file still as it was

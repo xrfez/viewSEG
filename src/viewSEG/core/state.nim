@@ -470,6 +470,10 @@ type
       ## `doc` was made in this run for edits made before the hash of every
       ## byte came (not one brought back): a document waiting for that hash
       ## may still be this file's
+    seenAside: bool
+      ## `doc` has parts that cannot be read, so it is not written again:
+      ## when the file was opened is in its side file (`seenName`), removed
+      ## when the document is written
 
   MemoryList* = object
     ## What the File memory window lists: every file the store remembers.
@@ -837,6 +841,9 @@ proc writeMemoryDoc(state: var AppState; i: int) =
   let name = r.path.extractFilename
   var rec = state.recordOf(i)
   r.savedRev = if r.path in state.edits: state.edits[r.path].keptRevision else: 0
+  if r.seenAside: # the document is written whole now: its own time
+    state.diskIo.remove(state.store.docPath(r.doc).seenName, "when " & name & " was opened")
+    r.seenAside = false
   if rec.edits.isEmpty:
     if r.doc.len > 0:
       state.diskIo.remove(state.store.docPath(r.doc), "what is remembered about " & name)
@@ -2112,8 +2119,15 @@ proc applyRecord(state: var AppState; i: int; c: FileRecord) =
   r.brought = if r.hashed: FileRecord() else: c
   state.knownDocs[c.doc] = c
   # Written again (seen now, under this name), unless it had parts that
-  # could not be read: those stay on disk until the user changes the edits.
+  # could not be read: those stay on disk until the user changes the edits,
+  # and when it was opened is kept beside it, so that File memory never
+  # takes a file in use for one not opened for months.
   if not c.damaged: r.savedRev = -1
+  else:
+    state.knownDocs[c.doc].opened = r.opened
+    state.diskIo.replace(state.store.docPath(c.doc).seenName, seenDocument(r.opened),
+      "when " & name & " was opened")
+    r.seenAside = true
   if c.edits.isEmpty: return
   state.edits.mgetOrPut(r.path, FileEdits()).remembered(c.edits)
   var said = name & ": " & keptWords(c.edits) & ", as you left " &
@@ -2165,6 +2179,9 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     state.log.add(sevWarning, name, name & " begins and ends as the file remembered as " &
       state.knownDocs.getOrDefault(r.doc).name & " did, but its content differs: the edits " &
       "remembered for that file are taken away from it (they stay remembered for that file).")
+    if r.seenAside: # the time this file was opened is not that one's
+      state.diskIo.remove(state.store.docPath(r.doc).seenName, "when " & name & " was opened")
+      r.seenAside = false
     if r.brought.doc == r.doc:
       # What was written of this file meanwhile (its name, its edits) went
       # into the other file's document: that one is put back as it was.
@@ -2194,8 +2211,9 @@ proc takeHashed(state: var AppState; m: sink Msg) =
       state.diskIo.remove(state.store.docPath(own), "what is remembered about " & name)
       state.knownDocs.del own
     elif own.len > 0: r.savedRev = -1 # its document gets the hash
-  elif not state.knownDocs.getOrDefault(r.doc).identity.fullKnown:
-    r.savedRev = -1 # its document gets the hash
+  elif not state.knownDocs.getOrDefault(r.doc).identity.fullKnown and
+      not state.knownDocs.getOrDefault(r.doc).damaged:
+    r.savedRev = -1 # its document gets the hash (not one with parts it cannot read)
   if r.doc.len == 0 and not state.editsAt(r.path).kept.isEmpty:
     r.savedRev = -1 # edits made before it was known: a document of its own
 
@@ -2378,6 +2396,7 @@ proc forgetFiles(state: var AppState; cmd: Command) =
         template r: untyped = state.remembered[i]
         if r.doc == doc:
           r.doc = ""
+          r.seenAside = false
           if r.path in state.edits:
             state.edits[r.path].forget()
             r.savedRev = state.edits[r.path].keptRevision
@@ -2385,6 +2404,7 @@ proc forgetFiles(state: var AppState; cmd: Command) =
       state.knownDocs.del doc
       let name = if rec.name.len > 0: rec.name else: doc
       state.diskIo.remove(state.store.docPath(doc), "what is remembered about " & name)
+      state.diskIo.remove(state.store.docPath(doc).seenName, "when " & name & " was opened")
       state.log.add(sevInfo, "file memory", "Forgot " & name & " (" & keptWords(rec.edits) &
         (if rec.path.len > 0: ", last seen at " & rec.path else: "") & ").")
       state.memoryList.records.keepItIf(it.doc != doc)
