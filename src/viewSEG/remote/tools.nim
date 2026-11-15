@@ -560,7 +560,7 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
       let f = m.records[i]
       files.add %*{"name": f.name, "path": f.path, "opened": $f.opened, "kept":
         keptWords(f.edits), "size": f.identity.size, "bytes": f.bytes, "gone": f.gone, "unreached": f.unreached,
-        "document": f.doc}
+        "looking": f.looking, "notAnswering": f.silent, "document": f.doc}
     r["memory"] = %*{"listed": m.listed, "listing": m.listing, "count": m.records.len,
       "files": files, "problems": m.problems}
   textResult($r)

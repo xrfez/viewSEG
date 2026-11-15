@@ -577,6 +577,12 @@ type
       ## (newer than the disk until the disk thread has written them)
     memoryList: MemoryList
     memoryJob: JobId ## the listing under way; `NoJob` for none
+    memoryLooks: seq[JobId]
+      ## the looks of the listing shown at its files (`lookWork`), the one
+      ## under way last: what they post is taken, also late (a drive that
+      ## answers again)
+    lookGiven: seq[LookFolder]
+      ## the folders the look under way was given, in its order
     memoryWork: seq[JobId]
       ## the identifications and hashes under way: they end quietly
     exports: seq[JobId] ## the exports of edits under way
@@ -2238,6 +2244,14 @@ proc endMemoryWork(state: var AppState; job: JobInfo): bool =
           "holds (" & job.error & "); it is known by its first and last bytes.")
       return true
   if w >= 0: return true # its message came: said then
+  if job.id in state.memoryLooks:
+    if state.memoryLooks.len > 0 and job.id == state.memoryLooks[^1] and job.state != jsDone:
+      # it ended without a word of some folders (failed): they are not
+      # looked at, so never taken as gone
+      for r in state.memoryList.records.mitems:
+        if r.looking: (r.looking, r.unreached) = (false, true)
+      inc state.memoryList.revision
+    return true
   if job.id == state.memoryJob:
     state.memoryJob = NoJob
     state.memoryList.listing = false
@@ -2363,17 +2377,71 @@ proc listMemory(state: var AppState) =
   state.memoryJob = state.jobs.submit(JobSpec(title: "List what is remembered about files",
     lane: jlInteractive), listMemoryWork(state.store, state.inbox.poster))
 
+proc lookAt(state: var AppState; folders: sink seq[LookFolder]) =
+  ## Looks at the files of `folders` on a job (`lookWork`).
+  if folders.len > 0:
+    state.memoryLooks.add state.jobs.submit(JobSpec(title: "Look for the files File memory " &
+      "lists", lane: jlInteractive), lookWork(folders, state.inbox.poster))
+    state.lookGiven = folders
+
+proc takeLooked(state: var AppState; m: sink Msg) =
+  ## Where the files remembered in one folder stand.
+  if m.job notin state.memoryLooks: return # a listing before
+  var at = initTable[string, int]()
+  for i, r in state.memoryList.records: at[r.doc] = i
+  for x in m.looked:
+    if x.doc in at:
+      template r: untyped = state.memoryList.records[at[x.doc]]
+      (r.gone, r.unreached, r.looking, r.silent) = (x.gone, x.unreached, false, false)
+  inc state.memoryList.revision
+
+proc followMemoryLook(state: var AppState) =
+  ## Once a frame: a look whose folder's drive has not answered for
+  ## `StallAfter` has that folder's files said "not answering" (never gone),
+  ## and the folders after it looked at by a new job; the one held is left
+  ## (cancelled), and what it posts if its drive answers is still taken.
+  if state.memoryLooks.len == 0: return
+  let job = state.memoryLooks[^1]
+  let info = state.jobs.info(job)
+  if info.isNone or info.get.state != jsRunning or
+      info.get.notAnsweringFor < StallAfter: return
+  let i = int(info.get.progress.done)
+  if i notin 0 ..< state.lookGiven.len: return
+  var docs = initHashSet[string]()
+  for f in state.lookGiven[i].files: docs.incl f.doc
+  for r in state.memoryList.records.mitems:
+    if r.doc in docs and r.looking: (r.looking, r.silent) = (false, true)
+  inc state.memoryList.revision
+  discard state.jobs.cancel(job)
+  let rest = state.lookGiven[i + 1 .. ^1]
+  state.lookGiven.setLen 0
+  state.lookAt(rest)
+
 proc takeMemoryList(state: var AppState; m: sink Msg) =
   ## What the listing read; the documents this run wrote are newer.
   var records = move m.records
   for r in records.mitems:
     if r.doc in state.knownDocs:
-      let bytes = r.bytes
-      let gone = r.gone
+      let (bytes, gone, looking) = (r.bytes, r.gone, r.looking)
       r = state.knownDocs[r.doc]
-      (r.bytes, r.gone) = (bytes, gone)
+      (r.bytes, r.gone, r.looking) = (bytes, gone, looking)
+  # Whether each file is where it was seen: on a job, folder by folder, so
+  # that a drive that does not answer holds none of the listing
+  # (`followMemoryLook`).
+  var at = initTable[string, int]()
+  var folders: seq[LookFolder]
+  for r in records:
+    if r.looking:
+      let dir = r.path.parentDir
+      if dir notin at:
+        at[dir] = folders.len
+        folders.add (dir, @[])
+      folders[at[dir]].files.add (r.doc, r.path, r.identity.size)
+  folders.sort(proc (a, b: LookFolder): int = cmp(a.folder, b.folder))
   state.memoryList = MemoryList(records: records, problems: move m.listProblems,
     listed: true, revision: state.memoryList.revision + 1)
+  state.memoryLooks.setLen 0
+  state.lookAt(folders)
 
 func memoryList*(state: AppState): lent MemoryList {.inline.} =
   ## What the File memory window lists (`ckFileMemory` reads it again).
@@ -4420,6 +4488,7 @@ proc drainInbox*(state: var AppState): bool =
     of mkIdentified: state.takeIdentified(move m)
     of mkHashed: state.takeHashed(move m)
     of mkMemoryList: state.takeMemoryList(move m)
+    of mkMemoryLooked: state.takeLooked(move m)
     of mkEditsList: state.takeEditsList(move m)
     of mkEditsRead: state.takeImported(move m)
     of mkLayout:
@@ -4503,3 +4572,4 @@ proc drainInbox*(state: var AppState): bool =
   state.relink()
   state.followInspect()
   state.followMapWork()
+  state.followMemoryLook()

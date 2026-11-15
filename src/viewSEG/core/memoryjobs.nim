@@ -6,7 +6,9 @@
 ## - `fullHashWork` (the lane of hashes): the hash of every byte of the file,
 ##   which confirms the identity or tells the files apart.
 ## - `listMemoryWork`: every document of the store, for the File memory
-##   window.
+##   window; then `lookWork`: whether each file is where it was last seen,
+##   folder by folder (a folder whose drive does not answer holds only its
+##   own entries).
 ## - `exportEditsWork`: a file's list, with each edited trace's record and
 ##   channel from the open file's keys, as NIF or CSV text.
 ## - `importEditsWork`: a file's list the user imports, read and taken
@@ -69,12 +71,32 @@ proc listMemoryWork*(store: Store; to: Poster): JobWork =
     var msg = Msg(job: ctx.id, kind: mkMemoryList)
     try:
       msg.records = store.listRecords(msg.listProblems, proc (done, total: int): bool =
-        ctx.progress(done, total))
+        ctx.progress(done, total), look = false)
     except OSError as e:
       msg.listProblems.add "the folder " & store.home & " cannot be read: " & e.msg
     ctx.checkCancelled()
     clearCycleRoots()
     to.post move msg
+
+type
+  LookFolder* = tuple
+    folder: string
+    files: seq[tuple[doc, path: string; size: int64]]
+
+proc lookWork*(folders: seq[LookFolder]; to: Poster): JobWork =
+  ## Posts an `mkMemoryLooked` for each of `folders` in turn: whether each
+  ## file remembered there is where it was last seen (`placeOf`). Before
+  ## each folder it reports its place in `folders` as its progress (done of
+  ## total), so that the one a drive holds is known (`notAnsweringFor`).
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "looking for the files"
+    for i, f in folders:
+      if not ctx.progress(i, folders.len): raise newException(JobCancelledError, "cancelled")
+      var msg = Msg(job: ctx.id, kind: mkMemoryLooked, lookedFolder: f.folder)
+      for x in f.files:
+        let (gone, unreached) = placeOf(x.path, x.size)
+        msg.looked.add (x.doc, gone, unreached)
+      to.post move msg
 
 proc exportEditsWork*(file: ptr SeismicFile; r: FileRecord; dest: string; to: Poster): JobWork =
   ## Posts `mkEditsList`: `r`'s edits as the text of `dest` (CSV when its

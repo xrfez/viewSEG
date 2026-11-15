@@ -77,8 +77,14 @@ type
       ## a listing: no file at `path` any more (in a folder that is there),
       ## or one of another size
     unreached*: bool
-      ## a listing: the folder of `path` is not there or does not answer (a
-      ## network drive not connected): not counted as gone
+      ## a listing: the folder of `path` is not there (a network drive not
+      ## connected): not counted as gone
+    looking*: bool
+      ## a listing: `path` not looked at yet (`placeOf`, on a job of its
+      ## folder's: its drive may not answer)
+    silent*: bool
+      ## a listing: the drive of `path` did not answer the look in time
+      ## (`StallAfter`): not counted as gone
     damaged*: bool
       ## the document had parts that could not be read (said as problems)
     later*: seq[NifNode]
@@ -584,14 +590,28 @@ proc recordsOf*(s: Store; id: FileIdentity; taken: var seq[string];
       except NifError, IOError, OSError:
         problems.add name & ": " & getCurrentExceptionMsg()
 
+proc placeOf*(path: string; size: int64): tuple[gone, unreached: bool] =
+  ## Whether the file last seen at `path`, of `size` bytes, is gone
+  ## (nothing at `path`, in a folder that is there, or a file of another
+  ## size), or its folder is not there or cannot be looked at (`unreached`,
+  ## as a network drive not connected). Holds the calling thread for as
+  ## long as the drive does not answer: call it on a job.
+  try:
+    if path.len == 0: (true, false)
+    elif fs.fileExists(path): (fs.getFileSize(path) != size, false)
+    elif fs.dirExists(path.parentDir): (true, false)
+    else: (false, true) # a drive not connected is no file gone
+  except OSError:
+    (false, true)
+
 proc listRecords*(s: Store; problems: var seq[string];
-    progress: proc (done, total: int): bool {.gcsafe.} = nil): seq[FileRecord] =
-  ## Every document of the store, read, each with whether its file is gone
-  ## (`gone`: nothing at the path it was last seen at, in a folder that is
-  ## there, or a file of another size; `unreached`: the folder is not there
-  ## or does not answer, as a network drive not connected), the newest
-  ## opened first. A document that cannot be read is a
-  ## problem. Raises `OSError` when the folder cannot be listed.
+    progress: proc (done, total: int): bool {.gcsafe.} = nil; look = true): seq[FileRecord] =
+  ## Every document of the store, read, the newest opened first; with
+  ## `look`, each with whether its file is gone (`placeOf`), else each
+  ## `looking` (the files' drives looked at apart, folder by folder, so
+  ## that one that does not answer holds none of the listing). A document
+  ## that cannot be read is a problem. Raises `OSError` when the folder
+  ## cannot be listed.
   if s.isNowhere or not fs.dirExists(s.home): return
   var names, seen: seq[string]
   for kind, path in fs.walkDir(s.home):
@@ -608,13 +628,9 @@ proc listRecords*(s: Store; problems: var seq[string];
         if problems.len < WordedProblems: problems.add path.extractFilename & ": " & x
       if seen.binarySearch(path.seenName) >= 0: # opened since, not written again
         r.opened = max(r.opened, readSeenFile(path.seenName))
-      try:
-        if r.path.len == 0: r.gone = true
-        elif fs.fileExists(r.path): r.gone = fs.getFileSize(r.path) != r.identity.size
-        elif fs.dirExists(r.path.parentDir): r.gone = true
-        else: r.unreached = true # a drive not connected is no file gone
-      except OSError:
-        r.unreached = true
+      if look: (r.gone, r.unreached) = placeOf(r.path, r.identity.size)
+      elif r.path.len == 0: r.gone = true
+      else: r.looking = true
       result.add r
     except NifError, IOError, OSError:
       problems.add path.extractFilename & ": " & getCurrentExceptionMsg()

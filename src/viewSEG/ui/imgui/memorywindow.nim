@@ -181,9 +181,18 @@ proc drawMemory*(ui: var MemoryUi; title: string; st: AppState; t: Theme;
             igPopStyleColor(1)
             tip("No file of this size is at " & r.path & " any more (moved, renamed or " &
               "deleted). A file moved keeps what is remembered: open it to bring it back")
+          elif r.looking:
+            igTextDisabled("looking...")
+            tip("Looking for it at " & r.path)
+          elif r.silent:
+            igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+            igTextUnformatted("not answering", nil)
+            igPopStyleColor(1)
+            tip("The drive of " & r.path & " did not answer within 3 seconds (a network " &
+              "drive?), so this is not counted as gone. Refresh looks again")
           elif r.unreached:
             igTextDisabled("not found")
-            tip("The folder " & r.path & " was in is not there or does not answer (a " &
+            tip("The folder " & r.path & " was in is not there or cannot be looked at (a " &
               "network drive not connected?), so this is not counted as gone")
           else:
             igTextDisabled("in place")

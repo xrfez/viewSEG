@@ -31,6 +31,8 @@
 ##   one remembered, is not left in that file's document when the hash says
 ##   it was another;
 ## - a file's hash under way holds no background job (a lane of its own);
+## - File memory lists past an entry whose drive does not answer, which is
+##   "not answering" and never gone;
 ## - a file rewritten in the middle while its hash runs is not confirmed;
 ## - the data file's bytes and modification time are as they were through
 ##   all of it, what is remembered of it forgotten (File memory) included.
@@ -55,7 +57,8 @@
 ## to its copy edited before the hash"; with the hash's after-check on the
 ## size and the ends only, "a file changed in the middle while it was
 ## hashed was confirmed"; with the hash on the background lane, "a
-## background job waits behind a file's hash".
+## background job waits behind a file's hash"; with the files looked at in
+## the listing's job, "the listing waits for a drive that does not answer".
 
 import std/[atomics, os, strutils, times]
 import viewSEG/core/[jobs, state]
@@ -409,5 +412,43 @@ withFixtures fx:
       "a file changed in the middle while it was hashed was confirmed"
     st.shutdown()
     removeFile(c)
+  block listedPastAHungDrive:
+    # File memory with an entry on a drive that does not answer: the
+    # listing comes at once, the entries elsewhere are looked at, the one
+    # held is "not answering" (never gone), and its answer, once the drive
+    # gives it, is still taken
+    let hungDir = fx.dir / "a-hung-share"
+    let placeDir = fx.dir / "place"
+    createDir(hungDir)
+    createDir(placeDir)
+    writeFile(hungDir / "far.sgy", newString(300))
+    writeFile(placeDir / "here.sgy", newString(400))
+    var docs: seq[string]
+    for (name, path, size) in [("far.sgy", hungDir / "far.sgy", 300'i64),
+        ("here.sgy", placeDir / "here.sgy", 400'i64), ("gone.sgy", placeDir / "gone.sgy", 500'i64)]:
+      var r = FileRecord(identity: FileIdentity(size: size, quick: uint64(size)), name: name,
+        path: path, opened: getTime())
+      r.edits.lists[teKilled] = @[0]
+      r.doc = docName(r.identity, 1)
+      writeFile(config / StoreFolder / r.doc, memoryDocument(r))
+      docs.add r.doc
+    proc rec(st: AppState; name: string): FileRecord =
+      for r in st.memoryList.records:
+        if r.name == name: return r
+    var st = start(config)
+    fault(hungDir, fkHang, {foStat})
+    st.apply Command(kind: ckFileMemory)
+    doAssert waitUntil((discard st.drainInbox(); st.memoryList.listed and
+      not st.memoryList.listing), initDuration(seconds = 2)),
+      "the listing waits for a drive that does not answer"
+    doAssert st.settle(st.rec("gone.sgy").gone and not st.rec("here.sgy").looking and
+      st.rec("far.sgy").silent), "the entries after the one held were not looked at"
+    doAssert not st.rec("here.sgy").gone and not st.rec("far.sgy").gone
+    release(hungDir)
+    doAssert st.settle(not st.rec("far.sgy").silent and not st.rec("far.sgy").looking),
+      "the late answer was not taken"
+    doAssert not st.rec("far.sgy").gone
+    st.apply Command(kind: ckForgetFiles, forget: docs)
+    st.shutdown()
   doAssert (readFile(b), getLastModificationTime(b)) == kept, "the data file changed"
 echo "tmemory: ok"

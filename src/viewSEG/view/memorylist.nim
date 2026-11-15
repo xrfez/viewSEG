@@ -18,7 +18,9 @@ type
     size*: string    ## the file's size
     entry*: string   ## the size of its entry in the store
     gone*: bool      ## no file at `path` any more (or one of another size)
-    unreached*: bool ## the folder of `path` is not there or does not answer
+    unreached*: bool ## the folder of `path` is not there
+    looking*: bool   ## not looked at yet
+    silent*: bool    ## its drive did not answer the look
 
 proc memoryRows*(records: openArray[FileRecord]; now = getTime()): seq[MemoryRow] =
   ## A row per record, in their order (the newest opened first).
@@ -27,7 +29,8 @@ proc memoryRows*(records: openArray[FileRecord]; now = getTime()): seq[MemoryRow
     result.add MemoryRow(doc: r.doc, name: r.name, path: r.path,
       opened: (if r.opened == Time(): "" else: r.opened.local.format("yyyy-MM-dd HH:mm")),
       days: days, kept: keptWords(r.edits), size: sizeText(r.identity.size),
-      entry: sizeText(r.bytes), gone: r.gone, unreached: r.unreached)
+      entry: sizeText(r.bytes), gone: r.gone, unreached: r.unreached, looking: r.looking,
+      silent: r.silent)
 
 func notOpenedFor*(rows: openArray[MemoryRow]; days: int): seq[int] =
   ## The rows of files not opened for `days` days or more.

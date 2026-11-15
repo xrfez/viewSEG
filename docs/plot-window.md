@@ -885,8 +885,11 @@ through agent control are shown for the session only (docs/agent-control.md).
 
 **File > File memory...** lists what is remembered: the name a file was last seen under,
 when it was last opened, what is kept, the file's size and the entry's, and whether the
-file is gone from where it was ("not found" when its folder is not there or does not
-answer, as a network drive not connected: that is not counted as gone). It removes the
+file is gone from where it was ("not found" when its folder is not there, as a network
+drive not connected: that is not counted as gone). The entries come at once; where each
+file is, is looked at afterwards, folder by folder ("looking..."), so that a drive that
+does not answer holds only its own entries: after 3 seconds they say "not answering"
+(never gone; Refresh looks again) and the folders after it are looked at. It removes the
 entry selected, those not opened for a number of days (90 to begin with), or those whose
 file is gone; each removal lists what it takes away and asks first (a listing that comes
 meanwhile does not change what it takes), and Messages names each entry forgotten.

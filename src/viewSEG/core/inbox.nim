@@ -41,6 +41,8 @@ type
       ## an opened file's quick identity and what is remembered about it (`core/memoryjobs`)
     mkHashed     ## an opened file's identity with the hash of every byte
     mkMemoryList ## every file the store remembers, for the File memory window
+    mkMemoryLooked
+      ## whether the files remembered in one folder are where they were seen
     mkEditsList  ## a file's list of edits, as the text of the file it is exported to
     mkEditsRead  ## a file's list of edits the user imports, read
 
@@ -189,6 +191,10 @@ type
     of mkMemoryList:
       records*: seq[FileRecord]      ## every document of the store, the newest opened first
       listProblems*: seq[string]     ## documents that could not be read
+    of mkMemoryLooked:
+      lookedFolder*: string          ## the folder looked in
+      looked*: seq[tuple[doc: string; gone, unreached: bool]]
+        ## each document of a file last seen there, and where it stands
     of mkEditsList:
       listText*: string              ## the text to write
       listDest*: string              ## the file to write it to
