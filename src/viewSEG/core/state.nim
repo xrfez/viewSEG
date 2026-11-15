@@ -394,6 +394,10 @@ type
       ## the plot's polarity, its pipeline's length, the gather's kind
     display: DisplaySettings
       ## the plot's display, compared by `sameProcessing`
+    joins: int
+      ## the geometry joins ended so far (`joinReport.serial`): a join
+      ## changes the keys the Trace tab shows (read here, never the file's
+      ## `keysRevision`, which a join's job writes)
 
   AppState* = object
     ## Everything the views show. Move-only.
@@ -1590,7 +1594,8 @@ proc followInspect(state: var AppState) =
   ## found again when the selection changed, and its reader asked for what
   ## the window has on screen when that is not what it was asked for last
   ## (other traces, another record, their edits or the plot's processing
-  ## when they are shown as displayed). Each file it reads is held first; a
+  ## when they are shown as displayed, their keys after a geometry join).
+  ## Each file it reads is held first; a
   ## trace of a file that cannot be held (a job needs it to itself) is
   ## answered as busy. With nothing on screen, nothing is read.
   template ins: untyped = state.inspect
@@ -1616,6 +1621,7 @@ proc followInspect(state: var AppState) =
       if r >= 0: want.record = (s.id, r)
   let traceParts = ins.parts * {ipTraceHeaders, ipTraceSamples}
   if traceParts != {}: want.traces = ins.chosen.traces
+  want.joins = state.joinReport.serial
   want.displayed = view.asDisplayed and ipTraceSamples in ins.parts
   if want.displayed:
     for t in want.traces: want.edits.add state.traceEdits(t)
@@ -1625,7 +1631,8 @@ proc followInspect(state: var AppState) =
       want.display = layer.display
   template was: untyped = state.asked
   if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
-      want.displayed == was.displayed and want.record == was.record and
+      want.joins == was.joins and want.displayed == was.displayed and
+      want.record == was.record and
       want.flow == was.flow and want.display.sameProcessing(was.display, want.flow[2]):
     return
   state.asked = want

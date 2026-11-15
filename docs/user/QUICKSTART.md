@@ -497,7 +497,9 @@ holds, read-only, in three tabs:
 - **Summary:** what the file is, in plain words: its standard and revision, byte order,
   textual header's character set, sample format, how many traces and records, the field
   record numbers, samples per trace, sample interval and record length, the coordinate
-  units and reference; then the record shown (what tells it apart: FFID, source,
+  units and reference (as File > Join geometry shows them; after a join, the units you
+  confirmed there, and the join: its files, how many traces matched, what it did); then
+  the record shown (what tells it apart: FFID, source,
   receiver) with its counts (traces, seismic, auxiliary, dead, missing: the Records
   window's), and for SEG-D that record's channel sets.
 - **File headers:** a tab per header block, as the format has them. SEG-Y: **Text** (the
@@ -513,7 +515,11 @@ holds, read-only, in three tabs:
   stays while you move to the Headers window. A line at the top says which traces these
   are. **Header** lists every header field of each trace (extensions included): its
   description, bytes and value, a value column per trace (at most 32 side by side), and the
-  fields whose values differ between them in the warning colour. **Data** lists the
+  fields whose values differ between them in the warning colour. After a geometry join
+  (File > Join geometry), the table starts with **Joined from the survey files**: the
+  stations, coordinates, offset and midpoint the join gave, in the accent colour for each
+  trace it gave them to ("from the survey files, not in the header" when pointed at); the
+  header's own fields follow, as the file holds them. **Data** lists the
   samples: index, time in ms and a column per trace, as the file holds them, or **As
   displayed** (after kills, polarity reversals and the gain's processing: what the status
   bar's amplitude reads); the row at the time under the pointer in the plot is marked and

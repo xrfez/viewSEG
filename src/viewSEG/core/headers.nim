@@ -4,7 +4,8 @@
 ##
 ## - `fileFacts`, on the open job's thread, before the file is handed over:
 ##   what the Summary tab says of the file (parseSEG's `summary`,
-##   `channelSets`, `crsText`, the SEG-Y textual header's character set) and
+##   `channelSets`, the SEG-Y textual header's character set; its CRS text
+##   is the session's, `Session.crs`, as the join window shows it) and
 ##   its file headers: the SEG-Y textual header as its 40 lines, the binary
 ##   header's fields, the extended textual headers; a SEG-2 file's
 ##   descriptor block; the blocks without named fields (a tape or storage
@@ -24,7 +25,7 @@ import std/[math, strutils]
 import parseSEG
 import fielddocs
 
-export FileSummary, ChannelSetSummary
+export FileSummary, ChannelSetSummary, JoinGroup
 
 const
   MaxRawBytes* = 1024 * 1024 ## the bytes of a block without named fields kept to show, at most
@@ -56,7 +57,6 @@ type
     ## is opened.
     summary*: FileSummary
     channelSets*: seq[ChannelSetSummary] ## SEG-D: every record's
-    crs*: string ## the coordinate reference text; "" for none
     textEncoding*: string ## SEG-Y: "EBCDIC" or "ASCII"; "" otherwise
     text*: seq[string] ## SEG-Y: the textual header's 40 lines
     extendedText*: seq[seq[string]] ## SEG-Y: each extended textual header's lines
@@ -84,6 +84,9 @@ type
     cut*: int              ## samples left out of `samples` (too many at once); 0 for none
     dtMs*, t0Ms*: float64  ## its sample interval and the time of its first sample
     problem*: string       ## what could not be read; "" when all was
+    joined*: set[JoinGroup]
+      ## the groups of its keys a geometry join gave (parseSEG's
+      ## `joinedGroups`): those values are not its headers'
 
   Inspected* = object
     ## The inspector's answer to one request (`core/inspector`).
@@ -169,7 +172,6 @@ proc fileFacts*(f: SeismicFile; headers = true): FileFacts =
     result.problems.add "the summary cannot be read: " & e.msg
   try:
     result.channelSets = f.channelSets
-    if headers: result.crs = latin1(f.crsText)
   except ValueError as e:
     result.problems.add "the channel sets cannot be read: " & e.msg
   if not headers: return

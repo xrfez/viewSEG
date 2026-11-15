@@ -425,6 +425,7 @@ withFixtures fx:
       file["summary"]["traceCount"].getInt == SurveyTraces, $file
     doAssert file["fileHeaderFields"].getInt > 20 and file["textualHeader"].getStr.len > 0
     doAssert file["join"]["matched"].getInt == SurveyTraces, $file["join"] # (joined above)
+    doAssert read[0]["joined"].kind == JArray, $read[0] # the groups a join gave it
     doAssert not st.run(%*{"kind": "headers shown", "inspect": []}).isError
     doAssert not st.run(%*{"kind": "clear selection"}).isError
     doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)

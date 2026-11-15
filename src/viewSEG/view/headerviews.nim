@@ -69,11 +69,19 @@ func firstLine(text: string): string =
   result = (if i >= 0: text[0 ..< i] else: text).strip
   if result.len > 100: result = result[0 ..< 100] & "..."
 
-proc summaryLines*(s: Session; gather: int): seq[SummaryLine] =
+func unitWords*(c: CoordinateUnits): string =
+  ## The unit a file's headers give its coordinates in, in the words of the
+  ## join window (File > Join geometry).
+  result = $unitOf(c)
+  if c == cuLength: result.add " (the headers say a length, not whether metres or feet)"
+
+proc summaryLines*(s: Session; gather: int; joins: openArray[Joined] = []): seq[SummaryLine] =
   ## The Summary tab of file `s` with its gather `gather` shown (-1 for
-  ## none): the file, its format, its traces and timing, its coordinates,
-  ## and the record shown with its counts (the Records window's), and for
-  ## SEG-D that record's channel sets.
+  ## none): the file, its format, its traces and timing, its coordinates
+  ## (as the join window gives them: the units its headers say, or those
+  ## confirmed for its join, and its CRS text), the join it was given (of
+  ## `joins`), and the record shown with its counts (the Records window's),
+  ## and for SEG-D that record's channel sets.
   template facts: untyped = s.facts
   let sm = facts.summary
   result.heading "File"
@@ -109,17 +117,30 @@ proc summaryLines*(s: Session; gather: int): seq[SummaryLine] =
     (if sm.standard == skSegd: "channel sets" else: "traces")
     else: exactText(sm.sampleIntervalUs / 1000) & " ms")
   result.add "Record length", msText(sm.recordLengthMs)
+  var joined = -1
+  for j, x in joins:
+    if x.session == s.id: joined = j
   result.heading "Coordinates"
-  result.add "Units", (case sm.coordinateUnits
-    of cuUnknown: "not given"
-    of cuMeters: "metres"
-    of cuFeet: "feet"
-    of cuLength: "length (metres or feet not said)"
-    of cuArcSeconds: "arc seconds"
-    of cuDegrees: "degrees"
-    of cuDms: "degrees, minutes and seconds")
-  result.add "Coordinate reference", (if facts.crs.len == 0: "none in the file"
-    else: $sm.crsFormat & ": " & firstLine(facts.crs))
+  let said = unitWords(s.crs.units)
+  if joined >= 0:
+    let confirmed = $joins[joined].units.file
+    result.add "Units", confirmed & " (confirmed for the geometry join" &
+      (if confirmed != $unitOf(s.crs.units): "; the headers say " & said else: "") & ")"
+  else:
+    result.add "Units", said
+  result.add "Coordinate reference", (if s.crs.format == ctNone or s.crs.text.len == 0:
+    "none in the file" else: $s.crs.format & ": " & firstLine(latin1(s.crs.text)))
+  if joined >= 0:
+    let j = joins[joined]
+    result.heading "Geometry join"
+    var names: seq[string]
+    for f in j.files: names.add f.path.extractFilename
+    result.add "Survey files", names.join(", ")
+    result.add "Their units", $j.units.survey
+    result.add "Matched", $j.plan.matched & " of " & $j.plan.seismic & " seismic traces"
+    result.add "Keys changed", $j.plan.changes & (if j.plan.changes == 1: " trace" else: " traces")
+    for k, w in j.words:
+      result.add (if k == 0: "What it did" else: ""), w
   if gather in 0 ..< s.records.len:
     let r = s.records[gather]
     result.heading "The record shown: " & $(gather + 1) & " of " & $s.records.len
@@ -167,6 +188,9 @@ type
     offset*: string ## the file offset of its first byte (the first column's)
     values*: seq[string] ## per column; "" where a column has no such field
     differs*: bool ## the columns do not all hold the same value
+    joined*: seq[bool]
+      ## per column, a value a geometry join gave (not the header's); empty
+      ## for a header's field
 
   FieldTable* = object
     ## A header table: fields as rows, a column of values per header shown
@@ -252,6 +276,90 @@ func manyFiles*(traces: openArray[TraceDetail]): bool =
   for d in traces:
     if d.file != traces[0].file: return true
   false
+
+const
+  JoinedTitle* = "Joined from the survey files"
+    ## the title of the trace table's rows of joined values: not in the
+    ## trace's header, whose own fields follow
+  JoinedKeys = [(jgSourceStation, "srcLine", "Source line"),
+    (jgSourceStation, "srcPoint", "Source point"),
+    (jgSourceStation, "srcIndex", "Source point index"),
+    (jgReceiverStation, "rcvLine", "Receiver line"),
+    (jgReceiverStation, "rcvPoint", "Receiver point"),
+    (jgReceiverStation, "rcvIndex", "Receiver point index"),
+    (jgSourceXy, "srcX", "Source X"), (jgSourceXy, "srcY", "Source Y"),
+    (jgSourceZ, "srcZ", "Source elevation"),
+    (jgReceiverXy, "rcvX", "Receiver X"), (jgReceiverXy, "rcvY", "Receiver Y"),
+    (jgReceiverZ, "rcvZ", "Receiver elevation"),
+    (jgDerived, "offset", "Offset, source to receiver"),
+    (jgDerived, "cmpX", "Midpoint X"), (jgDerived, "cmpY", "Midpoint Y"),
+    (jgComponent, "component", "Component")]
+    ## the keys a join may give, by the group parseSEG marks them in
+
+func keyText(k: TraceKeys; name: string): string =
+  ## Key `name` of `k` as text; "" when not known.
+  func number(x: float64): string = (if x.isNaN: "" else: exactText(x))
+  case name
+  of "srcLine": number(k.srcLine)
+  of "srcPoint": number(k.srcPoint)
+  of "srcIndex": $k.srcIndex
+  of "rcvLine": number(k.rcvLine)
+  of "rcvPoint": number(k.rcvPoint)
+  of "rcvIndex": $k.rcvIndex
+  of "srcX": number(k.srcX)
+  of "srcY": number(k.srcY)
+  of "srcZ": number(k.srcZ)
+  of "rcvX": number(k.rcvX)
+  of "rcvY": number(k.rcvY)
+  of "rcvZ": number(k.rcvZ)
+  of "offset": number(k.offset)
+  of "cmpX": number(k.cmpX)
+  of "cmpY": number(k.cmpY)
+  of "component": $k.component
+  else: ""
+
+func traceStandard(traces: openArray[TraceDetail]): SeismicKind =
+  ## The standard of the traces' header blocks (the first listed).
+  result = skSegy
+  for d in traces:
+    if d.rows.len > 0:
+      case d.rows[0].kind
+      of hbSegdTrace, hbSegdExt1, hbSegdExt1Rev3: return skSegd
+      of hbSeg2Trace: return skSeg2
+      else: return skSegy
+
+func traceTable*(traces: openArray[TraceDetail]): FieldTable =
+  ## The Trace tab's Header table: a value column per trace whose header
+  ## fields were read, the fields that differ between them marked; first,
+  ## when a geometry join gave some of their keys, a row per key it gave
+  ## (in the groups it gave to any of them, `JoinedKeys`), each value from
+  ## the keys, marked `joined` where the join gave it to that trace.
+  let withFile = traces.manyFiles
+  var columns: seq[seq[FieldRow]]
+  var labels: seq[string]
+  var shown: seq[int] # the traces with columns
+  for k, d in traces:
+    if d.rows.len > 0:
+      columns.add d.rows
+      labels.add traceLabel(d, withFile)
+      shown.add k
+  result = fieldTable(columns, labels, traceStandard(traces))
+  var groups: set[JoinGroup]
+  for k in shown: groups.incl traces[k].joined
+  if groups == {}: return
+  var rows = @[TableRow(title: JoinedTitle)]
+  for (group, name, words) in JoinedKeys:
+    if group in groups:
+      var row = TableRow(description: words, name: "keys." & name,
+        values: newSeq[string](shown.len), joined: newSeq[bool](shown.len))
+      for c, k in shown:
+        row.values[c] = keyText(traces[k].keys, name)
+        row.joined[c] = group in traces[k].joined
+      for v in row.values:
+        if v != row.values[0]: row.differs = true
+      rows.add row
+  rows.add result.rows
+  result.rows = move rows
 
 func listed(numbers: openArray[int]): string =
   ## "13", "13 and 14", "13, 14 and 20".

@@ -19,6 +19,12 @@
 ## selection cleared (Esc in the plot): the trace under the pointer again;
 ## "Follow the pointer" off: empty, with the pointer over a trace.
 ##
+## A SEG-D record joined with survey files: two traces selected, one whose
+## receiver the survey has and one whose receiver it lacks; once joined, the
+## Header table starts with the keys the join gave, the first trace's
+## receiver X drawn in the accent colour (pixels of the frame), the second's
+## not.
+##
 ## A drive that stops answering, through the file-system seam
 ## (`tests/utils/faultyfs`): a trace header the Trace tab reads hangs; the
 ## window keeps drawing frames and says, above its tabs, that its reader does
@@ -31,7 +37,10 @@
 ## remembered"; with the columns set up without `syncColumns` (every column
 ## shown), "stopped at binary" (the value pushed out of view by the Name and
 ## Offset columns); with `ckInspect` never sent, "the record's general
-## headers never came". With the line of what does not answer not drawn
+## headers never came". With the joined values drawn in the text colour
+## (the accent's push taken out of `drawFieldTable`), "the joined receiver X
+## is not in the accent colour: 0 pixels". With the line of what does not
+## answer not drawn
 ## (`headersWait` not asked in `drawHeaders`), "stopped at \"a header read
 ## hangs\"".
 ##
@@ -43,6 +52,7 @@
 
 import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
+import viewSEG/view/theme
 import viewSEG/ui/imgui/app
 import utils/[faultyfs, fixtures]
 
@@ -368,6 +378,54 @@ proc tabShot(name, mark, file: string): (string, Step) =
     f.click(wait, mark)
     result = wait > 20 and not f.core.inspection.waiting
     if result: f.shoot(file)))
+
+proc inked(f: FrameInfo; mark: string; ink: Rgba): int =
+  ## The pixels of `mark` near `ink` (a glyph's stems, antialiased: within
+  ## 48 levels; the warning and text colours are over 100 away).
+  let r = f.markOf(mark)
+  let pixels = f.readFrame()
+  for y in max(0, int(r.pos.y)) ..< min(f.height, int(r.pos.y + r.size.y)):
+    for x in max(0, int(r.pos.x)) ..< min(f.width, int(r.pos.x + r.size.x)):
+      let p = pixels[y * f.width + x]
+      if abs(p.r.int - ink.r.int) + abs(p.g.int - ink.g.int) + abs(p.b.int - ink.b.int) <= 48:
+        inc result
+
+block theJoinedValues:
+  withFixtures fx:
+    let survey = fx.surveySps()
+    var files: seq[JoinFile]
+    for p in [survey.s, survey.r, survey.x]: files.add JoinFile(path: p, kind: jkSps)
+    runSteps(fx.stationsSegd(), @[
+      ("shown", Step(proc (f: FrameInfo; wait: int): bool = f.laidOut and wait > 3))] &
+      enlarge() & @[
+      ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.tab trace")
+        wait > 8 and f.core.settings.headers.tab == htTrace)),
+      ("two traces", Step(proc (f: FrameInfo; wait: int): bool =
+        let base = f.core.sessions[0].base
+        if wait == 1:
+          f.apply Command(kind: ckSelect, traces: @[base + 1, base + SegdChannels + 1],
+            mode: smReplace)
+        wait > 4 and f.answered([base + 1, base + SegdChannels + 1]) and
+          f.shown("headers.trace ext1.receiverLineNumber 1"))),
+      ("joined", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1:
+          f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: files,
+            joinUnits: JoinUnits(survey: suMetres))
+        result = wait > 4 and f.core.joinReport.serial > 0 and not f.core.inspection.waiting and
+          f.shown("headers.trace keys.rcvX 1")
+        if result:
+          doAssert f.core.joinReport.outcome == joJoined, $f.core.joinReport.words
+          doAssert f.shown("headers.trace joined keys.rcvX 0"), "the joined receiver X is not marked"
+          doAssert not f.shown("headers.trace joined keys.rcvX 1"), "the other trace's is"
+          f.shoot("headers-trace-joined-segd.png")
+          let accent = f.theme.roles[rlAccent]
+          let lit = f.inked("headers.trace joined keys.rcvX 0", accent)
+          doAssert lit > 0, "the joined receiver X is not in the accent colour: " & $lit &
+            " pixels"
+          doAssert f.inked("headers.trace keys.rcvX 1", accent) == 0,
+            "the receiver X the survey lacks is in the accent colour"))],
+      fx.dir / "cache")
 
 if shots.len > 0 and dirExists(examples):
   withFixtures fx:

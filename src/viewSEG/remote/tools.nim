@@ -397,7 +397,7 @@ proc headersJson(state: AppState; limit: int): JsonNode =
     let d = ins.answer.traces[i]
     answered.add %*{"trace": d.id, "file": d.file, "index": d.trace, "fields": d.rows.len,
       "samples": d.samples.len, "samplesLeftOut": d.cut, "asDisplayed": d.displayed,
-      "problem": d.problem}
+      "joined": toJson(d.joined), "problem": d.problem}
   result["trace"] = %*{"chosenBy": $ins.chosen.by, "traces": clipped(ins.chosen.traces, limit),
     "total": ins.chosen.total, "reading": ins.waiting, "read": answered}
   result["notAnswering"] = %state.headersWait.words # "" while its reader answers

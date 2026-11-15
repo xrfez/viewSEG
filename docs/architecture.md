@@ -487,7 +487,14 @@ shows each trace a request behind rather than nothing. Every field becomes a `Fi
 (block, name, description in plain words from `fielddocs`, value as text and as a number,
 the bytes in its block from 1, the file offset); `fieldTable` sets header listings side by
 side (traces, a record's channel sets) and marks the fields whose values differ. Header
-text is Latin-1 in the files and made UTF-8 for the toolkit.
+text is Latin-1 in the files and made UTF-8 for the toolkit. A joined file's trace keys
+are not its headers' bytes: the reader gives each trace's keys and the groups a join gave
+(parseSEG's `joinedGroups`), and `traceTable` puts a row per key the join gave (its
+stations, coordinates, offset, midpoint) above the header's fields, marked per trace, so
+the window draws them in the join's accent colour; the reader is asked again when a join
+ends (`joinReport.serial`). The Summary's coordinates are the session's (`Session.crs`,
+read with the open, as the join window shows them) and, once joined, the units confirmed
+for the join (`AppState.joins`).
 
 **Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
 severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`

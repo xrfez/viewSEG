@@ -28,8 +28,7 @@
 
 import std/[math, strutils, tables]
 import imguin/cimgui
-from parseSEG import SeismicKind, skSegy, skSegd, skSeg2, skUnknown, HeaderBlock, hbSegdTrace,
-  hbSegdExt1, hbSegdExt1Rev3, hbSeg2Trace
+from parseSEG import SeismicKind, skSegy, skSegd, skSeg2, skUnknown
 import ../../core/state
 import ../../view/[headerviews, theme]
 import chrome, focus, fonts, style
@@ -69,6 +68,9 @@ type
   HeadersOutput* = object
     commands*: seq[Command]
 
+const JoinedTip = "From the survey files (joined, not in the header)"
+  ## what a value a geometry join gave says when pointed at, as in the plot
+
 proc tabItem(ui: var HeadersUi; tab: HeadersTab; wanted: HeadersTab): bool =
   ## A tab of the window's tab bar; selected once when it is the settings'.
   let flags = if ui.selecting and tab == wanted: ImGui_TabItemFlags_SetSelected.cint else: 0.cint
@@ -103,7 +105,7 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
     igTextDisabled("No file is shown.")
     return
   let ses = st.sessions[s]
-  let lines = summaryLines(ses, gather)
+  let lines = summaryLines(ses, gather, st.joins)
   if ses.path != ui.pickedFile:
     ui.picked = -1
     ui.pickedFile = ses.path
@@ -245,7 +247,8 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
         if igTableSetColumnIndex(cint(ord(hcDescription))):
           igTextUnformatted(row.description.cstring, nil)
           if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
-            igSetTooltip("%s", (row.description & "\n" & row.name & ", bytes " & row.bytes &
+            igSetTooltip("%s", (row.description & "\n" & row.name & (if row.joined.len > 0:
+              ": " & JoinedTip else: ", bytes " & row.bytes) &
               (if row.differs: "\nThe values differ." else: "")).cstring)
         fonts.withFont(frMono, 0):
           igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
@@ -263,8 +266,15 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
           for c, v in row.values:
             if igTableSetColumnIndex(cint(ord(HeaderColumn.high) + 1 + c)):
               igPushID_Int(cint(c))
+              let joined = c < row.joined.len and row.joined[c] # (the join's accent colour)
+              if joined: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
               rightAlign(v)
               discard igSelectable_Bool((v & "##v").cstring, false, 0, ImVec2_c(x: 0, y: 0))
+              if joined:
+                igPopStyleColor(1)
+                if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
+                  igSetTooltip("%s", JoinedTip.cstring)
+                if i < 400: marks.mark(id & " joined " & row.name & " " & $c)
               valueMenu(table, c, v)
               if i < 400: marks.mark(id & " " & row.name & " " & $c)
               igPopID()
@@ -469,7 +479,8 @@ proc problems(traces: openArray[TraceDetail]; t: Theme; marks: var Marks) =
 
 proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks: var Marks;
     output: var HeadersOutput) =
-  ## Trace, Header: every header field of the traces, a value column each.
+  ## Trace, Header: every header field of the traces, a value column each;
+  ## first, the values a geometry join gave them, in the accent colour.
   template answer: untyped = st.inspection.answer
   var shown = 0
   for d in answer.traces:
@@ -480,17 +491,7 @@ proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; ma
   const id = "headers.trace"
   let key = $answer.gen
   if id notin ui.tables or ui.tables[id].key != key:
-    let withFile = answer.traces.manyFiles
-    var columns: seq[seq[FieldRow]]
-    var labels: seq[string]
-    var standard = skSegy
-    for d in answer.traces:
-      if d.rows.len > 0:
-        columns.add d.rows
-        labels.add traceLabel(d, withFile)
-        if d.rows[0].kind in {hbSegdTrace, hbSegdExt1, hbSegdExt1Rev3}: standard = skSegd
-        elif d.rows[0].kind == hbSeg2Trace: standard = skSeg2
-    ui.tables[id] = CachedTable(key: key, table: fieldTable(columns, labels, standard))
+    ui.tables[id] = CachedTable(key: key, table: traceTable(answer.traces))
   ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
 
 proc drawTraceData(ui: var HeadersUi; st: AppState; cursorMs: float64; pointerInPlot: bool;

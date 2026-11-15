@@ -9,10 +9,21 @@
 ## bytes, read by the Headers window's reader (`core/inspector`) off the UI
 ## thread when the tab is on screen (`ckInspect`).
 ##
+## The coordinates in the Summary are worded as the join window words them
+## (the units the headers say, the CRS text); a file joined with survey
+## files gives the units confirmed for the join and the join itself, and the
+## Trace tab's Header table starts with the keys the join gave, marked for
+## each trace it gave them to; the Headers reader is asked again once the
+## join has changed the keys.
+##
 ## Seen to fail: with the summary's record taken from the first gather
 ## whatever is shown (`s.records[0]`), `summaryOfASegyFile` found no FFID
 ## 12 for the second record; with the inspector keeping its holds,
 ## `inspectorReadsTheRecordShown` found "the inspector's hold did not end".
+## With the request not made again after a join (`joins` left out of the
+## comparison in `followInspect`), `theJoinedValues` found "not read again
+## after the join"; with every key of a joined group marked for every trace
+## (`row.joined[c] = true`), "@[true, true]".
 
 import std/[intsets, os, strutils]
 import parseSEG
@@ -127,6 +138,11 @@ block summaryOfTheDemoFiles:
       doAssert lines.valueOf("Name") == name
       doAssert lines.valueOf("Traces") == $s.len, name
       doAssert lines.valueOf("Samples decodable") == "yes", name
+      # the coordinates as the join window gives them
+      doAssert lines.valueOf("Units").startsWith($unitOf(s.crs.units)), name & ": " &
+        lines.valueOf("Units")
+      if s.crs.text.len > 0:
+        doAssert lines.valueOf("Coordinate reference").startsWith($s.crs.format & ": "), name
       case s.file.kind
       of skSegy:
         doAssert s.facts.extendedText.len > 0, name
@@ -139,6 +155,58 @@ block summaryOfTheDemoFiles:
         doAssert lines.valueOf("Byte order") == "little-endian", name
       of skUnknown: doAssert false, name
       st.shutdown()
+
+block theJoinedValues:
+  # Line 100's receivers are in the survey files, line 101's are not: the
+  # trace of each, side by side, before and after the join.
+  withFixtures fx:
+    var st = initAppState()
+    let s = st.shown(fx.stationsSegd())
+    let survey = fx.surveySps()
+    let (a, b) = (s.base + 1, s.base + SegdChannels + 1)
+    st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders})
+    st.apply Command(kind: ckSelect, traces: @[a, b], mode: smReplace)
+    doAssert st.settle(not st.inspection.waiting and st.inspection.answer.traces.len == 2)
+    doAssert traceTable(st.inspection.answer.traces).rows[0].title != JoinedTitle,
+      "joined values before a join"
+    let before = summaryLines(s, 0, st.joins)
+    doAssert before.valueOf("Units") == $unitOf(s.crs.units), before.valueOf("Units")
+    doAssert not before.hasHeading("Geometry join")
+    var files: seq[JoinFile]
+    for p in [survey.s, survey.r, survey.x]: files.add JoinFile(path: p, kind: jkSps)
+    st.apply Command(kind: ckJoin, joinFile: s.id, joinFiles: files,
+      joinUnits: JoinUnits(survey: suMetres, file: suFeet))
+    doAssert st.settle(st.joinReport.serial > 0 and st.joinUnderWay.job == NoJob)
+    doAssert st.joinReport.outcome == joJoined, $st.joinReport.words
+    doAssert st.settle(not st.inspection.waiting and st.inspection.answer.traces.len == 2 and
+      st.inspection.answer.traces[0].joined != {}), "not read again after the join"
+    let answer = st.inspection.answer.traces
+    doAssert jgReceiverXy in answer[0].joined and jgReceiverXy notin answer[1].joined,
+      $answer[0].joined & " " & $answer[1].joined
+    let table = traceTable(answer)
+    doAssert table.rows[0].title == JoinedTitle and table.columns.len == 2
+    proc row(name: string): TableRow =
+      for r in table.rows:
+        if r.name == name: return r
+      doAssert false, "no row " & name
+    let rcvX = row("keys.rcvX")
+    doAssert rcvX.joined == @[true, false], $rcvX.joined
+    doAssert rcvX.values[0] == exactText(answer[0].keys.rcvX) and rcvX.differs, $rcvX
+    doAssert row("keys.srcX").joined == @[true, true], "the source is joined for both"
+    # then the headers' own fields, as the file holds them, unmarked
+    let own = row("ext1.receiverLineNumber")
+    doAssert own.joined.len == 0 and own.values == @["100", "101"], $own
+    let after = summaryLines(s, 0, st.joins)
+    doAssert after.valueOf("Units") == "feet (confirmed for the geometry join; the headers say " &
+      $unitOf(s.crs.units) & ")", after.valueOf("Units")
+    doAssert after.hasHeading("Geometry join")
+    doAssert after.valueOf("Survey files") == survey.s.extractFilename & ", " &
+      survey.r.extractFilename & ", " & survey.x.extractFilename, after.valueOf("Survey files")
+    doAssert after.valueOf("Their units") == "metres"
+    doAssert after.valueOf("Matched") == $SegdChannels & " of " & $(2 * SegdChannels) &
+      " seismic traces", after.valueOf("Matched")
+    doAssert after.valueOf("What it did").len > 0
+    st.shutdown()
 
 func rowOf(rows: openArray[FieldRow]; blockName, field: string): FieldRow =
   for r in rows:
