@@ -31,8 +31,10 @@
 ##   document's size and modification time with those this run read or
 ##   wrote last; when they moved, it reads the other's and writes both
 ##   programs' edits (`merged`, from what this run had last), and posts the
-##   result (`mkMemoryMerged`) so the screen shows them too. The window
-##   between that look and the rename is a few milliseconds.
+##   result (`mkMemoryMerged`) so the screen shows them too. From that look
+##   to the stamp taken after the rename it holds the store's lock between
+##   programs (`StoreLockSuffix`), so that no other viewSEG writes the
+##   document in between, which would lose one of the two changes.
 ## - **Read** reads a whole file up to a size, and posts it (or why it could
 ##   not be read) for the UI thread, with its NIF tree (`parseNif`) or why
 ##   it is not NIF, so the UI thread only takes in a tree.
@@ -145,13 +147,16 @@ proc freshName(path: string): string =
     result = dir / name & "-" & $n & ext
     inc n
 
+const NoDoc* = (size: -1'i64, modified: times.Time(), file: 0'i64)
+  ## the stamp of a document that is not there
+
 proc stampOf(path: string): DocStamp =
   ## The size and modification time of `path`; size -1 when there is none.
   try:
     let info = fs.getFileInfo(path)
-    (info.size, info.lastWriteTime)
+    (info.size, info.lastWriteTime, int64(info.id.file))
   except OSError:
-    (-1'i64, times.Time())
+    NoDoc
 
 proc mergeOthers(w: var Writer; t: var Task; removing: bool): bool =
   ## For a document of the store (`t.merging`): when another program
@@ -172,6 +177,20 @@ proc mergeOthers(w: var Writer; t: var Task; removing: bool): bool =
         raise newException(NifError, "it has parts this version cannot read")
       template a: untyped = theirs.identity
       template b: untyped = t.memory.identity
+      if t.path.extractFilename.isPendingName and (a.size != b.size or
+          theirs.path != t.memory.path or theirs.modified != t.memory.modified):
+        # an earlier run's edits of the file at that path as it was then:
+        # they would not be applied (`takePending`), so they are said and
+        # written over
+        var lists: seq[string]
+        for edit in [teKilled, teReversed]:
+          if theirs.edits.lists[edit].len > 0:
+            lists.add $edit & " " & runsText(theirs.edits.lists[edit])
+        if theirs.edits.allReversed: lists.add "all reversed"
+        w.warn("The edits of " & t.memory.name & " kept by its path in an earlier run are " &
+          "not applied: it changed since (its size or time is not the same). They were: " &
+          lists.join("; ") & ".")
+        return
       if a.size != b.size or a.quick != b.quick or (a.fullKnown and b.fullKnown and a.full != b.full):
         raise newException(NifError, "it is about another file (its bytes differ)")
     except NifError, IOError, OSError:
@@ -192,9 +211,31 @@ proc mergeOthers(w: var Writer; t: var Task; removing: bool): bool =
   w.d.poster.post Msg(job: NoJob, kind: mkMemoryMerged, mergedDoc: t.path.extractFilename,
     mergedEdits: both, mergedSent: sent, mergedRemoved: removing)
 
+const
+  StoreLockSuffix* = ".lock"
+    ## beside the store's folder (`files.lock`): the file whose lock a
+    ## program holds from the look at a document's stamp to the stamp after
+    ## its rename (`lockStore`); outside the folder, which lists documents only
+  StoreLockWait* = initDuration(seconds = 2)
+    ## how long a write waits for another program's (it takes milliseconds):
+    ## longer, and it goes on without (that program's drive does not answer)
+
+proc lockStore(path: string): FileLock =
+  ## The lock between programs of the store `path`'s document is in, so
+  ## that no other viewSEG writes it between this one's look at its stamp
+  ## and its rename, or between the rename and the stamp taken after it:
+  ## either would lose that program's change, or this one's.
+  try:
+    fs.createDir(path.parentDir)
+  except IOError, OSError:
+    discard # said by the write
+  fs.lockFile(path.parentDir & StoreLockSuffix, StoreLockWait)
+
 proc replaceFile(w: var Writer; t: Task) =
   var t = t
   if t.fresh: t.path = freshName(t.path)
+  var lock = if t.merging: lockStore(t.path) else: FileLock()
+  defer: fs.unlock(lock)
   if t.merging and not w.mergeOthers(t, removing = false): return
   let tmp = t.path & "." & $getCurrentProcessId() & ".tmp"
   try:
@@ -209,7 +250,8 @@ proc replaceFile(w: var Writer; t: Task) =
     finally:
       f.close()
     fs.moveFile(tmp, t.path)
-    if t.merging: w.written[t.path] = (stampOf(t.path), t.memory.edits)
+    if t.render: # what this thread wrote last, merged or not: never another program's
+      w.written[t.path] = (stampOf(t.path), t.memory.edits)
     if t.done.len > 0: w.say(sevInfo, if t.fresh: t.done & t.path & "." else: t.done)
   except IOError, OSError:
     let why = getCurrentExceptionMsg()
@@ -269,6 +311,8 @@ proc pruneDir(w: var Writer; t: Task) =
       w.warn("Could not remove the old file " & names[i] & ": " & getCurrentExceptionMsg())
 
 proc removeFor(w: var Writer; t: Task) =
+  var lock = if t.merging: lockStore(t.path) else: FileLock()
+  defer: fs.unlock(lock)
   if t.merging:
     var t = t
     if not w.mergeOthers(t, removing = true): return
@@ -277,7 +321,8 @@ proc removeFor(w: var Writer; t: Task) =
       w.replaceFile(t)
       w.written[t.path] = (stampOf(t.path), t.memory.edits)
       return
-    w.written[t.path] = ((-1'i64, times.Time()), EditLists())
+    w.written[t.path] = (NoDoc, EditLists())
+  else: w.written.del t.path # its next write is as the UI thread knows it
   try:
     if fs.fileExists(t.path): fs.removeFile(t.path)
     if t.done.len > 0: w.say(sevInfo, t.done)

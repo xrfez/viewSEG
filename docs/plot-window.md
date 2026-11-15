@@ -884,15 +884,19 @@ the data file's bytes and modification time are never touched. A file whose driv
 come when its identity can be read, and edits you make before that are kept by the file's
 path, size and modification time (`pending-<hash of the path>.nif`) until it is: quit
 before, and the next run that opens the file unchanged shows them and remembers them with
-its identity (a file changed since does not take them: Messages lists them). Two viewSEG at once with
+its identity (a file changed since does not take them: Messages lists them); a second run
+whose drive is silent too keeps the first run's beside its own. Two viewSEG at once with
 the same file open (two windows) lose none of each other's edits: before a write, the
 entry's time is compared with the one read or written last, and another's change is
 merged in (what either added or took away is kept), Messages says so, and the plot shows
-the other's edits too. One file opened under two
+the other's edits too (each window shows the other's once it writes itself); the two
+never write the entry at the same moment. One file opened under two
 paths in a run (a copy, a hard or a symbolic link) has one set of edits, those made under
 each path kept, and one entry: at once when the two paths' size, ends and modification
-time agree, otherwise once both are hashed whole; Messages says so, and a file taken so at
-once whose hash then tells it apart loses only what it took. When a hash of every byte says
+time agree, otherwise once both are hashed whole; Messages says so. A file taken so at
+once whose hash then tells it apart (the same size, first and last 64 KiB and
+modification time, another content: rare) has its edits taken away, also those made
+under its own path meanwhile, which stay with the other. When a hash of every byte says
 that a file taken at once for one remembered was another, the remembered file's entry is
 put back as it was. An entry with parts that cannot be read (edited by hand) says so and
 brings back the rest, and is not written again until its edits change (so as not to drop

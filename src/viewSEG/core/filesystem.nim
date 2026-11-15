@@ -211,3 +211,61 @@ proc setLastModificationTime*(_: FileSystem; path: string; t: Time) {.raises: [O
   ## `os.setLastModificationTime`.
   enter(foWrite, path)
   os.setLastModificationTime(path, t)
+
+# ----------------------------------------------------------------- lock --
+
+when defined(windows):
+  from std/winlean import nil
+else:
+  from std/posix import nil
+  proc c_flock(fd: cint; op: cint): cint {.importc: "flock", header: "<sys/file.h>".}
+  const LockEx = 2.cint # LOCK_EX
+  const LockNb = 4.cint # LOCK_NB
+
+type
+  FileLock* = object
+    ## A lock between programs taken on a file (`lockFile`); none when not
+    ## `locked`.
+    when defined(windows):
+      handle: winlean.Handle
+    else:
+      fd: cint
+    locked*: bool
+
+proc lockFile*(_: FileSystem; path: string; wait: Duration): FileLock {.raises: [].} =
+  ## Takes the lock of `path` (made when there is none) that other programs
+  ## (and other `FileLock`s of this one) taking it wait for, waiting up to
+  ## `wait` for one that holds it; not `locked` when it could not be taken
+  ## by then, or the drive fails. The system lets it go when the program
+  ## ends, however it ends. Let it go with `unlock`.
+  try:
+    enter(foOpen, path)
+  except OSError:
+    return
+  let deadline = getMonoTime() + wait
+  when defined(windows):
+    let name = newWideCString(path)
+    while true:
+      # opened with no sharing: a second open fails while this one is open
+      let h = winlean.createFileW(name, winlean.GENERIC_READ or winlean.GENERIC_WRITE, 0, nil,
+        winlean.OPEN_ALWAYS, winlean.FILE_ATTRIBUTE_NORMAL, 0)
+      if h != winlean.INVALID_HANDLE_VALUE: return FileLock(handle: h, locked: true)
+      if getMonoTime() >= deadline: return
+      sleep 5
+  else:
+    let fd = posix.open(path.cstring, posix.O_RDWR or posix.O_CREAT or posix.O_CLOEXEC, 0o600)
+    if fd < 0: return
+    while true:
+      # per open file: two locks of one program on the same file exclude each other too
+      if c_flock(fd, LockEx or LockNb) == 0: return FileLock(fd: fd, locked: true)
+      if getMonoTime() >= deadline:
+        discard posix.close(fd)
+        return
+      sleep 5
+
+proc unlock*(_: FileSystem; l: var FileLock) {.raises: [].} =
+  ## Lets the lock `lockFile` took go.
+  if l.locked:
+    when defined(windows): discard winlean.closeHandle(l.handle)
+    else: discard posix.close(l.fd)
+    l.locked = false

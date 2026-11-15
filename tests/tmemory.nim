@@ -41,6 +41,14 @@
 ##   edits, and each shows the other's;
 ## - one file opened under three paths (itself, a symbolic link, a copy)
 ##   has one set of edits, the kills made under each kept, in one document;
+## - a kill taken back in the second before a silent drive answers stays
+##   taken back (this run's pending document is older than what it shows);
+##   an earlier run's pending document, its drive silent in this run too,
+##   is kept beside this run's edits, never written over;
+## - what is remembered forgotten (File memory), then the same trace killed
+##   again: the new kill is kept and shown;
+## - another program in the middle of its write of the document (it holds
+##   the store's lock): this one's write waits for it, then merges;
 ## - the data file's bytes and modification time are as they were through
 ##   all of it, what is remembered of it forgotten (File memory) included.
 ##
@@ -72,11 +80,18 @@
 ## with the edits shown exported, "the export holds the agent's kill"; with
 ## the edits kept by path (`keyOf` the path itself), "the link does not share
 ## the edits"; with `link` merging what a path only brought back from the
-## document, "a kill taken back came back with the link"; with the disk thread writing over another program's change
-## (no `mergeOthers`), "a write dropped the other's edit".
+## document, "a kill taken back came back with the link"; with the disk
+## thread writing over another program's change (no `mergeOthers`), "a write
+## dropped the other's edit"; with `takePending` taking in a pending
+## document this run wrote, "the kill taken back came back from the pending
+## document"; with the pending document written over (not merged), "the
+## earlier run's pending edit is not shown beside this run's"; with a plain
+## removal leaving the disk thread's stamp of the document (`written`), "the
+## kill made after the forgetting is gone"; with no lock between programs
+## (`lockStore`), "this program wrote while the other held the lock".
 
 import std/[atomics, os, strutils, times]
-import viewSEG/core/[jobs, state]
+import viewSEG/core/[diskio, filesystem, jobs, state]
 import utils/[faultyfs, fixtures, steps, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
@@ -125,6 +140,16 @@ proc quiet(st: AppState): bool =
   true
 
 var backgroundRan: Atomic[bool]
+var locking, unlocking: Gate
+
+proc holdStoreLock(path: string) {.thread.} =
+  ## Another program in the middle of a write: it holds the store's lock
+  ## until `unlocking` opens.
+  var l = fs.lockFile(path, initDuration(seconds = 1))
+  doAssert l.locked
+  locking.open()
+  doAssert waitUntil(unlocking.isOpen)
+  fs.unlock(l)
 
 install()
 installSteps()
@@ -626,5 +651,107 @@ withFixtures fx:
     one.shutdown()
     two.shutdown()
     doAssert not fileExists(doc)
+  block pendingOfThisRunAndAnEarlier:
+    # a store of its own: the pending documents of the file's path
+    let config = fx.dir / "config-pending"
+    proc hungShow(st: var AppState; path: string) =
+      holdStep("reading its first and last bytes")
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert waitUntil((discard st.drainInbox(); inStep("reading its first and last bytes").len == 1))
+      doAssert st.settle(st.panel(MainPanel).laidOut)
+      fault(path, fkHang, {foOpen, foRead})
+      releaseStep("reading its first and last bytes")
+      doAssert waitUntil(hung() == 1)
+    proc kill(st: var AppState; trace: int; on = true) =
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + trace],
+        on: on)
+    # this run's own pending document is older than what it shows: a kill
+    # taken back in the second before the drive answers stays taken back
+    var st = start(config)
+    st.hungShow(b)
+    st.kill(1)
+    st.flushFiles() # the pending document has it
+    st.kill(1, on = false) # not written yet when the drive answers
+    release(b)
+    doAssert waitUntil((discard st.drainInbox(); st.remembering(b).known))
+    doAssert not st.editsOf(0).has(teKilled, 1), "the kill taken back came back from the " &
+      "pending document"
+    st.shutdown()
+    doAssert docs(config).len == 0, $docs(config)
+    # an earlier run's pending document, the drive not answering in this run
+    # either: kept beside this run's edits, not written over
+    st = start(config)
+    st.hungShow(b)
+    st.kill(3)
+    st.shutdown(wait = initDuration(milliseconds = 200))
+    release(b)
+    doAssert waitUntil(hung() == 0)
+    st = start(config)
+    st.hungShow(b)
+    st.kill(5)
+    st.flushFiles()
+    doAssert st.settle(st.editsOf(0).has(teKilled, 3)), "the earlier run's pending edit is " &
+      "not shown beside this run's"
+    release(b)
+    doAssert st.settle(st.remembering(b).known and st.editsOf(0).has(teKilled, 5))
+    doAssert st.editsOf(0).has(teKilled, 3), "the earlier run's pending document was written over"
+    st.flushFiles()
+    doAssert not fileExists(config / StoreFolder / pendingName(b))
+    doAssert "(killed \"4 6\")" in readFile(config / StoreFolder / st.remembering(b).doc)
+    st.apply Command(kind: ckClearEdits, panel: MainPanel)
+    st.shutdown()
+  block forgottenThenKilledAgain:
+    # what is remembered forgotten (File memory), then the same trace killed
+    # again: the new kill is kept and shown
+    let config = fx.dir / "config-forget"
+    var st = start(config)
+    st.showFile(b)
+    doAssert st.settle(st.remembering(b).known)
+    st.edit(teKilled, 3)
+    st.flushFiles()
+    st.apply Command(kind: ckForgetFiles, forget: @[st.remembering(b).doc])
+    st.flushFiles()
+    st.edit(teKilled, 3)
+    st.flushFiles()
+    doAssert st.settle(true)
+    doAssert st.editsOf(0).has(teKilled, 3), "the kill made after the forgetting is gone"
+    doAssert docs(config).len == 1 and "(killed \"4\")" in readFile(docs(config)[0]),
+      "the kill made after the forgetting is not remembered"
+    st.apply Command(kind: ckClearEdits, panel: MainPanel)
+    st.shutdown()
+  block anotherProgramMidWrite:
+    # another viewSEG in the middle of its write of the document (it holds
+    # the store's lock: between its look at the document and its rename):
+    # this one's write waits for it, then merges, and loses neither kill
+    let config = fx.dir / "config-lock"
+    var st = start(config)
+    st.showFile(b)
+    doAssert st.settle(st.remembering(b).known)
+    st.edit(teKilled, 2)
+    st.flushFiles()
+    let doc = config / StoreFolder / st.remembering(b).doc
+    locking.close()
+    unlocking.close()
+    var other: Thread[string]
+    createThread(other, holdStoreLock, config / StoreFolder & StoreLockSuffix)
+    doAssert waitUntil(locking.isOpen), "the lock was not taken"
+    st.edit(teKilled, 4)
+    st.persist() # the change seen ...
+    sleep 1100
+    st.persist() # ... and handed to the disk thread a second later
+    sleep 300
+    # the other program's rename, with a kill of its own
+    let text = readFile(doc).replace("(killed \"3\")", "(killed \"3 8\")")
+    doAssert "3 8" in text, "this program wrote while the other held the lock: " & readFile(doc)
+    writeFile(doc & ".other.tmp", text)
+    moveFile(doc & ".other.tmp", doc)
+    unlocking.open()
+    joinThread(other)
+    st.flushFiles()
+    doAssert st.settle(st.editsOf(0).has(teKilled, 7)), "the other's kill is not shown"
+    doAssert "(killed \"3 5 8\")" in readFile(doc), "a write in the other's lost a kill: " &
+      readFile(doc)
+    st.apply Command(kind: ckClearEdits, panel: MainPanel)
+    st.shutdown()
   doAssert (readFile(b), getLastModificationTime(b)) == kept, "the data file changed"
 echo "tmemory: ok"

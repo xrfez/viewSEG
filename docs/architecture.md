@@ -709,13 +709,21 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   (`DiskIo.remove`). Edits made before the identity is known are kept by the path
   instead (`pendingName`: the path, size and modification time; `writePending`), taken
   in when that file is next identified unchanged (`takePending`) and the pending
-  document removed after its own is written. **Two programs, one document**: a write of
+  document removed after its own is written; a pending document this run wrote is
+  older than what it shows, and is not taken in. A pending document is written as a
+  document is below, so that an earlier run's, its drive silent then too, is merged in
+  and shown, never written over. **Two programs, one document**: a write of
   a document (and the removal of one that keeps nothing) carries what the document held
-  and its stamp (size, modification time) as this run read or wrote it
+  and its stamp (size, modification time, file number) as this run read or wrote it
   (`FileRecord.stamp`); the disk thread, finding the stamp moved, reads the other
   program's document and writes `merged(base, ours, theirs)`, then posts it
   (`mkMemoryMerged`): the UI takes the other's edits in as kept (`FileEdits.adopt`, no
-  step) and writes again if it changed meanwhile. A document of another file, or one it
+  step) and writes again if it changed meanwhile. From its look at the stamp to the
+  stamp it takes after the rename it holds a lock between programs on `files.lock`
+  beside the store (`fs.lockFile`, at most `StoreLockWait`): another program's rename
+  in between would lose one of the two changes. The thread keeps the stamp of every
+  document it wrote or removed, merged or not (`Writer.written`), so that its own
+  write is never taken for another program's. A document of another file, or one it
   cannot read, is not written over (said). **One file under two paths** (a copy, a
   hard or symbolic link, opened in one run): `edits` is keyed by `keyOf(path)`, the path
   itself or, once two paths are known to hold the same bytes (`linkSame`: the same size,

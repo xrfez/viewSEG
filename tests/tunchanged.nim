@@ -19,7 +19,12 @@
 ##
 ## Seen to fail: with the open job marking the seismic file used instead of
 ## its index cache (`setLastModificationTime(path, ...)` in `openWork`), the
-## second round found the modification times of the files moved.
+## second round found the modification times of the files moved. Under
+## load it failed now and then ("joined 19", "never closed") while every
+## file was closed: a wait for "no job active" met between the open job's
+## end and the frame that takes its file, so the next file was opened
+## beside it and worked as the first (`settle` looks twice now; 8 of 48
+## runs, six at once, failed before, none after).
 
 import std/[algorithm, os, strutils, times]
 import parseSEG
@@ -37,7 +42,11 @@ proc listing(dir: string): seq[(string, int64)] =
   result.sort()
 
 template settle(st: var AppState; cond: untyped): bool =
-  waitUntil((discard st.drainInbox(); cond))
+  ## `cond` holds after a frame's drain, and still after the next: a job's
+  ## work posts what it made, then ends, so "no job active" can hold before
+  ## the frame takes what the open posted (the file not open yet); the
+  ## second drain takes it.
+  waitUntil((discard st.drainInbox(); cond) and (discard st.drainInbox(); cond))
 
 proc main(st: AppState): lent Panel = st.panel(MainPanel)
 

@@ -103,8 +103,10 @@ type
       ## the document file's size and modification time when it was read
       ## (`readMemoryFile`): another program's write since moves it
 
-  DocStamp* = tuple[size: int64; modified: Time]
-    ## A document file's size and modification time; size -1 for no file.
+  DocStamp* = tuple[size: int64; modified: Time; file: int64]
+    ## A document file's size, modification time and file number (a write
+    ## is a new file renamed over it: a new number, also within the time
+    ## stamp's own step); size -1 for no file.
 
 func isNowhere*(s: Store): bool {.inline.} = s.home.len == 0
   ## Whether nothing is remembered (tests, a run without settings).
@@ -429,7 +431,7 @@ proc readMemoryFile*(path: string; problems: var seq[string]): FileRecord =
   result = readMemory(parseNif(text, path.extractFilename, MaxMemoryBytes), path.extractFilename,
     problems)
   result.bytes = text.len
-  result.stamp = (info.size, info.lastWriteTime)
+  result.stamp = (info.size, info.lastWriteTime, int64(info.id.file))
 
 # ----------------------------------------------------------------- CSV --
 

@@ -921,10 +921,13 @@ proc writePending(state: var AppState; i: int) =
   r.pendingRev = e.keptRevision
   if e.kept.isEmpty: state.dropPending(i)
   else:
+    # Merged by the disk thread with a pending document an earlier run left
+    # (its drive did not answer then either), never written over: what that
+    # one kept comes back as an `mkMemoryMerged` (`takeMerged`).
     state.diskIo.replace(state.store.docPath(pendingName(r.path)), FileRecord(
       identity: FileIdentity(size: r.size), name: r.path.extractFilename, path: r.path,
       opened: r.opened, modified: r.openModified, edits: e.kept),
-      "the edits of " & r.path.extractFilename & " kept by its path")
+      "the edits of " & r.path.extractFilename & " kept by its path", EditLists(), NoDoc)
     r.pending = true
 
 proc writeMemoryDoc(state: var AppState; i: int) =
@@ -941,7 +944,7 @@ proc writeMemoryDoc(state: var AppState; i: int) =
   # viewSEG's change since is merged in by the disk thread.
   let (base, expect) = block:
     let was = state.knownDocs.getOrDefault(r.doc)
-    (was.edits, if was.stamp.modified == Time(): (-1'i64, Time()) else: was.stamp)
+    (was.edits, if was.stamp.modified == Time(): NoDoc else: was.stamp)
   if rec.edits.isEmpty:
     if r.doc.len > 0:
       state.diskIo.removeMerging(state.store.docPath(r.doc), move rec, "what is remembered about " &
@@ -2585,9 +2588,17 @@ proc takePending(state: var AppState; i: int; p: FileRecord; fits: bool) =
   ## The edits kept by `remembered[i]`'s path in a run that could not read
   ## its identity: taken, as kept (`fits`: the file is as it was then), and
   ## written in its own document, then the pending one removed; or, the
-  ## file changed since, said in full and removed.
+  ## file changed since, said in full and removed. One this run wrote (or
+  ## took in) is older than what it shows: the edits as they are now go to
+  ## the file's document, and it is removed after.
   template r: untyped = state.remembered[i]
   let name = r.path.extractFilename
+  if r.pending:
+    # A kill taken back since it was written (a second before the drive
+    # answered) would come back from it; what an earlier run left in it was
+    # merged in when this run first wrote it (`takeMerged`).
+    r.savedRev = -1
+    return
   r.pending = true # removed once its edits are written (`writeMemoryDoc`), or now
   if fits:
     state.edits.mgetOrPut(state.keyOf(r.path), FileEdits()).remembered(p.edits)
@@ -2966,6 +2977,18 @@ proc takeMerged(state: var AppState; m: sink Msg) =
       let name = r.path.extractFilename
       state.log.add(sevInfo, name, "Another viewSEG changed the edits remembered for " & name &
         " meanwhile; both are kept: " & keptWords(e.kept) & " now.")
+      state.editsChanged(r.path)
+    elif doc == pendingName(r.path) and key notin done:
+      # the pending document an earlier run left, its drive not answering
+      # then either: what it kept is this file's too
+      done.add key
+      template e: untyped = state.edits.mgetOrPut(key, FileEdits())
+      e.adopt(merged(m.mergedSent, e.kept, m.mergedEdits))
+      if r.known: r.savedRev = -1 # its own document takes them
+      let name = r.path.extractFilename
+      state.log.add(sevInfo, name, name & ": the edits kept by its path in an earlier run, " &
+        "when its drive did not give its first and last bytes either, are back beside these: " &
+        keptWords(e.kept) & " now.")
       state.editsChanged(r.path)
 
 proc takeLooked(state: var AppState; m: sink Msg) =
