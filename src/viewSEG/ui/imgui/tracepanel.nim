@@ -199,6 +199,7 @@ type
     hex: array[12, char] ## what the picker's `#rrggbb` box holds
     presetBox: array[MaxPresetName + 1, char] ## the Display presets section's name box
     presetPicked: string ## the preset clicked last there: Rename and Delete act on it
+    moreSize: ImVec2_c ## the gear popover's size, as drawn last
 
   PanelOutput* = object
     ## What the plot window asks for.
@@ -1118,7 +1119,17 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
       igOpenPopup_Str(moreId, 0)
     tip("Display presets, colours, density's colour map, killed traces, display header, " &
       "scale units and screen calibration")
+  if igIsPopupOpen_Str(moreId, 0):
+    # below the gear, its right edge at the gear's, moved as far as needed to
+    # stay inside the main window: the gear is near the middle of it, and
+    # past its edge the popover would be a window of the desktop's own
+    let vp = igGetMainViewport()
+    let (gear, size) = (igGetItemRectMax(), tp.moreSize)
+    let x = max(vp.WorkPos.x, min(gear.x - size.x, vp.WorkPos.x + vp.WorkSize.x - size.x))
+    let y = max(vp.WorkPos.y, min(gear.y, vp.WorkPos.y + vp.WorkSize.y - size.y))
+    igSetNextWindowPos(ImVec2_c(x: x, y: y), ImGui_Cond_Always.cint, ImVec2_c(x: 0, y: 0))
   if igBeginPopup(moreId, 0):
+    tp.moreSize = igGetWindowSize()
     marks.markWindow("plot.more popover")
     # in columns, so the popover fits a laptop's screen: how the traces
     # look; the wiggles, killed traces and the header; the scales

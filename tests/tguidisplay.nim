@@ -4,7 +4,10 @@
 ## of the plot's image (`utils/plotref`) and against reads from the file:
 ##
 ## - Density colour map: the four maps are in the popover, which fits the
-##   window (it is laid out in columns); a click on viridis's bar, then on the name Red-black, draws
+##   window (it is laid out in columns) and stays inside it (opened from the
+##   gear near the middle of the window, it is moved left; past the window's
+##   edge it would be a window of the desktop's own); a click on viridis's
+##   bar, then on the name Red-black, draws
 ##   density in that map (no pixel off the reference, the map's colours
 ##   among the pixels), with nothing read again (the same tiles, no new
 ##   request);
@@ -19,7 +22,9 @@
 ## - a second run in the same settings folder has the preset and the map.
 ##
 ## Seen to fail: with the popover in one column (as it was), "the popover
-## does not fit" (1074 pixels tall); with the frame's colour map left out
+## does not fit" (1074 pixels tall); with the popover placed where Dear
+## ImGui puts it (at the pointer), "the popover leaves the window" (x 383 to
+## 1597); with the frame's colour map left out
 ## (`colourMap` not given to `PlotFrame`), "viridis: 35258 of 35258 pixels
 ## off the reference";
 ## with the clip percentile box's value not sent (`p.send` left out),
@@ -166,6 +171,10 @@ withFixtures fx:
     if result:
       let pop = f.markOf("plot.more popover")
       doAssert pop.size.x <= 1280 and pop.size.y <= 800, "the popover does not fit: " & $pop
+      # inside the main window, though the gear is near the middle of it:
+      # past its edge the popover would be a window of the desktop's own
+      doAssert pop.pos.x >= 0 and pop.pos.y >= 0 and pop.pos.x + pop.size.x <= 1280 and
+        pop.pos.y + pop.size.y <= 800, "the popover leaves the window: " & $pop
       for m in ColourMap:
         let r = f.markOf("plot.colour map." & $m)
         doAssert r.size.x > 0 and r.pos.y >= pop.pos.y and

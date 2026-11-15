@@ -6,14 +6,16 @@
 ## - the two diverging maps are white at zero (`lutIndex(0)`), their pure
 ##   colours at the ends (red for the most negative amplitude; blue, or
 ##   black, for the most positive), and run straight between;
-## - viridis is within 4 of 255 of matplotlib's map at nine points, and its
-##   lightness rises from one end to the other (no band reads as another);
+## - viridis is matplotlib's table, entry for entry (checked at 17 of its
+##   256 entries), and its lightness rises from one end to the other (no
+##   band reads as another);
 ## - an amplitude drawn full black in grey (the reference, at the display
 ##   gain) is the positive end of every map, its negative the other end.
 ##
-## Seen to fail: with viridis's map made from 1 down to 0, `l[0] ==
-## viridisAt(0)`; with the zero entry at 127 (`ZeroEntry`), `grey` found
-## another grey there than the zero amplitude is drawn with.
+## Seen to fail: with viridis the polynomial fit it was before (up to 4 of
+## 255 off the table), "viridis at 0: 3 off #440154"; with the zero entry at 127
+## (`ZeroEntry`), `grey` found another grey there than the zero amplitude
+## is drawn with.
 
 import std/strutils
 import viewSEG/core/[colourmaps, geometry, tiles]
@@ -53,14 +55,17 @@ block diverging:
       doAssert gap(l[i], want) <= 1 and l[i].a == 255, $m & " at " & $i & ": " & $l[i]
 
 block viridis:
-  # R's viridis(9), matplotlib's map at 0, 1/8, ..., 1
-  const knots = ["440154", "472D7B", "3B528B", "2C728E", "21908C", "27AD81", "5DC863", "AADC32",
-    "FDE725"]
+  # matplotlib's table (`_viridis_data`, 256 entries) at every 16th entry
+  # and the last, each channel times 255, rounded: the map is the table,
+  # not a fit of it
+  const knots = [(0, "440154"), (16, "48186A"), (32, "472D7B"), (48, "424086"),
+    (64, "3B528B"), (80, "33638D"), (96, "2C728E"), (112, "26828E"), (128, "21918C"),
+    (144, "1FA088"), (160, "28AE80"), (176, "3FBC73"), (192, "5EC962"), (208, "84D44B"),
+    (224, "ADDC30"), (240, "D8E219"), (255, "FDE725")]
   let l = lutOf(cmViridis)
-  for k, h in knots:
-    let at = viridisAt(k / 8)
-    doAssert gap(at, hex(h)) <= 4, "viridis at " & $k & "/8: " & $gap(at, hex(h)) & " off #" & h
-  doAssert l[0] == viridisAt(0) and l[255] == viridisAt(1)
+  for (i, h) in knots:
+    doAssert gap(l[i], hex(h)) == 0 and l[i].a == 255,
+      "viridis at " & $i & ": " & $gap(l[i], hex(h)) & " off #" & h
   for i in 1 .. 255:
     doAssert luma(l[i]) >= luma(l[i - 1]) - 0.5, "viridis darkens at " & $i
 

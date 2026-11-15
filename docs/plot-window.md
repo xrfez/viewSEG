@@ -390,6 +390,10 @@ trace) both ways.
   (the default) and **"Follow the theme"**, the two ready-made ones, which also put the
   ready-made colours back, and "My own", which brings the user's own back unchanged.
   The six and the scheme are remembered between runs.
+- **The gear popover** is laid out in three columns (presets, colours and maps; wiggles,
+  killed traces and the display header; scales), and opens below the gear, moved left
+  or up as far as needed to stay inside the program's window: past its edge it would
+  become a window of the desktop's own.
 - **Density has a colour map of its own**, chosen in the gear popover's **Density colour
   map** section, where each map is shown as its colour bar (the most negative amplitude
   at the left, the most positive at the right) with its name; a click on a bar or its
@@ -406,7 +410,7 @@ trace) both ways.
   The amplitude the gain draws full black in grey is the positive end of every map, its
   negative the other end. The two diverging maps run in straight lines from white at
   zero to their pure colours; viridis is matplotlib's (perceptually uniform, readable in
-  grey and by most colour-blind viewers), within 4 of 255 of its table. The GPU draws
+  grey and by most colour-blind viewers), its 256-entry table as published. The GPU draws
   through the map as a 256-entry lookup texture (`core/colourmaps`); the pixel tests
   compare it with the same map on the CPU, time down and time across. The map is
   density's only: the wiggles, the fills and the plot's background keep their colours,
