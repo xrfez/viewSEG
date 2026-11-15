@@ -36,11 +36,11 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.11.0: capabilities | names | processSEG 0.4.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 37 (21 in part) | 94 | 6 (4 in part) | 27 |
+| `built` | 38 (22 in part) | 96 | 11 (9 in part) | 45 |
 | `internal` | 14 | 34 | 4 | 38 |
-| `planned` | 39 | 286 | 58 | 369 |
-| `to plan` | 2 | 10 | 1 | 6 |
-| `not applicable` | 19 | 355 | 5 | 60 |
+| `planned` | 38 | 285 | 53 | 352 |
+| `to plan` | 2 | 10 | 1 | 5 |
+| `not applicable` | 19 | 354 | 5 | 60 |
 | all | 111 | 779 | 74 | 500 |
 
 In the next library release (below): parseSEG: 5 capabilities (5 planned); processSEG: 8 capabilities (4 planned, 4 to plan).
@@ -368,7 +368,7 @@ name, so these are building blocks for code that works on raw headers.
 | Patch description (template, clipped records) | `describePatches`, `PatchDescription`, `RecordPatch`, `spreadOf`, `PatchSide`, `PatchLine`, `Spread`, `$` | Patch QC: template, clipped records on the map | planned |
 | X records generated from a template or distance box | `PatchTemplate`, `initPatchTemplate`, `initDistancePatch`, `patchShots`, `generateRelations`, `receiverLayout` | The map's template box when no relation file is loaded: the spreads generated on a job from the user's template (lines × stations, or a distance box), said to be generated; writing them as an XPS file | built (the map); planned (the export) |
 | Listed against generated relations | `compareRelations`, `RecordAgreement`, `jaccard`, `listedFraction`, `describePatches` | The map's filter "spread not the template": the shots whose X record agrees with the template the records describe far less than the survey's do; receivers dropped in the field, per shot | built (the filter); planned (per shot) |
-| A template's edges and placement | `PatchEdge`, `PatchPlacement`, `NumberMap`, `PatchBox`, `PatchShot`, `hasTemplate`, `hasDistance` | The template's options where X records are generated (above) | planned |
+| A template's edges and placement | `PatchEdge`, `PatchPlacement`, `NumberMap`, `PatchBox`, `PatchShot`, `hasTemplate`, `hasDistance` | The template's options where X records are generated (above): the map's template box makes its shots (`PatchShot`) | built (the map's template box); planned (the edge and placement options) |
 
 ## In the next library release
 
