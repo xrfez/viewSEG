@@ -58,6 +58,13 @@ read-only location such as `Program Files`, it uses the per-user directories of 
 `viewSEG --paths` prints the directories in use and exits; `viewSEG --version` prints the
 version.
 
+## Agent control
+
+An AI agent (any Model Context Protocol client: Claude Code, Claude Desktop, an editor) can
+operate the running program while you watch: `viewSEG --mcp`, or File > Agent control, and
+a client that starts `viewSEG --mcp-stdio`. Off by default, local only, every call shown in
+Messages, nothing that writes a file. See `docs/agent-control.md`.
+
 ## License
 
 MIT
