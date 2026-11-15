@@ -226,6 +226,10 @@ type
     layout*: PanelLayout      ## layer 0's traces, from the reader; `traces` 0 until it says
     laidOut*: bool            ## `layout` is known: the reader said, or there is nothing to read
     known*: set[HeaderField]  ## the header fields layer 0's traces have values for
+    widest*: array[HeaderField, int]
+      ## per field, its longest value over layer 0's traces as the header
+      ## shows it (`numberText`), in characters: its column's width when
+      ## time is across, the same wherever the view goes in the gather
     kind*: GatherKind         ## the kind of gather layer 0 shows
     view*: Viewport           ## what the plot shows
     back*: seq[Viewport]      ## earlier views, newest last, for "back"; at most `MaxBack`

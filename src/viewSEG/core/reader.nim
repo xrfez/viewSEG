@@ -66,7 +66,8 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
 import processSEG/gain/stats
-import edits, filesystem, inbox, jobs, log, panels, sorting, threads, tiles, viewport, wiggle
+import edits, filesystem, inbox, jobs, log, panels, readout, sorting, threads, tiles, viewport,
+  wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
@@ -250,6 +251,7 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   rd.positions = rd.shown
   let n = rd.shown.len
   var known: set[HeaderField]
+  var widest: array[HeaderField, int]
   var layout = PanelLayout(traces: n, dtMs: 1, t0Ms: 0)
   if n > 0:
     layout.samples = if all: f[].maxSamples(g) else: f[].maxSamples(list)
@@ -282,12 +284,19 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
       for field in HeaderField:
         if not keys.value(field, t).isNaN: known.incl field
       k += step
+    # The longest value of each field the traces have, over all of them: the
+    # header's columns, time across, keep their widths as the view pans.
+    for k in 0 ..< n:
+      let t = rd.positions.traceAt(k)
+      let keys = f[].traceKeys(t)
+      for field in known:
+        widest[field] = max(widest[field], numberChars(keys.value(field, t)))
     if layout.samples == 0:
       rd.note(sevWarning, "The traces shown of " & rd.name & " have no samples, so the plot " &
         "stays empty.")
   rd.layout = layout
   rd.r.poster.post Msg(job: NoJob, kind: mkLayout, panel: rd.r.panel,
-    sourceGen: rd.src.gen, layout: layout, known: known)
+    sourceGen: rd.src.gen, layout: layout, known: known, widest: widest)
   # The layout does not depend on the order, so it goes first: the panel can
   # ask for its view while the traces are sorted.
   let order = rd.src.order

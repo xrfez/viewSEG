@@ -415,14 +415,17 @@ proc longTraceSegy*(fx: Fixtures; samples: int; traces = 1): string =
     w.writeTrace(k, buf)
   w.checkClose()
 
-proc manyTracesSegy*(fx: Fixtures; traces: int): string =
-  ## One record of `traces` traces of 4 samples each: a selection as large
-  ## as a survey's, in a small file.
-  result = fx.dir / ("many-traces-" & $traces & ".sgy")
+proc manyTracesSegy*(fx: Fixtures; traces: int; samples = 4): string =
+  ## One record of `traces` traces of `samples` samples each (1 ms apart,
+  ## 1, -1, 0.5, 0 over and over): a selection as large as a survey's, in a
+  ## small file.
+  result = fx.dir / ("many-traces-" & $traces & (if samples == 4: "" else: "x" & $samples) &
+    ".sgy")
   if fileExists(result): return
   var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
     text: @["C01 viewSEG test fixture: " & $traces & " short traces"]))
-  let buf = [1'f32, -1, 0.5, 0]
+  var buf = newSeq[float32](samples)
+  for i in 0 ..< samples: buf[i] = [1'f32, -1, 0.5, 0][i mod 4]
   for c in 1 .. traces:
     var k = initTraceKeys()
     (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(c), 0.0, 1000.0,

@@ -182,6 +182,9 @@ type
     cursorHeader: seq[string] ## the header values it showed over the rows; none for none
     focus: FocusClicks ## a click selects only in a window that had the focus
     turned: Orientation ## the orientation the plot was drawn in last frame
+    headerExtent: float32
+      ## how much of the plot's length along time the display header took
+      ## last frame (its rows, or its columns when time is across)
     fieldChars: Table[uint64, seq[int]] ## per tile: each header field's longest label
     bandChars: seq[int]
       ## time across: each header column's longest label so far, for the
@@ -1554,20 +1557,26 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   # band for the edits while the gather has one.
   let edited = st.gatherEdited(k)
   var bands = HeaderBands(axis: turn.along[axTime])
+  var headerExtent = 0'f32 # what the header takes of the plot's length along time
   if bands.axis == saY:
     for i in 0 ..< fields.len + ord(edited):
       bands.start.add headerTop.y + float32(i) * lineH
       bands.size.add lineH
     igDummy(ImVec2_c(x: 1, y: float32(fields.len + ord(edited)) * lineH + 2))
+    headerExtent = float32(fields.len + ord(edited)) * lineH
   else:
     let charW = igCalcTextSize("0", nil, false, -1).x
     let gap = round(igGetFontSize() * 0.8)
+    # Each column as wide as its field's longest value over the gather (the
+    # reader's count; a tile's own, if longer: keys a join changed), so the
+    # columns, and the plot's start, stay put as the view pans.
     let chars = tp.bandChars(tiles, fields, p.sourceGen)
     var at = headerTop.x
     for i, f in fields:
       let caption = igCalcTextSize(caption(f).cstring, nil, false, -1).x
       bands.start.add at
-      bands.size.add round(max(caption, float32(max(chars[i], 1)) * charW)) + gap
+      bands.size.add round(max(caption, float32(max(max(chars[i], p.widest[f]), 1)) * charW)) +
+        gap
       at += bands.size[^1]
     if edited:
       bands.start.add at
@@ -1575,6 +1584,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       at += bands.size[^1]
     igDummy(ImVec2_c(x: 1, y: lineH + 2)) # the columns' names
     igSetCursorScreenPos(ImVec2_c(x: at, y: igGetCursorScreenPos().y))
+    headerExtent = at - headerTop.x
   # This frame's view: what `core` set itself (back, a new gather), else
   # what a control or a test asked for, else last frame's.
   var remember = false
@@ -1710,13 +1720,17 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     # A new plot size keeps the scale from the top left (the whole data where
     # the plot becomes larger than it), within the limits on the new size; a
     # turn keeps the traces and times shown (narrowed from the first trace
-    # where the limits say).
+    # where the limits say), and so does a plot made shorter or longer
+    # along time by the display header (other fields, the edits' band, time
+    # across another gather's values): the time span chosen stays whole.
     let limNow = p.viewLimits(view.columns)
-    var after = if turn.orientation != tp.turned: keptFrom(view, limNow)
+    var after = if turn.orientation != tp.turned or headerExtent != tp.headerExtent:
+        keptFrom(view, limNow)
       elif view.columns != next.columns or view.rows != next.rows:
         next.resized(view.columns, view.rows, limNow)
       else: view
     tp.turned = turn.orientation
+    tp.headerExtent = headerExtent
     var click = clNone
     tp.handleMouse(after, view, plot, turn, limNow, hovered, t, remember, menu, click)
     case tp.bars.drawScrollBars(after, view, pos, size, barsUnder, limNow, turn, t, marks)

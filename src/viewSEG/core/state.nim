@@ -3808,6 +3808,7 @@ proc drainInbox*(state: var AppState): bool =
         p.layout = m.layout
         p.laidOut = true
         p.known = m.known
+        p.widest = m.widest
         # The next gather at the scales of the one before; a first one fits
         # (in a wiggle mode, as far as its limit, from the first trace).
         p.view = if p.carry.traces.width > 0:

@@ -81,6 +81,17 @@ func numberText*(v: float64): string =
   else: formatFloat(v, ffDecimal, 2).strip(leading = false, chars = {'0'}).strip(
     leading = false, chars = {'.'})
 
+func numberChars*(v: float64): int =
+  ## The length of `numberText(v)`; a whole number's is counted, not made.
+  if not known(v): result = 0
+  elif v == floor(v) and abs(v) < 1e15:
+    var n = abs(int64(v))
+    result = if v < 0: 2 else: 1
+    while n >= 10:
+      n = n div 10
+      inc result
+  else: result = numberText(v).len
+
 func significant*(v: float64; digits = 4): string =
   ## `v` to `digits` significant digits, without trailing zeros ("0.04123",
   ## "1.235e+04", "2"); "" when unknown.

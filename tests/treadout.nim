@@ -46,6 +46,15 @@ proc knownPick(): Pick =
   result.keys.component = 2
   result.keys.status = tsLive
 
+block numberCharsCountsTheText:
+  # `numberChars` (the display header's column widths) is `numberText`'s
+  # length, whole numbers counted without making the text.
+  for v in [0.0, -0.0, 1, -1, 9, 10, -10, 99, 100, 12345, -98765, 1e14, -1e14 + 1, 999999999999999.0,
+      1e15, 2e20, 0.5, -0.5, 0.004, -0.004, 0.005, 3.999, 112.45, -10963.41, 10.1, 1e16 + 0.5,
+      NaN, Inf, -Inf]:
+    doAssert numberChars(v) == numberText(v).len, $v & ": " & $numberChars(v) & " for " &
+      numberText(v).escape
+
 block defaultFields:
   let p = knownPick()
   var shown: seq[string]

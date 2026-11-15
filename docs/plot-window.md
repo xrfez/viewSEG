@@ -277,7 +277,7 @@ signals can start time across.
 | Time | downwards; its values left of the plot | from left to right; its values along the bottom |
 | Traces | across, the first at the left | stacked from the top down, the first at the top |
 | A positive amplitude | swings right, towards the next trace | swings up, towards the trace before |
-| Display header | a row per field above the plot, the names at the left | a column per field left of the plot, the names above them; the edits column next to the plot |
+| Display header | a row per field above the plot, the names at the left | a column per field left of the plot, the names above them, each as wide as its field's longest value in the gather (so the plot stays put as the view pans); the edits column next to the plot |
 | Scroll bars | the traces' below, time's at the right | time's below, the traces' at the right |
 | The cursor's time line | from the pointer left to the time axis, the time over its values | from the pointer down to the time axis, the time over its values |
 | The header's box at the cursor | over each row, at the trace's column | in each column, at the trace's row |
@@ -305,6 +305,10 @@ signals can start time across.
 - **Everything that acts on traces acts on them the same way:** hover, selection, Ctrl +
   click, Shift + click's range in the order shown, the sorts, kills and reversals, the
   Seismic and Aux toggles and the link with the map.
+- **The header takes room, not time:** fields added to the display header or taken
+  away, the edits' band coming or going, or (time across) another gather's longer values
+  make the plot shorter or longer along time; the time span shown stays the same (a view
+  of the whole record stays whole), the scale changes.
 - **A turn keeps the view:** the same traces and times are shown after it, at the scales
   the plot's other shape gives them (the scale boxes say which), within the limits: in a
   wiggle mode no more traces than the plot has pixels along them (a wider view is
