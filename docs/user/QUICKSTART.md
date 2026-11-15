@@ -59,7 +59,7 @@ folder beside it. Listing reads only the first few kilobytes of each file, in th
 background, so a folder of thousands of files lists without opening any of them.
 
 - **Click a file** to show it in the Seismic window, in place of the one shown. The display
-  (mode, gain, sort order, display header) and the scales stay as they were, so records
+  (mode, gain, filters, sort order, display header) and the scales stay as they were, so records
   compare one after the other. **Click a survey file** to load it into the survey: a pin
   marks it once loaded (its tooltip says what it holds); the Seismic window stays as it is.
 - **With the Files window focused** (click in it), **Up / Down** step to the next or
@@ -237,6 +237,7 @@ point by default): right-click them, or their names at the left, to choose its f
 | Reverse its polarity, or put it back | right-click: Reverse polarity | `R` |
 | Undo the last kill, restore or polarity change | Edit > Undo (or right-click: Undo) | Ctrl+Z, in any window |
 | Redo what was undone | Edit > Redo (or right-click: Redo) | Ctrl+Shift+Z or Ctrl+Y, in any window |
+| See the traces without the filters, or filtered again | the strip's Raw toggle | `P` |
 
 Keys act while the Seismic window has the focus: click in it first (undo and redo work
 from every window, but in a text field, which keeps its own Ctrl+Z). The click that brings
@@ -270,6 +271,33 @@ and **Aux**. With both on, the auxiliary traces stand in the file's order among 
 seismic ones and the window is called **Seismic + Aux**; with Seismic off it shows the
 auxiliary traces alone (**Aux**). One of them always stays on. The gain, the sorts, the
 edits, the display header and the status bar work on them too.
+
+**Filters.** The **Filters** drop-down in the strip, before the gain (it reads "Filters" while there is none)
+sets what the traces go through before the gain, and the plot follows as you move a
+slider:
+
+- **DC removal**: none, the mean, or the mean and a linear trend of each trace.
+- **Pass band**: none, **Low-cut**, **High-cut** or **Band-pass**, each by its corners in
+  Hz: the low-cut ramp from f1 (nothing below) to f2 (everything above), the high-cut ramp
+  from f3 to f4 (nothing above). A band-pass of 8-14-60-80 Hz, say, takes the slow ground
+  roll out of a shot record. The sliders move finely at low frequencies; Ctrl + click one
+  to type a value. They end at the file's Nyquist frequency; a corner past it (set for
+  another file) is cut there, and the drop-down says so.
+- **Notches**: **+ 50 Hz** or **+ 60 Hz** adds a notch at the power line's frequency and
+  its next two harmonics (x3); **+ Notch** one of your own. Each has its frequency, its
+  width (the notch is gone half the width away) and how many harmonics it takes, and can
+  be turned off or removed.
+- **Filter the Aux traces too**: off, the auxiliary traces are shown as recorded; on,
+  they go through the same filters (a notch on a pilot sweep shows where it passes that
+  frequency).
+- **No filters** takes them all away.
+
+The **Raw** toggle beside the drop-down (or `P`) shows the traces without the filters,
+under the same gain, so you can compare; press it again for the filtered traces. The
+filters stay on for the next record and file, and a new plot starts with the ones you
+set last. Moving a slider never reads the file again: viewSEG filters the samples it
+already holds, and only the traces and times you are looking at (and a little around
+them), so it is as quick on a huge file as on a small one.
 
 **The plot's menu** (right-click the plot) holds what acts on the data, and nothing about
 how it looks. Its first line names what it acts on: the trace under the pointer, or the

@@ -8,8 +8,9 @@
 
 ```
 ┌ Seismic ───────────────────────────────────────────────────┐
-│ [▒|∿|▒∿][◢|◣][⊢][↦][-][1.00][+] overlap [gain▾] [-][+0][+] dB│  controls (they
-│ [12.5] tr/in [200] ms/in [-][+][fit][<] [◂ 1 / 1 ▸]        │  wrap when narrow)
+│ [▒|∿|▒∿][◢|◣][⊢][↦][-][1.00][+] overlap [Filters ▾][Raw]   │  controls (they
+│ [gain▾] [-][+0][+] dB [12.5] tr/in [200] ms/in             │  wrap when narrow)
+│ [-][+][fit][<] [◂ 1 / 1 ▸]                                 │
 │ [Line/Station|By Flag|By Component] [Custom...] [⋯]        │
 ├────────────────────────────────────────────────────────────┤
 │ line    100  100  100  100  100  100  100  100  100        │  display header
@@ -416,6 +417,45 @@ gain. A trace reversed both ways is as recorded. A trace the file marks dead sta
 reversed or not (it is never drawn); the display header and the status bar still say it is
 reversed.
 
+## Filters
+
+The **Filters** drop-down in the strip, before the gain (the order the samples go
+through them), says what the traces go through ("Filters: 8-14-60-80 Hz, notch 60 Hz x3,
+DC"; "Filters" alone for none, short because the strip is full) and holds every setting, applied
+as it changes (a slider sends its value every frame it moves). The traces go through, in
+order: the **DC removal** (none, the mean: `demeanOp`, or the mean and a linear trend:
+`detrendOp`), then one zero-phase filter (processSEG's `filterOp`): a **low-cut**,
+**high-cut** or **band-pass** by its four corners (`f1` to `f2`, the low-cut ramp; `f3`
+to `f4`, the high-cut ramp; cos² ramps, `bandPassOp(Corners)` when there is no notch),
+and the **notches** (`withNotch`: each at a frequency, with a width and a number of
+harmonics; **+ 50 Hz** and **+ 60 Hz** add the power line's with two harmonics). Then
+the polarity and the gain, as before. The sliders are logarithmic (fine at low
+frequencies), each corner between its neighbours (`f1 < f2 <= f3 < f4`, `core` keeps them
+so whoever sends them), and end at the file's Nyquist frequency: a corner or notch set
+for a finer interval is cut at Nyquist or left out for this file, and the drop-down says
+so; the processing never stops for it.
+
+**Raw / processed:** the **Raw** toggle beside the drop-down, and `P` while the plot has
+the focus, show the traces without the filters, under the same gain, and filtered again;
+both are disabled while there is no filter. **The Aux traces** go through the filters
+only when "Filter the Aux traces too" is ticked (processSEG passes an auxiliary trace by
+otherwise); the gain still leaves them as they are. A plot of auxiliary traces alone
+takes its level from them, so a pilot sweep shown alone is drawn.
+
+**The cost follows the view.** The panel's reader filters the tile's traces and samples
+only (and the margin the filters need around them), on a `ProcessPool` of its own, off
+the UI thread; while the layer filters it asks for whole traces, so every later change of
+a parameter, of raw or processed, or of the Aux box, is made from the samples it already
+holds, with no read of the file (also when the file's drive does not answer). The picture
+before stays until the new one is drawn. While a slider moves, the reader finishes each
+tile it has begun and takes the newest change next (those it never reached are dropped),
+each tile it finishes is drawn though a newer change waits, and after the first change
+each asks for the view alone (the read-ahead comes back with the next view): so the plot
+follows the slider instead of waiting for it to stop.
+The filters are on the plot's layer: they go with it to the next record and to the next
+file by every route, and the settings keep them (not Raw) for a new plot. Measured: see
+[Performance targets](#performance-targets).
+
 ## Mouse and keys
 
 **One gesture, one action.** Each row is one input; no input appears twice for the same
@@ -458,7 +498,7 @@ its shortcut shown there.
 | Page Down / Page Up | Next / previous gather |
 | Home / End | First / last gather |
 | Ctrl + G | Go to a record number |
-| Space | Raw ↔ processed |
+| `P` | Raw ↔ processed: the traces without the filters, under the same gain, or filtered (not Space: with keyboard navigation on, Space presses the control that has the keyboard's focus, such as the strip button clicked last) |
 | `K` | Kill or restore the hovered trace (or the selection, when it holds that trace) |
 | `R` | Reverse the polarity of the hovered trace, or put it back (or the selection, when it holds that trace) |
 | `F` | Amplitude spectrum (FFT) of the hovered trace (or the selection) in a new window |
@@ -885,6 +925,7 @@ sometimes a laptop with integrated graphics; plan for 16 GB of RAM and files ove
 | Frame watchdog | a frame whose UI-thread work passes 50 ms is logged as a stall |
 | The map, a million points | a pan or a zoom draws at once from the levels of detail on the GPU; see the numbers in [The map window](#the-map-window) |
 | Response to a zoom or pan | the view moves at once with what is already drawn; new data replaces it as it arrives; a pan of up to a whole view (an arrow key, Shift + arrow, a click on a scroll bar's track) finds its data on hand: a view and a half is read ahead on each side, and read again as the view moves once less than a view is left (the user: "arrow and shift arrow have visible delay in data being drawn") |
+| A filter's slider dragged | the plot follows while it moves: a new filtered tile each change the reader keeps up with (changes it has not reached are dropped), each of the view alone, from the samples at hand (no read). Measured with `tools/filterbench` (release build, software OpenGL under xvfb, on a 32-core machine shared with other work, load 20) on a 3954-trace, 4001-sample record dragging f2 of a band-pass over 600 frames: the whole record in density, frames 10.2 ms median, 12.5 ms 95th, a tile every frame; 723 traces of wiggles, 38.9 ms median, as a pan of the same view (38.8 ms: drawing that many wiggles on software OpenGL), a tile every frame; no read from the file |
 | Work per view | only the traces and samples on screen (plus that read-ahead, which shrinks to keep a tile within 64 MiB, and the filter margin); a panel's tiles hold 192 MiB at most; in density zoomed out past a trace per pixel, only the traces drawn; in the wiggle modes at most a trace per pixel column, every one of them read |
 | Open | progress and Cancel at once; a second open of an unchanged file reads its index cache |
 

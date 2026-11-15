@@ -124,6 +124,7 @@ schema (in the tool list) gives every field and value; the most used:
 | `display` | `display` (`orientation`: `time down` or `time across`; `mode`, `fills`, `overlap`, `gain`, `gainDb`, `agcWindowMs`, colours ...) | How the traces are drawn, and which way the plot is turned |
 | `sort` | `order` (`field`, `descending`) | The traces' order; `[]` is the file's |
 | `trace filter` | `filter` (`seismic`, `auxiliary`) | Which traces are shown |
+| `processing` | `processing` (`dc`: `none`, `mean`, `mean and trend`; `band`: `none`, `low-cut`, `high-cut`, `band-pass`; `f1` .. `f4` in Hz, the low-cut ramp `f1` to `f2` and the high-cut ramp `f3` to `f4`; `notches`, each `on`, `hz`, `widthHz`, `harmonics`; `raw`; `aux`) | The filters the traces go through, as the strip's Filters drop-down sets them: `{"kind": "processing", "processing": {"band": "band-pass", "f1": 4, "f2": 8, "f3": 60, "f4": 80}}`; `raw` shows them unfiltered (`P`), `aux` filters the auxiliary traces too. `state` gives each panel's `processing`, and `processingNote` when the file's Nyquist cut a corner or notch |
 | `select` | `traces` (survey-wide ids), `mode` (`replace`, `add`, `toggle`, `range`) | The selection |
 | `edit traces` | `edit` (`killed`, `reversed`), `edited`, `on` | Kills or reverses traces, beside the file, for this session (below) |
 | `undo edit`, `redo edit` | | Takes back the last change to the edits of the panel's file, or makes it again, as Edit > Undo and Redo; `state`'s panel says what each would do (`undo`, `redo`) |
@@ -167,8 +168,8 @@ Turn agent control on for agents you would let do what you can do in the windows
   (your user name is often in them) and the newest messages; `screenshot` gives pictures
   of viewSEG's own window, nothing else on your screen.
 - **It changes the plot as you would, for this session only.** What it does shows and
-  acts exactly as if you had done it: the display, gain, display header and sort it sets
-  are what a new plot starts with until you quit, and the files and folders it opens are
+  acts exactly as if you had done it: the display, gain, filters, display header and sort
+  it sets are what a new plot starts with until you quit, and the files and folders it opens are
   in File > Open recent until then. Nothing of it is saved: not the defaults for new plots, not the
   recent files and folders, nothing in `settings.nif` or `layout.nif`. What you change by
   hand is saved as always, also while an agent is connected, and only your change: if an

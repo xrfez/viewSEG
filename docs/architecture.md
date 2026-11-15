@@ -107,11 +107,11 @@ How rule 3 maps onto parseSEG (0.11) and processSEG (0.4). The contracts come fr
 | Background jobs | `core/jobs`: a second runner and queue | Long work: an opened file's hash of every byte (`fullHashWork`), whole-file columns, QC passes (an open file's records against the loaded relation file, `checkWork`), folder scans, the listed files' shots (`shotsWork`), the map's planned spreads (`spreadWork`), the record shown for the map's filters (`recordQcWork`), brute stack, conversions, exports and patches, queued workflows |
 | Disk | `core/diskio`, started by `AppState.logTo` | Writes the program's own files: appends the session log (making its lines from the log's entries), replaces settings and layouts atomically (a temporary file, flushed, then renamed), prunes old logs; lists the layouts; reads the documents the user imports and makes their NIF tree; failures come back as log messages |
 | Folder watch | `core/watch`, started by `AppState` when a listing or an open file needs it | Looks at the folder listed and at the open files about once a second (names, then `stat`; the first 4 KiB of a file not known to be seismic when it appears or changes), and posts what changed (`mkWatched`); never opens what is not a regular file |
-| Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits and runs the display pipeline on each chunk (its own `Workspace`), cuts the tile and posts it |
+| Panel reader | `core/reader`, one per trace panel, started when the panel first shows a file | Owns that panel's `Prefetcher` and the samples it last read; applies the trace filter, sorts the traces in the layer's order (`core/sorting`), applies the file's edits, runs the layer's filters and the display pipeline on each chunk on its own `ProcessPool`, cuts the tile and posts it |
 | Agent server | `remote/server`, started only when agent control is turned on | Accepts MCP clients on the socket, reads and frames their messages, answers the handshake and the tool list itself, queues tool calls for the UI thread and writes the answers it is given; never reads or changes `AppState` |
-| Headers reader | `core/inspector`, started by `AppState` when the Headers window first has something on screen to read | Reads what the Headers window shows of the files' bytes: a SEG-D record's headers (`recordHeaders`, `copyBytes`), the chosen traces' header fields (`traceHeaders`) and samples (`readTraces`, then the edits and the display pipeline when shown as displayed, its own `Workspace`), and posts them (`mkInspected`); newest request wins; a `stat` of each file first, and every read marked (`fs.mappedRead`): one stuck in a drive is left for a new one (Network drives, below) |
+| Headers reader | `core/inspector`, started by `AppState` when the Headers window first has something on screen to read | Reads what the Headers window shows of the files' bytes: a SEG-D record's headers (`recordHeaders`, `copyBytes`), the chosen traces' header fields (`traceHeaders`) and samples (`readTraces`, then the edits, the plot's filters and the display pipeline when shown as displayed, its own `Workspace`), and posts them (`mkInspected`); newest request wins; a `stat` of each file first, and every read marked (`fs.mappedRead`): one stuck in a drive is left for a new one (Network drives, below) |
 | Prefetch workers | parseSEG: `newPrefetcher(workers = n)`, called on the panel thread | Decoding only; joined by the prefetcher's `close` |
-| Pool workers | processSEG: one `ProcessPool`, made by `core` at start-up | The rows of `pool.apply`, `pool.pickInto` and `pool.traceAmplitudeInto`; destroyed at shutdown, once every caller has stopped |
+| Pool workers | processSEG: a `ProcessPool` per panel reader (half the cores, at most 4 workers), made by the reader the first time it processes and ended with it | The rows of the reader's `pool.apply` (the filters, the display pipeline). One pool per reader, not one for the program: a pool runs one job at a time, so panels would wait for each other, and a reader stuck in a drive that does not answer outlives the program's state (it is left to end on its own), so a shared pool could be destroyed under it. QC passes will get pools of their own (`pool.pickInto`, `pool.traceAmplitudeInto`) |
 
 ### Jobs
 
@@ -799,16 +799,22 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    position when zoomed out past a trace per pixel column (density only; never more
    than the pixel columns), the visible samples plus
    read-ahead, kept at `decimation` samples per column (at most two columns per pixel
-   row), and the display pipeline's margin (`requiredMargin`, `decodeWindow`). The
+   row), and the filters' and the display pipeline's margins (`requiredMargin`,
+   `decodeWindow`); while the layer filters, whole traces, so that the samples at hand
+   stay enough when a slider changes the filters' margin (a narrower ramp has a longer
+   one) and a parameter moved never reads the file. The
    read-ahead of a large view shrinks on both axes alike to keep the tile within
    `MaxAheadValues` (64 MiB); the view itself is always read. The
    request carries the new `requestGen`. The reader acts only on the newest note.
 4. **Prefetch and process** (reader). A selection-mode prefetcher over the request's
    traces (`uniform = true`, `quickFirst = true`) with the decode window as its sample
-   window; per chunk, the display pipeline (`polarityOp` when every trace is reversed,
+   window; per chunk, the layer's **filters** (`core/processing`: DC removal, a low-cut,
+   high-cut or band-pass, notches; compiled for the file's interval within Nyquist),
+   then the display pipeline (`polarityOp` when every trace is reversed,
    then the layer's pipeline, then the part of the
    display gain that changes the samples: AGC, by default on pre-stack gathers,
-   Exponential, Normalized per trace) runs in place (`chunkMeta(c)`), and each row is
+   Exponential, Normalized per trace) run in place on the reader's pool
+   (`pool.apply`, the rows shared out among its workers), and each row is
    cut to the kept samples and peak-decimated into the tile; when the request asks for
    it (traces wide enough for wiggles, samples decimated), each column's smallest and
    largest sample are kept too, in the order they occur (`core/wiggle.minMaxInto`), so a
@@ -824,14 +830,27 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    a failed row, so neither sees it; a reversed row's live samples are negated
    (`reversePolarity`, as `polarityOp` does). The samples as decoded are kept
    (`RawCache`, up to 128 MiB): a request for the same traces whose samples lie among
-   them (an edit, a gain change, a slightly shorter view) is served from them, with no
-   prefetcher and no read of the file; the tile says so (`Tile.cached`).
-   A newer note stops the read between chunks.
+   them (an edit, a gain change, a filter's parameter, raw or processed, a slightly
+   shorter view) is served from them, with no prefetcher and no read of the file, in
+   blocks of 256 traces (enough rows for every worker of the pool); the tile says so
+   (`Tile.cached`), and how many traces it passed to the filters (`Tile.filtered`: the
+   request's, so the work follows the zoom, not the file's size). The auxiliary traces
+   go through the filters only when the layer asks (`Processing.aux`): processSEG
+   passes a row by unless it is live, so the reader gives the filters a view of the
+   chunk's keys in which they are (`auxLiveRows`); the display gain never touches them.
+   A newer note stops the read between chunks; a tile made from the samples at hand is
+   finished first (only a new source, order or stop ends it). **A slider dragged**
+   (`ckProcessing` frame after frame, nothing else between: `Panel.filterRun`,
+   `filterGen`): a tile asked for since the run began is taken in when it is newer than
+   those held, though a newer request waits, and the run's requests after the first are
+   of the view alone (`requestView(readAhead = false)`), so the plot follows the slider;
+   the read-ahead comes back with the next view.
 5. **Tile** (reader). A `Tile` (plain seqs, moved through the inbox, never shared)
    holds the values (and, for wiggles zoomed out in time, the columns' extremes), the
    display header's values per trace, the edits each row was made with, and its
    `Level`: the RMS, peak and clip percentile of |x| over its live traces that are not
-   killed (`panelStats`; a trace marked dead is not live).
+   killed (`panelStats`; a trace marked dead is not live), or over its auxiliary
+   traces when it has no live one (a plot of a pilot alone).
 6. **Take in** (UI). A tile whose `request.gen` is not the panel's `requestGen` is
    dropped. `AppState` keeps the newest four per panel, and no more than
    `MaxPanelValues` (192 MiB) in all, the oldest dropped first (after a new order, or the
@@ -1054,10 +1073,18 @@ type
                              # gain type (automatic, none, fixed, normalized, exponential,
                              # float, AGC) and its settings, gain amount in dB, clip
                              # percentile, overlap
+    processing: Processing   # core/processing: the filters (DC removal, low-cut, high-cut
+                             # or band-pass corners, notches with harmonics), raw or
+                             # processed, the auxiliary traces filtered or not; kept with
+                             # the layer, so it goes to the next record and file. A file's
+                             # own filters, kept with what is remembered about it, are
+                             # written and read by settingsnif's writeProcessing and
+                             # readProcessing (the settings use them for a new plot's)
 
   CommandKind = enum         # core/state: every user intent, the only way state changes
     ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
-    ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckReverseAll, ckBack,
+    ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckProcessing,
+    ckReverseAll, ckBack,
     ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckExportEdits, ckImportEdits,
     ckFileMemory, ckForgetFiles, ckHover, ckSelect,
     ckClearSelection, ckSettings, ckExportSettings, ckImportSettings, ckResetSettings,
