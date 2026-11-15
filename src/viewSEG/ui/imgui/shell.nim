@@ -22,8 +22,9 @@
 ## SDL makes the tray whether or not one is there, so `askTrayHost` asks the
 ## session bus first (`platform/trayhost`), off the UI thread.
 ## The icon goes when the tray is hidden and at `SDL_Quit`; on Windows a
-## fatal signal also removes it (`platform/trayguard`), so a crash leaves no
-## ghost icon in the notification area.
+## fatal signal and an exception no thread handles (a worker's ends the
+## program before `SDL_Quit` can run) also remove it (`platform/trayguard`),
+## so a crash leaves no ghost icon in the notification area.
 
 import std/[atomics, locks, options, strutils, typedthreads]
 from std/os import getEnv
@@ -419,6 +420,7 @@ proc showTray*(): string =
       when defined(windows):
         prepareTrayRemoval(TrayWindowClass)
         guardFatalSignals(dropTrayIcons)
+        guardUnhandled(dropTrayIcons)
 
 proc hideTray*() =
   ## Takes the icon out of the tray; nothing when it is not there. Main

@@ -72,7 +72,9 @@ Alt+Tab and Explorer read the same resource (`res/viewSEG.ico`: 16, 24, 32,
   Show viewSEG brings it back as it was (maximized stays maximized).
 - **No ghost icon.** The icon is removed before the rest of the quit (File >
   Quit, closing the window, the tray's Quit), when an exception ends the
-  program (SDL's own quit runs), at Ctrl+C in a console build (the first one
+  program on the main thread (SDL's own quit runs) or on any other thread (a
+  hook on Nim's unhandled exception removes it before the program ends),
+  at Ctrl+C in a console build (the first one
   quits cleanly, the second at once) and on a crash: a fatal signal (an
   access violation, an abort) first removes the icon (`platform/trayguard`),
   then Nim writes its message and the program ends. Only a kill from outside

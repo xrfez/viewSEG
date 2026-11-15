@@ -43,6 +43,7 @@ proc onDeath() {.nimcall, gcsafe, raises: [].} = discard removeTrayIcons()
 let v = windowsVersion()
 prepareTrayRemoval("SDL_TRAY")
 guardFatalSignals(onDeath)
+guardUnhandled(onDeath)
 echo v.build, " ", applyChrome(nil, ChromeLook(dark: true)), " ", setWindowIcons(nil)
 """
 

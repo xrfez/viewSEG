@@ -13,12 +13,15 @@
 ## - elsewhere than Windows nothing is set and the version is unknown;
 ## - a fatal signal runs the cleanup (which takes the tray icon away on
 ##   Windows) before Nim's own handler, which still writes its message and
-##   ends the program: a child process raises SIGSEGV.
+##   ends the program: a child process raises SIGSEGV;
+## - so does a Defect no thread handles, raised on a worker thread, which
+##   ends the program before the main thread's cleanup could run.
 ##
 ## Seen to fail: with the dark mode attribute 20 given from build 17763,
 ## "1809 takes attribute 19"; with red and blue swapped in `colorRef`,
 ## "0x003b352d"; with `guardFatalSignals` not calling the cleanup, "the
-## cleanup did not run before Nim's handler".
+## cleanup did not run before Nim's handler"; with `guardUnhandled` not
+## installing its hook, "the cleanup did not run for a worker's Defect".
 
 import std/[os, osproc, strutils]
 import viewSEG/platform/[chrome, trayguard]
@@ -34,6 +37,18 @@ proc onDeath() {.nimcall, gcsafe, raises: [].} =
 
 proc c_raise(sig: cint): cint {.importc: "raise", header: "<signal.h>".}
 var SIGSEGV {.importc, header: "<signal.h>".}: cint
+
+proc failing() {.thread.} =
+  var empty: seq[int] = @[]
+  echo empty[3] # an IndexDefect no one handles, on a worker thread
+
+if paramCount() == 1 and paramStr(1) == "thread":
+  guardUnhandled(onDeath)
+  var worker: Thread[void]
+  createThread(worker, failing)
+  joinThread(worker)
+  echo "still alive"
+  quit 0
 
 if paramCount() == 1 and paramStr(1) == "crash":
   guardFatalSignals(onDeath)
@@ -131,5 +146,17 @@ block fatalSignalCleanup:
     doAssert cleaned >= 0, "the cleanup did not run before Nim's handler:\n" & output
     let nims = output.find("SIGSEGV")
     doAssert nims > cleaned, "Nim's handler did not run after the cleanup:\n" & output
+
+block workerDefectCleanup:
+  # A Defect no thread handles ends the program from the worker (Nim's
+  # `threadTrouble`): the main thread's own cleanup never runs, so the hook
+  # must.
+  let (output, code) = execCmdEx(quoteShell(getAppFilename()) & " thread")
+  doAssert code != 0, "the program lived on: " & output
+  doAssert "still alive" notin output, output
+  let cleaned = output.find("cleaned")
+  doAssert cleaned >= 0, "the cleanup did not run for a worker's Defect:\n" & output
+  let nims = output.find("IndexDefect")
+  doAssert nims > cleaned, "Nim did not report the Defect after the cleanup:\n" & output
 
 echo "tchrome: ok"

@@ -4,6 +4,7 @@
 ## `guardFatalSignals` runs a cleanup on a fatal signal (an access violation,
 ## an abort, a bad instruction or a division fault) before the handler that
 ## was there (Nim's, which writes the stack trace and ends the program);
+## `guardUnhandled` runs it when an exception is not handled on any thread;
 ## `removeTrayIcons` is the cleanup for icons added through a hidden window
 ## of a known class (SDL's tray, class `SDL_TRAY`).
 ##
@@ -46,6 +47,28 @@ proc onFatal(sig: cint) {.noconv.} =
       return
   discard c_signal(sig, nil) # SIG_DFL: end as the system would
   discard c_raise(sig)
+
+var
+  previousUnhandled: proc (e: ref Exception) {.nimcall, tags: [], gcsafe, raises: [].}
+  unhandledCleanup: FatalCleanup
+
+proc onUnhandled(e: ref Exception) {.nimcall, tags: [], gcsafe, raises: [].} =
+  {.cast(gcsafe), cast(tags: []).}:
+    if not cleaned:
+      cleaned = true
+      if unhandledCleanup != nil: unhandledCleanup()
+    if previousUnhandled != nil: previousUnhandled(e)
+
+proc guardUnhandled*(onDeath: FatalCleanup) =
+  ## Runs `onDeath` when an exception (a Defect too) is not handled, on any
+  ## thread, before Nim writes it and ends the program. On a worker thread
+  ## Nim ends the program there and then (`rawQuit`), so the main thread's
+  ## cleanup (`SDL_Quit`'s, which removes the tray icon) never runs: this is
+  ## what removes the icon then. Install once, at start, on the main thread.
+  if unhandledCleanup == nil:
+    previousUnhandled = unhandledExceptionHook
+    unhandledExceptionHook = onUnhandled
+  unhandledCleanup = onDeath
 
 proc guardFatalSignals*(onDeath: FatalCleanup) =
   ## Runs `onDeath` on a fatal signal, then the handler installed before (or
