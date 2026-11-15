@@ -93,7 +93,7 @@ proc expected*(s: Shot; i, j: int; nudge = 0.0): Rgba =
             s.ink.background)
           result = if s.wiggles: c
                    else: densityTint(c, markOf(tile.rowAt(x), hover, selected, lit),
-                     s.ink.wiggle, DensityTint)
+                     s.ink.wiggle, DensityTint, s.display.colourMap)
       let (_, ts) = tile.span
       if s.wiggles and t >= ts.lo and t < ts.hi:
         let ser = tile.series

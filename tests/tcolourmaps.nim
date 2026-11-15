@@ -12,13 +12,20 @@
 ## - an amplitude drawn full black in grey (the reference, at the display
 ##   gain) is the positive end of every map, its negative the other end.
 ##
-## Seen to fail: with viridis the polynomial fit it was before (up to 4 of
+## - a hovered or a selected trace's column under density alone is tinted
+##   towards colours off its map (`highlights`): far from every colour the
+##   map draws, and from each other.
+##
+## Seen to fail: with every map tinted in the plot's own hover and
+## selection colours (as it was), "red-white-blue (Everforest Dark,
+## paper): the tinted hover 36, ..."; with viridis the polynomial fit it was before (up to 4 of
 ## 255 off the table), "viridis at 0: 3 off #440154"; with the zero entry at 127
 ## (`ZeroEntry`), `grey` found another grey there than the zero amplitude
 ## is drawn with.
 
 import std/strutils
-import viewSEG/core/[colourmaps, geometry, tiles]
+import viewSEG/core/[colourmaps, geometry, panels, tiles, wiggle]
+import viewSEG/view/[plotink, theme]
 
 func luma(c: Rgba): float64 = 0.2126 * float64(c.r) + 0.7152 * float64(c.g) + 0.0722 * float64(c.b)
 
@@ -79,5 +86,31 @@ block everyMapAtTheReference:
     doAssert l.densityColour(9, scale) == l[255], "past the reference: clipped"
     doAssert l.densityColour(0, scale) == l[ZeroEntry]
     doAssert $m in ["grey", "red-white-blue", "viridis", "red-black"]
+
+block readableTints:
+  # under density alone, a hovered or selected column is tinted (by
+  # `DensityTint`) towards colours off the map's own: at every entry the
+  # tinted colour is far from every colour the map draws, so it never reads
+  # as an amplitude, and the hover and the selection never look alike. Grey
+  # keeps the plot's own colours, which show on grey.
+  for theme in [EverforestDark, EverforestLight]:
+    for colours in [pcPaper, pcTheme]:
+      let ink = plotInk(theme, DisplaySettings(colours: colours)).wiggle
+      for m in ColourMap:
+        let l = lutOf(m)
+        var worst = (hover: 255, selected: 255, apart: 255)
+        for i in 0 ..< 256:
+          let h = densityTint(l[i], tmHovered, ink, DensityTint, m)
+          let s = densityTint(l[i], tmSelected, ink, DensityTint, m)
+          var nearH, nearS = 255
+          for k in 0 ..< 256:
+            nearH = min(nearH, gap(h, l[k]))
+            nearS = min(nearS, gap(s, l[k]))
+          worst = (min(worst.hover, nearH), min(worst.selected, nearS),
+            min(worst.apart, gap(h, s)))
+        let off = if m == cmGrey: 10 else: 50
+        doAssert worst.hover >= off and worst.selected >= off and worst.apart >= 40,
+          $m & " (" & theme.name & ", " & $colours & "): the tinted hover " & $worst.hover &
+          ", the selection " & $worst.selected & " off the map, " & $worst.apart & " apart"
 
 echo "tcolourmaps: ok"

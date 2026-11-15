@@ -19,6 +19,9 @@
 ## pure colours. Viridis (matplotlib's, perceptually uniform, readable in
 ## grey and by most colour-blind viewers) runs from the most negative
 ## amplitude to the most positive, entry for entry matplotlib's table.
+##
+## A hovered or selected trace's column, under density alone, is tinted
+## towards colours off the map's own hues (`highlights`).
 
 import std/math
 import geometry
@@ -110,3 +113,16 @@ const Luts = block:
 
 func lutOf*(m: ColourMap): Lut {.inline.} = Luts[m]
   ## The 256 colours of map `m`.
+
+func highlights*(m: ColourMap; hover, selected: Rgba): tuple[hover, selected: Rgba] =
+  ## The colours a hovered and a selected trace's column are tinted towards
+  ## under density alone in map `m`, given the plot's own (`hover`,
+  ## `selected`): colours off the map's hues, so a tinted column never reads
+  ## as an amplitude of the map. Grey keeps the plot's own (a colour shows
+  ## on grey); red-white-blue takes green and black, viridis magenta and
+  ## white, red-black green and blue.
+  case m
+  of cmGrey: (hover, selected)
+  of cmRedWhiteBlue: (Rgba(r: 0, g: 160, b: 80, a: 255), Black)
+  of cmViridis: (Rgba(r: 255, g: 0, b: 255, a: 255), White)
+  of cmRedBlack: (Rgba(r: 64, g: 255, b: 0, a: 255), Rgba(r: 0, g: 64, b: 255, a: 255))

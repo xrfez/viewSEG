@@ -108,7 +108,8 @@ proc expected(t: Tile; p: Picture; i, j: int): Rgba =
     if density:
       let c = t.densityAt(lutOf(p.display.colourMap), x, tm, 1, paper)
       result = if wiggles: c
-               else: densityTint(c, markOf(t.rowAt(x), p.hover, p.selected), ink, DensityTint)
+               else: densityTint(c, markOf(t.rowAt(x), p.hover, p.selected), ink, DensityTint,
+                 p.display.colourMap)
   let (_, ts) = t.span
   if wiggles and tm >= ts.lo and tm < ts.hi:
     let ser = t.series

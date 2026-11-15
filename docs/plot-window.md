@@ -420,7 +420,11 @@ trace) both ways.
   through the map as a 256-entry lookup texture (`core/colourmaps`); the pixel tests
   compare it with the same map on the CPU, time down and time across. The map is
   density's only: the wiggles, the fills and the plot's background keep their colours,
-  and the hovered and selected traces' columns are tinted over any map.
+  and the hovered and selected traces' columns are tinted over any map: in grey towards
+  the hover and selection colours below, in the other maps towards colours off the
+  map's own hues, so a tinted column never reads as an amplitude (`highlights`):
+  green and black in red-white-blue, magenta and white in viridis, green and blue in
+  red-black.
 - **"Paper":** white background, black wiggles and black positive fill, the theme's red
   (darkened to read on white) for the negative fill, whatever the UI theme. **"Follow
   the theme":** the theme's plot background, trace and fill colours.

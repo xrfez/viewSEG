@@ -236,8 +236,9 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
   glActiveTexture(GL_TEXTURE0 + 1)
   glBindTexture(GL_TEXTURE_2D, r.lut)
   glActiveTexture(GL_TEXTURE0)
+  let (hover, selected) = highlights(f.colourMap, f.ink.hover, f.ink.selected)
   let look = DensityLook(scale: f.scale, solid: not f.density, solidColour: bg,
-    tint: (if f.wiggles: 0'f32 else: f.tint), hover: f.ink.hover, selected: f.ink.selected)
+    tint: (if f.wiggles: 0'f32 else: f.tint), hover: hover, selected: selected)
   let n = min(tiles.len, textures.len)
   template drawAll() =
     glClear(GL_COLOR_BUFFER_BIT)

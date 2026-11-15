@@ -131,7 +131,7 @@ proc expected(s: Shot; i, j: int): Rgba =
           let c = greyLut().densityColour(tile.amplitudeAt(x, t), s.scale)
           result = if s.wiggles: c
                    else: densityTint(c, markOf(tile.rowAt(x), hover, selected), s.ink.wiggle,
-                     DensityTint)
+                     DensityTint, cmGrey)
       let (_, ts) = tile.span
       if s.wiggles and t >= ts.lo and t < ts.hi:
         let ser = tile.series
@@ -486,7 +486,8 @@ withFixtures fx:
     let c = s.column(knownChannel - 1)
     let j = s.row(450)
     let plain = greyLut().densityColour(0, s.scale)
-    doAssert close(s.at(c, j), densityTint(plain, tmHovered, s.ink.wiggle, DensityTint)) and
+    doAssert close(s.at(c, j),
+      densityTint(plain, tmHovered, s.ink.wiggle, DensityTint, cmGrey)) and
       not close(s.at(c, j), plain), "the hovered column is not tinted"
     let n = s.column(knownChannel)
     doAssert close(s.at(n, j), plain), "the neighbour's column is tinted"

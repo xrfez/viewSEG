@@ -292,10 +292,13 @@ func blend*(a, b: Rgba; t: float32): Rgba =
     uint8(clamp(round(float32(x) + (float32(y) - float32(x)) * t), 0, 255))
   Rgba(r: channel(a.r, b.r), g: channel(a.g, b.g), b: channel(a.b, b.b), a: channel(a.a, b.a))
 
-func densityTint*(c: Rgba; mark: TraceMark; ink: WiggleInk; tint: float32): Rgba =
-  ## Density colour `c` of a trace with `mark`, tinted by `tint` towards the
-  ## hover or selection colour (what density alone shows of a highlight).
+func densityTint*(c: Rgba; mark: TraceMark; ink: WiggleInk; tint: float32;
+    map: ColourMap): Rgba =
+  ## Density colour `c` (of `map`) of a trace with `mark`, tinted by `tint`
+  ## towards the hover or selection colour `map` takes for them
+  ## (`highlights`: what density alone shows of a highlight).
+  let (hover, selected) = highlights(map, ink.hover, ink.selected)
   case mark
-  of tmHovered: blend(c, ink.hover, tint)
-  of tmSelected: blend(c, ink.selected, tint)
+  of tmHovered: blend(c, hover, tint)
+  of tmSelected: blend(c, selected, tint)
   of tmNone: c
