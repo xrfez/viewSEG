@@ -1389,6 +1389,15 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.fft")
   tip("The amplitude spectrum of this trace (of the selection: their average), raw and " &
     "through the filters, in a window of its own; killed traces are left out")
+  let newPlot = igBeginMenu("New plot", under >= 0)
+  marks.mark("plot.menu.newplot")
+  if newPlot:
+    for v in AnalysisView:
+      if igMenuItem_Bool(v.viewName.cstring, nil, false, true):
+        res.commands.add Command(kind: ckOpenPlot, plotOf: p.id, plotView: v,
+          plotTraces: st.selection.targets(under))
+      marks.mark("plot.menu.newplot." & $v)
+    igEndMenu()
   # Its station on the map: the receiver (in a receiver gather, the source).
   let role = $st.stationRole(k)
   let many = under >= 0 and under in st.selection.selected and st.selection.selectedCount > 1

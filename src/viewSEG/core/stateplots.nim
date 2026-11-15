@@ -17,6 +17,15 @@ func findPlot*(state: AppState; id: int): int =
     if w.id == id: return i
   -1
 
+func selectedIn*(state: AppState; i: int): int =
+  ## How many of the selected traces are of open file `sessions[i]`; 0 for
+  ## none, or no such file.
+  result = 0
+  if i in 0 ..< state.sessions.len:
+    let s = state.sessions[i]
+    for t in state.selection.selected:
+      if t in s: inc result
+
 func plotsWaiting*(state: AppState): seq[string] =
   ## The windows whose numbers are on their way, by title.
   for w in state.plots:
@@ -95,7 +104,8 @@ proc askPlot(state: var AppState; w: int): bool =
 proc openPlot(state: var AppState; cmd: Command) =
   ## `ckOpenPlot`: a new analysis window of `cmd.plotTraces` (else the
   ## selected traces of the panel's file, else the trace under the
-  ## pointer), asked for at once.
+  ## pointer), asked for at once; an envelope or a phase spectrum is of the
+  ## first of them.
   let k = state.findPanel(if cmd.plotOf == NoPanel: MainPanel else: cmd.plotOf)
   let i = if k >= 0: state.shownFile(k) else: -1
   if k < 0:
@@ -125,6 +135,8 @@ proc openPlot(state: var AppState; cmd: Command) =
     state.ignore(cmd, if ids.len == 0: "no trace is selected or under the pointer in " & s.name
                       else: "none of the traces is in " & s.name)
     return
+  if cmd.plotView in {avEnvelope, avPhase} and traces.len > 1:
+    traces.setLen 1 # a view of one trace: the first chosen
   if traces.len > MaxPlotTraces:
     var kept: seq[int] = @[]
     for j in evenly(traces.len, MaxPlotTraces): kept.add traces[j]

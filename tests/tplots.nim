@@ -108,6 +108,10 @@ withFixtures fx:
     doAssert peakHz(late) > peakHz(early) + 20, "the sweep does not rise: " & $peakHz(early) &
       " Hz at 300 ms, " & $peakHz(late) & " at 1700"
     doAssert st.plots[2].result.plots.len == 3 and st.plots[3].result.plots.len == 2
+    st.apply Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[s.base + 2,
+      s.base + 1])
+    doAssert st.plots[^1].traces == @[s.base + 2], "an envelope of " & $st.plots[^1].traces
+    st.apply Command(kind: ckClosePlot, plot: st.plots[^1].id)
     doAssert st.plots[1].title.startsWith("Spectrogram 2: trace 1")
 
   block follows:

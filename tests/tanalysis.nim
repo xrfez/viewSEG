@@ -10,13 +10,16 @@
 ##   (degrees, unwrapped) where the amplitude is within the threshold, and
 ##   none (NaN) where it is not; wrapped, it stays within ±180;
 ## - cross-correlation: a Ricker wavelet delayed 40 ms against itself peaks
-##   at +40 ms, scaled by 0.5 its amplitude ratio is -6 dB in band.
+##   at +40 ms, scaled by 0.5 its amplitude ratio is -6 dB in band, and
+##   none is given where the reference has no energy (past 150 Hz).
 ##
 ## Seen to fail: with the frames' times taken at their start rather than
 ## their centre, "frame 4: peak 31.25 Hz, the chirp at 17.6"; with the
 ## instantaneous frequency not divided by the two samples' span, "frequency
 ## 60.00009145758993 at 1000.0 ms, want 30.0"; with the unwrap's offset not
-## kept between bins, "phase at 6.8359375 Hz: 177.89..., want -182.109375".
+## kept between bins, "phase at 6.8359375 Hz: 177.89..., want -182.109375";
+## with the comparison not cut to the reference's band, "a ratio at 150.39
+## Hz: -6.02" (noise read as a ratio).
 
 import std/math
 import viewSEG/core/analysis
@@ -132,5 +135,10 @@ block correlationLag:
   for k in 0 ..< hz.len:
     if hz[k] >= 15 and hz[k] <= 40:
       doAssert near(ratio[k], 20 * log10(0.5), 0.05), "ratio at " & $hz[k] & " Hz: " & $ratio[k]
+  # where the reference has no energy (a 25 Hz Ricker at 150 Hz): no ratio, no phase
+  for k in 0 ..< hz.len:
+    if hz[k] >= 150:
+      doAssert ratio[k].isNaN and c.plots[2].curves[1].ys[k].isNaN, "a ratio at " & $hz[k] &
+        " Hz: " & $ratio[k]
 
 echo "tanalysis: ok"

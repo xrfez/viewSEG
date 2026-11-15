@@ -30,13 +30,13 @@ import protocol, schema
 const
   ToolNames* = ["command", "state", "headers", "screenshot", "wait"]
   StateParts* = ["program", "fileList", "files", "panels", "selection", "map", "jobs",
-    "messages", "survey", "headers", "memory", "spectra", "displayPresets"]
+    "messages", "survey", "headers", "memory", "spectra", "displayPresets", "plots"]
   ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "headers", "messages",
     "jobs", "toolbar", "statusbar", "spectrum", "fft"]
     ## what `screenshot` takes a picture of: the whole window, the Seismic
     ## window's picture of the traces alone, or one window ("spectrum" the
     ## live spectrum panel, "fft" the FFT window opened last; "fft 2" names
-    ## FFT window 2)
+    ## FFT window 2, "new plot 3" the analysis window 3)
   DefaultShotSide* = 1600 ## the longest side of a screenshot, unless asked
   MaxShotSide* = 4096
   MaxShotBytes* = 16 * 1024 * 1024 ## the largest PNG a screenshot returns
@@ -165,9 +165,11 @@ proc toolList*(): string =
        "reads data.",
      "inputSchema": {"type": "object", "properties": {
        "window": {"anyOf": [{"type": "string", "enum": shotEnum},
-           {"type": "string", "pattern": "^fft [1-9][0-9]{0,3}$"}],
+           {"type": "string", "pattern": "^fft [1-9][0-9]{0,3}$"},
+           {"type": "string", "pattern": "^new plot [1-9][0-9]{0,3}$"}],
          "description": "what to take (default \"window\"): \"spectrum\" is the live " &
-           "spectrum panel, \"fft\" the FFT window opened last, \"fft 2\" FFT window 2"},
+           "spectrum panel, \"fft\" the FFT window opened last, \"fft 2\" FFT window 2, " &
+           "\"new plot 3\" analysis window 3 (New plot)"},
        "maxSize": {"type": "integer", "minimum": 64, "maximum": MaxShotSide,
          "description": "the longest side in pixels; larger pictures are scaled down " &
            "(default " & $DefaultShotSide & ")"}},
@@ -189,10 +191,12 @@ func isShotTarget*(t: string): bool =
   ## Whether `screenshot` can take `t`: one of `ShotTargets`, or "fft N",
   ## FFT window N.
   if t in ShotTargets: return true
-  if t.len in 5 .. 8 and t.startsWith("fft ") and t[4] in {'1' .. '9'}:
-    for c in t.substr(4):
-      if c notin Digits: return false
-    return true
+  for (prefix, longest) in [("fft ", 8), ("new plot ", 13)]:
+    if t.len in prefix.len + 1 .. longest and t.startsWith(prefix) and
+        t[prefix.len] in {'1' .. '9'}:
+      for c in t.substr(prefix.len):
+        if c notin Digits: return false
+      return true
   false
 
 proc args(text: string; n: var JsonNode): string =
@@ -250,6 +254,16 @@ proc prefill(state: AppState; given: Command; c: var Command) =
       c.frozen = state.spectra[w].frozen
   of ckCloseSpectrum, ckSpectrumCursor: c.spectrum = given.spectrum
   of ckStepTrace: (c.spectrumOf, c.stepBy) = (MainPanel, 1)
+  of ckOpenPlot: c.plotOf = if given.plotOf == NoPanel: MainPanel else: given.plotOf
+  of ckPlotDisplay, ckPlotCursor:
+    # what the window has, so that what is not given stays
+    c.plot = given.plot
+    let w = state.findPlot(given.plot)
+    if w >= 0:
+      c.plotParams = state.plots[w].params
+      c.plotFrozen = state.plots[w].frozen
+      c.plotCursor = state.plots[w].cursor
+  of ckClosePlot: c.plot = given.plot
   of ckSpectrumPanel: c.onScreen = true
   of ckJoin, ckSelectUnmatched:
     # the file the plot shows, and the join window's options
@@ -489,6 +503,55 @@ proc mapJson(state: AppState; limit: int): JsonNode =
   for p in state.selection.hoverPoints: hovered.add state.pointJson(p)
   result["hovered"] = hovered
 
+func evenlyOf(n, limit: int): seq[int] =
+  ## At most `limit` indices of `0 ..< n`, evenly, the first and the last
+  ## among them.
+  if n <= limit or limit < 2:
+    for i in 0 ..< min(n, max(limit, 1)): result.add i
+  else:
+    for k in 0 ..< limit: result.add int(round(float64(k) * float64(n - 1) /
+      float64(limit - 1)))
+
+proc plotJson(w: AnalysisWindow; limit: int): JsonNode =
+  ## An analysis window: what it shows and how, and its numbers: each plot's
+  ## curves at most `limit` points (evenly), an image's size, axes and, per
+  ## column (at most `limit`), the y of its largest value.
+  template r: untyped = w.result
+  var plots = newJArray()
+  for p in r.plots:
+    let at = evenlyOf(p.xs.len, limit)
+    var xs = newJArray()
+    for i in at: xs.add toJson(p.xs[i])
+    var curves = newJArray()
+    for c in p.curves:
+      var ys = newJArray()
+      for i in at: ys.add toJson(if i < c.ys.len: c.ys[i] else: NaN)
+      curves.add %*{"name": c.name, "ys": ys}
+    plots.add %*{"title": p.title, "x": p.xLabel, "y": p.yLabel, "xs": xs, "curves": curves}
+  result = %*{"id": w.id, "title": w.title, "view": $w.view, "frozen": w.frozen,
+    "params": toJson(w.params), "traces": clipped(w.traces, limit), "reference": w.reference,
+    "filters": w.filters, "waiting": w.waiting, "cursor": toJson(w.cursor),
+    "problem": r.problem, "note": r.note, "used": r.used, "leftOut": r.leftOut,
+    "dtMs": toJson(r.dtMs), "plots": plots}
+  if r.view == avCorrelation and r.plots.len > 0:
+    var lags = newJArray()
+    for c in 0 ..< r.plots[0].curves.len div 2:
+      lags.add toJson(r.peakLagMs(c))
+    result["peakLagMs"] = lags
+  if not r.image.isEmpty:
+    let img = r.image
+    var peaks = newJArray()
+    var times = newJArray()
+    for col in evenlyOf(img.cols, limit):
+      var best = 0
+      for row in 0 ..< img.rows:
+        if img.valueAt(col, row) > img.valueAt(col, best): best = row
+      times.add toJson(img.x0 + float64(col) * img.dx)
+      peaks.add toJson(img.y0 + float64(best) * img.dy)
+    result["image"] = %*{"columns": img.cols, "rows": img.rows, "x": img.xLabel,
+      "y": img.yLabel, "unit": img.unit, "x0": img.x0, "dx": img.dx, "y0": img.y0,
+      "dy": img.dy, "lo": img.lo, "hi": img.hi, "peakXs": times, "peakYs": peaks}
+
 proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
   ## A spectrum window: what it shows and how, and its numbers: per curve
   ## the amplitude at most `limit` points from 0 Hz to Nyquist (the largest
@@ -679,6 +742,10 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
     var list = newJArray()
     for w in state.spectra: list.add spectrumJson(w, limit)
     r["spectra"] = list
+  if "plots" in wanted:
+    var list = newJArray()
+    for w in state.plots: list.add plotJson(w, limit)
+    r["plots"] = list
   if "memory" in wanted:
     let m = state.memoryList
     var files = newJArray()
@@ -809,7 +876,7 @@ proc screenshot*(fe: Frontend; arguments: string; picture: var Picture): string 
   for key, v in n.pairs:
     if key == "window":
       if v.kind != JString or not v.str.isShotTarget:
-        problems.add "window: one of " & ShotTargets.join(", ") & ", or \"fft N\""
+        problems.add "window: one of " & ShotTargets.join(", ") & ", \"fft N\" or \"new plot N\""
       else: target = v.str
     elif key != "maxSize":
       problems.add "no argument " & escapeJson(key.substr(0, 79))
@@ -881,6 +948,7 @@ proc busy*(state: AppState; fe: Frontend): seq[string] =
     result.add "the Headers window's reader" & (if w.kind == wkNone: "" else: ": " & w.words)
   for w in state.spectra:
     if w.waiting: result.add w.title & ": its spectrum"
+  for title in state.plotsWaiting: result.add title & ": its numbers"
   for k in 0 ..< state.panels.len:
     let picture = state.pictureOf(k, fe)
     if picture notin ["complete", "nothing shown", "nothing to draw", "no room to draw"]:

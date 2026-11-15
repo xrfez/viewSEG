@@ -276,6 +276,17 @@ withFixtures fx:
       $st.spectra[1].traces
     st.agent(%*{"kind": "close spectrum", "spectrum": st.spectra[1].id})
     doAssert st.spectra.len == 1
+    st.agent(%*{"kind": "open plot", "plotView": "spectrogram"})
+    doAssert st.plots.len == 1, "the agent's plot window: " & $st.plots.len
+    st.agent(%*{"kind": "plot display", "plot": st.plots[0].id, "plotParams": {"windowMs": 64},
+      "plotFrozen": true})
+    doAssert st.plots[0].frozen and st.plots[0].params.windowMs == 64 and
+      st.plots[0].params.overlap == AnalysisParams().overlap, $st.plots[0].params
+    st.agent(%*{"kind": "plot cursor", "plot": st.plots[0].id, "plotCursor": {"held": true,
+      "x": 2, "y": 3}})
+    doAssert st.plots[0].cursor == PlotCursor(held: true, x: 2, y: 3)
+    st.agent(%*{"kind": "close plot", "plot": st.plots[0].id})
+    doAssert st.plots.len == 0
     st.agent(%*{"kind": "edit traces", "edit": "killed"})
     st.agent(%*{"kind": "undo edit"})
     st.agent(%*{"kind": "redo edit"})

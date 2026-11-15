@@ -46,7 +46,8 @@ import ../../remote/control
 import ../../view/jobstatus
 import agentshot, chrome, dpi, filelist, fonts, frames, headerswindow, icons, jobswindow,
   joindialog,
-  mapwindow, memorywindow, menus, messages, recordlist, shell, spectrumwindow, style,
+  mapwindow, memorywindow, menus, messages, plotwindows, recordlist, shell, spectrumwindow,
+  style,
   tracepanel, windows
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow, DialogKind,
@@ -93,6 +94,7 @@ type
     join: JoinUi                               ## the "Import survey" window
     memory: MemoryUi                           ## the "File memory" window
     spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
+    plotWins: PlotWindowsUi                    ## the analysis windows (New plot)
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
     dropAt: float64                            ## when a drag was last seen over the window
     windows: WindowsUi                         ## which windows are shown (the Window menu)
@@ -504,6 +506,10 @@ proc addJoinFiles*(frame: FrameInfo; paths: openArray[string]) =
   ## Adds `paths` to the survey files of the "Import survey" window, as its
   ## "Add files..." dialog does (tests cannot drive the system's dialog).
   frame.ui.join.addFiles(paths)
+
+proc plotWindows*(frame: FrameInfo): lent PlotWindowsUi =
+  ## The analysis windows' state (New plot), for tests.
+  frame.ui.plotWins
 
 proc spectraWindows*(frame: FrameInfo): lent SpectraUi =
   ## The spectrum windows' frontend state (tests: what each read under the pointer).
@@ -1139,7 +1145,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     shown: {AppWindow.low .. AppWindow.high} - ui.windows.hidden,
     seismicName: ui.core.windowTitle(MainPanel), joinShown: ui.join.shown,
     trayIcon: ui.core.settings.tray.icon, trayMinimize: ui.core.settings.tray.minimize,
-    trayProblem: ui.trayProblem, trayAvailable: trayShown()), ui.marks)
+    trayProblem: ui.trayProblem, trayAvailable: trayShown(),
+    plotTraces: ui.core.selectedIn(shownAt)), ui.marks)
+  if menu.newPlot:
+    ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)
   if menu.toggleAgent: ui.toggleAgent()
   if menu.toggleTrayIcon or menu.toggleTrayMinimize:
     var s = ui.core.settings
@@ -1247,6 +1256,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   var spectra = SpectraOutput()
   ui.spectra.drawLive(ui.core, ui.windows.shows(awSpectrum), ui.theme, ui.marks, spectra)
   ui.spectra.drawFfts(ui.core, ui.theme, ui.scale, ui.marks, spectra)
+  var plotWins = PlotWindowsOutput()
+  ui.plotWins.drawPlotWindows(ui.core, ui.theme, ui.scale, ui.marks, plotWins)
+  for c in plotWins.commands.mitems:
+    ui.core.apply move c
   if spectra.bringForward: ui.windows.bringForward(awSpectrum)
   for c in spectra.commands.mitems:
     ui.core.apply move c

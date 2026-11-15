@@ -558,6 +558,64 @@ The filters are on the plot's layer: they go with it to the next record and to t
 file by every route, and the settings keep them (not Raw) for a new plot. Measured: see
 [Performance targets](#performance-targets).
 
+## New plot
+
+**New plot** opens a window of a plot's traces in one of the signal-analysis views
+processSEG offers. It is in two places:
+
+- **Window > New plot**, on the traces selected in the Seismic window (greyed out until
+  some are);
+- **the plot's right-click menu > New plot**, on the trace under the pointer, or on the
+  selection when that trace is in it.
+
+Each view is a window of its own that docks, titled by what it shows ("Spectrogram 2:
+3 traces · FFID 151 · shot.sgd"). Its numbers are worked out off the screen's thread,
+from the traces read whole, through the Seismic window's filters (an auxiliary trace only
+when "Filter the Aux traces too" is ticked, as in the plot), less the traces killed or
+marked dead (said under the title). Unless **Freeze** is ticked, a window follows the
+plot it was opened from: new filters, the Aux toggle, a kill or a restore of one of its
+traces work it out again; its traces stay those it was opened on.
+
+| View | Of | Shows | processSEG |
+|---|---|---|---|
+| **Spectrogram** | the traces (several: their power average) | amplitude against time and frequency, in dB from the largest, in a density colour map, with its scale | `spectrogramInto` |
+| **Envelope and instantaneous phase** | the first trace | the trace and its envelope; its instantaneous phase (°); its instantaneous frequency (Hz) | `hilbertInto` |
+| **Phase spectrum** | the first trace | amplitude (dB) and phase against frequency | `amplitudeInto` |
+| **Cross-correlation** | each trace (up to 8) against a reference | the correlation coefficient and its envelope against lag; the amplitude ratio (dB) and phase difference (°) per frequency | `crossCorrelateInto`, `compareInto` |
+
+Each window's first line holds its view's settings; a change works it out again.
+
+- **Spectrogram:** the frame's length (ms; a Hann window: a frame of W ms resolves about
+  2/W kHz; 128 ms at first), the frames' overlap (%, 75 at first), the floor (the lowest
+  dB drawn, -60 at first) and the colour map (density's maps; viridis at first). Each
+  frame is placed at its centre's time.
+- **Phase spectrum:** the phase is drawn **only where the amplitude is within N dB of its
+  peak** (20 dB at first): elsewhere it is noise. **Unwrapped** (on at first) joins it
+  along frequency, so a delay is a straight line (`-360·f·τ` degrees); off, it stays
+  within ±180°. The phase is from the trace's first sample, of the whole trace,
+  untapered.
+- **Cross-correlation:** the reference is **the record's pilot** (its first auxiliary
+  trace) at first, else the first trace of the window; **The selected trace** makes the
+  first selected trace the reference, in this file or another one open (Sweep0's pilot,
+  say), sampled at the same interval. A trace that is the reference delayed by τ peaks at
+  +τ (the words under the title give each trace's peak). The amplitude ratio and the
+  phase difference are given where the reference's amplitude is within the same N dB
+  (20) of its peak. The lags shown: ±250 ms at first.
+- The **envelope** is the analytic signal's modulus; the instantaneous phase its
+  argument; the instantaneous frequency the phase's step between the samples either
+  side, in Hz.
+
+**The cursor.** In a spectrogram the cursor follows the pointer, a line to each axis with
+its exact value written on the axis, and the line under the image reads its time,
+frequency and dB. While the window has the focus (a click on it), the keys hold it:
+**Left / Right** a frame, **Up / Down** a frequency bin, **Home / End** the first or last
+frame; **Esc**, or moving the pointer over the image, lets it go. The curve views read
+the nearest point of each curve under the pointer, as the spectrum windows do.
+
+Agent control: `open plot`, `plot display`, `plot cursor` and `close plot`
+(docs/agent-control.md); `state`'s `plots` gives each window and its numbers;
+`screenshot` takes `new plot N`.
+
 ## Mouse and keys
 
 **One gesture, one action.** Each row is one input; no input appears twice for the same

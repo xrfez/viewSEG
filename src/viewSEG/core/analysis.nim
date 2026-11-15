@@ -282,7 +282,8 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
   ## Each of `signals` against `reference`: the correlation coefficient and
   ## its envelope against lag (a signal that is the reference delayed by τ
   ## peaks at +τ), and per frequency the amplitude ratio (dB) and phase
-  ## difference (degrees) of each signal to the reference.
+  ## difference (degrees) of each signal to the reference, where the
+  ## reference's amplitude is within `p.phaseWithinDb` of its peak.
   result = AnalysisResult(view: avCorrelation, dtMs: dtMs, used: signals.len)
   var samples = reference.len
   for (_, s) in signals: samples = max(samples, s.len)
@@ -311,6 +312,18 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
   var c, e = newSeq[float32](cp.lags)
   var ratio, phase = newSeq[float64](cp.bins)
   var peaks = ""
+  # Where the reference has its energy: its own spectrum (of its
+  # autocorrelation's lag window) within `phaseWithinDb` of its peak;
+  # elsewhere the ratio and the phase are noise.
+  var refAmp, refPhase = newSeq[float64](cp.bins)
+  cp.crossCorrelateInto(reference, reference, c, ws)
+  cp.lagSpectrumInto(c, refAmp, refPhase, ws)
+  var refPeak = 0.0
+  for a in refAmp:
+    if not a.isNaN: refPeak = max(refPeak, a)
+  var inBand = newSeq[bool](cp.bins)
+  for k in 0 ..< cp.bins:
+    inBand[k] = refPeak > 0 and toDb(refAmp[k], refPeak) >= -abs(p.phaseWithinDb)
   for (name, s) in signals:
     cp.crossCorrelateInto(s, reference, c, e, ws)
     var cs, es = newSeq[float64](cp.lags)
@@ -321,6 +334,8 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
     lagPlot.curves.add AnalysisCurve(name: name, ys: cs)
     lagPlot.curves.add AnalysisCurve(name: name & " envelope", ys: es)
     cp.compareInto(s, reference, ratio, phase, ws)
+    for k in 0 ..< cp.bins:
+      if not inBand[k]: (ratio[k], phase[k]) = (NaN, NaN)
     ratioPlot.curves.add AnalysisCurve(name: name, ys: ratio)
     phasePlot.curves.add AnalysisCurve(name: name, ys: phase)
     if best >= 0:

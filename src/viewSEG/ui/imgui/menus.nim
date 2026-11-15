@@ -17,7 +17,7 @@
 
 import std/os
 import imguin/cimgui
-import ../../core/layouts
+import ../../core/[analysis, layouts]
 import ../../view/theme
 import icons, marks, thememenu, windows
 
@@ -70,6 +70,10 @@ type
     trayMinimize*: bool         ## Window > Minimize to the tray is checked
     trayProblem*: string        ## why the tray icon cannot be shown; "" when it can
     trayAvailable*: bool        ## the icon is in a tray that is seen (minimizing to it can work)
+    plotTraces*: int
+      ## Window > New plot: the selected traces of the file shown; 0: none
+      ## (its views are then offered on the trace under the pointer, from
+      ## the plot's menu)
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -88,6 +92,8 @@ type
     toggleJoin*: bool     ## the "Import survey" window's entry under Window was clicked
     toggleTrayIcon*: bool     ## Window > Icon in the tray was clicked
     toggleTrayMinimize*: bool ## Window > Minimize to the tray was clicked
+    newPlot*: bool        ## Window > New plot > a view was clicked: `newPlotView`
+    newPlotView*: AnalysisView
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
@@ -278,6 +284,21 @@ proc drawEditMenu(input: MenuInput; res: var MenuResult) =
         "file itself is never changed"
       else: "No edits to clear")
 
+proc drawNewPlot(input: MenuInput; res: var MenuResult) =
+  ## Window > New plot: a window of the selected traces for each view.
+  let open = igBeginMenu((IconPulse & "  New plot").cstring, input.plotTraces > 0)
+  if marked != nil: marked[].mark("menu.window.newplot")
+  tip(if input.plotTraces > 0: "A window of the " & $input.plotTraces & " selected traces: " &
+        "a spectrogram, their envelope and instantaneous phase, the phase spectrum, a " &
+        "cross-correlation against a pilot. It follows the Seismic window's filters and kills"
+      else: "Select traces in the Seismic window first (or right-click one there)")
+  if open:
+    for v in AnalysisView:
+      if igMenuItem_Bool(v.viewName.cstring, nil, false, true):
+        (res.newPlot, res.newPlotView) = (true, v)
+      if marked != nil: marked[].mark("menu.newplot." & $v)
+    igEndMenu()
+
 proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
   ## Window: putting the windows right first, then each window with a tick,
   ## then the layouts.
@@ -318,6 +339,7 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
     res.toggleJoin = true
   if marked != nil: marked[].mark("menu.window.join")
   tip("Ticked while open: a click opens it in front, or closes it")
+  drawNewPlot(input, res)
   drawLayouts(input, res)
 
 proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
