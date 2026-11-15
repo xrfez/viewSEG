@@ -11,6 +11,7 @@
 ##  (recentFiles "/data/shot1.sgd")
 ##  (recentFolders "/data")
 ##  (plot
+##   (orientation timeDown)
 ##   (mode wiggle)
 ##   (fills positive)
 ##   ...
@@ -55,6 +56,7 @@ const
   MaxPresets* = 12     ## sort presets kept
   MaxText = 4096       ## the longest path or name taken
 
+  OrientationNames: array[Orientation, string] = ["timeDown", "timeAcross"]
   ModeNames: array[DisplayMode, string] = ["density", "wiggle", "wiggleDensity"]
   FillNames: array[WiggleFill, string] = ["positive", "negative"]
   ColourNames: array[PlotColours, string] = ["paper", "theme", "custom"]
@@ -140,6 +142,7 @@ proc keys(w: var NifWriter; order: openArray[SortKey]) =
     w.close()
 
 proc display(w: var NifWriter; d: DisplaySettings) =
+  w.choice("orientation", OrientationNames[d.orientation])
   w.choice("mode", ModeNames[d.mode])
   w.open("fills")
   for f in d.fills: w.ident FillNames[f]
@@ -405,6 +408,7 @@ proc display(r: var Reading; n: NifNode; d: var DisplaySettings) =
       r.unknown(c, "plot")
     else:
       case c.tag
+      of "orientation": r.choice(c, OrientationNames, d.orientation)
       of "mode": r.choice(c, ModeNames, d.mode)
       of "fills":
         var fills: set[WiggleFill]

@@ -1,11 +1,15 @@
 ## What a trace panel shows, and what it reads for it.
 ##
-## A panel is drawn the way seismic is plotted: traces across, time down.
-## Its x axis counts *positions*: the panel's traces in order (a gather
-## after its trace filter), position `k` centred on `x = k` and covering
-## `k - 0.5 .. k + 0.5`. Its y axis is time in ms, increasing downward;
-## sample `j` lies at `t0Ms + j * dtMs` and covers half an interval either
-## side.
+## A panel has two data axes, whichever way its plot is turned
+## (`core/orientation`: traces across and time down, as seismic is plotted,
+## or time across and the traces stacked). One counts *positions*: the
+## panel's traces in order (a gather after its trace filter), position `k`
+## centred on `x = k` and covering `k - 0.5 .. k + 0.5`. The other is time
+## in ms; sample `j` lies at `t0Ms + j * dtMs` and covers half an interval
+## either side. A `Viewport` holds a span of each and the plot's pixels
+## along each (`columns` along the positions, `rows` along time), so
+## everything here (the stride, the decimation, the read-ahead) is the same
+## for either orientation.
 ##
 ## **The view bounds the work.** `requestFor` turns what is on screen into
 ## a `ReadRequest`:
@@ -16,14 +20,16 @@
 ##   where the data goes on (`covers` with `keep`, `KeepAhead`), so the
 ##   margin stays filled as the view moves; the read-ahead of a large view
 ##   shrinks to stay within `MaxAheadValues`;
-## - zoomed out past one position per pixel column (in density only: the
-##   wiggle modes stop at one pixel a trace, `MinTracePixels`), every
-##   `stride`-th position only (a power of two, positions that are multiples
-##   of it), never more than the panel has columns, read-ahead included; a
-##   view no wider than the plot's columns reads every position it shows;
+## - zoomed out past one position per pixel (in density only: the wiggle
+##   modes stop at one pixel a trace, `MinTracePixels`), every `stride`-th
+##   position only (a power of two, positions that are multiples of it),
+##   never more than the plot has pixels along the positions (`columns`),
+##   read-ahead included; a view no wider than those reads every position
+##   it shows;
 ## - the visible samples, plus the same read-ahead in time; zoomed out past
-##   one sample per pixel row, the tile keeps one column per `decimation`
-##   samples (a power of two; `decimatePeakInto`), at most two per row;
+##   one sample per pixel along time (`rows`), the tile keeps one column per
+##   `decimation` samples (a power of two; `decimatePeakInto`), at most two
+##   per pixel;
 ## - `margin` more samples on each side for processing (a filter's edge, an
 ##   AGC window), decoded but not kept (`decodeWindow`);
 ## - when the layer draws wiggles and the samples are decimated, each
@@ -63,8 +69,9 @@ const
     ## its 192 MiB)
   MinTracePixels* = 1.0
     ## the narrowest trace spacing, in pixels, of a view in a wiggle mode:
-    ## zoomed out as far as it goes, every trace in view has a pixel column
-    ## of its own, and none is skipped (density has no such limit)
+    ## zoomed out as far as it goes, every trace in view has a pixel of its
+    ## own (a column, or a row when time is across), and none is skipped
+    ## (density has no such limit)
 
 type
   Span* = object
@@ -73,9 +80,11 @@ type
 
   Viewport* = object
     ## What a panel shows.
-    traces*: Span        ## x, in positions, from the left edge to the right edge
-    timeMs*: Span        ## y, in ms, from the top edge to the bottom edge
-    columns*, rows*: int ## the plot's size in pixels
+    traces*: Span ## in positions, from the first shown to the last
+    timeMs*: Span ## in ms, from the earliest time shown to the latest
+    columns*, rows*: int
+      ## the plot's pixels along the positions and along time: its width and
+      ## height when time is down, its height and width when time is across
 
   PanelLayout* = object
     ## What a panel's traces span: known once the panel's reader has looked

@@ -3343,14 +3343,19 @@ proc applyCommand(state: var AppState; cmd: Command) =
       let d = cmd.display.bounded # whoever sent it: the settings file takes it as it is
       p.layers[0].display = d
       inc p.revision
+      if d.orientation != was.orientation:
+        # Turned: the same traces and times, the plot's pixels along each
+        # the other way round until the window says what they are now.
+        swap(p.view.columns, p.view.rows)
       # what this command changed in the display; a new mode leaves the
       # gain as the user had it, whatever an agent made it meanwhile
       state.change(cmd.origin, s):
         s.plot.display = carried(s.plot.display, state.settings.plot.display, remembered(d))
-      # New limits (a wiggle mode's widest view, the margin of the overlap):
-      # the view stays where it is, a wider one (from density) narrowed
-      # keeping its left edge, and one that showed the whole record shows
-      # the whole of it again; the frontend follows.
+      # New limits (a wiggle mode's widest view, the margin of the overlap,
+      # a turn): the view stays where it is, a wider one (from density, or
+      # a turn to fewer pixels along the traces) narrowed keeping its first
+      # trace, and one that showed the whole record shows the whole of it
+      # again; the frontend follows.
       if p.laidOut and p.layout.traces > 0:
         let v = relimited(p.view, wasLimits, p.viewLimits(p.view.columns))
         if v != p.view:

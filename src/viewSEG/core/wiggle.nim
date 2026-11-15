@@ -9,19 +9,23 @@
 ## column's extremes (`ReadRequest.envelope`, made by `minMaxInto`), two per
 ## column, the smallest and the largest sample of the column in the order
 ## they occur, a quarter of a column either side of its centre. So a trace
-## drawn in fewer pixel rows than it has samples keeps every peak and
+## drawn in fewer pixels along time than it has samples keeps every peak and
 ## trough. Between vertices the line is straight; before the first and
 ## after the last it is held.
 ##
 ## **The swing.** A value `a` swings the trace `swing(a, scale, overlap)`
-## trace spacings right of its baseline (left when negative): `a * scale`
-## (the display gain, `displayScale`) clipped to ±1, times the overlap. So
-## the reference amplitude, the one density draws full black, swings a
-## trace `overlap` trace spacings, and nothing swings further: the clip. Overlap 1 reaches the next trace's
-## baseline.
+## trace spacings from its baseline towards the next trace (towards the
+## trace before when negative): `a * scale` (the display gain,
+## `displayScale`) clipped to ±1, times the overlap. So the reference
+## amplitude, the one density draws full black, swings a trace `overlap`
+## trace spacings, and nothing swings further: the clip. Overlap 1 reaches
+## the next trace's baseline. A plot turned so that a positive amplitude
+## swings towards the trace before (time across, the first trace at the
+## top: up) draws each wiggle mirrored about its baseline
+## (`WiggleStyle.swing`, from `core/orientation`).
 ##
 ## **A pixel.** The line covers the part of a pixel between its smallest
-## and largest swing over the pixel's row of time (`lineExtent`), widened
+## and largest swing over the pixel's span of time (`lineExtent`), widened
 ## by half the line's width on each side; a fill covers the part between
 ## the baseline and the swing at the pixel's centre time, on the side
 ## chosen (`WiggleFill`). Fill and line are drawn with that coverage, the
@@ -56,10 +60,13 @@ type
     scale*: float32          ## the display gain (`displayScale`)
     overlap*: float64        ## the largest swing, in trace spacings
     pixelsPerTrace*: float64 ## the trace spacing on screen
-    msPerPixel*: float64     ## the time one pixel row spans
+    msPerPixel*: float64     ## the time one pixel spans
     lineWidth*: float64      ## pixels; 0 draws no line
     markedWidth*: float64    ## pixels, for a hovered or selected trace's line
     fills*: set[WiggleFill]
+    swing*: float64 = 1
+      ## 1: a positive amplitude swings towards later positions; -1: towards
+      ## earlier ones, each wiggle mirrored about its baseline (`Turn.swing`)
 
   WiggleInk* = object
     ## The colours of a wiggle display.
@@ -72,7 +79,7 @@ type
 
 const
   MaxRowVertices* = 32
-    ## vertices inside one pixel row that a line's extent looks at, at most
+    ## vertices inside one pixel's time that a line's extent looks at, at most
     ## (a tile has at most four per row; an older, finer one may have more)
 
 func finite(v: float32): float32 {.inline.} =
@@ -150,7 +157,7 @@ func swing*(a, scale: float32; overlap: float64): float64 {.inline.} =
 func lineExtent*(t: Tile; s: Series; row: int; tA, tB: float64; scale: float32;
     overlap: float64): (float64, float64) =
   ## The smallest and the largest swing of row `row`'s line between times
-  ## `tA` and `tB` (one pixel row), in trace spacings: at both ends and at
+  ## `tA` and `tB` (one pixel's time), in trace spacings: at both ends and at
   ## the vertices between them (at most `MaxRowVertices`).
   let dA = swing(t.valueAt(s, row, tA), scale, overlap)
   let dB = swing(t.valueAt(s, row, tB), scale, overlap)
@@ -192,10 +199,12 @@ func onto*(top: Ink; below: Rgba): Rgba =
 func traceInk*(t: Tile; s: Series; row: int; xPx, tMs: float64; st: WiggleStyle;
     ink: WiggleInk; mark = tmNone): Ink =
   ## What row `row`'s trace puts on the pixel whose centre lies `xPx` pixels
-  ## right of the trace's baseline at time `tMs`: its fill, then its line
-  ## over it, in the colours of `mark`; nothing for a killed or dead trace,
-  ## which is drawn blank.
+  ## from the trace's baseline towards later positions at time `tMs`: its
+  ## fill, then its line over it, in the colours of `mark`; nothing for a
+  ## killed or dead trace, which is drawn blank. With `st.swing` -1 the
+  ## wiggle is mirrored about its baseline.
   if t.isBlank(row): return Ink()
+  let xPx = xPx * st.swing # pixels towards where a positive amplitude swings
   let (line, positive, negative, width) = case mark
     of tmHovered: (ink.hover, ink.hover, ink.hover, st.markedWidth)
     of tmSelected: (ink.selected, ink.selected, ink.selected, st.markedWidth)
@@ -235,13 +244,15 @@ func styleFor*(d: DisplaySettings; view: Viewport; scale: float32; lineWidth,
     markedWidth: float64): WiggleStyle =
   ## The wiggle style of a layer drawn with `d` in `view` at display gain
   ## `scale`, lines `lineWidth` pixels wide (`markedWidth` when hovered or
-  ## selected), at its `effectiveOverlap`. The plain line is never wider
-  ## than `LineShare` of a trace spacing (`lineWidthFor`); a hovered or
-  ## selected trace keeps `markedWidth`, so it stands out.
+  ## selected), at its `effectiveOverlap`, swinging as its orientation says.
+  ## The plain line is never wider than `LineShare` of a trace spacing
+  ## (`lineWidthFor`); a hovered or selected trace keeps `markedWidth`, so
+  ## it stands out.
   let ppt = pixelsPerTrace(view)
   WiggleStyle(scale: scale, overlap: d.effectiveOverlap, pixelsPerTrace: ppt,
     msPerPixel: view.timeMs.width / float64(max(view.rows, 1)),
-    lineWidth: lineWidthFor(lineWidth, ppt), markedWidth: markedWidth, fills: d.fills)
+    lineWidth: lineWidthFor(lineWidth, ppt), markedWidth: markedWidth, fills: d.fills,
+    swing: d.turn.swing)
 
 func hoverRow*(t: Tile; base, hover: int): int =
   ## The row of `t` that holds survey-wide trace `hover` (`Selection.hover`)

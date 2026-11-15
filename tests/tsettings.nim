@@ -67,7 +67,8 @@ proc everyFieldSet(): Settings =
     headers: HeadersView(tab: htTrace, traceTab: ttData, followPointer: false,
       asDisplayed: true, columns: {hcName, hcOffset}))
   result.plot = PlotDefaults(
-    display: DisplaySettings(mode: dmWiggleDensity, fills: {wfNegative}, colours: pcCustom,
+    display: DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
+      fills: {wfNegative}, colours: pcCustom,
       custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),
         line: Rgba(r: 250, g: 128, b: 0, a: 255), positive: Rgba(r: 9, g: 8, b: 7, a: 128),
         negative: Rgba(r: 200, a: 255), hover: Rgba(g: 200, a: 255),

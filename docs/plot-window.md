@@ -8,7 +8,7 @@
 
 ```
 ┌ Seismic ───────────────────────────────────────────────────┐
-│ [▒|∿|▒∿][◢|◣][⊢] [-][1.00][+] overlap [gain▾] [-][+0.0][+] dB│  controls (they
+│ [▒|∿|▒∿][◢|◣][⊢][↦][-][1.00][+] overlap [gain▾] [-][+0][+] dB│  controls (they
 │ [12.5] tr/in [200] ms/in [-][+][fit][<] [◂ 1 / 1 ▸]        │  wrap when narrow)
 │ [Line/Station|By Flag|By Component] [Custom...] [⋯]        │
 ├────────────────────────────────────────────────────────────┤
@@ -30,8 +30,11 @@
   window of a kind is numbered ("Seismic 2"). Saved layouts name a window by an identity
   of its own (Dear ImGui's `###plot`), never by its title, so a layout saved before a
   rename puts every window back where it was.
-- **Vertical, as seismic is plotted:** time runs down, traces run across. Single traces
-  and overlays are vertical too; overlays also offer a horizontal option.
+- **Time down, or time across:** as seismic is plotted, time runs down and the traces
+  across; a toggle in the strip turns the plot so that time runs from left to right and
+  the traces are stacked from the top down, as signals are drawn (see
+  [Orientation](#orientation)). The Seismic window starts time down; every plot window,
+  single traces and overlays among them, can be turned.
 - **Never past the data:** every way of moving the view (wheel, keys, drags, box zoom,
   typed scales, the scroll bars, back, a new window size) stops at the first and last
   trace and at the record's start and end. Zoomed out as far as it goes, the record
@@ -50,24 +53,29 @@
   in the status bar. Every label is as wide as the longest the record can have (its
   first or last time, with the decimals of the finest step a view of it can show), so
   the axis keeps one width and the plot's left edge does not move when the labels grow
-  from "999" to "1000" as the view pans.
+  from "999" to "1000" as the view pans. (When time is across, its values run along the
+  bottom, where their width moves nothing.)
 - **The cursor's time line**, a toggle in the strip after the fills (⊢; off by default,
   remembered between runs): when on, a thin line runs along the pointer's pixel row
   from the pointer across the plot to the time axis, and the pointer's time is written
   at the axis on that row, right-aligned as the tick values are, on a small box over
-  them, to the sample interval (whole ms at 1 ms or coarser). It is drawn over the plot's image each
+  them, to the sample interval (whole ms at 1 ms or coarser); when time is across, the
+  line runs down the pointer's pixel column to the time axis along the bottom, and the
+  time stands under it, over the tick values. It is drawn over the plot's image each
   frame, so it follows the pointer without lag and reads and redraws nothing; it is not
   drawn when the pointer is off the plot. Its colour is the theme's crosshair colour,
   made readable on the plot's background, with a halo of that background on each side,
   so it shows on paper and on the theme's plot, over wiggles and over density. **With
   it, the display header's values of the trace under the pointer** stand in a box over
-  each of the header's rows, at that trace's column, in the style of the time box: a
+  each of the header's rows, at that trace's column (in each of its columns, at the
+  trace's row, when time is across), in the style of the time box: a
   trace's line and point can be read where the rows are thinned because the traces are
   close (the user: "a box displaying the header like the one that gives the time would
   be nice for when not all headers are shown"). No vertical line: the trace's highlight
   marks the trace.
 - **Scroll bars** appear when part of the data is out of view: under the plot when not
-  every trace is shown, right of it when not all of the record's time is; none when
+  every trace is shown, right of it when not all of the record's time is (when time is
+  across, the other way round: time under the plot, the traces right of it); none when
   everything is in view. The thumb's length is the share in view. Dragging the thumb
   pans; a click on the track pans by a whole view towards the click (held, it repeats
   until the thumb reaches the pointer); the wheel over a bar pans along it. They move
@@ -82,8 +90,9 @@
   as a sheet of paper would. Only when the plot becomes larger than the whole record
   at that scale does the scale grow, as far as fills the plot (never a view past the
   data).
-- **Display header along the top:** rows of trace header values over the traces, thinned
-  so labels never overlap. Any trace header field can be a row (among them the component
+- **Display header along the top** (beside the plot, at its left, when time is across):
+  rows of trace header values over the traces (columns beside them), thinned so labels
+  never overlap. Any trace header field can be a row (among them the component
   of a multi-component station), and there can be several; the default is receiver
   **line** and **point**. While the record has an edited trace, a last row, **edits**,
   marks each one over its trace, as the edits are now: **K** (killed, in the theme's
@@ -104,8 +113,8 @@
   itself never scrolls, so no window scroll bar ever covers the plot:
   - **display mode** (▒ ∿ ▒∿ above): greyscale density, wiggles, or wiggles over
     density, and two toggles for the wiggles' fills (◢ ◣): the **positive fill** (the
-    lobes right of the trace) and the **negative fill** (left of it), either, both or
-    none. The default is **wiggles with the positive fill**, black on white paper.
+    lobes right of the trace, above it when time is across) and the **negative fill**
+    (left of it, below it), either, both or none; the symbols turn with the plot. The default is **wiggles with the positive fill**, black on white paper.
     Beside them, the **trace overlap** (the largest swing of a wiggle, in trace spacings:
     see [Wiggles](#wiggles)), as the gain amount is shown: a box to type into, and - and
     + stepping through 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8 and 10;
@@ -125,6 +134,9 @@
     overlap, the colours, the gain type, amount and settings, the order and the display
     header's fields (`Settings.plot`: a new plot starts as the user left the last one;
     polarity is not kept, reversing it being an operation on the data);
+  - the **orientation** (↦, a toggle on the symbols' line after the cursor's time line):
+    time down, or, while it is on, time across ([Orientation](#orientation)); kept with
+    the display, so a new plot window starts the way the last one was left;
   - **Seismic and Aux** (the user, asked whether auxiliary traces should wait for an
     Aux window: "filter toggle"), two toggles shown when the record holds auxiliary
     traces (a time break, a pilot, an uphole): Seismic is on at first; with Aux on too,
@@ -252,6 +264,61 @@
   trace the file marks dead, and "killed", "polarity reversed" or both over an edited
   trace, in the theme's warning colour.
 
+## Orientation
+
+A plot can be drawn two ways (the user, on the vibrator analysis plots that reuse the
+plot: "realistically some of these plots will need to be rotated -90 degrees and
+displayed left to right"), chosen per plot window by the toggle in the strip and kept
+with the window's display. The Seismic window starts time down; a window made for single
+signals can start time across.
+
+| | Time down (as seismic is plotted) | Time across (as signals are drawn) |
+|---|---|---|
+| Time | downwards; its values left of the plot | from left to right; its values along the bottom |
+| Traces | across, the first at the left | stacked from the top down, the first at the top |
+| A positive amplitude | swings right, towards the next trace | swings up, towards the trace before |
+| Display header | a row per field above the plot, the names at the left | a column per field left of the plot, the names above them; the edits column next to the plot |
+| Scroll bars | the traces' below, time's at the right | time's below, the traces' at the right |
+| The cursor's time line | from the pointer left to the time axis, the time over its values | from the pointer down to the time axis, the time over its values |
+| The header's box at the cursor | over each row, at the trace's column | in each column, at the trace's row |
+| Traces per inch, ms per inch | along the plot's width, along its height | along its height, along its width |
+| Zoomed out as far as wiggles go | a pixel column a trace | a pixel row a trace |
+| The edge traces' whole wave | left of the first trace, right of the last | above the first, below the last |
+
+- **One mapping.** Every part of the plot finds where a trace and a time lie on the
+  screen, and what lies under a point of it, through one mapping between the data and
+  the screen (`core/orientation`): the picture (density, wiggles, fills, the hovered and
+  selected traces), the display header, the scroll bars, the cursor's line and boxes, a
+  box zoom, the trace under the pointer and the status bar's readout. The view itself
+  (the traces and times shown, and the plot's pixels along each) is the same either way,
+  so the limits, the zoom-out limit, the scales, the read-ahead and what is read do not
+  depend on the orientation, and neither do the tiles and their textures. A pixel of the
+  time-across picture is the matching pixel of the time-down picture transposed, with
+  each wiggle swung the other way about its baseline (up rather than right): that is what
+  the tests compare.
+- **Every gesture and key acts in the screen's directions:** the wheel zooms about the
+  pointer; Ctrl + wheel, and Ctrl + Up / Down, zoom up and down only (in time when time is
+  down, in traces when it is across); Shift + wheel, the sideways wheel, and Ctrl + Left /
+  Right zoom across only (in traces, or in time); the arrow keys pan the way they point;
+  a drag carries the data with the pointer; a right drag zooms to the box drawn; a scroll
+  bar's thumb lies where the view lies along it, and follows the pointer.
+- **Everything that acts on traces acts on them the same way:** hover, selection, Ctrl +
+  click, Shift + click's range in the order shown, the sorts, kills and reversals, the
+  Seismic and Aux toggles and the link with the map.
+- **A turn keeps the view:** the same traces and times are shown after it, at the scales
+  the plot's other shape gives them (the scale boxes say which), within the limits: in a
+  wiggle mode no more traces than the plot has pixels along them (a wider view is
+  narrowed from its first trace); a view of the whole record shows it whole again.
+  Nothing is read for a turn: the tiles on hand are drawn the other way round at once.
+  Only where the plot's other shape needs another resolution (zoomed out past a trace or
+  a sample a pixel, as a new window size can) is a new view asked for, as for any view.
+- **The first trace at the top** when time is across is the default taken (the traces
+  then read down the plot as the rows of the display header, a table's rows and a chart
+  recorder's channels do); whether the user would rather have it at the bottom (the
+  time-down picture turned a quarter turn anticlockwise, "-90 degrees" taken literally)
+  is asked. It is one constant (`FirstTraceAtTop`); either way a positive amplitude
+  swings up.
+
 ## Wiggles
 
 - **At every zoom** the wiggle modes draw wiggles, never density in their place: the
@@ -354,12 +421,12 @@ its shortcut shown there.
 | Click a scroll bar's track | Pan by a whole view towards the click; held, it repeats |
 | Wheel over a scroll bar | Pan along that bar, a tenth of the view per notch |
 | Wheel | **Zoom** in or out about the cursor, in time and traces together |
-| Ctrl + wheel | Zoom in time only, about the cursor |
-| Shift + wheel, or the sideways wheel | Zoom in traces only, about the cursor (some systems send Shift + wheel as the sideways wheel) |
+| Ctrl + wheel | Zoom up and down only, about the cursor: in time (in traces when time is across) |
+| Shift + wheel, or the sideways wheel | Zoom across only, about the cursor: in traces (in time when time is across; some systems send Shift + wheel as the sideways wheel) |
 | `+` / `-` (main keys or keypad) | Zoom in or out about the cursor (or the centre), both axes |
-| Ctrl + Up / Ctrl + Down | Zoom in / out in time only |
-| Ctrl + Right / Ctrl + Left | Zoom in / out in traces only |
-| Arrow keys | Pan by a tenth of the view; with Shift, by a whole view |
+| Ctrl + Up / Ctrl + Down | Zoom in / out up and down only: in time (in traces when time is across) |
+| Ctrl + Right / Ctrl + Left | Zoom in / out across only: in traces (in time when time is across) |
+| Arrow keys | Pan the way they point, by a tenth of the view; with Shift, by a whole view |
 | Ctrl + `0` | Fit all (also a button in the controls) |
 | `]` or keypad `*` / `[` or keypad `/` | More / less gain amount, 3 dB a step; with Shift, 12 dB |
 | Backspace, or Alt + Left | Back to the previous view |

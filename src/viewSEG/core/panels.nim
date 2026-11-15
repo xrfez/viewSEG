@@ -62,10 +62,10 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/gain/[curves, gain]
 import processSEG/vibroseis/sweep
-import geometry, session, viewport, zoom
+import geometry, orientation, session, viewport, zoom
 
-export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, GatherKind, NormScope,
-  NormStat
+export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, orientation, GatherKind,
+  NormScope, NormStat
 
 type
   PanelId* = distinct int
@@ -104,8 +104,8 @@ type
 
   WiggleFill* = enum
     ## The lobes of a wiggle that are filled.
-    wfPositive = "positive fill" ## right of the baseline
-    wfNegative = "negative fill" ## left of it
+    wfPositive = "positive fill" ## right of the baseline (above it when time is across)
+    wfNegative = "negative fill" ## left of it (below it)
 
   PlotColours* = enum
     pcPaper = "paper" ## white background, black traces, whatever the theme
@@ -144,6 +144,9 @@ type
   DisplaySettings* = object
     ## How a layer is drawn.
     visible*: bool = true
+    orientation*: Orientation = orTimeDown
+      ## which way the plot is turned (`core/orientation`): the panel's
+      ## layer 0 decides for the whole plot
     mode*: DisplayMode = dmWiggle
     fills*: set[WiggleFill] = {wfPositive} ## the wiggles' fills: either, both or none
     colours*: PlotColours = pcPaper
@@ -532,6 +535,10 @@ func effectiveOverlap*(d: DisplaySettings): float64 =
   ## be drawn).
   if d.overlap.isNaN: 1.0 else: clamp(d.overlap, MinOverlap, MaxOverlap)
 
+func turn*(d: DisplaySettings): Turn {.inline.} =
+  ## The mapping between data and screen of a plot drawn with `d`.
+  turnOf(d.orientation)
+
 func traceMargin*(d: DisplaySettings): float64 =
   ## How far a view of a layer drawn with `d` reaches past the first and
   ## last trace's cells, in trace spacings: in the wiggle modes, the swing
@@ -542,22 +549,25 @@ func traceMargin*(d: DisplaySettings): float64 =
 
 func viewLimits*(layout: PanelLayout; d: DisplaySettings; columns: int): ViewLimits =
   ## The limits (`core/zoom`) of a view of a layer of `layout` drawn with
-  ## `d` on a plot `columns` pixels wide: the data's, reaching `traceMargin`
-  ## past the first and last trace, and in the wiggle modes no more traces
-  ## across than `columns / MinTracePixels`, so every trace in view is
-  ## drawn. A plot whose size is not known yet (0) has no such limit.
+  ## `d` on a plot `columns` pixels long along the positions
+  ## (`Viewport.columns`, whichever way it is turned): the data's, reaching
+  ## `traceMargin` past the first and last trace, and in the wiggle modes
+  ## no more traces than `columns / MinTracePixels`, so every trace in view
+  ## is drawn. A plot whose size is not known yet (0) has no such limit.
   let widest = if d.drawsWiggles and columns > 0: float64(columns) / MinTracePixels else: Inf
   limitsOf(layout, widest, d.traceMargin)
 
 func viewLimits*(p: Panel; layout: PanelLayout; columns: int): ViewLimits =
   ## The limits of a view of `layout` (`p.layout`, or the gather it showed
-  ## before) on a plot `columns` pixels wide, as `p`'s layer 0 is drawn; a
+  ## before) on a plot `columns` pixels along the positions, as `p`'s layer
+  ## 0 is drawn; a
   ## panel with no layer draws nothing, and only the data limits it.
   if p.layers.len == 0: limitsOf(layout)
   else: viewLimits(layout, p.layers[0].display, columns)
 
 func viewLimits*(p: Panel; columns: int): ViewLimits {.inline.} =
-  ## The limits of `p`'s view on a plot `columns` pixels wide.
+  ## The limits of `p`'s view on a plot `columns` pixels along the
+  ## positions.
   p.viewLimits(p.layout, columns)
 
 func rangeOf*(p: Panel; base, anchor, to: int): seq[int] =

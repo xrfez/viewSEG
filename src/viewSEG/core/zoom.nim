@@ -2,20 +2,21 @@
 ## pan, drag, box zoom, a new plot size and the scroll bars, all kept within
 ## the limits the panel's traces set.
 ##
-## Views are moved in data coordinates (`core/viewport`): positions across,
-## ms down. Every change keeps the view within `limitsOf(layout)`:
+## Views are moved in data coordinates (`core/viewport`): positions and ms,
+## whichever way the plot is turned (`core/orientation`). Every change
+## keeps the view within `limitsOf(layout)`:
 ##
-## - its edges inside the data: from the first trace's left edge to the last
-##   trace's right edge, from the record's start to its last sample. Nothing
+## - its edges inside the data: from the first trace's outer edge to the
+##   last trace's, from the record's start to its last sample. Nothing
 ##   past the data is ever shown, and zoomed out as far as it goes the data
 ##   fills the plot exactly. The one exception is `margin`: the wiggle modes
 ##   reach past the first and last trace by the swing the trace overlap
 ##   allows (`core/panels.viewLimits`), so those traces' outer lobes are
 ##   shown whole, and nothing else is drawn there;
 ## - never narrower than `MinTraces` positions or `MinSamples` samples;
-## - never wider than the data, nor than `widest` positions across (the
-##   wiggle modes: the plot's pixel columns, so every trace in view is
-##   drawn; `core/panels.viewLimits`). Zoomed out as far as it goes, such a
+## - never wider than the data, nor than `widest` positions (the wiggle
+##   modes: the plot's pixels along the positions, so every trace in view
+##   is drawn; `core/panels.viewLimits`). Zoomed out as far as it goes, such a
 ##   view shows `widest` positions of a larger record, and the scroll bar
 ##   the rest. The time axis has no such limit.
 ##
@@ -25,11 +26,12 @@
 ## allow, from the first trace.
 ##
 ## **A new plot size** (`resized`) always keeps the scale (data per pixel)
-## and the top-left corner: a smaller plot shows less, with scroll bars, a
-## larger one more, as a sheet of paper would. Only where the plot becomes
-## larger than all the data at that scale does the scale grow, as far as
-## fills the plot. A view that the limits make narrower (`keptFrom`) keeps
-## its left or top edge.
+## and the corner of the first position and the earliest time (the top-left
+## one): a smaller plot shows less, with scroll bars, a larger one more, as
+## a sheet of paper would. Only where the plot becomes larger than all the
+## data at that scale does the scale grow, as far as fills the plot. A view
+## that the limits make narrower (`keptFrom`) keeps its first position or
+## its earliest time.
 ##
 ## **The next gather** (`carried`) is shown at the same scales: the same
 ## positions and times, or all of it along an axis that showed all of the
@@ -40,11 +42,16 @@
 ## as long as the share of the data in view and lies where the view lies;
 ## dragging it (`scrolled`) or clicking the track (`paged`) pans.
 ##
-## The frontend turns the pointer into data coordinates with `dataAt` and
-## calls these. A map view can use the `Span` forms.
+## The frontend turns the pointer into data coordinates with `dataAt`
+## (`core/orientation`: which way the plot is turned) and calls these. The
+## gestures that start on the screen (`dragged`, the scroll bars) take the
+## plot's `Turn`, so they act in the screen's directions whichever way it
+## is turned. A map view can use the `Span` forms.
 
 import std/math
-import geometry, viewport
+import geometry, orientation, viewport
+
+export orientation
 
 const
   MinTraces* = 4.0  ## the narrowest view, in positions
@@ -54,10 +61,6 @@ const
   PanStep* = 0.1    ## the fraction of the view an arrow key pans by
 
 type
-  Axis* = enum
-    axTraces = "traces" ## across: positions
-    axTime = "time"     ## down: ms
-
   Limits* = object
     ## What a view is kept within along one axis: its edges inside
     ## `bounds`, its width from `least` to `most`.
@@ -65,11 +68,6 @@ type
     least*, most*: float64
 
   ViewLimits* = array[Axis, Limits]
-
-  DataPoint* = object
-    ## A point of a panel in data coordinates.
-    x*: float64   ## positions
-    tMs*: float64 ## ms
 
   Thumb* = object
     ## Where a scroll bar's thumb lies on its track, in pixels from the
@@ -104,9 +102,6 @@ func fitted*(lim: ViewLimits; columns, rows: int): Viewport =
   let b = lim[axTraces].bounds
   Viewport(traces: Span(lo: b.lo, hi: b.lo + min(lim[axTraces].most, b.width)),
     timeMs: lim[axTime].bounds, columns: columns, rows: rows)
-
-func span(v: Viewport; a: Axis): Span {.inline.} =
-  if a == axTraces: v.traces else: v.timeMs
 
 proc setSpan(v: var Viewport; a: Axis; s: Span) {.inline.} =
   if a == axTraces: v.traces = s else: v.timeMs = s
@@ -223,29 +218,15 @@ func stepped*(v: Viewport; fx, fy: float64; lim: ViewLimits): Viewport =
   ## `PanStep`, or 1 for a whole view).
   panned(v, fx * v.traces.width, fy * v.timeMs.width, lim)
 
-func dataAt*(v: Viewport; plot: Rect; p: Vec2): DataPoint =
-  ## The data point under screen point `p` of a plot drawn in `plot` (any
-  ## pixel units, the same for both).
-  let w = if plot.size.x > 0: float64(plot.size.x) else: 1.0
-  let h = if plot.size.y > 0: float64(plot.size.y) else: 1.0
-  DataPoint(x: v.traces.lo + (float64(p.x) - float64(plot.pos.x)) / w * v.traces.width,
-    tMs: v.timeMs.lo + (float64(p.y) - float64(plot.pos.y)) / h * v.timeMs.width)
-
-func screenAt*(v: Viewport; plot: Rect; p: DataPoint): Vec2 =
-  ## Where data point `p` is drawn in `plot`: the inverse of `dataAt`.
-  let fx = if v.traces.width != 0: (p.x - v.traces.lo) / v.traces.width else: 0.0
-  let fy = if v.timeMs.width != 0: (p.tMs - v.timeMs.lo) / v.timeMs.width else: 0.0
-  vec2(float32(float64(plot.pos.x) + fx * float64(plot.size.x)),
-    float32(float64(plot.pos.y) + fy * float64(plot.size.y)))
-
-func dragged*(start: Viewport; plot: Rect; moved: Vec2; lim: ViewLimits): Viewport =
+func dragged*(start: Viewport; plot: Rect; moved: Vec2; lim: ViewLimits;
+    m = TimeDown): Viewport =
   ## The view while the data is dragged: `start` (the view at the press)
   ## with the pointer `moved` pixels from where it was pressed, so the data
-  ## point under it stays under it.
+  ## point under it stays under it, on a plot turned as `m` says.
   let w = if plot.size.x > 0: float64(plot.size.x) else: 1.0
   let h = if plot.size.y > 0: float64(plot.size.y) else: 1.0
-  panned(start, -float64(moved.x) / w * start.traces.width,
-    -float64(moved.y) / h * start.timeMs.width, lim)
+  let (fx, ft) = m.dataDelta(float64(moved.x) / w, float64(moved.y) / h)
+  panned(start, -fx * start.traces.width, -ft * start.timeMs.width, lim)
 
 func boxed*(v: Viewport; a, b: DataPoint; axes: set[Axis]; lim: ViewLimits): Viewport =
   ## The view of the box with corners `a` and `b` along `axes` (the other
@@ -305,11 +286,13 @@ func carried*(v: Viewport; was, now: ViewLimits): Viewport =
     if v.showsAll(a, was): result.setSpan(a, keptFrom(now[a].bounds, now[a]))
     else: result.setSpan(a, kept(v.span(a), now[a]))
 
-func thumbOf*(v: Viewport; a: Axis; lim: ViewLimits; track, least: float64): Thumb =
+func thumbOf*(v: Viewport; a: Axis; lim: ViewLimits; track, least: float64;
+    m = TimeDown): Thumb =
   ## The thumb of the scroll bar along `a` on a track `track` pixels long:
   ## as long as the share of the data in view, but at least `least` pixels
   ## (so it can be grabbed), and as far along the track as the view is along
-  ## the data. The whole track when everything is in view.
+  ## the data, from the track's left or top end (`m`: the end where the
+  ## data starts on the screen). The whole track when everything is in view.
   let s = kept(v.span(a), lim[a])
   let b = lim[a].bounds
   if not (track > 0): return Thumb(start: 0, length: 0)
@@ -317,23 +300,27 @@ func thumbOf*(v: Viewport; a: Axis; lim: ViewLimits; track, least: float64): Thu
   let room = track - length # pixels the thumb can move through
   let free = b.width - s.width # data the view can move through
   let start = if free > 0 and room > 0: room * (s.lo - b.lo) / free else: 0.0
-  Thumb(start: clamp(start, 0, room), length: length)
+  let along = clamp(start, 0, room)
+  Thumb(start: (if m.reversed[a]: room - along else: along), length: length)
 
-func scrolled*(start: Viewport; a: Axis; lim: ViewLimits; track, least, moved: float64): Viewport =
+func scrolled*(start: Viewport; a: Axis; lim: ViewLimits; track, least, moved: float64;
+    m = TimeDown): Viewport =
   ## The view while the thumb along `a` is dragged: `start` (the view when it
   ## was grabbed) with the thumb `moved` pixels further along its track
-  ## (`track` and `least` as for `thumbOf`), so the thumb stays under the
-  ## pointer, stopping at the track's ends.
+  ## (rightwards or downwards; `track`, `least` and `m` as for `thumbOf`), so
+  ## the thumb stays under the pointer, stopping at the track's ends.
   let th = thumbOf(start, a, lim, track, least)
   let room = track - th.length
   let free = lim[a].bounds.width - kept(start.span(a), lim[a]).width
-  let d = if room > 0 and free > 0: moved / room * free else: 0.0
+  let d = if room > 0 and free > 0: moved * m.sign(a) / room * free else: 0.0
   if a == axTraces: panned(start, d, 0, lim) else: panned(start, 0, d, lim)
 
-func paged*(v: Viewport; a: Axis; pages: float64; lim: ViewLimits): Viewport =
-  ## `v` moved by `pages` of its own width along `a`: a click on a scroll
-  ## bar's track before the thumb is -1, after it +1.
-  if a == axTraces: stepped(v, pages, 0, lim) else: stepped(v, 0, pages, lim)
+func paged*(v: Viewport; a: Axis; pages: float64; lim: ViewLimits; m = TimeDown): Viewport =
+  ## `v` moved by `pages` of its own width along `a`, rightwards or
+  ## downwards on the screen (`m`): a click on a scroll bar's track before
+  ## the thumb is -1, after it +1.
+  let d = pages * m.sign(a)
+  if a == axTraces: stepped(v, d, 0, lim) else: stepped(v, 0, d, lim)
 
 func sameSpans*(a, b: Viewport): bool =
   ## Whether `a` and `b` show the same data, whatever their pixel sizes.

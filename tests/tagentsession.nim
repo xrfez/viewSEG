@@ -57,7 +57,7 @@ import utils/[fixtures, waiting]
 const Reached = {
   "theme": "", "window.x": "", "window.y": "", "window.width": "", "window.height": "",
   "window.maximized": "", "recentFiles": "open", "recentFolders": "browse",
-  "plot.display.visible": "",
+  "plot.display.visible": "", "plot.display.orientation": "display",
   "plot.display.mode": "display", "plot.display.fills": "display",
   "plot.display.colours": "display", "plot.display.custom.background": "display",
   "plot.display.custom.line": "display", "plot.display.custom.positive": "display",
@@ -111,8 +111,9 @@ proc appIn(dir: string): AppState =
   result = initAppState()
   result.keepSettingsIn(dir, loadSettings(dir / SettingsFileName))
 
-const Everything = DisplaySettings(mode: dmWiggleDensity, fills: {wfNegative},
-  colours: pcCustom, custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),
+const Everything = DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
+  fills: {wfNegative}, colours: pcCustom,
+  custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),
     line: Rgba(r: 250, g: 128, b: 0, a: 255), positive: Rgba(r: 9, g: 8, b: 7, a: 128),
     negative: Rgba(r: 200, a: 255), hover: Rgba(g: 200, a: 255),
     selected: Rgba(b: 200, a: 255)),

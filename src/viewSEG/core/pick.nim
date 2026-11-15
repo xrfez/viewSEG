@@ -70,10 +70,10 @@ func pickAt*(tiles: openArray[Tile]; layout: PanelLayout; at: DataPoint): Pick =
     result.binned = r.decimation
 
 func pick*(tiles: openArray[Tile]; layout: PanelLayout; view: Viewport; plot: Rect;
-    p: Vec2): Pick =
+    p: Vec2; m = TimeDown): Pick =
   ## What lies under screen point `p` of a panel drawn in `plot` showing
-  ## `view`; `noPick()` when `p` is not over the plot.
+  ## `view`, turned as `m` says; `noPick()` when `p` is not over the plot.
   if not plot.contains(p) or plot.size.x <= 0 or plot.size.y <= 0:
     return noPick()
-  result = pickAt(tiles, layout, dataAt(view, plot, p))
+  result = pickAt(tiles, layout, dataAt(view, plot, p, m))
   result.inside = true

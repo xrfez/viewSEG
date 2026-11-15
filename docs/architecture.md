@@ -723,8 +723,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    record is first shown as wide as those limits allow, from its first trace:
    `fitted`) and `core/scales` (traces
    and ms per inch or cm, at the monitor's
-   pixels per inch), and reports what its plot shows (`ckView`: the x range in
-   positions, the y range in ms, the size in pixels). The first view of a gesture comes
+   pixels per inch), and reports what its plot shows (`ckView`: the range in
+   positions and the range in ms, and the plot's pixels along each, whichever way it is
+   turned: see "One mapping between data and screen" below). The first view of a gesture comes
    with `remember`, and the panel keeps the view it replaces (at most 50) for `ckBack`;
    when `core` sets the view itself (back, the whole gather once it is laid out) it
    bumps the panel's `jumps` and the frontend follows. When the request sent last does
@@ -809,7 +810,7 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    in its plot. The CPU twins (`amplitudeAt`, `densityColour`, `traceInk`,
    `densityTint`) are what the shaders are tested against.
 8. **Read out** (UI, `core/pick` and `core/readout`). The pointer's screen point goes
-   to the data point under it, then to the trace drawn there (the newest tile holding
+   to the data point under it (through the plot's `Turn`), then to the trace drawn there (the newest tile holding
    it), the nearest sample and the value drawn for it, and the trace's keys, which each
    tile carries per row, and the edits the trace was drawn with. Nothing is read from
    the file. The status bar formats the fields the user chose (`Settings.readout`) from
@@ -824,6 +825,32 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
 | Prefetch | `seek`, which drops the old chunks; a worker drops a stale chunk within 8 traces |
 | `pool.apply` | Nothing: a call takes a few ms per panel. The panel thread checks `requestGen` between chunks |
 | A panel's tile | A newer note to its reader (between chunks); `AppState` drops a tile whose `request.gen` is not the panel's `requestGen` |
+
+### One mapping between data and screen
+
+A panel's view is in data coordinates, a span of positions and a span of ms, with the
+plot's pixels along each (`Viewport.columns` along the positions, `rows` along time),
+whichever way the plot is turned. Where those two axes lie on the screen is the plot's
+`Turn` (`core/orientation`), chosen by layer 0's `DisplaySettings.orientation`: **time
+down** (the positions across from the left, time down) or **time across** (time across
+from the left, the positions down from the top, or up from the bottom with
+`FirstTraceAtTop` false), and which way a positive amplitude swings along the positions
+(`Turn.swing`). Every place where the plot meets the screen goes through it, and nothing
+else knows which way the plot is turned:
+
+| Where | Through |
+|---|---|
+| The plot's size | `sized`: its width and height in pixels to its pixels along each data axis |
+| The pointer | `dataAt` (the pick, the zoom's anchor, a box zoom), `screenAt` (the display header's labels, the cursor's line and boxes) |
+| Drags and keys | `dataDelta` (a move on the screen as moves along the data axes: a drag, the arrow keys), `axisAlong` (the data axis a screen axis shows: zooms along one axis, a box, the scroll bars) |
+| The scroll bars | `thumbOf`, `scrolled`, `paged` with the turn: the thumb measured from the end of the track where the data starts on the screen |
+| The image | `screenSize` (the image's width and height), `ndcOf` (density's quads), `ndcMap` (the wiggle shader's vertices), `screenRect` (a hover's stripes), `WiggleStyle.swing` (the wiggle shader and `traceInk` mirror each wiggle about its baseline) |
+
+So the limits, the wiggle mode's zoom-out limit, the scales, a request's stride,
+decimation and read-ahead (`requestFor`, `covers`), the tiles and their textures are the
+same for either orientation. A turn (`ckDisplay` with another orientation) keeps the
+view's spans and swaps its pixels along the two axes, and the frontend reports the real
+ones in its next `ckView`; zoomed in, nothing new is read.
 
 ### Calls by thread
 
@@ -961,7 +988,8 @@ type
                              # the file's order (SortPresets: the plot window's buttons)
     pipeline: Pipeline       # processSEG operations; empty shows raw samples
     reversed: bool           # every trace's polarity reversed: polarityOp runs first
-    display: DisplaySettings # density, wiggle or wiggle over density, the fills (positive,
+    display: DisplaySettings # the orientation (time down or across), density, wiggle or
+                             # wiggle over density, the fills (positive,
                              # negative), the trace overlap, "paper", theme or own colours,
                              # gain type (automatic, none, fixed, normalized, exponential,
                              # float, AGC) and its settings, gain amount in dB, clip
