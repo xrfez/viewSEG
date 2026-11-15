@@ -14,7 +14,9 @@
 ##   refused, and the whole window can be taken;
 ## - the agent names the fixture relative to the program's folder; it hides
 ##   the map's receivers (the Map window's picture changes) and halves the
-##   map's scale (the map takes the view, as a zoom of the user's);
+##   map's scale (the map takes the view, as a zoom of the user's); `state`
+##   gives the Headers window's tab and the facts of the file shown, and the
+##   Headers window can be taken alone;
 ## - while it is connected the status bar shows "agent connected", and
 ##   Messages holds a line for each of its commands and for its first call
 ##   of each other tool; the file is not changed;
@@ -29,7 +31,9 @@
 ## starting the server, "no listening socket after turning it on"; with the
 ## map's view applied in `core` alone (no `showMapView`), "the map's view was
 ## not taken"; with the sign drawn after the readout, "the sign is out of
-## view: it spans 2632.0 to 2715.0 in a bar 1280.0 wide".
+## view: it spans 2632.0 to 2715.0 in a bar 1280.0 wide". With "headers"
+## left out of the screenshot's targets, "screenshot of the Headers window:
+## ... window: one of window, plot, ...".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -161,6 +165,16 @@ proc agent(s: Scenario) {.thread.} =
   check(r, "state of the map after its view")
   results.send(("perPixel", $parseJson(r.text)["map"]["view"]["perPixel"].getFloat & " " &
     $asked))
+  # the Headers window: its part of `state`, and its picture
+  r = c.call("state", %*{"parts": ["headers"]})
+  check(r, "state of the Headers window")
+  let hs = parseJson(r.text)["headers"]
+  if hs{"file"}.kind != JObject: fail("the Headers window has no file: " & $hs)
+  results.send(("headers", hs["tab"].getStr & " " & hs["file"]["summary"]["standard"].getStr &
+    " " & $hs["file"]["summary"]["traceCount"].getInt))
+  r = c.call("screenshot", %*{"window": "headers", "maxSize": 4096})
+  check(r, "screenshot of the Headers window")
+  results.send(("headers shot", r["content"][1]["text"].getStr))
   c.close()
   results.send(("done", ""))
 
@@ -326,6 +340,10 @@ withFixtures fx:
     let pp = found["perPixel"].splitWhitespace
     doAssert abs(parseFloat(pp[0]) / parseFloat(pp[1]) - 1) < 1e-6,
       "the map's view was not taken: " & found["perPixel"]
+    doAssert found["headers"] == "Summary SEG-Y " & $SurveyTraces, found["headers"]
+    let size = found["headers shot"].splitWhitespace # "headers: W x H pixels"
+    doAssert size[0] == "headers:" and parseInt(size[1]) > 100 and parseInt(size[3]) > 100,
+      found["headers shot"]
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
   doAssert not fileExists(path & ".txt"), "the export was written"
   echo "tguiagent: ok"

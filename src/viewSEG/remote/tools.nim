@@ -5,14 +5,16 @@
 ## - `command`: one `Command` from JSON (`remote/schema`), given to `apply`;
 ## - `state`: the file list, the open files, the panels (view, display, gain,
 ##   order, the traces at each position, the edits), the selection, the jobs,
-##   the newest messages, the survey;
+##   the newest messages, the survey, the Headers window (its tab, the traces
+##   it is about and what its reader read of them, the file's facts);
 ## - `headers`: one trace's keys and header fields;
 ## - `screenshot`: a PNG of the window or a part of it: the frontend reads
 ##   the pixels back (`Frontend.shoot`, the only part on the UI thread);
 ##   `pictureAnswer` scales them down and encodes them on the server thread,
 ##   with the encoder the frontend gave (`PngEncoder`);
-## - `wait`: until no job runs and every panel's picture is complete
-##   (`remote/control` keeps it across frames; `busy` says what is left).
+## - `wait`: until no job runs, every panel's picture is complete and the
+##   Headers window's reader has answered (`remote/control` keeps it across
+##   frames; `busy` says what is left).
 ##
 ## Each tool's answer is the JSON text of an MCP tool result. Input comes
 ## from an agent: every problem with it is a result with `isError`, never an
@@ -26,9 +28,9 @@ import protocol, schema
 const
   ToolNames* = ["command", "state", "headers", "screenshot", "wait"]
   StateParts* = ["program", "fileList", "files", "panels", "selection", "map", "jobs",
-    "messages", "survey"]
-  ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "messages", "jobs",
-    "toolbar", "statusbar"]
+    "messages", "survey", "headers"]
+  ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "headers", "messages",
+    "jobs", "toolbar", "statusbar"]
     ## what `screenshot` takes a picture of: the whole window, the Seismic
     ## window's picture of the traces alone, or one window
   DefaultShotSide* = 1600 ## the longest side of a screenshot, unless asked
@@ -111,7 +113,10 @@ proc toolList*(): string =
        "order, trace filter, polarity, the traces at each position, the edits, whether " &
        "the picture is complete), the selection, the map (its view, its layers, shown " &
        "or hidden, with their points, and the points selected and hovered), the jobs, " &
-       "the newest messages and the survey. All parts unless some are named.",
+       "the newest messages, the survey, and the Headers window (headers: the tab shown, " &
+       "what it has on screen, the traces its Trace tab is about and what its reader read " &
+       "of them, and the facts its Summary gives of the file the plot shows). All parts " &
+       "unless some are named.",
      "inputSchema": {"type": "object", "properties": {
        "parts": {"type": "array", "items": {"type": "string", "enum": parts},
          "description": "the parts to give; all when not given"},
@@ -139,7 +144,8 @@ proc toolList*(): string =
     {"name": "screenshot",
      "description": "A PNG of what the user sees now: the whole window, the Seismic " &
        "window's picture of the traces alone (\"plot\": its pixels are the data, at " &
-       "the panel's view), or one window (\"map\" is the Map window). Call `wait` first " &
+       "the panel's view), or one window (\"map\" is the Map window, \"headers\" the " &
+       "Headers window). Call `wait` first " &
        "after a command that " &
        "reads data.",
      "inputSchema": {"type": "object", "properties": {
@@ -150,8 +156,9 @@ proc toolList*(): string =
            "(default " & $DefaultShotSide & ")"}},
        "additionalProperties": false}},
     {"name": "wait",
-     "description": "Waits until no job runs or waits and every panel's picture is " &
-       "complete (read, sorted and drawn), at least one frame after the last command; " &
+     "description": "Waits until no job runs or waits, every panel's picture is " &
+       "complete (read, sorted and drawn) and the Headers window's reader has read what " &
+       "it has on screen, at least one frame after the last command; " &
        "or until the timeout. Says whether it is idle, and what is still going if not.",
      "inputSchema": {"type": "object", "properties": {
        "timeout": {"type": "number", "minimum": 0, "maximum": MaxWaitSeconds,
@@ -375,6 +382,46 @@ proc mapJson(state: AppState; limit: int): JsonNode =
   for p in state.selection.hoverPoints: hovered.add state.pointJson(p)
   result["hovered"] = hovered
 
+proc headersJson(state: AppState; limit: int): JsonNode =
+  ## The Headers window: its tab and toggles, what it has on screen (what its
+  ## reader reads), the traces its Trace tab is about and what was read of
+  ## them, and the facts its Summary gives of the file the plot shows (read
+  ## with the file: nothing is read here).
+  let view = state.settings.headers
+  template ins: untyped = state.inspection
+  result = %*{"tab": $view.tab, "traceTab": $view.traceTab,
+    "followPointer": view.followPointer, "asDisplayed": view.asDisplayed,
+    "onScreen": toJson(ins.parts)}
+  var answered = newJArray()
+  for i in 0 ..< min(ins.answer.traces.len, limit):
+    let d = ins.answer.traces[i]
+    answered.add %*{"trace": d.id, "file": d.file, "index": d.trace, "fields": d.rows.len,
+      "samples": d.samples.len, "samplesLeftOut": d.cut, "asDisplayed": d.displayed,
+      "problem": d.problem}
+  result["trace"] = %*{"chosenBy": $ins.chosen.by, "traces": clipped(ins.chosen.traces, limit),
+    "total": ins.chosen.total, "reading": ins.waiting, "read": answered}
+  let k = state.findPanel(MainPanel)
+  let i = if k >= 0: state.shownFile(k) else: -1
+  if i < 0:
+    result["file"] = newJNull()
+  else:
+    let s = state.sessions[i]
+    template facts: untyped = s.facts
+    var f = %*{"id": int(s.id), "path": s.path, "summary": toJson(facts.summary),
+      "coordinateUnits": $unitOf(s.crs.units), "crs": s.crs.text.substr(0, 4095),
+      "textualHeader": facts.textEncoding, "extendedTextualHeaders": facts.extendedText.len,
+      "fileHeaderFields": facts.rows.len, "channelSets": facts.channelSets.len,
+      "problems": toJson(facts.problems)}
+    let j = state.joinedOf(s.id)
+    if j >= 0:
+      let joined = state.joins[j]
+      var files = newJArray()
+      for jf in joined.files: files.add newJString(jf.path)
+      f["join"] = %*{"files": files, "units": toJson(joined.units),
+        "matched": joined.plan.matched, "seismic": joined.plan.seismic,
+        "changed": joined.plan.changes}
+    result["file"] = f
+
 proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
   ## The `state` tool.
   var n: JsonNode
@@ -448,6 +495,7 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
         "receivers": l.points[prReceiver].len, "counts": {
           "sources": toJson(l.counts[prSource]), "receivers": toJson(l.counts[prReceiver])}}
     r["survey"] = layers
+  if "headers" in wanted: r["headers"] = state.headersJson(limit)
   textResult($r)
 
 # ------------------------------------------------------------- headers --
@@ -583,11 +631,13 @@ proc pictureAnswer*(p: Picture; encode: PngEncoder): string =
 # ---------------------------------------------------------------- wait --
 
 proc busy*(state: AppState; fe: Frontend): seq[string] =
-  ## What `wait` still waits for: the jobs running or waiting, and each panel
-  ## whose picture is not complete; none when everything is done.
+  ## What `wait` still waits for: the jobs running or waiting, the listing,
+  ## the Headers window's reader, and each panel whose picture is not
+  ## complete; none when everything is done.
   for j in state.jobs.active:
     result.add "job \"" & j.spec.title & "\" (" & $j.state & ")"
   if state.fileList.scanning: result.add "the folder's listing"
+  if state.inspection.waiting: result.add "the Headers window's reader"
   for k in 0 ..< state.panels.len:
     let picture = state.pictureOf(k, fe)
     if picture notin ["complete", "nothing shown"]:

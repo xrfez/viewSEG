@@ -257,9 +257,12 @@ type
         ## the joined file
     of ckInspect:
       inspect*: set[InspectPart]
-        ## the parts of the Headers window on screen: a SEG-D record's
-        ## headers (File headers), the traces' header fields or samples
-        ## (Trace); none when the window is hidden
+        ## the parts of the Headers window on screen, which its reader reads
+        ## (off the UI thread) until they change: the SEG-D record's headers
+        ## of the record the plot shows (File headers), the header fields or
+        ## the samples of the traces its Trace tab is about (the selection,
+        ## else the trace under the pointer); none when the window is hidden.
+        ## Changes nothing else: what was read is in `state`'s `headers`
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are

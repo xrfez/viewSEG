@@ -14,7 +14,9 @@
 ##   sort, a display given in part, a selection, a kill of the selected
 ##   trace); numbers no control gives (null, infinite, huge, negative) are
 ##   brought within core's bounds, and a header field or sort key given
-##   twice is taken once; `state` and `headers` answer with what the state holds; `busy`
+##   twice is taken once; `state` and `headers` answer with what the state holds
+##   (`state`'s `headers`: what the Headers window's reader read of the
+##   traces an agent's `headers shown` and selection named); `busy`
 ##   (what `wait` waits for) empties once the picture is complete; the other
 ##   tools refuse bad arguments;
 ## - the program's folders and the map in `state`; the map's commands
@@ -41,7 +43,8 @@
 ## taken as given, "5001" fields and "@[(field: FFID ...), (field: FFID
 ## ...)]"; with `hasComment` not checked, "a comment hid 900 levels"; with
 ## `ckShowPoints` left out of `Offered`, "\"show points' record\" is not
-## decided on".
+## decided on". With `headersJson` listing none of the traces read, "the
+## trace's header fields were not read: []".
 
 import std/[base64, json, math, os, sequtils, sets, strutils, tables]
 import viewSEG/core/[geometry, settingsnif, state]
@@ -187,6 +190,11 @@ block schemaFromCommand:
   doAssert takes(ckJoin) == @["joinFile", "joinFiles", "joinOptions", "joinUnits"],
     $takes(ckJoin)
   doAssert takes(ckSelectUnmatched) == @["unmatchedOf"], $takes(ckSelectUnmatched)
+  # what the Headers window has on screen: read off the UI thread, nothing changed
+  doAssert ckInspect in Offered and "headers shown" in kinds and takes(ckInspect) == @["inspect"],
+    $takes(ckInspect)
+  doAssert s["properties"]["inspect"]["items"]["enum"] ==
+    %*["record headers", "trace headers", "trace samples"]
   # core's bounds, stated
   let gainDb = s["properties"]["display"]["properties"]["gainDb"]
   doAssert gainDb["maximum"].getFloat == MaxGainDb and gainDb["minimum"].getFloat == -MaxGainDb
@@ -394,6 +402,32 @@ withFixtures fx:
         """{"panel":1,"position":24}""", """{"file":5,"index":0}""", """{"file":1,"index":72}""",
         """{"trace":-1}""", """{"trace":"5"}""", """{"color":1}"""]:
       doAssert st.traceHeaderReport(bad).isError, bad
+
+  block theHeadersWindow:
+    # What the Headers window has on screen is read by its reader, and
+    # `state` gives it: the tab, the traces its Trace tab is about and what
+    # was read of them, the facts of the file shown and its join.
+    let id = st.sessions[0].base + 7
+    doAssert not st.run(%*{"kind": "headers shown", "inspect": ["trace headers"]}).isError
+    doAssert st.inspection.parts == {ipTraceHeaders}, $st.inspection.parts
+    doAssert not st.run(%*{"kind": "select", "traces": [id], "mode": "replace"}).isError
+    doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
+    let h = st.stateReport(fe, """{"parts":["headers"]}""").body["headers"]
+    doAssert h["tab"].getStr == "Summary" and h["onScreen"] == %*["trace headers"], $h
+    doAssert h["trace"]["chosenBy"].getStr == "the selection" and
+      h["trace"]["traces"] == %*[id] and not h["trace"]["reading"].getBool, $h["trace"]
+    let read = h["trace"]["read"]
+    doAssert read.len == 1 and read[0]["trace"].getInt == id and
+      read[0]["fields"].getInt > 50 and read[0]["samples"].getInt == 0,
+      "the trace's header fields were not read: " & $read
+    let file = h["file"]
+    doAssert file["path"].getStr == path and file["summary"]["standard"].getStr == "SEG-Y" and
+      file["summary"]["traceCount"].getInt == SurveyTraces, $file
+    doAssert file["fileHeaderFields"].getInt > 20 and file["textualHeader"].getStr.len > 0
+    doAssert file["join"]["matched"].getInt == SurveyTraces, $file["join"] # (joined above)
+    doAssert not st.run(%*{"kind": "headers shown", "inspect": []}).isError
+    doAssert not st.run(%*{"kind": "clear selection"}).isError
+    doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
 
   block theProgramAndTheMap:
     let s = st.stateReport(fe, """{"parts":["program","map"]}""").body

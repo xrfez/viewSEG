@@ -51,7 +51,9 @@ import utils/[fixtures, waiting]
 # (and this test shows no command reaches it). A new plot's display is
 # always shown (`remembered`); its Fixed amplitude an agent's display command
 # also changes through the data it shows (`settleGain`). An agent's join
-# gives its own options: the join's settings are the window's.
+# gives its own options: the join's settings are the window's. So are the
+# Headers window's (its tabs, toggles and columns): an agent's `headers
+# shown` says what its reader reads, which is no setting.
 const Reached = {
   "theme": "", "window.x": "", "window.y": "", "window.width": "", "window.height": "",
   "window.maximized": "", "recentFiles": "open", "recentFolders": "browse",
@@ -73,7 +75,9 @@ const Reached = {
   "messages.autoScroll": "", "messages.hidden": "", "cursorLine": "",
   "files.followLatest": "", "files.prepareNext": "", "map.info": "", "map.lengths": "",
   "join.trailingDigits": "", "join.multiComponent": "", "join.lineNames": "",
-  "join.coordinates": "", "join.recordMatch": "", "join.traceMatch": ""}.toTable
+  "join.coordinates": "", "join.recordMatch": "", "join.traceMatch": "",
+  "headers.tab": "", "headers.traceTab": "", "headers.followPointer": "",
+  "headers.asDisplayed": "", "headers.columns": ""}.toTable
 
 proc flatten[T](x: T; at: string; into: var OrderedTable[string, string]) =
   ## Every setting in `x` by its path ("plot.display.mode"), with its value
@@ -211,6 +215,9 @@ withFixtures fx:
     let t = st.firstTrace + 3
     st.agent(%*{"kind": "hover", "trace": t})
     st.agent(%*{"kind": "select", "traces": [t]})
+    st.agent(%*{"kind": "headers shown", "inspect": ["trace headers", "trace samples"]})
+    doAssert st.inspection.answer.traces.len == 1, "the Headers window's reader read nothing"
+    st.agent(%*{"kind": "headers shown", "inspect": []})
     st.agent(%*{"kind": "edit traces", "edit": "killed"})
     st.agent(%*{"kind": "undo edit"})
     st.agent(%*{"kind": "clear edits"})
