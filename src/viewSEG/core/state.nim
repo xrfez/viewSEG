@@ -1084,7 +1084,7 @@ proc keepForStragglers(state: var AppState) =
   if not state.joining.geometry.isNil: GC_ref(state.joining.geometry) # `joinApplyWork` reads it
 
 proc shutdown*(state: var AppState; wait = QuitWait; diskLimit = DiskQuitLimit;
-    tick: proc () {.closure.} = nil): bool {.discardable.} =
+    tick: proc () {.closure, raises: [].} = nil): bool {.discardable.} =
   ## Asks every thread to end at once (the panels' readers, the watch, the
   ## jobs: every job is cancelled), hands what is left to save to the disk
   ## thread (the settings and the layout before what waits there, then the

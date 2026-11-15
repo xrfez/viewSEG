@@ -525,7 +525,7 @@ proc askStop*(x: DiskIo) =
       signal(x.p.changed)
 
 proc stop*(x: DiskIo; deadline = getMonoTime() + DiskStopWait;
-    stuckAfter = DiskStopWait; tick: proc () {.closure.} = nil): bool {.discardable.} =
+    stuckAfter = DiskStopWait; tick: proc () {.closure, raises: [].} = nil): bool {.discardable.} =
   ## Does what is left, then ends the thread, waiting for it until
   ## `deadline`, and no longer once a task whose folder has not answered
   ## (the module documentation) has been in hand for `stuckAfter`, after
@@ -583,7 +583,8 @@ proc stuckOn*(x: DiskIo): string =
 
 proc `=destroy`*(x: DiskIo) =
   if x.p != nil:
-    discard x.stop()
+    try: discard x.stop()
+    except ResourceExhaustedError: discard # stop's own wait failed: the thread keeps its memory
     if not x.p.started: # else the thread still runs: its memory stays with it
       deinitCond(x.p.changed)
       deinitCond(x.p.idle)

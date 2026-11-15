@@ -1796,8 +1796,9 @@ proc run*(opts = RunOptions()): int =
   # on drawing (tried against hiding the window at once: then a slow save,
   # or one given up, was not seen at all).
   let quitAt = getMonoTime()
-  ui.core.shutdown(tick = proc () =
+  ui.core.shutdown(tick = proc () {.raises: [].} =
     if getMonoTime() - quitAt >= SavingShownAfter:
       inc frame
-      ui.savingFrame(window, opts, frame))
+      try: ui.savingFrame(window, opts, frame)
+      except Exception: discard) # a frame that fails only stops the message
   0

@@ -19,7 +19,6 @@
 import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, log]
 import viewSEG/core/state {.all.}
-import viewSEG/view/theme
 import viewSEG/ui/imgui/[app, shell]
 import utils/[fixtures, waiting]
 
