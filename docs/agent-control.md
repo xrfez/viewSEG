@@ -121,7 +121,7 @@ schema (in the tool list) gives every field and value; the most used:
 | `show file` | `path`, `panel` | Shows a file in a panel |
 | `go to gather` | `gather` | Shows another record of the file shown |
 | `view` | `view` (`traces` and `timeMs`, each `lo` and `hi`) | Zooms and pans, as you would |
-| `display` | `display` (`orientation`: `time down` or `time across`; `mode`, `fills`, `overlap`, `gain`, `gainDb`, `agcWindowMs`, colours ...) | How the traces are drawn, and which way the plot is turned |
+| `display` | `display` (`orientation`: `time down` or `time across`; `mode`, `fills`, `overlap`, `gain`, `gainDb`, `agcWindowMs`, `clipPercentile` (the percentile of \|x\| drawn full black, 50 to 100), `colourMap` (density's: `grey`, `red-white-blue`, `viridis`, `red-black`), colours ...) | How the traces are drawn, and which way the plot is turned. A new `clipPercentile` or `colourMap` reads nothing from the file |
 | `sort` | `order` (`field`, `descending`) | The traces' order; `[]` is the file's |
 | `trace filter` | `filter` (`seismic`, `auxiliary`) | Which traces are shown |
 | `processing` | `processing` (`dc`: `none`, `mean`, `mean and trend`; `band`: `none`, `low-cut`, `high-cut`, `band-pass`; `f1` .. `f4` in Hz, the low-cut ramp `f1` to `f2` and the high-cut ramp `f3` to `f4`; `notches`, each `on`, `hz`, `widthHz`, `harmonics`; `raw`; `aux`) | The filters the traces go through, as the strip's Filters drop-down sets them: `{"kind": "processing", "processing": {"band": "band-pass", "f1": 4, "f2": 8, "f3": 60, "f4": 80}}`; `raw` shows them unfiltered (`P`), `aux` filters the auxiliary traces too. `state` gives each panel's `processing`, and `processingNote` when the file's Nyquist cut a corner or notch |

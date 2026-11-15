@@ -116,8 +116,8 @@
 - **The window's own controls**, in a slim strip at its top (nothing about a plot sits in
   the main toolbar). In a narrow window the strip wraps onto more lines; the window
   itself never scrolls, so no window scroll bar ever covers the plot:
-  - **display mode** (▒ ∿ ▒∿ above): greyscale density, wiggles, or wiggles over
-    density, and two toggles for the wiggles' fills (◢ ◣): the **positive fill** (the
+  - **display mode** (▒ ∿ ▒∿ above): density (grey, or the colour map chosen),
+    wiggles, or wiggles over density, and two toggles for the wiggles' fills (◢ ◣): the **positive fill** (the
     lobes right of the trace, above it when time is across) and the **negative fill**
     (left of it, below it), either, both or none; the symbols turn with the plot. The default is **wiggles with the positive fill**, black on white paper.
     Beside them, the **trace overlap** (the largest swing of a wiggle, in trace spacings:
@@ -207,6 +207,16 @@
     | Clip percentile | 99 (of \|x\|) |
     | Gain amount | 0 dB, in steps of 3 dB (12 dB with Shift), -300 to +300 dB |
 
+    **The clip percentile** is the drop-down's last setting, under every type's own: a
+    box for the percentile of |x| drawn full black (99 by default, from 50 to 100: 98
+    clips harder, 100 is the peak), with the amplitude it gives now beside it and what
+    it is taken from (the record, the data in view under Float, each trace under
+    Normalized per trace). A new percentile never reads the file: the panel's reader
+    works the level out again, off the screen's thread, from the samples it holds (and
+    under Normalized per trace brings each trace to it again), and the picture before
+    stays until the new one is drawn; under Float the level of the data in view is taken
+    again at once. Fixed takes it when its amplitude is taken from the record shown.
+
     **Exponential's cutoff** (the user: "with exponential the basemet gets pretty blown
     out. maybe there should be a cutoff time"): the gain rises with time until the time
     in its "until" box and holds the value it reached there for the rest of the record,
@@ -248,8 +258,8 @@
     the same scales as the one before (the same positions and times; the whole record
     along an axis that showed the whole record), with the same display, gain and order;
   - zoom out, zoom in, fit all, back to the view before the last gesture, and a "more"
-    popover: the colours, the trace overlap again, the display header's fields, the
-    scale units and the screen calibration.
+    popover: the colours, density's colour map, the trace overlap again, the display
+    header's fields, the scale units and the screen calibration.
   - The strip's groups wrap as the window narrows: two lines in the default layout on a
     1920-pixel screen, three on a 1366-pixel laptop screen.
 - **The status bar** (the main window's bottom edge) reads out what lies under the
@@ -379,8 +389,28 @@ trace) both ways.
   colours shown, with that one changed. Above the swatches, the schemes: **"Paper"**
   (the default) and **"Follow the theme"**, the two ready-made ones, which also put the
   ready-made colours back, and "My own", which brings the user's own back unchanged.
-  The six and the scheme are remembered between runs. Density keeps its own grey colour
-  map (a choice of colour maps is to come).
+  The six and the scheme are remembered between runs.
+- **Density has a colour map of its own**, chosen in the gear popover's **Density colour
+  map** section, where each map is shown as its colour bar (the most negative amplitude
+  at the left, the most positive at the right) with its name; a click on a bar or its
+  name draws the plot in it at once, and reads nothing again. It is kept with the rest of
+  the display (a new plot starts with it; it is remembered between runs):
+
+  | Map | Negative | Zero | Positive |
+  |---|---|---|---|
+  | **Grey** (the default) | white | mid grey | black |
+  | **Red-white-blue** | red | white | blue |
+  | **Viridis** | dark purple | teal | yellow |
+  | **Red-black** | red | white | black |
+
+  The amplitude the gain draws full black in grey is the positive end of every map, its
+  negative the other end. The two diverging maps run in straight lines from white at
+  zero to their pure colours; viridis is matplotlib's (perceptually uniform, readable in
+  grey and by most colour-blind viewers), within 4 of 255 of its table. The GPU draws
+  through the map as a 256-entry lookup texture (`core/colourmaps`); the pixel tests
+  compare it with the same map on the CPU, time down and time across. The map is
+  density's only: the wiggles, the fills and the plot's background keep their colours,
+  and the hovered and selected traces' columns are tinted over any map.
 - **"Paper":** white background, black wiggles and black positive fill, the theme's red
   (darkened to read on white) for the negative fill, whatever the UI theme. **"Follow
   the theme":** the theme's plot background, trace and fill colours.

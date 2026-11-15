@@ -65,7 +65,8 @@ const Reached = {
   "plot.display.colours": "display", "plot.display.custom.background": "display",
   "plot.display.custom.line": "display", "plot.display.custom.positive": "display",
   "plot.display.custom.negative": "display", "plot.display.custom.hover": "display",
-  "plot.display.custom.selected": "display", "plot.display.gain": "display",
+  "plot.display.custom.selected": "display", "plot.display.colourMap": "display",
+  "plot.display.gain": "display",
   "plot.display.gainDb": "display", "plot.display.agcWindowMs": "display",
   "plot.display.fixedClip": "display",
   "plot.display.normScope": "display", "plot.display.normStat": "display",
@@ -135,7 +136,7 @@ const Everything = DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDens
   custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),
     line: Rgba(r: 250, g: 128, b: 0, a: 255), positive: Rgba(r: 9, g: 8, b: 7, a: 128),
     negative: Rgba(r: 200, a: 255), hover: Rgba(g: 200, a: 255),
-    selected: Rgba(b: 200, a: 255)),
+    selected: Rgba(b: 200, a: 255)), colourMap: cmRedBlack,
   gain: dgExponential, gainDb: -7.5, agcWindowMs: 250, fixedClip: 0.125, normScope: perPanel,
   normStat: normRms, timeGain: tgPower, dbPerS: 12, power: 1.5, untilMs: 3500,
   clipPercentile: 98.5, overlap: 2.5)

@@ -8,6 +8,10 @@
 ## - every display mode (density, wiggles, wiggles over density) and fill
 ##   (positive, negative, both), with a hovered trace, two selected ones, a
 ##   killed one and one the file marks dead;
+## - density, and wiggles over density, in each colour map (grey,
+##   red-white-blue, viridis, red-black), against the same map on the CPU
+##   (`lutOf`); one renderer drawing the maps one after another, each image
+##   in its own map (the lookup texture follows the frame);
 ## - a tile with each column's extremes (zoomed out in time), and a tile
 ##   cut into blocks of traces by a small texture limit;
 ## - a pixel of the time-across image is the matching pixel of the
@@ -20,7 +24,11 @@
 ## Seen to fail: with density's quads placed time down whatever the turn,
 ## time across had 36 730 of 43 200 pixels off the reference in density;
 ## with the wiggle shader ignoring the swing, 25 297 in wiggles with the
-## positive fill; with the wiggles placed with the trace order reversed,
+## positive fill; with the renderer keeping the grey lookup texture whatever
+## the frame's map, red-white-blue had 36 000 of 43 200 pixels off in
+## density (22 013 under wiggles), and the maps drawn in turn by one
+## renderer 99 280 of 172 800; with the wiggles placed with
+## the trace order reversed,
 ## 24 724 (and 30 844 off the transposed time-down image); with a hover's
 ## scissor box taken as columns when time is across, the image after the
 ## hover differed from a whole drawing in 1 584 pixels.
@@ -77,10 +85,11 @@ type Picture = object
   selected: seq[bool]
 
 proc pictureOf(v: Viewport; mode: DisplayMode; fills: set[WiggleFill]; m: Turn;
-    hover: int; selected: seq[bool]): Picture =
+    hover: int; selected: seq[bool]; map = cmGrey): Picture =
   ## The picture of `v` on a plot turned `m` (the style swings as `m` does:
-  ## a display's orientation has the turn of `FirstTraceAtTop`).
-  let d = DisplaySettings(mode: mode, fills: fills, orientation: m.orientation)
+  ## a display's orientation has the turn of `FirstTraceAtTop`), density in
+  ## colour map `map`.
+  let d = DisplaySettings(mode: mode, fills: fills, orientation: m.orientation, colourMap: map)
   result = Picture(view: v, display: d, style: d.styleFor(v, 1, 1, 2), hover: hover,
     selected: selected)
   if m.reversed[axTraces] != turnOf(m.orientation).reversed[axTraces]:
@@ -97,7 +106,7 @@ proc expected(t: Tile; p: Picture; i, j: int): Rgba =
   result = paper
   if t.contains(x, tm):
     if density:
-      let c = t.densityAt(greyLut(), x, tm, 1, paper)
+      let c = t.densityAt(lutOf(p.display.colourMap), x, tm, 1, paper)
       result = if wiggles: c
                else: densityTint(c, markOf(t.rowAt(x), p.hover, p.selected), ink, DensityTint)
   let (_, ts) = t.span
@@ -113,7 +122,7 @@ proc expected(t: Tile; p: Picture; i, j: int): Rgba =
 
 proc frameOf(p: Picture; m: Turn): PlotFrame =
   PlotFrame(view: p.view, turn: m, background: paper, density: p.display.drawsDensity,
-    wiggles: p.display.drawsWiggles, scale: 1, style: p.style, ink: ink, tint: DensityTint)
+    colourMap: p.display.colourMap, wiggles: p.display.drawsWiggles, scale: 1, style: p.style, ink: ink, tint: DensityTint)
 
 proc draw(r: var PlotRenderer; t: Tile; tt: var TileTextures; f: PlotFrame;
     p: Picture): seq[Rgba] =
@@ -126,7 +135,7 @@ proc draw(r: var PlotRenderer; t: Tile; tt: var TileTextures; f: PlotFrame;
 proc offReference(t: Tile; p: Picture; m: Turn; name: string; maxSize = 0): (int, int) =
   ## The pixels of `t` drawn as `p` says on a plot turned `m` that differ
   ## from the reference, and the pixels looked at.
-  var (r, err) = newPlotRenderer(greyLut(), maxSize)
+  var (r, err) = newPlotRenderer(maxSize)
   doAssert err.len == 0, err
   var tt = r.upload(t)
   tt.setMarks(t, p.selected)
@@ -146,10 +155,28 @@ proc offReference(t: Tile; p: Picture; m: Turn; name: string; maxSize = 0): (int
   tt.free()
   r.free()
 
+proc mapsInTurn(t: Tile; v: Viewport; m: Turn; selected: seq[bool]): int =
+  ## The pixels off the reference when one renderer draws density in every
+  ## colour map in turn, the same tiles, on a plot turned `m`.
+  var (r, err) = newPlotRenderer()
+  doAssert err.len == 0, err
+  var tt = r.upload(t)
+  tt.setMarks(t, selected)
+  for map in [cmViridis, cmGrey, cmRedBlack, cmRedWhiteBlue]:
+    let p = pictureOf(v, dmDensity, {wfPositive}, m, 5, selected, map)
+    let img = r.draw(t, tt, p.frameOf(m), p)
+    let (w, _) = v.screenSize(m)
+    for j in 0 ..< v.rows:
+      for i in 0 ..< v.columns:
+        let (x, y) = v.screenPixel(m, i, j)
+        if distance(img[y * w + x], t.expected(p, i, j)) > tolerance: inc result
+  tt.free()
+  r.free()
+
 proc transposed(t: Tile; p: Picture; m: Turn): int =
   ## The pixels of the image turned `m` that differ from the time-down
   ## image drawn with each wiggle swung as `m` swings them (GPU against GPU).
-  var (r, err) = newPlotRenderer(greyLut())
+  var (r, err) = newPlotRenderer()
   doAssert err.len == 0, err
   var tt = r.upload(t)
   tt.setMarks(t, p.selected)
@@ -170,7 +197,7 @@ proc hoverStripes(t: Tile; p: Picture; m: Turn): (int, int) =
   ## A hover moving from trace 2 to trace 29 on a plot turned `m`: the
   ## pixels along the traces it drew again, and the pixels of the image
   ## that then differ from a whole drawing with trace 29 hovered.
-  var (r, err) = newPlotRenderer(greyLut())
+  var (r, err) = newPlotRenderer()
   doAssert err.len == 0, err
   var tt = r.upload(t)
   tt.setMarks(t, p.selected)
@@ -180,7 +207,7 @@ proc hoverStripes(t: Tile; p: Picture; m: Turn): (int, int) =
   q.hover = 29
   let after = r.draw(t, tt, q.frameOf(m), q)
   result[0] = r.columnsDrawn
-  var (whole, err2) = newPlotRenderer(greyLut())
+  var (whole, err2) = newPlotRenderer()
   doAssert err2.len == 0, err2
   var wt = whole.upload(t)
   wt.setMarks(t, p.selected)
@@ -204,7 +231,7 @@ proc timing() =
     columns: 720, rows: 720)
   for mode in DisplayMode:
     for m in [TimeDown, turnOf(orTimeAcross)]:
-      var (r, err) = newPlotRenderer(greyLut())
+      var (r, err) = newPlotRenderer()
       doAssert err.len == 0, err
       var tt = r.upload(t)
       var f = pictureOf(v, mode, {wfPositive}, m, -1, @[]).frameOf(m)
@@ -238,6 +265,13 @@ proc onFrame(f: FrameInfo) =
         let what = name & ", " & $mode & " " & $fills
         let (off, seen) = t.offReference(p, m, what)
         results.add (what, off, seen)
+    for map in [cmRedWhiteBlue, cmViridis, cmRedBlack]:
+      for mode in [dmDensity, dmWiggleDensity]:
+        let p = pictureOf(v, mode, {wfPositive}, m, 5, selected, map)
+        let what = name & ", " & $mode & " in " & $map
+        let (off, seen) = t.offReference(p, m, what)
+        results.add (what, off, seen)
+    results.add (name & ", the maps in turn", t.mapsInTurn(v, m, selected), 4 * v.columns * v.rows)
     let p = pictureOf(v, dmWiggle, {wfPositive, wfNegative}, m, 5, selected)
     # zoomed out in time: the columns' extremes
     let e = tileOf(12, 100, decimation = 4)
@@ -272,7 +306,7 @@ withFixtures fx:
     userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
     onFrame: onFrame))
   doAssert code == 0, "run() exit code " & $code
-  doAssert results.len == 3 * (1 + 3 + 3 + 4), "only " & $results.len & " checks ran"
+  doAssert results.len == 3 * (1 + 3 + 3 + 6 + 1 + 4), "only " & $results.len & " checks ran"
   for (name, off, seen) in results:
     echo "tguiplotturn: ", name, ": ", off, " of ", seen, " pixels off"
   for (name, off, seen) in results:

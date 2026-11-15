@@ -37,7 +37,8 @@ type
     view*: Viewport        ## the data shown, and the plot's pixels along each axis
     turn*: Turn = TimeDown ## which way the plot is turned: the image is `screenSize`
     background*: Rgba
-    density*: bool         ## greyscale density under everything
+    density*: bool         ## density under everything
+    colourMap*: ColourMap  ## density's colours (`core/colourmaps`)
     wiggles*: bool
     scale*: float32        ## the display gain (`displayScale`)
     style*: WiggleStyle
@@ -50,6 +51,7 @@ type
     density: DensityProgram
     wiggle: WiggleProgram
     lut, fbo, target: GLuint
+    map: ColourMap  ## the colour map the lookup texture holds
     width, height: int
     maxSize: int    ## the largest texture side used
     ready: bool
@@ -77,8 +79,8 @@ proc maxTextureSize*(): int =
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, addr v)
   int(v)
 
-proc setLut*(r: PlotRenderer; lut: Lut) =
-  ## Replaces the density colour map.
+proc setLut(r: PlotRenderer; lut: Lut) =
+  ## Fills the density colour map's lookup texture with `lut`.
   var last: GLint
   glGetIntegerv(GL_TEXTURE_BINDING_2D, addr last)
   glBindTexture(GL_TEXTURE_2D, r.lut)
@@ -89,10 +91,10 @@ proc setLut*(r: PlotRenderer; lut: Lut) =
 
 proc warmUp(r: var PlotRenderer) {.gcsafe.}
 
-proc newPlotRenderer*(lut: Lut; maxSize = 0): (PlotRenderer, string) =
-  ## The renderer, with density colour map `lut`, and "" or why it cannot
-  ## draw (a shader the driver rejects). Textures are at most `maxSize` on a
-  ## side (0: the GPU's limit). Needs `initGpu` first.
+proc newPlotRenderer*(maxSize = 0): (PlotRenderer, string) =
+  ## The renderer and "" or why it cannot draw (a shader the driver
+  ## rejects). Textures are at most `maxSize` on a side (0: the GPU's
+  ## limit). Needs `initGpu` first.
   var r = PlotRenderer()
   if not loaded:
     return (r, "OpenGL functions missing: " & missing.join(", "))
@@ -109,7 +111,8 @@ proc newPlotRenderer*(lut: Lut; maxSize = 0): (PlotRenderer, string) =
   glGetIntegerv(GL_TEXTURE_BINDING_2D, addr lastTex)
   r.lut = newTexture()
   glBindTexture(GL_TEXTURE_2D, GLuint(lastTex))
-  r.setLut(lut)
+  r.map = cmGrey
+  r.setLut(lutOf(r.map))
   glGenFramebuffers(1, addr r.fbo)
   r.ready = true
   r.warmUp()
@@ -227,6 +230,9 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
   glViewport(0, 0, GLsizei(width), GLsizei(height))
   let bg = f.background
   glClearColor(bg.r.float32 / 255, bg.g.float32 / 255, bg.b.float32 / 255, 1)
+  if f.colourMap != r.map: # another map: its 256 colours into the lookup texture
+    r.map = f.colourMap
+    r.setLut(lutOf(r.map))
   glActiveTexture(GL_TEXTURE0 + 1)
   glBindTexture(GL_TEXTURE_2D, r.lut)
   glActiveTexture(GL_TEXTURE0)

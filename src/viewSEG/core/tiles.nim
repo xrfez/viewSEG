@@ -23,9 +23,9 @@ from parseSEG import TraceKeys, JoinGroup
 from processSEG/gain/gain import dbToFactor
 from processSEG/gain/stats import percentileAbs, percentileWorkspace, traceStats
 from processSEG/core/workspace import Workspace, reserve
-import edits, geometry, panels, viewport
+import colourmaps, edits, geometry, panels, viewport
 
-export TraceEdit
+export TraceEdit, colourmaps
 
 type
   Tile* = object
@@ -71,10 +71,6 @@ type
     ## per trace, nearest), `v` columns (interpolated in time).
     x0*, x1*, t0*, t1*: float64
     u0*, u1*, v0*, v1*: float64
-
-  Lut* = array[256, Rgba]
-    ## A colour map: index 0 for the most negative amplitude, 255 for the
-    ## most positive.
 
 func joinedAt*(t: Tile; row: int): set[JoinGroup] {.inline.} =
   ## The groups of row `row`'s keys a geometry join gave.
@@ -234,12 +230,9 @@ func densityAt*(t: Tile; lut: Lut; x, tMs: float64; scale: float32; background: 
   ## (drawn blank). What the density shader computes.
   if t.isBlank(t.rowAt(x)): background else: lut.densityColour(t.amplitudeAt(x, tMs), scale)
 
-func greyLut*(): Lut =
+func greyLut*(): Lut {.inline.} = lutOf(cmGrey)
   ## The grey density map of seismic plots: positive amplitudes black,
-  ## negative white, zero mid grey.
-  for i in 0 .. 255:
-    let g = uint8(255 - i)
-    result[i] = Rgba(r: g, g: g, b: g, a: 255)
+  ## negative white, zero mid grey (`core/colourmaps`).
 
 func displayScale*(reference: float64; gainDb = 0.0): float32 =
   ## The display gain: `reference` (`Panel.reference`), raised or lowered by

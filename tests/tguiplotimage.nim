@@ -75,7 +75,7 @@ proc offReference(t: Tile; v: Viewport; maxSize = 0; hover = -1;
     selected: seq[bool] = @[]): int =
   ## The pixels of `t` drawn as wiggles with both fills in view `v` that
   ## differ from the reference.
-  var (r, err) = newPlotRenderer(greyLut(), maxSize)
+  var (r, err) = newPlotRenderer(maxSize)
   doAssert err.len == 0, err
   var tt = r.upload(t)
   tt.hoverRow = hover

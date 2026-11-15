@@ -4,7 +4,10 @@
 ## and taken again on request, Float following the data in view, and the samples the
 ## reader sends for Exponential (processSEG's exponential curve and power of
 ## time, held after the cutoff time) and for Normalized per trace (each
-## trace's 99th percentile of |x| at 1).
+## trace's 99th percentile of |x| at 1), and a new clip percentile: the
+## level taken again from the samples the reader holds (no read from the
+## file), under the types that take it from the record, the view or each
+## trace.
 ##
 ## Seen to fail: with the gain amount left out of `displayScale`,
 ## `amountRescalesWithNoRead` found the scale unchanged at +6 dB; with a
@@ -14,11 +17,15 @@
 ## 0.98, on the quiet and the loud part of the record; with Fixed taken
 ## again from each new record, `fixedHoldsAcrossFiles` found the reference
 ## changed; with the exponential curve in dB per millisecond,
-## `exponentialGain` found trace 0's sample 79 at 0.271 where 0.303 is due.
+## `exponentialGain` found trace 0's sample 79 at 0.271 where 0.303 is due;
+## with a new clip percentile dropping the tiles for a read (as every change
+## of processing does), `clipPercentileFromTheSamples` found "none: the
+## picture went while the reader worked".
 
 import std/[algorithm, fenv, math, os, sequtils, strutils]
 import parseSEG
 import processSEG/gain/curves
+from processSEG/core/workspace import initWorkspace
 import viewSEG/core/state {.all.}
 import viewSEG/core/wiggle
 import utils/[fixtures, waiting]
@@ -323,6 +330,49 @@ block normalizedPerTrace:
       let k = int(floor(h))
       let p99 = a[k] + (h - float64(k)) * (a[min(k + 1, a.high)] - a[k])
       doAssert near(p99, 1, 1e-4), "trace " & $row & ": " & $p99
+    st.shutdown()
+
+block clipPercentileFromTheSamples:
+  # 99 to 90: the reference falls to the 90th percentile of the samples on
+  # hand, the tile comes from the reader's samples (no prefetch chunk), and
+  # the picture before stays until it comes. Under Float the view's level
+  # follows at once; under Normalized per trace each trace's 90th
+  # percentile is brought to 1.
+  withFixtures fx:
+    var st = initAppState()
+    st.apply Command(kind: ckOpen, paths: @[fx.surveySegy()])
+    doAssert st.settle(st.main.layout.traces > 0)
+    st.look()
+    var ws = initWorkspace()
+    for g in [dgNone, dgFloat, dgNormalized]:
+      var d = st.main.layers[0].display
+      d.gain = g
+      d.normScope = perTrace
+      d.normStat = normPercentile
+      d.clipPercentile = 99
+      st.display(d)
+      doAssert st.settle(st.answered and not st.main.reference.isNaN), $g & " never drawn"
+      let before = st.main.reference
+      let tiles = st.shown.len
+      d.clipPercentile = 90
+      st.display(d)
+      doAssert st.shown.len == tiles, $g & ": the picture went while the reader worked"
+      if g == dgFloat:
+        doAssert st.main.reference < before, "Float did not follow at once"
+      doAssert st.settle(st.answered), $g & ": no tile with the new percentile"
+      let t = st.shown[^1]
+      doAssert t.cached and t.chunks == 0, $g & ": read from the file (" & $t.chunks & " chunks)"
+      if g == dgNormalized:
+        doAssert st.main.reference == 1
+        for row in 0 ..< t.request.count:
+          let l = levelOf(t.data.toOpenArray(row * t.columns, (row + 1) * t.columns - 1), 90, ws)
+          doAssert near(l.clip, 1, 0.01), "trace " & $row & ": " & $l.clip
+      else:
+        let want = levelOf(t.data, 90, ws).clip
+        doAssert near(st.main.reference, want, (if g == dgFloat: 0.03 else: 0.01)), $g & ": " & $st.main.reference &
+          " for " & $want
+        doAssert st.main.reference < 0.9 * before, $g & ": " & $before & " to " &
+          $st.main.reference
     st.shutdown()
 
 block deadAndNotANumber:

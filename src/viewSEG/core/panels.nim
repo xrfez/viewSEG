@@ -62,10 +62,10 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/gain/[curves, gain]
 import processSEG/vibroseis/sweep
-import geometry, orientation, processing, session, viewport, zoom
+import colourmaps, geometry, orientation, processing, session, viewport, zoom
 
 export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, orientation, processing,
-  GatherKind, NormScope, NormStat
+  GatherKind, NormScope, NormStat, ColourMap
 
 type
   PanelId* = distinct int
@@ -98,9 +98,9 @@ type
     ## that name it (`drawsWiggles`, `drawsDensity`). In the wiggle modes a
     ## view is never zoomed out past one pixel a trace (`viewLimits`), so
     ## every trace in view is drawn as a wiggle.
-    dmDensity = "density" ## greyscale density
+    dmDensity = "density" ## density, in its colour map (grey by default)
     dmWiggle = "wiggle" ## wiggles, with the fills chosen
-    dmWiggleDensity = "wiggle over density" ## wiggles over greyscale density
+    dmWiggleDensity = "wiggle over density" ## wiggles over density
 
   WiggleFill* = enum
     ## The lobes of a wiggle that are filled.
@@ -148,6 +148,7 @@ type
     fills*: set[WiggleFill] = {wfPositive} ## the wiggles' fills: either, both or none
     colours*: PlotColours = pcPaper
     custom*: CustomColours                 ## the colours under `pcCustom`
+    colourMap*: ColourMap = cmGrey         ## density's colours (`core/colourmaps`)
     gain*: DisplayGain = dgAuto
     gainDb*: float64                       ## the gain amount on top of any type: + brighter
     agcWindowMs*: float64 = 500.0          ## the AGC window
@@ -487,6 +488,15 @@ func sameProcessing*(a, b: DisplaySettings; kind: GatherKind): bool =
       result = a.timeGain == b.timeGain and a.untilMs == b.untilMs and
         (if a.timeGain == tgDbPerSecond: a.dbPerS == b.dbPerS else: a.power == b.power)
     else: discard
+
+func onlyClipDiffers*(a, b: DisplaySettings; kind: GatherKind): bool =
+  ## Whether the clip percentile is all that gives a gather of `kind`
+  ## other samples or another level under `a` than under `b`: then the
+  ## reader makes the new tiles from the samples it holds, and the plot
+  ## keeps the old ones until they come.
+  var c = a
+  c.clipPercentile = b.clipPercentile
+  a.clipPercentile != b.clipPercentile and sameProcessing(c, b, kind)
 
 func usable(x: float64): bool {.inline.} = x > 0 and x < Inf
 

@@ -6,7 +6,9 @@
 ## and reads nothing again; so does a change between the types that are a
 ## scale alone. A type whose gain runs on the samples (AGC, Exponential,
 ## Normalized per trace) reads the view again when it or its settings
-## change (`core/panels`, "Display gain").
+## change (`core/panels`, "Display gain"). The clip percentile, the
+## drop-down's last setting, never reads the file: the reader takes the
+## level again from the samples it holds.
 
 import std/math
 import imguin/cimgui
@@ -62,6 +64,53 @@ proc numberBox(id: string; value: float64; format: string; width: float32;
   discard igInputDouble(id.cstring, addr v, 0, 0, format.cstring, 0)
   typed = float64(v)
   igIsItemDeactivatedAfterEdit()
+
+func clipSource(p: Panel; d: DisplaySettings): string =
+  ## What the clip percentile is taken of, under the type `d` shows `p`'s
+  ## gather with; "" when the type does not use it.
+  case d.effectiveGain(p.kind)
+  of dgFloat: "of the data in view"
+  of dgNormalized:
+    if d.normStat != normPercentile: ""
+    elif d.normScope == perTrace: "of each trace"
+    else: "of the record"
+  of dgFixed: "of the record, for From this record"
+  else: "of the record"
+
+proc drawClip(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Command];
+    notes: var seq[string]) =
+  ## The clip percentile: a box, what it is taken of, and the amplitude it
+  ## gives now (drawn full black at 0 dB).
+  igSeparatorText("Clip")
+  let source = clipSource(p, d)
+  igTextUnformatted("Full black at the", nil)
+  igSameLine(0, -1)
+  var typed = 0.0
+  let w = round(igCalcTextSize("000.00", nil, false, -1).x + 2 * igGetStyle().FramePadding.x)
+  if numberBox("##clippercentile", d.clipPercentile, "%.4g", w, typed) and
+      typed != d.clipPercentile:
+    if typed >= MinClipPercentile and typed <= 100:
+      var nd = d
+      nd.clipPercentile = typed
+      p.send(nd, cmds)
+    else:
+      notes.add "The clip percentile needs " & significant(MinClipPercentile) & " to 100, not " &
+        significant(typed) & "."
+  marks.mark("plot.gain clip percentile")
+  tip("The percentile of |x| drawn full black at 0 dB: 98 clips harder than 99, 100 is the " &
+    "peak (" & significant(MinClipPercentile) & " to 100). A new value reads nothing from " &
+    "the file.")
+  igSameLine(0, -1)
+  let what = if source.len == 0: "th percentile of |x| (not used: the " &
+                 (if d.normStat == normRms: "RMS" else: "peak") & " is)"
+             else: "th percentile of |x| " & source
+  igTextUnformatted(what.cstring, nil)
+  let r = p.reference
+  if source.len > 0 and not (d.effectiveGain(p.kind) == dgNormalized and
+      d.normScope == perTrace) and d.effectiveGain(p.kind) != dgFixed:
+    let now = if r > 0 and r < Inf: "|x| = " & significant(r, 4) else: "not known yet"
+    igTextUnformatted(("Now: " & now).cstring, nil)
+    marks.mark("plot.gain clip amplitude")
 
 proc settings(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Command];
     notes: var seq[string]) =
@@ -163,6 +212,7 @@ proc settings(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Comm
     igTextUnformatted(("Amplitudes past the " & pct & " of |x| of the data in view\n" &
       "are drawn full black or white, so the scale changes as you pan and zoom.").cstring, nil)
   of dgAuto: discard # effectiveGain never gives it
+  drawClip(p, d, marks, cmds, notes)
 
 proc drawGainControls*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Command];
     notes: var seq[string]) =

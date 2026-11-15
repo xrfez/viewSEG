@@ -88,7 +88,8 @@ proc expected*(s: Shot; i, j: int): Rgba =
       if tile.contains(x, t):
         result = s.ink.background
         if s.density:
-          let c = tile.densityAt(greyLut(), x, t, s.scale, s.ink.background)
+          let c = tile.densityAt(lutOf(s.display.colourMap), x, t, s.scale,
+            s.ink.background)
           result = if s.wiggles: c
                    else: densityTint(c, markOf(tile.rowAt(x), hover, selected, lit),
                      s.ink.wiggle, DensityTint)

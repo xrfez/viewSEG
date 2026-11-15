@@ -1,6 +1,6 @@
 ## The trace panel: the plot window that shows a record, traces across and
-## time down, as wiggles (with a positive fill by default) or greyscale
-## density on white "paper", with the display header along the top and the
+## time down, as wiggles (with a positive fill by default) or density (in
+## its colour map) on white "paper", with the display header along the top and the
 ## window's own controls in a strip above it; or turned, time from left to
 ## right and the traces stacked from the top down, the display header in
 ## columns beside it (the orientation, a toggle in the strip). Everything
@@ -226,7 +226,7 @@ proc startGpu*(tp: var TracePanelUi; getProc: GetProcAddress; maxTexture = 0): s
   if missing.len > 0:
     tp.gpuError = "OpenGL functions missing: " & missing
     return tp.gpuError
-  let (r, err) = newPlotRenderer(greyLut(), maxTexture)
+  let (r, err) = newPlotRenderer(maxTexture)
   tp.renderer = r
   tp.gpuError = err
   err
@@ -588,6 +588,52 @@ proc drawColours(tp: var TracePanelUi; p: Panel; t: Theme; marks: var Marks;
       res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
     if not typing and not hexActive: tp.fillHex(if changed: picked else: was)
     igEndPopup()
+
+func mapHelp(m: ColourMap): string =
+  case m
+  of cmGrey: "Grey: positive amplitudes black, negative white, zero mid grey"
+  of cmRedWhiteBlue: "Red-white-blue: negative red, zero white, positive blue"
+  of cmViridis: "Viridis: dark purple (negative) to yellow (positive), readable in grey " &
+    "and by most colour-blind viewers"
+  of cmRedBlack: "Red-black: negative red, zero white, positive black"
+
+proc drawColourMaps(p: Panel; t: Theme; marks: var Marks; res: var PanelOutput) =
+  ## Density's colour maps, each its colour bar (the most negative amplitude
+  ## at the left) and its name; a click on either draws density in it.
+  let d = p.layers[0].display
+  let h = igGetFrameHeight()
+  let barWidth = round(8 * h)
+  for m in ColourMap:
+    let pos = igGetCursorScreenPos()
+    let clicked = igInvisibleButton(("##colourmap" & $m).cstring,
+      ImVec2_c(x: barWidth, y: h), 0)
+    marks.mark("plot.colour map." & $m)
+    tip(mapHelp(m))
+    let dl = igGetWindowDrawList()
+    let lut = lutOf(m)
+    const bands = 64
+    for b in 0 ..< bands:
+      let c = lut[(b * 255 + (bands - 1) div 2) div (bands - 1)]
+      let x0 = pos.x + float32(b) * barWidth / bands
+      ImDrawList_AddRectFilled(dl, ImVec2_c(x: x0, y: pos.y + 2),
+        ImVec2_c(x: pos.x + float32(b + 1) * barWidth / bands, y: pos.y + h - 2), u32(c), 0, 0)
+    let edge = if m == d.colourMap: t.roles[rlAccent] else: t.roles[rlBorder]
+    ImDrawList_AddRect(dl, ImVec2_c(x: pos.x, y: pos.y + 1),
+      ImVec2_c(x: pos.x + barWidth, y: pos.y + h - 1), u32(edge), 0,
+      (if m == d.colourMap: 2'f32 else: 1'f32), 0)
+    igSameLine(0, -1)
+    let name = case m
+      of cmGrey: "Grey"
+      of cmRedWhiteBlue: "Red-white-blue"
+      of cmViridis: "Viridis"
+      of cmRedBlack: "Red-black"
+    let picked = igRadioButton_Bool((name & "##colourmapname").cstring, m == d.colourMap)
+    marks.mark("plot.colour map name." & $m)
+    tip(mapHelp(m))
+    if (clicked or picked) and m != d.colourMap:
+      var nd = d
+      nd.colourMap = m
+      res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
 
 const OverlapSteps = [0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0,
   10.0] ## the values the overlap's - and + step through
@@ -1012,10 +1058,26 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
   tp.stripGroup(8, right, 8, lift):
     if button(IconSettings & "##more", t, marks, "plot.more"):
       igOpenPopup_Str(moreId, 0)
-    tip("Colours, killed traces, display header, scale units and screen calibration")
+    tip("Colours, density's colour map, killed traces, display header, scale units and " &
+      "screen calibration")
   if igBeginPopup(moreId, 0):
+    marks.markWindow("plot.more popover")
+    # in columns, so the popover fits a laptop's screen: how the traces
+    # look; the wiggles, killed traces and the header; the scales
+    let table = igBeginTable("##more", 3, ImGui_TableFlags_SizingFixedFit.ImGuiTableFlags,
+      ImVec2_c(x: 0, y: 0), 0)
+    template nextColumn() =
+      if table:
+        discard igTableNextColumn()
+        igDummy(ImVec2_c(x: round(igGetFontSize()), y: 0)) # a gutter between the columns
+        igSameLine(0, 0)
+        igBeginGroup()
+    if table: discard igTableNextColumn()
     igSeparatorText("Colours")
     tp.drawColours(p, t, marks, res)
+    igSeparatorText("Density colour map")
+    drawColourMaps(p, t, marks, res)
+    nextColumn()
     igSeparatorText("Wiggles")
     drawWiggleSettings(p, res)
     igSeparatorText("Killed traces")
@@ -1029,8 +1091,13 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
       "Off: they are drawn blank. Either way they are left out of the levels and spectra.")
     igSeparatorText("Display header")
     drawHeaderChoice(p, marks, "plot.more.header.", res)
+    if table: igEndGroup()
+    nextColumn()
     igSeparatorText("Scales")
     tp.drawScaleSettings(st, res, ppi, mon)
+    if table:
+      igEndGroup()
+      igEndTable()
     igEndPopup()
 
 proc drawStartScreen(t: Theme; recent, folders: openArray[string]; marks: var Marks;
@@ -1708,8 +1775,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       # `styleFor`), two for a hovered or selected trace
       let width = max(1.0, round(float64(fb.x)))
       let tex = tp.renderer.render(PlotFrame(view: shown, turn: turn,
-        background: ink.background, density: d.drawsDensity, wiggles: d.drawsWiggles,
-        scale: scale, style: d.styleFor(shown, scale, width, 2 * width), ink: ink.wiggle,
+        background: ink.background, density: d.drawsDensity, colourMap: d.colourMap,
+        wiggles: d.drawsWiggles, scale: scale, style: d.styleFor(shown, scale, width, 2 * width), ink: ink.wiggle,
         tint: DensityTint, marks: tp.marks), tiles, tp.textures)
       tp.drawn = shown
       if tex != 0:

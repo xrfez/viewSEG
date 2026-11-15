@@ -70,6 +70,7 @@ const
   DcNames: array[DcRemoval, string] = ["none", "mean", "trend"]
   FillNames: array[WiggleFill, string] = ["positive", "negative"]
   ColourNames: array[PlotColours, string] = ["paper", "theme", "custom"]
+  ColourMapNames: array[ColourMap, string] = ["grey", "redWhiteBlue", "viridis", "redBlack"]
   GainNames: array[DisplayGain, string] = ["auto", "none", "fixed", "normalized",
     "exponential", "float", "agc"]
   TimeGainNames: array[TimeGain, string] = ["dbPerSecond", "power"]
@@ -109,7 +110,7 @@ type
 func persistedNames*(): seq[seq[string]] =
   ## Every table of names written for a choice (for tests: each must be a
   ## NIF identifier and unique in its table).
-  @[@ModeNames, @BandNames, @DcNames, @FillNames, @ColourNames, @GainNames, @TimeGainNames, @ScopeNames,
+  @[@ModeNames, @BandNames, @DcNames, @FillNames, @ColourNames, @ColourMapNames, @GainNames, @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
     @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames]
 
@@ -167,6 +168,7 @@ proc display(w: var NifWriter; d: DisplaySettings) =
       ("hover", d.custom.hover), ("selected", d.custom.selected)]:
     w.value(tag, colourText(c))
   w.close()
+  w.choice("colourMap", ColourMapNames[d.colourMap])
   w.choice("gain", GainNames[d.gain])
   w.value("gainDb", d.gainDb)
   w.value("agcWindowMs", d.agcWindowMs)
@@ -479,6 +481,7 @@ proc display(r: var Reading; n: NifNode; d: var DisplaySettings) =
             of "hover": r.colour(k, d.custom.hover)
             of "selected": r.colour(k, d.custom.selected)
             else: r.unknown(k, "custom")
+      of "colourMap": r.choice(c, ColourMapNames, d.colourMap)
       of "gain": r.choice(c, GainNames, d.gain)
       of "gainDb": r.number(c, -MaxGainDb, MaxGainDb, d.gainDb)
       of "agcWindowMs": r.number(c, MinAgcWindowMs, MaxAgcWindowMs, d.agcWindowMs)

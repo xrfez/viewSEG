@@ -250,7 +250,7 @@ the scales and the top-left corner: what no longer fits is reached with the scro
 and a larger window shows more. Only a window larger than the whole record at that scale
 shows it larger, filling the plot.
 
-**Display.** The first buttons in the strip choose how traces are drawn: greyscale
+**Display.** The first buttons in the strip choose how traces are drawn:
 density, wiggles, or wiggles over density. Density is drawn only in the two modes that
 name it. Changing from density to wiggles while more traces are in view than the plot
 has pixels narrows the view to one pixel a trace, keeping its left edge. The two after them fill the wiggles' positive
@@ -264,7 +264,10 @@ wiggle line, positive fill, negative fill, the trace under the pointer, selected
 always shown. Click one to pick a colour, or type it as `#rrggbb` and press Enter: the
 plot becomes "My own" colours. **Paper** (black on white; negative fills red) and
 **Follow the theme** put ready-made colours back; **My own** brings yours back. They are
-remembered when you quit.
+remembered when you quit. Under them, **Density colour map** shows each map as its colour
+bar: **Grey** (positive black), **Red-white-blue** (negative red, zero white, positive
+blue), **Viridis** (dark purple to yellow) and **Red-black** (negative red, zero white,
+positive black); click one and the density is drawn in it at once.
 
 **Auxiliary traces.** When the record holds auxiliary traces (a time break, a pilot, an
 uphole), two toggles in the strip choose what the plot shows: **Seismic** (on at first)
@@ -352,7 +355,10 @@ Fixed (one scale for every record, so records compare), Normalized (every trace,
 record, to the same level), Exponential (more gain later in the record: dB per second,
 or a power of time, rising until the time in its "until" box, 2 000 ms at first, and
 held after it, so the deep part of the record is not blown out), Float (the scale
-follows what is in view) and AGC. Beside it, the
+follows what is in view) and AGC. At the bottom of the list, **Clip at the ... th
+percentile** sets which amplitude is drawn full black: 99 % of |x| at first; 98 clips
+harder (more of the record full black), 100 is the peak. Beside it stands the amplitude
+that gives now. It never reads the file again. Beside the drop-down, the
 gain amount in dB works with every type, from -300 to +300 dB: type a value, click - or
 +, or press `]` and `[` (keypad `*` and `/`), 3 dB a step or 12 dB with Shift; the
 buttons and keys repeat while held, and the picture brightens or darkens at once. A trace the file

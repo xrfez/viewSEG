@@ -630,10 +630,11 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   (`RunOptions.persist`).
 - **Settings.** One typed `Settings` object (`core/settings`), a default for every field:
   the theme, the main window's place and size, the recent files and folders, what a new
-  plot window starts with (display mode, fills, overlap, colours, gain type, amount and
-  settings, order, display header: whatever the user chose last; polarity is not kept),
-  scale units, per-monitor calibrations, the status bar's fields, the sort presets, the
-  user's own sort keys and the cursor time line. Changed only by commands: `ckSettings`, and the plot window's
+  plot window starts with (display mode, fills, overlap, colours, density's colour map,
+  gain type, amount and settings, clip percentile, order, display header: whatever the
+  user chose last; polarity is not kept), scale units, per-monitor calibrations, the
+  status bar's fields, the sort presets, the user's own sort keys and the cursor time
+  line. Changed only by commands: `ckSettings`, and the plot window's
   `ckDisplay`, `ckSort` and `ckHeader`, which the plot defaults follow; `ckExportSettings`,
   `ckImportSettings` (read on the disk thread, taken in as an `mkRead` message) and
   `ckResetSettings`. Kept as NIF in `<config>/settings.nif` (`core/settingsnif`, through

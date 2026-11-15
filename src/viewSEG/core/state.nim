@@ -4821,7 +4821,11 @@ proc applyCommand(state: var AppState; cmd: Command) =
           inc p.jumps
       # Only a change of the samples reads again: the gain amount, a Fixed
       # amplitude and a type that is a scale alone change only the drawing.
-      if not d.sameProcessing(was, p.kind):
+      if d.onlyClipDiffers(was, p.kind):
+        # a new clip percentile: the same samples, another level, made by
+        # the reader from those it holds; the picture before stays meanwhile
+        state.resample(k, relevel = true)
+      elif not d.sameProcessing(was, p.kind):
         state.refetch(k, keepTiles = false)
       else:
         state.requestView(k) # a new view, or the extremes wiggles need

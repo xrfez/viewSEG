@@ -76,7 +76,7 @@ proc everyFieldSet(): Settings =
       custom: CustomColours(background: Rgba(r: 1, g: 2, b: 3, a: 255),
         line: Rgba(r: 250, g: 128, b: 0, a: 255), positive: Rgba(r: 9, g: 8, b: 7, a: 128),
         negative: Rgba(r: 200, a: 255), hover: Rgba(g: 200, a: 255),
-        selected: Rgba(b: 200, a: 255)),
+        selected: Rgba(b: 200, a: 255)), colourMap: cmRedWhiteBlue,
       gain: dgExponential, gainDb: -7.5, agcWindowMs: 250, fixedClip: 0.125,
       normScope: perPanel, normStat: normRms, timeGain: tgPower, dbPerS: 12, power: 1.5,
       untilMs: 3500, clipPercentile: 98.5, overlap: 2.5),
@@ -107,6 +107,7 @@ block savedByAnOlderBuild:
   doAssert s.plot.display.untilMs == 2000, "the Exponential gain's cutoff takes its default"
   doAssert not s.hideKilled and s.spectrum == SpectrumOptions(),
     "the spectrum windows' settings take their defaults"
+  doAssert s.plot.display.colourMap == cmGrey, "density's colour map takes its default"
   doAssert cleaned(s)[1] == 0
 
 block joinOptions:
