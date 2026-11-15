@@ -387,10 +387,44 @@ func p1HeadUnit(lines: openArray[string]): HeadUnit =
       return HeadUnit(unit: unitOf(g), said: said.join(", ") & " (H2000)")
     if line.len > 0 and line[0] != 'H': return
 
+type CsvColumn = enum
+  ccKind, ccLine, ccPoint, ccIndex, ccX, ccY, ccZ
+
+func columnOf(name: string): int =
+  ## The column a header cell names (`CsvColumn`); -1 for none. A unit in
+  ## brackets after the name ("x (ftUS)", "Easting [m]") is passed by.
+  var n = ""
+  for c in name.toLowerAscii:
+    if c in {'(', '['}: break
+    if c in {'a' .. 'z', '0' .. '9'}: n.add c
+  case n
+  of "kind", "type", "role", "recordtype", "pointtype", "code": ord(ccKind)
+  of "line", "lineno", "linenumber", "linename", "ln": ord(ccLine)
+  of "point", "pointno", "pointnumber", "station", "stationno", "stationnumber", "pt", "sp",
+      "shotpoint": ord(ccPoint)
+  of "index", "idx", "pointindex", "pi": ord(ccIndex)
+  of "x", "easting", "east", "e", "xcoord", "xcoordinate": ord(ccX)
+  of "y", "northing", "north", "n", "ycoord", "ycoordinate": ord(ccY)
+  of "z", "elevation", "elev", "height", "h", "zcoord", "depth": ord(ccZ)
+  else: -1
+
+func cells(line: string; delimiter: char): seq[string] =
+  ## The cells of a row, quotes and blanks trimmed; split at runs of blanks
+  ## when `delimiter` is ' '.
+  let parts = if delimiter == ' ': line.splitWhitespace() else: line.split(delimiter)
+  for p in parts: result.add p.strip.strip(chars = {'"', '\''}).strip
+
+func delimiterOf(line: string): char =
+  if '\t' in line: '\t'
+  elif ';' in line: ';'
+  elif ',' in line: ','
+  else: ' '
+
 func csvHeadUnit(lines: openArray[string]): HeadUnit =
   ## A CSV table's unit: a comment before its first row that names one ("#
-  ## units: US survey feet"), or a unit in brackets in a cell of its first
-  ## row ("x (ftUS)", "Easting [m]").
+  ## units: US survey feet"), or a unit in brackets in its first row's x or
+  ## y column ("x (ftUS)", "Easting [m]"; an elevation's unit is not the
+  ## grid's).
   for line in lines:
     let l = line.strip
     if l.startsWith('#'):
@@ -401,8 +435,8 @@ func csvHeadUnit(lines: openArray[string]): HeadUnit =
         let u = unitNamed(word)
         if u != suNotGiven: return HeadUnit(unit: u, said: "\"" & l[1 .. ^1].strip & "\"")
     elif l.len > 0:
-      for cell in l.split({',', ';', '\t'}):
-        let a = cell.find({'(', '['})
+      for cell in cells(l, delimiterOf(l)):
+        let a = if columnOf(cell) in [ord(ccX), ord(ccY)]: cell.find({'(', '['}) else: -1
         let b = if a >= 0: cell.find({')', ']'}, a) else: -1
         if b > a + 1:
           let u = unitNamed(cell[a + 1 ..< b])
@@ -538,39 +572,6 @@ func lineNamesText*(names: openArray[LineName]): string =
     result.add n.name & " = " & (if x == round(x) and abs(x) < 1e15: $int64(x) else: $x)
 
 # ------------------------------------------------------------ CSV tables --
-
-type CsvColumn = enum
-  ccKind, ccLine, ccPoint, ccIndex, ccX, ccY, ccZ
-
-func columnOf(name: string): int =
-  ## The column a header cell names (`CsvColumn`); -1 for none. A unit in
-  ## brackets after the name ("x (ftUS)", "Easting [m]") is passed by.
-  var n = ""
-  for c in name.toLowerAscii:
-    if c in {'(', '['}: break
-    if c in {'a' .. 'z', '0' .. '9'}: n.add c
-  case n
-  of "kind", "type", "role", "recordtype", "pointtype", "code": ord(ccKind)
-  of "line", "lineno", "linenumber", "linename", "ln": ord(ccLine)
-  of "point", "pointno", "pointnumber", "station", "stationno", "stationnumber", "pt", "sp",
-      "shotpoint": ord(ccPoint)
-  of "index", "idx", "pointindex", "pi": ord(ccIndex)
-  of "x", "easting", "east", "e", "xcoord", "xcoordinate": ord(ccX)
-  of "y", "northing", "north", "n", "ycoord", "ycoordinate": ord(ccY)
-  of "z", "elevation", "elev", "height", "h", "zcoord", "depth": ord(ccZ)
-  else: -1
-
-func cells(line: string; delimiter: char): seq[string] =
-  ## The cells of a row, quotes and blanks trimmed; split at runs of blanks
-  ## when `delimiter` is ' '.
-  let parts = if delimiter == ' ': line.splitWhitespace() else: line.split(delimiter)
-  for p in parts: result.add p.strip.strip(chars = {'"', '\''}).strip
-
-func delimiterOf(line: string): char =
-  if '\t' in line: '\t'
-  elif ';' in line: ';'
-  elif ',' in line: ','
-  else: ' '
 
 func roleOfCell(cell: string): int =
   ## 0 for a source ("S", "source", "shot", "src"), 1 for a receiver ("R",

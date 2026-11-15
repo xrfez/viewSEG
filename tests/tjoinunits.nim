@@ -10,7 +10,8 @@
 ##   survey foot, 0.3048 the international, 1 the metre; a rounded factor;
 ##   80-byte cards without line ends; a last line without a line end when
 ##   the whole file was read), a SEG P1 file's H2000, a CSV table's
-##   comment or first row ("x (m)", which the table is then read with);
+##   comment or its first row's x or y column ("x (m)", which the table is
+##   then read with; not an elevation's unit);
 ## - the survey's unit as its files say it, and the files that disagree
 ##   named;
 ## - the seismic file's unit: the survey's where its headers say nothing, or
@@ -27,7 +28,8 @@
 ##   window's (`importUnits`, an agent's import); after an import the units
 ##   confirmed for the file label it.
 ##
-## Seen to fail: with the last line without a line end left out of a whole
+## Seen to fail: with a CSV unit taken from any column, "an elevation's
+## unit taken: (unit: metres, ...)"; with the last line without a line end left out of a whole
 ## file, "a last line without a line end: (unit: feet, ...)"; with the unit
 ## words matched whole, as first written,
 ## "unit words read wrong: \"Meters (m)\": not given, ..."; with H201's
@@ -128,6 +130,10 @@ block csvHeaders:
   let c = headUnitOf("line;point;x (m);y (m)\n1;1;10;20\n", jkCsv)
   doAssert c.unit == suMetres and c.said == "\"x (m)\" (its first row)", $c
   doAssert headUnitOf("line,point,x,y\n1,1,10,20\n", jkCsv).unit == suNotGiven
+  # Only the x and y columns' units are the grid's.
+  let elevation = headUnitOf("line,point,elevation [m],easting [ft],northing [ft]\n", jkCsv)
+  doAssert elevation.unit == suFeet, "an elevation's unit taken: " & $elevation
+  doAssert headUnitOf("x,y,z (m)\n1,2,3\n", jkCsv).unit == suNotGiven
   # The table is read with its units in brackets.
   var g = initSurveyGeometry()
   var problems: seq[string]
