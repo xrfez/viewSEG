@@ -4,7 +4,11 @@
 ## against.
 ##
 ## `capture` takes the image and what it was drawn from in a frame hook;
-## `mismatches` counts the pixels that differ from `expected`.
+## `mismatches` counts the pixels that differ from `expected`. Pixels are
+## named along the data's axes: `i` along the traces, `j` along time, from
+## the view's first position and earliest time; `at` finds such a pixel in
+## the image through the plot's `Turn`, so a plot turned time across is
+## compared with the same reference, transposed.
 
 import std/math
 import viewSEG/core/[geometry, state, wiggle]
@@ -16,8 +20,10 @@ const Tolerance* = 6 ## per channel: float rounding and 8-bit blending on the GP
 type
   Shot* = object
     ## A plot image and what it was drawn from.
-    image*: seq[Rgba]
-    w*, h*: int
+    image*: seq[Rgba]  ## as drawn, rows from the top
+    width*: int        ## the image's width
+    w*, h*: int        ## pixels along the traces and along time (the view's)
+    turn*: Turn
     view*: Viewport
     tiles*: seq[Tile]
     display*: DisplaySettings
@@ -35,15 +41,19 @@ proc capture*(f: FrameInfo): Shot =
   let k = f.core.findPanel(MainPanel)
   let p = f.core.panels[k]
   let d = p.layers[0].display
-  let (img, w, h) = f.tracePanel.plotImage
+  let (img, width, _) = f.tracePanel.plotImage
   let v = f.tracePanel.drawnView
   let scale = displayScale(p.reference, d.gainDb)
-  result = Shot(image: img, w: w, h: h, view: v, display: d, ink: plotInk(f.theme, d),
+  result = Shot(image: img, width: width, w: v.columns, h: v.rows, turn: d.turn, view: v,
+    display: d, ink: plotInk(f.theme, d),
     style: d.styleFor(v, scale, 1, 2), scale: scale, density: d.mode != dmWiggle,
     wiggles: d.mode != dmDensity, hover: f.core.selection.hover, selection: f.core.selection)
   for t in f.core.tiles(k): result.tiles.add t
 
-proc at*(s: Shot; i, j: int): Rgba = s.image[j * s.w + i]
+proc at*(s: Shot; i, j: int): Rgba =
+  ## The image's pixel `i` along the traces and `j` along time.
+  let (x, y) = s.view.screenPixel(s.turn, i, j)
+  s.image[y * s.width + x]
 
 func xOf*(s: Shot; i: int): float64 =
   ## The position at the centre of image column `i`.

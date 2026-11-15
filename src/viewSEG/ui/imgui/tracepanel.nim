@@ -1,14 +1,21 @@
 ## The trace panel: the plot window that shows a record, traces across and
 ## time down, as wiggles (with a positive fill by default) or greyscale
 ## density on white "paper", with the display header along the top and the
-## window's own controls in a strip above it.
+## window's own controls in a strip above it; or turned, time from left to
+## right and the traces stacked from the top down, the display header in
+## columns beside it (the orientation, a toggle in the strip). Everything
+## the window places on the screen, and every gesture, goes through the
+## plot's `Turn` (`core/orientation`): the axes and their values, the
+## image, the header, the scroll bars, the cursor's line and boxes, a box
+## zoom, the trace under the pointer; the mouse and keys act in the
+## screen's directions.
 ##
 ## The window reads the panel from `core` and issues `Command`s; it never
 ## changes the state itself. ImPlot only draws the axes: the window handles
 ## the mouse and keys itself (docs/plot-window.md, "The plot") and moves the
-## view with `core/zoom`: wheel zoom about the cursor (Ctrl: time only,
-## Shift or the sideways wheel: traces only), `+` / `-`, Ctrl + arrows for
-## one axis, drag to pan (left or middle button), right drag to zoom to a
+## view with `core/zoom`: wheel zoom about the cursor (Ctrl: up and down
+## only, Shift or the sideways wheel: across only), `+` / `-`, Ctrl + arrows
+## for one axis, drag to pan (left or middle button), right drag to zoom to a
 ## box, arrows to pan, Ctrl + 0 to fit, Backspace or Alt + Left for back,
 ## Esc to cancel a drag, and the scroll bars (`plotbars`) beside the plot
 ## when part of the data is out of view. No view ever shows anything past
@@ -174,6 +181,13 @@ type
     cursorText: string ## the time the cursor's time line showed last; "" for none
     cursorHeader: seq[string] ## the header values it showed over the rows; none for none
     focus: FocusClicks ## a click selects only in a window that had the focus
+    turned: Orientation ## the orientation the plot was drawn in last frame
+    fieldChars: Table[uint64, seq[int]] ## per tile: each header field's longest label
+    bandChars: seq[int]
+      ## time across: each header column's longest label so far, for the
+      ## gather and fields `bandKey` names (they only grow, so the columns
+      ## do not jump as the view pans)
+    bandKey: (uint64, seq[HeaderField])
     picking: int ## the colour whose picker is open (as `colourKeys` lists them)
     hex: array[12, char] ## what the picker's `#rrggbb` box holds
 
@@ -183,8 +197,6 @@ type
     actions*: set[MenuAction]
     pick*: Pick         ## what lies under the mouse; `noPick()` when it is not over the plot
     notes*: seq[string] ## warnings for the log (a scale that is not a number)
-
-func isPaper(d: DisplaySettings): bool = d.colours != pcTheme
 
 func caption(f: HeaderField): string =
   ## A header row's name as it stands left of the plot: short, so it fits
@@ -309,7 +321,9 @@ proc sync(tp: var TracePanelUi; tiles: openArray[Tile]; base: int; sel: Selectio
     for t in tiles:
       if t.id == id: live = true
     if not live: gone.add id
-  for id in gone: tp.labelChars.del id
+  for id in gone:
+    tp.labelChars.del id
+    tp.fieldChars.del id
 
 proc labelChars(tp: var TracePanelUi; t: Tile): int =
   ## The length of the longest header label of tile `t`.
@@ -319,6 +333,65 @@ proc labelChars(tp: var TracePanelUi; t: Tile): int =
       for v in row: n = max(n, headerText(v).len)
     tp.labelChars[t.id] = n
   tp.labelChars[t.id]
+
+proc bandChars(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[HeaderField];
+    gen: uint64): seq[int] =
+  ## Time across: the longest label of each of `fields` in `tiles`, never
+  ## less than before for the same gather (`gen`: the panel's `sourceGen`)
+  ## and fields, so the header's columns keep their widths as the view pans.
+  let key = (gen, @fields)
+  if key != tp.bandKey or tp.bandChars.len != fields.len:
+    tp.bandKey = key
+    tp.bandChars = newSeq[int](fields.len)
+  for t in tiles:
+    if t.fields == fields:
+      if t.id notin tp.fieldChars:
+        var chars = newSeq[int](t.header.len)
+        for i, row in t.header:
+          for v in row: chars[i] = max(chars[i], headerText(v).len)
+        tp.fieldChars[t.id] = chars
+      for i, n in tp.fieldChars[t.id]:
+        if i < tp.bandChars.len: tp.bandChars[i] = max(tp.bandChars[i], n)
+  tp.bandChars
+
+func along(p: ImVec2_c; s: ScreenAxis): float32 {.inline.} =
+  ## `p`'s coordinate along screen axis `s`.
+  if s == saX: p.x else: p.y
+
+func other(s: ScreenAxis): ScreenAxis {.inline.} =
+  if s == saX: saY else: saX
+
+func vec(s: ScreenAxis; a, b: float32): ImVec2_c {.inline.} =
+  ## The point `a` along screen axis `s` and `b` along the other.
+  if s == saX: ImVec2_c(x: a, y: b) else: ImVec2_c(x: b, y: a)
+
+func ordered(a, b: ImVec2_c): (ImVec2_c, ImVec2_c) {.inline.} =
+  ## The rectangle between `a` and `b` as its top-left and bottom-right.
+  (ImVec2_c(x: min(a.x, b.x), y: min(a.y, b.y)), ImVec2_c(x: max(a.x, b.x), y: max(a.y, b.y)))
+
+func traceAt(view: Viewport; m: Turn; plotPos, plotSize: ImVec2_c; position: float64): float32 =
+  ## Where the centre of `position` lies on the screen along the traces'
+  ## screen axis, for a plot at `plotPos`, `plotSize` showing `view` turned
+  ## as `m` says.
+  let s = m.along[axTraces]
+  let perPos = plotSize.along(s) / max(view.traces.width, 1e-9)
+  let d = float32((position - view.traces.lo) * perPos)
+  if m.reversed[axTraces]: plotPos.along(s) + plotSize.along(s) - d else: plotPos.along(s) + d
+
+type HeaderBands = object
+  ## Where the display header's rows lie (its columns, when time is
+  ## across): a band per field, then the edits band, along the screen axis
+  ## time runs on, before the plot's start along it.
+  axis: ScreenAxis    ## the bands' axis: time's
+  start: seq[float32] ## each band's start along it
+  size: seq[float32]  ## its thickness
+
+proc inBand(b: HeaderBands; i: int; extent: float32): float32 =
+  ## Where a label `extent` long along the bands' axis starts in band `i`:
+  ## a row's top; a column's right end, less a gap (numbers in a column
+  ## stand right-aligned).
+  if b.axis == saY: b.start[i]
+  else: b.start[i] + b.size[i] - extent - round(igGetFontSize() * 0.4)
 
 func headerValue(tiles: openArray[Tile]; fields: openArray[HeaderField]; row,
     position: int): (bool, float64) =
@@ -388,10 +461,23 @@ proc tipAlways(text: string) =
 const
   colourKeys = ["background", "line", "positive", "negative", "hover", "selected"]
     ## each of the plot's colours, as its swatch is marked
-  colourNames = ["Background", "Wiggle line", "Positive fill (the lobes right of a trace)",
-    "Negative fill (the lobes left of it)", "The trace under the pointer",
-    "Selected traces"]
   pickerId = "##colourpicker"
+
+func colourName(i: int; m: Turn): string =
+  ## The name of the plot's colour `i` (as `colourKeys` lists them), the
+  ## fills' sides as the plot is turned (`m`).
+  let (axis, sign) = m.swingOnScreen
+  let (positive, negative) = if axis == saX: (if sign > 0: ("right of", "left of")
+                                              else: ("left of", "right of"))
+                             elif sign < 0: ("above", "below")
+                             else: ("below", "above")
+  case i
+  of 0: "Background"
+  of 1: "Wiggle line"
+  of 2: "Positive fill (the lobes " & positive & " a trace)"
+  of 3: "Negative fill (the lobes " & negative & " it)"
+  of 4: "The trace under the pointer"
+  else: "Selected traces"
 
 func colourOf(ink: PlotInk; i: int): Rgba =
   ## The plot's colour `i` (as `colourKeys` lists them).
@@ -457,12 +543,12 @@ proc drawColours(tp: var TracePanelUi; p: Panel; t: Theme; marks: var Marks;
       igOpenPopup_Str(pickerId, 0)
     marks.mark("plot.colour." & colourKeys[i])
     igSameLine(0, -1)
-    igTextUnformatted(colourNames[i].cstring, nil)
+    igTextUnformatted(colourName(i, d.turn).cstring, nil)
   if igBeginPopup(pickerId, 0):
     marks.markWindow("plot.colour picker")
     let i = clamp(tp.picking, 0, colourKeys.high)
     let was = ink.colourOf(i)
-    igTextUnformatted(colourNames[i].cstring, nil)
+    igTextUnformatted(colourName(i, d.turn).cstring, nil)
     var col: array[3, cfloat] = [cfloat(was.r) / 255, cfloat(was.g) / 255, cfloat(was.b) / 255]
     var picked = was
     var changed = false
@@ -791,10 +877,12 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
   let lift = round((size - igGetFrameHeight()) / 2) # centres a text control on the symbols
   let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
   let d = p.layers[0].display
+  let turn = d.turn
+  let turned = d.orientation == orTimeAcross # the plot's symbols turn with it
   tp.stripGroup(0, right, 0, 0):
     for m in DisplayMode:
       if symbolButton(modeSymbols[m], size, t, marks, selected = m == d.mode,
-          markPrefix = "plot.") and m != d.mode:
+          markPrefix = "plot.", turned = turned) and m != d.mode:
         var nd = d
         nd.mode = m
         res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
@@ -805,7 +893,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     for f in WiggleFill:
       if symbolButton(fillSymbols[f], size, t, marks, selected = f in d.fills and
           d.mode != dmDensity, note = (if d.mode == dmDensity: " (with wiggles)" else: ""),
-          markPrefix = "plot."):
+          markPrefix = "plot.", turned = turned):
         var nd = d
         if f in nd.fills: nd.fills.excl f else: nd.fills.incl f
         res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
@@ -814,13 +902,26 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     # the cursor's time line: on the symbols' line, so the strip keeps its height
     igSameLine(0, 6)
     let on = st.settings.cursorLine
-    let note = if on: " (on): a line from the pointer across to the time axis, and its time"
-               else: " (off): click for a line from the pointer across to the time axis"
+    let way = if turn.along[axTraces] == saX: "across" else: "down"
+    let note = if on: " (on): a line from the pointer " & way & " to the time axis, and its time"
+               else: " (off): click for a line from the pointer " & way & " to the time axis"
     if symbolButton(syCursorTime, size, t, marks, selected = on, note = note,
-        markPrefix = "plot."):
+        markPrefix = "plot.", turned = turned):
       var s = st.settings
       s.cursorLine = not on
       res.commands.add Command(kind: ckSettings, settings: s)
+    # the plot's orientation: time down, or time across
+    igSameLine(0, 6)
+    const stacked = if FirstTraceAtTop: "from the top down" else: "from the bottom up"
+    let turnNote = if turned: " (on): time runs from left to right, the traces stacked " &
+                     stacked & "; click to draw time downwards again"
+                   else: " (off): click to draw time from left to right, the traces " &
+                     "stacked " & stacked & ", a positive amplitude up"
+    if symbolButton(syTimeAcross, size, t, marks, selected = turned, note = turnNote,
+        markPrefix = "plot."):
+      var nd = d
+      nd.orientation = if turned: orTimeDown else: orTimeAcross
+      res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
   # which traces: seismic, auxiliary or both, for a record that has auxiliary traces
   let f = p.layers[0].filter
   if hasAux(st, p) or not f.seismic or f.auxiliary:
@@ -860,7 +961,8 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     tip("Zoom out (-, or the wheel)")
     igSameLine(0, 2)
     if button(IconZoomIn & "##zoomin", t, marks, "plot.zoom in"): ask = ViewAsk(kind: vaZoomIn)
-    tip("Zoom in (+, or the wheel; Ctrl: time only, Shift: traces only)")
+    tip("Zoom in (+, or the wheel; Ctrl: " & $turn.axisAlong(saY) & " only, Shift: " &
+      $turn.axisAlong(saX) & " only)")
     igSameLine(0, 2)
     if button(IconFit & "##fit", t, marks, "plot.fit"): ask = ViewAsk(kind: vaFit)
     tip("Fit all: every trace and the whole record (Ctrl+0)")
@@ -975,10 +1077,12 @@ proc centredText(text: string; colour: Rgba) =
   igPopStyleColor(1)
 
 proc drawHeader(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[HeaderField];
-    stride: int; view: Viewport; layout: PanelLayout; top, plotPos, plotSize: ImVec2_c;
-    t: Theme; paper: bool) =
-  ## The display header between `top` and the plot: one row per field, the
-  ## field's name left of the plot, values over their traces.
+    stride: int; view: Viewport; layout: PanelLayout; m: Turn; bands: HeaderBands;
+    top, plotPos, plotSize: ImVec2_c; t: Theme; marks: var Marks) =
+  ## The display header between `top` and the plot: a band per field (a row
+  ## above the plot, or a column left of it when time is across), the
+  ## field's name before the plot's start along the traces (left of it, or
+  ## above it), values at their traces.
   if fields.len == 0 or tiles.len == 0: return
   let dl = igGetWindowDrawList()
   let lineH = igGetTextLineHeight()
@@ -987,32 +1091,41 @@ proc drawHeader(tp: var TracePanelUi; tiles: openArray[Tile]; fields: openArray[
   let dim = u32(t.roles[rlTextDim])
   let charW = igCalcTextSize("0", nil, false, -1).x
   let chars = tp.labelChars(tiles[^1])
-  let perPos = plotSize.x / max(view.traces.width, 1e-9)
-  let step = headerStep(stride, perPos, (float64(chars) + 2) * charW)
+  let ta = m.along[axTraces] # where the traces run on the screen
+  let perPos = plotSize.along(ta) / max(view.traces.width, 1e-9)
+  # a label and the gap to the next, along the traces
+  let room = if ta == saX: (float64(chars) + 2) * charW else: float64(lineH) + 2
+  let step = headerStep(stride, perPos, room)
   let vis = visiblePositions(layout, view)
-  ImDrawList_PushClipRect(dl, ImVec2_c(x: top.x - 200, y: top.y),
-    ImVec2_c(x: plotPos.x + plotSize.x, y: plotPos.y), true)
+  let (t0, t1) = (plotPos.along(ta), plotPos.along(ta) + plotSize.along(ta))
+  let (b0, b1) = (top.along(bands.axis), plotPos.along(bands.axis))
+  let names = if ta == saX: 200'f32 else: 0'f32 # room for the names before the plot
+  ImDrawList_PushClipRect(dl, vec(ta, top.along(ta) - names, b0), vec(ta, t1, b1), true)
   for i, f in fields:
-    let y = top.y + float32(i) * lineH
+    let (r0, r1) = ordered(vec(ta, t0, bands.start[i]), vec(ta, t1, bands.start[i] +
+      bands.size[i]))
+    marks.markRect("plot.header." & $f, r0, r1) # the band's values, for tests
     let name = caption(f)
-    let nw = igCalcTextSize(name.cstring, nil, false, -1).x
-    ImDrawList_AddText_Vec2(dl, ImVec2_c(x: plotPos.x - nw - 6, y: y), dim, name.cstring, nil)
-    ImDrawList_PushClipRect(dl, ImVec2_c(x: plotPos.x, y: top.y),
-      ImVec2_c(x: plotPos.x + plotSize.x, y: plotPos.y), true)
+    let ns = igCalcTextSize(name.cstring, nil, false, -1)
+    let at = if ta == saX: vec(ta, t0 - ns.x - 6, bands.inBand(i, ns.y))
+             else: vec(ta, t0 - lineH - 2, bands.inBand(i, ns.x))
+    ImDrawList_AddText_Vec2(dl, at, dim, name.cstring, nil)
+    ImDrawList_PushClipRect(dl, vec(ta, t0, b0), vec(ta, t1, b1), true)
     for pos in labelled(vis, step):
       let (have, v) = headerValue(tiles, fields, i, pos)
       if have:
         let text = headerText(v)
         if text.len > 0:
-          let x = plotPos.x + float32((float64(pos) - view.traces.lo) * perPos)
-          let w = igCalcTextSize(text.cstring, nil, false, -1).x
-          let left = round(x - w / 2)
-          if left >= plotPos.x and left + w <= plotPos.x + plotSize.x: # whole labels only
+          let c = traceAt(view, m, plotPos, plotSize, float64(pos))
+          let ts = igCalcTextSize(text.cstring, nil, false, -1)
+          let w = ts.along(ta)
+          let left = round(c - w / 2)
+          if left >= t0 and left + w <= t1: # whole labels only
             let colour = if headerJoined(tiles, fields, i, pos): joinedInk else: ink
-            ImDrawList_AddText_Vec2(dl, ImVec2_c(x: left, y: y), colour, text.cstring, nil)
+            ImDrawList_AddText_Vec2(dl, vec(ta, left, bands.inBand(i, ts.along(bands.axis))),
+              colour, text.cstring, nil)
     ImDrawList_PopClipRect(dl)
   ImDrawList_PopClipRect(dl)
-  discard paper
 
 func targetOf(under: int; pick: Pick; sel: Selection): string =
   ## What the plot's menu acts on, in words: the selection when the trace
@@ -1113,49 +1226,57 @@ func holds(t: Tile; position: int): bool {.inline.} =
     (position - r.first) mod r.stride == 0
 
 proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
-    layout: PanelLayout; y: float32; plotPos, plotSize: ImVec2_c; t: Theme; marks: var Marks) =
-  ## The display header's row of edits, at `y` under its other rows: over
-  ## each edited trace in view, as the file's edits `e` are now, "K"
-  ## (killed, in the theme's error colour) or "R" (reversed, in its accent
-  ## colour), "KR" for both; a thin bar where traces are too close for the
-  ## letters.
+    layout: PanelLayout; m: Turn; bands: HeaderBands; plotPos, plotSize: ImVec2_c; t: Theme;
+    marks: var Marks) =
+  ## The display header's band of edits, its last (a row under its other
+  ## rows; a column next to the plot when time is across): over each edited
+  ## trace in view, as the file's edits `e` are now, "K" (killed, in the
+  ## theme's error colour) or "R" (reversed, in its accent colour), "KR" for
+  ## both; a thin bar where traces are too close for the letters.
   let dl = igGetWindowDrawList()
   let lineH = igGetTextLineHeight()
+  let ta = m.along[axTraces]
+  let i = bands.start.high
+  let (bs, bz) = (bands.start[i], bands.size[i])
   let name = "edits"
-  let nw = igCalcTextSize(name.cstring, nil, false, -1).x
-  ImDrawList_AddText_Vec2(dl, ImVec2_c(x: plotPos.x - nw - 6, y: y), u32(t.roles[rlTextDim]),
-    name.cstring, nil)
-  marks.markRect("plot.header.edits", ImVec2_c(x: plotPos.x - nw - 6, y: y),
-    ImVec2_c(x: plotPos.x, y: y + lineH))
-  let perPos = plotSize.x / max(view.traces.width, 1e-9)
-  ImDrawList_PushClipRect(dl, ImVec2_c(x: plotPos.x, y: y),
-    ImVec2_c(x: plotPos.x + plotSize.x, y: y + lineH), true)
+  let ns = igCalcTextSize(name.cstring, nil, false, -1)
+  let t0 = plotPos.along(ta)
+  let (nlo, nhi) = if ta == saX:
+      (vec(ta, t0 - ns.x - 6, bs), vec(ta, t0, bs + lineH))
+    else: (vec(ta, t0 - lineH - 2, bands.inBand(i, ns.x)),
+      vec(ta, t0 - 2, bands.inBand(i, ns.x) + ns.x))
+  ImDrawList_AddText_Vec2(dl, nlo, u32(t.roles[rlTextDim]), name.cstring, nil)
+  marks.markRect("plot.header.edits", nlo, nhi)
+  let perPos = plotSize.along(ta) / max(view.traces.width, 1e-9)
+  ImDrawList_PushClipRect(dl, vec(ta, t0, bs), vec(ta, t0 + plotSize.along(ta), bs + bz), true)
   var marked = 0
   let vis = visiblePositions(layout, view)
   # Each tile's rows in view that no newer tile has (as drawn): bounded by
   # the rows the tiles hold, not by the traces of the gather.
-  for i in countdown(tiles.high, 0):
-    for row in 0 ..< min(tiles[i].request.count, tiles[i].traces.len):
-      let pos = tiles[i].request.position(row)
+  for k in countdown(tiles.high, 0):
+    for row in 0 ..< min(tiles[k].request.count, tiles[k].traces.len):
+      let pos = tiles[k].request.position(row)
       var newer = false
-      for j in i + 1 .. tiles.high:
+      for j in k + 1 .. tiles.high:
         if tiles[j].holds(pos): newer = true
-      let trace = tiles[i].traces[row]
+      let trace = tiles[k].traces[row]
       let has = if pos in vis and not newer: e.editsOf(trace) else: {}
       if has != {}:
         let text = (if teKilled in has: "K" else: "") & (if teReversed in has: "R" else: "")
         let colour = u32(t.roles[if teKilled in has: rlError else: rlAccent])
-        let x = plotPos.x + float32((float64(pos) - view.traces.lo) * perPos)
-        let w = igCalcTextSize(text.cstring, nil, false, -1).x
+        let c = traceAt(view, m, plotPos, plotSize, float64(pos))
+        let ts = igCalcTextSize(text.cstring, nil, false, -1)
+        let w = ts.along(ta)
         var lo, hi: ImVec2_c
         if perPos >= w + 2:
-          lo = ImVec2_c(x: round(x - w / 2), y: y)
-          hi = ImVec2_c(x: lo.x + w, y: y + lineH)
+          let b = bands.inBand(i, ts.along(bands.axis))
+          lo = vec(ta, round(c - w / 2), b)
+          hi = vec(ta, lo.along(ta) + w, b + ts.along(bands.axis))
           ImDrawList_AddText_Vec2(dl, lo, colour, text.cstring, nil)
         else:
           let half = max(0.5'f32, perPos / 2 - 0.5'f32)
-          lo = ImVec2_c(x: x - half, y: y + round(lineH * 0.2))
-          hi = ImVec2_c(x: x + half, y: y + round(lineH * 0.8))
+          lo = vec(ta, c - half, bs + round(bz * 0.2))
+          hi = vec(ta, c + half, bs + round(bz * 0.8))
           ImDrawList_AddRectFilled(dl, lo, hi, colour, 0, 0)
         if marked < 200: # for tests
           marks.markRect("plot.header.edit " & $(trace + 1), lo, hi)
@@ -1171,64 +1292,84 @@ proc drawHeaderMenu(p: Panel; marks: var Marks; res: var PanelOutput) =
   drawHeaderChoice(p, marks, "plot.header menu.", res)
   igEndPopup()
 
-proc drawCursorLine(tp: var TracePanelUi; at, pos: ImVec2_c; tMs, dtMs: float64;
+proc drawCursorLine(tp: var TracePanelUi; at, pos, size: ImVec2_c; m: Turn; tMs, dtMs: float64;
     ink: PlotInk; t: Theme; marks: var Marks) =
-  ## The cursor's time line: a thin line from the pointer at `at` across to
-  ## the time axis at the plot's left edge `pos.x`, and the pointer's time
-  ## there, right-aligned as the tick values are, over them. Drawn over the
-  ## plot's image, so nothing is read or drawn again for it. The line takes
-  ## the theme's crosshair colour made readable on the plot's background,
-  ## with a halo of the background around it, so it shows over wiggles and
-  ## over density's black and white alike.
+  ## The cursor's time line: a thin line from the pointer at `at`, along the
+  ## traces (across, or down when time is across), to the edge of the plot
+  ## at `pos`, `size` where the time axis's values are (its left edge, or
+  ## its bottom edge), and the pointer's time there, over those values.
+  ## Drawn over the plot's image, so nothing is read or drawn again for it.
+  ## The line takes the theme's crosshair colour made readable on the plot's
+  ## background, with a halo of the background around it, so it shows over
+  ## wiggles and over density's black and white alike.
   let dl = igGetWindowDrawList()
-  let fb = igGetIO_Nil().DisplayFramebufferScale.y
+  let ta = m.along[axTraces] # the line runs along the traces, at one time
+  let ba = other(ta)
+  let fb = igGetIO_Nil().DisplayFramebufferScale.along(ba)
   let px = 1 / max(fb, 0.01) # one framebuffer pixel
-  let top = floor(at.y * fb) / fb # the pointer's pixel row: rectangles, so no blur
+  let top = floor(at.along(ba) * fb) / fb # the pointer's pixel: rectangles, so no blur
+  # ImPlot writes the y axis's values left of the plot, the x axis's below it
+  let edge = if ta == saX: pos.x else: pos.y + size.y
   let colour = readableOn(t.roles[rlCrosshair], ink.background)
-  ImDrawList_AddRectFilled(dl, ImVec2_c(x: pos.x, y: top - px), ImVec2_c(x: at.x,
-    y: top + 2 * px), u32(withAlpha(ink.background, 150)), 0, 0)
-  ImDrawList_AddRectFilled(dl, ImVec2_c(x: pos.x, y: top), ImVec2_c(x: at.x, y: top + px),
-    u32(colour), 0, 0)
-  marks.markRect("plot.cursor line", ImVec2_c(x: pos.x, y: top), ImVec2_c(x: at.x, y: top + px))
-  let y = top + px / 2
+  let (h0, h1) = ordered(vec(ta, edge, top - px), vec(ta, at.along(ta), top + 2 * px))
+  ImDrawList_AddRectFilled(dl, h0, h1, u32(withAlpha(ink.background, 150)), 0, 0)
+  let (l0, l1) = ordered(vec(ta, edge, top), vec(ta, at.along(ta), top + px))
+  ImDrawList_AddRectFilled(dl, l0, l1, u32(colour), 0, 0)
+  marks.markRect("plot.cursor line", l0, l1)
+  let mid = top + px / 2
   tp.cursorText = cursorTimeText(tMs, dtMs)
   let ts = igCalcTextSize(tp.cursorText.cstring, nil, false, -1)
-  let right = pos.x - ImPlot_GetStyle().LabelPadding.x # where the tick values end
-  let lo = ImVec2_c(x: right - ts.x - 3, y: round(y - ts.y / 2) - 1)
-  let hi = ImVec2_c(x: pos.x, y: lo.y + ts.y + 2)
+  let pad = ImPlot_GetStyle().LabelPadding
+  var lo, hi, text: ImVec2_c
+  if ta == saX: # right-aligned left of the plot, as the tick values are
+    let right = pos.x - pad.x # where the tick values end
+    lo = ImVec2_c(x: right - ts.x - 3, y: round(mid - ts.y / 2) - 1)
+    hi = ImVec2_c(x: pos.x, y: lo.y + ts.y + 2)
+    text = ImVec2_c(x: right - ts.x, y: lo.y + 1)
+  else: # centred under the line, below the plot, over the tick values
+    lo = ImVec2_c(x: round(mid - ts.x / 2) - 3, y: edge)
+    hi = ImVec2_c(x: lo.x + ts.x + 6, y: edge + pad.y + ts.y + 2)
+    text = ImVec2_c(x: lo.x + 3, y: edge + pad.y)
   ImDrawList_AddRectFilled(dl, lo, hi, u32(t.roles[rlWindow]), 0, 0)
   ImDrawList_AddRect(dl, lo, hi, u32(colour), 0, 1, 0)
-  ImDrawList_AddText_Vec2(dl, ImVec2_c(x: right - ts.x, y: lo.y + 1), u32(t.roles[rlText]),
-    tp.cursorText.cstring, nil)
+  ImDrawList_AddText_Vec2(dl, text, u32(t.roles[rlText]), tp.cursorText.cstring, nil)
   marks.markRect("plot.cursor time", lo, hi)
 
 proc drawCursorHeader(tp: var TracePanelUi; tiles: openArray[Tile];
-    fields: openArray[HeaderField]; position: int; view: Viewport; top, plotPos,
-    plotSize: ImVec2_c; ink: PlotInk; t: Theme; marks: var Marks) =
-  ## With the cursor's time line, the display header's value of each row for
-  ## the trace at `position` (the pointer's), in a box over its row at the
-  ## trace's column, in the style of the time at the axis: the value is
-  ## there when the row's labels are thinned because the traces are close.
-  ## The trace's highlight marks the trace; no line is drawn. From the
-  ## tiles' header values: nothing is read.
+    fields: openArray[HeaderField]; position: int; view: Viewport; m: Turn;
+    bands: HeaderBands; plotPos, plotSize: ImVec2_c; ink: PlotInk; t: Theme;
+    marks: var Marks) =
+  ## With the cursor's time line, the display header's value of each band
+  ## for the trace at `position` (the pointer's), in a box over its row at
+  ## the trace's column (in its column at the trace's row, when time is
+  ## across), in the style of the time at the axis: the value is there when
+  ## the band's labels are thinned because the traces are close. The trace's
+  ## highlight marks the trace; no line is drawn. From the tiles' header
+  ## values: nothing is read.
   let dl = igGetWindowDrawList()
-  let lineH = igGetTextLineHeight()
+  let ta = m.along[axTraces]
+  let ba = bands.axis
   let colour = readableOn(t.roles[rlCrosshair], ink.background)
-  let x = plotPos.x + float32((float64(position) - view.traces.lo) * float64(plotSize.x) /
-    max(view.traces.width, 1e-9))
+  let c = traceAt(view, m, plotPos, plotSize, float64(position))
+  let (t0, t1) = (plotPos.along(ta), plotPos.along(ta) + plotSize.along(ta))
+  let pad = if ta == saX: 6'f32 else: 2'f32 # around the text, along the traces
   for i, f in fields:
     let (have, v) = headerValue(tiles, fields, i, position)
     let text = if have: headerText(v) else: ""
     tp.cursorHeader.add text
     if text.len > 0:
       let ts = igCalcTextSize(text.cstring, nil, false, -1)
-      let left = clamp(round(x - ts.x / 2) - 3, plotPos.x, plotPos.x + plotSize.x - ts.x - 6)
-      let lo = ImVec2_c(x: left, y: top.y + float32(i) * lineH - 1)
-      let hi = ImVec2_c(x: lo.x + ts.x + 6, y: lo.y + lineH + 1)
+      let w = ts.along(ta)
+      let first = clamp(round(c - w / 2) - pad / 2, t0, t1 - w - pad)
+      let b0 = bands.start[i] - 1
+      let lo = vec(ta, first, b0)
+      let hi = vec(ta, first + w + pad, b0 + bands.size[i] + 1)
       ImDrawList_AddRectFilled(dl, lo, hi, u32(t.roles[rlWindow]), 0, 0)
       ImDrawList_AddRect(dl, lo, hi, u32(colour), 0, 1, 0)
       let ink = if headerJoined(tiles, fields, i, position): t.roles[rlAccent] else: t.roles[rlText]
-      ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + 3, y: lo.y + 1), u32(ink), text.cstring, nil)
+      let at = if ba == saY: vec(ta, first + pad / 2, b0 + 1)
+               else: vec(ta, first + pad / 2, bands.inBand(i, ts.x))
+      ImDrawList_AddText_Vec2(dl, at, u32(ink), text.cstring, nil)
       marks.markRect("plot.cursor header " & $f, lo, hi)
 
 proc burst(tp: var TracePanelUi; g: Gesture): bool =
@@ -1239,30 +1380,33 @@ proc burst(tp: var TracePanelUi; g: Gesture): bool =
   tp.gesture = g
   tp.gestureAt = now
 
-func wheelOf(io: ptr ImGuiIO): (float64, set[Axis]) =
-  ## Wheel notches this frame and the axes they zoom: both; Ctrl, time
-  ## only; Shift or the sideways wheel, traces only.
+func wheelOf(io: ptr ImGuiIO; m: Turn): (float64, set[Axis]) =
+  ## Wheel notches this frame and the data axes they zoom on a plot turned
+  ## `m`: both; Ctrl, up and down only (time, or the traces when time is
+  ## across); Shift or the sideways wheel, across only.
   if io.MouseWheel != 0:
-    let axes = if io.KeyCtrl: {axTime} elif io.KeyShift: {axTraces} else: BothAxes
+    let axes = if io.KeyCtrl: m.axesAlong({saY}) elif io.KeyShift: m.axesAlong({saX})
+               else: BothAxes
     (float64(io.MouseWheel), axes)
-  elif io.MouseWheelH != 0: (float64(io.MouseWheelH), {axTraces})
+  elif io.MouseWheelH != 0: (float64(io.MouseWheelH), m.axesAlong({saX}))
   else: (0.0, {})
 
 func clampTo(p: ImVec2_c; r: Rect): Vec2 =
   vec2(clamp(p.x, r.pos.x, r.pos.x + r.size.x), clamp(p.y, r.pos.y, r.pos.y + r.size.y))
 
 proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot: Rect;
-    lim: ViewLimits; hovered: bool; t: Theme; remember, menu: var bool;
+    m: Turn; lim: ViewLimits; hovered: bool; t: Theme; remember, menu: var bool;
     click: var ClickKind) =
   ## The wheel and the buttons over the plot (the invisible button just
-  ## drawn over it). A left press released where it went down is a click.
+  ## drawn over it), turned as `m` says. A left press released where it went
+  ## down is a click.
   let io = igGetIO_Nil()
   let mouse = io.MousePos
   if hovered:
-    let (notches, axes) = wheelOf(io)
+    let (notches, axes) = wheelOf(io, m)
     if notches != 0 and axes.card > 0:
-      after = after.zoomed(pow(WheelStep, notches), view.dataAt(plot, vec2(mouse.x, mouse.y)),
-        axes, lim)
+      after = after.zoomed(pow(WheelStep, notches),
+        view.dataAt(plot, vec2(mouse.x, mouse.y), m), axes, lim)
       if tp.burst(gsWheel): remember = true
       if tp.drag.kind == dkPan: # go on dragging from here
         tp.drag.start = after
@@ -1284,7 +1428,7 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
   of dkNone: discard
   of dkPan:
     if tp.drag.moved:
-      after = dragged(tp.drag.start, plot, moved, lim)
+      after = dragged(tp.drag.start, plot, moved, lim, m)
       igSetMouseCursor(ImGui_MouseCursor_ResizeAll.cint)
     if not down:
       if not tp.drag.moved and tp.drag.button == ImGui_MouseButton_Left.cint and hovered:
@@ -1306,10 +1450,10 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
     if not down:
       if tp.drag.moved:
         var axes: set[Axis]
-        if abs(a.x - b.x) >= boxMinPixels: axes.incl axTraces
-        if abs(a.y - b.y) >= boxMinPixels: axes.incl axTime
+        if abs(a.x - b.x) >= boxMinPixels: axes.incl m.axisAlong(saX)
+        if abs(a.y - b.y) >= boxMinPixels: axes.incl m.axisAlong(saY)
         if axes.card > 0:
-          after = view.boxed(view.dataAt(plot, a), view.dataAt(plot, b), axes, lim)
+          after = view.boxed(view.dataAt(plot, a, m), view.dataAt(plot, b, m), axes, lim)
           remember = true
           tp.gesture = gsNone
       elif hovered:
@@ -1317,9 +1461,10 @@ proc handleMouse(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot
       tp.drag = Drag()
 
 proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot: Rect;
-    lim: ViewLimits; hovered: bool; p: Panel; selected: bool; record: (int, int);
+    m: Turn; lim: ViewLimits; hovered: bool; p: Panel; selected: bool; record: (int, int);
     remember: var bool; res: var PanelOutput) =
-  ## The plot's keys, while its window has the focus (docs/plot-window.md).
+  ## The plot's keys, while its window has the focus (docs/plot-window.md),
+  ## in the screen's directions on a plot turned `m`.
   let io = igGetIO_Nil()
   if io.WantTextInput: return # typing into a box
   template held(chord: cint): bool = igShortcut_Nil(chord, ImGui_InputFlags_Repeat.cint)
@@ -1331,18 +1476,20 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
   let zoomIn = held(ImGui_Key_Equal.cint) or held(shift or ImGui_Key_Equal.cint) or
     held(ImGui_Key_KeypadAdd.cint)
   let zoomOut = held(ImGui_Key_Minus.cint) or held(ImGui_Key_KeypadSubtract.cint)
-  let timeIn = held(ctrl or ImGui_Key_UpArrow.cint)
-  let timeOut = held(ctrl or ImGui_Key_DownArrow.cint)
-  let tracesIn = held(ctrl or ImGui_Key_RightArrow.cint)
-  let tracesOut = held(ctrl or ImGui_Key_LeftArrow.cint)
-  let at = if hovered: view.dataAt(plot, vec2(io.MousePos.x, io.MousePos.y)) else: after.centre
+  let upIn = held(ctrl or ImGui_Key_UpArrow.cint)
+  let upOut = held(ctrl or ImGui_Key_DownArrow.cint)
+  let acrossIn = held(ctrl or ImGui_Key_RightArrow.cint)
+  let acrossOut = held(ctrl or ImGui_Key_LeftArrow.cint)
+  let at = if hovered: view.dataAt(plot, vec2(io.MousePos.x, io.MousePos.y), m)
+           else: after.centre
+  let (upDown, sideways) = (m.axesAlong({saY}), m.axesAlong({saX}))
   var zooms: seq[(float64, set[Axis])]
   if zoomIn: zooms.add (KeyStep, BothAxes)
   if zoomOut: zooms.add (1 / KeyStep, BothAxes)
-  if timeIn: zooms.add (KeyStep, {axTime})
-  if timeOut: zooms.add (1 / KeyStep, {axTime})
-  if tracesIn: zooms.add (KeyStep, {axTraces})
-  if tracesOut: zooms.add (1 / KeyStep, {axTraces})
+  if upIn: zooms.add (KeyStep, upDown)
+  if upOut: zooms.add (1 / KeyStep, upDown)
+  if acrossIn: zooms.add (KeyStep, sideways)
+  if acrossOut: zooms.add (1 / KeyStep, sideways)
   for (factor, axes) in zooms:
     after = after.zoomed(factor, at, axes, lim)
   if zooms.len > 0 and tp.burst(gsKeyZoom): remember = true
@@ -1356,7 +1503,8 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
       fx += dx
       fy += dy
   if fx != 0 or fy != 0:
-    after = after.stepped(fx, fy, lim)
+    let (alongTraces, alongTime) = m.dataDelta(fx, fy) # the way the keys point
+    after = after.stepped(alongTraces, alongTime, lim)
     if tp.burst(gsKeyPan): remember = true
   if once(ctrl or ImGui_Key_0.cint) or once(ctrl or ImGui_Key_Keypad0.cint):
     after = fitted(lim, after.columns, after.rows)
@@ -1385,7 +1533,7 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
 proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts;
     marks: var Marks; res: var PanelOutput; ask: ViewAsk; ppi: float64) =
   ## The display header and the plot of `panels[k]`, and the mouse and keys
-  ## over it.
+  ## over it, turned as its display says.
   # Aliases, not copies: a `let` would copy the panel's tiles every frame.
   template p: untyped = st.panels[k]
   template layer: untyped = st.panels[k].layers[0]
@@ -1393,15 +1541,38 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   # The limits on the plot's size last frame; `limNow` on this frame's.
   let lim = p.viewLimits(tp.cur.columns)
   let fields = p.shownFields
-  let paper = layer.display.isPaper
   let ink = plotInk(t, layer.display)
+  let turn = layer.display.turn # the one mapping between the data and the screen
   let source = st.findSession(layer.source.file)
   let base = if source >= 0: st.sessions[source].base else: -1
   let lineH = igGetTextLineHeight()
   let headerTop = igGetCursorScreenPos()
-  # a row for the edits, while the gather has one
+  # The display header: a row per field above the plot, or a column per
+  # field left of it when time is across (their names above them), and a
+  # band for the edits while the gather has one.
   let edited = st.gatherEdited(k)
-  igDummy(ImVec2_c(x: 1, y: float32(fields.len + ord(edited)) * lineH + 2))
+  var bands = HeaderBands(axis: turn.along[axTime])
+  if bands.axis == saY:
+    for i in 0 ..< fields.len + ord(edited):
+      bands.start.add headerTop.y + float32(i) * lineH
+      bands.size.add lineH
+    igDummy(ImVec2_c(x: 1, y: float32(fields.len + ord(edited)) * lineH + 2))
+  else:
+    let charW = igCalcTextSize("0", nil, false, -1).x
+    let gap = round(igGetFontSize() * 0.8)
+    let chars = tp.bandChars(tiles, fields, p.sourceGen)
+    var at = headerTop.x
+    for i, f in fields:
+      let caption = igCalcTextSize(caption(f).cstring, nil, false, -1).x
+      bands.start.add at
+      bands.size.add round(max(caption, float32(max(chars[i], 1)) * charW)) + gap
+      at += bands.size[^1]
+    if edited:
+      bands.start.add at
+      bands.size.add round(max(igCalcTextSize("edits", nil, false, -1).x, 2 * charW)) + gap
+      at += bands.size[^1]
+    igDummy(ImVec2_c(x: 1, y: lineH + 2)) # the columns' names
+    igSetCursorScreenPos(ImVec2_c(x: at, y: igGetCursorScreenPos().y))
   # This frame's view: what `core` set itself (back, a new gather), else
   # what a control or a test asked for, else last frame's.
   var remember = false
@@ -1442,53 +1613,67 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   let room = barRoom()
   if ImPlot_BeginPlot("##traces", ImVec2_c(x: max(1, avail.x - room.x),
       y: max(1, avail.y - room.y)), flags):
-    ImPlot_SetupAxis(ImAxis_X1.cint, nil, ImPlot_AxisFlags_NoDecorations.cint or
-      ImPlot_AxisFlags_NoMenus.cint)
-    # Tick values only: the unit is in the ms/in box and the status bar.
-    ImPlot_SetupAxis(ImAxis_Y1.cint, nil, ImPlot_AxisFlags_Invert.cint or
-      ImPlot_AxisFlags_NoMenus.cint or ImPlot_AxisFlags_NoGridLines.cint or
-      ImPlot_AxisFlags_NoTickMarks.cint) # nothing drawn over the data
-    # Every label as wide as the longest the record can have, so the axis,
-    # and the plot's left edge, stay put as the labels change length.
-    ImPlot_SetupAxisFormat_Str(ImAxis_Y1.cint, ("%" & $timeLabelChars(p.layout) & "g").cstring)
-    ImPlot_SetupAxesLimits(next.traces.lo, next.traces.hi, next.timeMs.lo, next.timeMs.hi,
-      ImPlot_Cond_Always.cint)
+    # ImPlot's x axis is the screen's width, its y axis the height (its
+    # values growing upwards): each shows the data axis the turn puts there.
+    var inverted: array[ScreenAxis, bool]
+    for (implot, s) in [(ImAxis_X1.cint, saX), (ImAxis_Y1.cint, saY)]:
+      let a = turn.axisAlong(s)
+      inverted[s] = (s == saY) != turn.reversed[a]
+      # Tick values only, for time: the unit is in the ms/in box and the
+      # status bar; nothing drawn over the data. The traces: none.
+      let flags = ImPlot_AxisFlags_NoMenus.cint or
+        (if a == axTraces: ImPlot_AxisFlags_NoDecorations.cint
+         else: ImPlot_AxisFlags_NoGridLines.cint or ImPlot_AxisFlags_NoTickMarks.cint) or
+        (if inverted[s]: ImPlot_AxisFlags_Invert.cint else: 0)
+      ImPlot_SetupAxis(implot, nil, flags)
+    if turn.along[axTime] == saY:
+      # Every label as wide as the longest the record can have, so the axis,
+      # and the plot's left edge, stay put as the labels change length.
+      ImPlot_SetupAxisFormat_Str(ImAxis_Y1.cint, ("%" & $timeLabelChars(p.layout) & "g").cstring)
+    let (xs, ys) = (next.span(turn.axisAlong(saX)), next.span(turn.axisAlong(saY)))
+    ImPlot_SetupAxesLimits(xs.lo, xs.hi, ys.lo, ys.hi, ImPlot_Cond_Always.cint)
     ImPlot_SetupFinish()
     let lim2 = ImPlot_GetPlotLimits(ImAxis_X1.cint, ImAxis_Y1.cint)
     let pos = ImPlot_GetPlotPos()
     let size = ImPlot_GetPlotSize()
     let fb = igGetIO_Nil().DisplayFramebufferScale
-    var view = next
-    view.columns = int(round(size.x * fb.x))
-    view.rows = int(round(size.y * fb.y))
+    let view = next.sized(turn, int(round(size.x * fb.x)), int(round(size.y * fb.y)))
     marks.markRect("plot.data", pos, ImVec2_c(x: pos.x + size.x, y: pos.y + size.y))
     if tp.gpuError.len == 0 and tp.started:
       tp.sync(tiles, base, st.selection)
       let d = layer.display
       let scale = displayScale(p.reference, d.gainDb)
-      let shown = Viewport(traces: Span(lo: lim2.X.Min, hi: lim2.X.Max),
-        timeMs: Span(lo: lim2.Y.Min, hi: lim2.Y.Max), columns: view.columns, rows: view.rows)
+      var shown = view # what ImPlot shows along each screen axis
+      let (sx, sy) = (Span(lo: lim2.X.Min, hi: lim2.X.Max), Span(lo: lim2.Y.Min, hi: lim2.Y.Max))
+      (shown.traces, shown.timeMs) = if turn.axisAlong(saX) == axTraces: (sx, sy) else: (sy, sx)
       # one pixel of line at 100 % (no more than a quarter of a trace spacing:
       # `styleFor`), two for a hovered or selected trace
       let width = max(1.0, round(float64(fb.x)))
-      let tex = tp.renderer.render(PlotFrame(view: shown, background: ink.background,
-        density: d.drawsDensity, wiggles: d.drawsWiggles, scale: scale,
-        style: d.styleFor(shown, scale, width, 2 * width), ink: ink.wiggle,
+      let tex = tp.renderer.render(PlotFrame(view: shown, turn: turn,
+        background: ink.background, density: d.drawsDensity, wiggles: d.drawsWiggles,
+        scale: scale, style: d.styleFor(shown, scale, width, 2 * width), ink: ink.wiggle,
         tint: DensityTint, marks: tp.marks), tiles, tp.textures)
       tp.drawn = shown
       if tex != 0:
+        # ImPlot puts uv0 at (x min, y max); the image's first row is the
+        # plot's bottom, its first column the left
+        let u0 = if inverted[saX]: 1'f32 else: 0'f32
+        let v0 = if inverted[saY]: 0'f32 else: 1'f32
         ImPlot_PlotImage("##traces", ImTextureRef_c(internal_TexID: ImTextureID(tex)),
           ImPlotPoint_c(x: lim2.X.Min, y: lim2.Y.Min),
           ImPlotPoint_c(x: lim2.X.Max, y: lim2.Y.Max),
-          # ImPlot puts uv0 at (x min, y max): the bottom, the image's first row
-          ImVec2_c(x: 0, y: 0), ImVec2_c(x: 1, y: 1), ImVec4_c(x: 1, y: 1, z: 1, w: 1),
-          ImPlot_ItemFlags_NoFit.cint)
+          ImVec2_c(x: u0, y: v0), ImVec2_c(x: 1 - u0, y: 1 - v0),
+          ImVec4_c(x: 1, y: 1, z: 1, w: 1), ImPlot_ItemFlags_NoFit.cint)
     let stride = if p.pending.isEmpty: 1 else: p.pending.stride
-    tp.drawHeader(tiles, fields, stride, view, p.layout, headerTop, pos, size, t, paper)
+    tp.drawHeader(tiles, fields, stride, view, p.layout, turn, bands, headerTop, pos, size, t,
+      marks)
     if edited:
-      drawEditRow(st.editsOf(k), tiles, view, p.layout, headerTop.y + float32(fields.len) *
-        lineH, pos, size, t, marks)
+      drawEditRow(st.editsOf(k), tiles, view, p.layout, turn, bands, pos, size, t, marks)
     ImPlot_EndPlot()
+    # the bar along the width goes under the values of the axis there, if any
+    let barsUnder = if turn.axisAlong(saX) == axTime:
+                  igGetItemRectMax().y - ImPlot_GetStyle().PlotPadding.y
+                else: pos.y + size.y
     if st.sorting(k): # the old order stays drawn until the new one comes
       let dl = igGetWindowDrawList()
       let text = if layer.order.len == 0: "Back to the file's order..."
@@ -1502,9 +1687,12 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
         u32(t.roles[rlText]), text.cstring, nil)
       marks.markRect("plot.sorting", at, ImVec2_c(x: at.x + ts.x + 2 * pad.x,
         y: at.y + ts.y + 2 * pad.y))
-    # The display header's own menu: a right click on its rows of values or
-    # on their names left of the plot (nothing else happens there).
-    let headerSize = ImVec2_c(x: pos.x + size.x - headerTop.x, y: pos.y - headerTop.y)
+    # The display header's own menu: a right click on its bands of values or
+    # on their names (nothing else happens there): from the header's top-left
+    # to the plot's start along time and its end along the traces.
+    let ta = turn.along[axTraces]
+    let corner = vec(ta, pos.along(ta) + size.along(ta), pos.along(other(ta)))
+    let headerSize = ImVec2_c(x: corner.x - headerTop.x, y: corner.y - headerTop.y)
     if headerSize.x >= 1 and headerSize.y >= 1:
       igSetCursorScreenPos(headerTop)
       if igInvisibleButton("##headerinput", headerSize,
@@ -1518,32 +1706,36 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       ImGui_ButtonFlags_MouseButtonRight.cint or ImGui_ButtonFlags_MouseButtonMiddle.cint)
     let hovered = igIsItemHovered(0)
     # A new plot size keeps the scale from the top left (the whole data where
-    # the plot becomes larger than it), within the limits on the new size.
+    # the plot becomes larger than it), within the limits on the new size; a
+    # turn keeps the traces and times shown (narrowed from the first trace
+    # where the limits say).
     let limNow = p.viewLimits(view.columns)
-    var after = if view.columns != next.columns or view.rows != next.rows:
+    var after = if turn.orientation != tp.turned: keptFrom(view, limNow)
+      elif view.columns != next.columns or view.rows != next.rows:
         next.resized(view.columns, view.rows, limNow)
       else: view
+    tp.turned = turn.orientation
     var click = clNone
-    tp.handleMouse(after, view, plot, limNow, hovered, t, remember, menu, click)
-    case tp.bars.drawScrollBars(after, view, pos, size, limNow, t, marks)
+    tp.handleMouse(after, view, plot, turn, limNow, hovered, t, remember, menu, click)
+    case tp.bars.drawScrollBars(after, view, pos, size, barsUnder, limNow, turn, t, marks)
     of beNone, beDrag: discard
     of beGrab:
       remember = true
       tp.gesture = gsNone
     of bePage: (if tp.burst(gsPage): remember = true)
     of beWheel: (if tp.burst(gsBarWheel): remember = true)
-    tp.handleKeys(after, view, plot, limNow, hovered, p, st.selection.selected.len > 0,
-      recordOf(st, p), remember, res)
+    tp.handleKeys(after, view, plot, turn, limNow, hovered, p,
+      st.selection.selected.len > 0, recordOf(st, p), remember, res)
     tp.cursorText = ""
     tp.cursorHeader.setLen 0
     if hovered:
-      let m = igGetIO_Nil().MousePos
-      res.pick = pick(tiles, p.layout, view, plot, vec2(m.x, m.y))
+      let mouse = igGetIO_Nil().MousePos
+      res.pick = pick(tiles, p.layout, view, plot, vec2(mouse.x, mouse.y), turn)
       if st.settings.cursorLine and res.pick.inside:
-        tp.drawCursorLine(m, pos, res.pick.at.tMs, p.layout.dtMs, ink, t, marks)
+        tp.drawCursorLine(mouse, pos, size, turn, res.pick.at.tMs, p.layout.dtMs, ink, t, marks)
         if res.pick.found and res.pick.position >= 0:
-          tp.drawCursorHeader(tiles, fields, res.pick.position, view, headerTop, pos, size, ink,
-            t, marks)
+          tp.drawCursorHeader(tiles, fields, res.pick.position, view, turn, bands, pos, size,
+            ink, t, marks)
     # The trace under the pointer is the hover; a click selects it.
     let under = if res.pick.found and res.pick.trace >= 0 and base >= 0: base + res.pick.trace
                 else: -1

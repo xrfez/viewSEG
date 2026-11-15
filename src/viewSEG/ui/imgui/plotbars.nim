@@ -1,6 +1,10 @@
-## The plot window's scroll bars: one under the plot when not every trace is
-## in view, one right of it when not all of the record's time is, none when
-## everything is (`core/zoom`: `showsAll`, `thumbOf`, `scrolled`, `paged`).
+## The plot window's scroll bars: one under the plot when not all the data
+## along the plot's width is in view, one right of it when not all along
+## its height is, none when everything is (`core/zoom`: `showsAll`,
+## `thumbOf`, `scrolled`, `paged`). Which data each bar scrolls is the
+## plot's `Turn`'s (`core/orientation`): the traces below and time at the
+## right when time is down, the other way round when it is across; a thumb
+## lies where the view lies along its bar, and follows the pointer.
 ##
 ## The thumb is as long as the share of the data in view. Dragging it pans;
 ## a click on the track pans by a whole view towards the click, again and
@@ -36,7 +40,7 @@ type
     ## being held. `ScrollBars()` lets go of both until the button is pressed
     ## again (Esc, or a view `core` sets itself).
     grabbed: bool
-    axis: Axis
+    axis: Axis ## the data axis of the bar held
     press: float32 ## the pointer along the bar when the thumb was grabbed
     start: Viewport ## the view then
     moved: bool
@@ -61,48 +65,52 @@ proc cancel*(sb: var ScrollBars; after: var Viewport): bool =
   sb = ScrollBars()
 
 proc drawScrollBars*(sb: var ScrollBars; after: var Viewport; view: Viewport;
-    pos, size: ImVec2_c; lim: ViewLimits; t: Theme; marks: var Marks): BarEvent =
+    pos, size: ImVec2_c; under: float32; lim: ViewLimits; m: Turn; t: Theme;
+    marks: var Marks): BarEvent =
   ## The bars of the plot whose data area lies at `pos`, `size` (ImGui's
-  ## coordinates) and shows `view`, each with its mouse handling; `after` is
-  ## this frame's view so far, and what the user does with a bar moves it.
-  ## Says what happened, for "back".
+  ## coordinates), shows `view` and is turned as `m` says, each with its
+  ## mouse handling: the one along the width under `under` (the data area's
+  ## bottom, or the bottom of the axis's values written under it); `after`
+  ## is this frame's view so far, and what the user does with a bar moves
+  ## it. Says what happened, for "back".
   result = beNone
   let io = igGetIO_Nil()
   let style = igGetStyle()
   let bar = style.ScrollbarSize
   let least = float64(max(style.GrabMinSize, bar))
   let dl = igGetWindowDrawList()
-  for a in Axis:
-    let length = if a == axTraces: size.x else: size.y
+  for s in ScreenAxis:
+    let a = m.axisAlong(s) # the data the bar along `s` scrolls
+    let length = if s == saX: size.x else: size.y
     let shown = not view.showsAll(a, lim) or (sb.grabbed and sb.axis == a)
     if shown and length >= 1 and bar >= 1:
-      let lo = if a == axTraces: ImVec2_c(x: pos.x, y: pos.y + size.y + barGap)
+      let lo = if s == saX: ImVec2_c(x: pos.x, y: under + barGap)
                else: ImVec2_c(x: pos.x + size.x + barGap, y: pos.y)
-      let hi = if a == axTraces: ImVec2_c(x: pos.x + size.x, y: lo.y + bar)
+      let hi = if s == saX: ImVec2_c(x: pos.x + size.x, y: lo.y + bar)
                else: ImVec2_c(x: lo.x + bar, y: pos.y + size.y)
       igSetCursorScreenPos(lo)
-      discard igInvisibleButton((if a == axTraces: "##bar.traces" else: "##bar.time").cstring,
+      discard igInvisibleButton(("##bar." & $a).cstring,
         ImVec2_c(x: hi.x - lo.x, y: hi.y - lo.y), ImGui_ButtonFlags_MouseButtonLeft.cint)
       let hovered = igIsItemHovered(0)
-      let along = float64(if a == axTraces: io.MousePos.x - lo.x else: io.MousePos.y - lo.y)
+      let along = float64(if s == saX: io.MousePos.x - lo.x else: io.MousePos.y - lo.y)
       let track = float64(length)
-      let th = thumbOf(after, a, lim, track, least)
+      let th = thumbOf(after, a, lim, track, least, m)
       let onThumb = along >= th.start and along <= th.start + th.length
       if igIsItemActivated():
         if onThumb:
           sb = ScrollBars(grabbed: true, axis: a, press: float32(along), start: after)
         else:
           sb = ScrollBars(axis: a, paging: true)
-          after = after.paged(a, (if along < th.start: -1.0 else: 1.0), lim)
+          after = after.paged(a, (if along < th.start: -1.0 else: 1.0), lim, m)
           result = bePage
       elif igIsItemActive() and sb.paging and sb.axis == a and
           igIsMouseClicked_Bool(ImGui_MouseButton_Left.cint, true):
         # held on the track: page on until the thumb is under the pointer
         if along < th.start:
-          after = after.paged(a, -1, lim)
+          after = after.paged(a, -1, lim, m)
           result = bePage
         elif along > th.start + th.length:
-          after = after.paged(a, 1, lim)
+          after = after.paged(a, 1, lim, m)
           result = bePage
       if sb.grabbed and sb.axis == a:
         let moved = along - float64(sb.press)
@@ -112,21 +120,21 @@ proc drawScrollBars*(sb: var ScrollBars; after: var Viewport; view: Viewport;
         elif sb.moved:
           result = beDrag
         if sb.moved:
-          after = scrolled(sb.start, a, lim, track, least, moved)
+          after = scrolled(sb.start, a, lim, track, least, moved, m)
         if not igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
           sb = ScrollBars()
       elif sb.paging and sb.axis == a and not igIsMouseDown_Nil(ImGui_MouseButton_Left.cint):
         sb = ScrollBars()
       if hovered and not sb.grabbed:
-        let notches = if a == axTraces and io.MouseWheelH != 0: -io.MouseWheelH
+        let notches = if s == saX and io.MouseWheelH != 0: -io.MouseWheelH
                       else: io.MouseWheel
         if notches != 0:
-          after = after.paged(a, -float64(notches) * PanStep, lim)
+          after = after.paged(a, -float64(notches) * PanStep, lim, m)
           result = beWheel
       # drawn where this frame leaves the view, so the thumb keeps up
-      let now = thumbOf(after, a, lim, track, least)
+      let now = thumbOf(after, a, lim, track, least, m)
       let (t0, t1) = (float32(now.start), float32(now.start + now.length))
-      let (g0, g1) = if a == axTraces:
+      let (g0, g1) = if s == saX:
           (ImVec2_c(x: lo.x + t0, y: lo.y), ImVec2_c(x: lo.x + t1, y: hi.y))
         else: (ImVec2_c(x: lo.x, y: lo.y + t0), ImVec2_c(x: hi.x, y: lo.y + t1))
       let grab = if sb.grabbed and sb.axis == a: ImGui_Col_ScrollbarGrabActive

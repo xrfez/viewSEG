@@ -87,14 +87,15 @@ proc iconButton*(icon, text, shortcut: string; size: float32; t: Theme;
   clicked
 
 proc symbolButton*(sym: Symbol; size: float32; t: Theme; marks: var Marks;
-    selected = false; note = ""; markPrefix = "tool."): bool =
-  ## A tool button showing a seismic symbol, for a plot window's own controls;
-  ## its mark is `markPrefix` and the symbol's name.
+    selected = false; note = ""; markPrefix = "tool."; turned = false): bool =
+  ## A tool button showing a seismic symbol, for a plot window's own controls,
+  ## `turned` with a plot whose time runs across; its mark is `markPrefix`
+  ## and the symbol's name.
   let (clicked, pos) = toolButton("##" & $sym, size, selected, t)
   marks.mark(markPrefix & $sym)
   let inset = round(size * 0.17)
   drawSymbol(igGetWindowDrawList(), sym, ImVec2_c(x: pos.x + inset, y: pos.y + inset),
-    size - 2 * inset, symbolColours(t, selected))
+    size - 2 * inset, symbolColours(t, selected), turned)
   tooltip($sym & note, "", t)
   clicked
 

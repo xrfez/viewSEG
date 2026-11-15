@@ -26,8 +26,11 @@
 ## hover differed from a whole drawing in 1 584 pixels.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
+## `VIEWSEG_FRAMETIMES=1` also times a whole image in each orientation and
+## mode, on the same plot (an optimised build gives the numbers worth
+## reading).
 
-import std/[math, options, os, strutils]
+import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state, wiggle]
 import viewSEG/gpu/[plotimage, textures]
 import viewSEG/view/plotink
@@ -192,6 +195,33 @@ proc hoverStripes(t: Tile; p: Picture; m: Turn): (int, int) =
 
 var results: seq[(string, int, int)]
 
+proc timing() =
+  ## With `VIEWSEG_FRAMETIMES` set: how long a whole image takes in each
+  ## orientation and mode, on the same plot (400 traces of 2000 samples on
+  ## 720 x 720 pixels, the columns' extremes kept), each read back.
+  let t = tileOf(400, 1000, decimation = 2)
+  let v = Viewport(traces: Span(lo: -0.5, hi: 399.5), timeMs: Span(lo: 0, hi: 3998),
+    columns: 720, rows: 720)
+  for mode in DisplayMode:
+    for m in [TimeDown, turnOf(orTimeAcross)]:
+      var (r, err) = newPlotRenderer(greyLut())
+      doAssert err.len == 0, err
+      var tt = r.upload(t)
+      var f = pictureOf(v, mode, {wfPositive}, m, -1, @[]).frameOf(m)
+      var ms: seq[float64]
+      for k in 0 ..< 41:
+        f.marks = k # a new image each time
+        let start = getMonoTime()
+        doAssert r.render(f, [t], [tt]) != 0
+        discard r.readImage
+        if k > 0: ms.add float64((getMonoTime() - start).inNanoseconds) / 1e6
+      ms.sort
+      echo "tguiplotturn: ", mode, ", ", m.orientation, ": a whole image in ",
+        formatFloat(ms[ms.len div 2], ffDecimal, 1), " ms (median of 40), fastest ",
+        formatFloat(ms[0], ffDecimal, 1)
+      tt.free()
+      r.free()
+
 proc onFrame(f: FrameInfo) =
   if f.index < 2: return # the renderer's GL functions are loaded by then
   let selected = @[false, true, false, false, false, false, false, false, false, true]
@@ -234,6 +264,7 @@ proc onFrame(f: FrameInfo) =
     doAssert drawn > 0 and drawn < v.columns div 2, name & ": the hover drew " & $drawn &
       " pixels along the traces of " & $v.columns
     results.add (name & ", after a hover", differ, v.columns * v.rows)
+  if getEnv("VIEWSEG_FRAMETIMES").len > 0: timing()
   f.stop()
 
 withFixtures fx:
