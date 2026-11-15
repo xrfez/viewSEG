@@ -16,6 +16,9 @@
 ## map's view models looping over the survey's layers by value (a copy of
 ## every layer, 100 MB, each frame), "the map lags" found 73 ms frames.
 ##
+## Runs alone: it bounds the frame times while the map moves (under 33 ms, and
+## at most 15 ms over an idle frame).
+##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
 import std/[algorithm, math, monotimes, options, os, strutils, times]
