@@ -159,6 +159,10 @@ type
         ## the file's `keysRevision` it was read with
       qcHits*: array[MapFilter, FilterHits]
         ## what each filter of `TraceFilters` found
+      qcRecord*: int64
+        ## the relation record it was checked against; -1 for none
+      qcByPlace*: bool
+        ## that record found with the station at the record's place
     of mkTraceRead:
       readKeys*: TraceKeys
         ## the trace's keys, as the index holds them

@@ -2346,35 +2346,40 @@ func shownDomain*(state: AppState): RelationDomain =
       state.sessions[i].gathers[g.gather].kind == gkReceiver: rdReceiver
   else: rdSource
 
+func shownPlace(state: AppState; s: Session; gather: int;
+    domain: RelationDomain): Placed =
+  ## For a record whose headers name no station of the role its relation
+  ## record is found by (a shot's source, a receiver gather's receiver): the
+  ## loaded survey files' station at the record's own place (`stationNear`).
+  ## Not found when the headers name one, or nothing is there.
+  let role = if domain == rdSource: prSource else: prReceiver
+  let own = state.survey.findTraces(s.id)
+  if own < 0: return
+  template l: untyped = state.survey.layers[own]
+  var placed = -1
+  for t in s.gathers[gather].traces:
+    if l.stationOf(role, t).known: return
+    if placed < 0: placed = l.pointOf(role, t)
+  if placed >= 0:
+    let (found, st) = state.survey.stationNear(role, l.points[role].index.x(placed),
+      l.points[role].index.y(placed))
+    result = (found, st)
+
 func shownSpread*(state: AppState): PlannedSpread =
   ## The spread planned for the record on show in the main panel (its
-  ## receivers; for a receiver gather, the receiver's shots), as the loaded
-  ## relation records, or those made from the template, give it; `record`
-  ## -1 for none.
+  ## receivers; for a receiver gather, the receiver's shots): that of the
+  ## relation record its check found (`followRecordQc`, as the map's
+  ## filters use it), in the loaded relation records or those made from
+  ## the template; `record` -1 for none, and while the check runs.
   let domain = state.shownDomain
   result = PlannedSpread(domain: domain)
   let g = state.selection.activeGather
-  let i = state.findSession(g.file)
-  if i < 0 or g.gather notin 0 ..< state.sessions[i].gathers.len: return
-  let s = state.sessions[i]
-  let role = if domain == rdSource: prSource else: prReceiver
-  var fixed: StationKey
-  var has = false
-  let own = state.survey.findTraces(s.id)
-  if own >= 0:
-    template l: untyped = state.survey.layers[own]
-    var placed = -1
-    for t in s.gathers[g.gather].traces:
-      let st = l.stationOf(role, t)
-      if st.known and not has:
-        (fixed, has) = (stationKeyOf(st), true)
-      if placed < 0: placed = l.pointOf(role, t)
-    if not has and placed >= 0: # no station in the headers: the survey file's at its place
-      (has, fixed) = state.survey.stationNear(role, l.points[role].index.x(placed),
-        l.points[role].index.y(placed))
-  let ffid = if domain == rdSource: s.records[g.gather].record else: NaN
-  result = state.survey.plannedSpread(state.spreads, domain, ffid, fixed, has,
-    state.settings.join.recordMatch)
+  template q: untyped = state.recordQc
+  if q.key.file != g.file or q.key.gather != g.gather or q.key.domain != domain or
+      q.record < 0:
+    return
+  result = state.survey.checkedSpread(state.spreads, domain, q.record)
+  result.byPlace = q.byPlace
 
 func spreadAt*(state: AppState; p: PointRef): PlannedSpread =
   ## The spread planned at map point `p` when records of the domain shown
@@ -2391,7 +2396,7 @@ func spreadAt*(state: AppState; p: PointRef): PlannedSpread =
   # An open file's own point whose headers name no station: the survey file's at its place.
   let (has, key) = if st.known: (true, stationKeyOf(st))
                    else: state.survey.stationNear(p.role, ps.index.x(p.point), ps.index.y(p.point))
-  if has: result = state.survey.plannedSpread(state.spreads, domain, NaN, key, true)
+  if has: result = state.survey.plannedSpread(state.spreads, domain, key)
 
 func wantedSpreads(state: AppState): SpreadInputs =
   ## The relation records the map's template box and its filter "missing
@@ -2565,14 +2570,17 @@ func qcRelations(state: AppState; domain: RelationDomain): (ref SurveyGeometry, 
 
 proc followRecordQc(state: var AppState) =
   ## Reads the record shown on a job for the map's filters when one of
-  ## `TraceFilters` is on and the record (its file, its keys, the relation
-  ## records it is checked against, how its traces are matched to them)
-  ## changed; what it found before goes.
+  ## `TraceFilters` is on, or the template box (which draws the relation
+  ## record the check finds), and the record (its file, its keys, the
+  ## relation records it is checked against, how its traces are matched to
+  ## them, the station at its place) changed; what it found before goes.
+  ## The samples are read only for a filter that needs them.
   template q: untyped = state.recordQc
   let g = state.selection.activeGather
   let i = state.findSession(g.file)
   let shown = i >= 0 and g.gather in 0 ..< state.sessions[i].gathers.len
-  if state.settings.map.filters * TraceFilters == {} or not shown:
+  let filters = state.settings.map.filters * TraceFilters
+  if (filters == {} and not state.settings.map.templateBox) or not shown:
     if q.job != NoJob:
       discard state.jobs.cancel(q.job)
       q.replaced.add q.job
@@ -2582,19 +2590,23 @@ proc followRecordQc(state: var AppState) =
   let s = state.sessions[i]
   let domain = state.shownDomain
   let (rel, against) = state.qcRelations(domain)
+  let placed = state.shownPlace(s, g.gather, domain)
+  let samples = filters * SampleFilters != {}
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
-    domain, state.settings.join.recordMatch, state.settings.join.traceMatch)
+    domain, state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples)
   if key == q.key: return
   if q.job != NoJob:
     discard state.jobs.cancel(q.job)
     q.replaced.add q.job
   q.key = key
   for m in TraceFilters: q.hits[m] = FilterHits(state: fsComputing)
+  (q.record, q.byPlace) = (-1'i64, false)
   inc q.revision
   q.job = state.jobs.submit(JobSpec(title: "Check the record shown for the map's filters",
     lane: jlBackground, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
-    state.settings.join.recordMatch, state.settings.join.traceMatch, state.inbox.poster))
+    state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
+    state.inbox.poster))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
 
 proc takeRecordQc(state: var AppState; m: sink Msg) =
@@ -2604,6 +2616,7 @@ proc takeRecordQc(state: var AppState; m: sink Msg) =
   if m.job == q.job and m.qcSession == q.key.file and m.qcGather == q.key.gather and
       m.qcKeys == q.key.keys:
     for f in TraceFilters: q.hits[f] = move m.qcHits[f]
+    (q.record, q.byPlace) = (m.qcRecord, m.qcByPlace)
     inc q.revision
 
 func filterHits*(state: AppState): array[MapFilter, FilterHits] =

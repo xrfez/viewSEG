@@ -36,9 +36,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.11.0: capabilities | names | processSEG 0.4.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 38 (22 in part) | 96 | 11 (9 in part) | 45 |
+| `built` | 38 (22 in part) | 96 | 12 (10 in part) | 48 |
 | `internal` | 14 | 34 | 4 | 39 |
-| `planned` | 38 | 285 | 53 | 352 |
+| `planned` | 38 | 285 | 52 | 349 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 19 | 354 | 5 | 59 |
 | all | 111 | 779 | 74 | 500 |
@@ -333,7 +333,7 @@ name, so these are building blocks for code that works on raw headers.
 | Automatic bin grid of a survey | `surveyGrid` | Fold map: grid proposed from the SPS | planned |
 | Pre-plot, actual and difference fold | `preplotFold`, `initFoldMap`, `addFold`, `foldDifference`, `FoldMap` (`fold`, `binned`, `outside`, `noCoordinates`, `notLive`, `options`), `clone` | Fold map layers and their difference | planned |
 | Fold by offset class and azimuth sector, offset range | `FoldOptions`, `offsetFold`, `azimuthFold`, `offsetMin`, `offsetMax` | Fold map: offset-class and azimuth layers, min / max offset maps | planned |
-| Field records against the XPS | `recordCompleteness`, `RecordCompleteness`, `RecordMatch`, `TraceMatch` | Records window: each record's stations missing against the loaded relation file, or the relation records of the survey imported (`expected`, `missing`, `unlisted`, `duplicates` in the cell's tooltip; a job per open file; the record and trace match chosen in Import survey's options); the map's filters missing from the template (`missingStations`), not in the template, recorded twice, on the record shown; survey QC issue list: missing, unlisted, duplicate stations | built (Records, the map's filters); planned (the issue list) |
+| Field records against the XPS | `recordCompleteness`, `RecordCompleteness`, `RecordMatch`, `TraceMatch` | Records window: each record's stations missing against the loaded relation file, or the relation records of the survey imported (`expected`, `missing`, `unlisted`, `duplicates` in the cell's tooltip; a job per open file; the record and trace match chosen in Import survey's options); the map's filters missing from the template (`missingStations`), not in the template, recorded twice, on the record shown, and the template box of that record (its `xpsRecord`, the source at the record's place given to the check when the headers name none); survey QC issue list: missing, unlisted, duplicate stations | built (Records, the map's filters); planned (the issue list) |
 | Missing stations of a record | `RecordCompleteness.missingStations`, `missingRanges`, `lines`, `StationRange`, `LineCompleteness` | Missing-stations map layer | planned |
 | Completeness over many records | `summarize`, `CompletenessSummary` | QC report section | planned |
 
@@ -365,7 +365,7 @@ name, so these are building blocks for code that works on raw headers.
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Receiver layout (azimuth, interval, line spacing) | `receiverLayout`, `inlineOf`, `crosslineOf`, `ReceiverLayout`, `ReceiverLine`, `LineStation` | Survey summary in File properties; map in the layout frame | to plan (priority 5) |
-| Patch description (template, clipped records) | `describePatches`, `PatchDescription`, `RecordPatch`, `spreadOf`, `PatchSide`, `PatchLine`, `Spread`, `$` | Patch QC: template, clipped records on the map | planned |
+| Patch description (template, clipped records) | `describePatches`, `PatchDescription`, `RecordPatch`, `spreadOf`, `PatchSide`, `PatchLine`, `Spread`, `$` | The map's filter "spread not the template" (below): the X records and their sources it compares (`RecordPatch`'s `record` and `source`), the medians it measures them by (`spreadOf`); Patch QC: template, clipped records on the map | built (the filter); planned (patch QC) |
 | X records generated from a template or distance box | `PatchTemplate`, `initPatchTemplate`, `initDistancePatch`, `patchShots`, `generateRelations`, `receiverLayout` | The map's template box when no relation file is loaded: the spreads generated on a job from the user's template (lines × stations, or a distance box), said to be generated; writing them as an XPS file | built (the map); planned (the export) |
 | Listed against generated relations | `compareRelations`, `RecordAgreement`, `jaccard`, `listedFraction`, `describePatches` | The map's filter "spread not the template": the shots whose X record agrees with the template the records describe far less than the survey's do; receivers dropped in the field, per shot | built (the filter); planned (per shot) |
 | A template's edges and placement | `PatchEdge`, `PatchPlacement`, `NumberMap`, `PatchBox`, `PatchShot`, `hasTemplate`, `hasDistance` | The template's options where X records are generated (above): the map's template box makes its shots (`PatchShot`) | built (the map's template box); planned (the edge and placement options) |

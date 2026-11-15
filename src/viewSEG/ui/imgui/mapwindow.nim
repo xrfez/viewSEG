@@ -132,7 +132,8 @@ type
       ## the layers and groups hidden when the highlight's places were found
     spreadShown, spreadHovered: PlannedSpread
       ## the spreads planned for the record on show and for the shot under the pointer
-    spreadFor: tuple[gather: GatherRef; survey, spreads: int; domain: RelationDomain; on: bool]
+    spreadFor: tuple[gather: GatherRef; survey, spreads, checked: int; domain: RelationDomain;
+      on: bool]
       ## what `spreadShown` was found from
     spreadHoverFor: tuple[point, survey, spreads: int; domain: RelationDomain; on: bool]
       ## what `spreadHovered` was found from
@@ -341,6 +342,7 @@ proc drawTemplateRow(st: AppState; marks: var Marks; res: var MapOutput) =
     wrapped("From the relation records of " & st.survey.layers[listed].name & ".")
   for w in st.spreads.words: wrapped(w)
   if st.spreads.job != NoJob: wrapped("Making the planned spreads...")
+  if st.recordQc.job != NoJob: wrapped("Checking the record shown...")
   if st.survey.listedLayer(rdSource) < 0:
     var t = s.map.spreadTemplate
     var changed = false
@@ -899,7 +901,8 @@ proc followSpreads(mu: var MapUi; st: AppState) =
   ## again only when what they come from changes.
   let on = st.settings.map.templateBox
   let domain = st.shownDomain
-  let shown = (st.selection.activeGather, st.survey.revision, st.spreads.revision, domain, on)
+  let shown = (st.selection.activeGather, st.survey.revision, st.spreads.revision,
+    st.recordQc.revision, domain, on)
   if shown != mu.spreadFor:
     mu.spreadFor = shown
     mu.spreadShown = if on: st.shownSpread else: PlannedSpread()
@@ -919,7 +922,9 @@ func spreadText(sp: PlannedSpread): string =
   let what = if sp.domain == rdSource: "receiver" else: "shot"
   result = (if sp.generated: "Generated"
     elif sp.domain == rdSource: "X record " & $sp.record
-    else: "O gather " & $sp.record) & ": " & $sp.stations & " " & what &
+    else: "O gather " & $sp.record) &
+    (if sp.byPlace: " (by the " & (if sp.domain == rdSource: "source" else: "receiver") &
+      " at its place)" else: "") & ": " & $sp.stations & " " & what &
     (if sp.stations == 1: "" else: "s") & " planned"
   if sp.unplaced > 0: result.add ", " & $sp.unplaced & " not on the map"
 

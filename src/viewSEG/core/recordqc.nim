@@ -12,7 +12,14 @@
 ##   a shot's X record, found as processSEG's `recordCompleteness` finds it,
 ##   or a receiver gather's O record), the stations planned that the record
 ##   lacks (`missingStations`), its traces at stations the record does not
-##   list, and its stations recorded twice. The counts are the library's
+##   list, and its stations recorded twice. A record whose headers name no
+##   station of the role its record is found by (a SEG-Y file without a
+##   header layout naming them) is checked with the station the state found
+##   at its place (`placed`, the survey file's station there): the check is
+##   given the record's keys with that station in them, as a join would fill
+##   them. The record checked against is posted (`RecordQc.record`), and the
+##   map's template box draws that record's spread: the box and the filters
+##   never name two records. The counts are the library's
 ##   (stations); the traces are found here by the same rules (the header's
 ##   station with its index, index 0 any; one component counted once), so
 ##   that the map can place them. Without stations in the headers (traces
@@ -35,18 +42,31 @@ export mapkinds
 const QcChunk* = 512 ## traces read and measured at a time
 
 type
+  Placed* = tuple[found: bool; station: StationKey]
+    ## the station of the role a record's relation record is found by (a
+    ## shot's source, a receiver gather's receiver) at the record's place,
+    ## when its headers name none: the survey file's station there
+
   RecordQc* = object
     ## The record shown's filters, as its job found them.
     job*: JobId = NoJob                 ## the job reading it; `NoJob` for none
     key*: tuple[file: SessionId; gather, keys: int; relations: pointer; domain: RelationDomain;
-        recordMatch: RecordMatch; traceMatch: TraceMatch]
+        recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed; samples: bool]
       ## what the job, or `hits`, were made from
     hits*: array[MapFilter, FilterHits] ## of the filters in `TraceFilters`
+    record*: int64 = -1
+      ## the relation record (X: a shot's; O: a receiver gather's) the job
+      ## checked the record against; -1 for none, or while it runs
+    byPlace*: bool ## found with the station at the record's place (`Placed`)
     revision*: int                      ## bumped when `hits` change
     replaced*: seq[JobId]               ## jobs given up for a newer record: they end quietly
 
-const AmplitudeFilters: array[AmplitudeFlag, MapFilter] = [mfNotANumber, mfAllZero,
-  mfConstant, mfClipped, mfSpiky, mfDcOffset, mfWeak, mfNoisy]
+const
+  AmplitudeFilters: array[AmplitudeFlag, MapFilter] = [mfNotANumber, mfAllZero,
+    mfConstant, mfClipped, mfSpiky, mfDcOffset, mfWeak, mfNoisy]
+  SampleFilters* = {mfUndecodable, mfNoisy, mfClipped, mfSpiky, mfConstant, mfWeak,
+    mfDcOffset, mfAllZero, mfNotANumber}
+    ## the filters of `TraceFilters` that read the record's samples
 
 func hasStation(line, point: float64): bool {.inline.} =
   # As processSEG's completeness: both zero is a header left empty.
@@ -121,25 +141,56 @@ proc placeTraces*(hits: var array[MapFilter, FilterHits]; keys: openArray[TraceK
     hits[mfDuplicate].count = dupStations.len
     hits[mfDuplicate].note = "sources with two traces of one component"
 
+func namesSource(f: SeismicFile; traces: Slice[int]): bool =
+  ## Whether the headers of the record's traces name a source station, as
+  ## `recordCompleteness` looks for one (a trace that is not auxiliary).
+  for t in traces:
+    let k = f.index.keys[t]
+    if k.status != tsAuxiliary and hasStation(k.srcLine, k.srcPoint): return true
+  false
+
+proc withSource(f: SeismicFile; traces: Slice[int]; st: StationKey): seq[TraceKeys] =
+  ## The keys of the record's traces with source station `st` in them.
+  result = newSeq[TraceKeys](traces.len)
+  for t in traces:
+    let i = t - traces.a
+    result[i] = f.index.keys[t]
+    if result[i].status != tsAuxiliary:
+      (result[i].srcLine, result[i].srcPoint, result[i].srcIndex) = (st.line, st.point, st.index)
+
 proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: int;
     traces: Slice[int]; g: SurveyGeometry; against: string; domain: RelationDomain;
-    recordMatch: RecordMatch; traceMatch: TraceMatch) =
+    recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed;
+    byPlace: var bool): int64 =
   ## The stations planned that the record lacks, its traces at stations not
-  ## planned, and its stations recorded twice.
+  ## planned, and its stations recorded twice; the relation record they are
+  ## of (-1 for none). `byPlace`: found with the station `placed`.
+  result = -1
   for m in [mfMissing, mfUnlisted, mfDuplicate]: hits[m].state = fsDone
   template notChecked(why: string) =
     for m in [mfMissing, mfUnlisted, mfDuplicate]:
       (hits[m].state, hits[m].note) = (fsNotChecked, why)
   var record = -1'i64
   var byStation = true
+  byPlace = false
   if domain == rdSource:
-    let c = g.recordCompleteness(f.rowsOf(traces), recordMatch, traceMatch)
+    var c: RecordCompleteness
+    if placed.found and not f.namesSource(traces):
+      # No source station in the headers: the survey file's at the record's
+      # place, given to the check as a join would fill it.
+      let keys = f.withSource(traces, placed.station)
+      let counts = newSeq[int](keys.len)
+      c = g.recordCompleteness(rowsOf(keys, counts), recordMatch, traceMatch)
+      byPlace = true
+    else:
+      c = g.recordCompleteness(f.rowsOf(traces), recordMatch, traceMatch)
     if c.xpsRecord < 0:
       notChecked("no X record of " & against & " is this record's (" &
         (if c.candidates.len > 1: "its source has " & $c.candidates.len & " and the FFID " &
           "chooses none" else: "by its source station or its FFID") & ")")
       return
     record = c.xpsRecord
+    result = record
     byStation = c.traceMatch == tmStation
     hits[mfMissing].stations = c.missingStations
     hits[mfMissing].count = c.missing
@@ -158,12 +209,15 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
       let k = f.index.keys[t]
       if not found and k.isSeismic and hasStation(k.rcvLine, k.rcvPoint):
         (rcv, found) = (stationKey(k.rcvLine, k.rcvPoint, k.rcvIndex), true)
+    if not found and placed.found:
+      (rcv, found, byPlace) = (placed.station, true, true)
     let records = if found: g.recordsAt(rcv, rdReceiver) else: @[]
     if records.len == 0:
       notChecked(if found: "no O record of " & against & " is this receiver's"
         else: "its headers name no receiver station")
       return
     record = records[0]
+    result = record
   if not byStation:
     for m in [mfMissing, mfUnlisted, mfDuplicate]:
       hits[m].note.add " (matched by channel: not placed)"
@@ -172,19 +226,26 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
 
 proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base, gather: int;
     traces: Slice[int]; domain: RelationDomain; relations: ptr SurveyGeometry;
-    against: string; recordMatch: RecordMatch; traceMatch: TraceMatch; to: Poster): JobWork =
+    against: string; recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed;
+    samples: bool; to: Poster): JobWork =
   ## The work of a job that reads gather `gather` (`traces`) of open file
   ## `session` (`file`, at `path`; its trace 0 is survey-wide `base`) and
   ## posts what the filters in `TraceFilters` find in it (`mkRecordQc`):
   ## the record's traces dead in the headers, auxiliary, not decodable, the
   ## amplitude flags, and, with `relations` (named `against`; nil for none),
   ## what the template of `domain` plans that the record lacks, its traces
-  ## not in it and its stations recorded twice. Submitted with the file in
-  ## `reads`; `relations` is read in place, never copied.
+  ## not in it and its stations recorded twice, with the relation record
+  ## that is (found with station `placed` when the headers name none).
+  ## Without `samples` (only the template box, or filters of the keys, ask),
+  ## from the keys alone: the filters that need the samples (not decodable,
+  ## the amplitude flags) are said not checked. Submitted with the file in `reads`; `relations` is
+  ## read in place, never copied.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var hits: array[MapFilter, FilterHits]
     for m in TraceFilters: hits[m].state = fsDone
     var revision = 0
+    var record = -1'i64
+    var byPlace = false
     {.cast(gcsafe).}:
       template f: untyped = file[]
       revision = f.keysRevision
@@ -194,7 +255,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       let cols = max(1, f.maxSamples(traces))
       ws.reserve(traceAmplitudeWorkspace(cols))
       ctx.setPhase "reading the record"
-      var first = traces.a
+      var first = if samples: traces.a else: traces.b + 1
       while first <= traces.b:
         let part = first .. min(traces.b, first + QcChunk - 1)
         fs.mappedRead(path) # (tests: the drive's next pages come late)
@@ -223,13 +284,17 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
           if k.status == tsDead: hits[mfDead].traces.add base + traces.a + i
       var stats = newSeq[TraceAmplitude](seismic.len)
       for j, i in seismic: stats[j] = amps[i]
-      ws.reserve(recordAmplitudeWorkspace(stats.len))
-      discard recordAmplitude(stats, AmplitudeParams(), ws)
-      for j, i in seismic:
-        for flag in stats[j].flags: hits[AmplitudeFilters[flag]].traces.add base + traces.a + i
+      if samples:
+        ws.reserve(recordAmplitudeWorkspace(stats.len))
+        discard recordAmplitude(stats, AmplitudeParams(), ws)
+        for j, i in seismic:
+          for flag in stats[j].flags: hits[AmplitudeFilters[flag]].traces.add base + traces.a + i
       for m in TraceFilters - {mfMissing, mfUnlisted, mfDuplicate}:
         hits[m].count = hits[m].traces.len
         hits[m].note = "traces"
+      if not samples:
+        for m in SampleFilters:
+          (hits[m].state, hits[m].note) = (fsNotChecked, "the samples were not read")
       if relations.isNil:
         for m in [mfMissing, mfUnlisted, mfDuplicate]:
           (hits[m].state, hits[m].note) = (fsNotChecked, "no relation file is loaded, and " &
@@ -237,12 +302,12 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       else:
         ctx.setPhase "checking the record against the template"
         try:
-          hits.completeness(f, base, traces, relations[], against, domain, recordMatch,
-            traceMatch)
+          record = hits.completeness(f, base, traces, relations[], against, domain,
+            recordMatch, traceMatch, placed, byPlace)
         except ValueError as e:
           for m in [mfMissing, mfUnlisted, mfDuplicate]:
             (hits[m].state, hits[m].note) = (fsNotChecked, e.msg)
     discard ctx.progress(1, 1)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkRecordQc, qcSession: session, qcGather: gather,
-      qcKeys: revision, qcHits: move hits)
+      qcKeys: revision, qcHits: move hits, qcRecord: record, qcByPlace: byPlace)

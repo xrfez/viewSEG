@@ -394,6 +394,7 @@ proc mapJson(state: AppState; limit: int): JsonNode =
     spread["planned"] = %sp.stations
     spread["placed"] = %sp.places.len
     spread["generated"] = %sp.generated
+    spread["byPlace"] = %sp.byPlace
     spread["from"] = %sp.source
     spread["made"] = %state.spreads.words
   result["template"] = spread

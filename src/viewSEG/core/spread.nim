@@ -16,12 +16,14 @@
 ## plain words (`Spreads.words`), and a spread from records made, not read,
 ## says so (`PlannedSpread.generated`).
 ##
-## **The record** (`xRecordOf`) is found as processSEG's
-## `recordCompleteness` finds it: the source station's X record (the one
-## numbered as the FFID when it has several), else the X record numbered as
-## the FFID. A receiver gather's O record is its receiver station's. A
+## **The record** of the record on show is the one the map's filters'
+## check found (`core/recordqc`: processSEG's `recordCompleteness` for a
+## shot, its source station's X record, else the FFID's, with the user's
+## record match; a receiver gather's O record by its receiver station;
+## either station found at the record's place when its headers name none),
+## so the box and the filters never name two records (`checkedSpread`). A
 ## source under the pointer has its station's X record (the first, when it
-## was shot again).
+## was shot again: `plannedSpread`).
 ##
 ## **The box** (`boxOf`) is the smallest rectangle round the planned
 ## stations' places with its sides along and across their lines (the
@@ -30,10 +32,9 @@
 ## north is not drawn larger than it is. Stations no loaded survey file
 ## places are counted (`PlannedSpread.unplaced`), not drawn.
 
-import std/[algorithm, math, sets, strutils, times]
+import std/[math, sets, strutils, times]
 import parseSEG
 import processSEG/survey/patch
-from processSEG/qc/record import RecordMatch, rmAuto, rmSourceStation, rmFieldRecord
 import inbox, jobs, mapkinds, mapview, survey, surveyjobs, threads
 
 export RelationDomain, StationKey
@@ -85,33 +86,8 @@ type
     unplaced*: int ## planned stations no loaded survey file places
     generated*: bool ## from relation records made, not read
     source*: string ## the relation file's name; "" for records made
+    byPlace*: bool ## its record found with the station at the record's place
     box*: SpreadBox
-
-func wholeNumber(x: float64): bool {.inline.} = abs(x) < 9e18 and x == round(x)
-
-func hasRecord(g: SurveyGeometry; record: int64; domain: RelationDomain): bool =
-  for _ in g.relationRuns(record, domain): return true
-  false
-
-func xRecordOf*(g: SurveyGeometry; ffid: float64; source: StationKey;
-    hasSource: bool; match = rmAuto): int64 =
-  ## The X record of a field record whose headers give FFID `ffid` (NaN: none)
-  ## and, with `hasSource`, source station `source`, as processSEG's
-  ## `recordCompleteness` finds it with `match` (the user's choice where
-  ## the survey is imported): by default the source station's X record, the
-  ## one numbered as the FFID when it has several (none when no FFID
-  ## chooses), else, when the station has none, the X record numbered as
-  ## the FFID; `rmSourceStation` the source station's only; `rmFieldRecord`
-  ## the FFID's only. -1 for none.
-  result = -1
-  var candidates: seq[int64]
-  if hasSource and match != rmFieldRecord:
-    candidates = g.recordsAt(source)
-    if candidates.len == 1: return candidates[0]
-    if wholeNumber(ffid) and int64(ffid) in candidates: return int64(ffid)
-  if (match == rmFieldRecord or (match == rmAuto and candidates.len == 0)) and
-      wholeNumber(ffid) and g.hasRecord(int64(ffid), rdSource):
-    result = int64(ffid)
 
 proc firstRecord(g: SurveyGeometry; station: StationKey; domain: RelationDomain): int64 =
   ## The first record of `domain` at `station` (a source shot again has
@@ -183,7 +159,7 @@ func boxOf*(places: openArray[MapPoint]; along: MapPoint): SpreadBox =
   func at(a, c: float64): MapPoint = mapPoint(o.x + a * u.x + c * v.x, o.y + a * u.y + c * v.y)
   SpreadBox(corners: [at(aLo, cLo), at(aHi, cLo), at(aHi, cHi), at(aLo, cHi)], shown: true)
 
-proc spreadOf*(s: Survey; g: SurveyGeometry; record: int64; domain: RelationDomain): PlannedSpread =
+proc recordSpread*(s: Survey; g: SurveyGeometry; record: int64; domain: RelationDomain): PlannedSpread =
   ## The spread record `record` of `g` plans in `domain`: its stations,
   ## their places in the loaded survey files and the box round them.
   result = PlannedSpread(domain: domain, record: record)
@@ -209,29 +185,42 @@ proc spreadOf*(s: Survey; g: SurveyGeometry; record: int64; domain: RelationDoma
               else: mapPoint(0, 0)
   result.box = boxOf(result.places, along)
 
-proc plannedSpread*(s: Survey; made: Spreads; domain: RelationDomain; ffid: float64;
-    fixed: StationKey; hasFixed: bool; match = rmAuto): PlannedSpread =
-  ## The spread planned for a field record whose headers give FFID `ffid`
-  ## and (with `hasFixed`) source station `fixed` (`rdSource`; its X record
-  ## found by `match`, as the map's filters find it), or for the receiver
-  ## gather of receiver station `fixed` (`rdReceiver`; `ffid` NaN): from the
+proc plannedSpread*(s: Survey; made: Spreads; domain: RelationDomain;
+    fixed: StationKey): PlannedSpread =
+  ## The spread planned for the shot of source station `fixed`
+  ## (`rdSource`: its first X record) or for the receiver gather of
+  ## receiver station `fixed` (`rdReceiver`: its first O record): from the
   ## first loaded survey file with relation records of `domain`, else from
   ## the records made (`made`). `record` is -1 when none plans it.
   result = PlannedSpread(domain: domain, fixed: fixed)
   let i = s.listedLayer(domain)
   if i >= 0:
     template g: untyped = s.layers[i].relations[]
-    let record = if domain == rdSource: g.xRecordOf(ffid, fixed, hasFixed, match)
-                 elif hasFixed: g.firstRecord(fixed, domain)
-                 else: -1'i64
+    let record = g.firstRecord(fixed, domain)
     if record >= 0:
-      result = s.spreadOf(g, record, domain)
+      result = s.recordSpread(g, record, domain)
       result.source = s.layers[i].name
-  elif not made.relations.isNil and hasFixed:
+  elif not made.relations.isNil:
     let record = made.relations[].firstRecord(fixed, domain)
     if record >= 0:
-      result = s.spreadOf(made.relations[], record, domain)
+      result = s.recordSpread(made.relations[], record, domain)
       result.generated = true
+
+proc checkedSpread*(s: Survey; made: Spreads; domain: RelationDomain;
+    record: int64): PlannedSpread =
+  ## The spread relation record `record` of `domain` plans, in the records
+  ## a record's check is made against: the first loaded survey file's with
+  ## relation records of `domain`, else the records made (`made`). `record`
+  ## -1 for none.
+  result = PlannedSpread(domain: domain)
+  if record < 0: return
+  let i = s.listedLayer(domain)
+  if i >= 0:
+    result = s.recordSpread(s.layers[i].relations[], record, domain)
+    result.source = s.layers[i].name
+  elif not made.relations.isNil:
+    result = s.recordSpread(made.relations[], record, domain)
+    result.generated = true
 
 func describe*(t: TemplateSpec; units: string): string =
   ## "a patch of 8 lines × 120 stations", "a box of ±1500 × ±500 ft".
@@ -250,17 +239,14 @@ func patchOf(t: TemplateSpec): PatchTemplate =
 
 func outlierBelow(xs: openArray[float64]): float64 =
   ## Where an agreement is far below the survey's typical one: the median
-  ## less 3 robust deviations (1.4826 × the median absolute deviation); the
-  ## median itself when they all agree as well (a regular survey: any less
-  ## stands out).
+  ## less 3 robust deviations (1.4826 × the median absolute deviation), both
+  ## medians processSEG's (`spreadOf`, nearest rank); the median itself when
+  ## they all agree as well (a regular survey: any less stands out).
   if xs.len == 0: return 0
-  var v = @xs
-  v.sort()
-  let median = v[v.high div 2]
-  var dev = newSeq[float64](v.len)
-  for i, x in v: dev[i] = abs(x - median)
-  dev.sort()
-  let mad = dev[dev.high div 2]
+  let median = spreadOf(xs).median
+  var dev = newSeq[float64](xs.len)
+  for i, x in xs: dev[i] = abs(x - median)
+  let mad = spreadOf(dev).median
   if mad > 0: median - 3 * 1.4826 * mad else: median
 
 proc compareWithTemplate(g: SurveyGeometry; differing: var seq[tuple[record: int64;
@@ -272,16 +258,14 @@ proc compareWithTemplate(g: SurveyGeometry; differing: var seq[tuple[record: int
   ## `compareRelations`: the records whose receivers agree with the
   ## template's (their Jaccard index) far less than the survey's records
   ## typically do (`outlierBelow`; on a regular survey, any that is not the
-  ## template's) go to `differing`; the records compared.
+  ## template's) go to `differing`; the records compared. The records and
+  ## their sources are those `describePatches` gives.
   let d = g.describePatches()
   if not (d.templateLines > 0 and d.templateChannels > 0):
     words.add "The X records describe no template (lines × stations) to compare them with."
     return
-  var shots: seq[PatchShot]
-  for r in g.records(rdSource):
-    for run in g.relationRuns(r, rdSource):
-      if shots.len == 0 or shots[^1].record != r:
-        shots.add PatchShot(record: r, source: run.fixed)
+  var shots = newSeqOfCap[PatchShot](d.records.len)
+  for r in d.records: shots.add PatchShot(record: r.record, source: r.source)
   var gen = initSurveyGeometry()
   gen.addSps(SpsFile(relations: g.generateRelations(d.layout, shots,
     initPatchTemplate(d.templateLines, d.templateChannels))), rdSource)
@@ -298,9 +282,7 @@ proc compareWithTemplate(g: SurveyGeometry; differing: var seq[tuple[record: int
         if differing.len == 0 or differing[^1].record != a.record:
           differing.add (a.record, run.fixed)
   result = agreements.len
-  var sorted = j
-  sorted.sort()
-  let median = if sorted.len > 0: sorted[sorted.high div 2] else: 1.0
+  let median = if j.len > 0: spreadOf(j).median else: 1.0
   words.add $differing.len & " of " & $agreements.len & " X records list receivers that " &
     "agree with their template (" & $d.templateLines & " lines × " & $d.templateChannels &
     " stations, " & (if d.regular: "as the records give it" else: "the records' median") &

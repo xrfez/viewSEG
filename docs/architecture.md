@@ -410,8 +410,12 @@ anew takes the points away, `ckClearSelection` takes both.
 **The template box** (`core/spread`): the spread planned for the record on show
 (`shownSpread`) and for the shot under the map's pointer (`spreadAt`), from the first
 loaded survey file with relation records of the domain shown (X for shots, O for receiver
-gathers: `shownDomain`), the record found as processSEG's `recordCompleteness` finds it
-(`xRecordOf`), the box round the planned stations' places along their lines (`boxOf`).
+gathers: `shownDomain`); the record on show's relation record is the one the filters' job
+found (`RecordQc.record`: processSEG's `recordCompleteness` for a shot, the station at the
+record's place given to it when the headers name none, so the box and the filters name one
+record; the job runs while the box is on, from the keys alone when no filter needs the
+samples), the hovered shot's its station's first (`plannedSpread`); the box round the
+planned stations' places along their lines (`boxOf`).
 When no relation file has them, a job on the background lane (`spreadWork`) reads the
 survey files again (`surveyjobs.readGeometry`, quietly) and makes them: X records
 generated from the user's template (`generateRelations`) and O records from them, or O
@@ -566,7 +570,9 @@ record shown (`recordQcWork`: a chunk of 512 traces at a time, processSEG's
 auxiliary traces; the traces parseSEG could not decode; with the relation records of the
 domain shown, the loaded file's or those made from the template, kept alive while the job
 reads them in place (`AppState.qcHeld`), `recordCompleteness` and the same rules for the
-traces), submitted again only when the record, its keys or those relation records change;
+traces; a record whose headers name no station checked with the survey file's station at
+its place, `shownPlace`), submitted again only when the record, its keys, those relation
+records, that station or the filters' need of the samples change;
 killed and reversed traces from the edits, traces without a position from the survey, and
 the shots whose spread is not their template from the spreads job (`snCompare`), at once.
 Each finding is a `FilterHits` (traces, stations, sources, a count, a note), so the

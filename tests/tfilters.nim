@@ -16,8 +16,9 @@
 ## - another record shown: read again (computing meanwhile); another way of
 ##   matching its traces to the X record (the import's options): read again;
 ##   no filter on: what was found goes;
-## - a receiver gather whose headers name no receiver station: the
-##   template's filters say they are not checked, and why;
+## - a receiver gather whose headers name no receiver station: checked
+##   against the O record of the survey file's receiver at its place, the
+##   record the template box draws;
 ## - the record read is as it was (bytes and time).
 ##
 ## Seen to fail: with the record's statistics left out (`recordAmplitude`),
@@ -179,8 +180,10 @@ withFixtures fx:
     st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.mapReceiverSegy(1, 4))
     doAssert st.settle(st.shownDomain == rdReceiver and st.done)
     let h = st.filterHits
-    doAssert h[mfMissing].state == fsNotChecked and "receiver station" in h[mfMissing].note,
-      h[mfMissing].note
+    let o = st.recordQc.record
+    doAssert h[mfMissing].state == fsDone and o >= 0 and st.recordQc.byPlace and
+      ("O record " & $o & " plans") in h[mfMissing].note, h[mfMissing].note
+    doAssert st.shownSpread.record == o and st.shownSpread.byPlace
     st.shutdown()
   doAssert readFile(shot) == bytes and getLastModificationTime(shot) == time, "the record changed"
 

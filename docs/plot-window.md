@@ -543,8 +543,14 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
   1127 receivers planned" above it) and for the source under the pointer (in the hover
   colour, its words below it); for a file of receiver gathers (the domain follows the
   record shown), round the shots the O records plan for its receiver, and for the receiver
-  under the pointer. The record's X record is found as the Records window's check finds it
-  (the source station's, else the FFID's); a source shot again shows its first. The box's
+  under the pointer. The record's X record is the one the filters' check finds (processSEG's
+  `recordCompleteness`: the source station's, else the FFID's, as the record match in
+  Import survey's options says), checked on a background job from the keys while the box
+  is on; for a record whose headers name no station (a SEG-Y file without a header
+  layout), the survey file's station at its place is the record's for the check, and the
+  box says so ("X record 77 (by the source at its place)"), so the box and the filters
+  always name the same record. A source under the pointer shows its station's first X
+  record (a source shot again has several). The box's
   sides run along and across the planned stations' lines (the run with most places), a few
   pixels outside them. **Without a relation file**, the spreads are generated from a
   template the user gives in the Layers list (lines × stations centred on the source, or a
