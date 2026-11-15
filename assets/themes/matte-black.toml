@@ -7,7 +7,7 @@
 #
 # Roles viewSEG moves in this theme, to keep it readable and its
 # marks apart (README.md, "Readable in every theme"):
-#   warning, source, receiver
+#   selection, hover, warning, source, receiver
 
 name = "Matte Black"
 mode = "dark"
