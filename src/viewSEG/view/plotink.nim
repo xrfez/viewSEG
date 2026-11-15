@@ -10,18 +10,20 @@
 ##   chosen yet is paper's.
 ##
 ## A hovered trace takes the theme's highlight colour (orange, the colour
-## of the linked selection) and a selected one its accent (the colour of a
-## selected button), each made dark or light enough to read on the
-## background (`readableOn`), so a highlight stands out on paper and on a
-## dark plot alike, and the two never look alike.
+## of the linked selection) and a selected one its `selected` role (its
+## accent, the colour of a selected button, unless that is too close to the
+## traces), each made dark or light enough to read on the background
+## (`readableOn`), so a highlight stands out on paper and on a dark plot
+## alike; the theme keeps the two apart from the traces and from each other
+## (`deriveRoles`).
 
 import ../core/[geometry, panels, wiggle]
 import theme
 
 const
-  PaperBackground* = Rgba(r: 255, g: 255, b: 255, a: 255)
-  PaperInk* = Rgba(r: 0, g: 0, b: 0, a: 255)
-  MinContrast* = 3.0
+  PaperBackground* = White
+  PaperInk* = Black
+  MinContrast* = InkContrast
     ## the contrast a highlight keeps against the background (WCAG's ratio
     ## for graphics)
   DensityTint* = 0.55'f32
@@ -33,16 +35,11 @@ type
     background*: Rgba
     wiggle*: WiggleInk
 
-func readableOn*(c, background: Rgba; ratio = MinContrast): Rgba =
+func readableOn*(c, background: Rgba; ratio = MinContrast): Rgba {.inline.} =
   ## `c`, darkened on a light background or lightened on a dark one, just
   ## enough to stand out from `background` by `ratio` (as far as black or
   ## white allows).
-  let target = if luminance(background) > 0.18: PaperInk else: PaperBackground
-  result = c
-  var t = 0'f32
-  while contrast(result, background) < ratio and t < 1:
-    t += 0.05
-    result = mix(c, target, t)
+  readable(c, background, ratio)
 
 func opaque(c: Rgba): Rgba {.inline.} = Rgba(r: c.r, g: c.g, b: c.b, a: 255)
 
@@ -51,7 +48,7 @@ func plotInk*(t: Theme; d: DisplaySettings): PlotInk =
   let paper = PlotInk(background: PaperBackground, wiggle: WiggleInk(line: PaperInk,
     positive: PaperInk, negative: readableOn(t.roles[rlFillNegative], PaperBackground),
     hover: readableOn(t.roles[rlHighlight], PaperBackground),
-    selected: readableOn(t.roles[rlAccent], PaperBackground)))
+    selected: readableOn(t.roles[rlSelected], PaperBackground)))
   case d.colours
   of pcPaper: paper
   of pcTheme:
@@ -59,7 +56,7 @@ func plotInk*(t: Theme; d: DisplaySettings): PlotInk =
     PlotInk(background: bg, wiggle: WiggleInk(line: opaque(t.roles[rlTrace]),
       positive: opaque(t.roles[rlFillPositive]), negative: opaque(t.roles[rlFillNegative]),
       hover: readableOn(opaque(t.roles[rlHighlight]), bg),
-      selected: readableOn(opaque(t.roles[rlAccent]), bg)))
+      selected: readableOn(opaque(t.roles[rlSelected]), bg)))
   of pcCustom:
     func pick(c, fallback: Rgba): Rgba = (if c.a == 0: fallback else: opaque(c))
     let c = d.custom

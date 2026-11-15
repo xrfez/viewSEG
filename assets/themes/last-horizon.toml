@@ -1,0 +1,52 @@
+# viewSEG theme: Last Horizon.
+#
+# Omarchy's last-horizon theme (its colors.toml in Omarchy 4.0.0.alpha), the
+# colours unchanged. The palette: Last Horizon, by HANCORE
+# (HANCORE-linux/omarchy-lasthorizon-theme, MIT). Where each theme comes from,
+# and its licence: README.md in this folder; what each key does:
+# everforest-dark.toml.
+#
+# Left out: Omarchy's keys for other programs (hyprland_active_border,
+# hyprland_inactive_border, active_border_color, active_tab_background).
+#
+# Added in viewSEG's copy: `orange` and `brown`, which the file does not have,
+# as viewSEG derives them (orange halfway between red and yellow, brown
+# orange 55 % of the way to the background), so that it loads without a
+# message.
+#
+# Roles viewSEG moves in this theme, to keep it readable and its
+# marks apart (README.md, "Readable in every theme"):
+#   highlight, source
+
+name = "Last Horizon"
+mode = "dark"
+
+accent = "#b59790"
+selection = "#584e51"
+muted = "#584e51"
+
+background = "#0c0b0c"
+dark_background = "#090809"
+darker_background = "#060606"
+lighter_background = "#0c0b0c"
+
+foreground = "#FAFCFB"
+dark_foreground = "#584e51"
+light_foreground = "#cfd3cd"
+bright_foreground = "#e2dddc"
+
+red = "#c38b7b"
+yellow = "#6B5E73"
+orange = "#977577"
+green = "#87a9b0"
+cyan = "#a5a0b6"
+blue = "#b59790"
+magenta = "#c4d8e2"
+brown = "#4b3b3c"
+
+bright_red = "#c38b7b"
+bright_yellow = "#6B5E73"
+bright_green = "#87a9b0"
+bright_cyan = "#a5a0b6"
+bright_blue = "#b59790"
+bright_magenta = "#c4d8e2"

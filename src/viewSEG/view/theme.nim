@@ -81,6 +81,9 @@ type
     rlFillPositive = "fill_positive" ## the default positive-lobe fill
     rlFillNegative = "fill_negative" ## the default negative-lobe fill
     rlCrosshair = "crosshair"
+    rlSelected = "selected" ## selected traces, and their points on the map
+    rlSource = "source" ## sources on the map
+    rlReceiver = "receiver" ## receivers on the map
 
   FontRole* = enum
     ## The faces of the interface.
@@ -115,6 +118,10 @@ type
     ## A theme file found on disk.
     name*: string ## the file name without `.toml`
     path*: string
+    theme*: Theme
+      ## what it holds, read when it was found (its problems are said when
+      ## it is chosen): its name, mode and colours, for the menu's swatch
+      ## and its preview
 
 const
   ThemeExt* = ".toml"
@@ -133,10 +140,10 @@ func rgb*(hex: uint32; a = 255'u8): Rgba =
   Rgba(r: uint8(hex shr 16 and 0xff), g: uint8(hex shr 8 and 0xff), b: uint8(hex and 0xff),
     a: a)
 
-func mixChannel(x, y: uint8; t: float32): uint8 =
-  uint8(clamp(round(x.float32 + (y.float32 - x.float32) * t), 0, 255))
+func mixChannel(x, y: uint8; t: float64): uint8 =
+  uint8(clamp(round(x.float64 + (y.float64 - x.float64) * t), 0, 255))
 
-func mix*(a, b: Rgba; t: float32): Rgba =
+func mix*(a, b: Rgba; t: float64): Rgba =
   ## `a` moved by the fraction `t` (0..1) towards `b`, alpha included.
   Rgba(r: mixChannel(a.r, b.r, t), g: mixChannel(a.g, b.g, t), b: mixChannel(a.b, b.b, t),
     a: mixChannel(a.a, b.a, t))
@@ -144,14 +151,16 @@ func mix*(a, b: Rgba; t: float32): Rgba =
 func withAlpha*(c: Rgba; a: uint8): Rgba =
   Rgba(r: c.r, g: c.g, b: c.b, a: a)
 
-func luminance*(c: Rgba): float32 =
-  ## Relative luminance (WCAG), 0 for black .. 1 for white.
-  func lin(x: uint8): float32 =
-    let v = x.float32 / 255
+func luminance*(c: Rgba): float64 =
+  ## Relative luminance (WCAG), 0 for black .. 1 for white. (In float64
+  ## throughout, so the built-in themes, derived at compile time, come out as
+  ## the same files read at run time.)
+  func lin(x: uint8): float64 =
+    let v = x.float64 / 255
     if v <= 0.04045: v / 12.92 else: pow((v + 0.055) / 1.055, 2.4)
   0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
 
-func contrast*(a, b: Rgba): float32 =
+func contrast*(a, b: Rgba): float64 =
   ## The WCAG contrast ratio of two colours, 1 .. 21.
   let (la, lb) = (luminance(a), luminance(b))
   (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
@@ -159,6 +168,40 @@ func contrast*(a, b: Rgba): float32 =
 func distance*(a, b: Rgba): int =
   ## The largest difference of the red, green and blue channels.
   max(abs(a.r.int - b.r.int), max(abs(a.g.int - b.g.int), abs(a.b.int - b.b.int)))
+
+func lab(c: Rgba): array[3, float64] =
+  ## `c` in CIELAB (D65): lightness 0 .. 100, then the two colour axes.
+  func lin(x: uint8): float64 =
+    let v = x.float64 / 255
+    if v <= 0.04045: v / 12.92 else: pow((v + 0.055) / 1.055, 2.4)
+  func f(t: float64): float64 =
+    if t > 0.008856: pow(t, 1 / 3) else: 7.787 * t + 16 / 116
+  let (r, g, b) = (lin(c.r), lin(c.g), lin(c.b))
+  let x = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047)
+  let y = f(0.2126 * r + 0.7152 * g + 0.0722 * b)
+  let z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883)
+  [116 * y - 16, 500 * (x - y), 200 * (y - z)]
+
+func deltaE*(a, b: Rgba): float64 =
+  ## How different two colours look: CIE76's distance in CIELAB, 0 for the
+  ## same colour; about 2 is just noticed, 20 and more is plainly another.
+  let (p, q) = (lab(a), lab(b))
+  sqrt((p[0] - q[0]) ^ 2 + (p[1] - q[1]) ^ 2 + (p[2] - q[2]) ^ 2)
+
+const
+  White* = Rgba(r: 255, g: 255, b: 255, a: 255)
+  Black* = Rgba(a: 255)
+
+func readable*(c, background: Rgba; ratio: float64): Rgba =
+  ## `c`, darkened on a light background or lightened on a dark one, just
+  ## enough to stand out from `background` by the contrast `ratio` (as far
+  ## as black or white allows).
+  let target = if luminance(background) > 0.18: Black else: White
+  result = c
+  var t = 0.0
+  while contrast(result, background) < ratio and t < 1:
+    t += 0.05
+    result = mix(c, target, t)
 
 func toHex*(c: Rgba): string =
   ## `#rrggbb`, or `#rrggbbaa` when not opaque.
@@ -183,82 +226,6 @@ func parseColor*(s: string; c: var Rgba): bool =
     result = true
 
 # ------------------------------------------------------------------ roles --
-
-const MinFrameStep* = 12
-  ## the least `distance` of a frame's colour from a window's and a popup's
-
-func deriveRoles*(p: Palette; mode: ThemeMode): array[Role, Rgba] =
-  ## The roles built from the palette. Backgrounds: `backdrop` is
-  ## `darker_background`, `window` is `background`, `bar` is `dark_background`,
-  ## `frame` is `lighter_background` (moved toward `foreground` until it is
-  ## `MinFrameStep` from both `window` and `popup`, so an unticked checkbox
-  ## shows in a popup too), and `popup` is `lighter_background` in a
-  ## dark theme and `background` in a light one (popups stay the brightest
-  ## surface). Text: `foreground`, `light_foreground` (dim) and, for disabled,
-  ## halfway between `dark_foreground` and `light_foreground`. `border` is
-  ## `muted`; `selection` and `hover` are `selection`, `active` is `muted`.
-  ## `accent` is `accent`, `highlight` is `orange`; ok / warning / error / info
-  ## are green / yellow / red / blue. Plots: `dark_background` behind, a grid
-  ## 12 % of the way to `foreground`. Traces: the line and the positive fill are
-  ## `foreground`, the negative fill `red`; the crosshair is `accent`.
-  result[rlBackdrop] = p[bcDarkerBackground]
-  result[rlWindow] = p[bcBackground]
-  result[rlPopup] = if mode == tmDark: p[bcLighterBackground] else: p[bcBackground]
-  result[rlBar] = p[bcDarkBackground]
-  # Frames (checkboxes, radio buttons, inputs) must show on windows and in
-  # popups alike: where `lighter_background` is the popup's own colour (a
-  # dark theme), they are lifted toward the foreground until they stand out.
-  var frame = p[bcLighterBackground]
-  var t = 0'f32
-  while t < 0.5 and (distance(frame, result[rlPopup]) < MinFrameStep or
-      distance(frame, result[rlWindow]) < MinFrameStep):
-    t += 0.02
-    frame = mix(p[bcLighterBackground], p[bcForeground], t)
-  result[rlFrame] = frame
-  result[rlText] = p[bcForeground]
-  result[rlTextDim] = p[bcLightForeground]
-  result[rlTextDisabled] = mix(p[bcDarkForeground], p[bcLightForeground], 0.5)
-  result[rlBorder] = p[bcMuted]
-  result[rlSelection] = p[bcSelection]
-  result[rlHover] = p[bcSelection]
-  result[rlActive] = p[bcMuted]
-  result[rlAccent] = p[bcAccent]
-  result[rlHighlight] = p[bcOrange]
-  result[rlOk] = p[bcGreen]
-  result[rlWarning] = p[bcYellow]
-  result[rlError] = p[bcRed]
-  result[rlInfo] = p[bcBlue]
-  result[rlPlotBackground] = p[bcDarkBackground]
-  result[rlPlotGrid] = mix(p[bcDarkBackground], p[bcForeground], 0.12)
-  result[rlTrace] = p[bcForeground]
-  result[rlFillPositive] = p[bcForeground]
-  result[rlFillNegative] = p[bcRed]
-  result[rlCrosshair] = p[bcAccent]
-
-func deriveSeries*(p: Palette): array[8, Rgba] =
-  ## Eight distinct colours for series and components, in this order of
-  ## preference: accent, orange, green, magenta, yellow, cyan, red, blue, then
-  ## the bright variants, secondary text and brown, skipping near-duplicates.
-  var n = 0
-  for k in [bcAccent, bcOrange, bcGreen, bcMagenta, bcYellow, bcCyan, bcRed, bcBlue,
-      bcBrightRed, bcBrightGreen, bcBrightYellow, bcBrightBlue, bcBrightMagenta,
-      bcBrightCyan, bcLightForeground, bcBrown, bcForeground]:
-    var fresh = n < result.len
-    for i in 0 ..< n:
-      if distance(result[i], p[k]) < 24:
-        fresh = false
-    if fresh:
-      result[n] = p[k]
-      inc n
-  while n < result.len: # a palette of near-identical colours
-    result[n] = p[bcForeground]
-    inc n
-
-func makeTheme*(name: string; mode: ThemeMode; p: Palette;
-    fonts = DefaultFonts; metrics = DefaultMetrics): Theme =
-  ## A theme whose roles and series are derived from `p`.
-  Theme(name: name, mode: mode, palette: p, roles: deriveRoles(p, mode),
-    series: deriveSeries(p), fonts: fonts, metrics: metrics)
 
 const
   everforestDarkPalette: Palette = [
@@ -293,6 +260,232 @@ const
     bcBrightGreen: rgb(0x8da101), bcBrightCyan: rgb(0x35a77c),
     bcBrightBlue: rgb(0x3a94c5), bcBrightMagenta: rgb(0xdf69ba)]
 
+const MinFrameStep* = 12
+  ## the least `distance` of a frame's colour from a window's and a popup's
+
+func plainRoles(p: Palette; mode: ThemeMode): array[Role, Rgba] =
+  ## The roles as the palette gives them, before `legible`.
+  result[rlBackdrop] = p[bcDarkerBackground]
+  result[rlWindow] = p[bcBackground]
+  result[rlPopup] = if mode == tmDark: p[bcLighterBackground] else: p[bcBackground]
+  result[rlBar] = p[bcDarkBackground]
+  # Frames (checkboxes, radio buttons, inputs) must show on windows and in
+  # popups alike: where `lighter_background` is the popup's own colour (a
+  # dark theme), they are lifted toward the foreground until they stand out.
+  var frame = p[bcLighterBackground]
+  var t = 0.0
+  while t < 0.5 and (distance(frame, result[rlPopup]) < MinFrameStep or
+      distance(frame, result[rlWindow]) < MinFrameStep):
+    t += 0.02
+    frame = mix(p[bcLighterBackground], p[bcForeground], t)
+  result[rlFrame] = frame
+  result[rlText] = p[bcForeground]
+  result[rlTextDim] = p[bcLightForeground]
+  result[rlTextDisabled] = mix(p[bcDarkForeground], p[bcLightForeground], 0.5)
+  result[rlBorder] = p[bcMuted]
+  result[rlSelection] = p[bcSelection]
+  result[rlHover] = p[bcSelection]
+  result[rlActive] = p[bcMuted]
+  result[rlAccent] = p[bcAccent]
+  result[rlHighlight] = p[bcOrange]
+  result[rlOk] = p[bcGreen]
+  result[rlWarning] = p[bcYellow]
+  result[rlError] = p[bcRed]
+  result[rlInfo] = p[bcBlue]
+  result[rlPlotBackground] = p[bcDarkBackground]
+  result[rlPlotGrid] = mix(p[bcDarkBackground], p[bcForeground], 0.12)
+  result[rlTrace] = p[bcForeground]
+  result[rlFillPositive] = p[bcForeground]
+  result[rlFillNegative] = p[bcRed]
+  result[rlCrosshair] = p[bcAccent]
+  result[rlSelected] = p[bcAccent]
+  result[rlSource] = p[bcRed]
+  result[rlReceiver] = if distance(p[bcBlue], p[bcAccent]) < 40: p[bcGreen] else: p[bcBlue]
+
+const
+  TextContrast* = 4.5
+    ## text against every surface it is drawn on: windows, popups, bars,
+    ## frames, a selected or hovered item (WCAG's AA level for text)
+  DimContrast* = 3.0
+    ## secondary text, and text in the accent or a status colour (ok,
+    ## warning, error, info), against the same surfaces (WCAG's level for
+    ## large text and for parts of a control)
+  DisabledContrast* = 2.0 ## a disabled item, against windows and popups
+  StepContrast* = 1.08
+    ## a selected or hovered item against the window, popup or frame it is on
+  InkContrast* = 3.0
+    ## the plot's traces, fills and marks against its background, the map's
+    ## points against the map's (WCAG's level for graphics)
+  MarkApart* = 25.0
+    ## `deltaE` of a hovered or a selected trace from the traces around it,
+    ## on paper and on the theme's own plot background
+  MarksApart* = 20.0
+    ## `deltaE` of the hovered from the selected, and of sources and
+    ## receivers on the map from each other and from both
+
+func lift(c: Rgba; on: openArray[Rgba]; ratio: float64): Rgba =
+  ## `c` made `readable` on every colour of `on` (all light or all dark, as
+  ## a theme's surfaces are).
+  result = c
+  var t = 0.0
+  let target = if luminance(on[0]) > 0.18: Black else: White
+  var low = false
+  for b in on: low = low or contrast(result, b) < ratio
+  while low and t < 1:
+    t += 0.05
+    result = mix(c, target, t)
+    low = false
+    for b in on: low = low or contrast(result, b) < ratio
+
+func stepFrom(c, toward: Rgba; on: openArray[Rgba]): Rgba =
+  ## `c` moved toward `toward` until it stands out from each of `on` by
+  ## `StepContrast` (halfway at most).
+  result = c
+  var t = 0.0
+  var flat = false
+  for b in on: flat = flat or contrast(result, b) < StepContrast
+  while flat and t < 0.5:
+    t += 0.02
+    result = mix(c, toward, t)
+    flat = false
+    for b in on: flat = flat or contrast(result, b) < StepContrast
+
+type Scheme = tuple[background, line: Rgba]
+  ## a plot's background and its traces' colour: paper, or the theme's
+
+func ink(c: Rgba; s: Scheme): Rgba {.inline.} = readable(withAlpha(c, 255), s.background,
+  InkContrast)
+
+func apart(c: Rgba; schemes: openArray[Scheme]; others: openArray[Rgba];
+    fromLine, fromOthers: float64): float64 =
+  ## How far `c` is from passing on every scheme: its least margin over
+  ## `fromLine` from the traces and over `fromOthers` from `others`, all as
+  ## drawn (`ink`). Zero or more passes.
+  result = Inf
+  for s in schemes:
+    let a = ink(c, s)
+    result = min(result, deltaE(a, ink(s.line, s)) - fromLine)
+    for o in others:
+      result = min(result, deltaE(a, ink(o, s)) - fromOthers)
+
+const Signal = [rgb(0xff7f0e), rgb(0x1f77b4), rgb(0xd62728), rgb(0x2ca02c),
+    rgb(0x9467bd), rgb(0x17becf), rgb(0xe377c2), rgb(0xbcbd22)]
+  ## strong colours to fall back on when neither palette has one that is
+  ## apart (matplotlib's ten categorical colours, the first eight)
+
+func pick(first: Rgba; keys: openArray[BaseColor]; p, builtin: Palette;
+    schemes: openArray[Scheme]; others: openArray[Rgba]; fromLine: float64): Rgba =
+  ## `first` when it is `apart`, else the first of the palette's `keys`
+  ## that is, else the built-in palette's, else one of `Signal`; failing
+  ## all, the farthest apart.
+  var candidates: seq[Rgba] = @[]
+  for k in keys: candidates.add p[k]
+  for k in keys: candidates.add builtin[k]
+  candidates.add Signal
+  result = first
+  var best = apart(first, schemes, others, fromLine, MarksApart)
+  for c in candidates:
+    if best < 0:
+      let m = apart(c, schemes, others, fromLine, MarksApart)
+      if m > best:
+        (result, best) = (c, m)
+
+func legible(r: var array[Role, Rgba]; p, builtin: Palette) =
+  ## The roles moved where they must be to read and to tell apart, by the
+  ## limits above; a palette that meets them is left as it is.
+  let surfaces = [r[rlWindow], r[rlPopup], r[rlBar], r[rlFrame]]
+  # A hovered or selected item shows on what it is on, and text on it reads.
+  r[rlSelection] = stepFrom(r[rlSelection], r[rlText], [r[rlWindow], r[rlPopup], r[rlFrame]])
+  r[rlHover] = stepFrom(r[rlHover], r[rlText], [r[rlWindow], r[rlPopup], r[rlFrame]])
+  r[rlText] = lift(r[rlText], @surfaces & @[r[rlSelection], r[rlHover]], TextContrast)
+  # Secondary text is dimmer than text, and still reads; disabled is dimmer still.
+  let window = r[rlWindow]
+  if contrast(r[rlTextDim], window) > 0.9 * contrast(r[rlText], window):
+    r[rlTextDim] = mix(r[rlText], window, 0.3)
+  r[rlTextDim] = lift(r[rlTextDim], surfaces, DimContrast)
+  if contrast(r[rlTextDisabled], window) >= contrast(r[rlTextDim], window):
+    r[rlTextDisabled] = mix(r[rlTextDim], window, 0.35)
+  r[rlTextDisabled] = lift(r[rlTextDisabled], [window, r[rlPopup]], DisabledContrast)
+  for role in [rlAccent, rlOk, rlWarning, rlError, rlInfo]:
+    r[role] = lift(r[role], surfaces, DimContrast)
+  # The theme's own plot: traces and fills show on its background.
+  for role in [rlTrace, rlFillPositive, rlFillNegative]:
+    r[role] = lift(r[role], [r[rlPlotBackground]], InkContrast)
+  # Marked traces and the map's points: apart from the traces and from each
+  # other, on paper and on the theme's plot.
+  let schemes = [(White, Black), (withAlpha(r[rlPlotBackground], 255), r[rlTrace])]
+  r[rlSelected] = pick(r[rlSelected], [bcAccent, bcBlue, bcCyan, bcMagenta, bcGreen,
+    bcBrightBlue, bcBrightCyan, bcBrightMagenta], p, builtin, schemes, [], MarkApart)
+  r[rlHighlight] = pick(r[rlHighlight], [bcOrange, bcYellow, bcRed, bcMagenta, bcBrightRed,
+    bcBrightYellow, bcBrightMagenta], p, builtin, schemes, [r[rlSelected]], MarkApart)
+  let marks = [r[rlSelected], r[rlHighlight]]
+  r[rlSource] = pick(r[rlSource], [bcRed, bcOrange, bcMagenta, bcBrightRed, bcYellow,
+    bcBrightMagenta], p, builtin, schemes, marks, -Inf)
+  r[rlReceiver] = pick(r[rlReceiver], [bcBlue, bcGreen, bcCyan, bcBrightBlue,
+    bcBrightGreen, bcBrightCyan, bcMagenta], p, builtin, schemes, @marks & @[r[rlSource]],
+    -Inf)
+
+func deriveRoles*(p: Palette; mode: ThemeMode): array[Role, Rgba] =
+  ## The roles built from the palette. Backgrounds: `backdrop` is
+  ## `darker_background`, `window` is `background`, `bar` is `dark_background`,
+  ## `frame` is `lighter_background` (moved toward `foreground` until it is
+  ## `MinFrameStep` from both `window` and `popup`, so an unticked checkbox
+  ## shows in a popup too), and `popup` is `lighter_background` in a
+  ## dark theme and `background` in a light one (popups stay the brightest
+  ## surface). Text: `foreground`, `light_foreground` (dim) and, for disabled,
+  ## halfway between `dark_foreground` and `light_foreground`. `border` is
+  ## `muted`; `selection` and `hover` are `selection`, `active` is `muted`.
+  ## `accent` is `accent`, `highlight` is `orange`; ok / warning / error / info
+  ## are green / yellow / red / blue. Plots: `dark_background` behind, a grid
+  ## 12 % of the way to `foreground`. Traces: the line and the positive fill are
+  ## `foreground`, the negative fill `red`; the crosshair is `accent`. Marked
+  ## traces: `selected` is `accent`. The map: sources `red`, receivers `blue`
+  ## (`green` where the blue is the accent).
+  ##
+  ## Then each role that would be hard to read or to tell apart is moved
+  ## (`adjustedRoles` says which), by the limits `TextContrast` ..
+  ## `MarksApart`: text and status colours lightened on a dark theme or
+  ## darkened on a light one, a selection that does not show moved toward the
+  ## text, secondary text dimmer than text, and the marks (`selected`,
+  ## `highlight`, `source`, `receiver`) taken from the palette's other colours,
+  ## or from the built-in theme's, when the palette's own are too close to the
+  ## traces or to each other.
+  result = plainRoles(p, mode)
+  legible(result, p, if mode == tmDark: everforestDarkPalette else: everforestLightPalette)
+
+func adjustedRoles*(p: Palette; mode: ThemeMode): seq[Role] =
+  ## The roles `deriveRoles` moved from what the palette gives (`legible`).
+  result = @[]
+  let (plain, derived) = (plainRoles(p, mode), deriveRoles(p, mode))
+  for r in Role:
+    if plain[r] != derived[r]: result.add r
+
+func deriveSeries*(p: Palette): array[8, Rgba] =
+  ## Eight distinct colours for series and components, in this order of
+  ## preference: accent, orange, green, magenta, yellow, cyan, red, blue, then
+  ## the bright variants, secondary text and brown, skipping near-duplicates.
+  var n = 0
+  for k in [bcAccent, bcOrange, bcGreen, bcMagenta, bcYellow, bcCyan, bcRed, bcBlue,
+      bcBrightRed, bcBrightGreen, bcBrightYellow, bcBrightBlue, bcBrightMagenta,
+      bcBrightCyan, bcLightForeground, bcBrown, bcForeground]:
+    var fresh = n < result.len
+    for i in 0 ..< n:
+      if distance(result[i], p[k]) < 24:
+        fresh = false
+    if fresh:
+      result[n] = p[k]
+      inc n
+  while n < result.len: # a palette of near-identical colours
+    result[n] = p[bcForeground]
+    inc n
+
+func makeTheme*(name: string; mode: ThemeMode; p: Palette;
+    fonts = DefaultFonts; metrics = DefaultMetrics): Theme =
+  ## A theme whose roles and series are derived from `p`.
+  Theme(name: name, mode: mode, palette: p, roles: deriveRoles(p, mode),
+    series: deriveSeries(p), fonts: fonts, metrics: metrics)
+
+const
   EverforestDark* = makeTheme("Everforest Dark", tmDark, everforestDarkPalette)
   EverforestLight* = makeTheme("Everforest Light", tmLight, everforestLightPalette)
   DefaultThemeNames*: array[ThemeMode, string] = ["everforest-dark", "everforest-light"]
@@ -480,8 +673,11 @@ func derived(k: BaseColor; p: Palette; given: array[BaseColor, bool]; mode: Them
   else:
     ok = false
 
-const ignoredKeys = ["cursor", "selection_foreground", "color0", "color7", "color15"]
-  ## Omarchy keys for terminals that a viewer has no use for.
+const ignoredKeys = ["cursor", "selection_foreground", "color0", "color7", "color15",
+    "active_border_color", "active_tab_background", "inactive_border_color",
+    "inactive_tab_background"]
+  ## Omarchy keys for terminals and other programs that a viewer has no use
+  ## for (with every `hyprland_` key: the window manager's).
 
 func kindProblem(e: Entry; kind: ValueKind): string =
   ## "" when `e` holds a `kind`, else what is wrong.
@@ -533,7 +729,7 @@ proc parseTheme*(text, name: string; messages: var seq[string]; where = name): T
         of "dark": (mode, modeGiven) = (tmDark, true)
         of "light": (mode, modeGiven) = (tmLight, true)
         else: messages.add at & "`mode` is \"dark\" or \"light\", not `" & e.value.str & "`"
-    elif key in ignoredKeys:
+    elif key in ignoredKeys or key.startsWith("hyprland_"):
       discard
     elif key == "selection_background" or (key.startsWith("color") and
         key[5..^1].allCharsInSet(Digits) and key.len in 6..7):
@@ -714,6 +910,8 @@ func toToml*(t: Theme): string =
 proc themeFiles*(dirs: openArray[string]): seq[ThemeFile] =
   ## The `*.toml` files in `dirs`, sorted by name within each directory; a
   ## name found in an earlier directory hides the same name in later ones.
+  ## Each is read (a few kilobytes): what cannot be read is the built-in
+  ## theme under the file's name.
   result = @[]
   for d in dirs:
     var here: seq[ThemeFile]
@@ -727,4 +925,9 @@ proc themeFiles*(dirs: openArray[string]): seq[ThemeFile] =
       for g in result:
         if g.name == f.name: seen = true
       if not seen:
-        result.add f
+        var problems: seq[string]
+        var found = f
+        found.theme = loadTheme(f.path, tmDark, problems)
+        if problems.len > 0 and found.theme.name == builtinTheme(tmDark).name:
+          found.theme.name = displayName(f.name) # unreadable: not "Everforest Dark" twice
+        result.add found

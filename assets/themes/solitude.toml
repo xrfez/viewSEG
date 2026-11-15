@@ -1,0 +1,52 @@
+# viewSEG theme: Solitude.
+#
+# Omarchy's solitude theme (its colors.toml in Omarchy 4.0.0.alpha), the
+# colours unchanged. The palette: Solitude, by HANCORE
+# (HANCORE-linux/omarchy-solitude-theme, MIT). Where each theme comes from,
+# and its licence: README.md in this folder; what each key does:
+# everforest-dark.toml.
+#
+# Left out: Omarchy's keys for other programs (hyprland_active_border,
+# hyprland_inactive_border, active_border_color, active_tab_background).
+#
+# Added in viewSEG's copy: `orange` and `brown`, which the file does not have,
+# as viewSEG derives them (orange halfway between red and yellow, brown
+# orange 55 % of the way to the background), so that it loads without a
+# message.
+#
+# Roles viewSEG moves in this theme, to keep it readable and its
+# marks apart (README.md, "Readable in every theme"):
+#   text_dim, highlight, error, fill_negative, source, receiver
+
+name = "Solitude"
+mode = "dark"
+
+accent = "#798186"
+selection = "#343d41"
+muted = "#4b4e55"
+
+background = "#101315"
+dark_background = "#0c0e10"
+darker_background = "#080a0b"
+lighter_background = "#101315"
+
+foreground = "#cacccc"
+dark_foreground = "#4b4e55"
+light_foreground = "#cbc2be"
+bright_foreground = "#a5aeb4"
+
+red = "#565d60"
+yellow = "#d9dbdc"
+orange = "#989c9e"
+green = "#9fa5a9"
+cyan = "#707070"
+blue = "#798186"
+magenta = "#aeaeae"
+brown = "#4d5153"
+
+bright_red = "#de6145"
+bright_yellow = "#c9c2b4"
+bright_green = "#343d41"
+bright_cyan = "#707070"
+bright_blue = "#5d6367"
+bright_magenta = "#9a9a9a"

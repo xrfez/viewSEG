@@ -9,6 +9,10 @@
 # text, border, selection, plot, trace colours, the series palette) is derived
 # from them; a missing colour is derived or taken from the built-in Everforest,
 # and the Messages window says which.
+#
+# Roles viewSEG moves in this theme, to keep it readable and its
+# marks apart (README.md, "Readable in every theme"):
+#   none
 
 name = "Everforest Dark"
 mode = "dark"                    # "dark" or "light"; guessed from background if absent

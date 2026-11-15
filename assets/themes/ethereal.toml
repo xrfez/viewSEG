@@ -1,0 +1,43 @@
+# viewSEG theme: Ethereal.
+#
+# Omarchy's ethereal theme (its colors.toml in Omarchy 4.0.0.alpha), the
+# colours unchanged. The palette: an Omarchy theme by bjarneo (Omarchy's MIT).
+# Where each theme comes from, and its licence: README.md in this folder; what
+# each key does: everforest-dark.toml.
+#
+# Roles viewSEG moves in this theme, to keep it readable and its
+# marks apart (README.md, "Readable in every theme"):
+#   none
+
+name = "Ethereal"
+mode = "dark"
+
+accent = "#7d82d9"
+selection = "#252e56"
+muted = "#6d7db6"
+
+background = "#060B1E"
+dark_background = "#040816"
+darker_background = "#030610"
+lighter_background = "#131a3a"
+
+foreground = "#ffcead"
+dark_foreground = "#6d7db6"
+light_foreground = "#c9b8a6"
+bright_foreground = "#ffcead"
+
+red = "#ED5B5A"
+yellow = "#E9BB4F"
+orange = "#eb8b54"
+green = "#92a593"
+cyan = "#a3bfd1"
+blue = "#7d82d9"
+magenta = "#c89dc1"
+brown = "#75452a"
+
+bright_red = "#faaaa9"
+bright_yellow = "#f7dc9c"
+bright_green = "#c4cfc4"
+bright_cyan = "#dfeaf0"
+bright_blue = "#c2c4f0"
+bright_magenta = "#ead7e7"

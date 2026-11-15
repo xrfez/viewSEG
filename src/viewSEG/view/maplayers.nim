@@ -17,11 +17,11 @@
 ## them), so that planned against recorded reads at a glance.
 ##
 ## **Colours** (`mapInk`): the plot's background (paper by default, or the
-## theme's, as the plot window's colour scheme says), sources in the theme's
-## red and receivers in its blue (its green where the blue is the accent,
-## which marks the selection), each made readable on the background; the
+## theme's, as the plot window's colour scheme says), sources and receivers
+## in the theme's `source` and `receiver` roles (its red, and its blue or
+## green: `deriveRoles`), each made readable on the background; the
 ## hovered points in the highlight colour and the selected ones in the
-## accent colour, as in the plot; the receivers of the record on show in a
+## `selected` colour, as in the plot; the receivers of the record on show in a
 ## darker shade of the receivers' colour, its source larger and outlined.
 
 import std/[intsets, math, os, strutils]
@@ -43,7 +43,8 @@ type
     outline*: Rgba                 ## round the highlighted points: the background's opposite
     active*: Rgba
       ## the receivers of the record on show: the receivers' colour, darker
-      ## (lighter on a dark background), so the spread shows as a whole
+      ## on paper (on a dark background lighter, or darker where they are
+      ## light already), so the spread shows as a whole
 
   MapLayerView* = object
     ## One layer of the map, as the frontend draws and lists it.
@@ -82,13 +83,17 @@ func mapInk*(t: Theme; colours: PlotColours; custom = CustomColours()): MapInk =
   ## scheme `colours`.
   let plot = plotInk(t, DisplaySettings(colours: colours, custom: custom))
   let bg = plot.background
-  let blue = if distance(t.roles[rlInfo], t.roles[rlAccent]) < 40: t.palette[bcGreen]
-             else: t.roles[rlInfo]
   result = MapInk(background: bg, hover: plot.wiggle.hover, selected: plot.wiggle.selected,
     outline: (if luminance(bg) > 0.18: PaperInk else: PaperBackground))
-  result.roles[prSource] = readableOn(t.roles[rlError], bg)
-  result.roles[prReceiver] = readableOn(blue, bg)
-  result.active = mix(result.roles[prReceiver], result.outline, 0.45)
+  result.roles[prSource] = readableOn(t.roles[rlSource], bg)
+  result.roles[prReceiver] = readableOn(t.roles[rlReceiver], bg)
+  # Toward the outline (darker on paper); where the receivers are close to
+  # it already (light receivers on a dark map), toward the background.
+  let rcv = result.roles[prReceiver]
+  let (toOutline, toBackground) = (mix(rcv, result.outline, 0.45),
+    readableOn(mix(rcv, bg, 0.45), bg))
+  result.active = if deltaE(toOutline, rcv) >= deltaE(toBackground, rcv): toOutline
+                  else: toBackground
 
 func plural(n: int; one, many: string): string =
   $n & " " & (if n == 1: one else: many)

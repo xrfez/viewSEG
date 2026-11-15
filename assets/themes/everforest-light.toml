@@ -9,6 +9,10 @@
 # Upstream names: background bg0, dark_background bg1, lighter_background bg2,
 # selection bg3, darker_background bg4, muted bg5, dark_foreground grey0,
 # light_foreground grey2. Brown has no upstream value (orange, lightened).
+#
+# Roles viewSEG moves in this theme, to keep it readable and its
+# marks apart (README.md, "Readable in every theme"):
+#   text, text_dim, accent, ok, warning, error, info, fill_negative
 
 name = "Everforest Light"
 mode = "light"

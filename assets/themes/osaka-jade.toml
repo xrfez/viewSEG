@@ -1,0 +1,55 @@
+# viewSEG theme: Osaka Jade.
+#
+# Omarchy's osaka-jade theme. The Omarchy 4.0.0.alpha copy has no colors.toml,
+# so this is the colors.toml of Omarchy's own repository (omacom/omarchy, branch
+# master, commit f4378f0de5b4, themes/osaka-jade/colors.toml), which is in the
+# terminal form (color0 .. color15), turned into the named keys as viewSEG
+# reads that form: red color1, green color2, blue color4, magenta color5, cyan
+# color6, muted color8, the bright ones color9 .. color14. The palette: an
+# Omarchy theme (Omarchy's MIT; its Neovim theme is ribru17/bamboo.nvim, MIT).
+# Where each theme comes from, and its licence: README.md in this folder; what
+# each key does: everforest-dark.toml.
+#
+# Changed in viewSEG's copy: `yellow` is the bright yellow (color11), because
+# the file's yellow (color3, #459451) is a green, and warnings would look like
+# the green of "ok"; `orange` is halfway between red and that yellow. The
+# colours the file does not have (`dark_background`, `darker_background`,
+# `lighter_background`, `selection`, `dark_foreground`, `light_foreground`,
+# `brown`) are what viewSEG derives from it, written out.
+#
+# Roles viewSEG moves in this theme, to keep it readable and its
+# marks apart (README.md, "Readable in every theme"):
+#   receiver
+
+name = "Osaka Jade"
+mode = "dark"
+
+accent = "#509475"
+selection = "#263027"
+muted = "#53685b"
+
+background = "#111c18"
+dark_background = "#0d1512"
+darker_background = "#090f0d"
+lighter_background = "#1c2620"
+
+foreground = "#c1c497"
+dark_foreground = "#384134"
+light_foreground = "#959a77"
+bright_foreground = "#c1c497"
+
+red = "#ff5345"
+yellow = "#e5c736"
+orange = "#f28d3e"
+green = "#549e6a"
+cyan = "#2dd5b7"
+blue = "#509475"
+magenta = "#d2689c"
+brown = "#764f29"
+
+bright_red = "#db9f9c"
+bright_yellow = "#e5c736"
+bright_green = "#63b07a"
+bright_cyan = "#8cd3cb"
+bright_blue = "#acd4cf"
+bright_magenta = "#75bbb3"
