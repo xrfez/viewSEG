@@ -318,7 +318,7 @@ proc surveyHeadWork*(file: JoinFile; to: Poster): JobWork =
         if kind == fkP1: h.file.kind = jkP1
         elif kind.isSurvey: h.file.kind = jkSps
       {.cast(gcsafe).}:
-        h.head = headUnitOf(head, h.file.kind)
+        h.head = headUnitOf(head, h.file.kind, whole = got >= info.size)
     except CatchableError as e:
       h.problem = "its headers cannot be read (" & e.msg.splitLines()[0] & ")"
     discard ctx.progress(1, 1)

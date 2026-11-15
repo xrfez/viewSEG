@@ -8,7 +8,8 @@
 ##   feet (Clarke's, Indian) read as no unit known;
 ## - the start of an SPS file (H20, H201: 0.3048006096 m a unit is the US
 ##   survey foot, 0.3048 the international, 1 the metre; a rounded factor;
-##   80-byte cards without line ends), a SEG P1 file's H2000, a CSV table's
+##   80-byte cards without line ends; a last line without a line end when
+##   the whole file was read), a SEG P1 file's H2000, a CSV table's
 ##   comment or first row ("x (m)", which the table is then read with);
 ## - the survey's unit as its files say it, and the files that disagree
 ##   named;
@@ -26,7 +27,9 @@
 ##   window's (`importUnits`, an agent's import); after an import the units
 ##   confirmed for the file label it.
 ##
-## Seen to fail: with the unit words matched whole, as first written,
+## Seen to fail: with the last line without a line end left out of a whole
+## file, "a last line without a line end: (unit: feet, ...)"; with the unit
+## words matched whole, as first written,
 ## "unit words read wrong: \"Meters (m)\": not given, ..."; with H201's
 ## factor left out of the SPS reading (the name only), "Morgantown's
 ## headers: feet" (not US survey feet); with
@@ -102,6 +105,11 @@ block spsHeaders:
     if line.len > 0: cards.add line.alignLeft(80)
   doAssert headUnitOf(cards, jkSps).unit == suUsFeet
   doAssert headUnitOf(sps("feet", "") & "H201Factor to met", jkSps).unit == suFeet
+  # The whole file read: its last line without a line end is read too.
+  let unterminated = sps("feet", "0.3048006096").strip(leading = false)
+  doAssert headUnitOf(unterminated, jkSps, whole = true).unit == suUsFeet,
+    "a last line without a line end: " & $headUnitOf(unterminated, jkSps, whole = true)
+  doAssert headUnitOf(unterminated, jkSps).unit == suFeet # (cut short, as far as one knows)
 
 block p1Headers:
   let p1 = "H0100SURVEY AREA                  NORTH SEA\n" &

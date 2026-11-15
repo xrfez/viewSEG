@@ -330,10 +330,10 @@ type
     surveyChosen*: bool
     files*: seq[tuple[path: string; unit: SurveyUnit]]
 
-func headLines(head: string): seq[string] =
+func headLines(head: string; whole: bool): seq[string] =
   ## The lines of the start of a file: cut at its line ends (the last,
-  ## possibly cut short, left out), else as 80-byte cards; a UTF-8 BOM
-  ## passed by.
+  ## possibly cut short, left out unless `head` is the `whole` file), else
+  ## as 80-byte cards; a UTF-8 BOM passed by.
   var at = if head.startsWith("\xEF\xBB\xBF"): 3 else: 0
   var ends = false
   var lo = at
@@ -342,10 +342,13 @@ func headLines(head: string): seq[string] =
       ends = true
       if i > lo: result.add head[lo ..< i]
       lo = i + 1
-  if not ends:
+  if ends:
+    if whole and lo < head.len: result.add head[lo .. ^1]
+  else:
     while at + 80 <= head.len:
       result.add head[at ..< at + 80]
       at += 80
+    if whole and at < head.len: result.add head[at .. ^1]
 
 proc spsHeadUnit(lines: openArray[string]): HeadUnit =
   ## H20 and H201 of the header records the file starts with (parseSEG's
@@ -407,13 +410,15 @@ func csvHeadUnit(lines: openArray[string]): HeadUnit =
             return HeadUnit(unit: u, said: "\"" & cell.strip & "\" (its first row)")
       return
 
-proc headUnitOf*(head: string; kind: JoinFileKind): HeadUnit =
+proc headUnitOf*(head: string; kind: JoinFileKind; whole = false): HeadUnit =
   ## What the start of a survey file, `head` (its first `HeadBytes` or
   ## fewer), says of its coordinates' unit: SPS H20 and H201 (H201's factor
   ## names the foot: 0.3048006096 is the US survey foot, 0.3048 the
   ## international), SEG P1's H2000, or a CSV table's comment or first row.
-  ## Never raises: a file that says nothing gives `suNotGiven`.
-  let lines = headLines(head)
+  ## `whole`: `head` is the whole file, so its last line is read even
+  ## without a line end. Never raises: a file that says nothing gives
+  ## `suNotGiven`.
+  let lines = headLines(head, whole)
   case kind
   of jkSps: spsHeadUnit(lines)
   of jkP1: p1HeadUnit(lines)
