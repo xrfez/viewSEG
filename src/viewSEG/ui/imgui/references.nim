@@ -201,7 +201,7 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
   igSameLine(igGetFontSize() * 8, -1)
   discard igInputDouble("##store.to", addr d.toMs, 0, 0, "%.4g", 0)
   marks.mark("store.to")
-  let length = "Trace length " & references.numberText(d.durationMs) & " ms" &
+  let length = "Trace length " & msWords(d.durationMs) & " ms" &
     (if d.sweep: " (To is the sweep length from the file's headers; the rest is listen time)"
       else: " (usually cut to the sweep length; the rest is listen time)")
   igTextWrapped("%s", length.cstring)

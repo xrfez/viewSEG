@@ -141,7 +141,7 @@ func lawTitle*(law: ReferenceLaw): string =
   of rlDbPerOctave: "dB/octave"
   of rlDbPerHz: "dB/Hz"
 
-func numberText*(x: float64): string =
+func numberText(x: float64): string =
   ## `x` without a trailing fraction when it is a whole number.
   if x.isNaN: "none"
   elif abs(x - round(x)) < 1e-6 * max(1.0, abs(x)) and abs(x) < 1e9:

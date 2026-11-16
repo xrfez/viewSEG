@@ -6,7 +6,10 @@
 ## carry the file's own samples, before polarity, edits and gain, and the
 ## readout reads them (`rawAmplitude`).
 ##
-## Seen to fail: with `numberText` printing NaN, `otherFields` showed "nan"
+## Seen to fail: with `numberText` also exported from `references` (and so from
+## `state`), this file did not compile ("ambiguous call; both readout.numberText
+## and references.numberText"); with `numberText` printing NaN, `otherFields`
+## showed "nan"
 ## for an unknown inline number; with `pair` dropping the known half,
 ## `halfKnownPairs` read "" for a point alone; with the times shown in local
 ## time (run with TZ=Asia/Tokyo), `defaultFields` read 20:33:20.123; with
