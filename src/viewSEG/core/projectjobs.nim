@@ -27,7 +27,7 @@ import displaypresets, filekinds, filememory, filesystem, identity, inbox, jobs,
   nif, persist, processing, project, projectnif, session, survey, surveystore, threads
 
 type NewProject* = object
-  ## What File > New project makes.
+  ## What Project > New project makes.
   name*: string
   data*: seq[string] ## the data folders, absolute
   bringFrom*: string

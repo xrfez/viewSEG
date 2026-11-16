@@ -8,14 +8,16 @@
 ## > Export: the messages, the settings, the layout, trace edits), each in
 ## that one place, and opens the File memory window (what is remembered
 ## about files: it is about files on disk, so File, not Window, which only
-## arranges windows); Edit undoes, redoes and clears the trace edits of the
-## file the Seismic window shows, whichever window has the focus (Ctrl+Z,
-## Ctrl+Shift+Z and Ctrl+Y everywhere but in a text field, which keeps its
-## own undo); View holds the theme; Window puts the windows right (Reset the
-## windows, Bring all windows onto this screen), says whether the program's
-## icon is in the tray and whether minimizing hides it there, shows, hides
-## and brings forward each window, and loads and saves layouts; Help says
-## what viewSEG is (About: its version and its libraries').
+## arranges windows); Project holds the job's folder (New project, Open
+## project, Recent projects, the Project window, Close project); Edit undoes,
+## redoes and clears the trace edits of the file the Seismic window shows,
+## whichever window has the focus (Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y everywhere
+## but in a text field, which keeps its own undo); View holds the theme;
+## Window puts the windows right (Reset the windows, Bring all windows onto
+## this screen), says whether the program's icon is in the tray and whether
+## minimizing hides it there, shows, hides and brings forward each window,
+## and loads and saves layouts; Help says what viewSEG is (About: its version
+## and its libraries').
 
 import std/os
 import imguin/cimgui
@@ -80,7 +82,7 @@ type
       ## Window > New plot: the selected traces of the file shown; 0: none
       ## (its views are then offered on the trace under the pointer, from
       ## the plot's menu)
-    recentProjects*: seq[string] ## File > Recent projects, newest first
+    recentProjects*: seq[string] ## Project > Recent projects, newest first
     projectName*: string        ## the project open; "" for none
     projectShown*: bool         ## the Project window is open
 
@@ -224,7 +226,7 @@ proc drawRecentProjects*(projects: openArray[string]; chosen: var string;
     igPopID()
 
 proc drawProjects(input: MenuInput; res: var MenuResult) =
-  ## File's project entries: New, Open, the recent ones, the Project window
+  ## Project's entries: New, Open, the recent ones, then the Project window
   ## and Close.
   item(maNewProject, res)
   tip("A folder of its own for this job: its files' edits, its survey (imported once, " &
@@ -236,6 +238,7 @@ proc drawProjects(input: MenuInput; res: var MenuResult) =
   if open:
     drawRecentProjects(input.recentProjects, res.openProject, marked, "menu.project.", 2000)
     igEndMenu()
+  igSeparator()
   if igMenuItem_Bool(label(maProject).cstring, nil, input.projectShown, true):
     res.actions.incl maProject
   if marked != nil: marked[].mark("menu." & $maProject)
@@ -404,8 +407,8 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
 
 proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
   ## The menu bar over the main window, plus the shortcuts, which work whether
-  ## or not a menu is open. Its menus are marked "menu.File", "menu.Edit",
-  ## "menu.View", "menu.Window" and "menu.Help", its items "menu." and their
+  ## or not a menu is open. Its menus are marked "menu.File", "menu.Project",
+  ## "menu.Edit", "menu.View", "menu.Window" and "menu.Help", its items "menu." and their
   ## names, the windows' entries "menu.window." and their IDs, the presets
   ## "menu.layout." and their names.
   result = MenuResult()
@@ -428,8 +431,6 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       for a in maOpenFile .. maOpenFolder:
         item(a, result)
       drawRecent(input.recent, input.recentFolders, result)
-      igSeparator()
-      drawProjects(input, result)
       igSeparator()
       igBeginDisabled(not input.canClose)
       item(maClose, result)
@@ -472,6 +473,11 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
         "Messages; it cannot write files. For this run only.")
       igSeparator()
       item(maQuit, result)
+      igEndMenu()
+    let project = igBeginMenu("Project", true)
+    marks.mark("menu.Project")
+    if project:
+      drawProjects(input, result)
       igEndMenu()
     let edit = igBeginMenu("Edit", true)
     marks.mark("menu.Edit")

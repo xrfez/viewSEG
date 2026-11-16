@@ -3,20 +3,21 @@
 ## the test (`RunOptions.dialogs`), with the settings in a folder of the
 ## test's own:
 ##
-## - File > New project...: its window, the place chosen with Choose...,
+## - Project > New project...: its window, the place chosen with Choose...,
 ##   the data folder the file list lists given, Make the project: the
 ##   project is made and open, the title names it;
 ## - the survey imported (as the Import survey window does) is kept in it;
-## - File > Close project, then File > Recent projects: it opens again, its
+## - Project > Close project, then Project > Recent projects: it opens again, its
 ##   survey on the map without the import;
-## - a survey original that changed: File > Open project... opens it, the
+## - a survey original that changed: Project > Open project... opens it, the
 ##   Project window comes forward with Update from the original, and its
 ##   click copies the original in again;
 ## - the program started again opens the project that was open at the quit.
 ##
-## Seen to fail: with the Project window not brought forward when the
-## project offers an update, "the Project window offers the update" did not
-## happen (twice of two).
+## Seen to fail: with the project entries still under File, "Project > New
+## project..." did not happen. With the Project window not brought forward
+## when the project offers an update, "the Project window offers the update"
+## did not happen (twice of two).
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -98,10 +99,10 @@ withFixtures fx:
     steps.add Step(name: name, act: act, done: done)
   proc noop(f: FrameInfo) = discard
   proc menu(sub, item: string; chosen: seq[string]; then: proc (f: FrameInfo): bool) =
-    step("File > " & (if sub.len > 0: sub & " > " else: "") & item, proc (f: FrameInfo) =
+    step("Project > " & (if sub.len > 0: sub & " > " else: "") & item, proc (f: FrameInfo) =
       asked.setLen 0
       answer = chosen
-      f.click(f.markOf("menu.File").centre), proc (f: FrameInfo): bool =
+      f.click(f.markOf("menu.Project").centre), proc (f: FrameInfo): bool =
       let it = f.markOf("menu." & item)
       if it.size.x > 0 and wait mod 5 == 0: f.click(it.centre)
       elif sub.len > 0 and f.markOf("menu." & sub).size.x > 0:

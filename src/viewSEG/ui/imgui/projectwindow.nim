@@ -1,6 +1,6 @@
-## The project's windows (docs/project.md): "New project" (File > New
+## The project's windows (docs/project.md): "New project" (Project > New
 ## project...: a name, a place, the data folders, and what the session takes
-## along) and "Project" (File > Project...: the project open, its data
+## along) and "Project" (Project > Project...: the project open, its data
 ## folders found or missing with Locate..., its survey and whether each file
 ## is as it was copied in, with Update from the original when one changed,
 ## and Close project). Both float, as "File memory" does; the Project window
@@ -258,7 +258,7 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
     if not st.inProject:
       let opening = st.projectOpening
       igTextDisabled((if opening.len > 0: "Opening " & opening & "..." else:
-        "No project is open. File > New project... makes one; File > Open project... opens " &
+        "No project is open. Project > New project... makes one; Project > Open project... opens " &
         "one.").cstring)
     else:
       igTextUnformatted((IconFolder & "  " & p.doc.name).cstring, nil)

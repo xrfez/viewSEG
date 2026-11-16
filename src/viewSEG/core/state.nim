@@ -212,7 +212,7 @@ type
       ## draw a panel as a named display says; keep, rename or forget one
     ckTheme = "theme"                    ## the theme the program is drawn in, as View > Theme picks it
     ckNewProject = "new project"
-      ## make a project folder (File > New project) and open it: the session's files stay open
+      ## make a project folder (Project > New project) and open it: the session's files stay open
     ckOpenProject = "open project"
       ## open a project (its folder, or the project.nif in it): the files open and the survey
       ## on the map are closed, and the project's opened
@@ -3301,7 +3301,7 @@ proc sayEarlier(state: var AppState; path: string; c: FileRecord) =
       "(output again since " & (if c.opened != Time(): c.opened.local.format(
       "yyyy-MM-dd HH:mm") else: "it was last opened") & ": other contents): its " &
       keptWords(c.edits) & " are not applied. They are kept as an earlier output of " & name &
-      ", to look at, apply or forget (File > Project...).")
+      ", to look at, apply or forget (Project > Project...).")
 
 proc sayUnconfirmed(state: var AppState; i: int; c: FileRecord; why = "") =
   ## The edits an earlier run left, unconfirmed, for a file of `remembered[i]`'s

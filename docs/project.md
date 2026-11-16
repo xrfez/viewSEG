@@ -33,7 +33,7 @@ Morgantown 2026/            the project folder: this is what is opened
 ```
 
 - **A folder that holds a `project.nif` is a project**, wherever a folder is named to
-  the program: File > Open project..., File > Recent projects, the command line
+  the program: Project > Open project..., Project > Recent projects, the command line
   (`viewSEG <project folder>` or `viewSEG <project folder>/project.nif`), a drop on the
   window, a folder listed in Files. Such a folder is opened as the project, never listed;
   any other folder is a data folder, whatever it holds. (Double-clicking a project in the
@@ -261,7 +261,7 @@ filters and windows back.
 
 ## Opening, making and closing a project
 
-**File > New project...** opens its window: a name, the place the project's folder is made
+**Project > New project...** opens its window: a name, the place the project's folder is made
 in (`~/viewSEG projects`, on Windows `Documents\viewSEG projects`, by default; Choose...),
 the data folders (the folder Files lists, by default; Add a data folder...), and what the
 session takes along:
@@ -276,18 +276,18 @@ session takes along:
 The plot's filters are taken along too. The session then becomes the project's: the files
 open stay open.
 
-**File > Open project...** (a folder dialog), **File > Recent projects**, the command line
+**Project > Open project...** (a folder dialog), **Project > Recent projects**, the command line
 and a drop: what is pending of the session is written, the files open and the survey on
 the map are closed, and the project's opened: its document read, its lock taken, its
 data folders and survey originals looked at, its first data folder found listed, its
 survey made from `survey.bin`, its windows arranged as it left them. Everything is read on
-jobs; the window stays at frame rate. **File > Close project** writes what is pending,
+jobs; the window stays at frame rate. **Project > Close project** writes what is pending,
 closes its files and survey in the same way and goes back to working without a project,
 with the user's own windows, presets and filters. There is no Save: a project is written
 as it changes.
 
 **The window says which project is open:** the title (`viewSEG - Morgantown 2026`, with
-`(read-only)` when it is) and the **Project window** (File > Project...): its name and
+`(read-only)` when it is) and the **Project window** (Project > Project...): its name and
 place, why it is read-only, its data folders (found, missing with Locate..., each with
 List), Add a data folder..., the survey (its counts; on the map, loading, being copied;
 each file as copied in, changed, or its original not found; how long it took to make from

@@ -33,6 +33,11 @@ folder (`viewSEG --paths` shows where it is).
 | Close the file shown | Ctrl+W |
 | Quit | Ctrl+Q |
 
+**Project**, between File and Edit, holds this job's folder: **New project...** makes
+one, **Open project...** and **Recent projects** open one, **Project...** opens its
+window (ticked while it is open) and **Close project** goes back to working without one.
+The toolbar's Open project button is the same as **Project > Open project...**.
+
 Files and folders can also be dragged from a file manager and dropped on the window.
 
 **Survey files** (SPS source, receiver and relation files, `.s` `.r` `.x` or `.sps` `.rps`
