@@ -157,15 +157,19 @@ withFixtures fx:
 
   block aPilotOfAnotherFile:
     # the reference in another file (a pilot sweep's own file): chosen while
-    # that file is shown, kept open when the record is shown again
+    # that file is shown, kept open when the record is shown again. Frozen,
+    # so opening the pilot does not move the window off the record.
     let pilot = fx.pilotSegy()
+    var held = st.plots[0].params
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: held,
+      plotFrozen: true)
     st.apply Command(kind: ckOpen, paths: @[pilot])
     doAssert st.settle(st.sessions.len == 2 and st.panel(MainPanel).laidOut and
       st.sessions[st.shownFile(st.findPanel(MainPanel))].path == pilot)
     let other = st.sessions[st.findSession(st.sessions[1].id)]
     var p = st.plots[0].params
     p.reference = other.base
-    st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p)
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p, plotFrozen: true)
     doAssert st.settle(st.answered(0) and st.plots[0].result.gen == st.plots[0].asked)
     doAssert st.plots[0].result.problem == "", st.plots[0].result.problem
     doAssert "pilot.sgy" in st.plots[0].reference, st.plots[0].reference
@@ -176,8 +180,14 @@ withFixtures fx:
     s = st.sessions[st.findSession(s.id)]
     # back to the record's own pilot
     p.reference = -1
-    st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p)
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p, plotFrozen: true)
     doAssert st.settle(st.answered(0) and st.plots[0].result.gen == st.plots[0].asked)
+    # unfrozen, it follows the selection: put the four seismic traces back
+    st.apply Command(kind: ckSelect, traces: @[s.base + 1, s.base + 2, s.base + 3, s.base + 4],
+      mode: smReplace)
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p, plotFrozen: false)
+    doAssert st.plots[0].traces == @[s.base + 1, s.base + 2, s.base + 3, s.base + 4],
+      "unfrozen, it did not take the selection: " & $st.plots[0].traces
 
   block otherViews:
     for v in [avSpectrogram, avEnvelope, avPhase]:

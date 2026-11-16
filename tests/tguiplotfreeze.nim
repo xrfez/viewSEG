@@ -1,0 +1,150 @@
+## New plot windows in the running frontend, on samples/land/shots.sgy, then
+## samples/vib/vib_uncorrelated.sgd in the same plot.
+##
+## Three kinds (spectrogram, envelope, phase): a selection change is followed;
+## Freeze keeps one on its traces; opening the other file leaves the frozen
+## one on shots.sgy and moves the others; unfreezing follows.
+##
+## Seen to fail: with the windows locked to the traces that opened them,
+## "an unfrozen window did not follow the selection".
+##
+## Break to see it fail: in `followPlots`, skip the repick.
+##
+## Needs a display: run under the tester (it gives each test its own).
+
+import std/[math, options, os, strutils]
+import viewSEG/core/[geometry, state]
+import viewSEG/ui/imgui/app
+import utils/fixtures
+
+const root = currentSourcePath().parentDir.parentDir
+let land = root / "samples" / "land" / "shots.sgy"
+let vib = root / "samples" / "vib" / "vib_uncorrelated.sgd"
+
+type
+  Step = object
+    name: string
+    act: proc (f: FrameInfo)
+    done: proc (f: FrameInfo): bool
+
+func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
+
+template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
+
+proc answered(f: FrameInfo): bool =
+  let tiles = f.core.tiles(f.core.findPanel(MainPanel))
+  f.panel.laidOut and tiles.len > 0 and tiles[^1].request == f.panel.pending and
+    f.panel.pending.gen == f.panel.requestGen
+
+doAssert fileExists(land) and fileExists(vib)
+
+withFixtures fx:
+  var steps: seq[Step] = @[]
+  var pointAt: Vec2
+  var frozenTraces: seq[int] = @[]
+  var frozenFile = ""
+  proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+    steps.add Step(name: name, act: act, done: done)
+  proc noop(f: FrameInfo) = discard
+  proc after(n: int): proc (f: FrameInfo): bool =
+    var frames = 0
+    result = proc (f: FrameInfo): bool =
+      inc frames
+      frames >= n
+  proc to(mark: string) =
+    step("to " & mark, proc (f: FrameInfo) =
+      let r = f.markOf(mark)
+      doAssert r.size.x > 0, mark & " is not shown"
+      pointAt = r.centre
+      f.moveMouse(pointAt), after(3))
+  proc click(mark: string) =
+    to(mark)
+    step("click " & mark, proc (f: FrameInfo) =
+      f.pressMouse(pointAt, true, 1)
+      f.pressMouse(pointAt, false, 1), after(3))
+
+  step("shots.sgy", noop, proc (f: FrameInfo): bool =
+    f.answered and f.core.sessions.len == 1 and f.core.sessions[0].name == "shots.sgy")
+  step("two selected", proc (f: FrameInfo) =
+    let b = f.core.sessions[0].base
+    f.apply(Command(kind: ckSelect, traces: @[b, b + 1], mode: smReplace)),
+    proc (f: FrameInfo): bool = f.core.selection.selectedCount == 2)
+  step("three plots", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckOpenPlot, plotView: avSpectrogram))
+    f.apply(Command(kind: ckOpenPlot, plotView: avEnvelope))
+    f.apply(Command(kind: ckOpenPlot, plotView: avPhase)),
+    proc (f: FrameInfo): bool =
+      result = f.core.plots.len == 3 and not f.core.plots[0].waiting and
+        not f.core.plots[1].waiting and not f.core.plots[2].waiting
+      if result:
+        let b = f.core.sessions[0].base
+        doAssert f.core.plots[0].traces == @[b, b + 1]
+        doAssert f.core.plots[1].traces == @[b] and f.core.plots[2].traces == @[b])
+  step("selection of three", proc (f: FrameInfo) =
+    let b = f.core.sessions[0].base
+    f.apply(Command(kind: ckSelect, traces: @[b + 4, b + 5, b + 6], mode: smReplace)),
+    proc (f: FrameInfo): bool =
+      let b = f.core.sessions[0].base
+      doAssert f.core.plots[0].traces == @[b + 4, b + 5, b + 6],
+        "an unfrozen window did not follow the selection: " & $f.core.plots[0].traces
+      doAssert f.core.plots[1].traces == @[b + 4] and f.core.plots[2].traces == @[b + 4]
+      true)
+  click("new plot 3.freeze")
+  step("phase frozen", noop, proc (f: FrameInfo): bool =
+    result = f.core.plots[2].frozen
+    if result:
+      frozenTraces = f.core.plots[2].traces
+      frozenFile = f.core.plots[2].file)
+  step("selection while frozen", proc (f: FrameInfo) =
+    let b = f.core.sessions[0].base
+    f.apply(Command(kind: ckSelect, traces: @[b + 8, b + 9], mode: smReplace)),
+    proc (f: FrameInfo): bool =
+      let b = f.core.sessions[0].base
+      doAssert f.core.plots[2].traces == frozenTraces and f.core.plots[2].file == frozenFile,
+        "a frozen window followed the selection"
+      doAssert f.core.plots[0].traces == @[b + 8, b + 9],
+        "an unfrozen window did not follow: " & $f.core.plots[0].traces
+      true)
+  step("open the vib file", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckShowFile, panel: MainPanel, path: vib)),
+    proc (f: FrameInfo): bool =
+      let k = f.core.findPanel(MainPanel)
+      let i = f.core.shownFile(k)
+      result = i >= 0 and f.core.sessions[i].path == vib and f.answered
+      if result:
+        doAssert f.core.plots[2].traces == frozenTraces and f.core.plots[2].file == frozenFile,
+          "a frozen window followed the new file: " & f.core.plots[2].file
+        doAssert "vib_uncorrelated.sgd" in f.core.plots[0].file,
+          "an unfrozen window did not follow the new file: " & f.core.plots[0].file
+        doAssert "vib_uncorrelated.sgd" in f.core.plots[1].file, f.core.plots[1].file)
+  click("new plot 3.freeze")
+  step("unfrozen, it follows", noop, proc (f: FrameInfo): bool =
+    result = not f.core.plots[2].frozen and "vib_uncorrelated.sgd" in f.core.plots[2].file and
+      f.core.plots[2].traces != frozenTraces)
+
+  var at = 0
+  var started = false
+  var wait = 0
+  var failed = ""
+  proc onFrame(f: FrameInfo) =
+    if at >= steps.len or failed.len > 0:
+      f.stop()
+      return
+    if not started:
+      steps[at].act(f)
+      started = true
+      wait = 0
+    else:
+      inc wait
+      if wait >= 2 and steps[at].done(f):
+        inc at
+        started = false
+      elif wait > 900:
+        failed = steps[at].name & " did not happen"
+        f.stop()
+  let code = run(RunOptions(openPaths: @[land], windowSize: (1600, 1000), theme: forceDark,
+    userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+    onFrame: onFrame))
+  doAssert code == 0, "run() exit code " & $code
+  doAssert failed.len == 0, failed
+  doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
