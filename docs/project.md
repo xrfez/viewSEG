@@ -154,6 +154,16 @@ second.
   (the same size and ends, one trace in the middle re-processed), they are taken off
   again and Messages says so. With another modification time, they wait for that hash
   and are never shown on another file.
+- **Edits made during the check are the user's own, kept apart.** The brought-back
+  document is not written until the hash agrees. What the user does meanwhile goes into
+  a record of its own (the quick identity and the modification time, no hash of every
+  byte). When the hash agrees, it joins the document. When it differs, the brought-back
+  edits are taken off and the user's own stay as this file's record; Messages says
+  both. A quit during the check leaves the brought-back document as it was; the next
+  open of a file of that size, ends and time brings the unconfirmed edits back as
+  provisional and binds them to whatever hash that file then has, and one of another
+  time is listed as an earlier output, not applied. (An edit the user took off a
+  brought-back one during the check is not kept by a quit.)
 - **An earlier output is said, kept and listed.** When the file at a path is not the
   one the edits there were made on, Messages says it once ("line7.sgy is not the file
   your edits were made on (output again since 2026-11-14 10:32: other contents): its

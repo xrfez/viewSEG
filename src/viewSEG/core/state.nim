@@ -651,6 +651,12 @@ type
       ## the document `doc` as it was brought back before the hash of every
       ## byte confirmed it: written back as it was when the hash says it
       ## was another file's
+    provDocs: seq[string]
+      ## the documents holding edits that are not confirmed by a hash of every
+      ## byte: those made while `brought` was being checked (written here, never
+      ## into the brought document), and those a run that quit during a check
+      ## left. Joined into the file's document once the hash agrees, or made its
+      ## own record when it differs; removed after.
     savedRev: int ## the edits' `keptRevision` written last
     changedAt: MonoTime ## when its kept edits changed last
     opened: Time ## when it was opened
@@ -1138,10 +1144,62 @@ proc writePending(state: var AppState; i: int) =
       "the edits of " & r.path.extractFilename & " kept by its path", EditLists(), NoDoc)
     r.pending = true
 
+proc readOnlyProject(state: AppState): bool =
+  ## A project is open and another program has it: nothing is written into
+  ## its store (what is remembered is kept in memory for the session).
+  state.project.dir.len > 0 and state.project.readOnly
+
+proc dropProvisional(state: var AppState; i: int) =
+  ## Removes the documents of `remembered[i]`'s edits that no hash has
+  ## confirmed (`provDocs`): their edits are in its own document by now.
+  template r: untyped = state.remembered[i]
+  for d in r.provDocs:
+    if not state.readOnlyProject:
+      state.diskIo.remove(state.store.docPath(d), "what is remembered about " &
+        r.path.extractFilename & " (unconfirmed)")
+    state.knownDocs.del d
+  r.provDocs.setLen 0
+
+proc writeProvisional(state: var AppState; i: int) =
+  ## While `remembered[i]`'s brought document is being checked: the document
+  ## itself is not written. The edits made since it was brought back go into
+  ## a record of their own, of the file's quick identity and modification time,
+  ## without a hash of every byte (what a quit during the check leaves), or
+  ## none when there are none.
+  template r: untyped = state.remembered[i]
+  let key = state.keyOf(r.path)
+  r.savedRev = if key in state.edits: state.edits[key].keptRevision else: 0
+  let own = if key in state.edits: state.edits[key].kept.minus(r.brought.edits) else: EditLists()
+  if own.isEmpty:
+    state.dropProvisional(i)
+    return
+  var rec = FileRecord(identity: FileIdentity(size: r.identity.size, quick: r.identity.quick),
+    name: r.path.extractFilename, path: r.path, opened: r.opened, modified: r.modified, edits: own)
+  for s in state.sessions:
+    if s.path == r.path: rec.traces = s.len
+  if r.provDocs.len == 0:
+    var taken = r.waiting.mapIt(it.doc) & r.taken
+    for x in state.remembered: taken.add x.doc
+    for x in state.remembered: taken.add x.provDocs
+    for d in state.knownDocs.keys: taken.add d
+    r.provDocs.add freeDocName(rec.identity, taken)
+  rec.doc = r.provDocs[0]
+  state.knownDocs[rec.doc] = rec
+  state.diskIo.replace(state.store.docPath(rec.doc), move rec, "the edits made on " &
+    r.path.extractFilename & " while what is remembered was being checked")
+  for d in r.provDocs[1 .. ^1]: # joined into the first
+    state.diskIo.remove(state.store.docPath(d), "what is remembered about " &
+      r.path.extractFilename & " (unconfirmed)")
+    state.knownDocs.del d
+  r.provDocs.setLen 1
+
 proc writeMemoryDoc(state: var AppState; i: int) =
   ## Hands `remembered[i]`'s document to the disk thread, or its removal
   ## when it keeps nothing.
   template r: untyped = state.remembered[i]
+  if not r.hashed and r.brought.doc.len > 0:
+    state.writeProvisional(i)
+    return
   let name = r.path.extractFilename
   var rec = state.recordOf(i)
   let key = state.keyOf(r.path)
@@ -1160,6 +1218,7 @@ proc writeMemoryDoc(state: var AppState; i: int) =
         name, base, expect)
       state.knownDocs.del r.doc
     state.dropPending(i)
+    state.dropProvisional(i)
     return
   if r.doc.len == 0: # the same file under another path may have one
     for x in state.remembered:
@@ -1168,7 +1227,9 @@ proc writeMemoryDoc(state: var AppState; i: int) =
     rec.doc = r.doc
   if r.doc.len == 0:
     var taken = r.waiting.mapIt(it.doc) & r.taken
-    for x in state.remembered: taken.add x.doc
+    for x in state.remembered:
+      taken.add x.doc
+      taken.add x.provDocs
     for d in state.knownDocs.keys: taken.add d
     r.doc = freeDocName(r.identity, taken)
     r.ownDoc = true
@@ -1177,6 +1238,7 @@ proc writeMemoryDoc(state: var AppState; i: int) =
   state.diskIo.replace(state.store.docPath(r.doc), move rec, "what is remembered about " & name,
     base, expect)
   state.dropPending(i) # written after the document: the edits are never on neither
+  state.dropProvisional(i)
   for x in state.remembered.mitems: # the other paths of the file: written with it
     if x.doc == r.doc: x.savedRev = r.savedRev
   if not r.identity.fullKnown: state.hashFile(i)
@@ -2947,11 +3009,6 @@ proc identify(state: var AppState; s: Session) =
     lane: jlInteractive), identifyWork(s.path, state.store, state.inbox.poster))
   state.memoryWork.add r.job
 
-proc readOnlyProject(state: AppState): bool =
-  ## A project is open and another program has it: nothing is written into
-  ## its store (what is remembered is kept in memory for the session).
-  state.project.dir.len > 0 and state.project.readOnly
-
 proc applyRecord(state: var AppState; i: int; c: FileRecord) =
   ## Brings back what document `c` remembers about `remembered[i]`'s file,
   ## and says so.
@@ -3103,6 +3160,23 @@ proc sayEarlier(state: var AppState; path: string; c: FileRecord) =
       keptWords(c.edits) & " are not applied. They are kept as an earlier output of " & name &
       ", to look at, apply or forget (File > Project...).")
 
+proc takeUnconfirmed(state: var AppState; i: int; c: FileRecord) =
+  ## The edits an earlier run left for a file of `remembered[i]`'s quick
+  ## identity and modification time that it had not confirmed (the program
+  ## quit while they were being checked): shown as provisional, kept apart
+  ## (`provDocs`), bound to whatever hash of every byte this file has.
+  template r: untyped = state.remembered[i]
+  r.provDocs.add c.doc
+  state.knownDocs[c.doc] = c
+  if c.edits.isEmpty: return
+  let name = r.path.extractFilename
+  state.edits.mgetOrPut(state.keyOf(r.path), FileEdits()).remembered(c.edits)
+  state.log.add(sevInfo, name, name & ": " & keptWords(c.edits) & ", made on a file of its " &
+    "size, ends and time that was not confirmed before the program quit (" &
+    (if c.opened != Time(): c.opened.local.format("yyyy-MM-dd HH:mm") else: "earlier") &
+    "); provisional until its whole content is compared.")
+  state.editsChanged(r.path)
+
 func earlierOf*(state: AppState; path: string): seq[FileRecord] =
   ## What is remembered about earlier outputs of the name of open file
   ## `path`: other files, whose edits are not its own.
@@ -3145,10 +3219,16 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
     if d notin r.taken and c.identity.size == r.identity.size and
         c.identity.quick == r.identity.quick:
       cands.add c
-  var at = -1
+  var at = -1 # a record of the full hash first: another is an unconfirmed one's
   for j, c in cands:
-    if at < 0 and c.modified == r.modified: at = j
-  if at >= 0: state.applyRecord(i, cands[at])
+    if c.modified == r.modified and
+        (at < 0 or (c.identity.fullKnown and not cands[at].identity.fullKnown)): at = j
+  if at >= 0:
+    state.applyRecord(i, cands[at])
+    for j, c in cands:
+      if j != at and not c.identity.fullKnown:
+        if c.modified == r.modified: state.takeUnconfirmed(i, c)
+        elif c.path == r.path: state.sayEarlier(r.path, c) # another output, same quick identity
   else: r.waiting = cands
   if m.pending.doc.len > 0: state.takePending(i, m.pending, m.pendingFits)
   if cands.len > 0 or not state.editsAt(r.path).kept.isEmpty: state.hashFile(i)
@@ -3184,13 +3264,21 @@ proc takeHashed(state: var AppState; m: sink Msg) =
       r.savedRev = state.edits[state.keyOf(r.path)].keptRevision
       (r.doc, r.ownDoc, r.brought) = ("", false, FileRecord())
       state.editsChanged(r.path)
+  let wasChecking = r.brought.doc.len > 0
   if r.doc.len > 0 and r.identity.fullKnown and r.identity.full != m.hashed.full:
     state.unlink(r.path) # the other paths of the file keep their edits
     let other = state.knownDocs.getOrDefault(r.doc)
+    let key = state.keyOf(r.path)
+    # What the user did on this file since the other's edits were brought
+    # back is this file's own: kept, as its record.
+    let own = if r.brought.doc == r.doc and key in state.edits:
+        state.edits[key].kept.minus(r.brought.edits)
+      else: EditLists()
     state.log.add(sevWarning, name, name & " begins and ends as the file remembered as " &
       other.name & " did, but its content differs: the edits remembered for that file, " &
       "brought back while it was checked, are taken away from it (they stay remembered for " &
-      "that file).")
+      "that file)" & (if own.isEmpty: "." else: "; your own edits made on " & name &
+      " meanwhile (" & keptWords(own) & ") stay with it."))
     var was = if r.brought.doc == r.doc: r.brought else: other
     if was.path == r.path:
       state.sayEarlier(r.path, was)
@@ -3198,22 +3286,24 @@ proc takeHashed(state: var AppState; m: sink Msg) =
       if not state.readOnlyProject:
         state.diskIo.remove(state.store.docPath(r.doc).seenName, "when " & name & " was opened")
       r.seenAside = false
-    if r.brought.doc == r.doc:
-      # What was written of this file meanwhile (its name, its edits) went
-      # into the other file's document: that one is put back as it was.
-      state.knownDocs[r.doc] = r.brought
-      if not state.readOnlyProject:
-        state.diskIo.replace(state.store.docPath(r.doc), r.brought,
-          "what is remembered about " & r.brought.name)
+    # The other file's document was never written while it was checked
+    # (`writeProvisional`): it stands as it was.
+    if r.brought.doc == r.doc: state.knownDocs[r.doc] = r.brought
     else: state.knownDocs.del r.doc
     r.brought = FileRecord()
     r.doc = ""
-    state.edits.mgetOrPut(state.keyOf(r.path), FileEdits()).forget()
-    r.savedRev = state.edits[state.keyOf(r.path)].keptRevision
+    state.edits.mgetOrPut(key, FileEdits()).forget()
+    if own.isEmpty:
+      r.savedRev = state.edits[key].keptRevision
+      state.dropProvisional(i)
+    else:
+      state.edits[key].remembered(own)
+      r.savedRev = -1 # a record of its own, with the hash it gets below
     state.editsChanged(r.path)
   r.identity = m.hashed
   r.hashed = true
   r.brought = FileRecord() # confirmed
+  if wasChecking and r.doc.len > 0: r.savedRev = -1 # seen now; with what was made meanwhile
   if r.doc.len == 0 or r.ownDoc:
     # What waited for the hash; also when edits made meanwhile have a
     # document of their own already: that one then gives way to the one
@@ -3226,6 +3316,8 @@ proc takeHashed(state: var AppState; m: sink Msg) =
         state.applyRecord(i, c)
       elif c.path == r.path and c.identity.fullKnown and c.identity.full != r.identity.full:
         state.sayEarlier(r.path, c) # the same size and ends, other contents
+      elif c.path == r.path and not c.identity.fullKnown and c.modified != r.modified:
+        state.sayEarlier(r.path, c) # an unconfirmed output of another time
     if own.len > 0 and r.doc != own:
       if not state.readOnlyProject:
         state.diskIo.remove(state.store.docPath(own), "what is remembered about " & name)
