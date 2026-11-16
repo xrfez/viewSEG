@@ -37,7 +37,7 @@ import std/[intsets, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import viewSEG/core/[fielddocs, inspector, state]
-import viewSEG/view/headerviews
+import viewSEG/view/[byteview, headerviews]
 import utils/[fixtures, waiting]
 
 func valueOf(lines: openArray[SummaryLine]; label: string; nth = 0): string =
@@ -548,3 +548,85 @@ block wordsOfHeaderBlocks:
   doAssert bytesText(1) == "1 byte" and bytesText(2048) == "2 048 bytes (2.0 KiB)"
   doAssert latin1("caf\xE9\x01") == "café."
   doAssert exactText(2.0) == "2" and exactText(0.1) == "0.1"
+
+block findAField:
+  # Find in a header table keeps the fields whose description, name or
+  # value holds the text, each under its block's title.
+  let rows = @[FieldRow(blockName: "binary", field: "jobId", description: "Job identification",
+    value: "7", offset: 3200, size: 4, blockOffset: 3200, blockSize: 400),
+    FieldRow(blockName: "binary", field: "sampleInterval", description: "Sample interval",
+    value: "2000", offset: 3216, size: 2, blockOffset: 3200, blockSize: 400)]
+  let t = fieldTable([rows], ["Value"], skSegy)
+  doAssert t.rows.len == 3 and t.rows[0].title.len > 0
+  doAssert t.rows[2].at == @[3216'i64] and t.rows[2].size == 2 and t.rows[2].blockName == "binary"
+  let f = filtered(t, "INTERVAL")
+  doAssert f.rows.len == 2 and f.rows[0].title == t.rows[0].title and
+    f.rows[1].name == "binary.sampleInterval", $f.rows.len
+  doAssert filtered(t, "2000").rows.len == 2, "a value is not found"
+  doAssert filtered(t, "nothing").rows.len == 0
+  doAssert filtered(t, " ").rows.len == 3
+
+block bytesReadEveryWay:
+  # The hex pane's readings of a field's bytes.
+  proc value(r: seq[Reading]; label: string): string =
+    for x in r:
+      if x.label == label: return x.value
+  let two = byteReadings([0x07'u8, 0xD0])
+  doAssert two.value("Integer, big-endian") == "2000" and
+    two.value("Integer, little-endian") == "-12281" and two.value("Unsigned, little-endian") ==
+    "53255", $two
+  doAssert two.value("BCD") == "not BCD (a nibble past 9)"
+  doAssert byteReadings([0x20'u8, 0x00]).value("BCD") == "2000"
+  let four = byteReadings([0x42'u8, 0x64, 0x00, 0x00]) # IBM 100.0; IEEE 57.0
+  doAssert four.value("IBM float") == "100" and four.value("IEEE float, big-endian") == "57"
+  doAssert four.value("Text") == "Bd.." and four.value("Bytes") == "42 64 00 00"
+  doAssert byteReadings([1'u8, 2, 3]).value("Unsigned, little-endian") == "197121"
+  doAssert byteReadings([0xFF'u8]).value("Signed") == "-1"
+  let eight = byteReadings([0x40'u8, 0x59, 0, 0, 0, 0, 0, 0])
+  doAssert eight.value("IEEE float, big-endian") == "100"
+  doAssert byteReadings([1'u8, 2, 3, 4, 5]).len == 0
+  doAssert dumpColumn(0) == 10 and dumpColumn(7) == 31 and dumpColumn(8) == 35
+
+block blocksForTheHexPane:
+  # The bytes of the blocks with named fields are read with the file (the
+  # binary header), with a SEG-D record's headers and with a trace's.
+  withFixtures fx:
+    var st = initAppState()
+    let s = st.shown(fx.surveySegy())
+    var binary = -1
+    for i, b in s.facts.blocks:
+      if b.blockName == "binary": binary = i
+    doAssert binary >= 0 and s.facts.blocks[binary].offset == 3200 and
+      s.facts.blocks[binary].bytes.len == 400, $s.facts.blocks.len
+    st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders})
+    st.apply Command(kind: ckSelect, traces: @[s.base + 1], mode: smReplace)
+    doAssert st.settle(not st.inspection.waiting and st.inspection.answer.traces.len == 1 and
+      st.inspection.answer.traces[0].rows.len > 0)
+    let d = st.inspection.answer.traces[0]
+    doAssert d.blocks.len >= 1 and d.blocks[0].blockName == "trace" and
+      d.blocks[0].bytes.len == 240, $d.blocks.len
+    st.shutdown()
+    var sd = initAppState()
+    discard sd.shown(fx.twoSetSegd())
+    sd.apply Command(kind: ckInspect, inspect: {ipRecord})
+    doAssert sd.settle(not sd.inspection.waiting and sd.inspection.answer.record.rows.len > 0)
+    doAssert sd.inspection.answer.record.blocks.len > 0 and
+      sd.inspection.answer.record.blocks[0].blockName == "gh1",
+          $sd.inspection.answer.record.blocks.len
+    sd.shutdown()
+
+block stanzasOfTheDemoLine:
+  # The demo post-stack line's extended textual headers: their stanzas,
+  # each with its text or its bytes.
+  withFixtures fx:
+    for name in demoFileNames:
+      var st = initAppState()
+      let s = st.shown(fx.demoFile(name))
+      if s.file.kind == skSegy and s.facts.extendedText.len > 0:
+        doAssert s.facts.stanzas.len > 0, name & ": no stanza"
+        var text = false
+        for f in s.facts.stanzas:
+          doAssert f.key.len > 0 and ":" in f.key
+          if f.kind == skText and f.text.len > 0: text = true
+        doAssert text, name & ": no text stanza"
+      st.shutdown()

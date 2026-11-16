@@ -36,7 +36,8 @@
 ##  (join (trailingDigits false) (multiComponent false) (coordinates fill)
 ##   (recordMatch auto) (traceMatch auto) (lineNames (line "CLT4960" 4960)))
 ##  (headers (tab summary) (traceTab header) (followPointer true) (asDisplayed false)
-##   (columns description bytes))
+##   (columns description bytes) (tableFields "keys.record" "keys.channel")
+##   (tableScope record))
 ##  (hideKilled false)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
@@ -60,7 +61,7 @@
 ## making old files unreadable.
 
 import std/strutils
-import geometry, join, log, nif, panels, readout, scales, settings
+import geometry, join, log, nif, panels, readout, scales, settings, tracetable
 
 export nif
 
@@ -97,7 +98,8 @@ const
   FieldNames: array[HeaderField, string] = ["rcvLine", "rcvPoint", "component", "channel",
     "ffid", "srcLine", "srcPoint", "offset", "cdp", "inline", "crossline", "trace"]
   SeverityNames: array[Severity, string] = ["info", "warning", "error", "fatal"]
-  HeadersTabNames: array[HeadersTab, string] = ["summary", "fileHeaders", "trace"]
+  HeadersTabNames: array[HeadersTab, string] = ["summary", "fileHeaders", "trace", "traceTable"]
+  TableScopeNames: array[TableScope, string] = ["record", "file"]
   TraceTabNames: array[TraceTab, string] = ["header", "data"]
   HeaderColumnNames: array[HeaderColumn, string] = ["description", "name", "bytes", "offset"]
   SpectrumScaleNames: array[SpectrumScale, string] = ["db", "linear"]
@@ -119,7 +121,8 @@ func persistedNames*(): seq[seq[string]] =
   @[@ModeNames, @BandNames, @DcNames, @FillNames, @ColourNames, @ColourMapNames, @GainNames,
     @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
-    @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames]
+    @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames,
+    @TableScopeNames]
 
 # ----------------------------------------------------------------- writing --
 
@@ -351,6 +354,10 @@ proc settingsDocument*(s: Settings): string =
   w.open("columns")
   for c in s.headers.columns: w.ident HeaderColumnNames[c]
   w.close()
+  w.open("tableFields")
+  for f in s.headers.tableFields: w.add f
+  w.close()
+  w.choice("tableScope", TableScopeNames[s.headers.tableScope])
   w.close()
   w.value("hideKilled", s.hideKilled)
   w.open("spectrum")
@@ -826,6 +833,14 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
               var x = hcDescription
               if r.pick(v, HeaderColumnNames, "columns", x): shown.incl x
             result.headers.columns = shown
+          elif k.isTree("tableFields"):
+            var got: seq[string]
+            for v in k.kids:
+              if v.kind != nkString or not usableText(v.text) or v.text.len > 200:
+                r.unusable(v, k.tag, "strings")
+              elif v.text notin got and got.len < MaxTableColumns: got.add v.text
+            result.headers.tableFields = got
+          elif k.isTree("tableScope"): r.choice(k, TableScopeNames, result.headers.tableScope)
           else: r.unknown(k, "headers")
       of "hideKilled": r.flag(c, result.hideKilled)
       of "spectrum":

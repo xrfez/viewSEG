@@ -113,7 +113,8 @@ import analysis, analysisreader, closer, diskio, edits, filejobs, filelist, file
 export analysis, edits, filelist, filememory, identity, inbox, jobs, join, layouts, log,
   mapstate, panels, persist, pick, project, recordqc, selection, session, settings, shots,
   spectra, spread, survey, threads, tiles, zoom
-export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues
+export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues, MaxTableRows
+export tracetable
 export WatchInterval
 
 const
@@ -345,8 +346,12 @@ type
         ## (off the UI thread) until they change: the SEG-D record's headers
         ## of the record the plot shows (File headers), the header fields or
         ## the samples of the traces its Trace tab is about (the selection,
-        ## else the trace under the pointer); none when the window is hidden.
-        ## Changes nothing else: what was read is in `state`'s `headers`
+        ## else the trace under the pointer), the trace table's rows; none
+        ## when the window is hidden. Changes nothing else: what was read is
+        ## in `state`'s `headers`
+      table*: TableView
+        ## the trace table's columns, scope, order, Find, rows on screen and
+        ## graph, while it is on screen
     of ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel, ckSpectrumCursor,
         ckStepTrace:
       spectrum*: int
@@ -633,6 +638,9 @@ type
       ## the geometry joins ended so far (`joinReport.serial`): a join
       ## changes the keys the Trace tab shows (read here, never the file's
       ## `keysRevision`, which a join's job writes)
+    table: TableView ## the trace table's, when on screen
+    tableOf: (SessionId, Slice[int])
+      ## the trace table's file and the traces it has rows for; NoSession for none
 
   LiveKey = object
     ## What the live spectrum panel was asked for: a new request when it
@@ -2469,6 +2477,15 @@ proc followInspect(state: var AppState) =
       if r >= 0: want.record = (s.id, r)
   let traceParts = ins.parts * {ipTraceHeaders, ipTraceSamples}
   if traceParts != {}: want.traces = ins.chosen.traces
+  want.tableOf = (NoSession, 0 .. -1)
+  if ipTable in ins.parts and shown >= 0:
+    let s = state.sessions[shown]
+    let g = state.panels[k].layers[0].source.gather
+    let scope = if ins.table.scope == tsFile: 0 ..< s.len
+                elif g in 0 ..< s.gathers.len: s.gathers[g].traces
+                else: 0 .. -1
+    want.tableOf = (s.id, scope)
+    want.table = ins.table
   want.joins = state.joinReport.serial
   want.displayed = view.asDisplayed and ipTraceSamples in ins.parts
   if want.displayed:
@@ -2483,12 +2500,14 @@ proc followInspect(state: var AppState) =
   template was: untyped = state.asked
   if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
       want.joins == was.joins and want.displayed == was.displayed and
+      want.table == was.table and want.tableOf == was.tableOf and
       want.shown == was.shown and want.record == was.record and
       want.flow == was.flow and want.display.sameProcessing(was.display, want.flow[2]):
     return
   state.asked = want
-  if want.record[0] == NoSession and want.traces.len == 0:
-    if ins.answer.traces.len > 0 or ins.answer.recordPath.len > 0:
+  if want.record[0] == NoSession and want.traces.len == 0 and want.tableOf[0] == NoSession:
+    if ins.answer.traces.len > 0 or ins.answer.recordPath.len > 0 or
+        ins.answer.table.path.len > 0:
       ins.answer = Inspected()
       inc ins.revision
     ins.waiting = false
@@ -2517,6 +2536,9 @@ proc followInspect(state: var AppState) =
     req.flow = layer.displayPipeline(state.gatherKind(layer))
     req.filters = layer.processing.filterPipeline(state.panels[k].layout)
     req.filterAux = layer.processing.aux
+  if want.tableOf[0] != NoSession:
+    req.table = TableAsk(at: state.fileOf(req, held, state.findSession(want.tableOf[0])),
+      traces: want.tableOf[1], view: want.table, joins: want.joins)
   for n, t in want.traces:
     let i = state.findTrace(t)
     if i >= 0:
@@ -6464,6 +6486,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
         "of " & file & ": it shows what it had read. Retry reads again.")
   of ckInspect:
     state.inspect.parts = cmd.inspect # read for by `followInspect`, after every command
+    state.inspect.table = cmd.table
   of ckSpectrum: state.openSpectrum(cmd)
   of ckSpectrumDisplay: state.showSpectrum(cmd)
   of ckCloseSpectrum: state.closeSpectrum(cmd)

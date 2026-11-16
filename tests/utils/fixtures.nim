@@ -453,6 +453,23 @@ proc manyTracesSegy*(fx: Fixtures; traces: int; samples = 4): string =
     w.writeTrace(k, buf)
   w.checkClose()
 
+proc millionTracesSegy*(fx: Fixtures): string =
+  ## A million traces of one sample: 1000 records (FFID 1 .. 1000) of 1000
+  ## channels, record by record. About 244 MB, written once per fixture
+  ## folder.
+  result = fx.dir / "million-traces.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: a million one-sample traces"]))
+  let buf = [1'f32]
+  for r in 1 .. 1000:
+    for c in 1 .. 1000:
+      var k = initTraceKeys()
+      (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (float64(r), float64(c), 0.0,
+        1000.0, tsLive)
+      w.writeTrace(k, buf)
+  w.checkClose()
+
 proc noIntervalSegy*(fx: Fixtures): string =
   ## One record of 4 traces of `LongSamples` samples (a 25 Hz sine at 2 ms)
   ## whose headers give no sample interval (0).

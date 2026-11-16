@@ -647,7 +647,7 @@ or behind another tab.
 ## Headers
 
 The **Headers** window (Window > Headers) shows what the file in the Seismic window
-holds, read-only, in three tabs:
+holds, read-only, in four tabs:
 
 - **Summary:** what the file is, in plain words: its standard and revision, byte order,
   textual header's character set, sample format, how many traces and records, the field
@@ -669,7 +669,10 @@ holds, read-only, in three tabs:
   data trailer when it has one. SEG-D, of the record shown: **General** (its general
   headers, typed blocks included), **Channel sets** (one column per channel set, so they
   compare at a glance; 64 side by side, with Previous and Next for a record with more), and **Extended**, **External**, a skew or a trailer when the record
-  has them, shown as their bytes (offset, hexadecimal, text). SEG-2: **File**.
+  has them, shown as their bytes (offset, hexadecimal, text). SEG-2: **File**. A SEG-Y
+  file's extended textual headers also have **Stanzas** (each stanza by its name: its
+  text, or a binary one's bytes) and **User data** (each attachment's label, format,
+  description, creator and bytes) when they hold any.
 - **Trace:** the selected traces (in the plot, or a receiver's on the map), or, with none
   selected and **Follow the pointer** on (the default), the trace under the pointer in the
   plot (or the traces of the receiver under it on the map); the trace pointed at last
@@ -686,6 +689,26 @@ holds, read-only, in three tabs:
   bar's amplitude reads); the row at the time under the pointer in the plot is marked and
   kept in view. A line says so when the file gives no sample interval (the times then
   count samples, 1 ms each) or a trace has no samples.
+- **Trace table:** a row per trace of the record shown, or of **The whole file**, with
+  the header fields you choose as columns (**Columns...**: the keys the plot and the map
+  use, layout-aware inline and crossline and the values a survey import gave included,
+  then every field of the traces, with a filter to find one). Click a column's header to
+  sort by it, again for the other way; **Find** keeps the rows whose chosen column holds
+  a value (`1001`) or a value in a range (`1001..1010`); **Graph** draws a column along
+  the rows above the table, the rows in view shaded. The rows are linked with the plot
+  and the map: point at a row and its trace lights up in both, click to select it
+  (Ctrl+click adds or takes away, Shift+click selects a range), double-click to show its
+  record; selected rows are marked, and so is the row of the trace under the plot's
+  pointer. Right-click a row to copy it or every row read. Only the rows on screen are
+  read; a column you sort, find or graph by is read whole once, in the background (a
+  million traces scroll at frame rate).
+
+Above each header table, **Find** keeps the fields whose description, name or value holds
+what you type (**Clear** brings them all back). Click a value to see its field's bytes
+below the table: its block in hexadecimal and as text with the field's bytes
+highlighted, and those bytes read every way a header could hold them (whole numbers
+big- and little-endian, signed and not, IEEE and IBM floats, BCD, text), so a value read
+in the wrong byte order or format shows what it would be; click it again to hide them.
 
 The header tables list each field's **Description** (cut to fit a narrow window: point at it
 to read it whole), its values and its **Bytes** (in its block, from 1, as the standards

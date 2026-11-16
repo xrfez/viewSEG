@@ -23,7 +23,7 @@
 
 import std/[math, strutils]
 import parseSEG
-import fielddocs, openchoice
+import fielddocs, openchoice, tracetable
 
 export FileSummary, ChannelSetSummary, JoinGroup, openchoice
 
@@ -52,6 +52,31 @@ type
     size*: int        ## the block's size
     bytes*: seq[byte] ## its first `MaxRawBytes` at most
 
+  StanzaKind* = enum
+    ## What a SEG-Y extended textual stanza holds.
+    skText = "text"
+    skBinary = "binary"
+    skUserData = "user data"
+    skEnd = "end"
+
+  StanzaFact* = object
+    ## One stanza of a SEG-Y file's extended textual headers.
+    key*: string         ## `SEG:LAYOUT`, as the standard matches them
+    company*, name*: string
+    contentType*: string ## its media type; "" when it gives none
+    kind*: StanzaKind
+    size*: int           ## its data's bytes
+    text*: string        ## a text stanza's text, as UTF-8 (cut at `MaxStanzaBytes`)
+    bytes*: seq[byte]    ## a binary stanza's first `MaxStanzaBytes`
+
+  UserDataFact* = object
+    ## One User Data attachment of a SEG-Y file's extended textual headers.
+    label*, format*, description*, created*, creator*, compression*: string
+    size*: int64      ## its bytes
+    descXml*: string  ## its description block, as written
+    bytes*: seq[byte] ## its first `MaxStanzaBytes`, when held in memory
+    problem*: string  ## why its bytes are not shown; "" when they are
+
   FileFacts* = object
     ## What the Summary and File headers tabs show of a file, read when it
     ## is opened.
@@ -62,15 +87,19 @@ type
     extendedText*: seq[seq[string]] ## SEG-Y: each extended textual header's lines
     rows*: seq[FieldRow] ## the file-level header blocks, in file order
     raw*: seq[RawBlock] ## those without named fields
+    blocks*: seq[RawBlock] ## the bytes of those with named fields, for the hex pane
+    stanzas*: seq[StanzaFact] ## SEG-Y: the extended textual headers' stanzas
+    userData*: seq[UserDataFact] ## SEG-Y: their User Data attachments
     problems*: seq[string] ## what could not be read, in plain words
     opened*: OpenFacts ## how it was opened (`core/openchoice`)
 
   RecordHeaders* = object
     ## The headers of one SEG-D record.
-    record*: int = -1    ## its index in the file; -1 for none
-    rows*: seq[FieldRow] ## general headers, channel sets, skew, extended, external, trailer
+    record*: int = -1      ## its index in the file; -1 for none
+    rows*: seq[FieldRow]   ## general headers, channel sets, skew, extended, external, trailer
     raw*: seq[RawBlock]
-    problem*: string     ## why they could not be read; "" when they were
+    blocks*: seq[RawBlock] ## the bytes of the blocks with named fields
+    problem*: string       ## why they could not be read; "" when they were
 
   TraceDetail* = object
     ## What the Trace tab shows of one trace: its headers, its samples.
@@ -79,6 +108,7 @@ type
     file*: string          ## its file's name
     keys*: TraceKeys       ## its keys, as the index holds them
     rows*: seq[FieldRow]   ## every header field (when asked for)
+    blocks*: seq[RawBlock] ## the bytes of its header blocks (with `rows`)
     samples*: seq[float32] ## its samples (when asked for)
     displayed*: bool       ## `samples` as displayed: after the edits, the polarity and
                            ## the display gain's processing; false: as recorded
@@ -93,6 +123,7 @@ type
   Inspected* = object
     ## The inspector's answer to one request (`core/inspector`).
     gen*: uint64              ## the request's
+    table*: TableAnswer       ## the trace table's rows (when asked for)
     recordPath*: string       ## the file of `record`; "" for none
     record*: RecordHeaders    ## a SEG-D record's headers (when asked for)
     traces*: seq[TraceDetail] ## the traces asked for, in the order asked
@@ -108,6 +139,18 @@ func latin1*(text: openArray[char]): string =
     else:
       result.add chr(0xC0 or (b shr 6))
       result.add chr(0x80 or (b and 0x3F))
+
+func latin1Lines(text: openArray[char]): string =
+  ## Latin-1 text as UTF-8, its line breaks kept (a carriage return before
+  ## one dropped), other control characters as dots.
+  var start = 0
+  for i in 0 .. text.len:
+    if i == text.len or text[i] == '\n':
+      var stop = i - 1
+      if stop >= start and text[stop] == '\r': dec stop
+      if start > 0: result.add '\n'
+      result.add latin1(text.toOpenArray(start, stop))
+      start = i + 1
 
 func exactText*(x: float64): string =
   ## `x` in its shortest form: a whole number without a decimal point.
@@ -146,6 +189,62 @@ func fieldRows*(rows: openArray[HeaderRow]): seq[FieldRow] =
   result = newSeqOfCap[FieldRow](rows.len)
   for r in rows: result.add fieldRow(r)
 
+const MaxStanzaBytes* = 256 * 1024
+  ## the bytes of a stanza or an attachment kept to show, at most
+
+proc stanzaFacts(x: ExtendedTextHeader; facts: var FileFacts) =
+  ## The stanzas and User Data attachments of extended textual headers `x`.
+  for i in 0 ..< x.stanzas.len:
+    let s: Stanza = x.stanzas[i]
+    var f = StanzaFact(key: s.key, company: s.company, name: s.name,
+      contentType: s.contentType, size: s.dataEnd - s.dataStart)
+    f.kind = if s.isEndText: skEnd
+             elif s.isUserData: skUserData
+             elif s.isBinary: skBinary
+             else: skText
+    case f.kind
+    of skText:
+      let text = x.stanzaText(s)
+      f.text = latin1Lines(text.toOpenArray(0, min(text.len, MaxStanzaBytes) - 1))
+    of skBinary:
+      let b = x.stanzaBytes(s)
+      f.bytes = b[0 ..< min(b.len, MaxStanzaBytes)]
+    of skUserData, skEnd: discard
+    facts.stanzas.add f
+  for i in 0 ..< x.userData.len:
+    let b: UserDataBlock = x.userData[i]
+    var u = UserDataFact(label: b.dataLabel, format: b.dataFormat, description: b.description,
+      created: b.creationTime, creator: b.creator, compression: b.compression,
+      size: b.blockSize, descXml: b.toDescXml)
+    if x.isRetained(b):
+      try:
+        let bytes = x.userDataBytes(b)
+        u.bytes = bytes[0 ..< min(bytes.len, MaxStanzaBytes)]
+      except ValueError as e:
+        u.problem = e.msg
+    else:
+      u.problem = "its bytes are past what the extended textual headers keep in memory"
+    facts.userData.add u
+
+const MaxNamedBytes* = 64 * 1024
+  ## the bytes of a block with named fields kept for the hex pane, at most
+
+proc namedBlocks*(f: SeismicFile; rows: openArray[FieldRow]): seq[RawBlock] =
+  ## The bytes of the blocks of `rows` with named fields (each once, its
+  ## first `MaxNamedBytes` at most), for the hex pane. A block that cannot
+  ## be read is left out. Reads the file: call it where `rows` were read.
+  for r in rows:
+    if r.field.len > 0 and (result.len == 0 or result[^1].offset != r.blockOffset):
+      var seen = false
+      for b in result:
+        if b.offset == r.blockOffset: seen = true
+      if not seen:
+        try:
+          result.add RawBlock(blockName: r.blockName, offset: r.blockOffset, size: r.blockSize,
+            bytes: f.copyBytes(r.blockOffset, min(r.blockSize, MaxNamedBytes)))
+        except ValueError:
+          discard
+
 proc rawBlocks(f: SeismicFile; rows: openArray[FieldRow]; problems: var seq[string]):
     seq[RawBlock] =
   ## The bytes of the blocks of `rows` without named fields.
@@ -182,12 +281,14 @@ proc fileFacts*(f: SeismicFile; headers = true): FileFacts =
     try:
       result.text = cardLines(f.textHeader)
       for t in f.extendedTextHeaders: result.extendedText.add cardLines(t)
+      stanzaFacts(f.index.segy.extended, result)
     except ValueError as e:
       result.problems.add "the textual headers cannot be read: " & e.msg
   if f.kind != skUnknown:
     try:
       result.rows = fieldRows(f.fileHeaders)
       result.raw = rawBlocks(f, result.rows, result.problems)
+      result.blocks = namedBlocks(f, result.rows)
     except ValueError as e:
       result.problems.add "the file headers cannot be read: " & e.msg
 
@@ -201,6 +302,7 @@ proc readRecordHeaders*(f: SeismicFile; record: int): RecordHeaders =
     result.rows = fieldRows(f.recordHeaders(record))
     var problems: seq[string]
     result.raw = rawBlocks(f, result.rows, problems)
+    result.blocks = namedBlocks(f, result.rows)
     if problems.len > 0: result.problem = problems.join("; ")
   except ValueError as e:
     result.problem = e.msg

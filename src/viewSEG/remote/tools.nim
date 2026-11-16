@@ -654,6 +654,14 @@ proc headersJson(state: AppState; limit: int): JsonNode =
   result["trace"] = %*{"chosenBy": $ins.chosen.by, "traces": clipped(ins.chosen.traces, limit),
     "total": ins.chosen.total, "reading": ins.waiting, "read": answered}
   result["notAnswering"] = %state.headersWait.words # "" while its reader answers
+  template tab: untyped = ins.answer.table
+  var rows = newJArray()
+  for r in 0 ..< min(tab.rowTraces.len, limit):
+    rows.add %*{"row": tab.first + r, "index": tab.rowTraces[r], "values": toJson(tab.values[r])}
+  result["table"] = %*{"asked": toJson(ins.table), "file": tab.path, "view": toJson(tab.view),
+    "count": tab.count, "traces": tab.traces.len, "rows": rows,
+    "graphBuckets": tab.graphMin.len, "problems": toJson(tab.problems),
+    "fields": tab.catalogue.len}
   let k = state.findPanel(MainPanel)
   let i = if k >= 0: state.shownFile(k) else: -1
   if i < 0:
@@ -828,7 +836,8 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
     for i in 0 ..< min(m.records.len, limit):
       let f = m.records[i]
       files.add %*{"name": f.name, "path": f.path, "opened": $f.opened, "kept":
-        keptWords(f.edits), "size": f.identity.size, "bytes": f.bytes, "gone": f.gone, "unreached": f.unreached,
+        keptWords(f.edits), "size": f.identity.size, "bytes": f.bytes, "gone": f.gone,
+            "unreached": f.unreached,
         "looking": f.looking, "notAnswering": f.silent, "document": f.doc}
     r["memory"] = %*{"listed": m.listed, "listing": m.listing, "count": m.records.len,
       "files": files, "problems": m.problems}

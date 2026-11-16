@@ -20,7 +20,7 @@
 ## change from one to the other).
 
 import std/math
-import displaypresets, join, log, mapkinds, panels, readout, scales, spectra
+import displaypresets, join, log, mapkinds, panels, readout, scales, spectra, tracetable
 
 export displaypresets, join, mapkinds, readout, scales, spectra
 
@@ -106,6 +106,7 @@ type
     htSummary = "Summary"
     htFile = "File headers"
     htTrace = "Trace"
+    htTable = "Trace table"
 
   TraceTab* = enum
     ## The Trace tab's own tabs.
@@ -130,6 +131,9 @@ type
       ## the Data tab's samples after the edits, the polarity and the
       ## display gain's processing; off: as recorded
     columns*: set[HeaderColumn] = {hcDescription, hcBytes} ## the columns shown
+    tableFields*: seq[string] = @DefaultTableFields
+      ## the trace table's columns, after the trace's number (`core/tracetable`)
+    tableScope*: TableScope ## the trace table's rows: the record shown, or the file
 
   SpectrumOptions* = object
     ## How the spectrum windows show their spectra: each new FFT window as
@@ -161,9 +165,9 @@ type
     hideKilled*: bool
       ## killed traces are left out of the plot (the traces beside them close
       ## up); off: drawn blank
-    spectrum*: SpectrumOptions                    ## the spectrum windows' display
-    displayPresets*: seq[DisplayPreset]           ## named displays, in the order made
-    tray*: TrayOptions                            ## the tray icon and minimizing to it
+    spectrum*: SpectrumOptions ## the spectrum windows' display
+    displayPresets*: seq[DisplayPreset] ## named displays, in the order made
+    tray*: TrayOptions ## the tray icon and minimizing to it
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not

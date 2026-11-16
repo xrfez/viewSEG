@@ -697,6 +697,27 @@ how the file was opened (`OpenFacts`, read on the open job: the standard read as
 detection says of the first bytes, the index from the cache, a sample or every header,
 mapped or unmapped, `prefersFloat64`).
 
+**The trace table** (`core/tracetable`, `ui/imgui/headerstable`). The window says what the
+table shows (`TableView`: its columns, the record or the whole file, the column sorted by,
+Find's column and value, the rows on screen and some on each side, the column graphed)
+with `ckInspect`; `followInspect` adds it to the Headers reader's request (`TableAsk`, the
+file held as for the other parts). The reader reads only the rows asked for (the keys
+from the index in memory, a header field through `traceFieldColumnInto`), and a column the
+rows are sorted, narrowed or graphed by for every row of the scope once, in steps of
+`ColumnStep` traces between looks for a newer request, kept in the reader's own cache (8
+columns, by file, scope, joins and name) so that a pointer moving over the plot (a new
+request each frame) never starts it again; the order (`orderOf`) is kept too. The answer
+carries the rows read, the count, the graph as at most 2048 buckets of least and most (never
+a whole column), and the fields of the scope's first trace for the column chooser. The
+window keeps no copy of any of it.
+
+**Header bytes.** The blocks with named fields are read with their fields (`namedBlocks`:
+the file's on the open job, a SEG-D record's and a trace's by the Headers reader), so the
+hex pane under a header table shows the block of the value clicked, the field's bytes
+highlighted, and reads them every way (`view/byteview`, through parseSEG's codecs) without
+touching the file. A SEG-Y file's stanzas and User Data attachments (`index.segy.extended`)
+are read on the open job too (`StanzaFact`, `UserDataFact`).
+
 **Reopen with options** (`core/openchoice`, `ui/imgui/reopendialog`). `ckReopen` names a
 file and an `OpenChoice` (the standard, `vfFull`, two's-complement mantissas, the
 access, the demultiplexed copy's folder), kept per file for the run

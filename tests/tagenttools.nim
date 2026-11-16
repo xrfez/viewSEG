@@ -203,10 +203,10 @@ block schemaFromCommand:
     $takes(ckJoin)
   doAssert takes(ckSelectUnmatched) == @["unmatchedOf"], $takes(ckSelectUnmatched)
   # what the Headers window has on screen: read off the UI thread, nothing changed
-  doAssert ckInspect in Offered and "headers shown" in kinds and takes(ckInspect) == @["inspect"],
-    $takes(ckInspect)
+  doAssert ckInspect in Offered and "headers shown" in kinds and
+    takes(ckInspect) == @["inspect", "table"], $takes(ckInspect)
   doAssert s["properties"]["inspect"]["items"]["enum"] ==
-    %*["record headers", "trace headers", "trace samples"]
+    %*["record headers", "trace headers", "trace samples", "trace table"]
   # core's bounds, stated
   let gainDb = s["properties"]["display"]["properties"]["gainDb"]
   doAssert gainDb["maximum"].getFloat == MaxGainDb and gainDb["minimum"].getFloat == -MaxGainDb

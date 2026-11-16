@@ -45,7 +45,9 @@ import std/[heapqueue, intsets, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
-import edits, filesystem, headers, inbox, jobs, log, processing, selection, threads
+import edits, filesystem, headers, inbox, jobs, log, processing, selection, threads, tracetable
+
+export tracetable
 
 const
   MaxInspectedValues* = 32 * 1024 * 1024
@@ -61,6 +63,7 @@ type
     ipRecord = "record headers"      ## File headers: the SEG-D record's blocks
     ipTraceHeaders = "trace headers" ## Trace, Header: the traces' header fields
     ipTraceSamples = "trace samples" ## Trace, Data: the traces' samples
+    ipTable = "trace table"          ## Trace table: a row per trace, the fields chosen
 
   ChosenBy* = enum
     ## What chose the traces the Trace tab is about.
@@ -81,6 +84,7 @@ type
     ## What the Headers window is shown of the files' bytes (`AppState`
     ## keeps it; the window reads it).
     parts*: set[InspectPart] ## on screen now (`ckInspect`)
+    table*: TableView ## what the trace table shows, when on screen
     chosen*: Chosen ## the traces the Trace tab is about now
     answer*: Inspected ## the newest answer taken in
     waiting*: bool ## a request is out that has not been answered yet
@@ -112,6 +116,30 @@ type
     flow*: Pipeline     ## the display processing, for samples as displayed
     filters*: Pipeline  ## the plot's filters, run before `flow`
     filterAux*: bool    ## an auxiliary trace goes through `filters` too
+    table*: TableAsk    ## the trace table's rows and columns
+
+  TableAsk* = object
+    ## What the trace table asks the reader for.
+    at*: int = -1                 ## its file: an index into `InspectRequest.files`; -1 for no table
+    traces*: Slice[int] = 0 .. -1 ## the traces it has a row for (indices in the file)
+    view*: TableView
+    joins*: int
+      ## the geometry joins ended so far: a column of keys read before
+      ## another ended is read again
+
+  CachedColumn = object
+    ## A column of the trace table read for every row of its scope.
+    key: string     ## its file, scope, joins and name
+    values: seq[float64]
+    filled: int     ## the rows read so far, from the first
+    problem: string ## why it cannot be read; "" when it can
+
+  TableCache = object
+    columns: seq[CachedColumn] ## the newest last, at most `MaxCachedColumns`
+    orderKey: string           ## what `order` was made of
+    order: seq[int32]
+    catalogueOf: string        ## the file and trace `catalogue` was made of
+    catalogue: seq[CatalogueField]
 
   InspectorObj = object
     lock: Lock
@@ -131,6 +159,8 @@ type
       ## the thread is done
     abandoned: bool
       ## left to end on its own: its memory stays with it
+    table: TableCache
+      ## the trace table's columns read whole, and its order: the thread's own
     thread: Thread[ptr InspectorObj]
 
   Inspector* = object
@@ -258,6 +288,153 @@ proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
   if whole < n and kept < n and processed:
     d.problem = "processed on its first " & $whole & " samples only (it has " & $n & ")"
 
+const MaxCachedColumns = 8
+  ## columns of the trace table kept read whole (8 MiB each a million traces)
+const MaxTableRows* = 2048 ## rows of the trace table read in one answer, at most
+
+proc readRows(f: ptr SeismicFile; name: string; traces: openArray[int];
+    dst: var openArray[float64]) =
+  ## Column `name` of `traces` into `dst`. Raises `ValueError` for a field
+  ## the file's traces do not have.
+  if name.isKey:
+    let keyed = f[].index.keys.len == f[].len
+    for k, t in traces:
+      dst[k] = keyValue(if keyed: f[].index.keys[t] else: f[].traceKeys(t), name)
+  else:
+    let column = f[].traceFieldColumn(name, traces) # (the rows on screen: a few hundred)
+    for k in 0 ..< column.len: dst[k] = column[k]
+
+proc readRange(f: ptr SeismicFile; name: string; traces: Slice[int];
+    dst: var openArray[float64]) =
+  ## Column `name` of the traces `traces` (a range) into `dst`.
+  if name.isKey:
+    let keyed = f[].index.keys.len == f[].len
+    for k in 0 ..< traces.len:
+      let t = traces.a + k
+      dst[k] = keyValue(if keyed: f[].index.keys[t] else: f[].traceKeys(t), name)
+  else:
+    f[].traceFieldColumnInto(name, traces, dst)
+
+proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; name: string;
+    answer: var TableAnswer): int =
+  ## The index in the cache of column `name` read for every trace of the
+  ## table's scope, read further in steps of `ColumnStep` traces; -1 when a
+  ## newer request came first (it goes on from there, kept in the cache).
+  template cache: untyped = p.table
+  let key = f.path & "\t" & $ask.traces & "\t" & $ask.joins & "\t" & name
+  result = -1
+  for i, c in cache.columns:
+    if c.key == key: result = i
+  if result < 0:
+    if cache.columns.len >= MaxCachedColumns: cache.columns.delete(0)
+    cache.columns.add CachedColumn(key: key, values: newSeq[float64](ask.traces.len))
+    result = cache.columns.high
+  template c: untyped = cache.columns[result]
+  while c.filled < c.values.len and c.problem.len == 0:
+    if p.interrupted:
+      answer.reading = name
+      return -1
+    let step = min(ColumnStep, c.values.len - c.filled)
+    let part = ask.traces.a + c.filled .. ask.traces.a + c.filled + step - 1
+    p.beat(f.path)
+    try:
+      fs.mappedRead(f.path, headers = true)
+      readRange(f.file, name, part, c.values.toOpenArray(c.filled, c.filled + step - 1))
+      c.filled += step
+    except ValueError as e:
+      c.problem = e.msg
+    except OSError as e:
+      c.problem = failedText(e)
+      c.filled = 0 # read again next time: the drive may answer then
+      return result
+
+proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
+    answer: var TableAnswer): bool =
+  ## The trace table's rows and columns: false when a newer request came
+  ## first (nothing is posted then).
+  result = true
+  answer = TableAnswer(path: f.path, traces: ask.traces, view: ask.view)
+  if why.len > 0:
+    answer.problems.add why
+    return
+  let view = ask.view
+  let n = ask.traces.len
+  template cache: untyped = p.table
+  # The fields the scope's first trace has, for the column chooser.
+  let catalogueOf = f.path & "\t" & $ask.traces.a & "\t" & $ask.joins
+  if n > 0 and cache.catalogueOf != catalogueOf:
+    cache.catalogue.setLen 0
+    for (name, label) in KeyColumns:
+      cache.catalogue.add CatalogueField(name: name, blockName: "keys", description: label)
+    p.beat(f.path)
+    try:
+      fs.mappedRead(f.path, headers = true)
+      for r in traceRows(f.file[], ask.traces.a):
+        if r.field.len > 0 and r.kind != hbRaw:
+          cache.catalogue.add CatalogueField(name: r.blockName & "." & r.field,
+            blockName: r.blockName, description: r.description)
+      cache.catalogueOf = catalogueOf
+    except ValueError, OSError:
+      discard # the keys only; tried again next time
+  answer.catalogue = cache.catalogue
+  # The columns read for every row: the sort's, Find's, the graph's.
+  var whole: seq[(string, int)]
+  for name in wholeColumns(view):
+    let i = p.wholeColumn(f, ask, name, answer)
+    if i < 0: return false
+    if cache.columns[i].problem.len > 0:
+      answer.problems.add name & ": " & cache.columns[i].problem
+    else: whole.add (name, i)
+  proc column(whole: seq[(string, int)]; name: string): int =
+    result = -1
+    for (n, i) in whole:
+      if n == name: result = i
+  let find = parseFind(view.findValue)
+  let findAt = if view.findField.len > 0 and find.valid: whole.column(view.findField) else: -1
+  let sortAt = if view.sortBy.len > 0: whole.column(view.sortBy) else: -1
+  let ordered = findAt >= 0 or sortAt >= 0
+  if ordered:
+    let orderKey = cache.columns[max(findAt, 0)].key & "|" & $findAt & "|" & $find & "|" &
+      (if sortAt >= 0: cache.columns[sortAt].key else: "") & "|" & $view.descending & "|" &
+      $ask.traces & "|" & f.path
+    if orderKey != cache.orderKey:
+      var keep: seq[bool]
+      if findAt >= 0:
+        keep = newSeq[bool](n)
+        for i in 0 ..< n: keep[i] = find.matches(cache.columns[findAt].values[i])
+      cache.order = if sortAt >= 0: orderOf(cache.columns[sortAt].values, keep, view.descending)
+                    else: orderOf([], keep, false)
+      cache.orderKey = orderKey
+  answer.count = if ordered: cache.order.len else: n
+  # The rows on screen, at most `MaxTableRows`.
+  let a = max(view.rows.a, 0)
+  let b = min(min(view.rows.b, answer.count - 1), a + MaxTableRows - 1)
+  answer.first = a
+  for r in a .. b:
+    answer.rowTraces.add ask.traces.a + (if ordered: int(cache.order[r]) else: r)
+  answer.values = newSeq[seq[float64]](answer.rowTraces.len)
+  for row in answer.values.mitems: row = newSeq[float64](view.fields.len)
+  var buf = newSeq[float64](answer.rowTraces.len)
+  for c, name in view.fields:
+    let w = whole.column(name)
+    if w >= 0:
+      for k, t in answer.rowTraces: answer.values[k][c] = cache.columns[w].values[t - ask.traces.a]
+    elif answer.rowTraces.len > 0:
+      p.beat(f.path)
+      try:
+        fs.mappedRead(f.path, headers = true)
+        readRows(f.file, name, answer.rowTraces, buf)
+        for k in 0 ..< buf.len: answer.values[k][c] = buf[k]
+      except ValueError as e:
+        answer.problems.add name & ": " & e.msg
+        for k in 0 ..< buf.len: answer.values[k][c] = NaN
+      except OSError as e:
+        answer.problems.add failedText(e)
+        for k in 0 ..< buf.len: answer.values[k][c] = NaN
+  let g = if view.graph.len > 0: whole.column(view.graph) else: -1
+  if g >= 0:
+    bucketsOf(cache.columns[g].values, cache.order, ordered, answer.graphMin, answer.graphMax)
+
 proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
   ## Reads and posts what `req` asks for; false when a newer request came
   ## first (then nothing is posted). Each call to the file system goes
@@ -279,6 +456,9 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
         answer.record = readRecordHeaders(f.file[], req.record)
       except OSError as e:
         answer.record = RecordHeaders(record: req.record, problem: failedText(e))
+  if req.table.at in 0 ..< req.files.len:
+    if not p.serveTable(req.files[req.table.at], req.table, why[req.table.at], answer.table):
+      return false
   var room = MaxInspectedValues
   for t in req.traces:
     if p.interrupted: return false
@@ -306,6 +486,7 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
             p.beat(f.path)
             fs.mappedRead(f.path, headers = true)
             d.rows = traceRows(f.file[], t.trace)
+            d.blocks = namedBlocks(f.file[], d.rows)
           if req.samples:
             p.beat(f.path)
             fs.mappedRead(f.path)

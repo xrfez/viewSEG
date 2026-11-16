@@ -22,6 +22,9 @@ type
     bytes*: string ## the bytes it takes in its block, from 1: "1-4"
     offset*: string ## the file offset of its first byte (the first column's)
     values*: seq[string] ## per column; "" where a column has no such field
+    blockName*: string ## its block's name (`trace`, `binary`)
+    size*: int ## the bytes it takes
+    at*: seq[int64] ## per column, the file offset of its first byte; -1 where it has none
     differs*: bool ## the columns do not all hold the same value
     joined*: seq[bool]
       ## per column, a value a geometry join gave (not the header's); empty
@@ -71,8 +74,11 @@ func fieldTable*(columns: openArray[seq[FieldRow]]; labels: openArray[string];
         place[key] = k
         result.rows.add TableRow(description: r.description,
           name: (if r.field.len > 0: r.blockName & "." & r.field else: r.blockName),
-          bytes: bytesOf(r), offset: $r.offset, values: newSeq[string](columns.len))
+          bytes: bytesOf(r), offset: $r.offset, values: newSeq[string](columns.len),
+          blockName: r.blockName, size: r.size, at: newSeq[int64](columns.len))
+        for x in result.rows[k].at.mitems: x = -1
       result.rows[k].values[c] = r.value
+      result.rows[k].at[c] = r.offset
   if columns.len > 1:
     for row in result.rows.mitems:
       if row.title.len == 0:
@@ -293,3 +299,36 @@ func dataText*(traces: openArray[TraceDetail]; column = -1): string =
         result.add '\t'
         if i < d.samples.len: result.add sampleText(d.samples[i])
     result.add '\n'
+
+func traceTableText*(labels: openArray[string]; t: TableAnswer; rows = 0 .. int.high): string =
+  ## The trace table's rows read (those of `rows`, indices into them), as
+  ## Copy puts them on the clipboard: a line of the columns' labels, then a
+  ## line per row, its trace's number first, the values tab-separated.
+  result = "Trace"
+  for l in labels: result.add '\t' & l
+  result.add '\n'
+  for r in max(rows.a, 0) .. min(rows.b, t.rowTraces.high):
+    result.add $(t.rowTraces[r] + 1)
+    for x in t.values[r]:
+      result.add '\t'
+      if not x.isNaN: result.add exactText(x)
+    result.add '\n'
+
+func filtered*(t: FieldTable; query: string): FieldTable =
+  ## The rows of `t` whose description, name or a value holds `query`
+  ## (any case), each under its block's title; `t` for an empty query.
+  let q = query.strip.toLowerAscii
+  if q.len == 0: return t
+  result = FieldTable(columns: t.columns)
+  var title = -1 # the title above the rows, not yet added
+  for i, r in t.rows:
+    if r.title.len > 0: title = i
+    else:
+      var hit = q in r.description.toLowerAscii or q in r.name.toLowerAscii
+      for v in r.values:
+        if q in v.toLowerAscii: hit = true
+      if hit:
+        if title >= 0:
+          result.rows.add t.rows[title]
+          title = -1
+        result.rows.add r

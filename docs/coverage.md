@@ -41,11 +41,11 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.12.1: capabilities | names | processSEG 0.5.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 40 (23 in part) | 102 | 28 (21 in part) | 126 |
-| `internal` | 14 | 41 | 4 | 39 |
-| `planned` | 43 | 294 | 45 | 393 |
+| `built` | 47 (20 in part) | 140 | 28 (21 in part) | 126 |
+| `internal` | 14 | 42 | 4 | 39 |
+| `planned` | 36 | 257 | 45 | 393 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 19 | 349 | 6 | 53 |
+| `not applicable` | 19 | 347 | 6 | 53 |
 | all | 118 | 796 | 84 | 616 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
@@ -113,13 +113,13 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Any field by name | `traceField`, `recordField`, `fileField`, `findTraceField`, `findRecordField`, `findFileField`, `FieldValue` | Status-bar fields, header table cells | planned |
-| One field for many traces | `traceFieldColumn`, `traceFieldColumnInto` | Header table columns | planned |
-| A header field plotted against the trace axis | `traceFieldColumn` | Header graph strip above the panel (offset, elevation, static) | planned |
+| One field for many traces | `traceFieldColumn`, `traceFieldColumnInto` | Headers window, Trace table: a column per header field chosen, the rows on screen read (a column sorted, found or graphed by read whole) | built |
+| A header field plotted against the trace axis | `traceFieldColumn` | Headers window, Trace table: Graph draws a column along the rows (each bucket's least and most), the rows on screen shaded | built |
 | Field catalogue | `fieldNames`, `blockKind`, `fieldByName`, `HeaderBlock` | Every field of every block described in plain words in the header tables (`fieldNames` checked against the descriptions in a test); column chooser, status-bar field picker to come | built (descriptions); planned (choosers) |
-| Every header block with byte offsets | `traceHeaders`, `recordHeaders`, `fileHeaders`, `HeaderRow`, `copyBytes` | Headers window: File headers (a tab per block: SEG-Y Binary, SEG-D General, Channel sets side by side, blocks without named fields as bytes) and Trace > Header (every field of up to 32 traces side by side, the differences marked), each field's description, name, bytes, offset and value, read off the UI thread; the hex pane beside a field list to come | built (tables, raw blocks as bytes); planned (hex pane) |
+| Every header block with byte offsets | `traceHeaders`, `recordHeaders`, `fileHeaders`, `HeaderRow`, `copyBytes` | Headers window: File headers (a tab per block: SEG-Y Binary, SEG-D General, Channel sets side by side, blocks without named fields as bytes) and Trace > Header (every field of up to 32 traces side by side, the differences marked), each field's description, name, bytes, offset and value, read off the UI thread; the hex pane beside a field list to come | built (tables, raw blocks as bytes, the hex pane under a table: the block of the value clicked, the field highlighted) |
 | SEG-Y textual header | `textHeader`, `extendedTextHeaders`, `TextEncoding` | Headers window, File headers: Text (the 40 lines) and Extended; its encoding (`TextEncoding`) in the Summary | built |
 | Samples of chosen traces, whole | `readTraces(traces, samples)`, `maxSamples` | Headers window, Trace > Data: index, time and a sample column per trace, as recorded or as displayed (edits, polarity, the display gain's processing) | built |
-| SEG-Y extended text stanzas and user data | `index.segy.extended`, `ExtendedTextHeader`, `Stanza`, `UserDataBlock`, `toDescXml` | Textual header window: stanza list, user data tab | planned |
+| SEG-Y extended text stanzas and user data | `index.segy.extended`, `ExtendedTextHeader`, `Stanza`, `UserDataBlock`, `toDescXml` | Headers window, File headers: Stanzas (a list; a text stanza's text, a binary one's bytes) and User data (each attachment's description and bytes), read on the open job | built |
 | SEG-Y Layout stanza (fields moved to other bytes) | `layoutOf`, `entriesFor`, `fieldValue`, `initGeometryReader`, `TraceLayout`, `LayoutEntry`, `LayoutType`, `GeometryReader` (`geometry`, `timeBasis`), `TraceGeometry` | Header table shows layout-named fields (`iline`, `xline`, `sht_line`…) | planned |
 | Inline and crossline of post-stack volumes | `TraceKeys.inline`, `crossline` | "Go to inline / crossline", inline or crossline sections | planned |
 | Datum, uphole and statics fields, scaled | `traceStatics`, `traceStaticsInto`, `TraceStatics`, `initTraceStatics` | Statics column group in the header table; statics graph strip | planned |
@@ -130,15 +130,15 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Keys revision for stale-data checks | `keysRevision`, `markJoined` | internal: overlays, bins and processed tiles rebuilt when keys change | internal; not applicable (`markJoined`: the viewer joins through parseSEG, which marks what it changes) |
 | Vendor header blocks decoded by maps | `loadVendorMaps`, `vendorSearchPath`, `decodeVendorAreas`, `VendorRegistry`, `checkVendorMap`, `registerVendorDecoder` | Header inspector shows decoded vendor blocks; Settings → vendor map folders | planned |
 | Starting maps for undecoded vendor blocks | `scaffoldVendorMap`, `toNif` | "Create vendor map for this file…" | planned |
-| Byte-level codecs (endians, BCD, IBM float, EBCDIC) | `parseSEG/codecs`, `getNum`, `loadNum`, `loadU24`, `beU8`, `beU16`, `beU24`, `beU32`, `beU64`, `beI8`, `beI16`, `beI24`, `beI32`, `beI64`, `beF32`, `beF64`, `hostOrder`, `swapBytes` | Hex pane value inspector (selected bytes as int, IBM, IEEE, BCD) | planned |
+| Byte-level codecs (endians, BCD, IBM float, EBCDIC) | `parseSEG/codecs`, `getNum`, `loadNum`, `loadU24`, `beU8`, `beU16`, `beU24`, `beU32`, `beU64`, `beI8`, `beI16`, `beI24`, `beI32`, `beI64`, `beF32`, `beF64`, `hostOrder`, `swapBytes`, `ByteBuf`, `byteBuf` | Headers window, the hex pane under a header table: the field's bytes read as whole numbers big- and little-endian, signed and not, IEEE and IBM floats, BCD and text | built |
 | Field values by kind | `FieldValue`, `FieldValueKind`, `HeaderScope`, `BlockRef`, `toFieldValue`, `toFloat`, `$` | The header tables show each value by its kind (integer, real, text, bytes): the Headers window's File headers and Trace > Header | built (the Headers window); not applicable (`HeaderScope`, `BlockRef`, `toFieldValue`, `toFloat`: the header rows give the values) |
 | SEG-2 strings by keyword, typed | `Seg2String`, `value`, `contains`, `find`, `number`, `numbers`, `integer`, `sampleInterval`, `delay`, `channelNumber`, `receiverLocation`, `sourceLocation`, `Seg2Location`, `traceType`, `Seg2TraceType`, `traceSort`, `Seg2TraceSort`, `units`, `Seg2Units`, `acquisitionTime` | Header inspector: a SEG-2 file's strings with their typed values (interval, delay, locations, trace type, units, time) | planned |
-| A stanza's text and user data | `stanzaText`, `stanzaBytes`, `isBinary`, `isEndText`, `isUserData`, `key`, `userDataBytes`, `isRetained`, `UserDataItem` | Textual header window: stanza list, user data tab (with the stanzas above) | planned |
+| A stanza's text and user data | `stanzaText`, `stanzaBytes`, `isBinary`, `isEndText`, `isUserData`, `key`, `userDataBytes`, `isRetained` | Headers window, File headers: Stanzas and User data (above) | built |
 | A decoded vendor block | `VendorRegistry.addMap`, `loadVendorMap`, `VendorMap`, `decode`, `VendorBlock` (`[]`, `contains`), `VendorField`, `VendorValue`, `VendorValueKind`, `applies`, `vendorContext`, `VendorContext`, `VendorArea`, `VendorDecoder`, `decodeTarget` | Header inspector: a decoded vendor block's fields and values (with `decodeVendorAreas`, above) | planned |
-| Extended textual header, parsed record by record | `initExtendedTextHeader`, `add`, `finish`, `isComplete`, `needsMore`, `hasEndText`, `inBinaryStanza`, `continuesUserData`, `ExtTextIssue`, `streamLimit=`, `startsStanza`, `startsStanzaRecord`, `normalizeStanzaName`; writing: `addText`, `addStanza`, `addUserData`, `addEndText` | The readers parse a file's stanzas into `index.segy.extended`; the writers copy them | not applicable (the readers' and writers' work; the viewer reads the parsed stanzas) |
+| Extended textual header, parsed record by record | `initExtendedTextHeader`, `add`, `finish`, `isComplete`, `needsMore`, `hasEndText`, `inBinaryStanza`, `continuesUserData`, `ExtTextIssue`, `streamLimit=`, `startsStanza`, `startsStanzaRecord`, `normalizeStanzaName`; writing: `addText`, `addStanza`, `addUserData`, `UserDataItem`, `addEndText` | The readers parse a file's stanzas into `index.segy.extended`; the writers copy them | not applicable (the readers' and writers' work; the viewer reads the parsed stanzas) |
 | Layouts made by hand | `standardLayout`, `parseLayout`, `merge`, `normalizeEntryName`, `size` | The file's own layout (`layoutOf`, above) | not applicable (the viewer shows a file's layout; it makes none) |
 | A compiled vendor map's parts | `VendorMatch`, `VendorRevision`, `VendorRevisionRange`, `VendorTarget`, `VendorTargetKind`, `VendorFieldPlan`, `VendorRepeatPlan`, `VendorEncoding`, `VendorTrim`, `VendorEnumLabel`, `VendorBitFlag`, `VendorScaffold` | Maps are text files; `checkVendorMap` says what is wrong with one | not applicable (a map's inner structure, built and used by its decoder) |
-| Writing bytes | `putNum`, `putBeU8`, `putBeU16`, `putBeU24`, `putBeU32`, `putBeU64`, `putBeI8`, `putBeI16`, `putBeI24`, `putBeI32`, `putBeI64`, `putBeF32`, `putBeF64`, `ByteBuf`, `byteBuf`, `copyHostOrder` | None | not applicable (the viewer changes a file only through the header editor, which encodes its values itself) |
+| Writing bytes | `putNum`, `putBeU8`, `putBeU16`, `putBeU24`, `putBeU32`, `putBeU64`, `putBeI8`, `putBeI16`, `putBeI24`, `putBeI32`, `putBeI64`, `putBeF32`, `putBeF64`, `copyHostOrder` | None | not applicable (the viewer changes a file only through the header editor, which encodes its values itself) |
 
 ### Gathers and channels
 

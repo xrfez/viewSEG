@@ -1,5 +1,5 @@
 ## The "Headers" window: what the file shown is and what its headers hold,
-## in three tabs (`HeadersTab`), read-only.
+## in four tabs (`HeadersTab`), read-only.
 ##
 ## - **Summary:** the file's properties: what it is (its standard, sample
 ##   format, counts, timing, coordinates), how it was opened, and the record
@@ -17,6 +17,14 @@
 ##   right-click menu) and its value; a block without named fields is shown
 ##   as its bytes, in hexadecimal and as text. A SEG-D record's headers are
 ##   read off the UI thread (`core/inspector`), only while the tab shows.
+##   A SEG-Y file's stanzas and User Data attachments have tabs of their
+##   own (Stanzas, User data). Above each table, Find keeps the fields whose
+##   description, name or value holds what is typed; a click on a value
+##   shows its block's bytes below the table, the field's highlighted, read
+##   every way a header could hold them (`view/byteview`).
+## - **Trace:** the selected traces' (or the pointed one's) header fields and
+##   samples.
+## - **Trace table:** a row per trace (`ui/imgui/headerstable`).
 ##
 ## What is on screen is told to `core` (`ckInspect`) when it changes, so
 ## nothing is read for a hidden tab; when its reader does not answer (a
@@ -31,8 +39,8 @@ import std/[math, monotimes, strutils, tables, times]
 import imguin/cimgui
 from parseSEG import SeismicKind, skSegy, skSegd, skSeg2, skUnknown
 import ../../core/state
-import ../../view/[headerviews, theme]
-import chrome, focus, fonts, style
+import ../../view/[byteview, headerviews, theme]
+import chrome, focus, fonts, headerstable, style
 
 type
   CachedTable = object
@@ -55,9 +63,9 @@ type
       ## the summary row picked (Ctrl + C copies it); -1 for none
     pickedIn: string
       ## the file and gather it was picked in
-    summary: seq[SummaryLine] ## the Summary's lines, made at most twice a second
-    summaryKey: string ## what they were made of
-    summaryAt: MonoTime ## when
+    summary: seq[SummaryLine]                 ## the Summary's lines, made at most twice a second
+    summaryKey: string                        ## what they were made of
+    summaryAt: MonoTime                       ## when
     parts: set[InspectPart]
       ## what is on screen, as told to `core` last
     shownTraceTab: TraceTab
@@ -68,10 +76,31 @@ type
     tables: Table[string, CachedTable]
     texts: Table[string, CachedText]
     applied: Table[string, set[HeaderColumn]] ## the columns each table was given
-    setsPage: int ## the page of the Channel sets tab's columns shown
+    setsPage: int                             ## the page of the Channel sets tab's columns shown
     widths: Table[string, float32]
       ## per table, the window's width its description was last fitted to
-    sets: int ## how many channel sets the record shown has
+    sets: int                                 ## how many channel sets the record shown has
+    table: TableUi                            ## the Trace table tab's
+    fieldFind: array[64, char]                ## the header tables' Find, being typed
+    hex: HexPick                              ## the field whose bytes the hex pane shows
+    stanza: int                               ## the stanza the Stanzas tab shows
+    attachment: int                           ## the attachment the User data tab shows
+    found: Table[string, CachedTable]         ## per table, its rows Find keeps
+    toldTable: TableView                      ## the trace table's view as told to `core` last
+
+  HexPick = object
+    ## A field picked for the hex pane, and its block's bytes once found.
+    id: string       ## the table it was picked in; "" for none
+    name: string     ## the field (`binary.sampleInterval`)
+    description: string
+    column: int      ## its value column
+    at: int64        ## the file offset of its first byte
+    size: int
+    found: bool      ## `bytes` hold its block
+    bytes: seq[byte] ## its block's bytes, copied once when picked
+    base: int64      ## the file offset of `bytes[0]`
+    seek: bool       ## scroll the dump to it (picked this frame)
+    tableKey: string ## what its table was made from when it was picked
 
   HeadersOutput* = object
     commands*: seq[Command]
@@ -246,13 +275,41 @@ proc valueMenu(table: FieldTable; column: int; value: string; marks: var Marks) 
   if igIsItemFocused() and igGetIO_Nil().KeyCtrl and igIsKeyPressed_Bool(ImGui_Key_C, false):
     igSetClipboardText(value.cstring)
 
-proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppState;
+proc findCell(ui: var HeadersUi; id: string; marks: var Marks) =
+  ## Find, in the Description column's header (it takes no line of its
+  ## own): the text typed, shared by every table, and a button that clears it.
+  let typed = ui.fieldFind[0] != '\0'
+  let clear = if typed: igGetFrameHeight() + igGetStyle().ItemSpacing.x else: 0
+  igSetNextItemWidth(max(igGetContentRegionAvail().x - clear, igGetFontSize() * 4))
+  discard igInputTextWithHint(("##find" & id).cstring, "Find a field or a value",
+    cast[cstring](addr ui.fieldFind[0]), csize_t(ui.fieldFind.len), 0, nil, nil)
+  marks.mark(id & " find")
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
+    igSetTooltip("%s", ("Show only the fields whose description, name or value holds " &
+      "this text").cstring)
+  if typed:
+    igSameLine(0, -1)
+    if igButton(("x##clear" & id).cstring, ImVec2_c(x: igGetFrameHeight(), y: 0)):
+      zeroMem(addr ui.fieldFind[0], ui.fieldFind.len)
+    marks.mark(id & " find clear")
+    if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint): igSetTooltip("Every field again")
+
+proc drawFieldTable(ui: var HeadersUi; id: string; whole: FieldTable; st: AppState;
     fonts: Fonts; t: Theme; marks: var Marks; output: var HeadersOutput; height = 0'f32) =
-  ## A header table: a row per field (titles between blocks), its
+  ## A header table: Find, then a row per field (titles between blocks), its
   ## description, a value column per header, and its name, bytes and
   ## offset (the columns chosen); values that differ between the columns in
   ## the warning colour. Only the rows in view are drawn.
   # (never more than Dear ImGui takes: a caller pages more, `pageOf`)
+  let query = $cast[cstring](addr ui.fieldFind[0]) # (typed in the table's header, below)
+  let made = (if id in ui.tables: ui.tables[id].key else: "") & "\t" & $whole.rows.len &
+    "\t" & query
+  if query.len > 0 and (id notin ui.found or ui.found[id].key != made):
+    ui.found[id] = CachedTable(key: made, table: filtered(whole, query))
+  # (by its address: nothing of a table is copied a frame; `whole` is
+  # `ui.tables[id].table`, as every caller passes)
+  let shown = if query.len > 0: addr ui.found[id].table else: addr ui.tables[id].table
+  template table: untyped = shown[]
   let values = min(table.columns.len, MaxSideBySide)
   let n = int(HeaderColumn.high) + 1 + values
   const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_ScrollY.cint or
@@ -282,8 +339,15 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
   if igGetCurrentTable().MinColumnWidth > 0 and ui.widths.getOrDefault(id, avail) != avail:
     igTableSetColumnWidth(0, describe)
   ui.widths[id] = avail
-  fonts.withFont(frHeading, 0):
-    igTableHeadersRow()
+  # The header row: Find in the description's place, the columns' names
+  # (right-click one to show or hide columns).
+  igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
+  for c in 0 ..< n:
+    if igTableSetColumnIndex(cint(c)):
+      if c == 0: ui.findCell(id, marks)
+      else:
+        fonts.withFont(frHeading, 0):
+          igTableHeader(igTableGetColumnName_Int(cint(c)))
   ui.syncColumns(id, values, st, output)
   let warning = vec4(t.roles[rlWarning])
   # The cells are no stops of Tab (it moves between the window's controls,
@@ -331,8 +395,14 @@ proc drawFieldTable(ui: var HeadersUi; id: string; table: FieldTable; st: AppSta
               if joined: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
               rightAlign(v)
               # (drawn as chosen while its menu is open, as it was under the pointer)
-              discard igSelectable_Bool((v & "##v").cstring, igIsPopupOpen_Str("##value", 0), 0,
-                ImVec2_c(x: 0, y: 0))
+              let picked = ui.hex.id == id and ui.hex.name == row.name and ui.hex.column == c
+              if igSelectable_Bool((v & "##v").cstring, picked or
+                  igIsPopupOpen_Str("##value", 0), 0, ImVec2_c(x: 0, y: 0)) and
+                  c < row.at.len and row.at[c] >= 0:
+                # a click shows the field's bytes in its block, or hides them
+                ui.hex = if picked: HexPick() else: HexPick(id: id, name: row.name, column: c,
+                  at: row.at[c], size: row.size, description: row.description, seek: true,
+                  tableKey: ui.tables[id].key)
               if joined:
                 igPopStyleColor(1)
                 if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
@@ -376,10 +446,12 @@ proc drawText(ui: var HeadersUi; id, key: string; lines: proc (): string; fonts:
   igEndChild()
   marks.mark(id)
 
-proc drawBytes(id: string; b: RawBlock; t: Theme; fonts: Fonts; marks: var Marks) =
-  ## A block without named fields as its bytes: offset, hexadecimal, text.
-  dim(t, $b.size & " bytes at offset " & $b.offset & (if b.bytes.len < b.size:
-    "; the first " & $b.bytes.len & " are shown" else: "") & ".")
+proc drawBytes(id: string; b: RawBlock; t: Theme; fonts: Fonts; marks: var Marks;
+    inFile = true) =
+  ## A block without named fields as its bytes: offset, hexadecimal, text;
+  ## not `inFile` (a stanza's), the offsets are from its first byte.
+  dim(t, $b.size & " bytes" & (if inFile: " at offset " & $b.offset else: "") &
+    (if b.bytes.len < b.size: "; the first " & $b.bytes.len & " are shown" else: "") & ".")
   if igBeginChild_Str(id.cstring, ImVec2_c(x: 0, y: 0), 0, 0):
     fonts.withFont(frMono, 0):
       let clipper = ImGuiListClipper_ImGuiListClipper()
@@ -391,6 +463,156 @@ proc drawBytes(id: string; b: RawBlock; t: Theme; fonts: Fonts; marks: var Marks
       ImGuiListClipper_End(clipper)
       ImGuiListClipper_destroy(clipper)
   igEndChild()
+
+# ---------------------------------------------------------------- hex pane --
+
+func hexHeight(): float32 = igGetTextLineHeightWithSpacing() * 13
+  ## the hex pane's height: what the table above it leaves
+
+proc tableHeight(ui: HeadersUi; id: string): float32 =
+  ## The height a header table is given: what is left (0), less the hex
+  ## pane's when it shows a field of this table (at most half of it).
+  if ui.hex.id == id: -min(hexHeight(), 0.5 * igGetContentRegionAvail().y) else: 0
+
+proc drawHex(ui: var HeadersUi; id: string; blocks: openArray[RawBlock]; fonts: Fonts;
+    t: Theme; marks: var Marks) =
+  ## Below table `id`, when a field of it is picked: its block's bytes (a
+  ## line each 16: offset, hexadecimal, text), the field's highlighted, and
+  ## its bytes read every way a header could hold them.
+  if ui.hex.id != id: return
+  template h: untyped = ui.hex
+  if id in ui.tables and ui.tables[id].key != h.tableKey:
+    # the table was made again (other traces, another record): the field
+    # picked, at its place there, or none
+    var at = -1'i64
+    for row in ui.tables[id].table.rows:
+      if row.name == h.name and h.column < row.at.len: at = row.at[h.column]
+    if at < 0:
+      h = HexPick()
+      return
+    (h.at, h.found, h.tableKey) = (at, false, ui.tables[id].key)
+  if not h.found:
+    for b in blocks:
+      if h.at >= b.offset and h.at + h.size <= b.offset + b.bytes.len:
+        h.bytes = b.bytes
+        h.base = b.offset
+        h.found = true
+  if not h.found:
+    igTextDisabled("The bytes of this field were not read.")
+    marks.mark("headers.hex none")
+    return
+  let first = int(h.at - h.base)
+  igSeparator()
+  dim(t, h.description & " (" & h.name & "): " & $h.size & (if h.size == 1: " byte" else:
+    " bytes") & " at " & $h.at & ". Click its value again to hide its bytes.")
+  let readingsWidth = min(igGetFontSize() * 22, 0.45 * igGetContentRegionAvail().x)
+  if igBeginChild_Str("##hexdump", ImVec2_c(x: -readingsWidth, y: 0), ImGui_ChildFlags_Borders.cint,
+      ImGui_WindowFlags_HorizontalScrollbar.cint):
+    fonts.withFont(frMono, 0):
+      let charW = igCalcTextSize("0", nil, false, -1).x
+      let lineH = igGetTextLineHeight()
+      let mark = u32(withAlpha(t.roles[rlHighlight], 110))
+      let dl = igGetWindowDrawList()
+      let clipper = ImGuiListClipper_ImGuiListClipper()
+      ImGuiListClipper_Begin(clipper, cint(dumpLines(h.bytes)), -1)
+      ImGuiListClipper_IncludeItemByIndex(clipper, cint(first div 16))
+      while ImGuiListClipper_Step(clipper):
+        for line in clipper.DisplayStart ..< clipper.DisplayEnd:
+          let pos = igGetCursorScreenPos()
+          for k in max(first, line * 16) ..< min(first + h.size, line * 16 + 16):
+            let x = pos.x + charW * float32(dumpColumn(k - line * 16))
+            ImDrawList_AddRectFilled(dl, ImVec2_c(x: x - 1, y: pos.y),
+              ImVec2_c(x: x + 2 * charW + 1, y: pos.y + lineH), mark, 0, 0)
+          igTextUnformatted(dumpLine(h.bytes, h.base, line).cstring, nil)
+          if line == first div 16:
+            marks.mark("headers.hex field")
+            if h.seek:
+              igSetScrollHereY(0.3)
+              h.seek = false
+      ImGuiListClipper_End(clipper)
+      ImGuiListClipper_destroy(clipper)
+  igEndChild()
+  marks.mark("headers.hex")
+  igSameLine(0, -1)
+  if igBeginChild_Str("##readings", ImVec2_c(x: 0, y: 0), 0, 0):
+    const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_SizingFixedFit.cint
+    let readings = byteReadings(h.bytes.toOpenArray(first, first + h.size - 1))
+    if readings.len == 0: igTextDisabled("Read as a number: 1, 2, 3, 4 or 8 bytes only.")
+    elif igBeginTable("##read", 2, flags, ImVec2_c(x: 0, y: 0), 0):
+      for r in readings:
+        igTableNextRow(0, 0)
+        discard igTableNextColumn()
+        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+        igTextUnformatted(r.label.cstring, nil)
+        igPopStyleColor(1)
+        discard igTableNextColumn()
+        fonts.withFont(frMono, 0):
+          igTextUnformatted(r.value.cstring, nil)
+        marks.mark("headers.hex read " & r.label)
+      igEndTable()
+  igEndChild()
+
+# ------------------------------------------------------------------ stanzas --
+
+proc listPane(id: string; names: openArray[string]; picked: var int; marks: var Marks) =
+  ## A list on the left of a tab: a click picks a line.
+  if igBeginChild_Str(id.cstring, ImVec2_c(x: igGetFontSize() * 16, y: 0),
+      ImGui_ChildFlags_Borders.cint or ImGui_ChildFlags_ResizeX.cint, 0):
+    for i, n in names:
+      if igSelectable_Bool((n & "##" & $i).cstring, picked == i, 0, ImVec2_c(x: 0, y: 0)):
+        picked = i
+      if i < 64: marks.mark(id & " " & $i)
+  igEndChild()
+  igSameLine(0, -1)
+
+proc drawStanzas(ui: var HeadersUi; stanzas: openArray[StanzaFact]; fileKey: string;
+    fonts: Fonts; t: Theme; marks: var Marks) =
+  ## The extended textual headers' stanzas: a list, and the one picked (its
+  ## text, or its bytes).
+  var names: seq[string]
+  for s in stanzas:
+    names.add s.company & ": " & s.name & (if s.kind == skText: "" else: " (" & $s.kind & ")")
+  ui.stanza = clamp(ui.stanza, 0, stanzas.high)
+  listPane("headers.stanzas", names, ui.stanza, marks)
+  if igBeginChild_Str("##stanza", ImVec2_c(x: 0, y: 0), 0, 0):
+    template s: untyped = stanzas[ui.stanza]
+    dim(t, s.key & (if s.contentType.len > 0: ", " & s.contentType else: "") & ", " &
+      $s.size & " bytes" & (case s.kind
+      of skEnd: ": the end of the extended textual headers"
+      of skUserData: ": a User Data attachment (the User data tab shows it)"
+      else: ""))
+    case s.kind
+    of skText:
+      let text = addr stanzas[ui.stanza].text # (read once, when it changes: never copied a frame)
+      ui.drawText("##stanzatext", fileKey & "." & $ui.stanza, proc (): string = text[], fonts,
+        marks)
+    of skBinary:
+      drawBytes("headers.stanza bytes", RawBlock(blockName: s.key, size: s.size,
+        bytes: s.bytes), t, fonts, marks, inFile = false)
+    of skUserData, skEnd: discard
+  igEndChild()
+  marks.mark("headers.stanza")
+
+proc drawUserData(ui: var HeadersUi; data: openArray[UserDataFact]; fileKey: string;
+    fonts: Fonts; t: Theme; marks: var Marks) =
+  ## The User Data attachments: a list, and the one picked: its description
+  ## and its bytes.
+  var names: seq[string]
+  for u in data: names.add (if u.label.len > 0: u.label else: "(no label)")
+  ui.attachment = clamp(ui.attachment, 0, data.high)
+  listPane("headers.userdata", names, ui.attachment, marks)
+  if igBeginChild_Str("##attachment", ImVec2_c(x: 0, y: 0), 0, 0):
+    template u: untyped = data[ui.attachment]
+    for (label, value) in [("Format", u.format), ("Description", u.description),
+        ("Created", u.created), ("Creator", u.creator), ("Compression", u.compression),
+        ("Size", $u.size & " bytes")]:
+      if value.len > 0: dim(t, label & ": " & value)
+    if u.problem.len > 0: dim(t, "Its bytes are not shown: " & u.problem & ".")
+    else:
+      drawBytes("headers.userdata bytes", RawBlock(blockName: u.label, size: int(u.size),
+        bytes: u.bytes), t, fonts, marks, inFile = false)
+  igEndChild()
+  marks.mark("headers.userdata")
 
 # ------------------------------------------------------------ file headers --
 
@@ -464,7 +686,9 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
       if ui.stale(id, fileKey):
         ui.tables[id] = CachedTable(key: fileKey, table: fieldTable([rowsOf(facts.rows,
           proc (r: FieldRow): bool = r.blockName == "binary")], ["Value"], standard))
-      ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
+      ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output,
+        ui.tableHeight(id))
+      ui.drawHex(id, facts.blocks, fonts, t, marks)
       igEndTabItem()
     if facts.extendedText.len > 0 and subTab("Extended", marks):
       ui.drawText("##extended", fileKey, proc (): string =
@@ -473,6 +697,12 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
           parts.add "Extended textual header " & $(k + 1) & " of " &
             $facts.extendedText.len & "\n" & lines.join("\n")
         parts.join("\n\n"), fonts, marks)
+      igEndTabItem()
+    if facts.stanzas.len > 0 and subTab("Stanzas", marks):
+      ui.drawStanzas(facts.stanzas, fileKey, fonts, t, marks)
+      igEndTabItem()
+    if facts.userData.len > 0 and subTab("User data", marks):
+      ui.drawUserData(facts.userData, fileKey, fonts, t, marks)
       igEndTabItem()
   of skSegd:
     template r: untyped = st.inspection.answer.record # not copied a frame
@@ -495,7 +725,9 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
         if ui.stale(id, key):
           ui.tables[id] = CachedTable(key: key, table: fieldTable([rowsOf(r.rows,
             proc (x: FieldRow): bool = x.blockName.blockIs("gh"))], ["Value"], standard))
-        ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
+        ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output,
+          ui.tableHeight(id))
+        ui.drawHex(id, r.blocks, fonts, t, marks)
         igEndTabItem()
       func isSet(x: FieldRow): bool = x.blockName.blockIs("st") and "cs" in x.blockName
       var anySet = false
@@ -527,7 +759,9 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
           ui.tables[id] = CachedTable(key: key & "." & $ui.setsPage, table: fieldTable(sets,
             names, standard, byBlock = false))
         if ui.sets > MaxSideBySide: ui.drawSetsPage(t, marks)
-        ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
+        ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output,
+          ui.tableHeight(id))
+        ui.drawHex(id, r.blocks, fonts, t, marks)
         igEndTabItem()
       for i in 0 ..< r.raw.len:
         template b: untyped = r.raw[i]
@@ -541,7 +775,9 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
       if ui.stale(id, fileKey):
         ui.tables[id] = CachedTable(key: fileKey, table: fieldTable([facts.rows], ["Value"],
           standard))
-      ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
+      ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output,
+        ui.tableHeight(id))
+      ui.drawHex(id, facts.blocks, fonts, t, marks)
       igEndTabItem()
   of skUnknown: discard
   if standard != skSeg2:
@@ -595,7 +831,14 @@ proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; ma
   let key = $answer.gen
   if id notin ui.tables or ui.tables[id].key != key:
     ui.tables[id] = CachedTable(key: key, table: traceTable(answer.traces))
-  ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output)
+  ui.drawFieldTable(id, ui.tables[id].table, st, fonts, t, marks, output, ui.tableHeight(id))
+  # the blocks of the trace whose value was picked (the columns are the
+  # traces whose fields were read, in order)
+  var c = -1
+  for k in 0 ..< answer.traces.len:
+    if answer.traces[k].rows.len > 0:
+      inc c
+      if c == ui.hex.column: ui.drawHex(id, answer.traces[k].blocks, fonts, t, marks)
 
 func cutWords(rows, columns: int): string =
   ## What a copy of the Data tab's `rows` rows of `columns` columns of
@@ -813,6 +1056,13 @@ proc drawHeaders*(ui: var HeadersUi; title: string; st: AppState; cursorMs: floa
         ui.drawTrace(st, cursorMs, pointerInPlot, fonts, t, marks, result, parts)
         igEndTabItem()
       else: marks.mark("headers.tab trace")
+      if ui.tabItem(htTable, view.tab):
+        shown = htTable
+        marks.mark("headers.tab table")
+        parts.incl ipTable
+        ui.table.drawTraceTable(st, fonts, t, marks, result.commands)
+        igEndTabItem()
+      else: marks.mark("headers.tab table")
       igEndTabBar()
       if ui.selecting:
         ui.selecting = false
@@ -824,7 +1074,9 @@ proc drawHeaders*(ui: var HeadersUi; title: string; st: AppState; cursorMs: floa
         result.commands.add Command(kind: ckSettings, settings: s)
     ui.focus.settle()
   igEnd()
-  if parts != ui.parts or not ui.told:
+  let table = if ipTable in parts: ui.table.view else: TableView()
+  if parts != ui.parts or not ui.told or table != ui.toldTable:
     ui.parts = parts
     ui.told = true
-    result.commands.add Command(kind: ckInspect, inspect: parts)
+    ui.toldTable = table
+    result.commands.add Command(kind: ckInspect, inspect: parts, table: table)
