@@ -342,7 +342,12 @@ selection when that trace is selected. Then:
   pointer is in a selection): the same frequency filters as the strip's Filters drop-down,
   in the same order and words, for those traces only. **Apply** sets them as one step.
   They run **after the plot's filters** (the usual choice) or **instead of the plot's
-  filters**. **Remove the trace's filter** (or **Remove the filters of N traces**) is in
+  filters**. **Apply** with nothing set and "After" takes the trace's filter away (no
+  mark; if there was none, nothing is stored). "Instead" with nothing set is kept: the
+  trace is shown without the plot's filters, and the mark says "No filter: the plot's
+  filters are not applied". **Clear** empties the controls and puts the choice back to
+  "After". **Cancel**, Escape, and a click outside close the popover without applying.
+  **Remove the trace's filter** (or **Remove the filters of N traces**) is in
   the same menu, and only when one of the traces has a filter. Gain, AGC, sort and the
   display are still the plot's, not a trace's. A killed trace keeps its filter; the kill
   wins on screen (the trace stays blank).
@@ -357,10 +362,13 @@ selection when that trace is selected. Then:
   this file** shows the traces as the file has them (Undo brings the edits back).
 
 Edited traces are marked in a row of the display header, **edits**, that is there only
-while the record has an edit: a red **K** over a killed trace, an **R** over a reversed
-one, and the filter icon over a trace that has its own filter. The tooltip on that icon
-says the filter in words ("Band-pass 10-60 Hz, after the plot's filters"). The Headers
-window's trace table shows the same letters beside the trace number. The status bar says
+while the record has an edit: a red **K** over a killed trace, an **R** in the accent
+colour over a reversed one, and the filter icon in that same accent colour over a trace
+that has its own filter (red, with the **K**, when the trace is also killed). The tooltip
+on that icon says the filter in words ("Band-pass 10-60 Hz, after the plot's filters").
+The Headers window's trace table shows the same letters beside the trace number, and the
+same tooltip. A filter changed for this run only, different from the one remembered with
+the file, has a star, as a kill an agent made does. The status bar says
 "killed", "polarity reversed" or the filter's words for the trace under the pointer, and
 Messages lists each change. Edits are lists kept beside the file, never
 written into it: they hold through another record, a sort, a gain change, stepping to
@@ -693,8 +701,13 @@ spectrum in a window named for what it shows ("FFT: trace 12 · FFID 1 · shots.
 over a selected trace, the selection's, averaged ("FFT 2: 12 traces ..."). Open as many
 as you like and dock them anywhere; each keeps what it was opened on while you move on.
 Two curves: **raw**, the samples as recorded, and **processed**, through the filters of
-the strip (a band-pass shows as the processed curve falling away outside its corners, a
-notch as a dip at its frequency). In dB both are on one scale (0 dB at the larger peak,
+the strip and, where a trace has one, its own filter (a band-pass shows as the processed
+curve falling away outside its corners, a notch as a dip at its frequency). Of one trace
+that has its own filter, the response and the line of words are what that trace went
+through (the strip's filters then the trace's, or the trace's alone when it runs
+instead). Of several traces that do not share one filter, the response stays the strip's
+and the words say how many have their own. The live panel asks again when a trace it
+shows gains, changes or loses its filter. In dB both are on one scale (0 dB at the larger peak,
 whose amplitude the window's line of words gives, so that two windows compare);
 **Linear** shows the amplitude itself (a sine of amplitude A reads A). **Log frequency**
 spreads the low frequencies out. **Visible time** takes the spectrum over the time the

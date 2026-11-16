@@ -1327,8 +1327,13 @@ that cannot be read or hold a sample that is not a number, and traces at another
 interval than the first. Auxiliary traces count as seismic ones do (a pilot's spectrum).
 
 **Raw and processed.** The raw curve is the samples as the file has them; the processed
-one the same samples through the plot's filters (Filters in the strip), run on whole
-traces before the window is cut, also when the plot is shown raw, so the two compare. In
+one the same samples through the plot's filters (Filters in the strip) and each trace's
+own filter, run on whole traces before the window is cut, also when the plot is shown
+raw, so the two compare. Of one trace that has its own filter, the response and the
+words are what that trace went through: the plot's filters then the trace's, or the
+trace's alone when it runs instead of the plot's (or when the plot's did not reach an
+auxiliary trace). Of several traces with their own filters, the response stays the
+plot's and the words add how many. In
 dB both are on one scale, 0 dB at the larger peak of the two (a filter's cut shows as
 the gap between them), and the line of words says which amplitude that is ("0 dB =
 amplitude 0.000142 (raw peak)"): each window has a 0 dB of its own, so two windows
@@ -1370,13 +1375,15 @@ the bins fill it in. `samples/land` is 1.5 s at 2 ms.
 **What the processed curve went through.** The filters are made for the traces' own
 sample interval (a corner or notch past its Nyquist is cut or left out, as in the
 plot, and the words say so), and the processed curve is of the traces they reach
-only. An auxiliary trace goes through them only when "Filter the Aux traces too" is
-ticked, as in the plot: with it off, a record's auxiliary traces are in the raw curve
-and left out of the processed one ("processed: notch 60 Hz, 23 of the 24 traces (the
+only. An auxiliary trace goes through the plot's filters only when "Filter the Aux
+traces too" is ticked, as in the plot. With it off, an auxiliary trace is in the raw
+curve and left out of the processed one, unless it has a filter of its own, which is
+in the processed curve either way ("processed: notch 60 Hz, 23 of the 24 traces (the
 auxiliary trace is not filtered: Filters > Filter the Aux traces too is off)"; the legend
 names it "processed (23 of 24)": the two curves then differ by those traces too), and a
-pilot shown alone has no processed curve at all ("not processed: the auxiliary trace is
-not filtered: ..."); nor has a spectrum whose filters cannot run at its interval
+pilot shown alone, with no filter of its own, has no processed curve at all ("not
+processed: the auxiliary trace is not filtered: ..."); nor has a spectrum whose filters
+cannot run at its interval
 (every notch past Nyquist, say). The words are the answer's own: they name what its
 processed curve went through, never only what the plot has set now.
 

@@ -1568,6 +1568,7 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     tp.ownDraft = start.filter
     tp.ownMixed = start.mixed
   marks.mark("plot.menu.filter")
+  marks.mark("plot.menu.filter.item " & filterItem)
   tip("Give this trace its own frequency filter, after the plot's filters or instead of them")
   var anyFilter = false
   for id in targets:
@@ -1580,6 +1581,7 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     if igMenuItem_Bool(removeItem.cstring, nil, false, true):
       res.commands.add Command(kind: ckOwnFilter, panel: p.id, edited: targets, on: false)
     marks.mark("plot.menu.removefilter")
+    marks.mark("plot.menu.removefilter.item " & removeItem)
     tip("Take this trace's own filter away (the plot's filters stay)")
   let fft = fftEntry()
   if igMenuItem_Bool((fft.icon & "  " & fft.name & " in a new window").cstring,
@@ -1661,6 +1663,18 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
     if igShortcut_Nil(ImGui_Key_F.cint, 0):
       res.commands.add fftCommand(st, p, under)
 
+func editColour*(has: set[TraceEdit]; shownFilter: bool): Role =
+  ## The colour of an edit mark: error when the trace is killed, accent when
+  ## a reversal or a filter is shown, dim when only a remembered edit is hidden.
+  if teKilled in has: rlError
+  elif has != {} or shownFilter: rlAccent
+  else: rlTextDim
+
+func editStar*(has, kept: set[TraceEdit]; shownF, keptF: bool; shown, keptFilter: OwnFilter): bool =
+  ## Whether the mark has a star: an edit shown but not remembered, or a
+  ## filter that differs from the one remembered with the file.
+  (has - kept) != {} or (shownF and not keptF) or (shownF and keptF and shown != keptFilter)
+
 func holds(t: Tile; position: int): bool {.inline.} =
   ## Whether `t` has a row at `position`.
   let r = t.request
@@ -1674,10 +1688,12 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
   ## rows; a column next to the plot when time is across): over each edited
   ## trace in view, as the file's edits `e` are now, "K" (killed, in the
   ## theme's error colour) or "R" (reversed, in its accent colour), "KR" for
-  ## both; a thin bar where traces are too close for the letters. An edit
-  ## shown but not remembered (an agent's, for the session) has a "*" after
-  ## it, its bar an outline; one remembered but hidden for the session (an
-  ## agent's undo of the user's) is in brackets, "(K)", in the dim text
+  ## both, and the filter icon in the accent colour (the error colour when
+  ## the trace is also killed); a thin bar where traces are too close for
+  ## the letters. An edit shown but not remembered (an agent's, for the
+  ## session), or a filter that differs from the one remembered, has a "*"
+  ## after it, its bar an outline; one remembered but hidden for the session
+  ## (an agent's undo of the user's) is in brackets, "(K)", in the dim text
   ## colour: it comes back at the next run.
   let dl = igGetWindowDrawList()
   let lineH = igGetTextLineHeight()
@@ -1718,12 +1734,12 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
             (if filtered: IconFilter else: "")
         let session = has - kept # shown, not remembered
         let hidden = kept - has # remembered, not shown
+        let filterMoved = editStar(has, kept, shownF, keptF, shownFilter, keptFilter)
         var text = letters(has, shownF)
-        if session != {} or (shownF and not keptF): text.add "*"
+        if filterMoved: text.add "*"
         if hidden != {} or (keptF and not shownF):
           text.add "(" & letters(hidden, keptF and not shownF) & ")"
-        let colour = if has == {}: u32(t.roles[rlTextDim])
-                     else: u32(t.roles[if teKilled in has: rlError else: rlAccent])
+        let colour = u32(t.roles[editColour(has, shownF)])
         let c = traceAt(view, m, plotPos, plotSize, float64(pos))
         let ts = igCalcTextSize(text.cstring, nil, false, -1)
         let w = ts.along(ta)
@@ -1741,7 +1757,8 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
           else: ImDrawList_AddRectFilled(dl, lo, hi, colour, 0, 0)
         if marked < 200: # for tests
           marks.markRect("plot.header.edit " & $(trace + 1), lo, hi)
-          if session != {}: marks.markRect("plot.header.edit " & $(trace + 1) & " session", lo, hi)
+          if session != {} or (shownF and not keptF) or filterMoved:
+            marks.markRect("plot.header.edit " & $(trace + 1) & " session", lo, hi)
           if hidden != {}: marks.markRect("plot.header.edit " & $(trace + 1) & " hidden", lo, hi)
           if shownF or keptF:
             marks.markRect("plot.header.filter " & $(trace + 1), lo, hi)
@@ -2287,8 +2304,16 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     openOwnFilter()
   if tp.ownTraces.len > 0 and drawOwnFilter(tp.ownDraft, tp.ownMixed, tp.ownTraces.len,
       st.panels[k].layout.dtMs, tp.ownPos, marks):
-    res.commands.add Command(kind: ckOwnFilter, panel: st.panels[k].id, edited: tp.ownTraces,
-      on: true, processing: tp.ownDraft.spec, filterPlace: tp.ownDraft.place)
+    # Nothing set and "after" takes the filter away (no mark; no step when
+    # there was none). "Instead" with nothing set is kept: the trace is shown
+    # without the plot's filters.
+    let remove = not tp.ownDraft.spec.hasFilters and tp.ownDraft.place == fpAfter
+    if remove:
+      res.commands.add Command(kind: ckOwnFilter, panel: st.panels[k].id, edited: tp.ownTraces,
+        on: false)
+    else:
+      res.commands.add Command(kind: ckOwnFilter, panel: st.panels[k].id, edited: tp.ownTraces,
+        on: true, processing: tp.ownDraft.spec, filterPlace: tp.ownDraft.place)
   drawHeaderMenu(p, marks, res)
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)

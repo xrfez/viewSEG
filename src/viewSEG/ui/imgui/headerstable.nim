@@ -350,8 +350,10 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
             mode: (if io.KeyCtrl: smToggle else: smReplace))
           ui.lastClicked = row
       if igIsItemHovered(0) and id >= 0: over = id
-      if hasF and igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
-        igSetTooltip("%s", filterWords(filt).cstring)
+      if hasF and igIsItemHovered(0):
+        let words = filterWords(filt)
+        igSetTooltip("%s", words.cstring)
+        if row < 400: marks.mark("table.filter tip " & words)
       if hasF and row < 400: marks.mark("table.filter " & $row)
       if row < 400: marks.mark("table.row " & $row)
       if id >= 0 and igBeginPopupContextItem("##rowmenu", ImGui_PopupFlags_MouseButtonRight.cint):

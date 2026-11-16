@@ -256,6 +256,7 @@ proc drawOwnFilter*(draft: var OwnFilter; mixed: bool; n: int; dtMs: float64;
   if mixed:
     igTextDisabled("the selected traces have different filters")
     marks.mark("plot.ownfilter mixed")
+    marks.mark("plot.ownfilter mixed the selected traces have different filters")
   let dt = dtMs
   let nyq = if dt > 0 and dt < Inf: 500 / dt else: MaxFilterHz
   let w = round(igGetFontSize() * 16)
@@ -329,7 +330,11 @@ proc drawOwnFilter*(draft: var OwnFilter; mixed: bool; n: int; dtMs: float64;
     igSameLine(0, -1)
   if igButton("+ Notch", ImVec2_c(x: 0, y: 0)): pr.notches.add NotchFilter()
   igEndDisabled()
-  if igButton("No filters", ImVec2_c(x: 0, y: 0)): pr = Processing()
+  if igButton("Clear", ImVec2_c(x: 0, y: 0)):
+    pr = Processing()
+    draft.place = fpAfter
+  marks.mark("plot.ownfilter clear")
+  tip("Clear the controls, and run after the plot's filters")
   igSeparatorText("When")
   if igRadioButton_Bool("After the plot's filters", draft.place == fpAfter):
     draft.place = fpAfter
@@ -339,8 +344,14 @@ proc drawOwnFilter*(draft: var OwnFilter; mixed: bool; n: int; dtMs: float64;
   marks.mark("plot.ownfilter instead")
   draft.spec = pr
   igSeparator()
+  if igButton("Cancel", ImVec2_c(x: 0, y: 0)): igCloseCurrentPopup()
+  marks.mark("plot.ownfilter cancel")
+  tip("Close without changing the trace's filter")
+  igSameLine(0, -1)
   result = igButton("Apply", ImVec2_c(x: 0, y: 0))
   marks.mark("plot.ownfilter apply")
+  tip("Set this filter on the traces. With nothing set and \"After the plot's filters\", " &
+    "it takes the trace's filter away")
   if result: igCloseCurrentPopup()
   igEndPopup()
 
