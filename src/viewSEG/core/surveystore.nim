@@ -234,15 +234,21 @@ proc readText(path: string; most: int64): string =
   fs.readFile(path)
 
 proc c_fflush(f: File): cint {.importc: "fflush", header: "<stdio.h>".}
+when defined(windows):
+  proc c_commit(fd: cint): cint {.importc: "_commit", header: "<io.h>".}
+  proc c_fileno(f: File): cint {.importc: "_fileno", header: "<stdio.h>".}
 
 proc syncFile(f: File; name: string) =
   ## Puts what was written to `f` on the disk: the stream's buffer flushed
-  ## (its result checked: a full disk shows here) and, on POSIX, `fsync`ed,
-  ## so that the rename that follows never puts a cut-short file in place.
-  ## Raises `IOError`.
+  ## (its result checked: a full disk shows here) and then synced to the disk
+  ## (`fsync` on POSIX, `_commit` on Windows: the descriptor's buffers
+  ## written), so that the rename that follows never puts a cut-short file in
+  ## place. Raises `IOError`.
   if c_fflush(f) != 0: raise newException(IOError, "the disk did not take " & name)
   when defined(posix):
     if fsync(getFileHandle(f)) != 0: raise newException(IOError, "the disk did not keep " & name)
+  elif defined(windows):
+    if c_commit(c_fileno(f)) != 0: raise newException(IOError, "the disk did not keep " & name)
 
 proc writeStore*(dir: string; files: openArray[SurveyCopy]; ctx: JobContext): StoreInfo =
   ## Reads the copies `files` of the project in `dir` and writes what they
