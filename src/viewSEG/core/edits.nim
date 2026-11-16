@@ -10,7 +10,8 @@
 ##   computed over the panel (the gain's levels).
 ## - **All reversed:** every trace of the file reversed (`setAllReversed`),
 ##   as the plot's "Reverse polarity of all traces" asks; a trace reversed on
-##   its own as well is reversed twice, so as recorded.
+##   its own as well is reversed twice, so as recorded. Every graph uses that
+##   same effective reversal (`effectivelyReversed`).
 ## - **Own filter:** a trace's frequency filters (`OwnFilter`), run after
 ##   the plot's or instead of them. A killed trace keeps its filter; the
 ##   kill wins on screen (the row stays blank).
@@ -242,6 +243,13 @@ func len*(e: FileEdits; edit: TraceEdit): int {.inline.} =
 
 func allReversed*(e: FileEdits): bool {.inline.} = e.shown.allReversed
   ## Whether the polarity of every trace is reversed (as shown).
+
+func effectivelyReversed*(e: FileEdits; trace: int): bool {.inline.} =
+  ## Whether trace `trace` is reversed as the picture shows it, and as every
+  ## graph must: reversed on its own, or every trace of the file is, but not
+  ## both. Both ways is as recorded. The one answer to "is this trace
+  ## effectively reversed".
+  e.has(teReversed, trace) xor e.allReversed
 
 func isEmpty*(e: FileEdits): bool {.inline.} = e.shown.isEmpty
   ## Whether no trace has an edit (as shown).

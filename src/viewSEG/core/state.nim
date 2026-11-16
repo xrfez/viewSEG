@@ -2840,17 +2840,22 @@ func recordText(s: Session; trace: int): string =
   else: "record " & $(g + 1)
 
 func ownKeyOf(e: FileEdits; traces: openArray[int]): string =
-  ## The own filters of `traces`, and which of them are reversed, as a key:
-  ## a change of one asks a spectrum or an analysis again.
+  ## The own filters of `traces`, which of them are reversed on their own,
+  ## and whether every trace is reversed, as a key: a change of one asks a
+  ## spectrum or an analysis again. Reverse-all is one mark, not a list of
+  ## every trace.
+  if e.allReversed: result.add "all;"
   for t in traces:
     let (has, f) = e.ownOf(t)
     if has: result.add $t & ":" & $f.place & ":" & $f.spec & ";"
     if e.has(teReversed, t): result.add $t & ":r;"
 
 proc reversedOf(e: FileEdits; traces: openArray[int]): seq[int] =
-  ## Those of `traces` reversed in `e`, ascending.
+  ## Those of `traces` effectively reversed (`effectivelyReversed`: own
+  ## reversal or reverse all, not both), ascending. The one list every graph
+  ## flips.
   for t in traces:
-    if e.has(teReversed, t): result.add t
+    if e.effectivelyReversed(t): result.add t
   result.sort()
 
 func ownOfTraces(e: FileEdits; traces: openArray[int]): seq[FilterEntry] =
@@ -2895,8 +2900,8 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   inc sw.revision
   state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
     session: int(s.id), file: s.filePtr, path: s.path, size: s.size, traces: traces,
-    killed: killed, reversed: reversed, own: own, fromMs: window[0], toMs: window[1],
-    processing: processing)
+    killed: killed, reversed: reversed, allReversed: e.allReversed, own: own,
+    fromMs: window[0], toMs: window[1], processing: processing)
   true
 
 func spread(list: var seq[int]; samples: int) =
@@ -2981,7 +2986,7 @@ proc followLive(state: var AppState) =
   ## The live panel, while on screen and not frozen, asked again when what
   ## it is of changed (the traces in view or selected, the record, the
   ## file, the time in view, the filters, a kill, a shown trace's own
-  ## filter or reversal). Nothing is asked while it is hidden.
+  ## filter or reversal, reverse-all). Nothing is asked while it is hidden.
   template live: untyped = state.spectra[0]
   if live.display != state.settings.spectrum.live:
     live.display = state.settings.spectrum.live

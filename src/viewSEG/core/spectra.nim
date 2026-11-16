@@ -132,8 +132,9 @@ type
       ## band-pass 10-60 Hz", or "N traces have their own filter"; "" for none
     reverseNote*: string
       ## the reversed traces it is of: "Trace 12: reversed", or "N traces
-      ## are reversed"; "" for none. A reversal is part of the trace, as an
-      ## own filter is: no box turns it off
+      ## are reversed"; "All traces are reversed" when reverse-all is on and
+      ## every trace it shows is; "" for none. A reversal is part of the
+      ## trace, as an own filter is: no box turns it off
     insteadNote*: string
       ## "this trace uses its own filter instead of the plot's" when the
       ## plot's filters do not apply because the trace's own filter runs

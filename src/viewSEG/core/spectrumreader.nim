@@ -5,8 +5,9 @@
 ## The UI thread leaves a request per window (`ask`): an open file, the
 ## traces, the time window, the plot's filters. The reader reads what it
 ## does not hold of those traces (a selection-mode `Prefetcher` over whole
-## traces), keeps their samples as decoded, multiplies a reversed trace by
-## -1 (part of the trace, before its own filter; no box turns it off),
+## traces), keeps their samples as decoded, multiplies an effectively
+## reversed trace by -1 (own reversal or reverse-all, not both; part of the
+## trace, before its own filter; no box turns it off),
 ## applies each trace's own filter (part of the trace, in the raw curve),
 ## computes the raw and,
 ## when the plot has a filter on, the processed spectrum, and posts the
@@ -65,7 +66,8 @@ type
     size*: int64           ## its size when it was opened; -1 when not known
     traces*: seq[int]      ## indices in the file
     killed*: seq[int]      ## those of them killed, ascending: left out
-    reversed*: seq[int]    ## those reversed, ascending: samples times -1 first
+    reversed*: seq[int]    ## those effectively reversed, ascending: samples times -1 first
+    allReversed*: bool     ## reverse-all was on: the note says so once, not per trace
     own*: seq[FilterEntry] ## those that carry a filter of their own, ascending
     fromMs*, toMs*: float64 = NaN
       ## the time window; NaN: the whole trace
@@ -266,7 +268,7 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   var reversedOn = newSeq[bool](list.len)
   for i, t in list:
     if a.reversed.binarySearch(t) >= 0: reversedOn[i] = true
-  answer.reverseNote = reverseShownWords(list[0], reversedOn)
+  answer.reverseNote = reverseShownWords(list[0], reversedOn, a.allReversed)
   # The response is the plot's filters only. A trace's own filter is already
   # in the raw curve, and does not unlock Processed or Response.
   let responsePipe = if filtering: filters else: initPipeline()

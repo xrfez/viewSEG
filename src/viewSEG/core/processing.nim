@@ -410,11 +410,24 @@ func ownShownWords*(firstTrace: int; own: openArray[OwnFilter]): string =
   elif n == 1: "1 trace has its own filter"
   else: $n & " traces have their own filter"
 
-func reverseShownWords*(firstTrace: int; on: openArray[bool]): string =
+const AllReversedWords* = "All traces are reversed"
+  ## What a window says when reverse-all is on and every trace it shows is
+  ## reversed that way: once, not a list of the traces.
+
+func reverseShownWords*(firstTrace: int; on: openArray[bool]; allReversed = false): string =
   ## What a window says of the reversed traces it shows, in the place it
   ## names an own filter. One trace: "Trace 12: reversed" (`firstTrace` its
   ## index in the file, from 0). One of several: "1 trace is reversed".
   ## Several: "N traces are reversed". "" when none is reversed.
+  ## With reverse-all on and every shown trace effectively reversed,
+  ## "All traces are reversed" once, and the traces are not listed. A trace
+  ## that is not in `on` (reversed on its own as well, so as recorded) is
+  ## not called reversed.
+  if allReversed:
+    var anyOff = false
+    for b in on:
+      if not b: anyOff = true
+    if not anyOff and on.len > 0: return AllReversedWords
   var n = 0
   for b in on:
     if b: inc n

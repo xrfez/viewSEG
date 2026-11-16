@@ -130,8 +130,10 @@ proc askPlot(state: var AppState; w: int): bool =
       if j != i:
         if not state.jobs.hold(rs.path): return false
         (a.refFile, a.refPath, a.refSize) = (rs.filePtr, rs.path, rs.size)
-      a.refOwn = ownOfTraces(state.editsAt(rs.path), @[r - rs.base])
-      a.refReversed = state.editsAt(rs.path).has(teReversed, r - rs.base)
+      let re = state.editsAt(rs.path)
+      a.refOwn = ownOfTraces(re, @[r - rs.base])
+      a.refReversed = re.effectivelyReversed(r - rs.base)
+      a.refAllReversed = re.allReversed
     else:
       let aux = s.firstAux(traces[0])
       if aux >= 0:
@@ -140,8 +142,10 @@ proc askPlot(state: var AppState; w: int): bool =
         let sweep = s.filePtr[].traceKeys(aux).traceCode == SweepTraceCode
         (a.refTrace, a.refName) = (aux, (if sweep: "the pilot, trace "
           else: "the first auxiliary trace, trace ") & $(aux + 1))
-        a.refOwn = ownOfTraces(state.editsAt(s.path), @[aux])
-        a.refReversed = state.editsAt(s.path).has(teReversed, aux)
+        let re = state.editsAt(s.path)
+        a.refOwn = ownOfTraces(re, @[aux])
+        a.refReversed = re.effectivelyReversed(aux)
+        a.refAllReversed = re.allReversed
     pw.reference = a.refName
   if not state.jobs.hold(s.path):
     if a.refFile != nil: discard state.jobs.holdRelease.release(a.refPath)
@@ -154,11 +158,13 @@ proc askPlot(state: var AppState; w: int): bool =
   if not pw.frozen:
     pw.own = ownOfTraces(e, traces)
     pw.reversed = reversedOf(e, traces)
+    pw.allReversed = e.allReversed
     pw.ownKey = ownKeyOf(e, traces)
     pw.refKey = if pw.view == avCorrelation: state.refKeyOf(s, traces, pw.params.reference)
                 else: ""
   a.own = pw.own
   a.reversed = pw.reversed
+  a.allReversed = pw.allReversed
   inc state.plotGen
   a.gen = state.plotGen
   pw.asked = state.plotGen
@@ -464,9 +470,9 @@ proc blockPlot(state: var AppState; w, i: int; problem: string) =
 
 proc followFilters(state: var AppState; w, k: int) =
   ## Window `plots[w]`, not frozen, follows the plot's filters and the kills
-  ## of the traces it already shows, and a reversal of one of them or of the
-  ## reference (the same key as an own filter). `sameFollow` is the spectrum
-  ## windows' comparison.
+  ## of the traces it already shows, and a reversal of one of them, reverse-all,
+  ## or the reference (the same key as an own filter). `sameFollow` is the
+  ## spectrum windows' comparison.
   template pw: untyped = state.plots[w]
   let i = state.findTrace(if pw.traces.len > 0: pw.traces[0] else: -1)
   if i < 0 or state.panels[k].layers.len == 0: return

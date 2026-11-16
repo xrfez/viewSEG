@@ -13,8 +13,9 @@
 ##   another interval, or with none, is left out and counted, `atOtherInterval`,
 ##   as the spectrum reader does); a reference trace
 ##   for a correlation, from the same file or another one.
-## - **Filters.** A reversed trace is multiplied by -1 first (a sign flip,
-##   before anything else; no box turns it off). The plot's filters first
+## - **Filters.** An effectively reversed trace is multiplied by -1 first (own
+##   reversal or reverse-all, not both; a sign flip, before anything else; no
+##   box turns it off). The plot's filters first
 ##   after that (`Processing`, shown raw or not alike; an f-k asked raw
 ##   leaves them out), made for the traces' interval, run on whole traces;
 ##   an auxiliary trace goes through them only when the Aux toggle says so,
@@ -47,7 +48,8 @@ type
     offsetUnit*: SurveyUnit   ## the unit of the file's trace offsets
     names*: seq[string]       ## per trace, what the curves call it: "trace 12"
     killed*: seq[int]         ## those of `traces` killed, ascending: left out
-    reversed*: seq[int]       ## those of `traces` reversed, ascending: samples times -1 first
+    reversed*: seq[int]       ## those of `traces` effectively reversed, ascending: samples times -1 first
+    allReversed*: bool        ## reverse-all was on for this file
     own*: seq[FilterEntry]    ## traces that carry a filter of their own, ascending
     processing*: Processing   ## the plot's filters and its Aux toggle
     refFile*: ptr SeismicFile ## a correlation's reference's file (held); nil: none
@@ -56,7 +58,8 @@ type
     refTrace*: int = -1       ## its index in `refFile`
     refName*: string
     refOwn*: seq[FilterEntry] ## the reference's own filter, when it has one
-    refReversed*: bool        ## the reference is reversed
+    refReversed*: bool        ## the reference is effectively reversed
+    refAllReversed*: bool     ## reverse-all was on in the reference's file
 
   ReaderObj = object
     lock: Lock
@@ -446,9 +449,19 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               answer.note = (if answer.note.len > 0: answer.note & "; " else: "") &
                 "reference, " & refLine
             if a.refReversed:
-              let revLine = reverseShownWords(a.refTrace, [true])
-              answer.note = (if answer.note.len > 0: answer.note & "; " else: "") &
-                "reference, " & revLine
+              # same file, and the shown traces already say reverse-all once:
+              # do not say it again for the reference
+              var shownOn = newSeq[bool](a.traces.len)
+              for i, t in a.traces:
+                if a.reversed.binarySearch(t) >= 0: shownOn[i] = true
+              let shownLine = if a.traces.len == 0: ""
+                              else: reverseShownWords(a.traces[0], shownOn, a.allReversed)
+              let covered = refHere and shownLine == AllReversedWords
+              if not covered:
+                let revLine = if a.refAllReversed: AllReversedWords
+                              else: reverseShownWords(a.refTrace, [true])
+                answer.note = (if answer.note.len > 0: answer.note & "; " else: "") &
+                  "reference, " & revLine
       except OSError as e:
         answer.problem = "it cannot be read now: " & e.msg
       except ValueError as e:
