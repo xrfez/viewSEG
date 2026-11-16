@@ -35,6 +35,12 @@ const
   SpsChunk = 4 * 1024 * 1024
   MaxStoreString = 64 * 1024 * 1024
   MaxBlockBytes = 1024'i64 * 1024 * 1024
+  # The least a record takes in format 1 (its fields as the writer puts them,
+  # a name as its length word and text): a count read from a block is
+  # checked against them before anything is sized by it.
+  PointMinBytes = 1 + 4 + 4 + 8 + 8 + 4 + 8 + 8 + 8
+  RelationMinBytes = 1 + 4 + 8 + 4 + 1 + 4 + 4 + 8 + 8 + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 8 + 8 + 8 + 4
+  P1MinBytes = 4 + 4 + 8 + 1 + 8 + 8 + 8
 
 static: doAssert cpuEndian == littleEndian, "survey.bin is written little-endian"
 
@@ -323,6 +329,12 @@ type Cursor = object
 proc need(c: var Cursor; n: int) {.inline.} =
   if n < 0 or c.at + n > c.s.len: raise newException(IOError, "survey.bin is damaged")
 
+proc needRecords(c: var Cursor; count: uint32; minBytes: int) =
+  ## Fails when `count` records of at least `minBytes` each cannot be in the
+  ## bytes left in the block.
+  if int64(count) * int64(minBytes) > int64(c.s.len - c.at):
+    raise newException(IOError, "survey.bin is damaged")
+
 proc get[T](c: var Cursor; x: var T) {.inline.} =
   c.need sizeof(T)
   copyMem(addr x, addr c.s[c.at], sizeof(T))
@@ -448,6 +460,7 @@ proc readStore*(path: string; ctx: JobContext; r: StoreReader) =
       of bkPoints:
         var part = SpsFile(name: current.copy.extractFilename, revision: revision,
           headers: headers)
+        c.needRecords(count, PointMinBytes)
         part.points = newSeqOfCap[SpsPoint](int(count))
         for i in 0 ..< int(count):
           var p = SpsPoint()
@@ -467,6 +480,7 @@ proc readStore*(path: string; ctx: JobContext; r: StoreReader) =
       of bkRelations:
         var part = SpsFile(name: current.copy.extractFilename, revision: revision,
           headers: headers)
+        c.needRecords(count, RelationMinBytes)
         part.relations = newSeqOfCap[SpsRelation](int(count))
         for i in 0 ..< int(count):
           var x = SpsRelation()
@@ -502,6 +516,7 @@ proc readStore*(path: string; ctx: JobContext; r: StoreReader) =
         lf.format = c.read8(low(PFormat), high(PFormat))
         var n = 0'u32
         c.get n
+        c.needRecords(n, P1MinBytes)
         lf.records = newSeqOfCap[P1Record](int(n))
         for i in 0 ..< int(n):
           var x = P1Record()
