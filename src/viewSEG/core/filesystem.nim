@@ -71,12 +71,19 @@ const fs* = FileSystem()
   ## The file system: `fs.getFileInfo(path)`.
 
 var
-  hook: Atomic[pointer] # an `FsHook`; nil for none
-  offset: Atomic[int64] # ns `now` is ahead of the monotonic clock
+  hook: Atomic[pointer]   # an `FsHook`; nil for none
+  ioHook: Atomic[pointer] # a test seam: raises `IOError` (an unmapped read that fails)
+  offset: Atomic[int64]   # ns `now` is ahead of the monotonic clock
 
 proc setFsHook*(h: FsHook) =
   ## Calls `h` before every call from now on; nil for none (tests).
   hook.store(cast[pointer](h))
+
+proc setIoHook*(h: proc (path: string) {.nimcall, gcsafe, raises: [IOError].}) =
+  ## Calls `h` from `mappedRead` after the file-system hook; nil for none.
+  ## A test uses it to make a read raise `IOError`, as an unmapped read that
+  ## fails does (`parseSEG`'s `raiseReadFailed`).
+  ioHook.store(cast[pointer](h))
 
 proc advanceFsClock*(d: Duration) =
   ## Moves `fs.now` on by `d`, as if that much time had passed (tests: a slow
@@ -181,6 +188,14 @@ proc mappedRead*(_: FileSystem; path: string; headers = false) {.raises: [OSErro
   ## which may hold the thread as a drive that does not answer would, or
   ## raise as one that went away.
   enter(if headers: foHeaders else: foMapped, path)
+
+proc unmappedFail*(_: FileSystem; path: string) {.raises: [IOError].} =
+  ## A test seam: raises `IOError` when a test has asked for an unmapped
+  ## read that fails (`setIoHook`). Nothing in production. The Headers
+  ## reader calls it beside `mappedRead`, so that failure stays in the part
+  ## that read.
+  let r = cast[proc (path: string) {.nimcall, gcsafe, raises: [IOError].}](ioHook.load(moRelaxed))
+  if r != nil: r(path)
 
 # ---------------------------------------------------------------- write --
 

@@ -13,7 +13,10 @@
 ##   each, then moves `fs.now` on by the fault's `delay`: a drive whose every
 ##   round trip the test times itself;
 ## - `fkDelay`: holds the calling thread for the fault's `delay`, really (a
-##   slow disk that answers).
+##   slow disk that answers);
+## - `fkIo`: `mappedRead` raises `IOError` ("Input/output error"), as an
+##   unmapped read that fails does. The file-system hook itself raises only
+##   `OSError`, so this goes through `setIoHook`.
 ##
 ## A fault applies to the calls named in its `ops` (every call by default).
 ## The hook also **asserts that it is never called on the UI thread**: every
@@ -30,7 +33,7 @@ export filesystem
 
 type
   FaultKind* = enum
-    fkNone, fkSlow, fkHang, fkFail, fkPermits, fkDelay
+    fkNone, fkSlow, fkHang, fkFail, fkPermits, fkDelay, fkIo
 
   Fault = object
     prefix: string
@@ -75,6 +78,7 @@ proc hookCall(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
         of fkSlow: advanceFsClock(faults[i].delay)
         of fkDelay: hold = faults[i].delay # (waited for outside the lock)
         of fkFail: fail = true
+        of fkIo: discard # `mappedRead` raises `IOError` through `setIoHook`
         of fkHang:
           let serial = faults[i].serial
           let deadline = getMonoTime() + HangLimit
@@ -114,11 +118,24 @@ proc hookCall(op: FsOp; path: string) {.nimcall, gcsafe, raises: [OSError].} =
     if fail:
       raise newOSError(OSErrorCode(5), path) # EIO: Input/output error
 
+proc ioCall(path: string) {.nimcall, gcsafe, raises: [IOError].} =
+  ## `mappedRead` of a path under an `fkIo` fault: `IOError`, as an unmapped
+  ## read that fails.
+  var fail = false
+  {.cast(gcsafe).}:
+    withLock lock:
+      let mapped = find(path, foMapped)
+      let headers = find(path, foHeaders)
+      fail = (mapped >= 0 and faults[mapped].kind == fkIo) or
+        (headers >= 0 and faults[headers].kind == fkIo)
+  if fail: raise newException(IOError, "Input/output error")
+
 proc install*() =
   ## Puts this file system in place, with no fault.
   initLock lock
   initCond changed
   setFsHook(hookCall)
+  setIoHook(ioCall)
 
 proc fault*(prefix: string; kind: FaultKind; ops: set[FsOp] = {low(FsOp) .. high(FsOp)};
     delay = initDuration()) =

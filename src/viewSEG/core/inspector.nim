@@ -230,6 +230,13 @@ func failedText(e: ref OSError): string =
   "it cannot be read now (" & (if msg.len > 0: msg else: "its drive does not answer") &
     "): its drive went away or fails"
 
+func readProblem(e: ref CatchableError): string =
+  ## What a part says of a read that failed: a drive, a cut file, or a field
+  ## the file has not. One part only; the rest of the answer stands.
+  if e of OSError: failedText(cast[ref OSError](e))
+  elif e.msg.len > 0: e.msg
+  else: $e.name
+
 proc unreadable(f: InspectFile): string =
   ## Why nothing of the file is read now; "" when it can be. A file shorter
   ## than when it was opened would end the program when its map is read
@@ -352,14 +359,11 @@ proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; key, name: 
     p.beat(f.path)
     try:
       fs.mappedRead(f.path, headers = true)
+      fs.unmappedFail(f.path)
       readRange(f.file, name, part, c.values.toOpenArray(c.filled, c.filled + step - 1))
       c.filled += step
-    except ValueError as e:
-      problem = e.msg
-      c.filled = 0
-      return true
-    except OSError as e:
-      problem = failedText(e)
+    except CatchableError as e:
+      problem = readProblem(e)
       c.filled = 0 # read again next time: the drive may answer then
       return true
   true
@@ -385,12 +389,13 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
     p.beat(f.path)
     try:
       fs.mappedRead(f.path, headers = true)
+      fs.unmappedFail(f.path)
       for r in traceRows(f.file[], ask.traces.a):
         if r.field.len > 0 and r.kind != hbRaw:
           cache.catalogue.add CatalogueField(name: r.blockName & "." & r.field,
             blockName: r.blockName, description: r.description)
       cache.catalogueOf = catalogueOf
-    except ValueError, OSError:
+    except CatchableError:
       discard # the keys only; tried again next time
   answer.catalogue = cache.catalogue
   # The columns read for every row: the sort's, Find's, the graph's. All of
@@ -445,13 +450,11 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
       p.beat(f.path)
       try:
         fs.mappedRead(f.path, headers = true)
+        fs.unmappedFail(f.path)
         readRows(f.file, name, answer.rowTraces, buf)
         for k in 0 ..< buf.len: answer.values[k][c] = buf[k]
-      except ValueError as e:
-        answer.problems.add name & ": " & e.msg
-        for k in 0 ..< buf.len: answer.values[k][c] = NaN
-      except OSError as e:
-        answer.problems.add failedText(e)
+      except CatchableError as e:
+        answer.problems.add name & ": " & readProblem(e)
         for k in 0 ..< buf.len: answer.values[k][c] = NaN
   let g = if view.graph.len > 0: whole.column(view.graph) else: ""
   if g.len > 0:
@@ -476,9 +479,10 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
       p.beat(f.path)
       try:
         fs.mappedRead(f.path, headers = true)
+        fs.unmappedFail(f.path)
         answer.record = readRecordHeaders(f.file[], req.record)
-      except OSError as e:
-        answer.record = RecordHeaders(record: req.record, problem: failedText(e))
+      except CatchableError as e:
+        answer.record = RecordHeaders(record: req.record, problem: readProblem(e))
   if req.table.at in 0 ..< req.files.len:
     if not p.serveTable(req.files[req.table.at], req.table, why[req.table.at], answer.table):
       return false
@@ -508,17 +512,17 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
           if req.headers:
             p.beat(f.path)
             fs.mappedRead(f.path, headers = true)
+            fs.unmappedFail(f.path)
             d.rows = traceRows(f.file[], t.trace)
             d.blocks = namedBlocks(f.file[], d.rows)
           if req.samples:
             p.beat(f.path)
             fs.mappedRead(f.path)
+            fs.unmappedFail(f.path)
             d.readSamples(f.file, t, req, room, ws)
             room -= d.samples.len
-        except ValueError as e:
-          d.problem = e.msg
-        except OSError as e:
-          d.problem = failedText(e)
+        except CatchableError as e:
+          d.problem = readProblem(e)
     answer.traces.add d
   clearCycleRoots() # the UI thread frees what was made here
   p.poster.post Msg(job: NoJob, kind: mkInspected, inspected: answer)

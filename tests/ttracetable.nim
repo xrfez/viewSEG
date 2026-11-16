@@ -18,7 +18,10 @@
 ## Seen to fail: with the source point's column reading the receiver point (`keyValue`),
 ## "the joined stations of row 0"; with the rows sorted ascending whatever is asked
 ## (`orderOf` ignoring `descending`), "not sorted descending"; with `isAnswerOf`
-## not comparing the open, "the previous open's rows would show as current".
+## not comparing the open, "the previous open's rows would show as current";
+## with a column read catching only `OSError`, an `IOError` (the `fkIo` seam
+## in `faultyfs`: `mappedRead` raises it, as an unmapped read that fails)
+## "the whole answer was dropped".
 ##
 ## Runs alone: it bounds the time a million rows take to sort (5 s).
 
@@ -271,6 +274,38 @@ block aColumnThatFailedIsReadAgain:
     for r in 0 ..< a.rowTraces.len:
       if r > 0: doAssert rcvX[a.rowTraces[r - 1]] <= rcvX[a.rowTraces[r]], "not sorted"
     st.shutdown()
+
+proc sawDrop(st: var AppState): bool =
+  ## The reader gave up the whole answer (a warning, no rows).
+  discard st.drainInbox()
+  for e in st.log:
+    if "could not read what it shows" in e.text: return true
+  false
+
+block anIoErrorStaysInItsColumn:
+  # An unmapped read raises IOError (`fkIo`: mappedRead raises it). That is
+  # one column's problem, not a dropped answer: the record headers and the
+  # other columns are still there.
+  install()
+  withFixtures fx:
+    let path = fx.twoSetSegd()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    st.apply Command(kind: ckSelect, traces: @[st.sessions[0].base], mode: smReplace)
+    fault(path, fkIo, {foHeaders})
+    let view = TableView(fields: @["keys.channel"], scope: tsRecord, rows: 0 .. 3)
+    st.apply Command(kind: ckInspect, inspect: {ipRecord, ipTraceHeaders, ipTable}, table: view)
+    doAssert waitUntil(st.sawDrop() or (not st.inspection.waiting and
+      st.inspection.answer.table.problems.len > 0)), "no answer and no warning"
+    doAssert not st.sawDrop(), "the whole answer was dropped"
+    doAssert st.inspection.answer.record.problem.len > 0, "the record headers went with the column"
+    doAssert st.inspection.answer.table.problems.len > 0, "the column was not reported"
+    doAssert st.inspection.answer.traces.len > 0 and
+      st.inspection.answer.traces[0].problem.len > 0, "the Trace tab went with the column"
+    releaseAll()
+    st.shutdown()
+  releaseAll()
 
 block anAnswerOfItsTraces:
   # Seen to fail: an answer of the record shown before still counted as
