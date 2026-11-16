@@ -16,7 +16,7 @@
 ## columns not centred on k = 0, "peak at -35.416666666666664 cycles/km,
 ## want 15.0".
 
-import std/[math, strutils]
+import std/[math, monotimes, strutils, times]
 import viewSEG/core/[analysis, fkanalysis, join]
 import viewSEG/view/analysisview
 
@@ -133,5 +133,39 @@ block spacing:
 block tooFew:
   let r = fkOf(planeWave(1)[0 .. 2], Dx, "offsets", suMetres, Dt, 0, AnalysisParams())
   doAssert "4 traces at least" in r.problem, r.problem
+
+block cancelling:
+  # a long f-k (96 traces of 8 s at 1 ms) given up from outside: stops between
+  # steps, each short, and says so (no numbers)
+  var big: seq[seq[float32]] = @[]
+  for i in 0 ..< 96:
+    var r = newSeq[float32](8192)
+    for j in 0 ..< r.len: r[j] = float32(sin(float64(j + i) / 9))
+    big.add r
+  var polls = 0
+  var last = getMonoTime()
+  var worst = 0.0
+  let begun = getMonoTime()
+  var stopAt = 0.0
+  let stop = proc (): bool =
+    let now = getMonoTime()
+    worst = max(worst, float64((now - last).inNanoseconds) / 1e6)
+    last = now
+    inc polls
+    let ms = float64((now - begun).inNanoseconds) / 1e6
+    if ms > 100 and stopAt == 0: stopAt = ms
+    stopAt > 0
+  let r = fkOf(big, 10, "offsets", suMetres, 1.0, 0, AnalysisParams(), stop)
+  let took = float64((getMonoTime() - begun).inNanoseconds) / 1e6
+  doAssert r.cancelled and r.image.isEmpty, "not given up"
+  doAssert polls > 10 and worst < 250, $polls & " polls, the longest step " & $worst & " ms"
+  doAssert took - stopAt < 250, "stopped " & $(took - stopAt) & " ms after it was asked"
+  # never asked to stop: it finishes
+  doAssert not fkOf(big[0 .. 7], 10, "offsets", suMetres, 1.0, 0, AnalysisParams()).cancelled
+  # the same for the spectrogram and the correlation
+  doAssert spectrogramOf(big[0 .. 3], 1.0, 0, AnalysisParams(windowMs: 128, overlap: 75),
+    proc (): bool = true).cancelled
+  doAssert correlationOf([("a", big[0])], big[1], "b", 1.0, AnalysisParams(maxLagMs: 100),
+    proc (): bool = true).cancelled
 
 echo "tfk: ok"

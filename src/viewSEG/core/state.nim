@@ -2207,6 +2207,12 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
         (s.path in job.spec.reads or s.path in job.spec.exclusive):
       discard state.jobs.cancel(job.id)
   state.selection.forget(s.id, s.traceIds)
+  if not state.analysisReader.isNil:
+    # the analysis windows of the file: what is being worked out for them stops
+    for w in state.plots:
+      if (w.traces.len > 0 and w.traces[0] in s) or
+          (w.view == avCorrelation and w.params.reference >= 0 and w.params.reference in s):
+        state.analysisReader.cancel(w.id)
   let joined = state.joinedOf(s.id)
   if joined >= 0: state.joins.delete(joined)
   let positions = state.survey.findTraces(s.id)

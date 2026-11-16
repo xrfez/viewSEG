@@ -134,12 +134,22 @@ type
     used*: int ## traces it is of
     leftOut*: int ## of those asked about: killed, dead, not decoded
     atOtherInterval*: int ## of those asked about: sampled at another interval, or none
+    notDrawn*: int
+      ## live traces asked about that were not read at all, because the view draws
+      ## no more than `MaxAnalysisCurves` (a correlation's)
+    cancelled*: bool ## given up part way (the caller's `StopCheck` said so): no numbers
     passedBy*: int
       ## the auxiliary traces (the reference included) the plot's filters passed
       ## by because Filters > Filter the Aux traces too is off
     dtMs*: float64
     note*: string ## what the numbers are, in words (shown under the plot)
     problem*: string ## why there is none; "" when there is one
+
+type StopCheck* = proc (): bool {.closure, gcsafe.}
+  ## Asked between the steps of a long computation: true to give it up now.
+
+template stopped*(stop: StopCheck): bool =
+  not stop.isNil and stop()
 
 const AuxFilterOff* = "Filters > Filter the Aux traces too is off"
   ## where the plot's Aux toggle is, as the words name it
@@ -239,7 +249,7 @@ func toDb(amp, peak: float64): float64 {.inline.} =
 # ------------------------------------------------------------ spectrogram --
 
 proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
-    p: AnalysisParams): AnalysisResult =
+    p: AnalysisParams; stop: StopCheck = nil): AnalysisResult =
   ## The spectrogram of `rows` (traces at `dtMs`, the first sample at
   ## `t0Ms`): frames of `p.windowMs` overlapping by `p.overlap` %, in dB
   ## from the largest amplitude; of several traces, the power average.
@@ -265,6 +275,9 @@ proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
   var amp = newSeq[float64](sg.frames * sg.bins)
   var power = newSeq[float64](amp.len)
   for r in rows:
+    if stop.stopped:
+      result.cancelled = true
+      return
     sg.spectrogramInto(r, amp, ws)
     for k in 0 ..< amp.len: power[k] += amp[k] * amp[k]
   var peak = 0.0
@@ -433,7 +446,8 @@ proc phaseOf*(x: openArray[float32]; name: string; dtMs: float64;
 # ------------------------------------------------------- cross-correlation --
 
 proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[float32];
-    referenceName: string; dtMs: float64; p: AnalysisParams): AnalysisResult =
+    referenceName: string; dtMs: float64; p: AnalysisParams;
+    stop: StopCheck = nil): AnalysisResult =
   ## Each of `signals` against `reference`: the correlation coefficient and
   ## its envelope against lag (a signal that is the reference delayed by τ
   ## peaks at +τ), and per frequency the amplitude ratio (dB) and phase
@@ -480,6 +494,9 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
   for k in 0 ..< cp.bins:
     inBand[k] = refPeak > 0 and toDb(refAmp[k], refPeak) >= -abs(p.phaseWithinDb)
   for (name, s) in signals:
+    if stop.stopped:
+      result.cancelled = true
+      return
     cp.crossCorrelateInto(s, reference, c, e, ws)
     var cs, es = newSeq[float64](cp.lags)
     var best = -1

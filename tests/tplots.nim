@@ -409,6 +409,23 @@ proc auxRecord(fx: Fixtures; name: string; code: int16): string =
     w.writeTrace(k, buf)
   doAssert w.close().len == 0
 
+block onlyWhatIsDrawn:
+  # a correlation draws 8 traces: of 12 asked, the others are not read, and
+  # the window says how many
+  withFixtures fx:
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.longTraceSegy(1000, 12))
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    var all: seq[int] = @[]
+    for i in 0 ..< 12: all.add st.sessions[0].base + i
+    st.apply Command(kind: ckOpenPlot, plotView: avCorrelation, plotTraces: all)
+    doAssert st.settle(st.answered(0)), "no answer"
+    let r = st.plots[0].result
+    doAssert r.problem == "" and r.used == 8 and r.notDrawn == 4 and r.leftOut == 0,
+      r.problem & " used " & $r.used & " not drawn " & $r.notDrawn
+    doAssert r.plots[0].curves.len == 16, $r.plots[0].curves.len # 8 and their envelopes
+    discard st.shutdown()
+
 block firstAuxiliary:
   # the default reference is a pilot only when the trace says sweep (code 6);
   # a time break (code 4) is "the first auxiliary trace"

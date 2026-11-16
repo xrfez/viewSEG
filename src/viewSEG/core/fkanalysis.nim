@@ -81,7 +81,8 @@ func fkLengthOf*(unit: SurveyUnit): tuple[ok: bool; per, velocity: string] =
   else: (false, "", "")
 
 proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
-    unit: SurveyUnit; dtMs, t0Ms: float64; p: AnalysisParams): AnalysisResult =
+    unit: SurveyUnit; dtMs, t0Ms: float64; p: AnalysisParams;
+    stop: StopCheck = nil): AnalysisResult =
   ## The f-k amplitude of `rows` (traces at `dtMs`, the first sample at
   ## `t0Ms`, `spacing` apart, NaN: not regular) between `p.fkFromMs` and
   ## `p.fkToMs` (NaN: the ends), in dB from its largest, floored at
@@ -123,6 +124,9 @@ proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
   var x = newSeq[float64](nt)
   var r1, i1 = newSeq[float64](nb)
   for t in 0 ..< ntr:
+    if stop.stopped:
+      result.cancelled = true
+      return
     for j in 0 ..< nt: x[j] = 0
     let across = cosTaper(t, ntr, FkTaper)
     for j in 0 ..< n:
@@ -138,6 +142,9 @@ proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
   var amp = newSeq[float64](nk * nb) # [col * nb + bin]
   var peak = 0.0
   for f in 0 ..< nb:
+    if stop.stopped:
+      result.cancelled = true
+      return
     for t in 0 ..< nk:
       (a[t], b[t]) = if t < ntr: (re[t * nb + f], im[t * nb + f]) else: (0.0, 0.0)
     kp.forward(a, ar, ai, ws)

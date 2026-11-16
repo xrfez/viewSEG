@@ -196,6 +196,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
     var names: seq[string] = @[]
     var dtMs = NaN
     var t0Ms = 0.0
+    var notDrawn = 0
     for i, t in a.traces:
       if t notin 0 ..< f[].len or a.killed.binarySearch(t) >= 0 or
           f[].traceKeys(t).status == tsDead:
@@ -212,10 +213,12 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
           if dtMs.isNaN:
             dtMs = dt
             if abs(k.t0Ms) < Inf: t0Ms = k.t0Ms
-          if sameDt(dt, dtMs):
+          if not sameDt(dt, dtMs): inc answer.atOtherInterval
+          elif a.view == avCorrelation and list.len >= MaxAnalysisCurves:
+            inc notDrawn # drawn no more than that many: the rest are not even read
+          else:
             list.add t
             names.add (if i < a.names.len: a.names[i] else: "trace " & $(t + 1))
-          else: inc answer.atOtherInterval
     answer.dtMs = dtMs
     if list.len == 0:
       answer.problem = "no trace to work it out on (" &
@@ -235,6 +238,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             kept.add move rows[i]
             keptNames.add names[i]
             keptList.add list[i]
+        let stop = proc (): bool = p.interrupted(a.id)
         let raw = a.view == avFk and a.params.fkRaw # (f-k: raw or processed, chosen)
         var passed = 0
         var through = if kept.len > 0 and not raw: filtered(kept, f, keptList, a.processing,
@@ -252,7 +256,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
           case a.view
           of avSpectrogram:
             let n = (answer.leftOut, answer.atOtherInterval)
-            answer = spectrogramOf(kept, dtMs, t0Ms, a.params)
+            answer = spectrogramOf(kept, dtMs, t0Ms, a.params, stop)
             (answer.leftOut, answer.atOtherInterval) = n
           of avEnvelope:
             let n = (answer.leftOut, answer.atOtherInterval)
@@ -297,7 +301,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 for i in 0 ..< min(kept.len, MaxAnalysisCurves):
                   signals.add (keptNames[i], kept[i])
                 let n = (answer.leftOut, answer.atOtherInterval)
-                answer = correlationOf(signals, refRows[0], refName, dtMs, a.params)
+                answer = correlationOf(signals, refRows[0], refName, dtMs, a.params, stop)
                 (answer.leftOut, answer.atOtherInterval) = n
                 # a signal that is the reference itself: its autocorrelation
                 let own = if rf == f: keptList.find(rt) else: -1
@@ -314,7 +318,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               ys.add k.rcvY
             let (spacing, source) = spacingOf(offsets, xs, ys)
             let n = (answer.leftOut, answer.atOtherInterval)
-            answer = fkOf(kept, spacing, source, a.unit, dtMs, t0Ms, a.params)
+            answer = fkOf(kept, spacing, source, a.unit, dtMs, t0Ms, a.params, stop)
             (answer.leftOut, answer.atOtherInterval) = n
           of avVibrator:
             # each role's trace: its place among those asked about, then
@@ -335,9 +339,11 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               let words = missing.join(", ") & " left out (killed, dead or unreadable)"
               if answer.problem.len > 0: answer.problem.add "; " & words
               else: answer.note.add "; " & words
+          if answer.cancelled: return false # its window closed or asked again: nothing to say
           answer.gen = a.gen
           answer.id = a.id
           answer.passedBy = passed
+          answer.notDrawn = notDrawn
           if through.len > 0 and answer.problem.len == 0:
             answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & through
       except OSError as e:

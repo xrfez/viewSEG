@@ -594,6 +594,12 @@ it is not, the window says how many the filters passed by (under the title, "the
 not filtered: Filters > Filter the Aux traces too is off"; in a cross-correlation the reference
 too, when it is one), as the spectrum windows do, and `state`'s `passedBy` counts them.
 
+One reader thread works out every window's numbers in turn, and a long computation (an f-k,
+a spectrogram, a correlation) is given up between its steps, within about 100 ms, when its
+window is closed or asks again (a new setting, a new filter), or its file is closed. A
+cross-correlation draws 8 traces: of more, only those 8 are read, and the window says how
+many were not (`notDrawn` in `state`).
+
 Each window's first line holds its view's settings; a change works it out again.
 
 - **Spectrogram:** the frame's length (ms; a Hann window: a frame of W ms resolves about

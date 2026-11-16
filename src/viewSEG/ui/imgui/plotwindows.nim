@@ -521,6 +521,9 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   if w.filters.len > 0:
     words.add " · filters: " & w.filters
     if r.passedBy > 0: words.add " (" & passedWords(r.passedBy) & ")"
+  if r.notDrawn > 0:
+    words.add " · " & $r.notDrawn & " more traces not read (the window draws " &
+      $MaxAnalysisCurves & ")"
   if r.leftOut > 0: words.add " · " & $r.leftOut & " left out (killed, dead or unreadable)"
   if r.atOtherInterval > 0: words.add " · " & $r.atOtherInterval & " at another interval"
   if w.waiting: words.add " · working it out..."
