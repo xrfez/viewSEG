@@ -39,14 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.14.0: capabilities | names | processSEG 0.6.0: capabilities | names |
+| Status | parseSEG 0.15.0: capabilities | names | processSEG 0.6.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 48 (20 in part) | 142 | 28 (21 in part) | 126 |
 | `internal` | 15 | 43 | 4 | 39 |
 | `planned` | 36 | 253 | 47 | 405 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 19 | 351 | 6 | 53 |
-| all | 120 | 799 | 86 | 628 |
+| `not applicable` | 20 | 356 | 6 | 53 |
+| all | 121 | 804 | 86 | 628 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -124,6 +124,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Inline and crossline of post-stack volumes | `TraceKeys.inline`, `crossline` | "Go to inline / crossline", inline or crossline sections | planned |
 | Datum, uphole and statics fields, scaled | `traceStatics`, `traceStaticsInto`, `TraceStatics`, `initTraceStatics` | Statics column group in the header table; statics graph strip | planned |
 | SEG-D general, channel set and Rev 3 blocks (position, source description, sensor, time drift, orientation) | `index.segdRecords`, `recordHeaders`, `SegdSourceDescription`, `SegdSensorInfo`, `SegdTimeDrift`, `SegdOrientation` | Headers window, File headers of the record shown: General (typed Rev 3 blocks' fields included), Channel sets, Extended, External, skew and trailer as bytes | built; not applicable (`SegdSourceDescription`, `SegdSensorInfo`, `SegdTimeDrift`, `SegdOrientation`: their fields reach the Headers window as `recordHeaders` rows) |
+| A trace's or a record's orientation block, read on its own | `traceOrientation`, `recordOrientation`, `TraceOrientation`, `initTraceOrientation`, `BlockTypeOrientation` | Not read as its own value: the Headers window shows Rev 3 blocks through `recordHeaders` | not applicable |
 | SEG-2 keyword strings and notes | `seg2Strings`, `seg2Trace`, `noteLines`, typed getters; the strings as `traceHeaders` and `fileHeaders` rows | Headers window: File (the file descriptor block's fields and strings) and Trace > Header (the trace's); notes in File properties to come | built (headers); planned (notes) |
 | UTC and GPS time | `TraceKeys.time`, `generalHeaderUtc`, `timestampToUnix`, `gpsMinusUtc` | Status bar: shot time and time within the record | built (the status bar's fields "shot time" and "UTC at the cursor", from `TraceKeys.time`); not applicable (`generalHeaderUtc`, `timestampToUnix`, `gpsMinusUtc`: parseSEG puts the time in the keys) |
 | Values joined from survey files, by group | `joinedTraces`, `joinedGroups`, `JoinGroup`, `changedGroups` | Values from the survey (an import) are drawn in the accent colour in the display header, the cursor's header box and the status bar (`Tile.joined`), and in the Headers window's Trace > Header table, a row per key the join gave above the header's own fields, marked per trace; the Summary names the join, its files and the units confirmed | built; not applicable (`changedGroups`: parseSEG's join records what it changed) |
@@ -256,7 +257,7 @@ name, so these are building blocks for code that works on raw headers.
 | Chunk metadata from parseSEG reads | `initChunkMeta`, `chunkMeta`, `intervalMs`, `ChunkMeta` (`isLive`, `sampleTimeMs`, `isFailed`, `liveSamples`, `len`, `rows`, `dtMs`, `firstSample`, `failedCount`, `failedRow`, `keys`, `t0Ms`, `sub`), `sameInterval`, `checkShape` | internal: every processing call; killed traces are passed as failed rows, so the processing and the levels pass them by | internal; not applicable (`chunkMeta`, `intervalMs`, `ChunkMeta`, `isLive`, `sampleTimeMs`, `failedCount`, `failedRow`, `sameInterval`, `checkShape`: the reader makes each meta with `initChunkMeta` from its chunk's rows, interval, failed and killed rows) |
 | Row views and scratch | `rowBlock`, `RowBlock` (`len`, `cols`, `row`, `rowPtr`, `sub`), `Workspace`, `initWorkspace`, `reserve`, `capacity`, `fits`, `scratch`, `WorkspaceSize` (`+`, `max`), `SampleType` | internal: allocation-free processing | internal; not applicable (`WorkspaceSize`, `fits`, `SampleType`: the reader reserves what its plan needs) |
 | Remove mean or trend | `demean`, `detrend`, `demeanOp`, `detrendOp` | Seismic window: Filters in its strip, "DC removal": the mean (`demeanOp`) or the mean and trend (`detrendOp`), before the filter; `demean` and `detrend` on their own in the processing window | built (the Seismic window's Filters: `demeanOp`, `detrendOp`); planned (the processing window) |
-| Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Seismic window: "Reverse polarity" of a trace or the selection (`R`, the plot's menu: `reversePolarity` on its live samples where the reader prepares them, before the pipeline, as `polarityOp` would; the Headers window's Data tab, as displayed, the same) and "Reverse polarity of all traces" (`polarityOp` first in the window's display pipeline); processing window: scale and clip; the wiggles' clip at the trace overlap is the shader's own | built (polarity of a trace, of the selection, of all traces); planned (the rest) |
+| Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Seismic window: "Reverse polarity" of a trace or the selection (`R`, the plot's menu: `reversePolarity` on its live samples where the reader prepares them, before the pipeline, as `polarityOp` would; the Headers window's Data tab, as displayed, the same) and "Reverse polarity of all traces" (`polarityOp` first in the window's display pipeline; the analysis graphs apply the same sign flip, own reversal or reverse-all, not both); processing window: scale and clip; the wiggles' clip at the trace overlap is the shader's own | built (polarity of a trace, of the selection, of all traces); planned (the rest) |
 | Top and bottom mutes (time, table, LMO) | `timeMute`, `tableMute`, `lmoMute`, `muteTop`, `muteBottom`, `muteTopOp`, `muteBottomOp`, `muteTimeMs`, `MuteKind`, `MuteCurve`, `kind` | Processing window: mutes, drawn as a line on the panel, table picked by clicking | planned |
 | Pad tapers | `cosTaperInto`, `taperPads` | processSEG's filters pad and taper with them | not applicable (inside processSEG's filters; for a caller's own padded kernels) |
 | Fractional shifts | `shiftSamples`, `ShiftInterp` | processSEG's statics, LMO and NMO shift with them | not applicable (inside processSEG's statics, LMO and NMO) |

@@ -540,15 +540,21 @@ command), for the session only, as with every other setting it changes.
 
 Reversing the polarity turns the trace data 180 degrees out of phase: an operation on the
 samples, not a way of colouring them. **Reverse polarity of all traces**, in the plot's
-right-click menu (ticked while it is on), runs processSEG's `polarityOp` first on every
-trace the Seismic window reads, before its gain, so the picture, the gain's statistics,
-the status bar's amplitude and Headers shown as displayed see the reversed data. It is
-the window's display pipeline, not a trace edit: the analysis graphs and the spectrum
-curves do not apply it. Turning it on or off reads the view again;
-the picture before stays until the reversed one is drawn. It is an edit of the file, not a
-setting: it holds for every record of the file, comes back with the file when it is
-opened again (also after a restart: [Edits](#edits-to-traces)), is undone with Edit >
-Undo, and another file is shown as it was left.
+right-click menu (ticked while it is on), is a file edit, remembered with the file and
+undone with Edit > Undo. It holds for every record of the file, comes back when the file
+is opened again (also after a restart: [Edits](#edits-to-traces)), and another file is
+shown as it was left. It is not a setting. On the Seismic picture it runs processSEG's
+`polarityOp` first on every trace the window reads, before its gain, so the picture, the
+gain's statistics, the status bar's amplitude and Headers shown as displayed see the
+reversed data. The same reversal applies in every graph of the file: a spectrum and its
+phase, a spectrogram, an envelope and its instantaneous phase, a correlation (a reference
+follows its own file's reverse-all), a vibrator
+signature, an f-k, and the live spectrum panel. A window that is not frozen asks again
+when reverse-all is set, cleared, undone or redone; a frozen one does not. With it on,
+the line under a graph says "All traces are reversed" once, and does not also list every
+trace. Turning it on or off reads the view again; the picture before stays until the
+reversed one is drawn. Headers shown as recorded, the hex view and the status bar's raw
+amplitude stay the file's samples.
 
 **Reverse polarity** of a single trace, or of the selection that holds it (`R`, or the
 plot's menu), is an edit of the file's traces (see [Edits](#edits-to-traces)): those
@@ -563,7 +569,8 @@ same way ("Trace 12: reversed", "N traces are reversed", "reference, Trace 1: re
 An open window that is not frozen asks again when a trace it shows, or its reference,
 is reversed, put back or undone; a frozen one does not. Headers shown as recorded, the
 hex view and the status bar's raw amplitude stay the file's samples. A trace reversed
-both ways (this edit and reverse all) is as recorded on the plot. A trace the file marks
+both ways (this edit and reverse all) is as recorded everywhere, on the plot and in every
+graph, and a graph does not call it reversed. A trace the file marks
 dead stays blank, reversed or not (it is never drawn); the display header and the status
 bar still say it is reversed.
 
@@ -638,7 +645,9 @@ filter, run after them (named under the title: "Trace 12: own filter, band-pass 
 Hz", or "N traces have their own filter"). A reversed trace is multiplied by -1 first,
 before its own filter and the plot's filters, and named the same way ("Trace 12:
 reversed", or "N traces are reversed"; a correlation's reference, "reference, Trace 1:
-reversed"). No box turns it off. An f-k's **Raw** leaves the plot's filters
+reversed"). Reverse-all is that same sign flip, said once ("All traces are reversed");
+a trace reversed on its own as well is as recorded, and is not called reversed. No box
+turns it off. An f-k's **Raw** leaves the plot's filters
 out and still applies each trace's own filter and a reversal. Killed traces and those marked dead are left out (said under the title). A trace sampled at another interval than the first
 one's is left out too, and counted "at another interval", as a spectrum window does; a
 trace with no sample interval of its own takes its file's, and is left out when it has
@@ -647,7 +656,7 @@ follows the Seismic plot it was opened from, as the Spectrum panel does: the sel
 the record on show, or, with no selection, what that view shows of the record (an envelope
 or a phase spectrum: its first trace; an f-k: its seismic traces; a vibrator signature:
 its pilot and the next channels). A new record, a sort, a kill or a restore, the plot's
-filters and another file opened in the plot all work it out again. A file that cannot feed
+filters, a reversal, reverse-all and another file opened in the plot all work it out again. A file that cannot feed
 the view (a vibrator signature of a record with no pilot) leaves the window open and says
 so, and a file that can brings the numbers back. Frozen, a window keeps the traces and the
 file it had; the title and the line under the controls name that file and those traces
@@ -1218,7 +1227,7 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 | Kill / Restore | `K` | drawn blank (or left out of the plot: the gear popover's "Hide killed traces"), left out of the processing, of the levels the gain computes over the record and of spectra; "Restore" over a killed trace |
 | FFT in a new window | `F` | that trace's amplitude spectrum, or the selection's averaged, raw and through the plot's filters, in a window of its own ([Spectra](#spectra)); several can be open |
 | Select its receiver on the map | `M` | the receiver the trace was recorded at (in a receiver gather, its source), or those of the selection, with their traces; greyed out where the trace has no place on the map |
-| Reverse polarity of all traces | | every trace of the window, ticked while on ([Polarity](#polarity)) |
+| Reverse polarity of all traces | | every trace of the file, in the picture and every graph, ticked while on ([Polarity](#polarity)) |
 | Undo *what it was* | Ctrl + Z | takes back the file's last kill, restore, polarity change or clearing, as Edit > Undo |
 | Redo *what it was* | Ctrl + Shift + Z | makes it again, as Edit > Redo |
 | Clear all edits for this file | | the traces as the file has them; Undo brings the edits back |
@@ -1237,9 +1246,9 @@ killed trace is drawn blank (the plot's background, no wiggle); with "Hide kille
 (the gear popover, a setting) it is left out of the plot instead, and the traces beside it
 close up: the record is laid out again without it, at the same scales and place, and
 again with it when it is restored or the setting is turned off.
-"Reverse polarity of all traces" is an edit of the file too: each file shows its own, and
-another file opened in the same window is shown as it was left. Messages lists every
-change.
+"Reverse polarity of all traces" is an edit of the file too, remembered and undoable:
+each file shows its own, every graph of it follows it, and another file opened in the
+same window is shown as it was left. Messages lists every change.
 
 **History.** Every change is a step: Edit > Undo (Ctrl + Z) takes back the last, Edit >
 Redo (Ctrl + Shift + Z, Ctrl + Y) makes it again, as far back as the session goes (a
@@ -1386,7 +1395,9 @@ plot is shown raw, so the two compare. A trace's own filter is part of the trace
 is in the raw curve wherever that trace is shown or analysed, and no box turns it
 off. The window names it ("Trace 12: own filter, band-pass 10-60 Hz"; of several,
 "N traces have their own filter"). A reversed trace is multiplied by -1 first and named
-the same way ("Trace 12: reversed"; of several, "N traces are reversed"). Where the own
+the same way ("Trace 12: reversed"; of several, "N traces are reversed"). Reverse-all is
+that same sign flip, said once ("All traces are reversed"); a trace reversed on its own
+as well is as recorded, and is not called reversed. Where the own
 filter runs instead of the plot's,
 the plot's filters do not apply to that trace, so its processed curve equals its raw
 curve, and the line says "this trace uses its own filter instead of the plot's".

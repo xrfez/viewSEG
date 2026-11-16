@@ -404,8 +404,11 @@ holds, without reading the file.
 **Polarity.** Right-click the plot and choose **Reverse polarity of all traces** to see
 every trace 180 degrees out of phase; the item is ticked while it is on, and choosing it
 again goes back. It reverses the data itself, before the gain, so the status bar's
-amplitude is the reversed one too. It is an edit of the file: every record of it is
-reversed, it comes back with the file, and another file is shown as you left it.
+amplitude is the reversed one too, and every graph of the file follows it (a spectrum, a
+spectrogram, an envelope, a correlation, a vibrator signature, an f-k). A trace reversed
+on its own as well is as recorded, and a graph does not call it reversed. It is a file
+edit, remembered and undoable: every record of the file is reversed, it comes back with
+the file, and another file is shown as you left it.
 
 **Highlight.** The trace under the pointer is drawn in orange, line and fill (under
 density, its column is tinted), and the status bar reads it out. Click a trace to select
@@ -736,8 +739,9 @@ own filter is always in the raw curve: there is no box that leaves it out. The w
 names it where it names the trace ("Trace 12: own filter, band-pass 10-60 Hz"; of
 several, "N traces have their own filter"). A reversed trace is multiplied by -1 first,
 the same way, and named in that same line ("Trace 12: reversed"; of several, "N traces
-are reversed"). The live panel asks again when a trace it shows is reversed, put back
-or undone, as it does for that trace's filter. Where that filter runs instead of the
+are reversed"). Reverse-all is that same sign flip, said once ("All traces are
+reversed"). The live panel asks again when a trace it shows is reversed, or reverse-all
+is set, put back or undone, as it does for that trace's filter. Where that filter runs instead of the
 strip's, the processed curve equals the raw one, and the line says "this trace uses
 its own filter instead of the plot's". **Response** is the strip's filters' response,
 and only when the strip has a filter on. The live panel asks again when a trace it
