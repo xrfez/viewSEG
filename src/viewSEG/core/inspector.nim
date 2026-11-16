@@ -369,7 +369,7 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
   ## The trace table's rows and columns: false when a newer request came
   ## first (nothing is posted then).
   result = true
-  answer = TableAnswer(path: f.path, traces: ask.traces, view: ask.view)
+  answer = TableAnswer(path: f.path, session: int(f.session), traces: ask.traces, view: ask.view)
   if why.len > 0:
     answer.problems.add why
     return

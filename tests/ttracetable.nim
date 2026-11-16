@@ -17,7 +17,8 @@
 ##
 ## Seen to fail: with the source point's column reading the receiver point (`keyValue`),
 ## "the joined stations of row 0"; with the rows sorted ascending whatever is asked
-## (`orderOf` ignoring `descending`), "not sorted descending".
+## (`orderOf` ignoring `descending`), "not sorted descending"; with `isAnswerOf`
+## not comparing the open, "the previous open's rows would show as current".
 ##
 ## Runs alone: it bounds the time a million rows take to sort (5 s).
 
@@ -285,11 +286,17 @@ block anAnswerOfItsTraces:
     let view = TableView(fields: @["keys.channel"], scope: tsRecord, rows: 0 .. 3)
     let one = st.table(view)
     let s = st.sessions[0]
-    doAssert one.isAnswerOf(s.path, s.gathers[1].traces, view)
-    doAssert not one.isAnswerOf(s.path, s.gathers[2].traces, view),
+    doAssert one.isAnswerOf(s.path, int(s.id), s.gathers[1].traces, view)
+    doAssert one.session == int(s.id), "the reader did not name the open"
+    doAssert not one.isAnswerOf(s.path, int(s.id), s.gathers[2].traces, view),
       "the rows of another record would show as current"
-    doAssert not one.isAnswerOf(s.path, s.gathers[1].traces, TableView(fields: @["keys.channel"],
-      scope: tsRecord, sortBy: "keys.channel", rows: 0 .. 3)), "another sort is current"
+    doAssert not one.isAnswerOf(s.path, int(s.id), s.gathers[1].traces,
+      TableView(fields: @["keys.channel"], scope: tsRecord, sortBy: "keys.channel",
+      rows: 0 .. 3)), "another sort is current"
+    # The same file, the same traces, another open: not this answer, so the
+    # table says it is reading until the new open's rows arrive.
+    doAssert not one.isAnswerOf(s.path, int(s.id) + 1, s.gathers[1].traces, view),
+      "the previous open's rows would show as current"
     st.shutdown()
 
 block theTraceTabAgrees:
