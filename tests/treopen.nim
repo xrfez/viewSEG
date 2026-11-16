@@ -539,6 +539,7 @@ block carriedJoinIsDroppedWhenItFails:
     doAssert st.joinedOf(st.sessions[0].id) < 0, "a failed join was kept"
     doAssert not st.log.has("is as it was"), "a dropped join was said to leave the file as it was"
     doAssert not st.log.has("The survey match"), "the drop was said again in the words"
+    doAssert not st.log.has("Import the survey for"), "the failed import was said again"
     var drops = 0
     for e in st.log:
       if "dropped the survey join" in e.text: inc drops
@@ -682,4 +683,34 @@ block carriedJoinIsDroppedWhenNothingMatches:
     let keys = st.sessions[0].file.traceKeys([0, 10, 40, 71])
     for k in keys:
       doAssert k.srcLine.isNaN and k.rcvLine.isNaN, "a trace kept a survey station"
+    st.shutdown()
+
+block carriedJoinIsDroppedWhenCancelled:
+  # The rematch reads a survey file of a million receivers, which takes a
+  # second or two: the import is cancelled while it reads. The drop line names
+  # the cancel once, and the import's own "was cancelled" line is not said.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let name = path.extractFilename
+    let sps = fx.surveySps()
+    let own = (s: fx.dir / "cancelled.s", r: fx.dir / "cancelled.r", x: fx.dir / "cancelled.x")
+    copyFile(sps.s, own.s)
+    copyFile(sps.r, own.r)
+    copyFile(sps.x, own.x)
+    var st = initAppState()
+    st.joined(path, own.s, own.r, own.x)
+    copyFile(fx.bigSps(1000, 1000), own.r) # what the rematch reads
+    st.reopen(path, OpenChoice(verifyAll: true))
+    doAssert st.settle(st.joinUnderWay.job != NoJob and st.joinUnderWay.step == jpReading),
+      "the rematch was not reading"
+    st.apply Command(kind: ckCancelJob, job: st.joinUnderWay.job)
+    let dropped = name & " dropped the survey join: the match was cancelled."
+    doAssert st.settle(st.joinUnderWay.job == NoJob and st.log.has(dropped)),
+      "a cancelled carried join was not said dropped"
+    doAssert not st.log.has("Import the survey for"), "the cancelled import was said again"
+    var drops = 0
+    for e in st.log:
+      if "dropped the survey join" in e.text: inc drops
+    doAssert drops == 1, "the drop was said " & $drops & " times"
+    doAssert st.joinedOf(st.sessions[0].id) < 0, "a cancelled join was kept"
     st.shutdown()

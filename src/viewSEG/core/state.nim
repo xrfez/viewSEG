@@ -4488,7 +4488,7 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
   template j: untyped = state.joining
   state.resumeReaders()
   let i = state.findSession(j.session)
-  var words: seq[string]
+  var words: seq[string] = @[]
   case outcome
   of joJoined, joNothing:
     # The distances in the unit confirmed, else the survey files' or the file's.
@@ -5701,6 +5701,8 @@ proc onFinished(state: var AppState; job: JobInfo) =
           job.error & ")" else: "its headers were not read (the reading was stopped)"
       state.headJobs.delete(k)
       return
+  # A carried join's end is said by endJoin's drop line alone (not again here).
+  let carriedEnd = job.id == state.joining.job and state.joining.carried
   if job.id == state.joining.job:
     case job.state
     of jsDone:
@@ -5771,10 +5773,11 @@ proc onFinished(state: var AppState; job: JobInfo) =
     return
   case job.state
   of jsFailed:
-    state.log.add(sevError, "jobs", job.spec.title & " failed: " & job.error)
+    if not carriedEnd: state.log.add(sevError, "jobs", job.spec.title & " failed: " & job.error)
     if job.spec.lane == jlBackground:
       state.notify(sevError, job.spec.title & " failed: " & job.error)
-  of jsCancelled: state.log.add(sevInfo, "jobs", job.spec.title & " was cancelled.")
+  of jsCancelled:
+    if not carriedEnd: state.log.add(sevInfo, "jobs", job.spec.title & " was cancelled.")
   of jsDone:
     if job.spec.lane == jlBackground:
       state.log.add(sevInfo, "jobs", job.spec.title & " is done.")
