@@ -23,7 +23,8 @@
 ## in `faultyfs`: `mappedRead` raises it, as an unmapped read that fails)
 ## "the whole answer was dropped"; with the cache evicting a column this
 ## request needs (`if c.key notin needed` changed to `if true`), "the sort's
-## column was evicted".
+## column was evicted"; with `closeSession` not dropping the reader's cache,
+## "a closed session's columns stayed cached".
 ##
 ## Runs alone: it bounds the time a million rows take to sort (5 s).
 
@@ -333,6 +334,23 @@ block aNeededColumnIsNotEvicted:
     for row in a.values:
       doAssert row[0] >= prev, "not sorted by the oldest column: " & $a.values
       prev = row[0]
+    st.shutdown()
+
+block aClosedSessionDropsItsColumns:
+  # Seen to fail: with `closeSession` not calling `dropSession`, the reader's
+  # cache still held the closed open's columns.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let id = st.sessions[0].id
+    discard st.table(TableView(fields: @["keys.channel"], scope: tsFile,
+      sortBy: "keys.channel", rows: 0 .. 2))
+    doAssert st.cachedTraceColumns > 0, "nothing was cached"
+    st.apply Command(kind: ckClose, file: id)
+    doAssert st.settle(st.sessions.len == 0 and st.cachedTraceColumns == 0),
+      "a closed session's columns stayed cached"
     st.shutdown()
 
 block anAnswerOfItsTraces:

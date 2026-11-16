@@ -1502,6 +1502,10 @@ func spectraWaiting*(state: AppState): bool =
     if w.waiting: return true
   false
 
+func cachedTraceColumns*(state: AppState): int =
+  ## Whole columns the trace table still holds, plus its order and catalogue.
+  if state.inspector.isNil: 0 else: state.inspector.cachedColumns
+
 func inspection*(state: AppState): lent Inspection {.inline.} =
   ## What the Headers window shows of the files' bytes: the traces its Trace
   ## tab is about, and the newest answer of its reader.
@@ -2257,6 +2261,7 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
           if o.job == job.id and o.reopened and not o.unwanted: kept = true
       if not kept: discard state.jobs.cancel(job.id)
   state.selection.forget(s.id, s.traceIds)
+  if not state.inspector.isNil: state.inspector.dropSession(int(s.id))
   # the analysis windows of the file: what is being worked out for them stops,
   # and a window waiting for it says why and waits for nothing
   for k in 0 ..< state.plots.len:

@@ -131,15 +131,18 @@ type
 
   CachedColumn = object
     ## A column of the trace table read for every row of its scope.
-    key: string ## its file, scope, joins and name
+    key: string  ## its file, scope, joins and name
+    session: int ## the open it was read for
     values: seq[float64]
-    filled: int ## the rows read so far, from the first
+    filled: int  ## the rows read so far, from the first
 
   TableCache = object
     columns: seq[CachedColumn] ## the newest last, at most `MaxCachedColumns`
     orderKey: string           ## what `order` was made of
+    orderSession: int
     order: seq[int32]
     catalogueOf: string        ## the file and trace `catalogue` was made of
+    catalogueSession: int
     catalogue: seq[CatalogueField]
 
   InspectorObj = object
@@ -162,6 +165,8 @@ type
       ## left to end on its own: its memory stays with it
     table: TableCache
       ## the trace table's columns read whole, and its order: the thread's own
+    dropIds: seq[int]
+      ## opens whose cached columns, order and catalogue are to be dropped
     thread: Thread[ptr InspectorObj]
 
   Inspector* = object
@@ -347,7 +352,8 @@ proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; key, name: 
         if c.key notin needed:
           cache.columns.delete i
           break
-    cache.columns.add CachedColumn(key: key, values: newSeq[float64](ask.traces.len))
+    cache.columns.add CachedColumn(key: key, session: int(f.session),
+      values: newSeq[float64](ask.traces.len))
   let at = cache.indexOf(key)
   template c: untyped = cache.columns[at]
   while c.filled < c.values.len:
@@ -395,6 +401,7 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
           cache.catalogue.add CatalogueField(name: r.blockName & "." & r.field,
             blockName: r.blockName, description: r.description)
       cache.catalogueOf = catalogueOf
+      cache.catalogueSession = int(f.session)
     except CatchableError:
       discard # the keys only; tried again next time
   answer.catalogue = cache.catalogue
@@ -431,6 +438,7 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
           orderOf(cache.columns[cache.indexOf(sortKey)].values, keep, view.descending)
         else: orderOf([], keep, false)
       cache.orderKey = orderKey
+      cache.orderSession = int(f.session)
   answer.count = if ordered: cache.order.len else: n
   # The rows on screen, at most `MaxTableRows`.
   let a = max(view.rows.a, 0)
@@ -528,6 +536,26 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
   p.poster.post Msg(job: NoJob, kind: mkInspected, inspected: answer)
   true
 
+proc dropCached(cache: var TableCache; session: int) =
+  ## Drops the columns, order and catalogue of open `session`.
+  var kept: seq[CachedColumn]
+  for c in cache.columns:
+    if c.session != session: kept.add c
+  cache.columns = move kept
+  if cache.orderSession == session:
+    cache.order.setLen 0
+    cache.orderKey = ""
+    cache.orderSession = 0
+  if cache.catalogueSession == session:
+    cache.catalogue.setLen 0
+    cache.catalogueOf = ""
+    cache.catalogueSession = 0
+
+proc applyDrops(p: ptr InspectorObj) =
+  ## Lock held, or the inspector thread while it is busy.
+  for id in p.dropIds: p.table.dropCached(id)
+  p.dropIds.setLen 0
+
 proc run(p: ptr InspectorObj) {.thread.} =
   markWorkerThread()
   var ws = initWorkspace()
@@ -554,6 +582,7 @@ proc run(p: ptr InspectorObj) {.thread.} =
       clearCycleRoots()
       for f in req.files: discard p.holds.release(f.path)
     withLock p.lock:
+      p.applyDrops()
       p.busy = false
       p.reading = ""
     if quit: break
@@ -599,6 +628,22 @@ proc newInspector*(poster: sink Poster; holds: HoldRelease): Inspector =
   result = Inspector(p: p)
   createThread(p.thread, run, p)
   p.started = true
+
+proc dropSession*(x: Inspector; session: int) =
+  ## Drops the cached columns, order and catalogue of open `session`. Applied
+  ## now when the reader is idle, else when the request it is serving ends.
+  if x.p == nil: return
+  withLock x.p.lock:
+    x.p.dropIds.add session
+    if not x.p.busy: x.p.applyDrops()
+
+proc cachedColumns*(x: Inspector): int =
+  ## Cached whole columns, plus one if an order or a catalogue is held.
+  if x.p == nil: return 0
+  withLock x.p.lock:
+    result = x.p.table.columns.len
+    if x.p.table.order.len > 0: inc result
+    if x.p.table.catalogue.len > 0: inc result
 
 proc ask*(x: Inspector; req: sink InspectRequest) =
   ## Asks for `req`, whose files the caller holds; replaces a request not
