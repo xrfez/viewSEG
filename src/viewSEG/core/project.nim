@@ -51,6 +51,9 @@ type
     modified*: Time ## its modification time then
     quick*: uint64 ## its first and last 64 KiB's hash then (`quickIdentity`)
     full*: uint64 ## the hash of every byte of its copy (`fullHash`); 0 when not known
+    changedModified*: Time
+      ## the original's modification time when it was found changed by a read of every
+      ## byte: not read again until its time moves
 
   ImportFile* = object
     ## A survey file of an import that is being copied into the project: its
@@ -114,10 +117,11 @@ type
   OriginalLook* = object
     ## What a look at an original found.
     state*: OriginalState
-    path*: string    ## where it was found ("" when it was not)
+    path*: string      ## where it was found ("" when it was not)
     size*: int64
     modified*: Time
-    confirmed*: bool ## its time moved but every byte is the copy's: the new time is recorded
+    readChanged*: bool ## found changed by a read of every byte, its time having moved
+    confirmed*: bool   ## its time moved but every byte is the copy's: the new time is recorded
 
   Owner* = object
     ## Who has a project open (`owner.nif`): said to a second program.

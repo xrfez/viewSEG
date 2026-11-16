@@ -31,7 +31,7 @@ func laneName*(lane: JobLane): string =
   ## How a lane is named to the user.
   case lane
   of jlInteractive, jlPeeks: "foreground"
-  of jlBackground, jlHashes: "background"
+  of jlBackground, jlHashes, jlOriginals: "background"
 
 func seconds(d: Duration): string =
   let ms = d.inMilliseconds

@@ -34,7 +34,7 @@ block rowsOfEachKind:
     info(5, "Open b.sgy", jsFailed, jlInteractive, 2.0, 2.5, "there is no such file"),
     info(6, "Close b.sgy", jsQueued, jlInteractive, cancellable = false),
     info(7, "QC 4", jsCancelled)]
-  let rows = jobRows(list, [@[JobId(6)], @[JobId(4), JobId(3)], @[], @[]], t0 + secs(3))
+  let rows = jobRows(list, [@[JobId(6)], @[JobId(4), JobId(3)], @[], @[], @[]], t0 + secs(3))
   doAssert rows.running.len == 1 and rows.running[0].title == "QC 1"
   doAssert rows.running[0].progress == "reading 25 %, about 9 s left", rows.running[0].progress
   doAssert abs(rows.running[0].fraction - 0.25) < 1e-6 and rows.running[0].canCancel

@@ -42,6 +42,8 @@ proc laneTag(lane: JobLane; t: Theme) =
         "background work"
       elif lane == jlPeeks: "A file's first bytes read for what its headers say: beside " &
         "the other work, so a drive that does not answer holds nothing else"
+      elif lane == jlOriginals: "A project's survey originals looked at, a lane of their own: " &
+        "no file's hash waits for them"
       elif lane == jlHashes: "A file read whole to confirm what it holds: beside the other " &
         "background work, which never waits for it"
       else: "Long work that runs in the background while you go on")

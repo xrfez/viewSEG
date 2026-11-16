@@ -80,7 +80,10 @@ proc lookOriginal*(c: SurveyCopy; dir: string;
         result = OriginalLook(state: osAsCopied, path: path, size: id.size, modified: t)
         if id.size != c.size or id.quick != c.quick: result.state = osChanged
         elif t != c.modified and c.full != 0:
-          if fullHash(path, progress) != c.full: result.state = osChanged # other content between
+          if t == c.changedModified: result.state = osChanged # found so, as it stands now
+          elif fullHash(path, progress) != c.full:
+            result.state = osChanged # other content between
+            result.readChanged = true
           else: result.confirmed = true
         return
       except IOError, OSError:
@@ -459,6 +462,7 @@ proc updateSurveyWork*(dir: string; copies: seq[SurveyCopy]; originals: seq[Orig
             news.copies[i].full = fullHash(tmps[^1][0], proc (done, total: int64): bool =
               ctx.stopAtCancel(done, total))
             news.copies[i].original = placeOf(dir, src)
+            news.copies[i].changedModified = Time()
             sources[i] = tmps[^1][0]
         news.store = writeStore(dir, news.copies, ctx, sources)
         commitCopies(tmps)

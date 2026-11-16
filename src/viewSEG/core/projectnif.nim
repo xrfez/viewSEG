@@ -71,8 +71,8 @@ proc place(w: var NifWriter; p: ProjectPath) =
   if p.path.len > 0: w.value("path", p.path)
   if p.absolute.len > 0: w.value("absolute", p.absolute)
 
-proc modified(w: var NifWriter; t: Time) =
-  w.open "modified"
+proc modified(w: var NifWriter; t: Time; tag = "modified") =
+  w.open tag
   w.add t.toUnix
   w.add int64(t.nanosecond)
   w.close
@@ -102,6 +102,7 @@ proc projectDocument*(d: ProjectDoc): string =
       w.modified f.modified
       w.value("quick", hex(f.quick))
       if f.full != 0: w.value("full", hex(f.full))
+      if f.changedModified != Time(): w.modified(f.changedModified, "changedModified")
       w.close
     w.writeJoinOptions(d.options)
     w.open "units"
@@ -237,6 +238,10 @@ proc surveyFile(r: var Reading; n: NifNode; d: var ProjectDoc) =
         else: r.problem(k, "(modified) needs seconds and nanoseconds")
       of "quick": r.hash(k, f.quick)
       of "full": r.hash(k, f.full)
+      of "changedModified":
+        if k.kids.len == 2 and k.kids[0].kind == nkInt and k.kids[1].kind == nkInt and
+            k.kids[1].intVal in 0 ..< 1_000_000_000:
+          f.changedModified = initTime(k.kids[0].intVal, int(k.kids[1].intVal))
       else: discard
   if f.copy.len == 0: r.problem(n, "a survey file names no copy; it is left out")
   elif not f.copy.isSurveyCopy:

@@ -89,6 +89,10 @@ type
     jlHashes = "hashes"
       ## files read whole for their identity: a lane of their own, so that a
       ## large file's hash never holds the background work
+    jlOriginals = "originals"
+      ## a project's survey originals looked at (one may be read whole, on a
+      ## share): a lane of their own, so that it holds neither a data file's
+      ## hash nor the background work
     jlPeeks = "peeks"
       ## a few bytes at the start of a file read for what its headers say
       ## (a survey file's units): a lane of their own, so that a file on a

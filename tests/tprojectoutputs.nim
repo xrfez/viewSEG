@@ -200,4 +200,21 @@ withFixtures fx:
     doAssert lookOriginal(copy, job).state == osAsCopied, "a touched original is offered as changed"
     writeFile(src, b)
     doAssert lookOriginal(copy, job).state == osChanged, "a changed middle is not seen"
+    # found changed by a read of every byte: not read again until its time moves
+    var reads = 0
+    let counting = proc (done, total: int64): bool {.gcsafe.} =
+      {.cast(gcsafe).}:
+        inc reads
+      true
+    let first = lookOriginal(copy, job, counting)
+    doAssert first.state == osChanged and first.readChanged and reads > 0, "not read whole"
+    var known = copy
+    known.changedModified = first.modified
+    reads = 0
+    let second = lookOriginal(known, job, counting)
+    doAssert second.state == osChanged and reads == 0, "read whole again at the next open"
+    setLastModificationTime(src, first.modified + initDuration(seconds = 30))
+    reads = 0
+    discard lookOriginal(known, job, counting)
+    doAssert reads > 0, "not read after its time moved"
 echo "tprojectoutputs: done"

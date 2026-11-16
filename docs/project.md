@@ -303,9 +303,11 @@ programs never write the project at once, so the project needs no merging.
 Reading the document, taking the lock, reading the project's layout and looking at the
 data folders are a job on the interactive lane (`openProjectWork`, a few stats and one
 small read). The survey originals are never looked at on the open path: once the project
-is open they are looked at in a job of their own on the lane of hashes (`originalsWork`,
+is open they are looked at in a job of their own on a lane of its own (`originalsWork`,
 with progress and a cancel), so an original on a share that does not answer, or one
-touched and large, holds up nothing. When one's time moved but every byte is its copy's,
+touched and large, holds up nothing: not the open, and not the hash of any data file
+("edits being checked"). An original found changed by a read of every byte is not read
+again until its time moves: the time it was found changed at is kept in `project.nif`. When one's time moved but every byte is its copy's,
 the new time is recorded in `project.nif`, so the next open does not read it again; copying the survey in, writing `survey.bin` and making the
 survey from it are jobs on the background lane (`keepSurveyWork`, `updateSurveyWork`,
 `restoreWork`: `survey.bin` can be large, so its job writes it, not the disk thread,

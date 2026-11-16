@@ -129,6 +129,18 @@ withFixtures fx:
       "the open waited for an original"
     doAssert again.project.originals.len == 3 and again.project.originals[0].state == osLooking,
       "the originals were looked at before the open ended: " & $again.project.originals[0].state
+    # the held look at an original delays no data file's hash
+    let data = field / "d.sgy"
+    copyFile(fx.manyTracesSegy(200, 40), data)
+    again.apply Command(kind: ckShowFile, panel: MainPanel, path: data)
+    doAssert again.settle(again.sessions.len >= 1 and again.remembering(data).known and
+      again.panel(MainPanel).laidOut)
+    again.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled,
+      edited: @[again.sessions[0].base + 3], on: true) # a record to confirm
+    # (within StallAfter: past it the lane would give the hash a runner of its own)
+    doAssert waitUntil((discard again.drainInbox(); again.persist();
+      again.remembering(data).confirmed), initDuration(seconds = 2)) and
+      inStep("looking at survey.s").len == 1, "the hash waited for the original's look"
     releaseStep("looking at survey.s")
     doAssert again.settle(again.project.originals.allIt(it.state == osAsCopied)),
       "the originals were not looked at afterwards"

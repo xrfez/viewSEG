@@ -4479,7 +4479,7 @@ proc lookAtOriginals(state: var AppState) =
     return
   p.originals = p.doc.survey.mapIt(OriginalLook(state: osLooking))
   p.originalsJob = state.jobs.submit(JobSpec(title: "Look at the survey's original files",
-    lane: jlHashes), originalsWork(p.dir, p.doc, state.inbox.poster))
+    lane: jlOriginals), originalsWork(p.dir, p.doc, state.inbox.poster))
   inc p.revision
 
 proc lookAgain(state: var AppState) =
@@ -4739,10 +4739,14 @@ proc takeProject(state: var AppState; m: sink Msg) =
       # An original whose time moved but whose content is the copy's: the new
       # time is recorded, so that no later open reads it whole again.
       for i, o in p.originals:
-        if o.confirmed and not p.readOnly and i < p.doc.survey.len and
-            p.doc.survey[i].modified != o.modified:
-          p.doc.survey[i].modified = o.modified
-          state.projectChanged()
+        if i < p.doc.survey.len and not p.readOnly:
+          if o.confirmed and p.doc.survey[i].modified != o.modified:
+            p.doc.survey[i].modified = o.modified
+            state.projectChanged()
+          elif o.readChanged and p.doc.survey[i].changedModified != o.modified:
+            # found changed by reading it whole: not read again until it moves
+            p.doc.survey[i].changedModified = o.modified
+            state.projectChanged()
       inc p.revision
       state.sayOriginals()
 
