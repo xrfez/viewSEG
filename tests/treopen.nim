@@ -19,15 +19,17 @@
 ## record shown, the selection and the kills as they were, says once that it
 ## failed, and the choice is not kept (a later open reads the file as before).
 ## A reopen that succeeds with the file's trace count keeps the selection,
-## the geometry join, the record and the FFT windows (at the new ids); with
-## another count it drops them and says so.
+## the geometry join, the record and the frozen FFT windows (at the new
+## ids); with another count it drops them and says so.
 ##
 ## A reopen whose open has already posted is not adopted after the file was
 ## closed: the close stands, the new session is released. The choice is
 ## written only when that open is taken in: a second reopen at once, or a
 ## close while the open is still reading, leaves the choice the file had.
-## A correlation whose traces are in one file and whose reference is in
-## another shifts only the ids that lay in the reopened file. Traces
+## A frozen correlation whose traces are in one file and whose reference is
+## in another shifts only the ids that lay in the reopened file (not frozen,
+## it follows the plot to the file opened next, and the file it left
+## closes). Traces
 ## selected in another file, and points selected on the map, stay selected.
 ## A file that changes on disk while a reopen is reading ends open: with the
 ## choice asked for when that open succeeds, never silently closed. One cut
@@ -289,6 +291,9 @@ block successfulReopenKeepsWhatItCan:
       spectrumTraces: @[base + 6, base + 7])
     st.pump(50)
     doAssert st.spectra.len == 2
+    # frozen, it keeps its traces (unfrozen it would follow the plot's)
+    st.apply Command(kind: ckSpectrumDisplay, spectrum: st.spectra[1].id,
+      spectrumShow: st.spectra[1].display, frozen: true)
     st.reopen(path, OpenChoice(verifyAll: true))
     doAssert st.settle(st.sessions.len == 1 and st.sessions[0].facts.opened.choice.verifyAll and
       st.panel(MainPanel).laidOut)
@@ -397,21 +402,41 @@ proc baseOf(st: AppState; path: string): int =
     if s.path == want: return s.base
 
 proc twoFiles(st: var AppState; a, b: string): tuple[baseA, baseB: int] =
-  ## `a` shown, `b` open beside it. The plot of `a`'s traces keeps `a` open
-  ## when `b` is shown.
+  ## `a` shown, `b` open beside it. The frozen plot of `a`'s traces keeps
+  ## `a` open when `b` is shown (unfrozen, it would follow to `b`).
   st.showIt(a)
   st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
     plotTraces: @[st.sessions[0].base + 3, st.sessions[0].base + 4])
   doAssert st.plots.len == 1, "the correlation window was not opened"
+  st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: st.plots[0].params,
+    plotFrozen: true)
   st.apply Command(kind: ckOpen, paths: @[b])
   doAssert st.settle(st.sessions.len == 2), "the second file did not open"
   result = (st.baseOf(a), st.baseOf(b))
   doAssert result.baseB >= 0 and result.baseB != result.baseA, "the second file has no ids"
   var p = st.plots[0].params
   p.reference = result.baseB + 2
-  st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p)
+  st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p, plotFrozen: true)
   doAssert st.plots[0].traces == @[result.baseA + 3, result.baseA + 4]
   doAssert st.plots[0].params.reference == result.baseB + 2
+
+block unfrozenWindowFollowsTheNewFile:
+  # Not frozen, the plot of `a`'s traces follows the plot to `b`, and `a`,
+  # which nothing shows or uses any more, is closed.
+  withFixtures fx:
+    let a = fx.surveySegy()
+    let b = fx.dir / "other.sgy"
+    copyFile(a, b)
+    var st = initAppState()
+    st.showIt(a)
+    st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
+      plotTraces: @[st.sessions[0].base + 3, st.sessions[0].base + 4])
+    doAssert st.plots.len == 1, "the correlation window was not opened"
+    st.apply Command(kind: ckOpen, paths: @[b])
+    doAssert st.settle(st.sessions.len == 1 and st.baseOf(b) >= 0 and
+      st.plots[0].file == "other.sgy"), "the window did not follow to the new file"
+    doAssert st.baseOf(a) < 0, "the file followed away from was kept open"
+    st.shutdown()
 
 block referenceInAnotherFileIsShiftedAlone:
   # Reopen the reference's file: its id moves, the other file's traces do not.
@@ -462,9 +487,11 @@ block anotherFilesSelectionStays:
     doAssert st.settle(st.sessions.len == 2), "the second file did not open"
     let (baseA, baseB) = (st.baseOf(a), st.baseOf(b))
     doAssert baseB >= 0 and baseB != baseA
-    # a window of the other file keeps it open when this one is shown again
+    # a frozen window of the other file keeps it open when this one is shown again
     st.apply Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[baseB + 1])
     doAssert st.plots.len == 1, "the other file's window was not opened"
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: st.plots[0].params,
+      plotFrozen: true)
     st.apply Command(kind: ckShowFile, panel: MainPanel, path: a)
     doAssert st.settle(st.sessions.len == 2 and st.baseOf(a) == baseA)
     st.apply Command(kind: ckSelect, traces: @[baseA + 3], mode: smReplace)
