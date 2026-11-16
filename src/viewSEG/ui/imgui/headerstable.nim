@@ -224,10 +224,11 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
       ui.view.findValue = ""
     marks.mark("table.find clear")
   # What the answer is of: this view's columns, scope, order and Find.
-  let current = answer.path == ses.path and answer.view.fields == ui.view.fields and
-    answer.view.scope == ui.view.scope and answer.view.sortBy == ui.view.sortBy and
-    answer.view.descending == ui.view.descending and
-    answer.view.findField == ui.view.findField and answer.view.findValue == ui.view.findValue
+  let gather = st.panels[k].layers[0].source.gather
+  let wanted = if settings.tableScope == tsFile: 0 ..< ses.len
+               elif gather in 0 ..< ses.gathers.len: ses.gathers[gather].traces
+               else: 0 .. -1
+  let current = answer.isAnswerOf(ses.path, wanted, ui.view)
   let count = if current: answer.count else: 0
   let words = if not current: (if st.inspection.waiting: "Reading..." else: "")
               elif finding: grouped(count) & " of " & grouped(answer.traces.len) & " traces"

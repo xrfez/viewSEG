@@ -259,3 +259,24 @@ block aColumnThatFailedIsReadAgain:
     for r in 0 ..< a.rowTraces.len:
       if r > 0: doAssert rcvX[a.rowTraces[r - 1]] <= rcvX[a.rowTraces[r]], "not sorted"
     st.shutdown()
+
+block anAnswerOfItsTraces:
+  # Seen to fail: an answer of the record shown before still counted as
+  # current after the record changed (the check did not compare the traces),
+  # so the rows of that record stayed on screen.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    st.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
+    doAssert st.settle(st.panel(MainPanel).layers[0].source.gather == 1)
+    let view = TableView(fields: @["keys.channel"], scope: tsRecord, rows: 0 .. 3)
+    let one = st.table(view)
+    let s = st.sessions[0]
+    doAssert one.isAnswerOf(s.path, s.gathers[1].traces, view)
+    doAssert not one.isAnswerOf(s.path, s.gathers[2].traces, view),
+      "the rows of another record would show as current"
+    doAssert not one.isAnswerOf(s.path, s.gathers[1].traces, TableView(fields: @["keys.channel"],
+      scope: tsRecord, sortBy: "keys.channel", rows: 0 .. 3)), "another sort is current"
+    st.shutdown()

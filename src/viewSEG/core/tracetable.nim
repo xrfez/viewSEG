@@ -218,6 +218,17 @@ proc bucketsOf*(values: openArray[float64]; order: openArray[int32]; ordered: bo
         z = max(z, x)
     (lo[b], hi[b]) = if a <= z: (a, z) else: (NaN, NaN)
 
+func isAnswerOf*(answer: TableAnswer; path: string; traces: Slice[int];
+    view: TableView): bool =
+  ## Whether `answer` is of the file `path`, the traces `traces` (the scope)
+  ## and the columns, scope, sort and Find of `view`: then its rows show; the
+  ## rows on screen and the graph are not compared (they change with the
+  ## scroll).
+  answer.path == path and answer.traces == traces and answer.view.fields == view.fields and
+    answer.view.scope == view.scope and answer.view.sortBy == view.sortBy and
+    answer.view.descending == view.descending and answer.view.findField == view.findField and
+    answer.view.findValue == view.findValue
+
 func wholeColumns*(v: TableView): seq[string] =
   ## The columns the view needs for every row of the scope: the sort's,
   ## Find's and the graph's, each once.
