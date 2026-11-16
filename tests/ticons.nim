@@ -4,9 +4,12 @@
 ##
 ## Seen to fail: with IconQuit set back to IconClose, "icons are distinct";
 ## with maResetSettings given IconRefresh, "reset settings is not a re-read";
-## with Import survey labelled "Survey..." again, "survey words".
+## with Import survey labelled "Survey..." again, "survey words"; with
+## redoShortcut returning "nope" instead of the chord name, "redo shows its
+## real binding".
 
 import std/[sets, strutils]
+import imguin/cimgui
 import viewSEG/ui/imgui/[headerstable, icons, menus]
 
 block glyphs:
@@ -55,5 +58,11 @@ block words:
   doAssert "kills and polarity reversals stay" in ReopenTip
   doAssert FindRangeExample in findValueTip()
   doAssert "1001..1010" notin findValueTip(), "one range example"
+
+block redoBinding:
+  let ctx = igCreateContext(nil)
+  defer: igDestroyContext(ctx)
+  let y = $igGetKeyChordName(ImGui_Mod_Ctrl.cint or ImGui_Key_Y.cint)
+  doAssert redoShortcut() == shortcutName(maRedo) & ", " & y, "redo shows its real binding"
 
 echo "ticons: ok"

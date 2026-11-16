@@ -233,7 +233,8 @@ point by default): right-click them, or their names at the left, to choose its f
 | Pan with a scroll bar | drag its thumb; click the bar for a whole view; or the wheel over it | |
 | Zoom to a box | drag with the right button | |
 | Fit the whole record (in wiggles: as far as one pixel a trace, from the first) | the fit button | Ctrl+0 |
-| Go back to the view before | the back button | Backspace, or Alt+Left |
+| Go back to the view before | the back button | Backspace |
+| Step the selection to the next or previous trace | | Alt+Right / Alt+Left (Alt+Down / Alt+Up when time runs across) |
 | Select a trace | click it | |
 | Add a trace to the selection, or take it out | Ctrl + click | |
 | Select every trace from the one clicked last to this one | Shift + click | |

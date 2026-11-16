@@ -166,6 +166,11 @@ proc shortcutName*(a: MenuAction): string =
   ## The shortcut of `a` as shown to the user ("Ctrl+O"), or "".
   if shortcuts[a] == 0: "" else: $igGetKeyChordName(shortcuts[a])
 
+proc redoShortcut*(): string =
+  ## Both of Redo's bindings, named as the others are (Ctrl is Cmd on macOS).
+  shortcutName(maRedo) & ", " &
+    $igGetKeyChordName(ImGui_Mod_Ctrl.cint or ImGui_Key_Y.cint)
+
 func menuLabel*(a: MenuAction): string =
   ## What `a` is called, the same words in its menu, its button and its tooltip.
   ## Import survey opens a window, so it has no ellipsis; the others that open
@@ -339,7 +344,7 @@ proc drawEditMenu(input: MenuInput; res: var MenuResult) =
       else: "No file is shown")
   let redo = if input.redo.len > 0: "Redo " & input.redo else: "Redo"
   if igMenuItem_Bool((menuIcons[maRedo] & "  " & redo).cstring,
-      (shortcutName(maRedo) & ", Ctrl+Y").cstring, false, input.redo.len > 0):
+      redoShortcut().cstring, false, input.redo.len > 0):
     res.actions.incl maRedo
   if marked != nil: marked[].mark("menu." & $maRedo)
   tip(if input.redo.len > 0: "Make the change undone last again: " & input.redo
