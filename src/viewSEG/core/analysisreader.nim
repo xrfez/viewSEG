@@ -13,9 +13,12 @@
 ##   another interval, or with none, is left out and counted, `atOtherInterval`,
 ##   as the spectrum reader does); a reference trace
 ##   for a correlation, from the same file or another one.
-## - **Filters.** The plot's filters (`Processing`, shown raw or not alike),
-##   made for the traces' interval, run on whole traces; an auxiliary trace
-##   goes through them only when the Aux toggle says so, as in the plot.
+## - **Filters.** Each trace's own filter always, then the plot's filters
+##   (`Processing`, shown raw or not alike; an f-k asked raw leaves the
+##   plot's filters out), made for the traces' interval, run on whole
+##   traces; an auxiliary trace goes through the plot's filters only when
+##   the Aux toggle says so, as in the plot. A trace's own filter runs on
+##   it either way, and instead of the plot's when it says so.
 ## - **Holds.** The caller holds the files (`Jobs.hold`) before it asks; the
 ##   reader ends the holds (`HoldRelease`) once it has served the request or
 ##   given it up, and `ask` and `cancel` end those of the requests they drop.
@@ -50,6 +53,7 @@ type
     refSize*: int64 = -1
     refTrace*: int = -1       ## its index in `refFile`
     refName*: string
+    refOwn*: seq[FilterEntry] ## the reference's own filter, when it has one
 
   ReaderObj = object
     lock: Lock
@@ -181,13 +185,15 @@ proc applyRowsOwn(b: RowBlock[float32]; live: TraceRows; dtMs: float64;
         plan.apply(b, initChunkMeta(live, dtMs, 0, skip), ws)
 
 proc filtered(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
-    pr: Processing; own: openArray[FilterEntry]; dtMs: float64; passed: var int): string =
-  ## `rows` (traces `list` of `f`) through the filters `pr` at `dtMs`,
-  ## whole, then each trace's own filter (`own`): after the plot's, or
-  ## instead of them. An auxiliary trace goes through the plot's filters
-  ## only when `pr.aux` (the others, `passed` of them, are passed by); a
-  ## trace's own filter runs on it either way. What the filters are, in
-  ## words, or why they did not run; "" for none.
+    pr: Processing; own: openArray[FilterEntry]; dtMs: float64; passed: var int;
+    plotOn = true): string =
+  ## `rows` (traces `list` of `f`) through each trace's own filter (`own`),
+  ## always, then the plot's filters `pr` at `dtMs` when `plotOn` (an f-k
+  ## asked raw leaves them out). An own filter that runs instead leaves the
+  ## plot's filters off that trace. An auxiliary trace goes through the
+  ## plot's filters only when `pr.aux` (the others, `passed` of them, are
+  ## passed by); its own filter runs either way. What the plot's filters
+  ## are, in words, or why they did not run; "" when they were not applied.
   passed = 0
   var q = pr
   q.raw = false
@@ -198,9 +204,10 @@ proc filtered(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
     if at >= 0:
       if own[at].filter.place == fpInstead: instead.add k
       if own[at].filter.spec.hasFilters: anyOwn = true
-  if (not q.hasFilters and not anyOwn) or rows.len == 0: return ""
-  let filters = q.filterPipeline(dtMs)
-  if q.hasFilters and filters.len == 0 and not anyOwn:
+  let applyPlot = plotOn and q.hasFilters
+  if (not applyPlot and not anyOwn) or rows.len == 0: return ""
+  let filters = if applyPlot: q.filterPipeline(dtMs) else: initPipeline()
+  if applyPlot and filters.len == 0 and not anyOwn:
     return "the filters (none of them below Nyquist) did not run"
   var cols = 0
   for r in rows: cols = max(cols, r.len)
@@ -212,7 +219,7 @@ proc filtered(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
   try:
     var ws = initWorkspace()
     let traceRows = f[].rowsOf(list)
-    if q.hasFilters and filters.len > 0:
+    if applyPlot and filters.len > 0:
       let plan = filters.compile(float32, dtMs, cols, recordSamples = cols)
       ws.reserve(plan)
       if q.aux and traceRows.hasAuxiliary:
@@ -232,11 +239,12 @@ proc filtered(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
     return "the filters could not run: " & e.msg
   for i in 0 ..< rows.len:
     if rows[i].len > 0: copyMem(addr rows[i][0], addr work[i * cols], rows[i].len * 4)
-    if not q.aux and f[].traceKeys(list[i]).status == tsAuxiliary and
-        entryAt(own, list[i]) < 0: inc passed
-  if q.hasFilters: "through " & q.describe
-  elif anyOwn: "through the traces' own filters"
-  else: ""
+    if applyPlot and not q.aux and f[].traceKeys(list[i]).status == tsAuxiliary:
+      inc passed
+  if applyPlot and filters.len > 0:
+    result = "through " & q.describe
+    if instead.len > 0: result.add ". " & insteadWords(instead.len, list.len)
+  elif applyPlot: result = "the filters (none of them below Nyquist) did not run"
 
 proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
   ## Reads, works out and posts what `a` asks for; false when a newer
@@ -297,10 +305,10 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             keptNames.add names[i]
             keptList.add list[i]
         let stop = proc (): bool = p.interrupted(a.id)
-        let raw = a.view == avFk and a.params.fkRaw # (f-k: raw or processed, chosen)
+        let plotOn = not (a.view == avFk and a.params.fkRaw) # f-k raw: the plot's filters only
         var passed = 0
-        var through = if kept.len > 0 and not raw: filtered(kept, f, keptList, a.processing,
-          a.own, dtMs, passed) else: ""
+        var through = if kept.len > 0: filtered(kept, f, keptList, a.processing,
+          a.own, dtMs, passed, plotOn) else: ""
         if passed > 0 and through.startsWith("through "):
           # the filters did not touch these: the words must not say they did
           if passed == kept.len:
@@ -350,7 +358,9 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               else:
                 let refName = if a.refName.len > 0: a.refName else: keptNames[0]
                 var refPassed = 0
-                let refOwn = if a.refPath == a.path: a.own else: @[]
+                let refOwn = if a.refOwn.len > 0: a.refOwn
+                             elif a.refPath == a.path: a.own
+                             else: @[]
                 let refThrough = filtered(refRows, rf, @[rt], a.processing, refOwn, dtMs,
                   refPassed)
                 if refPassed > 0 and refThrough.startsWith("through "):
@@ -408,6 +418,15 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
           answer.notDrawn = notDrawn
           if through.len > 0 and answer.problem.len == 0:
             answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & through
+          if a.view == avCorrelation and a.refTrace >= 0 and a.refTrace notin keptList and
+              answer.problem.len == 0:
+            let named = if a.refOwn.len > 0: a.refOwn
+                        elif a.refPath == a.path or a.refPath.len == 0: a.own
+                        else: @[]
+            let refLine = ownShownWords(a.refTrace, ownPerTrace(named, @[a.refTrace]))
+            if refLine.len > 0:
+              answer.note = (if answer.note.len > 0: answer.note & "; " else: "") &
+                "reference, " & refLine
       except OSError as e:
         answer.problem = "it cannot be read now: " & e.msg
       except ValueError as e:

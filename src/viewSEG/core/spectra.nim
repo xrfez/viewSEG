@@ -26,24 +26,27 @@
 ## each. Auxiliary traces count as seismic ones do (a pilot's spectrum is
 ## what the vibrator analysis wants).
 ##
-## **Raw and processed.** The raw curve is of the samples as the file has
-## them; the processed one of the same samples through the plot's filters
-## (`core/processing`, made for the spectrum's own sample interval) and
-## each trace's own filter, run on whole traces before the window is cut,
-## so the filters' edges never fall in it. A plot shown raw still gets the
-## processed curve: the two compare. The processed curve is of the traces
-## the filters reach only: an auxiliary trace goes through the plot's
-## filters only when the Aux toggle says so (`Processing.aux`), so with it
-## off the processed curve leaves an auxiliary trace out (`passedBy` counts
-## it) unless that trace has a filter of its own, which is in the curve
-## either way. With no trace reached there is none; nor is there when the
-## filters cannot run at the traces' interval (`filterProblem`). The answer
-## says which (`filtered`, `passedBy`, `filterNote`), so the words never
-## claim a filter that was not applied. One trace with its own filter: the
-## response and the words are what that trace went through (the plot's then
-## the trace's, or the trace's alone when it runs instead, or when the
-## plot's did not reach it). Several traces, any with their own: the plot's
-## response, and the words say how many.
+## **Raw and processed.** The raw curve is the trace as the plot shows it
+## before the plot's filters: the file's samples with that trace's own
+## filter, which is part of the trace and is never a curve the user can
+## untick. The processed one is those samples through the plot's filters
+## only (`core/processing`, made for the spectrum's own sample interval),
+## run on whole traces before the window is cut, so the filters' edges
+## never fall in it. A plot shown raw still gets the processed curve: the
+## two compare. It is drawn only when the plot has a filter on. The
+## processed curve is of the traces the plot's filters reach only: an
+## auxiliary trace goes through them only when the Aux toggle says so
+## (`Processing.aux`), so with it off the processed curve leaves an
+## auxiliary trace out (`passedBy` counts it). A trace whose own filter
+## runs instead of the plot's is left out of the plot's filters, so its
+## processed curve equals its raw curve, and the words say so. With no
+## trace reached there is none; nor is there when the filters cannot run
+## at the traces' interval (`filterProblem`). The answer says which
+## (`filtered`, `passedBy`, `filterNote`), so the words never claim a
+## filter that was not applied. The response is the plot's filters'
+## response, and only when the plot has a filter on. A trace's own filter
+## is named apart (`ownNote`): "Trace 12: own filter, band-pass 10-60 Hz",
+## or how many.
 ##
 ## The work runs on a thread of its own (`core/spectrumreader`); `AppState`
 ## keeps the windows (`SpectrumWindow`).
@@ -103,7 +106,9 @@ type
     gen*: uint64            ## the request's
     id*: int                ## the window's
     binHz*: float64         ## the bins' spacing; bin k is at k·binHz, the last at Nyquist
-    raw*: seq[float64]      ## per bin, the RMS amplitude of the samples as recorded
+    raw*: seq[float64]
+      ## per bin, the RMS amplitude of the trace with its own filter, before
+      ## the plot's filters
     processed*: seq[float64]
       ## per bin, of the traces through the filters (`filtered`); empty when
       ## there are none, they reach no trace, or they cannot run
@@ -122,6 +127,13 @@ type
     nfft*: int ## the FFT's length
     read*: int ## traces read from the file for it (0: all at hand)
     filters*: string ## the plot's filters asked for, in words; "" for none
+    ownNote*: string
+      ## the own filters of the traces it is of: "Trace 12: own filter,
+      ## band-pass 10-60 Hz", or "N traces have their own filter"; "" for none
+    insteadNote*: string
+      ## "this trace uses its own filter instead of the plot's" when the
+      ## plot's filters do not apply because the trace's own filter runs
+      ## instead; "" otherwise
     filterAux*: bool ## the auxiliary traces were asked to go through them
     filtered*: int ## of `averaged`, the traces `processed` is of
     passedBy*: int
@@ -309,36 +321,6 @@ func auxText(n: int): string =
 const AuxOff* = "Filters > Filter the Aux traces too is off"
   ## where the plot's Aux toggle is, as the words name it
 
-func spectrumFilterWords*(plot: Processing; own: openArray[OwnFilter];
-    plotRan = true): string =
-  ## What a spectrum's filter line names. One trace with its own filter:
-  ## the plot's then the trace's, or the trace's alone when it runs instead
-  ## of the plot's (or the plot's did not reach it, `plotRan` false: an
-  ## auxiliary trace with the Aux toggle off). Several traces, any with
-  ## their own: the plot's words, and how many. "" when nothing is set.
-  var n = 0
-  var lone = OwnFilter()
-  for f in own:
-    if f.changesSamples:
-      inc n
-      lone = f
-  let plotWords = if plot.hasFilters: describe(plot) else: ""
-  if own.len == 1 and n == 1:
-    let f = lone
-    if f.place == fpInstead or not plotRan:
-      if f.spec.hasFilters: result = describe(f.spec)
-      else: result = "none, instead of the plot's filters"
-    elif plotWords.len > 0 and f.spec.hasFilters:
-      result = plotWords & ", then " & describe(f.spec)
-    elif f.spec.hasFilters: result = describe(f.spec)
-    else: result = plotWords
-  elif n > 0:
-    let note = if n == 1: "1 trace has its own filter"
-               else: $n & " traces have their own filter"
-    if plotWords.len > 0: result = plotWords & ", " & note
-    else: result = note
-  else: result = plotWords
-
 func filterText*(w: SpectrumWindow): string =
   ## What the processed curve went through, in words, as the answer says
   ## it (never the plot's filters of now): "processed: 4-8-60-80 Hz";
@@ -346,11 +328,13 @@ func filterText*(w: SpectrumWindow): string =
   ## not filtered: Filters > Filter the Aux traces too is off)"; "not
   ## processed: the auxiliary trace is not filtered: ... (the plot's
   ## filters: notch 60 Hz)"; "no filters on the plot: the raw curve only";
-  ## what Nyquist cut of them after it.
+  ## what Nyquist cut of them after it. A trace's own filter is named after
+  ## that (`ownNote`), and, where it runs instead of the plot's, that the
+  ## plot's filters did not apply (`insteadNote`).
   template sp: untyped = w.spectrum
   if sp.raw.len == 0: return ""
-  if sp.filters.len == 0: return "no filters on the plot: the raw curve only"
-  if sp.filterProblem.len > 0:
+  if sp.filters.len == 0: result = "no filters on the plot: the raw curve only"
+  elif sp.filterProblem.len > 0:
     result = "not processed: the plot's filters (" & sp.filters & ") cannot run: " &
       sp.filterProblem
   elif sp.filtered == 0 and sp.passedBy > 0:
@@ -364,6 +348,8 @@ func filterText*(w: SpectrumWindow): string =
       result.add ", " & $sp.filtered & " of the " & $sp.averaged & " traces (" &
         auxText(sp.passedBy) & " not filtered: " & AuxOff & ")"
   if sp.filterNote.len > 0: result.add ". " & sp.filterNote
+  if sp.insteadNote.len > 0: result.add ". " & sp.insteadNote
+  if sp.ownNote.len > 0: result.add ". " & sp.ownNote
 
 func auxUnfiltered*(w: SpectrumWindow): bool {.inline.} =
   ## Whether auxiliary traces of `w`'s spectrum were left unfiltered because

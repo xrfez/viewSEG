@@ -76,7 +76,8 @@ type
     maxLagMs*: float64 = 250.0 ## cross-correlation: the lags shown, either side of 0
     fkFromMs*: float64 = NaN ## f-k: the box's first time, ms; NaN: the traces' start
     fkToMs*: float64 = NaN ## f-k: its last time, ms; NaN: the traces' end
-    fkRaw*: bool = false ## f-k: the traces as recorded, not through the plot's filters
+    fkRaw*: bool = false
+      ## f-k: the plot's filters left out. A trace's own filter still runs.
     roles*: VibRoles ## vibrator signature: which trace is which
     reactionMassKg*: float64 = NaN
       ## vibrator signature: the reaction mass, kg, for the ground force
@@ -592,6 +593,17 @@ func viewName*(v: AnalysisView): string =
   of avCorrelation: "Cross-correlation"
   of avVibrator: "Vibrator signature"
   of avFk: "f-k"
+
+func ownLine*(w: AnalysisWindow): string =
+  ## What the window says of its traces' own filters, in the place it names
+  ## them: "Trace 12: own filter, band-pass 10-60 Hz", or how many. "" for none.
+  if w.traces.len == 0: return ""
+  let base = w.traces[0] - w.first
+  var own = newSeq[OwnFilter](w.traces.len)
+  for i, t in w.traces:
+    let at = entryAt(w.own, t - base)
+    if at >= 0: own[i] = w.own[at].filter
+  ownShownWords(w.first, own)
 
 func label*(w: AnalysisWindow): string =
   ## What a window is of, in words: "trace 12 · FFID 151 · shot.sgd".

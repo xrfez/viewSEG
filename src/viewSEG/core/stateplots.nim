@@ -118,6 +118,7 @@ proc askPlot(state: var AppState; w: int): bool =
       if j != i:
         if not state.jobs.hold(rs.path): return false
         (a.refFile, a.refPath, a.refSize) = (rs.filePtr, rs.path, rs.size)
+      a.refOwn = ownOfTraces(state.editsAt(rs.path), @[r - rs.base])
     else:
       let aux = s.firstAux(traces[0])
       if aux >= 0:
@@ -126,6 +127,7 @@ proc askPlot(state: var AppState; w: int): bool =
         let sweep = s.filePtr[].traceKeys(aux).traceCode == SweepTraceCode
         (a.refTrace, a.refName) = (aux, (if sweep: "the pilot, trace "
           else: "the first auxiliary trace, trace ") & $(aux + 1))
+        a.refOwn = ownOfTraces(state.editsAt(s.path), @[aux])
     pw.reference = a.refName
   if not state.jobs.hold(s.path):
     if a.refFile != nil: discard state.jobs.holdRelease.release(a.refPath)

@@ -195,7 +195,7 @@ proc drawSettings(p: Panel; pr: Processing; hasAux: bool; reach: FilterReach;
 const filtersId = "##filterspopup"
 
 proc drawFilterControls*(p: Panel; hasAux: bool; reach: FilterReach; t: Theme;
-    marks: var Marks; cmds: var seq[Command]) =
+    marks: var Marks; cmds: var seq[Command]; ownLine = "") =
   ## The filters' button, lit while they are applied, which opens their
   ## drop-down (what they are, then their settings), then the Raw toggle.
   ## The button is one icon wide whatever the filters are, so the strip
@@ -212,13 +212,15 @@ proc drawFilterControls*(p: Panel; hasAux: bool; reach: FilterReach; t: Theme;
   let below = ImVec2_c(x: igGetItemRectMin().x, y: igGetItemRectMax().y)
   marks.mark("plot.filters")
   let why = reachText(reach)
-  tip(text & (if why.len > 0: "\n" & why else: "") &
+  tip(text & (if ownLine.len > 0: "\n" & ownLine else: "") &
+    (if why.len > 0: "\n" & why else: "") &
     "\nWhat the traces go through before the gain (DC removal, low-cut, " &
     "high-cut, band-pass, notches): click to set them. The plot follows as you do.")
   igSetNextWindowPos(below, ImGui_Cond_Appearing.cint, ImVec2_c(x: 0, y: 0))
   if igBeginPopup(filtersId, 0):
     marks.markWindow("plot.filters popup")
     igTextUnformatted(text.cstring, nil)
+    if ownLine.len > 0: igTextUnformatted(ownLine.cstring, nil)
     marks.mark("plot.filters says")
     # the sliders' tracks and the boxes stand out from the popup they are on
     let raised = vec4(mix(t.roles[rlFrame], t.roles[rlText], 0.12))

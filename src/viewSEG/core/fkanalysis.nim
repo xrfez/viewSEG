@@ -187,4 +187,5 @@ proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
     else: "the traces " & $spacing & " " & $unit & " apart (from their " & spacingFrom & ")"
   result.note = $ntr & " traces × " & $n & " samples (" & $(float64(first) * dtMs + t0Ms) &
     " to " & $(float64(last) * dtMs + t0Ms) & " ms), tapered 10 % at each end both ways; " &
-    apart & "; dB from the largest" & (if p.fkRaw: "; raw (the filters left out)" else: "")
+    apart & "; dB from the largest" &
+      (if p.fkRaw: "; the plot's filters left out" else: "")

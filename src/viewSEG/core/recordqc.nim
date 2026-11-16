@@ -6,8 +6,9 @@
 ## - **The amplitude flags** of processSEG's `qc/amplitude` with its default
 ##   thresholds (`AmplitudeParams()`): each seismic trace's statistics
 ##   (`traceAmplitudeInto`, a chunk of traces at a time, so a record of any
-##   size is read in bounded memory), then the record's (`recordAmplitude`,
-##   over its seismic traces: weak and noisy against their median).
+##   size is read in bounded memory) after that trace's own filter, then the
+##   record's (`recordAmplitude`, over its seismic traces: weak and noisy
+##   against their median).
 ## - **Against the template** (the relation records of the record's domain:
 ##   a shot's X record, found as processSEG's `recordCompleteness` finds it,
 ##   or a receiver gather's O record), the stations planned that the record
@@ -33,9 +34,10 @@
 
 import std/[algorithm, math, sets, tables]
 import parseSEG
-import processSEG/core/[types, workspace]
+import processSEG/core/[rows, types, workspace]
+import processSEG/pipeline
 import processSEG/qc/[amplitude, record]
-import filesystem, inbox, jobs, mapkinds, session, threads
+import filesystem, inbox, jobs, mapkinds, processing, session, threads
 
 export mapkinds
 
@@ -51,7 +53,8 @@ type
     ## The record shown's filters, as its job found them.
     job*: JobId = NoJob                 ## the job reading it; `NoJob` for none
     key*: tuple[file: SessionId; gather, keys: int; relations: pointer; domain: RelationDomain;
-        recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed; samples: bool]
+        recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed; samples: bool;
+        own: string]
       ## what the job, or `hits`, were made from
     hits*: array[MapFilter, FilterHits] ## of the filters in `TraceFilters`
     record*: int64 = -1
@@ -224,10 +227,52 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
     return
   hits.placeTraces(f.index.keys, base, traces, g, record, domain)
 
+proc applyOwnQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
+    own: openArray[FilterEntry]; ws: var Workspace) =
+  ## Each trace of `part`'s own frequency filter, on `samples`, before the
+  ## amplitude flags. A filter that only runs instead of the plot's, with no
+  ## frequency filter of its own, changes nothing here: the check has no
+  ## plot filters.
+  if own.len == 0: return
+  var list = newSeq[int](part.len)
+  for i in 0 ..< part.len: list[i] = part.a + i
+  var any = false
+  for t in list:
+    let at = entryAt(own, t)
+    if at >= 0 and own[at].filter.spec.hasFilters: any = true
+  if not any: return
+  let b = rowBlock(samples)
+  var keys: seq[TraceKeys] = @[]
+  var lengths: seq[int] = @[]
+  let rows = f.rowsOf(part).auxLiveRows(keys, lengths)
+  var seen: seq[int]
+  for k, t in list:
+    let at = entryAt(own, t)
+    if at >= 0 and own[at].filter.spec.hasFilters and k notin seen:
+      let filt = own[at].filter
+      var group = @[k]
+      seen.add k
+      for j in k + 1 ..< list.len:
+        let aj = entryAt(own, list[j])
+        if aj >= 0 and own[aj].filter == filt:
+          group.add j
+          seen.add j
+      var skip = newSeqOfCap[int](b.len - group.len)
+      var g = 0
+      for row in 0 ..< b.len:
+        if g < group.len and group[g] == row: inc g
+        else: skip.add row
+      let dt = f.index.keys[t].intervalUs / 1000
+      let pipe = filt.ownPipeline(if dt > 0: dt else: 1.0)
+      if pipe.len > 0:
+        let plan = pipe.compile(float32, (if dt > 0: dt else: 1.0), b.cols, recordSamples = b.cols)
+        ws.reserve(plan)
+        plan.apply(b, initChunkMeta(rows, (if dt > 0: dt else: 1.0), 0, skip), ws)
+
 proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base, gather: int;
     traces: Slice[int]; domain: RelationDomain; relations: ptr SurveyGeometry;
     against: string; recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed;
-    samples: bool; to: Poster): JobWork =
+    samples: bool; own: seq[FilterEntry]; to: Poster): JobWork =
   ## The work of a job that reads gather `gather` (`traces`) of open file
   ## `session` (`file`, at `path`; its trace 0 is survey-wide `base`) and
   ## posts what the filters in `TraceFilters` find in it (`mkRecordQc`):
@@ -238,8 +283,9 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
   ## that is (found with station `placed` when the headers name none).
   ## Without `samples` (only the template box, or filters of the keys, ask),
   ## from the keys alone: the filters that need the samples (not decodable,
-  ## the amplitude flags) are said not checked. Submitted with the file in `reads`; `relations` is
-  ## read in place, never copied.
+  ## the amplitude flags) are said not checked. `own` is each trace's own
+  ## filter, applied before the amplitude flags. Submitted with the file in
+  ## `reads`; `relations` is read in place, never copied.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var hits: array[MapFilter, FilterHits]
     for m in TraceFilters: hits[m].state = fsDone
@@ -261,6 +307,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
         fs.mappedRead(path) # (tests: the drive's next pages come late)
         var log: DiagLog
         var samples = f.readTraces(part, 0 ..< cols, log)
+        if own.len > 0: applyOwnQc(samples, f, part, own, ws)
         var failed: seq[int]
         for d in log:
           if d.loc.trace in part and (d.loc.trace - part.a) notin failed:

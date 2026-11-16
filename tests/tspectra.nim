@@ -1054,9 +1054,9 @@ withFixtures fx:
       "cannot run: none of them is below Nyquist. Nyquist is 250 Hz at 2 ms: a notch is not " &
       "below Nyquist and left out.", five.spectra[q].filterText
     five.shutdown()
-    # An auxiliary trace's own filter is in its processed spectrum with the
-    # plot's Aux toggle off. Seen to fail with the processed sum leaving the
-    # row out: "a pilot's own filter is not in its spectrum".
+    # An auxiliary trace's own filter is in the raw curve. The plot's filters
+    # still pass it by when the Aux toggle is off, so there is no processed
+    # curve, and the response is not drawn.
     var six = initAppState()
     six.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.pilotSegy())
     doAssert waitUntil((discard six.drainInbox(); six.sessions.len == 1 and
@@ -1070,12 +1070,12 @@ withFixtures fx:
       processing: ownBand, filterPlace: fpAfter)
     let ownWin = six.answer(@[pb])
     template owned: untyped = six.spectra[ownWin]
-    doAssert owned.spectrum.processed.len > 0 and owned.spectrum.filtered == 1 and
-      owned.spectrum.passedBy == 0, "a pilot's own filter is not in its spectrum: " &
+    doAssert owned.spectrum.processed.len == 0 and owned.spectrum.filtered == 0 and
+      owned.spectrum.passedBy == 1, "a pilot's own filter unlocked processing: " &
       $(owned.spectrum.filtered, owned.spectrum.passedBy, owned.spectrum.processed.len)
-    doAssert "notch" notin owned.spectrum.filters, owned.spectrum.filters
-    doAssert owned.spectrum.filters == "8-12-40-48 Hz", owned.spectrum.filters
-    doAssert owned.spectrum.response.len > 0
+    doAssert owned.spectrum.filters == "notch 60 Hz", owned.spectrum.filters
+    doAssert "Trace 1: own filter, band-pass 12-40 Hz" in owned.filterText, owned.filterText
+    doAssert not owned.spectrum.hasResponse
     six.shutdown()
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
 echo "tspectra: ok"

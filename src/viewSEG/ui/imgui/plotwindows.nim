@@ -556,6 +556,8 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   drawSettings(st, w, name, t, marks, res)
   let r = w.result
   var words = if w.frozen: "Frozen · " & w.label else: w.label
+  let own = w.ownLine
+  if own.len > 0: words.add " · " & own
   if w.filters.len > 0:
     words.add " · filters: " & w.filters
     if r.passedBy > 0: words.add " (" & passedWords(r.passedBy) & ")"

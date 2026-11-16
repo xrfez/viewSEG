@@ -3,12 +3,12 @@
 ## - with no filter on, Processed and Response are drawn unticked and a click
 ##   does not change the stored choice (it stays ticked);
 ## - a filter on, that stored choice shows again (both ticked);
-## - a trace's own filter alone, the plot's filters off, enables Processed
-##   (its stored tick shows), and, the spectrum being of that one trace,
-##   Response too: its response is what that trace went through;
-## - that filter run instead with no frequency filter: Response is off and
-##   its tooltip says the trace's filters have nothing to draw (seen to fail
-##   as "The plot has no pass band or notch to draw").
+## - a trace's own filter alone, the plot's filters off, leaves Processed
+##   and Response locked and drawn unticked, as with no filter on, and the
+##   window's line names the own filter;
+## - that filter run instead with no frequency filter: still locked, and
+##   the Response tooltip says no filter is on in the plot (seen to fail as
+##   "This trace's filters have no pass band or notch to draw").
 ##
 ## Phase, when the spectrum is not of one trace, is the same: drawn unticked
 ## while disabled, the stored choice kept. The New plot windows have no
@@ -20,7 +20,7 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24"`.
 
-import std/[math, monotimes, options, os]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, processing, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/[app, spectrumwindow]
@@ -142,15 +142,16 @@ withFixtures fx:
       processing: own, filterPlace: fpAfter)),
     proc (f: FrameInfo): bool =
       let w = f.core.spectra[1]
-      f.core.ownChangesSamples(w) and not w.waiting and w.spectrum.processed.len > 0)
-  step("an own filter enables Processed", noop, proc (f: FrameInfo): bool =
-    doAssert f.core.spectra[1].display.processed
-    doAssert not f.core.spectra[1].processing.hasFilters
-    result = f.ticked("fft 1.processed")
+      f.core.ownChangesSamples(w) and not w.waiting and w.spectrum.raw.len > 0 and
+        w.spectrum.processed.len == 0)
+  step("an own filter leaves Processed locked", noop, proc (f: FrameInfo): bool =
+    let w = f.core.spectra[1]
+    doAssert w.display.processed
+    doAssert not w.processing.hasFilters
+    doAssert w.filterText.find("Trace 1: own filter, band-pass 12-40 Hz") >= 0, w.filterText
+    result = not f.ticked("fft 1.processed") and not f.ticked("fft 1.response")
     if not result:
-      doAssert false, "an own filter did not enable Processed"
-    doAssert f.core.spectra[1].spectrum.hasResponse and f.ticked("fft 1.response"),
-      "one trace's own filter: its response is not drawn")
+      doAssert false, "an own filter alone enabled Processed or Response")
   step("the trace's own filter runs instead, with no frequency filter", proc (f: FrameInfo) =
     let base = f.core.sessions[0].base
     f.apply(Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
@@ -158,10 +159,10 @@ withFixtures fx:
     proc (f: FrameInfo): bool =
       let w = f.core.spectra[1]
       f.core.ownChangesSamples(w) and not w.waiting and not w.spectrum.hasResponse)
-  step("Response says the trace's filters have no band", noop, proc (f: FrameInfo): bool =
+  step("Response says no filter is on in the plot", noop, proc (f: FrameInfo): bool =
     let w = f.core.spectra[1]
-    let words = w.responseTip(f.core.ownChangesSamples(w))
-    doAssert words == "This trace's filters have no pass band or notch to draw", words
+    let words = w.responseTip
+    doAssert words == "No filter is on in the plot", words
     not f.ticked("fft 1.response"))
 
   var at = 0

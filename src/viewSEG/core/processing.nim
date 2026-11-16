@@ -369,6 +369,55 @@ func filterWords*(f: OwnFilter): string =
               else: "instead of the plot's filters"
   parts.join(", ") & ", " & where
 
+func ownBrief*(f: OwnFilter): string =
+  ## `f` as a window names it, without where it runs: "band-pass 10-60 Hz",
+  ## "low-cut 4-8 Hz", "notch 60 Hz", "DC removed". A band-pass names the flat
+  ## pass (`f2` to `f3`). "no frequency filter" when it only leaves the plot's
+  ## filters off that trace.
+  if not f.spec.hasFilters: return "no frequency filter"
+  var parts: seq[string]
+  case f.spec.band
+  of pbNone: discard
+  of pbLowCut: parts.add "low-cut " & number(f.spec.f1) & "-" & number(f.spec.f2) & " Hz"
+  of pbHighCut: parts.add "high-cut " & number(f.spec.f3) & "-" & number(f.spec.f4) & " Hz"
+  of pbBandPass:
+    parts.add "band-pass " & number(f.spec.f2) & "-" & number(f.spec.f3) & " Hz"
+  var notches: seq[string]
+  for n in f.spec.notches:
+    if n.on:
+      var s = number(n.hz) & " Hz"
+      if n.harmonics > 1: s.add " x" & $n.harmonics
+      notches.add s
+  if notches.len > 0: parts.add "notch " & notches.join(", ")
+  if f.spec.dc == dcMean: parts.add "DC removed"
+  elif f.spec.dc == dcTrend: parts.add "DC and trend removed"
+  if parts.len == 0: "no frequency filter" else: parts.join(", ")
+
+func ownShownWords*(firstTrace: int; own: openArray[OwnFilter]): string =
+  ## What a window says of the own filters of the traces it shows, in the
+  ## place it names them. One trace that changes the samples: "Trace 12: own
+  ## filter, band-pass 10-60 Hz" (`firstTrace` its index in the file, from 0).
+  ## Several: "N traces have their own filter". "" when none change the samples.
+  var n = 0
+  var lone = OwnFilter()
+  for f in own:
+    if f.changesSamples:
+      inc n
+      lone = f
+  if n == 0: ""
+  elif n == 1 and own.len == 1:
+    "Trace " & $(firstTrace + 1) & ": own filter, " & ownBrief(lone)
+  elif n == 1: "1 trace has its own filter"
+  else: $n & " traces have their own filter"
+
+func insteadWords*(nInstead, nShown: int): string =
+  ## What a window says when a trace's own filter runs instead of the plot's,
+  ## so the plot's filters do not apply to it. "" for none.
+  if nInstead <= 0 or nShown <= 0: ""
+  elif nShown == 1: "this trace uses its own filter instead of the plot's"
+  elif nInstead == nShown: "these traces use their own filter instead of the plot's"
+  else: $nInstead & " traces use their own filter instead of the plot's"
+
 proc auxLiveRows*(rows: TraceRows; keys: var seq[TraceKeys]; samples: var seq[int]): TraceRows =
   ## A view of `rows` in which the auxiliary traces are live, so that a plan
   ## processes them as seismic traces (processSEG passes a row by unless its

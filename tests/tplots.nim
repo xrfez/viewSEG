@@ -40,7 +40,7 @@
 ## ms; ..."; with a vibrator signature opened on one trace kept to it, `traces ==
 ## @[...]` "@[0]"; with the settings compared field by field as Nim does (NaN
 ## unequal to itself), "the same settings asked again"; with an f-k's Raw not
-## heeded, `"raw (the filters left out)" in r.note and "through" notin r.note`.
+## heeded, `"the plot's filters left out" in r.note and "through" notin r.note`.
 
 import std/[math, os, strutils]
 import parseSEG
@@ -400,7 +400,7 @@ withFixtures fx:
     st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p)
     doAssert st.settle(st.answered(w) and st.plots[w].result.gen == st.plots[w].asked)
     r = st.plots[w].result
-    doAssert "raw (the filters left out)" in r.note and "through" notin r.note, r.note
+    doAssert "the plot's filters left out" in r.note and "through" notin r.note, r.note
   block agentSettings:
     # an agent's settings are judged as the GUI's boxes judge them: null, not
     # finite or out of the range the boxes allow is ignored, said with the

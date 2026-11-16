@@ -67,31 +67,29 @@ func fftTitle*(w: SpectrumWindow): string =
 
 const GroupGap = 14'f32 ## between the spectrum line's groups, as on the Seismic strip
 
-func processedReady(w: SpectrumWindow; ownChanges: bool): bool =
+func processedReady(w: SpectrumWindow): bool =
   ## Whether Processed can be ticked: a processed curve is there, or the
-  ## plot's filters or a shown trace's own filter change the samples and the
-  ## answer in hand has not already said they produced none.
+  ## plot's filters change the samples and the answer in hand has not
+  ## already said they produced none. A trace's own filter is part of the
+  ## raw curve, not processing, so it does not unlock the box.
   if w.spectrum.processed.len > 0: return true
-  if not (w.processing.hasFilters or ownChanges): return false
+  if not w.processing.hasFilters: return false
   if w.spectrum.raw.len > 0 and not w.waiting: return false
   true
 
-func responseTip*(w: SpectrumWindow; ownChanges: bool): string =
-  ## The Response box's tooltip. `ownChanges`: a shown trace's own filter
-  ## changes the samples; of one trace, the response is that trace's.
-  let own = ownChanges and w.traces.len == 1
-  let whose = if own: "this trace's filters" else: "the plot's filters"
+func responseTip*(w: SpectrumWindow): string =
+  ## The Response box's tooltip: the plot's filters' response. A trace's own
+  ## filter is named in the window's line of words, not drawn as this curve.
   if w.spectrum.hasResponse:
-    "Under the curves, the gain " & whose & " apply at each frequency (an impulse put " &
-      "through them, as the traces are), 0 dB at the top of the curves: what they do, " &
+    "Under the curves, the gain the plot's filters apply at each frequency (an impulse " &
+      "put through them, as the traces are), 0 dB at the top of the curves: what they do, " &
       "where the processed curve shows what the data and the window make of it"
-  elif not w.processing.hasFilters and not ownChanges: "No filter is on in the plot"
+  elif not w.processing.hasFilters: "No filter is on in the plot"
   elif w.spectrum.response.len > 0:
     "The filters reached none of these traces: their response is not drawn"
-  elif own: "This trace's filters have no pass band or notch to draw"
   else: "The plot has no pass band or notch to draw"
 
-proc drawControls(st: AppState; w: SpectrumWindow; name: string; t: Theme;
+proc drawControls(w: SpectrumWindow; name: string; t: Theme;
     widths: var array[3, float32]; marks: var Marks; res: var SpectraOutput) =
   ## The controls in three groups that wrap as wholes (the scale, the curves,
   ## Visible time), before the Freeze pin; each change is a `ckSpectrumDisplay`.
@@ -129,24 +127,21 @@ proc drawControls(st: AppState; w: SpectrumWindow; name: string; t: Theme;
   group(1):
     if igCheckbox("Raw", addr d.raw): changed = true
     marks.mark(name & ".raw")
-    tip("The samples as the file has them")
+    tip("The trace with its own filter, before the plot's filters")
     igSameLine(0, -1)
-    let ownChanges = st.ownChangesSamples(w)
-    let processedOn = w.processedReady(ownChanges)
+    let processedOn = w.processedReady
     if lockedCheck("Processed", d.processed, processedOn): changed = true
     marks.mark(name & ".processed")
-    tip(if processedOn and w.spectrum.filters.len > 0:
-          (if ownChanges: "Through: " else: "Through the plot's filters: ") &
-            w.spectrum.filters
-        elif processedOn: "Through the shown trace's own filter"
-        elif not w.processing.hasFilters and not ownChanges: "No filter is on in the plot"
+    tip(if processedOn and w.spectrum.filters.len > 0: "Through the plot's filters: " &
+          w.spectrum.filters
+        elif not w.processing.hasFilters: "No filter is on in the plot"
         elif w.spectrum.filters.len > 0: "No processed curve: " & w.filterText
         else: "No filter is on in the plot")
     igSameLine(0, -1)
     let responseOn = w.spectrum.hasResponse
     if lockedCheck("Response", d.response, responseOn): changed = true
     marks.mark(name & ".response")
-    tip(w.responseTip(ownChanges))
+    tip(w.responseTip)
     igSameLine(0, -1)
     if lockedCheck("Phase", d.phase, w.hasPhase): changed = true
     marks.mark(name & ".phase")
@@ -248,7 +243,7 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
   let name = w.markName
   marks.markWindow(name)
   var widths = ui.widths.getOrDefault(w.id)
-  drawControls(st, w, name, t, widths, marks, res)
+  drawControls(w, name, t, widths, marks, res)
   ui.widths[w.id] = widths
   # What it is of (the live panel's title does not say), and what was left out.
   let head = if w.frozen: "Frozen · " & w.label & " · "

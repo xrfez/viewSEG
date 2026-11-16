@@ -104,7 +104,7 @@ from std/unicode import runeSubStr
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
-from processing import changesSamples
+from processing import changesSamples, ownShownWords
 import analysis, analysisreader, closer, components, diskio, edits, filejobs, filelist, filememory,
   filesystem, identity, inbox, inspector, jobs, join, layouts, log, mapstate, memoryjobs,
   panels, persist, pick, project, projectjobs, projectnif, reader, recordqc, selection, session,
@@ -1813,6 +1813,20 @@ func ownAt*(state: AppState; path: string; trace: int): tuple[has: bool; filter:
   if state.keyOf(path) in state.edits:
     result = state.edits[state.keyOf(path)].ownOf(trace)
 
+func ownLine*(state: AppState; p: Panel): string =
+  ## What the plot says of the own filters of the traces it shows, in the
+  ## place it names its filters: "Trace 12: own filter, band-pass 10-60 Hz",
+  ## or "N traces have their own filter". "" when none change the samples.
+  if p.layers.len == 0 or not p.laidOut or p.shown.len == 0: return ""
+  let i = state.findSession(p.layers[0].source.file)
+  if i < 0: return ""
+  let e = state.editsAt(state.sessions[i].path)
+  var own = newSeq[OwnFilter](p.shown.len)
+  for k, t in p.shown:
+    let (has, f) = e.ownOf(t)
+    if has: own[k] = f
+  ownShownWords(p.shown[0], own)
+
 func ownChangesSamples*(state: AppState; w: SpectrumWindow): bool =
   ## Whether a trace `w` shows has an own filter that changes its samples
   ## (a frequency filter, or one that runs instead of the plot's).
@@ -2852,7 +2866,7 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   sw.killed = killed
   sw.editsSeen = e.revision
   sw.ownKey = ownKeyOf(e, traces)
-  sw.filters = spectrumFilterWords(processing, ownPerTrace(own, traces))
+  sw.filters = filtersText(processing)
   inc sw.asks
   inc sw.revision
   state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
@@ -5666,8 +5680,13 @@ proc followRecordQc(state: var AppState) =
   let (rel, against) = state.qcRelations(domain)
   let placed = state.shownPlace(s, g.gather, domain)
   let samples = filters * SampleFilters != {}
+  let tr = s.gathers[g.gather].traces
+  var gatherTraces = newSeq[int](tr.len)
+  for i in 0 ..< tr.len: gatherTraces[i] = tr.a + i
+  let own = ownOfTraces(state.editsAt(s.path), gatherTraces)
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
-    domain, state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples)
+    domain, state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
+    ownKeyOf(state.editsAt(s.path), gatherTraces))
   if key == q.key: return
   if q.job != NoJob:
     discard state.jobs.cancel(q.job)
@@ -5680,7 +5699,7 @@ proc followRecordQc(state: var AppState) =
     lane: jlBackground, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
     state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
-    state.inbox.poster))
+    own, state.inbox.poster))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
 
 proc takeRecordQc(state: var AppState; m: sink Msg) =
