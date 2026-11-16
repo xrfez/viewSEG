@@ -50,7 +50,9 @@ type
     maSaveLayout = "Save layout as...",
     maShowFiles = "Files", maShowRecords = "Records", maShowMap = "Map",
     maShowHeaders = "Headers", maShowJobs = "Jobs", maShowMessages = "Messages",
-    maShortcuts = "Keyboard shortcuts", maAbout = "About viewSEG"
+    maShortcuts = "Keyboard shortcuts", maAbout = "About viewSEG",
+    maGenerateReference = "Generate a reference...",
+    maReferenceArchive = "Reference archive..."
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
@@ -86,6 +88,7 @@ type
     recentProjects*: seq[string] ## Project > Recent projects, newest first
     projectName*: string ## the project open; "" for none
     projectShown*: bool ## the Project window is open
+    archiveShown*: bool ## the Reference archive window is open
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -128,7 +131,8 @@ const
     maBringWindows: 0, maSaveLayout: 0,
     maShowFiles: 0, maShowRecords: 0, maShowMap: 0, maShowHeaders: 0, maShowJobs: 0,
     maShowMessages: 0,
-    maShortcuts: ImGui_Key_F1.cint, maAbout: 0]
+    maShortcuts: ImGui_Key_F1.cint, maAbout: 0, maGenerateReference: 0,
+    maReferenceArchive: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
@@ -143,7 +147,8 @@ const
     maResetWindows: IconHome, maBringWindows: IconFit, maSaveLayout: IconSave,
     maShowFiles: IconList, maShowRecords: IconRecords, maShowMap: IconMap,
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog,
-    maShortcuts: IconList, maAbout: IconInfo]
+    maShortcuts: IconList, maAbout: IconInfo, maGenerateReference: IconVibrator,
+    maReferenceArchive: IconReference]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog, awSpectrum: IconPulse]
@@ -524,6 +529,17 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       (result.pickedTheme, result.theme) = (result.themeMenu.picked, result.themeMenu.theme)
       item(maToggleTheme, result)
       tip("Switch to the other mode's default theme")
+      igEndMenu()
+    let operations = igBeginMenu("Operations", true)
+    marks.mark("menu.Operations")
+    if operations:
+      igSeparatorText("References")
+      item(maGenerateReference, result)
+      tip("Make a sweep and keep it as a reference")
+      if igMenuItem_Bool(label(maReferenceArchive).cstring, nil, input.archiveShown, true):
+        result.actions.incl maReferenceArchive
+      marks.mark("menu." & $maReferenceArchive)
+      tip("The stored references, and which one the plots use")
       igEndMenu()
     let window = igBeginMenu("Window", true)
     marks.mark("menu.Window")

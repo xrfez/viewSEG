@@ -96,7 +96,7 @@ import ../../gpu/[plotimage, textures]
 import ../../view/[displayheader, maplayers, plotink, strip, theme, timeaxis]
 import chrome, dpi, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort,
   shortcutkeys,
-  plotviews, style,
+  plotviews, references, style,
   symbols
 
 export PaperBackground, PaperInk
@@ -219,6 +219,7 @@ type
     markTitle: string
     markChoices: seq[MarkChoice]
     markMouse: ImVec2_c ## where it opened, for the filter popover
+    store: StoreDialog ## Store as reference, opened from the plot's menu
     cursorText: string ## the time the cursor's time line showed last; "" for none
     cursorHeader: seq[string] ## the header values it showed over the rows; none for none
     focus: FocusClicks ## a click selects only in a window that had the focus
@@ -1616,6 +1617,25 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     marks.mark("plot.menu.removefilter")
     marks.mark("plot.menu.removefilter.item " & removeItem)
     tip("Take this trace's own filter away (the plot's filters stay)")
+  if igMenuItem_Bool((IconReference & "  Store as reference...").cstring, nil, false, under >= 0):
+    let i = st.findTrace(under)
+    if i >= 0:
+      let s = st.sessions[i]
+      let local = under - s.base
+      let span = indexedSpan(s.filePtr, local)
+      let dt = if span.intervalUs > 0: span.intervalUs / 1000
+               elif p.laidOut and not p.layout.noInterval: p.layout.dtMs else: 2.0
+      let traceMs = if span.samples > 1: float64(span.samples - 1) * dt else: 0.0
+      let sweep = span.sweepMs > 0
+      let toMs = if sweep: span.sweepMs elif traceMs > 0: traceMs else: -1.0
+      let g = s.gatherOf(local)
+      let rec = if g >= 0 and g < s.records.len and abs(s.records[g].record) < 1e15:
+                  $int(s.records[g].record) else: $(max(g, 0) + 1)
+      let stem = s.name.splitFile.name
+      tp.store.openStore(under, stem & " rec " & rec & " tr " & $(local + 1), 0, toMs,
+        traceMs, sweep)
+  marks.mark("plot.menu.store")
+  tip("Keep this trace's raw samples as a reference (no filters, no gain, no polarity edit)")
   let fft = fftEntry()
   if igMenuItem_Bool((fft.icon & "  " & fft.name & " in a new window").cstring,
       fft.shortcut.cstring, false, under >= 0):
@@ -2478,6 +2498,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     else:
       res.commands.add Command(kind: ckOwnFilter, panel: st.panels[k].id, edited: tp.ownTraces,
         on: true, processing: tp.ownDraft.spec, filterPlace: tp.ownDraft.place)
+  for c in tp.store.drawStore(st, t, marks): res.commands.add c
   drawHeaderMenu(p, marks, res)
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)

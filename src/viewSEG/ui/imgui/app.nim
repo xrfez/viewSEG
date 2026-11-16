@@ -47,6 +47,7 @@ import ../../view/jobstatus
 import aboutbox, agentshot, chrome, dpi, filelist, fonts, frames, headerswindow, icons,
   shortcutswindow,
   jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows, projectwindow,
+  references,
   recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow, DialogKind,
@@ -94,6 +95,7 @@ type
     records: RecordListUi                      ## the record list's window
     join: JoinUi                               ## the "Import survey" window
     memory: MemoryUi                           ## the "File memory" window
+    refs: ReferencesUi                         ## the Reference archive window and Generate
     project: ProjectUi                         ## the "Project" and "New project" windows
     titled: string                             ## the main window's title, as set last
     reopen: ReopenUi                           ## the "Reopen with options" dialog
@@ -903,6 +905,7 @@ proc resetWindows(ui: var Ui) =
   ui.layoutDone = false
   ui.join.placeAgain()
   ui.memory.placeAgain()
+  ui.refs.placeAgain()
   discard ui.placeMain(wholly = false)
   ui.say("The windows are back as at a first start.")
 
@@ -981,6 +984,13 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maClearEdits: ui.core.apply Command(kind: ckClearEdits, panel: MainPanel)
     of maFileMemory:
       if ui.memory.shown: ui.memory.shown = false else: ui.memory.open()
+    of maGenerateReference:
+      ui.refs.openGenerate(ui.core.shownIntervalMs)
+    of maReferenceArchive:
+      if ui.refs.shown: ui.refs.shown = false
+      else:
+        ui.refs.open()
+        ui.core.apply Command(kind: ckListReferences)
     of maNewProject:
       ui.project.startNew(projectsHome(), ui.core.fileList.folder)
     of maOpenProject:
@@ -1224,7 +1234,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     trayProblem: ui.trayProblem, trayAvailable: trayShown(),
     plotTraces: ui.core.selectedIn(shownAt), recentProjects: ui.core.settings.recentProjects,
     projectName: (if ui.core.inProject: ui.core.project.doc.name else: ""),
-    projectShown: ui.project.shown)
+    projectShown: ui.project.shown, archiveShown: ui.refs.shown)
   let menu = drawMainMenu(menuInput, ui.marks)
   if menu.newPlot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)
@@ -1366,6 +1376,11 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.apply move c
   var memory = ui.memory.drawMemory(memoryTitle, ui.core, ui.theme, ui.marks)
   for c in memory.commands.mitems:
+    ui.core.apply move c
+  let refsTitle = IconReference & "  Reference archive (" & referenceArchiveTitle(ui.core) &
+    ")###refs"
+  var refs = ui.refs.drawReferences(refsTitle, ui.core, ui.theme, ui.marks)
+  for c in refs.commands.mitems:
     ui.core.apply move c
   var project = ui.project.drawProjectWindows(projectTitle, newProjectTitle, ui.core, ui.theme,
     ui.marks)
