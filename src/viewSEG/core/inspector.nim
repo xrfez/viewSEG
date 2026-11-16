@@ -131,10 +131,9 @@ type
 
   CachedColumn = object
     ## A column of the trace table read for every row of its scope.
-    key: string     ## its file, scope, joins and name
+    key: string ## its file, scope, joins and name
     values: seq[float64]
-    filled: int     ## the rows read so far, from the first
-    problem: string ## why it cannot be read; "" when it can
+    filled: int ## the rows read so far, from the first
 
   TableCache = object
     columns: seq[CachedColumn] ## the newest last, at most `MaxCachedColumns`
@@ -328,11 +327,12 @@ proc indexOf(cache: TableCache; key: string): int =
     if c.key == key: return i
 
 proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; key, name: string;
-    needed: openArray[string]; answer: var TableAnswer): bool =
+    needed: openArray[string]; answer: var TableAnswer; problem: var string): bool =
   ## Reads column `key` (of `name`) whole for every trace of the table's
   ## scope, in steps of `ColumnStep` traces, kept in the cache: false when a
   ## newer request came first (it goes on from there). A column of `needed`
-  ## (this request's) is never evicted to make room.
+  ## (this request's) is never evicted to make room. A read that fails says
+  ## why in `problem`, for this request only: the next one reads it again.
   template cache: untyped = p.table
   if cache.indexOf(key) < 0:
     if cache.columns.len >= MaxCachedColumns:
@@ -343,7 +343,7 @@ proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; key, name: 
     cache.columns.add CachedColumn(key: key, values: newSeq[float64](ask.traces.len))
   let at = cache.indexOf(key)
   template c: untyped = cache.columns[at]
-  while c.filled < c.values.len and c.problem.len == 0:
+  while c.filled < c.values.len:
     if p.interrupted:
       answer.reading = name
       return false
@@ -355,9 +355,11 @@ proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; key, name: 
       readRange(f.file, name, part, c.values.toOpenArray(c.filled, c.filled + step - 1))
       c.filled += step
     except ValueError as e:
-      c.problem = e.msg
+      problem = e.msg
+      c.filled = 0
+      return true
     except OSError as e:
-      c.problem = failedText(e)
+      problem = failedText(e)
       c.filled = 0 # read again next time: the drive may answer then
       return true
   true
@@ -397,13 +399,11 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
   let needed = wholeColumns(view)
   var keys: seq[string]
   for name in needed: keys.add f.columnKey(ask, name)
+  var whole: seq[(string, string)] # (name, key) of the columns read whole
   for k, name in needed:
-    if not p.wholeColumn(f, ask, keys[k], name, keys, answer): return false
-  var whole: seq[(string, string)] # (name, key) of the columns read whole, without a problem
-  for k, name in needed:
-    let i = cache.indexOf(keys[k])
-    if cache.columns[i].problem.len > 0:
-      answer.problems.add name & ": " & cache.columns[i].problem
+    var problem = ""
+    if not p.wholeColumn(f, ask, keys[k], name, keys, answer, problem): return false
+    if problem.len > 0: answer.problems.add name & ": " & problem
     else: whole.add (name, keys[k])
   proc column(whole: seq[(string, string)]; name: string): string =
     result = ""

@@ -17,7 +17,7 @@
 import std/[algorithm, math, monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/state
-import utils/[fixtures, waiting]
+import utils/[faultyfs, fixtures, waiting]
 
 block findTakes:
   doAssert parseFind("1001") == Find(lo: 1001, hi: 1001, valid: true)
@@ -236,4 +236,26 @@ block aRewrittenFileReopened:
       doAssert a.values[r][0] == now[a.rowTraces[r]], "row " & $r & ": " &
         $a.values[r][0] & ", the file now says " & $now[a.rowTraces[r]]
       if r > 0: doAssert a.values[r - 1][0] <= a.values[r][0], "not sorted by the new values"
+    st.shutdown()
+
+block aColumnThatFailedIsReadAgain:
+  # Seen to fail: a column whose read failed kept the failure, and every later
+  # request said the same ("cannot be read now") with the drive back.
+  install()
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    fault(path, fkFail, {foHeaders})
+    var view = TableView(fields: @[], scope: tsFile, sortBy: "keys.rcvX", rows: 0 .. 3)
+    var a = st.table(view)
+    doAssert a.problems.len == 1 and "keys.rcvX" in a.problems[0], $a.problems
+    release(path)
+    view.rows = 0 .. 4
+    a = st.table(view)
+    doAssert a.problems.len == 0, "the column was not read again: " & $a.problems
+    let rcvX = directKeys(path, ["keys.rcvX"])[0]
+    for r in 0 ..< a.rowTraces.len:
+      if r > 0: doAssert rcvX[a.rowTraces[r - 1]] <= rcvX[a.rowTraces[r]], "not sorted"
     st.shutdown()
