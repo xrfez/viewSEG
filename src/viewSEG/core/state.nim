@@ -1144,12 +1144,18 @@ proc hashFile(state: var AppState; i: int) =
       quick: r.identity.quick), r.modified, state.inbox.poster))
     state.memoryWork.add r.hashJob
 
+proc readOnlyProject(state: AppState): bool =
+  ## A project is open and another program has it: nothing is written into
+  ## its store (what is remembered is kept in memory for the session).
+  state.project.dir.len > 0 and state.project.readOnly
+
 proc dropPending(state: var AppState; i: int) =
   ## Removes `remembered[i]`'s pending document, if it has one.
   template r: untyped = state.remembered[i]
   if r.pending:
-    state.diskIo.remove(state.store.docPath(pendingName(r.path)),
-      "the edits of " & r.path.extractFilename & " kept by its path")
+    if not state.readOnlyProject:
+      state.diskIo.remove(state.store.docPath(pendingName(r.path)),
+        "the edits of " & r.path.extractFilename & " kept by its path")
     r.pending = false
 
 proc writePending(state: var AppState; i: int) =
@@ -1170,11 +1176,6 @@ proc writePending(state: var AppState; i: int) =
       opened: r.opened, modified: r.openModified, edits: e.kept),
       "the edits of " & r.path.extractFilename & " kept by its path", EditLists(), NoDoc)
     r.pending = true
-
-proc readOnlyProject(state: AppState): bool =
-  ## A project is open and another program has it: nothing is written into
-  ## its store (what is remembered is kept in memory for the session).
-  state.project.dir.len > 0 and state.project.readOnly
 
 proc dropProvisional(state: var AppState; i: int) =
   ## Removes the documents of `remembered[i]`'s edits that no hash has
@@ -4601,9 +4602,13 @@ proc takeOpened(state: var AppState; m: sink Msg) =
           p.geometry = last.geometry
           p.joinSurvey = last.survey
       p.doc.imported = getTime()
-      state.markImporting(files)
-      state.projectChanged()
-      state.keepSurvey(files)
+      if p.readOnly:
+        state.log.add(sevWarning, "project", "The survey is not kept in the project " &
+          p.doc.name & ": it is open read-only (" & p.whyReadOnly & ").")
+      else:
+        state.markImporting(files)
+        state.projectChanged()
+        state.keepSurvey(files)
   if news.created:
     for s in state.sessions:
       if p.doc.hasSurvey and state.joinedOf(s.id) < 0: p.queue.add s.id

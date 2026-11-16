@@ -11,8 +11,9 @@
 ## failure given the owner's note, "cannot be opened" (the reason named the
 ## owner, "has it open").
 import std/[os, strutils]
-import viewSEG/core/state
-import utils/[fixtures, steps, waiting]
+import parseSEG
+import viewSEG/core/[join, project, state, survey]
+import utils/[faultyfs, fixtures, steps, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); st.persist(); cond) and
@@ -26,6 +27,10 @@ proc showFile(st: var AppState; path: string) =
   st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
   doAssert st.settle(st.sessions.len >= 1 and st.sessions[^1].path == path and
     st.panel(MainPanel).laidOut), "not shown: " & path
+
+proc said(st: AppState; words: string): bool =
+  for e in st.log:
+    if words in e.text: return true
 
 proc docs(dir: string): seq[string] =
   for k, p in walkDir(dir):
@@ -89,4 +94,27 @@ withFixtures fx:
         "has it open" notin s2.project.whyReadOnly, s2.project.whyReadOnly
       s2.shutdown()
     setFilePermissions(lock, {fpUserRead, fpUserWrite})
+  block newSurveyNotKept:
+    # a new project whose lock cannot be opened is read-only: the session's
+    # survey is not copied into it (nothing under survey/ is written)
+    install()
+    let survey = fx.surveySps()
+    let job = fx.dir / "Unkept"
+    var st = start(config)
+    st.apply Command(kind: ckJoin, joinFile: NoSession, joinFiles: @[
+      JoinFile(path: survey.s, kind: jkSps), JoinFile(path: survey.r, kind: jkSps),
+      JoinFile(path: survey.x, kind: jkSps)])
+    doAssert st.settle(not st.importing and st.survey.layers.len > 0)
+    fault(job / LockName, fkFail, {foOpen})
+    st.apply Command(kind: ckNewProject, projectPath: job, useSurvey: true)
+    doAssert st.settle(st.inProject and st.project.readOnly)
+    doAssert st.settle(st.said("is not kept in the project")), "the refusal is not said"
+    discard st.settle(st.jobs.active.len == 0)
+    doAssert not fileExists(job / "survey" / "survey.bin"), "survey.bin was written"
+    if dirExists(job / "survey" / "files"):
+      var copies = 0
+      for k, p in walkDir(job / "survey" / "files"): inc copies
+      doAssert copies == 0, "a survey file was copied into a read-only project: " & $copies
+    fault(job / LockName, fkNone)
+    st.shutdown()
 echo "tprojectreadonly: done"
