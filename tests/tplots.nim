@@ -45,6 +45,7 @@
 import std/[math, os, strutils]
 import parseSEG
 import viewSEG/core/[edits, log, processing, state]
+import viewSEG/view/analysisview
 import utils/[fixtures, waiting]
 
 const
@@ -352,4 +353,47 @@ withFixtures fx:
     doAssert st.plots.len == before + 2, st.log.lastText
     discard st.drainInbox()
   discard st.shutdown()
+
+proc planeWaveRecord(fx: Fixtures; name: string; system: int16; spacing: float64): string =
+  ## 16 traces `spacing` apart (offsets, in the file's unit), a 30 Hz plane wave
+  ## at 3000 m/s: the file says its unit by the binary header's measurement system.
+  result = fx.dir / name
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    measurementSystem: system, text: @["C01 viewSEG test fixture: a plane wave"]))
+  var buf = newSeq[float32](500)
+  let metres = spacing * (if system == 2: 0.3048 else: 1.0)
+  for c in 0 ..< 16:
+    for i in 0 ..< 500:
+      buf[i] = float32(cos(2 * PI * 30 * (float64(i) * 0.002 - float64(c) * metres / 3000)))
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs) = (1.0, float64(c + 1), 0.0, 2000.0)
+    k.offset = float64(c + 1) * spacing
+    k.status = tsLive
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0
+
+block feetAndMetres:
+  # the unit of the file's distances reaches the f-k: the same wave, 10
+  # cycles/km at 3000 m/s, in a file of feet and in one of metres
+  withFixtures fx:
+    for (name, system, spacing, label, velocity) in [("ft.sgy", 2'i16, 110.0,
+        "Wavenumber (cycles/kft)", "ft/s"), ("m.sgy", 1'i16, 33.528,
+        "Wavenumber (cycles/km)", "m/s")]:
+      var st = initAppState()
+      st.apply Command(kind: ckShowFile, panel: MainPanel,
+        path: fx.planeWaveRecord(name, system, spacing))
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      st.apply Command(kind: ckOpenPlot, plotView: avFk, plotTraces: @[st.sessions[0].base])
+      doAssert st.settle(st.answered(0)), "no answer"
+      let img = st.plots[0].result.image
+      doAssert st.plots[0].result.problem == "" and img.xLabel == label and
+        img.velocityUnit == velocity, st.plots[0].result.problem & img.xLabel
+      var best = (0, 0)
+      for c in 0 ..< img.cols:
+        for r in 0 ..< img.rows:
+          if img.valueAt(c, r) > img.valueAt(best[0], best[1]): best = (c, r)
+      let k = img.xOf(best[0])
+      let want = if system == 2: 3.048 else: 10.0
+      doAssert abs(k - want) <= 2 * img.dx, name & ": peak at " & $k & ", want " & $want
+      discard st.shutdown()
 echo "tplots: ok"

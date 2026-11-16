@@ -615,13 +615,18 @@ Each window's first line holds its view's settings; a change works it out again.
   the colour map as a spectrogram's, and **Raw** (off at first: through the Seismic
   window's filters, so the effect of a filter shows; on: as recorded). The box is
   tapered (a cosine over 10 % at each end) along time and across the traces, which are
-  zero-padded to twice their number. The wavenumber is in cycles per km from the trace
-  spacing when it is regular (the signed offsets, else the receivers' distances along
-  the line, the file's units taken as metres), else in **cycles per trace**, and the
-  axis says which. An event arriving later on the later traces is at a positive
-  wavenumber. The cursor reads the wavenumber, the frequency, the dB and the apparent
-  velocity f/k (m/s, or traces/s per trace); the keys step it a wavenumber (Left /
-  Right) or a frequency (Up / Down), as a spectrogram's.
+  zero-padded to twice their number. The wavenumber is worked out from the trace spacing
+  when it is regular (the signed offsets, else the receivers' distances along the line) and
+  the unit of the file's distances (the unit confirmed with its import, else what its
+  headers say: the measurement system, the coordinate unit, the CRS). **In metres** the axis
+  is in cycles/km and the apparent velocity in m/s. **In feet** (international or US survey:
+  the foot of the file itself) the axis is in cycles/kft (per 1000 ft) and the velocity in
+  ft/s, as a US crew reads them; the note under the title names the unit. When the spacing is
+  not regular, or the unit is an angle (arc seconds, degrees) or not given, the wavenumber is
+  in **cycles per trace** (velocity in traces/s), and the note says why; the axis always
+  names its unit. An event arriving later on the later traces is at a positive wavenumber.
+  The cursor reads the wavenumber, the frequency, the dB and the apparent velocity f/k; the
+  keys step it a wavenumber (Left / Right) or a frequency (Up / Down), as a spectrogram's.
 - **Vibrator signature** (wireline tests, start-up QC of a vibrator):
   - **Roles.** A table gives each role its trace among the window's: by default the
     order Ref, GF, M, B. Opened on one trace (the pilot), the window takes it and the

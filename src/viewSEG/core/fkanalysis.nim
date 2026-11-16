@@ -13,19 +13,22 @@
 ## conjugates.
 ##
 ## - **Wavenumber.** From the trace spacing when it is regular (`spacingOf`:
-##   the offsets, else the receivers' distances along the line), in cycles
-##   per km (the file's units taken as metres); otherwise in cycles per
-##   trace, and the axis says so.
+##   the offsets, else the receivers' distances along the line) and the
+##   file's distance unit: in cycles per km for metres, in cycles per kft
+##   (1000 feet of the file's own foot, international or US survey) for
+##   feet. Otherwise (irregular, an angular unit, a unit not given) in
+##   cycles per trace, and the axis says so and why.
 ## - **Sign.** An event arriving later on the later traces (a positive dip)
 ##   is at a positive wavenumber.
-## - **Apparent velocity** at a point: `f / k` (m/s, or traces/s per trace).
+## - **Apparent velocity** at a point: `f / k` (m/s for metres, ft/s for
+##   feet, or traces/s per trace).
 ##
 ## Pure: samples in, an `AnalysisResult` out; never raises.
 
 import std/[algorithm, math]
 import processSEG/fft/plan
 import processSEG/core/workspace
-import analysis
+import analysis, join
 
 const
   FkTaper* = 0.1 ## the fraction of the box tapered at each end, on both axes
@@ -68,12 +71,22 @@ func cosTaper(i, n: int; fraction: float64): float64 =
   let d = min(i, n - 1 - i)
   if d >= ramp: 1.0 else: 0.5 - 0.5 * cos(PI * (float64(d) + 0.5) / float64(ramp))
 
+func fkLengthOf*(unit: SurveyUnit): tuple[ok: bool; per, velocity: string] =
+  ## How an f-k reads a file whose distances are in `unit`: whether its
+  ## wavenumber can be per length at all, the unit it is per ("km", "kft"),
+  ## and its velocity's ("m/s", "ft/s").
+  case unit
+  of suMetres: (true, "km", "m/s")
+  of suFeet, suUsFeet: (true, "kft", "ft/s")
+  else: (false, "", "")
+
 proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
-    dtMs, t0Ms: float64; p: AnalysisParams): AnalysisResult =
+    unit: SurveyUnit; dtMs, t0Ms: float64; p: AnalysisParams): AnalysisResult =
   ## The f-k amplitude of `rows` (traces at `dtMs`, the first sample at
   ## `t0Ms`, `spacing` apart, NaN: not regular) between `p.fkFromMs` and
   ## `p.fkToMs` (NaN: the ends), in dB from its largest, floored at
-  ## `p.floorDb`.
+  ## `p.floorDb`. `unit` is the unit of the distances `spacing` is in
+  ## (`fkLengthOf`).
   result = AnalysisResult(view: avFk, dtMs: dtMs, used: rows.len)
   if rows.len < MinFkTraces:
     result.problem = "an f-k needs " & $MinFkTraces & " traces at least, it has " & $rows.len
@@ -142,25 +155,31 @@ proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
       let v = hypot(xr, xi)
       amp[col * nb + f] = v
       peak = max(peak, v)
-  let perTrace = spacing.isNaN or spacing <= 0
-  let kScale = if perTrace: 1.0 else: 1000 / spacing # cycles per trace -> per km
+  let lengths = fkLengthOf(unit)
+  let irregular = spacing.isNaN or spacing <= 0
+  let perTrace = irregular or not lengths.ok
+  let kScale = if perTrace: 1.0 else: 1000 / spacing # cycles per trace -> per km or kft
   let floor = min(p.floorDb, -1)
   var img = AnalysisImage(cols: nk, rows: nb,
     x0: -float64(nk div 2) / float64(nk) * kScale, dx: kScale / float64(nk),
     y0: 0, dy: 1000 / (float64(nt) * dtMs),
-    xLabel: (if perTrace: "Wavenumber (cycles per trace)" else: "Wavenumber (cycles/km)"),
-    xUnit: (if perTrace: "/trace" else: "/km"), yLabel: "Frequency (Hz)", yUnit: "Hz",
+    xLabel: (if perTrace: "Wavenumber (cycles per trace)"
+    else: "Wavenumber (cycles/" & lengths.per & ")"),
+    xUnit: (if perTrace: "/trace" else: "/" & lengths.per), yLabel: "Frequency (Hz)", yUnit: "Hz",
     unit: "dB", lo: float32(floor), hi: 0,
-    velocityUnit: (if perTrace: "traces/s" else: "m/s"),
+    velocityUnit: (if perTrace: "traces/s" else: lengths.velocity),
     velocityScale: (if perTrace: 1.0 else: 1000.0))
   img.values = newSeq[float32](amp.len)
   for i in 0 ..< amp.len:
     img.values[i] = float32(if peak > 0 and amp[i] > 0: max(20 * log10(amp[i] / peak), floor)
                             else: floor)
   result.image = img
-  let apart = if perTrace: "the trace spacing is not regular: wavenumber per trace"
-              else: "the traces " & $spacing & " apart (from their " & spacingFrom &
-                ", the file's units taken as metres)"
+  let apart =
+    if irregular: "the trace spacing is not regular: wavenumber per trace"
+    elif perTrace:
+      "the file's distance unit is " & (if unit == suNotGiven: "not given" else: "the " & $unit) &
+        ", not a length: wavenumber per trace (the import's unit choice sets it)"
+    else: "the traces " & $spacing & " " & $unit & " apart (from their " & spacingFrom & ")"
   result.note = $ntr & " traces × " & $n & " samples (" & $(float64(first) * dtMs + t0Ms) &
     " to " & $(float64(last) * dtMs + t0Ms) & " ms), tapered 10 % at each end both ways; " &
     apart & "; dB from the largest" & (if p.fkRaw: "; raw (the filters left out)" else: "")

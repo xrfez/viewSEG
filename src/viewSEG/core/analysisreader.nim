@@ -26,7 +26,7 @@ import std/[algorithm, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
-import analysis, filesystem, fkanalysis, inbox, jobs, log, processing, threads, vibanalysis
+import analysis, filesystem, fkanalysis, inbox, jobs, join, log, processing, threads, vibanalysis
 
 type
   AnalysisAsk* = object
@@ -39,6 +39,7 @@ type
     path*: string
     size*: int64              ## its size when it was opened; -1 when not known
     traces*: seq[int]         ## indices in the file, in the order drawn
+    unit*: SurveyUnit         ## the unit of the file's distances (offsets, coordinates)
     names*: seq[string]       ## per trace, what the curves call it: "trace 12"
     killed*: seq[int]         ## those of `traces` killed, ascending: left out
     processing*: Processing   ## the plot's filters and its Aux toggle
@@ -297,7 +298,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               ys.add k.rcvY
             let (spacing, source) = spacingOf(offsets, xs, ys)
             let n = (answer.leftOut, answer.atOtherInterval)
-            answer = fkOf(kept, spacing, source, dtMs, t0Ms, a.params)
+            answer = fkOf(kept, spacing, source, a.unit, dtMs, t0Ms, a.params)
             (answer.leftOut, answer.atOtherInterval) = n
           of avVibrator:
             # each role's trace: its place among those asked about, then

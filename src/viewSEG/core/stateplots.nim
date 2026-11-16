@@ -94,6 +94,11 @@ proc askPlot(state: var AppState; w: int): bool =
   var a = AnalysisAsk(id: pw.id, view: pw.view, params: pw.params, file: s.filePtr,
     path: s.path, size: s.size, traces: traces, names: labels,
     processing: pw.processing)
+  # the unit of the file's distances: as imported, else what its headers say
+  let joined = state.joinedOf(s.id)
+  a.unit = if joined >= 0 and state.joins[joined].units.file != suNotGiven:
+             state.joins[joined].units.file
+           else: headerUnitOf(s.crs)
   if pw.view == avCorrelation:
     let r = pw.params.reference
     let j = state.findTrace(r)

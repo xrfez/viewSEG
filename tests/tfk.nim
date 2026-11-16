@@ -17,7 +17,7 @@
 ## want 15.0".
 
 import std/[math, strutils]
-import viewSEG/core/[analysis, fkanalysis]
+import viewSEG/core/[analysis, fkanalysis, join]
 import viewSEG/view/analysisview
 
 const
@@ -28,14 +28,14 @@ const
   V = 2000.0
   F = 30.0
 
-proc planeWave(dip: float64; startMs = 0.0; endMs = 1000.0): seq[seq[float32]] =
+proc planeWave(dip: float64; startMs = 0.0; endMs = 1000.0; dx = Dx; v = V): seq[seq[float32]] =
   ## A cosine of F Hz, trace i delayed i·Dx/V·dip seconds, between two times.
   for i in 0 ..< Traces:
     var r = newSeq[float32](N)
     for j in 0 ..< N:
       let t = float64(j) * Dt
       if t >= startMs and t < endMs:
-        r[j] = float32(cos(2 * PI * F * (t / 1000 - dip * float64(i) * Dx / V)))
+        r[j] = float32(cos(2 * PI * F * (t / 1000 - dip * float64(i) * dx / v)))
     result.add r
 
 proc peakOf(img: AnalysisImage): (float64, float64, int, int) =
@@ -47,7 +47,7 @@ proc peakOf(img: AnalysisImage): (float64, float64, int, int) =
   (img.xOf(bc), img.yOf(br), bc, br)
 
 block dippingPlaneWave:
-  let r = fkOf(planeWave(1), Dx, "offsets", Dt, 0, AnalysisParams())
+  let r = fkOf(planeWave(1), Dx, "offsets", suMetres, Dt, 0, AnalysisParams())
   doAssert r.problem == "", r.problem
   let img = r.image
   doAssert img.xLabel == "Wavenumber (cycles/km)" and img.yLabel == "Frequency (Hz)"
@@ -62,12 +62,43 @@ block dippingPlaneWave:
   doAssert text.endsWith(" m/s"), text
   doAssert img.hi == 0 and img.valueAt(c, row) == 0
   # the other way: a negative wavenumber
-  let back = fkOf(planeWave(-1), Dx, "offsets", Dt, 0, AnalysisParams()).image
+  let back = fkOf(planeWave(-1), Dx, "offsets", suMetres, Dt, 0, AnalysisParams()).image
   let (kb, _, _, _) = back.peakOf
   doAssert abs(kb + 1000 * F / V) <= back.dx, "peak at " & $kb & ", want " & $(-1000 * F / V)
 
+block feetAndMetres:
+  # one wave, 3000 m/s at 30 Hz, traces 110 ft (33.528 m) apart. Its true
+  # wavenumber is 10 cycles/km = 3.048 cycles/kft, and its velocity 3000 m/s
+  # = 9842.5 ft/s, whichever unit the file is in
+  const Ft = 0.3048
+  let rows = planeWave(1, dx = 110 * Ft, v = 3000)
+  let ft = fkOf(rows, 110, "offsets", suFeet, Dt, 0, AnalysisParams())
+  doAssert ft.problem == "" and ft.image.xLabel == "Wavenumber (cycles/kft)", ft.image.xLabel
+  doAssert ft.image.xUnit == "/kft" and ft.image.velocityUnit == "ft/s"
+  let (kf, _, cf, rf) = ft.image.peakOf
+  doAssert abs(kf - 3.048) <= ft.image.dx, "peak at " & $kf & " cycles/kft, want 3.048"
+  let tf = ft.image.readingText(PlotCursor(held: true, x: cf, y: rf))
+  let vf = parseFloat(tf.split(" · ")[^1].split(' ')[0])
+  doAssert abs(vf - 9842.5) < 9842.5 * (ft.image.dx / kf + ft.image.dy / 30), tf
+  doAssert tf.endsWith(" ft/s") and "feet" in ft.note, ft.note
+  let us = fkOf(rows, 110, "offsets", suUsFeet, Dt, 0, AnalysisParams())
+  doAssert us.image.xLabel == "Wavenumber (cycles/kft)" and "US survey feet" in us.note, us.note
+  # the same wave in metres: 10 cycles/km, 3000 m/s
+  let m = fkOf(rows, 110 * Ft, "offsets", suMetres, Dt, 0, AnalysisParams())
+  let (km, _, cm, rm) = m.image.peakOf
+  doAssert abs(km - 10) <= m.image.dx, "peak at " & $km & " cycles/km, want 10"
+  let tm = m.image.readingText(PlotCursor(held: true, x: cm, y: rm))
+  let vm = parseFloat(tm.split(" · ")[^1].split(' ')[0])
+  doAssert abs(vm - 3000) < 3000 * (m.image.dx / km + m.image.dy / 30), tm
+  doAssert tm.endsWith(" m/s")
+  # an angular unit, or none given, is no length: per trace, said why
+  for u in [suDegrees, suArcSeconds, suDms, suNotGiven]:
+    let a = fkOf(rows, 110, "offsets", u, Dt, 0, AnalysisParams())
+    doAssert a.image.xLabel == "Wavenumber (cycles per trace)" and
+      a.image.velocityUnit == "traces/s" and "not a length" in a.note, $u & ": " & a.note
+
 block perTrace:
-  let r = fkOf(planeWave(1), NaN, "", Dt, 0, AnalysisParams())
+  let r = fkOf(planeWave(1), NaN, "", suMetres, Dt, 0, AnalysisParams())
   let img = r.image
   doAssert img.xLabel == "Wavenumber (cycles per trace)", img.xLabel
   let (k, _, _, _) = img.peakOf
@@ -77,7 +108,7 @@ block perTrace:
 block aBox:
   # the wave only after 600 ms; a box of 0 to 500 ms sees nothing of it
   var p = AnalysisParams(fkFromMs: 0, fkToMs: 500)
-  let early = fkOf(planeWave(1, startMs = 600), Dx, "offsets", Dt, 0, p)
+  let early = fkOf(planeWave(1, startMs = 600), Dx, "offsets", suMetres, Dt, 0, p)
   doAssert early.problem == ""
   var loud = 0
   for v in early.image.values:
@@ -85,7 +116,7 @@ block aBox:
   doAssert loud == 0, $loud & " cells above -40 dB where the box has no wave"
   p.fkFromMs = 600
   p.fkToMs = 998
-  let late = fkOf(planeWave(1, startMs = 600), Dx, "offsets", Dt, 0, p)
+  let late = fkOf(planeWave(1, startMs = 600), Dx, "offsets", suMetres, Dt, 0, p)
   let (k, _, _, _) = late.image.peakOf
   doAssert abs(k - 1000 * F / V) <= late.image.dx
 
@@ -100,7 +131,7 @@ block spacing:
   doAssert spacingOf(nan, nan, nan).spacing.isNaN
 
 block tooFew:
-  let r = fkOf(planeWave(1)[0 .. 2], Dx, "offsets", Dt, 0, AnalysisParams())
+  let r = fkOf(planeWave(1)[0 .. 2], Dx, "offsets", suMetres, Dt, 0, AnalysisParams())
   doAssert "4 traces at least" in r.problem, r.problem
 
 echo "tfk: ok"
