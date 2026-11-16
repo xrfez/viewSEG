@@ -15,6 +15,11 @@
 ##   at +40 ms, scaled by 0.5 its amplitude ratio is -6 dB in band, and
 ##   none is given where the reference has no energy (past 150 Hz).
 ##
+## - envelope, faded: a 20 to 60 Hz sweep whose amplitude falls 100 dB over
+##   its length has no instantaneous frequency where the envelope is 60 dB
+##   below its peak (said in the note), and the frequencies it has stay in
+##   the sweep's band;
+##
 ## Seen to fail: with the frames' times taken at their start rather than
 ## their centre, "frame 4: peak 31.25 Hz, the chirp at 17.6"; with the
 ## instantaneous frequency not divided by the two samples' span, "frequency
@@ -26,7 +31,7 @@
 ## -102735.49838558499 at 77.63671875 Hz to -102555.57570173252 at
 ## 77.69775390625 Hz" (the unwrap aliases past half the trace's length).
 
-import std/math
+import std/[math, strutils]
 import viewSEG/core/analysis
 
 const DtMs = 2.0
@@ -81,6 +86,34 @@ block envelopeOfAModulatedCosine:
     doAssert near(freq[i], f, 0.2), "frequency " & $freq[i] & " at " & $(float64(i) * DtMs) &
       " ms, want " & $f
   doAssert r.plots[0].xs[10] == 20.0
+
+block frequencyWhereTheSignalFades:
+  # envelope below 0.001 of its peak (60 dB): no frequency; the phase of a
+  # signal that is nearly nothing is noise. Seen to fail: with the blanking
+  # only where the signal is exactly zero, "frequency 43.55 at 2306.0 ms,
+  # where the envelope is 0.00092 of the peak", and no note on the rule.
+  let n = 2001
+  var x = newSeq[float32](n)
+  for i in 0 ..< n:
+    let t = float64(i) * DtMs / 1000
+    x[i] = float32(exp(-2.88 * t) * cos(2 * PI * (20 * t + 5 * t * t)))
+  let r = envelopeOf(x, "sweep", DtMs, 0)
+  doAssert r.problem == "", r.problem
+  let env = r.plots[0].curves[1].ys
+  let freq = r.plots[2].curves[0].ys
+  var peak = 0.0
+  for e in env: peak = max(peak, e)
+  for i in 0 ..< n:
+    if env[i] < peak * 0.001:
+      doAssert freq[i].isNaN, "frequency " & $freq[i] & " at " & $(float64(i) * DtMs) &
+        " ms, where the envelope is " & $(env[i] / peak) & " of the peak"
+    elif not freq[i].isNaN:
+      doAssert freq[i] in 10.0 .. 70.0, "frequency " & $freq[i] & " at " &
+        $(float64(i) * DtMs) & " ms, outside the sweep's band"
+  doAssert freq[n - 1].isNaN
+  doAssert not freq[n div 4].isNaN and abs(freq[n div 4] - 30) < 1,
+    "frequency " & $freq[n div 4] & " at 1000 ms, want 30"
+  doAssert "60 dB" in r.note, r.note
 
 block phaseOfAnImpulse:
   let n = 512

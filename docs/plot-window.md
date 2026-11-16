@@ -647,7 +647,8 @@ Each window's first line holds its view's settings; a change works it out again.
   - All four plots share sweep time, so the held cursor reads them at the same time.
 - The **envelope** is the analytic signal's modulus; the instantaneous phase its
   argument; the instantaneous frequency the phase's step between the samples either
-  side, in Hz.
+  side, in Hz. Where the envelope is 60 dB or more below its peak the phase is noise,
+  so no frequency is drawn there (and the window's words say so).
 
 **The cursor.** In a spectrogram the cursor follows the pointer, a line to each axis with
 its exact value written on the axis, and the line under the image reads its time,

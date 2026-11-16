@@ -217,14 +217,21 @@ proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
 func instantaneousHz*(x, h: openArray[float32]; dtMs: float64): seq[float64] =
   ## The instantaneous frequency of the analytic signal `x + i·h`, per
   ## sample: the step of its phase between the samples either side
-  ## (wrapped to one turn), in Hz; NaN where the signal has no amplitude.
+  ## (wrapped to one turn), in Hz. NaN where the signal is exactly zero
+  ## (there or either side), and where the envelope is 60 dB or more below
+  ## its peak (`envelope < peak * 0.001`): the phase of what is nearly
+  ## nothing is noise.
   result = newSeq[float64](x.len)
   let n = x.len
+  var env = newSeq[float64](n)
+  var peak = 0.0
+  for i in 0 ..< n:
+    env[i] = hypot(float64(x[i]), float64(h[i]))
+    peak = max(peak, env[i])
   for i in 0 ..< n:
     let a = max(i - 1, 0)
     let b = min(i + 1, n - 1)
-    if b == a or (float64(x[a]) == 0 and float64(h[a]) == 0) or
-        (float64(x[b]) == 0 and float64(h[b]) == 0):
+    if b == a or env[i] == 0 or env[i] < peak * 0.001 or env[a] == 0 or env[b] == 0:
       result[i] = NaN
     else:
       var d = arctan2(float64(h[b]), float64(x[b])) - arctan2(float64(h[a]), float64(x[a]))
@@ -268,7 +275,8 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64): Anal
       yLabel: "Frequency (Hz)", yUnit: "Hz", xs: times,
       curves: @[AnalysisCurve(name: "frequency", ys: freq)])]
   result.note = "The analytic signal's modulus (envelope) and argument (phase), the " &
-    "phase's step per sample (frequency)"
+    "phase's step per sample (frequency); no frequency where the envelope is 60 dB " &
+    "below its peak"
 
 # ---------------------------------------------------------- phase spectrum --
 
