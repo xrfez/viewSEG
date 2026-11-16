@@ -10,8 +10,10 @@
 ## and resets them, each reset keeping its own backup; remembers the recent
 ## files; and gives a new plot what the user last chose, also in the next run.
 ##
-## Seen to fail: with the `(fills ...)` writer dropped, `everyField` found the
-## fills at their default; with `loadSettings` reading a damaged file as
+## Seen to fail: with `referenceId` left at "" in `everyFieldSet`, `everyField`
+## found "field referenceId is at its default"; with the `(fills ...)` writer
+## dropped, `everyField` found the fills at their default; with `loadSettings`
+## reading a damaged file as
 ## defaults without moving it, `damaged` found no backup; with `persist`
 ## saving at once, `debounce` found the file before the delay; with `show`
 ## making a new layer with the built-in display, `newPlotsFollow` drew the
@@ -77,7 +79,8 @@ proc everyFieldSet(): Settings =
       fixedClip: 2))],
     tray: TrayOptions(icon: false, minimize: true),
     componentColours: [Rgba(r: 1, g: 2, b: 3, a: 255), Rgba(r: 4, g: 5, b: 6, a: 255),
-      Rgba(r: 7, g: 8, b: 9, a: 255), Rgba(r: 10, g: 11, b: 12, a: 255)])
+      Rgba(r: 7, g: 8, b: 9, a: 255), Rgba(r: 10, g: 11, b: 12, a: 255)],
+    referenceId: "r-pilot")
   result.plot = PlotDefaults(
     display: DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
       fills: {wfNegative}, colours: pcCustom,
