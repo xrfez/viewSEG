@@ -43,9 +43,9 @@
 ##  (hideKilled false)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
-##    (response true) (phase false) (phasePicture magnitude))
+##    (response true) (phase false) (phasePicture unwrapped))
 ##   (live (scale db) (logFrequency false) (time visible) (raw true) (processed true)
-##    (response true) (phase false) (phasePicture magnitude)))
+##    (response true) (phase false) (phasePicture unwrapped)))
 ##  (displayPresets
 ##   (preset "Section" (mode density) (colourMap viridis) (gain none) ...))
 ##  (tray (icon true) (minimize false))
@@ -108,7 +108,7 @@ const
   HeaderColumnNames: array[HeaderColumn, string] = ["description", "name", "bytes", "offset"]
   SpectrumScaleNames: array[SpectrumScale, string] = ["db", "linear"]
   SpectrumTimeNames: array[SpectrumTime, string] = ["whole", "visible"]
-  PhasePictureNames: array[PhasePicture, string] = ["magnitude", "signed", "unwrapped",
+  PhasePictureNames: array[PhasePicture, string] = ["unwrapped", "magnitude", "signed",
     "delayRemoved"]
   ReadoutNames: array[ReadoutField, string] = ["time", "trace", "channel", "receiver",
     "source", "ffid", "offset", "amplitude", "shotTime", "cursorUtc", "sample", "cdp",

@@ -160,8 +160,9 @@ const
     processed: false, response: false, phase: true, phasePicture: ppSigned)
     ## an FFT window shown otherwise than by default
   LiveShown = SpectrumDisplay(scale: ssLinear, logFrequency: true, time: stWhole, raw: false,
-    processed: false, response: false, phase: true, phasePicture: ppUnwrapped)
-    ## the live panel shown otherwise than by default
+    processed: false, response: false, phase: true, phasePicture: ppMagnitude)
+    ## the live panel shown otherwise than by default (its phase picture is
+    ## not the default, unwrapped)
 
 const Filters = Processing(raw: true, aux: true, dc: dcTrend, band: pbBandPass, f1: 3, f2: 6,
   f3: 50, f4: 70, notches: @[NotchFilter(hz: 50, widthHz: 3, harmonics: 3)])

@@ -15,7 +15,7 @@
 ## Every number here is processSEG's but for what it leaves to the caller:
 ## the envelope's instantaneous frequency (the analytic signal's phase step
 ## between samples, `instantaneousHz`), the phase spectrum drawn as its
-## picture asks (`phasepicture`: magnitude by default, signed, unwrapped or
+## picture asks (`phasepicture`: unwrapped by default, magnitude, signed or
 ## with the delay taken off) and only where the amplitude is within
 ## `phaseWithinDb` of its peak (elsewhere the phase is noise), and the
 ## spectrogram of several traces, their power average (as the spectrum
@@ -68,8 +68,8 @@ type
     phaseWithinDb*: float64 = 20.0
       ## phase spectrum: the phase is shown where the amplitude is within
       ## this of the peak (elsewhere it is noise)
-    phasePicture*: PhasePicture = ppMagnitude
-      ## phase spectrum: which picture is drawn (magnitude by default)
+    phasePicture*: PhasePicture = ppUnwrapped
+      ## phase spectrum: which picture is drawn (unwrapped by default)
     reference*: int = -1
       ## cross-correlation: the reference trace, survey-wide id; -1: none
       ## chosen (the first trace of the window then)

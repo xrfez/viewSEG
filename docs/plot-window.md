@@ -658,7 +658,8 @@ right of that line's first row. A change works it out again.
   frame is placed at its centre's time.
 - **Phase spectrum:** the phase is drawn **only where the amplitude is within N dB of its
   peak** (20 dB at first): elsewhere it is noise, a gap, and the unwrap starts again on
-  the far side from the last drawn value. The picture is **Magnitude 0-180** at first
+  the far side from the last drawn value. The picture is **Unwrapped** at first.
+  Also offered: **Magnitude 0-180**
   (the absolute value of the wrapped phase, axis fixed 0 to 180). **Signed +-180** is
   the wrapped phase, with the same gaps. **Unwrapped** joins it along frequency, so a
   delay is a straight line (`-360·f·τ` degrees) and the axis may be large. **Delay
@@ -1360,9 +1361,9 @@ amplitude 0.000142 (raw peak)"): each window has a 0 dB of its own, so two windo
 compare by it; linear, in the file's sample units. The frequency axis can be
 logarithmic (0 Hz is then left out). A spectrum of one trace has its phase too (Phase:
 degrees, from the window's first sample, drawn under the amplitude). The picture is
-**Magnitude 0-180** at first (absolute value, axis fixed 0 to 180); **Signed +-180**,
-**Unwrapped** and **Delay removed** are the other choices, kept with the window's other
-choices. Where the amplitude is more than 60 dB below that curve's peak the phase is
+**Unwrapped** at first; **Magnitude 0-180** (absolute value, axis fixed 0 to 180),
+**Signed +-180** and **Delay removed** are the other choices, kept with the window's
+other choices. Where the amplitude is more than 60 dB below that curve's peak the phase is
 not drawn, and the unwrap does not run across the gap. The readout gives the phase as
 drawn and, unless the picture is signed, the signed value in brackets; Delay removed
 also says the delay in ms. A sweep's phase climbs steeply because its delay grows with

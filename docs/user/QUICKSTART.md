@@ -718,9 +718,8 @@ gives, so that two windows compare); **Linear** shows the amplitude itself (a si
 amplitude A reads A). **Log frequency** spreads the low frequencies out. **Visible time**
 takes the spectrum over the time the plot showed when the window opened, instead of the
 whole trace. For one trace, **Phase** (with the curves) draws its phase under its
-amplitude. The picture is **Magnitude 0-180** at first (the absolute value, on a fixed
-0 to 180 axis); **Signed +-180**, **Unwrapped** and **Delay removed** are the other
-choices. Where the amplitude is more than 60 dB below the peak the phase is left out, so
+amplitude. The picture is **Unwrapped** at first (the phase joined up along frequency); **Magnitude 0-180** (the absolute value, on a fixed
+0 to 180 axis), **Signed +-180** and **Delay removed** are the other choices. Where the amplitude is more than 60 dB below the peak the phase is left out, so
 the noise outside a sweep's band is not drawn. A sweep's phase climbs steeply because
 its delay grows with frequency; for vibrator QC, read the phase against the pilot in the
 vibrator signature plot. The same line, in the same order, is on an FFT window and on

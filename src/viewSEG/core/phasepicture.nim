@@ -1,6 +1,6 @@
-## How a phase spectrum is drawn: the absolute value (the default), the signed
-## value within ±180°, the phase unwrapped along frequency, or that line with
-## its best straight line taken off (a pure time delay).
+## How a phase spectrum is drawn: the phase unwrapped along frequency (the
+## default), the absolute value, the signed value within ±180°, or that line
+## with its best straight line taken off (a pure time delay).
 ##
 ## processSEG reports phase wrapped into -pi .. pi. Nothing there unwraps a
 ## spectrum along frequency, so the unwrap lives here: a jump of more than
@@ -14,9 +14,9 @@ import std/[math, strutils]
 type
   PhasePicture* = enum
     ## Which picture of a phase spectrum is drawn.
+    ppUnwrapped = "Unwrapped" ## the default, and the drop-down's first entry
     ppMagnitude = "Magnitude 0-180"
     ppSigned = "Signed +-180"
-    ppUnwrapped = "Unwrapped"
     ppDelayRemoved = "Delay removed"
 
 const

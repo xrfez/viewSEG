@@ -1,13 +1,13 @@
 ## Phase pictures (`core/phasepicture`, and the phase spectrum that draws
-## them): the absolute value by default, the signed value, the unwrapped
-## line, and that line with its delay taken off.
+## them): the unwrapped line by default, the absolute value, the signed
+## value, and that line with its delay taken off.
 ##
 ## - known phases: a straight line, a parabola, and a line with a gap, each
 ##   unwrapped back to what it was; the unwrap starts again after the gap
 ##   from the last drawn value, and does not follow a jump that sits in the
 ##   gap;
 ## - magnitude stays in 0 to 180; signed is the wrapped value, with the
-##   gaps; the default picture is magnitude;
+##   gaps; the default picture is unwrapped (the spectrum's, and the analysis's);
 ## - an impulse's delay-removed phase is flat, and the delay it reports is
 ##   the impulse's time;
 ## - the sample pilot (`samples/vib/vib_uncorrelated.sgd`, the source
@@ -21,7 +21,7 @@
 
 import std/[math, os, strutils]
 import parseSEG
-import viewSEG/core/[analysis, phasepicture]
+import viewSEG/core/[analysis, phasepicture, spectra]
 
 func near(a, b, tol: float64): bool = abs(a - b) <= tol
 
@@ -76,7 +76,11 @@ block pictures:
   let unwrapped = drawnPhase(wrapped, shown, hz, ppUnwrapped)
   doAssert unwrapped.ys[2].isNaN
   doAssert near(unwrapped.ys[3], -20, 1e-6) or near(unwrapped.ys[3], 340, 1e-6)
-  doAssert PhasePicture(0) == ppMagnitude, "the default is not magnitude"
+  doAssert PhasePicture(0) == ppUnwrapped, "the default is not unwrapped"
+  doAssert SpectrumDisplay().phasePicture == ppUnwrapped,
+    "the spectrum display does not default to unwrapped"
+  doAssert AnalysisParams().phasePicture == ppUnwrapped,
+    "the analysis does not default to unwrapped"
 
 block delayOfAnImpulse:
   let n = 512
@@ -94,7 +98,7 @@ block delayOfAnImpulse:
       doAssert abs(y) < 1.0, "residual " & $y & " after the delay was taken off"
   doAssert nDrawn > 10
   doAssert r.note.find("delay 80.0 ms") >= 0, r.note
-  let mag = phaseOf(x, "impulse", 2.0, AnalysisParams())
+  let mag = phaseOf(x, "impulse", 2.0, AnalysisParams(phasePicture: ppMagnitude))
   doAssert mag.plots[1].yLo == 0 and mag.plots[1].yHi == 180, "the default axis is not 0..180"
   for y in mag.plots[1].curves[0].ys:
     doAssert y.isNaN or (y >= -1e-6 and y <= 180 + 1e-4), $y
@@ -138,7 +142,8 @@ block pilotOfTheSample:
     elif hz[k] > 100.0:
       doAssert ph[k].isNaN, "a phase at " & $hz[k] & " Hz, outside the sweep"
   doAssert inside > 50, "only " & $inside & " bins inside 8-80 Hz"
-  let mag = phaseOf(x, "pilot", dtMs, AnalysisParams(phaseWithinDb: -PhaseFloorDb))
+  let mag = phaseOf(x, "pilot", dtMs, AnalysisParams(phaseWithinDb: -PhaseFloorDb,
+    phasePicture: ppMagnitude))
   for y in mag.plots[1].curves[0].ys:
     doAssert y.isNaN or (y >= -1e-6 and y <= 180 + 1e-4), $y
 
