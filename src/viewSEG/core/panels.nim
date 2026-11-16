@@ -86,7 +86,8 @@ type
 
   TraceFilter* = object
     ## Which of the source's traces a layer shows. The reader applies the
-    ## seismic and auxiliary switches; the other fields are not applied yet.
+    ## seismic and auxiliary switches and the components. Channel sets and
+    ## channel numbers are not applied.
     seismic*: bool = true ## seismic traces
     auxiliary*: bool ## auxiliary traces (pilots, time breaks, uphole)
     channelSets*: seq[int] ## SEG-D channel sets to show; empty shows all
