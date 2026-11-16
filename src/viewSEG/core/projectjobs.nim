@@ -326,29 +326,47 @@ proc sweepTemporaries(dir: string; recorded: openArray[SurveyCopy]) =
   except OSError:
     discard
 
-proc resolveResume(dir: string; f: ImportFile): string =
+type Resumed = tuple[path: string; outside: bool]
+
+proc resolveResume(dir: string; f: ImportFile; existing: seq[SurveyCopy];
+    roots: seq[string]): Resumed =
   ## The original of a file of an import that was cut short, if it is the
   ## file the import began with: at the path recorded (relative to the
   ## project, or absolute; never searched for beside the project or by its
-  ## name), of the size and the first and last 64 KiB recorded. "" when it
-  ## is not.
-  if not f.known: return ""
+  ## name), of the size and the first and last 64 KiB recorded, and inside
+  ## the project folder or one of its data folders `roots` (resolved paths
+  ## compared: a project handed over may name any path). A path inside the
+  ## survey copies is accepted when it is one of the `existing` copies, of
+  ## the size and ends recorded for it. "" when it is not; `outside` when a
+  ## path recorded is elsewhere (never copied without a click).
   var places: seq[string] = @[]
   if f.original.path.len > 0:
     places.add normalizedPath(dir / f.original.path.replace('/', DirSep))
   if f.original.absolute.len > 0 and f.original.absolute notin places:
     places.add f.original.absolute
+  let copies = realPath(dir.partOf(SurveyCopies))
   for path in places:
+    var inside = false
+    let real = realPath(path)
+    for r in roots:
+      if real.isInside(realPath(r)): inside = true
+    if not inside:
+      result.outside = true
+      continue
     try:
       if fs.fileExists(path):
         var t: Time
         let id = quickIdentity(path, t)
-        if id.size == f.size and id.quick == f.quick: return path
+        if real.isInside(copies):
+          for c in existing:
+            if normalizedPath(dir.partOf(c.copy)) == normalizedPath(path) and
+                id.size == c.size and id.quick == c.quick: return (path, false)
+        elif f.known and id.size == f.size and id.quick == f.quick: return (path, false)
     except IOError, OSError:
       discard
 
 proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy];
-    to: Poster; resume: seq[ImportFile] = @[]): JobWork =
+    to: Poster; resume: seq[ImportFile] = @[]; dataFolders: seq[string] = @[]): JobWork =
   ## The work of a job that copies survey files `files` into the project in
   ## `dir` (a file already a copy of it is kept as it is), writes
   ## `survey.bin` from the copies and posts both (`pnKept`); the copies come
@@ -357,7 +375,8 @@ proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy
   ## It first posts the identity of each original (`pnImporting`), which the
   ## project document keeps. With `resume` (one per file: an import that a
   ## close or a quit cut short, taken up again at the next open), each
-  ## original is taken only if it is the file the import began with.
+  ## original is taken only if it is the file the import began with and lies
+  ## in the project folder or one of `dataFolders`.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var news = ProjectNews(dir: dir, kind: pnKept)
     var tmps: seq[(string, string)] = @[]
@@ -369,12 +388,16 @@ proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy
         var paths: seq[string] = @[]
         for i, jf in files:
           if i < resume.len:
-            let path = resolveResume(dir, resume[i])
-            if path.len == 0:
+            let found = resolveResume(dir, resume[i], existing, @[dir] & dataFolders)
+            if found.path.len == 0:
+              if found.outside:
+                raise newException(IOError, "the import of the survey was interrupted, and " &
+                  resume[i].original.displayName & " is not in the project or its data " &
+                  "folders, so it is not copied again by itself: import the survey again")
               raise newException(IOError, "the import of the survey was interrupted and its " &
                 "files are not as they were (" & resume[i].original.displayName & "): import " &
                 "the survey again")
-            paths.add path
+            paths.add found.path
           else: paths.add jf.path
         if resume.len == 0: # the identities the document keeps, until the copy is whole
           var identities = ProjectNews(dir: dir, kind: pnImporting)

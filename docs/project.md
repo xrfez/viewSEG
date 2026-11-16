@@ -139,9 +139,14 @@ while the copy runs stops it and keeps what was written; the next open copies th
 originals again and makes the survey, with a message. The entry records each original's
 size, modified time and first-and-last-64-KiB hash when the copy begins; the resume takes
 only a file of that identity at the recorded path (never one found beside the project or by
-its name). Anything else (an original changed or gone, an entry without an identity) is
+its name), and only when that path is inside the project folder or one of its data folders
+(the paths resolved, links followed): a project handed over may name any path, and no other
+file is copied into the project without the user's say. A file already in `survey/files`
+that is one of the project's copies, of its recorded identity, is taken as it is. Anything
+else (an original changed or gone, an entry without an identity, a path elsewhere) is
 not copied: Messages says the import was interrupted and its files are not as they were,
-the survey is to be imported again, and the entry is cleared. The copies are written to
+the survey is to be imported again (for a path elsewhere, Messages says it is not in the
+project or its data folders), and the entry is cleared. The copies are written to
 temporary files and put in place only once `survey.bin` is written, so a failed or
 abandoned copy leaves none. The `(importing ...)` entry goes
 when the copy is whole (or when it failed: the user then imports the survey again).

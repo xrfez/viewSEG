@@ -4650,9 +4650,10 @@ proc keepSurvey(state: var AppState; files: seq[JoinFile]; resume: seq[ImportFil
   template p: untyped = state.project
   if p.surveyJob != NoJob: discard state.jobs.cancel(p.surveyJob)
   p.survey = srKeeping
+  let found = p.folders.filterIt(it.state == psFound).mapIt(it.path)
   p.surveyJob = state.jobs.submit(JobSpec(title: "Keep the survey in the project",
     lane: jlBackground, exclusive: @[p.dir.partOf(SurveyFolder)]), keepSurveyWork(p.dir, files,
-    p.doc.survey, state.inbox.poster, resume))
+    p.doc.survey, state.inbox.poster, resume, found))
   inc p.revision
 
 proc markImporting(state: var AppState; files: seq[JoinFile]) =

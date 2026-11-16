@@ -27,7 +27,10 @@
 ## - An Update refused (an original written during both tries) or cancelled
 ##   leaves the copies, the document and survey.bin as they were.
 ##
-## Seen to fail: with `sweepTemporaries` removing every `*.tmp`, "the survey file day1.tmp
+## Seen to fail: with `resolveResume` taking an absolute path outside the project and its data
+## folders, "is not in the project or its data folders"; with it refusing a copy that is
+## inside survey/files, "the cut-short import of the existing copies was not taken up"; with
+## `sweepTemporaries` removing every `*.tmp`, "the survey file day1.tmp
 ## was swept"; with `exclusive` taken off the keep job, "two keeps ran at
 ## once" (the test waits past CancelGrace and StallAfter, when the lane gives
 ## the next job a runner of its own); with the temporary name of `survey.bin`
@@ -68,6 +71,12 @@ withFixtures fx:
   createDir(field)
   let survey = fx.surveySps()
   let config = fx.dir / "config"
+  # an import cut short is taken up again by itself only for originals in the
+  # project's data folders
+  let inField = (s: field / survey.s.extractFilename, r: field / survey.r.extractFilename,
+    x: field / survey.x.extractFilename)
+  for (src, dst) in [(survey.s, inField.s), (survey.r, inField.r), (survey.x, inField.x)]:
+    copyFile(src, dst)
   installSteps()
 
   for how in ["close", "quit"]:
@@ -77,7 +86,7 @@ withFixtures fx:
       var st = start(config)
       st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
       doAssert st.settle(st.inProject and st.projectOpening.len == 0)
-      st.importSurvey(survey)
+      st.importSurvey(inField)
       doAssert st.settle(st.project.survey == srKeeping and st.said("is being copied") and
         st.project.doc.importing.allIt(it.known)),
         "the copy did not begin: " & $st.project.survey
@@ -262,13 +271,17 @@ withFixtures fx:
   block hostileImport:
     # A project.nif that names an import to resume copies nothing it was not
     # recorded as: no identity, or another file's, is refused with a message,
-    # and the entry is cleared.
+    # and the entry is cleared. A file outside the project folder and its data
+    # folders is never copied by itself, even with the identity recorded.
     let secret = fx.dir / "secret.txt"
-    writeFile(secret, "private\n".repeat(20_000))
-    var t: Time
-    let real = quickIdentity(secret, t)
-    for how in ["no identity", "other size", "replaced after"]:
-      let job = fx.dir / ("Job hostile " & how)
+    let inData = field / "secret.txt"
+    for (how, where) in [("no identity", "data"), ("other size", "data"),
+        ("replaced after", "data"), ("right", "outside"), ("other size", "outside")]:
+      let path = if where == "data": inData else: secret
+      writeFile(path, "private\n".repeat(20_000))
+      var t: Time
+      let real = quickIdentity(path, t)
+      let job = fx.dir / ("Job hostile " & how & " " & where)
       var st = start(config)
       st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
       doAssert st.settle(st.inProject and st.projectOpening.len == 0)
@@ -276,24 +289,55 @@ withFixtures fx:
       st.shutdown()
       var problems: seq[string]
       var doc = readProject(readFile(job / "project.nif"), "project.nif", problems)
-      var f = ImportFile(kind: jkSps, original: ProjectPath(absolute: secret))
+      var f = ImportFile(kind: jkSps, original: ProjectPath(absolute: path))
       if how != "no identity":
         (f.known, f.size, f.modified, f.quick) = (true, real.size, t, real.quick)
       if how == "other size": f.size += 1
       doc.importing = @[f]
       writeFile(job / "project.nif", projectDocument(doc))
-      if how == "replaced after": writeFile(secret, "other\n".repeat(20_000))
+      if how == "replaced after": writeFile(path, "other\n".repeat(20_000))
       var again = start(config)
       again.apply Command(kind: ckOpenProject, projectPath: job)
       doAssert again.settle(again.inProject and again.project.survey == srFailed),
         how & ": the open did not refuse it: " & $again.project.survey
-      doAssert again.said("interrupted and its files are not as they were"), how & ": not said"
+      if where == "data":
+        doAssert again.said("interrupted and its files are not as they were"), how & ": not said"
+      else:
+        doAssert again.said("is not in the project or its data folders"), how & ": not said"
       doAssert not fileExists(job / "survey" / "files" / "secret.txt"), how & ": copied"
       doAssert not again.project.doc.hasImport, how & ": the entry stays"
       again.flushFiles()
       again.shutdown()
       for f in walkFiles(job / "survey" / "files" / "*"): doAssert false, "a copy is left: " & f
-      writeFile(secret, "private\n".repeat(20_000))
+      removeFile(path)
+  block resumedOnCopies:
+    # An import cut short that named a file already inside survey/files (an
+    # existing copy) is taken up again: the copy is kept as it is.
+    let job = fx.dir / "Job copies"
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+    doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+    st.importSurvey(survey)
+    doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore and
+      not st.project.doc.hasImport)
+    st.flushFiles()
+    st.shutdown()
+    var problems: seq[string]
+    var doc = readProject(readFile(job / "project.nif"), "project.nif", problems)
+    doc.importing = @[]
+    for c in doc.survey:
+      doc.importing.add ImportFile(kind: c.kind, role: c.role,
+        original: ProjectPath(absolute: job / "survey" / "files" / c.copy.extractFilename))
+    writeFile(job / "project.nif", projectDocument(doc))
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject and again.project.survey == srLoaded and
+      again.project.doc.hasStore and not again.project.doc.hasImport),
+      "the cut-short import of the existing copies was not taken up: " & $again.project.survey &
+      " " & again.project.surveyNote
+    doAssert not again.said("files are not as they were")
+    again.flushFiles()
+    again.shutdown()
   block updateRefused:
     # An original written during both tries is refused: the copies, the
     # document and survey.bin stay as they were, agreeing, and no temporary
