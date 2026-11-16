@@ -464,5 +464,39 @@ withFixtures fx:
     doAssert again.settings.plot.display.mode == dmWiggle and
       again.settings.plot.display.gain == user.plot.display.gain
     doAssert again.settings.readout == @[rfTime, rfAmplitude]
+  block aTableAskedBeyondTheLimits:
+    # Seen to fail: rows at 9223372036854775000 raised OverflowDefect in the
+    # Headers reader (the program ended), and 8000 columns were taken. The
+    # rows are clamped to what an int32 holds and to MaxTableRows, and a table
+    # of more than MaxTableColumns columns is refused, with the words said.
+    var st = appIn(dir)
+    st.apply Command(kind: ckOpen, paths: @[mine])
+    doAssert st.settle(st.sessions.len == 1)
+    var applied = false
+    var view = toJson(TableView(fields: @["keys.channel"], scope: tsFile, rows: 0 .. 0))
+    view["rows"]["a"] = newJInt(9223372036854775000'i64)
+    view["rows"]["b"] = newJInt(9223372036854775000'i64)
+    discard st.runCommand(fe, $(%*{"kind": "headers shown", "inspect": ["trace table"],
+      "table": view}), applied)
+    doAssert applied, "the command was not taken"
+    doAssert st.settle(not st.inspection.waiting), "the table was not answered"
+    let rows = st.inspection.table.rows
+    doAssert rows.a == int(int32.high) and rows.b - rows.a < MaxTableRows and
+      rows.b >= rows.a, $rows
+    doAssert st.inspection.answer.table.first == rows.a and
+      st.inspection.answer.table.rowTraces.len == 0, $st.inspection.answer.table.first
+    var wide = toJson(TableView(fields: @["keys.channel"], scope: tsFile, rows: 0 .. 0))
+    wide["fields"] = %*(newSeq[string](8000).mapIt("keys.channel"))
+    applied = false
+    let shown = st.inspection.table
+    discard st.runCommand(fe, $(%*{"kind": "headers shown", "inspect": ["trace table"],
+      "table": wide}), applied)
+    doAssert st.inspection.table == shown, "the table of 8000 columns was taken"
+    var said = false
+    for e in st.log:
+      if "Ignored \"headers shown\": 8000 columns asked" in e.text: said = true
+    doAssert said, "the refusal was not said"
+    st.shutdown()
+
   doAssert (readFile(mine), getLastModificationTime(mine)) == fixtures, "a fixture changed"
   echo "tagentsession: ok"

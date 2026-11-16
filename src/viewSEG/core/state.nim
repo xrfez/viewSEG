@@ -6496,8 +6496,17 @@ proc applyCommand(state: var AppState; cmd: Command) =
       state.log.add(sevInfo, "files", "The " & name & " window stopped waiting for the drive " &
         "of " & file & ": it shows what it had read. Retry reads again.")
   of ckInspect:
-    state.inspect.parts = cmd.inspect # read for by `followInspect`, after every command
-    state.inspect.table = cmd.table
+    if cmd.table.fields.len > MaxTableColumns:
+      state.ignore(cmd, $cmd.table.fields.len & " columns asked: a table shows " &
+        $MaxTableColumns & " at most")
+    else:
+      state.inspect.parts = cmd.inspect # read for by `followInspect`, after every command
+      state.inspect.table = cmd.table
+      # The rows asked for: an int32 at most, and at most MaxTableRows of them.
+      template rows: untyped = state.inspect.table.rows
+      rows.a = clamp(rows.a, 0, int(int32.high))
+      rows.b = clamp(rows.b, 0, int(int32.high))
+      rows.b = min(rows.b, rows.a + MaxTableRows - 1)
   of ckSpectrum: state.openSpectrum(cmd)
   of ckSpectrumDisplay: state.showSpectrum(cmd)
   of ckCloseSpectrum: state.closeSpectrum(cmd)
