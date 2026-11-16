@@ -56,7 +56,9 @@ and no polarity edit. The read runs in the background; the window does not wait 
 ## What a plot does with it
 
 When a reference is selected, a cross-correlation and a vibrator signature use it instead
-of the file's pilot, and say so: "Reference: <name> (archive)".
+of the file's pilot, and say so: "Reference: <name> (archive)". Its samples are used as
+stored: neither the plot's filters nor a trace's own filter apply to them. An open plot
+that is not frozen follows the choice; a frozen one keeps the reference it had.
 
 If its sample interval is not the file's, the plot says "the reference is 2 ms, this file
 is 4 ms" and does not draw. Nothing is resampled.
