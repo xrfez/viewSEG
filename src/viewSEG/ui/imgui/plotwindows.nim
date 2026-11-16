@@ -248,7 +248,9 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     limit("peak", "##peak", peakForce, "", "The largest peak at a point (the hold-down weight)")
     igEndDisabled()
     igEndPopup()
-  if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks): changed = true
+  if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks):
+    frozen = not frozen
+    changed = true
 
 proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks: var Marks;
     res: var PlotWindowsOutput) =
@@ -383,7 +385,9 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       tip("On: the traces as recorded. Off: through the Seismic window's filters, so the " &
         "effect of a filter shows")
     of avVibrator: discard
-    if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks): changed = true
+    if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks):
+      frozen = not frozen
+      changed = true
   if changed:
     res.commands.add Command(kind: ckPlotDisplay, plot: w.id, plotParams: p,
       plotFrozen: frozen)

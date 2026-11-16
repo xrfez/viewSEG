@@ -24,7 +24,11 @@
 ##   click on it opens nothing) and, with two selected, opens the window the
 ##   menu opens.
 ##
-## Seen to fail: with the image's keys not read (`keyMove` never called),
+## - each Freeze pin toggles (the envelope and the vibrator signature): frozen
+##   on, the window keeps its filters while the plot's change; off, it follows.
+##
+## Seen to fail: with the pin's click not flipping `frozen`, "frozen new plot
+## 1.freeze did not happen"; with the image's keys not read (`keyMove` never called),
 ## "Right did not move the cursor"; with the menu's entry not sent
 ## (`newPlot` dropped in the app), "Window > New plot did not open a window";
 ## with a curve view's Right not read, "Right did not hold the curve plot's
@@ -96,6 +100,28 @@ withFixtures fx:
       f.pressKey(k, true)
       f.pressKey(k, false), after(3))
 
+  let notch = Processing(notches: @[NotchFilter(hz: 60, widthHz: 2, harmonics: 3)])
+  proc freezePin(mark: string; i: int) =
+    ## The Freeze pin at `mark` (plot `i`): a click turns it on, and the plot's
+    ## filters changed are not followed while it is on; a click again follows them.
+    click(mark)
+    step("frozen " & mark, noop, proc (f: FrameInfo): bool =
+      f.core.plots[i].frozen)
+    step("the plot's filters notched, " & mark, proc (f: FrameInfo) =
+      f.apply(Command(kind: ckProcessing, panel: MainPanel, processing: notch)), after(30))
+    step("frozen " & mark & " keeps its filters", noop, proc (f: FrameInfo): bool =
+      doAssert f.core.plots[i].processing.notches.len == 0,
+        "a frozen window followed the filters: " & mark
+      true)
+    click(mark)
+    step("unfrozen " & mark & " follows the filters", noop, proc (f: FrameInfo): bool =
+      result = not f.core.plots[i].frozen and f.core.plots[i].processing.notches.len == 1 and
+        not f.core.plots[i].waiting)
+    step("the plot's filters back, " & mark, proc (f: FrameInfo) =
+      f.apply(Command(kind: ckProcessing, panel: MainPanel, processing: Processing())),
+      proc (f: FrameInfo): bool = f.answered and not f.core.plots[i].waiting and
+        f.core.plots[i].processing.notches.len == 0)
+
   step("the record", noop, proc (f: FrameInfo): bool = f.answered)
   step("two selected", proc (f: FrameInfo) =
     f.apply(Command(kind: ckSelect, traces: @[0, 1], mode: smReplace)),
@@ -153,6 +179,7 @@ withFixtures fx:
         doAssert pin.size.x > 0, "no Freeze pin"
         doAssert pin.pos.x + pin.size.x > win.pos.x + win.size.x - 28,
           "freeze not at the right of the first row")
+  freezePin("new plot 1.freeze", 0)
   click("new plot 1.plot 1.data")
   key("Right on the envelope", skRight)
   step("held on the phase plot", noop, proc (f: FrameInfo): bool =
@@ -216,6 +243,8 @@ withFixtures fx:
       for c in f.core.plots[1].result.plots[0].curves:
         if c.style == csLimit: inc limits
       doAssert limits == 2, $limits & " phase limits drawn")
+  key("Esc closes the limits", skEscape) # the popover is over the pin: Esc shuts it
+  freezePin("new plot 2.freeze", 1)
   step("the vibrator signature closed", proc (f: FrameInfo) =
     f.apply(Command(kind: ckClosePlot, plot: 2)),
     proc (f: FrameInfo): bool = f.core.plots.len == 1)

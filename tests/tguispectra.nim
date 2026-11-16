@@ -16,7 +16,13 @@
 ## - the toolbar's FFT button is greyed with no trace selected (a click on it
 ##   opens nothing) and, with three selected, opens their FFT window.
 ##
-## Seen to fail: with Freeze still a checkbox at the end of the line, "freeze
+## - the Freeze pins toggle: the live panel and an FFT window turn frozen on and
+##   off by a click, and a frozen one keeps its traces (the panel) or its
+##   filters (the FFT) while the plot changes, following them again unfrozen.
+##
+## Seen to fail: with the pin's click not flipping `frozen` (the caller's
+## `frozen = not frozen` left out), "fft 1 frozen did not happen"; with Freeze
+## still a checkbox at the end of the line, "freeze
 ## not on the first row"; with Phase still after Visible time, "phase is not
 ## with the curves". With the `F` key left out of `editKeys`, "F over trace 1
 ## did not happen"; with the readout taken at the pointer's other axis,
@@ -131,6 +137,25 @@ withFixtures fx:
         let plot = w.spectrumPlot(builtinTheme(tmDark))
         let db = plot.curves[0].ys[k]
         doAssert text == plot.xText(hz) & " Hz   raw " & yText(db, "dB") & " dB", text)
+  # the FFT window's Freeze pin: a click turns it on and off. Frozen, it keeps
+  # the filters it went through when the plot's change; unfrozen, it follows them
+  let notch = Processing(notches: @[NotchFilter(hz: 60, widthHz: 2, harmonics: 3)])
+  click("fft 1.freeze")
+  step("fft 1 frozen", noop, proc (f: FrameInfo): bool = f.core.spectra[1].frozen)
+  step("the plot's filters notched", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckProcessing, panel: MainPanel, processing: notch)), after(30))
+  step("frozen, fft 1 keeps its filters", noop, proc (f: FrameInfo): bool =
+    doAssert f.core.spectra[1].processing.notches.len == 0,
+      "a frozen FFT window followed the filters"
+    true)
+  click("fft 1.freeze")
+  step("fft 1 follows the filters again", noop, proc (f: FrameInfo): bool =
+    result = not f.core.spectra[1].frozen and f.core.spectra[1].processing.notches.len == 1 and
+      not f.core.spectra[1].waiting)
+  step("the plot's filters back", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckProcessing, panel: MainPanel, processing: Processing())),
+    proc (f: FrameInfo): bool = f.answered and not f.core.spectra[1].waiting and
+      f.core.spectra[1].processing.notches.len == 0)
   # the plot's menu over a selected trace: the selection's FFT
   step("select three", proc (f: FrameInfo) =
     f.apply(Command(kind: ckSelect, traces: @[2, 3, 4], mode: smReplace)),
@@ -195,6 +220,27 @@ withFixtures fx:
     doAssert f.core.spectra[0].chosen == soVisible
     doAssert f.core.spectra[0].traces.len == f.panel.layout.traces
     true)
+  # the Freeze pin: a click turns it on and off. Frozen, the panel keeps its
+  # traces when the selection changes; unfrozen, it follows the selection
+  var liveWas: seq[int] = @[]
+  click("spectrum.freeze")
+  step("the live panel frozen", noop, proc (f: FrameInfo): bool =
+    result = f.core.spectra[0].frozen
+    if result: liveWas = f.core.spectra[0].traces)
+  step("select three while frozen", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckSelect, traces: @[2, 3, 4], mode: smReplace)), after(30))
+  step("frozen, the panel keeps its traces", noop, proc (f: FrameInfo): bool =
+    doAssert f.core.selection.selectedCount == 3
+    doAssert f.core.spectra[0].traces == liveWas, "a frozen panel followed the selection"
+    true)
+  click("spectrum.freeze")
+  step("unfrozen, the panel follows the selection", noop, proc (f: FrameInfo): bool =
+    result = not f.core.spectra[0].frozen and not f.core.spectra[0].waiting and
+      f.core.spectra[0].traces.len == 3)
+  step("clear the selection for the panel", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckClearSelection)),
+    proc (f: FrameInfo): bool = not f.core.spectra[0].waiting and
+      f.core.spectra[0].traces == liveWas)
   click("menu.Window")
   click("menu.window.spectrum")
   step("the panel hidden", noop, proc (f: FrameInfo): bool =

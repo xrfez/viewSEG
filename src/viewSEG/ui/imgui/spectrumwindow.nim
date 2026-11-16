@@ -131,7 +131,9 @@ proc drawControls(w: SpectrumWindow; name: string; t: Theme; widths: var array[3
                    "and its trace while Alt + arrows step the plot's selection; off: it follows " &
                    "the plot's filters and its Aux toggle (its traces stay those it was opened " &
                    "on, but for Alt + arrows)"
-  if line.drawFreeze(name, sentence, name & ".freeze", frozen, t, marks): changed = true
+  if line.drawFreeze(name, sentence, name & ".freeze", frozen, t, marks):
+    frozen = not frozen
+    changed = true
   if changed:
     res.commands.add Command(kind: ckSpectrumDisplay, spectrum: w.id, spectrumShow: d,
       frozen: frozen)
