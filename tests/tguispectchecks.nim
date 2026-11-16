@@ -4,7 +4,8 @@
 ##   does not change the stored choice (it stays ticked);
 ## - a filter on, that stored choice shows again (both ticked);
 ## - a trace's own filter alone, the plot's filters off, enables Processed
-##   (its stored tick shows) .
+##   (its stored tick shows), and, the spectrum being of that one trace,
+##   Response too: its response is what that trace went through.
 ##
 ## Phase, when the spectrum is not of one trace, is the same: drawn unticked
 ## while disabled, the stored choice kept. The New plot windows have no
@@ -145,8 +146,8 @@ withFixtures fx:
     result = f.ticked("fft 1.processed")
     if not result:
       doAssert false, "an own filter did not enable Processed"
-    doAssert not f.ticked("fft 1.response"),
-      "Response came on with no plot filter")
+    doAssert f.core.spectra[1].spectrum.hasResponse and f.ticked("fft 1.response"),
+      "one trace's own filter: its response is not drawn")
 
   var at = 0
   var started = false

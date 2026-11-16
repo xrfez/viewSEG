@@ -121,7 +121,8 @@ proc drawControls(st: AppState; w: SpectrumWindow; name: string; t: Theme;
     if lockedCheck("Processed", d.processed, processedOn): changed = true
     marks.mark(name & ".processed")
     tip(if processedOn and w.spectrum.filters.len > 0:
-          "Through the plot's filters: " & w.spectrum.filters
+          (if ownChanges: "Through: " else: "Through the plot's filters: ") &
+            w.spectrum.filters
         elif processedOn: "Through the shown trace's own filter"
         elif not w.processing.hasFilters and not ownChanges: "No filter is on in the plot"
         elif w.spectrum.filters.len > 0: "No processed curve: " & w.filterText
@@ -130,11 +131,13 @@ proc drawControls(st: AppState; w: SpectrumWindow; name: string; t: Theme;
     let responseOn = w.spectrum.hasResponse
     if lockedCheck("Response", d.response, responseOn): changed = true
     marks.mark(name & ".response")
-    tip(if responseOn: "Under the curves, the gain the plot's filters apply at " &
+    let whose = if ownChanges and w.traces.len == 1: "this trace's filters"
+                else: "the plot's filters"
+    tip(if responseOn: "Under the curves, the gain " & whose & " apply at " &
           "each frequency (an impulse put through them, as the traces are), 0 dB at the top " &
           "of the curves: what they do, where the processed curve shows what the data and " &
           "the window make of it"
-        elif not w.processing.hasFilters: "No filter is on in the plot"
+        elif not w.processing.hasFilters and not ownChanges: "No filter is on in the plot"
         elif w.spectrum.response.len > 0: "The filters reached none of these traces: their " &
           "response is not drawn"
         else: "The plot has no pass band or notch to draw")
