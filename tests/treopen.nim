@@ -48,7 +48,9 @@
 ## file were dropped"; (the watch cancelling the reopen): with `closeSession`
 ## cancelling that open, "the file was gone after it changed"; (the join
 ## said kept at once): with `carryOver` adding "kept the survey join" when
-## the match is only submitted, "said kept before the match"; (another
+## the match is only submitted, "said kept before the match"; (a dropped
+## join said to leave the file as it was): with the import's cancel and
+## failure texts used for a carried join, "is as it was"; (another
 ## panel's record): with `showPath` showing gather 0 of a file already
 ## open, "the other panel came back at the first record".
 ##
@@ -521,6 +523,7 @@ block carriedJoinIsDroppedWhenItFails:
     doAssert st.settle(st.sessions.len == 1 and st.log.has("dropped the survey join")),
       "a join that failed was not said dropped"
     doAssert st.joinedOf(st.sessions[0].id) < 0, "a failed join was kept"
+    doAssert not st.log.has("is as it was"), "a dropped join was said to leave the file as it was"
     st.shutdown()
 
 block eachPanelKeepsItsRecord:

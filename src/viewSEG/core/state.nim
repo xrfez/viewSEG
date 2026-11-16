@@ -4499,10 +4499,12 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
         state.log.add(sevInfo, s.name, "The survey files' headers say: " &
           j.survey.notes.join("; ") & ".")
   of joCancelled:
-    words = @["The survey import was cancelled: " & j.name & " is as it was, and so is the map."]
+    words = @[if j.carried: "The survey match was cancelled."
+      else: "The survey import was cancelled: " & j.name & " is as it was, and so is the map."]
   of joFailed:
-    words = @["The survey import failed: " & error & ". " & j.name & " is as it was, and " &
-      "so is the map."]
+    words = @[if j.carried: "The survey match failed: " & error & "."
+      else: "The survey import failed: " & error & ". " & j.name & " is as it was, and " &
+        "so is the map."]
   of joNone, joMapOnly: discard
   (j.job, j.outcome, j.words, j.waits) = (NoJob, outcome, words, true)
   if outcome in {joCancelled, joFailed}:
