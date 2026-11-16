@@ -64,6 +64,10 @@ proc drawControls(w: SpectrumWindow; name: string; t: Theme; widths: var array[3
   template group(i: int; body: untyped) =
     if i > 0 and line.fitsBefore(widths[i], GroupGap):
       igSameLine(0, GroupGap)
+    elif i == 0 and igGetCursorScreenPos().x + widths[0] > line.rowRight:
+      # the first group is too wide for the row beside the pin: below it
+      igSetCursorScreenPos(ImVec2_c(x: line.left,
+        y: line.top + line.size + igGetStyle().ItemSpacing.y))
     igBeginGroup()
     body
     igEndGroup()
