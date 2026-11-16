@@ -3050,8 +3050,9 @@ proc link(state: var AppState; i, j: int) =
     if x.doc.len > 0 and theirs.len == 0 and x.path in moved: (theirs, theirsOwn) = (x.doc, x.ownDoc)
   if doc.len == 0: (doc, own) = (theirs, theirsOwn)
   elif theirs.len > 0 and theirs != doc and not state.knownDocs.getOrDefault(theirs).damaged:
-    state.diskIo.remove(state.store.docPath(theirs), "what is remembered about " &
-      state.remembered[i].path.extractFilename) # its edits are in the other now
+    if not state.readOnlyProject:
+      state.diskIo.remove(state.store.docPath(theirs), "what is remembered about " &
+        state.remembered[i].path.extractFilename) # its edits are in the other now
     state.knownDocs.del theirs
   for x in state.remembered.mitems:
     if state.keyOf(x.path) == key:
