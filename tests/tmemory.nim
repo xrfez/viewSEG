@@ -23,15 +23,22 @@
 ## - a copy (a time of its own) edited before the hash of every byte comes
 ##   gets what is remembered of the file all the same, in one document;
 ## - edits made while the drive does not answer are said to wait for the
-##   file's identity, kept by the file's path at a quit before it came, and
-##   back the next run (then remembered with its identity); kept so for a
-##   file that changed since, they are said and not applied;
+##   file's identity, kept by the file's path at a quit before it came; the
+##   next run does not apply them by themselves (the path says nothing of the
+##   content): they are offered as an unconfirmed record, applied only by the
+##   user's click (one step, Undo takes it back); kept so for a file that
+##   changed since, they are said and not applied;
 ## - a document that cannot be read is said and never written over;
 ## - a document with a part that cannot be read keeps the time its file was
 ##   opened beside it, and File memory lists that time;
 ## - a user's edit while the hash is under way, on a file taken at once for
-##   one remembered, is not left in that file's document when the hash says
-##   it was another;
+##   one remembered, is kept apart in a record of its own (unconfirmed) and
+##   never written into that file's document; when the hash says it was
+##   another file, the brought-back edits are taken off and the user's own
+##   stay as this file's; edits made after the hash agrees (also by two
+##   programs, or under two paths) join the record and its one document;
+## - a document with a part that cannot be read is not written again when
+##   its hash agrees either;
 ## - a file's hash under way holds no background job (a lane of its own);
 ## - File memory lists past an entry whose drive does not answer, which is
 ##   "not answering" and never gone;
@@ -63,8 +70,13 @@
 ## wait for the file's identity, "an edit that waits for the file's
 ## identity is not said"; with no pending document written (as before),
 ## "the edits kept by the path are not said at the quit"; with it not read
-## at the next identification,
-## "the edits made before the identity was known did not come back";
+## at the next identification, "the edits made before the identity was known are
+## not offered"; with `takePending` making the record confirmed (`unconfirmed:
+## false`), the same block ("the edits made before the identity was known are
+## not offered"); with `writeMemoryDoc` not routing a check to
+## `writeProvisional`, "the user's own edit is not kept in a record of its
+## own"; with `takeHashed` rewriting a document with parts it cannot read when
+## its hash agrees (no `damaged` check), "the damaged document was written";
 ## with the names of documents that could not be read left out of those
 ## taken (`Remembered.taken`), "the document that could not be read was
 ## written over"; with no side file for a damaged document, "a file opened
@@ -90,7 +102,7 @@
 ## kill made after the forgetting is gone"; with no lock between programs
 ## (`lockStore`), "this program wrote while the other held the lock".
 
-import std/[atomics, os, strutils, times]
+import std/[atomics, os, sequtils, strutils, times]
 import viewSEG/core/[diskio, filesystem, jobs, state]
 import utils/[faultyfs, fixtures, steps, waiting]
 
@@ -213,30 +225,41 @@ withFixtures fx:
     let c2 = fx.dir / "changed-same-time.sgy"
     writeFile(c2, bytes)
     setLastModificationTime(c2, kept[1])
-    let docBefore = readFile(docs(config)[0])
+    let docBeforePath = docs(config)[0]
+    let docBefore = readFile(docBeforePath)
     st = start(config)
     holdStep("reading every byte") # a large file: its hash comes later
     st.showFile(c2)
     doAssert st.settle(st.remembering(c2).known)
     doAssert st.editsOf(0).has(teKilled, 3), "a file of the same size, ends and time is " &
       "taken for the file at once"
-    st.edit(teKilled, 9) # the user's, while the hash is under way: written a second later
+    st.edit(teKilled, 9) # the user's, while the hash is under way: kept apart
     st.flushFiles()
-    doAssert "changed-same-time" in readFile(docs(config)[0])
+    doAssert docs(config).len == 2, "the user's own edit is not kept in a record of its own"
+    doAssert readFile(docBeforePath) == docBefore,
+      "the brought-back document holds the edit made on the other file"
+    doAssert docs(config).anyIt("changed-same-time" in readFile(it) and "unconfirmed" in readFile(it)),
+      "the own record is not marked unconfirmed"
     releaseStep("reading every byte")
     doAssert st.settle(st.remembering(c2).confirmed and not st.remembering(c2).looking)
-    doAssert st.editsOf(0).isEmpty and not st.panel(MainPanel).layers[0].reversed,
-      "the changed copy shows the edits of the file it was copied from"
+    doAssert st.editsOf(0).has(teKilled, 9) and not st.editsOf(0).has(teKilled, 3) and
+      not st.panel(MainPanel).layers[0].reversed,
+      "the brought-back edits stay, or the user's own were taken away, when the content differs"
     doAssert "its content differs" in st.lastWarning, st.lastWarning
     doAssert st.quiet, "the jobs of what is remembered were said to end"
     st.shutdown()
-    doAssert docs(config).len == 1, "the copies made documents of their own: " & $docs(config)
-    doAssert readFile(docs(config)[0]) == docBefore, "the other file's document keeps what " &
-      "was written of the changed copy: " & readFile(docs(config)[0])
+    doAssert docs(config).len == 2, "the changed copy has its own record only: " & $docs(config)
+    doAssert readFile(docBeforePath) == docBefore, "the other file's document keeps what " &
+      "was written of the changed copy: " & readFile(docBeforePath)
+    for f in docs(config): # the copy's own record is the file's now: not for later blocks
+      if f != docBeforePath: removeFile(f)
   block clearedAndBack:
     var st = start(config)
     st.showFile(b)
     doAssert st.settle(st.remembering(b).known and st.editsOf(0).has(teKilled, 3))
+    # while the hash is under way, what is taken off is the user's own state,
+    # kept apart as an unconfirmed record: the brought-back document stands
+    doAssert st.settle(st.remembering(b).confirmed and not st.remembering(b).looking)
     st.apply Command(kind: ckClearEdits, panel: MainPanel)
     st.flushFiles()
     doAssert docs(config).len == 0, "a document that keeps nothing is removed"
@@ -340,22 +363,29 @@ withFixtures fx:
     doAssert fileExists(config / StoreFolder / pendingName(b)), "no pending document"
     release(b)
     # the next run, the file unchanged and its drive answering: the edits
-    # are back, and remembered with the file's identity, the pending
-    # document gone
+    # kept by the path are not applied by themselves (the path says nothing
+    # of the content): an unconfirmed record of the file's identity, offered
+    # with the earlier outputs, the pending document gone
     st = start(config)
     st.showFile(b)
-    doAssert st.settle(st.remembering(b).known and st.editsOf(0).has(teKilled, 1)),
-      "the edits made before the identity was known did not come back"
+    doAssert st.settle(st.remembering(b).known and
+      st.earlierOf(b).anyIt(it.unconfirmed and 1 in it.edits.lists[teKilled])),
+      "the edits made before the identity was known are not offered"
     doAssert st.settle(st.remembering(b).confirmed and not st.remembering(b).looking)
-    doAssert st.editsOf(0).has(teKilled, 3) and st.editsOf(0).has(teKilled, 1),
-      "what was remembered of it before did not come beside them"
+    doAssert not st.editsOf(0).has(teKilled, 1), "the edits kept by the path were applied alone"
+    doAssert st.editsOf(0).has(teKilled, 3), "what was remembered of it before did not come"
     st.flushFiles()
     doAssert not fileExists(config / StoreFolder / pendingName(b)), "the pending document stays"
-    doAssert "(killed \"2 4\")" in readFile(config / StoreFolder / st.remembering(b).doc),
-      readFile(config / StoreFolder / st.remembering(b).doc)
-    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[st.base + 1],
-      on: false) # as it was for the next blocks
+    # Apply (one step) makes them the file's: the user's click only
+    let offered = st.earlierOf(b)[0]
+    st.apply Command(kind: ckImportEdits, panel: MainPanel,
+      listPath: st.store.docPath(offered.doc), replaceEdits: true)
+    doAssert st.settle(st.editsOf(0).has(teKilled, 1)), "Apply did not apply them"
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel) # as it was for the next blocks
+    doAssert st.settle(st.editsOf(0).has(teKilled, 3) and not st.editsOf(0).has(teKilled, 1))
     st.shutdown()
+    for f in docs(config): # the offered record: not for the next blocks
+      if "unconfirmed" in readFile(f): removeFile(f)
     # a pending document of a file that changed since: not applied, said
     # with its edits, removed
     writeFile(config / StoreFolder / pendingName(b), memoryDocument(FileRecord(
@@ -430,6 +460,9 @@ withFixtures fx:
     var st = start(config) # once its edits change, the document is whole again
     st.showFile(d)
     doAssert st.settle(st.remembering(d).known)
+    # the user's edit during the check is kept apart; once the hash agrees
+    # the edit joins the record, which is then whole again
+    doAssert st.settle(st.remembering(d).confirmed and not st.remembering(d).looking)
     st.edit(teKilled, 5)
     st.flushFiles()
     doAssert "x" notin readFile(config / StoreFolder / doc).split("(killed")[1].split(")")[0]
@@ -556,6 +589,9 @@ withFixtures fx:
     var st = start(config)
     st.showFile(b)
     doAssert st.settle(st.remembering(b).known)
+    # paths of one content are linked only once the edits brought back are
+    # confirmed: the edits come after the hash
+    doAssert st.settle(st.remembering(b).confirmed and not st.remembering(b).looking)
     st.edit(teKilled, 4)
     st.edit(teKilled, 12)
     st.flushFiles() # the document has 12 killed ...
@@ -563,6 +599,9 @@ withFixtures fx:
       on: false) # ... and the user takes it back, not written yet
     st.showFile(l)
     doAssert st.settle(st.remembering(l).known)
+    # the link's edits, brought back from the document, are checked first:
+    # the two paths join once both hashes agree
+    doAssert st.settle(st.remembering(l).confirmed and not st.remembering(l).looking)
     doAssert st.editsOf(0).has(teKilled, 4), "the link does not share the edits"
     doAssert not st.editsOf(0).has(teKilled, 12), "a kill taken back came back with the link"
     st.edit(teKilled, 8)
@@ -609,6 +648,9 @@ withFixtures fx:
     doAssert st.settle(st.remembering(l).known and st.editsOf(0).has(teKilled, 6) and
       st.editsOf(0).has(teKilled, 4) and st.editsOf(0).has(teKilled, 8)),
       "the edits of the three paths did not all come back"
+    # cleared once the hash agrees: during the check a clearing is the user's
+    # own state, kept apart as an unconfirmed record
+    doAssert st.settle(st.remembering(l).confirmed and not st.remembering(l).looking)
     st.apply Command(kind: ckClearEdits, panel: MainPanel)
     st.shutdown()
     removeFile(l)
@@ -623,6 +665,10 @@ withFixtures fx:
     one.showFile(b)
     two.showFile(b)
     doAssert one.settle(one.remembering(b).known) and two.settle(two.remembering(b).known)
+    # the edits brought back are checked first; what each makes after is the
+    # record's, written to the one document
+    doAssert one.settle(one.remembering(b).confirmed and not one.remembering(b).looking) and
+      two.settle(two.remembering(b).confirmed and not two.remembering(b).looking)
     one.edit(teKilled, 2)
     one.flushFiles()
     two.edit(teKilled, 5)
