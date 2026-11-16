@@ -310,6 +310,27 @@ func coordinatesText*(at: MapPoint; perPixel: float64; units: string): string =
   "E " & fixed(at.x, d) & "   N " & fixed(at.y, d) & (if units.len > 0: " " & units
     else: "  (units not given)")
 
+func lengthUnitName*(u: SurveyUnit): string =
+  ## The unit a length is stated in, as the ruler's tooltip names it.
+  case u
+  of suMetres: "metres (m)"
+  of suFeet: "feet (ft)"
+  of suUsFeet: "US survey feet (ftUS)"
+  of suNotGiven: "the survey's units"
+  of suDegrees: "degrees"
+  of suArcSeconds: "arc seconds"
+  of suDms: "degrees, minutes and seconds"
+
+func rulerReading*(distance: float64; lengths: tuple[unit: SurveyUnit; factor: float64]): string =
+  ## The ruler's length: `distance` (survey units) in the unit lengths are
+  ## shown in, with that unit's short name (`m`, `ft`, `ftUS`). An unknown
+  ## unit keeps the survey's number and names no unit (never "units").
+  let n = distance * lengths.factor
+  let num = if n == round(n) and abs(n) < 1e15: $int64(n)
+            else: formatFloat(n, ffDecimal, (if abs(n) >= 10: 1 else: 2))
+  let u = lengths.unit.abbreviation
+  if u.len == 0: num else: num & " " & u
+
 func lengthText*(length: float64; units: string): string =
   ## A length as the scale bar and the ruler write it: "500 ft", "1.25 km"
   ## in metres from 1 km on.

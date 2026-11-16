@@ -458,7 +458,8 @@ The gestures are the plot's:
 | Click a receiver (Ctrl+click: any dot) | Select it and its traces (Ctrl: add it, or take it out) |
 | Shift+click a dot | Select the stations of its line from the dot you clicked last to this one |
 | Shift+drag | Select every dot in the box, and their traces (Ctrl+Shift+drag adds) |
-| Ctrl+drag | Measure: the distance and the grid bearing, until Esc |
+| Ruler, then left drag | Measure, as Ctrl+drag does. The button stays on until clicked again; a click without a drag still selects |
+| Ctrl+drag | Measure, also with Ruler off: the distance and the grid bearing, until Esc |
 | Right-click a dot | Show its record (a source), select it, add it to the selection or take it out, hide its layer |
 | Esc | The drag going on, else the ruler, else the selection |
 
@@ -468,7 +469,11 @@ it (H20, and H201's factor: `feet` with 0.3048006096 m a unit is US survey feet)
 the seismic file's headers say, else as you confirmed it when importing the survey; where
 nothing says,
 "units" (never a guess). A **scale bar** and a north arrow stand in the map's corners; the
-axes show no values. The gear's **Lengths** shows the scale bar's and the ruler's lengths
+axes show no values. **Ruler** in the strip (after zoom, before the gear) turns measuring
+on: drag on the map for the distance and the grid bearing, in the unit the gear's Lengths
+shows (m, ft, ftUS; the survey's own number, with no unit, when nothing says what it is).
+The button stays lit until you click it again. With it off, Ctrl+drag still measures.
+The gear's **Lengths** shows the scale bar's and the ruler's lengths
 in another unit instead, converted exactly (1 ft = 0.3048 m, 1 ftUS = 1200/3937 m).
 
 **Layers** in the map's strip lists the layers in two groups, each with its own tick:

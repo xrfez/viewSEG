@@ -770,7 +770,8 @@ The map uses the same gestures wherever the meaning carries over, always at equa
 | Shift + left click | **Select a range:** the stations of the line from the point clicked last to this one (of the same file and role), and their traces, in place of the selection; the point clicked last stays where the next range starts |
 | Left drag | **Pan** |
 | Shift + left drag | **Box select:** every point of a shown layer in the box, and their traces (replaces the selection; with Ctrl too, adds to it) |
-| Ctrl + left drag | **Measure:** a line from press to release, its length (in the survey's units) and grid bearing beside it, until Esc |
+| Ruler, then left drag | **Measure**, as Ctrl + left drag does. The button stays on until clicked again; a click without a drag still selects. Panning stays on the middle button and the arrow keys |
+| Ctrl + left drag | **Measure:** a line from press to release, its length and grid bearing beside it, until Esc. Works with Ruler off |
 | Right drag | **Box zoom:** as close as shows the whole box, at equal aspect |
 | Right click | **The menu of the point under the cursor:** show its record (a source with traces), select it and its traces, add it to the selection or take it out, hide its layer; over no point, "No point here". Layers and fit are in the strip |
 | Middle drag | Pan |
@@ -825,7 +826,7 @@ under the pointer then, as desktop programs do.
 
 ```
 ┌ Map ──────────────────────────────────────┐
-│ [Layers] [-][+][fit][<] [⚙]               │  controls (they wrap when narrow)
+│ [Layers] [-][+][fit][<] [ruler] [⚙]       │  controls (they wrap when narrow)
 ├───────────────────────────────────────────┤
 │ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·     ▲     │  survey coordinates, north up,
 │   •     •        •                N       │  equal aspect; no axis values
@@ -967,14 +968,16 @@ under the pointer then, as desktop programs do.
   correct ft/survey ft/ meters"): `m`, `ft` (international feet, 0.3048 m) or `ftUS` (US
   survey feet, 1200/3937 m) in the status bar's coordinates, the scale bar and the ruler,
   from the units confirmed with a join, else the survey file's header (`H20`, `H201`), else
-  the seismic file's headers; "units" where nothing says, never a guess. **Files that name
+  the seismic file's headers. The scale bar says "units" where nothing says; the ruler
+  shows the number as the survey gives it and names no unit. Never a guess. **Files that name
   different units** (a second survey file, the open file's headers) are said once in
   Messages and at the top of the Layers list ("The coordinates' units disagree (...): the
   map uses US survey feet, the first, and converts nothing"). The gear's
   Lengths shows lengths in another of the three instead, converted exactly.
 - **A scale bar** (1, 2 or 5 times a power of ten, at most 150 pixels long) in the plot's
   bottom-left corner and a **north arrow** (grid north) in its top-right one.
-- **The strip:** Layers, zoom out, zoom in, fit, back, and the gear: where the point under
+- **The strip:** Layers, zoom out, zoom in, fit, back, Ruler (a left drag then measures;
+  the button stays on until clicked again), and the gear: where the point under
   the pointer is described, beside the pointer (the default) or in a strip along the map's
   bottom (kept when nothing is pointed at, so the map does not change size).
 - **Levels of detail.** When the points outnumber the pixels, the map draws a point per

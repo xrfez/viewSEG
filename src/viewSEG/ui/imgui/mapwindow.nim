@@ -16,7 +16,9 @@
 ## button), right drag to zoom to a box, arrows to pan (a tenth of the view;
 ## Shift: a whole view), Ctrl + 0 to fit, Backspace or Alt + Left for back,
 ## Shift + drag to select the points in a box (and their traces), Ctrl +
-## drag to measure a distance, which stays until Esc. Esc cancels the
+## drag to measure a distance, which stays until Esc (the Ruler button makes
+## a plain left drag measure the same way; the button stays on until clicked
+## again). Esc cancels the
 ## innermost: a drag, the ruler, the selection. No view loses the survey,
 ## and a new window size keeps the scale from the top-left corner. Each new
 ## view goes to `core` (`ckMapView`); the first of a gesture with
@@ -117,6 +119,7 @@ type
     jumps: int             ## the map's `jumps` last followed
     drag: MapDrag
     ruler: Ruler
+    rulerOn: bool          ## the Ruler button: a plain left drag measures
     gesture: MapGesture
     gestureAt: float64
     focus: FocusClicks
@@ -652,6 +655,17 @@ proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; mar
     igEndDisabled()
     tip("Back to the view before (Backspace, Alt+Left)")
   mu.stripGroup(2, right, 14):
+    let on = mu.rulerOn
+    if on:
+      igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(t.roles[rlSelection]))
+      igPushStyleColor_Vec4(ImGui_Col_ButtonHovered.cint, vec4(t.roles[rlHover]))
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
+    if button(IconRuler & "##ruler", marks, "map.ruler button"):
+      mu.rulerOn = not mu.rulerOn
+    if on: igPopStyleColor(3)
+    tip("Ruler (on/off): drag on the map to measure a distance and bearing, in " &
+      lengthUnitName(st.shownLengths.unit) & ". With it off, Ctrl+drag measures.")
+  mu.stripGroup(3, right, 14):
     if button(IconSettings & "##more", marks, "map.more"): igOpenPopup_Str(moreId, 0)
     under[1] = ImVec2_c(x: igGetItemRectMin().x, y: igGetItemRectMax().y)
     tip("Where the map describes the point under the pointer, and the unit of its lengths")
@@ -745,9 +759,9 @@ proc handleMouse(mu: var MapUi; st: AppState; after: var MapView; view: MapView;
       if mu.drag.kind == mdNone and igIsMouseClicked_Bool(b.cint, false):
         let kind = if b == ImGui_MouseButton_Right: mdZoom
                    elif b == ImGui_MouseButton_Middle: mdPan
-                   elif io.KeyShift: mdSelect
-                   elif io.KeyCtrl: mdMeasure
-                   else: mdPan
+                    elif io.KeyShift: mdSelect
+                    elif io.KeyCtrl or mu.rulerOn: mdMeasure
+                    else: mdPan
         mu.drag = MapDrag(kind: kind, button: b.cint, press: mouse, start: after,
           adding: io.KeyCtrl and io.KeyShift)
   elif held and mu.drag.kind == mdNone and
@@ -800,7 +814,8 @@ proc handleMouse(mu: var MapUi; st: AppState; after: var MapView; view: MapView;
         b: view.mapAt(plot, v2(b)))
     if not down:
       if not mu.drag.moved and hovered and mu.focus.acts:
-        click = 2 # Ctrl + click (no drag, no ruler): adds the point or takes it out
+        # Ctrl + click adds; a click with the Ruler on, and no drag, selects
+        click = if io.KeyCtrl: 2 else: 1
       mu.drag = MapDrag()
 
 proc handleKeys(mu: var MapUi; st: AppState; after: var MapView; view: MapView; plot: Rect;
@@ -1033,7 +1048,7 @@ proc drawRuler(mu: var MapUi; view: MapView; plot: Rect;
   ImDrawList_AddCircleFilled(dl, pb, 3.5, c, 12)
   let d = distance(mu.ruler.a, mu.ruler.b)
   let br = bearing(mu.ruler.a, mu.ruler.b)
-  mu.rulerText = lengthText(d * lengths.factor, lengths.unit.abbreviation) & (if br.isNaN: ""
+  mu.rulerText = rulerReading(d, lengths) & (if br.isNaN: ""
     else: ", bearing " & align(formatFloat(br, ffDecimal, 1), 5, '0') & "°")
   let ts = igCalcTextSize(mu.rulerText.cstring, nil, false, -1)
   let pad = igGetStyle().FramePadding

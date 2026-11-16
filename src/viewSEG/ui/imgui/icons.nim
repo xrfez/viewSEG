@@ -44,6 +44,7 @@ const
   IconCorrelation* = "\u{EBCB}" ## nf-cod-arrow_swap
   IconVibrator* = "\u{EB34}" ## nf-cod-radio_tower
   IconFk* = "\u{EC30}"  ## nf-cod-map_vertical
+  IconRuler* = "\u{EA96}" ## nf-cod-symbol_ruler
   IconLayers* = ""     ## nf-cod-layers
   IconTarget* = ""     ## nf-cod-target
   IconLocation* = ""   ## nf-cod-location
@@ -76,6 +77,7 @@ const
     IconZoomOut, IconFit, IconPlay, IconStep, IconPrevious, IconNext, IconWarning,
     IconError, IconInfo, IconClose, IconCheck, IconTheme, IconTable, IconPlot, IconPulse,
     IconFft, IconSpectrogram, IconEnvelope, IconPhase, IconCorrelation, IconVibrator, IconFk,
+    IconRuler,
     IconLayers, IconTarget, IconLocation, IconRefresh, IconArrowUp, IconArrowDown, IconTrash,
     IconCopy, IconClearAll, IconTasks, IconList, IconGoTo, IconExport, IconHistory,
     IconRecordBack, IconRecordNext, IconRecords, IconNew, IconWriting, IconFollow,
