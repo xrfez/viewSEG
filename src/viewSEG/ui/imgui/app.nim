@@ -546,6 +546,11 @@ proc showView*(frame: FrameInfo; v: Viewport) =
   ## Pans and zooms the main plot to `v` next frame, as the user would.
   frame.ui.trace.show(v)
 
+proc showMapView*(frame: FrameInfo; v: MapView) =
+  ## Gives the map the centre and scale of `v` next frame, as a pan or zoom
+  ## of the user's would.
+  frame.ui.map.show(v)
+
 proc apply*(frame: FrameInfo; cmd: Command) =
   ## Applies `cmd` as a control of the window would (for tests).
   frame.ui.core.apply cmd

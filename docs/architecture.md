@@ -405,7 +405,7 @@ it was made from). A million traces become a layer in about 0.1 s (land) to 0.25
 (marine, every receiver a point of its own) in an optimised build; a lookup takes a few
 microseconds.
 
-**The map** (`core/mapview`, `core/maplod`, `core/mapstate`, `view/maplayers`,
+**The map** (`core/mapview`, `core/maplod`, `core/mapthin`, `core/mapstate`, `view/maplayers`,
 `gpu/mappoints`, `ui/imgui/mapwindow`; docs/plot-window.md, "The map window"). A
 `MapView` is the survey point at the plot's centre and the survey units per pixel, the
 same across and down, so the map is at equal aspect by construction; `core/mapview` moves
@@ -608,9 +608,14 @@ ms; zooming a notch a frame 10.6 / 39.4 / 42.2 ms; panning 10.0 / 31.9 / 34.1 ms
 hovering 9.3 / 27.3 / 30.9 ms. A box selection of half a million points took one frame
 of 193 ms, and the frames that drew half a million highlighted points again 100-250 ms
 each on llvmpipe; now the selection takes 25 ms in `core` (was 60), and more than 50 000
-selected points are highlighted about one a pixel and a half (`ThinAbove`, thinned again
-when the scale changes by half: `tguimapload` holds it), so the map draws what a screen
-shows. Run again at load 24 with both: the import 9.5 s, its frames 11.5 / 15.7 / 52.5
+selected points are highlighted about one a pixel and a half (`ThinAbove`, `core/mapthin`:
+those in the view and half a view round it, a cell each, the cells taken kept in a bitmap
+of that area; thinned again when the view leaves it or the scale changes by half:
+`tguimapload` and `tmapthin` hold it), so the map draws what a screen shows. Thinning
+842 000 points takes 4-8 ms in an optimised build (load 50-85), at any zoom; it kept the
+cells in an `IntSet` before, 250-620 ms a thinning, and zoomed in close (every point a
+cell of its own) freeing the set overflowed the stack and crashed the program (from
+about 600 000 selected points on Linux's 8 MB stack, 100 000 on Windows' 1 MB). Run again at load 24 with both: the import 9.5 s, its frames 11.5 / 15.7 / 52.5
 ms; the box selection's frames 9.9 / 27.5 / 69.8 ms and the click after it 10.8 / 46.7 /
 58.6 ms. At a tenth of the scale, before (load 23): the import 38.2 s with a frame of
 393 ms. Before, the import's last step held the UI thread 288 ms at a tenth of this

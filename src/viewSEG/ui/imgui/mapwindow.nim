@@ -42,9 +42,9 @@
 ## takes out; Shift + click selects the stations along the line from the
 ## point clicked last.
 
-import std/[intsets, math, strutils]
+import std/[math, strutils]
 import imguin/cimgui
-import ../../core/[geometry, state]
+import ../../core/[geometry, mapthin, state]
 import ../../gpu/mappoints
 import ../../view/[maplayers, theme]
 import focus, icons, marks, style
@@ -131,11 +131,14 @@ type
     activeAt: array[PointRole, seq[MapPoint]]
       ## where they are
     selectedAt: seq[MapPoint]
+      ## where `highlight.selected` are
     selectedDrawn: seq[MapPoint]
-      ## of `selectedAt`, those drawn: all, or one a cell of `thinCell` when
-      ## there are more than `ThinAbove` (`thinned`)
-    thinCell: float64 ## survey units; 0: not thinned
-                        ## where `highlight.selected` are
+      ## of `selectedAt`, those drawn: all, or when there are more than
+      ## `ThinAbove`, those in `thin`'s area round the view, one a cell
+      ## (`core/mapthin`)
+    thin: ThinArea ## where and how `selectedDrawn` was thinned; unset: not thinned
+    drawnAll: bool ## `selectedDrawn` is all of `selectedAt`
+    thinTaken: seq[uint64] ## the thinning's bitmap, kept between thinnings
     activeFor: tuple[gather: GatherRef; survey: int]
       ## what `active` was made from
     visibleFor: tuple[hidden: seq[MapLayerKey]; groups: set[MapGroup]]
@@ -851,24 +854,13 @@ const ThinAbove = 50_000
   ## and a half: half a million highlighted discs took llvmpipe 100-250 ms a
   ## drawing
 
-proc thinned(dst: var seq[MapPoint]; points: openArray[MapPoint]; origin: MapPoint;
-    cell: float64) =
-  ## `points`, one a `cell`-wide square of the survey (the first in it).
-  dst.setLen 0
-  var seen = initIntSet()
-  for p in points:
-    if not (p.x.isNaN or p.y.isNaN):
-      let (cx, cy) = (int64((p.x - origin.x) / cell), int64((p.y - origin.y) / cell))
-      if cx in 0'i64 ..< (1'i64 shl 30) and cy in 0'i64 ..< (1'i64 shl 30):
-        if not seen.containsOrIncl(int((cx shl 30) or cy)): dst.add p
-      else: dst.add p
-
-proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
+proc followHighlight(mu: var MapUi; st: AppState; view: MapView; hidden: bool) =
   ## The highlighted points on the GPU: the gather on show's, the
   ## selection's, the plot's hovered trace's and the map's own hover, each
   ## found again (with where they are) only when what it comes from changes,
   ## so a hover finds its own few points alone; uploaded when one changed.
-  ## Points of a hidden layer are not drawn.
+  ## Points of a hidden layer are not drawn. `view`: the view drawn this
+  ## frame.
   let visible = (st.map.hidden, st.settings.map.hiddenGroups)
   var changed = mu.highlightRev == 0 or hidden != mu.drawnHidden or visible != mu.visibleFor
   if visible != mu.visibleFor:
@@ -880,21 +872,24 @@ proc followHighlight(mu: var MapUi; st: AppState; hidden: bool) =
     mu.highlight = st.highlightOf
     mu.selectedAt.addShownAt(st, mu.highlight.selected)
     mu.selectedFor = selected
-    mu.thinCell = -1 # thinned again below
+    mu.thin = ThinArea() # thinned again below
+    mu.drawnAll = false
     changed = true
-  # Many points selected: drawn about one a pixel and a half at this scale,
-  # thinned again when the scale changes by half or more.
-  if mu.selectedAt.len > ThinAbove and mu.cur.perPixel > 0:
-    let cell = 1.5 * mu.cur.perPixel
-    if mu.thinCell <= 0 or cell > 1.5 * mu.thinCell or cell < mu.thinCell / 1.5:
+  # Many points selected: those round the view drawn about one a pixel and
+  # a half at this scale, thinned again when the view leaves that area or
+  # its scale changes by half or more (one pass over the points and a
+  # bitmap of the area's cells: a few milliseconds for 842 000 points).
+  if mu.selectedAt.len > ThinAbove and view.isSet:
+    if not mu.thin.thinFits(view):
       let b = st.survey.bounds
-      mu.selectedDrawn.thinned(mu.selectedAt, (if b.isEmpty: mapPoint(0, 0)
-        else: mapPoint(b.minX, b.minY)), cell)
-      mu.thinCell = cell
+      mu.thin = thinArea(view, if b.isEmpty: mapPoint(0, 0) else: mapPoint(b.minX, b.minY))
+      mu.selectedDrawn.thinned(mu.selectedAt, mu.thin, mu.thinTaken)
+      mu.drawnAll = false
       changed = true
-  elif mu.thinCell != 0:
+  elif not mu.drawnAll:
     mu.selectedDrawn = mu.selectedAt
-    mu.thinCell = 0
+    mu.thin = ThinArea()
+    mu.drawnAll = true
     changed = true
   let active = (st.selection.activeGather, st.survey.revision)
   if active != mu.activeFor:
@@ -1292,7 +1287,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
     mu.plot = Rect(pos: vec2((pos.x - origin.x) * fb.x, (pos.y - origin.y) * fb.y),
       size: vec2(size.x * fb.x, size.y * fb.y))
     if mu.gpuError.len == 0 and mu.started and next.isSet:
-      mu.followHighlight(st, not st.map.shown(HighlightKey))
+      mu.followHighlight(st, view, not st.map.shown(HighlightKey))
       mu.followMarks(st)
       let s = fb.x
       var frame = MapFrame(area: Bounds(minX: limits.X.Min, minY: limits.Y.Min,
