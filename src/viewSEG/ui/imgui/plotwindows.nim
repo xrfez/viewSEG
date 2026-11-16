@@ -16,9 +16,9 @@
 ## `Command`s: `ckPlotDisplay` for a setting, `ckPlotCursor` for a key,
 ## `ckClosePlot` when one is closed.
 
-import std/[math, strutils, tables]
+import std/[math, sets, strutils, tables]
 import imguin/cimgui
-import ../../core/[colourmaps, plotcursor, state]
+import ../../core/[colourmaps, geometry, plotcursor, state]
 import ../../view/[analysisview, curveplot, theme]
 import curveplot as curves, icons, marks, placement, spectrumwindow, style
 
@@ -40,6 +40,7 @@ type
     curves: Table[int, seq[CurvePlotUi]] ## per window id, per plot
     under: Table[int, PlotCursor]        ## per window id: the cell under the pointer last frame
     readout*: Table[int, string]         ## per window id: what its cursor read last frame (tests)
+    toFront: HashSet[int]                ## windows to bring forward when next drawn
     heat: Table[int, HeatCache]          ## per window id: the image as drawn, cut to the pixels
     maps: array[ColourMap, int]          ## ImPlot's index of each density colour map + 1; 0: not added
 
@@ -614,6 +615,9 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
   for w in st.plots:
     ids.add w.id
     placeNext(w.id, (if w.view == avVibrator: VibratorSize else: PlotSize), scale)
+    if w.id in ui.toFront:
+      ui.toFront.excl w.id
+      igSetNextWindowFocus()
     var open = true
     if igBegin(w.windowTitle.cstring, addr open, 0):
       ui.drawBody(st, w, t, marks, res)
@@ -635,3 +639,20 @@ func readoutOf*(ui: PlotWindowsUi; id: int): string =
 func cellsDrawn*(ui: PlotWindowsUi; id: int): int =
   ## The cells window `id`'s image hands ImPlot to draw (tests).
   if id in ui.heat: ui.heat[id].cells.cols * ui.heat[id].cells.rows else: 0
+
+proc coveredBy*(ui: var PlotWindowsUi; id: int; area: Rect; others: openArray[int]): string =
+  ## Which of the other analysis windows `others` is in front of window `id` and
+  ## hides part of `area` (where it was drawn); "" when none does. A covered
+  ## window is brought forward at the next frame, so that asking again finds it
+  ## whole.
+  let target = igFindWindowByName(("###newplot-" & $id).cstring)
+  if target == nil: return ""
+  for o in others:
+    if o == id: continue
+    let w = igFindWindowByName(("###newplot-" & $o).cstring)
+    if w == nil or not w.Active or w.Hidden or not igIsWindowAbove(w, target): continue
+    if w.Pos.x < area.pos.x + area.size.x and w.Pos.x + w.Size.x > area.pos.x and
+        w.Pos.y < area.pos.y + area.size.y and w.Pos.y + w.Size.y > area.pos.y:
+      ui.toFront.incl id
+      return "new plot " & $o
+  ""

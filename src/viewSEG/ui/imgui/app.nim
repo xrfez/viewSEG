@@ -1469,6 +1469,17 @@ proc shoot(ui: var Ui; target: string): Shot =
       if r.size.x < 1 or r.size.y < 1:
         return Shot(error: "the " & target & " window is not on screen (closed, behind " &
           "another tab, or in a window of its own)")
+      if name.startsWith("new plot "):
+        # a picture of the frame holds what is in front of the window, not it
+        var id = 0
+        try: id = parseInt(name["new plot ".len .. ^1])
+        except ValueError: discard
+        var all: seq[int] = @[]
+        for w in ui.core.plots: all.add w.id
+        let cover = ui.plotWins.coveredBy(id, r, all)
+        if cover.len > 0:
+          return Shot(error: name & " is covered by another window (" & cover & "): it " &
+            "is being brought forward, ask again")
     let x0 = clamp(int(r.pos.x), 0, fw.int)
     let y0 = clamp(int(r.pos.y), 0, fh.int)
     w = clamp(int(r.pos.x + r.size.x), 0, fw.int) - x0
@@ -1477,6 +1488,10 @@ proc shoot(ui: var Ui; target: string): Shot =
       return Shot(error: "the " & target & " window is outside the main window")
     pixels = readRegion(fh.int, x0, y0, w, h)
   Shot(pixels: move pixels, width: w, height: h)
+
+proc screenshot*(frame: FrameInfo; target: string): Shot =
+  ## What an agent's screenshot of `target` gets, as this frame drew it (tests).
+  frame.ui[].shoot(target)
 
 proc frontendOf(ui: ptr Ui; minimized: bool): Frontend =
   ## What agent control may ask of this frontend: the main window's

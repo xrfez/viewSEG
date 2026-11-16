@@ -686,7 +686,9 @@ the same x in the plots that share its axis, the reading then marked "Held".
 
 Agent control: `open plot`, `plot display`, `plot cursor` and `close plot`
 (docs/agent-control.md); `state`'s `plots` gives each window and its numbers;
-`screenshot` takes `new plot N`.
+`screenshot` takes `new plot N`; when another analysis window is in front of it and hides
+part of it, the shot is refused (naming that window) and the window is brought forward, so
+that asking again gets it whole.
 
 ## Mouse and keys
 

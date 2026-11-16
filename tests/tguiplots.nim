@@ -38,6 +38,7 @@
 import std/[math, options, os, sets, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
+import viewSEG/remote/tools
 import utils/fixtures
 
 type
@@ -255,6 +256,19 @@ withFixtures fx:
     let same = f.edgeOf(box)
     doAssert same < edgeAt div 2, "the box's edge shows through the window in front (" &
       $same & " pixels of it)"
+    true)
+  step("a shot of the covered f-k", noop, proc (f: FrameInfo): bool =
+    # the picture would be of what is in front of it: refused, and the window
+    # brought forward for the next try
+    let covered = f.screenshot("new plot 2")
+    doAssert covered.error.len > 0 and "is covered by" in covered.error, "a shot of a covered " &
+      "window: " & $covered.width & " x " & $covered.height & " " & covered.error
+    let front = f.screenshot("new plot 3")
+    doAssert front.error.len == 0 and front.width > 100, front.error
+    true)
+  step("the f-k's shot, after a frame", noop, proc (f: FrameInfo): bool =
+    let again = f.screenshot("new plot 2")
+    doAssert again.error.len == 0 and again.width > 100, again.error
     true)
   step("the envelope closed", proc (f: FrameInfo) =
     f.apply(Command(kind: ckClosePlot, plot: 3)),
