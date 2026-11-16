@@ -58,6 +58,18 @@ proc said(st: AppState; part: string): bool =
     if part in e.text: return true
   false
 
+proc story(st: AppState): string =
+  ## What the project and its jobs did, for a failed wait: the open's
+  ## outcome, the project's messages and every job's end.
+  result = "read-only " & $st.project.readOnly & ", import recorded " &
+    $st.project.doc.hasImport
+  for e in st.log:
+    if e.source == "project": result.add "\n  said: " & e.text
+  for j in st.jobs.list:
+    result.add "\n  job " & j.spec.title & ": " & $j.state &
+      (if j.cancelRequested: ", cancel asked" else: "") & (if j.error.len > 0: " (" &
+      j.error & ")" else: "")
+
 proc surveyLayers(st: AppState): int =
   for l in st.survey.layers:
     if l.origin == loSurveyFile: inc result
@@ -112,8 +124,8 @@ withFixtures fx:
         sleep 100
         st = start(config)
       doAssert st.settle(st.inProject and st.project.survey == srLoaded and
-        st.project.doc.hasStore), "the survey was not copied at the next open: " &
-        $st.project.survey & " " & st.project.surveyNote
+        st.project.doc.hasStore), "the survey was not copied at the next open (" & how &
+        "): " & $st.project.survey & " " & st.project.surveyNote & "; " & st.story
       doAssert st.surveyLayers == 3, "the survey is not on the map: " & $st.surveyLayers
       for p in [survey.s, survey.r, survey.x]:
         doAssert fileExists(job / "survey" / "files" / p.extractFilename), p
