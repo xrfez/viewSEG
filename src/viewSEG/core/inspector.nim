@@ -167,6 +167,9 @@ type
       ## the trace table's columns read whole, and its order: the thread's own
     dropIds: seq[int]
       ## opens whose cached columns, order and catalogue are to be dropped
+    dropped: IntSet
+      ## opens dropped this run: a request already queued when one was closed
+      ## is served after that drop, and would put its columns back
     thread: Thread[ptr InspectorObj]
 
   Inspector* = object
@@ -469,6 +472,12 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
     bucketsOf(cache.columns[cache.indexOf(g)].values, cache.order, ordered,
       answer.graphMin, answer.graphMax)
 
+proc wasDropped(p: ptr InspectorObj; session: int): bool =
+  ## Whether open `session` has been dropped. The UI thread adds to `dropped`
+  ## under the lock; this reads it there too.
+  withLock p.lock:
+    result = session in p.dropped
+
 proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
   ## Reads and posts what `req` asks for; false when a newer request came
   ## first (then nothing is posted). Each call to the file system goes
@@ -492,8 +501,11 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
       except CatchableError as e:
         answer.record = RecordHeaders(record: req.record, problem: readProblem(e))
   if req.table.at in 0 ..< req.files.len:
-    if not p.serveTable(req.files[req.table.at], req.table, why[req.table.at], answer.table):
-      return false
+    let f = req.files[req.table.at]
+    # Closed already: not read, so its columns are not cached again.
+    if not p.wasDropped(int(f.session)):
+      if not p.serveTable(f, req.table, why[req.table.at], answer.table):
+        return false
   var room = MaxInspectedValues
   for t in req.traces:
     if p.interrupted: return false
@@ -552,9 +564,13 @@ proc dropCached(cache: var TableCache; session: int) =
     cache.catalogueSession = 0
 
 proc applyDrops(p: ptr InspectorObj) =
-  ## Lock held, or the inspector thread while it is busy.
+  ## Lock held, or the inspector thread while it is busy. A request already
+  ## queued (or taken in this wake) when the close happened is served after
+  ## the first drop and would put that open's columns back, so every open
+  ## dropped this run is dropped again after the serve.
   for id in p.dropIds: p.table.dropCached(id)
   p.dropIds.setLen 0
+  for id in p.dropped: p.table.dropCached(id)
 
 proc run(p: ptr InspectorObj) {.thread.} =
   markWorkerThread()
@@ -635,6 +651,7 @@ proc dropSession*(x: Inspector; session: int) =
   if x.p == nil: return
   withLock x.p.lock:
     x.p.dropIds.add session
+    x.p.dropped.incl session
     if not x.p.busy: x.p.applyDrops()
 
 proc cachedColumns*(x: Inspector): int =

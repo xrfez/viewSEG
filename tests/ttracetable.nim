@@ -24,7 +24,9 @@
 ## "the whole answer was dropped"; with the cache evicting a column this
 ## request needs (`if c.key notin needed` changed to `if true`), "the sort's
 ## column was evicted"; with `closeSession` not dropping the reader's cache,
-## "a closed session's columns stayed cached".
+## "a closed session's columns stayed cached"; with a request queued at the
+## close served after the drop (`applyDrops` not run again after that serve),
+## "a closed open's columns came back".
 ##
 ## Runs alone: it bounds the time a million rows take to sort (5 s).
 
@@ -432,3 +434,30 @@ block theTraceTabAgrees:
       # here; the joined stations and the scaled header coordinates it does)
       doAssert seen >= 7, "the Trace tab had " & $seen & " of the table's fields (row " & $r & ")"
     st.shutdown()
+
+block aQueuedRequestDoesNotRestoreAClosedOpen:
+  # A column read is held, another table request for the same open is queued,
+  # and the file is closed. That request is served after the drop: it must not
+  # put the closed open's columns back.
+  install()
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let id = st.sessions[0].id
+    fault(path, fkPermits, {foHeaders})
+    st.apply Command(kind: ckInspect, inspect: {ipTable}, table: TableView(fields: @[
+        "keys.channel"],
+      scope: tsFile, sortBy: "keys.channel", rows: 0 .. 2))
+    doAssert waitUntil(hung() > 0), "the table's read was not held"
+    grant() # the catalogue; the column read waits next
+    doAssert waitUntil(hung() > 0), "the column read was not held"
+    st.apply Command(kind: ckInspect, inspect: {ipTable}, table: TableView(fields: @["keys.offset"],
+      scope: tsFile, sortBy: "keys.offset", rows: 0 .. 4))
+    st.apply Command(kind: ckClose, file: id)
+    releaseAll()
+    doAssert st.settle(st.sessions.len == 0 and st.cachedTraceColumns == 0),
+      "a closed open's columns came back (" & $st.cachedTraceColumns & ")"
+    st.shutdown()
+  releaseAll()
