@@ -152,7 +152,7 @@ and an XXH64 hash of its first and last 64 KiB). One that changed (an S file tha
 with the day's shots) is said in the log, and the Project window comes forward with
 **Update from the original**: never updated without asking. Until then the project uses
 its copy. The update copies the changed originals in again, writes `survey.bin` again and
-puts the new survey on the map; the files open are matched to it again. The original's identity is taken after the copy and must be the one before it: an original written meanwhile is copied once more, and then refused with a message. Update is not offered while the survey is being copied in. An original that
+puts the new survey on the map; the files open are matched to it again. The original's identity is taken after the copy and must be the one before it: an original written meanwhile is copied once more, and then refused with a message. The copies are written to temporary files and put over the old ones only after `survey.bin` is written from them, so a refused or cancelled Update leaves the copies, `project.nif` and `survey.bin` as they were. Update is not offered while the survey is being copied in. An original that
 is gone is no problem: the copy stands for it, and the Project window says the original
 was not found.
 

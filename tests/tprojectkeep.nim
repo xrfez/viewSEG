@@ -28,6 +28,9 @@
 ##   import began, at the path recorded; a hostile project.nif cannot make
 ##   the open copy another file.
 ##
+## - An Update refused (an original written during both tries) or cancelled
+##   leaves the copies, the document and survey.bin as they were.
+##
 ## Seen to fail: with the temporary name of `survey.bin` made from the
 ## process id, "the temporary name"; with the originals looked at inside `openProjectWork`, "the
 ## originals were looked at before the open ended"; with `markImporting` not called, "the import is not in
@@ -313,4 +316,53 @@ withFixtures fx:
       again.shutdown()
       for f in walkFiles(job / "survey" / "files" / "*"): doAssert false, "a copy is left: " & f
       writeFile(secret, "private\n".repeat(20_000))
+  block updateRefused:
+    # An original written during both tries is refused: the copies, the
+    # document and survey.bin stay as they were, agreeing, and no temporary
+    # file is left.
+    let job = fx.dir / "Job refused"
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+    doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+    st.importSurvey(survey)
+    doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore and
+      not st.project.doc.hasImport)
+    st.flushFiles()
+    st.shutdown()
+    let copyPath = job / "survey" / "files" / "survey.s"
+    let (copyBefore, binBefore) = (readFile(copyPath), readFile(job / "survey" / "survey.bin"))
+    proc grow(path: string) =
+      var sf = readSps(path)
+      var p = sf.points[^1]
+      p.point += 1
+      p.pointName = ""
+      sf.points.add p
+      sf.order.setLen 0
+      sleep 20
+      doAssert writeSps(sf, path).len == 0
+    grow(survey.s)
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject and again.project.survey == srLoaded and
+      again.project.offer)
+    let sizeBefore = again.project.doc.survey[0].size
+    holdStep("copying survey.s into the project again")
+    holdStep("copying survey.s into the project again (once more)")
+    again.apply Command(kind: ckUpdateSurvey)
+    doAssert again.settle(inStep("copying survey.s into the project again").len == 1)
+    grow(survey.s)
+    releaseStep("copying survey.s into the project again")
+    doAssert again.settle(inStep("copying survey.s into the project again (once more)").len == 1)
+    grow(survey.s)
+    releaseStep("copying survey.s into the project again (once more)")
+    doAssert again.settle(again.project.survey == srLoaded and
+      again.said("changed while it was copied")), "the update was not refused: " &
+      $again.project.survey & " " & again.project.surveyNote
+    doAssert again.project.doc.survey[0].size == sizeBefore, "the document took the refused copy"
+    again.flushFiles()
+    again.shutdown()
+    doAssert readFile(copyPath) == copyBefore, "the copy was overwritten"
+    doAssert readFile(job / "survey" / "survey.bin") == binBefore, "survey.bin changed"
+    for f in walkFiles(job / "survey" / "files" / "*.tmp"): doAssert false, "a temp is left: " & f
+    for f in walkFiles(job / "survey" / "*.tmp"): doAssert false, "a temp is left: " & f
 echo "tprojectkeep: done"

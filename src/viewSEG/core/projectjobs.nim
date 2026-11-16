@@ -446,7 +446,8 @@ proc updateSurveyWork*(dir: string; copies: seq[SurveyCopy]; originals: seq[Orig
             for attempt in 1 .. 2:
               var before: Time
               let first = quickIdentity(src, before)
-              ctx.setPhase "copying " & src.extractFilename & " into the project again"
+              ctx.setPhase "copying " & src.extractFilename & " into the project again" &
+                (if attempt > 1: " (once more)" else: "")
               dropCopies(tmps[mark ..< tmps.len])
               tmps.setLen mark
               discard ctx.copyIn(dir, src, c.copy.extractFilename, tmps)
