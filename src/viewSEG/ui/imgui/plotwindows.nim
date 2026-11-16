@@ -303,12 +303,12 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
       "this file or another one open (Sweep0's pilot, say)")
     igSameLine(0, -1)
     igBeginDisabled(p.reference < 0)
-    if igSmallButton("The record's pilot"):
+    if igSmallButton("The first auxiliary trace"):
       (p.reference, changed) = (-1, true)
     igEndDisabled()
     marks.mark(name & ".reference pilot")
-    tip("Correlate against the record's first auxiliary trace (its pilot), else the " &
-      "first trace of the window")
+    tip("Correlate against the record's first auxiliary trace (its pilot when it is a " &
+      "sweep, a time break on a dynamite record), else the first trace of the window")
     igSameLine(0, -1)
     label("lags ±")
     if numberBox("##lags", p.maxLagMs, box, typed) and LagMsRange.allows(typed):

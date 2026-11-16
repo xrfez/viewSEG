@@ -67,6 +67,8 @@ proc analysisReaderFor(state: var AppState; path: string): lent AnalysisReader =
     state.analysisReader = newAnalysisReader(state.inbox.poster, state.jobs.holdRelease)
   state.analysisReader
 
+const SweepTraceCode = 6'i16 ## SEG-Y's trace identification code of a sweep: a pilot
+
 func firstAux(s: Session; trace: int): int =
   ## The first auxiliary trace (index in the file) of the record `trace`
   ## is in: its pilot, for a correlation; -1 for none.
@@ -111,7 +113,12 @@ proc askPlot(state: var AppState; w: int): bool =
         (a.refFile, a.refPath, a.refSize) = (rs.filePtr, rs.path, rs.size)
     else:
       let aux = s.firstAux(traces[0])
-      if aux >= 0: (a.refTrace, a.refName) = (aux, "the pilot, trace " & $(aux + 1))
+      if aux >= 0:
+        # a sweep (SEG-Y trace code 6) is a pilot; any other auxiliary trace (a
+        # time break on a dynamite record) is only the first one
+        let sweep = s.filePtr[].traceKeys(aux).traceCode == SweepTraceCode
+        (a.refTrace, a.refName) = (aux, (if sweep: "the pilot, trace "
+          else: "the first auxiliary trace, trace ") & $(aux + 1))
     pw.reference = a.refName
   if not state.jobs.hold(s.path):
     if a.refFile != nil: discard state.jobs.holdRelease.release(a.refPath)

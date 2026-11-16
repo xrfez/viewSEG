@@ -608,8 +608,10 @@ Each window's first line holds its view's settings; a change works it out again.
   arriving at time t steps 360°·t/(4T), at most a quarter turn for any t within the
   trace (length T), so the unwrap cannot alias. Unpadded, a step passes half a turn once
   t is past T/2, and a sweep's phase (which falls all the way) turned and rose there.
-- **Cross-correlation:** the reference is **the record's pilot** (its first auxiliary
-  trace) at first, else the first trace of the window; **The selected trace** makes the
+- **Cross-correlation:** the reference is **the record's first auxiliary trace** at first
+  (the window calls it "the pilot" when its SEG-Y trace identification code says sweep, 6;
+  a dynamite record's is its time break, so it is "the first auxiliary trace"; SEG-D
+  channel types are not read, so a SEG-D one is that too), else the first trace of the window; **The selected trace** makes the
   first selected trace the reference, in this file or another one open (Sweep0's pilot,
   say), sampled at the same interval. A trace that is the reference delayed by τ peaks at
   +τ (the words under the title give each trace's peak). A trace that is the reference

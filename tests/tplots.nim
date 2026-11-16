@@ -394,6 +394,39 @@ proc planeWaveRecord(fx: Fixtures; name: string; system: int16; spacing: float64
     w.writeTrace(k, buf)
   doAssert w.close().len == 0
 
+proc auxRecord(fx: Fixtures; name: string; code: int16): string =
+  ## A record of an auxiliary trace (trace identification `code`) and 4 seismic traces.
+  result = fx.dir / name
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: an auxiliary trace and four traces"]))
+  var buf = newSeq[float32](500)
+  for c in 0 .. 4:
+    for i in 0 ..< 500: buf[i] = float32(sin(float64(i + c) / 7))
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs) = (1.0, float64(c + 1), 0.0, 2000.0)
+    if c == 0: (k.traceCode, k.status) = (code, tsAuxiliary)
+    else: k.status = tsLive
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0
+
+block firstAuxiliary:
+  # the default reference is a pilot only when the trace says sweep (code 6);
+  # a time break (code 4) is "the first auxiliary trace"
+  withFixtures fx:
+    for (name, code, words) in [("sweep.sgy", 6'i16, "the pilot, trace 1"),
+        ("break.sgy", 4'i16, "the first auxiliary trace, trace 1")]:
+      var st = initAppState()
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.auxRecord(name, code))
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      st.apply Command(kind: ckFilter, panel: MainPanel, filter: TraceFilter(seismic: true,
+        auxiliary: true))
+      doAssert st.settle(st.panel(MainPanel).laidOut)
+      let base = st.sessions[0].base
+      st.apply Command(kind: ckOpenPlot, plotView: avCorrelation, plotTraces: @[base + 1, base + 2])
+      doAssert st.settle(st.answered(0)), "no answer"
+      doAssert st.plots[0].reference == words, name & ": " & st.plots[0].reference
+      discard st.shutdown()
+
 block feetAndMetres:
   # the unit of the file's distances reaches the f-k: the same wave, 10
   # cycles/km at 3000 m/s, in a file of feet and in one of metres
