@@ -3,10 +3,11 @@
 ## live Spectrum panel (Window > Spectrum), which follows the Seismic
 ## window's view or selection while it is on screen.
 ##
-## Each shows a line of controls (dB or linear, the frequency axis
-## logarithmic, the raw and processed curves, the filters' response, the
-## whole trace or the time the plot showed; Freeze), what the spectrum is of and
-## what was left out, the plot (`curveplot`), and what the pointer reads.
+## Each shows a line of controls in three groups (the scale: dB or linear and
+## a logarithmic frequency axis; the curves: raw, processed, the filters'
+## response and the phase; then the whole trace or the time the plot showed),
+## with Freeze, a pin at the right of the first row. Then what the spectrum
+## is of and what was left out, the plot (`curveplot`), and what the pointer reads.
 ## The windows read `core` and issue `Command`s: `ckSpectrumDisplay` for a
 ## control, `ckCloseSpectrum` when an FFT window is closed,
 ## `ckSpectrumPanel` when the live panel comes on screen or leaves it (it
@@ -29,6 +30,7 @@ type
     phases: Table[int, CurvePlotUi] ## per window id: its phase plot
     readout*: Table[int, string]   ## per window id: what the pointer read last frame (tests)
     readAt*: Table[int, int]       ## per window id: the bin it read; -1 for none (tests)
+    widths: Table[int, array[3, float32]] ## per window id: the control groups, as drawn last frame
     front: int                     ## the live panel's `front` followed last
 
   SpectraOutput* = object
@@ -49,82 +51,81 @@ func fftTitle*(w: SpectrumWindow): string =
   ## layout keeps ("###fft-2").
   IconPulse & "  " & w.title & "###fft-" & $w.id
 
-proc toggleWidth(label: string): float32 =
-  ## A checkbox's or radio button's width with its label.
-  igGetFrameHeight() + igGetStyle().ItemInnerSpacing.x +
-    igCalcTextSize(label.cstring, nil, true, -1).x
+const GroupGap = 14'f32 ## between the spectrum line's groups, as on the Seismic strip
 
-proc after(line: ControlLine; label: string) =
-  ## The next control on the line of the one before when it fits (before
-  ## the Freeze pin on the first row), else on the next line.
-  if line.fitsBefore(toggleWidth(label), igGetStyle().ItemSpacing.x):
-    igSameLine(0, -1)
-
-proc drawControls(w: SpectrumWindow; name: string; t: Theme; marks: var Marks;
-    res: var SpectraOutput) =
-  ## The controls, wrapping before the Freeze pin; each change is a
-  ## `ckSpectrumDisplay`.
+proc drawControls(w: SpectrumWindow; name: string; t: Theme; widths: var array[3, float32];
+    marks: var Marks; res: var SpectraOutput) =
+  ## The controls in three groups that wrap as wholes (the scale, the curves,
+  ## Visible time), before the Freeze pin; each change is a `ckSpectrumDisplay`.
   var d = w.display
   var frozen = w.frozen
   var changed = false
   let line = beginControlLine()
-  if igRadioButton_Bool("dB", d.scale == ssDb):
-    d.scale = ssDb
-    changed = true
-  marks.mark(name & ".db")
-  tip("Amplitude in dB, 0 dB at the largest of the curves (raw and processed on one scale)")
-  after(line, "Linear")
-  if igRadioButton_Bool("Linear", d.scale == ssLinear):
-    d.scale = ssLinear
-    changed = true
-  marks.mark(name & ".linear")
-  tip("Amplitude in the file's sample units: a sine of amplitude A on a bin reads A")
-  after(line, "Log frequency")
-  if igCheckbox("Log frequency", addr d.logFrequency): changed = true
-  marks.mark(name & ".log")
-  tip("The frequency axis logarithmic (0 Hz left out)")
-  after(line, "Raw")
-  if igCheckbox("Raw", addr d.raw): changed = true
-  marks.mark(name & ".raw")
-  tip("The samples as the file has them")
-  after(line, "Processed")
-  igBeginDisabled(w.spectrum.processed.len == 0)
-  if igCheckbox("Processed", addr d.processed): changed = true
-  igEndDisabled()
-  marks.mark(name & ".processed")
-  tip(if w.spectrum.processed.len > 0: "Through the plot's filters: " & w.spectrum.filters
-      elif w.spectrum.filters.len > 0: "No processed curve: " & w.filterText
-      else: "The plot has no filters (Filters in the Seismic window's strip)")
-  after(line, "Response")
-  igBeginDisabled(not w.spectrum.hasResponse)
-  if igCheckbox("Response", addr d.response): changed = true
-  igEndDisabled()
-  marks.mark(name & ".response")
-  tip(if w.spectrum.hasResponse: "Under the curves, the gain the plot's filters apply at " &
-        "each frequency (an impulse put through them, as the traces are), 0 dB at the top " &
-        "of the curves: what they do, where the processed curve shows what the data and " &
-        "the window make of it"
-      elif w.spectrum.response.len > 0: "The filters reached none of these traces: their " &
-        "response is not drawn"
-      else: "The plot has no pass band or notch to draw")
-  after(line, "Visible time")
-  var visible = d.time == stVisible
-  if igCheckbox("Visible time", addr visible):
-    d.time = if visible: stVisible else: stWhole
-    changed = true
-  marks.mark(name & ".time")
-  tip(if w.id == LiveSpectrum: "The time the Seismic window shows; off: the whole trace"
-      else: "The time the Seismic window showed when this window opened (" &
-        valueText(w.visibleMs.lo) & " to " & valueText(w.visibleMs.hi) &
-        " ms); off: the whole trace")
-  after(line, "Phase")
-  igBeginDisabled(not w.hasPhase)
-  if igCheckbox("Phase", addr d.phase): changed = true
-  igEndDisabled()
-  marks.mark(name & ".phase")
-  tip(if w.hasPhase: "The phase of this trace (degrees, from the window's first sample), " &
-        "under its amplitude"
-      else: "The phase is drawn for the spectrum of one trace")
+  template group(i: int; body: untyped) =
+    if i > 0 and line.fitsBefore(widths[i], GroupGap):
+      igSameLine(0, GroupGap)
+    igBeginGroup()
+    body
+    igEndGroup()
+    widths[i] = igGetItemRectSize().x
+  group(0):
+    if igRadioButton_Bool("dB", d.scale == ssDb):
+      d.scale = ssDb
+      changed = true
+    marks.mark(name & ".db")
+    tip("Amplitude in dB, 0 dB at the largest of the curves (raw and processed on one scale)")
+    igSameLine(0, -1)
+    if igRadioButton_Bool("Linear", d.scale == ssLinear):
+      d.scale = ssLinear
+      changed = true
+    marks.mark(name & ".linear")
+    tip("Amplitude in the file's sample units: a sine of amplitude A on a bin reads A")
+    igSameLine(0, -1)
+    if igCheckbox("Log frequency", addr d.logFrequency): changed = true
+    marks.mark(name & ".log")
+    tip("The frequency axis logarithmic (0 Hz left out)")
+  group(1):
+    if igCheckbox("Raw", addr d.raw): changed = true
+    marks.mark(name & ".raw")
+    tip("The samples as the file has them")
+    igSameLine(0, -1)
+    igBeginDisabled(w.spectrum.processed.len == 0)
+    if igCheckbox("Processed", addr d.processed): changed = true
+    igEndDisabled()
+    marks.mark(name & ".processed")
+    tip(if w.spectrum.processed.len > 0: "Through the plot's filters: " & w.spectrum.filters
+        elif w.spectrum.filters.len > 0: "No processed curve: " & w.filterText
+        else: "The plot has no filters (Filters in the Seismic window's strip)")
+    igSameLine(0, -1)
+    igBeginDisabled(not w.spectrum.hasResponse)
+    if igCheckbox("Response", addr d.response): changed = true
+    igEndDisabled()
+    marks.mark(name & ".response")
+    tip(if w.spectrum.hasResponse: "Under the curves, the gain the plot's filters apply at " &
+          "each frequency (an impulse put through them, as the traces are), 0 dB at the top " &
+          "of the curves: what they do, where the processed curve shows what the data and " &
+          "the window make of it"
+        elif w.spectrum.response.len > 0: "The filters reached none of these traces: their " &
+          "response is not drawn"
+        else: "The plot has no pass band or notch to draw")
+    igSameLine(0, -1)
+    igBeginDisabled(not w.hasPhase)
+    if igCheckbox("Phase", addr d.phase): changed = true
+    igEndDisabled()
+    marks.mark(name & ".phase")
+    tip(if w.hasPhase: "The phase of this trace (degrees, from the window's first sample), " &
+          "under its amplitude"
+        else: "The phase is drawn for the spectrum of one trace")
+  group(2):
+    var visible = d.time == stVisible
+    if igCheckbox("Visible time", addr visible):
+      d.time = if visible: stVisible else: stWhole
+      changed = true
+    marks.mark(name & ".time")
+    tip(if w.id == LiveSpectrum: "The time the Seismic window shows; off: the whole trace"
+        else: "The time the Seismic window showed when this window opened (" &
+          valueText(w.visibleMs.lo) & " to " & valueText(w.visibleMs.hi) &
+          " ms); off: the whole trace")
   let sentence = if w.id == LiveSpectrum: "Keep this spectrum while the Seismic window moves on"
                  else: "Keep this spectrum: the filters it went through while the plot's change, " &
                    "and its trace while Alt + arrows step the plot's selection; off: it follows " &
@@ -199,7 +200,9 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
   ## filters the auxiliary traces when they were not), its plot and reading.
   let name = w.markName
   marks.markWindow(name)
-  drawControls(w, name, t, marks, res)
+  var widths = ui.widths.getOrDefault(w.id)
+  drawControls(w, name, t, widths, marks, res)
+  ui.widths[w.id] = widths
   # What it is of (the live panel's title does not say), and what was left out.
   let words = (if w.id == LiveSpectrum: w.label & " · " else: "") & w.summaryText &
     (if w.filterText.len > 0: " · " & w.filterText else: "")
@@ -281,6 +284,7 @@ proc drawFfts*(ui: var SpectraUi; st: AppState; t: Theme; scale: float32; marks:
     ui.phases.del id
     ui.readout.del id
     ui.readAt.del id
+    ui.widths.del id
 
 func readoutOf*(ui: SpectraUi; id: int): (string, int) =
   ## What window `id`'s pointer read last frame, and the bin; "" and -1

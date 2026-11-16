@@ -106,9 +106,10 @@ withFixtures fx:
       doAssert abs(pin.pos.y - db.pos.y) <= 8, "freeze not on the first row"
       doAssert pin.pos.x + pin.size.x > win.pos.x + win.size.x - 28, "freeze not at the right"
       doAssert db.pos.x + db.size.x < pin.pos.x, "a scale control reaches the freeze place"
-      discard phase
-      discard raw
-      discard time)
+      doAssert abs(phase.pos.y - raw.pos.y) <= 2 and phase.pos.x > raw.pos.x,
+        "phase is not with the curves"
+      doAssert time.pos.y > phase.pos.y + 2 or phase.pos.x < time.pos.x,
+        "visible time is not after the curves")
   step("its title", noop, proc (f: FrameInfo): bool =
     doAssert f.windowName("fft-1").startsWith(IconPulse & "  FFT: trace 1 · FFID 5 · " &
       "spectrum.sgy"), f.windowName("fft-1")

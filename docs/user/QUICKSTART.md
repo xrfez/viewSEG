@@ -650,7 +650,9 @@ whose amplitude the window's line of words gives, so that two windows compare);
 **Linear** shows the amplitude itself (a sine of amplitude A reads A). **Log frequency**
 spreads the low frequencies out. **Visible time** takes the spectrum over the time the
 plot showed when the window opened, instead of the whole trace. For one trace, **Phase**
-draws its phase under its amplitude. Point at the plot: the line under it reads the
+(with the curves) draws its phase under its amplitude. The same line, in the same order,
+is on an FFT window and on the live Spectrum panel; the **Freeze** pin sits at the right
+of its first row. Point at the plot: the line under it reads the
 frequency and each curve's level. The wheel zooms, a drag pans, a double click shows it
 all again. The window's line of words says how many traces were averaged and what was
 left out (killed, dead, unreadable).
@@ -658,7 +660,10 @@ left out (killed, dead, unreadable).
 **Window > Spectrum** is the same, docked and live (a tab beside the map at first): the
 spectrum of the traces the Seismic window shows (of the selection, when you have one),
 over the time it shows, updated as you pan, zoom, select, change record or file, or move
-a filter's slider. **Freeze** keeps what it shows. It costs nothing while it is hidden
+a filter's slider. The line is three groups: the scale (**dB**, **Linear**, **Log
+frequency**), the curves (**Raw**, **Processed**, **Response**, **Phase**) and **Visible
+time**; groups wrap whole. The **Freeze** pin, at the right of the first row, keeps what
+it shows. It costs nothing while it is hidden
 or behind another tab.
 
 ## Headers
