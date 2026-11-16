@@ -2094,7 +2094,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
         style: d.styleFor(shown, scale, width, 2 * width), ink: ink.wiggle,
         tint: DensityTint, marks: tp.marks, componentInk: multi and d.drawsWiggles,
         componentColours: cols,
-        bandPx: (if multi and d.drawsDensity and not d.drawsWiggles: max(8, int(round(4 * fb.x)))
+        bandPx: (if multi and d.drawsDensity and not d.drawsWiggles: densityBandPx(fb.x)
         else: 0),
         bandEdge: (if turn.along[axTime] == saX: 1 else: 0)), tiles, tp.textures)
       tp.drawn = shown

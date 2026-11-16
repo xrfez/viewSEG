@@ -26,7 +26,7 @@
 ## would be left with no trace, because every component present is off,
 ## is shown whole again.
 
-import std/algorithm
+import std/[algorithm, math]
 import geometry
 
 type
@@ -195,6 +195,11 @@ func buttonFaces*(codes, sensors: openArray[uint8]; counts: openArray[int]): seq
     let name = "component " & $code[i] & (if known.len > 0: " (" & known & ")" else: "")
     result.add ComponentFace(code: code[i], count: if i < counts.len: counts[i] else: 0,
       sensor: sensor[i], letter: $code[i], name: name, slot: slot)
+
+func densityBandPx*(scale: float32): int =
+  ## The density component band, in framebuffer pixels: 8 logical pixels,
+  ## and at least 8 physical, so a HiDPI display does not shrink it.
+  max(8, int(round(8 * scale)))
 
 func componentSlots*(faces: openArray[ComponentFace]): array[256, uint8] =
   ## Colour slot of each component code in `faces` (0: the normal ink).

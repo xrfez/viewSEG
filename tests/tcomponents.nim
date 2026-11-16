@@ -37,6 +37,14 @@ block names:
     colourSlot(4) == 4 and colourSlot(9) == 0
   doAssert componentMark(2) == uint8(2 shl ComponentShift)
 
+block density_band:
+  ## Seen to fail: with the band `max(8, round(4*scale))`, a 2x display stayed
+  ## at 8 physical pixels.
+  doAssert densityBandPx(1) == 8
+  doAssert densityBandPx(2) == 16, "2x display"
+  doAssert densityBandPx(1.25) == 10
+  doAssert densityBandPx(0.5) == 8
+
 block faces:
   # group index 1, 2, 3, every trace sensor type 2: numbers, green first
   let same = buttonFaces(@[1'u8, 2, 3], @[2'u8, 2, 2], @[24, 24, 24])
