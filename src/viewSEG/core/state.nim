@@ -4341,7 +4341,8 @@ proc restoreSurvey(state: var AppState; layers: bool) =
   ## `layers` its map's layers too.
   template p: untyped = state.project
   p.survey = srLoading
-  p.surveyJob = state.jobs.submit(JobSpec(title: "Load the project's survey", lane: jlBackground),
+  p.surveyJob = state.jobs.submit(JobSpec(title: "Load the project's survey",
+    lane: jlBackground, exclusive: @[p.dir.partOf(SurveyFolder)]),
     restoreWork(p.dir, p.doc, layers, state.inbox.poster))
   inc p.revision
 
@@ -4352,7 +4353,8 @@ proc keepSurvey(state: var AppState; files: seq[JoinFile]; places: seq[ProjectPa
   if p.surveyJob != NoJob: discard state.jobs.cancel(p.surveyJob)
   p.survey = srKeeping
   p.surveyJob = state.jobs.submit(JobSpec(title: "Keep the survey in the project",
-    lane: jlBackground), keepSurveyWork(p.dir, files, p.doc.survey, state.inbox.poster, places))
+    lane: jlBackground, exclusive: @[p.dir.partOf(SurveyFolder)]), keepSurveyWork(p.dir, files,
+        p.doc.survey, state.inbox.poster, places))
   inc p.revision
 
 proc markImporting(state: var AppState; files: seq[JoinFile]) =
@@ -6200,7 +6202,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
       p.offer = false
       p.survey = srKeeping
       p.surveyJob = state.jobs.submit(JobSpec(title: "Update the project's survey",
-        lane: jlBackground), updateSurveyWork(p.dir, p.doc.survey, p.originals,
+        lane: jlBackground, exclusive: @[p.dir.partOf(SurveyFolder)]), updateSurveyWork(p.dir,
+        p.doc.survey, p.originals,
         state.inbox.poster))
       inc p.revision
   of ckHeader:

@@ -251,7 +251,7 @@ proc writeStore*(dir: string; files: openArray[SurveyCopy]; ctx: JobContext): St
   ## when a copy cannot be read or the store not written,
   ## `JobCancelledError` at a cancel. Worker-only.
   let path = dir.partOf(SurveyStoreName)
-  let tmp = path & "." & $getCurrentProcessId() & ".tmp"
+  let tmp = path & "." & $int(ctx.id) & ".tmp" # the job's own: no other job's is the same
   fs.createDir(path.parentDir)
   var w = Writer(path: tmp, h: initHasher())
   if not fs.open(w.f, tmp, fmWrite): raise newException(IOError, "cannot write " & tmp)

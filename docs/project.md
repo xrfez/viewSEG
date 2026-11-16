@@ -292,7 +292,7 @@ touched and large, holds up nothing. When one's time moved but every byte is its
 the new time is recorded in `project.nif`, so the next open does not read it again; copying the survey in, writing `survey.bin` and making the
 survey from it are jobs on the background lane (`keepSurveyWork`, `updateSurveyWork`,
 `restoreWork`: `survey.bin` can be large, so its job writes it, not the disk thread,
-which must stay free for the settings and the log). The disk thread writes the project
+which must stay free for the settings and the log). These three are exclusive on the project's survey folder, so two never run at once, and each names its temporary files for its own job; copying and hashing a file have places for a cancel. The disk thread writes the project
 document, its layout and the file documents. A project on a drive that does not answer
 holds only its own jobs.
 

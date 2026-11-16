@@ -12,7 +12,11 @@
 ## - A survey.bin that is rejected (damaged) is made again from the copies in
 ##   a writable project, and said.
 ##
-## Seen to fail: with the originals looked at inside `openProjectWork`, "the
+## - A keep's temporary files are named for its job; two keeps never run at
+##   once (the survey folder is exclusive); a cancel stops the copy.
+##
+## Seen to fail: with the temporary name of `survey.bin` made from the
+## process id, "the temporary name"; with the originals looked at inside `openProjectWork`, "the
 ## originals were looked at before the open ended"; with `markImporting` not called, "the import is not in
 ## project.nif"; with the open not taking an import up, "the survey was not
 ## copied at the next open".
@@ -73,7 +77,13 @@ withFixtures fx:
       doAssert not fileExists(job / "survey" / "survey.bin")
     block resumed:
       var st = start(config)
-      st.apply Command(kind: ckOpenProject, projectPath: job)
+      for _ in 0 ..< 50: # the quit's straggler may still hold the lock for a moment
+        st.apply Command(kind: ckOpenProject, projectPath: job)
+        doAssert st.settle(st.inProject)
+        if not st.project.readOnly: break
+        st.shutdown()
+        sleep 100
+        st = start(config)
       doAssert st.settle(st.inProject and st.project.survey == srLoaded and
         st.project.doc.hasStore), "the survey was not copied at the next open: " &
         $st.project.survey & " " & st.project.surveyNote
@@ -148,4 +158,32 @@ withFixtures fx:
     doAssert third.settle(third.inProject and third.project.survey == srLoaded)
     doAssert not third.said("made again from the copies"), "damaged again"
     third.shutdown()
+  block ownTemporaryNames:
+    # A keep's temporary files are named for its job, so that two jobs never
+    # share one; a second import while the first is held begins after it, and
+    # ends whole with no temporary file left.
+    let job = fx.dir / "Job twice"
+    holdStep("keeping survey.s")
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+    doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+    st.importSurvey(survey)
+    doAssert st.settle(inStep("keeping survey.s").len == 1)
+    let id = int(inStep("keeping survey.s")[0])
+    var temps: seq[string] = @[]
+    for f in walkFiles(job / "survey" / "*.tmp"): temps.add f.extractFilename
+    doAssert temps == @["survey.bin." & $id & ".tmp"], "the temporary name: " & $temps
+    st.importSurvey(survey) # cancels the first, which waits in its step
+    for _ in 0 ..< 30:
+      discard st.drainInbox()
+      st.persist()
+      sleep 10
+    doAssert inStep("keeping survey.s").len == 1, "two keeps ran at once"
+    releaseStep("keeping survey.s")
+    doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore and
+      not st.project.doc.hasImport), "the second import did not end: " & $st.project.survey
+    st.flushFiles()
+    st.shutdown()
+    for dir in [job / "survey", job / "survey" / "files"]:
+      for f in walkFiles(dir / "*.tmp"): doAssert false, "a temporary file is left: " & f
 echo "tprojectkeep: done"

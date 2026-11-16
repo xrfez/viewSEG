@@ -229,14 +229,43 @@ proc unlockWork*(lock: FileLock): JobWork =
     var l = lock
     fs.unlock(l)
 
-proc copyIn(dir, source, name: string): string =
-  ## Copies `source` into the project's survey copies as `name`; its path
-  ## relative to the project folder.
+proc stopAtCancel(ctx: JobContext; done, total: int64): bool =
+  ## A progress callback for `fullHash`: a cancel stops the job.
+  if not ctx.progress(done, total): raise newException(JobCancelledError, "cancelled")
+  true
+
+proc copyIn(ctx: JobContext; dir, source, name: string): string =
+  ## Copies `source` into the project's survey copies as `name`, in pieces,
+  ## each one a place for a cancel (the copy's temporary file is removed
+  ## then); its path relative to the project folder. The temporary file is
+  ## named for the job: no other job's is the same.
   result = SurveyCopies & "/" & name
   let dest = dir.partOf(result)
-  let tmp = dest & "." & $getCurrentProcessId() & ".tmp"
+  let tmp = dest & "." & $int(ctx.id) & ".tmp"
   fs.createDir(dest.parentDir)
-  fs.copyFile(source, tmp)
+  var (src, dst) = (File(nil), File(nil))
+  var ok = false
+  if not fs.open(src, source, fmRead): raise newException(IOError, "cannot read " & source)
+  try:
+    if not fs.open(dst, tmp, fmWrite): raise newException(IOError, "cannot write " & tmp)
+    try:
+      var buf = newSeq[byte](1 shl 20)
+      let total = try: fs.getFileSize(source) except OSError: 0'i64
+      var done = 0'i64
+      while true:
+        let n = fs.readBuffer(src, source, addr buf[0], buf.len)
+        if n <= 0: break
+        if fs.writeBuffer(dst, tmp, addr buf[0], n) != n:
+          raise newException(IOError, "the disk did not take " & tmp.extractFilename)
+        done += n
+        discard stopAtCancel(ctx, done, total)
+      flushFile(dst)
+      ok = true
+    finally:
+      close(dst)
+  finally:
+    close(src)
+    if not ok: discard fs.tryRemoveFile(tmp)
   fs.moveFile(tmp, dest)
 
 proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy];
@@ -278,10 +307,11 @@ proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy
             let id = quickIdentity(jf.path, t)
             let name = copyName(jf.path.extractFilename, taken)
             taken.add name
-            let copy = copyIn(dir, jf.path, name)
+            let copy = ctx.copyIn(dir, jf.path, name)
             news.copies.add SurveyCopy(kind: jf.kind, role: jf.role, copy: copy,
               original: placeOf(dir, jf.path), size: id.size, modified: t, quick: id.quick,
-              full: fullHash(dir.partOf(copy)))
+              full: fullHash(dir.partOf(copy), proc (done, total: int64): bool =
+              ctx.stopAtCancel(done, total)))
           if not ctx.progress(i + 1, files.len + 1):
             raise newException(JobCancelledError, "cancelled")
         news.store = writeStore(dir, news.copies, ctx)
@@ -315,11 +345,12 @@ proc updateSurveyWork*(dir: string; copies: seq[SurveyCopy]; originals: seq[Orig
             ctx.setPhase "copying " & src.extractFilename & " into the project again"
             var t: Time
             let id = quickIdentity(src, t)
-            discard copyIn(dir, src, c.copy.extractFilename)
+            discard ctx.copyIn(dir, src, c.copy.extractFilename)
             news.copies[i].size = id.size
             news.copies[i].modified = t
             news.copies[i].quick = id.quick
-            news.copies[i].full = fullHash(dir.partOf(c.copy))
+            news.copies[i].full = fullHash(dir.partOf(c.copy), proc (done, total: int64): bool =
+              ctx.stopAtCancel(done, total))
             news.copies[i].original = placeOf(dir, src)
         news.store = writeStore(dir, news.copies, ctx)
       except JobCancelledError:
