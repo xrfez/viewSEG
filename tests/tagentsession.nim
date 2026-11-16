@@ -276,8 +276,14 @@ withFixtures fx:
     st.agent(%*{"kind": "select reference", "refId": rid})
     st.agent(%*{"kind": "generate reference", "refGenerate": {"name": "agent sweep",
       "law": "linear", "f1Hz": 8, "f2Hz": 40, "durationMs": 1000, "dtMs": 2, "amplitude": 1}})
+    var sweep = ""
+    for e in st.references.entries:
+      if e.name == "agent sweep": sweep = e.id
+    doAssert sweep.len > 0, "the generated reference was not stored"
     st.agent(%*{"kind": "rename reference", "refId": rid, "refNewName": "agent pilot renamed"})
-    st.agent(%*{"kind": "delete reference", "refId": rid})
+    # Delete a reference that is not the choice: deleting the choice clears
+    # it, so this select would no longer be visible at the end.
+    st.agent(%*{"kind": "delete reference", "refId": sweep})
     st.agent(%*{"kind": "select", "traces": [t]})
     st.agent(%*{"kind": "headers shown", "inspect": ["trace headers", "trace samples"]})
     doAssert st.inspection.answer.traces.len == 1, "the Headers window's reader read nothing"

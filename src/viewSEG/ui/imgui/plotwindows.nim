@@ -571,7 +571,8 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   if w.waiting: words.add " · working it out..."
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextWrapped("%s", words.cstring)
-  if r.problem.len > 0: igTextWrapped("%s", ("Nothing to show: " & r.problem).cstring)
+  if w.goneNote.len > 0: igTextWrapped("%s", w.goneNote.cstring)
+  elif r.problem.len > 0: igTextWrapped("%s", ("Nothing to show: " & r.problem).cstring)
   elif r.note.len > 0: igTextWrapped("%s", r.note.cstring)
   igPopStyleColor(1)
   marks.mark(name & ".summary")

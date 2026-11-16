@@ -572,6 +572,8 @@ type
       ## while frozen
     allReversed*: bool
       ## reverse-all was on when it asked last, kept while frozen
+    goneNote*: string
+      ## set when the window's reference was deleted: one sentence, the name
     result*: AnalysisResult ## the newest answer taken in
     asked*: uint64 ## the newest request's gen
     since*: uint64 ## answers to requests from before this are not its
