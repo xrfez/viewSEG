@@ -19,10 +19,6 @@
 ##   once when the original was written meanwhile), and is refused while the
 ##   survey is being copied in.
 ##
-## - The layers of a restore a close cancelled do not land on the map.
-##
-## (Not seen to fail: a close's cancel already makes the inbox drop the job's
-## messages, so `staleSurveyJobs` is a second guard.)
 ##
 ## - A resumed import takes only a file with the identity recorded when the
 ##   import began, at the path recorded; a hostile project.nif cannot make
@@ -31,14 +27,17 @@
 ## - An Update refused (an original written during both tries) or cancelled
 ##   leaves the copies, the document and survey.bin as they were.
 ##
-## Seen to fail: with the temporary name of `survey.bin` made from the
-## process id, "the temporary name"; with the originals looked at inside `openProjectWork`, "the
-## originals were looked at before the open ended"; with `markImporting` not called, "the import is not in
+## Seen to fail: with `exclusive` taken off the keep job, "two keeps ran at
+## once" (the test waits past CancelGrace and StallAfter, when the lane gives
+## the next job a runner of its own); with the temporary name of `survey.bin`
+## made from the process id, "the temporary name"; with the originals looked
+## at inside `openProjectWork`, "the originals were looked at before the open
+## ended"; with `markImporting` not called, "the import is not in
 ## project.nif"; with the open not taking an import up, "the survey was not
 ## copied at the next open".
-import std/[os, sequtils, strutils, times]
+import std/[monotimes, os, sequtils, strutils, times]
 import parseSEG
-import viewSEG/core/[identity, project, projectnif, state]
+import viewSEG/core/[identity, jobs, project, projectnif, state]
 import utils/[fixtures, steps, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
@@ -203,7 +202,10 @@ withFixtures fx:
     for f in walkFiles(job / "survey" / "*.tmp"): temps.add f.extractFilename
     doAssert temps == @["survey.bin." & $id & ".tmp"], "the temporary name: " & $temps
     st.importSurvey(survey) # cancels the first, which waits in its step
-    for _ in 0 ..< 30:
+    # past CancelGrace and StallAfter the lane gives the next job a runner of
+    # its own: only the exclusive survey folder keeps the second keep waiting
+    let until = getMonoTime() + CancelGrace + StallAfter + initDuration(seconds = 1)
+    while getMonoTime() < until:
       discard st.drainInbox()
       st.persist()
       sleep 10
@@ -255,31 +257,6 @@ withFixtures fx:
     doAssert again.project.doc.survey[0].size == getFileSize(survey.s),
       "the identity recorded is not that of the copy"
     doAssert readFile(job / "survey" / "files" / "survey.s") == readFile(survey.s)
-    again.shutdown()
-  block staleRestore:
-    # The layers of a restore that ended before a close, still in the inbox
-    # when the project is closed, do not land on the map.
-    let job = fx.dir / "Job stale"
-    var st = start(config)
-    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
-    doAssert st.settle(st.inProject and st.projectOpening.len == 0)
-    st.importSurvey(survey)
-    doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore and
-      not st.project.doc.hasImport)
-    st.flushFiles()
-    st.shutdown()
-    holdStep("making the survey kept in the project")
-    var again = start(config)
-    again.apply Command(kind: ckOpenProject, projectPath: job)
-    doAssert again.settle(again.inProject and
-      inStep("making the survey kept in the project").len == 1)
-    let id = inStep("making the survey kept in the project")[0]
-    releaseStep("making the survey kept in the project")
-    doAssert waitUntil(cameBack(id)), "the restore did not end"
-    again.apply Command(kind: ckCloseProject) # its layers are in the inbox still
-    discard again.drainInbox()
-    doAssert again.surveyLayers == 0, "the cancelled restore's layers landed on the map: " &
-      $again.surveyLayers
     again.shutdown()
   block hostileImport:
     # A project.nif that names an import to resume copies nothing it was not
