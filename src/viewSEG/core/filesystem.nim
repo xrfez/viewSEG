@@ -126,6 +126,11 @@ proc getLastModificationTime*(_: FileSystem; path: string): Time {.raises: [OSEr
   enter(foStat, path)
   os.getLastModificationTime(path)
 
+proc expandFilename*(_: FileSystem; path: string): string {.raises: [OSError].} =
+  ## `os.expandFilename`: the full path, with its links resolved.
+  enter(foStat, path)
+  os.expandFilename(path)
+
 # ----------------------------------------------------------------- list --
 
 iterator walkDir*(_: FileSystem; dir: string; relative = false;

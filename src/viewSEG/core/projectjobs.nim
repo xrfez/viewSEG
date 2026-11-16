@@ -100,7 +100,7 @@ proc realPath(path: string): string =
   ## (a link to a data folder is that folder). Worker-only: it reads the disk.
   result = path
   if fs.dirExists(path) or fs.fileExists(path):
-    try: result = expandFilename(path)
+    try: result = fs.expandFilename(path)
     except OSError: discard
 
 proc isEmptyFolder(dir: string): bool =
