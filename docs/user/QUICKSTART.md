@@ -371,10 +371,22 @@ selection when that trace is selected. Then:
 Edited traces are marked in a row of the display header, **edits**, that is there only
 while the record has an edit: a red **K** over a killed trace, an **R** in the accent
 colour over a reversed one, and the filter icon in that same accent colour over a trace
-that has its own filter (red, with the **K**, when the trace is also killed). The tooltip
-on that icon says the filter in words ("Band-pass 10-60 Hz, after the plot's filters").
+that has its own filter (red, with the **K**, when the trace is also killed). Hovering a
+mark highlights it. The tooltip names the edit ("Killed", "Polarity reversed", or the
+filter in words, "Band-pass 10-60 Hz, after the plot's filters") and ends with
+"Right-click to remove". A right-click on the mark opens a small menu for that trace:
+**Remove kill**, **Remove reversal**, **Remove the trace's filter**, and **Edit the
+trace's filter...** when it has a filter. Each removal is one step (Edit > Undo brings
+the mark back at once). When the trace has more than one edit, **Remove all edits of
+this trace** takes them all away as that one step. If the trace is selected and other
+selected traces have the same edit, the menu also offers **Remove kill from N selected
+traces** (and the same for a reversal or a filter). Zoomed out, where the marks are thin
+bars or share a pixel, a right-click on the row picks the nearest edited trace within a
+few pixels; when several traces share the pixel the menu says **N traces here** and the
+removals apply to all of them as one step. A right-click elsewhere is unchanged: the
+plot's menu on the traces, the header's menu on its other rows.
 The Headers window's trace table shows the same letters beside the trace number, and the
-same tooltip. A filter changed for this run only, different from the one remembered with
+filter's words in its tooltip. A filter changed for this run only, different from the one remembered with
 the file, has a star, as a kill an agent made does. The status bar says
 "killed", "polarity reversed" or the filter's words for the trace under the pointer, and
 Messages lists each change. Edits are lists kept beside the file, never

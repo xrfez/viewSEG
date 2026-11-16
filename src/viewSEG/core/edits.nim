@@ -70,6 +70,7 @@ type
     skImport = "import"      ## edits taken in from a file
     skSetAside = "set aside" ## every edit taken away: the file changed on disk
     skFilter = "filter"      ## a trace's own filter set or removed
+    skDrop = "drop"          ## edits taken off the traces named, as one step
 
   ListsChange = object
     ## What a step does to the lists kept, where that is not what it does
@@ -531,6 +532,47 @@ proc setOwnFilters*(e: var FileEdits; traces: openArray[int]; f: OwnFilter; keep
     step.keptChanges(ListsChange(filterOff: kOff, filterOn: kOn))
     e.make(step, keep)
 
+proc dropEdits*(e: var FileEdits; traces: openArray[int]; kinds: set[TraceEdit];
+    filters: bool; keep = true): int =
+  ## Takes `kinds` and, with `filters`, the own filter off every trace of
+  ## `traces`, as one step (in what is kept too with `keep`). Returns how
+  ## many traces changed; a change of none makes no step. Raises
+  ## `ValueError` for a negative index.
+  var shownChanged, keptChanged: seq[int]
+  var removed, kRemoved: array[TraceEdit, seq[int]]
+  var off, on, kOff, kOn: seq[FilterSnap]
+  for t in sortedTraces(traces):
+    var shown, kept = false
+    for edit in kinds:
+      if e.has(edit, t):
+        removed[edit].add t
+        shown = true
+      if keep and e.keptHas(edit, t):
+        kRemoved[edit].add t
+        kept = true
+    if filters:
+      let s = e.shown.snapOf(t)
+      if s.had:
+        off.add s
+        on.add FilterSnap(trace: t, had: false)
+        shown = true
+      if keep:
+        let k = e.kept.snapOf(t)
+        if k.had:
+          kOff.add k
+          kOn.add FilterSnap(trace: t, had: false)
+          kept = true
+    if shown: shownChanged.add t
+    elif kept: keptChanged.add t
+  result = shownChanged.len
+  if keep and result == 0: result = keptChanged.len
+  if result > 0:
+    var step = EditStep(kind: skDrop, on: false,
+      traces: if shownChanged.len > 0: shownChanged else: keptChanged,
+      removed: removed, filterOff: off, filterOn: on)
+    step.keptChanges(ListsChange(removed: kRemoved, filterOff: kOff, filterOn: kOn))
+    e.make(step, keep)
+
 proc clearOwnFilters*(e: var FileEdits; traces: openArray[int]; keep = true): int =
   ## Takes the filter off every trace of `traces`, as one step (in what is
   ## kept too with `keep`). Returns how many had one taken away, or caught
@@ -783,6 +825,7 @@ func describe*(s: EditStep): string =
     if s.on: what & " filtered"
     elif s.traces.len == 1: "filter of " & what & " removed"
     else: "filters of " & what & " removed"
+  of skDrop: "edits of " & tracesText(s.traces) & " removed"
 
 func undoText*(e: FileEdits): string =
   ## `describe` of the step `undo` takes back, without a copy of it (the

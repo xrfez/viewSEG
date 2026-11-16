@@ -99,6 +99,10 @@
   marks each one over its trace, as the edits are now: **K** (killed, in the theme's
   error colour), **R** (reversed, in its accent colour), **KR** for both, a thin bar where
   traces are too close for the letters; the row goes when the record has no edit left.
+  Hovering a mark highlights it, and the tooltip ends with "Right-click to remove".
+  A right-click on a mark opens a menu to take that trace's edits away (one step each;
+  several traces that share a pixel when zoomed out are one step together). A right-click
+  elsewhere on the header is still the header's menu.
   What the row shows but viewSEG does not remember, an edit made through agent control
   for the session only, has a **\*** after it (**K\***; its bar an outline); an edit
   remembered but hidden for the session (an agent undid your kill: it comes back at the

@@ -265,6 +265,10 @@ type
       edit*: TraceEdit ## ckEdit: killed, or reversed
       edited*: seq[int] ## ckEdit, ckOwnFilter: survey-wide ids of traces of the panel's file
       on*: bool ## ckEdit, ckOwnFilter: given (true) or taken away
+      alsoDrop*: set[TraceEdit]
+        ## ckEdit: other edits taken away with `edit` in the same step, when `on` is false
+      alsoFilter*: bool
+        ## ckEdit: the trace's own filter taken away in the same step, when `on` is false
       filter*: TraceFilter ## ckFilter: layer 0's traces (seismic, auxiliary, components)
       listPath*: string
         ## ckExportEdits, ckImportEdits: the list's file (`.nif`, or `.csv`)
@@ -6297,7 +6301,14 @@ proc editTraces(state: var AppState; cmd: Command) =
     elif traces.len < cmd.edited.len:
       state.ignore(cmd, plural(cmd.edited.len - traces.len, "trace") & " of " &
         $cmd.edited.len & " are not in " & s.name)
-    if traces.len > 0 and e.change(cmd.edit, traces, cmd.on, keep) > 0:
+    var n = 0
+    if traces.len > 0 and not cmd.on and (cmd.alsoDrop != {} or cmd.alsoFilter):
+      var kinds = cmd.alsoDrop
+      kinds.incl cmd.edit
+      n = e.dropEdits(traces, kinds, cmd.alsoFilter, keep)
+    elif traces.len > 0:
+      n = e.change(cmd.edit, traces, cmd.on, keep)
+    if n > 0:
       changed = e.nextUndo
       said = describe(changed).capitalizeAscii & "."
       state.editStamps[s.path] = (s.size, s.modified) # made on the file as it is now

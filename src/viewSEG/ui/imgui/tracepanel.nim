@@ -81,14 +81,17 @@
 ## act on the trace under the pointer, or on the whole selection when that
 ## trace is in it (`ckEdit`); Ctrl + Z undoes the file's last edit. The
 ## edited traces are marked in a row of the display header that is there
-## only while the gather has an edit: "K" killed, "R" reversed. Killed
+## only while the gather has an edit: "K" killed, "R" reversed. A right
+## click on a mark opens a menu for that trace's edits (and, zoomed out,
+## for the traces that share its pixel); a right click elsewhere is the
+## plot's menu or the header's, as before. Killed
 ## traces are drawn blank, or left out of the plot (the gear popover's
 ## "Hide killed traces", a setting). "FFT in a new window" (`F`) opens the
 ## amplitude spectrum of the same traces (`ckSpectrum`, `spectrumwindow`).
 
-import std/[math, os, strutils, tables]
+import std/[algorithm, math, os, strutils, tables]
 import imguin/cimgui
-import ../../core/[components, geometry, openchoice, state, wiggle]
+import ../../core/[components, editmarks, geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
 import ../../view/[displayheader, maplayers, plotink, strip, theme, timeaxis]
 import chrome, dpi, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort,
@@ -103,6 +106,7 @@ const
   fillSymbols: array[WiggleFill, Symbol] = [syWigglePositive, syWiggleNegative]
   menuId = "##plotmenu"
   headerMenuId = "##headermenu"
+  markMenuId = "##editmark"
   gotoId = "Go to record##goto"
   MinPlotLines = 10.0
     ## the plot's least height, in lines of text: the strip scrolls rather
@@ -129,6 +133,12 @@ type
 
   ClickKind = enum
     clNone, clClick, clCtrlClick, clShiftClick
+
+  MarkChoice = object
+    ## One line of the edits-mark menu, snapshotted when it opened.
+    text: string
+    item: MarkItem
+    traces: seq[int] ## survey-wide ids
 
   ViewAskKind = enum
     vaNone, vaFit, vaZoomIn, vaZoomOut, vaTraceScale, vaTimeScale
@@ -202,6 +212,13 @@ type
     ownDraft: OwnFilter ## the filter the popover is editing
     ownMixed: bool ## the selection holds different filters: the draft starts empty
     ownPos: ImVec2_c ## where the popover opens
+    editMarks: seq[EditMark] ## the edits row as drawn this frame
+    editBand0, editBand1: float32 ## the row across the traces, this frame
+    editAxis: ScreenAxis ## the traces' axis, this frame
+    markAsk: bool ## open the mark menu this frame
+    markTitle: string
+    markChoices: seq[MarkChoice]
+    markMouse: ImVec2_c ## where it opened, for the filter popover
     cursorText: string ## the time the cursor's time line showed last; "" for none
     cursorHeader: seq[string] ## the header values it showed over the rows; none for none
     focus: FocusClicks ## a click selects only in a window that had the focus
@@ -1683,7 +1700,7 @@ func holds(t: Tile; position: int): bool {.inline.} =
   r.count > 0 and position >= r.first and position <= r.last and
     (position - r.first) mod r.stride == 0
 
-proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
+proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; view: Viewport;
     layout: PanelLayout; m: Turn; bands: HeaderBands; plotPos, plotSize: ImVec2_c; t: Theme;
     marks: var Marks) =
   ## The display header's band of edits, its last (a row under its other
@@ -1696,7 +1713,8 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
   ## session), or a filter that differs from the one remembered, has a "*"
   ## after it, its bar an outline; one remembered but hidden for the session
   ## (an agent's undo of the user's) is in brackets, "(K)", in the dim text
-  ## colour: it comes back at the next run.
+  ## colour: it comes back at the next run. Hovering a mark highlights it;
+  ## the tooltip names the edit and ends with "Right-click to remove".
   let dl = igGetWindowDrawList()
   let lineH = igGetTextLineHeight()
   let ta = m.along[axTraces]
@@ -1712,11 +1730,12 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
   ImDrawList_AddText_Vec2(dl, nlo, u32(t.roles[rlTextDim]), name.cstring, nil)
   marks.markRect("plot.header.edits", nlo, nhi)
   let perPos = plotSize.along(ta) / max(view.traces.width, 1e-9)
-  ImDrawList_PushClipRect(dl, vec(ta, t0, bs), vec(ta, t0 + plotSize.along(ta), bs + bz), true)
-  var marked = 0
   let vis = visiblePositions(layout, view)
-  # Each tile's rows in view that no newer tile has (as drawn): bounded by
-  # the rows the tiles hold, not by the traces of the gather.
+  # Gather the marks first, so a hover can light the ones a click would take
+  # before they are drawn.
+  var spans: seq[EditMark]
+  var drawn: seq[tuple[text: string; colour: ImU32; lo, hi: ImVec2_c; bar, outlineBar,
+    session, hidden, filter: bool]]
   for k in countdown(tiles.high, 0):
     for row in 0 ..< min(tiles[k].request.count, tiles[k].traces.len):
       let pos = tiles[k].request.position(row)
@@ -1746,29 +1765,147 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
         let ts = igCalcTextSize(text.cstring, nil, false, -1)
         let w = ts.along(ta)
         var lo, hi: ImVec2_c
-        if perPos >= w + 2:
+        let asBar = perPos < w + 2
+        if not asBar:
           let b = bands.inBand(i, ts.along(bands.axis))
           lo = vec(ta, round(c - w / 2), b)
           hi = vec(ta, lo.along(ta) + w, b + ts.along(bands.axis))
-          ImDrawList_AddText_Vec2(dl, lo, colour, text.cstring, nil)
         else:
           let half = max(0.5'f32, perPos / 2 - 0.5'f32)
           lo = vec(ta, c - half, bs + round(bz * 0.2))
           hi = vec(ta, c + half, bs + round(bz * 0.8))
-          if has == {} or session == has: ImDrawList_AddRect(dl, lo, hi, colour, 0, 1, 0)
-          else: ImDrawList_AddRectFilled(dl, lo, hi, colour, 0, 0)
-        if marked < 200: # for tests
-          marks.markRect("plot.header.edit " & $(trace + 1), lo, hi)
-          if session != {} or (shownF and not keptF) or filterMoved:
-            marks.markRect("plot.header.edit " & $(trace + 1) & " session", lo, hi)
-          if hidden != {}: marks.markRect("plot.header.edit " & $(trace + 1) & " hidden", lo, hi)
-          if shownF or keptF:
-            marks.markRect("plot.header.filter " & $(trace + 1), lo, hi)
-          inc marked
-        if (shownF or keptF) and igIsMouseHoveringRect(lo, hi, true):
-          let words = if shownF: filterWords(shownFilter) else: filterWords(keptFilter)
-          igSetTooltip("%s", words.cstring)
+        let note = if shownF: filterWords(shownFilter)
+                   elif keptF: filterWords(keptFilter) else: ""
+        # A pixel of pad so the edge of a letter still counts as the mark.
+        let pad = if asBar: 0'f32 else: 1'f32
+        spans.add EditMark(trace: trace, centre: c,
+          lo: lo.along(ta) - pad, hi: hi.along(ta) + pad,
+          cross0: if asBar: bs else: lo.along(bands.axis) - pad,
+          cross1: if asBar: bs + bz else: hi.along(bands.axis) + pad,
+          edits: has, hasFilter: shownF, outline: asBar, filterNote: note)
+        drawn.add (text, colour, lo, hi, asBar, has == {} or session == has,
+          session != {} or (shownF and not keptF) or filterMoved, hidden != {},
+          shownF or keptF)
+  tp.editMarks = spans
+  tp.editBand0 = bs
+  tp.editBand1 = bs + bz
+  tp.editAxis = ta
+  let mouse = igGetIO_Nil().MousePos
+  let rowLo = vec(ta, t0, bs)
+  let rowHi = vec(ta, t0 + plotSize.along(ta), bs + bz)
+  let rowHovered = igIsMouseHoveringRect(rowLo, rowHi, true)
+  var hit = MarkHit()
+  if rowHovered:
+    hit = marksAt(spans, mouse.along(ta), mouse.along(bands.axis), bs, bs + bz)
+  ImDrawList_PushClipRect(dl, rowLo, rowHi, true)
+  var marked = 0
+  for n, span in spans:
+    let d = drawn[n]
+    let lit = span.trace in hit.traces
+    if lit:
+      let (h0, h1) = ordered(vec(ta, span.lo, span.cross0), vec(ta, span.hi, span.cross1))
+      ImDrawList_AddRectFilled(dl, h0, h1, u32(withAlpha(t.roles[rlHover], 160)), 2, 0)
+      ImDrawList_AddRect(dl, h0, h1, u32(t.roles[rlHighlight]), 2, 1, 0)
+    if d.bar:
+      if d.outlineBar: ImDrawList_AddRect(dl, d.lo, d.hi, d.colour, 0, 1, 0)
+      else: ImDrawList_AddRectFilled(dl, d.lo, d.hi, d.colour, 0, 0)
+    else: ImDrawList_AddText_Vec2(dl, d.lo, d.colour, d.text.cstring, nil)
+    if marked < 200: # for tests
+      marks.markRect("plot.header.edit " & $(span.trace + 1), d.lo, d.hi)
+      if d.session: marks.markRect("plot.header.edit " & $(span.trace + 1) & " session", d.lo, d.hi)
+      if d.hidden: marks.markRect("plot.header.edit " & $(span.trace + 1) & " hidden", d.lo, d.hi)
+      if d.filter: marks.markRect("plot.header.filter " & $(span.trace + 1), d.lo, d.hi)
+      if lit: marks.markRect("plot.header.edit hover", d.lo, d.hi)
+      inc marked
+  if hit.traces.len > 0:
+    let tip = markTip(hit, spans)
+    if tip.len > 0: igSetTooltip("%s", tip.cstring)
   ImDrawList_PopClipRect(dl)
+
+proc openMarkMenu(tp: var TracePanelUi; st: AppState; k, base: int; hit: MarkHit;
+    mouse: ImVec2_c) =
+  ## Snapshots the menu for `hit` (file indices) of the file panel `k`
+  ## shows, whose first survey-wide id is `base`. Nothing is opened when
+  ## the traces have no edit to take away. The selection is met with the
+  ## file's edit lists, not walked trace by trace.
+  var rows: seq[TraceEditView]
+  var selected: seq[int]
+  let i = st.findTrace(base)
+  if i < 0: return
+  let path = st.sessions[i].path
+  let span = 0 ..< st.sessions[i].len
+  var wanted = hit.traces
+  for edit in TraceEdit:
+    for t in st.editsOf(k).listIn(edit, span):
+      if base + t in st.selection.selected:
+        selected.add t
+        wanted.add t
+  for f in st.editsOf(k).filtersIn(span):
+    if base + f.trace in st.selection.selected:
+      selected.add f.trace
+      wanted.add f.trace
+  wanted.sort()
+  var n = 0
+  for t in wanted:
+    if n == 0 or wanted[n - 1] != t:
+      wanted[n] = t
+      inc n
+  wanted.setLen n
+  selected.sort()
+  n = 0
+  for t in selected:
+    if n == 0 or selected[n - 1] != t:
+      selected[n] = t
+      inc n
+  selected.setLen n
+  for t in wanted:
+    let (has, _) = st.ownAt(path, t)
+    rows.add TraceEditView(trace: t, edits: st.traceEdits(base + t), hasFilter: has)
+  let entries = markEntries(hit, rows, selected)
+  if entries.len == 0: return
+  tp.markAsk = true
+  tp.markMouse = mouse
+  tp.markTitle = markTitle(hit)
+  tp.markChoices.setLen 0
+  for e in entries:
+    var ids = newSeq[int](e.traces.len)
+    for k, t in e.traces: ids[k] = base + t
+    tp.markChoices.add MarkChoice(text: entryText(e, hit.shared), item: e.item, traces: ids)
+
+proc drawMarkMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
+    res: var PanelOutput) =
+  ## The menu a right click on an edit mark opened: that trace's edits, or
+  ## the traces that shared its pixel.
+  if not igBeginPopup(markMenuId, 0): return
+  marks.markWindow("plot.editmenu")
+  if tp.markTitle.len > 0:
+    igTextDisabled("%s", tp.markTitle.cstring)
+    marks.mark("plot.editmenu.title")
+  template p: untyped = st.panels[k]
+  for choice in tp.markChoices:
+    if igMenuItem_Bool(choice.text.cstring, nil, false, choice.traces.len > 0):
+      case choice.item
+      of miRemoveKill, miRemoveKillSelected:
+        res.commands.add Command(kind: ckEdit, panel: p.id, edit: teKilled,
+          edited: choice.traces, on: false)
+      of miRemoveReverse, miRemoveReverseSelected:
+        res.commands.add Command(kind: ckEdit, panel: p.id, edit: teReversed,
+          edited: choice.traces, on: false)
+      of miRemoveFilter, miRemoveFilterSelected:
+        res.commands.add Command(kind: ckOwnFilter, panel: p.id, edited: choice.traces,
+          on: false)
+      of miRemoveAll:
+        res.commands.add Command(kind: ckEdit, panel: p.id, edit: teKilled,
+          edited: choice.traces, on: false, alsoDrop: {teReversed}, alsoFilter: true)
+      of miEditFilter:
+        let start = st.startingFilter(choice.traces)
+        tp.ownDraft = start.filter
+        tp.ownMixed = start.mixed
+        tp.ownTraces = choice.traces
+        tp.ownPos = tp.markMouse
+        tp.ownAsk = true
+    marks.mark("plot.editmenu.item " & choice.text)
+  igEndPopup()
 
 proc drawHeaderMenu(p: Panel; marks: var Marks; res: var PanelOutput) =
   ## The display header's own menu (a right click on its rows or their
@@ -2050,6 +2187,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   let source = st.findSession(layer.source.file)
   let base = if source >= 0: st.sessions[source].base else: -1
   let lineH = igGetTextLineHeight()
+  tp.editMarks.setLen 0
   let headerTop = igGetCursorScreenPos()
   # The display header: a row per field above the plot, or a column per
   # field left of it when time is across (their names above them), and a
@@ -2189,7 +2327,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     tp.drawHeader(tiles, fields, stride, view, p.layout, turn, bands, headerTop, pos, size, t,
       marks)
     if edited:
-      drawEditRow(st.editsOf(k), tiles, view, p.layout, turn, bands, pos, size, t, marks)
+      drawEditRow(tp, st.editsOf(k), tiles, view, p.layout, turn, bands, pos, size, t, marks)
     ImPlot_EndPlot()
     # the bar along the width goes under the values of the axis there, if any
     let barsUnder = if turn.axisAlong(saX) == axTime:
@@ -2218,7 +2356,13 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       igSetCursorScreenPos(headerTop)
       if igInvisibleButton("##headerinput", headerSize,
           ImGui_ButtonFlags_MouseButtonRight.cint):
-        igOpenPopup_Str(headerMenuId, 0)
+        let mouse = igGetIO_Nil().MousePos
+        if tp.editMarks.len > 0 and base >= 0:
+          let along = mouse.along(tp.editAxis)
+          let cross = mouse.along(if tp.editAxis == saX: saY else: saX)
+          let hit = marksAt(tp.editMarks, along, cross, tp.editBand0, tp.editBand1)
+          if hit.traces.len > 0: tp.openMarkMenu(st, k, base, hit, mouse)
+        if not tp.markAsk: igOpenPopup_Str(headerMenuId, 0)
       marks.mark("plot.header")
     # The mouse and keys, over the plot's data area.
     let plot = Rect(pos: vec2(pos.x, pos.y), size: vec2(size.x, size.y))
@@ -2300,6 +2444,10 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   ImPlot_PopStyleColor(1)
   if menu: igOpenPopup_Str(menuId, 0)
   tp.drawTraceMenu(st, k, marks, res)
+  if tp.markAsk:
+    tp.markAsk = false
+    igOpenPopup_Str(markMenuId, 0)
+  tp.drawMarkMenu(st, k, marks, res)
   if tp.ownAsk:
     tp.ownAsk = false
     igSetNextWindowPos(tp.ownPos, ImGui_Cond_Appearing.cint, ImVec2_c(x: 0, y: 0))
