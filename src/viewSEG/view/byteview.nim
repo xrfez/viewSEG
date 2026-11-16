@@ -48,10 +48,16 @@ proc nibbleReadings(b: openArray[byte]; start, count: int): seq[Reading] =
     hex.add "0123456789ABCDEF"[nibbleOf(b, n)]
     if count <= 16: number = number shl 4 or uint64(nibbleOf(b, n))
   result.add ("Nibbles", hex & " (" & $count & (if count == 1: " nibble)" else: " nibbles)"))
-  try:
-    result.add ("BCD", $bcd(b, start, count))
-  except CatchableError:
-    result.add ("BCD", "not BCD (a nibble past 9)")
+  var allF = true
+  for n in start ..< start + count:
+    if nibbleOf(b, n) != 0xF: allF = false
+  if allF:
+    result.add ("BCD", "all F (see the extended field)")
+  else:
+    try:
+      result.add ("BCD", $bcd(b, start, count))
+    except CatchableError:
+      result.add ("BCD", "not BCD (a nibble past 9)")
   if count <= 16: result.add ("Unsigned, binary", $number)
   result.add ("Bytes it touches", (block:
     var s = ""

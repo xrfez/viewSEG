@@ -37,6 +37,10 @@ block readings:
   let b = [0x11'u8, 0x23, 0x45]
   let own = byteReadings(b[0 .. 1], 1, 3)
   doAssert ("BCD", "123") in own, $own
+  # SEG-D's all-F nibble field means "see the extended field", not a bad BCD.
+  # Seen to fail: with every nibble read as BCD, "not BCD (a nibble past 9)".
+  let extended = byteReadings([0x8F'u8, 0xFF], 1, 3)
+  doAssert ("BCD", "all F (see the extended field)") in extended, $extended
   doAssert ("Nibbles", "123 (3 nibbles)") in own, $own
   doAssert ("Unsigned, binary", "291") in own, $own
   doAssert ("Integer, big-endian", "4387") notin own, "a whole-bytes reading of a nibble field"
