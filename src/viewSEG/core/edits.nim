@@ -331,6 +331,33 @@ proc setAllReversed*(e: var FileEdits; on: bool; keep = true): bool =
     s.keptChanges(ListsChange(allChanged: keptToo, allBefore: not on, allAfter: on))
     e.make(s, keep)
 
+proc setTo*(e: var FileEdits; l: EditLists; source: string; keep = true): int =
+  ## Makes the edits those of `l` (a record's state: what it has that the
+  ## file does not is given, what the file has that it does not is taken
+  ## away) as one step, in what is kept too with `keep`; returns how many
+  ## traces changed.
+  var s = EditStep(kind: skImport, source: source)
+  var c = ListsChange()
+  var kept = 0
+  for edit in TraceEdit:
+    let list = sortedTraces(l.lists[edit])
+    s.added[edit] = difference(list, e.shown.lists[edit])
+    s.removed[edit] = difference(e.shown.lists[edit], list)
+    c.added[edit] = difference(list, e.kept.lists[edit])
+    c.removed[edit] = difference(e.kept.lists[edit], list)
+    result += s.added[edit].len + s.removed[edit].len
+    kept += c.added[edit].len + c.removed[edit].len
+  if l.allReversed != e.shown.allReversed:
+    (s.allChanged, s.allBefore, s.allAfter) = (true, e.shown.allReversed, l.allReversed)
+    inc result
+  if l.allReversed != e.kept.allReversed:
+    (c.allChanged, c.allBefore, c.allAfter) = (true, e.kept.allReversed, l.allReversed)
+    inc kept
+  if keep and result == 0: result = kept
+  if result > 0:
+    s.keptChanges(c)
+    e.make(s, keep)
+
 proc takeIn*(e: var FileEdits; l: EditLists; source: string; keep = true): int =
   ## Adds the edits of `l` (a file's list imported: `source` names it) as
   ## one step (in what is kept too with `keep`); returns how many were not

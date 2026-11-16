@@ -210,12 +210,16 @@ proc drawShownFile(ui: var ProjectUi; st: AppState; t: Theme; marks: var Marks;
       "are taken back if its whole content differs.").cstring)
   let earlier = st.earlierOf(s.path)
   if earlier.len == 0: return
-  igSeparatorText(("Earlier outputs of " & s.name).cstring)
-  t.dim(s.name & " is not the file these edits were made on (other contents under the same " &
-    "name): they are not applied to it. They are kept, to apply or to forget.")
+  igSeparatorText(("Edits kept apart for " & s.name).cstring)
+  t.dim("Edits made on other contents under the same name, or before the file's content was " &
+    "compared, are not applied to it. They are kept, to apply or to forget.")
   for i, c in earlier:
     igPushID_Int(cint(4000 + i))
-    igTextUnformatted(("Edits: " & keptWords(c.edits) & lastOpened(c)).cstring, nil)
+    if c.unconfirmed:
+      igTextUnformatted(("Edits you made on " & (if c.opened == Time(): "an earlier day" else:
+        c.opened.local.format("yyyy-MM-dd HH:mm")) & " before the file's content was " &
+        "compared: " & keptWords(c.edits)).cstring, nil)
+    else: igTextUnformatted(("Edits: " & keptWords(c.edits) & lastOpened(c)).cstring, nil)
     marks.mark("project.earlier." & $i)
     let fits = c.traces > 0 and c.traces == s.len
     if button("Apply them to this file", "project.earlier.apply." & $i,
@@ -227,7 +231,7 @@ proc drawShownFile(ui: var ProjectUi; st: AppState; t: Theme; marks: var Marks;
           $s.len & ", so its trace numbers are not these"), fits and not st.project.readOnly,
         marks) and ui.focusProject.acts:
       res.commands.add Command(kind: ckImportEdits, panel: MainPanel,
-        listPath: st.store.docPath(c.doc))
+        listPath: st.store.docPath(c.doc), replaceEdits: c.unconfirmed)
     igSameLine(0, -1)
     if button("Forget them", "project.earlier.forget." & $i,
         (if st.project.readOnly: "Not offered: the project is open read-only (" &

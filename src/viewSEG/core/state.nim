@@ -266,6 +266,9 @@ type
       filter*: TraceFilter ## ckFilter: layer 0's traces (seismic, auxiliary)
       listPath*: string
         ## ckExportEdits, ckImportEdits: the list's file (`.nif`, or `.csv`)
+      replaceEdits*: bool
+        ## ckImportEdits: the file's edits become the list's, what it has that
+        ## the list does not taken off (one step), instead of the list's added
       processing*: Processing
         ## ckProcessing: layer 0's filters (DC removal, pass band, notches),
         ## shown raw or processed, the auxiliary traces filtered or not
@@ -836,7 +839,7 @@ type
     memoryWork: seq[JobId]
       ## the identifications and hashes under way: they end quietly
     exports: seq[JobId] ## the exports of edits under way
-    editImports: seq[tuple[job: JobId; path: string; by: CommandOrigin]]
+    editImports: seq[tuple[job: JobId; path: string; by: CommandOrigin; replace: bool]]
       ## the imports of edits under way: each job, and the file it is for
     notices: seq[Notice] ## the newest `MaxNotices`
     nextNotice: int
@@ -1190,32 +1193,35 @@ proc dropProvisional(state: var AppState; i: int) =
 
 proc writeProvisional(state: var AppState; i: int) =
   ## While `remembered[i]`'s brought document is being checked: the document
-  ## itself is not written. The edits made since it was brought back go into
-  ## a record of their own, of the file's quick identity and modification time,
-  ## without a hash of every byte (what a quit during the check leaves), or
-  ## none when there are none.
+  ## itself is not written. When the user changed anything since it was
+  ## brought back (an edit given or taken off), the whole state as the user
+  ## has it goes into an unconfirmed record of its own (the quick identity
+  ## and modification time, no hash of every byte): never applied by itself
+  ## when the file is opened again. None when nothing changed.
   template r: untyped = state.remembered[i]
   let key = state.keyOf(r.path)
   r.savedRev = if key in state.edits: state.edits[key].keptRevision else: 0
-  let own = if key in state.edits: state.edits[key].kept.minus(r.brought.edits) else: EditLists()
-  if own.isEmpty:
+  let now = if key in state.edits: state.edits[key].kept else: EditLists()
+  if now == r.brought.edits:
     state.dropProvisional(i)
     return
   var rec = FileRecord(identity: FileIdentity(size: r.identity.size, quick: r.identity.quick),
-    name: r.path.extractFilename, path: r.path, opened: r.opened, modified: r.modified, edits: own)
+    name: r.path.extractFilename, path: r.path, opened: getTime(), modified: r.modified,
+    edits: now, unconfirmed: true)
   for s in state.sessions:
     if s.path == r.path: rec.traces = s.len
   if r.provDocs.len == 0:
     var taken = r.waiting.mapIt(it.doc) & r.taken
-    for x in state.remembered: taken.add x.doc
-    for x in state.remembered: taken.add x.provDocs
+    for x in state.remembered:
+      taken.add x.doc
+      taken.add x.provDocs
     for d in state.knownDocs.keys: taken.add d
     r.provDocs.add freeDocName(rec.identity, taken)
   rec.doc = r.provDocs[0]
   state.knownDocs[rec.doc] = rec
   state.diskIo.replace(state.store.docPath(rec.doc), move rec, "the edits made on " &
     r.path.extractFilename & " while what is remembered was being checked")
-  for d in r.provDocs[1 .. ^1]: # joined into the first
+  for d in r.provDocs[1 .. ^1]:
     state.diskIo.remove(state.store.docPath(d), "what is remembered about " &
       r.path.extractFilename & " (unconfirmed)")
     state.knownDocs.del d
@@ -3183,6 +3189,11 @@ proc link(state: var AppState; i, j: int) =
     "they are remembered once, for both.")
   state.editsChanged(state.remembered[j].path)
 
+func checking(r: Remembered): bool {.inline.} =
+  ## Whether the edits brought back for `r`'s file wait for the hash of every
+  ## byte to be confirmed.
+  not r.hashed and r.brought.doc.len > 0
+
 proc linkSame(state: var AppState; i: int) =
   ## Links `remembered[i]`'s file to another path opened this run that holds
   ## the same bytes (`link`): at once when their size, ends and modification
@@ -3197,8 +3208,8 @@ proc linkSame(state: var AppState; i: int) =
         o.identity.quick == r.identity.quick and state.keyOf(o.path) != state.keyOf(r.path):
       if r.hashed and o.hashed:
         if r.identity.full == o.identity.full: state.link(i, j)
-      elif r.modified == o.modified: state.link(i, j)
-      else:
+      elif r.modified == o.modified and not r.checking and not o.checking: state.link(i, j)
+      else: # while edits brought back are checked, each waits for its own hash
         state.hashFile(i)
         state.hashFile(j)
 
@@ -3221,22 +3232,29 @@ proc sayEarlier(state: var AppState; path: string; c: FileRecord) =
       keptWords(c.edits) & " are not applied. They are kept as an earlier output of " & name &
       ", to look at, apply or forget (File > Project...).")
 
-proc takeUnconfirmed(state: var AppState; i: int; c: FileRecord) =
-  ## The edits an earlier run left for a file of `remembered[i]`'s quick
-  ## identity and modification time that it had not confirmed (the program
-  ## quit while they were being checked): shown as provisional, kept apart
-  ## (`provDocs`), bound to whatever hash of every byte this file has.
+proc sayUnconfirmed(state: var AppState; i: int; c: FileRecord) =
+  ## The edits an earlier run left, unconfirmed, for a file of `remembered[i]`'s
+  ## quick identity (the program closed while its brought-back record was
+  ## being checked): nothing of them is applied. They are listed with the
+  ## earlier outputs, to apply or to forget, and said once. Edits that are
+  ## the file's own already (applied) are not offered again.
   template r: untyped = state.remembered[i]
-  r.provDocs.add c.doc
-  state.knownDocs[c.doc] = c
-  if c.edits.isEmpty: return
   let name = r.path.extractFilename
-  state.edits.mgetOrPut(state.keyOf(r.path), FileEdits()).remembered(c.edits)
-  state.log.add(sevInfo, name, name & ": " & keptWords(c.edits) & ", made on a file of its " &
-    "size, ends and time that was not confirmed before the program quit (" &
-    (if c.opened != Time(): c.opened.local.format("yyyy-MM-dd HH:mm") else: "earlier") &
-    "); provisional until its whole content is compared.")
-  state.editsChanged(r.path)
+  if c.edits == state.editsAt(r.path).kept:
+    if not state.readOnlyProject:
+      state.diskIo.remove(state.store.docPath(c.doc), "what is remembered about " & name &
+        " (unconfirmed, applied)")
+    state.knownDocs.del c.doc
+    return
+  var list = state.earlier.getOrDefault(r.path)
+  for x in list:
+    if x.doc == c.doc: return
+  list.add c
+  state.earlier[r.path] = list
+  state.log.add(sevWarning, name, name & ": the edits you made on " &
+    (if c.opened != Time(): c.opened.local.format("yyyy-MM-dd HH:mm") else: "an earlier day") &
+    " (" & keptWords(c.edits) & ") were not yet confirmed as this file's when viewSEG closed: " &
+    "they are kept apart (Project window: Apply or Forget).")
 
 func earlierOf*(state: AppState; path: string): seq[FileRecord] =
   ## What is remembered about earlier outputs of the name of open file
@@ -3260,7 +3278,8 @@ proc takeEarlier(state: var AppState; m: sink Msg) =
   for c in m.earlier:
     # Edits that are on this file already (applied with "Apply them to this
     # file", or the same made again) are no earlier output's to say.
-    if c.edits.isEmpty or not c.edits.minus(state.editsAt(m.earlierPath).kept).isEmpty:
+    if c.unconfirmed: state.sayUnconfirmed(i, c)
+    elif c.edits.isEmpty or not c.edits.minus(state.editsAt(m.earlierPath).kept).isEmpty:
       state.sayEarlier(m.earlierPath, c)
 
 proc takeIdentified(state: var AppState; m: sink Msg) =
@@ -3277,24 +3296,20 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
   let name = r.path.extractFilename
   for p in m.memoryProblems:
     state.log.add(sevWarning, name, "What is remembered about " & name & ": " & p & ".")
-  var cands: seq[FileRecord]
+  var cands, unconfirmed: seq[FileRecord]
   for c in m.candidates: # what this run wrote is newer than the disk
-    cands.add(if c.doc in state.knownDocs: state.knownDocs[c.doc] else: c)
+    let x = if c.doc in state.knownDocs: state.knownDocs[c.doc] else: c
+    if x.unconfirmed: unconfirmed.add x else: cands.add x
   for d, c in state.knownDocs:
     if d notin r.taken and c.identity.size == r.identity.size and
         c.identity.quick == r.identity.quick:
-      cands.add c
-  var at = -1 # a record of the full hash first: another is an unconfirmed one's
+      if c.unconfirmed: unconfirmed.add c else: cands.add c
+  var at = -1
   for j, c in cands:
-    if c.modified == r.modified and
-        (at < 0 or (c.identity.fullKnown and not cands[at].identity.fullKnown)): at = j
-  if at >= 0:
-    state.applyRecord(i, cands[at])
-    for j, c in cands:
-      if j != at and not c.identity.fullKnown:
-        if c.modified == r.modified: state.takeUnconfirmed(i, c)
-        elif c.path == r.path: state.sayEarlier(r.path, c) # another output, same quick identity
+    if at < 0 and c.modified == r.modified: at = j
+  if at >= 0: state.applyRecord(i, cands[at])
   else: r.waiting = cands
+  for c in unconfirmed: state.sayUnconfirmed(i, c)
   if m.pending.doc.len > 0: state.takePending(i, m.pending, m.pendingFits)
   if cands.len > 0 or not state.editsAt(r.path).kept.isEmpty: state.hashFile(i)
   state.linkSame(i)
@@ -3328,6 +3343,7 @@ proc takeHashed(state: var AppState; m: sink Msg) =
       state.edits[state.keyOf(r.path)].forget()
       r.savedRev = state.edits[state.keyOf(r.path)].keptRevision
       (r.doc, r.ownDoc, r.brought) = ("", false, FileRecord())
+      state.dropProvisional(i)
       state.editsChanged(r.path)
   let wasChecking = r.brought.doc.len > 0
   if r.doc.len > 0 and r.identity.fullKnown and r.identity.full != m.hashed.full:
@@ -3381,8 +3397,6 @@ proc takeHashed(state: var AppState; m: sink Msg) =
         state.applyRecord(i, c)
       elif c.path == r.path and c.identity.fullKnown and c.identity.full != r.identity.full:
         state.sayEarlier(r.path, c) # the same size and ends, other contents
-      elif c.path == r.path and not c.identity.fullKnown and c.modified != r.modified:
-        state.sayEarlier(r.path, c) # an unconfirmed output of another time
     if own.len > 0 and r.doc != own:
       if not state.readOnlyProject:
         state.diskIo.remove(state.store.docPath(own), "what is remembered about " & name)
@@ -3497,7 +3511,8 @@ proc importEdits(state: var AppState; cmd: Command) =
     let job = state.jobs.submit(JobSpec(title: "Import the edits in " &
       cmd.listPath.extractFilename, lane: jlInteractive), importEditsWork(cmd.listPath,
       state.sessions[state.shownFile(k)].len, state.inbox.poster))
-    state.editImports.add (job, state.sessions[state.shownFile(k)].path, cmd.origin)
+    state.editImports.add (job, state.sessions[state.shownFile(k)].path, cmd.origin,
+      cmd.replaceEdits)
 
 proc takeImported(state: var AppState; m: sink Msg) =
   ## A file's list a job read: its edits added to those of the file it was
@@ -3506,7 +3521,7 @@ proc takeImported(state: var AppState; m: sink Msg) =
   for j, x in state.editImports:
     if x.job == m.job: w = j
   if w < 0: return
-  let (_, path, by) = state.editImports[w]
+  let (_, path, by, replace) = state.editImports[w]
   state.editImports.delete w
   let name = m.importedList.extractFilename
   let target = path.extractFilename
@@ -3544,7 +3559,7 @@ proc takeImported(state: var AppState; m: sink Msg) =
       " (its size or its bytes differ): its edits are applied by trace number all the same; " &
       "Edit > Undo (Ctrl+Z) takes them away.")
   template e: untyped = state.edits.mgetOrPut(state.keyOf(path), FileEdits())
-  let n = e.takeIn(l, name, keeps(by))
+  let n = if replace: e.setTo(l, name, keeps(by)) else: e.takeIn(l, name, keeps(by))
   if n == 0:
     state.log.add(sevInfo, "edits", "Every edit in " & name & " was on " & target & " already.")
   else:

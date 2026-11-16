@@ -8,9 +8,12 @@
 ##   brought-back record: a quit before the hash ends leaves the brought
 ##   document as it was, and writes the own edits as an unconfirmed record of
 ##   their own (quick identity and time, no hash of every byte).
-## - The next open of a file of that size, ends and time brings them back as
-##   provisional; with another time they are listed as an earlier output and
-##   not applied.
+## - The next open of a file of that quick identity applies nothing of it,
+##   whatever hash the file has: it is listed with the earlier outputs, to
+##   apply (one step, Undo takes it back) or to forget. It holds the whole
+##   state as the user left it, so an edit taken off is kept too.
+## - Two paths of one size, ends and time open at once are not linked while
+##   their edits are being checked: each waits for its own hash.
 ## - When the hash says it is another file, the user's own edits made on it
 ##   stay as its record; only the brought-back ones are taken away.
 ## - When the hash agrees, they join the brought-back record.
@@ -86,6 +89,15 @@ withFixtures fx:
   installSteps()
   made()
 
+  proc unconfirmedOf(st: AppState; path: string): seq[FileRecord] =
+    for c in st.earlierOf(path):
+      if c.unconfirmed: result.add c
+
+  proc applyUnconfirmed(st: var AppState; path: string) =
+    let c = st.unconfirmedOf(path)[0]
+    st.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: st.store.docPath(c.doc),
+      replaceEdits: true)
+
   block quitDuringCheck: # B, same size/ends/time; kill 9 on B during the check; quit
     writeFile(a, b)
     setLastModificationTime(a, t0)
@@ -103,44 +115,118 @@ withFixtures fx:
     let all = docs(job)
     doAssert all.len == 2, "expected the brought document and an unconfirmed one: " & $all.len
     for r in all:
-      if r.identity.fullKnown:
-        doAssert r.killedIn == @[5], "the brought document holds the edits made on the " &
-          "other file: " & $r.killedIn
+      if r.unconfirmed:
+        doAssert r.killedIn == @[5, 9], "the unconfirmed record is not the whole state: " &
+          $r.killedIn
+        doAssert r.modified == t0 and not r.identity.fullKnown and r.traces == Traces
+        doAssert r.path == a and r.opened != Time()
       else:
-        doAssert r.killedIn == @[9], "the unconfirmed record is wrong: " & $r.killedIn
-        doAssert r.modified == t0
+        doAssert r.identity.fullKnown and r.killedIn == @[5],
+          "the brought document holds the edits made on the other file: " & $r.killedIn
 
-  block otherTime: # the unconfirmed record, a file of another time: listed, not applied
-    writeFile(a, b)
-    setLastModificationTime(a, initTime(t0.toUnix - 600, 0))
+  block backOnA: # A opened later: only its own [5]; the unconfirmed [5, 9] is offered
+    writeFile(a, original)
+    setLastModificationTime(a, t0)
     var st = start(config)
     st.apply Command(kind: ckOpenProject, projectPath: job)
     doAssert st.settle(st.inProject)
     st.showFile(a)
-    doAssert st.settle(st.remembering(a).confirmed and st.jobs.active.len == 0)
-    doAssert not st.killed(9) and not st.killed(5), "applied on another time"
-    doAssert st.settle(st.earlierOf(a).len >= 1)
+    doAssert st.settle(st.remembering(a).confirmed and st.jobs.active.len == 0 and
+      st.unconfirmedOf(a).len == 1)
+    doAssert st.killed(5) and not st.killed(9), "an unconfirmed edit was applied to A"
+    doAssert st.said("not yet confirmed as this file's"), "not said"
+    st.applyUnconfirmed(a) # only by the user's click, one step
+    doAssert st.settle(st.killed(9)), "Apply did not apply it"
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+    doAssert st.settle(not st.killed(9) and st.killed(5)), "Undo did not take it back"
+    st.flushFiles()
     st.shutdown()
+    for r in docs(job):
+      if not r.unconfirmed: doAssert r.killedIn == @[5], "A's record changed: " & $r.killedIn
 
-  block backOnB: # B again, same time: 9 is provisional, bound to B's hash; 5 is taken off
+  block backOnB: # B opened later: nothing applied, A's [5] taken off, the unconfirmed offered
     writeFile(a, b)
     setLastModificationTime(a, t0)
     var st = start(config)
     st.apply Command(kind: ckOpenProject, projectPath: job)
     doAssert st.settle(st.inProject)
     st.showFile(a)
-    doAssert st.settle(st.remembering(a).confirmed and st.jobs.active.len == 0)
-    doAssert st.killed(9), "the provisional edit was not brought back"
-    doAssert not st.killed(5), "the other file's edit stayed"
+    doAssert st.settle(st.remembering(a).confirmed and st.jobs.active.len == 0 and
+      st.unconfirmedOf(a).len == 1)
+    doAssert not st.killed(5) and not st.killed(9), "an edit was applied to B"
+    st.applyUnconfirmed(a)
+    doAssert st.settle(st.killed(5) and st.killed(9)), "Apply did not apply it"
     st.flushFiles()
     st.shutdown()
-    var mine = 0
+
+  block takenOff: # an edit taken off a brought-back one is kept in the unconfirmed state
+    removeDir(job)
+    removeDir(config)
+    writeFile(a, original)
+    setLastModificationTime(a, t0)
+    made()
+    holdStep("reading every byte")
+    var st = start(config)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject)
+    st.showFile(a)
+    doAssert st.settle(st.editsChecking(a))
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled,
+      edited: @[st.sessions[0].base + 5], on: false)
+    doAssert st.settle(not st.killed(5))
+    st.flushFiles()
+    st.shutdown(wait = initDuration(milliseconds = 300))
+    releaseStep("reading every byte")
+    var seen = 0
     for r in docs(job):
-      if r.killedIn == @[5]: doAssert r.identity.fullKnown
-      if r.killedIn == @[9]:
-        inc mine
-        doAssert r.identity.fullKnown, "bound to no hash"
-    doAssert mine == 1, "one record holds 9: " & $mine
+      if r.unconfirmed:
+        inc seen
+        doAssert r.killedIn.len == 0
+      else: doAssert r.killedIn == @[5]
+    doAssert seen == 1, "the taken-off edit was not kept as unconfirmed"
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject)
+    again.showFile(a)
+    doAssert again.settle(again.remembering(a).confirmed and again.unconfirmedOf(a).len == 1)
+    doAssert again.killed(5), "the taken-off edit was applied by itself"
+    again.shutdown()
+
+  block twoPaths: # A and B (same size, ends, time) open at once, under two paths
+    removeDir(job)
+    removeDir(config)
+    writeFile(a, original)
+    setLastModificationTime(a, t0)
+    made()
+    let c = field / "line7-again.sgy"
+    writeFile(c, b)
+    setLastModificationTime(c, t0)
+    holdStep("reading every byte")
+    var st = start(config)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject)
+    st.showFile(a)
+    doAssert st.settle(st.editsChecking(a))
+    st.showFile(c)
+    doAssert st.settle(st.remembering(c).known and st.editsChecking(c))
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled,
+      edited: @[st.sessions[st.sessions.high].base + 9], on: true)
+    doAssert st.settle(st.killed(9))
+    st.flushFiles()
+    releaseStep("reading every byte")
+    doAssert st.settle(st.remembering(c).confirmed and st.remembering(a).confirmed and
+      st.jobs.active.len == 0)
+    doAssert st.killed(9) and not st.killed(5), "B (the second path) lost its own edit"
+    st.showFile(a)
+    doAssert not st.killed(9) and st.killed(5), "A took B's edit or lost its own"
+    st.flushFiles()
+    st.shutdown()
+    var sawA, sawB = false
+    for r in docs(job):
+      doAssert not r.unconfirmed, "an unconfirmed record was left"
+      if r.killedIn == @[5]: sawA = true
+      if r.killedIn == @[9]: sawB = true
+    doAssert sawA and sawB, "A's record is not [5], or B's own is missing"
 
   block ownKept: # fresh project state: A, then B with a kill 11 during the check; hash differs
     removeDir(job)

@@ -83,6 +83,10 @@ type
     traces*: int      ## the file's traces when its edits were made; 0 when not known
     doc*: string      ## the document's file name in the store; "" until it has one
     bytes*: int64     ## the document's size (a listing)
+    unconfirmed*: bool
+      ## the edits the user left on a file whose brought-back record was still
+      ## being checked when viewSEG closed: the whole state as left, never
+      ## applied by itself (offered, to apply or to forget)
     gone*: bool
       ## a listing: no file at `path` any more (in a folder that is there),
       ## or one of another size
@@ -284,6 +288,10 @@ proc memoryDocument*(r: FileRecord): string =
     w.open "traces"
     w.add int64(r.traces)
     w.close
+  if r.unconfirmed:
+    w.open "unconfirmed"
+    w.add true
+    w.close
   for edit in [teKilled, teReversed]:
     if r.edits.lists[edit].len > 0:
       w.open $edit
@@ -415,6 +423,9 @@ proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string
             if k.kids.len == 1 and k.kids[0].kind == nkInt and k.kids[0].intVal in 1 .. high(int32):
               result.traces = int(k.kids[0].intVal)
             else: problems.add "traces: not a count of traces"
+          of "unconfirmed":
+            result.unconfirmed = k.kids.len == 1 and k.kids[0].kind == nkIdent and
+              k.kids[0].text == "true"
           of "killed", "reversed", "allReversed": discard # readEditsIn
           else: result.later.add k # a later version's: kept as it is
       readEditsIn(n, result, problems, upTo, outside)
