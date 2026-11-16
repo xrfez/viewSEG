@@ -18,7 +18,8 @@
 ##   stay as its record; only the brought-back ones are taken away.
 ## - When the hash agrees, they join the brought-back record.
 ##
-## Seen to fail: with the message left as `undoText` ("imported from <store>.nif"), "the
+## Seen to fail: with `takeIdentified` taking an open file's `provDocs` as candidates, "the live
+## record of A's edits is offered"; with the message left as `undoText` ("imported from <store>.nif"), "the
 ## counts are not said"; with `takePending` applying edits kept by path on path, size and
 ## time, "edits kept by path were applied"; with `writeMemoryDoc` not routing a check to
 ## `writeProvisional`, "the brought document holds the edits made on the
@@ -288,6 +289,36 @@ withFixtures fx:
     st.shutdown()
     let all = docs(job)
     doAssert all.len == 1 and all[0].killedIn == @[5, 12], "not joined: " & $all.len
+  block liveNotOffered: # A checking with an edit saved: another path of its quick identity is not offered it
+    removeDir(job)
+    removeDir(config)
+    writeFile(a, original)
+    setLastModificationTime(a, t0)
+    made()
+    let a2 = field / "line7-again.sgy"
+    writeFile(a2, original)
+    setLastModificationTime(a2, t0)
+    holdStep("reading every byte")
+    var st = start(config)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject)
+    st.showFile(a)
+    doAssert st.settle(st.editsChecking(a))
+    st.kill 9
+    doAssert st.settle(st.killed(9))
+    st.flushFiles()
+    st.showFile(a2)
+    doAssert st.settle(st.remembering(a2).known)
+    doAssert st.unconfirmedOf(a2).len == 0, "the live record of A's edits is offered as an earlier run's"
+    doAssert not st.said("when viewSEG closed"), "said as left at a quit"
+    releaseStep("reading every byte")
+    doAssert st.settle(st.remembering(a).confirmed and st.remembering(a2).confirmed)
+    doAssert st.unconfirmedOf(a2).len == 0 and st.unconfirmedOf(a).len == 0,
+      "an entry stays listed after its document is gone"
+    st.flushFiles()
+    st.shutdown()
+    removeFile(a2)
+
   block pendingByPath: # edits kept by path, no hash recorded: unconfirmed, never applied
     let c2 = fx.dir / "config-pending"
     let p = field / "pend.sgy"

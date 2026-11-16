@@ -1208,6 +1208,8 @@ proc dropProvisional(state: var AppState; i: int) =
       state.diskIo.remove(state.store.docPath(d), "what is remembered about " &
         r.path.extractFilename & " (unconfirmed)")
     state.knownDocs.del d
+    for path, list in state.earlier.mpairs: # perhaps offered to another file meanwhile
+      list.keepItIf(it.doc != d)
   r.provDocs.setLen 0
 
 proc writeProvisional(state: var AppState; i: int) =
@@ -3327,6 +3329,7 @@ proc takeEarlier(state: var AppState; m: sink Msg) =
   for p in m.earlierProblems:
     state.log.add(sevWarning, m.earlierPath.extractFilename, "What is remembered: " & p & ".")
   for c in m.earlier:
+    if state.remembered.anyIt(c.doc in it.provDocs): continue # an open file's live record
     # Edits that are on this file already (applied with "Apply them to this
     # file", or the same made again) are no earlier output's to say.
     if c.unconfirmed: state.sayUnconfirmed(i, c)
@@ -3351,12 +3354,16 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
   # What the path kept comes first: a record of its own, found below like any
   let fromPending = if m.pending.doc.len > 0: state.takePending(i, m.pending, m.pendingFits)
     else: ""
+  var live = initHashSet[string]() # the live record of an open file's edits: not an earlier run's
+  for x in state.remembered:
+    for d in x.provDocs: live.incl d
   var cands, unconfirmed: seq[FileRecord]
   for c in m.candidates: # what this run wrote is newer than the disk
     let x = if c.doc in state.knownDocs: state.knownDocs[c.doc] else: c
+    if x.doc in live: continue
     if x.unconfirmed: unconfirmed.add x else: cands.add x
   for d, c in state.knownDocs:
-    if d notin r.taken and c.identity.size == r.identity.size and
+    if d notin r.taken and d notin live and c.identity.size == r.identity.size and
         c.identity.quick == r.identity.quick:
       if c.unconfirmed: unconfirmed.add c else: cands.add c
   var at = -1
