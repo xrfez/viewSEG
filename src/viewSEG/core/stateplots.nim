@@ -98,9 +98,10 @@ proc askPlot(state: var AppState; w: int): bool =
     processing: pw.processing)
   # the unit of the file's distances: as imported, else what its headers say
   let joined = state.joinedOf(s.id)
-  a.unit = if joined >= 0 and state.joins[joined].units.file != suNotGiven:
-             state.joins[joined].units.file
-           else: headerUnitOf(s.crs)
+  let imported = joined >= 0 and state.joins[joined].units.file != suNotGiven
+  a.unit = if imported: state.joins[joined].units.file else: headerUnitOf(s.crs)
+  # the offsets' unit: the import's when joined, else the header's measurement system
+  a.offsetUnit = if imported: state.joins[joined].units.file else: offsetUnitOf(s.crs)
   if pw.view == avCorrelation:
     let r = pw.params.reference
     let j = state.findTrace(r)

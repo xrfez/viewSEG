@@ -90,6 +90,32 @@ proc pilotRecord(fx: Fixtures; name = "pilot-record.sgy"; noInterval = -1): stri
     data[at + 1] = '\0'
     writeFile(result, data)
 
+proc offsetsRecord(fx: Fixtures; name: string): string =
+  ## Six traces 30 m apart in offset, the binary header's measurement system
+  ## metres, and trace bytes 89-90 (the coordinates' unit) arc-seconds: the
+  ## offsets are still metres.
+  result = fx.dir / name
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1, measurementSystem: 1,
+    text: @["C01 viewSEG test fixture: offsets 30 m apart, coordinates in arc-seconds"]))
+  var buf = newSeq[float32](Samples)
+  for c in 0 ..< 6:
+    for i in 0 ..< Samples: buf[i] = float32(sin(float64(i) / 9 + float64(c)))
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs) = (1.0, float64(c + 1), 0.0, DtMs * 1000)
+    k.offset = 30.0 * float64(c)
+    k.status = tsLive
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0
+  var f = openSeismic(result, keys = true)
+  var at: seq[int] = @[]
+  for c in 0 ..< 6: at.add int(f.index.entries[c].offset)
+  f.close()
+  var data = readFile(result)
+  for a in at:
+    data[a + 88] = '\0' # trace bytes 89-90: 2, arc-seconds
+    data[a + 89] = '\2'
+  writeFile(result, data)
+
 proc lastText(log: MessageLog): string = log[log.len - 1].text
 
 proc answered(st: AppState; w: int): bool =
@@ -288,6 +314,23 @@ withFixtures fx:
     doAssert g.plots[0].result.problem == "its file was closed", g.plots[0].result.problem
     doAssert g.sessions.len == 0
     discard g.shutdown()
+
+  block offsetsInTheirOwnUnit:
+    # trace offsets are in the binary header's measurement system (metres),
+    # whatever the coordinates' unit says: 30 m apart reads cycles per km
+    var h = initAppState()
+    h.apply Command(kind: ckShowFile, panel: MainPanel,
+      path: fx.offsetsRecord("offsets-record.sgy"))
+    doAssert h.settle(h.sessions.len == 1 and h.panel(MainPanel).laidOut)
+    let hs = h.sessions[0]
+    var all: seq[int] = @[]
+    for i in 0 ..< 6: all.add hs.base + i
+    h.apply Command(kind: ckOpenPlot, plotView: avFk, plotTraces: all)
+    doAssert h.settle(h.answered(0)), "no answer"
+    let r = h.plots[0].result
+    doAssert r.problem == "", r.problem
+    doAssert r.image.xLabel == "Wavenumber (cycles/km)", r.image.xLabel
+    discard h.shutdown()
 
   block cursorAndClose:
     let id = st.plots[1].id

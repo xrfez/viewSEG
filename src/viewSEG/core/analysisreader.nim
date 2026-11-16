@@ -39,7 +39,8 @@ type
     path*: string
     size*: int64              ## its size when it was opened; -1 when not known
     traces*: seq[int]         ## indices in the file, in the order drawn
-    unit*: SurveyUnit         ## the unit of the file's distances (offsets, coordinates)
+    unit*: SurveyUnit         ## the unit of the file's distances (coordinates)
+    offsetUnit*: SurveyUnit   ## the unit of the file's trace offsets
     names*: seq[string]       ## per trace, what the curves call it: "trace 12"
     killed*: seq[int]         ## those of `traces` killed, ascending: left out
     processing*: Processing   ## the plot's filters and its Aux toggle
@@ -318,7 +319,9 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               ys.add k.rcvY
             let (spacing, source) = spacingOf(offsets, xs, ys)
             let n = (answer.leftOut, answer.atOtherInterval)
-            answer = fkOf(kept, spacing, source, a.unit, dtMs, t0Ms, a.params, stop)
+            # the offsets' unit when the spacing is from them, else the coordinates'
+            let unit = if source == "offsets": a.offsetUnit else: a.unit
+            answer = fkOf(kept, spacing, source, unit, dtMs, t0Ms, a.params, stop)
             (answer.leftOut, answer.atOtherInterval) = n
           of avVibrator:
             # each role's trace: its place among those asked about, then

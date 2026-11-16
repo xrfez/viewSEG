@@ -304,6 +304,15 @@ func headerUnitOf*(c: FileCrs): SurveyUnit =
   result = unitOf(c.units)
   if result == suNotGiven or result == suFeet and named == suUsFeet: result = named
 
+func offsetUnitOf*(c: FileCrs): SurveyUnit =
+  ## The unit a seismic file's trace offsets are in: the binary header's
+  ## measurement system (SEG-Y), never the coordinates' unit; not given
+  ## when that says neither metres nor feet.
+  case c.measurement
+  of 1: suMetres
+  of 2: suFeet
+  else: suNotGiven
+
 # ------------------------------------------------ the import's units --
 # What each survey file's headers say of its coordinates' unit is read as
 # soon as the file is chosen, from its first `HeadBytes` only (`headUnitOf`,

@@ -31,6 +31,9 @@ type
       ## the format of `text`; `ctNone` when the file gives none
     text*: string
       ## its coordinate reference system, as stored (`crsText`)
+    measurement*: int16
+      ## the binary header's measurement system (SEG-Y): 1 metres, 2 feet,
+      ## 0 not given; the unit trace offsets are in
     lengthUnit*: string
       ## the unit of length that CRS names for its grid (parseSEG's
       ## `parseCrsText`: its projection's parameters, "US survey foot",
@@ -100,7 +103,8 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   result.keysRevision = result.file.keysRevision
   try:
     let sum = result.file.summary
-    result.crs = FileCrs(units: sum.coordinateUnits, format: sum.crsFormat)
+    result.crs = FileCrs(units: sum.coordinateUnits, format: sum.crsFormat,
+      measurement: result.file.index.segy.binary.measurementSystem)
     if readable and sum.crsFormat != ctNone:
       result.crs.text = result.file.crsText
       result.crs.lengthUnit = lengthUnitOf(result.file.crs)

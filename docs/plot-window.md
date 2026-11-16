@@ -631,7 +631,9 @@ Each window's first line holds its view's settings; a change works it out again.
   zero-padded to twice their number. The wavenumber is worked out from the trace spacing
   when it is regular (the signed offsets, else the receivers' distances along the line) and
   the unit of the file's distances (the unit confirmed with its import, else what its
-  headers say: the measurement system, the coordinate unit, the CRS). **In metres** the axis
+  headers say: the measurement system, the coordinate unit, the CRS). Trace offsets are
+  in the measurement system (not the coordinates' unit); the receivers' distances are in
+  the coordinate unit. **In metres** the axis
   is in cycles/km and the apparent velocity in m/s. **In feet** (international or US survey:
   the foot of the file itself) the axis is in cycles/kft (per 1000 ft) and the velocity in
   ft/s, as a US crew reads them; the note under the title names the unit. When the spacing is
