@@ -15,8 +15,8 @@
 ## inside its own data folder); with the check left out of `faLocate`, "a
 ## data folder located inside the project is refused" (the folder moved in).
 import std/[os, strutils]
-import viewSEG/core/state
-import utils/[fixtures, waiting]
+import viewSEG/core/[project, state]
+import utils/[faultyfs, fixtures, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); st.persist(); cond) and
@@ -66,5 +66,37 @@ withFixtures fx:
       folderPath: job / "moved")
     doAssert st.settle(st.said("cannot hold")), "the refusal is not said"
     doAssert st.project.doc.data[0].absolute == was, "the data folder was moved inside"
+    st.shutdown()
+  block fileManagerFiles:
+    # a folder holding only what a file manager leaves (.DS_Store, desktop.ini,
+    # Thumbs.db) is empty: a project is made there, and those files stay
+    let job = fx.dir / "Managed"
+    createDir job
+    for name in [".DS_Store", "desktop.ini", "Thumbs.db"]: writeFile(job / name, "x")
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject), "a folder with only those files is refused"
+    doAssert fileExists(job / "Thumbs.db") and fileExists(job / ProjectFileName)
+    st.shutdown()
+  block failedMakeTakesBack:
+    # a make that fails part-way removes what it made (folders and the
+    # document) and nothing it did not: the folder as it was, and a retry
+    # in it works
+    install()
+    let job = fx.dir / "Retried"
+    createDir job
+    writeFile(job / "Thumbs.db", "not a project's")
+    fault(job / CacheFolder, fkFail)
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.said("Cannot make the project")), "the failure is not said"
+    discard st.settle(st.jobs.active.len == 0)
+    doAssert not st.inProject
+    doAssert fileExists(job / "Thumbs.db") and readFile(job / "Thumbs.db") == "not a project's"
+    doAssert not dirExists(job / "survey") and not dirExists(job / ProjectStoreFolder) and
+      not fileExists(job / ProjectFileName), "what the failed make made is still there"
+    fault(job / CacheFolder, fkNone)
+    st.apply Command(kind: ckNewProject, projectPath: job)
+    doAssert st.settle(st.inProject), "a retry in the same folder fails"
     st.shutdown()
 echo "tprojectdatafolder: done"

@@ -213,6 +213,16 @@ proc removeFile*(_: FileSystem; path: string) {.raises: [OSError].} =
   enter(foWrite, path)
   os.removeFile(path)
 
+proc tryRemoveDir*(_: FileSystem; dir: string): bool {.raises: [].} =
+  ## `os.removeDir` of an empty folder: false when it stays (not empty, or
+  ## the drive failing too).
+  try:
+    enter(foWrite, dir)
+    os.removeDir(dir)
+    true
+  except OSError:
+    false
+
 proc tryRemoveFile*(_: FileSystem; path: string): bool {.raises: [].} =
   ## `os.tryRemoveFile`: false when the file stays (the drive failing too).
   try:

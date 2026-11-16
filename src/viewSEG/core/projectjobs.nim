@@ -110,8 +110,14 @@ proc realPath(path: string): string =
     try: result = fs.expandFilename(path)
     except OSError: discard
 
+const IgnoredFolderFiles = [".ds_store", "desktop.ini", "thumbs.db"]
+  ## the files a file manager leaves in a folder: a folder holding only these
+  ## is empty (lower case)
+
 proc isEmptyFolder(dir: string): bool =
-  for _ in fs.walkDir(dir): return false
+  ## Nothing in `dir` but the files a file manager leaves there.
+  for k, p in fs.walkDir(dir):
+    if k != pcFile or p.extractFilename.toLowerAscii notin IgnoredFolderFiles: return false
   true
 
 proc makeProject(dir: string; np: NewProject; brought: var int): ProjectDoc =
@@ -124,27 +130,43 @@ proc makeProject(dir: string; np: NewProject; brought: var int): ProjectDoc =
     if realPath(dir).isInside(realPath(d)):
       raise newException(IOError, "it would be inside its data folder " & d &
         ", and data folders are never written to")
-  fs.createDir(dir)
-  for part in [ProjectStoreFolder, SurveyCopies, CacheFolder]: fs.createDir(dir.partOf(part))
-  result = ProjectDoc(name: np.name, created: getTime())
-  for d in np.data:
-    if result.data.len < MaxProjectData: result.data.add placeOf(dir, d)
-  if np.takePresets: (result.displayPresets, result.hasPresets) = (np.presets, true)
-  if np.takeProcessing: (result.processing, result.hasProcessing) = (np.processing, true)
-  writeWhole(documentOf(dir), projectDocument(result))
-  if np.bringFrom.len > 0 and np.data.len > 0:
-    var problems: seq[string] = @[]
-    for r in listRecords(Store(home: np.bringFrom), problems, look = false):
-      var inData = false
-      for d in np.data:
-        if realPath(r.path).isInside(realPath(d)): inData = true
-      let dest = dir.partOf(ProjectStoreFolder) / r.doc
-      if inData and r.doc.len > 0 and not fs.fileExists(dest):
-        try:
-          fs.copyFile(np.bringFrom / r.doc, dest)
-          inc brought
-        except CatchableError:
-          discard
+  # What it makes is listed as it is made, so a failure part-way takes back
+  # what it made, and nothing it did not make (a folder already there stays).
+  var madeDirs, madeFiles: seq[string] = @[]
+  try:
+    if not fs.dirExists(dir):
+      fs.createDir(dir)
+      madeDirs.add dir
+    for part in [ProjectStoreFolder, SurveyFolder, SurveyCopies, CacheFolder]:
+      let folder = dir.partOf(part)
+      if not fs.dirExists(folder):
+        fs.createDir(folder)
+        madeDirs.add folder
+    result = ProjectDoc(name: np.name, created: getTime())
+    for d in np.data:
+      if result.data.len < MaxProjectData: result.data.add placeOf(dir, d)
+    if np.takePresets: (result.displayPresets, result.hasPresets) = (np.presets, true)
+    if np.takeProcessing: (result.processing, result.hasProcessing) = (np.processing, true)
+    madeFiles.add documentOf(dir)
+    writeWhole(documentOf(dir), projectDocument(result))
+    if np.bringFrom.len > 0 and np.data.len > 0:
+      var problems: seq[string] = @[]
+      for r in listRecords(Store(home: np.bringFrom), problems, look = false):
+        var inData = false
+        for d in np.data:
+          if realPath(r.path).isInside(realPath(d)): inData = true
+        let dest = dir.partOf(ProjectStoreFolder) / r.doc
+        if inData and r.doc.len > 0 and not fs.fileExists(dest):
+          try:
+            madeFiles.add dest
+            fs.copyFile(np.bringFrom / r.doc, dest)
+            inc brought
+          except CatchableError:
+            discard
+  except CatchableError:
+    for i in countdown(madeFiles.high, 0): discard fs.tryRemoveFile(madeFiles[i])
+    for i in countdown(madeDirs.high, 0): discard fs.tryRemoveDir(madeDirs[i])
+    raise
 
 proc openProjectWork*(dir: string; to: Poster; make = false; np = NewProject()): JobWork =
   ## The work of a job that opens (with `make`, first makes) the project in
