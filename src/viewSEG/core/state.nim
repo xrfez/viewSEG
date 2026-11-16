@@ -4023,7 +4023,8 @@ proc carryOf(state: AppState; s: Session): Carry =
 proc carryOver(state: var AppState; c: Carry; i: int) =
   ## Puts what `c` kept on the file `sessions[i]`, which replaced the one it
   ## was taken from: with the same trace count, the selection, the join and
-  ## the windows of its traces (at the new ids); with another, none of them.
+  ## the windows of its traces (at the new ids; an id that lay in another
+  ## file is left where it is); with another, none of them.
   ## Says in one line what was kept or dropped.
   let s = state.sessions[i]
   var kept, dropped: seq[string]
@@ -4032,6 +4033,7 @@ proc carryOver(state: var AppState; c: Carry; i: int) =
   if c.selected.len > 0 or c.joined or windows > 0:
     if c.count == s.len:
       let shift = s.base - c.oldBase
+      let old = c.oldBase ..< c.oldBase + c.count
       if c.selected.len > 0:
         var ids = newSeq[int](c.selected.len)
         for k, t in c.selected: ids[k] = s.base + t
@@ -4040,14 +4042,19 @@ proc carryOver(state: var AppState; c: Carry; i: int) =
       for id in c.plots:
         let w = state.findPlot(id)
         if w >= 0:
-          for t in state.plots[w].traces.mitems: t += shift
-          if state.plots[w].params.reference >= 0: state.plots[w].params.reference += shift
+          # A window may mix this file's traces with another's (a correlation
+          # against a trace in another file): only this file's ids move.
+          for t in state.plots[w].traces.mitems:
+            if t in old: t += shift
+          if state.plots[w].params.reference in old:
+            state.plots[w].params.reference += shift
           inc state.plots[w].revision
           discard state.askPlot(w)
       for id in c.spectra:
         let w = state.findSpectrum(id)
         if w >= 0:
-          for t in state.spectra[w].traces.mitems: t += shift
+          for t in state.spectra[w].traces.mitems:
+            if t in old: t += shift
           inc state.spectra[w].revision
           discard state.askAgain(w)
       if windows > 0: kept.add wordsOf

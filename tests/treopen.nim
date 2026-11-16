@@ -26,6 +26,8 @@
 ## closed: the close stands, the new session is released. The choice is
 ## written only when that open is taken in: a second reopen at once, or a
 ## close while the open is still reading, leaves the choice the file had.
+## A correlation whose traces are in one file and whose reference is in
+## another shifts only the ids that lay in the reopened file.
 ##
 ## Seen to fail (the failing reopen): with the trace-count test taken out of
 ## `adopt` (`elif false`), "stays as it was"; (the carried state): with
@@ -33,7 +35,8 @@
 ## posted reopen): with `adopt` adding the new session when the old one is
 ## gone, "a closed file came back"; (the choice written before the open):
 ## with `reopenWith` storing the choice before the job, "the untried choice
-## was kept".
+## was kept"; (a cross-file reference): with every carried id shifted,
+## "traces of the other file were shifted".
 ##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
@@ -354,3 +357,63 @@ block closeMidReopenKeepsNoChoice:
     doAssert st.openChoiceOf(canonical(path)).isDefault, "the untried choice was kept"
     st.shutdown()
   releaseAll()
+
+proc baseOf(st: AppState; path: string): int =
+  ## The first survey-wide id of the open file `path`; -1 when it is not open.
+  let want = canonical(path)
+  result = -1
+  for s in st.sessions:
+    if s.path == want: return s.base
+
+proc twoFiles(st: var AppState; a, b: string): tuple[baseA, baseB: int] =
+  ## `a` shown, `b` open beside it. The plot of `a`'s traces keeps `a` open
+  ## when `b` is shown.
+  st.showIt(a)
+  st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
+    plotTraces: @[st.sessions[0].base + 3, st.sessions[0].base + 4])
+  doAssert st.plots.len == 1, "the correlation window was not opened"
+  st.apply Command(kind: ckOpen, paths: @[b])
+  doAssert st.settle(st.sessions.len == 2), "the second file did not open"
+  result = (st.baseOf(a), st.baseOf(b))
+  doAssert result.baseB >= 0 and result.baseB != result.baseA, "the second file has no ids"
+  var p = st.plots[0].params
+  p.reference = result.baseB + 2
+  st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p)
+  doAssert st.plots[0].traces == @[result.baseA + 3, result.baseA + 4]
+  doAssert st.plots[0].params.reference == result.baseB + 2
+
+block referenceInAnotherFileIsShiftedAlone:
+  # Reopen the reference's file: its id moves, the other file's traces do not.
+  withFixtures fx:
+    let a = fx.surveySegy()
+    let b = fx.dir / "other.sgy"
+    copyFile(a, b)
+    var st = initAppState()
+    let (baseA, baseB) = st.twoFiles(a, b)
+    st.reopen(b, OpenChoice(verifyAll: true))
+    doAssert st.settle(st.baseOf(b) != baseB and st.sessions.len == 2 and st.plots.len == 1),
+      "the file was not opened again"
+    let newB = st.baseOf(b)
+    doAssert st.plots[0].traces == @[baseA + 3, baseA + 4],
+      "traces of the other file were shifted: " & $st.plots[0].traces
+    doAssert st.plots[0].params.reference == newB + 2,
+      "the reference was not shifted: " & $st.plots[0].params.reference
+    st.shutdown()
+
+block tracesShiftLeavesAnotherFilesReference:
+  # Reopen the traces' file: they move, a reference in the other file does not.
+  withFixtures fx:
+    let a = fx.surveySegy()
+    let b = fx.dir / "other.sgy"
+    copyFile(a, b)
+    var st = initAppState()
+    let (baseA, baseB) = st.twoFiles(a, b)
+    st.reopen(a, OpenChoice(verifyAll: true))
+    doAssert st.settle(st.baseOf(a) != baseA and st.sessions.len == 2 and st.plots.len == 1),
+      "the file was not opened again"
+    let newA = st.baseOf(a)
+    doAssert st.plots[0].traces == @[newA + 3, newA + 4],
+      "the traces were not shifted: " & $st.plots[0].traces
+    doAssert st.plots[0].params.reference == baseB + 2,
+      "a reference in another file was shifted: " & $st.plots[0].params.reference
+    st.shutdown()
