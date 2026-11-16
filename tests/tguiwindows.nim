@@ -34,7 +34,9 @@
 ## settings handler not writing its section, "the layout does not say that
 ## files is hidden"; with `bringWindows` not moving the windows outside the
 ## main window, "files is not on the screen"; with the check after a layout
-## is arranged left out, "headers is not on the screen".
+## is arranged left out, "headers is not on the screen"; with the item click
+## waiting a frame after an off-screen title (the clamped pointer then rests
+## on the next menu and takes the open one), the main window stayed at -300.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -128,11 +130,25 @@ withFixtures fx:
   var main: Rect
 
   proc menu(name, item: string; then: proc (f: FrameInfo): bool) =
-    ## Steps: Window opened by a click on the menu bar, then a click on its
-    ## item marked `item`.
-    step(name & ": Window", proc (f: FrameInfo) = f.click(f.markOf("menu.Window").centre),
-      proc (f: FrameInfo): bool = f.markOf(item).size.x > 0)
-    step(name, proc (f: FrameInfo) = f.click(f.markOf(item).centre), then)
+    ## Window opened by a click on its title, then a click on `item` while
+    ## that item is still drawn. The title can lie off the left of the screen
+    ## (the main window hangs there): the pointer warp is clamped to the
+    ## screen's edge, which can rest on the next title and take the open
+    ## menu, so the pointer is parked past the last title at once.
+    var clicked = false
+    step(name & ": Window", proc (f: FrameInfo) =
+      clicked = false
+      let title = f.markOf("menu.Window")
+      f.click(title.centre)
+      let last = f.markOf("menu.Help")
+      f.moveMouse(vec2(last.pos.x + last.size.x + 40, title.centre.y)),
+      proc (f: FrameInfo): bool =
+      let it = f.markOf(item)
+      if it.size.x > 0 and not clicked:
+        f.click(it.centre)
+        clicked = true
+      result = clicked)
+    step(name, noop, then)
 
   proc onScreen(f: FrameInfo; id: string) =
     let p = f.windowPlace(id)
