@@ -8,7 +8,8 @@
 ##
 ## Seen to fail: with `forgetFiles` not checking `readOnly`, "the holder's
 ## document is kept" (the document was removed); with the lock's open
-## failure given the owner's note, "cannot be opened".
+## failure given the owner's note, "cannot be opened" (the reason named the
+## owner, "has it open").
 import std/[os, strutils]
 import viewSEG/core/state
 import utils/[fixtures, steps, waiting]
@@ -63,4 +64,29 @@ withFixtures fx:
     doAssert fileExists(job / "files" / d), "a read-only program removed a document"
     other.shutdown()
     st.shutdown()
+  block lockOpen:
+    # a lock file nobody can open (mode 000) is said as such, not as another
+    # program's; as root every file opens, so there is nothing to test
+    let j2 = fx.dir / "Job2"
+    var st2 = start(config)
+    st2.apply Command(kind: ckNewProject, projectPath: j2)
+    doAssert st2.settle(st2.inProject)
+    st2.apply Command(kind: ckCloseProject)
+    discard st2.settle(not st2.inProject and st2.jobs.active.len == 0)
+    st2.shutdown()
+    let lock = j2 / LockName
+    setFilePermissions(lock, {})
+    var openable = true
+    try: close(open(lock, fmRead))
+    except IOError: openable = false
+    if openable:
+      echo "tprojectreadonly: lock open case skipped (running as root)"
+    else:
+      var s2 = start(config)
+      s2.apply Command(kind: ckOpenProject, projectPath: j2)
+      doAssert s2.settle(s2.inProject)
+      doAssert s2.project.readOnly and "cannot be opened" in s2.project.whyReadOnly and
+        "has it open" notin s2.project.whyReadOnly, s2.project.whyReadOnly
+      s2.shutdown()
+    setFilePermissions(lock, {fpUserRead, fpUserWrite})
 echo "tprojectreadonly: done"

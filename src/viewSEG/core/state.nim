@@ -4333,7 +4333,9 @@ proc takeOpened(state: var AppState; m: sink Msg) =
     userArrangement: userArrangement, userPresets: userPresets,
     userProcessing: userProcessing, surveyJob: NoJob, lookJob: NoJob, job: NoJob)
   p.readOnly = not p.lock.locked or p.doc.version > ProjectVersion
-  p.whyReadOnly = if not p.lock.locked: news.owner.words & " has it open"
+  p.whyReadOnly = if not p.lock.locked and p.lock.failure.len > 0:
+                    "the project's lock file cannot be opened (" & p.lock.failure & ")"
+                  elif not p.lock.locked: news.owner.words & " has it open"
                   elif p.doc.version > ProjectVersion: "a newer viewSEG made it"
                   else: ""
   inc p.revision

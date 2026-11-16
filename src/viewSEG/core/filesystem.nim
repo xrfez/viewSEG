@@ -240,6 +240,7 @@ type
     else:
       fd: cint
     locked*: bool
+    failure*: string ## why the file could not be opened (not locked by another); "" otherwise
 
 proc lockFile*(_: FileSystem; path: string; wait: Duration): FileLock {.raises: [].} =
   ## Takes the lock of `path` (made when there is none) that other programs
@@ -249,8 +250,8 @@ proc lockFile*(_: FileSystem; path: string; wait: Duration): FileLock {.raises: 
   ## ends, however it ends. Let it go with `unlock`.
   try:
     enter(foOpen, path)
-  except OSError:
-    return
+  except OSError as e:
+    return FileLock(failure: e.msg)
   let deadline = getMonoTime() + wait
   when defined(windows):
     let name = newWideCString(path)
@@ -259,11 +260,15 @@ proc lockFile*(_: FileSystem; path: string; wait: Duration): FileLock {.raises: 
       let h = winlean.createFileW(name, winlean.GENERIC_READ or winlean.GENERIC_WRITE, 0, nil,
         winlean.OPEN_ALWAYS, winlean.FILE_ATTRIBUTE_NORMAL, 0)
       if h != winlean.INVALID_HANDLE_VALUE: return FileLock(handle: h, locked: true)
+      let err = osLastError()
+      # a sharing or lock violation is another program holding it; any other
+      # failure is the file itself
+      if err.int32 != 32 and err.int32 != 33: return FileLock(failure: osErrorMsg(err))
       if getMonoTime() >= deadline: return
       sleep 5
   else:
-    let fd = posix.open(path.cstring, posix.O_RDWR or posix.O_CREAT or posix.O_CLOEXEC, 0o600)
-    if fd < 0: return
+    let fd = posix.open(path.cstring, posix.O_RDWR or posix.O_CREAT or posix.O_CLOEXEC, 0o666)
+    if fd < 0: return FileLock(failure: osErrorMsg(osLastError()))
     while true:
       # per open file: two locks of one program on the same file exclude each other too
       if c_flock(fd, LockEx or LockNb) == 0: return FileLock(fd: fd, locked: true)
