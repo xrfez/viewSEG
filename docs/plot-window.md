@@ -31,8 +31,9 @@
   of its own (Dear ImGui's `###plot`), never by its title, so a layout saved before a
   rename puts every window back where it was.
 - **Time down, or time across:** as seismic is plotted, time runs down and the traces
-  across; a toggle in the strip turns the plot so that time runs from left to right and
-  the traces are stacked from the top down, as signals are drawn (see
+  across; the **Time across** checkbox, under Plot in the gear's Look tab, turns the plot so
+  that time runs from left to right and the traces are stacked from the top down, as
+  signals are drawn (see
   [Orientation](#orientation)). The Seismic window starts time down; every plot window,
   single traces and overlays among them, can be turned.
 - **Never past the data:** every way of moving the view (wheel, keys, drags, box zoom,
@@ -55,8 +56,8 @@
   the axis keeps one width and the plot's left edge does not move when the labels grow
   from "999" to "1000" as the view pans. (When time is across, its values run along the
   bottom, where their width moves nothing.)
-- **The cursor's time line**, a toggle in the strip after the fills (⊢; off by default,
-  remembered between runs): when on, a thin line runs along the pointer's pixel row
+- **The cursor's time line**, the **Cursor time line** checkbox under Plot in the gear's
+  Look tab (off by default, remembered between runs): when on, a thin line runs along the pointer's pixel row
   from the pointer across the plot to the time axis, and the pointer's time is written
   at the axis on that row, right-aligned as the tick values are, on a small box over
   them, to the sample interval (whole ms at 1 ms or coarser); when time is across, the
@@ -153,7 +154,8 @@
     (their times are then not to scale). Sorts, gain, edits, the display header and the
     readout work on them as on the others. The Aux window of its own, with its own
     filters, is still to come;
-  - **scale boxes: traces per inch and ms per inch**, each a box to type a value into.
+  - **scale boxes: traces per inch and ms per inch**, each a box to type a value into, at
+    the top of the gear's Scales tab.
     Typing a value and pressing Enter sets the zoom, keeping the top-left corner where it
     is (a plot grows from where it starts, as on paper); zooming any other way updates the
     boxes. A value past what the record allows (wider than the record, narrower than four
@@ -305,7 +307,8 @@
 
 A plot can be drawn two ways (the user, on the vibrator analysis plots that reuse the
 plot: "realistically some of these plots will need to be rotated -90 degrees and
-displayed left to right"), chosen per plot window by the toggle in the strip and kept
+displayed left to right"), chosen per plot window by the Time across checkbox in the gear's
+Look tab and kept
 with the window's display. The Seismic window starts time down; a window made for single
 signals can start time across.
 
@@ -470,7 +473,8 @@ A **display preset** keeps a whole display under a name, to put it back with one
 the mode, the fills, the trace overlap, the colours (the scheme and the six), density's
 colour map, the gain type with every setting of its drop-down, the gain amount and the
 clip percentile. Not the orientation: applying a preset leaves the plot turned as it is.
-They are the first section of the gear popover's Look tab, **Display presets**:
+They sit under their own **Display presets** heading in the gear popover's Look tab, below
+the Plot checkboxes:
 
 - the presets, in the order they were made, each a line to click: the plot is drawn as
   it says at once (as if each control had been set; only what changes the samples, a
@@ -512,8 +516,8 @@ reversed.
 
 ## Filters
 
-The **Filters** button in the strip (a funnel icon, lit while filters are applied), before
-the gain (the order the samples go through them), opens a drop-down that says what the
+The **Filters** button in the strip (a funnel icon, lit while filters are applied), after
+the gain button, opens a drop-down that says what the
 traces go through ("Filters: 8-14-60-80 Hz, notch 60 Hz x3, DC"; "Filters: none"), as
 the button's tooltip does, and holds every setting, applied as it changes (a slider sends its value every frame it moves). The traces go through, in
 order: the **DC removal** (none, the mean: `demeanOp`, or the mean and a linear trend:

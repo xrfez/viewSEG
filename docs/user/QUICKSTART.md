@@ -275,11 +275,12 @@ bar: **Grey** (positive black), **Red-white-blue** (negative red, zero white, po
 blue), **Viridis** (dark purple to yellow) and **Red-black** (negative red, zero white,
 positive black); click one and the density is drawn in it at once.
 
-**Display presets.** The gear's Look tab, under Plot, keeps whole displays under names: type a
-name and click **Save** to keep the display shown (mode, fills, overlap, colours, colour
-map, gain and its settings, clip); click a preset's name to draw the plot that way again
-(it stays turned as it is). **Rename** and **Delete** act on the preset you clicked last.
-The presets are remembered when you quit.
+**Display presets.** The gear's Look tab keeps whole displays under names, under its own
+**Display presets** heading below the Plot checkboxes: type a name and click **Save** to
+keep the display shown (mode, fills, overlap, colours, colour map, gain and its settings,
+clip); click a preset's name to draw the plot that way again (it stays turned as it is).
+**Rename** and **Delete** act on the preset you clicked last. The presets are remembered
+when you quit.
 
 **Auxiliary traces.** When the record holds auxiliary traces (a time break, a pilot, an
 uphole), two toggles in the strip choose what the plot shows: **Seismic** (on at first)
