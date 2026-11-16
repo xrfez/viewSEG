@@ -4076,8 +4076,11 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
       state.release(s) # nothing else has it
       if panel == MainPanel: state.chooseShown()
       return
-    # Opened: takes the open file's place, which lets go of its panels.
+    # Opened: takes the open file's place, which lets go of its panels. The
+    # file's shots are read again, as the options say.
     state.opening[reopened].swapped = true
+    state.shots.forget(state.survey, @[s.path])
+    state.shots.listedRev = -1
     var old = -1
     for j, x in state.sessions:
       if x.path == s.path: old = j
@@ -5333,9 +5336,11 @@ proc followShots(state: var AppState) =
     let n = min(ShotBatch, x.pending.len)
     x.jobPaths = x.pending[0 ..< n]
     x.pending.delete(0 ..< n)
+    var choices: seq[OpenChoice]
+    for p in x.jobPaths: choices.add state.openChoices.getOrDefault(p)
     x.job = state.jobs.submit(JobSpec(title: "Find the shots in the folder's files",
       lane: jlBackground, reads: x.jobPaths), shotsWork(x.gen, x.jobPaths, state.indexCache,
-      state.inbox.poster))
+      state.inbox.poster, choices))
 
 proc takeShots(state: var AppState; m: sink Msg) =
   ## A listed file's shots, read by a job of this listing.

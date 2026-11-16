@@ -11,6 +11,9 @@
 ## viewSEG's, parseSEG's and processSEG's versions; Close closes it. The
 ## file is never changed.
 ##
+## The Seismic window says how the file was opened ("plot.opened as") while the options
+## are not the defaults.
+##
 ## Seen to fail: with the dialog's Reopen giving no command (`result.add`
 ## taken out of `drawReopen`), "Reopen did not happen"; with File >
 ## Reopen with options... not acted on (`maReopen` doing nothing in
@@ -99,7 +102,8 @@ withFixtures fx:
     result = f.panel.laidOut and f.panel.layers[0].source.gather == 1
     if result:
       doAssert f.opens == opensBefore + 1, "not opened again by the open job: " & $f.opens
-      doAssert not f.reopenDialog.shown)
+      doAssert not f.reopenDialog.shown
+      doAssert f.markOf("plot.opened as").size.x > 0, "the plot says nothing of the options")
   clickOn("the Summary tab", "headers.tab summary", proc (f: FrameInfo): bool =
     wait > 3 and f.markOf("headers.summary Read as").size.x > 0 and
       f.markOf("headers.summary Options").size.x > 0)
@@ -116,7 +120,8 @@ withFixtures fx:
   clickOn("Defaults", "reopen.defaults", proc (f: FrameInfo): bool = wait > 3)
   clickOn("Reopen with the defaults", "reopen.reopen", proc (f: FrameInfo): bool =
     f.markOf("reopen").size.x == 0 and f.shown != nil and
-      f.shown.facts.opened.choice.isDefault and f.panel.laidOut)
+      f.shown.facts.opened.choice.isDefault and f.panel.laidOut and
+      f.markOf("plot.opened as").size.x == 0)
   menu("the dialog again", "File", "Reopen with options...", proc (f: FrameInfo): bool =
     result = dialogOpen(f)
     if result: opensBefore = f.opens)

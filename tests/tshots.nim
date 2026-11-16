@@ -27,7 +27,12 @@
 ##   state says the folder does not answer, and the reading goes on (every
 ##   file read) once the drive answers.
 ##
-## Seen to fail: with the stalled job waited for (no give-up), "the rest
+## - A file opened with options ("Reopen with options") has its shots read with
+##   them: with every header checked it is read through no index cache and has
+##   no shot cache, the others have one (its shots are on the map all the same).
+##
+## Seen to fail: with the choice not given to `readShots`, "a shot cache of a
+## file read with options"; with the stalled job waited for (no give-up), "the rest
 ## read" timed out with 2 of 5 files read; with the shot cache not read,
 ## "listed again" found 3 mapped reads of shot-2.sgy; with a file tried again
 ## after `RetryAfter` whatever its first try was doing, "2 tries of the file
@@ -197,6 +202,21 @@ withFixtures fx:
       "read on: " & $st.shots.shotFiles & " of 5"
     doAssert st.shots.pointRefs.len == 5
     doAssert uiCalls().len == 0, $uiCalls()
+    st.shutdown()
+
+  block readWithTheOptionsOfTheFile:
+    let own = fx.dir / "own-cache"
+    var st = initAppState(indexCache = own)
+    let chosen = canonical(paths[2])
+    st.apply Command(kind: ckReopen, reopenPath: chosen, openChoice: OpenChoice(verifyAll: true))
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].facts.opened.choice.verifyAll)
+    st.apply Command(kind: ckBrowse, paths: @[folder])
+    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+    doAssert st.settle(st.shots.done(5)), "the folder's shots: " & $st.shots.shotFiles
+    doAssert st.shots.pointRefs.len == 5, $st.shots.pointRefs.len
+    for i, p in paths:
+      doAssert fileExists(shotCacheFile(own, p)) == (i != 2),
+        "a shot cache of a file read with options: " & p
     st.shutdown()
 
 echo "tshots: ok"

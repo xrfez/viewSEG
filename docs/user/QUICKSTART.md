@@ -739,7 +739,10 @@ count the Messages say what was dropped). The file is opened first and replaces 
 only when it has traces: if the options read it as nothing (a SEG-Y file named SEG-D), the
 file stays as it was, one message says why, and the options are not kept. The options hold
 for that file until viewSEG quits. **Defaults**
-puts every option back. The file is only read, never changed.
+puts every option back. A file opened with options says so: its Seismic window's title and a line above the plot
+("Opened as SEG-D · every header checked"; hover it for the full words), and its tooltip in
+the Files list. Its shots on the map are read with the same options. The file is only read,
+never changed.
 
 **Help > About viewSEG** gives viewSEG's version and those of parseSEG, processSEG, Dear
 ImGui, SDL, the OpenGL driver and the compiler, with **Copy** for a bug report.

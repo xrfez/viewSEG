@@ -38,7 +38,7 @@
 
 import std/[math, monotimes, os, sequtils, sets, tables, times]
 import parseSEG
-import filejobs, filesystem, inbox, jobs, session, shotfiles, spread, survey, threads
+import filejobs, filesystem, inbox, jobs, openchoice, session, shotfiles, spread, survey, threads
 
 export shotfiles
 
@@ -66,27 +66,27 @@ type
       ## files that did not answer, with the job given up on them: not
       ## tried again while that job's work still runs (each try that hangs
       ## holds a thread until the drive answers)
-    job*: JobId = NoJob              ## the job reading files now
-    jobPaths*: seq[string]           ## its files not yet answered, in its order
-    queued*: HashSet[string]         ## the files in `pending`, `later` and `jobPaths`
-    replaced*: seq[JobId]            ## jobs given up (a new listing, no answer): they end quietly
+    job*: JobId = NoJob ## the job reading files now
+    jobPaths*: seq[string] ## its files not yet answered, in its order
+    queued*: HashSet[string] ## the files in `pending`, `later` and `jobPaths`
+    replaced*: seq[JobId] ## jobs given up (a new listing, no answer): they end quietly
     givenUp*: seq[JobId]
       ## jobs given up whose work may still run (also after a new listing),
       ## until it is back (`Jobs.workingOn`)
     waiting*: bool
       ## no job is started: `MaxHanging` jobs given up still hang (the
       ## folder does not answer)
-    listedRev*: int                  ## the file list's `entriesRev` the files to read were found from
-    surveyRev*: int                  ## the survey's revision `points` were matched with
+    listedRev*: int ## the file list's `entriesRev` the files to read were found from
+    surveyRev*: int ## the survey's revision `points` were matched with
     points*: Table[int, seq[ShotPlace]]
       ## per survey file source point (`PointRef.key`): the listed records shot
       ## there, latest first (`latestFirst`)
-    pointRefs*: seq[PointRef]        ## those points, each once
+    pointRefs*: seq[PointRef] ## those points, each once
     placedAt*: Table[string, seq[int]]
       ## per file: the points (`PointRef.key`) its records are at
-    revision*: int                   ## bumped on every change of `files` or `points`
-    started*: MonoTime               ## when the listing's first job started (`fs.now`)
-    finished*: MonoTime              ## when the last file was answered
+    revision*: int ## bumped on every change of `files` or `points`
+    started*: MonoTime ## when the listing's first job started (`fs.now`)
+    finished*: MonoTime ## when the last file was answered
 
 func shotCacheFile*(dir, path: string): string =
   ## Where the shots of seismic file `path` are kept in the index cache
@@ -114,11 +114,14 @@ proc shotsOf(s: Session): seq[ShotOf] =
             (r.x, r.y) = (k.srcX, k.srcY)
         result.add r
 
-proc readShots*(path, cacheDir: string; ctx: JobContext): FileShots =
+proc readShots*(path, cacheDir: string; ctx: JobContext;
+    choice = OpenChoice()): FileShots =
   ## The shots of seismic file `path`, from its shot cache in `cacheDir` when
   ## that is of the file as it is now, else from the file (opened through its
   ## index cache when that is current, then closed here), and kept in the
-  ## shot cache. A file that cannot be read says why (`problem`). Raises
+  ## shot cache. The file is read with the options `choice` (its "Reopen with
+  ## options"), and a file so read has no shot cache, which is of the default
+  ## reading. A file that cannot be read says why (`problem`). Raises
   ## `JobCancelledError` at a cancel. Worker-only.
   assertWorkerThread()
   result = FileShots(path: path)
@@ -129,7 +132,7 @@ proc readShots*(path, cacheDir: string; ctx: JobContext): FileShots =
     result.problem = "cannot be looked at: " & e.msg
     return
   (result.size, result.modified) = (info.size, info.lastWriteTime)
-  let cache = shotCacheFile(cacheDir, path)
+  let cache = if choice.isDefault: shotCacheFile(cacheDir, path) else: ""
   if cache.len > 0 and fs.fileExists(cache):
     try:
       let (ok, kept) = parseCache(fs.readFile(cache), path)
@@ -144,7 +147,8 @@ proc readShots*(path, cacheDir: string; ctx: JobContext): FileShots =
       discard # a real drive that fails here ends the walk in parseSEG
     ctx.progress(done, total)
   try:
-    var s = openSession(path, progress, if index.len > 0 and fs.fileExists(index): index else: "")
+    var s = openSession(path, progress, if index.len > 0 and fs.fileExists(index): index else: "",
+      choice)
     if s.file.kind == skUnknown: result.problem = "not a SEG-Y, SEG-D or SEG-2 file"
     else: result.shots = shotsOf(s)
     s = nil # closed here, on the thread that opened it
@@ -166,14 +170,16 @@ proc readShots*(path, cacheDir: string; ctx: JobContext): FileShots =
     except CatchableError:
       discard # kept another time
 
-proc shotsWork*(gen: uint64; paths: seq[string]; cacheDir: string; to: Poster): JobWork =
+proc shotsWork*(gen: uint64; paths: seq[string]; cacheDir: string; to: Poster;
+    choices: seq[OpenChoice] = @[]): JobWork =
   ## The work of a background job that reads the shots of seismic files
   ## `paths` of listing `gen` (`readShots`), posting each file as it is done
-  ## (`mkShots`), so a file that does not answer holds back only itself.
+  ## (`mkShots`), so a file that does not answer holds back only itself; each
+  ## is read with its options in `choices` (those of `paths`, or none).
   result = proc (ctx: JobContext) {.gcsafe.} =
     for i, path in paths:
       ctx.setPhase "reading " & path.extractFilename
-      let f = readShots(path, cacheDir, ctx)
+      let f = readShots(path, cacheDir, ctx, if i < choices.len: choices[i] else: OpenChoice())
       discard ctx.progress(i + 1, paths.len)
       to.post Msg(job: ctx.id, kind: mkShots, shotsGen: gen, shots: f)
 

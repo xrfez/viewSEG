@@ -88,7 +88,7 @@
 
 import std/[math, os, strutils, tables]
 import imguin/cimgui
-import ../../core/[geometry, state, wiggle]
+import ../../core/[geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
 import ../../view/[displayheader, maplayers, plotink, theme, timeaxis]
 import chrome, dpi, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort, style,
@@ -106,7 +106,7 @@ const
     ## the plot's least height, in lines of text: the strip scrolls rather
     ## than take it
   moreId = "##plotmore"
-  burstSeconds = 0.6   ## wheel turns or key presses closer than this are one gesture
+  burstSeconds = 0.6 ## wheel turns or key presses closer than this are one gesture
   boxMinPixels = 4'f32 ## a box zoom narrower than this zooms the other axis only
 
 type
@@ -1506,7 +1506,7 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
         func letters(s: set[TraceEdit]): string =
           (if teKilled in s: "K" else: "") & (if teReversed in s: "R" else: "")
         let session = has - kept # shown, not remembered
-        let hidden = kept - has  # remembered, not shown
+        let hidden = kept - has # remembered, not shown
         var text = letters(has)
         if session != {}: text.add "*"
         if hidden != {}: text.add "(" & letters(hidden) & ")"
@@ -1883,8 +1883,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     ImPlot_Flags_NoMenus.cint or ImPlot_Flags_NoMouseText.cint or ImPlot_Flags_NoInputs.cint
   var menu = false
   let held = igIsPopupOpen_Str(menuId, 0) # the plot's menu, opened by a right click
-  # Room for the scroll bars is always kept, so the plot does not move or
-  # change size when one appears.
+                                          # Room for the scroll bars is always kept, so the plot does not move or
+                                          # change size when one appears.
   let avail = igGetContentRegionAvail()
   let room = barRoom()
   if ImPlot_BeginPlot("##traces", ImVec2_c(x: max(1, avail.x - room.x),
@@ -2116,8 +2116,9 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
   # Edits brought back on the file's size, ends and time are marked until
   # the hash of every byte confirms they are this file's.
   let checking = shown >= 0 and st.editsChecking(st.sessions[shown].path)
-  let title = IconPlot & "  " & name & (if checking: "  (edits being checked)" else: "") &
-    "###" & id
+  let opened = if shown >= 0: st.sessions[shown].facts.opened.choice else: OpenChoice()
+  let title = IconPlot & "  " & name & (if opened.isDefault: "" else: "  \u00b7  " &
+    choiceMark(opened)) & (if checking: "  (edits being checked)" else: "") & "###" & id
   # Arrow keys pan the plot, so they do not move ImGui's keyboard focus here;
   # the wheel zooms, so it does not scroll the window.
   const windowFlags = ImGui_WindowFlags_NoNavInputs.cint or
@@ -2160,6 +2161,14 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
       let source = p.layers[0].source
       let s = if source.kind == lsRecord: st.findSession(source.file) else: -1
       let name = if s >= 0: st.sessions[s].name else: "the file"
+      if s >= 0 and not st.sessions[s].facts.opened.choice.isDefault:
+        # Not read as the defaults read it: said above the plot, in full on hover.
+        let c = st.sessions[s].facts.opened.choice
+        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+        igTextUnformatted(("Opened " & choiceMark(c)).cstring, nil)
+        igPopStyleColor(1)
+        marks.mark("plot.opened as")
+        tip("Opened with options: " & choiceText(c) & ".\nFile > Reopen with options... changes them.")
       let again = if s < 0: st.reopening(panel) else: ("", false)
       let wait = st.waiting(k)
       if tp.gpuError.len > 0:

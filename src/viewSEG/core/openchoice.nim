@@ -108,6 +108,20 @@ func choiceWords*(c: OpenChoice): seq[string] =
   of acUnmapped: result.add "read unmapped, wherever it lies"
   if c.demuxDir.len > 0: result.add "its demultiplexed copy written in " & c.demuxDir
 
+func choiceMark*(c: OpenChoice): string =
+  ## `c` in a few words for a window's title or strip ("as SEG-D · every
+  ## header checked"); "" for the defaults.
+  var parts: seq[string]
+  if c.standard != scDetect: parts.add "as " & $c.standard
+  if c.verifyAll: parts.add "every header checked"
+  if c.twosComplement: parts.add "two's complement"
+  case c.access
+  of acAuto: discard
+  of acMapped: parts.add "mapped"
+  of acUnmapped: parts.add "unmapped"
+  if c.demuxDir.len > 0: parts.add "demultiplexed copy"
+  parts.join(" \u00b7 ")
+
 func choiceText*(c: OpenChoice): string =
   ## `choiceWords` as one sentence's body: "the defaults" for none.
   let w = choiceWords(c)

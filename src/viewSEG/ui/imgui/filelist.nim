@@ -79,6 +79,12 @@ func markText(e: FileEntry): string =
     of fsSteady: ""
   if e.isNew: result.add "\nNew: it appeared after the folder was listed."
 
+proc openedText(e: FileEntry; st: AppState): string =
+  ## What a file's tooltip says of the options it is opened with this run
+  ## ("Reopen with options"); nothing for the defaults.
+  let c = st.openChoiceOf(e.path)
+  if c.isDefault: "" else: "\nOpened with options: " & choiceText(c) & "."
+
 proc surveyText(e: FileEntry; st: AppState): string =
   ## What a survey file's row says of it, for its tooltip.
   let i = st.survey.findFile(e.path)
@@ -194,7 +200,7 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
         if not igIsItemVisible(): igSetScrollHereY(0.5)
         ui.follow = false
       tip(e.path & "\n" & sizeText(e.size) & ", modified " & dateText(e.modified) &
-        markText(e) & (if survey: surveyText(e, st) else: "") &
+        markText(e) & (if survey: surveyText(e, st) else: openedText(e, st)) &
         (if failed: "\nIt could not be " & (if survey: "loaded" else: "opened") &
           ": Messages says why." else: ""))
       # The mark and the name, over the row's selectable.
