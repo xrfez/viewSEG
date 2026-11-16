@@ -1297,8 +1297,8 @@ keeps it in view. Traces the trace filter hides are skipped; killed traces shown
 the next / previous trace after its own, and the window shows it; in one of a selection
 they step from the selection, and the window shows the trace stepped to. A frozen FFT
 window keeps what it shows: its trace stays, and Alt + arrows in it step the plot's
-selection (from the selection, as in the plot), so they are never stuck on the trace
-after its own. In the Spectrum panel they step the plot's selection, which the panel
+selection (from the selection, as in the plot; from its own trace while nothing is
+selected or under the pointer), so they are never stuck on the trace after its own. In the Spectrum panel they step the plot's selection, which the panel
 follows. (Alt + Left
 was also "back" in the plot; back is Backspace now, so the user's request wins.)
 

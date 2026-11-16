@@ -484,6 +484,11 @@ withFixtures fx:
     doAssert selectedNow == @[base + 8] and st.spectra[w].traces == @[base + 6],
       "a frozen window's step: selected " & $selectedNow & ", the window " &
       $st.spectra[w].traces
+    # nothing selected: from its own trace, not from the first in view
+    # (seen to fail without: the first in view selected)
+    st.apply Command(kind: ckClearSelection)
+    step(-1, st.spectra[w].id)
+    doAssert selectedNow == @[base + 5], "a frozen window's step from nothing: " & $selectedNow
     st.apply Command(kind: ckSpectrumDisplay, spectrum: st.spectra[w].id, spectrumShow: frozen,
       frozen: false)
     # its cursor, held by the keys or an agent: within its bins, let go

@@ -5635,7 +5635,8 @@ proc stepTrace(state: var AppState; cmd: Command) =
   ## back: `stepStart`), else the trace under the pointer, else the first in
   ## view. An FFT window (of one trace or a selection) then shows the new
   ## trace, unless frozen: a frozen one keeps its own and steps the plot's
-  ## selection, as the plot's keys do.
+  ## selection, as the plot's keys do (from its own trace while nothing is
+  ## selected or under the pointer).
   if cmd.stepBy == 0:
     state.ignore(cmd, "a step of 0 traces")
     return
@@ -5653,13 +5654,15 @@ proc stepTrace(state: var AppState; cmd: Command) =
     return
   template p: untyped = state.panels[k]
   let s = state.sessions[i]
-  # A frozen FFT window keeps its trace: it steps the plot's selection.
+  # A frozen FFT window keeps its trace: it steps the plot's selection (from
+  # its own trace while nothing is selected or under the pointer).
   let frozen = w > 0 and state.spectra[w].frozen
-  var start = -1
-  if w > 0 and not frozen and state.spectra[w].traces.len == 1 and
-      state.spectra[w].traces[0] in s:
-    start = p.shown.find(state.spectra[w].traces[0] - s.base)
+  let own = if w > 0 and state.spectra[w].traces.len == 1 and state.spectra[w].traces[0] in s:
+              p.shown.find(state.spectra[w].traces[0] - s.base)
+            else: -1
+  var start = if frozen: -1 else: own
   if start < 0: start = state.selection.stepStart(p.shown, s.base, cmd.stepBy)
+  if start < 0: start = own
   let to = if start >= 0: start + cmd.stepBy
            else: visiblePositions(p.layout, p.view).a
   if to notin 0 ..< p.shown.len:
