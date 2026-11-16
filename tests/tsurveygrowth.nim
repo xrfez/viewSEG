@@ -7,17 +7,21 @@
 ## long over what the jobs hand it (a drain of the inbox, what a frame pays).
 ##
 ## A trace's plan (each matched) costs against the larger survey what it
-## does against the smaller.
+## does against the smaller: it allocates nothing a trace, and takes about
+## as long. The checks are made to hold on a busy machine: the fastest of
+## several tries, the median of their longest drains, and the plan's cost
+## counted as allocations as well as timed.
 ##
 ## Seen to fail: with the plan of the join copying the station table for
 ## each end of each trace (the `addr` taken out in `planJoin`), a trace's plan
 ## cost 13.8 us against the smaller survey and 54.2 us against the larger
 ## (the import as a whole grew only 7.6 times: the read is most of it at
-## these sizes).
+## these sizes); counted, 2.0012 and 2.0001 allocations a trace (0.0012 and
+## 0.0001 without the copy).
 ##
 ## Runs alone: it times reads and bounds the UI thread's drains.
 
-import std/[monotimes, os, strutils, times]
+import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/[jobs, join, state, survey]
 import utils/[bigsurvey, fixtures, waiting]
@@ -61,11 +65,16 @@ proc tryOnce(f: BigSurveyFiles; segy: string): Tried =
   discard st.shutdown()
 
 proc best(f: BigSurveyFiles; segy: string): Tried =
+  ## The fastest of three tries, and the median of their longest drains (a
+  ## drain that is slow by its work is slow every time; one preempted on a
+  ## busy machine, once).
   result = (Inf, Inf, 0.0)
+  var drains: seq[float64]
   for _ in 0 ..< 3:
     let t = tryOnce(f, segy)
-    result = (min(result.loadMs, t.loadMs), min(result.importMs, t.importMs),
-      max(result.drainMs, t.drainMs))
+    result = (min(result.loadMs, t.loadMs), min(result.importMs, t.importMs), 0.0)
+    drains.add t.drainMs
+  result.drainMs = drains.sorted[1]
 
 func traces(b: BigSurvey; shots: int): int =
   for (i, k) in b.spreadShots(shots):
@@ -94,20 +103,38 @@ withFixtures fx:
     f1(b.importMs / a.importMs) & "x"
   doAssert b.drainMs < 20, "a drain of the inbox took " & f1(b.drainMs) & " ms"
   # The plan of each survey's file: what a trace costs (each matched) does
-  # not grow with the survey (a lookup by station).
+  # not grow with the survey (a lookup by station). Counted as allocations,
+  # which a busy machine does not change: a copy of a station table (the
+  # mistake this was written for) is one or more a lookup, two a trace;
+  # timed too (the fastest of five tries, the two surveys in turn), within
+  # three times and 2 us (a larger table misses the caches more: 1.1 to 1.9
+  # times here).
   var perTrace: array[2, float64] = [Inf, Inf]
+  var allocsPerTrace: array[2, float64]
+  proc allocs(): int = cast[tuple[allocs, deallocs: int]](getAllocStats()).allocs
+  var files: array[2, SeismicFile]
+  var geometry: array[2, SurveyGeometry]
   for k, (f, segy) in [(fa, writeBigSegy(fx.dir / "small", small, few)),
       (fb, writeBigSegy(fx.dir / "large", large, many))]:
-    var file = openSeismic(segy, keys = true)
-    var g = initSurveyGeometry()
-    for p in [f.s, f.r, f.x]: g.addSps(p)
-    for _ in 0 ..< 3:
+    files[k] = openSeismic(segy, keys = true)
+    geometry[k] = initSurveyGeometry()
+    for p in [f.s, f.r, f.x]: geometry[k].addSps(p)
+  for _ in 0 ..< 5:
+    for k in 0 .. 1:
+      let a0 = allocs()
       let t0 = getMonoTime()
-      let plan = planJoin(addr file, g, JoinOptions(), proc (done, total: int): bool = true)
-      perTrace[k] = min(perTrace[k], 1000 * ms(getMonoTime() - t0) / float64(file.len))
-      doAssert plan.traces == file.len and plan.matched == file.len, $plan.matched
-    file.close()
+      let plan = planJoin(addr files[k], geometry[k], JoinOptions(),
+        proc (done, total: int): bool = true)
+      perTrace[k] = min(perTrace[k], 1000 * ms(getMonoTime() - t0) / float64(files[k].len))
+      allocsPerTrace[k] = float64(allocs() - a0) / float64(files[k].len)
+      doAssert plan.traces == files[k].len and plan.matched == files[k].len, $plan.matched
+  for f in files.mitems: f.close()
   echo "tsurveygrowth: a trace's plan ", f1(perTrace[0]), " us against the smaller survey, ",
-    f1(perTrace[1]), " us against the larger"
-  doAssert perTrace[1] <= 2 * perTrace[0] + 1, "a trace's plan grew with the survey: " &
+    f1(perTrace[1]), " us against the larger; allocations a trace ",
+    formatFloat(allocsPerTrace[0], ffDecimal, 4), " and ",
+    formatFloat(allocsPerTrace[1], ffDecimal, 4)
+  for k in 0 .. 1:
+    doAssert allocsPerTrace[k] < 0.5, "a trace's plan allocates: " &
+      formatFloat(allocsPerTrace[k], ffDecimal, 4) & " a trace (a table copied?)"
+  doAssert perTrace[1] <= 3 * perTrace[0] + 2, "a trace's plan grew with the survey: " &
     f1(perTrace[0]) & " -> " & f1(perTrace[1]) & " us"
