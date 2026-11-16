@@ -1,12 +1,24 @@
 # viewSEG
 
-A high-performance viewer for SEG-Y and SEG-D seismic data, written in Nim on top of
-[parseSEG](https://github.com/xrfez/parseSEG) (reading, indexing, headers) and
-[processSEG](https://github.com/xrfez/processSEG) (filtering, gain, spectra, stacking).
+A viewer for SEG-Y and SEG-D seismic data, with quality-control tools. It reads files
+through [parseSEG](https://github.com/xrfez/parseSEG) and filters, gains and spectra
+through [processSEG](https://github.com/xrfez/processSEG).
 
-**Status:** early development. A file opens and its first record shows as greyscale
-density, with zoom, pan, scales in traces and ms per inch, and a cursor readout
-(`docs/user/QUICKSTART.md`).
+![Land sample: record 1 of shots.sgy, with the survey on the map](docs/images/land.png)
+
+## Try it
+
+Needs Nim 2.4. On a fresh clone, check out the pinned dependencies, build, and open the
+synthetic land survey:
+
+```sh
+atlas rep atlas.lock
+nim nimRelease
+bin/viewSEG samples/land/shots.sgy samples/land/land.?
+```
+
+Record 1 of 6 opens (96 traces), and `land.s`, `land.r` and `land.x` go on the map.
+What to do next is in `docs/user/QUICKSTART.md`.
 
 ## Building
 
@@ -29,7 +41,8 @@ behave like a Windows program (title bar, icons, tray), and what to check on a W
 machine: `docs/windows.md`.
 
 `nim depsCheck` verifies that `atlas.lock`, `nim.cfg` and `deps/` agree
-(`tools/deps.nim`). `nim help` lists every task.
+(`tools/deps.nim`). `nim help` lists every task. The test suite also runs optional
+checks on private files when a folder `exampleFiles/` exists, and skips them otherwise.
 
 ## Packaging
 
