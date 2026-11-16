@@ -470,14 +470,31 @@ type
     ## An open or close job the state waits for.
     job: JobId
     path: string
-    session: Session ## a closing file's session, kept until its close job ends
-    panel: PanelId   ## an open: the panel it is shown in (`ckShowFile`); NoPanel: the main one
-    gather: int      ## an open: the gather shown first (a file opened again: the one it showed)
-    unwanted: bool   ## an open no longer wanted (another file was chosen): dropped when it comes
-    follow: bool     ## an open "Follow the latest" made: shown only when the file is whole
-    quiet: bool      ## a close of a file the plot stepped away from: not logged
+    session: Session   ## a closing file's session, kept until its close job ends
+    panel: PanelId     ## an open: the panel it is shown in (`ckShowFile`); NoPanel: the main one
+    gather: int        ## an open: the gather shown first (a file opened again: the one it showed)
+    unwanted: bool     ## an open no longer wanted (another file was chosen): dropped when it comes
+    follow: bool       ## an open "Follow the latest" made: shown only when the file is whole
+    quiet: bool        ## a close of a file the plot stepped away from: not logged
     by: CommandOrigin
       ## an open: who asked for it (the user's goes to the recent files kept)
+    reopened: bool
+      ## an open "Reopen with options" made: its file takes the place of the open
+      ## one only when it opened with traces, else the file stays as it was
+    tried: OpenChoice ## a reopen: the choice it asks for
+    before: OpenChoice ## a reopen: the choice the file had before (put back when it fails)
+    hadBefore: bool ## a reopen: the file had a choice (not the defaults)
+    swapped: bool ## a reopen: its file took the place of the open one (its job ends quietly)
+
+  Carry = object
+    ## What a file that is opened again keeps, taken from the open file when
+    ## the new one takes its place: its selection, geometry join and the
+    ## analysis windows of its traces.
+    oldBase, count: int ## the old file's first survey-wide id, and its traces
+    selected: seq[int] ## the selected traces (indices in the file)
+    joined: bool
+    join: Joined
+    plots, spectra: seq[int] ## the ids of the windows of its traces
 
   Reopen = object
     ## A panel that showed a file another program changed: it shows the
@@ -3927,6 +3944,107 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
         elif state.joinedRelations(s.id) < 0: state.checkRecords(s)
     state.loaded(job, id)
 
+proc startJoin(state: var AppState; i: int; cmd: Command)
+proc notify(state: var AppState; severity: Severity; text: string)
+proc reopen(state: var AppState; i: int; now: bool)
+proc showAgain(state: var AppState; path: string)
+
+proc carryOf(state: AppState; s: Session): Carry =
+  ## What `s`, an open file about to be replaced by the same file opened
+  ## again, has that is to be kept.
+  result = Carry(oldBase: s.base, count: s.len)
+  for t in state.selection.selected:
+    if t in s: result.selected.add t - s.base
+  result.selected.sort()
+  let j = state.joinedOf(s.id)
+  if j >= 0: (result.joined, result.join) = (true, state.joins[j])
+  for w in state.plots:
+    if (w.traces.len > 0 and w.traces[0] in s) or
+        (w.view == avCorrelation and w.params.reference >= 0 and w.params.reference in s):
+      result.plots.add w.id
+  for w in state.spectra:
+    if w.id != LiveSpectrum and w.traces.len > 0 and w.traces[0] in s: result.spectra.add w.id
+
+proc carryOver(state: var AppState; c: Carry; i: int) =
+  ## Puts what `c` kept on the file `sessions[i]`, which replaced the one it
+  ## was taken from: with the same trace count, the selection, the join and
+  ## the windows of its traces (at the new ids); with another, none of them.
+  ## Says in one line what was kept or dropped.
+  let s = state.sessions[i]
+  var kept, dropped: seq[string]
+  let windows = c.plots.len + c.spectra.len
+  let wordsOf = if windows == 1: "1 plot window" else: $windows & " plot windows"
+  if c.selected.len > 0 or c.joined or windows > 0:
+    if c.count == s.len:
+      let shift = s.base - c.oldBase
+      if c.selected.len > 0:
+        var ids = newSeq[int](c.selected.len)
+        for k, t in c.selected: ids[k] = s.base + t
+        state.selection.select(ids, smReplace)
+        kept.add "the selection"
+      for id in c.plots:
+        let w = state.findPlot(id)
+        if w >= 0:
+          for t in state.plots[w].traces.mitems: t += shift
+          if state.plots[w].params.reference >= 0: state.plots[w].params.reference += shift
+          inc state.plots[w].revision
+          discard state.askPlot(w)
+      for id in c.spectra:
+        let w = state.findSpectrum(id)
+        if w >= 0:
+          for t in state.spectra[w].traces.mitems: t += shift
+          inc state.spectra[w].revision
+          discard state.askAgain(w)
+      if windows > 0: kept.add wordsOf
+      if c.joined:
+        if state.importing:
+          dropped.add "the survey join (an import is under way)"
+        else:
+          state.startJoin(i, Command(kind: ckJoin, joinFile: s.id, joinFiles: c.join.files,
+            joinOptions: c.join.options, joinUnits: c.join.units, origin: coWindow))
+          kept.add "the survey join (matched again)"
+    else:
+      if c.selected.len > 0: dropped.add "the selection"
+      if c.joined: dropped.add "the survey join"
+      for id in c.plots:
+        let w = state.findPlot(id)
+        if w >= 0:
+          if not state.analysisReader.isNil: state.analysisReader.cancel(id)
+          state.plots.delete w
+      for id in c.spectra:
+        let w = state.findSpectrum(id)
+        if w >= 0:
+          if not state.spectrumReader.isNil: state.spectrumReader.cancel(id)
+          state.spectra.delete w
+      if windows > 0: dropped.add wordsOf
+  if kept.len > 0 or dropped.len > 0:
+    var text = s.name & " opened again:"
+    if kept.len > 0: text &= " kept " & kept.join(", ")
+    if dropped.len > 0:
+      text &= (if kept.len > 0: ";" else: "") & " dropped " & dropped.join(", ")
+      if c.count != s.len:
+        text &= " (it has " & plural(s.len, "trace") & ", it had " & plural(c.count, "trace") & ")"
+    state.log.add(sevInfo, s.name, text & ".")
+
+proc reopenFailed(state: var AppState; o: Pending; s: Session; why: string) =
+  ## A reopen with options whose file did not open with traces: the file is
+  ## as it was, the choice too, and the log says so once.
+  if o.hadBefore: state.openChoices[o.path] = o.before
+  else: state.openChoices.del o.path
+  var problems, errors = 0
+  var first = ""
+  for d in s.file.log:
+    if d.severity in {sevError, sevFatal}:
+      inc errors
+      if first.len == 0: first = d.msg
+    if d.severity >= sevWarning: inc problems
+  let name = o.path.extractFilename
+  let text = "Reopening " & name & " with " & choiceText(o.tried) & " failed: " & why &
+    (if first.len > 0: " (" & first & (if problems > 1: "; and " & $(problems - 1) &
+      " more problems" else: "") & ")" else: "") & ". It stays as it was."
+  state.log.add(sevError, name, text)
+  state.notify(sevError, text)
+
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
   ## Takes in a file an open job opened, and shows its first gather (or the
   ## gather the open asks for) in the panel the open was for (the main panel
@@ -3937,13 +4055,40 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   var gather = 0
   var follow = false
   var by = coWindow
-  for p in state.opening:
+  var reopened = -1 # `opening[reopened]`: a reopen with options
+  for j, p in state.opening:
     if p.job == job:
       if p.unwanted: # another file was chosen meanwhile
         state.release(s)
         return
       if p.panel != NoPanel: (panel, replacing) = (p.panel, true)
       (gather, follow, by) = (p.gather, p.follow, p.by)
+      if p.reopened: reopened = j
+  var carry = Carry()
+  var swap = false
+  if reopened >= 0:
+    let o = state.opening[reopened]
+    let bad = if s.file.kind == skUnknown: "it is not read as a SEG-Y, SEG-D or SEG-2 file"
+              elif s.len == 0: "read so it has no traces"
+              else: ""
+    if bad.len > 0:
+      state.reopenFailed(o, s, bad)
+      state.release(s) # nothing else has it
+      if panel == MainPanel: state.chooseShown()
+      return
+    # Opened: takes the open file's place, which lets go of its panels.
+    state.opening[reopened].swapped = true
+    var old = -1
+    for j, x in state.sessions:
+      if x.path == s.path: old = j
+    if old >= 0:
+      swap = true
+      carry = state.carryOf(state.sessions[old])
+      state.reopen(old, now = false)
+      for r in state.reopens: # the first panel that showed it gets it, at its record
+        if r.path == s.path:
+          (panel, replacing, gather) = (r.panel, true, r.gather)
+          break
   if follow and s.file.kind != skUnknown and filejobs.cutShort(s.file):
     # Not shown early: it ends before its last trace. Shown when it changes and is whole.
     state.mark(s.path, short = true, seen = false)
@@ -3995,6 +4140,9 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   if state.jump.path == path and k >= 0: # a message's trace, asked for before the file opened
     state.showTrace(k, state.sessions.high, state.jump.trace, state.jump.record)
     state.jump = ("", -1, -1)
+  if swap:
+    state.showAgain(path) # the other panels that showed the file
+    state.carryOver(carry, state.sessions.high)
 
 proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
   ## Says how open job `opening[i]` ended, and forgets it. An open no longer
@@ -4003,9 +4151,13 @@ proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
   let p = o.path
   let name = p.extractFilename
   state.opening.delete(i)
-  if o.unwanted: return
+  if o.unwanted or o.swapped: return
   case how
-  of jsFailed: state.log.add(sevError, name, "Cannot open " & p & ": " & error)
+  of jsFailed:
+    if o.reopened:
+      if o.hadBefore: state.openChoices[p] = o.before
+      else: state.openChoices.del p
+    state.log.add(sevError, name, "Cannot open " & p & ": " & error)
   of jsCancelled: state.log.add(sevInfo, name, "Opening " & name & " was cancelled.")
   else: discard # done: `adopt` took the file
   if how in {jsFailed, jsCancelled} and o.panel == MainPanel:
@@ -5646,7 +5798,12 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
   ## "Reopen with options": `path` (canonical) opened anew with `choice`,
   ## which its later opens this run take too, in the panels that show it
   ## (keeping their display, view and record), or in the main panel when
-  ## none does. An open of it under way is no longer wanted.
+  ## none does. The new open runs first, on the open job; it takes the open
+  ## file's place only when it opened with traces (`adopt`), keeping the
+  ## selection, the geometry join and the windows of the traces when it has
+  ## as many. Else the file stays as it was, and so does its choice. An open
+  ## of it under way is no longer wanted.
+  let (hadBefore, before) = (path in state.openChoices, state.openChoices.getOrDefault(path))
   if choice.isDefault: state.openChoices.del path
   else: state.openChoices[path] = choice
   let name = path.extractFilename
@@ -5662,15 +5819,27 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
   var i = -1
   for j, s in state.sessions:
     if s.path == path: i = j
-  var shown = false
-  if i >= 0:
-    let id = state.sessions[i].id
-    shown = state.panels.anyIt(it.layers.len > 0 and it.layers[0].shows(id))
-    if keeps(by): state.openedBy[path] = by
-    state.reopen(i, now = true)
-  if not shown:
+  if i < 0:
     let k = state.findPanel(MainPanel)
-    if k >= 0: state.showPath(k, path, by = by)
+    if k >= 0:
+      state.showPath(k, path, by = by)
+      if state.opening.len > 0 and state.opening[^1].path == path:
+        template o: untyped = state.opening[^1]
+        (o.reopened, o.tried, o.before, o.hadBefore) = (true, choice, before, hadBefore)
+    return
+  let id = state.sessions[i].id
+  var panel = NoPanel
+  var gather = 0
+  for p in state.panels:
+    if panel == NoPanel and p.layers.len > 0 and p.layers[0].shows(id):
+      (panel, gather) = (p.id, p.layers[0].source.gather)
+  if keeps(by): state.openedBy[path] = by
+  let job = state.jobs.submit(JobSpec(title: "Open " & name, lane: jlInteractive,
+    reads: @[path]), openFileWork(path, state.inbox.poster, indexCacheFile(state.indexCache, path),
+    whole = false, lines = state.settings.join, choice = choice))
+  state.opening.add Pending(job: job, path: path, panel: if panel == NoPanel: MainPanel
+    else: panel, gather: gather, by: by, reopened: true, tried: choice, before: before,
+    hadBefore: hadBefore)
 
 proc onDisk(state: var AppState; w: WatchedFile) =
   ## What the watch saw of a file that is open, or that a panel waits for:

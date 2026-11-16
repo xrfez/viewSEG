@@ -14,6 +14,18 @@
 ## not name a folder for a demultiplexed copy (a file written there). The
 ## seismic files are never changed.
 ##
+## A reopen is opened first, off the UI thread, and replaces the file only
+## when it opened with traces: a SEG-Y file named SEG-D leaves the file, the
+## record shown, the selection and the kills as they were, says once that it
+## failed, and the choice is not kept (a later open reads the file as before).
+## A reopen that succeeds with the file's trace count keeps the selection,
+## the geometry join, the record and the FFT windows (at the new ids); with
+## another count it drops them and says so.
+##
+## Seen to fail (the failing reopen): with the trace-count test taken out of
+## `adopt` (`elif false`), "stays as it was"; (the carried state): with
+## `carryOver` not called, "the selection was lost".
+##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
 ## checked"; with the cache used whatever the choice (`openOptions` and
@@ -49,6 +61,11 @@ proc showIt(st: var AppState; path: string) =
   st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
   doAssert st.settle(st.sessions.len == 1 and st.sessions[0].path == path and
     st.panel(MainPanel).laidOut), "not shown: " & path
+
+proc pump(st: var AppState; n = 100) =
+  for i in 0 ..< n:
+    discard st.drainInbox()
+    sleep 10
 
 proc reopen(st: var AppState; path: string; c: OpenChoice; origin = coWindow) =
   st.apply Command(origin: origin, kind: ckReopen, reopenPath: path, openChoice: c)
@@ -123,19 +140,17 @@ block anotherStandardNamed:
     let before = (readFile(path), getLastModificationTime(path))
     var st = initAppState()
     st.showIt(path)
-    st.reopen(path, OpenChoice(standard: scSegy))
-    doAssert st.settle(not st.shownSession.isNil and
-      st.shownSession.facts.opened.choice.standard == scSegy)
-    let s = st.shownSession
-    doAssert s.file.kind == skSegy and s.facts.opened.kind == skSegy
-    doAssert s.facts.opened.detected == skSegd, $s.facts.opened.detected
-    let lines = summaryLines(s, 0)
-    doAssert lines.valueOf("Read as") == "SEG-Y, as chosen (detection says SEG-D)",
-      lines.valueOf("Read as")
-    # Read as what it is again.
+    # Named as what it is.
     st.reopen(path, OpenChoice(standard: scSegd))
-    doAssert st.settle(not st.shownSession.isNil and st.shownSession.file.kind == skSegd)
+    doAssert st.settle(not st.shownSession.isNil and
+      st.shownSession.facts.opened.choice.standard == scSegd)
     doAssert summaryLines(st.shownSession, 0).valueOf("Read as") == "SEG-D, as chosen"
+    # Named SEG-Y, it has no traces: it stays as it was, with the choice it had.
+    st.reopen(path, OpenChoice(standard: scSegy))
+    st.pump(150)
+    doAssert st.shownSession.file.kind == skSegd and st.shownSession.len > 0
+    doAssert st.openChoiceOf(canonical(path)).standard == scSegd, "the failed choice was kept"
+    doAssert st.log.has("failed")
     doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
     st.shutdown()
 
@@ -162,4 +177,102 @@ block agentsWriteNoCopy:
     doAssert st.opens(path.extractFilename) == 1
     st.reopen("", OpenChoice())
     doAssert st.log.has("Ignored \"reopen\": no file was named")
+    st.shutdown()
+
+block failedReopenKeepsTheFile:
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.showIt(path)
+    st.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
+    doAssert st.settle(st.panel(MainPanel).layers[0].source.gather == 1)
+    let (id, base) = (st.sessions[0].id, st.sessions[0].base)
+    st.apply Command(kind: ckSelect, traces: @[base + 3, base + 4], mode: smReplace)
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base + 5],
+      on: true)
+    let logged = st.log.len
+    st.reopen(path, OpenChoice(standard: scSegd))
+    st.pump(150)
+    doAssert st.opens(path.extractFilename) == 2
+    doAssert st.sessions.len == 1 and st.sessions[0].id == id, "a failed reopen replaced the file"
+    doAssert st.sessions[0].len == SurveyTraces
+    doAssert st.panel(MainPanel).layers[0].source.gather == 1, "the record shown was lost"
+    doAssert st.selection.selectedCount == 2, "the selection was lost"
+    doAssert teKilled in st.editsOf(st.findPanel(MainPanel)).editsOf(5), "the kill was lost"
+    doAssert st.openChoiceOf(canonical(path)).isDefault,
+      "the failed choice was kept"
+    var failures = 0
+    var count = 0
+    for e in st.log:
+      inc count
+      if count > logged and e.severity >= sevError and "Reopening" in e.text:
+        inc failures
+        doAssert "failed" in e.text and "stays as it was" in e.text, e.text
+    doAssert failures == 1, "not one message of the failure: " & $failures
+    doAssert st.log.len - logged < 8, "a page of messages: " & $(st.log.len - logged)
+    # a later open of the file reads it as before
+    st.apply Command(kind: ckClose, file: id)
+    doAssert st.settle(st.sessions.len == 0)
+    st.showIt(path)
+    doAssert st.sessions[0].file.kind == skSegy and st.sessions[0].len == SurveyTraces
+    st.shutdown()
+
+block successfulReopenKeepsWhatItCan:
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let sps = fx.surveySps()
+    var st = initAppState()
+    st.showIt(path)
+    st.apply Command(kind: ckGather, panel: MainPanel, gather: 2)
+    doAssert st.settle(st.panel(MainPanel).layers[0].source.gather == 2)
+    let base = st.sessions[0].base
+    var files: seq[JoinFile]
+    for p in [sps.s, sps.r, sps.x]: files.add JoinFile(path: p, kind: jkSps)
+    st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: files)
+    doAssert st.settle(st.joinedOf(st.sessions[0].id) >= 0), "not joined"
+    st.apply Command(kind: ckSelect, traces: @[base + 3, base + 4], mode: smReplace)
+    st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
+      spectrumTraces: @[base + 6, base + 7])
+    st.pump(50)
+    doAssert st.spectra.len == 2
+    st.reopen(path, OpenChoice(verifyAll: true))
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].facts.opened.choice.verifyAll and
+      st.panel(MainPanel).laidOut)
+    let s = st.sessions[0]
+    doAssert s.base != base, "the file kept its first id"
+    doAssert st.selection.selectedCount == 2 and s.base + 3 in st.selection.selected and
+      s.base + 4 in st.selection.selected, "the selection was lost"
+    doAssert st.panel(MainPanel).layers[0].source.gather == 2, "the record was lost"
+    doAssert st.settle(st.joinedOf(s.id) >= 0), "the join was lost"
+    doAssert st.spectra[1].traces == @[s.base + 6, s.base + 7],
+        "the FFT window kept the old ids: " &
+      $st.spectra[1].traces
+    doAssert st.log.has("kept the selection")
+    # a file of another trace count: all dropped, and said
+    st.apply Command(kind: ckSelect, traces: @[s.base + 3], mode: smReplace)
+    st.shutdown()
+
+block anotherTraceCountDropsWhatItKept:
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.showIt(path)
+    let base = st.sessions[0].base
+    let count = st.sessions[0].len
+    st.apply Command(kind: ckSelect, traces: @[base + 3], mode: smReplace)
+    st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base + 6])
+    st.pump(50)
+    doAssert st.spectra.len == 2
+    # the file grows by a trace (a copy of its last) before it is read again
+    var bytes = readFile(path)
+    let step = (bytes.len - 3600 - 3200) div count # (one extended text header)
+    doAssert 3600 + 3200 + step * count == bytes.len
+    writeFile(path, bytes & bytes[bytes.len - step ..< bytes.len])
+    st.reopen(path, OpenChoice(verifyAll: true))
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].len == count + 1 and
+      st.panel(MainPanel).laidOut), "not reopened"
+    doAssert st.selection.selectedCount == 0, "the selection of another file's ids was kept"
+    doAssert st.spectra.len == 1, "the FFT window of the old traces was kept"
+    doAssert st.log.has("dropped the selection, 1 plot window (it has " & $(count + 1) &
+      " traces, it had " & $count & " traces)"), "what was dropped was not said"
     st.shutdown()
