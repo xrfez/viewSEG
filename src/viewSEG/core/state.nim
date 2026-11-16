@@ -3448,7 +3448,8 @@ proc takeHashed(state: var AppState; m: sink Msg) =
   r.identity = m.hashed
   r.hashed = true
   r.brought = FileRecord() # confirmed
-  if wasChecking and r.doc.len > 0: r.savedRev = -1 # seen now; with what was made meanwhile
+  if wasChecking and r.doc.len > 0 and not state.knownDocs.getOrDefault(r.doc).damaged:
+    r.savedRev = -1 # seen now, but never a damaged document
   if r.doc.len == 0 or r.ownDoc:
     # What waited for the hash; also when edits made meanwhile have a
     # document of their own already: that one then gives way to the one
