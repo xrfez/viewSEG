@@ -102,6 +102,49 @@ proc iconButton*(icon, text, shortcut: string; size: float32; t: Theme;
   if tipText.len > 0: tooltip(tipText, shortcut, t) else: tooltip(text, shortcut, t)
   clicked
 
+type
+  ControlLine* = object
+    ## A control line with the Freeze pin reserved at the right of its first row.
+    left*, top*, right*, rowRight*, size*: float32
+
+proc beginControlLine*(): ControlLine =
+  ## The line about to be drawn: Freeze's width is kept at its right, and
+  ## `rowRight` is as far as another control on that first row may reach.
+  let pos = igGetCursorScreenPos()
+  let style = igGetStyle()
+  let size = round(igGetFontSize() * IconScale + 2 * style.FramePadding.y)
+  let right = pos.x + igGetContentRegionAvail().x
+  ControlLine(left: pos.x, top: pos.y, right: right, size: size,
+    rowRight: right - size - style.ItemSpacing.x)
+
+proc fitsBefore*(line: ControlLine; width, gap: float32): bool =
+  ## Whether a control of `width`, `gap` after the previous item, fits on
+  ## that item's line: before the Freeze pin on the first row, else before
+  ## the window's right edge.
+  let first = igGetItemRectMin().y <= line.top + 1
+  let edge = if first: line.rowRight else: line.right
+  igGetItemRectMax().x + gap + width <= edge
+
+proc drawFreeze*(line: ControlLine; id, sentence, mark: string; frozen: bool; t: Theme;
+    marks: var Marks): bool =
+  ## The pin at the right end of the first row, drawn selected while
+  ## `frozen`. `sentence` follows "Freeze (on): " or "Freeze (off): ". The
+  ## cursor is left below the line, at its left, for what comes under it.
+  let after = igGetCursorScreenPos()
+  igSetCursorScreenPos(ImVec2_c(x: line.right - line.size, y: line.top))
+  let (clicked, pos) = toolButton("##freeze" & id, line.size, frozen, t)
+  marks.mark(mark)
+  let (font, px) = (igGetFont(), round(line.size * 0.68))
+  let ts = ImFont_CalcTextSizeA(font, px, high(float32), 0, IconPin.cstring, nil, nil)
+  let col = if frozen: t.roles[rlAccent] else: t.roles[rlText]
+  ImDrawList_AddText_FontPtr(igGetWindowDrawList(), font, px,
+    ImVec2_c(x: round(pos.x + (line.size - ts.x) / 2), y: round(pos.y + (line.size - ts.y) / 2)),
+    u32(col), IconPin.cstring, nil, 0, nil)
+  tooltip("Freeze (" & (if frozen: "on" else: "off") & "): " & sentence, "", t)
+  let y = max(after.y, line.top + line.size + igGetStyle().ItemSpacing.y)
+  igSetCursorScreenPos(ImVec2_c(x: line.left, y: y))
+  clicked
+
 proc symbolButton*(sym: Symbol; size: float32; t: Theme; marks: var Marks;
     selected = false; note = ""; markPrefix = "tool."; turned = false): bool =
   ## A tool button showing a seismic symbol, for a plot window's own controls,

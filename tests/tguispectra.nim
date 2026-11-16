@@ -16,7 +16,9 @@
 ## - the toolbar's FFT button is greyed with no trace selected (a click on it
 ##   opens nothing) and, with three selected, opens their FFT window.
 ##
-## Seen to fail: with the `F` key left out of `editKeys`, "F over trace 1
+## Seen to fail: with Freeze still a checkbox at the end of the line, "freeze
+## not on the first row"; with Phase still after Visible time, "phase is not
+## with the curves". With the `F` key left out of `editKeys`, "F over trace 1
 ## did not happen"; with the readout taken at the pointer's other axis,
 ## "the readout at 24.41 Hz: 0 Hz   raw -60.1 dB"; with the panel's
 ## on-screen report left out (`drawLive` sending nothing), "the panel
@@ -92,6 +94,21 @@ withFixtures fx:
   step("F over trace 1", noop, proc (f: FrameInfo): bool =
     f.core.spectra.len == 2 and f.markOf("fft 1.data").size.x > 0 and
       not f.core.spectra[1].waiting and f.core.spectra[1].spectrum.raw.len > 0)
+  step("freeze at the right, phase with the curves", noop, proc (f: FrameInfo): bool =
+    let win = f.markOf("fft 1")
+    let pin = f.markOf("fft 1.freeze")
+    let db = f.markOf("fft 1.db")
+    let phase = f.markOf("fft 1.phase")
+    let raw = f.markOf("fft 1.raw")
+    let time = f.markOf("fft 1.time")
+    result = pin.size.x > 0 and db.size.x > 0 and phase.size.x > 0 and time.size.x > 0
+    if result:
+      doAssert abs(pin.pos.y - db.pos.y) <= 8, "freeze not on the first row"
+      doAssert pin.pos.x + pin.size.x > win.pos.x + win.size.x - 28, "freeze not at the right"
+      doAssert db.pos.x + db.size.x < pin.pos.x, "a scale control reaches the freeze place"
+      discard phase
+      discard raw
+      discard time)
   step("its title", noop, proc (f: FrameInfo): bool =
     doAssert f.windowName("fft-1").startsWith(IconPulse & "  FFT: trace 1 · FFID 5 · " &
       "spectrum.sgy"), f.windowName("fft-1")

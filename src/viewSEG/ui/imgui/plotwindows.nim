@@ -20,7 +20,7 @@ import std/[math, sets, strutils, tables]
 import imguin/cimgui
 import ../../core/[colourmaps, geometry, plotcursor, state]
 import ../../view/[analysisview, curveplot, theme]
-import curveplot as curves, icons, marks, placement, spectrumwindow, style
+import chrome, curveplot as curves, icons, marks, placement, spectrumwindow, style
 
 const
   PlotSize = (640'f32, 620'f32)     ## a window's first size, at 100 %
@@ -51,6 +51,20 @@ proc tip(text: string) =
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
+
+const PlotFreeze = "On: the window keeps what it shows. Off: it follows the Seismic " &
+  "window's filters (and Aux toggle) and the kills of its traces"
+
+proc follow(line: ControlLine; width: float32) =
+  if line.fitsBefore(width, igGetStyle().ItemSpacing.x):
+    igSameLine(0, -1)
+
+proc textBoxWidth(text: string; box: float32): float32 =
+  igCalcTextSize(text, nil, false, -1).x + igGetStyle().ItemSpacing.x + box
+
+proc checkWidth(label: string): float32 =
+  igGetFrameHeight() + igGetStyle().ItemInnerSpacing.x +
+    igCalcTextSize(label.cstring, nil, false, -1).x
 
 func markName*(w: AnalysisWindow): string =
   ## The window's mark (and screenshot target): "new plot 2".
@@ -100,7 +114,7 @@ proc limitBox(id: string; value: float64; width: float32; typed: var float64): b
   igIsItemDeactivatedAfterEdit()
 
 proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: float32;
-    marks: var Marks; p: var AnalysisParams; frozen, changed: var bool) =
+    t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool) =
   ## A vibrator signature's roles (a table: role, trace, polarity), its
   ## masses and harmonics, Limits and Freeze, and the limits (shown on, in
   ## boxes).
@@ -164,6 +178,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     igAlignTextToFramePadding()
     igTextUnformatted(cstring(text), nil)
     igSameLine(0, -1)
+  let line = beginControlLine()
   label("Masses: reaction")
   if limitBox("##reaction", p.reactionMassKg, box, typed) and
       (typed.isNaN or MassKgRange.allows(typed)) and typed != p.reactionMassKg:
@@ -171,30 +186,26 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   marks.mark(name & ".reaction mass")
   tip("The reaction mass, kg: with the baseplate's, the ground force is generated from M " &
     "and B (Mr·M + Mb·B), drawn over the recorded one. Empty: none")
-  igSameLine(0, -1)
+  line.follow(textBoxWidth("kg  baseplate", box))
   label("kg  baseplate")
   if limitBox("##baseplate", p.baseplateMassKg, box, typed) and
       (typed.isNaN or MassKgRange.allows(typed)) and typed != p.baseplateMassKg:
     (p.baseplateMassKg, changed) = (typed, true)
   marks.mark(name & ".baseplate mass")
   tip("The baseplate's mass, kg. Empty: none")
-  igSameLine(0, -1)
+  line.follow(textBoxWidth("kg  harmonics to", box))
   label("kg  harmonics to")
   var h = cint(p.harmonics)
   igSetNextItemWidth(box)
   if igInputInt("##harmonics", addr h, 0, 0, 0) and HarmonicRange.allows(float64(h)) and h != p.harmonics:
     (p.harmonics, changed) = (int(h), true)
   tip("The highest harmonic tracked (2 to 16): THD sums them from the 2nd")
-  igSameLine(0, -1)
+  line.follow(checkWidth("Limits"))
   if igCheckbox("Limits", addr p.limitsOn): changed = true
   marks.mark(name & ".limits")
   tip("On: the limits drawn on the plots, the points past them marked, and a pass or " &
     "fail table per signal; judged on the ground forces over the sweep less its tapers")
-  igSameLine(0, -1)
-  if igCheckbox("Freeze", addr frozen): changed = true
-  marks.mark(name & ".freeze")
-  tip("On: the window keeps what it shows. Off: it follows the Seismic window's filters " &
-    "(and Aux toggle) and the kills of its traces")
+  if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks): changed = true
   if p.limitsOn:
     # the limits on lines of their own, each going to the next when the
     # line has no room for it
@@ -227,7 +238,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     limit("to", "##forcehigh", forceHigh, "", "The largest fundamental at a point")
     limit("peak", "##peak", peakForce, "", "The largest peak at a point (the hold-down weight)")
 
-proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Marks;
+proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks: var Marks;
     res: var PlotWindowsOutput) =
   ## The view's settings and Freeze, on a line that wraps; a change is a
   ## `ckPlotDisplay`.
@@ -251,6 +262,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
       igEndCombo()
     marks.mark(name & ".map")
     tip("The colour map, as density's")
+  let line = beginControlLine()
   case w.view
   of avSpectrogram:
     label("Frame")
@@ -345,19 +357,9 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
     tip("On: the traces as recorded. Off: through the Seismic window's filters, so the " &
       "effect of a filter shows")
   of avVibrator:
-    drawVibratorSettings(st, w, name, box, marks, p, frozen, changed)
-  if w.view notin {avEnvelope, avVibrator}:
-    # on this line when it fits, else the next
-    let wide = igGetFrameHeight() + igGetStyle().ItemInnerSpacing.x +
-      igCalcTextSize("Freeze", nil, false, -1).x
-    # (the cursor is on the next line: its start and the room to the right)
-    let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
-    if igGetItemRectMax().x + igGetStyle().ItemSpacing.x + wide <= right: igSameLine(0, -1)
-  if w.view != avVibrator:
-    if igCheckbox("Freeze", addr frozen): changed = true
-    marks.mark(name & ".freeze")
-    tip("On: the window keeps what it shows. Off: it follows the Seismic window's filters " &
-      "(and Aux toggle) and the kills of its traces")
+    drawVibratorSettings(st, w, name, box, t, marks, p, frozen, changed)
+  if w.view != avVibrator and line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks):
+    changed = true
   if changed:
     res.commands.add Command(kind: ckPlotDisplay, plot: w.id, plotParams: p,
       plotFrozen: frozen)
@@ -515,7 +517,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   ## A window's contents: its settings, its words, its plots and reading.
   let name = w.markName
   marks.markWindow(name)
-  drawSettings(st, w, name, marks, res)
+  drawSettings(st, w, name, t, marks, res)
   let r = w.result
   var words = w.label
   if w.filters.len > 0:

@@ -15,8 +15,8 @@
 ##   window of the trace under the pointer against the record's pilot;
 ## - closed (`close plot`), a window goes;
 ## - Window > New plot > Vibrator signature on four selected traces shows
-##   its roles' table and four plots; Limits draws the phase limits and
-##   shows the table;
+##   its roles' table and four plots; Limits... opens the check, and
+##   checking it draws the phase limits and shows the table;
 ## - an f-k of the record: its image's cursor, held by the keys, reads the
 ##   wavenumber (per trace), the frequency, dB and the apparent velocity;
 ## - seven more windows each open inside the main window;
@@ -144,8 +144,15 @@ withFixtures fx:
   # clicked, with its values on the axes
   step("an envelope", proc (f: FrameInfo) =
     f.apply(Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[0])),
-    proc (f: FrameInfo): bool = f.core.plots.len == 1 and not f.core.plots[0].waiting and
-      f.markOf("new plot 1.plot 1.data").size.x > 0)
+    proc (f: FrameInfo): bool =
+      result = f.core.plots.len == 1 and not f.core.plots[0].waiting and
+        f.markOf("new plot 1.plot 1.data").size.x > 0
+      if result:
+        let win = f.markOf("new plot 1")
+        let pin = f.markOf("new plot 1.freeze")
+        doAssert pin.size.x > 0, "no Freeze pin"
+        doAssert pin.pos.x + pin.size.x > win.pos.x + win.size.x - 28,
+          "freeze not at the right of the first row")
   click("new plot 1.plot 1.data")
   key("Right on the envelope", skRight)
   step("held on the phase plot", noop, proc (f: FrameInfo): bool =
@@ -182,7 +189,8 @@ withFixtures fx:
       doAssert w.traces == @[2] and w.result.problem == "" and "pilot" in w.reference,
         $w.traces & " " & w.result.problem & " " & w.reference)
   # a vibrator signature of four selected traces: its roles in a table
-  # (Ref, GF, M, B, in their order), its four plots; Limits shows the table
+  # (Ref, GF, M, B, in their order), its four plots; Limits... opens the
+  # check, and checking it shows the table
   step("four selected", proc (f: FrameInfo) =
     f.apply(Command(kind: ckSelect, traces: @[0, 1, 2, 3], mode: smReplace)),
     proc (f: FrameInfo): bool = f.core.selection.selectedCount == 4)

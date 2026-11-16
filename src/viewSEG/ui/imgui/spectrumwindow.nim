@@ -16,7 +16,7 @@ import std/[math, sequtils, tables]
 import imguin/cimgui
 import ../../core/state
 import ../../view/[curveplot, spectrumview, theme]
-import curveplot as curves, icons, marks, placement, style
+import chrome, curveplot as curves, icons, marks, placement, style
 
 const
   SpectrumWindowTitle* = IconPulse & "  Spectrum###spectrum"
@@ -54,39 +54,40 @@ proc toggleWidth(label: string): float32 =
   igGetFrameHeight() + igGetStyle().ItemInnerSpacing.x +
     igCalcTextSize(label.cstring, nil, true, -1).x
 
-proc after(label: string) =
-  ## The next control on the line of the one before when it fits, else on
-  ## the next line: the controls wrap in a narrow window.
-  let room = igGetCursorScreenPos().x + igGetContentRegionAvail().x # the right edge
-  if igGetItemRectMax().x + igGetStyle().ItemSpacing.x + toggleWidth(label) <= room:
+proc after(line: ControlLine; label: string) =
+  ## The next control on the line of the one before when it fits (before
+  ## the Freeze pin on the first row), else on the next line.
+  if line.fitsBefore(toggleWidth(label), igGetStyle().ItemSpacing.x):
     igSameLine(0, -1)
 
-proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var SpectraOutput) =
-  ## The controls, wrapping in a narrow window; each change is a
+proc drawControls(w: SpectrumWindow; name: string; t: Theme; marks: var Marks;
+    res: var SpectraOutput) =
+  ## The controls, wrapping before the Freeze pin; each change is a
   ## `ckSpectrumDisplay`.
   var d = w.display
   var frozen = w.frozen
   var changed = false
+  let line = beginControlLine()
   if igRadioButton_Bool("dB", d.scale == ssDb):
     d.scale = ssDb
     changed = true
   marks.mark(name & ".db")
   tip("Amplitude in dB, 0 dB at the largest of the curves (raw and processed on one scale)")
-  after("Linear")
+  after(line, "Linear")
   if igRadioButton_Bool("Linear", d.scale == ssLinear):
     d.scale = ssLinear
     changed = true
   marks.mark(name & ".linear")
   tip("Amplitude in the file's sample units: a sine of amplitude A on a bin reads A")
-  after("Log frequency")
+  after(line, "Log frequency")
   if igCheckbox("Log frequency", addr d.logFrequency): changed = true
   marks.mark(name & ".log")
   tip("The frequency axis logarithmic (0 Hz left out)")
-  after("Raw")
+  after(line, "Raw")
   if igCheckbox("Raw", addr d.raw): changed = true
   marks.mark(name & ".raw")
   tip("The samples as the file has them")
-  after("Processed")
+  after(line, "Processed")
   igBeginDisabled(w.spectrum.processed.len == 0)
   if igCheckbox("Processed", addr d.processed): changed = true
   igEndDisabled()
@@ -94,7 +95,7 @@ proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var Sp
   tip(if w.spectrum.processed.len > 0: "Through the plot's filters: " & w.spectrum.filters
       elif w.spectrum.filters.len > 0: "No processed curve: " & w.filterText
       else: "The plot has no filters (Filters in the Seismic window's strip)")
-  after("Response")
+  after(line, "Response")
   igBeginDisabled(not w.spectrum.hasResponse)
   if igCheckbox("Response", addr d.response): changed = true
   igEndDisabled()
@@ -106,7 +107,7 @@ proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var Sp
       elif w.spectrum.response.len > 0: "The filters reached none of these traces: their " &
         "response is not drawn"
       else: "The plot has no pass band or notch to draw")
-  after("Visible time")
+  after(line, "Visible time")
   var visible = d.time == stVisible
   if igCheckbox("Visible time", addr visible):
     d.time = if visible: stVisible else: stWhole
@@ -116,7 +117,7 @@ proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var Sp
       else: "The time the Seismic window showed when this window opened (" &
         valueText(w.visibleMs.lo) & " to " & valueText(w.visibleMs.hi) &
         " ms); off: the whole trace")
-  after("Phase")
+  after(line, "Phase")
   igBeginDisabled(not w.hasPhase)
   if igCheckbox("Phase", addr d.phase): changed = true
   igEndDisabled()
@@ -124,14 +125,12 @@ proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var Sp
   tip(if w.hasPhase: "The phase of this trace (degrees, from the window's first sample), " &
         "under its amplitude"
       else: "The phase is drawn for the spectrum of one trace")
-  after("Freeze")
-  if igCheckbox("Freeze", addr frozen): changed = true
-  marks.mark(name & ".freeze")
-  tip(if w.id == LiveSpectrum: "Keep this spectrum while the Seismic window moves on"
-      else: "Keep this spectrum: the filters it went through while the plot's change, " &
-        "and its trace while Alt + arrows step the plot's selection; off: it follows the " &
-        "plot's filters and its Aux toggle (its traces stay those it was opened on, but " &
-        "for Alt + arrows)")
+  let sentence = if w.id == LiveSpectrum: "Keep this spectrum while the Seismic window moves on"
+                 else: "Keep this spectrum: the filters it went through while the plot's change, " &
+                   "and its trace while Alt + arrows step the plot's selection; off: it follows " &
+                   "the plot's filters and its Aux toggle (its traces stay those it was opened " &
+                   "on, but for Alt + arrows)"
+  if line.drawFreeze(name, sentence, name & ".freeze", frozen, t, marks): changed = true
   if changed:
     res.commands.add Command(kind: ckSpectrumDisplay, spectrum: w.id, spectrumShow: d,
       frozen: frozen)
@@ -200,7 +199,7 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
   ## filters the auxiliary traces when they were not), its plot and reading.
   let name = w.markName
   marks.markWindow(name)
-  drawControls(w, name, marks, res)
+  drawControls(w, name, t, marks, res)
   # What it is of (the live panel's title does not say), and what was left out.
   let words = (if w.id == LiveSpectrum: w.label & " · " else: "") & w.summaryText &
     (if w.filterText.len > 0: " · " & w.filterText else: "")
