@@ -483,8 +483,11 @@ trace) both ways.
   toggles: named sensors in the order hydrophone, vertical, inline, crossline, then
   the numbered ones by their component. All are on at first. Turning one off removes
   its traces and the plot is laid out again with the rest, as the Seismic / Aux
-  filter does. The last one on cannot be turned off. The choice holds across records
-  of the same file and resets when another file is shown. The buttons stay while any
+  filter does.   The last one on cannot be turned off. The choice holds across records
+  of the same file (what is switched off, so a component first seen on a
+  later record is shown) and resets when another file is shown. A record
+  that would be left with no trace, because every component present is
+  off, is shown whole again, and one message says so. The buttons stay while any
   is off, because multi-component is judged before the filter. A record with one
   component draws nothing new. The colours are the gear's Look tab, **Component
   colours**: four pickers and Reset, stored with the other settings. The defaults

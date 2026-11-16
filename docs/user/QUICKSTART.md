@@ -411,7 +411,9 @@ first; any further one stays in the normal ink. The tooltip says what is known. 
 density the colour map is unchanged and a thin band of the component's colour sits
 along the top of each trace. All are on at first. Turning one off drops its traces
 and lays the rest out again; the last one on stays on. The choice holds for the other
-records of the file and starts again on another file. A record with one component is
+records of the file: what is switched off, so a component that first appears later
+is shown. If every component of a record was switched off, they are all shown again
+and a message says so. It starts again on another file. A record with one component is
 unchanged: no buttons, the normal ink. The four colours are in the gear, on the Look
 tab, under **Component colours**, with Reset.
 

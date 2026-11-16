@@ -7073,6 +7073,8 @@ proc drainInbox*(state: var AppState): bool =
         p.componentCodes = m.components
         p.componentCounts = m.componentCounts
         p.componentSensors = m.componentSensors
+        if m.componentsCleared and p.layers.len > 0:
+          p.layers[0].filter.components = {}
         # The next gather at the scales of the one before; a first one fits
         # (in a wiggle mode, as far as its limit, from the first trace).
         p.view = if p.carry.traces.width > 0:

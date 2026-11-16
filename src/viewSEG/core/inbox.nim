@@ -87,6 +87,9 @@ type
       componentSensors*: seq[uint8]
         ## sensor type of each, when its traces agree; 0 when they do not,
         ## or the headers do not say (a SEG-Y trace)
+      componentsCleared*: bool
+        ## every component present was off, so none is: the panel's filter
+        ## is emptied and the traces are shown
     of mkOrder:
       orderPanel*: PanelId
       orderGen*: uint64 ## the panel's newer of `sourceGen` and `orderGen` it answers

@@ -19,9 +19,12 @@
 ## and take the four configured colours in order, green first; further ones
 ## keep the normal ink. The tooltip says whatever is known.
 ##
-## `TraceFilter.components` is the components to show; empty shows all
-## (including a trace whose component is 0, which no button names). The
-## last component still on cannot be turned off.
+## `TraceFilter.components` is the components switched off, not the ones
+## left on, so a component first seen on a later record is shown. Empty
+## shows all (including a trace whose component is 0, which no button
+## names). The last component still on cannot be turned off. A record that
+## would be left with no trace, because every component present is off,
+## is shown whole again.
 
 import std/algorithm
 import geometry
@@ -219,48 +222,43 @@ func multiComponent*(codes: openArray[uint8]): bool =
   ## More than one distinct non-zero component.
   tally(codes).len > 1
 
-func passesComponent*(code: uint8; filter: set[uint8]): bool =
-  ## Whether a trace of component `code` is shown. Empty shows all; a trace
-  ## with no component (0) is never one of the buttons, so it stays.
-  code == 0 or filter.card == 0 or code in filter
+const ComponentsRestored* =
+  "Every component of this record was switched off: all are shown again."
+
+func passesComponent*(code: uint8; off: set[uint8]): bool =
+  ## Whether a trace of component `code` is shown. `off` is the components
+  ## switched off; empty shows all. A trace with no component (0) is never
+  ## one of the buttons, so it stays.
+  code == 0 or code notin off
 
 func keptIndices*(codes: openArray[uint8]; filter: set[uint8]): seq[int] =
   ## The indices of `codes` the component filter keeps.
   for i, c in codes:
     if passesComponent(c, filter): result.add i
 
-func componentShown*(filter: set[uint8]; code: uint8): bool =
+func componentShown*(off: set[uint8]; code: uint8): bool =
   ## Whether `code`'s button is on. Empty shows every component.
-  filter.card == 0 or code in filter
+  code notin off
 
-func keepsOne*(present: openArray[uint8]; filter: set[uint8]): bool =
-  ## Whether `filter` still shows a component of `present` (empty shows all).
-  ## `present` empty: nothing to refuse yet.
-  if filter.card == 0 or present.len == 0: return true
+func keepsOne*(present: openArray[uint8]; off: set[uint8]): bool =
+  ## Whether `off` still shows a component of `present`. `present` empty:
+  ## nothing to refuse yet.
+  if present.len == 0: return true
   for c in present:
-    if c in filter: return true
+    if c notin off: return true
   false
 
-func toggled*(present: openArray[uint8]; filter: set[uint8]; code: uint8): set[uint8] =
-  ## The filter after clicking `code`. The last of `present` still on stays
-  ## on. All of them on is the empty set, so a component a later record adds
-  ## is shown until it is turned off.
-  var on: set[uint8] = {}
-  if filter.card == 0:
-    for c in present: on.incl c
-  else:
-    on = filter
-  if code in on:
+func toggled*(present: openArray[uint8]; off: set[uint8]; code: uint8): set[uint8] =
+  ## The components switched off after clicking `code`. The last of
+  ## `present` still on stays on. A component a later record adds is not
+  ## in `off`, so it is shown until it is turned off.
+  if code notin off:
     var n = 0
     for c in present:
-      if c in on: inc n
-    if n <= 1: return filter
-    on.excl code
-    result = on
+      if c notin off: inc n
+    if n <= 1: return off
+    result = off
+    result.incl code
   else:
-    on.incl code
-    var all = true
-    for c in present:
-      if c notin on: all = false
-    if all: result = {}
-    else: result = on
+    result = off
+    result.excl code

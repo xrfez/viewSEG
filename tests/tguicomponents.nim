@@ -133,7 +133,7 @@ withFixtures fx:
   step("turning hydrophone off did not drop a quarter", noop, proc (f: FrameInfo): bool =
     result = f.answered and f.panel.layout.traces == before * 3 div 4
     if result:
-      doAssert 1 notin f.panel.layers[0].filter.components
+      doAssert f.panel.layers[0].filter.components == {1'u8}
       doAssert f.panel.shown.len == before * 3 div 4
       for code in [1'u8, 2, 3, 4]:
         doAssert f.markOf("plot.component." & $code).size.x > 0, "button " & $code & " went"
@@ -167,13 +167,13 @@ withFixtures fx:
   step("inline off, crossline alone", noop, proc (f: FrameInfo): bool =
     result = f.answered and f.panel.layout.traces == before div 4
     if result:
-      doAssert f.panel.layers[0].filter.components == {4'u8}
+      doAssert f.panel.layers[0].filter.components == {1'u8, 2, 3}
   )
   click("plot.component.4")
   step("the last component turned off", noop, proc (f: FrameInfo): bool =
     result = f.answered and f.panel.layout.traces == before div 4
     if result:
-      doAssert f.panel.layers[0].filter.components == {4'u8}
+      doAssert f.panel.layers[0].filter.components == {1'u8, 2, 3}
       doAssert f.markOf("plot.component.4").size.x > 0
   )
   # back to all on, for the colour picture: turn the three back on

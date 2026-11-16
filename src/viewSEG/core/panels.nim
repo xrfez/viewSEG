@@ -92,9 +92,11 @@ type
     channelSets*: seq[int] ## SEG-D channel sets to show; empty shows all
     channels*: Slice[int] = 0 .. high(int) ## channel numbers to show
     components*: set[uint8]
-      ## components to show (`TraceKeys.component`); empty shows all. A
-      ## trace with no component stays. The choice holds across records of
-      ## one file and is cleared when another file is shown.
+      ## components switched off (`TraceKeys.component`); empty shows all,
+      ## so a component first seen on a later record is shown. A trace with
+      ## no component stays. The choice holds across records of one file
+      ## and is cleared when another file is shown. A record left with no
+      ## trace because every component present is off is shown whole again.
 
   DisplayMode* = enum
     ## How a layer's traces are drawn: density is drawn only in the modes

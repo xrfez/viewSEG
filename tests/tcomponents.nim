@@ -8,8 +8,8 @@
 ## comes from the sensor type, not from a group index of 1..4.
 ##
 ## Seen to fail: with `multiComponent` true for a single code, a one-component
-## record was multi; with `toggled` dropping the last code, the filter became
-## empty and no trace remained; with `keptIndices` ignoring the filter, turning
+## record was multi; with `toggled` storing the components left on, a component
+## first seen later was hidden; with `keptIndices` ignoring the filter, turning
 ## hydrophone off still kept every trace; with `buttonFaces` naming a group
 ## index 1..4 as H Z X, three components of sensor type 2 were H Z X.
 ##
@@ -87,22 +87,26 @@ block present:
 block filter:
   let codes = @[1'u8, 2, 3, 4, 1, 2, 3, 4, 0]
   doAssert keptIndices(codes, {}) == @[0, 1, 2, 3, 4, 5, 6, 7, 8]
+  # the set stores what is off, so a component first seen later stays shown
   let hydroOff = toggled(@[1'u8, 2, 3, 4], {}, 1)
-  doAssert 1 notin hydroOff and 2 in hydroOff and 3 in hydroOff and 4 in hydroOff, $hydroOff
+  doAssert hydroOff == {1'u8}, $hydroOff
   doAssert keptIndices(codes, hydroOff) == @[1, 2, 3, 5, 6, 7, 8], $keptIndices(codes, hydroOff)
+  doAssert passesComponent(5, hydroOff) and componentShown(hydroOff, 5)
+  doAssert keptIndices(@[5'u8, 2, 1], hydroOff) == @[0, 1]
   # a quarter of the named traces gone; the unlabelled trace stays
   doAssert keptIndices(@[1'u8, 2, 3, 4, 1, 2, 3, 4], hydroOff).len == 6
-  var on = hydroOff
-  on = toggled(@[1'u8, 2, 3, 4], on, 2)
-  on = toggled(@[1'u8, 2, 3, 4], on, 3)
-  doAssert on == {4'u8}, $on
-  doAssert toggled(@[1'u8, 2, 3, 4], on, 4) == on # the last one stays
-  doAssert keptIndices(codes, on) == @[3, 7, 8]
-  doAssert not keepsOne(@[1'u8, 2, 3, 4], {9'u8})
-  doAssert keepsOne(@[1'u8, 2, 3, 4], on)
+  var off = hydroOff
+  off = toggled(@[1'u8, 2, 3, 4], off, 2)
+  off = toggled(@[1'u8, 2, 3, 4], off, 3)
+  doAssert off == {1'u8, 2, 3}, $off
+  doAssert toggled(@[1'u8, 2, 3, 4], off, 4) == off # the last one stays
+  doAssert keptIndices(codes, off) == @[3, 7, 8]
+  doAssert not keepsOne(@[1'u8], {1'u8})
+  doAssert keepsOne(@[1'u8, 2, 3, 4], off)
   doAssert keepsOne(@[1'u8, 2, 3, 4], {})
-  # turning the last off one back on, with the others, is all on again
-  doAssert toggled(@[1'u8, 2, 3, 4], {2'u8, 3, 4}, 1) == {}
+  # a code switched off on another record does not hide these
+  doAssert keepsOne(@[1'u8, 2, 3, 4], {9'u8})
+  doAssert toggled(@[1'u8, 2, 3, 4], {1'u8}, 1) == {}
   doAssert componentShown({}, 1) and not componentShown(hydroOff, 1) and
     componentShown(hydroOff, 2)
   doAssert passesComponent(0, hydroOff) and not passesComponent(1, hydroOff)

@@ -24,7 +24,7 @@
 ##   (the gather's trace keys, for the trace filter and the display header),
 ##   which nothing changes while the file is held.
 ## - **Layout.** When it is shown a gather, the reader applies the layer's
-##   trace filter (seismic or auxiliary traces, and the components to show;
+##   trace filter (seismic or auxiliary traces, and the components switched off;
 ##   the killed ones left out when they are hidden, `ReaderSource.hidden`)
 ##   and posts the panel's
 ##   `PanelLayout` (`mkLayout`), with the header fields the traces have
@@ -292,7 +292,8 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   var counts: array[256, int]
   var sensors: array[256, uint8]
   var mixed: set[uint8]
-  let want = rd.src.filter.components
+  var excluded = 0
+  var want = rd.src.filter.components
   for k in 0 ..< rows.len:
     let keys = rows.keysAt(k)
     let seismic = keys.isSeismic
@@ -305,9 +306,27 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
         elif sensors[c] != keys.sensorType: mixed.incl c
         inc counts[c]
       if passesComponent(c, want): list.add g.a + k
-      else: all = false
+      else:
+        all = false
+        inc excluded
     else:
       all = false
+  # Every component present is off, and that leaves no trace: show them all.
+  var cleared = false
+  if list.len == 0 and excluded > 0:
+    cleared = true
+    want = {}
+    rd.src.filter.components = {}
+    rd.note(sevInfo, ComponentsRestored)
+    list.setLen 0
+    all = true
+    for k in 0 ..< rows.len:
+      let keys = rows.keysAt(k)
+      let seismic = keys.isSeismic
+      let kindOk = (seismic and rd.src.filter.seismic) or
+        (not seismic and rd.src.filter.auxiliary)
+      if kindOk and rd.src.hidden.binarySearch(g.a + k) < 0: list.add g.a + k
+      else: all = false
   var rawCodes, rawSensors: seq[uint8] = @[]
   var rawCounts: seq[int] = @[]
   for code in 1'u8 .. 255'u8:
@@ -375,7 +394,8 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
     compSensors.add t.sensor
   rd.r.poster.post Msg(job: NoJob, kind: mkLayout, panel: rd.r.panel,
     sourceGen: rd.src.gen, layout: layout, known: known, widest: widest,
-    components: codes, componentCounts: compCounts, componentSensors: compSensors)
+    components: codes, componentCounts: compCounts, componentSensors: compSensors,
+    componentsCleared: cleared)
   # The layout does not depend on the order, so it goes first: the panel can
   # ask for its view while the traces are sorted.
   let order = rd.src.order
