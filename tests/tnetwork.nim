@@ -79,8 +79,8 @@ proc silent() =
 install()
 
 withFixtures fx:
-  let far = fx.dir / "far"     # the network drive
-  let near = fx.dir / "near"   # a local disk
+  let far = fx.dir / "far" # the network drive
+  let near = fx.dir / "near" # a local disk
   createDir(far)
   createDir(near)
   let survey = fx.surveySegy

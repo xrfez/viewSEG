@@ -1,8 +1,8 @@
 ## The source, test and tool files stay as nimpretty writes them (the check
 ## CI runs: `--indent:2 --maxLineLen:100`): every `.nim` file under `src/`,
-## `tests/` and `tools/` but those in `NotYet`, written before the check and
-## not formatted since. A file of that list that nimpretty leaves as it is
-## must be taken off it, so the list only shrinks. Skipped without nimpretty.
+## `tests/` and `tools/`. (The `NotYet` list of files exempt from it was
+## emptied once all of them were formatted, so the list is now empty.) Skipped
+## without nimpretty.
 ##
 ## Seen to fail: with a comment's alignment changed by hand in
 ## `tests/utils/waiting.nim`, "not as nimpretty writes it: tests/utils/
@@ -18,21 +18,7 @@ import privatefiles
 
 const
   root = currentSourcePath().parentDir.parentDir
-  NotYet = [
-    "src/viewSEG/core/diskio.nim", "src/viewSEG/core/edits.nim", "src/viewSEG/core/filejobs.nim",
-    "src/viewSEG/core/filememory.nim", "src/viewSEG/core/identity.nim",
-    "src/viewSEG/core/panels.nim", "src/viewSEG/core/processing.nim",
-    "src/viewSEG/core/reader.nim", "src/viewSEG/core/recordqc.nim",
-    "src/viewSEG/core/spectra.nim",
-    "src/viewSEG/core/spectrumreader.nim", "src/viewSEG/core/spread.nim",
-    "src/viewSEG/core/tiles.nim", "src/viewSEG/core/watch.nim", "src/viewSEG/remote/control.nim",
-    "src/viewSEG/ui/imgui/icons.nim", "src/viewSEG/ui/imgui/memorywindow.nim",
-    "src/viewSEG/ui/imgui/menus.nim", "src/viewSEG/ui/imgui/spectrumwindow.nim",
-    "src/viewSEG/view/curveplot.nim",
-    "src/viewSEG/view/filetable.nim", "tests/tguiprocessing.nim",
-    "tests/tguiroutes.nim", "tests/tguispectra.nim", "tests/tnetwork.nim", "tests/treadout.nim",
-    "tests/trecordqc.nim", "tests/tshotcache.nim", "tests/utils/fixtures.nim", "tools/coverage.nim"]
-    ## relative to the repository's root
+  NotYet: array[0, string] = [] ## no file is exempt: every file is checked
 
 proc sources(): seq[string] =
   ## Every `.nim` file under src/, tests/ and tools/, relative to the root.

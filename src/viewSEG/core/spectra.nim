@@ -69,12 +69,12 @@ type
   SpectrumDisplay* = object
     ## How a spectrum window shows its spectrum, and over which time.
     scale*: SpectrumScale = ssDb
-    logFrequency*: bool       ## the frequency axis is logarithmic
+    logFrequency*: bool     ## the frequency axis is logarithmic
     time*: SpectrumTime = stWhole
-    raw*: bool = true         ## the raw curve is drawn
-    processed*: bool = true   ## the curve through the filters is drawn
-    response*: bool = true    ## the filters' own response is drawn (when there are some)
-    phase*: bool              ## a one-trace spectrum's phase is drawn under its amplitude
+    raw*: bool = true       ## the raw curve is drawn
+    processed*: bool = true ## the curve through the filters is drawn
+    response*: bool = true  ## the filters' own response is drawn (when there are some)
+    phase*: bool            ## a one-trace spectrum's phase is drawn under its amplitude
 
   SpectrumCurve* = enum
     ## A curve of a spectrum window's plot, in the order drawn (`drawnCurves`).
@@ -85,9 +85,9 @@ type
   SpectrumOf* = enum
     ## What chose a spectrum's traces.
     soNothing = "nothing"
-    soTrace = "trace"             ## the trace under the pointer
-    soSelection = "selection"     ## the selected traces
-    soVisible = "visible traces"  ## the traces the plot shows
+    soTrace = "trace"            ## the trace under the pointer
+    soSelection = "selection"    ## the selected traces
+    soVisible = "visible traces" ## the traces the plot shows
 
   Spectrum* = object
     ## An answer: the averaged amplitude spectra of the traces asked about.
@@ -101,20 +101,20 @@ type
     rawPhase*, processedPhase*: seq[float64]
       ## of a spectrum of one trace: per bin, its phase in degrees (-180 to
       ## 180, from the window's first sample); empty for several traces
-    asked*: int             ## traces asked about
-    averaged*: int          ## traces averaged
-    killed*: int            ## left out: killed
-    dead*: int              ## left out: marked dead in the file
-    failed*: int            ## left out: not decoded, a sample not a number, or none in the window
-    atOtherInterval*: int     ## left out: sampled at another interval
-    dtMs*: float64          ## the sample interval
+    asked*: int ## traces asked about
+    averaged*: int ## traces averaged
+    killed*: int ## left out: killed
+    dead*: int ## left out: marked dead in the file
+    failed*: int ## left out: not decoded, a sample not a number, or none in the window
+    atOtherInterval*: int ## left out: sampled at another interval
+    dtMs*: float64 ## the sample interval
     fromMs*, toMs*: float64 ## the window's first and last sample's times
-    windowLen*: int         ## its samples
-    nfft*: int              ## the FFT's length
-    read*: int              ## traces read from the file for it (0: all at hand)
-    filters*: string        ## the plot's filters asked for, in words; "" for none
-    filterAux*: bool        ## the auxiliary traces were asked to go through them
-    filtered*: int          ## of `averaged`, the traces `processed` is of
+    windowLen*: int ## its samples
+    nfft*: int ## the FFT's length
+    read*: int ## traces read from the file for it (0: all at hand)
+    filters*: string ## the plot's filters asked for, in words; "" for none
+    filterAux*: bool ## the auxiliary traces were asked to go through them
+    filtered*: int ## of `averaged`, the traces `processed` is of
     passedBy*: int
       ## of `averaged`, the auxiliary traces the filters passed by (the Aux
       ## toggle off): in `raw`, left out of `processed`
@@ -129,30 +129,30 @@ type
     response*: seq[float64]
       ## at each of `responseHz`, the gain the filters apply (`appliedResponse`);
       ## empty when they have no pass band or notch, or did not run
-    problem*: string        ## why there is no spectrum; "" when there is one
+    problem*: string ## why there is no spectrum; "" when there is one
 
   SpectrumWindow* = object
     ## A spectrum window: an FFT window opened from the plot's menu (a
     ## snapshot of the traces it was opened on), or the live panel (`id`
     ## 0), which follows the Seismic window's view or selection.
-    id*: int                  ## 0: the live panel; FFT windows from 1
+    id*: int ## 0: the live panel; FFT windows from 1
     display*: SpectrumDisplay
-    frozen*: bool             ## the live panel keeps what it shows
-    shown*: bool              ## the live panel: on screen (it works only then)
-    front*: int               ## bumped when it is to be brought forward (an agent showed it)
+    frozen*: bool ## the live panel keeps what it shows
+    shown*: bool ## the live panel: on screen (it works only then)
+    front*: int ## bumped when it is to be brought forward (an agent showed it)
     chosen*: SpectrumOf
-    file*: string             ## the file's name; "" for none
-    record*: string           ## the record's FFID, or its place in the file
-    traces*: seq[int]         ## survey-wide ids of the traces it is of, ascending
-    first*: int               ## the first one's index in its file
+    file*: string ## the file's name; "" for none
+    record*: string ## the record's FFID, or its place in the file
+    traces*: seq[int] ## survey-wide ids of the traces it is of, ascending
+    first*: int ## the first one's index in its file
     chosenCount*: int
       ## the traces chosen (selected, in view); `traces` spreads over them
       ## evenly when they are more than a spectrum takes (`spectrumTraces`)
     visibleMs*: Span
       ## the plot's visible time when the window was opened (FFT), or now (live)
-    panel*: PanelId           ## the plot it is of (the live panel: the Seismic window)
-    filters*: string          ## the plot's filters, in words, when asked; "" for none
-    processing*: Processing   ## them, as asked last (shown raw or not, alike)
+    panel*: PanelId ## the plot it is of (the live panel: the Seismic window)
+    filters*: string ## the plot's filters, in words, when asked; "" for none
+    processing*: Processing ## them, as asked last (shown raw or not, alike)
     cursor*: PlotCursor
       ## its cursor when held by the keys or an agent, as drawn: the bin
       ## along the frequency axis nearest `cursorHz` (among those the axis
@@ -160,18 +160,18 @@ type
       ## (`drawnCurves`; the top one while it is not drawn). Kept so by
       ## `followCursor` whenever the spectrum or the display changes
       ## (`core/plotcursor`)
-    cursorHz*: float64           ## the frequency the cursor is held at
-    cursorCurve*: SpectrumCurve  ## and the curve it reads
-    killed*: seq[int]         ## its traces killed when it asked last (indices in the file)
-    editsSeen*: int           ## its file's edits' revision then
-    spectrum*: Spectrum       ## the newest answer taken in
-    asked*: uint64            ## the newest request's gen; 0 for none
+    cursorHz*: float64 ## the frequency the cursor is held at
+    cursorCurve*: SpectrumCurve ## and the curve it reads
+    killed*: seq[int] ## its traces killed when it asked last (indices in the file)
+    editsSeen*: int ## its file's edits' revision then
+    spectrum*: Spectrum ## the newest answer taken in
+    asked*: uint64 ## the newest request's gen; 0 for none
     since*: uint64
       ## answers to requests from before this gen are of something else (a
       ## closed window of the same number, what the live panel showed before)
-    waiting*: bool            ## an answer newer than `spectrum` is on its way
-    asks*: int                ## requests made (for tests: the work follows the view)
-    revision*: int            ## bumped on every change
+    waiting*: bool ## an answer newer than `spectrum` is on its way
+    asks*: int ## requests made (for tests: the work follows the view)
+    revision*: int ## bumped on every change
 
   SpectrumSum* = object
     ## The power average of many traces' spectra, block by block.
@@ -182,7 +182,7 @@ type
     used: int
 
 const
-  LiveSpectrum* = 0 ## the live panel's id
+  LiveSpectrum* = 0        ## the live panel's id
   MaxSpectrumTraces* = 4096
     ## traces a spectrum averages at most: more chosen are taken evenly
   MaxSpectrumSamples* = 32 * 1024 * 1024

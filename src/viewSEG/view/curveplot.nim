@@ -54,9 +54,9 @@ type
 
   Reading* = object
     ## What the cursor reads at an x: the nearest point of each curve.
-    index*: int              ## into `xs`; -1 for none
+    index*: int           ## into `xs`; -1 for none
     x*: float64
-    values*: seq[float64]    ## per curve, what the readout says; NaN where it has none
+    values*: seq[float64] ## per curve, what the readout says; NaN where it has none
     drawn*: seq[float64]
       ## per curve, its drawn value there (at its own nearest x for a curve
       ## with its own); NaN where it has none

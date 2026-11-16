@@ -159,7 +159,8 @@ func boxOf*(places: openArray[MapPoint]; along: MapPoint): SpreadBox =
   func at(a, c: float64): MapPoint = mapPoint(o.x + a * u.x + c * v.x, o.y + a * u.y + c * v.y)
   SpreadBox(corners: [at(aLo, cLo), at(aHi, cLo), at(aHi, cHi), at(aLo, cHi)], shown: true)
 
-proc recordSpread*(s: Survey; g: SurveyGeometry; record: int64; domain: RelationDomain): PlannedSpread =
+proc recordSpread*(s: Survey; g: SurveyGeometry; record: int64;
+    domain: RelationDomain): PlannedSpread =
   ## The spread record `record` of `g` plans in `domain`: its stations,
   ## their places in the loaded survey files and the box round them.
   result = PlannedSpread(domain: domain, record: record)

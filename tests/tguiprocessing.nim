@@ -117,11 +117,11 @@ withFixtures fx:
         f.answered)
   step("let go of f2", proc (f: FrameInfo) = f.pressMouse(pointAt, false),
     proc (f: FrameInfo): bool =
-      result = f.answered
-      if result:
-        doAssert dragged.len >= 3, $dragged.len & " tiles while f2 was dragged"
-        doAssert f.processing.f2 > Processing().f2, "f2 did not move: " & $f.processing.f2
-        echo "tguiprocessing: f2 while dragged: ", dragged)
+    result = f.answered
+    if result:
+      doAssert dragged.len >= 3, $dragged.len & " tiles while f2 was dragged"
+      doAssert f.processing.f2 > Processing().f2, "f2 did not move: " & $f.processing.f2
+      echo "tguiprocessing: f2 while dragged: ", dragged)
   click("plot.filters notch add 60")
   step("a notch", noop, proc (f: FrameInfo): bool =
     result = f.processing.notches.len == 1 and f.answered

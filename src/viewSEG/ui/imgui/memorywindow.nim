@@ -33,9 +33,9 @@ type
     going: seq[MemoryRow]
       ## the entries it takes away, as they were listed when it was asked
       ## for (a listing that comes meanwhile changes the rows, not these)
-    popup: bool          ## open the confirmation next frame
+    popup: bool ## open the confirmation next frame
     rows: seq[MemoryRow] ## the listing's rows, made again when it changes
-    rowsRev: int = -1    ## the listing's revision they were made from
+    rowsRev: int = -1 ## the listing's revision they were made from
 
   MemoryOutput* = object
     commands*: seq[Command]
@@ -155,7 +155,7 @@ proc drawMemory*(ui: var MemoryUi; title: string; st: AppState; t: Theme;
       igTableSetupColumn("Entry", ImGui_TableColumnFlags_WidthFixed.cint, 0, 0)
       igTableSetupColumn("Where", ImGui_TableColumnFlags_WidthFixed.cint, 0, 0)
       igTableHeadersRow()
-      let clipper = ImGuiListClipper_ImGuiListClipper() # only the rows in view
+      let clipper = ImGuiListClipper_ImGuiListClipper()           # only the rows in view
       ImGuiListClipper_Begin(clipper, cint(rows.len), -1)
       while ImGuiListClipper_Step(clipper):
         for i in clipper.DisplayStart ..< clipper.DisplayEnd:

@@ -490,7 +490,7 @@ proc noIntervalSegy*(fx: Fixtures): string =
   # and its extended one, 3273-3280) and each trace header's (bytes 117-118,
   # and its extension's, 145-152, when it has one) set to 0
   var bytes = readFile(result)
-  let extended = ord(bytes[3504]) * 256 + ord(bytes[3505]) # textual headers after the binary
+  let extended = ord(bytes[3504]) * 256 + ord(bytes[3505])       # textual headers after the binary
   let first = 3600 + 3200 * extended
   let traceBytes = (bytes.len - first) div 4
   for at in [3216, 3217]: bytes[at] = '\0'
@@ -503,12 +503,12 @@ proc noIntervalSegy*(fx: Fixtures): string =
   writeFile(result, bytes)
 
 const
-  SpectrumTraces* = 9       ## traces of `spectrumSegy`
-  SpectrumSamples* = 2048   ## its samples per trace: the FFT's length, so bins are 1000 / 4096 Hz
-  SpectrumSineBin* = 100    ## the sine's bin: 24.4140625 Hz
+  SpectrumTraces* = 9     ## traces of `spectrumSegy`
+  SpectrumSamples* = 2048 ## its samples per trace: the FFT's length, so bins are 1000 / 4096 Hz
+  SpectrumSineBin* = 100  ## the sine's bin: 24.4140625 Hz
   SpectrumSineHz* = float64(SpectrumSineBin) * 1000 / (SpectrumSamples * DtMs)
-  SpectrumNoise* = 0.3      ## the noise's amplitude (uniform in ± this)
-  SpectrumLoudHz* = 100.0   ## channel 9's sine, 10 times as loud
+  SpectrumNoise* = 0.3    ## the noise's amplitude (uniform in ± this)
+  SpectrumLoudHz* = 100.0 ## channel 9's sine, 10 times as loud
 
 func spectrumSample*(channel, i: int): float32 =
   ## Sample `i` of `spectrumSegy`'s channel `channel` (1 ..).

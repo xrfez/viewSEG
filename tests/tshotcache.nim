@@ -23,10 +23,10 @@ block roundTrip:
 
 block damaged:
   let bad = [
-    "viewSEG shots 1\n1234 1700000000 5\n0 151 129 113 99999 1.0 2.0\n", # index past int16
-    "viewSEG shots 1\n1234 1700000000 2000000000\n",                      # nanoseconds
+    "viewSEG shots 1\n1234 1700000000 5\n0 151 129 113 99999 1.0 2.0\n",         # index past int16
+    "viewSEG shots 1\n1234 1700000000 2000000000\n",                             # nanoseconds
     "viewSEG shots 1\n1234 1700000000 -1\n",
-    "viewSEG shots 1\n1234 1700000000 5\n0 151 129 113 1 1.0\n",           # cut short
+    "viewSEG shots 1\n1234 1700000000 5\n0 151 129 113 1 1.0\n",                 # cut short
     "viewSEG shots 1\n1234 x 5\n",
     "viewSEG shots 0\n1234 1700000000 5\n"]
   for t in bad:

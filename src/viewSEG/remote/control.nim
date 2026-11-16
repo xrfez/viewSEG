@@ -56,7 +56,7 @@ type
     ## `start`; move-only (it holds the server).
     server: Server
     starting: Starting ## a start under way (its folder slow to answer); none otherwise
-    version: string    ## for the start under way
+    version: string ## for the start under way
     queue: seq[Call] ## taken, not answered yet
     waits: seq[Waiting]
     reading: seq[tuple[call: Call; ask: HeaderCall; written: bool]]

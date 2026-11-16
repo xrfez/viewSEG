@@ -46,10 +46,10 @@ import filejobs, filelist, filesystem, inbox, jobs, threads
 export filelist
 
 const
-  WatchInterval* = initDuration(seconds = 1) ## the pause between looks, at least
+  WatchInterval* = initDuration(seconds = 1)   ## the pause between looks, at least
   StopWait* = initDuration(milliseconds = 800) ## how long `stop` waits for a look to end
-  SlowFactor = 10                            ## a slow look: the pause is this many looks
-  Nap = 20                                   ## ms the thread sleeps between checks of its notes
+  SlowFactor = 10                              ## a slow look: the pause is this many looks
+  Nap = 20                                     ## ms the thread sleeps between checks of its notes
 
 type
   WatchObj = object

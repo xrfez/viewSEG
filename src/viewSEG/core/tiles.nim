@@ -54,7 +54,7 @@ type
     readTime*: Duration
       ## how long its reader waited for the file's samples (`fs.now`): the
       ## drive and the decoding, not the processing; zero when cached
-    chunks*: int            ## the reads (prefetch chunks) it took from the file
+    chunks*: int ## the reads (prefetch chunks) it took from the file
     filtered*: int
       ## the traces its reader passed to the filters (`ProcessPool.apply`):
       ## those of its request, or none without filters

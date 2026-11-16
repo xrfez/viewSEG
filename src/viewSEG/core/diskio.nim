@@ -91,19 +91,19 @@ type
     merging: bool
       ## a replace with `render`, or a remove: a document of the store,
       ## merged with another program's change (`base`, `expect`)
-    base: EditLists        ## `merging`: the edits the document held as this run read or wrote it
-    expect: DocStamp       ## `merging`: its stamp then; size -1 for no document
-    first: bool            ## left before the tasks waiting (after those left so before it)
+    base: EditLists ## `merging`: the edits the document held as this run read or wrote it
+    expect: DocStamp ## `merging`: its stamp then; size -1 for no document
+    first: bool ## left before the tasks waiting (after those left so before it)
 
   DiskObj = object
     lock: Lock
     changed, idle: Cond
     tasks: seq[Task]
     busy, quit, started, ended, abandoned: bool
-    since: MonoTime ## `busy`: when the task in hand was taken
-    current: string ## `busy`: what it writes, and where ("the settings (/home/...)")
-    answering: bool ## `busy`: the task's folder answered (`answered`, or a look just now)
-    holding: string ## `busy`: the file of the task in hand
+    since: MonoTime       ## `busy`: when the task in hand was taken
+    current: string       ## `busy`: what it writes, and where ("the settings (/home/...)")
+    answering: bool       ## `busy`: the task's folder answered (`answered`, or a look just now)
+    holding: string       ## `busy`: the file of the task in hand
     answered: seq[string] ## the folders a task ended in, this run
     helper: Thread[ptr DiskObj]
       ## writes the tasks left `first` while the thread is held (`stop`)

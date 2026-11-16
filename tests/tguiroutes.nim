@@ -147,7 +147,8 @@ withFixtures fx:
     f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
     f.apply Command(kind: ckSort, panel: MainPanel, order: @[SortKey(field: hfChannel,
       descending: true)])
-    f.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing(aux: true, dc: dcTrend, band: pbBandPass, f1: 3, f2: 6, f3: 50, f4: 70,
+    f.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing(aux: true,
+      dc: dcTrend, band: pbBandPass, f1: 3, f2: 6, f3: 50, f4: 70,
       notches: @[NotchFilter(hz: 50, widthHz: 3, harmonics: 2)]))
     f.apply(Command(kind: ckFilter, panel: MainPanel, filter: TraceFilter(seismic: true,
       auxiliary: true))), after(3))

@@ -34,7 +34,7 @@ type
     touched: seq[int] ## `follow`'s own buffer
     chosen: tuple[path: string; row, rowsRev: int]
       ## the row last found for a path
-    rebuilt: int ## how often the rows were made from scratch
+    rebuilt: int      ## how often the rows were made from scratch
 
 const kindRank = block:
   ## Each kind's place when the types are sorted by the names shown.

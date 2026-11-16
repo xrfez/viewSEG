@@ -26,12 +26,12 @@ const
 type
   SpectraUi* = object
     ## The spectrum windows' state between frames.
-    plots: Table[int, CurvePlotUi] ## per window id
-    phases: Table[int, CurvePlotUi] ## per window id: its phase plot
-    readout*: Table[int, string]   ## per window id: what the pointer read last frame (tests)
-    readAt*: Table[int, int]       ## per window id: the bin it read; -1 for none (tests)
+    plots: Table[int, CurvePlotUi]        ## per window id
+    phases: Table[int, CurvePlotUi]       ## per window id: its phase plot
+    readout*: Table[int, string]          ## per window id: what the pointer read last frame (tests)
+    readAt*: Table[int, int]              ## per window id: the bin it read; -1 for none (tests)
     widths: Table[int, array[3, float32]] ## per window id: the control groups, as drawn last frame
-    front: int                     ## the live panel's `front` followed last
+    front: int                            ## the live panel's `front` followed last
 
   SpectraOutput* = object
     commands*: seq[Command]
@@ -236,7 +236,7 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
       ImVec2_c(x: avail.x, y: max(60'f32, h - round(h * 0.6) - igGetStyle().ItemSpacing.y)),
       key, marks, (if w.cursor.held: PlotCursor(held: true, x: w.cursor.x,
                      y: max(q.curves.mapIt(it.name).find($w.cursorCurve), 0))
-                   else: PlotCursor()))
+      else: PlotCursor()))
     if po.hovered: text = q.readoutText(po.reading)
   if w.cursor.held and text.len > 0: text = HeldNote & text
   ui.readout[w.id] = text

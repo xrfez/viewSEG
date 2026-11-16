@@ -55,8 +55,8 @@ import std/[algorithm, math, os, parseutils, strutils, times]
 import edits, filesystem, identity, nif
 
 const
-  StoreFolder* = "files"         ## the store's folder in the configuration folder
-  MemoryVersion* = 1             ## the documents' version
+  StoreFolder* = "files" ## the store's folder in the configuration folder
+  MemoryVersion* = 1     ## the documents' version
   MaxMemoryBytes* = 64 shl 20
     ## the largest document read, and the largest list imported: a document
     ## of a million traces killed one in two is about 7.5 MB, its CSV 25 MB

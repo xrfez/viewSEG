@@ -93,7 +93,7 @@ const
   HeldTraces = 256
     ## traces processed at a time from the samples at hand: enough rows for
     ## every worker of the pool, few enough that a newer note is seen soon
-  DecodeWorkers = 2   ## prefetch threads per reader
+  DecodeWorkers = 2 ## prefetch threads per reader
   HeaderScan = 10_000 ## traces looked at for the header fields a gather has
   MaxRawSamples* = 32 * 1024 * 1024
     ## decoded samples (128 MiB) a reader keeps of its last request, at most
@@ -136,15 +136,15 @@ type
     order: seq[SortKey]
     orderGen: uint64
     request: ReaderRequest
-    hasLevel: bool          ## a level asked for, not taken yet
+    hasLevel: bool                              ## a level asked for, not taken yet
     level: ReaderRequest
     poster: Poster
     holds: HoldRelease
     started: bool
-    busy: bool         ## serving a note
-    beat: MonoTime     ## when it last showed it is alive (`fs.now`)
-    ended: bool        ## the thread is done
-    abandoned: bool    ## left to end on its own: its memory stays with it
+    busy: bool                                  ## serving a note
+    beat: MonoTime                              ## when it last showed it is alive (`fs.now`)
+    ended: bool                                 ## the thread is done
+    abandoned: bool                             ## left to end on its own: its memory stays with it
     thread: Thread[ptr ReaderObj]
 
   PanelReader* = object

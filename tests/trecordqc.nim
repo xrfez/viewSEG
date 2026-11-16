@@ -64,7 +64,7 @@ block binaryFraction:
   # X record 3 of source 10/5: receivers 101.1 .. 105.1 of receiver line 30.
   var g = initSurveyGeometry()
   g.addSps(SpsFile(relations: @[relation('X', 3, (10.0, 5.0), 30, 101.1, 105.1, 1)]), rdSource)
-  let decoded = 101.0 + float64(uint16(0.1 * 65536)) / 65536 # SEG-D's 2-byte fraction
+  let decoded = 101.0 + float64(uint16(0.1 * 65536)) / 65536       # SEG-D's 2-byte fraction
   doAssert decoded != 101.1
   let keys = keysOf([(30.0, decoded), (30.0, 101.1), (30.0, 102.1)], receiver = false)
   var hits: array[MapFilter, FilterHits]

@@ -241,15 +241,15 @@ type
       ## per field, its longest value over layer 0's traces as the header
       ## shows it (`numberText`), in characters: its column's width when
       ## time is across, the same wherever the view goes in the gather
-    kind*: GatherKind         ## the kind of gather layer 0 shows
-    view*: Viewport           ## what the plot shows
-    back*: seq[Viewport]      ## earlier views, newest last, for "back"; at most `MaxBack`
-    pending*: ReadRequest     ## the request sent last; empty for none
+    kind*: GatherKind ## the kind of gather layer 0 shows
+    view*: Viewport ## what the plot shows
+    back*: seq[Viewport] ## earlier views, newest last, for "back"; at most `MaxBack`
+    pending*: ReadRequest ## the request sent last; empty for none
     level*: Level
       ## the record's (`relevel`, `basis`): a tile's of `basis`, or the one
       ## its reader works out for it; another tile's stands in only while
       ## there is none
-    viewLevel*: Level         ## Float: the data in view, since the view last changed
+    viewLevel*: Level ## Float: the data in view, since the view last changed
     orderGen*: uint64
       ## `requestGen` when layer 0's order last changed: tiles from before
       ## it are kept until the first tile in the new order comes
@@ -268,8 +268,8 @@ type
       ## filters, a clip percentile, a gain that runs on the samples), over
       ## `basis` whatever is in view: from a tile of it, or from the reader's
       ## work out of it (`askLevel`)
-    levelSince*: uint64  ## `requestGen` when `relevel` was last set
-    levelAsked*: bool    ## the reader was asked for the record's level since
+    levelSince*: uint64 ## `requestGen` when `relevel` was last set
+    levelAsked*: bool ## the reader was asked for the record's level since
     basis*: ReadRequest
       ## what the record's level is taken over: the record's first request
       ## (as it was first shown, with its read-ahead: all of it at the fit in

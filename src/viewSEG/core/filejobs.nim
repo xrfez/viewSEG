@@ -138,7 +138,7 @@ proc openCached(path: string; ctx: JobContext; to: Poster; cache: string; budget
     try:
       fs.mappedRead(path) # (tests: the walk's next pages come late)
     except OSError:
-      discard # a real drive that fails here ends the walk in parseSEG
+      discard             # a real drive that fails here ends the walk in parseSEG
     ctx.progress(done, total)
   result = openSession(path, progress, if cached: cache else: "", choice)
   ctx.checkCancelled() # the file closes here, on the thread that opened it

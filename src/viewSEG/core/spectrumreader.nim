@@ -47,7 +47,7 @@ import processSEG/filter/design
 import filesystem, inbox, jobs, log, processing, spectra, threads
 
 const
-  ReadTraces = 64  ## traces per prefetch chunk
+  ReadTraces = 64   ## traces per prefetch chunk
   BlockTraces = 256 ## traces put through the FFT (and the filters) at a time
 
 type
@@ -77,16 +77,16 @@ type
     changed: Cond
     queue: seq[SpectrumAsk]
     quit: bool
-    serving: int      ## the window whose request is served; -1 for none
+    serving: int          ## the window whose request is served; -1 for none
     servedSince: MonoTime ## when it was taken
-    dropServed: bool  ## that request is given up (its window closed)
+    dropServed: bool      ## that request is given up (its window closed)
     poster: Poster
     holds: HoldRelease
     started, busy, ended, abandoned: bool
     beat: MonoTime
     reading: string
-    held: int         ## samples kept at hand
-    forget: bool      ## no window needs them: let them go once the queue is empty
+    held: int             ## samples kept at hand
+    forget: bool          ## no window needs them: let them go once the queue is empty
     thread: Thread[ptr ReaderObj]
 
   SpectrumReader* = object

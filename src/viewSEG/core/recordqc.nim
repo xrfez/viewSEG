@@ -58,8 +58,8 @@ type
       ## the relation record (X: a shot's; O: a receiver gather's) the job
       ## checked the record against; -1 for none, or while it runs
     byPlace*: bool ## found with the station at the record's place (`Placed`)
-    revision*: int                      ## bumped when `hits` change
-    replaced*: seq[JobId]               ## jobs given up for a newer record: they end quietly
+    revision*: int ## bumped when `hits` change
+    replaced*: seq[JobId] ## jobs given up for a newer record: they end quietly
 
 const
   AmplitudeFilters: array[AmplitudeFlag, MapFilter] = [mfNotANumber, mfAllZero,
@@ -100,7 +100,7 @@ proc placeTraces*(hits: var array[MapFilter, FilterHits]; keys: openArray[TraceK
   ## and the stations planned it lacks (`mfMissing`); a shot's are
   ## `recordCompleteness`'s, set before.
   let plan = g.plannedOf(record, domain)
-  var seen: Table[(StationKey, uint8), int]  # station (index 0 for none) and component: first trace
+  var seen: Table[(StationKey, uint8), int] # station (index 0 for none) and component: first trace
   var have: HashSet[(float64, float64)]
   var dupStations: HashSet[(float64, float64)]
   var firsts: HashSet[int] # the first trace of each key recorded twice, listed

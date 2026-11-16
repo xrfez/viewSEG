@@ -39,8 +39,8 @@ import std/[strutils, times]
 import filesystem
 
 const
-  QuickSpan* = 64 * 1024     ## bytes hashed at each end for the quick identity
-  FullPiece = 1024 * 1024    ## bytes read at a time for the full hash
+  QuickSpan* = 64 * 1024  ## bytes hashed at each end for the quick identity
+  FullPiece = 1024 * 1024 ## bytes read at a time for the full hash
   P1 = 11400714785074694791'u64
   P2 = 14029467366897019727'u64
   P3 = 1609587929392839161'u64
@@ -57,9 +57,9 @@ type
 
   FileIdentity* = object
     ## What a file holds, by its size and hashes of its bytes.
-    size*: int64        ## its size in bytes
-    quick*: uint64      ## its first and last `QuickSpan` bytes' hash
-    full*: uint64       ## every byte's hash, once `fullKnown`
+    size*: int64   ## its size in bytes
+    quick*: uint64 ## its first and last `QuickSpan` bytes' hash
+    full*: uint64  ## every byte's hash, once `fullKnown`
     fullKnown*: bool
 
 func rotl(x: uint64; r: int): uint64 {.inline.} = (x shl r) or (x shr (64 - r))

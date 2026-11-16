@@ -331,7 +331,7 @@ type UiNames* = object
   ## What the viewer's windows and menus are called, from the string
   ## literals of its toolkit code (`src/viewSEG/ui`).
   windows*: HashSet[string] ## window titles ("Headers" of "  Headers###headers") and names
-  labels*: HashSet[string]  ## every literal, trimmed and without a closing "..."
+  labels*: HashSet[string] ## every literal, trimmed and without a closing "..."
 
 func trimmedLabel(s: string): string =
   result = s.strip
@@ -515,11 +515,11 @@ proc readModule(path, srcDir: string): Module =
         result.locals[name] = r
         if r.len > 0 and r notin result.internal: result.internal.add r
 
-proc moduleName(g: Graph, path: string): string =
+proc moduleName(g: Graph; path: string): string =
   let rel = path.relativePath(g.srcDir).changeFileExt("")
   if rel.startsWith(g.lib & "/"): rel[g.lib.len + 1 .. ^1] else: rel
 
-proc exportsOf(g: var Graph, path: string): seq[Export] =
+proc exportsOf(g: var Graph; path: string): seq[Export] =
   ## What `import <path>` gives of the library.
   if path in g.memo: return g.memo[path]
   g.memo[path] = @[] # a cycle sees nothing
@@ -572,7 +572,7 @@ func enumValues(code: string): seq[string] =
       let v = part.split('=')[0].strip.strip(chars = {'`'})
       if v.len > 0 and v.validIdentifier: result.add v
 
-proc readDocs(g: var Graph, outDir: string) =
+proc readDocs(g: var Graph; outDir: string) =
   ## The entries of every module jsondoc wrote into `outDir`.
   for path in walkDirRec(outDir):
     if path.endsWith(".json") and path.extractFilename != "theindex.json":
@@ -602,7 +602,7 @@ proc nimCfgPaths*(root: string): seq[string] =
       if not (p.endsWith("parseSEG/src") or p.endsWith("processSEG/src")):
         result.add root / p
 
-proc jsondoc(file, outDir, cache: string, paths: seq[string], project: bool,
+proc jsondoc(file, outDir, cache: string; paths: seq[string]; project: bool;
     os = ""): Process =
   var args = @["jsondoc", "--doccmd:skip", "--hints:off", "--warnings:off", "--skipProjCfg",
     "--skipParentCfg", "--skipUserCfg", "--noNimblePath", "--nimcache:" & cache,
@@ -614,7 +614,7 @@ proc jsondoc(file, outDir, cache: string, paths: seq[string], project: bool,
   startProcess(getCurrentCompilerExe(), args = args,
     options = {poStdErrToStdOut, poUsePath})
 
-proc finish(p: Process, what: string) =
+proc finish(p: Process; what: string) =
   let output = p.outputStream.readAll
   let code = p.waitForExit
   p.close
@@ -637,12 +637,12 @@ type LibSource* = object
   parseRoot*: string ## For a processSEG: the parseSEG it is documented against.
   next*: bool        ## A next release.
 
-proc graphOf(l: LibSource, docDirs: openArray[string], other: Library): Graph =
+proc graphOf(l: LibSource; docDirs: openArray[string]; other: Library): Graph =
   result = Graph(lib: l.name, srcDir: expandFilename(l.root / "src"))
   for e in other.exports: result.other[e.name] = other.name
   for d in docDirs: result.readDocs(d)
 
-proc readLibraries*(libs: openArray[LibSource], paths: seq[string],
+proc readLibraries*(libs: openArray[LibSource]; paths: seq[string];
     work: string): seq[Library] =
   ## The exports of each library, read by `nim jsondoc` runs side by side.
   proc docPaths(l: LibSource): seq[string] =
@@ -780,7 +780,7 @@ func statusParts(cell: string): seq[string] =
       cur.add c
   result.add cur
 
-func parseStatus*(cell: string, statuses: var seq[Status], priority: var int): bool =
+func parseStatus*(cell: string; statuses: var seq[Status]; priority: var int): bool =
   ## The status words of a status cell, in order; false when a part has none.
   statuses = @[]
   priority = 0
@@ -849,7 +849,7 @@ type
 
 func libIndex(name: string): int = (if name == "parseSEG": 0 else: 1)
 
-func namedIn(row: Row, normNames: Table[string, string]): seq[string] =
+func namedIn(row: Row; normNames: Table[string, string]): seq[string] =
   ## The library names `row` names, as the library spells them, once each.
   ## A name also names its setter (`revision` names `revision=`).
   for n in spanNames(row.calls):
@@ -857,12 +857,12 @@ func namedIn(row: Row, normNames: Table[string, string]): seq[string] =
     for key in [k, k & "="]:
       if key in normNames and normNames[key] notin result: result.add normNames[key]
 
-func usedBySource(name: string, src: HashSet[string]): bool =
+func usedBySource(name: string; src: HashSet[string]): bool =
   ## Whether the viewer's source names `name` (a setter `x=` by `x`; an enum
   ## type by any of its values, which `check` adds to `src`).
   isOperator(name) or normName(name.strip(leading = false, chars = {'='})) in src
 
-func rowNameStatus(row: Row, name: string, src: HashSet[string]): Status =
+func rowNameStatus(row: Row; name: string; src: HashSet[string]): Status =
   ## The status `row` gives `name` (the module's doc says how).
   if row.statuses.len == 1: return row.statuses[0]
   let shown = row.statuses.filterIt(it in {stBuilt, stInternal})
@@ -878,7 +878,7 @@ func distinctive*(name: string): bool =
     if c in {'A' .. 'Z'}: return true
   false
 
-proc check*(page: Page, libs, next: openArray[Library], src: HashSet[string];
+proc check*(page: Page; libs, next: openArray[Library]; src: HashSet[string];
     declared = initHashSet[string](); ui = UiNames()): Coverage =
   ## Holds `page` against the libraries' exports (`libs`: the locked
   ## releases; `next`: the next ones found, maybe none), the viewer's source
@@ -1004,7 +1004,7 @@ func toPlanRemark(status: string): string =
         r = r[j .. ^1].strip(chars = {' ', ':', ','})
       return r
 
-proc summary*(page: Page, libs: openArray[Library], cov: Coverage): string =
+proc summary*(page: Page; libs: openArray[Library]; cov: Coverage): string =
   ## The page's summary: counts per library, then what is still to plan.
   var counts: array[2, array[Status, int]] # names
   var caps: array[2, array[Status, int]] # capabilities
@@ -1099,7 +1099,7 @@ type Result* = object
     ## rows say planned, to plan or not applicable: a row that may be stale (or
     ## a name the viewer uses of its own, a text search cannot tell).
 
-proc run*(root: string, work = ""): Result =
+proc run*(root: string; work = ""): Result =
   ## Reads the libraries, the page and the viewer's source of the repository
   ## at `root`, and checks the page. `work` is a scratch folder (made, then
   ## removed; a temporary one by default).
@@ -1133,7 +1133,7 @@ proc run*(root: string, work = ""): Result =
 when isMainModule:
   import std/parseopt
 
-  proc apiMissing(root: string, lib: Library): seq[string] =
+  proc apiMissing(root: string; lib: Library): seq[string] =
     ## The exported names `docs/api.md` does not mention as a whole word.
     let path = root / "docs" / "api.md"
     if fileExists(path):

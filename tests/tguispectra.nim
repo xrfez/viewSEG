@@ -123,7 +123,7 @@ withFixtures fx:
     true)
   step("the pointer at the sine", proc (f: FrameInfo) =
     let r = f.markOf("fft 1.data")
-    let x = r.pos.x + float32(SpectrumSineHz / 250) * r.size.x # 0 to Nyquist across
+    let x = r.pos.x + float32(SpectrumSineHz / 250) * r.size.x         # 0 to Nyquist across
     f.moveMouse(vec2(round(x), round(r.pos.y + r.size.y / 2))),
     proc (f: FrameInfo): bool =
       let (text, k) = f.spectraWindows.readoutOf(1)

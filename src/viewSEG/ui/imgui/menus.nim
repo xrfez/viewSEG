@@ -53,59 +53,59 @@ type
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
-    themes*: seq[ThemeFile]     ## listed under View > Theme
-    theme*: string              ## the one checked; "" for following the system
-    follows*: string            ## the theme file "Follow system" uses now
-    recent*: seq[string]        ## File > Open recent, newest first
-    recentFolders*: seq[string] ## the folders there, newest first
-    canClose*: bool             ## a file is shown, so File > Close closes it
-    layouts*: seq[SavedLayout]  ## Window: the presets, and the user's under Load
-    keepsLayouts*: bool         ## layouts can be saved by name (the program keeps its settings)
-    followLatest*: bool         ## File > Follow the latest file is checked
-    agentOn*: bool              ## File > Agent control is checked
-    agentSocket*: string        ## where agents connect; "" while not known yet
-    prepareNext*: bool          ## File > Prepare the next file is checked
-    shown*: set[AppWindow]      ## the windows ticked under Window
-    seismicName*: string        ## what the Seismic window is called now (`windowTitle`)
-    joinShown*: bool            ## the "Import survey" window is open
+    themes*: seq[ThemeFile]      ## listed under View > Theme
+    theme*: string               ## the one checked; "" for following the system
+    follows*: string             ## the theme file "Follow system" uses now
+    recent*: seq[string]         ## File > Open recent, newest first
+    recentFolders*: seq[string]  ## the folders there, newest first
+    canClose*: bool              ## a file is shown, so File > Close closes it
+    layouts*: seq[SavedLayout]   ## Window: the presets, and the user's under Load
+    keepsLayouts*: bool          ## layouts can be saved by name (the program keeps its settings)
+    followLatest*: bool          ## File > Follow the latest file is checked
+    agentOn*: bool               ## File > Agent control is checked
+    agentSocket*: string         ## where agents connect; "" while not known yet
+    prepareNext*: bool           ## File > Prepare the next file is checked
+    shown*: set[AppWindow]       ## the windows ticked under Window
+    seismicName*: string         ## what the Seismic window is called now (`windowTitle`)
+    joinShown*: bool             ## the "Import survey" window is open
     undo*, redo*: string
       ## Edit > Undo and Redo: the step each makes, in words ("trace 21
       ## killed"); "" when there is none
-    edited*: bool               ## the file shown has edits (Edit > Clear all edits)
-    editedName*: string         ## its name; "" when no file is shown
-    memoryShown*: bool          ## the File memory window is open
-    trayIcon*: bool             ## Window > Icon in the tray is checked
-    trayMinimize*: bool         ## Window > Minimize to the tray is checked
-    trayProblem*: string        ## why the tray icon cannot be shown; "" when it can
-    trayAvailable*: bool        ## the icon is in a tray that is seen (minimizing to it can work)
+    edited*: bool ## the file shown has edits (Edit > Clear all edits)
+    editedName*: string ## its name; "" when no file is shown
+    memoryShown*: bool ## the File memory window is open
+    trayIcon*: bool ## Window > Icon in the tray is checked
+    trayMinimize*: bool ## Window > Minimize to the tray is checked
+    trayProblem*: string ## why the tray icon cannot be shown; "" when it can
+    trayAvailable*: bool ## the icon is in a tray that is seen (minimizing to it can work)
     plotTraces*: int
       ## Window > New plot: the selected traces of the file shown; 0: none
       ## (its views are then offered on the trace under the pointer, from
       ## the plot's menu)
     recentProjects*: seq[string] ## Project > Recent projects, newest first
-    projectName*: string        ## the project open; "" for none
-    projectShown*: bool         ## the Project window is open
+    projectName*: string ## the project open; "" for none
+    projectShown*: bool ## the Project window is open
 
   MenuResult* = object
     actions*: set[MenuAction]
-    pickedTheme*: bool    ## a theme was chosen under View > Theme
-    theme*: string        ## its file name, or "" for "Follow system"
-    themeMenu*: ThemeMenu ## the submenu this frame: open, the entry the pointer rests on
-    openRecent*: string   ## a recent file to open; "" for none
-    browseRecent*: string ## a recent folder to list; "" for none
-    clearRecent*: bool    ## "Clear the list" under File > Open recent
-    loadLayout*: string   ## a layout file to load; "" for none
-    toggleFollow*: bool   ## File > Follow the latest file was clicked
-    toggleAgent*: bool    ## File > Agent control was clicked
-    togglePrepare*: bool  ## File > Prepare the next file was clicked
+    pickedTheme*: bool        ## a theme was chosen under View > Theme
+    theme*: string            ## its file name, or "" for "Follow system"
+    themeMenu*: ThemeMenu     ## the submenu this frame: open, the entry the pointer rests on
+    openRecent*: string       ## a recent file to open; "" for none
+    browseRecent*: string     ## a recent folder to list; "" for none
+    clearRecent*: bool        ## "Clear the list" under File > Open recent
+    loadLayout*: string       ## a layout file to load; "" for none
+    toggleFollow*: bool       ## File > Follow the latest file was clicked
+    toggleAgent*: bool        ## File > Agent control was clicked
+    togglePrepare*: bool      ## File > Prepare the next file was clicked
     pickedWindows*: set[AppWindow]
       ## their entries under Window were clicked (`picked`)
-    toggleJoin*: bool     ## the "Import survey" window's entry under Window was clicked
+    toggleJoin*: bool         ## the "Import survey" window's entry under Window was clicked
     toggleTrayIcon*: bool     ## Window > Icon in the tray was clicked
     toggleTrayMinimize*: bool ## Window > Minimize to the tray was clicked
-    newPlot*: bool        ## Window > New plot > a view was clicked: `newPlotView`
+    newPlot*: bool            ## Window > New plot > a view was clicked: `newPlotView`
     newPlotView*: AnalysisView
-    openProject*: string  ## a recent project to open; "" for none
+    openProject*: string      ## a recent project to open; "" for none
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [

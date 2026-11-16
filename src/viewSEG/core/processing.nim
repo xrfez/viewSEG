@@ -41,10 +41,10 @@ export design.Corners
 type
   PassBand* = enum
     ## The filter's pass band.
-    pbNone = "none"           ## no low-cut or high-cut
-    pbLowCut = "low-cut"      ## cut below `f1 .. f2`
-    pbHighCut = "high-cut"    ## cut above `f3 .. f4`
-    pbBandPass = "band-pass"  ## both: `f1 .. f2 .. f3 .. f4`
+    pbNone = "none"          ## no low-cut or high-cut
+    pbLowCut = "low-cut"     ## cut below `f1 .. f2`
+    pbHighCut = "high-cut"   ## cut above `f3 .. f4`
+    pbBandPass = "band-pass" ## both: `f1 .. f2 .. f3 .. f4`
 
   DcRemoval* = enum
     ## What is taken off each trace before the filter.
@@ -62,8 +62,8 @@ type
 
   Processing* = object
     ## A layer's filters, and how they are shown (the module documentation).
-    raw*: bool ## the traces without the filters: as recorded, under the same gain
-    aux*: bool ## the auxiliary traces go through the filters too
+    raw*: bool          ## the traces without the filters: as recorded, under the same gain
+    aux*: bool          ## the auxiliary traces go through the filters too
     dc*: DcRemoval = dcNone
     band*: PassBand = pbNone
     f1*: float64 = 4.0  ## Hz: the low-cut ramp starts (gain 0 below)
@@ -74,21 +74,21 @@ type
 
   FilterReach* = enum
     ## Which of the traces a plot shows its filters reach (`reach`).
-    frNone = "none"        ## no filter applied: none set, or shown raw
-    frAll = "all"          ## every trace shown goes through them
+    frNone = "none" ## no filter applied: none set, or shown raw
+    frAll = "all"   ## every trace shown goes through them
     frSeismic = "seismic"
       ## the seismic traces; the auxiliary ones shown are passed by (`aux` off)
     frNoTrace = "no trace"
       ## none: every trace shown is auxiliary, and `aux` is off
 
 const
-  MaxFilterHz* = 10_000.0 ## a corner or notch stays within 0 and this
-  MinRampHz* = 0.1        ## a ramp is at least this wide
-  MinNotchHz* = 0.1       ## a notch's frequency, at least
+  MaxFilterHz* = 10_000.0      ## a corner or notch stays within 0 and this
+  MinRampHz* = 0.1             ## a ramp is at least this wide
+  MinNotchHz* = 0.1            ## a notch's frequency, at least
   MinNotchWidthHz* = 0.1
   MaxNotchWidthHz* = 100.0
-  MaxHarmonics* = 20      ## a notch's harmonics, at most
-  MaxNotches* = 8         ## notches a layer has, at most
+  MaxHarmonics* = 20           ## a notch's harmonics, at most
+  MaxNotches* = 8              ## notches a layer has, at most
   NotchPresets* = [50.0, 60.0] ## the popup's quick notches: power-line hum
 
 func hasLow*(b: PassBand): bool {.inline.} = b in {pbLowCut, pbBandPass}

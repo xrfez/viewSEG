@@ -57,12 +57,12 @@ type
     teKilled = "killed"     ## drawn blank, left out of the panel's levels
 
   StepKind* = enum
-    skNone = "none"           ## no step: nothing to undo or redo
-    skChange = "change"       ## an edit given to some traces or taken away
-    skClear = "clear"         ## every edit taken away
-    skAllReversed = "all"     ## the polarity of every trace reversed, or put back
-    skImport = "import"       ## edits taken in from a file
-    skSetAside = "set aside"  ## every edit taken away: the file changed on disk
+    skNone = "none"          ## no step: nothing to undo or redo
+    skChange = "change"      ## an edit given to some traces or taken away
+    skClear = "clear"        ## every edit taken away
+    skAllReversed = "all"    ## the polarity of every trace reversed, or put back
+    skImport = "import"      ## edits taken in from a file
+    skSetAside = "set aside" ## every edit taken away: the file changed on disk
 
   ListsChange = object
     ## What a step does to the lists kept, where that is not what it does
@@ -73,16 +73,16 @@ type
   EditStep* = object
     ## One change of a file's edits: what it gave and took away.
     kind*: StepKind
-    edit*: TraceEdit                     ## skChange: which edit
-    on*: bool                            ## skChange: given (true); skAllReversed: reversed after
-    traces*: seq[int]                    ## skChange: the traces it changed, ascending
+    edit*: TraceEdit            ## skChange: which edit
+    on*: bool                   ## skChange: given (true); skAllReversed: reversed after
+    traces*: seq[int]           ## skChange: the traces it changed, ascending
     added*, removed*: array[TraceEdit, seq[int]]
       ## the traces each list gained and lost, ascending (as shown)
-    source*: string                      ## skImport: the file's name
-    allChanged*: bool                    ## the polarity of all traces changed with it
-    allBefore*, allAfter*: bool          ## all reversed before and after it
-    keptOwn: bool                        ## what is kept changes by `keptChange`
-    keptChange: ListsChange              ## what it does to what is kept, with `keptOwn`
+    source*: string             ## skImport: the file's name
+    allChanged*: bool           ## the polarity of all traces changed with it
+    allBefore*, allAfter*: bool ## all reversed before and after it
+    keptOwn: bool               ## what is kept changes by `keptChange`
+    keptChange: ListsChange     ## what it does to what is kept, with `keptOwn`
 
   EditLists* = object
     ## A file's edits: each list ascending, each trace once.
@@ -95,9 +95,9 @@ type
     shown: EditLists
     kept: EditLists
     undos, redos: seq[EditStep] ## the newest last
-    held: int                   ## the traces the steps name, all told (`MaxHeldTraces`)
-    revision: int               ## bumped on every change of what is shown
-    keptRevision: int           ## bumped on every change of what is kept
+    held: int ## the traces the steps name, all told (`MaxHeldTraces`)
+    revision: int ## bumped on every change of what is shown
+    keptRevision: int ## bumped on every change of what is kept
 
 func union(a, b: openArray[int]): seq[int] =
   ## The values of `a` and of `b` (both ascending), ascending, each once.
