@@ -189,7 +189,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
         if hk.anyOf: dist.curves.add past($s & " harmonic", xs, largest, hk)
   result.plots = @[phase, force, freq, dist]
   # The table: one row per signal
-  var head = @["Signal", "Trace", "Polarity", "Mean phase (°)", "Max |phase| (°)",
+  var head = @["Signal", "Trace", "Polarity", "Mean |phase| (°)", "Max |phase| (°)",
     "Mean THD (%)", "Max THD (%)", "Mean force", "Min force", "Max peak"]
   if p.limitsOn: head.add "Limits"
   result.table.add head
@@ -198,7 +198,7 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     let m = u.summaries[s]
     let trace = if s == vsWeightedSum: "M, B" else: names[at[VibRole(s)]]
     var row = @[$s, trace, (if s in u.reversed: "reversed" else: "as recorded"),
-      number(m.meanPhaseDeg), number(m.maxAbsPhaseDeg), number(m.meanThdPct),
+      number(m.meanAbsPhaseDeg), number(m.maxAbsPhaseDeg), number(m.meanThdPct),
       number(m.maxThdPct), number(m.meanForce, 3), number(m.minForce, 3),
       number(m.maxPeak, 3)]
     if p.limitsOn:

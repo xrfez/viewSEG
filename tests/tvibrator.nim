@@ -43,6 +43,15 @@ func taper(t: float64): float64 =
   elif T - t < Ramp: cos(PI / 2 * (1 - (T - t) / Ramp)) ^ 2
   else: 1.0
 
+func waveSplit(amp, phaseA, phaseB: float64): seq[float32] =
+  ## The sweep at phase A for its first half, phase B for its second.
+  result = newSeq[float32](N)
+  for j in 0 ..< N:
+    let t = float64(j) * Dt / 1000
+    let p = 2 * PI * (F0 * t + (F1 - F0) / (2 * T) * t * t)
+    let phaseDeg = if t < T / 2: phaseA else: phaseB
+    result[j] = float32(amp * taper(t) * sin(p + degToRad(phaseDeg)))
+
 func wave(amp, phaseDeg: float64; h2 = 0.0): seq[float32] =
   result = newSeq[float32](N)
   for j in 0 ..< N:
@@ -196,5 +205,24 @@ block noMassesNoReference:
   doAssert "trace 1, the reference, is not a sweep" in impulse.problem, impulse.problem
   # NaN settings compare equal (a window asks again only on a change)
   doAssert AnalysisParams() == AnalysisParams()
+
+block meanAbsPhase:
+  # the table's mean phase is the mean of |phase|, the one the limit judges:
+  # +8° then -8° is 8 on average, not 0
+  let rows = @[unitRows[0], waveSplit(1000, 8, -8), unitRows[2], unitRows[3]]
+  var p = params
+  p.limitsOn = true
+  p.limits = VibLimits(phaseDeg: 20, meanPhaseDeg: 5)
+  let r = vibratorOf(rows, names, inOrder, Dt, p)
+  doAssert r.problem == "", r.problem
+  doAssert r.table[0][3] == "Mean |phase| (°)", r.table[0][3]
+  var found = false
+  for row in r.table[1 .. ^1]:
+    if row[0] == "GF":
+      found = true
+      let mean = parseFloat(row[3])
+      doAssert abs(mean - 8) < 0.5, "mean |phase| " & row[3] & ", want about 8"
+      doAssert row[^1] == "fail: mean phase", row[^1]
+  doAssert found
 
 echo "tvibrator: ok"
