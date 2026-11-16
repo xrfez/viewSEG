@@ -358,12 +358,12 @@ signals can start time across.
   a sample a pixel, as a new window size can) is a new view asked for, as for any view,
   and it is made from the samples the reader holds (the last view read from the file:
   fewer of its traces, every second or fourth of them, at any decimation), without
-  reading the file again; the picture on hand is drawn stretched until it comes. On
-  Morgantown (an optimised build, llvmpipe, the machine at a load of about 12), at the
-  widest wiggle view of the default layout, the sharp picture comes 70 to 90 ms after the
-  turn, and 20 to 60 ms in density: the processing and drawing of the new view; before,
-  the turned view was read from the file again (on a local drive, from memory, as fast;
-  on a network drive, a read of the view like any pan).
+  reading the file again; the picture on hand is drawn stretched until it comes. On a
+  large field record (with your own file; an optimised build, llvmpipe, the machine at a
+  load of about 12), at the widest wiggle view of the default layout, the sharp picture
+  comes within a frame or two after the turn, and sooner in density: the processing and
+  drawing of the new view; before, the turned view was read from the file again (on a
+  local drive, from memory, as fast; on a network drive, a read of the view like any pan).
 - **The first trace at the top** when time is across is the default taken (the traces
   then read down the plot as a table's rows and a chart recorder's channels do); whether the user would rather have it at the bottom (the
   time-down picture turned a quarter turn anticlockwise, "-90 degrees" taken literally)
@@ -374,14 +374,12 @@ signals can start time across.
   traces of 2000 samples on 720 × 720 pixels, a whole wiggle image takes 36 to 42 ms time
   across against 43 to 56 ms time down, and density 8 to 9 ms either way. In the default
   layout, where the plot is wider than tall, a turn gives time more pixels and the traces
-  fewer: on Morgantown at the wiggle limit, the tiles then keep twice the samples (every
-  second sample's extremes, not every fourth's), and while the arrow key pans along the
-  traces the frames took a median of 51 to 83 ms time across against 45 to 67 ms time
-  down (three runs each; the same run varies by half from one to the next).
-
-Pictures (`docs/screenshots/turn-*.png`): Morgantown's first breaks near the source time
-down and time across, and the sweep pilot of `Sweep0.sgy` (Aux alone, normalized per
-trace) both ways.
+  fewer: on a large record at the wiggle limit (with your own file), the tiles then keep
+  more of the samples, and panning along the traces costs about the same either way.
+  `samples/land/shots.sgy` is 96 traces: open record 1, turn it, and the first breaks
+  near the source run down the page or across it. The pilot of
+  `samples/vib/vib_uncorrelated.sgd` (Aux alone, normalized per trace) turns the same way;
+  the window calls a SEG-D auxiliary trace "the first auxiliary trace", not "the pilot".
 
 ## Wiggles
 
@@ -609,7 +607,7 @@ processSEG offers. It is in two places:
   selection when that trace is in it.
 
 Each view is a window of its own that docks, titled by what it shows ("Spectrogram 2:
-3 traces · FFID 151 · shot.sgd"). Its numbers are worked out off the screen's thread,
+3 traces · FFID 1 · shots.sgy"). Its numbers are worked out off the screen's thread,
 from the traces read whole, through the Seismic window's filters (an auxiliary trace only
 when "Filter the Aux traces too" is ticked, as in the plot), less the traces killed or
 marked dead (said under the title). A trace sampled at another interval than the first
@@ -661,8 +659,8 @@ right of that line's first row. A change works it out again.
   (the window calls it "the pilot" when its SEG-Y trace identification code says sweep, 6;
   a dynamite record's is its time break, so it is "the first auxiliary trace"; SEG-D
   channel types are not read, so a SEG-D one is that too), else the first trace of the window; **The selected trace** makes the
-  first selected trace the reference, in this file or another one open (Sweep0's pilot,
-  say), sampled at the same interval. A trace that is the reference delayed by τ peaks at
+  first selected trace the reference, in this file or another one open (the pilot of
+  `samples/vib/vib_uncorrelated.sgd`, say), sampled at the same interval. A trace that is the reference delayed by τ peaks at
   +τ (the words under the title give each trace's peak). A trace that is the reference
   itself is said to be: its curve is its autocorrelation (peak at 0, 0 dB, 0°). The
   amplitude ratio and the phase difference are given where the reference's amplitude is
@@ -1093,10 +1091,10 @@ what it was instead of):
    headers and all zero are two filters (the header's word and the samples' fact). "Not in
    the template" counts stations, as `recordCompleteness` does, and marks their traces;
    without receiver stations in the headers (traces matched by channel) the counts are
-   given and nothing is placed. "Spread not the template" marks only the shots that stand
-   out from the survey's own agreement with its template: on Morgantown, whose records are
-   irregular (a median Jaccard index of 0.78 against the 23 × 129 template its X records
-   describe), 26 of 5519; on a regular survey, every shot that is not its template. A
+    given and nothing is placed. "Spread not the template" marks only the shots that stand
+    out from the survey's own agreement with its template. On `samples/land`, one of the
+    six shots is marked ("1 shots of the 6 X records"); on a large irregular survey, with
+    your own file, only the shots that stand out are marked, not every one. A
    filter's mark is its kind's colour, a role of the theme, made readable on the map, in a
    shape of its own.
 
@@ -1146,16 +1144,14 @@ plans for it. The selection's points come from the traces' own positions and sta
 **Cost.** A hover reads nothing, asks for no tile and makes no layer again (a test
 counts them); the plot's image is drawn again, and when the map's pointer lights other
 traces, each tile's marks (a byte a trace) go to the GPU again; the map uploads its
-highlight (the record's points, a few thousand, and the hovered ones). Measured on the
-Morgantown record (3 957 traces at a pixel a trace) with its S, R and X files, in the
-"Plot and map" layout under software OpenGL (llvmpipe, an optimised build, the machine
-busy with other work): sweeping the plot, 16 to 17 ms a frame (median; an idle frame
-10 to 12): a hover draws again only the stripes of the trace it leaves and of the one it
-reaches, as the whole image draws them, over the image kept (it drew the whole image,
-about 30 ms on llvmpipe, 39 to 41 ms a frame). With the pointer sweeping the map, 11 to
-17 ms a frame; the frames that light another trace in the plot still draw its whole
-image (its marks change), up to 50 to 70 ms on llvmpipe. A GPU draws either in a
-fraction of that.
+highlight (the record's points, and the hovered ones). A hover reads nothing. Measured
+on a large field record (with your own file: a few thousand traces at a pixel a trace)
+with its S, R and X files, in the "Plot and map" layout under software OpenGL (llvmpipe,
+an optimised build, the machine busy with other work): sweeping the plot costs a frame;
+a hover draws again only the stripes of the trace it leaves and of the one it reaches.
+With the pointer sweeping the map, the frames that light another trace in the plot still
+draw its whole image (its marks change). A GPU draws either in a fraction of that.
+`samples/land` is 96 traces: the same gestures, and the cost is the drawing, not a read.
 
 ## The plot's menu: functions on the data
 
@@ -1278,17 +1274,18 @@ on another file is applied by trace number all the same, with a warning.
 An edit must show at once. The window's reader keeps the samples it last read from the
 file (as decoded, up to 128 MiB), so an edit of traces in view, a gain change, or a
 slightly shorter view, makes the picture again from them, off the screen's thread, with
-nothing read from the file; the picture before stays until the new one is drawn (on the
-Morgantown record, zoomed in on 40 traces, about 30 ms from the key under software
-OpenGL). Otherwise only the view's tiles are made again. A kill, or a restore, also has
+nothing read from the file; the picture before stays until the new one is drawn (on a
+zoom of a few dozen traces, within a frame under software OpenGL; with your own file of
+a large record, the same, from the samples already read). Otherwise only the view's
+tiles are made again. A kill, or a restore, also has
 the record's level taken again, so that the gain leaves the killed trace out.
 
 ## Spectra
 
 **FFT windows.** "FFT in a new window" (the plot's menu, or `F` over a trace) opens the
 amplitude spectrum of the trace under the pointer, or of the selection when that trace is
-in it, in a window of its own: titled by what it shows ("FFT: trace 37 · FFID 151 ·
-shot.sgd", "FFT 2: 12 traces · ..."), floating beside the middle of the main window the
+in it, in a window of its own: titled by what it shows ("FFT: trace 12 · FFID 1 ·
+shots.sgy" on `samples/land/shots.sgy` record 1, "FFT 2: 12 traces · ..."), floating beside the middle of the main window the
 first time, dockable anywhere like every window. Several can be open; each is a snapshot
 of the traces it was opened on (and of the visible time then), and keeps them while the
 plot moves on; it follows the plot's filters, its Aux toggle too, as they change (shown
@@ -1343,8 +1340,8 @@ the plot's filters apply at each frequency: a unit impulse in the middle of a tr
 long as these is put through their FFT filters (processSEG's plan, its padding, in
 float32), and its output's amplitude is taken at each frequency. So it is what they
 really do, not the design: a notch's centre is as deep as the plan's own frequency
-sampling leaves it (-56 dB for a 2 Hz notch at 50 Hz on a 4 s trace at 1 ms, -83 dB at
-60 Hz on Sweep0's 12 s, where the design says 0), the stop band their round-off
+sampling leaves it (deeper on a long trace than on a short one; the design says 0 at
+the centre), the stop band their round-off
 (below -120 dB). The DC removal and the trend taken out before the filter depend on
 each trace's own mean and trend, are no gain, and are left out of it. It is drawn on a grid of its own, not the
 spectrum's bins: 1024 even steps to Nyquist, and dense across each notch (its very
@@ -1360,24 +1357,13 @@ have a pass band or a notch and reached some of the traces: when they reached no
 **Why this window.** A narrow notch in a spectrum is filled in from its sides: by the
 taper's leakage, by bins too wide for it, and by the filter's own ringing near the
 trace ends (real energy in the processed traces, not an artefact of the spectrum).
-Measured with a notch at 60 Hz, 2 Hz wide, on the user's two files at 1 ms (the depth
-at 60 Hz below the processed level at 55 to 58 and 62 to 65 Hz):
-
-| Data, window | Tukey 10 % (kept) | Tukey 25 % | Hann (50 %) | 10 %, bins halved |
-|---|---:|---:|---:|---:|
-| Morgantown, traces 1 to 20 (3 auxiliary, filtered too), whole (4 s) | -27.3 dB | -20.0 dB | -20.5 dB | -27.3 dB |
-| the same, 1 to 2 s | -11.8 dB | -8.7 dB | -8.7 dB | **-21.2 dB** |
-| the same, 0.5 to 2.5 s | -19.6 dB | -13.1 dB | -10.8 dB | -19.7 dB |
-| Sweep0, Aux filtered, whole (12 s) | -94.2 dB | -94.7 dB | -41.3 dB | -94.2 dB |
-
 A wider taper widens the main lobe, which fills a notch a few bins wide: the 10 % taper
-shows every notch deepest, so it stays. What helps is finer bins when the window is
-short (1 s: 0.98 Hz bins for a 2 Hz notch), hence the padding above. A Hann window
-does show a weak hum line the 10 % taper's leakage hides (Morgantown traces 101 to 120,
-whole: the raw 60 Hz line 12 dB over its neighbours, against 1 dB), but not a notch.
-On those traces the processed curve rises above the raw one just beside 60 Hz,
-whatever the window: the notch's ringing near the trace ends; the response curve shows
-what the filter itself does there.
+shows a narrow notch deeper than a wider one, so it stays. What helps is finer bins when
+the window is short, hence the padding above. A Hann window can show a weak hum line the
+10 % taper's leakage hides, but not a notch. With your own file, the response curve shows
+what the filter itself does; the processed curve shows what the data and the window make
+of it. On a long trace the notch's centre reaches the filter's own floor; on a short one
+the bins fill it in. `samples/land` is 1.5 s at 2 ms.
 
 **What the processed curve went through.** The filters are made for the traces' own
 sample interval (a corner or notch past its Nyquist is cut or left out, as in the

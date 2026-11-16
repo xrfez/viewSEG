@@ -12,7 +12,7 @@ program you run, on your own computer, that connects to a socket file.
 
 ## Turning it on
 
-- Start the program with `--mcp`: `viewSEG --mcp exampleFiles`. With `--mcp=<socket>` it
+- Start the program with `--mcp`: `viewSEG --mcp samples/land`. With `--mcp=<socket>` it
   listens on the socket you name instead of the default one.
 - Or, in a running program: **File > Agent control**. Click it again to turn it off.
 
@@ -76,7 +76,7 @@ When the agent runs in a devcontainer that shares the repository folder with you
 
 ```sh
 cd ~/path/to/viewSEG
-bin/viewSEG --mcp exampleFiles
+bin/viewSEG --mcp samples/land
 ```
 
 The socket is `bin/viewSEG.sock`, inside the shared folder, so the client in the container
@@ -175,7 +175,7 @@ by its place relative to that folder, and it is found on either side:
 
 | The agent sees | The program sees | Give |
 |---|---|---|
-| `/workspaces/viewSEG/exampleFiles/shot.sgd` | `/home/you/src/viewSEG/exampleFiles/shot.sgd` | `../exampleFiles/shot.sgd` |
+| `/workspaces/viewSEG/samples/land/shots.sgy` | `/home/you/src/viewSEG/samples/land/shots.sgy` | `../samples/land/shots.sgy` |
 
 An absolute path is taken as it is. The paths `state` reports are the program's.
 

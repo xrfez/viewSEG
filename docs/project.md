@@ -20,7 +20,7 @@ One folder, named by the user, that holds everything. Copying the folder copies 
 project; nothing about it lives anywhere else (the user's recent projects aside).
 
 ```
-Morgantown 2026/            the project folder: this is what is opened
+Land 2026/                  the project folder: this is what is opened
   project.nif               the project document (NIF text)
   layout.nif                the windows as they were arranged in the project
   files/                    what is remembered about each data file, one document per file
@@ -60,20 +60,20 @@ Morgantown 2026/            the project folder: this is what is opened
 (.vendor "viewSEG")
 (project
  (version 1)
- (name "Morgantown 2026")
+ (name "Land 2026")
  (created "2026-11-15T21:40:00Z")
  (data (folder (path "../field/day1") (absolute "/mnt/field/day1")))
  (survey
-  (file (kind sps) (copy "survey/files/morgantown.sps")
-   (path "../survey/morgantown.sps") (absolute "/mnt/survey/morgantown.sps")
-   (size 4812733) (modified 1763200961 120000000) (quick "9a0c51f3e2d4b6a7"))
+  (file (kind sps) (copy "survey/files/land.s")
+   (path "../samples/land/land.s") (absolute "/data/samples/land/land.s")
+   (size 776) (modified 1763200961 120000000) (quick "9a0c51f3e2d4b6a7"))
   (join (trailingDigits false) (multiComponent false) (coordinates fill) (recordMatch auto)
    (traceMatch auto) (lineNames (line "CLT4960" 4960)))
   (units (survey usFeet) (file usFeet) (surveyFromHeaders false) (fileFromHeaders true))
   (notes "H20 Description of grid units: US survey feet")
   (imported "2026-11-15T21:42:10Z")
-  (store (format 1) (bytes 31457280) (hash "51f3a0c4e2d4b6a7") (sources 1200)
-   (receivers 3954) (relations 1200)))
+  (store (format 1) (bytes 4096) (hash "51f3a0c4e2d4b6a7") (sources 6)
+   (receivers 96) (relations 6)))
  (processing (dc none) (band bandPass) (f1 4.0) (f2 8.0) (f3 60.0) (f4 80.0) (aux false))
  (displayPresets (preset "Section" (mode density) ...)))
 ```
@@ -286,7 +286,7 @@ closes its files and survey in the same way and goes back to working without a p
 with the user's own windows, presets and filters. There is no Save: a project is written
 as it changes.
 
-**The window says which project is open:** the title (`viewSEG - Morgantown 2026`, with
+**The window says which project is open:** the title (`viewSEG - Land 2026`, with
 `(read-only)` when it is) and the **Project window** (Project > Project...): its name and
 place, why it is read-only, its data folders (found, missing with Locate..., each with
 List), Add a data folder..., the survey (its counts; on the map, loading, being copied;

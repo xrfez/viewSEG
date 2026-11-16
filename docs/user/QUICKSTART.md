@@ -44,8 +44,8 @@ Files and folders can also be dragged from a file manager and dropped on the win
 `.xps`, and SEG P1 files) open the same ways: File > Open, a drop (several at once), the
 command line. viewSEG tells them by what they hold, not by their name, and loads them into
 the survey (on a job, with progress, in the Jobs window) instead of the Seismic window,
-which stays on the file it shows. Messages says what each held ("Loaded line7.rps (SPS R):
-6385 receiver points.") and what was left out: records without coordinates or at (0, 0),
+which stays on the file it shows. Messages says what each held ("Loaded land.r (SPS R):
+96 receiver points.") and what was left out: records without coordinates or at (0, 0),
 stations given twice (the last one is kept), damaged lines by number. A file that is not a
 survey file, or a damaged one, is refused or read as far as it goes, and the program goes
 on. Each open seismic file's source and receiver positions are read into the survey too,
@@ -538,7 +538,7 @@ template**, stations **recorded twice**; auxiliary traces, traces **without a po
 the template**). Hover a filter for what it counts; **Select** selects its traces in the
 plot; point at a ringed receiver and its description says which filters mark it.
 
-![Morgantown with its survey: the template box of record 151 (X record 77), every filter on](../screenshots/map-morgantown-filters.png)
+![Land sample, field record 3: the template box of X record 3 (96 receivers planned), filters on](../images/land-map.png)
 
 Untick a group to hide all of it (its layers keep their own ticks, greyed out, for when it
 comes back), or a layer to hide that layer alone; the highlight (the record on show, the
@@ -554,12 +554,15 @@ Move the pointer over a trace in the plot: its **source and receiver light up on
 up in the plot**, in the same colour; over a source, its whole record does. The record on
 show is always marked on the map: its receivers in a darker shade (the spread it was
 recorded on), its source larger and outlined. With the pointer on a trace, `M` selects its
-receiver on the map (the plot's right-click menu has it too). Try it on the Morgantown
-record with its survey files:
+receiver on the map (the plot's right-click menu has it too). Try it on the land sample:
 
 ```
-bin/viewSEG exampleFiles/00000151_12900_11300.sgd exampleFiles/sps/*.?ps
+bin/viewSEG samples/land/shots.sgy samples/land/land.?
 ```
+
+Record 1 of 6 opens (FFID 1, source 2001:101, 96 traces). The map draws two receiver
+lines and the six sources, and the scale bar reads ftUS. Field record 3 has one dead
+trace; its template box, once ticked, reads "X record 3: 96 receivers planned".
 
 The positions come from the trace headers' coordinates, or from the survey files by the
 stations the headers name (line and point); a trace whose headers give only its record
@@ -654,19 +657,19 @@ is read as it is on disk: import the survey again (the window keeps your files a
 options).
 
 ```
-bin/viewSEG exampleFiles/00000151_12900_11300.sgd exampleFiles/sps/*.?ps
+bin/viewSEG samples/land/shots.sgy samples/land/land.?
 ```
 
 then File > Import > Import survey, Import (or open only the record, and choose the three
-files with Add files...): 5519 source points and 6385 receiver points are on the map, and
-the Morgantown record's 3954 seismic traces all match by their headers' stations; its
-headers' coordinates agree with the survey's to 0.1 ftUS (choose "replace those the
-headers give" to have the survey's).
+files with Add files...): 6 source points and 96 receiver points are on the map, and all
+576 seismic traces match by the stations in their headers. The coordinates the headers
+give are kept: they are the survey's. Messages quotes the SPS headers: NAD83, Texas
+South Central, US survey feet, factor 0.3048006096. The file itself is never changed.
 
 ## Spectra
 
 **FFT in a new window** (right-click a trace, or `F` over it) opens its amplitude
-spectrum in a window named for what it shows ("FFT: trace 37 · FFID 151 · shot.sgd");
+spectrum in a window named for what it shows ("FFT: trace 12 · FFID 1 · shots.sgy");
 over a selected trace, the selection's, averaged ("FFT 2: 12 traces ..."). Open as many
 as you like and dock them anywhere; each keeps what it was opened on while you move on.
 Two curves: **raw**, the samples as recorded, and **processed**, through the filters of
