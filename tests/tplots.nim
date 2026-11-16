@@ -405,12 +405,12 @@ withFixtures fx:
     bad.windowMs = 0
     st.apply Command(kind: ckOpenPlot, plotView: avSpectrogram, plotTraces: @[s.base],
       plotParams: bad)
-    doAssert st.plots.len == before + 1 and "windowMs must be above 0 ms, not 0.0" in
+    doAssert st.plots.len == before + 1 and "windowMs must be above 0 and at most 3600000 ms, not 0.0" in
       st.log.lastText, st.log.lastText
     bad.windowMs = NaN
     st.apply Command(kind: ckOpenPlot, plotView: avSpectrogram, plotTraces: @[s.base],
       plotParams: bad)
-    doAssert st.plots.len == before + 1 and "windowMs must be above 0 ms, not null" in
+    doAssert st.plots.len == before + 1 and "windowMs must be above 0 and at most 3600000 ms, not null" in
       st.log.lastText, st.log.lastText
     bad = AnalysisParams()
     bad.overlap = 120
@@ -421,7 +421,7 @@ withFixtures fx:
     bad.floorDb = 3
     st.apply Command(kind: ckPlotDisplay, plot: st.plots[shown].id, plotParams: bad)
     doAssert st.plots[shown].params.floorDb == -60.0 and
-      "floorDb must be below 0 dB, not 3.0" in st.log.lastText, st.log.lastText
+      "floorDb must be from -400 to below 0 dB, not 3.0" in st.log.lastText, st.log.lastText
     # a vibrator's harmonics are judged on it; a setting the view does not use is not
     var vib = AnalysisParams()
     vib.harmonics = 1
@@ -429,6 +429,50 @@ withFixtures fx:
       plotParams: vib)
     doAssert st.plots.len == before + 1 and "harmonics must be from 2 to 16, not 1.0" in
       st.log.lastText, st.log.lastText
+    # every range has a cap: 1e300 is refused for each setting kind
+    var huge = AnalysisParams()
+    huge.windowMs = 1e300
+    st.apply Command(kind: ckOpenPlot, plotView: avSpectrogram, plotTraces: @[s.base],
+      plotParams: huge)
+    doAssert st.plots.len == before + 1 and "windowMs must be" in st.log.lastText,
+      st.log.lastText
+    huge = AnalysisParams()
+    huge.maxLagMs = 1e300
+    st.apply Command(kind: ckOpenPlot, plotView: avCorrelation, plotTraces: @[s.base],
+      plotParams: huge)
+    doAssert st.plots.len == before + 1 and "maxLagMs must be" in st.log.lastText,
+      st.log.lastText
+    huge = AnalysisParams()
+    huge.fkFromMs = 1e300
+    st.apply Command(kind: ckOpenPlot, plotView: avFk, plotTraces: @[s.base],
+      plotParams: huge)
+    doAssert st.plots.len == before + 1 and "fkFromMs must be" in st.log.lastText,
+      st.log.lastText
+    huge = AnalysisParams()
+    huge.phaseWithinDb = 1e300
+    st.apply Command(kind: ckOpenPlot, plotView: avPhase, plotTraces: @[s.base],
+      plotParams: huge)
+    doAssert st.plots.len == before + 1 and "phaseWithinDb must be" in st.log.lastText,
+      st.log.lastText
+    huge = AnalysisParams()
+    huge.floorDb = -1e300
+    st.apply Command(kind: ckOpenPlot, plotView: avSpectrogram, plotTraces: @[s.base],
+      plotParams: huge)
+    doAssert st.plots.len == before + 1 and "floorDb must be" in st.log.lastText,
+      st.log.lastText
+    huge = AnalysisParams()
+    huge.reactionMassKg = 1e300
+    st.apply Command(kind: ckOpenPlot, plotView: avVibrator, plotTraces: @[s.base],
+      plotParams: huge)
+    doAssert st.plots.len == before + 1 and "reactionMassKg must be" in st.log.lastText,
+      st.log.lastText
+    huge = AnalysisParams()
+    huge.limits.phaseDeg = 1e300
+    st.apply Command(kind: ckOpenPlot, plotView: avVibrator, plotTraces: @[s.base],
+      plotParams: huge)
+    doAssert st.plots.len == before + 1 and "phaseDeg must be" in st.log.lastText,
+      st.log.lastText
+    discard st.drainInbox()
     var env = AnalysisParams()
     env.windowMs = NaN
     st.apply Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[s.base],

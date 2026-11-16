@@ -186,15 +186,25 @@ type
     words*: string ## the range in words, for a message
 
 const
-  WindowMsRange* = SettingRange(lo: 0, loOpen: true, hi: Inf, words: "above 0 ms")
+  MaxTimeMs* = 3_600_000.0 ## the longest time a setting may be: an hour
+  MaxLimit* = 1e9          ## the largest limit or mass a setting may be
+  WindowMsRange* = SettingRange(lo: 0, loOpen: true, hi: MaxTimeMs,
+    words: "above 0 and at most 3600000 ms")
   OverlapRange* = SettingRange(lo: 0, hi: 95, words: "from 0 to 95 %")
-  FloorDbRange* = SettingRange(lo: -Inf, hi: 0, hiOpen: true, words: "below 0 dB")
-  PhaseWithinRange* = SettingRange(lo: 0, loOpen: true, hi: Inf, words: "above 0 dB")
-  LagMsRange* = SettingRange(lo: 0, loOpen: true, hi: Inf, words: "above 0 ms")
+  FloorDbRange* = SettingRange(lo: -400, hi: 0, hiOpen: true,
+    words: "from -400 to below 0 dB")
+  PhaseWithinRange* = SettingRange(lo: 0, loOpen: true, hi: 400,
+    words: "above 0 and at most 400 dB")
+  LagMsRange* = SettingRange(lo: 0, loOpen: true, hi: MaxTimeMs,
+    words: "above 0 and at most 3600000 ms")
+  TimeMsRange* = SettingRange(lo: -MaxTimeMs, hi: MaxTimeMs,
+    words: "from -3600000 to 3600000 ms")
   HarmonicRange* = SettingRange(lo: 2, hi: 16, words: "from 2 to 16")
-  MassKgRange* = SettingRange(lo: 0, loOpen: true, hi: Inf, words: "above 0 kg")
-  NumberRange* = SettingRange(lo: -Inf, hi: Inf, words: "a number")
-    ## a time, or a limit: any finite value
+  MassKgRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
+    words: "above 0 and at most 1000000000 kg")
+  NumberRange* = SettingRange(lo: -MaxLimit, hi: MaxLimit,
+    words: "from -1000000000 to 1000000000")
+    ## a limit: any value in its range
 
 func allows*(r: SettingRange; v: float64): bool =
   ## Whether `v` is a finite value within `r`; NaN (a setting that may be
@@ -222,8 +232,8 @@ func settingProblem*(p: AnalysisParams; view: AnalysisView): string =
   of avCorrelation:
     check("maxLagMs", p.maxLagMs, LagMsRange)
   of avFk:
-    check("fkFromMs", p.fkFromMs, NumberRange, none = true)
-    check("fkToMs", p.fkToMs, NumberRange, none = true)
+    check("fkFromMs", p.fkFromMs, TimeMsRange, none = true)
+    check("fkToMs", p.fkToMs, TimeMsRange, none = true)
     check("floorDb", p.floorDb, FloorDbRange)
   of avVibrator:
     check("reactionMassKg", p.reactionMassKg, MassKgRange, none = true)
