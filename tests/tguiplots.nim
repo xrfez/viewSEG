@@ -188,7 +188,7 @@ withFixtures fx:
     if result:
       let w = f.core.plots[1]
       doAssert w.view == avVibrator and w.traces == @[0, 1, 2, 3], $w.traces
-      doAssert w.result.problem == "" and w.result.plots.len == 4, w.result.problem
+      doAssert w.result.problem == "" and w.result.plots.len in 4 .. 5, w.result.problem
       for role in ["Ref", "GF", "M", "B"]:
         doAssert f.markOf("new plot 2.role " & role).size.x > 0, "no role " & role)
   click("new plot 2.limits")

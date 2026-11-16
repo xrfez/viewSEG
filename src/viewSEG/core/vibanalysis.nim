@@ -7,12 +7,15 @@
 ## | Plot | Curves |
 ## |---|---|
 ## | Phase to the reference | GF, GF (M, B), M, B (degrees) |
-## | Force | the fundamental's amplitude and the peak, of GF and GF (M, B) |
+## | Force | the fundamental's amplitude and the peak, of GF |
+## | Force from M and B | the same of GF (M, B), on an axis of its own (kg × recorded) |
 ## | Frequency | the reference's and the ground forces' instantaneous frequency |
 ## | Distortion | THD of GF and GF (M, B); each harmonic of the ground force, % of the fundamental |
 ##
 ## - **GF (M, B)** is the ground force generated from M and B, `Mr·a_M +
-##   Mb·a_B`, once both masses are entered; it overlays the recorded one.
+##   Mb·a_B`, once both masses are entered. Its unit is not the recorded
+##   force's (kg × counts, uncalibrated without accelerometer sensitivities),
+##   so its force is a plot of its own and the force limits are not applied to it.
 ## - **Limits** (`AnalysisParams.limitsOn`, off at first) are drawn on the
 ##   plots (thin lines), the points past them marked, and judged on the two
 ##   ground forces over the sweep less its tapers; the table says pass or
@@ -57,12 +60,18 @@ func anyOf(s: seq[bool]): bool =
 func forceUnit(u: AmplitudeUnit): string =
   if u == auForce: "N" elif u == auRecorded: "as recorded" else: $u
 
+func weightedUnit(u: AmplitudeUnit): string =
+  ## The unit of the weighted sum of the masses: the masses are in kg, the
+  ## traces as recorded (counts) unless calibrated.
+  if u == auForce: "N" elif u == auRecorded: "kg × as recorded" else: "kg × " & $u
+
 proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     at: array[VibRole, int]; dtMs: float64; p: AnalysisParams): AnalysisResult =
   ## The vibrator signature of the unit whose role `r` is row `at[r]` of
   ## `rows` (traces from their first sample at `dtMs`, named `names`; -1:
   ## the unit has none), with the masses, polarities, harmonics and limits
-  ## of `p`: four plots against sweep time, and the table per signal.
+  ## of `p`: four plots against sweep time (five when the force generated from the
+  ## masses has an axis of its own), and the table per signal.
   result = AnalysisResult(view: avVibrator, dtMs: dtMs)
   if at[vsReference] notin 0 ..< rows.len:
     result.problem = "no reference (Ref): give the pilot's trace that role"
@@ -130,13 +139,19 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     xUnit: "ms", yLabel: "Phase (°)", yUnit: "°", xs: xs)
   for s in [vsGroundForce, vsWeightedSum, vsMass, vsBaseplate]:
     if s in u.signals: phase.curves.add AnalysisCurve(name: $s, ys: u.tracks[s].phaseDeg)
-  # Force
+  # Force: the recorded ground force and the weighted sum of the masses are in
+  # different units (counts; kg x counts): a plot, an axis and a unit each
   var force = AnalysisPlot(title: "Force", xLabel: "Sweep time (ms)", xUnit: "ms",
     yLabel: "Force (" & forceUnit(u.units[main]) & ")", xs: xs)
+  var generated = AnalysisPlot(title: "Force from M and B", xLabel: "Sweep time (ms)",
+    xUnit: "ms", yLabel: "GF (M, B) (" & weightedUnit(u.units[vsWeightedSum]) & ")", xs: xs)
   for s in forces:
     if s in u.signals:
-      force.curves.add AnalysisCurve(name: $s & " fundamental", ys: u.tracks[s].amplitude[0])
-      force.curves.add AnalysisCurve(name: $s & " peak", ys: u.tracks[s].peak)
+      let (plot, name) = if s == vsWeightedSum and main != vsWeightedSum: (addr generated, $s)
+                         else: (addr force, $s)
+      plot[].curves.add AnalysisCurve(name: name & " fundamental",
+        ys: u.tracks[s].amplitude[0])
+      plot[].curves.add AnalysisCurve(name: name & " peak", ys: u.tracks[s].peak)
   # Frequency
   var freq = AnalysisPlot(title: "Frequency", xLabel: "Sweep time (ms)", xUnit: "ms",
     yLabel: "Frequency (Hz)", yUnit: "Hz", xs: xs)
@@ -164,6 +179,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     if l.phaseDeg < Inf:
       phase.curves.add limitLine("limit ±" & number(l.phaseDeg) & "°", xs, l.phaseDeg)
       phase.curves.add limitLine("limit ±" & number(l.phaseDeg) & "°", xs, -l.phaseDeg)
+    # the force limits are in the unit of the signal the force plot is of (`main`):
+    # never drawn or judged on a curve in another unit
     if l.forceLow < Inf: force.curves.add limitLine("lowest force", xs, l.forceLow)
     if l.forceHigh < Inf: force.curves.add limitLine("highest force", xs, l.forceHigh)
     if l.peakForce < Inf: force.curves.add limitLine("highest peak", xs, l.peakForce)
@@ -178,16 +195,18 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       let ph = flagged({lkPhase})
       if ph.anyOf: phase.curves.add past($s, xs, u.tracks[s].phaseDeg, ph)
       let lowHigh = flagged({lkForceLow, lkForceHigh})
-      if lowHigh.anyOf:
+      if lowHigh.anyOf and s == main:
         force.curves.add past($s & " fundamental", xs, u.tracks[s].amplitude[0], lowHigh)
       let pk = flagged({lkPeakForce})
-      if pk.anyOf: force.curves.add past($s & " peak", xs, u.tracks[s].peak, pk)
+      if pk.anyOf and s == main: force.curves.add past($s & " peak", xs, u.tracks[s].peak, pk)
       let th = flagged({lkThd})
       if th.anyOf: dist.curves.add past($s & " THD", xs, u.tracks[s].thdPct, th)
       if s == main:
         let hk = flagged({lkHarmonic})
         if hk.anyOf: dist.curves.add past($s & " harmonic", xs, largest, hk)
-  result.plots = @[phase, force, freq, dist]
+  result.plots = @[phase, force]
+  if generated.curves.len > 0: result.plots.add generated
+  result.plots.add [freq, dist]
   # The table: one row per signal
   var head = @["Signal", "Trace", "Polarity", "Mean |phase| (°)", "Max |phase| (°)",
     "Mean THD (%)", "Max THD (%)", "Mean force", "Min force", "Max peak"]
@@ -201,13 +220,17 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       number(m.meanAbsPhaseDeg), number(m.maxAbsPhaseDeg), number(m.meanThdPct),
       number(m.maxThdPct), number(m.meanForce, 3), number(m.minForce, 3),
       number(m.maxPeak, 3)]
+    # the force limits are not applied to a force in another unit than theirs
+    let ownUnit = if s == vsWeightedSum and main != vsWeightedSum:
+                    {lkForceLow, lkForceHigh, lkPeakForce, lkMeanForce}
+                  else: {}
     if p.limitsOn:
       row.add(if s notin forces: "not judged"
               elif m.points == 0: "not judged (no point)"
-              elif m.failed == {}: "pass"
+              elif m.failed - ownUnit == {}: "pass"
               else:
                 var what: seq[string] = @[]
-                for k in m.failed: what.add $k
+                for k in m.failed - ownUnit: what.add $k
                 "fail: " & what.join(", "))
     result.table.add row
   # The words: which trace is which, and how
@@ -221,6 +244,12 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   elif pair:
     words.add "; enter both masses to generate GF from M and B"
   words.add "; values as recorded"
+  if vsWeightedSum in u.signals:
+    words.add "; GF (M, B) is uncalibrated without accelerometer sensitivities: in " &
+      weightedUnit(u.units[vsWeightedSum]) & ", on an axis of its own"
+    if p.limitsOn and main != vsWeightedSum:
+      words.add " (the force limits are in " & forceUnit(u.units[main]) &
+        " and are not applied to it)"
   let e = u.reference.extent
   if p.limitsOn:
     let span = e.judgedPart(p.limits)

@@ -644,18 +644,24 @@ Each window's first line holds its view's settings; a change works it out again.
     difference); automatic needs both and both masses. Ref is the phase origin.
   - **GF from M and B.** With the reaction mass and the baseplate's mass entered (kg;
     empty at first, as no default fits every vibrator), `GF (M, B) = Mr·M + Mb·B` is
-    drawn over the recorded GF in every plot, and its row added to the table.
+    drawn with the recorded GF in the phase, frequency and distortion plots, and its row
+    added to the table. Its force is in **a plot of its own** ("Force from M and B", kg ×
+    recorded units): the recorded force (counts) and the weighted sum are not in one unit,
+    so neither shares the other's axis. Without accelerometer sensitivities it is
+    uncalibrated, and the window says so.
   - **Harmonics** tracked to the 5th at first (2 to 16); THD sums them from the 2nd.
   - **Limits** (off at first; **Limits** turns them on): the largest |phase| at a point
     (10° at first) and its mean (5°), THD at a point (40 %) and its mean (20 %), any one
     harmonic (%), the fundamental's lowest and highest, the largest peak (empty: none).
+    The force limits are in the recorded force's unit: drawn and judged on GF alone, never on
+    GF (M, B), whose unit is another (with no recorded GF they apply to it).
     On, they are drawn on the plots as thin lines in the error colour, the points past
     them marked, and the table shows each signal's statistics with **pass** or **fail**
     and the limits failed. They are judged on the two ground forces over the sweep less
     its tapers (the span is said under the title); M and B are summarised, not judged.
   - The values are as recorded (no calibration yet): the force in the recorded units,
     or a weighted sum of M and B's recorded values.
-  - All four plots share sweep time, so the held cursor reads them at the same time.
+  - All the plots share sweep time, so the held cursor reads them at the same time.
 - The **envelope** is the analytic signal's modulus; the instantaneous phase its
   argument; the instantaneous frequency the phase's step between the samples either
   side, in Hz. Where the envelope is 60 dB or more below its peak the phase is noise,

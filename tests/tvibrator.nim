@@ -12,6 +12,8 @@
 ## - limits: off, nothing is drawn or judged; a phase limit of 10° fails GF
 ##   (its points past it marked, the table says "fail: phase"), one of 20°
 ##   passes it;
+## - the recorded force and the one generated from the masses are in plots and axes of
+##   their own (counts; kg × counts); a force limit is drawn and judged on GF alone;
 ## - without masses there is no generated force, and the words say how to
 ##   have one; without a reference, or with an impulse as the reference,
 ##   nothing (the problem said).
@@ -102,7 +104,7 @@ func judged(xs: seq[float64]): seq[int] =
 block theLibrarysNumbers:
   let r = vibratorOf(unitRows, names, inOrder, Dt, params)
   doAssert r.problem == "", r.problem
-  doAssert r.plots.len == 4 and r.used == 4
+  doAssert r.plots.len == 5 and r.used == 4 and r.plots[2].title == "Force from M and B"
   let lib = library(unitRows, inOrder)
   doAssert r.plots[0].xs.sameAs(lib.tracks[vsReference].timeMs)
   doAssert r.curve(0, "GF").sameAs(lib.tracks[vsGroundForce].phaseDeg),
@@ -112,11 +114,11 @@ block theLibrarysNumbers:
   doAssert r.curve(0, "B").sameAs(lib.tracks[vsBaseplate].phaseDeg)
   doAssert r.curve(1, "GF fundamental").sameAs(lib.tracks[vsGroundForce].amplitude[0])
   doAssert r.curve(1, "GF peak").sameAs(lib.tracks[vsGroundForce].peak)
-  doAssert r.curve(1, "GF (M, B) fundamental").sameAs(lib.tracks[vsWeightedSum].amplitude[0])
-  doAssert r.curve(2, "Ref").sameAs(lib.tracks[vsReference].referenceHz)
-  doAssert r.curve(2, "GF").sameAs(lib.tracks[vsGroundForce].frequencyHz)
-  doAssert r.curve(3, "GF THD").sameAs(lib.tracks[vsGroundForce].thdPct)
-  doAssert r.curve(3, "GF (M, B) THD").sameAs(lib.tracks[vsWeightedSum].thdPct)
+  doAssert r.curve(2, "GF (M, B) fundamental").sameAs(lib.tracks[vsWeightedSum].amplitude[0])
+  doAssert r.curve(3, "Ref").sameAs(lib.tracks[vsReference].referenceHz)
+  doAssert r.curve(3, "GF").sameAs(lib.tracks[vsGroundForce].frequencyHz)
+  doAssert r.curve(4, "GF THD").sameAs(lib.tracks[vsGroundForce].thdPct)
+  doAssert r.curve(4, "GF (M, B) THD").sameAs(lib.tracks[vsWeightedSum].thdPct)
   # no limits: none drawn, none judged
   for p in r.plots:
     for c in p.curves:
@@ -128,13 +130,13 @@ block whatWasMade:
   let xs = r.plots[0].xs
   let phase = r.curve(0, "GF")
   let fund = r.curve(1, "GF fundamental")
-  let thd = r.curve(3, "GF THD")
-  let h2 = r.curve(3, "GF H2")
-  let hz = r.curve(2, "GF")
+  let thd = r.curve(4, "GF THD")
+  let h2 = r.curve(4, "GF H2")
+  let hz = r.curve(3, "GF")
   # the generated force: Mr·M + Mb·B, as phasors
   let z = Mr * 30.0 * exp(complex(0.0, degToRad(10.0))) +
     Mb * 25.0 * exp(complex(0.0, degToRad(-170.0)))
-  let ws = r.curve(1, "GF (M, B) fundamental")
+  let ws = r.curve(2, "GF (M, B) fundamental")
   let wsPhase = r.curve(0, "GF (M, B)")
   let points = judged(xs)
   doAssert points.len > 400, $points.len
@@ -156,7 +158,8 @@ block anotherOrder:
   let at = [vsReference: 1, vsGroundForce: 3, vsMass: 2, vsBaseplate: 0]
   let a = vibratorOf(unitRows, names, inOrder, Dt, params)
   let b = vibratorOf(shuffled, names, at, Dt, params)
-  for p in 0 ..< 4:
+  doAssert a.plots.len == b.plots.len
+  for p in 0 ..< a.plots.len:
     doAssert a.plots[p].curves.len == b.plots[p].curves.len
     for c in 0 ..< a.plots[p].curves.len:
       doAssert a.plots[p].curves[c].ys.sameAs(b.plots[p].curves[c].ys),
@@ -188,6 +191,30 @@ block limits:
   let ok = vibratorOf(unitRows, names, inOrder, Dt, p)
   for row in ok.table[1 .. ^1]:
     if row[0] == "GF": doAssert row[^1] == "pass", $row
+
+block forceInItsOwnUnit:
+  # the recorded GF (1000, as recorded) and the weighted sum (2.4e6, kg x as
+  # recorded) are on axes of their own, and a force limit is judged on GF only
+  var p = params
+  p.limitsOn = true
+  p.limits = VibLimits(forceLow: 2000)
+  let r = vibratorOf(unitRows, names, inOrder, Dt, p)
+  doAssert r.plots[1].title == "Force" and r.plots[2].title == "Force from M and B"
+  doAssert "as recorded" in r.plots[1].yLabel and "kg × as recorded" in r.plots[2].yLabel,
+    r.plots[1].yLabel & " / " & r.plots[2].yLabel
+  for c in r.plots[1].curves: doAssert not c.name.startsWith("GF (M, B)"), c.name
+  for c in r.plots[2].curves:
+    doAssert c.name.startsWith("GF (M, B)") and c.style == csLine,
+      "a force limit on the weighted sum: " & c.name
+  var lines = 0
+  for c in r.plots[1].curves:
+    if c.style == csLimit: inc lines
+  doAssert lines == 1, $lines & " force limit lines on GF"
+  for row in r.table[1 .. ^1]:
+    if row[0] == "GF": doAssert row[^1] == "fail: force low", $row
+    if row[0] == "GF (M, B)": doAssert row[^1] == "pass", $row
+  doAssert "uncalibrated without accelerometer sensitivities" in r.note and
+    "not applied" in r.note, r.note
 
 block noMassesNoReference:
   let r = vibratorOf(unitRows, names, inOrder, Dt, AnalysisParams())
