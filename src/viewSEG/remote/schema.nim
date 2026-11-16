@@ -32,7 +32,7 @@ const
   Offered* = {ckOpen, ckBrowse, ckShowFile, ckShowTrace, ckClose, ckCancelJob, ckReorderJob,
     ckRemoveJob, ckGather, ckView, ckDisplay, ckHeader, ckSort, ckFilter, ckProcessing,
     ckReverseAll, ckBack,
-    ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFileMemory, ckHover, ckSelect,
+    ckEdit, ckOwnFilter, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFileMemory, ckHover, ckSelect,
     ckClearSelection, ckLoadSurvey, ckUnloadSurvey, ckMapView, ckMapBack, ckMapLayer,
     ckSelectPoints, ckHoverPoints,
     ckShowPoints, ckJoin, ckSelectUnmatched, ckSurveyUnits, ckChooseUnit, ckRetry, ckStopReading,

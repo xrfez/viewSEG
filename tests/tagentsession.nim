@@ -307,6 +307,9 @@ withFixtures fx:
     st.agent(%*{"kind": "close plot", "plot": st.plots[0].id})
     doAssert st.plots.len == 0
     st.agent(%*{"kind": "edit traces", "edit": "killed"})
+    st.agent(%*{"kind": "own filter", "edited": [st.firstTrace], "on": true,
+      "filterPlace": "after", "processing": {"band": "band-pass", "f1": 10.0, "f2": 12.0,
+      "f3": 55.0, "f4": 60.0}})
     st.agent(%*{"kind": "undo edit"})
     st.agent(%*{"kind": "redo edit"})
     st.agent(%*{"kind": "list file memory"})

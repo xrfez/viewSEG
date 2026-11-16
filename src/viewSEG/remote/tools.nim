@@ -47,7 +47,8 @@ const
   MaxMessages = 1000
   DefaultWaitSeconds* = 30
   PanelKinds = {ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack,
-    ckShowFile, ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFilter, ckProcessing,
+    ckShowFile, ckShowTrace, ckEdit, ckOwnFilter, ckUndoEdit, ckRedoEdit, ckClearEdits, ckFilter,
+    ckProcessing,
     ckDisplayPreset}
     ## the kinds of `Command`'s branch with `panel`, a display, a view, a filter
 
@@ -241,7 +242,7 @@ proc prefill(state: AppState; given: Command; c: var Command) =
         c.reverse = p.layers[0].reversed
         c.processing = p.layers[0].processing
   case c.kind
-  of ckEdit: c.on = true
+  of ckEdit, ckOwnFilter: c.on = true
   of ckMapView: c.mapView = state.map.view
   of ckMapLayer: c.shown = true
   of ckSpectrum:
@@ -311,8 +312,10 @@ proc runCommand*(state: var AppState; fe: Frontend; arguments: string;
   state.prefill(first, c)
   decodeFields(n, c, problems)
   if problems.len > 0: return refused(problems)
-  if kind == ckEdit and not n.hasKey("edited"):
+  if kind in {ckEdit, ckOwnFilter} and not n.hasKey("edited"):
     c.edited = state.selectedIn(c.panel)
+  if kind == ckOwnFilter and not n.hasKey("processing"):
+    c.processing = Processing()
   case kind
   of ckOpen, ckBrowse, ckLoadSurvey:
     for p in c.paths.mitems: p = fromProgram(p)
@@ -411,6 +414,14 @@ proc panelJson(state: AppState; k: int; fe: Frontend; limit: int): JsonNode =
     let all = 0 ..< state.sessions[i].len
     result["killed"] = clipped(e.listIn(teKilled, all), limit)
     result["reversedTraces"] = clipped(e.listIn(teReversed, all), limit)
+    var own = newJArray()
+    for f in e.filtersIn(all):
+      if own.len >= limit: break
+      own.add %*{"trace": f.trace, "place": $f.filter.place, "words": filterWords(f.filter),
+        "band": $f.filter.spec.band, "dc": $f.filter.spec.dc,
+        "f1": f.filter.spec.f1, "f2": f.filter.spec.f2, "f3": f.filter.spec.f3,
+        "f4": f.filter.spec.f4}
+    result["ownFilters"] = own
     result["allReversed"] = %e.allReversed
     result["canUndoEdit"] = %e.canUndo
     result["canRedoEdit"] = %e.canRedo
