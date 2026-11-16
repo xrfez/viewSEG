@@ -198,6 +198,14 @@ proc folders(r: var Reading; n: NifNode; d: var ProjectDoc) =
       elif d.data.len < MaxProjectData: d.data.add p
     else: r.problem(c, "(data) holds folders: (folder (path ...) (absolute ...))")
 
+proc isSurveyCopy(copy: string): bool =
+  ## `copy` is `survey/files/<name>` with `<name>` a plain file name: not
+  ## empty, not `.` or `..`, and without a separator or a drive colon.
+  const Prefix = SurveyCopies & "/"
+  if not copy.startsWith(Prefix): return false
+  let name = copy[Prefix.len .. ^1]
+  name.len > 0 and name notin [".", ".."] and name.find({'/', '\\', ':'}) < 0
+
 proc surveyFile(r: var Reading; n: NifNode; d: var ProjectDoc) =
   var f = SurveyCopy()
   for k in n.kids:
@@ -218,6 +226,8 @@ proc surveyFile(r: var Reading; n: NifNode; d: var ProjectDoc) =
       of "full": r.hash(k, f.full)
       else: discard
   if f.copy.len == 0: r.problem(n, "a survey file names no copy; it is left out")
+  elif not f.copy.isSurveyCopy:
+    r.problem(n, "a survey file's copy is not a file in survey/files; it is left out")
   else: d.survey.add f
 
 proc units(r: var Reading; n: NifNode; u: var JoinUnits) =

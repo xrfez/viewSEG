@@ -236,7 +236,11 @@ proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy
           var still = false
           for x in news.copies:
             if x.copy == c.copy: still = true
-          if not still: discard fs.tryRemoveFile(dir.partOf(c.copy))
+          if not still:
+            # only a file directly in survey/files is a copy: a copy named
+            # outside it (a hand-edited document) is never removed
+            let old = dir.partOf(c.copy)
+            if old.parentDir == copies: discard fs.tryRemoveFile(old)
       except JobCancelledError:
         raise
       except CatchableError as e:
