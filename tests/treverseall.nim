@@ -14,9 +14,18 @@
 ##   does not;
 ## - the map's amplitude flags are unchanged.
 ##
-## Seen to fail: with the sign flip left out of `filtered`, the spectrum
-## reader's raw curve and `applyOwnQc` (the samples used as read), "the phase
-## spectrum did not move 180 degrees".
+## Reverse-all (`FileEdits.allReversed`) is the same flip: alone, every graph
+## moves 180 degrees and says "All traces are reversed" once; together with a
+## per-trace reversal it cancels, in every graph, and that trace is not called
+## reversed. An unfrozen window asks again when reverse-all is set, cleared,
+## undone or redone; a frozen one does not. A reference follows its own file's
+## reverse-all.
+##
+## Seen to fail: with the sign flip left out of `filtered` and the spectrum
+## reader's raw curve, "the phase spectrum did not move 180 degrees". Leaving
+## it out of `applyOwnQc` does not fail that check (the amplitude flags use
+## the absolute mean). With reverse-all left out of `effectivelyReversed`,
+## "reverse-all did not move 180 degrees in phase".
 
 import std/[math, os, strutils]
 import viewSEG/core/[analysis, processing, state]
@@ -97,6 +106,9 @@ proc spectrumOf(st: var AppState; traces: seq[int]): int =
 proc reverse(st: var AppState; traces: seq[int]; on: bool) =
   st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: traces, on: on)
 
+proc reverseAll(st: var AppState; on: bool) =
+  st.apply Command(kind: ckReverseAll, panel: MainPanel, reverse: on)
+
 proc coeff(r: AnalysisResult; signal: int): seq[float64] =
   r.plots[0].curves[2 * signal].ys
 
@@ -105,6 +117,15 @@ block words:
   doAssert reverseShownWords(0, [false]) == ""
   doAssert reverseShownWords(0, [true, false]) == "1 trace is reversed"
   doAssert reverseShownWords(0, [true, false, true]) == "2 traces are reversed"
+  doAssert reverseShownWords(0, [true, true], true) == AllReversedWords
+  doAssert reverseShownWords(0, [false], true) == ""
+  doAssert reverseShownWords(0, [true, false], true) == "1 trace is reversed"
+  var e: FileEdits
+  doAssert not e.effectivelyReversed(1)
+  discard e.setAllReversed(true)
+  doAssert e.effectivelyReversed(1)
+  discard e.change(teReversed, [1], true)
+  doAssert not e.effectivelyReversed(1) and e.effectivelyReversed(2)
 
 block landGraphs:
   var st = initAppState()
@@ -378,6 +399,251 @@ block askAgain:
   doAssert st.settle(not st.spectra[spec].waiting and not st.plots[plot].waiting)
   doAssert st.spectra[spec].asks == asksS3 and st.plots[plot].asks == asksP3,
     "a frozen window asked again"
+  st.shutdown()
+
+proc saysAll(text: string): bool =
+  AllReversedWords in text
+
+proc listsTraces(text: string): bool =
+  ## The per-trace wording, not the one line reverse-all uses.
+  "Trace " in text or "trace is reversed" in text or
+    "traces are reversed" in text.replace(AllReversedWords, "")
+
+block reverseAllAlone:
+  ## Reverse-all alone flips every graph, and the note says so once.
+  var st = initAppState()
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  let base = st.sessions[0].base
+  let lay = st.panel(MainPanel).layout
+  st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 800, 2 * lay.samples))
+  doAssert st.settle(st.answered)
+  let beforeTile = st.tiles(0)[^1]
+  let spec = st.spectrumOf(@[base + 1])
+  let plainPhase = st.spectra[spec].spectrum.rawPhase
+  let plainAmp = st.spectra[spec].spectrum.raw
+  let env = st.openPlot(avEnvelope, @[base + 1])
+  let envBefore = st.plots[env].result.plots[0].curves[1].ys
+  let instBefore = st.plots[env].result.plots[1].curves[0].ys
+  let phase = st.openPlot(avPhase, @[base + 1])
+  let phaseBefore = st.plots[phase].result.plots[1].curves[0].ys
+  let corr = st.openPlot(avCorrelation, @[base, base + 1])
+  let corrBefore = st.plots[corr].result.coeff(1)
+  let neighCorr = st.plots[corr].result.coeff(0)
+  let asksS = st.spectra[spec].asks
+  let asksE = st.plots[env].asks
+  let asksP = st.plots[phase].asks
+  let asksC = st.plots[corr].asks
+  st.reverseAll(true)
+  doAssert st.settle(st.answered and st.spectra[spec].asks > asksS and
+    st.plots[env].asks > asksE and st.plots[phase].asks > asksP and
+    st.plots[corr].asks > asksC and not st.spectra[spec].waiting and
+    not st.plots[env].waiting and not st.plots[phase].waiting and not st.plots[corr].waiting),
+    "an open window did not ask again when reverse-all was set"
+  doAssert negated(f64(beforeTile.rowOf(1)), f64(st.tiles(0)[^1].rowOf(1)), 1e-4),
+    "the plot did not reverse every trace"
+  doAssert closeSeq(plainAmp, st.spectra[spec].spectrum.raw, 1e-4),
+    "reverse-all changed the amplitude spectrum"
+  let sp = shifted180(plainPhase, st.spectra[spec].spectrum.rawPhase, plainAmp)
+  doAssert sp.n > 8 and sp.ok > sp.n * 9 div 10,
+    "reverse-all did not move 180 degrees in phase: " & $sp.ok & " of " & $sp.n
+  doAssert saysAll(st.spectra[spec].filterText), st.spectra[spec].filterText
+  doAssert not listsTraces(st.spectra[spec].filterText), st.spectra[spec].filterText
+  doAssert closeSeq(envBefore, st.plots[env].result.plots[0].curves[1].ys, 1e-3),
+    "reverse-all changed the envelope"
+  let inst = shifted180(instBefore, st.plots[env].result.plots[1].curves[0].ys)
+  doAssert inst.n > 8 and inst.ok > inst.n * 9 div 10,
+    "reverse-all did not move the instantaneous phase: " & $inst.ok & " of " & $inst.n
+  doAssert saysAll(st.plots[env].reverseLine), st.plots[env].reverseLine
+  doAssert not listsTraces(st.plots[env].reverseLine), st.plots[env].reverseLine
+  let ph = shifted180(phaseBefore, st.plots[phase].result.plots[1].curves[0].ys)
+  doAssert ph.n > 8 and ph.ok > ph.n * 9 div 10,
+    "reverse-all did not move the phase plot: " & $ph.ok & " of " & $ph.n
+  doAssert saysAll(st.plots[phase].reverseLine), st.plots[phase].reverseLine
+  # same file: signal and reference both flip, so the coefficient holds
+  doAssert closeSeq(corrBefore, st.plots[corr].result.coeff(1), 1e-3),
+    "reverse-all of signal and reference changed the correlation"
+  doAssert closeSeq(neighCorr, st.plots[corr].result.coeff(0), 1e-3),
+    "reverse-all changed the neighbour's correlation"
+  doAssert saysAll(st.plots[corr].reverseLine), st.plots[corr].reverseLine
+  doAssert "reference, Trace" notin st.plots[corr].result.note, st.plots[corr].result.note
+  # undo asks again and puts the phase back
+  let asksS1 = st.spectra[spec].asks
+  let asksP1 = st.plots[phase].asks
+  st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+  doAssert st.settle(st.spectra[spec].asks > asksS1 and st.plots[phase].asks > asksP1 and
+    not st.spectra[spec].waiting and not st.plots[phase].waiting),
+    "an open window did not ask again when reverse-all was undone"
+  doAssert "reversed" notin st.spectra[spec].filterText, st.spectra[spec].filterText
+  doAssert closeSeq(plainPhase, st.spectra[spec].spectrum.rawPhase, 1e-3),
+    "undo of reverse-all did not put the phase back"
+  # redo asks again
+  let asksS2 = st.spectra[spec].asks
+  st.apply Command(kind: ckRedoEdit, panel: MainPanel)
+  doAssert st.settle(st.spectra[spec].asks > asksS2 and not st.spectra[spec].waiting),
+    "an open window did not ask again when reverse-all was redone"
+  doAssert saysAll(st.spectra[spec].filterText), st.spectra[spec].filterText
+  let sp2 = shifted180(plainPhase, st.spectra[spec].spectrum.rawPhase, plainAmp)
+  doAssert sp2.n > 8 and sp2.ok > sp2.n * 9 div 10, "redo of reverse-all did not flip the phase"
+  st.shutdown()
+
+block reverseAllCancels:
+  ## A per-trace reversal under reverse-all is not reversed, in every graph.
+  var st = initAppState()
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  let base = st.sessions[0].base
+  let spec = st.spectrumOf(@[base + 1])
+  let plainPhase = st.spectra[spec].spectrum.rawPhase
+  let plainAmp = st.spectra[spec].spectrum.raw
+  let env = st.openPlot(avEnvelope, @[base + 1])
+  let instBefore = st.plots[env].result.plots[1].curves[0].ys
+  let phase = st.openPlot(avPhase, @[base + 1])
+  let phaseBefore = st.plots[phase].result.plots[1].curves[0].ys
+  let corr = st.openPlot(avCorrelation, @[base, base + 1])
+  var p = st.plots[corr].params
+  p.reference = base + 4
+  st.apply Command(kind: ckPlotDisplay, plot: st.plots[corr].id, plotParams: p, plotFrozen: false)
+  doAssert st.settle(st.plots[corr].result.gen == st.plots[corr].asked and not st.plots[corr].waiting)
+  let corrBefore = st.plots[corr].result.coeff(1)
+  let neighBefore = st.plots[corr].result.coeff(0)
+  st.reverse(@[base + 1], true)
+  doAssert st.settle(not st.spectra[spec].waiting and not st.plots[env].waiting and
+    not st.plots[phase].waiting and not st.plots[corr].waiting)
+  st.reverseAll(true)
+  doAssert st.settle(not st.spectra[spec].waiting and not st.plots[env].waiting and
+    not st.plots[phase].waiting and not st.plots[corr].waiting)
+  doAssert closeSeq(plainPhase, st.spectra[spec].spectrum.rawPhase, 1e-3),
+    "reverse-all did not cancel the per-trace reversal in the spectrum"
+  doAssert closeSeq(plainAmp, st.spectra[spec].spectrum.raw, 1e-4),
+    "the cancelled reversal changed the amplitude"
+  doAssert "Trace 2: reversed" notin st.spectra[spec].filterText, st.spectra[spec].filterText
+  doAssert not saysAll(st.spectra[spec].filterText), st.spectra[spec].filterText
+  doAssert "reversed" notin st.spectra[spec].filterText, st.spectra[spec].filterText
+  let inst = shifted180(instBefore, st.plots[env].result.plots[1].curves[0].ys)
+  doAssert inst.ok < inst.n div 10, "the instantaneous phase stayed flipped: " & $inst.ok &
+    " of " & $inst.n
+  doAssert "reversed" notin st.plots[env].reverseLine, st.plots[env].reverseLine
+  doAssert closeSeq(phaseBefore, st.plots[phase].result.plots[1].curves[0].ys, 1e-3),
+    "reverse-all did not cancel the reversal in the phase plot"
+  doAssert "reversed" notin st.plots[phase].reverseLine, st.plots[phase].reverseLine
+  # trace 2 cancels; the reference and the neighbour stay reversed, so trace 2's
+  # coefficient flips and the neighbour's (both reversed) holds
+  doAssert negated(corrBefore, st.plots[corr].result.coeff(1)),
+    "a cancelled trace against a reversed reference did not flip"
+  doAssert closeSeq(neighBefore, st.plots[corr].result.coeff(0), 1e-3),
+    "the neighbour's correlation changed under reverse-all"
+  doAssert "Trace 2: reversed" notin st.plots[corr].reverseLine, st.plots[corr].reverseLine
+  doAssert "reference, Trace 5: reversed" notin st.plots[corr].result.note, st.plots[
+      corr].result.note
+  st.shutdown()
+
+block reverseAllFrozen:
+  ## A frozen window does not ask again when reverse-all is set or undone.
+  var st = initAppState()
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  let base = st.sessions[0].base
+  let spec = st.spectrumOf(@[base + 1])
+  let plot = st.openPlot(avPhase, @[base + 1])
+  st.apply Command(kind: ckSpectrumDisplay, spectrum: st.spectra[spec].id,
+    spectrumShow: st.spectra[spec].display, frozen: true)
+  st.apply Command(kind: ckPlotDisplay, plot: st.plots[plot].id, plotParams: st.plots[plot].params,
+    plotFrozen: true)
+  doAssert st.settle(not st.spectra[spec].waiting and not st.plots[plot].waiting)
+  let asksS = st.spectra[spec].asks
+  let asksP = st.plots[plot].asks
+  let phaseBefore = st.plots[plot].result.plots[1].curves[0].ys
+  st.reverseAll(true)
+  doAssert st.settle(not st.spectra[spec].waiting and not st.plots[plot].waiting)
+  doAssert st.spectra[spec].asks == asksS and st.plots[plot].asks == asksP,
+    "a frozen window asked again when reverse-all was set"
+  doAssert "reversed" notin st.spectra[spec].filterText, st.spectra[spec].filterText
+  st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+  doAssert st.settle(not st.spectra[spec].waiting and not st.plots[plot].waiting)
+  doAssert st.spectra[spec].asks == asksS and st.plots[plot].asks == asksP,
+    "a frozen window asked again when reverse-all was undone"
+  doAssert closeSeq(phaseBefore, st.plots[plot].result.plots[1].curves[0].ys, 1e-6),
+    "a frozen phase plot moved"
+  # redo of a frozen window holds too
+  st.reverseAll(true)
+  doAssert st.settle(not st.plots[plot].waiting)
+  st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+  doAssert st.settle(not st.plots[plot].waiting)
+  st.apply Command(kind: ckRedoEdit, panel: MainPanel)
+  doAssert st.settle(not st.spectra[spec].waiting and not st.plots[plot].waiting)
+  doAssert st.spectra[spec].asks == asksS and st.plots[plot].asks == asksP,
+    "a frozen window asked again when reverse-all was redone"
+  st.shutdown()
+
+block reverseAllOtherFile:
+  ## A reference in another open file follows that file's reverse-all.
+  var st = initAppState()
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  let refTrace = st.sessions[0].base + 2
+  st.apply Command(kind: ckOpen, paths: @[vib])
+  doAssert st.settle(st.sessions.len == 2)
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
+  doAssert st.settle(st.panel(MainPanel).laidOut and st.sessions.len == 2)
+  let base = baseOf(st, vib)
+  let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
+  var p = st.plots[w].params
+  p.reference = refTrace
+  st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p, plotFrozen: false)
+  doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
+  doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
+  var before: array[3, seq[float64]]
+  for i in 0 .. 2: before[i] = st.plots[w].result.coeff(i)
+  let asks0 = st.plots[w].asks
+  # the other file, in another panel, so this window keeps the traces it shows
+  let second = st.addPanel()
+  st.apply Command(kind: ckShowFile, panel: second, path: vibOther)
+  doAssert st.settle(st.panel(second).laidOut and st.sessions.len == 2)
+  st.apply Command(kind: ckReverseAll, panel: second, reverse: true)
+  doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
+    "the correlation did not ask again when the reference file's reverse-all was set"
+  for i in 0 .. 2:
+    doAssert negated(before[i], st.plots[w].result.coeff(i)),
+      "reverse-all of the reference file did not flip trace " & $(i + 1)
+  doAssert "reference, " & AllReversedWords in st.plots[w].result.note, st.plots[w].result.note
+  doAssert "reference, Trace" notin st.plots[w].result.note, st.plots[w].result.note
+  # the reference's own reversal cancels that file's reverse-all
+  st.apply Command(kind: ckEdit, panel: second, edit: teReversed, edited: @[refTrace], on: true)
+  doAssert st.settle(not st.plots[w].waiting)
+  for i in 0 .. 2:
+    doAssert closeSeq(before[i], st.plots[w].result.coeff(i), 1e-3),
+      "the reference's own reversal did not cancel reverse-all"
+  doAssert "reference, Trace" notin st.plots[w].result.note, st.plots[w].result.note
+  doAssert "reference, " & AllReversedWords notin st.plots[w].result.note, st.plots[w].result.note
+  st.shutdown()
+
+block liveReverseAll:
+  ## The live panel uses the same flip, and asks again unless frozen.
+  var st = initAppState()
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  let base = st.sessions[0].base
+  st.apply Command(kind: ckSelect, traces: @[base + 1], mode: smReplace)
+  st.apply Command(kind: ckSpectrumPanel, onScreen: true)
+  doAssert st.settle(st.spectra[0].asks > 0 and st.spectra[0].spectrum.rawPhase.len > 8 and
+    not st.spectra[0].waiting)
+  let before = st.spectra[0].spectrum.rawPhase
+  let amp = st.spectra[0].spectrum.raw
+  let asks0 = st.spectra[0].asks
+  st.reverseAll(true)
+  doAssert st.settle(st.spectra[0].asks > asks0 and not st.spectra[0].waiting),
+    "the live panel did not ask again when reverse-all was set"
+  let moved = shifted180(before, st.spectra[0].spectrum.rawPhase, amp)
+  doAssert moved.n > 8 and moved.ok > moved.n * 9 div 10,
+    "the live panel did not move 180 degrees: " & $moved.ok & " of " & $moved.n
+  doAssert saysAll(st.spectra[0].filterText), st.spectra[0].filterText
+  st.apply Command(kind: ckSpectrumDisplay, spectrum: 0, spectrumShow: st.spectra[0].display,
+    frozen: true)
+  let asks1 = st.spectra[0].asks
+  st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+  doAssert st.settle(not st.spectra[0].waiting)
+  doAssert st.spectra[0].asks == asks1, "a frozen live panel asked again"
   st.shutdown()
 
 echo "treverseall: ok"
