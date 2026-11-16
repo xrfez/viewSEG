@@ -94,11 +94,27 @@ proc hostName(): string =
     try: result = fs.readFile("/etc/hostname").strip
     except IOError, OSError: discard
 
+proc realPath(path: string): string =
+  ## `path` with its links resolved when it exists, as given when it does
+  ## not: a job compares a project's folder with its data folders by these
+  ## (a link to a data folder is that folder). Worker-only: it reads the disk.
+  result = path
+  if fs.dirExists(path) or fs.fileExists(path):
+    try: result = expandFilename(path)
+    except OSError: discard
+
+proc isEmptyFolder(dir: string): bool =
+  for _ in fs.walkDir(dir): return false
+  true
+
 proc makeProject(dir: string; np: NewProject; brought: var int): ProjectDoc =
   if fs.fileExists(documentOf(dir)):
     raise newException(IOError, "there is a project in " & dir & " already")
+  if fs.dirExists(dir) and not isEmptyFolder(dir):
+    raise newException(IOError, "the folder " & dir & " is not empty: a project is made in " &
+      "an empty folder, or in a new one")
   for d in np.data:
-    if dir.isInside(d):
+    if realPath(dir).isInside(realPath(d)):
       raise newException(IOError, "it would be inside its data folder " & d &
         ", and data folders are never written to")
   fs.createDir(dir)
@@ -114,7 +130,7 @@ proc makeProject(dir: string; np: NewProject; brought: var int): ProjectDoc =
     for r in listRecords(Store(home: np.bringFrom), problems, look = false):
       var inData = false
       for d in np.data:
-        if r.path.isInside(d): inData = true
+        if realPath(r.path).isInside(realPath(d)): inData = true
       let dest = dir.partOf(ProjectStoreFolder) / r.doc
       if inData and r.doc.len > 0 and not fs.fileExists(dest):
         try:

@@ -4592,6 +4592,9 @@ proc projectFolder(state: var AppState; cmd: Command) =
     if at < 0 or path.len == 0:
       state.ignore(cmd, "the project has no data folder " & cmd.folderWas)
       return
+    if p.dir.isInside(path) or path.isInside(p.dir):
+      state.ignore(cmd, "a project's data folder cannot hold the project, nor be inside it")
+      return
     let old = p.doc.data[at].absolute
     p.doc.data[at] = placeOf(p.dir, path)
     var moved = 0
