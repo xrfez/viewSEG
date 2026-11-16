@@ -1,7 +1,7 @@
 ## The user's settings: everything the program remembers between runs.
 ## The theme, where the main window was, the recent files, folders and
 ## projects (and the project open at the quit, opened again at start), what
-## a new plot window starts with (display, order, display header), how
+## a new plot window starts with (display, order, display header, which traces), how
 ## scales are stated, each monitor's calibration, the status bar's fields,
 ## the sort presets, the user's own sort keys, the Messages window's
 ## toggles, the plot's cursor time line, whether the Files window follows
@@ -14,7 +14,7 @@
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
 ## whole object, and the plot window's own commands (display, sort, display
-## header), which the new plot window defaults follow. Saved as NIF
+## header, trace filter), which the new plot window defaults follow. Saved as NIF
 ## (`core/settingsnif`) by `AppState`, which keeps two: those in effect for
 ## the session, and those the user left by hand, which are saved (an
 ## agent's changes are for the session only; `carried` takes the user's
@@ -42,13 +42,17 @@ type
 
   PlotDefaults* = object
     ## What a new plot window starts with: the display, the order, the
-    ## display header and the filters chosen last. Polarity is not kept:
-    ## reversing it is an operation on the data, not a way of looking at it;
-    ## nor is showing a plot raw (`Processing.raw`).
+    ## display header, the filters and which traces (seismic, auxiliary)
+    ## chosen last. Polarity is not kept: reversing it is an operation on
+    ## the data, not a way of looking at it; nor is showing a plot raw
+    ## (`Processing.raw`). Which components are off is not kept: that choice
+    ## holds for one file and starts all on for the next.
     display*: DisplaySettings
     order*: seq[SortKey]
     header*: HeaderChoice
     processing*: Processing
+    seismic*: bool = true ## seismic traces
+    auxiliary*: bool ## auxiliary traces
 
   MessagesView* = object
     ## How the Messages window shows the log.

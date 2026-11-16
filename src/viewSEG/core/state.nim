@@ -2037,9 +2037,32 @@ proc followHidden(state: var AppState) =
                  else: @[]
       if want != state.panels[k].hidden: state.newSource(k)
 
+func fileHasAuxiliary(state: AppState; file: SessionId): bool =
+  ## Whether `file` holds an auxiliary trace, from the record list's counts.
+  let i = state.findSession(file)
+  if i >= 0:
+    for r in state.sessions[i].records:
+      if r.aux > 0: return true
+  false
+
+proc applyRememberedTraces(state: AppState; file: SessionId; filter: var TraceFilter) =
+  ## The Seismic / Aux choice a plot of `file` shows. A file with auxiliary
+  ## traces takes the choice a new plot starts with. A file with none shows
+  ## its seismic traces; the remembered choice is not written here.
+  if state.fileHasAuxiliary(file):
+    filter.seismic = state.settings.plot.seismic
+    filter.auxiliary = state.settings.plot.auxiliary
+  else:
+    filter.seismic = true
+    filter.auxiliary = false
+
 proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
-  ## Points layer 0 of `panel` at `gather` of `file`, keeping its filter,
-  ## pipeline and display; makes the layer when the panel has none.
+  ## Points layer 0 of `panel` at `gather` of `file`. A later record of the
+  ## same file keeps the filter, including which components are off. Another
+  ## file, or a new plot, takes the Seismic / Aux choice a new plot starts
+  ## with (a file with no auxiliary traces shows its seismic traces, and that
+  ## does not change the choice) and starts its component buttons all on. A
+  ## new plot also takes the display, order and filters chosen last.
   let k = state.findPanel(panel)
   if k < 0: return
   if state.panels[k].layers.len == 0: # a new plot: as the user last had one
@@ -2047,11 +2070,12 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
     layer.display = state.settings.plot.display
     layer.processing = state.settings.plot.processing
     layer.order = state.settings.plot.order
+    state.applyRememberedTraces(file, layer.filter)
     state.panels[k].layers.add layer
     state.panels[k].header = state.settings.plot.header
   else:
-    # Another file: the component buttons start all on. A later record of
-    # this file keeps the choice.
+    # Another file: the component buttons start all on, and the Seismic / Aux
+    # choice is the one remembered. A later record of this file keeps both.
     var otherFile = true
     if state.panels[k].layers[0].source.kind == lsRecord:
       otherFile = state.panels[k].layers[0].source.file != file
@@ -2060,6 +2084,7 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
       state.panels[k].componentCodes.setLen 0
       state.panels[k].componentCounts.setLen 0
       state.panels[k].componentSensors.setLen 0
+      state.applyRememberedTraces(file, state.panels[k].layers[0].filter)
     state.panels[k].layers[0].source = LayerSource(kind: lsRecord, file: file, gather: gather)
   # Reversing every trace is an edit of the file: each file shows its own.
   let i = state.findSession(file)
@@ -6620,7 +6645,14 @@ proc applyCommand(state: var AppState; cmd: Command) =
       state.ignore(cmd, "a plot keeps at least one component on")
     elif cmd.filter != state.panels[k].layers[0].filter:
       # The record's traces again, through the new filter, at the same scales.
+      # Seismic / Aux is a way of looking, kept for the next plot as the
+      # display is; which components are off stays with this file only.
+      let was = state.panels[k].layers[0].filter
       state.panels[k].layers[0].filter = cmd.filter
+      if cmd.filter.seismic != was.seismic or cmd.filter.auxiliary != was.auxiliary:
+        state.change(cmd.origin, s):
+          s.plot.seismic = cmd.filter.seismic
+          s.plot.auxiliary = cmd.filter.auxiliary
       state.newSource(k)
   of ckView:
     let k = state.findPanel(cmd.panel)

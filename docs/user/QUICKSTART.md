@@ -293,7 +293,10 @@ when you quit.
 uphole), two toggles in the strip choose what the plot shows: **Seismic** (on at first)
 and **Aux**. With both on, the auxiliary traces stand in the file's order among the
 seismic ones and the window is called **Seismic + Aux**; with Seismic off it shows the
-auxiliary traces alone (**Aux**). One of them always stays on. The gain, the sorts, the
+auxiliary traces alone (**Aux**). One of them always stays on. The choice is remembered,
+as the gain and the sort are: the next file, a new plot and the next time you start
+viewSEG show the same traces, when the file has them. A file with no auxiliary traces
+shows its seismic traces and leaves that choice as it was. The gain, the sorts, the
 edits, the display header and the status bar work on them too.
 
 **Filters.** The **Filters** button in the strip (a funnel, after the gain; lit while

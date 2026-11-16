@@ -88,7 +88,8 @@ proc everyFieldSet(): Settings =
       normScope: perPanel, normStat: normRms, timeGain: tgPower, dbPerS: 12, power: 1.5,
       untilMs: 3500, clipPercentile: 98.5, overlap: 2.5),
     order: @[SortKey(field: hfComponent), SortKey(field: hfOffset, descending: true)],
-    header: HeaderChoice(auto: false, fields: @[hfSrcLine, hfCrossline]))
+    header: HeaderChoice(auto: false, fields: @[hfSrcLine, hfCrossline]),
+    seismic: false, auxiliary: true)
 
 proc roundTrip(s: Settings; base = Settings()): (Settings, seq[string]) =
   var problems: seq[string]
@@ -116,6 +117,8 @@ block savedByAnOlderBuild:
     "the spectrum windows' settings take their defaults"
   doAssert s.plot.display.colourMap == cmGrey and s.displayPresets.len == 0,
     "density's colour map and the display presets take their defaults"
+  doAssert s.plot.seismic and not s.plot.auxiliary,
+    "the Seismic / Aux choice takes its default"
   doAssert cleaned(s)[1] == 0
 
 block joinOptions:

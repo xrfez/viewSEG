@@ -76,7 +76,8 @@ const Reached = {
   "plot.display.timeGain": "display", "plot.display.dbPerS": "display",
   "plot.display.power": "display", "plot.display.untilMs": "display",
   "plot.display.clipPercentile": "display", "plot.display.overlap": "display",
-  "plot.order": "sort", "plot.header.auto": "display header",
+  "plot.order": "sort", "plot.seismic": "trace filter", "plot.auxiliary": "trace filter",
+  "plot.header.auto": "display header",
   "plot.header.fields": "display header", "plot.processing.raw": "",
   "plot.processing.aux": "processing", "plot.processing.dc": "processing",
   "plot.processing.band": "processing", "plot.processing.f1": "processing",
@@ -369,6 +370,9 @@ withFixtures fx:
     st.agent(%*{"kind": "reopen", "reopenPath": third, "openChoice": {"verifyAll": true}})
     doAssert st.settle(st.sessions.anyIt(it.path == third and
       it.facts.opened.choice.verifyAll)), "not reopened"
+    # seismic stays on above (the spectrum is of a trace shown); off here,
+    # while a file is shown, so the choice is seen to change and not be saved
+    st.agent(%*{"kind": "trace filter", "filter": {"seismic": false, "auxiliary": true}})
     st.agent(%*{"kind": "close", "file": int(st.sessions[0].id)})
     st.agent(%*{"kind": "new project", "projectPath": fx.dir / "the agent's job",
       "dataFolders": [agentDir]})
@@ -425,6 +429,8 @@ withFixtures fx:
     d.fixedClip = NaN
     st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
     doAssert st.settle(st.panel(MainPanel).layers[0].display.fixedClip > 0)
+    st.apply Command(kind: ckFilter, panel: MainPanel,
+      filter: TraceFilter(seismic: false, auxiliary: true))
     let kept = flat(st.keptSettings)
     for path, was in before:
       if Reached[path].len > 0:

@@ -137,9 +137,10 @@
     wiggle mode in a wider view narrows the view to the limit, keeping its left edge.
     The mode a user picks becomes the
     default for new plot windows and is remembered between runs, as are the fills, the
-    overlap, the colours, the gain type, amount and settings, the order and the display
-    header's fields (`Settings.plot`: a new plot starts as the user left the last one;
-    polarity is not kept, reversing it being an operation on the data);
+    overlap, the colours, the gain type, amount and settings, the order, the display
+    header's fields and the Seismic / Aux choice (`Settings.plot`: a new plot starts as
+    the user left the last one; polarity is not kept, reversing it being an operation on
+    the data; which components are off is not kept, that choice holding for one file);
   - the **orientation** (a checkbox under Plot in the gear's Look tab, with the cursor time line):
     time down, or, while it is on, time across ([Orientation](#orientation)); kept with
     the display, so a new plot window starts the way the last one was left;
@@ -149,7 +150,15 @@
     the auxiliary traces are drawn in the same plot, in the file's order among the
     seismic ones (`TraceFilter`, `ckFilter`), at the same scales, and the window is
     titled "Seismic + Aux"; with Seismic off, "Aux" shows them alone. At least one stays
-    on. Shorter traces are drawn as long as they are; an auxiliary trace whose sample
+    on. The choice is kept with the other display settings: across records of the file,
+    when another file is shown and when that file is shown again, for a new plot, and
+    in the next run (`settings.nif`, `(seismic ...)` and `(auxiliary ...)`; a settings
+    file that does not hold them starts with Seismic on and Aux off). A file with no
+    auxiliary traces shows its seismic traces and does not change the remembered choice,
+    so a folder being watched keeps showing the same traces on every new shot that has
+    them. A record left with nothing the choice can show stays empty, and the plot says
+    the trace filter hides every trace. Shorter traces are drawn as long as they are; an
+    auxiliary trace whose sample
     interval differs from the seismic traces' is drawn at theirs, and the log says so
     (their times are then not to scale). Sorts, gain, edits, the display header and the
     readout work on them as on the others. The Aux window of its own, with its own

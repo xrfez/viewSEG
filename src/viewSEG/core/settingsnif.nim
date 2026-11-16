@@ -20,6 +20,8 @@
 ##   ...
 ##   (order (key rcvLine) (key offset descending))
 ##   (header auto)
+##   (seismic true)
+##   (auxiliary false)
 ##   (processing (dc none) (band bandPass) (f1 4.0) (f2 8.0) (f3 60.0) (f4 80.0)
 ##    (notch (on true) (hz 60.0) (width 2.0) (harmonics 3)) (aux false)))
 ##  (scale (length inch) (speed false))
@@ -282,6 +284,8 @@ proc settingsDocument*(s: Settings): string =
   w.value("reopenProject", s.reopenProject)
   w.open("plot")
   w.display(s.plot.display)
+  w.value("seismic", s.plot.seismic)
+  w.value("auxiliary", s.plot.auxiliary)
   w.open("order")
   w.keys(s.plot.order)
   w.close()
@@ -591,6 +595,8 @@ proc plot(r: var Reading; n: NifNode; p: var PlotDefaults) =
   var rest = NifNode(kind: nkTree, line: n.line, tag: n.tag)
   for c in n.kids:
     if c.isTree("processing"): r.readTree(c, p.processing)
+    elif c.isTree("seismic"): r.flag(c, p.seismic)
+    elif c.isTree("auxiliary"): r.flag(c, p.auxiliary)
     elif c.isTree("order"): r.keys(c, 0, p.order)
     elif c.isTree("header"):
       if c.kids.len == 1 and c.kids[0].kind == nkIdent and c.kids[0].text == "auto":
