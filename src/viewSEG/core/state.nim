@@ -4440,7 +4440,9 @@ proc finishImport(state: var AppState) =
   let unmatched = if j.outcome == joJoined: j.plan.unmatched.len else: 0
   case j.outcome
   of joJoined, joNothing:
-    if i >= 0:
+    # A carried rematch that matched nothing is the drop line below, once:
+    # not this line as well.
+    if i >= 0 and not (j.carried and j.outcome == joNothing):
       let s = state.sessions[i]
       state.log.add(if j.outcome == joNothing: sevWarning else: sevInfo, s.name,
         (if j.outcome == joNothing: "The survey matches none of the traces of " & s.name
@@ -4451,8 +4453,10 @@ proc finishImport(state: var AppState) =
   of joMapOnly:
     state.log.add(sevInfo, "survey", "Survey imported (" & fileNames(j.files) & "): " &
       words.join(" "))
-  of joCancelled: state.log.add(sevInfo, j.name, words[0])
-  of joFailed: state.log.add(sevError, j.name, words[0])
+  of joCancelled:
+    if not j.carried and words.len > 0: state.log.add(sevInfo, j.name, words[0])
+  of joFailed:
+    if not j.carried and words.len > 0: state.log.add(sevError, j.name, words[0])
   of joNone: discard
   if j.carried:
     case j.outcome
@@ -4461,9 +4465,14 @@ proc finishImport(state: var AppState) =
     of joNothing:
       state.log.add(sevWarning, j.name, j.name & " dropped the survey join: the survey " &
         "matches none of its traces.")
+      words.setLen 0 # the plan's "keys changed" was not applied; the line says it
     of joFailed, joCancelled:
-      let why = if words.len > 0: words[0] else: "the match ended"
+      # One sentence, not the words again (they would say the same thing).
+      let why = if j.outcome == joCancelled: "the match was cancelled."
+                elif words.len > 0: "the match failed: " & words[0] & "."
+                else: "the match failed."
       state.log.add(sevWarning, j.name, j.name & " dropped the survey join: " & why)
+      words.setLen 0
     of joMapOnly, joNone: discard
   state.joinReport = JoinReport(serial: state.joinReport.serial + 1, session: j.session,
     name: j.name, outcome: j.outcome, words: words, unmatched: unmatched, heldAtJoin: j.held)
@@ -4503,11 +4512,12 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
         state.log.add(sevInfo, s.name, "The survey files' headers say: " &
           j.survey.notes.join("; ") & ".")
   of joCancelled:
-    words = @[if j.carried: "The survey match was cancelled."
-      else: "The survey import was cancelled: " & j.name & " is as it was, and so is the map."]
+    if not j.carried:
+      words = @["The survey import was cancelled: " & j.name & " is as it was, and so is the map."]
   of joFailed:
-    words = @[if j.carried: "The survey match failed: " & error & "."
-      else: "The survey import failed: " & error & ". " & j.name & " is as it was, and " &
+    if j.carried: words = @[error] # the drop line names it; not shown as the words too
+    else:
+      words = @["The survey import failed: " & error & ". " & j.name & " is as it was, and " &
         "so is the map."]
   of joNone, joMapOnly: discard
   (j.job, j.outcome, j.words, j.waits) = (NoJob, outcome, words, true)
@@ -4571,9 +4581,13 @@ proc takeJoinPlan(state: var AppState; m: sink Msg) =
   j.survey = move m.joinSurvey
   # The units not chosen: what the headers say, as the import read them.
   j.units = j.units.resolved(j.survey.heads, headerUnitOf(state.sessions[i].crs))
-  if j.plan.changes == 0:
+  # A carried rematch that matches no seismic trace is dropped, not applied:
+  # filling stations the headers lack still counts as a key change, so
+  # `changes` alone would keep a join that matched nothing.
+  let noTrace = j.carried and j.plan.matched == 0
+  if j.plan.changes == 0 or noTrace:
     # Nothing to change (or nothing matched): the readers need not stop.
-    let nothing = j.plan.found[prSource] + j.plan.found[prReceiver] == 0
+    let nothing = j.plan.found[prSource] + j.plan.found[prReceiver] == 0 or noTrace
     state.endJoin(if nothing: joNothing else: joJoined)
   else:
     let s = state.sessions[i]

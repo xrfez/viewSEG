@@ -58,7 +58,9 @@
 ## reopen is kept): with the size read before the open (`openSession`
 ## reading it first), "said cut short again"; (the close still having the
 ## file when the new open is shown): with that panel not shown again when
-## the close ends, "not shown once the close ended".
+## the close ends, "not shown once the close ended"; (a carried rematch
+## that matches nothing kept): with `changes` alone deciding, "a join that
+## matched nothing was said kept".
 ##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
@@ -532,10 +534,15 @@ block carriedJoinIsDroppedWhenItFails:
     st.reopen(path, OpenChoice(verifyAll: true))
     doAssert st.settle(st.log.has("matching the survey again"))
     doAssert not st.log.has("kept the survey join"), "said kept before the match"
-    doAssert st.settle(st.sessions.len == 1 and st.log.has("dropped the survey join")),
-      "a join that failed was not said dropped"
+    doAssert st.settle(st.sessions.len == 1 and st.log.has(path.extractFilename &
+      " dropped the survey join: the match failed:")), "a join that failed was not said dropped"
     doAssert st.joinedOf(st.sessions[0].id) < 0, "a failed join was kept"
     doAssert not st.log.has("is as it was"), "a dropped join was said to leave the file as it was"
+    doAssert not st.log.has("The survey match"), "the drop was said again in the words"
+    var drops = 0
+    for e in st.log:
+      if "dropped the survey join" in e.text: inc drops
+    doAssert drops == 1, "the drop was said " & $drops & " times"
     st.shutdown()
 
 block eachPanelKeepsItsRecord:
@@ -642,4 +649,37 @@ block shownOnceTheCloseEnds:
     finally:
       delayJobEnd.open()
       setJobHook(nil)
+    st.shutdown()
+
+block carriedJoinIsDroppedWhenNothingMatches:
+  # The survey's S and R lines are rewritten (x100) before the reopen. The
+  # relation file still fills the stations the headers lack, which counts as
+  # a key change, but no seismic trace is in the station lists: the join is
+  # dropped, and no trace keeps a survey station.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let name = path.extractFilename
+    let sps = fx.surveySps()
+    var st = initAppState()
+    st.joined(path, sps.s, sps.r, sps.x)
+    proc scaleLines(p: string) =
+      var f = readSps(p)
+      for pt in f.points.mitems: pt.line = pt.line * 100
+      let wrote = writeSps(f, p)
+      doAssert wrote.len == 0, $wrote
+    scaleLines(sps.s)
+    scaleLines(sps.r)
+    st.reopen(path, OpenChoice(verifyAll: true))
+    let dropped = name & " dropped the survey join: the survey matches none of its traces."
+    doAssert st.settle(st.sessions.len == 1 and st.log.has(dropped)),
+      "a join that matched nothing was not said dropped"
+    doAssert not st.log.has("kept the survey join"), "a join that matched nothing was said kept"
+    var drops = 0
+    for e in st.log:
+      if "dropped the survey join" in e.text: inc drops
+    doAssert drops == 1, "the drop was said " & $drops & " times"
+    doAssert st.joinedOf(st.sessions[0].id) < 0, "a join that matched nothing was kept"
+    let keys = st.sessions[0].file.traceKeys([0, 10, 40, 71])
+    for k in keys:
+      doAssert k.srcLine.isNaN and k.rcvLine.isNaN, "a trace kept a survey station"
     st.shutdown()
