@@ -16,7 +16,7 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
-import std/[math, monotimes, options, os, strutils]
+import std/[math, monotimes, options, os]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]

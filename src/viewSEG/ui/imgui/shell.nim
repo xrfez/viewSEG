@@ -29,7 +29,9 @@
 import std/[atomics, locks, options, strutils, typedthreads]
 from std/os import getEnv
 import sdl3_nim
-import ../../platform/[chrome, trayguard, trayhost]
+import ../../platform/[trayguard, trayhost]
+when defined(windows):
+  import ../../platform/chrome # the tray icon's image at the notification area's size
 
 export TrayHost
 

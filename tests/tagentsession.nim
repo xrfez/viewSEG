@@ -43,7 +43,7 @@
 ## agent's edits (`keep = true`), "the agent's edits are remembered".
 
 import std/[json, math, os, sequtils, strutils, tables]
-import viewSEG/core/[geometry, settingsnif, state]
+import viewSEG/core/[geometry, state]
 import viewSEG/remote/[schema, tools]
 import utils/[fixtures, waiting]
 
