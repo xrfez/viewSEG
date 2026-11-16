@@ -122,12 +122,33 @@ func keyValue*(k: TraceKeys; name: string): float64 =
 type
   Find* = object
     ## What Find looks for, parsed: a value, or a range from `lo` to `hi`.
+    ## A value matches a bound within the bound's slack: half the least step
+    ## its typed text shows (`typedSlack`), never relative to its size.
     lo*, hi*: float64
+    loSlack*, hiSlack*: float64
     valid*: bool
+
+func typedSlack(text: string): float64 =
+  ## Half the least step a typed number shows: half a unit of its last
+  ## decimal place ("12.5": 0.05, "2.5e-3": 0.00005); 0 for an integer
+  ## ("1001", "1e3").
+  let t = text.strip.toLowerAscii
+  let e = t.find('e')
+  let mantissa = if e >= 0: t[0 ..< e] else: t
+  let dot = mantissa.find('.')
+  let decimals = if dot >= 0: mantissa.len - dot - 1 else: 0
+  var exponent = 0
+  if e >= 0:
+    var digits = t[e + 1 .. ^1]
+    if digits.startsWith('+'): digits = digits[1 .. ^1]
+    exponent = parseInt(digits)
+  let step = exponent - decimals
+  if step >= 0: 0.0 else: 0.5 * pow(10.0, float64(step))
 
 func parseFind*(text: string): Find =
   ## `text` as Find takes it: a number ("1001"), or a range ("1001..1010",
-  ## "0 - 500" too, either way round); not `valid` for anything else.
+  ## "0 - 500" too, either way round); not `valid` for anything else, nor
+  ## for a number that is not finite ("nan", "inf").
   let t = text.strip
   if t.len == 0: return
   var parts: seq[string]
@@ -143,19 +164,23 @@ func parseFind*(text: string): Find =
   try:
     if parts.len == 1:
       let x = parseFloat(parts[0].strip)
-      result = Find(lo: x, hi: x, valid: true)
+      if abs(x) < Inf: # (not NaN, nor infinite)
+        let slack = typedSlack(parts[0])
+        result = Find(lo: x, hi: x, loSlack: slack, hiSlack: slack, valid: true)
     elif parts.len == 2:
       let (a, b) = (parseFloat(parts[0].strip), parseFloat(parts[1].strip))
-      result = Find(lo: min(a, b), hi: max(a, b), valid: true)
+      if abs(a) < Inf and abs(b) < Inf:
+        let (sa, sb) = (typedSlack(parts[0]), typedSlack(parts[1]))
+        result = if a <= b: Find(lo: a, loSlack: sa, hi: b, hiSlack: sb, valid: true)
+                 else: Find(lo: b, loSlack: sb, hi: a, hiSlack: sa, valid: true)
   except ValueError:
     result = Find()
 
 func matches*(f: Find; x: float64): bool {.inline.} =
-  ## Whether value `x` is what `f` looks for (a value equal within a
-  ## millionth of itself, for the decimals a scaled field is given).
+  ## Whether value `x` is what `f` looks for: within each bound's slack of
+  ## it (an integer bound: equal to it).
   if not f.valid or x.isNaN: return false
-  let slack = 1e-6 * max(1.0, max(abs(f.lo), abs(f.hi)))
-  x >= f.lo - slack and x <= f.hi + slack
+  x >= f.lo - f.loSlack and x <= f.hi + f.hiSlack
 
 func orderOf*(sortBy: openArray[float64]; keep: openArray[bool]; descending: bool):
     seq[int32] =

@@ -26,13 +26,31 @@ block findTakes:
   doAssert parseFind("0 - 500") == Find(lo: 0, hi: 500, valid: true)
   doAssert parseFind("-10 - -5") == Find(lo: -10, hi: -5, valid: true)
   doAssert parseFind("-3") == Find(lo: -3, hi: -3, valid: true)
-  doAssert parseFind("2.5e-3") == Find(lo: 0.0025, hi: 0.0025, valid: true)
+  doAssert parseFind("2.5e-3").valid and parseFind("2.5e-3").lo == 0.0025
   doAssert not parseFind("abc").valid and not parseFind("").valid and
     not parseFind("1..2..3").valid
   let f = parseFind("100..200")
   doAssert f.matches(100) and f.matches(200) and f.matches(150.5) and not f.matches(99.9)
   doAssert not f.matches(NaN)
   doAssert parseFind("0.1").matches(0.1 + 1e-12), "a scaled value's last digits"
+  # The tolerance is half the least step the typed text shows, whatever the
+  # size of the value: an integer matches itself only. (Seen to fail with the
+  # tolerance a millionth of the larger bound: "10251135" matched 10251130 and
+  # 10251145.)
+  let whole = parseFind("10251135")
+  doAssert whole.matches(10251135) and not whole.matches(10251130) and
+    not whole.matches(10251145), "an integer matched a value next to it"
+  let half = parseFind("12.5")
+  doAssert half.matches(12.45) and half.matches(12.54) and not half.matches(12.56) and
+    not half.matches(12.44), "a value with one decimal"
+  doAssert parseFind("1.50").matches(1.504) and not parseFind("1.50").matches(1.506)
+  doAssert parseFind("2.5e-3").matches(0.0025 + 4e-5) and not parseFind("2.5e-3").matches(0.0025 + 1e-4)
+  doAssert parseFind("1e3").matches(1000) and not parseFind("1e3").matches(1000.5)
+  doAssert parseFind("100..200.5").matches(200.5) and not parseFind("100..200.5").matches(200.6)
+  # Not finite: not a Find (said as one that is not a number nor a range).
+  doAssert not parseFind("nan").valid and not parseFind("inf").valid and
+    not parseFind("-inf").valid and not parseFind("1e400").valid
+  doAssert not parseFind("1..nan").valid and not parseFind("inf..2").valid
 
 block rowsInOrder:
   let values = [3.0, NaN, 1.0, 3.0, 2.0]
