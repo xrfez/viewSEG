@@ -315,25 +315,36 @@ proc readRange(f: ptr SeismicFile; name: string; traces: Slice[int];
   else:
     f[].traceFieldColumnInto(name, traces, dst)
 
-proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; name: string;
-    answer: var TableAnswer): int =
-  ## The index in the cache of column `name` read for every trace of the
-  ## table's scope, read further in steps of `ColumnStep` traces; -1 when a
-  ## newer request came first (it goes on from there, kept in the cache).
-  template cache: untyped = p.table
-  let key = f.path & "\t" & $ask.traces & "\t" & $ask.joins & "\t" & name
+proc columnKey(f: InspectFile; ask: TableAsk; name: string): string =
+  ## The key of column `name` read whole for the table's scope.
+  f.path & "\t" & $ask.traces & "\t" & $ask.joins & "\t" & name
+
+proc indexOf(cache: TableCache; key: string): int =
+  ## The index in the cache of the column `key`; -1 for none.
   result = -1
   for i, c in cache.columns:
-    if c.key == key: result = i
-  if result < 0:
-    if cache.columns.len >= MaxCachedColumns: cache.columns.delete(0)
+    if c.key == key: return i
+
+proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; key, name: string;
+    needed: openArray[string]; answer: var TableAnswer): bool =
+  ## Reads column `key` (of `name`) whole for every trace of the table's
+  ## scope, in steps of `ColumnStep` traces, kept in the cache: false when a
+  ## newer request came first (it goes on from there). A column of `needed`
+  ## (this request's) is never evicted to make room.
+  template cache: untyped = p.table
+  if cache.indexOf(key) < 0:
+    if cache.columns.len >= MaxCachedColumns:
+      for i, c in cache.columns:
+        if c.key notin needed:
+          cache.columns.delete i
+          break
     cache.columns.add CachedColumn(key: key, values: newSeq[float64](ask.traces.len))
-    result = cache.columns.high
-  template c: untyped = cache.columns[result]
+  let at = cache.indexOf(key)
+  template c: untyped = cache.columns[at]
   while c.filled < c.values.len and c.problem.len == 0:
     if p.interrupted:
       answer.reading = name
-      return -1
+      return false
     let step = min(ColumnStep, c.values.len - c.filled)
     let part = ask.traces.a + c.filled .. ask.traces.a + c.filled + step - 1
     p.beat(f.path)
@@ -346,7 +357,8 @@ proc wholeColumn(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; name: strin
     except OSError as e:
       c.problem = failedText(e)
       c.filled = 0 # read again next time: the drive may answer then
-      return result
+      return true
+  true
 
 proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
     answer: var TableAnswer): bool =
@@ -377,33 +389,40 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
     except ValueError, OSError:
       discard # the keys only; tried again next time
   answer.catalogue = cache.catalogue
-  # The columns read for every row: the sort's, Find's, the graph's.
-  var whole: seq[(string, int)]
-  for name in wholeColumns(view):
-    let i = p.wholeColumn(f, ask, name, answer)
-    if i < 0: return false
+  # The columns read for every row: the sort's, Find's, the graph's. All of
+  # them are read (or found) first; then each is looked up by its key, so
+  # that no read evicts a column another of them is looked up by.
+  let needed = wholeColumns(view)
+  var keys: seq[string]
+  for name in needed: keys.add f.columnKey(ask, name)
+  for k, name in needed:
+    if not p.wholeColumn(f, ask, keys[k], name, keys, answer): return false
+  var whole: seq[(string, string)] # (name, key) of the columns read whole, without a problem
+  for k, name in needed:
+    let i = cache.indexOf(keys[k])
     if cache.columns[i].problem.len > 0:
       answer.problems.add name & ": " & cache.columns[i].problem
-    else: whole.add (name, i)
-  proc column(whole: seq[(string, int)]; name: string): int =
-    result = -1
-    for (n, i) in whole:
-      if n == name: result = i
+    else: whole.add (name, keys[k])
+  proc column(whole: seq[(string, string)]; name: string): string =
+    result = ""
+    for (n, key) in whole:
+      if n == name: result = key
   let find = parseFind(view.findValue)
-  let findAt = if view.findField.len > 0 and find.valid: whole.column(view.findField) else: -1
-  let sortAt = if view.sortBy.len > 0: whole.column(view.sortBy) else: -1
-  let ordered = findAt >= 0 or sortAt >= 0
+  let findKey = if view.findField.len > 0 and find.valid: whole.column(view.findField) else: ""
+  let sortKey = if view.sortBy.len > 0: whole.column(view.sortBy) else: ""
+  let ordered = findKey.len > 0 or sortKey.len > 0
   if ordered:
-    let orderKey = cache.columns[max(findAt, 0)].key & "|" & $findAt & "|" & $find & "|" &
-      (if sortAt >= 0: cache.columns[sortAt].key else: "") & "|" & $view.descending & "|" &
-      $ask.traces & "|" & f.path
+    let orderKey = findKey & "|" & $find & "|" & sortKey & "|" & $view.descending & "|" &
+      $ask.traces & "|" & f.path & "|" & $ask.joins
     if orderKey != cache.orderKey:
       var keep: seq[bool]
-      if findAt >= 0:
+      if findKey.len > 0:
         keep = newSeq[bool](n)
-        for i in 0 ..< n: keep[i] = find.matches(cache.columns[findAt].values[i])
-      cache.order = if sortAt >= 0: orderOf(cache.columns[sortAt].values, keep, view.descending)
-                    else: orderOf([], keep, false)
+        let values = cache.columns[cache.indexOf(findKey)].values
+        for i in 0 ..< n: keep[i] = find.matches(values[i])
+      cache.order = if sortKey.len > 0:
+          orderOf(cache.columns[cache.indexOf(sortKey)].values, keep, view.descending)
+        else: orderOf([], keep, false)
       cache.orderKey = orderKey
   answer.count = if ordered: cache.order.len else: n
   # The rows on screen, at most `MaxTableRows`.
@@ -416,8 +435,9 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
   for row in answer.values.mitems: row = newSeq[float64](view.fields.len)
   var buf = newSeq[float64](answer.rowTraces.len)
   for c, name in view.fields:
-    let w = whole.column(name)
-    if w >= 0:
+    let key = whole.column(name)
+    if key.len > 0:
+      let w = cache.indexOf(key)
       for k, t in answer.rowTraces: answer.values[k][c] = cache.columns[w].values[t - ask.traces.a]
     elif answer.rowTraces.len > 0:
       p.beat(f.path)
@@ -431,9 +451,10 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
       except OSError as e:
         answer.problems.add failedText(e)
         for k in 0 ..< buf.len: answer.values[k][c] = NaN
-  let g = if view.graph.len > 0: whole.column(view.graph) else: -1
-  if g >= 0:
-    bucketsOf(cache.columns[g].values, cache.order, ordered, answer.graphMin, answer.graphMax)
+  let g = if view.graph.len > 0: whole.column(view.graph) else: ""
+  if g.len > 0:
+    bucketsOf(cache.columns[cache.indexOf(g)].values, cache.order, ordered,
+      answer.graphMin, answer.graphMax)
 
 proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
   ## Reads and posts what `req` asks for; false when a newer request came

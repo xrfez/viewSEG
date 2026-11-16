@@ -14,7 +14,7 @@
 ##
 ## Runs alone: it bounds the time a million rows take to sort (5 s).
 
-import std/[math, monotimes, os, strutils, times]
+import std/[algorithm, math, monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/state
 import utils/[fixtures, waiting]
@@ -125,3 +125,50 @@ block readByTheReader:
     doAssert a.values.len == 4 and a.values[0][0].isNaN
     st.shutdown()
     doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
+
+proc directKeys(path: string; names: openArray[string]): seq[seq[float64]] =
+  ## Each column `names` of every trace of `path`, read from the file itself.
+  var f = openSeismic(path, keys = true)
+  result = newSeq[seq[float64]](names.len)
+  for t in 0 ..< f.len:
+    let k = f.traceKeys(t)
+    for c, name in names: result[c].add keyValue(k, name)
+  f.close()
+
+block columnsOfTheSameRequest:
+  # Seen to fail with the cache full (eight columns) and a sort by one new
+  # column with Find on another: the index of the sort's column was taken
+  # before the Find's read evicted the oldest column, so the sort and the row
+  # values came from the column after it.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let filled = ["keys.record", "keys.channel", "keys.srcPoint", "keys.srcX", "keys.srcY",
+      "keys.offset", "keys.ensemble", "keys.rcvLine"]
+    for name in filled:
+      discard st.table(TableView(fields: @["keys.channel"], scope: tsFile, sortBy: name,
+        rows: 0 .. 0))
+    let fields = ["keys.channel", "keys.rcvX", "keys.cmpX"]
+    let expect = directKeys(path, fields)
+    var sorted = expect[2]
+    sorted.sort
+    let (lo, hi) = (int(sorted[3].floor), int(sorted[10].ceil))
+    var kept: seq[int]
+    for t in 0 ..< SurveyTraces:
+      if expect[2][t] >= float64(lo) and expect[2][t] <= float64(hi): kept.add t
+    let view = TableView(fields: @fields, scope: tsFile, sortBy: "keys.rcvX",
+      findField: "keys.cmpX", findValue: $lo & ".." & $hi, rows: 0 .. SurveyTraces - 1)
+    let a = st.table(view)
+    doAssert a.problems.len == 0, $a.problems
+    doAssert a.count == kept.len and a.rowTraces.len == kept.len,
+      "rows kept: " & $a.count & ", " & $kept.len
+    for r, t in a.rowTraces:
+      doAssert t in kept, "row " & $r & " is trace " & $t & ", not kept by Find"
+      for c, name in fields:
+        doAssert a.values[r][c] == expect[c][t], "row " & $r & " " & name & ": " &
+          $a.values[r][c] & ", the file says " & $expect[c][t]
+      if r > 0:
+        doAssert expect[1][a.rowTraces[r - 1]] <= expect[1][t], "not sorted by keys.rcvX"
+    st.shutdown()
