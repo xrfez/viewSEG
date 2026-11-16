@@ -1312,26 +1312,33 @@ the record's level taken again, so that the gain leaves the killed trace out.
 amplitude spectrum of the trace under the pointer, or of the selection when that trace is
 in it, in a window of its own: titled by what it shows ("FFT: trace 12 · FFID 1 ·
 shots.sgy" on `samples/land/shots.sgy` record 1, "FFT 2: 12 traces · ..."), floating beside the middle of the main window the
-first time, dockable anywhere like every window. Several can be open; each is a snapshot
-of the traces it was opened on (and of the visible time then), and keeps them while the
-plot moves on; it follows the plot's filters, its Aux toggle too, as they change (shown
-raw or not alike: both curves are drawn), and the kills of its traces (a killed trace
-left out, a restored one taken back), computed again from the samples at hand, so the
-file is not read again. A reversed polarity changes no amplitude, and the phase is of
-the samples as recorded, so a reversal asks nothing. **Freeze** (the pin at the right of the first row, off by default) keeps the filters it went
-through while the plot's change, to compare one setting with the next; unticked, it
-follows the plot again. Closing one (its ×) drops its work if it is still being computed. A
+first time, dockable anywhere like every window. Several can be open. Unless **Freeze**
+is on, a window follows the Seismic plot it was opened from, as a New plot window does:
+it shows the traces it was opened on until the plot changes, then the selection in the
+record on show, or the traces in view when nothing is selected, and a new record or a
+new file. It follows the plot's filters, its Aux toggle too, as they change (shown raw
+or not alike: both curves are drawn), and the kills of its traces (a killed trace left
+out, a restored one taken back), computed again from the samples at hand, so the file
+is not read again when those samples are already held. A reversed polarity changes no
+amplitude, and the phase is of the samples as recorded, so a reversal asks nothing.
+**Freeze** (the pin at the right of the first row, off by default; tooltip "Freeze: keep
+these traces while the plot moves on") keeps the traces and the file it shows, and the
+filters they went through; the title names them ("Frozen · trace 12 · FFID 1 ·
+shots.sgy"). Unticked, it follows the plot at once. A record that cannot feed it leaves
+the window open and says why. Closing one (its ×) drops its work if it is still being computed. A
 window's number is the lowest free one, so a window opened again takes the place the
 layout kept for that number; a layout that names FFT windows not open loads without a
 word.
 
 **The live Spectrum panel** (Window > Spectrum; a tab behind the map in the first
-layout) shows the same for what the Seismic window shows: the selected traces of its
-file when there are some, else the traces in view, over the visible time (or the whole
-trace). It follows the plot as you pan, zoom,
-select, step to another record or file, kill a trace or change a filter, asking again
-only when what it is of changed; an answer older than the one shown is dropped, and while
-a pan goes on each newer answer is shown as it comes. The **Freeze** pin, at the right of the first row, keeps what it shows. It
+layout) shows the same for what the Seismic window shows: the selected traces of the
+record on show when there are some, else the traces in view, over the visible time (or
+the whole trace). A selection left in another record does not keep it there. It follows
+the plot as you pan, zoom, select, step to another record or file, kill a trace or change
+a filter, asking again only when what it is of changed; an answer older than the one
+shown is dropped, and while a pan goes on each newer answer is shown as it comes. The
+**Freeze** pin, at the right of the first row, keeps the traces and the file it shows;
+the line under the controls names them. Unfreezing follows at once. It
 works only while it is on screen: hidden, behind another tab or collapsed it asks for
 nothing. A layout saved before the panel came keeps it hidden.
 

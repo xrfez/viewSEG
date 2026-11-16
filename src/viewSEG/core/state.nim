@@ -389,7 +389,8 @@ type
         ## logarithmic, the whole trace or the plot's visible time, the raw
         ## and processed curves drawn
       frozen*: bool
-        ## ckSpectrumDisplay of the live panel: it keeps what it shows
+        ## ckSpectrumDisplay: the window keeps the traces and the file it
+        ## shows; off, it follows the plot again
       onScreen*: bool
         ## ckSpectrumPanel: the live panel is on screen (it follows the
         ## Seismic window's view or selection, off the UI thread, only then)
@@ -2394,6 +2395,17 @@ proc failed(state: var AppState; path: string) =
 
 func plotsUse(state: AppState; file: SessionId): bool
 
+func spectraUse(state: AppState; file: SessionId): bool =
+  ## Whether a spectrum window is of traces of open file `file`: then
+  ## showing another file in the plot keeps it open (a frozen one, or one
+  ## not yet followed onto the new file).
+  let i = state.findSession(file)
+  if i < 0: return false
+  let s = state.sessions[i]
+  for w in state.spectra:
+    if w.traces.len > 0 and w.traces[0] in s: return true
+  false
+
 proc showReplacing(state: var AppState; k: int; file: SessionId; gather: int) =
   ## Shows `gather` of `file` in `panels[k]`, in place of what it showed,
   ## and closes the file it showed when no other panel shows it and no
@@ -2403,7 +2415,8 @@ proc showReplacing(state: var AppState; k: int; file: SessionId; gather: int) =
   let old = if shown >= 0: state.sessions[shown].id else: NoSession
   state.show(state.panels[k].id, file, gather)
   if old != NoSession and not (old == file) and
-      not state.panels.anyIt(it.layers.anyIt(it.shows(old))) and not state.plotsUse(old):
+      not state.panels.anyIt(it.layers.anyIt(it.shows(old))) and not state.plotsUse(old) and
+      not state.spectraUse(old):
     state.closeSession(state.findSession(old), quiet = true)
 
 func gatherOf*(s: Session; trace: int): int =
@@ -2857,17 +2870,24 @@ func spread(list: var seq[int]; samples: int) =
     list = kept
 
 func liveTraces(state: AppState; k, i: int): (seq[int], SpectrumOf, int) =
-  ## What the live panel is of: the selected traces of the file `panels[k]`
-  ## shows (`sessions[i]`), else the traces in its view; at most what a
-  ## spectrum takes (`spectrumTraces`), spread evenly; indices in the
-  ## file, ascending; and how many were chosen.
+  ## What a spectrum that follows the plot is of: the selected traces of the
+  ## record `panels[k]` shows (`sessions[i]`), else the traces in its view;
+  ## at most what a spectrum takes (`spectrumTraces`), spread evenly;
+  ## indices in the file, ascending; and how many were chosen. A selection
+  ## in another record is not this record's.
   template p: untyped = state.panels[k]
   let s = state.sessions[i]
   var list: seq[int]
   var chosen = soNothing
   if state.selection.anySelected:
-    for t in state.selection.selected:
-      if t in s: list.add t - s.base
+    var order: seq[int] = @[]
+    if p.shown.len > 0: order = p.shown
+    elif p.layers.len > 0:
+      let g = p.layers[0].source.gather
+      if g in 0 ..< s.gathers.len:
+        for t in s.gathers[g].traces: order.add t
+    for t in order:
+      if s.base + t in state.selection.selected: list.add t
     if list.len > 0: chosen = soSelection
   if list.len == 0 and p.laidOut and p.shown.len == p.layout.traces:
     let vis = visiblePositions(p.layout, p.view)
@@ -2917,45 +2937,6 @@ func killedNow(state: AppState; sw: SpectrumWindow): (bool, seq[int], int) =
       var killed = killedOf(e, traces)
       killed.sort()
       result = (killed != sw.killed, killed, e.revision)
-
-proc followFfts(state: var AppState) =
-  ## After every change: each FFT window not frozen follows the filters of
-  ## the plot it was opened from (and its Aux toggle; shown raw or not
-  ## alike), and the kills of its traces, asked again from the samples at
-  ## hand when either changed. Its traces and time stay those it was opened
-  ## on. (A reversal changes no amplitude, and the phase is of the samples
-  ## as recorded: it asks nothing.)
-  for w in 0 ..< state.spectra.len:
-    template sw: untyped = state.spectra[w]
-    if sw.id != LiveSpectrum and not sw.frozen:
-      let k = state.findPanel(sw.panel)
-      if k >= 0 and state.panels[k].layers.len > 0:
-        let pr = spectrumFilters(state.panels[k])
-        let (_, _, revision) = state.killedNow(sw)
-        var ownMoved = false
-        var fileTraces: seq[int] = @[]
-        var killed: seq[int] = @[]
-        let i = state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1)
-        if i >= 0:
-          let s = state.sessions[i]
-          for t in sw.traces:
-            if t in s: fileTraces.add t - s.base
-          killed = killedOf(state.editsAt(s.path), fileTraces)
-          killed.sort()
-          if revision != sw.editsSeen:
-            ownMoved = ownKeyOf(state.editsAt(s.path), fileTraces) != sw.ownKey
-        else:
-          killed = sw.killed
-        let now = LiveKey(session: if i >= 0: state.sessions[i].id else: NoSession,
-          traces: fileTraces, processing: pr, killed: killed)
-        let wasKey = LiveKey(session: now.session, traces: fileTraces,
-          processing: sw.processing, killed: sw.killed)
-        if not sameFollow(now, wasKey) or ownMoved:
-          let was = sw.processing
-          sw.processing = pr
-          if not state.askAgain(w): sw.processing = was # asked again once it can be
-        elif revision != sw.editsSeen:
-          sw.editsSeen = revision # other traces' edits: nothing to ask
 
 proc followLive(state: var AppState) =
   ## The live panel, while on screen and not frozen, asked again when what
@@ -3010,6 +2991,8 @@ proc followLive(state: var AppState) =
   else:
     state.liveKey = LiveKey(session: NoSession) # asked again once it can be held
 
+proc stampSpectrum(state: var AppState; w, k, i: int)
+
 proc openSpectrum(state: var AppState; cmd: Command) =
   ## `ckSpectrum`: a new FFT window of `cmd.spectrumTraces` (else the
   ## selected traces) of the panel's file, a snapshot asked for at once.
@@ -3047,7 +3030,7 @@ proc openSpectrum(state: var AppState; cmd: Command) =
   if traces.len > 1 and chosen == soTrace: chosen = soSelection
   template p: untyped = state.panels[k]
   var w = SpectrumWindow(id: freeSpectrumId(state.spectra), display: cmd.spectrumShow,
-    chosen: chosen, file: s.name, record: s.recordText(traces[0]),
+    chosen: chosen, heldOpen: true, file: s.name, record: s.recordText(traces[0]),
     traces: traces.mapIt(it + s.base), first: traces[0], chosenCount: count,
     visibleMs: p.view.timeMs, panel: p.id, processing: spectrumFilters(p))
   w.filters = filtersText(w.processing)
@@ -3060,6 +3043,7 @@ proc openSpectrum(state: var AppState; cmd: Command) =
     state.spectra.delete state.spectra.high
     state.ignore(cmd, s.name & " is busy (a job needs it to itself)")
     return
+  state.stampSpectrum(state.spectra.high, k, i)
   state.change(cmd.origin, x):
     x.spectrum.window = cmd.spectrumShow
   if outside > 0:
@@ -3067,12 +3051,11 @@ proc openSpectrum(state: var AppState; cmd: Command) =
       ": left out of the spectrum.")
 
 proc followSpectrum(state: var AppState) =
-  ## After every change: the FFT windows follow the plot's filters
-  ## (`followFfts`), the live panel what it is of (`followLive`), and each
-  ## window's held cursor stays at its frequency and on its curve when the
-  ## spectrum changes (another FFT length: finer bins for a notch, another
-  ## time) or the curves drawn do (`followCursor`).
-  state.followFfts()
+  ## After every change: the live panel follows what it is of
+  ## (`followLive`). FFT windows follow with the New plot windows
+  ## (`followSpectra`, the same pick). Each window's held cursor stays at
+  ## its frequency and on its curve when the spectrum changes or the curves
+  ## drawn do (`followCursor`).
   state.followLive()
   for sw in state.spectra.mitems:
     if sw.followCursor(): inc sw.revision
@@ -3080,9 +3063,9 @@ proc followSpectrum(state: var AppState) =
 proc showSpectrum(state: var AppState; cmd: Command) =
   ## `ckSpectrumDisplay`: how a window shows its spectrum, and whether it is
   ## frozen. A new time window asks again (an FFT window over the time it
-  ## was opened on); the live panel keeps it for the next run, a new FFT
-  ## window starts as the last one changed. A frozen FFT window keeps the
-  ## filters it went through; unfrozen, it follows the plot's again.
+  ## shows); the live panel keeps it for the next run, a new FFT window
+  ## starts as the last one changed. Frozen, a window keeps the traces and
+  ## the file it shows; unfrozen, it follows the plot at once.
   let w = state.findSpectrum(cmd.spectrum)
   if w < 0:
     state.ignore(cmd, "there is no spectrum window " & $cmd.spectrum)
@@ -3097,7 +3080,9 @@ proc showSpectrum(state: var AppState; cmd: Command) =
       x.spectrum.live = cmd.spectrumShow
     return # `followSpectrum` asks again
   sw.display = cmd.spectrumShow
-  sw.frozen = cmd.frozen # unfrozen, `followFfts` asks again if the filters changed
+  let wasFrozen = sw.frozen
+  sw.frozen = cmd.frozen # unfrozen, `followSpectra` follows the plot at once
+  if wasFrozen and not sw.frozen: sw.heldOpen = false
   inc sw.revision
   state.change(cmd.origin, x):
     x.spectrum.window = cmd.spectrumShow
@@ -6433,8 +6418,10 @@ proc apply*(state: var AppState; cmd: Command) =
   state.relink()
   state.followHidden()
   state.followInspect()
+  let followed = state.filesHeldByFollow()
   state.followSpectrum()
   state.followPlots()
+  state.releaseFollowed(followed)
   state.followMapWork()
   state.followProject()
 
@@ -6507,10 +6494,10 @@ proc stepTrace(state: var AppState; cmd: Command) =
   ## From an FFT window of one trace: from its trace; else from the
   ## selection (the trace clicked last; else its last, or its first going
   ## back: `stepStart`), else the trace under the pointer, else the first in
-  ## view. An FFT window (of one trace or a selection) then shows the new
-  ## trace, unless frozen: a frozen one keeps its own and steps the plot's
-  ## selection, as the plot's keys do (from its own trace while nothing is
-  ## selected or under the pointer).
+  ## view. A frozen FFT window keeps its trace and steps the plot's
+  ## selection (from its own trace while nothing is selected or under the
+  ## pointer). One not frozen follows that selection, as every other change
+  ## of the plot (`followSpectra`).
   if cmd.stepBy == 0:
     state.ignore(cmd, "a step of 0 traces")
     return
@@ -6557,19 +6544,11 @@ proc stepTrace(state: var AppState; cmd: Command) =
     inc p.jumps # set by `core`: the frontend follows
     state.requestView(k)
     state.settleGain(k, cmd.origin)
-  # The FFT window it was pressed in shows the new trace, unless frozen.
+  # A frozen FFT window keeps its trace; one not frozen follows the selection
+  # `followSpectra` picks from this step.
   if frozen and cmd.origin == coAgent:
     state.log.add(sevInfo, "spectrum", state.spectra[w].title & " is frozen: it keeps its " &
       "trace (the plot's selection stepped to trace " & $(p.shown[to] + 1) & ")")
-  if w > 0 and not frozen:
-    template sw: untyped = state.spectra[w]
-    (sw.traces, sw.first, sw.chosen, sw.chosenCount) = (@[trace], p.shown[to], soTrace, 1)
-    sw.record = s.recordText(p.shown[to])
-    sw.since = state.spectrumGen + 1 # the previous trace's answers are not its
-    if not state.askAgain(w):
-      state.log.add(sevWarning, s.name, s.name & " is busy (a job needs it to itself): " &
-        sw.title & " shows its trace when it is free.")
-    inc sw.revision
 
 proc applyCommand(state: var AppState; cmd: Command) =
   case cmd.kind
@@ -7316,8 +7295,10 @@ proc drainInbox*(state: var AppState): bool =
   state.relink()
   state.followHidden()
   state.followInspect()
+  let followed = state.filesHeldByFollow()
   state.followSpectrum()
   state.followPlots()
+  state.releaseFollowed(followed)
   state.followMapWork()
   state.followMemoryLook()
   state.followProject()

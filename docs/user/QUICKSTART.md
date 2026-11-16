@@ -702,7 +702,11 @@ South Central, US survey feet, factor 0.3048006096. The file itself is never cha
 **FFT in a new window** (right-click a trace, or `F` over it) opens its amplitude
 spectrum in a window named for what it shows ("FFT: trace 12 · FFID 1 · shots.sgy");
 over a selected trace, the selection's, averaged ("FFT 2: 12 traces ..."). Open as many
-as you like and dock them anywhere; each keeps what it was opened on while you move on.
+as you like and dock them anywhere. Unless **Freeze** is on, a window follows the Seismic
+plot: it shows the traces it was opened on until the plot changes, then the selection in
+the record on show, or the traces in view when nothing is selected, and a new record or
+file. Freeze keeps those traces and that file; the title names them ("Frozen · trace 12 ·
+FFID 1 · shots.sgy"). Unfreezing follows at once.
 Two curves: **raw**, the samples as recorded, and **processed**, through the filters of
 the strip and, where a trace has one, its own filter (a band-pass shows as the processed
 curve falling away outside its corners, a notch as a dip at its frequency). Of one trace
@@ -716,26 +720,31 @@ trace's own); your choice is kept and shows again as soon as a filter is. In dB 
 are on one scale (0 dB at the larger peak, whose amplitude the window's line of words
 gives, so that two windows compare); **Linear** shows the amplitude itself (a sine of
 amplitude A reads A). **Log frequency** spreads the low frequencies out. **Visible time**
-takes the spectrum over the time the plot showed when the window opened, instead of the
-whole trace. For one trace, **Phase** (with the curves) draws its phase under its
-amplitude. The picture is **Unwrapped** at first (the phase joined up along frequency); **Magnitude 0-180** (the absolute value, on a fixed
-0 to 180 axis), **Signed +-180** and **Delay removed** are the other choices. Where the amplitude is more than 60 dB below the peak the phase is left out, so
-the noise outside a sweep's band is not drawn. A sweep's phase climbs steeply because
-its delay grows with frequency; for vibrator QC, read the phase against the pilot in the
-vibrator signature plot. The same line, in the same order, is on an FFT window and on
-the live Spectrum panel; the **Freeze** pin sits at the right of its first row. Point at
-the plot: the line under it reads the frequency and each curve's level, and, when the
-phase picture is not the signed one, the signed value in brackets. The wheel zooms, a
-drag pans, a double click shows it all again. The window's line of words says how many
-traces were averaged and what was left out (killed, dead, unreadable).
+takes the spectrum over the time the plot shows, instead of the whole trace (frozen,
+over the time it was frozen on). For one trace, **Phase** (with the curves) draws its
+phase under its amplitude. The picture is **Unwrapped** at first (the phase joined up
+along frequency); **Magnitude 0-180** (the absolute value, on a fixed 0 to 180 axis),
+**Signed +-180** and **Delay removed** are the other choices. Where the amplitude is
+more than 60 dB below the peak the phase is left out, so the noise outside a sweep's
+band is not drawn. A sweep's phase climbs steeply because its delay grows with
+frequency; for vibrator QC, read the phase against the pilot in the vibrator signature
+plot. The same line, in the same order, is on an FFT window and on the live Spectrum
+panel; the **Freeze** pin sits at the right of its first row. Its tooltip is "Freeze:
+keep these traces while the plot moves on". Point at the plot: the line under it reads
+the frequency and each curve's level, and, when the phase picture is not the signed
+one, the signed value in brackets. The wheel zooms, a drag pans, a double click shows
+it all again. The window's line of words says how many traces were averaged and what
+was left out (killed, dead, unreadable).
 
 **Window > Spectrum** is the same, docked and live (a tab beside the map at first): the
-spectrum of the traces the Seismic window shows (of the selection, when you have one),
-over the time it shows, updated as you pan, zoom, select, change record or file, or move
-a filter's slider. The line is three groups: the scale (**dB**, **Linear**, **Log
+spectrum of the selection in the record on show, or of the traces in view when nothing
+is selected, over the time it shows, updated as you pan, zoom, select, change record or
+file, or move a filter's slider. A selection left in another record does not keep it
+there. The line is three groups: the scale (**dB**, **Linear**, **Log
 frequency**), the curves (**Raw**, **Processed**, **Response**, **Phase**) and **Visible
-time**; groups wrap whole. The **Freeze** pin, at the right of the first row, keeps what
-it shows. It costs nothing while it is hidden
+time**; groups wrap whole. The **Freeze** pin, at the right of the first row, keeps the
+traces and the file it shows; the line under the controls names them. Unfreezing follows
+at once. It costs nothing while it is hidden
 or behind another tab.
 
 ## Headers

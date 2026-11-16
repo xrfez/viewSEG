@@ -142,9 +142,9 @@ proc fitsBefore*(line: ControlLine; width, gap: float32): bool =
 proc drawFreeze*(line: ControlLine; id, sentence, mark: string; frozen: bool; t: Theme;
     marks: var Marks): bool =
   ## The pin at the right end of the first row, its icon and the word
-  ## "Freeze", drawn selected while `frozen`. `sentence` follows "Freeze
-  ## (on): " or "Freeze (off): ". The cursor is left below the line, at its
-  ## left, for what comes under it.
+  ## "Freeze", drawn selected while `frozen`. The tooltip is "Freeze: keep
+  ## these traces while the plot moves on". The cursor is left below the
+  ## line, at its left, for what comes under it.
   let after = igGetCursorScreenPos()
   let width = freezeWidth(line.size)
   igSetCursorScreenPos(ImVec2_c(x: line.right - width, y: line.top))
@@ -161,7 +161,8 @@ proc drawFreeze*(line: ControlLine; id, sentence, mark: string; frozen: bool; t:
     ImVec2_c(x: round(pos.x + line.size + igGetStyle().ItemSpacing.x),
       y: round(pos.y + (line.size - word.y) / 2)),
     u32(col), FreezeWord.cstring, nil, 0, nil)
-  tooltip("Freeze (" & (if frozen: "on" else: "off") & "): " & sentence, "", t)
+  tooltip("Freeze: keep these traces while the plot moves on", "", t)
+  discard sentence
   let y = max(after.y, line.top + line.size + igGetStyle().ItemSpacing.y)
   igSetCursorScreenPos(ImVec2_c(x: line.left, y: y))
   clicked

@@ -164,15 +164,12 @@ proc drawControls(st: AppState; w: SpectrumWindow; name: string; t: Theme;
       d.time = if visible: stVisible else: stWhole
       changed = true
     marks.mark(name & ".time")
-    tip(if w.id == LiveSpectrum: "The time the Seismic window shows; off: the whole trace"
-        else: "The time the Seismic window showed when this window opened (" &
+    tip(if w.id == LiveSpectrum or not w.frozen:
+          "The time the Seismic window shows; off: the whole trace"
+        else: "The time this window is frozen on (" &
           valueText(w.visibleMs.lo) & " to " & valueText(w.visibleMs.hi) &
           " ms); off: the whole trace")
-  let sentence = if w.id == LiveSpectrum: "Keep this spectrum while the Seismic window moves on"
-                 else: "Keep this spectrum: the filters it went through while the plot's change, " &
-                   "and its trace while Alt + arrows step the plot's selection; off: it follows " &
-                   "the plot's filters and its Aux toggle (its traces stay those it was opened " &
-                   "on, but for Alt + arrows)"
+  const sentence = "keep these traces while the plot moves on"
   if line.drawFreeze(name, sentence, name & ".freeze", frozen, t, marks):
     frozen = not frozen
     changed = true
@@ -248,7 +245,10 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
   drawControls(st, w, name, t, widths, marks, res)
   ui.widths[w.id] = widths
   # What it is of (the live panel's title does not say), and what was left out.
-  let words = (if w.id == LiveSpectrum: w.label & " · " else: "") & w.summaryText &
+  let head = if w.frozen: "Frozen · " & w.label & " · "
+             elif w.id == LiveSpectrum: w.label & " · "
+             else: ""
+  let words = head & w.summaryText &
     (if w.filterText.len > 0: " · " & w.filterText else: "")
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextWrapped("%s", words.cstring)

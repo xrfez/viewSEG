@@ -324,7 +324,8 @@ proc closePlot(state: var AppState; cmd: Command) =
   state.plots.delete w
   # a file kept open for it alone, which no plot shows, goes with it
   for f in files:
-    if not state.panels.anyIt(it.layers.anyIt(it.shows(f))) and not state.plotsUse(f):
+    if not state.panels.anyIt(it.layers.anyIt(it.shows(f))) and not state.plotsUse(f) and
+        not state.spectraUse(f):
       let i = state.findSession(f)
       if i >= 0: state.closeSession(i, quiet = true)
 
@@ -520,27 +521,193 @@ proc repick(state: var AppState; w, k, i: int): bool =
   pw.record = oldRecord
   false
 
-proc releaseFollowed(state: var AppState; before: seq[SessionId]) =
+proc filesHeldByFollow*(state: AppState): seq[SessionId] =
+  ## Files an unfrozen window still shows, taken before it follows, so one
+  ## it follows away from can be closed.
+  result = @[]
+  for w in state.plots:
+    if not w.frozen and w.traces.len > 0:
+      let i = state.findTrace(w.traces[0])
+      if i >= 0: result.add state.sessions[i].id
+  for w in state.spectra:
+    if not w.frozen and w.traces.len > 0:
+      let i = state.findTrace(w.traces[0])
+      if i >= 0: result.add state.sessions[i].id
+
+proc releaseFollowed*(state: var AppState; before: seq[SessionId]) =
   ## A file an unfrozen window has followed away from, which no panel shows
   ## and no window still uses, is closed.
   for id in before:
     if state.findSession(id) >= 0 and not state.panels.anyIt(it.layers.anyIt(it.shows(id))) and
-        not state.plotsUse(id):
+        not state.plotsUse(id) and not state.spectraUse(id):
       let i = state.findSession(id)
       if i >= 0: state.closeSession(i, quiet = true)
 
+proc stampSpectrum(state: var AppState; w, k, i: int) =
+  ## Remembers what chose FFT window `spectra[w]`'s traces, so a later
+  ## change of the selection, the record, the file or the sort asks again.
+  template sw: untyped = state.spectra[w]
+  template p: untyped = state.panels[k]
+  sw.pickSession = int(state.sessions[i].id)
+  sw.pickGather = if p.layers.len > 0: p.layers[0].source.gather else: -1
+  sw.pickSelected = state.selection.selectedRevision
+  sw.pickOrder = p.orderGen
+  sw.pickSource = p.sourceGen
+  sw.pickShown = p.shown.len
+
+func spectrumMoved(state: AppState; w, k, i: int): bool =
+  ## Whether the plot's choice of traces moved on since FFT window
+  ## `spectra[w]` last followed it.
+  template sw: untyped = state.spectra[w]
+  template p: untyped = state.panels[k]
+  let gather = if p.layers.len > 0: p.layers[0].source.gather else: -1
+  sw.pickSession != int(state.sessions[i].id) or sw.pickGather != gather or
+    sw.pickSelected != state.selection.selectedRevision or sw.pickOrder != p.orderGen or
+    sw.pickSource != p.sourceGen or sw.pickShown != p.shown.len
+
+proc blockSpectrum(state: var AppState; w, i: int; problem: string) =
+  ## The FFT window stays open and says `problem`; nothing is asked.
+  template sw: untyped = state.spectra[w]
+  if not state.spectrumReader.isNil: state.spectrumReader.cancel(sw.id)
+  let name = if i >= 0: state.sessions[i].name else: ""
+  if sw.spectrum.problem == problem and sw.traces.len == 0 and not sw.waiting and sw.file == name:
+    return
+  sw.waiting = false
+  sw.traces.setLen 0
+  sw.file = name
+  sw.record = ""
+  sw.chosen = soNothing
+  sw.spectrum = Spectrum(problem: problem)
+  sw.since = state.spectrumGen + 1
+  inc sw.revision
+
+func timeNow(state: AppState; w, k: int): (float64, float64) =
+  ## The time window FFT window `spectra[w]` follows, when it shows the
+  ## plot's visible time; both NaN for the whole trace.
+  template sw: untyped = state.spectra[w]
+  let view = state.panels[k].view.timeMs
+  if sw.display.time == stVisible and view.hi > view.lo: (view.lo, view.hi)
+  else: (NaN, NaN)
+
+proc followSpectrumFilters(state: var AppState; w, k: int) =
+  ## FFT window `spectra[w]`, not frozen, follows the plot's filters and the
+  ## kills of the traces it already shows, and the plot's visible time when
+  ## that is what it shows. `sameFollow` is the comparison.
+  template sw: untyped = state.spectra[w]
+  if state.panels[k].layers.len == 0: return
+  let pr = spectrumFilters(state.panels[k])
+  let (_, _, revision) = state.killedNow(sw)
+  var ownMoved = false
+  var fileTraces: seq[int] = @[]
+  var killed: seq[int] = @[]
+  let i = state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1)
+  if i >= 0:
+    let s = state.sessions[i]
+    for t in sw.traces:
+      if t in s: fileTraces.add t - s.base
+    killed = killedOf(state.editsAt(s.path), fileTraces)
+    killed.sort()
+    if revision != sw.editsSeen:
+      ownMoved = ownKeyOf(state.editsAt(s.path), fileTraces) != sw.ownKey
+  else:
+    killed = sw.killed
+  var timeMoved = false
+  let window = state.timeNow(w, k)
+  if not window[0].isNaN and (sw.visibleMs.lo != window[0] or sw.visibleMs.hi != window[1]):
+    sw.visibleMs = Span(lo: window[0], hi: window[1])
+    timeMoved = true
+  let now = LiveKey(session: if i >= 0: state.sessions[i].id else: NoSession,
+    traces: fileTraces, processing: pr, killed: killed)
+  let was = LiveKey(session: now.session, traces: fileTraces, processing: sw.processing,
+    killed: sw.killed)
+  if not sameFollow(now, was) or ownMoved or timeMoved:
+    let kept = sw.processing
+    sw.processing = pr
+    if not state.askAgain(w): sw.processing = kept # `askSpectrum` says the filters
+  elif revision != sw.editsSeen:
+    sw.editsSeen = revision
+
+proc repickSpectrum(state: var AppState; w, k, i: int): bool =
+  ## Chooses FFT window `spectra[w]`'s traces again from the plot (the
+  ## selection in the record, else the traces in view) and asks; true when
+  ## that replaced the filter follow. A record with nothing to show is said,
+  ## and the window stays open.
+  let (fileTraces, chosen, count) = state.liveTraces(k, i)
+  if fileTraces.len == 0:
+    state.stampSpectrum(w, k, i)
+    state.blockSpectrum(w, i, "the plot shows no trace")
+    return true
+  let s = state.sessions[i]
+  var ids = newSeq[int](fileTraces.len)
+  for n, t in fileTraces: ids[n] = t + s.base
+  template sw: untyped = state.spectra[w]
+  let pr = spectrumFilters(state.panels[k])
+  let window = state.timeNow(w, k)
+  let timeSame = window[0].isNaN or
+    (sw.visibleMs.lo == window[0] and sw.visibleMs.hi == window[1])
+  if ids == sw.traces and pr == sw.processing and timeSame:
+    state.stampSpectrum(w, k, i)
+    return false
+  let kept = sw.processing
+  let oldTraces = sw.traces
+  let oldFirst = sw.first
+  let oldFile = sw.file
+  let oldRecord = sw.record
+  let oldChosen = sw.chosen
+  let oldCount = sw.chosenCount
+  let oldVisible = sw.visibleMs
+  sw.file = s.name
+  sw.record = s.recordText(fileTraces[0])
+  sw.traces = ids
+  sw.first = fileTraces[0]
+  sw.chosen = chosen
+  sw.chosenCount = count
+  sw.processing = pr
+  if not window[0].isNaN: sw.visibleMs = Span(lo: window[0], hi: window[1])
+  if state.askAgain(w):
+    state.stampSpectrum(w, k, i)
+    return true
+  sw.processing = kept
+  sw.traces = oldTraces
+  sw.first = oldFirst
+  sw.file = oldFile
+  sw.record = oldRecord
+  sw.chosen = oldChosen
+  sw.chosenCount = oldCount
+  sw.visibleMs = oldVisible
+  false
+
+proc followSpectra(state: var AppState) =
+  ## After every change: each FFT window not frozen follows the Seismic plot
+  ## it was opened from, by the same pick as a New plot window. Opened on
+  ## chosen traces, it keeps those until that pick changes. Then the
+  ## selection in the record on show wins; with none, the traces in view.
+  ## Frozen, it keeps the traces and the file it had.
+  for w in 0 ..< state.spectra.len:
+    template sw: untyped = state.spectra[w]
+    if sw.id == LiveSpectrum or sw.frozen: continue
+    let k = state.findPanel(sw.panel)
+    if k < 0 or state.panels[k].layers.len == 0: continue
+    let i = state.shownFile(k)
+    if i < 0:
+      state.blockSpectrum(w, -1, "the plot shows no file")
+      continue
+    if sw.heldOpen and not state.spectrumMoved(w, k, i):
+      state.followSpectrumFilters(w, k)
+    else:
+      sw.heldOpen = false
+      if not state.repickSpectrum(w, k, i): state.followSpectrumFilters(w, k)
+
 proc followPlots(state: var AppState) =
-  ## After every change: each window not frozen follows the Seismic plot it
-  ## was opened from, by the spectrum windows' follow (`sameFollow`). The
-  ## selection in the record on show wins; with none, the view's own traces
-  ## of that record. A new file is followed. Frozen, a window keeps the
-  ## traces and the file it had. Filters and kills of the traces it shows
-  ## are followed too, unless a repick already asked.
-  var before: seq[SessionId] = @[]
-  for w in 0 ..< state.plots.len:
-    if not state.plots[w].frozen and state.plots[w].traces.len > 0:
-      let i = state.findTrace(state.plots[w].traces[0])
-      if i >= 0: before.add state.sessions[i].id
+  ## After every change: each New plot window not frozen follows the Seismic
+  ## plot it was opened from, by the spectrum windows' follow (`sameFollow`),
+  ## and each FFT window does the same (`followSpectra`). The selection in
+  ## the record on show wins; with none, the view's own traces of that
+  ## record. A new file is followed. Frozen, a window keeps the traces and
+  ## the file it had. Filters and kills of the traces it shows are followed
+  ## too, unless a repick already asked. A file followed away from is closed
+  ## by the caller (`releaseFollowed`), once both have followed.
+  state.followSpectra()
   for w in 0 ..< state.plots.len:
     template pw: untyped = state.plots[w]
     if pw.frozen: continue
@@ -552,4 +719,3 @@ proc followPlots(state: var AppState) =
       if not state.repick(w, k, i): state.followFilters(w, k)
     else:
       state.followFilters(w, k)
-  state.releaseFollowed(before)

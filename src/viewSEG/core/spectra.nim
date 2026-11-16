@@ -141,12 +141,19 @@ type
     problem*: string ## why there is no spectrum; "" when there is one
 
   SpectrumWindow* = object
-    ## A spectrum window: an FFT window opened from the plot's menu (a
-    ## snapshot of the traces it was opened on), or the live panel (`id`
-    ## 0), which follows the Seismic window's view or selection.
+    ## A spectrum window: an FFT window opened from the plot's menu, or the
+    ## live panel (`id` 0). Not frozen, it follows the Seismic plot it was
+    ## opened from, as a New plot window does: the selection in the record
+    ## on show, or the traces in view with none, and the record, the file
+    ## and the filters. An FFT window opened on chosen traces keeps those
+    ## until the plot changes (`heldOpen`). Frozen, it keeps the traces and
+    ## the file it had.
     id*: int ## 0: the live panel; FFT windows from 1
     display*: SpectrumDisplay
-    frozen*: bool ## the live panel keeps what it shows
+    frozen*: bool ## keeps the traces and the file it had when frozen
+    heldOpen*: bool
+      ## an FFT window: still showing the traces it was opened on, until the
+      ## plot changes or it is unfrozen
     shown*: bool ## the live panel: on screen (it works only then)
     front*: int ## bumped when it is to be brought forward (an agent showed it)
     chosen*: SpectrumOf
@@ -182,6 +189,12 @@ type
     waiting*: bool ## an answer newer than `spectrum` is on its way
     asks*: int ## requests made (for tests: the work follows the view)
     revision*: int ## bumped on every change
+    pickSession*: int = -1 ## the plot's file when the traces were last chosen
+    pickGather*: int = -1 ## and the record
+    pickSelected*: int = -1 ## the selection's revision then
+    pickOrder*: uint64 ## the plot's sort generation then
+    pickSource*: uint64 ## the record's generation then
+    pickShown*: int = -1 ## how many traces the plot had laid out then
 
   SpectrumSum* = object
     ## The power average of many traces' spectra, block by block.
@@ -205,7 +218,9 @@ const
 func label*(w: SpectrumWindow): string =
   ## What a window shows, in words: "trace 12 · FFID 151 · shot.sgd",
   ## "24 traces · FFID 151 · shot.sgd"; "nothing" when it shows nothing.
-  if w.traces.len == 0: return "nothing"
+  if w.traces.len == 0:
+    if w.file.len > 0: return "nothing · " & w.file
+    return "nothing"
   result = if w.chosen == soVisible: $w.traces.len & " visible traces"
            elif w.traces.len == 1: "trace " & $(w.first + 1)
            else: $w.traces.len & " traces"
@@ -216,9 +231,10 @@ func title*(w: SpectrumWindow): string =
   ## A window's title, named for what it shows: "FFT: trace 12 · ...",
   ## "FFT 2: ..." from the second FFT window on; the live panel is
   ## "Spectrum".
+  let name = if w.frozen and w.id != LiveSpectrum: "Frozen · " & w.label else: w.label
   if w.id == LiveSpectrum: "Spectrum"
-  elif w.id == 1: "FFT: " & w.label
-  else: "FFT " & $w.id & ": " & w.label
+  elif w.id == 1: "FFT: " & name
+  else: "FFT " & $w.id & ": " & name
 
 func hasResponse*(sp: Spectrum): bool {.inline.} =
   ## Whether `sp` has a filter response to draw: the filters have a pass

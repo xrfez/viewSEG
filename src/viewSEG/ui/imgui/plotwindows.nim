@@ -54,9 +54,8 @@ proc tip(text: string) =
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
 
-const PlotFreeze* = "the window keeps the traces and the file it shows. Off: it " &
-  "follows the Seismic window (the selection, or the record's traces, and the filters)"
-  ## The Freeze pin's sentence, after "Freeze (on): " or "Freeze (off): "
+const PlotFreeze* = "keep these traces while the plot moves on"
+  ## The Freeze pin's sentence. The pin's tooltip is that, after "Freeze: ".
 
 proc follow(line: ControlLine; width: float32) =
   ## The next control of `width` on this line when it fits before the Freeze
