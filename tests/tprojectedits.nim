@@ -18,7 +18,8 @@
 ##   stay as its record; only the brought-back ones are taken away.
 ## - When the hash agrees, they join the brought-back record.
 ##
-## Seen to fail: with `takePending` applying edits kept by path on path, size and
+## Seen to fail: with the message left as `undoText` ("imported from <store>.nif"), "the
+## counts are not said"; with `takePending` applying edits kept by path on path, size and
 ## time, "edits kept by path were applied"; with `writeMemoryDoc` not routing a check to
 ## `writeProvisional`, "the brought document holds the edits made on the
 ## other file"; with `takeHashed` forgetting every edit, "the own edit was
@@ -136,14 +137,22 @@ withFixtures fx:
       st.unconfirmedOf(a).len == 1)
     doAssert st.killed(5) and not st.killed(9), "an unconfirmed edit was applied to A"
     doAssert st.said("not yet confirmed as this file's"), "not said"
+    st.kill 20 # this session's, not in the record: Apply takes it off, and says so
+    doAssert st.settle(st.killed(20))
     st.applyUnconfirmed(a) # only by the user's click, one step
     doAssert st.settle(st.killed(9)), "Apply did not apply it"
+    doAssert not st.killed(20)
+    doAssert st.said("1 edit given, 1 edit taken off"), "the counts are not said"
+    doAssert st.said("the edits made on line7.sgy on "), "the record is not named in the user's terms"
+    for e in st.log:
+      doAssert ".nif" notin e.text or "imported from" notin e.text,
+        "the store's file name is said: " & e.text
     st.apply Command(kind: ckUndoEdit, panel: MainPanel)
     doAssert st.settle(not st.killed(9) and st.killed(5)), "Undo did not take it back"
     st.flushFiles()
     st.shutdown()
     for r in docs(job):
-      if not r.unconfirmed: doAssert r.killedIn == @[5], "A's record changed: " & $r.killedIn
+      if not r.unconfirmed: doAssert r.killedIn == @[5, 20], "A's record changed: " & $r.killedIn
 
   block backOnB: # B opened later: nothing applied, A's [5] taken off, the unconfirmed offered
     writeFile(a, b)

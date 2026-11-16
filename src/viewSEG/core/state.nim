@@ -857,7 +857,8 @@ type
     memoryWork: seq[JobId]
       ## the identifications and hashes under way: they end quietly
     exports: seq[JobId] ## the exports of edits under way
-    editImports: seq[tuple[job: JobId; path: string; by: CommandOrigin; replace: bool]]
+    editImports: seq[tuple[job: JobId; path: string; by: CommandOrigin; replace: bool;
+      label: string]]
       ## the imports of edits under way: each job, and the file it is for
     notices: seq[Notice] ## the newest `MaxNotices`
     nextNotice: int
@@ -3305,6 +3306,12 @@ func earlierOf*(state: AppState; path: string): seq[FileRecord] =
   ## `path`: other files, whose edits are not its own.
   state.earlier.getOrDefault(path)
 
+func replaceCounts*(state: AppState; path: string; l: EditLists): tuple[given, takenOff: int] =
+  ## What making the edits of open file `path` those of `l` does: how many
+  ## edits it gives and how many it takes off (`FileEdits.setTo`).
+  (l.minus(state.editsAt(path).shown).count,
+    state.editsAt(path).shown.minus(l).count)
+
 func editsChecking*(state: AppState; path: string): bool =
   ## Whether the edits brought back for open file `path` are being checked:
   ## taken on its size, ends and time, waiting for the hash of every byte.
@@ -3566,8 +3573,15 @@ proc importEdits(state: var AppState; cmd: Command) =
     let job = state.jobs.submit(JobSpec(title: "Import the edits in " &
       cmd.listPath.extractFilename, lane: jlInteractive), importEditsWork(cmd.listPath,
       state.sessions[state.shownFile(k)].len, state.inbox.poster))
-    state.editImports.add (job, state.sessions[state.shownFile(k)].path, cmd.origin,
-      cmd.replaceEdits)
+    let path = state.sessions[state.shownFile(k)].path
+    var label = ""
+    if cmd.replaceEdits: # a record kept apart, said in the user's terms: not the store's file name
+      for c in state.earlier.getOrDefault(path):
+        if state.store.docPath(c.doc) == cmd.listPath:
+          label = "the edits made on " & (if c.name.len > 0: c.name else: path.extractFilename) &
+            " on " & (if c.opened == Time(): "an earlier day" else:
+            c.opened.local.format("yyyy-MM-dd HH:mm"))
+    state.editImports.add (job, path, cmd.origin, cmd.replaceEdits, label)
 
 proc takeImported(state: var AppState; m: sink Msg) =
   ## A file's list a job read: its edits added to those of the file it was
@@ -3576,7 +3590,7 @@ proc takeImported(state: var AppState; m: sink Msg) =
   for j, x in state.editImports:
     if x.job == m.job: w = j
   if w < 0: return
-  let (_, path, by, replace) = state.editImports[w]
+  let (_, path, by, replace, label) = state.editImports[w]
   state.editImports.delete w
   let name = m.importedList.extractFilename
   let target = path.extractFilename
@@ -3614,12 +3628,19 @@ proc takeImported(state: var AppState; m: sink Msg) =
       " (its size or its bytes differ): its edits are applied by trace number all the same; " &
       "Edit > Undo (Ctrl+Z) takes them away.")
   template e: untyped = state.edits.mgetOrPut(state.keyOf(path), FileEdits())
-  let n = if replace: e.setTo(l, name, keeps(by)) else: e.takeIn(l, name, keeps(by))
+  let given = l.minus(e.shown).count
+  let takenOff = e.shown.minus(l).count
+  let what = if replace and label.len > 0: label else: name
+  let n = if replace: e.setTo(l, what, keeps(by)) else: e.takeIn(l, what, keeps(by))
   if n == 0:
-    state.log.add(sevInfo, "edits", "Every edit in " & name & " was on " & target & " already.")
+    state.log.add(sevInfo, "edits", (if replace and label.len > 0: "The edits of " & label &
+      " were on " & target & " already." else: "Every edit in " & name & " was on " & target &
+      " already."))
   else:
     state.editStamps[path] = (s.size, s.modified)
-    state.log.add(sevInfo, target, e.undoText.capitalizeAscii & ".")
+    state.log.add(sevInfo, target, (if replace and label.len > 0: target & "'s edits became " &
+      label & ": " & plural(given, "edit") & " given, " & plural(takenOff, "edit") &
+      " taken off. Edit > Undo takes it back." else: e.undoText.capitalizeAscii & "."))
     state.editsChanged(path, e.nextUndo)
 
 proc listMemory(state: var AppState) =

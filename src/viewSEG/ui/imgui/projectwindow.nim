@@ -215,15 +215,20 @@ proc drawShownFile(ui: var ProjectUi; st: AppState; t: Theme; marks: var Marks;
     "compared, are not applied to it. They are kept, to apply or to forget.")
   for i, c in earlier:
     igPushID_Int(cint(4000 + i))
+    let made = (if c.opened == Time(): "an earlier day" else:
+      c.opened.local.format("yyyy-MM-dd HH:mm"))
+    let on = if c.name.len > 0: c.name else: s.name
     if c.unconfirmed:
-      igTextUnformatted(("Edits you made on " & (if c.opened == Time(): "an earlier day" else:
-        c.opened.local.format("yyyy-MM-dd HH:mm")) & " before the file's content was " &
-        "compared: " & keptWords(c.edits)).cstring, nil)
+      igTextUnformatted(("Edits you made on " & on & " on " & made & " before the file's " &
+        "content was compared: " & keptWords(c.edits)).cstring, nil)
     else: igTextUnformatted(("Edits: " & keptWords(c.edits) & lastOpened(c)).cstring, nil)
     marks.mark("project.earlier." & $i)
     let fits = c.traces > 0 and c.traces == s.len
+    let (given, takenOff) = st.replaceCounts(s.path, c.edits)
     if button("Apply them to this file", "project.earlier.apply." & $i,
-        (if fits: "Apply the earlier output's edits to " & s.name & " by trace number, as " &
+        (if fits and c.unconfirmed: "This file's edits become these: " & $given & " given, " &
+          $takenOff & " taken off. One step: Edit > Undo takes it back"
+        elif fits: "Apply the earlier output's edits to " & s.name & " by trace number, as " &
           "one step: Edit > Undo takes it back"
         elif c.traces == 0: "Not offered: how many traces the earlier output had is not " &
           "known, so its trace numbers may not be these"
