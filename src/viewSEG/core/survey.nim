@@ -605,6 +605,24 @@ proc add*(s: var Survey; layer: sink SurveyLayer): SurveyLayerId =
   else: s.layers.add layer
   inc s.revision
 
+proc add*(s: var Survey; layer: sink SurveyLayer; replaced: var SurveyLayer): SurveyLayerId =
+  ## As `add`; the layer `layer` takes the place of, if any, is moved into
+  ## `replaced` (else its id is `NoSurveyLayer`), to be put back
+  ## (`putBack`).
+  replaced = SurveyLayer(id: NoSurveyLayer)
+  let old = if layer.origin == loSurveyFile: s.findFile(layer.path)
+            else: s.findTraces(layer.session)
+  if old >= 0: replaced = move s.layers[old]
+  s.add(layer)
+
+proc putBack*(s: var Survey; id: SurveyLayerId; layer: sink SurveyLayer) =
+  ## Puts `layer` (one `add` replaced, with its own id) back in the place of
+  ## layer `id`, or at the end when `id` is gone.
+  let i = s.find(id)
+  if i >= 0: s.layers[i] = layer
+  else: s.layers.add layer
+  inc s.revision
+
 proc remove*(s: var Survey; id: SurveyLayerId): bool =
   ## Takes layer `id` out; false when there is none.
   let i = s.find(id)

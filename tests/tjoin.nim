@@ -26,8 +26,9 @@
 ##   match), and changes nothing;
 ## - a cancel while the survey files are read, and while the join waits for
 ##   the file, leaves the file as it was and the plot reading it again (also
-##   a record shown meanwhile, which waits for the join without a warning);
-##   a cancel while the step changes the keys (held there by the job hook)
+##   a record shown meanwhile, which waits for the join without a warning),
+##   and puts back the layers of survey files already on the map that the
+##   import's loads replaced; a cancel while the step changes the keys (held there by the job hook)
 ##   is refused, and the step is never abandoned however long it takes;
 ## - the survey's units confirmed with the join label the map;
 ## - an import's distances name their unit (confirmed, else the survey
@@ -45,7 +46,8 @@
 ## said "busy"; with the import's files not loaded (`loadSurvey` left out of
 ## `startJoin`), "the S file is not on the map"; with the layers of a
 ## cancelled import left on the map, "the map holds 2 survey files after the
-## cancel"; with the X file's load checking the records while the import
+## cancel"; with the layers a cancelled import replaced not put back (as at
+## first: taken off with the import's), "the map after the cancel: @[]"; with the X file's load checking the records while the import
 ## runs, "the records checked 2 times"; with the survey files' unit not
 ## taken when none was confirmed, `distancesSayTheirUnit` found the distance
 ## without "ftUS".
@@ -420,6 +422,48 @@ block cancelled:
     st.join(sps(survey.s, survey.r))
     doAssert st.joinReport.outcome == joJoined and st.sessions[0].file.keysRevision == 1
     echo "tjoin: cancelled twice, then joined"
+
+block cancelledPutsBack:
+  # Survey files already on the map, imported again with other line names
+  # (so read again, their layers made from the import's read in place of
+  # theirs) and cancelled after that: the map has its layers back, as they
+  # were (their ids, their points).
+  withFixtures fx:
+    let path = fx.stationsSegd()
+    let survey = fx.surveySps()
+    var st = initAppState()
+    st.opened(path)
+    st.apply Command(kind: ckLoadSurvey, paths: @[survey.s, survey.r])
+    doAssert st.settle(st.surveyFiles == 2 and not st.surveyLoading(survey.s) and
+      not st.surveyLoading(survey.r))
+    var before: seq[(SurveyLayerId, string, int)]
+    for l in st.survey.layers:
+      if l.origin == loSurveyFile:
+        before.add (l.id, l.path, l.points[prSource].len + l.points[prReceiver].len)
+    # the join held at its step by another job reading the file, the files on
+    # the map again from its read
+    gate.close()
+    discard st.jobs.submit(JobSpec(title: "Read it", lane: jlBackground, reads: @[path]),
+      proc (ctx: JobContext) {.gcsafe.} = gate.waitAt(ctx))
+    st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id,
+      joinFiles: sps(survey.s, survey.r), joinOptions: JoinOptions(trailingDigits: true))
+    doAssert st.settle(st.joinUnderWay.step == jpJoining)
+    var replaced = 0
+    for l in st.survey.layers:
+      if l.origin == loSurveyFile and before.allIt(it[0] != l.id): inc replaced
+    doAssert replaced == 2, "the import's loads replaced " & $replaced & " layers"
+    st.apply Command(kind: ckCancelJob, job: st.joinUnderWay.job)
+    doAssert st.settle(st.joinUnderWay.job == NoJob)
+    gate.open()
+    doAssert st.joinReport.outcome == joCancelled
+    doAssert "The survey import was cancelled: stations-only.sgd is as it was, and so is " &
+      "the map." == st.words, st.words
+    var after: seq[(SurveyLayerId, string, int)]
+    for l in st.survey.layers:
+      if l.origin == loSurveyFile:
+        after.add (l.id, l.path, l.points[prSource].len + l.points[prReceiver].len)
+    doAssert after == before, "the map after the cancel: " & $after & ", before: " & $before
+    echo "tjoin: a cancelled import put back the 2 layers it replaced"
 
 block cancelInTheStep:
   # The step that changes the keys runs to its end: a cancel then is refused,

@@ -492,6 +492,9 @@ type
       ## its files' loads onto the map, until their layers come
     added: seq[SurveyLayerId]
       ## the layers they gave (taken out again at a cancel)
+    replaced: seq[tuple[by: SurveyLayerId; layer: SurveyLayer]]
+      ## the layers of the same files they took the place of (put back at a
+      ## cancel or a failure)
     checkLater: bool
       ## a relation file loaded meanwhile: the file's records are checked
       ## once, when the match ends (against the survey imported, or that file)
@@ -3710,7 +3713,13 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
     for c in layer.counts: lost += c.missing + c.zero + c.moved
     let before = state.relationLayer
     let wasId = if before >= 0: state.survey.layers[before].id else: NoSurveyLayer
-    let id = state.survey.add(layer)
+    # An import's layer in place of the same file's keeps the one it
+    # replaces until the import ends: a cancel or a failure puts it back.
+    template j: untyped = state.joining
+    let ours = j.loads.find(job) >= 0 or (job != NoJob and job == j.job)
+    var replaced: SurveyLayer
+    let id = if ours: state.survey.add(layer, replaced) else: state.survey.add(layer)
+    if ours and replaced.id != NoSurveyLayer: j.replaced.add (id, move replaced)
     state.log.add(if lost > 0: sevWarning else: sevInfo, name, text)
     let now = state.relationLayer
     if now >= 0 and state.survey.layers[now].id != wasId:
@@ -4017,8 +4026,22 @@ proc endJoin(state: var AppState; outcome: JoinOutcome; error = "") =
     for job in j.loads:
       discard state.jobs.cancel(job)
       state.droppedLoads.add job
-    for id in j.added: discard state.survey.remove(id)
-    if j.added.len > 0: state.map.followed(state.survey)
+    # its layers taken off, those they replaced put back as they were
+    let before = state.relationLayer
+    let wasId = if before >= 0: state.survey.layers[before].id else: NoSurveyLayer
+    for id in j.added:
+      var back = -1
+      for k in 0 ..< j.replaced.len:
+        if j.replaced[k].by == id: back = k
+      if back >= 0: state.survey.putBack(id, move j.replaced[back].layer)
+      else: discard state.survey.remove(id)
+    if j.added.len > 0:
+      state.map.followed(state.survey)
+      let now = state.relationLayer
+      if now >= 0 and state.survey.layers[now].id != wasId:
+        for s in state.sessions: # against the relation file the map has again
+          if s.id == j.session: j.checkLater = true # (below)
+          elif state.joinedRelations(s.id) < 0: state.checkRecords(s)
     j.loads.setLen 0
   # A relation file loaded while it ran: checked against now, once (a file
   # joined was checked above).
