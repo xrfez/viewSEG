@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.15.0: capabilities | names | processSEG 0.6.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 48 (20 in part) | 142 | 28 (21 in part) | 126 |
+| `built` | 49 (20 in part) | 145 | 30 (23 in part) | 134 |
 | `internal` | 15 | 43 | 4 | 39 |
-| `planned` | 36 | 253 | 47 | 405 |
+| `planned` | 35 | 250 | 45 | 397 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 20 | 356 | 6 | 53 |
 | all | 121 | 804 | 86 | 628 |
@@ -181,7 +181,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 |---|---|---|---|
 | Write traces like the input, any subset and order | `openSeismicWriter(path, like)`, `writeTrace(src, trace, samples)`, `headerOverride`, `SeismicWriter`, `HeaderOverride`, `close` | Export processed traces; export the file without killed traces | planned |
 | Write with in-memory geometry | `writeTrace(..., keys, fields)` | Export with joined geometry and edits | planned |
-| New SEG-Y from keys | `openSeismicWriter(path, SegyOutputOptions)`, `writeTrace(keys, samples)` | Export a selection, a generated pilot or a stack as SEG-Y | planned |
+| New SEG-Y from keys | `openSeismicWriter(path, SegyOutputOptions)`, `writeTrace(keys, samples)` | Operations → References → Generate a reference, and Store as reference | built |
 | New SEG-D Rev 3 from keys | `openSeismicWriter(path, SegdOutputOptions)`, `SegdOutputOptions` (`revision`, `format`, `sampleIntervalUs`, `numSamples`, `units`, `crsText`, `time`), `SegdChannelType` with every channel-type value (`sctAcceleration`, `sctAcousticRange`, `sctAcousticRefMeasured`, `sctAcousticRefNominal`, `sctAngle`, `sctAuxDataTrailer`, `sctCalibration`, `sctClockTimeBreak`, `sctCurrent`, `sctDepth`, `sctEm`, `sctExternalData`, `sctFieldTimeBreak`, `sctOther`, `sctPressure`, `sctRadioRefSweep`, `sctRadioSimilarity`, `sctSeismic`, `sctSignatureFiltered`, `sctSignatureUnfiltered`, `sctSourceBasePlate`, `sctSourceExcitation`, `sctSourceMass`, `sctSourceOther`, `sctSourceOverload`, `sctSourceRefPilot`, `sctSourceRefSweep`, `sctSourceSigEstimated`, `sctSourceSigFiltered`, `sctSourceSigMeasured`, `sctSourceSigUnfiltered`, `sctSourceValve`, `sctTension`, `sctTilt`, `sctTimeBreak`, `sctTimeCounter`, `sctTrueRefSweep`, `sctUnused`, `sctUpHole`, `sctVelocity`, `sctVoltage`, `sctWaterBreak`, `sctWind`, `sctWirelineRefSweep`), `writeTrace(keys, samples, overrides, channelType)` | Export a selection as SEG-D; the synthetic sample set (tools/sampledata) | planned |
 | Per-standard streaming writers | `openSegyWriter`, `openSegdWriter`, `writeSegd`, `openSeg2Writer`, `SegyWriter`, `SegyWriteOptions`, `initSegyWriteOptions`, `tracesWritten`, `SegdWriter`, `SegdWriteOptions`, `writeRecordHeaders`, `endRecord`, `setRev3Trailer`, `computeRev3Sizes`, `MaxFixedBlock`, `Seg2Writer`, `Seg2WriteOptions`, `initSeg2File`, `abandon` | Conversion and the test suite's fixtures | not applicable (the viewer writes through `openSeismicWriter` and `convertFile`; its tests build their fixtures with these) |
 
@@ -356,8 +356,8 @@ name, so these are building blocks for code that works on raw headers.
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Sweep tapers (nine shapes) | `initSweepTaper`, `TaperShape`, `applyTaper`, `taperWeight`, `noTaper`, `SweepTaper`, `checkFits` | Compare pilots: generated pilot's tapers | planned |
-| Sweep generation (linear, dB/octave, dB/Hz, exponential, table) | `linearSweep`, `dbPerOctaveSweep`, `dbPerHzSweep`, `exponentialSweep`, `tableSweep`, `generatePilot`, `sweepSamples`, `SweepSpec`, `SweepLaw`, `SweepPoint`, `sweepLen`, `sweepInto` | Compare pilots: generated source | planned |
+| Sweep tapers (nine shapes) | `initSweepTaper`, `TaperShape`, `applyTaper`, `taperWeight`, `noTaper`, `SweepTaper`, `checkFits` | Operations → References → Generate a reference | built (Operations → References → Generate a reference); planned (the other shapes) |
+| Sweep generation (linear, dB/octave, dB/Hz, exponential, table) | `linearSweep`, `dbPerOctaveSweep`, `dbPerHzSweep`, `exponentialSweep`, `tableSweep`, `generatePilot`, `sweepSamples`, `SweepSpec`, `SweepLaw`, `SweepPoint`, `sweepLen`, `sweepInto` | Operations → References → Generate a reference | built (Operations → References → Generate a reference); planned (table sweeps) |
 | Sweep harmonics (known distortion) | `SweepHarmonic`, `sweepHarmonics`, `sweepHarmonicsInto` | Sample vibrator records with known distortion, to check the vibrator QC | planned |
 | Instantaneous frequency and phase | `frequencyAt`, `phaseAt` | Compare pilots: frequency at the cursor | planned |
 | Recorded pilot from a trace | `pilotFromTrace`, `pilotFromRow`, `sweepFromHeaders`, `energyAbove`, `initPilot`, `Pilot` (`lengthMs`) | Compare pilots: recorded source | planned |

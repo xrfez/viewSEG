@@ -708,7 +708,10 @@ right of that line's first row. A change works it out again.
   arriving at time t steps 360°·t/(4T), at most a quarter turn for any t within the
   trace (length T), so the unwrap cannot alias. Unpadded, a step passes half a turn once
   t is past T/2, and a sweep's phase (which falls all the way) turned and rose there.
-- **Cross-correlation:** the reference is **the record's first auxiliary trace** at first
+- **Cross-correlation:** the reference is the one selected in Operations > References
+  when one is (it says "Reference: <name> (archive)"); a different sample interval is
+  said and not drawn; a shorter reference is zero-padded and a longer one is not cut,
+  as a file's own pilot is), otherwise **the record's first auxiliary trace** at first
   (the window calls it "the pilot" when its SEG-Y trace identification code says sweep, 6;
   a dynamite record's is its time break, so it is "the first auxiliary trace"; SEG-D
   channel types are not read, so a SEG-D one is that too), else the first trace of the window; **The selected trace** makes the

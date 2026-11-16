@@ -45,7 +45,8 @@ shortened in the middle, and at a narrow window the name gives way and the icon 
 Click it for the same items as the Project menu. Rest the pointer on it for the
 project's folder and, in one line, how many survey files and data folders it holds. The
 theme is changed from **View > Theme** and **View > Light / dark**, not from the
-toolbar.
+toolbar. **Operations > References** keeps pilots and sweeps for the plots that need
+one ([References](references.md)).
 
 Files and folders can also be dragged from a file manager and dropped on the window.
 

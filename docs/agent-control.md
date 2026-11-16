@@ -157,6 +157,13 @@ schema (in the tool list) gives every field and value; the most used:
 | `new project` | `projectPath` (the project's folder, made), `projectName` ("" for the folder's), `dataFolders` (none: the folder the file list lists), `useSurvey`, `bringMemory`, `takePresets` | Makes a project as Project > New project does, and opens it; the files open stay open. It writes a new folder only, never into a data folder; what the agent then does in it is for the session (docs/project.md) |
 | `open project` | `projectPath` (a project's folder, or its `project.nif`) | Opens a project as Project > Open project does: the files open and the survey on the map are closed, the project's opened, its survey made from what it keeps (no survey file read) and every file opened matched to it; `wait`, then `state`'s `project` |
 | `close project` | (none) | Closes the project open, as Project > Close project does: its files and survey are closed, the user's windows, presets and filters come back |
+| `list references` | (none) | Reads the reference archive in force (the project's when one is open, otherwise the main archive) and, with a project open, the main archive too |
+| `store reference` | `refStore` (`name`, `trace` a survey-wide id, `fromMs`, `toMs`; `toMs` below 0 keeps the trace's end) | Stores that trace's raw samples (no filters, no gain, no polarity edit), cut to the window, as a named reference. A name already used is refused |
+| `generate reference` | `refGenerate` (`name`, `law`: `linear`, `exponential`, `dB/octave`, `dB/Hz`, `f1Hz`, `f2Hz`, `durationMs`, `dtMs` (0: the file on show), `taperStartMs`, `taperEndMs`, `amplitude` (0 means 1), `boostDb`) | Makes a sweep and stores it. `name` empty: one made from the parameters |
+| `select reference` | `refId` ("" : the file's own pilot) | The reference the plots that need one use. Kept in the project when the user has one open, otherwise in the settings; an agent's choice is for the session |
+| `rename reference` | `refId`, `refNewName` | Renames a reference. A name already used is refused |
+| `delete reference` | `refId` | Removes a reference from the archive in force |
+| `copy reference` | `refId` | Copies a reference of the main archive into the project open |
 | `theme` | `theme` (a theme file's name, as View > Theme lists them: `tokyo-night`, `catppuccin-latte`; `""` follows the system) | Draws the program in that theme, as View > Theme does; for the session only. `state`'s `program` says the theme in effect (`theme`) and the themes there are (`themes`) |
 | `clear edits`, `reverse all`, `back`, `map back`, `hover`, `clear selection`, `close`, `load survey`, `unload survey`, `cancel job`, ... | | As in the windows |
 
