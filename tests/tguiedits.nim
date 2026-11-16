@@ -435,7 +435,7 @@ withFixtures fx:
 # With the example files present (they are local only), the time from a key
 # to the new picture on the Morgantown record, zoomed in on 40 traces, is
 # measured; with `VIEWSEG_SCREENSHOTS=<dir>` the record is saved with one
-# trace killed and one reversed: docs/screenshots/ holds the committed ones.
+# trace killed and one reversed: docs/images/ holds the committed ones.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 

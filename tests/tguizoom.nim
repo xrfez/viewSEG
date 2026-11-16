@@ -625,7 +625,7 @@ main()
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
 # local only), the plot window is saved on a real record at two zoom levels
 # as zoom-*.png, with the pointer on a trace so the status bar reads it out:
-# docs/screenshots/ holds the committed ones.
+# docs/images/ holds the committed ones.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 

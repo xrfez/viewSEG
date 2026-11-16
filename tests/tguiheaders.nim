@@ -66,7 +66,7 @@
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves headers-*.png there, and, with the
 ## example files present (local only), each tab of a SEG-Y and a SEG-D
 ## example (headers-inglewood-*.png, headers-morgantown-*.png: the pictures
-## in docs/screenshots), the Headers window made larger by dragging its
+## in docs/images), the Headers window made larger by dragging its
 ## splitters and taken alone, the files shown from a folder of the
 ## fixtures (linked), so that no picture names the computer's folders;
 ## Morgantown also joined with its survey files, the headers' coordinates

@@ -266,7 +266,7 @@ withFixtures fx:
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
 # local only), the plot's menu is saved open over a trace of the Morgantown
 # record (menu-morgantown.png), and the display header's menu
-# (header-menu-morgantown.png): docs/screenshots/ holds the committed ones.
+# (header-menu-morgantown.png): docs/images/ holds the committed ones.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 

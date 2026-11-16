@@ -359,7 +359,7 @@ block buttonsWithoutTheirKeys:
 # showing line, point and component), and, when the example files are
 # present (they are local only), the popover of the user's own keys on a
 # real record sorted by offset, opened by the strip's Custom... button
-# (sort-morgantown.png): docs/screenshots/
+# (sort-morgantown.png): docs/images/
 # holds the committed ones.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"

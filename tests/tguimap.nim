@@ -564,7 +564,7 @@ linked()
 # its record open, in the "Plot and map" layout: at fit with the pointer on
 # a trace in the plot (its source and receiver lit up on the map), and
 # zoomed in on the record's source with the pointer on a receiver (what the
-# map says of it): docs/screenshots/ holds the committed ones.
+# map says of it): docs/images/ holds the committed ones.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 

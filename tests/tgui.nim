@@ -18,7 +18,7 @@
 ## not Everforest changes the background and the accent; 200 % grows the bars.
 ##
 ## `VIEWSEG_SCREENSHOTS=<dir>` also saves shell-dark.png, shell-light.png and
-## shell-dark-200.png there (docs/screenshots/ holds the committed ones).
+## shell-dark-200.png there (docs/images/ holds the committed ones).
 ##
 ## Runs alone: it asserts that the frontend warns of nothing, and a debug build
 ##   warns of a frame over its 50-ms budget, as a first frame on a busy machine

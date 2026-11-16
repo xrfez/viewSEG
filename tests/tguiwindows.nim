@@ -283,7 +283,7 @@ withFixtures fx:
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
 # local only), the menus are saved open over the Morgantown record: File >
 # Import (menus-import.png), File > Export (menus-export.png) and Window
-# (menus-window.png); docs/screenshots/ holds the committed ones.
+# (menus-window.png); docs/images/ holds the committed ones.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 

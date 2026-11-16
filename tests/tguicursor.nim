@@ -264,7 +264,7 @@ withFixtures fx:
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
 # local only), the cursor's time line is saved on the Morgantown record,
 # zoomed in, as wiggles on paper (cursor-morgantown.png) and as density on
-# the theme's colours (cursor-morgantown-density.png): docs/screenshots/
+# the theme's colours (cursor-morgantown-density.png): docs/images/
 # holds the committed ones.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"

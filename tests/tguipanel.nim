@@ -318,7 +318,7 @@ withFixtures fx:
 # ------------------------------------------------- screenshots of real data --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
 # local only), the plot window is saved on real records as record-*.png:
-# docs/screenshots/ holds the committed ones.
+# docs/images/ holds the committed ones.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 

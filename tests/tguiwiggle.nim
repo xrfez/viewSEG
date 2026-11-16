@@ -548,7 +548,7 @@ withFixtures fx:
 # local only), the plot window is saved zoomed in on the Morgantown record in
 # every mode, and as it opens (at the wiggle mode's limit, a trace a pixel),
 # one trace hovered and one selected, as wiggle-*.png
-# (docs/screenshots/ holds the committed ones), and the frame times while
+# (docs/images/ holds the committed ones), and the frame times while
 # panning in each mode are printed.
 
 const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"

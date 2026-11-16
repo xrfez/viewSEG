@@ -7,7 +7,9 @@
 ## Seen to fail: with a comment's alignment changed by hand in
 ## `tests/utils/waiting.nim`, "not as nimpretty writes it: tests/utils/
 ## waiting.nim"; with `src/viewSEG/core/state.nim` back on the list after it
-## was formatted, "formatted now: take it off NotYet".
+## was formatted, "formatted now: take it off NotYet"; with
+## `docs/screenshots/old.png` written into README.md, the public-docs check
+## named that mention and the image link that does not resolve.
 
 import std/[algorithm, os, osproc, strutils, tempfiles]
 
@@ -66,3 +68,68 @@ else:
     echo "tformat: ", files.len - NotYet.len, " of ", files.len, " files as nimpretty writes them"
   finally:
     removeDir(tmp)
+
+proc publicDocs(): seq[string] =
+  ## README, docs (not the old picture folder), and the READMEs a reader of
+  ## the repository sees beside assets, samples and vendormaps.
+  result.add root / "README.md"
+  result.add root / "samples" / "README.md"
+  result.add root / "vendormaps" / "README.md"
+  let shots = root / "docs" / "screenshots"
+  for f in walkDirRec(root / "docs"):
+    if not f.startsWith(shots):
+      result.add f
+  for f in walkDirRec(root / "assets"):
+    if f.endsWith("README.md"):
+      result.add f
+
+proc imageTargets(text: string): seq[string] =
+  ## Markdown image links and `<img src>`, the target only.
+  var i = 0
+  while true:
+    let at = text.find("![", i)
+    if at < 0: break
+    let open = text.find("](", at + 2)
+    if open < 0: break
+    let close = text.find(')', open + 2)
+    if close < 0: break
+    var target = text[open + 2 ..< close].strip
+    let space = target.find(' ')
+    if space >= 0: target = target[0 ..< space].strip
+    if target.len > 0: result.add target
+    i = close + 1
+  i = 0
+  while true:
+    let at = text.find("<img", i)
+    if at < 0: break
+    let src = text.find("src=", at + 4)
+    if src < 0 or src > at + 200: break
+    let q = text[src + 4]
+    if q notin {'\'', '"'}: break
+    let close = text.find(q, src + 5)
+    if close < 0: break
+    result.add text[src + 5 ..< close]
+    i = close + 1
+
+block publicDocsStayLocal:
+  ## No public page names the old picture folder, and every image link
+  ## resolves to a file. Seen to fail with `docs/screenshots/old.png` written
+  ## into README.md.
+  var problems: seq[string]
+  for f in publicDocs():
+    if f.splitFile.ext notin [".md", ".html", ".txt", ".nif", ".toml"]:
+      continue
+    let text = readFile(f)
+    let rel = f.relativePath(root)
+    if "docs/screenshots" in text:
+      problems.add rel & " mentions docs/screenshots"
+    for target in imageTargets(text):
+      if target.startsWith("http://") or target.startsWith("https://") or
+          target.startsWith("data:"):
+        problems.add rel & " image is not a file: " & target
+      else:
+        let path = absolutePath(f.parentDir / target)
+        if not fileExists(path):
+          problems.add rel & " image link does not resolve: " & target
+  doAssert problems.len == 0, "\n" & problems.join("\n")
+  echo "tformat: public docs name no private pictures, image links resolve"
