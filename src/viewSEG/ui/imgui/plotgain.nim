@@ -13,7 +13,7 @@
 import std/math
 import imguin/cimgui
 import ../../core/[gainlabel, readout, state]
-import ../../view/theme
+import ../../view/[strip, theme]
 import chrome, style
 
 const
@@ -219,13 +219,28 @@ proc settings(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Comm
   of dgAuto: discard # effectiveGain never gives it
   drawClip(p, d, marks, cmds, notes)
 
+type GainBox* = object
+  ## The gain amount's box between frames: what it holds while it is edited.
+  text*: array[32, char]
+  editing*: bool
+
+proc fill(box: var GainBox; text: string) =
+  let n = min(text.len, box.text.high)
+  for i in 0 ..< n: box.text[i] = text[i]
+  box.text[n] = '\0'
+
+func typed(box: GainBox): string =
+  for c in box.text:
+    if c == '\0': break
+    result.add c
+
 proc dimText(text: string; t: Theme) =
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextUnformatted(text.cstring, nil)
   igPopStyleColor(1)
 
-proc drawGainControls*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Command];
-    notes: var seq[string]) =
+proc drawGainControls*(p: Panel; box: var GainBox; t: Theme; marks: var Marks;
+    cmds: var seq[Command]; notes: var seq[string]) =
   ## The gain drop-down (a checkbox for letting viewSEG choose, then the six
   ## types, then the type's settings), then the gain amount: -, a box in dB, +.
   let d = p.layers[0].display
@@ -274,19 +289,28 @@ proc drawGainControls*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Comma
   marks.mark("plot.gain")
   tip("Gain: how amplitudes are scaled for display. Let viewSEG choose, or pick a type; " &
     "its settings are in this list.")
-  # the amount: the buttons repeat while held, 12 dB a step with Shift
+  # the amount: the buttons repeat while held, 12 dB a step with Shift.
+  # The unit is in the box ("+0.0 dB"); a bare number still applies.
   let step = if igGetIO_Nil().KeyShift: GainShiftStepDb else: GainStepDb
-  igSameLine(0, 8)
+  igSameLine(0, 2)
   igPushItemFlag(ImGui_ItemFlags_ButtonRepeat.cint, true)
   if igButton("-##gainless", ImVec2_c(x: 0, y: 0)):
     p.send(d.withGainDb(d.gainDb - step), cmds)
   marks.mark("plot.gain less")
   tip("Less gain, " & significant(GainStepDb, 2) & " dB; held, it repeats (" & dbKeysTip & ")")
   igSameLine(0, 2)
-  var db = cdouble(d.gainDb)
-  igSetNextItemWidth(round(igCalcTextSize("+000.0", nil, false, -1).x + 2 * style.FramePadding.x))
-  if igInputDouble("##gaindb", addr db, 0, 0, "%+.1f", 0) and float64(db) != d.gainDb:
-    p.send(d.withGainDb(float64(db)), cmds) # live: a scale only, nothing is read
+  if not box.editing: box.fill(gainDbText(d.gainDb))
+  igSetNextItemWidth(round(igCalcTextSize("+000.0 dB", nil, false, -1).x +
+    2 * style.FramePadding.x))
+  discard igInputText("##gaindb", cast[cstring](addr box.text[0]), csize_t(box.text.len),
+    ImGui_InputTextFlags_AutoSelectAll.cint, nil, nil)
+  box.editing = igIsItemActive()
+  if igIsItemDeactivatedAfterEdit():
+    let typed = parseGainDb(box.typed)
+    if typed.isNaN:
+      notes.add "The gain amount needs a number of dB, not \"" & box.typed & "\"."
+    elif typed != d.gainDb:
+      p.send(d.withGainDb(typed), cmds) # a scale only, nothing is read
   marks.mark("plot.gain dB")
   tip("Gain amount in dB, -" & significant(MaxGainDb) & " to +" & significant(MaxGainDb) &
     ", on top of any gain type: it rescales the display at once (" & dbKeysTip & ")")
@@ -296,8 +320,6 @@ proc drawGainControls*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Comma
   marks.mark("plot.gain more")
   tip("More gain, " & significant(GainStepDb, 2) & " dB; held, it repeats (" & dbKeysTip & ")")
   igPopItemFlag()
-  igSameLine(0, 4)
-  igTextUnformatted("dB", nil)
 
 proc gainKeys*(p: Panel; cmds: var seq[Command]) =
   ## The gain amount's keys, while the plot window has the focus: `]` or

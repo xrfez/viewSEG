@@ -287,10 +287,9 @@ withFixtures fx:
   block narrowWindowWrapsTheStrip:
     # In a narrow window the strip's controls wrap onto more lines, inside
     # the window, above the plot; nothing makes the window scroll.
-    const strip = ["plot.Greyscale density", "plot.Wiggle", "plot.trace scale",
-      "plot.time scale", "plot.zoom out", "plot.zoom in", "plot.fit", "plot.back",
-      "plot.sort.Line/Station", "plot.sort.By Flag", "plot.sort.By Component", "plot.sort.custom",
-      "plot.Cursor time line", "plot.more"]
+    const strip = ["plot.Greyscale density", "plot.Wiggle", "plot.zoom out", "plot.zoom in",
+      "plot.fit", "plot.back", "plot.sort", "plot.record", "plot.gain", "plot.filters",
+      "plot.more"]
     var marks: seq[(string, Rect)]
     let start = getMonoTime()
     proc onNarrow(f: FrameInfo) =

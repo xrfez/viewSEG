@@ -232,15 +232,54 @@ proc main() =
       v.traces = Span(lo: 49.5, hi: 79.5)
       f.showView(v), proc (f: FrameInfo): bool =
         f.answered and f.panel.view.traces.lo == 49.5)
+    step("to the gear", proc (f: FrameInfo) =
+      f.moveMouse(f.centreOf("plot.more")), proc (f: FrameInfo): bool = true)
+    step("the gear", proc (f: FrameInfo) =
+      f.click(f.centreOf("plot.more")), proc (f: FrameInfo): bool =
+      f.markOf("plot.more popover").size.x > 100 and wait > 4)
+    var tabAt: Vec2
+    var tabHeld = 0
+    step("the Scales tab steady", proc (f: FrameInfo) =
+      let c = f.centreOf("plot.more tab scales")
+      tabAt = c
+      tabHeld = 0
+      f.moveMouse(c), proc (f: FrameInfo): bool =
+      let c = f.centreOf("plot.more tab scales")
+      if abs(c.x - tabAt.x) < 1 and abs(c.y - tabAt.y) < 1: inc tabHeld
+      else:
+        tabAt = c
+        f.moveMouse(c)
+        tabHeld = 0
+      tabHeld >= 2)
+    step("the Scales tab", proc (f: FrameInfo) =
+      f.pressMouse(tabAt, true)
+      f.pressMouse(tabAt, false), proc (f: FrameInfo): bool =
+      f.markOf("plot.trace scale").size.x > 0)
+    var boxAt: Vec2
+    var boxHeld = 0
     step("to the trace scale box", proc (f: FrameInfo) =
-      f.moveMouse(f.centreOf("plot.trace scale")), proc (f: FrameInfo): bool = true)
+      boxAt = f.centreOf("plot.trace scale")
+      boxHeld = 0
+      f.moveMouse(boxAt), proc (f: FrameInfo): bool =
+      let c = f.centreOf("plot.trace scale")
+      if abs(c.x - boxAt.x) < 1 and abs(c.y - boxAt.y) < 1: inc boxHeld
+      else:
+        boxAt = c
+        f.moveMouse(c)
+        boxHeld = 0
+      boxHeld >= 2)
     step("the trace scale box", proc (f: FrameInfo) =
-      f.click(f.centreOf("plot.trace scale")), proc (f: FrameInfo): bool = f.typing)
+      f.pressMouse(boxAt, true)
+      f.pressMouse(boxAt, false), proc (f: FrameInfo): bool = f.typing)
     step("typing", proc (f: FrameInfo) = f.typeText("100000"),
       proc (f: FrameInfo): bool = true)
     step("Enter", proc (f: FrameInfo) = f.chord(skEnter), proc (f: FrameInfo): bool =
       result = f.atLimit("typed scale") and f.tracePanel.drawnView.traces.lo == 49.5)
 
+    step("close the gear", proc (f: FrameInfo) =
+      f.pressKey(skEscape, true)
+      f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
+      f.markOf("plot.more popover").size.x == 0)
     step("the fit button stops at the limit", proc (f: FrameInfo) =
       var v = f.panel.view
       v.traces = Span(lo: 149.5, hi: 159.5)

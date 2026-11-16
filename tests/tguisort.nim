@@ -1,18 +1,18 @@
-## The sort buttons in the running frontend, headless, driven by SDL mouse
+## The sort drop-down in the running frontend, headless, driven by SDL mouse
 ## events as the user's mouse sends them, on a record whose sets of
 ## components are in a scrambled order (`mixedOrderSegd`): each of the
-## strip's three buttons (Line/Station, By Flag, By Component) sorts the
-## traces in its known order, is then drawn selected while the others are
-## not, and the trace under the pointer (the pick, which the status bar reads
+## list's three presets (Line/Station, By Flag, By Component) sorts the
+## traces in its known order, and the drop-down then says that preset, and
+## the trace under the pointer (the pick, which the status bar reads
 ## out) and the display header's values there are the ones of that order,
 ## and so is the hover, drawn in the hover colour there and not three traces
 ## away;
-## clicking the selected button again gives the file's order back; the
-## strip's fourth button, Custom..., opens the popover of the user's own
+## picking the preset already in use does nothing; "File order" gives the
+## file's order back; Custom... opens the popover of the user's own
 ## keys, where a key's direction is turned to descending and "Sort" sorts
-## by them, with Custom... drawn selected and no other button; on traces
-## with none of a button's keys (the survey has
-## no receiver line, point or component) the buttons are greyed out and a
+## by them, and the drop-down then says "custom"; on traces
+## with none of a preset's keys (the survey has
+## no receiver line, point or component) the rows are greyed out and a
 ## click changes nothing; and the file is never changed.
 ##
 ## Seen to fail: with the buttons not drawn selected (`toggle` ignoring
@@ -113,14 +113,15 @@ proc main() =
       float64(n) / max(1.0, float64(r.size.x * r.size.y))
 
     proc checkLit(f: FrameInfo; selected: int) =
-      ## Button `selected` (-1: none; `SortPresets.len`: Custom...) is drawn
-      ## on the selection colour, the others are not.
-      for i in 0 .. SortPresets.len:
-        let name = if i < SortPresets.len: SortPresets[i].name else: "Custom..."
-        let share = f.lit(f.markOf(if i < SortPresets.len: "plot.sort." & name
-                                   else: "plot.sort.custom"))
-        if i == selected: doAssert share > 0.4, name & " is not drawn selected: " & $share
-        else: doAssert share < 0.05, name & " is drawn selected: " & $share
+      ## The drop-down says the order in use (`selected`: -1 the file's
+      ## order; `SortPresets.len` the user's own keys).
+      let want =
+        if selected < 0: "Sort: file order"
+        elif selected < SortPresets.len: "Sort: " & SortPresets[selected].name
+        else: "Sort: custom"
+      doAssert f.tracePanel.sortShown == want, "the drop-down says " &
+        f.tracePanel.sortShown & ", not " & want
+      doAssert f.markOf("plot.sort").size.x > 0, "the sort drop-down is not drawn"
       inc looked
 
     proc pointAt(f: FrameInfo; position: int): Vec2 =
@@ -194,8 +195,21 @@ proc main() =
       ## Steps: the pointer over a few positions, the first of them 0.
       for position in [0, 5, 13, 36, 71]: pickStep(name, position, selected)
 
+    proc openRow(name, mark: string) =
+      ## Opens the drop-down, if the row is not already shown. The pointer
+      ## moves a frame before the click, as the mouse does.
+      step("point at the sort list: " & name, proc (f: FrameInfo) =
+        if f.markOf(mark).size.x > 0: return
+        let combo = f.markOf("plot.sort")
+        doAssert combo.size.x > 0, "no sort drop-down"
+        f.moveMouse(combo.centre), proc (f: FrameInfo): bool = true)
+      step("open the sort list: " & name, proc (f: FrameInfo) =
+        if f.markOf(mark).size.x == 0: f.click(f.markOf("plot.sort").centre),
+        proc (f: FrameInfo): bool = f.markOf(mark).size.x > 0)
+
     proc clickPreset(i: int) =
       let s = SortPresets[i]
+      openRow(s.name, "plot.sort." & s.name)
       step("point at " & s.name, proc (f: FrameInfo) =
         f.moveMouse(f.markOf("plot.sort." & s.name).centre), proc (f: FrameInfo): bool = true)
       step("click " & s.name, proc (f: FrameInfo) =
@@ -211,24 +225,33 @@ proc main() =
         plot = f.markOf("plot.data")
         theme = f.theme
         want = seismic
-        for s in SortPresets:
-          doAssert f.markOf("plot.sort." & s.name).size.x > 0, "no " & s.name & " button"
+        doAssert f.markOf("plot.sort").size.x > 0, "no sort drop-down"
+        doAssert f.tracePanel.sortShown == "Sort: file order", f.tracePanel.sortShown
         f.apply Command(kind: ckHeader, panel: MainPanel, header: HeaderChoice(auto: false,
           fields: @[hfRcvLine, hfRcvPoint, hfComponent])))
     step("the header's rows", noop, proc (f: FrameInfo): bool = f.answered)
     checkPicks("the file's order", -1)
     for i in 0 ..< SortPresets.len: clickPreset(i)
-    # By Component is selected: a click on it gives the file's order back
+    # By Component is in use: picking it again does nothing; File order
+    # gives the file's order back
     let last = SortPresets[^1]
+    openRow(last.name & " again", "plot.sort." & last.name)
     step("point at " & last.name & " again", proc (f: FrameInfo) =
       f.moveMouse(f.markOf("plot.sort." & last.name).centre), proc (f: FrameInfo): bool = true)
-    step("click again: the file's order", proc (f: FrameInfo) =
+    step("the preset in use does nothing", proc (f: FrameInfo) =
       f.click(f.markOf("plot.sort." & last.name).centre), proc (f: FrameInfo): bool =
+      f.panel.layers[0].order == last.keys and f.answered)
+    openRow("File order", "plot.sort.file order")
+    step("point at File order", proc (f: FrameInfo) =
+      f.moveMouse(f.markOf("plot.sort.file order").centre), proc (f: FrameInfo): bool = true)
+    step("click File order: the file's order", proc (f: FrameInfo) =
+      f.click(f.markOf("plot.sort.file order").centre), proc (f: FrameInfo): bool =
       result = f.panel.layers[0].order.len == 0 and f.answered
       if result: want = seismic)
     checkPicks("the file's order again", -1)
     clickPreset(SortPresets.high)
-    # the user's own keys, from the strip's Custom... button
+    # the user's own keys, from the drop-down's Custom... row
+    openRow("Custom...", "plot.sort.custom")
     step("point at Custom...", proc (f: FrameInfo) =
       f.moveMouse(f.markOf("plot.sort.custom").centre), proc (f: FrameInfo): bool = true)
     step("the popover opens", proc (f: FrameInfo) =
@@ -298,15 +321,27 @@ block buttonsWithoutTheirKeys:
       inc wait
       case stage
       of 0:
-        if p.laidOut and f.markOf("plot.sort.Line/Station").size.x > 0 and wait > 10:
-          b = f.markOf("plot.sort.Line/Station").centre
+        if p.laidOut and f.markOf("plot.sort").size.x > 0 and wait > 10:
+          b = f.markOf("plot.sort").centre
           f.moveMouse(b)
           (stage, wait, since) = (1, 0, getMonoTime())
       of 1:
-        if wait == 3: # once: a second click on a selected button would undo it
+        if wait > 2:
+          f.pressMouse(b, true)
+          f.pressMouse(b, false)
+          (stage, wait, since) = (2, 0, getMonoTime())
+      of 2:
+        if f.markOf("plot.sort.Line/Station").size.x > 0:
+          b = f.markOf("plot.sort.Line/Station").centre
+          f.moveMouse(b)
+          (stage, wait, since) = (3, 0, getMonoTime())
+      of 3:
+        if wait > 2:
           f.pressMouse(b, true)
           f.pressMouse(b, false)
           inc clicks
+          (stage, wait, since) = (4, 0, getMonoTime())
+      of 4:
         if wait > 12:
           order = p.layers[0].order
           f.stop()
@@ -315,7 +350,7 @@ block buttonsWithoutTheirKeys:
     let code = run(RunOptions(openPaths: @[fx.surveySegy()],
       theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
       indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
-    doAssert code == 0 and stage == 1 and clicks == 1, "stage " & $stage
+    doAssert code == 0 and stage == 4 and clicks == 1, "stage " & $stage
     doAssert order.len == 0, "a greyed-out button sorted: " & $order
 
 # ------------------------------------------------------------ screenshots --
@@ -375,10 +410,16 @@ proc sortShot(path, file: string; order: seq[SortKey]; header: seq[HeaderField];
         next(if popover: 2 else: 5)
     of 2:
       if wait == 3:
-        q = f.markOf("plot.sort.custom").centre
+        q = f.markOf("plot.sort").centre
         f.moveMouse(q)
         next 3
     of 3:
+      if wait == 3: f.click(q)
+      if f.markOf("plot.sort.custom").size.x > 0:
+        q = f.markOf("plot.sort.custom").centre
+        f.moveMouse(q)
+        next 4
+    of 4:
       if wait == 3: f.click(q)
       if wait > 6 and f.markOf("plot.sort keys").size.x > 0:
         let r = f.markOf("plot.sort keys")

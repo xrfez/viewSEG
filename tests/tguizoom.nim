@@ -320,15 +320,55 @@ proc main() =
         doAssert false, "the boxes show " & tr & " and " & tm & ", not " & wantTr & " and " &
           wantTm)
 
-    step("typeTraceScale", proc (f: FrameInfo) =
+    step("to the gear", proc (f: FrameInfo) =
+      let b = f.markOf("plot.more")
+      doAssert b.size.x > 0, "no gear"
+      f.moveMouse(vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)),
+      proc (f: FrameInfo): bool = true)
+    step("the gear", proc (f: FrameInfo) =
+      let b = f.markOf("plot.more")
+      f.click(vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)), proc (f: FrameInfo): bool =
+      f.markOf("plot.more popover").size.x > 100 and wait > 4)
+    var tabAt: Vec2
+    var tabHeld = 0
+    step("to the Scales tab", proc (f: FrameInfo) =
+      let b = f.markOf("plot.more tab scales")
+      doAssert b.size.x > 0, "no Scales tab"
+      tabAt = vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)
+      tabHeld = 0
+      f.moveMouse(tabAt), proc (f: FrameInfo): bool =
+      let b = f.markOf("plot.more tab scales")
+      let c = vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)
+      if abs(c.x - tabAt.x) < 1 and abs(c.y - tabAt.y) < 1: inc tabHeld
+      else:
+        tabAt = c
+        f.moveMouse(c)
+        tabHeld = 0
+      tabHeld >= 2)
+    step("the Scales tab", proc (f: FrameInfo) =
+      f.pressMouse(tabAt, true)
+      f.pressMouse(tabAt, false), proc (f: FrameInfo): bool =
+      f.markOf("plot.trace scale").size.x > 0)
+
+    var boxAt: Vec2
+    var boxHeld = 0
+    step("to the trace scale box", proc (f: FrameInfo) =
       let b = f.markOf("plot.trace scale")
       doAssert b.size.x > 0, "no trace scale box"
-      let c = vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)
-      f.moveMouse(c), proc (f: FrameInfo): bool = true)
-    step("typeTraceScale", proc (f: FrameInfo) =
+      boxAt = vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)
+      boxHeld = 0
+      f.moveMouse(boxAt), proc (f: FrameInfo): bool =
       let b = f.markOf("plot.trace scale")
-      f.click(vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)), proc (f: FrameInfo): bool =
-      true)
+      let c = vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)
+      if abs(c.x - boxAt.x) < 1 and abs(c.y - boxAt.y) < 1: inc boxHeld
+      else:
+        boxAt = c
+        f.moveMouse(c)
+        boxHeld = 0
+      boxHeld >= 2)
+    step("the trace scale box", proc (f: FrameInfo) =
+      f.pressMouse(boxAt, true)
+      f.pressMouse(boxAt, false), proc (f: FrameInfo): bool = f.typing)
     step("typeTraceScale", proc (f: FrameInfo) =
       was = f.panel.view
       doAssert f.typing, "the trace scale box does not have the keyboard"
@@ -342,14 +382,22 @@ proc main() =
           $traceScale(v, DefaultDpi, ScaleUnits()) & " traces/in"
         doAssert v.traces.lo == was.traces.lo and v.timeMs == was.timeMs, $v)
 
-    step("typeTimeScale", proc (f: FrameInfo) =
+    step("to the time scale box", proc (f: FrameInfo) =
       let b = f.markOf("plot.time scale")
-      f.moveMouse(vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)),
-      proc (f: FrameInfo): bool = true)
-    step("typeTimeScale", proc (f: FrameInfo) =
+      boxAt = vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)
+      boxHeld = 0
+      f.moveMouse(boxAt), proc (f: FrameInfo): bool =
       let b = f.markOf("plot.time scale")
-      f.click(vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)), proc (f: FrameInfo): bool =
-      true)
+      let c = vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)
+      if abs(c.x - boxAt.x) < 1 and abs(c.y - boxAt.y) < 1: inc boxHeld
+      else:
+        boxAt = c
+        f.moveMouse(c)
+        boxHeld = 0
+      boxHeld >= 2)
+    step("the time scale box", proc (f: FrameInfo) =
+      f.pressMouse(boxAt, true)
+      f.pressMouse(boxAt, false), proc (f: FrameInfo): bool = f.typing)
     step("typeTimeScale", proc (f: FrameInfo) =
       was = f.panel.view
       f.typeText("100"), proc (f: FrameInfo): bool = true)
@@ -363,8 +411,11 @@ proc main() =
 
     step("aBadScaleIsSaid", proc (f: FrameInfo) =
       let b = f.markOf("plot.time scale")
-      f.click(vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)), proc (f: FrameInfo): bool =
-      true)
+      boxAt = vec2(b.pos.x + b.size.x / 2, b.pos.y + b.size.y / 2)
+      f.moveMouse(boxAt), proc (f: FrameInfo): bool = true)
+    step("aBadScaleIsSaid", proc (f: FrameInfo) =
+      f.pressMouse(boxAt, true)
+      f.pressMouse(boxAt, false), proc (f: FrameInfo): bool = f.typing)
     step("aBadScaleIsSaid", proc (f: FrameInfo) =
       was = f.panel.view
       f.typeText("-"), proc (f: FrameInfo): bool = true)
@@ -397,6 +448,10 @@ proc main() =
         doAssert abs(tv.size.y - v.size.y * f.panel.view.timeMs.width / all.timeMs.width) < 1,
           $tv & " on " & $v)
 
+    step("close the gear", proc (f: FrameInfo) =
+      f.pressKey(skEscape, true)
+      f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
+      f.markOf("plot.more popover").size.x == 0)
     step("thumbDrags", proc (f: FrameInfo) =
       let th = f.markOf("plot.thumb.traces")
       grab = vec2(round(th.pos.x + th.size.x / 2), round(th.pos.y + th.size.y / 2))

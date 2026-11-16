@@ -1,10 +1,10 @@
 ## The Seismic window's strip at the program's first window size (1280 x
 ## 800, the windows as at a first start), on a record with auxiliary traces
-## (so the Seismic and Aux toggles are in it): it takes three lines, with
-## no filter and with filters whose description is long (a band-pass, two
-## notches and the DC removal), applied and shown raw. A fourth line would
+## (so the Seismic and Aux toggles are in it): those toggles take a third
+## line. A record without auxiliary traces takes two. A fourth line would
 ## take its height from the plot, which then no longer shows a whole record
-## at its first scale.
+## at its first scale. The measurement below is with and without a long
+## filter description.
 ##
 ## The other window tests draw at 1280 x 900 or wider, measure from the
 ## plot's own rectangle and open records without auxiliary traces, so a
@@ -22,11 +22,11 @@ import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
 
 const
-  StripMarks = ["plot.Greyscale density", "plot.Time across", "plot.traces.Seismic",
-    "plot.traces.Aux", "plot.overlap", "plot.filters", "plot.filters raw", "plot.gain",
-    "plot.gain dB", "plot.trace scale", "plot.time scale", "plot.zoom out", "plot.back",
-    "plot.record", "plot.next record", "plot.sort.custom", "plot.more"]
-    ## the first and last control of each of the strip's groups
+  StripMarks = ["plot.previous record", "plot.next record", "plot.zoom out", "plot.back",
+    "plot.Greyscale density", "plot.Negative fill", "plot.gain", "plot.gain more",
+    "plot.filters", "plot.filters raw", "plot.sort", "plot.traces.Seismic",
+    "plot.traces.Aux", "plot.more"]
+    ## the first and last control of each of the strip's groups, and the gear
 
 template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
 

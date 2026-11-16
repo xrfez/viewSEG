@@ -91,14 +91,43 @@ withFixtures fx:
       f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
       return
     result = f.swings(1, "overlap 1"))
-  step("to +", proc (f: FrameInfo) = f.moveMouse(f.markOf("plot.overlap more").centre),
-    proc (f: FrameInfo): bool = quiet > 2)
-  step("+", proc (f: FrameInfo) = f.click(f.markOf("plot.overlap more").centre),
-    proc (f: FrameInfo): bool = f.swings(1.25, "+"))
-  step("to the box", proc (f: FrameInfo) = f.moveMouse(f.markOf("plot.overlap").centre),
-    proc (f: FrameInfo): bool = quiet > 2)
-  step("the box", proc (f: FrameInfo) = f.click(f.markOf("plot.overlap").centre),
-    proc (f: FrameInfo): bool = f.typing)
+  step("to the gear", proc (f: FrameInfo) =
+    f.moveMouse(f.markOf("plot.more").centre), proc (f: FrameInfo): bool = true)
+  step("the gear", proc (f: FrameInfo) = f.click(f.markOf("plot.more").centre),
+    proc (f: FrameInfo): bool =
+    # the popover's place is set from its size last frame: wait until that
+    # size is known, so the tab does not jump out from under the pointer
+    f.markOf("plot.more popover").size.x > 100 and wait > 4)
+  step("to Traces", proc (f: FrameInfo) =
+    f.moveMouse(f.markOf("plot.more tab traces").centre), proc (f: FrameInfo): bool =
+    wait > 2)
+  step("Traces", proc (f: FrameInfo) = f.click(f.markOf("plot.more tab traces").centre),
+    proc (f: FrameInfo): bool = f.markOf("plot.overlap").size.x > 0)
+  var aimed: Vec2
+  var held = 0
+  proc aim(mark: string) =
+    ## Moves to `mark` and waits until it has stopped moving (the gear
+    ## popover's place is set from its size last frame).
+    held = 0
+    step("to " & mark, proc (f: FrameInfo) =
+      let r = f.markOf(mark)
+      doAssert r.size.x > 0, mark & " is not shown"
+      aimed = r.centre
+      f.moveMouse(aimed), proc (f: FrameInfo): bool =
+      let c = f.markOf(mark).centre
+      if abs(c.x - aimed.x) < 1 and abs(c.y - aimed.y) < 1: inc held
+      else:
+        aimed = c
+        f.moveMouse(c)
+        held = 0
+      held >= 2)
+  proc hit(mark: string; done: proc (f: FrameInfo): bool) =
+    aim(mark)
+    step(mark, proc (f: FrameInfo) =
+      f.pressMouse(aimed, true)
+      f.pressMouse(aimed, false), done)
+  hit("plot.overlap more", proc (f: FrameInfo): bool = f.swings(1.25, "+"))
+  hit("plot.overlap", proc (f: FrameInfo): bool = f.typing)
   step("typed", proc (f: FrameInfo) =
     f.pressKey(skCtrl, true, {smCtrl}) # every character in the box, replaced
     f.typeText("a")
@@ -106,14 +135,8 @@ withFixtures fx:
     f.typeText("0.5"), proc (f: FrameInfo): bool = quiet > 2)
   step("typed 0.5", proc (f: FrameInfo) = f.chord(skEnter),
     proc (f: FrameInfo): bool = f.swings(0.5, "typed 0.5"))
-  step("to -", proc (f: FrameInfo) = f.moveMouse(f.markOf("plot.overlap less").centre),
-    proc (f: FrameInfo): bool = quiet > 2)
-  step("-", proc (f: FrameInfo) = f.click(f.markOf("plot.overlap less").centre),
-    proc (f: FrameInfo): bool = f.overlap == 0.25 and f.settled)
-  step("to the box again", proc (f: FrameInfo) = f.moveMouse(f.markOf("plot.overlap").centre),
-    proc (f: FrameInfo): bool = quiet > 2)
-  step("the box again", proc (f: FrameInfo) = f.click(f.markOf("plot.overlap").centre),
-    proc (f: FrameInfo): bool = f.typing)
+  hit("plot.overlap less", proc (f: FrameInfo): bool = f.overlap == 0.25 and f.settled)
+  hit("plot.overlap", proc (f: FrameInfo): bool = f.typing)
   step("typed 50", proc (f: FrameInfo) =
     f.pressKey(skCtrl, true, {smCtrl})
     f.typeText("a")
@@ -130,11 +153,8 @@ withFixtures fx:
     d.mode = dmDensity
     f.apply(Command(kind: ckDisplay, panel: MainPanel, display: d)),
     proc (f: FrameInfo): bool = f.panel.layers[0].display.mode == dmDensity and quiet > 2)
-  step("to + in density", proc (f: FrameInfo) =
-    f.moveMouse(f.markOf("plot.overlap more").centre), proc (f: FrameInfo): bool = quiet > 2)
-  step("+ greyed", proc (f: FrameInfo) = f.click(f.markOf("plot.overlap more").centre),
-    proc (f: FrameInfo): bool =
-    result = wait > 8
+  hit("plot.overlap more", proc (f: FrameInfo): bool =
+    result = wait > 4
     if result: doAssert f.overlap == 0.25, "the greyed + changed the overlap: " & $f.overlap)
 
   proc onFrame(f: FrameInfo) =

@@ -138,10 +138,32 @@ proc main() =
       result = f.panel.laidOut and f.answered and f.markOf("plot.data").size.x > 0
       if result: plot = f.markOf("plot.data"))
 
+    step("to the gear", proc (f: FrameInfo) =
+      f.moveMouse(centre(f.markOf("plot.more"))), proc (f: FrameInfo): bool = true)
+    step("the gear", proc (f: FrameInfo) =
+      f.click(centre(f.markOf("plot.more"))), proc (f: FrameInfo): bool =
+      f.markOf("plot.more popover").size.x > 100 and wait > 4)
+    var aimed: Vec2
+    var held = 0
+    step("to the cursor line", proc (f: FrameInfo) =
+      aimed = centre(f.markOf("plot.Cursor time line"))
+      held = 0
+      f.moveMouse(aimed), proc (f: FrameInfo): bool =
+      let c = centre(f.markOf("plot.Cursor time line"))
+      if abs(c.x - aimed.x) < 1 and abs(c.y - aimed.y) < 1: inc held
+      else:
+        aimed = c
+        f.moveMouse(c)
+        held = 0
+      held >= 2)
     step("the cursor's time line on", proc (f: FrameInfo) =
-      f.moveMouse(centre(f.markOf("plot.Cursor time line")))
-      f.click(centre(f.markOf("plot.Cursor time line"))), proc (f: FrameInfo): bool =
+      f.pressMouse(aimed, true)
+      f.pressMouse(aimed, false), proc (f: FrameInfo): bool =
       f.core.settings.cursorLine)
+    step("close the gear", proc (f: FrameInfo) =
+      f.pressKey(skEscape, true)
+      f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
+      f.markOf("plot.more popover").size.x == 0)
 
     step("zoom in", proc (f: FrameInfo) =
       was = f.panel.view
@@ -151,11 +173,27 @@ proc main() =
       if result:
         doAssert f.markOf("plot.bar.traces").size.x > 0 and f.markOf("plot.bar.time").size.x > 0)
 
+    step("the gear for the turn", proc (f: FrameInfo) =
+      f.moveMouse(centre(f.markOf("plot.more"))), proc (f: FrameInfo): bool = true)
+    step("open the gear for the turn", proc (f: FrameInfo) =
+      f.click(centre(f.markOf("plot.more"))), proc (f: FrameInfo): bool =
+      f.markOf("plot.Time across").size.x > 0 and wait > 2)
+    step("to time across first", proc (f: FrameInfo) =
+      aimed = centre(f.markOf("plot.Time across"))
+      held = 0
+      f.moveMouse(aimed), proc (f: FrameInfo): bool =
+      let c = centre(f.markOf("plot.Time across"))
+      if abs(c.x - aimed.x) < 1 and abs(c.y - aimed.y) < 1: inc held
+      else:
+        aimed = c
+        f.moveMouse(c)
+        held = 0
+      held >= 2)
     step("turn", proc (f: FrameInfo) =
       was = f.panel.view
       (gen, taken, uploads) = f.counts
-      f.moveMouse(centre(f.markOf("plot.Time across")))
-      f.click(centre(f.markOf("plot.Time across"))), proc (f: FrameInfo): bool =
+      f.pressMouse(aimed, true)
+      f.pressMouse(aimed, false), proc (f: FrameInfo): bool =
       result = f.turn.orientation == orTimeAcross and f.markOf("plot.data").size.x > 0 and
         f.tracePanel.drawnView.columns == int(round(f.markOf("plot.data").size.y)) and
         f.tracePanel.drawnView.sameSpans(f.panel.view) and
@@ -199,6 +237,10 @@ proc main() =
           doAssert band.pos.x >= left, "the header's columns out of order"
           left = band.right)
 
+    step("close the gear after the turn", proc (f: FrameInfo) =
+      f.pressKey(skEscape, true)
+      f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
+      f.markOf("plot.more popover").size.x == 0)
     step("pointer on a trace", proc (f: FrameInfo) =
       q = vec2(round(plot.pos.x + plot.size.x * 0.4), round(plot.pos.y + plot.size.y * 0.3))
       f.moveMouse(q), proc (f: FrameInfo): bool =
@@ -331,11 +373,27 @@ proc main() =
       picture("across " & $m)
     for mode in DisplayMode: modeSteps(mode)
 
+    step("to the gear again", proc (f: FrameInfo) =
+      f.moveMouse(centre(f.markOf("plot.more"))), proc (f: FrameInfo): bool = true)
+    step("the gear again", proc (f: FrameInfo) =
+      f.click(centre(f.markOf("plot.more"))), proc (f: FrameInfo): bool =
+      f.markOf("plot.more popover").size.x > 100 and wait > 4)
+    step("to time across", proc (f: FrameInfo) =
+      aimed = centre(f.markOf("plot.Time across"))
+      held = 0
+      f.moveMouse(aimed), proc (f: FrameInfo): bool =
+      let c = centre(f.markOf("plot.Time across"))
+      if abs(c.x - aimed.x) < 1 and abs(c.y - aimed.y) < 1: inc held
+      else:
+        aimed = c
+        f.moveMouse(c)
+        held = 0
+      held >= 2)
     step("turn back", proc (f: FrameInfo) =
       was = f.panel.view
       (gen, taken, uploads) = f.counts
-      f.moveMouse(centre(f.markOf("plot.Time across")))
-      f.click(centre(f.markOf("plot.Time across"))), proc (f: FrameInfo): bool =
+      f.pressMouse(aimed, true)
+      f.pressMouse(aimed, false), proc (f: FrameInfo): bool =
       result = f.turn.orientation == orTimeDown and
         f.tracePanel.drawnView.columns == int(round(f.markOf("plot.data").size.x)) and
         f.tracePanel.drawnView.sameSpans(f.panel.view)

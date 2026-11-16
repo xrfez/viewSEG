@@ -90,7 +90,7 @@ import std/[math, os, strutils, tables]
 import imguin/cimgui
 import ../../core/[geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
-import ../../view/[displayheader, maplayers, plotink, theme, timeaxis]
+import ../../view/[displayheader, maplayers, plotink, strip, theme, timeaxis]
 import chrome, dpi, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort,
   plotviews, style,
   symbols
@@ -180,9 +180,13 @@ type
     wanted: Viewport ## a view to give the plot next frame (`show`)
     want: bool
     traceBox, timeBox: ScaleBox
+    gainBox: GainBox
+    openSort: bool ## Custom... was picked: open the keys popover next frame
+    sortShown: string ## the sort drop-down's label, as drawn (for tests)
     calib: CalibrationUi
     sortKeys: SortKeysUi
-    stripWidths: array[11, float32] ## the strip's groups as drawn last frame
+    stripWidths: array[StripGroup, float32] ## the strip's groups as drawn last frame
+    gearWidth: float32 ## the gear button's width as drawn last frame
     stripHeight: float32 ## the strip's height as drawn last frame, all its lines
     goto: GoToUi
     menuTarget: string ## what the plot's menu acts on, said when it opened
@@ -301,6 +305,9 @@ func tilesUploaded*(tp: TracePanelUi): int {.inline.} = tp.uploads
 
 func textureLimit*(tp: TracePanelUi): int {.inline.} = tp.renderer.maxSize
   ## The largest texture side the renderer uses.
+
+func sortShown*(tp: TracePanelUi): string {.inline.} = tp.sortShown
+  ## The sort drop-down's label, as drawn last (for tests).
 
 func scaleTexts*(tp: TracePanelUi): (string, string) =
   ## What the trace and time scale boxes hold (for tests).
@@ -671,25 +678,28 @@ func overlapStep(now: float64; up: bool): float64 =
     for i in countdown(OverlapSteps.high, 0):
       if OverlapSteps[i] < now - 1e-9: return OverlapSteps[i]
 
-proc drawOverlapControls(p: Panel; t: Theme; marks: var Marks; res: var PanelOutput) =
-  ## The trace overlap in the strip, as the gain amount is: -, a box, +.
-  ## Greyed in the density mode, so that the strip keeps its shape.
+proc drawWiggleSettings(p: Panel; marks: var Marks; res: var PanelOutput) =
+  ## The trace overlap: -, a box, +, as the strip had them, greyed in density.
   let d = p.layers[0].display
   let o = d.effectiveOverlap
   const help = "Trace overlap: how far the strongest amplitudes swing a wiggle, in " &
     "trace spacings (1 reaches the next trace; anything stronger is clipped there)"
+  let note = if d.mode == dmDensity: " (with wiggles)" else: ""
   template send(o: float64) =
     var nd = d
     nd.overlap = o
     res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
   igBeginDisabled(d.mode == dmDensity)
+  igTextUnformatted("Trace overlap", nil)
+  tipAlways(help & note)
+  igSameLine(0, -1)
   if igButton("-##overlapless", ImVec2_c(x: 0, y: 0)) and o > MinOverlap:
     send(overlapStep(o, up = false))
   marks.mark("plot.overlap less")
   tipAlways("Less overlap: " & significant(overlapStep(o, up = false)) & " trace spacings")
   igSameLine(0, 2)
   var v = cdouble(o)
-  igSetNextItemWidth(round(igCalcTextSize("00.00", nil, false, -1).x +
+  igSetNextItemWidth(round(igCalcTextSize("000.00", nil, false, -1).x +
     2 * igGetStyle().FramePadding.x))
   discard igInputDouble("##overlap", addr v, 0, 0, "%.2f", 0)
   if igIsItemDeactivatedAfterEdit() and float64(v) != o:
@@ -698,39 +708,16 @@ proc drawOverlapControls(p: Panel; t: Theme; marks: var Marks; res: var PanelOut
       res.notes.add "The trace overlap needs " & significant(MinOverlap) & " to " &
         significant(MaxOverlap) & " trace spacings, not " & significant(float64(v)) & "."
   marks.mark("plot.overlap")
-  tipAlways(help & (if d.mode == dmDensity: " (with wiggles)" else: ""))
+  tipAlways(help & note)
   igSameLine(0, 2)
   if igButton("+##overlapmore", ImVec2_c(x: 0, y: 0)) and o < MaxOverlap:
     send(overlapStep(o, up = true))
   marks.mark("plot.overlap more")
   tipAlways("More overlap: " & significant(overlapStep(o, up = true)) & " trace spacings")
-  igSameLine(0, 4)
-  igTextUnformatted("overlap", nil)
-  tipAlways(help)
-  igEndDisabled()
-
-proc drawWiggleSettings(p: Panel; res: var PanelOutput) =
-  ## The trace overlap: how far the reference amplitude swings a trace.
-  let d = p.layers[0].display
-  igTextUnformatted("Trace overlap", nil)
-  igSameLine(0, -1)
-  var v = cdouble(d.overlap)
-  igSetNextItemWidth(round(igCalcTextSize("000.00", nil, false, -1).x +
-    2 * igGetStyle().FramePadding.x))
-  discard igInputDouble("##overlap", addr v, 0, 0, "%.2f", 0)
-  if igIsItemDeactivatedAfterEdit():
-    if v >= MinOverlap and v <= MaxOverlap:
-      var nd = d
-      nd.overlap = float64(v)
-      res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
-    else:
-      res.notes.add "The trace overlap needs " & significant(MinOverlap) & " to " &
-        significant(MaxOverlap) & " trace spacings, not " & significant(float64(v)) & "."
-  tip("The largest swing of a wiggle, in trace spacings (1 reaches the next trace):\n" &
-    "amplitudes drawn at full scale (the colour map's ends) swing this far, and none " &
-    "further.")
   igSameLine(0, -1)
   igTextUnformatted("trace spacings", nil)
+  tipAlways(help & note)
+  igEndDisabled()
 
 proc fill(box: var ScaleBox; text: string) =
   let n = min(text.len, box.text.len - 1)
@@ -778,10 +765,35 @@ proc askScale(box: ScaleBox; kind: ViewAskKind; what: string; ask: var ViewAsk;
 func lengthName(u: LengthUnit): string =
   if u == luInch: "inch" else: "cm"
 
-proc drawScaleSettings(tp: var TracePanelUi; st: AppState; res: var PanelOutput;
-    ppi: float64; mon: MonitorInfo) =
-  ## The scale units, and the calibration of the monitor the window is on.
+proc refreshScaleText(tp: var TracePanelUi; u: ScaleUnits; ppi: float64) =
+  ## What the scale boxes show, kept while the gear is closed so a test can
+  ## read it.
+  if not tp.traceBox.editing:
+    tp.traceBox.fill(significant(traceScale(tp.cur, ppi, u), 4))
+  if not tp.timeBox.editing:
+    tp.timeBox.fill(significant(timeScale(tp.cur, ppi, u), 4))
+
+proc drawScaleBoxes(tp: var TracePanelUi; u: ScaleUnits; ppi: float64; marks: var Marks;
+    ask: var ViewAsk; res: var PanelOutput) =
+  ## The two scale boxes: traces per inch or cm, and ms per inch or cm (or
+  ## in/s). Enter applies.
+  let per = lengthName(u.length)
+  if tp.traceBox.scaleBox("##tracescale", traceLabel(u), "Traces per " & per &
+      ": type a value and press Enter", traceScale(tp.cur, ppi, u), marks, "plot.trace scale"):
+    askScale(tp.traceBox, vaTraceScale, "trace scale", ask, res)
+  igSameLine(0, 10)
+  let timeTip = if u.speed: per & "es per second" else: "Milliseconds per " & per
+  if tp.timeBox.scaleBox("##timescale", timeLabel(u), timeTip & ": type a value and press Enter",
+      timeScale(tp.cur, ppi, u), marks, "plot.time scale"):
+    askScale(tp.timeBox, vaTimeScale, "time scale", ask, res)
+
+proc drawScaleSettings(tp: var TracePanelUi; st: AppState; marks: var Marks;
+    res: var PanelOutput; ppi: float64; mon: MonitorInfo; ask: var ViewAsk) =
+  ## The scale boxes, then the scale units and the calibration of the monitor
+  ## the window is on.
+  tp.drawScaleBoxes(st.settings.scale, ppi, marks, ask, res)
   var s = st.settings
+  igSeparatorText("Scales")
   igTextUnformatted("Scales per", nil)
   for u in LengthUnit:
     igSameLine(0, -1)
@@ -857,14 +869,19 @@ proc drawScaleSettings(tp: var TracePanelUi; st: AppState; res: var PanelOutput;
       tp.calib.rulerPx = 0
       res.commands.add Command(kind: ckSettings, settings: s)
 
-template stripGroup(tp: var TracePanelUi; i: int; right, spacing, lift: float32;
-    body: untyped) =
-  ## Group `i` of the strip, its controls `lift` below the top of its line,
-  ## on the line of the group before it when it fits left of `right` (its
-  ## width as drawn last frame), else on a new line: the strip wraps, so the
-  ## window never needs to scroll.
-  if i > 0 and igGetItemRectMax().x + spacing + tp.stripWidths[i] <= right:
+template stripGroup(tp: var TracePanelUi; g: StripGroup; firstEdge, fullEdge, spacing,
+    lift: float32; started, onFirst: var bool; body: untyped) =
+  ## Group `g` of the strip, its controls `lift` below the top of its line.
+  ## On the first line a group wraps when it would pass `firstEdge` (the
+  ## gear's place, kept free at the right of that line); later lines use
+  ## `fullEdge`. A group that does not fit goes to a new line, whole: the
+  ## strip wraps, so the window never needs to scroll.
+  let edge = if onFirst: firstEdge else: fullEdge
+  if started and igGetItemRectMax().x + spacing + tp.stripWidths[g] <= edge:
     igSameLine(0, spacing)
+  elif started:
+    onFirst = false
+  started = true
   igBeginGroup()
   if lift > 0: # a gap item, so every control of the group starts below it
     igPushStyleVar_Vec2(ImGui_StyleVar_ItemSpacing.cint,
@@ -873,7 +890,7 @@ template stripGroup(tp: var TracePanelUi; i: int; right, spacing, lift: float32;
     igPopStyleVar(1)
   body
   igEndGroup()
-  tp.stripWidths[i] = igGetItemRectSize().x
+  tp.stripWidths[g] = igGetItemRectSize().x
 
 func hasAux(st: AppState; p: Panel): bool =
   ## Whether the record `p` shows holds auxiliary traces (the record list's
@@ -1042,149 +1059,136 @@ proc drawPresets(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
 proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks: var Marks;
     res: var PanelOutput; ask: var ViewAsk; ppi: float64; mon: MonitorInfo) =
   ## The strip at the top of the window, in groups that wrap onto more lines
-  ## when the window is narrow.
-  let size = round(igGetFontSize() * IconScale + 2 * igGetStyle().FramePadding.y)
-  let lift = round((size - igGetFrameHeight()) / 2) # centres a text control on the symbols
-  let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
+  ## when the window is narrow. The gear stays at the right end of the first
+  ## line: a group on that line wraps when it would reach the gear's place,
+  ## and the gear does not move when other groups wrap.
+  let icon = round(igGetFontSize() * IconScale + 2 * igGetStyle().FramePadding.y)
+  let lift = round((icon - igGetFrameHeight()) / 2) # centres a text control on the symbols
+  let origin = igGetCursorScreenPos()
+  let fullRight = origin.x + igGetContentRegionAvail().x
+  let gearReserve = max(tp.gearWidth, igGetFrameHeight() + igGetStyle().FramePadding.x)
+  let firstEdge = fullRight - gearReserve - 14 # a group gap before the gear
+  var started = false
+  var onFirst = true
   let d = p.layers[0].display
   let turn = d.turn
   let turned = d.orientation == orTimeAcross # the plot's symbols turn with it
-  tp.stripGroup(0, right, 0, 0):
-    for m in DisplayMode:
-      if symbolButton(modeSymbols[m], size, t, marks, selected = m == d.mode,
-          markPrefix = "plot.", turned = turned) and m != d.mode:
-        var nd = d
-        nd.mode = m
-        res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
-      igSameLine(0, 2)
-    # the fills belong to the wiggles: either, both or none
-    igSameLine(0, 6)
-    igBeginDisabled(d.mode == dmDensity)
-    for f in WiggleFill:
-      if symbolButton(fillSymbols[f], size, t, marks, selected = f in d.fills and
-          d.mode != dmDensity, note = (if d.mode == dmDensity: " (with wiggles)" else: ""),
-          markPrefix = "plot.", turned = turned):
-        var nd = d
-        if f in nd.fills: nd.fills.excl f else: nd.fills.incl f
-        res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
-      if f != WiggleFill.high: igSameLine(0, 2)
-    igEndDisabled()
-    # the cursor's time line: on the symbols' line, so the strip keeps its height
-    igSameLine(0, 6)
-    let on = st.settings.cursorLine
-    let way = if turn.along[axTraces] == saX: "across" else: "down"
-    let note = if on: " (on): a line from the pointer " & way & " to the time axis, and its time"
-               else: " (off): click for a line from the pointer " & way & " to the time axis"
-    if symbolButton(syCursorTime, size, t, marks, selected = on, note = note,
-        markPrefix = "plot.", turned = turned):
-      var s = st.settings
-      s.cursorLine = not on
-      res.commands.add Command(kind: ckSettings, settings: s)
-    # the plot's orientation: time down, or time across
-    igSameLine(0, 6)
-    const stacked = if FirstTraceAtTop: "from the top down" else: "from the bottom up"
-    let turnNote = if turned: " (on): time runs from left to right, the traces stacked " &
-                     stacked & "; click to draw time downwards again"
-                   else: " (off): click to draw time from left to right, the traces " &
-                     "stacked " & stacked & ", a positive amplitude up"
-    if symbolButton(syTimeAcross, size, t, marks, selected = turned, note = turnNote,
-        markPrefix = "plot."):
-      var nd = d
-      nd.orientation = if turned: orTimeDown else: orTimeAcross
-      res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
-  # which traces: seismic, auxiliary or both, for a record that has auxiliary traces
   let f = p.layers[0].filter
-  if hasAux(st, p) or not f.seismic or f.auxiliary:
-    tp.stripGroup(9, right, 6, lift):
-      for (aux, name, what) in [(false, "Seismic", "seismic"), (true, "Aux", "auxiliary")]:
-        let on = if aux: f.auxiliary else: f.seismic
-        let other = if aux: f.seismic else: f.auxiliary
-        if toggle(name & "##traces", on, t) and (not on or other):
-          var nf = f
-          if aux: nf.auxiliary = not on else: nf.seismic = not on
-          res.commands.add Command(kind: ckFilter, panel: p.id, filter: nf)
-        marks.mark("plot.traces." & name)
-        tip("Show the record's " & what & " traces" & (if on: " (on)" else: " (off)") &
-          (if on and not other: ": the plot shows them alone, so this one stays on" else: "") &
-          ". With both, the auxiliary traces stand in the file's order among the seismic ones.")
-        if not aux: igSameLine(0, 2)
-  tp.stripGroup(1, right, 6, lift):
-    drawOverlapControls(p, t, marks, res)
-  # the filters, then the gain: the order the samples go through them
-  tp.stripGroup(10, right, 12, lift):
-    drawFilterControls(p, hasAux(st, p), st.filterReach(p), t, marks, res.commands)
-  tp.stripGroup(2, right, 12, lift):
-    drawGainControls(p, t, marks, res.commands, res.notes)
-  # the scales
-  let u = st.settings.scale
-  let per = lengthName(u.length)
-  tp.stripGroup(3, right, 14, lift):
-    if tp.traceBox.scaleBox("##tracescale", traceLabel(u), "Traces per " & per &
-        ": type a value and press Enter", traceScale(tp.cur, ppi, u), marks, "plot.trace scale"):
-      askScale(tp.traceBox, vaTraceScale, "trace scale", ask, res)
-    igSameLine(0, 10)
-    let timeTip = if u.speed: per & "es per second" else: "Milliseconds per " & per
-    if tp.timeBox.scaleBox("##timescale", timeLabel(u), timeTip & ": type a value and " &
-        "press Enter", timeScale(tp.cur, ppi, u), marks, "plot.time scale"):
-      askScale(tp.timeBox, vaTimeScale, "time scale", ask, res)
-  # zoom, fit, back
-  tp.stripGroup(4, right, 14, lift):
-    if button(IconZoomOut & "##zoomout", t, marks, "plot.zoom out"):
-      ask = ViewAsk(kind: vaZoomOut)
-    tip("Zoom out (-, or the wheel)")
-    igSameLine(0, 2)
-    if button(IconZoomIn & "##zoomin", t, marks, "plot.zoom in"): ask = ViewAsk(kind: vaZoomIn)
-    tip("Zoom in (+, or the wheel; Ctrl: " & $turn.axisAlong(saY) & " only, Shift: " &
-      $turn.axisAlong(saX) & " only)")
-    igSameLine(0, 2)
-    if button(IconFit & "##fit", t, marks, "plot.fit"): ask = ViewAsk(kind: vaFit)
-    tip("Fit all: every trace and the whole record (Ctrl+0)")
-    igSameLine(0, 2)
-    igBeginDisabled(p.back.len == 0)
-    if button(IconPrevious & "##back", t, marks, "plot.back"):
-      res.commands.add Command(kind: ckBack, panel: p.id)
-    igEndDisabled()
-    if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
-        ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
-      igTextUnformatted("Back to the view before (Backspace)", nil)
-      igEndTooltip()
-  # the record shown, the one before and after
   let (current, count) = recordOf(st, p)
-  tp.stripGroup(5, right, 14, lift):
-    igBeginDisabled(current <= 0)
-    if button(IconRecordBack & "##prevrecord", t, marks, "plot.previous record"):
-      res.commands.add Command(kind: ckGather, panel: p.id, gather: current - 1)
-    igEndDisabled()
-    tipAlways("Previous record (Page Up; Home: the first)")
-    igSameLine(0, 2)
-    if button($(current + 1) & " / " & $count & "##record", t, marks, "plot.record"):
-      tp.goto.open = true
-    tip("Record " & $(current + 1) & " of " & $count & " in the file: click to go to " &
-      "another (Ctrl+G)")
-    igSameLine(0, 2)
-    igBeginDisabled(current >= count - 1)
-    if button(IconRecordNext & "##nextrecord", t, marks, "plot.next record"):
-      res.commands.add Command(kind: ckGather, panel: p.id, gather: current + 1)
-    igEndDisabled()
-    tipAlways("Next record (Page Down; End: the last)")
-  tp.stripGroup(6, right, 14, lift):
-    drawSortButtons(p, st.settings.sortPresets, t, marks, res.commands)
-  tp.stripGroup(7, right, 2, lift): # on a line of its own in a narrow window
-    if drawCustomSort(p, st.settings.sortPresets, t, marks):
-      tp.sortKeys.openSortKeys(p, st.settings) # in the window's ID scope, as it is drawn
-  tp.stripGroup(8, right, 8, lift):
-    if button(IconSettings & "##more", t, marks, "plot.more"):
-      igOpenPopup_Str(moreId, 0)
-    tip("Display presets, colours, density's colour map, killed traces, display header, " &
-      "scale units and screen calibration")
+  let u = st.settings.scale
+  tp.refreshScaleText(u, ppi)
+  if tp.openSort:
+    tp.openSort = false
+    tp.sortKeys.openSortKeys(p, st.settings)
+  for g in stripGroups(showTraceToggles(hasAux(st, p), f.seismic, f.auxiliary)):
+    case g
+    of sgRecord:
+      tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
+        igBeginDisabled(current <= 0)
+        if button(IconRecordBack & "##prevrecord", t, marks, "plot.previous record"):
+          res.commands.add Command(kind: ckGather, panel: p.id, gather: current - 1)
+        igEndDisabled()
+        tipAlways("Previous record (Page Up; Home: the first)")
+        igSameLine(0, 2)
+        if button($(current + 1) & " / " & $count & "##record", t, marks, "plot.record"):
+          tp.goto.open = true
+        tip("Record " & $(current + 1) & " of " & $count &
+          " in the file: click to go to another (Ctrl+G)")
+        igSameLine(0, 2)
+        igBeginDisabled(current >= count - 1)
+        if button(IconRecordNext & "##nextrecord", t, marks, "plot.next record"):
+          res.commands.add Command(kind: ckGather, panel: p.id, gather: current + 1)
+        igEndDisabled()
+        tipAlways("Next record (Page Down; End: the last)")
+    of sgZoom:
+      tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
+        if button(IconZoomOut & "##zoomout", t, marks, "plot.zoom out"):
+          ask = ViewAsk(kind: vaZoomOut)
+        tip("Zoom out (-, or the wheel)")
+        igSameLine(0, 2)
+        if button(IconZoomIn & "##zoomin", t, marks, "plot.zoom in"):
+          ask = ViewAsk(kind: vaZoomIn)
+        tip("Zoom in (+, or the wheel; Ctrl: " & $turn.axisAlong(saY) & " only, Shift: " &
+          $turn.axisAlong(saX) & " only)")
+        igSameLine(0, 2)
+        if button(IconFit & "##fit", t, marks, "plot.fit"): ask = ViewAsk(kind: vaFit)
+        tip("Fit all: every trace and the whole record (Ctrl+0)")
+        igSameLine(0, 2)
+        igBeginDisabled(p.back.len == 0)
+        if button(IconPrevious & "##back", t, marks, "plot.back"):
+          res.commands.add Command(kind: ckBack, panel: p.id)
+        igEndDisabled()
+        if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+            ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+          igTextUnformatted("Back to the view before (Backspace)", nil)
+          igEndTooltip()
+    of sgDisplay:
+      tp.stripGroup(g, firstEdge, fullRight, 14, 0, started, onFirst):
+        var modeFirst = true
+        for m in DisplayMode:
+          if not modeFirst: igSameLine(0, 2)
+          modeFirst = false
+          if symbolButton(modeSymbols[m], icon, t, marks, selected = m == d.mode,
+              markPrefix = "plot.", turned = turned) and m != d.mode:
+            var nd = d
+            nd.mode = m
+            res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+        if showFills(d.mode):
+          igSameLine(0, 2)
+          var fillFirst = true
+          for wf in WiggleFill:
+            if not fillFirst: igSameLine(0, 2)
+            fillFirst = false
+            if symbolButton(fillSymbols[wf], icon, t, marks, selected = wf in d.fills,
+                markPrefix = "plot.", turned = turned):
+              var nd = d
+              if wf in nd.fills: nd.fills.excl wf else: nd.fills.incl wf
+              res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+    of sgGain:
+      tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
+        drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes)
+    of sgFilters:
+      tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
+        drawFilterControls(p, hasAux(st, p), st.filterReach(p), t, marks, res.commands)
+    of sgSort:
+      tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
+        tp.sortShown = sortLabel(p.layers[0].order, st.settings.sortPresets)
+        if drawSortCombo(p, st.settings, marks, res.commands):
+          tp.openSort = true # next frame, in the window's ID scope
+    of sgTraces:
+      tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
+        for (aux, name, what) in [(false, "Seismic", "seismic"), (true, "Aux", "auxiliary")]:
+          let shown = if aux: f.auxiliary else: f.seismic
+          let other = if aux: f.seismic else: f.auxiliary
+          if toggle(name & "##traces", shown, t) and (not shown or other):
+            var nf = f
+            if aux: nf.auxiliary = not shown else: nf.seismic = not shown
+            res.commands.add Command(kind: ckFilter, panel: p.id, filter: nf)
+          marks.mark("plot.traces." & name)
+          tip("Show the record's " & what & " traces" & (if shown: " (on)" else: " (off)") &
+            (if shown and not other: ": the plot shows them alone, so this one stays on" else: "") &
+            ". With both, the auxiliary traces stand in the file's order among the seismic ones.")
+          if not aux: igSameLine(0, 2)
+    of sgComponents:
+      discard # one toggle per component is drawn here, after the trace toggles
+  # the gear: the right end of the first line, whatever wrapped below it
+  let resume = igGetCursorScreenPos()
+  igSetCursorScreenPos(ImVec2_c(x: fullRight - gearReserve, y: origin.y + lift))
+  if button(IconSettings & "##more", t, marks, "plot.more"):
+    igOpenPopup_Str(moreId, 0)
+  tip("Display presets, colours, density's colour map, the cursor time line, time across, " &
+    "killed traces, trace overlap, display header, the scale boxes, scale units and " &
+    "screen calibration")
+  tp.gearWidth = igGetItemRectSize().x
+  let gearMax = igGetItemRectMax()
   if igIsPopupOpen_Str(moreId, 0):
     # below the gear, its right edge at the gear's, moved as far as needed to
-    # stay inside the main window: the gear is near the middle of it, and
-    # past its edge the popover would be a window of the desktop's own
+    # stay inside the main window: past its edge the popover would be a
+    # window of the desktop's own
     let vp = igGetMainViewport()
-    let (gear, size) = (igGetItemRectMax(), tp.moreSize)
-    let x = max(vp.WorkPos.x, min(gear.x - size.x, vp.WorkPos.x + vp.WorkSize.x - size.x))
-    let y = max(vp.WorkPos.y, min(gear.y, vp.WorkPos.y + vp.WorkSize.y - size.y))
+    let pop = tp.moreSize
+    let x = max(vp.WorkPos.x, min(gearMax.x - pop.x, vp.WorkPos.x + vp.WorkSize.x - pop.x))
+    let y = max(vp.WorkPos.y, min(gearMax.y, vp.WorkPos.y + vp.WorkSize.y - pop.y))
     igSetNextWindowPos(ImVec2_c(x: x, y: y), ImGui_Cond_Always.cint, ImVec2_c(x: 0, y: 0))
     # never larger than the window: a tab taller than it scrolls
     igSetNextWindowSizeConstraints(ImVec2_c(x: 0, y: 0), vp.WorkSize, nil, nil)
@@ -1202,6 +1206,28 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
           body
           igEndTabItem()
       tab("Look", "plot.more tab look"):
+        igSeparatorText("Plot")
+        var line = st.settings.cursorLine
+        if igCheckbox("Cursor time line", addr line):
+          var s = st.settings
+          s.cursorLine = line
+          res.commands.add Command(kind: ckSettings, settings: s)
+        marks.mark("plot.Cursor time line")
+        let way = if turn.along[axTraces] == saX: "across" else: "down"
+        tip("Cursor time line" & (if line: " (on): a line from the pointer " & way &
+          " to the time axis, and its time"
+          else: " (off): click for a line from the pointer " & way & " to the time axis"))
+        var across = turned
+        if igCheckbox("Time across", addr across):
+          var nd = d
+          nd.orientation = if across: orTimeAcross else: orTimeDown
+          res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
+        marks.mark("plot.Time across")
+        const stacked = if FirstTraceAtTop: "from the top down" else: "from the bottom up"
+        tip("Time across" & (if across: " (on): time runs from left to right, the traces " &
+          "stacked " & stacked & "; click to draw time downwards again"
+          else: " (off): click to draw time from left to right, the traces stacked " &
+          stacked & ", a positive amplitude up"))
         igSeparatorText("Display presets")
         tp.drawPresets(st, p, marks, res)
         igSeparatorText("Colours")
@@ -1210,7 +1236,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         drawColourMaps(p, t, marks, res)
       tab("Traces", "plot.more tab traces"):
         igSeparatorText("Wiggles")
-        drawWiggleSettings(p, res)
+        drawWiggleSettings(p, marks, res)
         igSeparatorText("Killed traces")
         var hide = st.settings.hideKilled
         if igCheckbox("Hide killed traces", addr hide):
@@ -1223,10 +1249,12 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         igSeparatorText("Display header")
         drawHeaderChoice(p, marks, "plot.more.header.", res)
       tab("Scales", "plot.more tab scales"):
-        igSeparatorText("Scales")
-        tp.drawScaleSettings(st, res, ppi, mon)
+        tp.drawScaleSettings(st, marks, res, ppi, mon, ask)
       igEndTabBar()
     igEndPopup()
+  igSetCursorScreenPos(ImVec2_c(x: origin.x,
+    y: max(resume.y, gearMax.y + igGetStyle().ItemSpacing.y)))
+  igDummy(ImVec2_c(x: 0, y: 0)) # the cursor jump above must submit an item
 
 proc drawStartScreen(t: Theme; recent, folders: openArray[string]; marks: var Marks;
     res: var PanelOutput) =
