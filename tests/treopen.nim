@@ -23,13 +23,17 @@
 ## another count it drops them and says so.
 ##
 ## A reopen whose open has already posted is not adopted after the file was
-## closed: the close stands, the new session is released.
+## closed: the close stands, the new session is released. The choice is
+## written only when that open is taken in: a second reopen at once, or a
+## close while the open is still reading, leaves the choice the file had.
 ##
 ## Seen to fail (the failing reopen): with the trace-count test taken out of
 ## `adopt` (`elif false`), "stays as it was"; (the carried state): with
 ## `carryOver` not called, "the selection was lost"; (the close after a
 ## posted reopen): with `adopt` adding the new session when the old one is
-## gone, "a closed file came back".
+## gone, "a closed file came back"; (the choice written before the open):
+## with `reopenWith` storing the choice before the job, "the untried choice
+## was kept".
 ##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
@@ -41,7 +45,7 @@ import std/[os, strutils, times]
 import parseSEG
 import viewSEG/core/[filejobs, state]
 import viewSEG/view/headerviews
-import utils/[fixtures, waiting]
+import utils/[faultyfs, fixtures, waiting]
 
 func valueOf(lines: openArray[SummaryLine]; label: string): string =
   for l in lines:
@@ -309,4 +313,44 @@ block closedAfterTheOpenPostedStaysClosed:
     doAssert st.sessions.len == 0, "the close did not take the file out"
     doAssert st.settle(st.sessions.len == 0), "a closed file came back"
     doAssert st.sessions.len == 0, "a closed file came back"
+    doAssert st.openChoiceOf(canonical(path)).isDefault, "the untried choice was kept"
     st.shutdown()
+
+block supersededReopenKeepsNoChoice:
+  # SEG-D, then SEG-2 at once, on a SEG-Y: both fail. The first's untried
+  # choice must not become what a later open uses.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.showIt(path)
+    st.reopen(path, OpenChoice(standard: scSegd))
+    st.reopen(path, OpenChoice(standard: scSeg2))
+    st.pump(200)
+    doAssert st.sessions.len == 1 and st.sessions[0].file.kind == skSegy and
+      st.sessions[0].len == SurveyTraces, "the file was replaced"
+    doAssert st.openChoiceOf(canonical(path)).isDefault, "the untried choice was kept"
+    st.apply Command(kind: ckClose, file: st.sessions[0].id)
+    doAssert st.settle(st.sessions.len == 0)
+    st.showIt(path)
+    doAssert st.sessions[0].file.kind == skSegy and st.sessions[0].facts.opened.choice.isDefault,
+      "a later open used a choice that was never in force"
+    st.shutdown()
+
+block closeMidReopenKeepsNoChoice:
+  # The open is held in its read, then the file is closed: the choice asked
+  # for was never in force.
+  install()
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.showIt(path)
+    let id = st.sessions[0].id
+    fault(path, fkHang, {foMapped})
+    st.reopen(path, OpenChoice(standard: scSegd, verifyAll: true))
+    doAssert waitUntil(hung() > 0), "the reopen was not held in its read"
+    st.apply Command(kind: ckClose, file: id)
+    releaseAll()
+    doAssert st.settle(st.sessions.len == 0), "the file came back"
+    doAssert st.openChoiceOf(canonical(path)).isDefault, "the untried choice was kept"
+    st.shutdown()
+  releaseAll()

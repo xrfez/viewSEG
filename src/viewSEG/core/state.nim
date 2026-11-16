@@ -470,20 +470,18 @@ type
     ## An open or close job the state waits for.
     job: JobId
     path: string
-    session: Session   ## a closing file's session, kept until its close job ends
-    panel: PanelId     ## an open: the panel it is shown in (`ckShowFile`); NoPanel: the main one
-    gather: int        ## an open: the gather shown first (a file opened again: the one it showed)
-    unwanted: bool     ## an open no longer wanted (another file was chosen): dropped when it comes
-    follow: bool       ## an open "Follow the latest" made: shown only when the file is whole
-    quiet: bool        ## a close of a file the plot stepped away from: not logged
+    session: Session  ## a closing file's session, kept until its close job ends
+    panel: PanelId    ## an open: the panel it is shown in (`ckShowFile`); NoPanel: the main one
+    gather: int       ## an open: the gather shown first (a file opened again: the one it showed)
+    unwanted: bool    ## an open no longer wanted (another file was chosen): dropped when it comes
+    follow: bool      ## an open "Follow the latest" made: shown only when the file is whole
+    quiet: bool       ## a close of a file the plot stepped away from: not logged
     by: CommandOrigin
       ## an open: who asked for it (the user's goes to the recent files kept)
     reopened: bool
       ## an open "Reopen with options" made: its file takes the place of the open
       ## one only when it opened with traces, else the file stays as it was
-    tried: OpenChoice ## a reopen: the choice it asks for
-    before: OpenChoice ## a reopen: the choice the file had before (put back when it fails)
-    hadBefore: bool ## a reopen: the file had a choice (not the defaults)
+    tried: OpenChoice ## a reopen: the choice it asks for, written only once it is taken in
     replacesOpen: bool
       ## a reopen of a file that was open: the new session is dropped when
       ## that session is gone before it arrives (the file was closed)
@@ -4085,9 +4083,8 @@ proc carryOver(state: var AppState; c: Carry; i: int) =
 
 proc reopenFailed(state: var AppState; o: Pending; s: Session; why: string) =
   ## A reopen with options whose file did not open with traces: the file is
-  ## as it was, the choice too, and the log says so once.
-  if o.hadBefore: state.openChoices[o.path] = o.before
-  else: state.openChoices.del o.path
+  ## as it was, the choice too (it is written only once a reopen is taken
+  ## in), and the log says so once.
   var problems, errors = 0
   var first = ""
   for d in s.file.log:
@@ -4143,8 +4140,11 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
       if panel == MainPanel: state.chooseShown()
       return
     # Opened: takes the open file's place, which lets go of its panels. The
-    # file's shots are read again, as the options say.
+    # file's shots are read again, as the options say. The choice is in force
+    # only now.
     state.opening[reopened].swapped = true
+    if o.tried.isDefault: state.openChoices.del o.path
+    else: state.openChoices[o.path] = o.tried
     state.shots.forget(state.survey, @[s.path])
     state.shots.listedRev = -1
     if old >= 0:
@@ -4220,9 +4220,6 @@ proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
   if o.unwanted or o.swapped: return
   case how
   of jsFailed:
-    if o.reopened:
-      if o.hadBefore: state.openChoices[p] = o.before
-      else: state.openChoices.del p
     state.log.add(sevError, name, "Cannot open " & p & ": " & error)
   of jsCancelled: state.log.add(sevInfo, name, "Opening " & name & " was cancelled.")
   else: discard # done: `adopt` took the file
@@ -5681,13 +5678,14 @@ proc preparedCurrent(state: AppState): bool =
     state.files.entries[e].size == s.size and state.files.entries[e].modified == s.modified
 
 proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = false;
-    by: CommandOrigin) =
+    by: CommandOrigin; asked = OpenChoice(); forced = false) =
   ## Shows the file at `path` (canonical) in `panels[k]`, in place of the
   ## one it shows, as `by` asked: at once when it is open, else once an open
-  ## job opened it (at `gather`; with `follow`, only if it is whole). An open started
-  ## earlier for this panel and another file is no longer wanted: it is
-  ## cancelled, and dropped if it comes all the same; so is the wait to show
-  ## a changed file again.
+  ## job opened it (at `gather`; with `follow`, only if it is whole). With
+  ## `forced`, that open uses `asked` rather than the choice already in
+  ## force. An open started earlier for this panel and another file is no
+  ## longer wanted: it is cancelled, and dropped if it comes all the same;
+  ## so is the wait to show a changed file again.
   let panel = state.panels[k].id
   for o in state.opening.mitems:
     if o.panel == panel and o.path != path and not o.unwanted:
@@ -5708,7 +5706,7 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
       state.opening[o].panel = panel
       if not follow: state.opening[o].follow = false # the user's own choice: shown as it is
       if keeps(by): state.opening[o].by = by # the user asked for it too
-    elif not state.prepared.session.isNil and state.prepared.session.path == path and
+    elif not forced and not state.prepared.session.isNil and state.prepared.session.path == path and
         state.preparedCurrent() and path notin state.openChoices:
       # Opened already, in the background, and not changed since: shown at once.
       let job = state.prepared.job
@@ -5725,7 +5723,7 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
       let job = state.jobs.submit(JobSpec(title: "Open " & path.extractFilename,
         lane: jlInteractive, reads: @[path]), openFileWork(path, state.inbox.poster,
         indexCacheFile(state.indexCache, path), whole = follow, lines = state.settings.join,
-        choice = state.openChoices.getOrDefault(path)))
+        choice = if forced: asked else: state.openChoices.getOrDefault(path)))
       state.opening.add Pending(job: job, path: path, panel: panel, gather: gather,
         follow: follow, by: by)
 
@@ -5861,11 +5859,10 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
   ## none does. The new open runs first, on the open job; it takes the open
   ## file's place only when it opened with traces (`adopt`), keeping the
   ## selection, the geometry join and the windows of the traces when it has
-  ## as many. Else the file stays as it was, and so does its choice. An open
+  ## as many. Else the file stays as it was, and so does its choice: the
+  ## choice is written only once the new open is taken in, so a reopen that
+  ## is superseded or cancelled leaves the one that was in force. An open
   ## of it under way is no longer wanted.
-  let (hadBefore, before) = (path in state.openChoices, state.openChoices.getOrDefault(path))
-  if choice.isDefault: state.openChoices.del path
-  else: state.openChoices[path] = choice
   let name = path.extractFilename
   state.log.add(sevInfo, name, name & " is opened again" & (if choice.isDefault:
     " with the defaults." else: ": " & choiceText(choice) & "."))
@@ -5882,10 +5879,10 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
   if i < 0:
     let k = state.findPanel(MainPanel)
     if k >= 0:
-      state.showPath(k, path, by = by)
+      state.showPath(k, path, by = by, asked = choice, forced = true)
       if state.opening.len > 0 and state.opening[^1].path == path:
         template o: untyped = state.opening[^1]
-        (o.reopened, o.tried, o.before, o.hadBefore) = (true, choice, before, hadBefore)
+        (o.reopened, o.tried) = (true, choice)
     return
   let id = state.sessions[i].id
   var panel = NoPanel
@@ -5898,8 +5895,7 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
     reads: @[path]), openFileWork(path, state.inbox.poster, indexCacheFile(state.indexCache, path),
     whole = false, lines = state.settings.join, choice = choice))
   state.opening.add Pending(job: job, path: path, panel: if panel == NoPanel: MainPanel
-    else: panel, gather: gather, by: by, reopened: true, tried: choice, before: before,
-    hadBefore: hadBefore, replacesOpen: true)
+    else: panel, gather: gather, by: by, reopened: true, tried: choice, replacesOpen: true)
 
 proc onDisk(state: var AppState; w: WatchedFile) =
   ## What the watch saw of a file that is open, or that a panel waits for:
