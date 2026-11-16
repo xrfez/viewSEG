@@ -4452,8 +4452,11 @@ proc finishImport(state: var AppState) =
   of joNone: discard
   if j.carried:
     case j.outcome
-    of joJoined, joNothing:
+    of joJoined:
       state.log.add(sevInfo, j.name, j.name & " kept the survey join.")
+    of joNothing:
+      state.log.add(sevWarning, j.name, j.name & " dropped the survey join: the survey " &
+        "matches none of its traces.")
     of joFailed, joCancelled:
       let why = if words.len > 0: words[0] else: "the match ended"
       state.log.add(sevWarning, j.name, j.name & " dropped the survey join: " & why)
