@@ -16,9 +16,12 @@
 ##   file stays open while the window uses it, when the record is shown
 ##   again (showing a file closes the one shown before otherwise);
 ## - its cursor is held where a command puts it; closed, it goes; a window
-##   with no trace to show is refused.
+##   with no trace to show is refused;
+## - a trace with no sample interval of its own is left out and counted, and
+##   the window's interval is the others' 2 ms, not 1 ms.
 ##
-## Seen to fail: with `followPlots` not called, "the filters were not
+## Seen to fail: with the trace with no interval taken as 1 ms, "the reference
+## is sampled at 2.0 ms, the traces at 1.0 ms"; with `followPlots` not called, "the filters were not
 ## followed: 1 asks"; with the record's pilot not taken as the default
 ## reference (`firstAux`), `"pilot" in st.plots[0].reference` (the first
 ## trace asked about taken instead); with `showReplacing` not asking
@@ -50,8 +53,11 @@ func sweep(i: int): float32 =
   let taper = min(1.0, min(t, 2 - t) / 0.1)
   float32(taper * sin(2 * PI * (10 * t + 50 / 4 * t * t)))
 
-proc pilotRecord(fx: Fixtures): string =
-  result = fx.dir / "pilot-record.sgy"
+proc pilotRecord(fx: Fixtures; name = "pilot-record.sgy"; noInterval = -1): string =
+  ## The record; trace `noInterval` (a file index) given no sample interval
+  ## of its own after writing (its header's bytes made zero: the writer
+  ## refuses such a trace).
+  result = fx.dir / name
   var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
     text: @["C01 viewSEG test fixture: a pilot and four delayed copies"]))
   var buf = newSeq[float32](Samples)
@@ -65,6 +71,14 @@ proc pilotRecord(fx: Fixtures): string =
     else: k.status = tsLive
     w.writeTrace(k, buf)
   doAssert w.close().len == 0
+  if noInterval >= 0:
+    var f = openSeismic(result, keys = true)
+    let at = int(f.index.entries[noInterval].offset) + 116         # the interval, bytes 117-118
+    f.close()
+    var data = readFile(result)
+    data[at] = '\0'
+    data[at + 1] = '\0'
+    writeFile(result, data)
 
 proc lastText(log: MessageLog): string = log[log.len - 1].text
 
@@ -173,6 +187,28 @@ withFixtures fx:
     doAssert st.plots[0].asks == corrAsks + 1, "the kill was not followed"
     doAssert st.settle(st.answered(0))
     doAssert st.plots[0].result.leftOut == 1, $st.plots[0].result.leftOut
+
+  block noIntervalOfItsOwn:
+    # the trace with no sample interval of its own (the file's is not used
+    # for it, the header has none) is left out and counted, as the spectrum
+    # view counts one at another interval; the first trace asked about is
+    # that one, so the window's interval is the others' (2 ms), not 1 ms
+    var g = initAppState()
+    let gap = fx.pilotRecord("gap-record.sgy", noInterval = 3)
+    g.apply Command(kind: ckShowFile, panel: MainPanel, path: gap)
+    doAssert g.settle(g.sessions.len == 1 and g.panel(MainPanel).laidOut)
+    let gs = g.sessions[0]
+    g.apply Command(kind: ckOpenPlot, plotView: avCorrelation, plotTraces: @[gs.base + 3,
+      gs.base + 1, gs.base + 2, gs.base + 4])
+    doAssert g.plots.len == 1, g.log.lastText
+    doAssert g.settle(g.answered(0)), "no answer"
+    let r = g.plots[0].result
+    doAssert r.problem == "", r.problem
+    doAssert r.dtMs == DtMs, "the interval is " & $r.dtMs & " ms, want " & $DtMs
+    doAssert r.used == 3 and r.leftOut == 0, $(r.used, r.leftOut)
+    doAssert r.atOtherInterval == 1, "the trace at another interval is not counted: " &
+        $r.atOtherInterval
+    discard g.shutdown()
 
   block cursorAndClose:
     let id = st.plots[1].id

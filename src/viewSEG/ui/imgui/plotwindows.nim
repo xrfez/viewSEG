@@ -491,6 +491,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   var words = w.label
   if w.filters.len > 0: words.add " · filters: " & w.filters
   if r.leftOut > 0: words.add " · " & $r.leftOut & " left out (killed, dead or unreadable)"
+  if r.atOtherInterval > 0: words.add " · " & $r.atOtherInterval & " at another interval"
   if w.waiting: words.add " · working it out..."
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextWrapped("%s", words.cstring)

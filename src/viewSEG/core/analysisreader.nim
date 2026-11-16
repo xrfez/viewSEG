@@ -9,7 +9,9 @@
 ##   (`cancel`). Windows' requests are served in turn.
 ## - **What is read.** The traces asked about, whole, less those killed, those
 ##   the file marks dead and those that cannot be decoded (the answer counts
-##   them, `leftOut`), at the first one's sample interval; a reference trace
+##   them, `leftOut`), at the first one's sample interval (a trace sampled at
+##   another interval, or with none, is left out and counted, `atOtherInterval`,
+##   as the spectrum reader does); a reference trace
 ##   for a correlation, from the same file or another one.
 ## - **Filters.** The plot's filters (`Processing`, shown raw or not alike),
 ##   made for the traces' interval, run on whole traces; an auxiliary trace
@@ -196,15 +198,20 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
         inc answer.leftOut
       else:
         let k = f[].traceKeys(t)
-        let us = k.intervalUs
-        let dt = if us > 0 and us < Inf: us / 1000 else: 1.0 # (counts samples)
-        if dtMs.isNaN:
-          dtMs = dt
-          if abs(k.t0Ms) < Inf: t0Ms = k.t0Ms
-        if sameDt(dt, dtMs):
-          list.add t
-          names.add (if i < a.names.len: a.names[i] else: "trace " & $(t + 1))
-        else: inc answer.leftOut
+        # the interval as the spectrum reader resolves it: the trace's, else the file's
+        let us = if k.intervalUs > 0 and k.intervalUs < Inf: k.intervalUs
+                 else: f[].sampleIntervalUs(t)
+        if not (us > 0 and us < Inf):
+          inc answer.atOtherInterval
+        else:
+          let dt = us / 1000
+          if dtMs.isNaN:
+            dtMs = dt
+            if abs(k.t0Ms) < Inf: t0Ms = k.t0Ms
+          if sameDt(dt, dtMs):
+            list.add t
+            names.add (if i < a.names.len: a.names[i] else: "trace " & $(t + 1))
+          else: inc answer.atOtherInterval
     answer.dtMs = dtMs
     if list.len == 0:
       answer.problem = "no trace to work it out on (" &
@@ -232,17 +239,17 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
         else:
           case a.view
           of avSpectrogram:
-            let n = answer.leftOut
+            let n = (answer.leftOut, answer.atOtherInterval)
             answer = spectrogramOf(kept, dtMs, t0Ms, a.params)
-            answer.leftOut = n
+            (answer.leftOut, answer.atOtherInterval) = n
           of avEnvelope:
-            let n = answer.leftOut
+            let n = (answer.leftOut, answer.atOtherInterval)
             answer = envelopeOf(kept[0], keptNames[0], dtMs, t0Ms)
-            answer.leftOut = n
+            (answer.leftOut, answer.atOtherInterval) = n
           of avPhase:
-            let n = answer.leftOut
+            let n = (answer.leftOut, answer.atOtherInterval)
             answer = phaseOf(kept[0], keptNames[0], dtMs, a.params)
-            answer.leftOut = n
+            (answer.leftOut, answer.atOtherInterval) = n
           of avCorrelation:
             # the reference: its own trace, read and filtered as the others
             let rf = if a.refFile != nil: a.refFile else: f
@@ -254,10 +261,15 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               answer.problem = "the reference trace is not in its file"
             else:
               if not p.readRows(rf, rpath, @[rt], a.id, refRows, refFailed): return false
-              let rus = rf[].traceKeys(rt).intervalUs
-              let rdt = if rus > 0 and rus < Inf: rus / 1000 else: 1.0
+              let rk = rf[].traceKeys(rt)
+              let rus = if rk.intervalUs > 0 and rk.intervalUs < Inf: rk.intervalUs
+                        else: rf[].sampleIntervalUs(rt)
+              let rdt = rus / 1000
               if refFailed[0] or refRows[0].len == 0:
                 answer.problem = "the reference trace could not be read"
+              elif not (rus > 0 and rus < Inf):
+                answer.problem = "the reference trace is at another interval: it has " &
+                  "no sample interval"
               elif not sameDt(rdt, dtMs):
                 answer.problem = "the reference is sampled at " & $rdt & " ms, the traces at " &
                   $dtMs & " ms"
@@ -267,9 +279,9 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 for i in 0 ..< min(kept.len, MaxAnalysisCurves):
                   signals.add (keptNames[i], kept[i])
                 let refName = if a.refName.len > 0: a.refName else: keptNames[0]
-                let n = answer.leftOut
+                let n = (answer.leftOut, answer.atOtherInterval)
                 answer = correlationOf(signals, refRows[0], refName, dtMs, a.params)
-                answer.leftOut = n
+                (answer.leftOut, answer.atOtherInterval) = n
                 # a signal that is the reference itself: its autocorrelation
                 let own = if rf == f: keptList.find(rt) else: -1
                 if own in 0 ..< signals.len and answer.problem.len == 0:
@@ -284,9 +296,9 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               xs.add k.rcvX
               ys.add k.rcvY
             let (spacing, source) = spacingOf(offsets, xs, ys)
-            let n = answer.leftOut
+            let n = (answer.leftOut, answer.atOtherInterval)
             answer = fkOf(kept, spacing, source, dtMs, t0Ms, a.params)
-            answer.leftOut = n
+            (answer.leftOut, answer.atOtherInterval) = n
           of avVibrator:
             # each role's trace: its place among those asked about, then
             # among those read (one left out has no role)
@@ -299,9 +311,9 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               let q = places[role]
               at[role] = if q in 0 ..< a.traces.len: keptList.find(a.traces[q]) else: -1
               if q in 0 ..< a.traces.len and at[role] < 0: missing.add $role
-            let n = answer.leftOut
+            let n = (answer.leftOut, answer.atOtherInterval)
             answer = vibratorOf(kept, keptNames, at, dtMs, a.params)
-            answer.leftOut = n
+            (answer.leftOut, answer.atOtherInterval) = n
             if missing.len > 0:
               let words = missing.join(", ") & " left out (killed, dead or unreadable)"
               if answer.problem.len > 0: answer.problem.add "; " & words

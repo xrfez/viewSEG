@@ -133,6 +133,7 @@ type
       ## columns' names; empty for none
     used*: int ## traces it is of
     leftOut*: int ## of those asked about: killed, dead, not decoded
+    atOtherInterval*: int ## of those asked about: sampled at another interval, or none
     dtMs*: float64
     note*: string ## what the numbers are, in words (shown under the plot)
     problem*: string ## why there is none; "" when there is one

@@ -572,7 +572,10 @@ Each view is a window of its own that docks, titled by what it shows ("Spectrogr
 3 traces · FFID 151 · shot.sgd"). Its numbers are worked out off the screen's thread,
 from the traces read whole, through the Seismic window's filters (an auxiliary trace only
 when "Filter the Aux traces too" is ticked, as in the plot), less the traces killed or
-marked dead (said under the title). Unless **Freeze** is ticked, a window follows the
+marked dead (said under the title). A trace sampled at another interval than the first
+one's is left out too, and counted "at another interval", as a spectrum window does; a
+trace with no sample interval of its own takes its file's, and is left out when it has
+none. Unless **Freeze** is ticked, a window follows the
 plot it was opened from: new filters, the Aux toggle, a kill or a restore of one of its
 traces work it out again; its traces stay those it was opened on.
 
