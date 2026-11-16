@@ -338,20 +338,31 @@ selection when that trace is selected. Then:
   a killed trace the item reads **Restore**. To have killed traces left out of the plot
   altogether (the traces beside them close up), tick **Hide killed traces** in the gear
   popover.
+- **Filter this trace...** (or **Filter N selected traces...** when the trace under the
+  pointer is in a selection): the same frequency filters as the strip's Filters drop-down,
+  in the same order and words, for those traces only. **Apply** sets them as one step.
+  They run **after the plot's filters** (the usual choice) or **instead of the plot's
+  filters**. **Remove the trace's filter** (or **Remove the filters of N traces**) is in
+  the same menu, and only when one of the traces has a filter. Gain, AGC, sort and the
+  display are still the plot's, not a trace's. A killed trace keeps its filter; the kill
+  wins on screen (the trace stays blank).
 - **FFT in a new window** (`F`): the trace's amplitude spectrum (of the selection: their
   average) from 0 Hz to Nyquist, raw and through the strip's filters, in a window of its
   own (see "Spectra" below). Killed traces are left out.
 - **Reverse polarity of all traces** (below).
-- **Undo** (Ctrl+Z) takes back the last kill, restore, polarity change or clearing (it
-  names it), and **Redo** (Ctrl+Shift+Z, Ctrl+Y) makes it again, as far back as you have
-  worked in this run; a new change drops what was undone. The same items are in the
-  **Edit** menu, which works whichever window has the focus. **Clear all edits for this
-  file** shows the traces as the file has them (Undo brings the edits back).
+- **Undo** (Ctrl+Z) takes back the last kill, restore, polarity change, trace filter or
+  clearing (it names it), and **Redo** (Ctrl+Shift+Z, Ctrl+Y) makes it again, as far back
+  as you have worked in this run; a new change drops what was undone. The same items are
+  in the **Edit** menu, which works whichever window has the focus. **Clear all edits for
+  this file** shows the traces as the file has them (Undo brings the edits back).
 
 Edited traces are marked in a row of the display header, **edits**, that is there only
 while the record has an edit: a red **K** over a killed trace, an **R** over a reversed
-one. The status bar says "killed" or "polarity reversed" for the trace under the
-pointer, and Messages lists each change. Edits are lists kept beside the file, never
+one, and the filter icon over a trace that has its own filter. The tooltip on that icon
+says the filter in words ("Band-pass 10-60 Hz, after the plot's filters"). The Headers
+window's trace table shows the same letters beside the trace number. The status bar says
+"killed", "polarity reversed" or the filter's words for the trace under the pointer, and
+Messages lists each change. Edits are lists kept beside the file, never
 written into it: they hold through another record, a sort, a gain change, stepping to
 another file and back, and the next run (see "What viewSEG remembers"). An edit shows at
 once: viewSEG makes the picture again from the samples it already
@@ -745,8 +756,8 @@ holds, read-only, in four tabs:
   gave them to ("from the survey, not the trace header" when pointed at); the
   header's own fields follow, as the file holds them. **Data** lists the
   samples: index, time in ms and a column per trace, as the file holds them, or **As
-  displayed** (after kills, polarity reversals and the gain's processing: what the status
-  bar's amplitude reads); the row at the time under the pointer in the plot is marked and
+  displayed** (after kills, polarity reversals, the trace's own filter and the gain's
+  processing: what the status bar's amplitude reads); the row at the time under the pointer in the plot is marked and
   kept in view. A line says so when the file gives no sample interval (the times then
   count samples, 1 ms each) or a trace has no samples.
 - **Trace table:** a row per trace of the record shown, or of **The whole file**, with
@@ -877,7 +888,7 @@ default size. Every other setting stays as it is, and the arrangement is saved a
 from then on. Ctrl+Shift+R does the same in a running viewSEG, if the main window has the
 keyboard. Deleting `layout.nif` in the settings folder also works, with viewSEG closed.
 
-**Your kills and polarity reversals are remembered with each file**, by what the file
+**Your kills, polarity reversals and per-trace filters are remembered with each file**, by what the file
 holds, not by its name: rename or move a file, open it again (in this run or the next),
 and its edits are back, as Messages says. A copy with one byte changed is another file
 and gets none. They are kept in `files/` in the settings folder, one small file per data

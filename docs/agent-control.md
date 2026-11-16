@@ -132,6 +132,7 @@ schema (in the tool list) gives every field and value; the most used:
 | `processing` | `processing` (`dc`: `none`, `mean`, `mean and trend`; `band`: `none`, `low-cut`, `high-cut`, `band-pass`; `f1` .. `f4` in Hz, the low-cut ramp `f1` to `f2` and the high-cut ramp `f3` to `f4`; `notches`, each `on`, `hz`, `widthHz`, `harmonics`; `raw`; `aux`) | The filters the traces go through, as the strip's Filters drop-down sets them: `{"kind": "processing", "processing": {"band": "band-pass", "f1": 4, "f2": 8, "f3": 60, "f4": 80}}`; `raw` shows them unfiltered (`P`), `aux` filters the auxiliary traces too. `state` gives each panel's `processing`, and `processingNote` when the file's Nyquist cut a corner or notch, or when the file gives no sample interval (the pass band and notches are then not applied) |
 | `select` | `traces` (survey-wide ids), `mode` (`replace`, `add`, `toggle`, `range`) | The selection |
 | `edit traces` | `edit` (`killed`, `reversed`), `edited`, `on` | Kills or reverses traces, beside the file, for this session (below) |
+| `own filter` | `edited`, `on`, `processing`, `filterPlace` (`after`, `instead`) | Sets a trace's own frequency filter (`on` true) or removes it. `processing` is the same object as `processing` (DC, pass band, corners, notches); `raw` and `aux` are ignored. `after` (the default) runs it after the plot's filters, `instead` instead of them. Omitted `edited` is the selection. `state`'s panel lists them in `ownFilters` (`trace`, `place`, `words`) |
 | `undo edit`, `redo edit` | | Takes back the last change to the edits of the panel's file, or makes it again, as Edit > Undo and Redo; `state`'s panel says what each would do (`undo`, `redo`) |
 | `list file memory` | | Reads again what is remembered about files, as File > File memory... does; `state`'s `memory` part gives it |
 | `map view` | `mapView` (`centre`: `x`, `y`; `perPixel`: survey units a pixel) | Pans and zooms the map, as you would |
@@ -202,7 +203,7 @@ Turn agent control on for agents you would let do what you can do in the windows
   cache, as when you open it. Numbers no control would take are brought within the
   controls' ranges.
 - **Its trace edits are for this session only too.** What an agent kills, reverses
-  (one trace or all of them), undoes, redoes or clears is shown as if you had done it,
+  (one trace or all of them), filters, undoes, redoes or clears is shown as if you had done it,
   but is never remembered with the file: the next time the file is opened, it shows the
   edits as you last left them by hand. The rule, as built: a change keeps (is
   remembered) when it comes from a window, and is shown only when it comes from agent
