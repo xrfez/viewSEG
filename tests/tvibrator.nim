@@ -5,9 +5,9 @@
 ##
 ## - the plots' numbers are the library's (`analyzeVibrators` on the same
 ##   rows, called here);
-## - and they are what was made: GF's phase 15°, its fundamental 1000, its
-##   THD 10 %, its frequency the sweep's; GF (M, B) the weighted sum's
-##   amplitude and phase worked out here from the masses;
+## - and they are what was made: GF at 15° to the reference, its
+##   fundamental 1000, its THD 10 %, its frequency the sweep's; GF (M, B)
+##   the weighted sum's amplitude and phase worked out here from the masses;
 ## - the roles in another order (B, Ref, M, GF) give the same numbers;
 ## - limits: off, nothing is drawn or judged; a phase limit of 10° fails GF
 ##   (its points past it marked, the table says "fail: phase"), one of 20°
