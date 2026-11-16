@@ -34,6 +34,13 @@ switch("define", "ImPlot")
 #   dlopens X11, Wayland and GL itself). Its rpath is dropped: nothing to find.
 # - Without a static SDL3 (pkg-config fails), or with -d:sdlShared, the binary
 #   needs libSDL3.so.0 at run time instead.
+# - The headers: imguin's impl_sdl3 includes <SDL3/SDL.h> and sdl3_nim only
+#   names its own Windows copy, so SDL's include folder comes from pkg-config
+#   (an SDL installed outside /usr/local, as CI's, is found too).
+when defined(linux):
+  let (sdlCflags, sdlNoCflags) = gorgeEx("pkg-config --cflags sdl3")
+  if sdlNoCflags == 0 and sdlCflags.strip.len > 0:
+    switch("passC", sdlCflags.strip)
 when defined(linux) and not defined(sdlShared):
   let
     (sdlLibDir, sdlMissing) = gorgeEx("pkg-config --variable=libdir sdl3")
