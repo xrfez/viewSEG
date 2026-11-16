@@ -892,9 +892,10 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   atomically (`replace` of the record: the document is made on the disk thread); a file
   that keeps nothing has its document removed
   (`DiskIo.remove`). Edits made before the identity is known are kept by the path
-  instead (`pendingName`: the path, size and modification time; `writePending`), taken
-  in when that file is next identified unchanged (`takePending`) and the pending
-  document removed after its own is written; a pending document this run wrote is
+  instead (`pendingName`: the path, size and modification time; `writePending`), turned,
+  when that file is next identified unchanged (`takePending`), into an unconfirmed
+  record of its identity (never applied by itself: offered with Apply/Forget) and the
+  pending document removed; a pending document this run wrote is
   older than what it shows, and is not taken in. A pending document is written as a
   document is below, so that an earlier run's, its drive silent then too, is merged in
   and shown, never written over. **Two programs, one document**: a write of

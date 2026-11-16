@@ -3128,11 +3128,16 @@ proc applyRecord(state: var AppState; i: int; c: FileRecord) =
   state.log.add(sevInfo, name, said & ". The file itself holds none of it.")
   state.editsChanged(r.path)
 
-proc takePending(state: var AppState; i: int; p: FileRecord; fits: bool) =
+proc takePending(state: var AppState; i: int; p: FileRecord; fits: bool): string =
   ## The edits kept by `remembered[i]`'s path in a run that could not read
-  ## its identity: taken, as kept (`fits`: the file is as it was then), and
-  ## written in its own document, then the pending one removed; or, the
-  ## file changed since, said in full and removed. One this run wrote (or
+  ## its identity. When the file is as it was then (`fits`: its path, size
+  ## and time), they are not applied by themselves: the path says nothing of
+  ## the content. They become a record of the file's quick identity, with
+  ## the hash of every byte if one was kept with them (brought back at once,
+  ## then confirmed by that hash, as any record), else unconfirmed (listed
+  ## to apply or forget, said once); the pending document goes. Returns that
+  ## record's document name, "" when there is none. When the file changed
+  ## since, the edits are said in full and removed. One this run wrote (or
   ## took in) is older than what it shows: the edits as they are now go to
   ## the file's document, and it is removed after.
   template r: untyped = state.remembered[i]
@@ -3143,24 +3148,38 @@ proc takePending(state: var AppState; i: int; p: FileRecord; fits: bool) =
     # merged in when this run first wrote it (`takeMerged`).
     r.savedRev = -1
     return
-  r.pending = true # removed once its edits are written (`writeMemoryDoc`), or now
   if fits:
-    state.edits.mgetOrPut(state.keyOf(r.path), FileEdits()).remembered(p.edits)
-    r.savedRev = -1 # its own document takes them
-    state.log.add(sevInfo, name, name & ": " & keptWords(p.edits) & ", as you left it " &
-      "when its drive did not give its first and last bytes (" &
-      p.opened.local.format("yyyy-MM-dd HH:mm") & "); remembered with it now.")
-    state.editsChanged(r.path)
-  else:
-    var lists: seq[string]
-    for edit in [teKilled, teReversed]:
-      if p.edits.lists[edit].len > 0: lists.add $edit & " " & runsText(p.edits.lists[edit])
-    if p.edits.allReversed: lists.add "all reversed"
-    state.log.add(sevWarning, name, "The edits of " & name & " made when its drive did not " &
-      "give its first and last bytes (" & p.opened.local.format("yyyy-MM-dd HH:mm") &
-      ") are not applied: it changed since (its size or time is not the same). They were: " &
-      lists.join("; ") & ".")
-    state.dropPending(i)
+    if not state.readOnlyProject:
+      state.diskIo.remove(state.store.docPath(p.doc), "the edits of " & name & " kept by its path")
+    if p.edits.isEmpty: return
+    var rec = FileRecord(identity: FileIdentity(size: r.identity.size, quick: r.identity.quick),
+      name: p.name, path: r.path, opened: p.opened, modified: r.modified, edits: p.edits,
+      unconfirmed: not p.identity.fullKnown)
+    if p.identity.fullKnown:
+      (rec.identity.full, rec.identity.fullKnown) = (p.identity.full, true)
+    for s in state.sessions:
+      if s.path == r.path: rec.traces = s.len
+    var taken = r.waiting.mapIt(it.doc) & r.taken
+    for x in state.remembered:
+      taken.add x.doc
+      taken.add x.provDocs
+    for d in state.knownDocs.keys: taken.add d
+    rec.doc = freeDocName(rec.identity, taken)
+    state.knownDocs[rec.doc] = rec
+    if not state.readOnlyProject:
+      state.diskIo.replace(state.store.docPath(rec.doc), rec, "the edits of " & name &
+        " kept by its path")
+    return rec.doc
+  r.pending = true # removed now
+  var lists: seq[string]
+  for edit in [teKilled, teReversed]:
+    if p.edits.lists[edit].len > 0: lists.add $edit & " " & runsText(p.edits.lists[edit])
+  if p.edits.allReversed: lists.add "all reversed"
+  state.log.add(sevWarning, name, "The edits of " & name & " made when its drive did not " &
+    "give its first and last bytes (" & p.opened.local.format("yyyy-MM-dd HH:mm") &
+    ") are not applied: it changed since (its size or time is not the same). They were: " &
+    lists.join("; ") & ".")
+  state.dropPending(i)
 
 proc link(state: var AppState; i, j: int) =
   ## `remembered[i]`'s file is `remembered[j]`'s, opened under another path
@@ -3250,7 +3269,7 @@ proc sayEarlier(state: var AppState; path: string; c: FileRecord) =
       keptWords(c.edits) & " are not applied. They are kept as an earlier output of " & name &
       ", to look at, apply or forget (File > Project...).")
 
-proc sayUnconfirmed(state: var AppState; i: int; c: FileRecord) =
+proc sayUnconfirmed(state: var AppState; i: int; c: FileRecord; why = "") =
   ## The edits an earlier run left, unconfirmed, for a file of `remembered[i]`'s
   ## quick identity (the program closed while its brought-back record was
   ## being checked): nothing of them is applied. They are listed with the
@@ -3271,8 +3290,9 @@ proc sayUnconfirmed(state: var AppState; i: int; c: FileRecord) =
   state.earlier[r.path] = list
   state.log.add(sevWarning, name, name & ": the edits you made on " &
     (if c.opened != Time(): c.opened.local.format("yyyy-MM-dd HH:mm") else: "an earlier day") &
-    " (" & keptWords(c.edits) & ") were not yet confirmed as this file's when viewSEG closed: " &
-    "they are kept apart (Project window: Apply or Forget).")
+    " (" & keptWords(c.edits) & ") " & (if why.len > 0: why else:
+    "were not yet confirmed as this file's when viewSEG closed") &
+    ": they are kept apart (Project window: Apply or Forget).")
 
 proc sayEarlierNew(state: var AppState; path: string; c: FileRecord; own: EditLists) =
   ## `sayEarlier`, unless the edits of `c` are on the file already (`own`:
@@ -3321,6 +3341,9 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
   let name = r.path.extractFilename
   for p in m.memoryProblems:
     state.log.add(sevWarning, name, "What is remembered about " & name & ": " & p & ".")
+  # What the path kept comes first: a record of its own, found below like any
+  let fromPending = if m.pending.doc.len > 0: state.takePending(i, m.pending, m.pendingFits)
+    else: ""
   var cands, unconfirmed: seq[FileRecord]
   for c in m.candidates: # what this run wrote is newer than the disk
     let x = if c.doc in state.knownDocs: state.knownDocs[c.doc] else: c
@@ -3334,8 +3357,10 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
     if at < 0 and c.modified == r.modified: at = j
   if at >= 0: state.applyRecord(i, cands[at])
   else: r.waiting = cands
-  for c in unconfirmed: state.sayUnconfirmed(i, c)
-  if m.pending.doc.len > 0: state.takePending(i, m.pending, m.pendingFits)
+  for c in unconfirmed:
+    state.sayUnconfirmed(i, c, if c.doc == fromPending and fromPending.len > 0:
+      "were made when its drive did not give its first and last bytes, so nothing says " &
+      "they were made on this file" else: "")
   if cands.len > 0 or not state.editsAt(r.path).kept.isEmpty: state.hashFile(i)
   state.linkSame(i)
   # Other files once at this path (output again under the same name): their

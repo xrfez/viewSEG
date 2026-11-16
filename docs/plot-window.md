@@ -1174,8 +1174,10 @@ file renamed over it; one that a write cut short leaves is removed at the next s
 the data file's bytes and modification time are never touched. A file whose drive does not answer opens as always; its edits
 come when its identity can be read, and edits you make before that are kept by the file's
 path, size and modification time (`pending-<hash of the path>.nif`) until it is: quit
-before, and the next run that opens the file unchanged shows them and remembers them with
-its identity (a file changed since does not take them: Messages lists them); a second run
+before, and the next run that opens the file unchanged does not apply them (the path says
+nothing of the content): they are kept as an unconfirmed record of the file's identity,
+said once and listed in the Project window to apply or to forget (a file changed since:
+Messages lists them and they are removed); a second run
 whose drive is silent too keeps the first run's beside its own. Two viewSEG at once with
 the same file open (two windows) lose none of each other's edits: before a write, the
 entry's time is compared with the one read or written last, and another's change is

@@ -18,7 +18,8 @@
 ##   stay as its record; only the brought-back ones are taken away.
 ## - When the hash agrees, they join the brought-back record.
 ##
-## Seen to fail: with `writeMemoryDoc` not routing a check to
+## Seen to fail: with `takePending` applying edits kept by path on path, size and
+## time, "edits kept by path were applied"; with `writeMemoryDoc` not routing a check to
 ## `writeProvisional`, "the brought document holds the edits made on the
 ## other file"; with `takeHashed` forgetting every edit, "the own edit was
 ## thrown away".
@@ -278,4 +279,25 @@ withFixtures fx:
     st.shutdown()
     let all = docs(job)
     doAssert all.len == 1 and all[0].killedIn == @[5, 12], "not joined: " & $all.len
+  block pendingByPath: # edits kept by path, no hash recorded: unconfirmed, never applied
+    let c2 = fx.dir / "config-pending"
+    let p = field / "pend.sgy"
+    copyFile(fx.manyTracesSegy(Traces, 40), p)
+    setLastModificationTime(p, t0)
+    createDir(c2 / StoreFolder)
+    writeFile(c2 / StoreFolder / pendingName(p), memoryDocument(FileRecord(
+      identity: FileIdentity(size: getFileSize(p)), name: "pend.sgy", path: p,
+      opened: getTime(), modified: getLastModificationTime(p),
+      edits: EditLists(lists: [@[], @[4]]))))
+    var st = start(c2)
+    st.showFile(p)
+    doAssert st.settle(st.remembering(p).known and st.said("Apply or Forget"))
+    doAssert not st.killed(4), "edits kept by path were applied on path, size and time alone"
+    doAssert st.unconfirmedOf(p).len == 1, "they are not offered as an unconfirmed record"
+    doAssert st.said("Apply or Forget"), "not said"
+    st.flushFiles()
+    doAssert not fileExists(c2 / StoreFolder / pendingName(p)), "the pending document stays"
+    st.applyUnconfirmed(p)
+    doAssert st.settle(st.killed(4)), "Apply did not apply them"
+    st.shutdown()
 echo "tprojectedits: done"
