@@ -229,6 +229,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     template limit(text, id: string; field: untyped; unit, what: string) =
       igAlignTextToFramePadding()
       igTextUnformatted(cstring(text), nil)
+      marks.mark(name & ".limit " & text)
       igSameLine(0, -1)
       if limitBox(id, p.limits.field, box, typed) and
           not (typed.isNaN and p.limits.field.isNaN) and typed != p.limits.field:
@@ -238,14 +239,14 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
         igSameLine(0, -1)
         igTextUnformatted(cstring(unit), nil)
     limit("Phase ±", "##phase", phaseDeg, "°", "The largest |phase| at a point, degrees")
-    limit("mean", "##meanphase", meanPhaseDeg, "°", "The largest mean |phase|, degrees")
+    limit("Phase mean", "##meanphase", meanPhaseDeg, "°", "The largest mean |phase|, degrees")
     limit("THD", "##thd", thdPct, "%", "The largest THD at a point, %")
-    limit("mean", "##meanthd", meanThdPct, "%", "The largest mean THD, %")
+    limit("THD mean", "##meanthd", meanThdPct, "%", "The largest mean THD, %")
     limit("harmonic", "##harmonic", harmonicPct, "%",
       "The largest level of any one harmonic at a point, % of the fundamental")
-    limit("force from", "##forcelow", forceLow, "", "The smallest fundamental at a point")
-    limit("to", "##forcehigh", forceHigh, "", "The largest fundamental at a point")
-    limit("peak", "##peak", peakForce, "", "The largest peak at a point (the hold-down weight)")
+    limit("Force from", "##forcelow", forceLow, "", "The smallest fundamental at a point")
+    limit("Force to", "##forcehigh", forceHigh, "", "The largest fundamental at a point")
+    limit("Peak force", "##peak", peakForce, "", "The largest peak at a point (the hold-down weight)")
     igEndDisabled()
     igEndPopup()
   if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks):

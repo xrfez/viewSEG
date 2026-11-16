@@ -242,7 +242,10 @@ withFixtures fx:
       var limits = 0
       for c in f.core.plots[1].result.plots[0].curves:
         if c.style == csLimit: inc limits
-      doAssert limits == 2, $limits & " phase limits drawn")
+      doAssert limits == 2, $limits & " phase limits drawn"
+      for label in ["Phase ±", "Phase mean", "THD", "THD mean", "harmonic", "Force from",
+          "Force to", "Peak force"]:
+        doAssert f.markOf("new plot 2.limit " & label).size.x > 0, "no label " & label)
   key("Esc closes the limits", skEscape) # the popover is over the pin: Esc shuts it
   freezePin("new plot 2.freeze", 1)
   step("the vibrator signature closed", proc (f: FrameInfo) =
