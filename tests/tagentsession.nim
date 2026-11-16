@@ -464,6 +464,27 @@ withFixtures fx:
     doAssert again.settings.plot.display.mode == dmWiggle and
       again.settings.plot.display.gain == user.plot.display.gain
     doAssert again.settings.readout == @[rfTime, rfAmplitude]
+  block aReopenOfNoFile:
+    # Seen to fail: "nope.sgy is opened again" was logged, and the choice kept
+    # for the path that is no file. A file that cannot be opened is refused.
+    var st = appIn(dir)
+    st.apply Command(kind: ckOpen, paths: @[mine])
+    doAssert st.settle(st.sessions.len == 1)
+    let missing = agentDir / "nope.sgy"
+    var applied = false
+    let answer = st.runCommand(fe, $(%*{"kind": "reopen", "reopenPath": missing,
+      "openChoice": toJson(OpenChoice(verifyAll: true))}), applied)
+    doAssert applied, answer
+    doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
+    let said = missing & " is not a file that can be opened"
+    var logged = false
+    for e in st.log:
+      if "Ignored \"reopen\": " & said in e.text: logged = true
+      doAssert "is opened again" notin e.text, e.text
+    doAssert logged, "the refusal was not said"
+    doAssert st.openChoiceOf(canonical(missing)).isDefault, "a choice kept for no file"
+    st.shutdown()
+
   block aTableAskedBeyondTheLimits:
     # Seen to fail: rows at 9223372036854775000 raised OverflowDefect in the
     # Headers reader (the program ended), and 8000 columns were taken. The
