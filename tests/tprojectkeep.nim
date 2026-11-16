@@ -27,7 +27,8 @@
 ## - An Update refused (an original written during both tries) or cancelled
 ##   leaves the copies, the document and survey.bin as they were.
 ##
-## Seen to fail: with `exclusive` taken off the keep job, "two keeps ran at
+## Seen to fail: with `sweepTemporaries` removing every `*.tmp`, "the survey file day1.tmp
+## was swept"; with `exclusive` taken off the keep job, "two keeps ran at
 ## once" (the test waits past CancelGrace and StallAfter, when the lane gives
 ## the next job a runner of its own); with the temporary name of `survey.bin`
 ## made from the process id, "the temporary name"; with the originals looked
@@ -342,4 +343,40 @@ withFixtures fx:
     doAssert readFile(job / "survey" / "survey.bin") == binBefore, "survey.bin changed"
     for f in walkFiles(job / "survey" / "files" / "*.tmp"): doAssert false, "a temp is left: " & f
     for f in walkFiles(job / "survey" / "*.tmp"): doAssert false, "a temp is left: " & f
+  block keptTmpName: # a survey file really named day1.tmp is not a job's temporary file
+    let job = fx.dir / "Job tmpname"
+    let (s, r, x) = fx.surveySps()
+    let odd = fx.dir / "day1.tmp"
+    copyFile(s, odd)
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+    doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+    st.apply Command(kind: ckJoin, joinFile: NoSession, joinFiles: @[
+      JoinFile(path: odd, kind: jkSps), JoinFile(path: r, kind: jkSps),
+      JoinFile(path: x, kind: jkSps)])
+    doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore and
+      not st.project.doc.hasImport), "not imported: " & st.project.surveyNote
+    let kept = job / "survey" / "files" / "day1.tmp"
+    doAssert fileExists(kept), "the copy is not named day1.tmp"
+    writeFile(job / "survey" / "files" / "r.7.tmp", "left by a cut-short copy")
+    var sf = readSps(r)
+    var p = sf.points[^1]
+    p.point += 1
+    p.pointName = ""
+    sf.points.add p
+    sf.order.setLen 0
+    sleep 20
+    doAssert writeSps(sf, r).len == 0
+    st.flushFiles()
+    st.shutdown()
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject and again.project.survey == srLoaded and
+      again.project.offer)
+    again.apply Command(kind: ckUpdateSurvey) # sweeps the temporaries first
+    doAssert again.settle(again.said("updated") or again.project.survey == srLoaded)
+    again.flushFiles()
+    again.shutdown()
+    doAssert fileExists(kept), "the survey file day1.tmp was swept as a temporary file"
+    doAssert not fileExists(job / "survey" / "files" / "r.7.tmp"), "a job's temporary file stays"
 echo "tprojectkeep: done"

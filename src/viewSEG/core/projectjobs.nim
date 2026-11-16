@@ -301,14 +301,28 @@ proc dropCopies(tmps: seq[(string, string)]) =
   ## Removes the temporary files of copies that were not put in place.
   for (tmp, _) in tmps: discard fs.tryRemoveFile(tmp)
 
-proc sweepTemporaries(dir: string) =
+func isJobTemporary(name: string): bool =
+  ## Whether `name` ends as a copy's temporary file does (`copyIn`):
+  ## `.<digits of a job>.tmp`.
+  if not name.endsWith(".tmp"): return false
+  let stem = name[0 ..< name.len - 4]
+  var n = 0
+  while n < stem.len and stem[stem.len - 1 - n] in {'0' .. '9'}: inc n
+  n > 0 and n < stem.len and stem[stem.len - 1 - n] == '.'
+
+proc sweepTemporaries(dir: string; recorded: openArray[SurveyCopy]) =
   ## Removes the temporary copies an earlier run left (it was cut short): no
-  ## job of this program has any, the survey folder being exclusive.
+  ## job of this program has any, the survey folder being exclusive. Only a
+  ## name made as a job makes it (`isJobTemporary`) and never one that is a
+  ## recorded copy: a survey file may be named `day1.tmp`.
   let copies = dir.partOf(SurveyCopies)
+  var names: seq[string] = @[]
+  for c in recorded: names.add c.copy.extractFilename
   try:
     if fs.dirExists(copies):
       for kind, path in fs.walkDir(copies):
-        if kind == pcFile and path.endsWith(".tmp"): discard fs.tryRemoveFile(path)
+        if kind == pcFile and path.extractFilename.isJobTemporary and
+            path.extractFilename notin names: discard fs.tryRemoveFile(path)
   except OSError:
     discard
 
@@ -349,7 +363,7 @@ proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy
     var tmps: seq[(string, string)] = @[]
     {.cast(gcsafe).}:
       try:
-        sweepTemporaries(dir)
+        sweepTemporaries(dir, existing)
         var taken: seq[string] = @[]
         let copies = dir.partOf(SurveyCopies)
         var paths: seq[string] = @[]
@@ -431,7 +445,7 @@ proc updateSurveyWork*(dir: string; copies: seq[SurveyCopy]; originals: seq[Orig
     var tmps: seq[(string, string)] = @[]
     {.cast(gcsafe).}:
       try:
-        sweepTemporaries(dir)
+        sweepTemporaries(dir, copies)
         var sources = newSeq[string](copies.len)
         for i, c in copies:
           if i < originals.len and originals[i].state == osChanged:
