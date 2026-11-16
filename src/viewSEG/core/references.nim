@@ -13,7 +13,9 @@
 
 import std/[math, os, strutils, times]
 import parseSEG
+import processSEG/fft/spectrum
 import processSEG/vibroseis/[sweep, taper]
+import processSEG/core/workspace
 import filesystem, nif, threads
 
 const
@@ -21,6 +23,10 @@ const
   ReferenceIndexName* = "index.nif"
   ReferenceVersion* = 1
   MaxReferenceName* = 120
+  PreviewPoints* = 4_000
+    ## a Generate preview draws at most this many samples
+  PerUserLockName* = "files.lock"
+    ## the lock the other per-user documents use, beside their folder
 
 type
   ReferenceLaw* = enum
@@ -59,6 +65,9 @@ type
     date*: string ## when it was stored, UTC, `yyyy-MM-ddTHH:mm:ssZ`
     file*: string ## its SEG-Y file's name in the folder
     missing*: bool
+    blocked*: bool
+      ## `file` is not a single name in the folder: the entry is said and
+      ## never deleted, renamed, opened or copied through
     later*: seq[NifNode]
 
   ReferenceIndex* = object
@@ -98,7 +107,25 @@ type
     raRenamed = "renamed"
     raDeleted = "deleted"
     raCopied = "copied"
+    raViewed = "viewed"
     raFailed = "failed"
+
+  RefView* = object
+    ## A window showing one reference: its samples against time, and its
+    ## amplitude spectrum. Not a follow window: it shows that reference
+    ## until it is closed.
+    id*: int
+    refId*: string
+    name*: string
+    gone*: bool
+    note*: string
+    waiting*: bool
+    fromMs*: float64
+    dtMs*: float64
+    ys*: seq[float64]
+    hz*: seq[float64]
+    amps*: seq[float64]
+    revision*: int
 
   ReferenceNews* = object
     ## What a reference job posts.
@@ -109,6 +136,12 @@ type
     failure*: string
     id*: string
     name*: string
+    window*: int  ## raViewed: the window it is for
+    fromMs*: float64
+    dtMs*: float64
+    ys*: seq[float64]
+    hz*: seq[float64]
+    amps*: seq[float64]
 
 func referencesFolder*(home: string): string {.inline.} =
   ## The archive folder of a config folder or a project folder.
@@ -205,6 +238,61 @@ func lengthText*(e: ReferenceEntry): string =
 
 func intervalText*(e: ReferenceEntry): string =
   if e.intervalUs > 0: numberText(e.intervalUs / 1000) & " ms" else: "none"
+
+func singleFileName*(file: string): bool =
+  ## A single file name inside the archive folder: no separator, no "..",
+  ## not absolute. A name such as `../outside.sgy` is not one.
+  if file.len == 0 or file == "." or file == "..": return false
+  if isAbsolute(file): return false
+  for c in file:
+    if c in {'/', '\\', '\0'}: return false
+  ".." notin file
+
+func archiveLockPath*(folder: string): string =
+  ## The lock the other per-user documents of this archive's home use.
+  folder.parentDir / PerUserLockName
+
+func sweepTooLong*(g: GeneratedReference): string =
+  ## Why `g` is too long for processSEG, in plain words; "" when it is not.
+  ## Checked before any sweep is made.
+  if not (g.dtMs > 0 and g.dtMs < Inf): return ""
+  if not (g.durationMs == g.durationMs): return ""
+  let steps = g.durationMs / g.dtMs
+  if steps > float64(high(int32)):
+    "a sweep of " & numberText(g.durationMs) & " ms at " & numberText(g.dtMs) &
+      " ms is over 2³¹ samples"
+  else: ""
+
+func previewGenerate*(g: GeneratedReference): GeneratedReference =
+  ## `g` shortened so a preview is at most `PreviewPoints` samples. The
+  ## sweep stored is still `g`; this is only what a dialog draws.
+  result = g
+  if g.dtMs > 0 and g.dtMs < Inf and g.durationMs / g.dtMs > float64(PreviewPoints):
+    result.durationMs = g.dtMs * float64(PreviewPoints)
+
+func timeStart*(e: ReferenceEntry): float64 =
+  ## The first sample's time, from the archive: a stored window's From, or
+  ## 0 for a generated sweep.
+  if e.origin.generated: 0.0
+  elif e.origin.fromMs == e.origin.fromMs: e.origin.fromMs
+  else: 0.0
+
+proc amplitudeOf*(samples: openArray[float32]; dtMs: float64): tuple[hz, amp: seq[float64]]
+    {.gcsafe.} =
+  ## The amplitude spectrum of `samples`, from processSEG. Empty when there
+  ## is nothing to transform.
+  if samples.len < 2 or not (dtMs > 0 and dtMs < Inf): return
+  let sp = initSpectrumPlan(float32, dtMs, samples.len)
+  var ws = workspace.initWorkspace()
+  ws.reserve(sp.workspaceSize)
+  var amp = newSeq[float32](sp.bins)
+  var phase = newSeq[float32](sp.bins)
+  sp.amplitudeInto(samples, amp, phase, ws)
+  result.hz = newSeq[float64](sp.bins)
+  result.amp = newSeq[float64](sp.bins)
+  for k in 0 ..< sp.bins:
+    result.hz[k] = sp.binHz(k)
+    result.amp[k] = float64(amp[k])
 
 proc nameProblem*(index: ReferenceIndex; name: string): string =
   ## Why `name` cannot be a new reference's; "" when it can.
@@ -452,7 +540,31 @@ proc readIndexDoc(text, name: string): ReferenceIndex =
 
 proc markMissing(folder: string; index: var ReferenceIndex) =
   for e in index.entries.mitems:
-    e.missing = e.file.len == 0 or not fs.fileExists(folder / e.file)
+    if not singleFileName(e.file):
+      e.blocked = true
+      e.missing = true
+      index.problems.add "an entry's file \"" & e.file &
+        "\" is not a file name in the archive: it was left"
+    else:
+      e.missing = not fs.fileExists(folder / e.file)
+
+proc noteOrphans(folder: string; index: var ReferenceIndex) =
+  ## SEG-Y files in the folder with no index entry, left where they are.
+  if not fs.dirExists(folder): return
+  var known: seq[string] = @[]
+  for e in index.entries:
+    if singleFileName(e.file): known.add e.file
+  var n = 0
+  try:
+    for kind, path in fs.walkDir(folder):
+      if kind == pcFile and path.extractFilename.endsWith(".sgy") and
+          path.extractFilename notin known:
+        inc n
+  except OSError:
+    return
+  if n > 0:
+    index.problems.add ($n & (if n == 1: " reference file is" else: " reference files are") &
+      " not in the index")
 
 proc loadIndex*(folder: string): ReferenceIndex {.gcsafe.} =
   ## The archive in `folder`. A missing folder is an empty archive. A
@@ -467,6 +579,7 @@ proc loadIndex*(folder: string): ReferenceIndex {.gcsafe.} =
   except IOError as e:
     return ReferenceIndex(problems: @[path & " cannot be read: " & e.msg])
   markMissing(folder, result)
+  noteOrphans(folder, result)
 
 proc writeAtomic(path, text: string) =
   ## `text` written to `path`: a temporary file beside it, flushed, then
@@ -582,13 +695,31 @@ proc addEntry(index: var ReferenceIndex; name: string; intervalUs: float64;
   result = ReferenceEntry(id: id, name: name.strip, intervalUs: intervalUs,
     samples: samples.len, origin: origin, date: nowText(), file: id & ".sgy")
 
+proc holdArchive(folder: string): FileLock {.gcsafe.} =
+  ## The lock the other per-user documents use, so two writers of this
+  ## archive do not drop each other's entry. The index is read again under it.
+  let path = archiveLockPath(folder)
+  try:
+    fs.createDir(path.parentDir)
+  except IOError, OSError:
+    discard
+  fs.lockFile(path, initDuration(seconds = 2))
+
+proc readForChange(folder: string): ReferenceIndex {.gcsafe.} =
+  ## The index, read again while the archive lock is held.
+  loadIndex(folder)
+
 proc storeSamples*(folder, name: string; intervalUs: float64; samples: openArray[float32];
     origin: ReferenceOrigin): string {.gcsafe.} =
   ## Writes a reference and returns its id. A name already used raises
   ## `ValueError` and writes nothing. The SEG-Y is written first, then the
   ## index, so a failure leaves no index entry for a file that is not there.
+  ## The index is read again under the per-user lock, so another writer of
+  ## this archive is not dropped.
   assertWorkerThread()
-  var index = loadIndex(folder)
+  var lock = holdArchive(folder)
+  defer: fs.unlock(lock)
+  var index = readForChange(folder)
   if index.newer:
     raise newException(ValueError, index.problems.join("; "))
   # A damaged index is moved aside by the save; what could be read is kept.
@@ -600,16 +731,25 @@ proc storeSamples*(folder, name: string; intervalUs: float64; samples: openArray
   writeIndex(folder, index)
   e.id
 
+proc refuseBlocked(e: ReferenceEntry; what: string) =
+  if e.blocked:
+    raise newException(ValueError, "the reference \"" & e.name &
+      "\" names a file outside the archive: it was not " & what)
+
 proc renameIn*(folder, id, name: string) {.gcsafe.} =
   ## Renames the reference `id`. A name already used, or no such reference,
   ## raises `ValueError`. The SEG-Y is written again so its textual header
-  ## carries the new name.
+  ## carries the new name. An entry whose file is not a name in the folder
+  ## is left alone.
   assertWorkerThread()
-  var index = loadIndex(folder)
+  var lock = holdArchive(folder)
+  defer: fs.unlock(lock)
+  var index = readForChange(folder)
   if index.damaged or index.newer:
     raise newException(ValueError, index.problems.join("; "))
   let i = index.findId(id)
   if i < 0: raise newException(ValueError, "there is no reference \"" & id & "\"")
+  refuseBlocked(index.entries[i], "renamed")
   let problem = index.nameProblem(name)
   if problem.len > 0 and index.findName(name.strip) != i:
     raise newException(ValueError, problem)
@@ -624,15 +764,19 @@ proc renameIn*(folder, id, name: string) {.gcsafe.} =
 
 proc deleteIn*(folder, id: string): string {.gcsafe.} =
   ## Removes the reference `id` and its SEG-Y. Returns its name. No such
-  ## reference raises `ValueError`.
+  ## reference raises `ValueError`. An entry whose file is not a name in
+  ## the folder is left alone, file and all.
   assertWorkerThread()
-  var index = loadIndex(folder)
+  var lock = holdArchive(folder)
+  defer: fs.unlock(lock)
+  var index = readForChange(folder)
   if index.damaged or index.newer:
     raise newException(ValueError, index.problems.join("; "))
   let i = index.findId(id)
   if i < 0: raise newException(ValueError, "there is no reference \"" & id & "\"")
+  refuseBlocked(index.entries[i], "deleted")
   result = index.entries[i].name
-  if index.entries[i].file.len > 0:
+  if singleFileName(index.entries[i].file):
     discard fs.tryRemoveFile(folder / index.entries[i].file)
   index.entries.delete i
   writeIndex(folder, index)
@@ -644,9 +788,16 @@ proc copyInto*(fromFolder, toFolder, id: string): string {.gcsafe.} =
   assertWorkerThread()
   let src = loadIndex(fromFolder)
   let i = src.findId(id)
-  if i < 0: raise newException(ValueError, "there is no reference \"" & id & "\" in the main archive")
+  if i < 0:
+    raise newException(ValueError, "there is no reference \"" & id & "\" in the main archive")
+  if src.entries[i].blocked:
+    raise newException(ValueError, "the reference \"" & src.entries[i].name &
+      "\" names a file outside the archive: it was not copied")
   if src.entries[i].missing:
     raise newException(ValueError, "the reference \"" & src.entries[i].name &
       "\" has no file: it was not copied")
+  if not singleFileName(src.entries[i].file):
+    raise newException(ValueError, "the reference \"" & src.entries[i].name &
+      "\" names a file outside the archive: it was not copied")
   let (samples, us) = readReferenceFile(fromFolder / src.entries[i].file)
   storeSamples(toFolder, src.entries[i].name, us, samples, src.entries[i].origin)

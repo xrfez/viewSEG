@@ -178,6 +178,34 @@ withFixtures fx:
       "this file is " in st.plots[w].result.problem, st.plots[w].result.problem
     doAssert st.plots[w].result.plots.len == 0, "a different interval was drawn"
 
+  block a_deleted_choice_says_the_name:
+    # Seen to fail: with the choice left set and the note naming the id,
+    # the next plot failed the same way and the note was "r...".
+    var windowId = ""
+    for entry in st.references.entries:
+      if entry.name == "a window": windowId = entry.id
+    doAssert windowId.len > 0
+    st.apply Command(kind: ckSelectReference, refId: windowId)
+    st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
+      plotTraces: @[s.base + pilot])
+    let usingIt = st.plots.high
+    doAssert st.settle(st.answered(usingIt))
+    st.apply Command(kind: ckDeleteReference, refId: windowId)
+    doAssert st.settle(st.chosenReference.len == 0), "the choice stayed set: " &
+      st.chosenReference
+    var said = false
+    for entry in st.log:
+      if "\"a window\"" in entry.text and "no longer in the archive" in entry.text and
+          "file's own pilot" in entry.text:
+        said = true
+    doAssert said, "the name was not said once"
+    doAssert "a window" in st.plots[usingIt].goneNote, st.plots[usingIt].goneNote
+    st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
+      plotTraces: @[s.base + pilot])
+    let next = st.plots.high
+    doAssert st.settle(st.answered(next) and st.plots[next].result.problem.len == 0),
+      "the next plot did not work: " & st.plots[next].result.problem
+
   block project_switches_the_archive:
     st.apply Command(kind: ckSelectReference, refId: "")
     let proj = fx.dir / "job"
@@ -203,6 +231,16 @@ withFixtures fx:
     doAssert st.settle(st.inProject and st.referencesLoaded)
     doAssert st.chosenReference.len > 0, "the project's choice was not kept"
     doAssert st.references.entries.len == 1
+    # A close queues the document and does not wait. A reopen at once must
+    # still see the choice (and every other field of that write).
+    # Seen to fail: with the open job reading before that write, the choice
+    # was empty.
+    st.apply Command(kind: ckSelectReference, refId: "")
+    st.apply Command(kind: ckSelectReference, refId: st.references.entries[0].id)
+    st.apply Command(kind: ckCloseProject)
+    st.apply Command(kind: ckOpenProject, projectPath: proj)
+    doAssert st.settle(st.inProject and st.referencesLoaded and st.chosenReference.len > 0),
+      "a fast reopen lost the choice"
     st.apply Command(kind: ckCloseProject)
 
   st.shutdown()

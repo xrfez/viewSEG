@@ -88,6 +88,15 @@ withFixtures fx:
     if f.markOf("store").size.x > 0: discard f.clickMark("store.ok")
     f.markOf("store").size.x == 0 and f.core.references.entries.len >= 1)
 
+  step("a synthetic sweep is stored", proc (f: FrameInfo) =
+    var g = GeneratedReference(name: "AAA synthetic", law: rlLinear, f1Hz: 8, f2Hz: 40,
+      durationMs: 200, dtMs: 2, amplitude: 1)
+    f.apply(Command(kind: ckGenerateReference, refGenerate: g)), proc (f: FrameInfo): bool =
+      var found = false
+      for e in f.core.references.entries:
+        if e.name == "AAA synthetic": found = true
+      found)
+
   step("Operations > Reference archive...", proc (f: FrameInfo) =
     f.click(f.markOf("menu.Operations").centre), proc (f: FrameInfo): bool =
     let it = f.markOf("menu.Reference archive...")
@@ -103,14 +112,26 @@ withFixtures fx:
     if f.core.chosenReference.len == 0: discard f.clickMark("references.use.0")
     f.core.chosenReference.len > 0)
 
-  step("View opens the reference", noop, proc (f: FrameInfo): bool =
-    if not f.core.sessions[^1].name.endsWith(".sgy"): discard f.clickMark("references.view.0")
-    f.core.sessions.len >= 1 and f.core.sessions[^1].name.endsWith(".sgy"))
+  step("View opens the reference in its own window", noop, proc (f: FrameInfo): bool =
+    # The file under QC stays open. The reference is a window of its own.
+    if f.markOf("reference.view.time.data").size.x == 0:
+      discard f.clickMark("references.view.0")
+    let still = f.core.sessions.len == 1 and f.core.sessions[0].name.endsWith("shots.sgy")
+    let shown = f.markOf("reference.view").size.x > 0 and
+      f.markOf("reference.view.time.data").size.x > 0 and
+      f.markOf("reference.view.spectrum.data").size.x > 0
+    result = still and shown and f.core.refViews.len >= 1 and not f.core.refViews[0].waiting and
+      f.core.refViews[0].name == "AAA synthetic"
+    if result:
+      discard f.savePng(shots / "reference-view.png")
+      if f.core.refViews.len > 0:
+        f.apply Command(kind: ckCloseRefView, refWindow: f.core.refViews[0].id))
 
   step("Delete asks, and confirms", noop, proc (f: FrameInfo): bool =
+    if f.core.references.entries.len == 0: return true
     if f.markOf("references.confirm").size.x == 0: discard f.clickMark("references.delete.0")
     elif wait mod 6 == 3: f.click(f.markOf("references.confirm.delete").centre)
-    f.core.references.entries.len == 0)
+    false)
 
   proc onFrame(f: FrameInfo) =
     inc wait

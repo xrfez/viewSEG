@@ -73,10 +73,14 @@ proc storeWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
       failed(to, ctx.id, folder, e.msg)
 
 proc generateWork*(g: GeneratedReference; folder: string; to: Poster): JobWork =
-  ## Makes the sweep `g` names and stores it.
+  ## Makes the sweep `g` names and stores it. A sweep too long for
+  ## processSEG is refused before any sample is made.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "generating the reference"
     try:
+      let tooLong = sweepTooLong(g)
+      if tooLong.len > 0:
+        raise newException(ValueError, tooLong)
       let samples = generateSamples(g)
       let name = if g.name.strip.len > 0: g.name.strip else: defaultGenerateName(g)
       let origin = ReferenceOrigin(generated: true, law: g.law, f1Hz: g.f1Hz, f2Hz: g.f2Hz,
@@ -111,6 +115,30 @@ proc deleteWork*(folder, id: string; to: Poster): JobWork =
       post(to, ctx.id, news)
     except CatchableError as e:
       failed(to, ctx.id, folder, e.msg)
+
+proc viewWork*(folder, file, id, name: string; window: int; fromMs: float64;
+    to: Poster): JobWork =
+  ## Reads one reference and its amplitude spectrum, for its window.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "reading the reference"
+    try:
+      if not singleFileName(file):
+        raise newException(ValueError, "the reference names a file outside the archive")
+      let (samples, us) = readReferenceFile(folder / file)
+      if samples.len == 0:
+        raise newException(ValueError, "the reference file has no sample")
+      let dt = if us > 0: us / 1000 else: 0.0
+      let spec = amplitudeOf(samples, dt)
+      var ys = newSeq[float64](samples.len)
+      for i, v in samples: ys[i] = float64(v)
+      var news = ReferenceNews(home: folder, act: raViewed, id: id, name: name,
+        window: window, fromMs: fromMs, dtMs: dt, ys: ys, hz: spec.hz, amps: spec.amp,
+        index: loadIndex(folder))
+      post(to, ctx.id, news)
+    except CatchableError as e:
+      var news = ReferenceNews(home: folder, act: raFailed, id: id, name: name,
+        window: window, failure: e.msg)
+      post(to, ctx.id, news)
 
 proc copyWork*(fromFolder, toFolder, id: string; to: Poster): JobWork =
   ## Copies a reference of the main archive into the project's.

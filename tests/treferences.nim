@@ -144,4 +144,73 @@ block generate_matches_processSEG:
   doAssert frequencyText(e) == "8-80 Hz"
   removeTemp(dir)
 
+block a_bad_file_is_left:
+  # Seen to fail: with `deleteIn` joining `file` onto the folder, the file
+  # outside the archive was removed.
+  let dir = tempDir()
+  let folder = referencesFolder(dir)
+  let outside = dir / "outside.sgy"
+  writeFile(outside, "keep")
+  createDir(folder)
+  writeFile(indexPath(folder), """(.nif27)
+(references
+  (version 1)
+  (entry (id "rbad") (name "bad") (intervalUs 2000.0) (samples 1)
+    (date "2026-01-01T00:00:00Z") (file "../outside.sgy")
+    (source (generated false) (fileName "a.sgy") (trace 1) (fromMs 0.0) (toMs 2.0))))
+""")
+  let index = loadIndex(folder)
+  doAssert index.entries.len == 1 and index.entries[0].blocked
+  doAssert index.problems.len > 0, "a bad file name is said"
+  doAssertRaises ValueError: discard deleteIn(folder, "rbad")
+  doAssertRaises ValueError: renameIn(folder, "rbad", "other")
+  doAssert readFile(outside) == "keep", "a bad entry was deleted through"
+  doAssert fileExists(indexPath(folder))
+  removeTemp(dir)
+
+block orphans_are_said_and_left:
+  # Seen to fail: with no word about a SEG-Y the index does not name,
+  # the message was empty and the file was removed.
+  let dir = tempDir()
+  let folder = referencesFolder(dir)
+  createDir(folder)
+  writeFile(folder / "left.sgy", "orphan")
+  writeFile(indexPath(folder), """(.nif27)
+(references (version 1))
+""")
+  let index = loadIndex(folder)
+  doAssert index.problems.len == 1 and "1 reference file is not in the index" in index.problems[0],
+    $index.problems
+  doAssert readFile(folder / "left.sgy") == "orphan", "an unlisted file was deleted"
+  removeTemp(dir)
+
+block sweep_too_long_is_refused:
+  # Seen to fail: with no check before generateSamples, a sweep past 2³¹
+  # samples was started.
+  let g = GeneratedReference(law: rlLinear, f1Hz: 8, f2Hz: 80, durationMs: 1e12, dtMs: 0.001,
+    amplitude: 1)
+  let why = sweepTooLong(g)
+  doAssert "over 2" in why and "samples" in why, why
+  doAssert sweepTooLong(GeneratedReference(law: rlLinear, f1Hz: 8, f2Hz: 80,
+    durationMs: 1000, dtMs: 2, amplitude: 1)).len == 0
+  let shown = previewGenerate(GeneratedReference(law: rlLinear, f1Hz: 8, f2Hz: 80,
+    durationMs: 100_000, dtMs: 2, amplitude: 1))
+  doAssert shown.durationMs / shown.dtMs <= float64(PreviewPoints), $shown.durationMs
+
+block the_lock_is_the_per_user_one:
+  # Seen to fail: with no lock around the index write, files.lock was not made.
+  let dir = tempDir()
+  let folder = referencesFolder(dir)
+  doAssert archiveLockPath(folder).endsWith("files.lock"), archiveLockPath(folder)
+  let origin = ReferenceOrigin(generated: false, fileName: "a.sgy", trace: 1, fromMs: 0,
+    toMs: 2)
+  discard storeSamples(folder, "one", 2000, @[1'f32, 2], origin)
+  doAssert fileExists(archiveLockPath(folder)), "the per-user lock was not taken"
+  # a second writer re-reads: an entry written before the call is kept
+  discard storeSamples(folder, "two", 2000, @[1'f32, 2], origin)
+  var names: seq[string] = @[]
+  for e in loadIndex(folder).entries: names.add e.name
+  doAssert names == @["one", "two"], $names
+  removeTemp(dir)
+
 echo "treferences: ok"

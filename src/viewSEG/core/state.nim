@@ -241,6 +241,11 @@ type
       ## give a reference another name (a name already used is refused)
     ckCopyReference = "copy reference"
       ## copy a reference of the main archive into the project open
+    ckViewReference = "view reference"
+      ## open a reference in its own window: samples against time, and its
+      ## amplitude spectrum. The file under QC stays open
+    ckCloseRefView = "close reference view"
+      ## close that window
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -462,12 +467,16 @@ type
         ## ckGenerateReference: the sweep (frequencies, length, sample interval,
         ## tapers, type, amplitude). `dtMs` 0: the file on show. `name` "":
         ## one made from the parameters
-    of ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference:
+    of ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference,
+        ckViewReference, ckCloseRefView:
       refId*: string
-        ## ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference:
-        ## the reference's id; "" for ckSelectReference is the file's own pilot
+        ## ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference,
+        ## ckViewReference: the reference's id; "" for ckSelectReference is the
+        ## file's own pilot
       refNewName*: string
         ## ckRenameReference: the new name
+      refWindow*: int
+        ## ckCloseRefView: the window
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -902,6 +911,7 @@ type
     refsLoaded: bool
     mainRefsLoaded: bool
     refsRev: int ## bumps when the archive or the choice changes, so a plot asks again
+    refViews: seq[RefView] ## windows showing a reference, until closed
     remembered: seq[Remembered]
       ## the files opened this run, by path, and where their edits are kept
     knownDocs: Table[string, FileRecord]
@@ -1217,6 +1227,10 @@ func referencesHome*(state: AppState): string {.inline.} =
 func referencesLoaded*(state: AppState): bool {.inline.} =
   ## Whether the archive in force has been read this run.
   state.refsLoaded
+
+func refViews*(state: AppState): lent seq[RefView] {.inline.} =
+  ## The windows showing a reference.
+  state.refViews
 
 func referenceArchiveTitle*(state: AppState): string =
   ## Which archive the window shows: the project's name, or the main one.
@@ -4977,7 +4991,7 @@ proc openProject(state: var AppState; dir: string; by: CommandOrigin; make = fal
     return
   p.job = state.jobs.submit(JobSpec(title: (if make: "Make the project " else:
     "Open the project ") & dir.untitled, lane: jlInteractive),
-    openProjectWork(dir, state.inbox.poster, make, np))
+    openProjectWork(dir, state.inbox.poster, make, np, addr state.disk))
   (p.jobDir, p.jobBy, p.useSurvey) = (dir, by, useSurvey)
 
 proc restoreSurvey(state: var AppState; layers: bool) =
@@ -6769,6 +6783,10 @@ proc generateReference(state: var AppState; cmd: Command) =
   if not (g.dtMs > 0):
     state.ignore(cmd, "no sample interval: name one, or show a file that has one")
     return
+  let tooLong = sweepTooLong(g)
+  if tooLong.len > 0:
+    state.ignore(cmd, tooLong)
+    return
   if g.name.strip.len == 0: g.name = defaultGenerateName(g)
   if state.refsLoaded:
     let problem = state.refs.nameProblem(g.name)
@@ -6816,6 +6834,45 @@ proc renameReference(state: var AppState; cmd: Command) =
   discard state.jobs.submit(JobSpec(title: "Rename a reference", lane: jlInteractive),
     renameWork(state.refsHome, cmd.refId, cmd.refNewName, state.inbox.poster))
 
+proc nextRefView(state: AppState): int =
+  result = 1
+  var taken = true
+  while taken:
+    taken = false
+    for w in state.refViews:
+      if w.id == result:
+        taken = true
+        inc result
+
+proc viewReference(state: var AppState; cmd: Command) =
+  ## Opens `cmd.refId` in its own window. The file under QC is not closed
+  ## and no plot is retargeted.
+  if not state.refsLoaded:
+    state.ignore(cmd, "the reference archive is still being read")
+    return
+  let i = state.refs.findId(cmd.refId)
+  if i < 0:
+    state.ignore(cmd, "there is no reference \"" & cmd.refId & "\" in the archive")
+    return
+  let e = state.refs.entries[i]
+  if e.blocked or not singleFileName(e.file):
+    state.ignore(cmd, "the reference \"" & e.name &
+      "\" names a file outside the archive: it was not opened")
+    return
+  if e.missing:
+    state.ignore(cmd, "the reference \"" & e.name & "\" has no file: it was not opened")
+    return
+  let id = state.nextRefView()
+  state.refViews.add RefView(id: id, refId: e.id, name: e.name, waiting: true,
+    fromMs: timeStart(e), dtMs: (if e.intervalUs > 0: e.intervalUs / 1000 else: 0.0))
+  discard state.jobs.submit(JobSpec(title: "Read the reference " & e.name,
+    lane: jlInteractive), viewWork(state.refsHome, e.file, e.id, e.name, id,
+    timeStart(e), state.inbox.poster))
+
+proc closeRefView(state: var AppState; cmd: Command) =
+  let i = state.refViews.findIt(it.id == cmd.refWindow)
+  if i >= 0: state.refViews.delete i
+
 proc copyReference(state: var AppState; cmd: Command) =
   if not state.inProject:
     state.ignore(cmd, "no project is open")
@@ -6834,9 +6891,52 @@ proc copyReference(state: var AppState; cmd: Command) =
     lane: jlInteractive), copyWork(state.mainRefsHome, state.refsHome, cmd.refId,
     state.inbox.poster))
 
+proc goneNote(name: string): string =
+  "The reference \"" & name & "\" is no longer in the archive. The plots use the file's own pilot."
+
+proc clearGoneChoice(state: var AppState; name: string) =
+  ## The chosen reference was deleted: one message, and the choice is the
+  ## file's own pilot, so the next plot works.
+  if state.chosenRef.len == 0: return
+  let msg = goneNote(name)
+  state.chosenRef = ""
+  inc state.refsRev
+  if state.inProject:
+    if not state.project.readOnly:
+      state.project.doc.referenceId = ""
+      state.projectChanged()
+  else:
+    state.change(coWindow, s): s.referenceId = ""
+  state.log.add(sevInfo, "references", msg)
+  for w in 0 ..< state.plots.len:
+    if state.plots[w].view in {avCorrelation, avVibrator}:
+      state.plots[w].goneNote = msg
+      state.plots[w].result.note = msg
+      state.plots[w].reference = ""
+      inc state.plots[w].revision
+
 proc takeReferences(state: var AppState; m: sink Msg) =
   ## A reference job's result.
   let n = m.refNews
+  if n.act == raViewed or (n.act == raFailed and n.window > 0):
+    let i = state.refViews.findIt(it.id == n.window)
+    if i >= 0:
+      if n.act == raFailed or n.failure.len > 0:
+        state.refViews[i].waiting = false
+        state.refViews[i].note = n.failure
+      else:
+        state.refViews[i].waiting = false
+        state.refViews[i].name = n.name
+        state.refViews[i].fromMs = n.fromMs
+        state.refViews[i].dtMs = n.dtMs
+        state.refViews[i].ys = n.ys
+        state.refViews[i].hz = n.hz
+        state.refViews[i].amps = n.amps
+        state.refViews[i].note = ""
+      inc state.refViews[i].revision
+    if n.act == raFailed and n.failure.len > 0:
+      state.log.add(sevWarning, "references", n.failure & ".")
+    return
   if n.home.len > 0 and n.home == state.mainRefsHome:
     state.mainRefs = n.index
     state.mainRefsLoaded = true
@@ -6844,6 +6944,19 @@ proc takeReferences(state: var AppState; m: sink Msg) =
     state.refs = n.index
     state.refsLoaded = true
     inc state.refsRev
+  var clearedChoice = false
+  if n.act == raRenamed:
+    for w in state.refViews.mitems:
+      if w.refId == n.id: w.name = n.name
+  elif n.act == raDeleted:
+    for w in state.refViews.mitems:
+      if w.refId == n.id:
+        w.gone = true
+        w.name = n.name
+        w.note = "The reference \"" & n.name & "\" was deleted."
+    if state.chosenRef == n.id:
+      state.clearGoneChoice(n.name)
+      clearedChoice = true
   if n.act == raFailed or (n.act == raListed and n.failure.len > 0):
     if n.failure.len > 0:
       state.log.add(sevWarning, "references", n.failure & ".")
@@ -6854,7 +6967,8 @@ proc takeReferences(state: var AppState; m: sink Msg) =
   elif n.act == raRenamed:
     state.log.add(sevInfo, "references", "Renamed the reference to \"" & n.name & "\".")
   elif n.act == raDeleted:
-    state.log.add(sevInfo, "references", "Deleted the reference \"" & n.name & "\".")
+    if not clearedChoice:
+      state.log.add(sevInfo, "references", "Deleted the reference \"" & n.name & "\".")
   elif n.act == raCopied:
     state.log.add(sevInfo, "references", "Copied \"" & n.name & "\" into the project.")
 
@@ -7146,6 +7260,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckDeleteReference: state.deleteReference(cmd)
   of ckRenameReference: state.renameReference(cmd)
   of ckCopyReference: state.copyReference(cmd)
+  of ckViewReference: state.viewReference(cmd)
+  of ckCloseRefView: state.closeRefView(cmd)
   of ckCloseProject:
     if not state.inProject: state.ignore(cmd, "no project is open")
     else:

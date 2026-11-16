@@ -1382,6 +1382,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   var refs = ui.refs.drawReferences(refsTitle, ui.core, ui.theme, ui.marks)
   for c in refs.commands.mitems:
     ui.core.apply move c
+  for c in ui.refs.drawRefViews(ui.core, ui.theme, ui.scale, ui.marks):
+    ui.core.apply c
   var project = ui.project.drawProjectWindows(projectTitle, newProjectTitle, ui.core, ui.theme,
     ui.marks)
   for c in project.commands.mitems:

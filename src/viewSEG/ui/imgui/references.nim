@@ -2,11 +2,11 @@
 ## Store as reference (the plot's menu). The windows issue commands; they
 ## do not read a file.
 
-import std/[algorithm, os, strutils]
+import std/[algorithm, strutils, tables]
 import imguin/cimgui
 import ../../core/[references, state]
-import ../../view/theme
-import focus, marks, style
+import ../../view/[curveplot, theme]
+import curveplot as curves, focus, icons, marks, placement, style
 
 type
   RefSort* = enum
@@ -21,6 +21,7 @@ type
     descending: bool
     renameId: string
     rename: string
+    renameProblem: string
     confirmId: string
     confirmAsk: bool
     genAsk: bool
@@ -30,6 +31,7 @@ type
     genMessage: string
     preview: seq[float32]
     previewKey: string
+    viewPlots: Table[int, tuple[time, spec: CurvePlotUi]]
 
   StoreDialog* = object
     ask: bool
@@ -137,12 +139,20 @@ proc drawGenerate(ui: var ReferencesUi; t: Theme; marks: var Marks): ReferencesO
     let g = GeneratedReference(law: ui.genLaw, f1Hz: ui.genF1, f2Hz: ui.genF2,
       durationMs: ui.genLength, dtMs: ui.genDt, taperStartMs: ui.genTaper0,
       taperEndMs: ui.genTaper1, amplitude: ui.genAmp, boostDb: ui.genBoost)
-    try:
-      ui.preview = generateSamples(g)
-      ui.genMessage = ""
-    except CatchableError as e:
+    let tooLong = sweepTooLong(g)
+    if tooLong.len > 0:
       ui.preview.setLen 0
-      ui.genMessage = e.msg
+      ui.genMessage = tooLong
+    else:
+      let shown = previewGenerate(g)
+      try:
+        ui.preview = generateSamples(shown)
+        ui.genMessage = if shown.durationMs < g.durationMs:
+            "preview of the first " & msWords(shown.durationMs) & " ms"
+          else: ""
+      except CatchableError as e:
+        ui.preview.setLen 0
+        ui.genMessage = e.msg
   if ui.preview.len > 1:
     var xs, ys: seq[float64]
     let step = max(1, ui.preview.len div 400)
@@ -164,7 +174,10 @@ proc drawGenerate(ui: var ReferencesUi; t: Theme; marks: var Marks): ReferencesO
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
     igTextWrapped("%s", ui.genMessage.cstring)
     igPopStyleColor(1)
-  if igButton("Generate", ImVec2_c(x: 0, y: 0)) and ui.genMessage.len == 0:
+  let tooLong = sweepTooLong(GeneratedReference(law: ui.genLaw, f1Hz: ui.genF1,
+    f2Hz: ui.genF2, durationMs: ui.genLength, dtMs: ui.genDt))
+  if igButton("Generate", ImVec2_c(x: 0, y: 0)) and tooLong.len == 0 and
+      not ui.genMessage.startsWith("a sweep of"):
     var g = GeneratedReference(name: bufText(ui.genName), law: ui.genLaw, f1Hz: ui.genF1,
       f2Hz: ui.genF2, durationMs: ui.genLength, dtMs: ui.genDt, taperStartMs: ui.genTaper0,
       taperEndMs: ui.genTaper1, amplitude: ui.genAmp, boostDb: ui.genBoost)
@@ -268,8 +281,10 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; home: string; writabl
         if problem.len == 0 or index.findName(name) == i:
           res.commands.add Command(kind: ckRenameReference, refId: e.id, refNewName: name)
           ui.renameId = ""
+          ui.renameProblem = ""
         else:
           ui.renameId = e.id
+          ui.renameProblem = problem
     elif igSelectable_Bool(e.name.cstring, e.id == chosen,
         ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)):
       if writable:
@@ -296,13 +311,12 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; home: string; writabl
       tip(if used: "The plots use this reference. Click again for the file's own pilot."
           else: "Use this reference in the plots")
     discard igTableNextColumn()
-    igBeginDisabled(e.missing or home.len == 0)
+    igBeginDisabled(e.missing or e.blocked or home.len == 0)
     if igSmallButton("View"):
-      res.commands.add Command(kind: ckShowFile, panel: MainPanel, path: home / e.file,
-        listFolder: false)
+      res.commands.add Command(kind: ckViewReference, refId: e.id)
     igEndDisabled()
     marks.mark(markPrefix & ".view." & $n)
-    tip("Open this reference in the Seismic window")
+    tip("Open this reference in its own window")
     if writable:
       igSameLine(0, -1)
       if igSmallButton("Delete"):
@@ -371,6 +385,11 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
       ui.drawRows(st.references, st.referencesHome, writable, st.chosenReference, st, marks,
         result, "references")
       igEndTable()
+    if ui.renameProblem.len > 0:
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+      igTextWrapped("%s", ui.renameProblem.cstring)
+      igPopStyleColor(1)
+      marks.mark("references.rename.problem")
     if st.inProject:
       if igCollapsingHeader_TreeNodeFlags("Main archive".cstring, 0):
         marks.mark("references.main")
@@ -409,6 +428,62 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
     if igButton("Cancel", ImVec2_c(x: 0, y: 0)): igCloseCurrentPopup()
     marks.mark("references.confirm.cancel")
     igEndPopup()
+
+proc timesOf(w: RefView): seq[float64] =
+  result = newSeq[float64](w.ys.len)
+  let dt = if w.dtMs > 0: w.dtMs else: 1.0
+  for i in 0 ..< w.ys.len: result[i] = w.fromMs + float64(i) * dt
+
+proc thinPair(xs, ys: seq[float64]): (seq[float64], seq[float64]) =
+  if ys.len <= 4000: return (xs, ys)
+  let step = max(1, ys.len div 4000)
+  var i = 0
+  while i < ys.len:
+    result[0].add xs[min(i, xs.high)]
+    result[1].add ys[i]
+    inc i, step
+
+proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
+    marks: var Marks): seq[Command] =
+  ## Each reference opened with View, in its own dockable window. The file
+  ## under QC is not touched.
+  var ids: seq[int] = @[]
+  for w in st.refViews:
+    ids.add w.id
+    placeNext(w.id + 8, (640'f32, 720'f32), scale)
+    var open = true
+    let title = IconReference & "  Reference: " & w.name & "###refview-" & $w.id
+    if igBegin(title.cstring, addr open, 0):
+      marks.markWindow("reference.view")
+      if w.gone:
+        igTextWrapped("%s", w.note.cstring)
+        marks.mark("reference.view.gone")
+      elif w.waiting:
+        igTextUnformatted("Reading...", nil)
+      elif w.note.len > 0 and w.ys.len == 0:
+        igTextWrapped("%s", w.note.cstring)
+      else:
+        var uis = ui.viewPlots.getOrDefault(w.id)
+        let ink = t.roles[rlAccent]
+        let xs = timesOf(w)
+        let (tx, ty) = thinPair(xs, w.ys)
+        var time = CurvePlot(xLabel: "Time (ms)", xUnit: "ms", yLabel: "Amplitude",
+          xs: tx, curves: @[Curve(name: w.name, colour: ink, ys: ty)])
+        discard curves.drawCurvePlot(uis.time, "reference.view.time", time, t,
+          ImVec2_c(x: -1, y: igGetFontSize() * 12), $w.revision, marks)
+        let (hx, hy) = thinPair(w.hz, w.amps)
+        var spec = CurvePlot(xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude",
+          xs: hx, curves: @[Curve(name: "amplitude", colour: ink, ys: hy)])
+        if hy.len == 0: spec.note = "No spectrum."
+        discard curves.drawCurvePlot(uis.spec, "reference.view.spectrum", spec, t,
+          ImVec2_c(x: -1, y: igGetFontSize() * 12), "s" & $w.revision, marks)
+        ui.viewPlots[w.id] = uis
+    igEnd()
+    if not open: result.add Command(kind: ckCloseRefView, refWindow: w.id)
+  var gone: seq[int] = @[]
+  for id in ui.viewPlots.keys:
+    if id notin ids: gone.add id
+  for id in gone: ui.viewPlots.del id
 
 proc drawReferences*(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
     marks: var Marks): ReferencesOutput =
