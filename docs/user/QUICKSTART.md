@@ -358,8 +358,9 @@ selection when that trace is selected. Then:
   display are still the plot's, not a trace's. A killed trace keeps its filter; the kill
   wins on screen (the trace stays blank).
 - **FFT in a new window** (`F`): the trace's amplitude spectrum (of the selection: their
-  average) from 0 Hz to Nyquist, raw and through the strip's filters, in a window of its
-  own (see "Spectra" below). Killed traces are left out.
+  average) from 0 Hz to Nyquist, the trace with its own filter and, when the strip has a
+  filter on, through that filter too, in a window of its own (see "Spectra" below).
+  Killed traces are left out.
 - **Reverse polarity of all traces** (below).
 - **Undo** (Ctrl+Z) takes back the last kill, restore, polarity change, trace filter or
   clearing (it names it), and **Redo** (Ctrl+Shift+Z, Ctrl+Y) makes it again, as far back
@@ -710,16 +711,19 @@ plot: it shows the traces it was opened on until the plot changes, then the sele
 the record on show, or the traces in view when nothing is selected, and a new record or
 file. Freeze keeps those traces and that file; the title names them ("Frozen · trace 12 ·
 FFID 1 · shots.sgy"). Unfreezing follows at once.
-Two curves: **raw**, the samples as recorded, and **processed**, through the filters of
-the strip and, where a trace has one, its own filter (a band-pass shows as the processed
-curve falling away outside its corners, a notch as a dip at its frequency). Of one trace
-that has its own filter, the response and the line of words are what that trace went
-through (the strip's filters then the trace's, or the trace's alone when it runs
-instead). Of several traces that do not share one filter, the response stays the strip's
-and the words say how many have their own. The live panel asks again when a trace it
+Two curves: **raw**, the trace with its own filter (before the strip's filters), and
+**processed**, through the strip's filters only (a band-pass shows as the processed
+curve falling away outside its corners, a notch as a dip at its frequency). A trace's
+own filter is always in the raw curve: there is no box that leaves it out. The window
+names it where it names the trace ("Trace 12: own filter, band-pass 10-60 Hz"; of
+several, "N traces have their own filter"). Where that filter runs instead of the
+strip's, the processed curve equals the raw one, and the line says "this trace uses
+its own filter instead of the plot's". **Response** is the strip's filters' response,
+and only when the strip has a filter on. The live panel asks again when a trace it
 shows gains, changes or loses its filter. **Processed** and **Response** are drawn
-unticked, and will not toggle, while no filter is on (neither the strip's nor a shown
-trace's own); your choice is kept and shows again as soon as a filter is. In dB both
+unticked, and will not toggle, while no filter is on in the strip; an own filter
+alone does not unlock them. Your choice is kept and shows again as soon as a strip
+filter is. In dB both
 are on one scale (0 dB at the larger peak, whose amplitude the window's line of words
 gives, so that two windows compare); **Linear** shows the amplitude itself (a sine of
 amplitude A reads A). **Log frequency** spreads the low frequencies out. **Visible time**

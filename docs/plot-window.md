@@ -617,9 +617,12 @@ processSEG offers. It is in two places:
 
 Each view is a window of its own that docks, titled by what it shows ("Spectrogram 2:
 3 traces · FFID 1 · shots.sgy"). Its numbers are worked out off the screen's thread,
-from the traces read whole, through the Seismic window's filters (an auxiliary trace only
-when "Filter the Aux traces too" is ticked, as in the plot), less the traces killed or
-marked dead (said under the title). A trace sampled at another interval than the first
+from the traces read whole, each with its own filter (named under the title: "Trace 12:
+own filter, band-pass 10-60 Hz", or "N traces have their own filter"), then through the
+Seismic window's filters (an auxiliary trace only when "Filter the Aux traces too" is
+ticked, as in the plot; a trace whose own filter runs instead of the plot's does not
+go through them). An f-k's **Raw** leaves the plot's filters out and still applies each
+trace's own filter. Killed traces and those marked dead are left out (said under the title). A trace sampled at another interval than the first
 one's is left out too, and counted "at another interval", as a spectrum window does; a
 trace with no sample interval of its own takes its file's, and is left out when it has
 none. Unless **Freeze** is on (the pin at the right of the first row of controls), a window
@@ -691,7 +694,8 @@ right of that line's first row. A change works it out again.
   within the same N dB (20) of its peak. The lags shown: ±250 ms at first.
 - **f-k:** the box's times (**From**, **to**, ms; empty: the traces' ends), the floor and
   the colour map as a spectrogram's, and **Raw** (off at first: through the Seismic
-  window's filters, so the effect of a filter shows; on: as recorded). The box is
+  window's filters, so the effect of a filter shows; on: the plot's filters left out.
+  A trace's own filter is applied either way). The box is
   tapered (a cosine over 10 % at each end) along time and across the traces, which are
   zero-padded to twice their number. The wavenumber is worked out from the trace spacing
   when it is regular (the signed offsets, else the receivers' distances along the line) and
@@ -1358,17 +1362,19 @@ counted in the window's line of words: killed traces, traces the file marks dead
 that cannot be read or hold a sample that is not a number, and traces at another sample
 interval than the first. Auxiliary traces count as seismic ones do (a pilot's spectrum).
 
-**Raw and processed.** The raw curve is the samples as the file has them; the processed
-one the same samples through the plot's filters (Filters in the strip) and each trace's
-own filter, run on whole traces before the window is cut, also when the plot is shown
-raw, so the two compare. Of one trace that has its own filter, the response and the
-words are what that trace went through: the plot's filters then the trace's, or the
-trace's alone when it runs instead of the plot's (or when the plot's did not reach an
-auxiliary trace). Of several traces with their own filters, the response stays the
-plot's and the words add how many. **Processed** is available when the plot's filters or
-a shown trace's own filter change the samples. **Processed** and **Response** are drawn
-unticked, and do not toggle, while no filter is on; the stored choice shows again when a
-filter is. In
+**Raw and processed.** The raw curve is the trace with its own filter, before the
+plot's filters; the processed one is those samples through the plot's filters only
+(Filters in the strip), run on whole traces before the window is cut, also when the
+plot is shown raw, so the two compare. A trace's own filter is part of the trace: it
+is in the raw curve wherever that trace is shown or analysed, and no box turns it
+off. The window names it ("Trace 12: own filter, band-pass 10-60 Hz"; of several,
+"N traces have their own filter"). Where the own filter runs instead of the plot's,
+the plot's filters do not apply to that trace, so its processed curve equals its raw
+curve, and the line says "this trace uses its own filter instead of the plot's".
+The response is the plot's filters' response, and only when the plot has a filter
+on. **Processed** and **Response** are drawn unticked, and do not toggle, while no
+filter is on in the plot; an own filter alone does not unlock them. The stored
+choice shows again when a plot filter is. In
 dB both are on one scale, 0 dB at the larger peak of the two (a filter's cut shows as
 the gap between them), and the line of words says which amplitude that is ("0 dB =
 amplitude 0.000142 (raw peak)"): each window has a 0 dB of its own, so two windows
@@ -1420,12 +1426,12 @@ sample interval (a corner or notch past its Nyquist is cut or left out, as in th
 plot, and the words say so), and the processed curve is of the traces they reach
 only. An auxiliary trace goes through the plot's filters only when "Filter the Aux
 traces too" is ticked, as in the plot. With it off, an auxiliary trace is in the raw
-curve and left out of the processed one, unless it has a filter of its own, which is
-in the processed curve either way ("processed: notch 60 Hz, 23 of the 24 traces (the
-auxiliary trace is not filtered: Filters > Filter the Aux traces too is off)"; the legend
-names it "processed (23 of 24)": the two curves then differ by those traces too), and a
-pilot shown alone, with no filter of its own, has no processed curve at all ("not
-processed: the auxiliary trace is not filtered: ..."); nor has a spectrum whose filters
+curve (with its own filter, when it has one) and left out of the processed one
+("processed: notch 60 Hz, 23 of the 24 traces (the auxiliary trace is not filtered:
+Filters > Filter the Aux traces too is off)"; the legend names it "processed (23 of 24)":
+the two curves then differ by those traces too), and a pilot shown alone has no
+processed curve at all ("not processed: the auxiliary trace is not filtered: ...");
+nor has a spectrum whose filters
 cannot run at its interval
 (every notch past Nyquist, say). The words are the answer's own: they name what its
 processed curve went through, never only what the plot has set now.
