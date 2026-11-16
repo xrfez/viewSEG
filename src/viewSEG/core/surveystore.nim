@@ -25,6 +25,8 @@
 ## here runs on a job; every file call goes through `fs`.
 
 import std/[os, strutils, times]
+when defined(posix):
+  from std/posix import fsync
 import parseSEG
 import filejobs, filekinds, filesystem, identity, jobs, join, project
 
@@ -231,6 +233,17 @@ proc readText(path: string; most: int64): string =
       $(most div (1024 * 1024)) & " MiB")
   fs.readFile(path)
 
+proc c_fflush(f: File): cint {.importc: "fflush", header: "<stdio.h>".}
+
+proc syncFile(f: File; name: string) =
+  ## Puts what was written to `f` on the disk: the stream's buffer flushed
+  ## (its result checked: a full disk shows here) and, on POSIX, `fsync`ed,
+  ## so that the rename that follows never puts a cut-short file in place.
+  ## Raises `IOError`.
+  if c_fflush(f) != 0: raise newException(IOError, "the disk did not take " & name)
+  when defined(posix):
+    if fsync(getFileHandle(f)) != 0: raise newException(IOError, "the disk did not keep " & name)
+
 proc writeStore*(dir: string; files: openArray[SurveyCopy]; ctx: JobContext): StoreInfo =
   ## Reads the copies `files` of the project in `dir` and writes what they
   ## hold to its `survey.bin` (the module's documentation); the counts of
@@ -311,7 +324,7 @@ proc writeStore*(dir: string; files: openArray[SurveyCopy]; ctx: JobContext): St
     if fs.writeBuffer(w.f, w.path, addr tail[0], tail.len) != tail.len:
       raise newException(IOError, "the disk did not take " & tmp.extractFilename)
     w.bytes += tail.len
-    flushFile(w.f)
+    syncFile(w.f, tmp.extractFilename)
     result.hash = digest
     result.bytes = w.bytes
     ok = true

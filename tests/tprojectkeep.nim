@@ -9,6 +9,9 @@
 ## - A survey original is never looked at while the project opens: a job of
 ##   its own does it afterwards, and records the new time of a file touched.
 ##
+## - A survey.bin that is rejected (damaged) is made again from the copies in
+##   a writable project, and said.
+##
 ## Seen to fail: with the originals looked at inside `openProjectWork`, "the
 ## originals were looked at before the open ended"; with `markImporting` not called, "the import is not in
 ## project.nif"; with the open not taking an import up, "the survey was not
@@ -113,5 +116,36 @@ withFixtures fx:
     doAssert third.settle(third.project.originals.len == 3 and
       third.project.originals.allIt(it.state == osAsCopied))
     doAssert not third.project.originals[0].confirmed, "read whole again at the next open"
+    third.shutdown()
+  block damagedStore:
+    # survey.bin of the right size but damaged (its hash fails): made again
+    # from the copies, and said, not "Import the survey again".
+    let job = fx.dir / "Job damaged"
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+    doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+    st.importSurvey(survey)
+    doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore and
+      not st.project.doc.hasImport)
+    let bytes = st.project.doc.store.bytes
+    st.flushFiles()
+    st.shutdown()
+    var bin = readFile(job / "survey" / "survey.bin")
+    bin[bin.len div 2] = char(ord(bin[bin.len div 2]) xor 0x55)
+    writeFile(job / "survey" / "survey.bin", bin)
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject and again.project.survey == srLoaded and
+      again.said("made again from the copies")), "not made again: " & $again.project.survey &
+      " " & again.project.surveyNote
+    doAssert again.surveyLayers == 3, "the survey is not on the map: " & $again.surveyLayers
+    doAssert not again.said("Import the survey again")
+    again.flushFiles()
+    again.shutdown()
+    doAssert getFileSize(job / "survey" / "survey.bin") == bytes
+    var third = start(config)
+    third.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert third.settle(third.inProject and third.project.survey == srLoaded)
+    doAssert not third.said("made again from the copies"), "damaged again"
     third.shutdown()
 echo "tprojectkeep: done"

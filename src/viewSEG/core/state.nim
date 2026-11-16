@@ -571,6 +571,7 @@ type
     geometry: ref SurveyGeometry    ## its survey, as the joins read it; nil until made
     joinSurvey: JoinSurvey
     queue: seq[SessionId]           ## files opened, to be matched to its survey
+    rebuilding: bool                ## survey.bin was rejected and is being made again from the copies
     layersAfterKeep: bool           ## the copy under way began at the open: the map's layers follow it
     docRev, savedRev: int
     changedAt: MonoTime
@@ -4560,6 +4561,7 @@ proc takeKept(state: var AppState; m: sink Msg) =
   let layers = p.layersAfterKeep
   p.layersAfterKeep = false
   if news.keptFailure.len > 0:
+    p.rebuilding = false
     p.survey = srFailed
     p.surveyNote = news.keptFailure
     if p.doc.hasImport: # not taken up again at every open: the user imports it again
@@ -4579,7 +4581,7 @@ proc takeKept(state: var AppState; m: sink Msg) =
   state.lookAgain()
   state.lookAtOriginals() # its originals, as copied now
   if news.updated: state.restoreSurvey(layers = true)
-  elif p.geometry.isNil: state.restoreSurvey(layers = layers)
+  elif p.geometry.isNil or p.rebuilding: state.restoreSurvey(layers = layers)
   else: p.survey = srLoaded
   for s in state.sessions:
     if state.joinedOf(s.id) < 0 and s.id notin p.queue: p.queue.add s.id
@@ -4593,11 +4595,26 @@ proc takeRestored(state: var AppState; m: sink Msg) =
   p.surveyJob = NoJob
   inc p.revision
   if news.surveyFailure.len > 0 or news.geometry.isNil:
+    if p.doc.hasSurvey and not p.readOnly and not p.rebuilding:
+      # survey.bin is rejected (damaged, cut short, of a newer format), but
+      # the copies are in the project: it is made again from them.
+      p.rebuilding = true
+      p.layersAfterKeep = true
+      var files: seq[JoinFile] = @[]
+      for c in p.doc.survey:
+        files.add JoinFile(path: p.dir.partOf(c.copy), kind: c.kind, role: c.role)
+      state.log.add(sevWarning, "project", "The survey kept in the project " & p.doc.name &
+        " could not be read (" & news.surveyFailure & "): it is made again from the copies " &
+        "of the survey files in the project.")
+      state.keepSurvey(files)
+      return
+    p.rebuilding = false
     p.survey = srFailed
     p.surveyNote = news.surveyFailure
     state.log.add(sevError, "project", "The survey kept in the project " & p.doc.name &
       " could not be read: " & news.surveyFailure & ". Import the survey again.")
     return
+  p.rebuilding = false
   let updated = not p.geometry.isNil
   p.geometry = move news.geometry
   p.joinSurvey = move news.survey

@@ -126,6 +126,12 @@ of at most 65 536, a P1 logical file's shotpoints, a CSV table's text; an end bl
 an XXH64 hash of every byte before it. The whole file's hash is checked before anything
 in it is used.
 
+**A `survey.bin` that cannot be used** (damaged, cut short, of a newer format) is not the
+end of the survey while its copies are in the project: in a writable project it is made
+again from them, with a message. It is written to a temporary file that is flushed and
+synced to the disk before it is renamed, so a full disk or a power loss never leaves a
+cut-short `survey.bin` in place.
+
 **While the survey is being copied in.** The import's files (their originals), options
 and units are written to `project.nif` at once, as `(importing ...)`, and Messages says
 the survey "is being copied into the project", not that it is. Close project, or a quit,
