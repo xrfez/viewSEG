@@ -7,7 +7,7 @@
 ## Seen to fail: with samples/land/shots.sgy moved aside, `present` quit on
 ## the missing file rather than skip the check.
 
-import std/[math, os, strutils]
+import std/[math, os]
 import parseSEG
 import viewSEG/core/[join, session]
 
