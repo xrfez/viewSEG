@@ -106,7 +106,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Sort by header fields (shot, receiver, CMP, offset, any) | `sortTraces(by[, traces])` | Sort by any raw header field, and gather domains | planned |
-| Sort by the viewer's own columns | `sortOrder(columns)` | Seismic window: the sort buttons (Line/Station, By Flag, By Component) and Custom… over the trace keys (`TraceKeys`, among them `component`), each ascending or descending, sorted by the panel's reader; later a gather by a QC attribute (RMS, pick time, SNR) | built (keys); planned (QC attributes) |
+| Sort by the viewer's own columns | `sortOrder(columns)` | Seismic window: the sort drop-down (Line/Station, By Flag, By Component, File order) and Custom… over the trace keys (`TraceKeys`, among them `component`), each ascending or descending, sorted by the panel's reader; later a gather by a QC attribute (RMS, pick time, SNR) | built (keys); planned (QC attributes) |
 
 ### Headers
 

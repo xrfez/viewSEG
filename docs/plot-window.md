@@ -8,10 +8,9 @@
 
 ```
 ┌ Seismic ───────────────────────────────────────────────────┐
-│ [▒|∿|▒∿][◢|◣][⊢][↦][-][1.00][+] overlap [Filters ▾][Raw]   │  controls (they
-│ [gain▾] [-][+0][+] dB [12.5] tr/in [200] ms/in             │  wrap when narrow)
-│ [-][+][fit][<] [◂ 1 / 1 ▸]                                 │
-│ [Line/Station|By Flag|By Component] [Custom...] [⋯]        │
+│ [◂ 1 / 1 ▸] [-][+][fit][<] [▒|∿|▒∿][◢|◣] [Gain ▾][-][+0.0 dB][+] │  controls (they
+│ [Filters][Raw] [Sort: file order ▾]              [⋯]       │  wrap when narrow; the
+│                                                            │  gear stays on row 1)
 ├────────────────────────────────────────────────────────────┤
 │ line    100  100  100  100  100  100  100  100  100        │  display header
 │ point   101  103  105  107  109  111  113  115  117        │  (thinned to fit)
@@ -120,10 +119,11 @@
     wiggles, or wiggles over density, and two toggles for the wiggles' fills (◢ ◣): the **positive fill** (the
     lobes right of the trace, above it when time is across) and the **negative fill**
     (left of it, below it), either, both or none; the symbols turn with the plot. The default is **wiggles with the positive fill**, black on white paper.
-    Beside them, the **trace overlap** (the largest swing of a wiggle, in trace spacings:
-    see [Wiggles](#wiggles)), as the gain amount is shown: a box to type into, and - and
+    The fill toggles are drawn in the two wiggle modes, not in density. The **trace overlap**
+    (the largest swing of a wiggle, in trace spacings: see [Wiggles](#wiggles)) is in the
+    gear's Traces tab, as the gain amount is shown: a box to type into, and - and
     + stepping through 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8 and 10;
-    greyed in the density mode, so the strip keeps its shape when the mode changes.
+    greyed in the density mode, with a "(with wiggles)" note.
     **Density is drawn only when it is chosen:** in the density mode, and under the
     wiggles in wiggles over density; the wiggle modes draw wiggles at every zoom. In
     them, **zooming out stops at one pixel a trace**, so every trace in view is drawn
@@ -139,7 +139,7 @@
     overlap, the colours, the gain type, amount and settings, the order and the display
     header's fields (`Settings.plot`: a new plot starts as the user left the last one;
     polarity is not kept, reversing it being an operation on the data);
-  - the **orientation** (↦, a toggle on the symbols' line after the cursor's time line):
+  - the **orientation** (a checkbox under Plot in the gear's Look tab, with the cursor time line):
     time down, or, while it is on, time across ([Orientation](#orientation)); kept with
     the display, so a new plot window starts the way the last one was left;
   - **Seismic and Aux** (the user, asked whether auxiliary traces should wait for an
@@ -252,7 +252,7 @@
     0, so its trace never shows up saturated at its raw amplitude among gained ones,
     and the log says once, for the first record of a file that has such samples, how
     many of the traces shown hold them;
-  - **three sort buttons and Custom...**, the button of the order in use drawn selected:
+  - **one Sort drop-down** (it says what is in use: a preset's name, "file order", or "custom"):
 
     | Button | Order |
     |---|---|
@@ -260,16 +260,16 @@
     | By Flag | receiver line, then station, then component: a station's components side by side, in order |
     | By Component | the traces grouped by component, each group by line, then station |
 
-    Clicking the selected button again goes back to the file's order (each button's tip
-    says so). A button whose keys the traces have none of (post-stack data has no receiver
-    line, point or component) is greyed out, as it would change nothing. Other orders are
-    keys of the user's own, from the fourth button, **Custom...**, drawn selected while
+    Picking the preset already in use does nothing; **File order** goes back. A preset whose
+    keys the traces have none of (post-stack data has no receiver line, point or component)
+    is greyed, unless it is the order in use. Other orders are keys of the user's own, from
+    **Custom...** in the same list, and the drop-down then says "custom", while
     such an order is in use: a small popover lists the keys, the first first, each a
     display header field (line, point, component, channel, FFID, source line and point,
     offset, CDP, inline, crossline, trace number) and each ascending or descending; "Sort"
     applies them, "File order" goes back. Traces equal in every key keep the file's order,
     and unknown values come last either way. The keys sorted by last are remembered and
-    offered again; the buttons themselves are data in the settings (`sortPresets` in
+    offered again; the presets themselves are data in the settings (`sortPresets` in
     `settings.nif`), so a site can rename them or add its own;
   - the **record** shown: the previous and next record, and its place ("2 / 120"), which
     opens **Go to record** (a place in the file or an FFID). The next record is shown at
@@ -1493,7 +1493,7 @@ the draft had it; otherwise, what the user changed is what this page describes.
     whole view, and the plot reads ahead far enough that such a step shows its data at
     once (a view and a half on each side, kept to at least a view as the view moves).
 16. **Line/Station and By Flag differ only within a station**, By Component groups the
-    components; clicking the selected sort button goes back to the file's order.
+    components; File order in the sort drop-down goes back to the file's order.
     Confirmed ("by flag will sort by line/station then by component").
 17. **A sort keeps the view.** Confirmed.
 18. **Sort keys are the display header's fields**; raw header words come with the gather
@@ -1502,9 +1502,8 @@ the draft had it; otherwise, what the user changed is what this page describes.
     pixel a trace (the user: "it should only be on if the user is asking for it",
     "maybe dont allow a zoom out that far?"). Changed by the user: the draft handed over
     to density below 4 pixels a trace.
-20. **The trace overlap is 1 by default**, from 0.1 to 10, in plain sight in the strip
-    ("Trace overlap should be configurable"). Changed by the user: it was in the gear
-    popover only.
+20. **The trace overlap is 1 by default**, from 0.1 to 10, in the gear's Traces tab
+    ("Trace overlap should be configurable"), with - and +.
 21. **Ctrl + click adds a trace to the selection or takes it out**, a plain click
     replaces it, Shift + click selects a range in the order shown (the user: "shoudnt
     this be control click"). Changed by the user: the draft had Shift + click add.

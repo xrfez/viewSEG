@@ -1464,7 +1464,7 @@ type
     scale: ScaleUnits        # per inch or per cm; time as ms per length or as speed
     calibrations: seq[Calibration] # per monitor (its name and size): pixels per inch
     readout: seq[ReadoutField]     # the status bar's fields, in order
-    sortPresets: seq[SortPreset]   # the sort buttons
+    sortPresets: seq[SortPreset]   # the sort drop-down's presets
     customOrder: seq[SortKey]      # the user's own keys, used last
     messages: MessagesView         # the Messages window's toggles: auto-scroll, hidden severities
     cursorLine: bool               # the plot's cursor time line is on

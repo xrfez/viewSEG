@@ -215,7 +215,7 @@ on shot and receiver records). Wiggles stay wiggles at every zoom: zooming out s
 where the traces are one pixel apart, so every trace in view is drawn. A shot of more
 traces than the plot is wide (a few thousand, say) opens at that limit from its first
 trace, with a scroll bar under the plot for the rest. To see a whole large record at
-once, choose the density display (the first button in the strip), which zooms out until
+once, choose the density display (Greyscale density, in the strip), which zooms out until
 the record fills the plot. Where the traces are only a few pixels apart, the wiggle line
 is drawn thinner than a pixel (light grey), so the fills show the record as a
 variable-area section rather than a band of lines. In wiggles the plot reaches a little past the first and the
@@ -255,15 +255,16 @@ the scales and the top-left corner: what no longer fits is reached with the scro
 and a larger window shows more. Only a window larger than the whole record at that scale
 shows it larger, filling the plot.
 
-**Display.** The first buttons in the strip choose how traces are drawn:
+**Display.** The display buttons in the strip choose how traces are drawn:
 density, wiggles, or wiggles over density. Density is drawn only in the two modes that
 name it. Changing from density to wiggles while more traces are in view than the plot
-has pixels narrows the view to one pixel a trace, keeping its left edge. The two after them fill the wiggles' positive
+has pixels narrows the view to one pixel a trace, keeping its left edge. In the two wiggle
+modes, the two after them fill the wiggles' positive
 lobes (right of the trace; above it when time runs across) and negative lobes (left of
-it; below it): either, both or none. Beside
-them, **overlap** sets how far the strongest amplitudes swing a trace, in trace spacings
-(1 reaches the next trace; anything stronger is clipped there): type a value, or step it
-with - and +. The settings button (the gear) holds the overlap too, and the
+it; below it): either, both or none. In density those two are not drawn. **Overlap**, in
+the gear's Traces tab, sets how far the strongest amplitudes swing a trace, in trace
+spacings (1 reaches the next trace; anything stronger is clipped there): type a value, or
+step it with - and +. It is greyed in density. The gear also holds the
 **colours**: a swatch for each of the plot's six colours (background,
 wiggle line, positive fill, negative fill, the trace under the pointer, selected traces),
 always shown. Click one to pick a colour, or type it as `#rrggbb` and press Enter: the
@@ -274,7 +275,7 @@ bar: **Grey** (positive black), **Red-white-blue** (negative red, zero white, po
 blue), **Viridis** (dark purple to yellow) and **Red-black** (negative red, zero white,
 positive black); click one and the density is drawn in it at once.
 
-**Display presets.** The gear's first section keeps whole displays under names: type a
+**Display presets.** The gear's Look tab, under Plot, keeps whole displays under names: type a
 name and click **Save** to keep the display shown (mode, fills, overlap, colours, colour
 map, gain and its settings, clip); click a preset's name to draw the plot that way again
 (it stays turned as it is). **Rename** and **Delete** act on the preset you clicked last.
@@ -287,7 +288,7 @@ seismic ones and the window is called **Seismic + Aux**; with Seismic off it sho
 auxiliary traces alone (**Aux**). One of them always stays on. The gain, the sorts, the
 edits, the display header and the status bar work on them too.
 
-**Filters.** The **Filters** button in the strip (a funnel, after the overlap; lit while
+**Filters.** The **Filters** button in the strip (a funnel, after the gain; lit while
 filters are applied; its tooltip and the top of its drop-down say which) sets what the
 traces go through before the gain, and the plot follows as you move a
 slider:
@@ -379,7 +380,8 @@ says **Gain: AGC 500 ms** when you chose it, and **Gain: auto (AGC 500 ms)** or
 black and white in grey; a wiggle's full swing): 99 % of |x| at first; 98 clips harder
 (more of the record at full scale), 100 is the peak. Beside it stands the amplitude
 that gives now. It never reads the file again. Beside the drop-down, the
-gain amount in dB works with every type, from -300 to +300 dB: type a value, click - or
+gain amount in dB works with every type, from -300 to +300 dB: the box shows the unit
+("+0.0 dB"; typing a bare number still works). Type a value, click - or
 +, or press `]` and `[` (keypad `*` and `/`), 3 dB a step or 12 dB with Shift; the
 buttons and keys repeat while held, and the picture brightens or darkens at once. A trace the file
 marks dead is never drawn, whatever the gain: it is blank, like a killed trace, it does
@@ -390,20 +392,22 @@ The view never goes past the data: panning and zooming stop at the first and las
 as far as it goes the record fills the plot (in wiggles, as many traces as the plot has
 pixels). Whenever part of the record is out of view, a scroll bar shows how much and
 where: under the plot for the traces, right of it for the time. The time axis shows the
-times only; its unit is in the ms/in box and in the status bar. Making the window larger
+times only; its unit is in the ms/in box (the gear's Scales tab) and in the status bar. Making the window larger
 or smaller keeps the scale and shows more or less of the record, from the same top-left
 corner, also when the whole record was in view.
 
-**Sort.** Three buttons in the strip put the traces in another order: **Line/Station**
-(receiver line, then station), **By Flag** (the same, with each station's components side
-by side, in order) and **By Component** (the traces grouped by component, each group by
-line, then station). The button of the order in use is highlighted; click it again for
-the file's order. For an order of your own, click the fourth button, **Custom...**: pick
+**Sort.** The **Sort** drop-down in the strip puts the traces in another order. It says
+what is in use ("Sort: Line/Station", "Sort: file order", "Sort: custom"). The list is
+**File order**, then each preset: **Line/Station** (receiver line, then station), **By
+Flag** (the same, with each station's components side by side, in order) and **By
+Component** (the traces grouped by component, each group by line, then station). A preset
+the file has none of the keys of is greyed, unless it is the order in use; picking the
+one already in use does nothing. For an order of your own, click **Custom...**: pick
 the header fields to sort by, the first first, each ascending or descending, and click
-Sort (Custom... is then highlighted; *File order* there goes back). Sorting never changes the file, and the display header and
+Sort (the drop-down then says "custom"; *File order* goes back). Sorting never changes the file, and the display header and
 the status bar follow the order shown.
 
-**Time across.** The button after the cursor time line (a trace lying along an arrow)
+**Time across.** A checkbox under **Plot** in the gear's Look tab
 turns the plot: time runs from left to right, with its values along the bottom, the
 traces are stacked from the top down (the first at the top), and a positive amplitude
 swings up, as signals are drawn; click it again for time downwards. The plot shows the
@@ -414,16 +418,16 @@ mouse and the keys act the way you see (the arrows pan the way they point, Ctrl 
 zooms up and down), and the strip's mode and fill symbols turn too. Each plot window
 keeps its own orientation, and viewSEG remembers it for the next plot.
 
-**Cursor time line.** The button after the fill buttons (a line drawn to an axis) turns
+**Cursor time line.** A checkbox under **Plot** in the gear's Look tab turns
 on a thin line from the pointer across to the time axis (down to it when time runs
 across), with the pointer's time written at the axis, so a time can be read off against the tick values, and the display
 header's values of the trace under the pointer, each in a box over its row (also where
 the rows are thinned because the traces are close). It follows the pointer and goes when
 the pointer leaves the plot; viewSEG remembers whether it is on.
 
-**Scales.** The two boxes over the plot state the zoom as traces per inch and ms per inch.
-Type a value and press Enter to set it; zooming any other way updates them. The settings
-button (the gear) switches to per cm, or time as inches per second, and calibrates the
+**Scales.** The two boxes at the top of the gear's Scales tab state the zoom as traces per
+inch and ms per inch. Type a value and press Enter to set it; zooming any other way updates
+them. Below them, the gear switches to per cm, or time as inches per second, and calibrates the
 screen: the scales assume 96 pixels per inch times the display scale until you enter the
 monitor's diagonal or make a bar on the screen as long as a ruler held to it says.
 
@@ -811,7 +815,7 @@ mode, fills, overlap, colours, the gain type and amount and every setting of eve
 type, also the ones not in use: the AGC window, Fixed's amplitude, Normalized's choices,
 Exponential's rate, power and cutoff; the sort order and the display header: a new plot
 starts as you left the last one; polarity is not kept), the cursor
-time line, scale units and screen calibrations, the status bar's fields, the sort buttons
+time line, scale units and screen calibrations, the status bar's fields, the sort presets
 and your own sort keys, the Messages window's toggles, and the Headers window's tabs,
 toggles and columns. It is saved a second after a change and when you quit.
 
