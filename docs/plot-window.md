@@ -541,9 +541,10 @@ command), for the session only, as with every other setting it changes.
 Reversing the polarity turns the trace data 180 degrees out of phase: an operation on the
 samples, not a way of colouring them. **Reverse polarity of all traces**, in the plot's
 right-click menu (ticked while it is on), runs processSEG's `polarityOp` first on every
-trace the window reads, before its gain, so the picture, the gain's statistics, the status
-bar's amplitude and whatever is later computed from the window (a spectrum, an overlay
-comparison, an export) see the reversed data. Turning it on or off reads the view again;
+trace the Seismic window reads, before its gain, so the picture, the gain's statistics,
+the status bar's amplitude and Headers shown as displayed see the reversed data. It is
+the window's display pipeline, not a trace edit: the analysis graphs and the spectrum
+curves do not apply it. Turning it on or off reads the view again;
 the picture before stays until the reversed one is drawn. It is an edit of the file, not a
 setting: it holds for every record of the file, comes back with the file when it is
 opened again (also after a restart: [Edits](#edits-to-traces)), is undone with Edit >
@@ -553,9 +554,18 @@ Undo, and another file is shown as it was left.
 plot's menu), is an edit of the file's traces (see [Edits](#edits-to-traces)): those
 traces' samples are negated (processSEG's `reversePolarity` on their live samples, as
 `polarityOp` does) where the window's reader prepares them, before the pipeline and the
-gain. A trace reversed both ways is as recorded. A trace the file marks dead stays blank,
-reversed or not (it is never drawn); the display header and the status bar still say it is
-reversed.
+gain. The same sign flip, before that trace's own filter and the plot's filters, is part
+of every graph of the trace: a spectrum and its phase, a spectrogram, an envelope and
+its instantaneous phase, a correlation (also when the reversed trace is the reference,
+in this file or another), a vibrator signature, an f-k, and the map's amplitude flags.
+No box turns it off. A window that names a trace's own filter names the reversal the
+same way ("Trace 12: reversed", "N traces are reversed", "reference, Trace 1: reversed").
+An open window that is not frozen asks again when a trace it shows, or its reference,
+is reversed, put back or undone; a frozen one does not. Headers shown as recorded, the
+hex view and the status bar's raw amplitude stay the file's samples. A trace reversed
+both ways (this edit and reverse all) is as recorded on the plot. A trace the file marks
+dead stays blank, reversed or not (it is never drawn); the display header and the status
+bar still say it is reversed.
 
 ## Filters
 
@@ -625,8 +635,11 @@ from the traces read whole, through the Seismic window's filters (an auxiliary
 trace only when "Filter the Aux traces too" is ticked, as in the plot; a trace whose own
 filter runs instead of the plot's does not go through them), then each with its own
 filter, run after them (named under the title: "Trace 12: own filter, band-pass 10-60
-Hz", or "N traces have their own filter"). An f-k's **Raw** leaves the plot's filters
-out and still applies each trace's own filter. Killed traces and those marked dead are left out (said under the title). A trace sampled at another interval than the first
+Hz", or "N traces have their own filter"). A reversed trace is multiplied by -1 first,
+before its own filter and the plot's filters, and named the same way ("Trace 12:
+reversed", or "N traces are reversed"; a correlation's reference, "reference, Trace 1:
+reversed"). No box turns it off. An f-k's **Raw** leaves the plot's filters
+out and still applies each trace's own filter and a reversal. Killed traces and those marked dead are left out (said under the title). A trace sampled at another interval than the first
 one's is left out too, and counted "at another interval", as a spectrum window does; a
 trace with no sample interval of its own takes its file's, and is left out when it has
 none. Unless **Freeze** is on (the pin at the right of the first row of controls), a window
@@ -1372,7 +1385,9 @@ plot's filters; the processed one is those samples through the plot's filters on
 plot is shown raw, so the two compare. A trace's own filter is part of the trace: it
 is in the raw curve wherever that trace is shown or analysed, and no box turns it
 off. The window names it ("Trace 12: own filter, band-pass 10-60 Hz"; of several,
-"N traces have their own filter"). Where the own filter runs instead of the plot's,
+"N traces have their own filter"). A reversed trace is multiplied by -1 first and named
+the same way ("Trace 12: reversed"; of several, "N traces are reversed"). Where the own
+filter runs instead of the plot's,
 the plot's filters do not apply to that trace, so its processed curve equals its raw
 curve, and the line says "this trace uses its own filter instead of the plot's".
 The response is the plot's filters' response, and only when the plot has a filter

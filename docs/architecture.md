@@ -1191,7 +1191,8 @@ traces it read, whole, so a filter or a time window changed, or another window o
 same traces, reads nothing from the file, and a pan reads only the traces it brings in
 (`Spectrum.read` counts them). Killed traces are left out before anything is read (and
 counted); dead, unreadable and NaN-holding traces are left out by processSEG's average
-(counted). Each trace's own filter is applied first and is the raw curve; the processed
+(counted). A reversed trace is multiplied by -1 first. Each trace's own filter is applied
+and is the raw curve; the processed
 curve runs the layer's filters only (`filterPipeline`, shown raw or not) on whole traces,
 then cuts the window, so a window inside a trace never sees the filters' edges. An own
 filter that runs instead of the plot's leaves the plot's filters off that trace. The answer (`Spectrum`: amplitudes per bin, raw and processed, and a

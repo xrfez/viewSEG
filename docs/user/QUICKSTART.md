@@ -335,9 +335,15 @@ how it looks. Its first line names what it acts on: the trace under the pointer,
 selection when that trace is selected. Then:
 
 - **Reverse polarity** (`R`): the trace's samples turned 180 degrees out of phase, before
-  the gain, so the picture, the gain and the status bar's amplitude all see the reversed
-  data. Ticked while the trace under the pointer is reversed; choose it again to put it
-  back.
+  its own filter, the strip's filters and the gain, so the picture, the gain, the status
+  bar's amplitude and every graph of that trace (a spectrum and its phase, a spectrogram,
+  an envelope, a correlation, a vibrator signature, an f-k, the map's amplitude flags)
+  see the reversed data. There is no box that leaves it out. A window that names a
+  trace's own filter names the reversal the same way ("Trace 12: reversed"; of several,
+  "N traces are reversed"; a correlation's reference, "reference, Trace 1: reversed").
+  Ticked while the trace under the pointer is reversed; choose it again to put it
+  back. An open window that is not frozen asks again when a trace it shows, or its
+  reference, is reversed, put back or undone.
 - **Kill** (`K`): the trace is drawn blank (the plot's background, in every display mode)
   and left out of whatever the gain computes over the record (Float, Normalized for the
   whole record, the automatic level), so a noisy trace stops setting the brightness. Over
@@ -728,7 +734,10 @@ Two curves: **raw**, the trace with its own filter (without the strip's filters)
 curve falling away outside its corners, a notch as a dip at its frequency). A trace's
 own filter is always in the raw curve: there is no box that leaves it out. The window
 names it where it names the trace ("Trace 12: own filter, band-pass 10-60 Hz"; of
-several, "N traces have their own filter"). Where that filter runs instead of the
+several, "N traces have their own filter"). A reversed trace is multiplied by -1 first,
+the same way, and named in that same line ("Trace 12: reversed"; of several, "N traces
+are reversed"). The live panel asks again when a trace it shows is reversed, put back
+or undone, as it does for that trace's filter. Where that filter runs instead of the
 strip's, the processed curve equals the raw one, and the line says "this trace uses
 its own filter instead of the plot's". **Response** is the strip's filters' response,
 and only when the strip has a filter on. The live panel asks again when a trace it
