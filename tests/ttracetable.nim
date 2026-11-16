@@ -9,7 +9,14 @@
 ## field the file has not said as a problem. A million values sort in a few
 ## seconds at most (about 2 s in a debug build).
 ##
-## Seen to fail: with the rows sorted ascending whatever is asked
+## The table's values are the fixture's known values (a record's receiver X,
+## the shot's source X, the offset between them, the channel) and the very
+## values the Trace tab shows for the same trace: header fields as they are
+## stored (the scaled coordinates), keys as the file's keys give them
+## (inline, crossline, the values a survey join gave).
+##
+## Seen to fail: with the source point's column reading the receiver point (`keyValue`),
+## "the joined stations of row 0"; with the rows sorted ascending whatever is asked
 ## (`orderOf` ignoring `descending`), "not sorted descending".
 ##
 ## Runs alone: it bounds the time a million rows take to sort (5 s).
@@ -17,6 +24,7 @@
 import std/[algorithm, math, monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/state
+import viewSEG/view/headerviews
 import utils/[faultyfs, fixtures, waiting]
 
 block findTakes:
@@ -112,7 +120,8 @@ block readByTheReader:
     doAssert a.first == 0 and a.rowTraces.len == 10, "not only the rows asked: " &
       $a.rowTraces.len
     doAssert a.rowTraces[0] == base and a.values[0][0] == 1 and a.values[9][0] == 10
-    doAssert a.values[0][1] > 0, "no source X"
+    doAssert a.values[0][1] == a.values[9][1], "the shot's source X differs between its traces"
+    doAssert a.values[0][1] != 0, "no source X"
     var names: seq[string]
     for c in a.catalogue: names.add c.name
     doAssert "keys.rcvPoint" in names and "trace.sourceX" in names, $names
@@ -227,8 +236,10 @@ block aRewrittenFileReopened:
     var a = st.table(view)
     doAssert a.values[0][0] == 1 and a.values[SurveyTraces - 1][0] == Channels
     rewriteChannels(path, fx.dir / "rewritten.sgy")
+    let was = st.sessions[0].id # (the file shown stays until the new one has opened)
     st.apply Command(kind: ckReopen, reopenPath: path, openChoice: OpenChoice())
-    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].id != was and
+      st.panel(MainPanel).laidOut)
     a = st.table(view)
     let now = directKeys(path, ["keys.channel"])[0]
     doAssert a.count == SurveyTraces and a.problems.len == 0, $a.problems
@@ -279,4 +290,57 @@ block anAnswerOfItsTraces:
       "the rows of another record would show as current"
     doAssert not one.isAnswerOf(s.path, s.gathers[1].traces, TableView(fields: @["keys.channel"],
       scope: tsRecord, sortBy: "keys.channel", rows: 0 .. 3)), "another sort is current"
+    st.shutdown()
+
+block theTraceTabAgrees:
+  # The rows of the table of one record, with the survey joined, against the
+  # fixture's known values and against what the Trace tab shows for the same
+  # trace.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let sps = fx.surveySps()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    var files: seq[JoinFile]
+    for p in [sps.s, sps.r, sps.x]: files.add JoinFile(path: p, kind: jkSps)
+    st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: files)
+    doAssert st.settle(st.joinReport.serial > 0 and st.joinUnderWay.job == NoJob)
+    doAssert st.joinReport.outcome == joJoined, $st.joinReport.words
+    st.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
+    doAssert st.settle(st.panel(MainPanel).layers[0].source.gather == 1)
+    let base = st.sessions[0].gathers[1].traces.a
+    let fields = ["keys.channel", "keys.srcX", "keys.rcvX", "keys.offset", "keys.srcLine",
+      "keys.srcPoint", "keys.rcvLine", "keys.rcvPoint", "keys.record", "trace.sourceX",
+      "trace.groupX", "trace.coordinateScalar"]
+    let a = st.table(TableView(fields: @fields, scope: tsRecord, rows: 0 .. Channels - 1))
+    doAssert a.problems.len == 0, $a.problems
+    doAssert a.rowTraces.len == Channels
+    for r in 0 ..< Channels: # the fixture's values: shot 1, channels 1 ..
+      let channel = r + 1
+      doAssert a.rowTraces[r] == base + r and a.values[r][0] == float64(channel)
+      doAssert a.values[r][1] == srcX(1) and a.values[r][2] == rcvX(channel),
+        "row " & $r & ": " & $a.values[r]
+      doAssert abs(a.values[r][3] - abs(rcvX(channel) - srcX(1))) < 1e-6, $a.values[r][3]
+      doAssert a.values[r][8] == float64(FirstRecord + 1)
+      doAssert a.values[r][5] == FirstSrcPoint + 1 and a.values[r][7] == FirstRcvPoint + float64(r),
+        "the joined stations of row " & $r & ": " & $a.values[r][5 .. 7]
+    st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders})
+    for r in [0, 5, Channels - 1]:
+      st.apply Command(kind: ckSelect, traces: @[base + r], mode: smReplace)
+      doAssert st.settle(not st.inspection.waiting and st.inspection.answer.traces.len == 1 and
+        st.inspection.answer.traces[0].id == base + r), "no Trace tab for row " & $r
+      let tab = traceTable(st.inspection.answer.traces)
+      var seen = 0
+      for c, name in fields:
+        for row in tab.rows:
+          if row.name == name and row.title.len == 0:
+            inc seen
+            let shown = parseFloat(row.values[0])
+            let tolerance = 1e-6 * max(1.0, abs(shown))
+            doAssert abs(shown - a.values[r][c]) <= tolerance, "row " & $r & " " & name &
+              ": the table says " & $a.values[r][c] & ", the Trace tab " & row.values[0]
+      # (inline and crossline are the file's own keys: the Trace tab shows no row for them
+      # here; the joined stations and the scaled header coordinates it does)
+      doAssert seen >= 7, "the Trace tab had " & $seen & " of the table's fields (row " & $r & ")"
     st.shutdown()
