@@ -1,9 +1,11 @@
 ## Named Nerd Font glyphs used by the shell, as UTF-8 strings to splice into
-## labels (`IconOpenFile & "  Open file..."`). All are Codicons (the VS Code
-## icon set, `nf-cod-*`), so they share one line weight and size; the names in
-## the comments are Nerd Fonts' (glyphnames.json, v3.5.1). They lie in the
-## Basic Multilingual Plane because imguin builds ImGui with 16-bit `ImWchar`:
-## the Material Design range (U+F0001 and up) is out of reach.
+## labels (`IconOpenFile & "  Open file..."`). They are Codicons (the VS Code
+## icon set, `nf-cod-*`) except `IconVibrator`, which is Font Awesome's side-view
+## truck (`nf-fa-truck`): a vibroseis is a truck, and the outline Material truck
+## (`nf-md-truck_outline`) sits above U+FFFF, which 16-bit `ImWchar` cannot draw.
+## The names in the comments are Nerd Fonts' (the font's own glyph names). They
+## lie in the Basic Multilingual Plane because imguin builds ImGui with 16-bit
+## `ImWchar`: the Material Design range (U+F0001 and up) is out of reach.
 ##
 ## The bundled faces (JetBrainsMono Nerd Font) contain them. A theme that names
 ## a font without icons can add `icons = "<a Nerd Font>.ttf"` under `[fonts]`.
@@ -42,7 +44,7 @@ const
   IconEnvelope* = "\u{EBAD}"    ## nf-cod-graph_left
   IconPhase* = "\u{EBD5}"       ## nf-cod-compass
   IconCorrelation* = "\u{EAFD}" ## nf-cod-git_compare
-  IconVibrator* = "\u{EC1B}"    ## nf-cod-music
+  IconVibrator* = "\u{F0D1}"    ## nf-fa-truck
   IconFk* = "\u{EC30}"          ## nf-cod-map_vertical
   IconRuler* = "\u{EA96}"       ## nf-cod-symbol_ruler
   IconLayers* = ""           ## nf-cod-layers

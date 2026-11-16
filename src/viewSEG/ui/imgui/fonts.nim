@@ -79,6 +79,8 @@ proc addFace(atlas: ptr ImFontAtlas; data: string; mergeInto: ptr ImFont): ptr I
   let io = igGetIO_Nil()
   let asserts = io.ConfigErrorRecoveryEnableAssert
   io.ConfigErrorRecoveryEnableAssert = false # a bad font is logged, not fatal
+  # No glyph range: ImGui bakes each glyph on demand. That already covers the
+  # truck (U+F0D1). A glyph above U+FFFF cannot be added; ImWchar is 16-bit.
   result = ImFontAtlas_AddFontFromMemoryTTF(atlas, buf, data.len.cint, 0, cfg, nil)
   io.ConfigErrorRecoveryEnableAssert = asserts
   ImFontConfig_destroy(cfg)

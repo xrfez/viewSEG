@@ -6,7 +6,8 @@
 ## Seen to fail: with the FFT row moved after Spectrogram, "FFT is first";
 ## with Spectrogram and Envelope given the same icon, "icons are distinct";
 ## with the shortcut a bare "F", "shortcut before the select-first"; with
-## correlation put back on the swap arrows, "correlation compares".
+## correlation put back on the swap arrows, "correlation compares"; with the
+## vibrator left as a music note, "vibrator is a truck".
 
 import std/[sets, strutils]
 import viewSEG/core/analysis
@@ -48,10 +49,10 @@ block ownIcons:
   for e in PlotEntries:
     doAssert e.icon notin taken, e.name & " reuses an action icon"
   # A compare mark says "against a reference"; swap arrows say "exchange".
-  # A note says the sweep; a tower does not. Phase keeps the compass: no other
+  # A truck is a vibroseis; a note is not. Phase keeps the compass: no other
   # glyph is an angle, and every graph glyph is already a plot.
   doAssert codepoint(entry(avCorrelation).icon) == 0xEAFD, "correlation compares"
-  doAssert codepoint(entry(avVibrator).icon) == 0xEC1B, "vibrator is a tone"
+  doAssert codepoint(entry(avVibrator).icon) == 0xF0D1, "vibrator is a truck"
   doAssert codepoint(entry(avPhase).icon) == 0xEBD5, "phase keeps the compass"
 
 block tip:
