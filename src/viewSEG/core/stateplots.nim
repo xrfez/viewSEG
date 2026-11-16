@@ -130,7 +130,10 @@ proc openPlot(state: var AppState; cmd: Command) =
   ## selected traces of the panel's file, else the trace under the
   ## pointer), asked for at once; an envelope or a phase spectrum is of the
   ## first of them; a vibrator signature opened on one trace takes it and
-  ## the record's next three (Ref, GF, M, B, as wireline records have them).
+  ## the record's next three (Ref, GF, M, B, as wireline records have them);
+  ## an f-k opened on fewer than `MinFkTraces` is of the seismic traces of
+  ## the whole record, and of the first `MaxPlotTraces` (side by side) of
+  ## more.
   let k = state.findPanel(if cmd.plotOf == NoPanel: MainPanel else: cmd.plotOf)
   let i = if k >= 0: state.shownFile(k) else: -1
   if k < 0:
@@ -171,6 +174,20 @@ proc openPlot(state: var AppState; cmd: Command) =
         if traces[0] in record:
           for t in traces[0] + 1 .. min(traces[0] + 3, record.b): traces.add t
     if traces.len > MaxVibratorTraces: traces.setLen MaxVibratorTraces
+  if cmd.plotView == avFk:
+    if traces.len < MinFkTraces:
+      # too few for an f-k: the seismic traces of the first one's record
+      let g = s.gatherOf(traces[0])
+      if g in 0 ..< s.gathers.len:
+        var record: seq[int] = @[]
+        for t in s.gathers[g].traces:
+          if isSeismic(s.filePtr[].index, t): record.add t
+        if record.len >= MinFkTraces: traces = record
+    if traces.len > MaxPlotTraces:
+      # the first ones, side by side: taken evenly, their spacing would not be
+      state.log.add(sevInfo, s.name, "An f-k of the first " & $MaxPlotTraces & " of the " &
+        $traces.len & " traces.")
+      traces.setLen MaxPlotTraces
   if traces.len > MaxPlotTraces:
     var kept: seq[int] = @[]
     for j in evenly(traces.len, MaxPlotTraces): kept.add traces[j]

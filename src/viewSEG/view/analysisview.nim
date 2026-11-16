@@ -47,11 +47,16 @@ func number(x: float64): string =
   else: formatFloat(x, ffDecimal, 2)
 
 func readingText*(img: AnalysisImage; c: PlotCursor): string =
-  ## What the cursor at cell `c` reads: "512.0 ms · 47.85 Hz: -12.30 dB";
-  ## "" for none.
+  ## What the cursor at cell `c` reads: "512.0 ms · 47.85 Hz: -12.30 dB",
+  ## and an f-k's apparent velocity after ("· 2000.0 m/s"); "" for none.
   if img.isEmpty or c.x < 0 or c.y < 0 or c.x >= img.cols or c.y >= img.rows: return ""
-  number(img.xOf(c.x)) & " " & img.xUnit & " · " & number(img.yOf(c.y)) & " " & img.yUnit &
-    ": " & number(float64(img.valueAt(c.x, c.y))) & " " & img.unit
+  result = number(img.xOf(c.x)) & " " & img.xUnit & " · " & number(img.yOf(c.y)) & " " &
+    img.yUnit & ": " & number(float64(img.valueAt(c.x, c.y))) & " " & img.unit
+  if img.velocityUnit.len > 0:
+    # the apparent velocity: f / k (none at k = 0)
+    let k = img.xOf(c.x)
+    if k == 0: result.add " · no velocity (k = 0)"
+    else: result.add " · " & number(img.velocityScale * img.yOf(c.y) / k) & " " & img.velocityUnit
 
 func topDown*(img: AnalysisImage): seq[float32] =
   ## The values row by row from the highest y (drawn at the top), each row

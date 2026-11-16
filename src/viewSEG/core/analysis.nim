@@ -10,6 +10,7 @@
 ## | Phase spectrum | amplitude (dB) and phase against frequency | `amplitudeInto` |
 ## | Cross-correlation | each trace against a reference: against lag, and compared per frequency | `crossCorrelateInto`, `compareInto` |
 ## | Vibrator signature | a unit's Ref, GF, M and B against sweep time: phase, force, frequency, distortion (`core/vibanalysis`) | `analyzeVibrators` |
+## | f-k | a box of traces × time: amplitude against frequency and wavenumber, an image (`core/fkanalysis`) | `forward` (composed) |
 ##
 ## Every number here is processSEG's but for what it leaves to the caller:
 ## the envelope's instantaneous frequency (the analytic signal's phase step
@@ -37,6 +38,7 @@ type
     avPhase = "phase spectrum"
     avCorrelation = "cross-correlation"
     avVibrator = "vibrator signature"
+    avFk = "f-k"
 
   VibRoles* = object
     ## A vibrator signature's roles: each one's place among the window's
@@ -57,8 +59,9 @@ type
       ## spectrogram: a frame's length (a Hann window): the time against
       ## frequency resolution (a frame of W ms resolves about 2/W kHz)
     overlap*: float64 = 75.0 ## spectrogram: how much a frame overlaps the next, %
-    floorDb*: float64 = -60.0 ## spectrogram: the lowest dB drawn (the colour map's low end)
-    colourMap*: ColourMap = cmViridis ## spectrogram's colours
+    floorDb*: float64 = -60.0
+      ## spectrogram, f-k: the lowest dB drawn (the colour map's low end)
+    colourMap*: ColourMap = cmViridis ## spectrogram's and f-k's colours
     phaseWithinDb*: float64 = 20.0
       ## phase spectrum: the phase is shown where the amplitude is within
       ## this of the peak (elsewhere it is noise)
@@ -67,6 +70,9 @@ type
       ## cross-correlation: the reference trace, survey-wide id; -1: none
       ## chosen (the first trace of the window then)
     maxLagMs*: float64 = 250.0 ## cross-correlation: the lags shown, either side of 0
+    fkFromMs*: float64 = NaN ## f-k: the box's first time, ms; NaN: the traces' start
+    fkToMs*: float64 = NaN ## f-k: its last time, ms; NaN: the traces' end
+    fkRaw*: bool = false ## f-k: the traces as recorded, not through the plot's filters
     roles*: VibRoles ## vibrator signature: which trace is which
     reactionMassKg*: float64 = NaN
       ## vibrator signature: the reaction mass, kg, for the ground force
@@ -110,6 +116,10 @@ type
     xLabel*, xUnit*, yLabel*, yUnit*, unit*: string
     values*: seq[float32]
     lo*, hi*: float32 ## the values the colour map's ends are drawn at
+    velocityUnit*: string
+      ## an f-k's: the unit of the apparent velocity a point reads, `y / x`
+      ## times `velocityScale` ("m/s"); "": it reads none
+    velocityScale*: float64 = 1.0
 
   AnalysisResult* = object
     ## An answer for an analysis window.
@@ -142,6 +152,7 @@ func `==`*(a, b: AnalysisParams): bool =
   true
 
 const
+  MinFkTraces* = 4       ## an f-k needs at least these many traces
   MaxAnalysisCurves* = 8 ## traces a curve view draws at most (the first ones)
 
 func isEmpty*(img: AnalysisImage): bool {.inline.} = img.cols == 0 or img.rows == 0
@@ -463,6 +474,7 @@ func viewName*(v: AnalysisView): string =
   of avPhase: "Phase spectrum"
   of avCorrelation: "Cross-correlation"
   of avVibrator: "Vibrator signature"
+  of avFk: "f-k"
 
 func label*(w: AnalysisWindow): string =
   ## What a window is of, in words: "trace 12 · FFID 151 · shot.sgd".

@@ -583,6 +583,7 @@ traces work it out again; its traces stay those it was opened on.
 | **Phase spectrum** | the first trace | amplitude (dB) and phase against frequency | `amplitudeInto` |
 | **Cross-correlation** | each trace (up to 8) against a reference | the correlation coefficient and its envelope against lag; the amplitude ratio (dB) and phase difference (°) per frequency | `crossCorrelateInto`, `compareInto` |
 | **Vibrator signature** | a vibrator unit: its reference (Ref), ground force (GF), reaction-mass (M) and baseplate (B) traces | against sweep time: the phase to the reference (GF, GF from M and B, M, B); the force (fundamental and peak); the frequency (Ref's, the ground forces'); the distortion (THD, each harmonic, %); a table per signal | `analyzeVibrators` |
+| **f-k** | a box of traces × time (opened on fewer than 4 traces: the seismic traces of the first one's record; of more than 256, the first 256, side by side) | amplitude against wavenumber and frequency, in dB from the largest, in a density colour map, with its scale | `forward` (composed: along time, then across the traces) |
 
 Each window's first line holds its view's settings; a change works it out again.
 
@@ -606,6 +607,17 @@ Each window's first line holds its view's settings; a change works it out again.
   itself is said to be: its curve is its autocorrelation (peak at 0, 0 dB, 0°). The
   amplitude ratio and the phase difference are given where the reference's amplitude is
   within the same N dB (20) of its peak. The lags shown: ±250 ms at first.
+- **f-k:** the box's times (**From**, **to**, ms; empty: the traces' ends), the floor and
+  the colour map as a spectrogram's, and **Raw** (off at first: through the Seismic
+  window's filters, so the effect of a filter shows; on: as recorded). The box is
+  tapered (a cosine over 10 % at each end) along time and across the traces, which are
+  zero-padded to twice their number. The wavenumber is in cycles per km from the trace
+  spacing when it is regular (the signed offsets, else the receivers' distances along
+  the line, the file's units taken as metres), else in **cycles per trace**, and the
+  axis says which. An event arriving later on the later traces is at a positive
+  wavenumber. The cursor reads the wavenumber, the frequency, the dB and the apparent
+  velocity f/k (m/s, or traces/s per trace); the keys step it a wavenumber (Left /
+  Right) or a frequency (Up / Down), as a spectrogram's.
 - **Vibrator signature** (wireline tests, start-up QC of a vibrator):
   - **Roles.** A table gives each role its trace among the window's: by default the
     order Ref, GF, M, B. Opened on one trace (the pilot), the window takes it and the

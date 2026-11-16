@@ -17,6 +17,8 @@
 ## - Window > New plot > Vibrator signature on four selected traces shows
 ##   its roles' table and four plots; Limits draws the phase limits and
 ##   shows the table;
+## - an f-k of the record: its image's cursor, held by the keys, reads the
+##   wavenumber (per trace), the frequency, dB and the apparent velocity;
 ## - seven more windows each open inside the main window.
 ##
 ## Seen to fail: with the image's keys not read (`keyMove` never called),
@@ -28,7 +30,8 @@
 ## used), "new plot 5 at (pos: (x: 492.0, y: 272.0), size: (x: 640.0, y:
 ## 620.0)) is not inside the main window's (pos: (x: 0.0, y: 67.0), size:
 ## (x: 1400.0, y: 806.0))" (it opened as a window of its own, outside); with
-## the vibrator signature's table not drawn, "limits on did not happen".
+## the vibrator signature's table not drawn, "limits on did not happen";
+## with an f-k's velocity not read, "0.0 /trace · 125.2 Hz: -49.35 dB".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -198,6 +201,26 @@ withFixtures fx:
         if c.style == csLimit: inc limits
       doAssert limits == 2, $limits & " phase limits drawn")
   step("the vibrator signature closed", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckClosePlot, plot: 2)),
+    proc (f: FrameInfo): bool = f.core.plots.len == 1)
+  # an f-k of the record: an image, its cursor held by the keys reads
+  # the wavenumber, the frequency, dB and the apparent velocity
+  step("an f-k", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckOpenPlot, plotView: avFk, plotTraces: @[0, 1, 2, 3, 4])),
+    proc (f: FrameInfo): bool =
+      result = f.core.plots.len == 2 and not f.core.plots[1].waiting and
+        f.markOf("new plot 2.image").size.x > 0
+      if result: doAssert f.core.plots[1].result.problem == "", f.core.plots[1].result.problem)
+  click("new plot 2.image")
+  key("Right on the f-k", skRight)
+  key("Up on the f-k", skUp)
+  step("the f-k's reading", noop, proc (f: FrameInfo): bool =
+    result = f.core.plots[1].cursor.held
+    if result:
+      let text = f.plotWindows.readoutOf(2)
+      doAssert " /trace · " in text and " Hz: " in text and
+        (text.endsWith(" traces/s") or text.endsWith("(k = 0)")), text)
+  step("the f-k closed", proc (f: FrameInfo) =
     f.apply(Command(kind: ckClosePlot, plot: 2)),
     proc (f: FrameInfo): bool = f.core.plots.len == 1)
   # more windows, each placed a step lower and to the right: every one

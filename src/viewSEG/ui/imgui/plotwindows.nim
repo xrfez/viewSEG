@@ -230,6 +230,17 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
     igAlignTextToFramePadding()
     igTextUnformatted(cstring(text), nil)
     igSameLine(0, -1)
+  template mapCombo() =
+    igSetNextItemWidth(round(igCalcTextSize("Red-white-blue", nil, false, -1).x +
+      igGetFrameHeight() + 2 * igGetStyle().FramePadding.x))
+    if igBeginCombo("##map", ($p.colourMap).cstring, 0):
+      for m in ColourMap:
+        if igSelectable_Bool(($m).cstring, m == p.colourMap, 0, ImVec2_c(x: 0, y: 0)) and
+            m != p.colourMap:
+          (p.colourMap, changed) = (m, true)
+      igEndCombo()
+    marks.mark(name & ".map")
+    tip("The colour map, as density's")
   case w.view
   of avSpectrogram:
     label("Frame")
@@ -252,16 +263,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
     tip("The lowest dB drawn: the colour map's low end (0 dB is the largest amplitude)")
     igSameLine(0, -1)
     label("dB")
-    igSetNextItemWidth(round(igCalcTextSize("Red-white-blue", nil, false, -1).x +
-      igGetFrameHeight() + 2 * igGetStyle().FramePadding.x))
-    if igBeginCombo("##map", ($p.colourMap).cstring, 0):
-      for m in ColourMap:
-        if igSelectable_Bool(($m).cstring, m == p.colourMap, 0, ImVec2_c(x: 0, y: 0)) and
-            m != p.colourMap:
-          (p.colourMap, changed) = (m, true)
-      igEndCombo()
-    marks.mark(name & ".map")
-    tip("The colour map, as density's")
+    mapCombo()
   of avEnvelope: discard
   of avPhase:
     label("Phase where within")
@@ -305,6 +307,33 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
     tip("The lags shown either side of 0, ms")
     igSameLine(0, -1)
     label("ms")
+  of avFk:
+    label("From")
+    if limitBox("##from", p.fkFromMs, box, typed) and
+        not (typed.isNaN and p.fkFromMs.isNaN) and typed != p.fkFromMs:
+      (p.fkFromMs, changed) = (typed, true)
+    marks.mark(name & ".from")
+    tip("The box's first time, ms (empty: the traces' start)")
+    igSameLine(0, -1)
+    label("to")
+    if limitBox("##to", p.fkToMs, box, typed) and
+        not (typed.isNaN and p.fkToMs.isNaN) and typed != p.fkToMs:
+      (p.fkToMs, changed) = (typed, true)
+    marks.mark(name & ".to")
+    tip("The box's last time, ms (empty: the traces' end)")
+    igSameLine(0, -1)
+    label("ms  floor")
+    if numberBox("##floor", p.floorDb, box, typed) and typed < 0:
+      (p.floorDb, changed) = (typed, true)
+    tip("The lowest dB drawn: the colour map's low end (0 dB is the largest amplitude)")
+    igSameLine(0, -1)
+    label("dB")
+    mapCombo()
+    igSameLine(0, -1)
+    if igCheckbox("Raw", addr p.fkRaw): changed = true
+    marks.mark(name & ".raw")
+    tip("On: the traces as recorded. Off: through the Seismic window's filters, so the " &
+      "effect of a filter shows")
   of avVibrator:
     drawVibratorSettings(st, w, name, box, marks, p, frozen, changed)
   if w.view notin {avEnvelope, avVibrator}:

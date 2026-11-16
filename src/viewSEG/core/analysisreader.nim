@@ -24,7 +24,7 @@ import std/[algorithm, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
-import analysis, filesystem, inbox, jobs, log, processing, threads, vibanalysis
+import analysis, filesystem, fkanalysis, inbox, jobs, log, processing, threads, vibanalysis
 
 type
   AnalysisAsk* = object
@@ -224,7 +224,9 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             kept.add move rows[i]
             keptNames.add names[i]
             keptList.add list[i]
-        let through = if kept.len > 0: filtered(kept, f, keptList, a.processing, dtMs) else: ""
+        let raw = a.view == avFk and a.params.fkRaw # (f-k: raw or processed, chosen)
+        let through = if kept.len > 0 and not raw: filtered(kept, f, keptList, a.processing,
+          dtMs) else: ""
         if kept.len == 0:
           answer.problem = "none of the traces could be read"
         else:
@@ -273,6 +275,18 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 if own in 0 ..< signals.len and answer.problem.len == 0:
                   answer.note.add "; " & keptNames[own] & " is the reference itself: its " &
                     "autocorrelation (a peak at 0 ms, 0 dB, 0°)"
+          of avFk:
+            # the trace spacing, from the keys of the traces read
+            var offsets, xs, ys: seq[float64] = @[]
+            for t in keptList:
+              let k = f[].traceKeys(t)
+              offsets.add k.offset
+              xs.add k.rcvX
+              ys.add k.rcvY
+            let (spacing, source) = spacingOf(offsets, xs, ys)
+            let n = answer.leftOut
+            answer = fkOf(kept, spacing, source, dtMs, t0Ms, a.params)
+            answer.leftOut = n
           of avVibrator:
             # each role's trace: its place among those asked about, then
             # among those read (one left out has no role)

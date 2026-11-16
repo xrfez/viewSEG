@@ -27,7 +27,8 @@
 ## at 0.0 ms; trace 3 peaks at 10.0 ms; ..."; with a vibrator signature
 ## opened on one trace kept to it, `traces == @[...]` "@[0]"; with the
 ## settings compared field by field as Nim does (NaN unequal to itself),
-## "the same settings asked again".
+## "the same settings asked again"; with an f-k's Raw not heeded, `"raw (the
+## filters left out)" in r.note and "through" notin r.note`.
 
 import std/[math, os, strutils]
 import parseSEG
@@ -209,5 +210,28 @@ withFixtures fx:
     let asks = st.plots[w].asks
     st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p)
     doAssert st.plots[w].asks == asks, "the same settings asked again"
+
+  block fk:
+    # opened on one trace: the seismic traces of its record (the pilot
+    # left out; the killed one restored first); raw: the filters left out,
+    # said
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[s.base + 3],
+      on: false)
+    discard st.drainInbox()
+    st.apply Command(kind: ckOpenPlot, plotView: avFk, plotTraces: @[s.base + 1])
+    let w = st.plots.high
+    doAssert st.plots[w].traces == @[s.base + 1, s.base + 2, s.base + 3, s.base + 4],
+      $st.plots[w].traces
+    doAssert st.settle(st.answered(w))
+    var r = st.plots[w].result
+    doAssert r.problem == "" and not r.image.isEmpty and r.leftOut == 0,
+      r.problem & " " & $r.leftOut
+    doAssert "through" in r.note and "raw" notin r.note, r.note
+    var p = st.plots[w].params
+    p.fkRaw = true
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p)
+    doAssert st.settle(st.answered(w) and st.plots[w].result.gen == st.plots[w].asked)
+    r = st.plots[w].result
+    doAssert "raw (the filters left out)" in r.note and "through" notin r.note, r.note
   discard st.shutdown()
 echo "tplots: ok"
