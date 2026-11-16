@@ -6,10 +6,14 @@
 ##   nothing, and the next open copies it (the survey is on the map then).
 ##   "Copied into the project" is said only when it is true.
 ##
-## Seen to fail: with `markImporting` not called, "the import is not in
+## - A survey original is never looked at while the project opens: a job of
+##   its own does it afterwards, and records the new time of a file touched.
+##
+## Seen to fail: with the originals looked at inside `openProjectWork`, "the
+## originals were looked at before the open ended"; with `markImporting` not called, "the import is not in
 ## project.nif"; with the open not taking an import up, "the survey was not
 ## copied at the next open".
-import std/[os, strutils, times]
+import std/[os, sequtils, strutils, times]
 import parseSEG
 import viewSEG/core/[project, state]
 import utils/[fixtures, steps, waiting]
@@ -77,4 +81,37 @@ withFixtures fx:
       st.flushFiles()
       st.shutdown()
       doAssert "(importing" notin readFile(job / "project.nif")
+  block originalsApart:
+    # A touched original (a new time, the same bytes): the open does not wait for
+    # it, it is looked at on a job of its own, and its new time is recorded.
+    let job = fx.dir / "Job touch"
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+    doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+    st.importSurvey(survey)
+    doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore and
+      not st.project.doc.hasImport)
+    st.flushFiles()
+    st.shutdown()
+    let t1 = initTime(getTime().toUnix - 5000, 0)
+    setLastModificationTime(survey.s, t1)
+    holdStep("looking at survey.s")
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject and again.project.survey == srLoaded),
+      "the open waited for an original"
+    doAssert again.project.originals.len == 3 and again.project.originals[0].state == osLooking,
+      "the originals were looked at before the open ended: " & $again.project.originals[0].state
+    releaseStep("looking at survey.s")
+    doAssert again.settle(again.project.originals.allIt(it.state == osAsCopied)),
+      "the originals were not looked at afterwards"
+    doAssert again.project.doc.survey[0].modified == t1, "the new time was not recorded"
+    again.flushFiles()
+    again.shutdown()
+    var third = start(config)
+    third.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert third.settle(third.project.originals.len == 3 and
+      third.project.originals.allIt(it.state == osAsCopied))
+    doAssert not third.project.originals[0].confirmed, "read whole again at the next open"
+    third.shutdown()
 echo "tprojectkeep: done"

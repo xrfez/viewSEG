@@ -110,9 +110,10 @@ type
   OriginalLook* = object
     ## What a look at an original found.
     state*: OriginalState
-    path*: string ## where it was found ("" when it was not)
+    path*: string    ## where it was found ("" when it was not)
     size*: int64
     modified*: Time
+    confirmed*: bool ## its time moved but every byte is the copy's: the new time is recorded
 
   Owner* = object
     ## Who has a project open (`owner.nif`): said to a second program.
@@ -127,11 +128,12 @@ type
 
   NewsKind* = enum
     ## What a project's job posts (`mkProject`).
-    pnOpened ## a project opened (or made): its document, its lock, where its parts are
-    pnSurvey ## its survey made from `survey.bin`: the joins' geometry (the map's
-             ## layers come as `mkSurvey`, one a file)
-    pnKept   ## survey files copied into it and `survey.bin` written
-    pnLooked ## its data folders and survey originals looked at again
+    pnOpened    ## a project opened (or made): its document, its lock, where its parts are
+    pnSurvey    ## its survey made from `survey.bin`: the joins' geometry (the map's
+                ## layers come as `mkSurvey`, one a file)
+    pnKept      ## survey files copied into it and `survey.bin` written
+    pnLooked    ## its data folders looked at again
+    pnOriginals ## its survey originals looked at (a job of their own: they may be large and far)
 
   ProjectNews* = object
     ## A project's job's result, for the UI thread.
@@ -160,7 +162,7 @@ type
       store*: StoreInfo
       keptFailure*: string
       updated*: bool                ## the copies were updated from their originals
-    of pnLooked:
+    of pnLooked, pnOriginals:
       discard
 
 func hasSurvey*(d: ProjectDoc): bool {.inline.} =

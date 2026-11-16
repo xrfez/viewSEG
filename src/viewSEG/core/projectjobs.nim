@@ -61,13 +61,16 @@ proc lookPlace*(p: ProjectPath; dir: string): PlaceLook =
   for c in p.candidates(dir):
     if fs.dirExists(c): return PlaceLook(state: psFound, path: c)
 
-proc lookOriginal*(c: SurveyCopy; dir: string): OriginalLook =
+proc lookOriginal*(c: SurveyCopy; dir: string;
+    progress: proc (done, total: int64): bool {.gcsafe.} = nil): OriginalLook =
   ## Where survey file `c`'s original is now, and whether its content
   ## changed since it was copied into the project in `dir`: by its size and
   ## the hash of its first and last 64 KiB, and, when those agree but its
-  ## modification time moved, by the hash of every byte against the copy's.
-  ## A file touched, renamed or copied with its content as it was has not
-  ## changed; one whose content differs has, whatever its time says.
+  ## modification time moved, by the hash of every byte against the copy's
+  ## (read with `progress`, which may raise to stop). A file touched, renamed
+  ## or copied with its content as it was has not changed (`confirmed` when
+  ## its time moved: the new time is then the one to record); one whose
+  ## content differs has, whatever its time says.
   result = OriginalLook(state: osNotFound)
   for path in c.original.candidates(dir):
     if path.len > 0 and fs.fileExists(path):
@@ -76,16 +79,20 @@ proc lookOriginal*(c: SurveyCopy; dir: string): OriginalLook =
         let id = quickIdentity(path, t)
         result = OriginalLook(state: osAsCopied, path: path, size: id.size, modified: t)
         if id.size != c.size or id.quick != c.quick: result.state = osChanged
-        elif t != c.modified and c.full != 0 and fullHash(path) != c.full:
-          result.state = osChanged # the same ends, other content in between
+        elif t != c.modified and c.full != 0:
+          if fullHash(path, progress) != c.full: result.state = osChanged # other content between
+          else: result.confirmed = true
         return
       except IOError, OSError:
         discard
 
 proc looks(doc: ProjectDoc; dir: string; folders: var seq[PlaceLook];
     originals: var seq[OriginalLook]) =
+  ## The data folders looked at; the originals only listed as not looked at
+  ## yet (`originalsWork` does that: they may be large, or on a drive that does
+  ## not answer, and no open waits for them).
   for p in doc.data: folders.add lookPlace(p, dir)
-  for c in doc.survey: originals.add lookOriginal(c, dir)
+  for c in doc.survey: originals.add OriginalLook(state: osLooking)
 
 proc hostName(): string =
   result = getEnv("HOSTNAME")
@@ -189,12 +196,30 @@ proc openProjectWork*(dir: string; to: Poster; make = false; np = NewProject()):
     to.post(ctx.id, news)
 
 proc lookWork*(dir: string; doc: ProjectDoc; to: Poster): JobWork =
-  ## The work of a job that looks at the data folders and the survey
-  ## originals of the project in `dir` again (`pnLooked`).
+  ## The work of a job that looks at the data folders of the project in
+  ## `dir` again (`pnLooked`).
   result = proc (ctx: JobContext) {.gcsafe.} =
     var news = ProjectNews(dir: dir, kind: pnLooked)
     {.cast(gcsafe).}:
       looks(doc, dir, news.folders, news.originals)
+    news.originals.setLen 0
+    to.post(ctx.id, news)
+
+proc originalsWork*(dir: string; doc: ProjectDoc; to: Poster): JobWork =
+  ## The work of a job (the lane of hashes) that looks at the survey
+  ## originals of the project in `dir` (`pnOriginals`): their size and ends,
+  ## and, when their time moved, every byte against the copy's, with
+  ## progress; a cancel stops it between files and within a file.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    var news = ProjectNews(dir: dir, kind: pnOriginals)
+    {.cast(gcsafe).}:
+      for i, c in doc.survey:
+        ctx.setPhase "looking at " & c.original.displayName
+        if not ctx.progress(i, doc.survey.len): raise newException(JobCancelledError, "cancelled")
+        news.originals.add lookOriginal(c, dir, proc (done, total: int64): bool =
+          if not ctx.progress(done, total): raise newException(JobCancelledError, "cancelled")
+          true)
+    discard ctx.progress(doc.survey.len, doc.survey.len)
     to.post(ctx.id, news)
 
 proc unlockWork*(lock: FileLock): JobWork =

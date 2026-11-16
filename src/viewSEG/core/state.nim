@@ -567,6 +567,7 @@ type
     useSurvey: bool                 ## the project being made takes the session's survey once open
     surveyJob: JobId = NoJob        ## its survey's job (made, kept, updated)
     lookJob: JobId = NoJob
+    originalsJob: JobId = NoJob     ## the look at its survey originals (a job of their own)
     geometry: ref SurveyGeometry    ## its survey, as the joins read it; nil until made
     joinSurvey: JoinSurvey
     queue: seq[SessionId]           ## files opened, to be matched to its survey
@@ -4300,7 +4301,7 @@ proc leaveProject(state: var AppState; restoreUser: bool) =
       p.doc.name & ": the copy stops here, and is taken up when the project is next opened.")
   state.clearSession()
   state.forgetFileMemory()
-  for job in [p.surveyJob, p.lookJob]:
+  for job in [p.surveyJob, p.lookJob, p.originalsJob]:
     if job != NoJob: discard state.jobs.cancel(job)
   state.releaseLock()
   state.store = Store(home: state.userStore)
@@ -4315,7 +4316,7 @@ proc leaveProject(state: var AppState; restoreUser: bool) =
     state.layoutSaved = state.layoutRev # the user's own, as saved
   let (job, jobDir, jobBy) = (p.job, p.jobDir, p.jobBy)
   state.project = ProjectState(job: job, jobDir: jobDir, jobBy: jobBy, surveyJob: NoJob,
-    lookJob: NoJob)
+    lookJob: NoJob, originalsJob: NoJob)
 
 proc openProject(state: var AppState; dir: string; by: CommandOrigin; make = false;
     np = NewProject(); useSurvey = false) =
@@ -4386,6 +4387,19 @@ proc keepImport(state: var AppState) =
     "into the project " & p.doc.name & ": it is not imported again. If the project is closed " &
     "or the program quits first, the copy is taken up at the next open.")
 
+proc lookAtOriginals(state: var AppState) =
+  ## Looks at the survey originals on a job of the hashes' lane, with
+  ## progress and a cancel (`originalsWork`): no open waits for them.
+  template p: untyped = state.project
+  if p.originalsJob != NoJob: discard state.jobs.cancel(p.originalsJob)
+  if p.doc.survey.len == 0:
+    p.originals.setLen 0
+    return
+  p.originals = p.doc.survey.mapIt(OriginalLook(state: osLooking))
+  p.originalsJob = state.jobs.submit(JobSpec(title: "Look at the survey's original files",
+    lane: jlHashes), originalsWork(p.dir, p.doc, state.inbox.poster))
+  inc p.revision
+
 proc lookAgain(state: var AppState) =
   template p: untyped = state.project
   if p.lookJob != NoJob: discard state.jobs.cancel(p.lookJob)
@@ -4440,7 +4454,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   p = ProjectState(dir: dir, doc: move news.doc, lock: news.lock, owner: news.owner,
     folders: move news.folders, originals: move news.originals, by: by,
     userArrangement: userArrangement, userPresets: userPresets,
-    userProcessing: userProcessing, surveyJob: NoJob, lookJob: NoJob, job: NoJob)
+    userProcessing: userProcessing, surveyJob: NoJob, lookJob: NoJob, originalsJob: NoJob, job: NoJob)
   p.readOnly = not p.lock.locked or p.doc.version > ProjectVersion
   p.whyReadOnly = if not p.lock.locked and p.lock.failure.len > 0:
                     "the project's lock file cannot be opened (" & p.lock.failure & ")"
@@ -4483,7 +4497,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
       "Project window says where " & (if missing.len == 1: "it is" else: "they are") & " now.")
   if not news.created and first.len > 0:
     state.startListing(@[first], first, "", by)
-  state.sayOriginals()
+  state.lookAtOriginals()
   if p.doc.hasImport:
     # An import was being copied in when the project was closed or the
     # program quit: copied again from the originals.
@@ -4562,7 +4576,8 @@ proc takeKept(state: var AppState; m: sink Msg) =
     "copied into the project again; the survey" else: "The survey") & " is kept in the project " &
     p.doc.name & " (" & $p.doc.survey.len & (if p.doc.survey.len == 1: " file" else: " files") &
     ", " & formatSize(news.store.bytes, includeSpace = true) & ").")
-  state.lookAgain() # its originals, as copied now
+  state.lookAgain()
+  state.lookAtOriginals() # its originals, as copied now
   if news.updated: state.restoreSurvey(layers = true)
   elif p.geometry.isNil: state.restoreSurvey(layers = layers)
   else: p.survey = srLoaded
@@ -4605,7 +4620,19 @@ proc takeProject(state: var AppState; m: sink Msg) =
     if m.job == p.lookJob and m.news.dir == p.dir:
       p.lookJob = NoJob
       p.folders = move m.news.folders
+      inc p.revision
+  of pnOriginals:
+    template p: untyped = state.project
+    if m.job == p.originalsJob and m.news.dir == p.dir:
+      p.originalsJob = NoJob
       p.originals = move m.news.originals
+      # An original whose time moved but whose content is the copy's: the new
+      # time is recorded, so that no later open reads it whole again.
+      for i, o in p.originals:
+        if o.confirmed and not p.readOnly and i < p.doc.survey.len and
+            p.doc.survey[i].modified != o.modified:
+          p.doc.survey[i].modified = o.modified
+          state.projectChanged()
       inc p.revision
       state.sayOriginals()
 
@@ -4628,6 +4655,11 @@ proc endProjectWork(state: var AppState; job: JobInfo): bool =
       if job.state == jsFailed:
         state.log.add(sevError, "project", "The project's survey: " & job.error & ".")
   elif job.id == p.lookJob: p.lookJob = NoJob
+  elif job.id == p.originalsJob:
+    p.originalsJob = NoJob
+    if job.state == jsFailed:
+      state.log.add(sevWarning, "project", "The survey's original files could not be looked " &
+        "at: " & job.error & ".")
   else: result = false
 
 proc startAutoJoin(state: var AppState; i: int) =

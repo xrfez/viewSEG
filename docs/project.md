@@ -133,8 +133,8 @@ while the copy runs stops it and keeps what was written; the next open copies th
 originals again and makes the survey, with a message. The `(importing ...)` entry goes
 when the copy is whole (or when it failed: the user then imports the survey again).
 
-**When an original changes.** At open, the program looks at each survey file's original
-(on a job: a share may not answer): its size, modification time and quick hash (the size
+**When an original changes.** After the open, the program looks at each survey file's original
+(on a job of its own: a share may not answer): its size, modification time and quick hash (the size
 and an XXH64 hash of its first and last 64 KiB). One that changed (an S file that grew
 with the day's shots) is said in the log, and the Project window comes forward with
 **Update from the original**: never updated without asking. Until then the project uses
@@ -278,8 +278,12 @@ programs never write the project at once, so the project needs no merging.
 ## Threads and files
 
 Reading the document, taking the lock, reading the project's layout and looking at the
-data folders and originals are a job on the interactive lane (`openProjectWork`, a few
-stats and one small read); copying the survey in, writing `survey.bin` and making the
+data folders are a job on the interactive lane (`openProjectWork`, a few stats and one
+small read). The survey originals are never looked at on the open path: once the project
+is open they are looked at in a job of their own on the lane of hashes (`originalsWork`,
+with progress and a cancel), so an original on a share that does not answer, or one
+touched and large, holds up nothing. When one's time moved but every byte is its copy's,
+the new time is recorded in `project.nif`, so the next open does not read it again; copying the survey in, writing `survey.bin` and making the
 survey from it are jobs on the background lane (`keepSurveyWork`, `updateSurveyWork`,
 `restoreWork`: `survey.bin` can be large, so its job writes it, not the disk thread,
 which must stay free for the settings and the log). The disk thread writes the project
