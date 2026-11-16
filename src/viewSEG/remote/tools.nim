@@ -543,6 +543,7 @@ proc plotJson(w: AnalysisWindow; limit: int): JsonNode =
     "filters": w.filters, "waiting": w.waiting, "cursor": toJson(w.cursor),
     "cursorOn": w.cursorOn,
     "problem": r.problem, "note": r.note, "used": r.used, "leftOut": r.leftOut,
+    "passedBy": r.passedBy,
     "dtMs": toJson(r.dtMs), "plots": plots}
   if r.table.len > 0:
     var rows = newJArray()

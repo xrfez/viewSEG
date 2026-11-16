@@ -134,9 +134,23 @@ type
     used*: int ## traces it is of
     leftOut*: int ## of those asked about: killed, dead, not decoded
     atOtherInterval*: int ## of those asked about: sampled at another interval, or none
+    passedBy*: int
+      ## the auxiliary traces (the reference included) the plot's filters passed
+      ## by because Filters > Filter the Aux traces too is off
     dtMs*: float64
     note*: string ## what the numbers are, in words (shown under the plot)
     problem*: string ## why there is none; "" when there is one
+
+const AuxFilterOff* = "Filters > Filter the Aux traces too is off"
+  ## where the plot's Aux toggle is, as the words name it
+
+func passedWords*(n: int): string =
+  ## What `n` auxiliary traces the filters passed by are told as: "the 2
+  ## auxiliary traces are not filtered: Filters > Filter the Aux traces too is
+  ## off"; "" for none.
+  if n <= 0: ""
+  elif n == 1: "the auxiliary trace is not filtered: " & AuxFilterOff
+  else: "the " & $n & " auxiliary traces are not filtered: " & AuxFilterOff
 
 func `==`*(a, b: AnalysisParams): bool =
   ## Whether two settings are the same, a NaN (a limit or a mass not set)

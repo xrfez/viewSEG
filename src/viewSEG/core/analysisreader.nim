@@ -144,10 +144,12 @@ proc readRows(p: ptr ReaderObj; f: ptr SeismicFile; path: string; list: seq[int]
   clearCycleRoots()
 
 proc filtered(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
-    pr: Processing; dtMs: float64): string =
+    pr: Processing; dtMs: float64; passed: var int): string =
   ## `rows` (traces `list` of `f`) through the filters `pr` at `dtMs`,
-  ## whole; an auxiliary trace only when `pr.aux`. What the filters are, in
-  ## words, or why they did not run; "" for none.
+  ## whole; an auxiliary trace only when `pr.aux` (the others, `passed` of
+  ## them, are passed by). What the filters are, in words, or why they did not
+  ## run; "" for none.
+  passed = 0
   var q = pr
   q.raw = false
   if not q.hasFilters or rows.len == 0: return ""
@@ -175,6 +177,7 @@ proc filtered(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
     return "the filters could not run: " & e.msg
   for i in 0 ..< rows.len:
     if rows[i].len > 0: copyMem(addr rows[i][0], addr work[i * cols], rows[i].len * 4)
+    if not q.aux and f[].traceKeys(list[i]).status == tsAuxiliary: inc passed
   "through " & q.describe
 
 proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
@@ -233,8 +236,16 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             keptNames.add names[i]
             keptList.add list[i]
         let raw = a.view == avFk and a.params.fkRaw # (f-k: raw or processed, chosen)
-        let through = if kept.len > 0 and not raw: filtered(kept, f, keptList, a.processing,
-          dtMs) else: ""
+        var passed = 0
+        var through = if kept.len > 0 and not raw: filtered(kept, f, keptList, a.processing,
+          dtMs, passed) else: ""
+        if passed > 0 and through.startsWith("through "):
+          # the filters did not touch these: the words must not say they did
+          if passed == kept.len:
+            through = passedWords(passed) & " (the plot's filters: " &
+              through["through ".len .. ^1] & ")"
+          else:
+            through.add " (" & passedWords(passed) & ")"
         if kept.len == 0:
           answer.problem = "none of the traces could be read"
         else:
@@ -275,11 +286,16 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 answer.problem = "the reference is sampled at " & $rdt & " ms, the traces at " &
                   $dtMs & " ms"
               else:
-                discard filtered(refRows, rf, @[rt], a.processing, dtMs)
+                let refName = if a.refName.len > 0: a.refName else: keptNames[0]
+                var refPassed = 0
+                let refThrough = filtered(refRows, rf, @[rt], a.processing, dtMs, refPassed)
+                if refPassed > 0 and refThrough.startsWith("through "):
+                  inc passed
+                  let words = "the reference (" & refName & ") is not filtered: " & AuxFilterOff
+                  through = if through.len > 0: through & "; " & words else: words
                 var signals: seq[(string, seq[float32])] = @[]
                 for i in 0 ..< min(kept.len, MaxAnalysisCurves):
                   signals.add (keptNames[i], kept[i])
-                let refName = if a.refName.len > 0: a.refName else: keptNames[0]
                 let n = (answer.leftOut, answer.atOtherInterval)
                 answer = correlationOf(signals, refRows[0], refName, dtMs, a.params)
                 (answer.leftOut, answer.atOtherInterval) = n
@@ -321,6 +337,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               else: answer.note.add "; " & words
           answer.gen = a.gen
           answer.id = a.id
+          answer.passedBy = passed
           if through.len > 0 and answer.problem.len == 0:
             answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & through
       except OSError as e:

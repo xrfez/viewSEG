@@ -249,6 +249,28 @@ withFixtures fx:
       plotFrozen: false)
     discard st.drainInbox()
 
+  block auxPassedBy:
+    # the Aux toggle off: the filters pass the auxiliary trace (the record's
+    # pilot, trace 1) by, and the windows say so rather than "through ..."
+    let band = Processing(band: pbBandPass, f1: 5, f2: 8, f3: 40, f4: 50, aux: false)
+    st.apply Command(kind: ckProcessing, panel: MainPanel, processing: band)
+    doAssert st.settle(st.answered(1) and st.plots[1].result.gen == st.plots[1].asked and
+      st.answered(0) and st.plots[0].result.gen == st.plots[0].asked)
+    let spec = st.plots[1].result # a spectrogram of the pilot alone
+    doAssert spec.passedBy == 1 and "the auxiliary trace is not filtered" in spec.note and
+      "through" notin spec.note, $spec.passedBy & ": " & spec.note
+    let corr = st.plots[0].result # the traces filtered, the pilot not
+    doAssert corr.passedBy == 1 and "the reference" in corr.note and
+      "is not filtered: Filters > Filter the Aux traces too is off" in corr.note and
+      "through" in corr.note, $corr.passedBy & ": " & corr.note
+    # the same filters with Aux on: nothing passed by
+    var on = band
+    on.aux = true
+    st.apply Command(kind: ckProcessing, panel: MainPanel, processing: on)
+    doAssert st.settle(st.answered(1) and st.plots[1].result.gen == st.plots[1].asked)
+    doAssert st.plots[1].result.passedBy == 0 and "through" in st.plots[1].result.note,
+      st.plots[1].result.note
+
   block cursorAndClose:
     let id = st.plots[1].id
     st.apply Command(kind: ckPlotCursor, plot: id, plotCursor: PlotCursor(held: true, x: 5,

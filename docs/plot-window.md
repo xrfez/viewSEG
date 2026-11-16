@@ -589,6 +589,11 @@ the kills it had when it was frozen, and a change of its settings works out from
 | **Vibrator signature** | a vibrator unit: its reference (Ref), ground force (GF), reaction-mass (M) and baseplate (B) traces | against sweep time: the phase to the reference (GF, GF from M and B, M, B); the force (fundamental and peak); the frequency (Ref's, the ground forces'); the distortion (THD, each harmonic, %); a table per signal | `analyzeVibrators` |
 | **f-k** | a box of traces × time (opened on fewer than 4 traces: the seismic traces of the first one's record; of more than 256, the first 256, side by side) | amplitude against wavenumber and frequency, in dB from the largest, in a density colour map, with its scale | `forward` (composed: along time, then across the traces) |
 
+Auxiliary traces go through the filters only when "Filter the Aux traces too" is ticked: when
+it is not, the window says how many the filters passed by (under the title, "the auxiliary trace is
+not filtered: Filters > Filter the Aux traces too is off"; in a cross-correlation the reference
+too, when it is one), as the spectrum windows do, and `state`'s `passedBy` counts them.
+
 Each window's first line holds its view's settings; a change works it out again.
 
 - **Spectrogram:** the frame's length (ms; a Hann window: a frame of W ms resolves about
