@@ -67,18 +67,21 @@ proc tooltip(text, shortcut: string; t: Theme) =
       igPopStyleColor(1)
     igEndTooltip()
 
-proc toolButton(id: string; size: float32; selected: bool; t: Theme): (bool, ImVec2_c) =
+proc toolButton(id: string; size: float32; selected: bool; t: Theme;
+    width = 0.0'f32): (bool, ImVec2_c) =
   ## A square, frameless button: the hover and selection backgrounds only.
-  ## Returns whether it was clicked and its top-left corner.
+  ## `width`, when given, makes it that wide (`size` high). Returns whether it
+  ## was clicked and its top-left corner.
   let pos = igGetCursorScreenPos()
-  let clicked = igInvisibleButton(id.cstring, ImVec2_c(x: size, y: size), 0)
+  let w = if width > 0: width else: size
+  let clicked = igInvisibleButton(id.cstring, ImVec2_c(x: w, y: size), 0)
   let bg = if igIsItemActive(): t.roles[rlActive]
            elif igIsItemHovered(0): t.roles[rlHover]
            elif selected: t.roles[rlSelection]
            else: Rgba()
   if bg.a > 0:
     ImDrawList_AddRectFilled(igGetWindowDrawList(), pos,
-      ImVec2_c(x: pos.x + size, y: pos.y + size), u32(bg), igGetStyle().FrameRounding, 0)
+      ImVec2_c(x: pos.x + w, y: pos.y + size), u32(bg), igGetStyle().FrameRounding, 0)
   (clicked, pos)
 
 proc iconButton*(icon, text, shortcut: string; size: float32; t: Theme;
@@ -107,6 +110,15 @@ type
     ## A control line with the Freeze pin reserved at the right of its first row.
     left*, top*, right*, rowRight*, size*: float32
 
+const FreezeWord = "Freeze"
+
+proc freezeWidth(size: float32): float32 =
+  ## The Freeze pin's width: its icon's square, the word after it and a
+  ## frame's padding at the end.
+  let style = igGetStyle()
+  round(size + style.ItemSpacing.x + igCalcTextSize(FreezeWord, nil, false, -1).x +
+    style.FramePadding.x)
+
 proc beginControlLine*(): ControlLine =
   ## The line about to be drawn: Freeze's width is kept at its right, and
   ## `rowRight` is as far as another control on that first row may reach.
@@ -115,7 +127,7 @@ proc beginControlLine*(): ControlLine =
   let size = round(igGetFontSize() * IconScale + 2 * style.FramePadding.y)
   let right = pos.x + igGetContentRegionAvail().x
   ControlLine(left: pos.x, top: pos.y, right: right, size: size,
-    rowRight: right - size - style.ItemSpacing.x)
+    rowRight: right - freezeWidth(size) - style.ItemSpacing.x)
 
 proc fitsBefore*(line: ControlLine; width, gap: float32): bool =
   ## Whether a control of `width`, `gap` after the previous item, fits on
@@ -127,12 +139,14 @@ proc fitsBefore*(line: ControlLine; width, gap: float32): bool =
 
 proc drawFreeze*(line: ControlLine; id, sentence, mark: string; frozen: bool; t: Theme;
     marks: var Marks): bool =
-  ## The pin at the right end of the first row, drawn selected while
-  ## `frozen`. `sentence` follows "Freeze (on): " or "Freeze (off): ". The
-  ## cursor is left below the line, at its left, for what comes under it.
+  ## The pin at the right end of the first row, its icon and the word
+  ## "Freeze", drawn selected while `frozen`. `sentence` follows "Freeze
+  ## (on): " or "Freeze (off): ". The cursor is left below the line, at its
+  ## left, for what comes under it.
   let after = igGetCursorScreenPos()
-  igSetCursorScreenPos(ImVec2_c(x: line.right - line.size, y: line.top))
-  let (clicked, pos) = toolButton("##freeze" & id, line.size, frozen, t)
+  let width = freezeWidth(line.size)
+  igSetCursorScreenPos(ImVec2_c(x: line.right - width, y: line.top))
+  let (clicked, pos) = toolButton("##freeze" & id, line.size, frozen, t, width)
   marks.mark(mark)
   let (font, px) = (igGetFont(), round(line.size * 0.68))
   let ts = ImFont_CalcTextSizeA(font, px, high(float32), 0, IconPin.cstring, nil, nil)
@@ -140,6 +154,11 @@ proc drawFreeze*(line: ControlLine; id, sentence, mark: string; frozen: bool; t:
   ImDrawList_AddText_FontPtr(igGetWindowDrawList(), font, px,
     ImVec2_c(x: round(pos.x + (line.size - ts.x) / 2), y: round(pos.y + (line.size - ts.y) / 2)),
     u32(col), IconPin.cstring, nil, 0, nil)
+  let word = igCalcTextSize(FreezeWord, nil, false, -1)
+  ImDrawList_AddText_FontPtr(igGetWindowDrawList(), font, igGetFontSize(),
+    ImVec2_c(x: round(pos.x + line.size + igGetStyle().ItemSpacing.x),
+      y: round(pos.y + (line.size - word.y) / 2)),
+    u32(col), FreezeWord.cstring, nil, 0, nil)
   tooltip("Freeze (" & (if frozen: "on" else: "off") & "): " & sentence, "", t)
   let y = max(after.y, line.top + line.size + igGetStyle().ItemSpacing.y)
   igSetCursorScreenPos(ImVec2_c(x: line.left, y: y))

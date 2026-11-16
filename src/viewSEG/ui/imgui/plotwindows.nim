@@ -54,7 +54,7 @@ proc tip(text: string) =
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
 
-const PlotFreeze* = "On: the window keeps what it shows. Off: it follows the Seismic " &
+const PlotFreeze* = "the window keeps what it shows. Off: it follows the Seismic " &
   "window's filters (and Aux toggle) and the kills of its traces"
   ## The Freeze pin's sentence, after "Freeze (on): " or "Freeze (off): "
 
