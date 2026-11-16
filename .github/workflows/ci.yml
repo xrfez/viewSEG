@@ -29,7 +29,9 @@ jobs:
       # the nim-dev image the devcontainer uses (Ubuntu and Debian ship no SDL 3.4).
       # Mesa's llvmpipe (libgl1-mesa-dri; libgl-dev and libegl-dev bring its GLX
       # and EGL) draws under Xvfb; dbus-daemon gives the tray tests a session bus
-      # of their own (they skip those parts without it).
+      # of their own (they skip those parts without it). Every name is in both
+      # Ubuntu 24.04 and 26.04 (ubuntu-latest moves to 26.04). No libpcre: 26.04
+      # has no PCRE1, and nothing here uses std/re or std/nre (tests/tlayers).
       - name: Install system libraries
         run: |
           sudo apt-get update -qq
@@ -39,12 +41,17 @@ jobs:
             libxinerama-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             libdecor-0-dev libegl-dev libgl-dev libgles-dev libdbus-1-dev libudev-dev
 
+      # SDL3 built on one Ubuntu release is not reused on the next.
+      - name: Name the runner's release
+        id: release
+        run: echo "id=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
+
       - name: Cache SDL3
         id: sdl3-cache
         uses: actions/cache@v4
         with:
           path: ~/sdl3
-          key: sdl3-3.4.18-${{ runner.os }}-${{ runner.arch }}-v1
+          key: sdl3-3.4.18-${{ steps.release.outputs.id }}-${{ runner.arch }}-v1
 
       # Static and shared, like the image. config.nims takes SDL's headers and
       # libSDL3.a from pkg-config (this prefix is not a default include path),
