@@ -309,4 +309,22 @@ block referenceInOtherFile:
   doAssert "reference, " notin st.plots[w].result.note, st.plots[w].result.note
   st.shutdown()
 
+block insteadCount:
+  ## Seen to fail: "1 traces use their own filter instead of the plot's" for one
+  ## instead-trace among two shown traces (the count is "1 trace uses").
+  var st = initAppState()
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  let base = st.sessions[0].base
+  st.apply Command(kind: ckProcessing, panel: MainPanel,
+    processing: Processing(band: pbHighCut, f3: 20, f4: 30))
+  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 1], on: true,
+    processing: band(40, 60, fpInstead).spec, filterPlace: fpInstead)
+  st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base, base + 1])
+  let w = st.spectra.high
+  doAssert st.settle(st.spectra[w].spectrum.raw.len > 0 and not st.spectra[w].waiting)
+  doAssert "1 trace uses its own filter instead of the plot's" in st.spectra[w].filterText,
+    st.spectra[w].filterText
+  st.shutdown()
+
 echo "townalways: ok"

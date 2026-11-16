@@ -416,6 +416,7 @@ func insteadWords*(nInstead, nShown: int): string =
   if nInstead <= 0 or nShown <= 0: ""
   elif nShown == 1: "this trace uses its own filter instead of the plot's"
   elif nInstead == nShown: "these traces use their own filter instead of the plot's"
+  elif nInstead == 1: "1 trace uses its own filter instead of the plot's"
   else: $nInstead & " traces use their own filter instead of the plot's"
 
 proc auxLiveRows*(rows: TraceRows; keys: var seq[TraceKeys]; samples: var seq[int]): TraceRows =
