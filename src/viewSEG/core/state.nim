@@ -4184,6 +4184,8 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
     state.opening[reopened].swapped = true
     if o.tried.isDefault: state.openChoices.del o.path
     else: state.openChoices[o.path] = o.tried
+    state.log.add(sevInfo, s.name, s.name & " is opened again" & (if o.tried.isDefault:
+      " with the defaults." else: ": " & choiceText(o.tried) & "."))
     state.shots.forget(state.survey, @[s.path])
     state.shots.listedRev = -1
     if old >= 0:
@@ -5919,8 +5921,6 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
   ## is superseded or cancelled leaves the one that was in force. An open
   ## of it under way is no longer wanted.
   let name = path.extractFilename
-  state.log.add(sevInfo, name, name & " is opened again" & (if choice.isDefault:
-    " with the defaults." else: ": " & choiceText(choice) & "."))
   for o in state.opening.mitems:
     if o.path == path and not o.unwanted:
       o.unwanted = true

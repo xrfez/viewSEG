@@ -466,8 +466,9 @@ withFixtures fx:
       again.settings.plot.display.gain == user.plot.display.gain
     doAssert again.settings.readout == @[rfTime, rfAmplitude]
   block aReopenOfNoFile:
-    # Seen to fail: "nope.sgy is opened again" was logged, and the choice kept
-    # for the path that is no file. The open job decides: a file that cannot be
+    # Seen to fail: "nope.sgy is opened again" was logged (the line is written
+    # in `reopenWith` before the open), and the choice kept for the path that
+    # is no file. The open job decides: a file that cannot be
     # opened gives one failure message and keeps no choice; a file that exists
     # outside the file list is opened (with a pre-check of the list, "was
     # opened" failed).
@@ -484,6 +485,7 @@ withFixtures fx:
     for e in st.log:
       if "Cannot open " & missing in e.text: inc failures
     doAssert failures == 1, "the failure was said " & $failures & " times"
+    doAssert not st.log.has("is opened again"), "said opened again before the open"
     doAssert st.openChoiceOf(canonical(missing)).isDefault, "a choice kept for no file"
     doAssert st.sessions.len == 1 and st.sessions[0].path == canonical(mine)
     let outside = agentDir / "outside.sgy"

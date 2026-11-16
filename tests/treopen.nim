@@ -139,10 +139,10 @@ block everyHeaderChecked:
     let cachedAt = getLastModificationTime(cache)
     sleep 20
     st.reopen(path, OpenChoice(standard: scSegy, verifyAll: true))
-    doAssert st.log.has(name & " is opened again: read as SEG-Y, not detected; every " &
-      "trace header checked.")
     doAssert st.settle(not st.shownSession.isNil and
       st.shownSession.facts.opened.choice.verifyAll), "not reopened with every header checked"
+    doAssert st.log.has(name & " is opened again: read as SEG-Y, not detected; every " &
+      "trace header checked.")
     let s = st.shownSession
     doAssert st.opens(name) == 2, "not the open job: " & $st.opens(name)
     doAssert not s.facts.opened.fromCache, "the index came from the cache"
