@@ -2348,9 +2348,22 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
       if not state.analysisReader.isNil: state.analysisReader.cancel(pw.id)
       if pw.waiting:
         pw.waiting = false
-        pw.result.problem = if ofFile: "its file was closed"
-                            else: "its reference's file was closed"
+        # A window that already has numbers keeps them (a frozen one, as a
+        # frozen spectrum window does). One still waiting for its first
+        # answer says why.
+        if pw.result.gen == 0:
+          pw.result.problem = if ofFile: "its file was closed"
+                              else: "its reference's file was closed"
         inc pw.revision
+  for k in 0 ..< state.spectra.len:
+    template sw: untyped = state.spectra[k]
+    if sw.traces.len > 0 and sw.traces[0] in s:
+      if not state.spectrumReader.isNil: state.spectrumReader.cancel(sw.id)
+      if sw.waiting:
+        sw.waiting = false
+        if sw.spectrum.raw.len == 0:
+          sw.spectrum.problem = "its file was closed"
+        inc sw.revision
   let joined = state.joinedOf(s.id)
   if joined >= 0: state.joins.delete(joined)
   let positions = state.survey.findTraces(s.id)
@@ -2881,6 +2894,13 @@ proc askAgain(state: var AppState; w: int): bool =
     if t in s: traces.add t - s.base
   state.askSpectrum(w, i, traces, window, sw.processing)
 
+func sameFollow(a, b: LiveKey): bool =
+  ## Whether two follow keys are the same request. A window whose time is
+  ## not a number compares equal to another (both are the whole trace).
+  a.session == b.session and a.traces == b.traces and a.processing == b.processing and
+    a.killed == b.killed and a.own == b.own and
+    (a.window == b.window or (a.window[0].isNaN and b.window[0].isNaN))
+
 func killedNow(state: AppState; sw: SpectrumWindow): (bool, seq[int], int) =
   ## Whether the kills among FFT window `sw`'s traces changed since it
   ## asked (its file's edits moved on); the killed ones now, ascending, and
@@ -2911,17 +2931,26 @@ proc followFfts(state: var AppState) =
       let k = state.findPanel(sw.panel)
       if k >= 0 and state.panels[k].layers.len > 0:
         let pr = spectrumFilters(state.panels[k])
-        let (killsMoved, _, revision) = state.killedNow(sw)
+        let (_, _, revision) = state.killedNow(sw)
         var ownMoved = false
-        if revision != sw.editsSeen:
-          let i = state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1)
-          if i >= 0:
-            let s = state.sessions[i]
-            var traces: seq[int] = @[]
-            for t in sw.traces:
-              if t in s: traces.add t - s.base
-            ownMoved = ownKeyOf(state.editsAt(s.path), traces) != sw.ownKey
-        if pr != sw.processing or killsMoved or ownMoved:
+        var fileTraces: seq[int] = @[]
+        var killed: seq[int] = @[]
+        let i = state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1)
+        if i >= 0:
+          let s = state.sessions[i]
+          for t in sw.traces:
+            if t in s: fileTraces.add t - s.base
+          killed = killedOf(state.editsAt(s.path), fileTraces)
+          killed.sort()
+          if revision != sw.editsSeen:
+            ownMoved = ownKeyOf(state.editsAt(s.path), fileTraces) != sw.ownKey
+        else:
+          killed = sw.killed
+        let now = LiveKey(session: if i >= 0: state.sessions[i].id else: NoSession,
+          traces: fileTraces, processing: pr, killed: killed)
+        let wasKey = LiveKey(session: now.session, traces: fileTraces,
+          processing: sw.processing, killed: sw.killed)
+        if not sameFollow(now, wasKey) or ownMoved:
           let was = sw.processing
           sw.processing = pr
           if not state.askAgain(w): sw.processing = was # asked again once it can be
@@ -2954,12 +2983,7 @@ proc followLive(state: var AppState) =
     let e = state.editsAt(state.sessions[i].path)
     key.killed = killedOf(e, key.traces)
     key.own = ownKeyOf(e, key.traces)
-  template was: untyped = state.liveKey
-  if key.session == was.session and key.traces == was.traces and
-      key.processing == was.processing and key.killed == was.killed and
-      key.own == was.own and
-      (key.window == was.window or (key.window[0].isNaN and was.window[0].isNaN)):
-    return
+  if sameFollow(key, state.liveKey): return
   state.liveKey = key
   if key.traces.len == 0:
     # Nothing to show: what is shown goes, and an answer on its way is dropped.

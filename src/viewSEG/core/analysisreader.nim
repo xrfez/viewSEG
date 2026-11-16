@@ -572,3 +572,10 @@ proc readingPath*(x: AnalysisReader): string =
   if x.p != nil:
     withLock x.p.lock:
       if x.p.busy: result = x.p.reading
+
+func queued*(x: AnalysisReader): int =
+  ## Requests waiting, not the one being served. A later ask of the same
+  ## window has already replaced the ones before it.
+  if x.p == nil: return 0
+  withLock x.p.lock:
+    result = x.p.queue.len

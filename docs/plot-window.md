@@ -623,10 +623,16 @@ marked dead (said under the title). A trace sampled at another interval than the
 one's is left out too, and counted "at another interval", as a spectrum window does; a
 trace with no sample interval of its own takes its file's, and is left out when it has
 none. Unless **Freeze** is on (the pin at the right of the first row of controls), a window
-follows the
-plot it was opened from: new filters, the Aux toggle, a kill or a restore of one of its
-traces work it out again; its traces stay those it was opened on. Frozen, a window keeps
-the kills it had when it was frozen, and a change of its settings works out from those.
+follows the Seismic plot it was opened from, as the Spectrum panel does: the selection in
+the record on show, or, with no selection, what that view shows of the record (an envelope
+or a phase spectrum: its first trace; an f-k: its seismic traces; a vibrator signature:
+its pilot and the next channels). A new record, a sort, a kill or a restore, the plot's
+filters and another file opened in the plot all work it out again. A file that cannot feed
+the view (a vibrator signature of a record with no pilot) leaves the window open and says
+so, and a file that can brings the numbers back. Frozen, a window keeps the traces and the
+file it had; the title and the line under the controls name that file and those traces
+("Frozen · 3 traces · FFID 1 · shots.sgy"). Unfreezing follows at once. A change of its
+settings works out from the traces it is frozen on.
 
 | View | Of | Shows | processSEG |
 |---|---|---|---|

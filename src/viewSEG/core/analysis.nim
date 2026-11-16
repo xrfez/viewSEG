@@ -544,12 +544,13 @@ type
   AnalysisWindow* = object
     ## An analysis window (New plot): a view of traces of a plot's file,
     ## opened on the plot's selection or the trace under the pointer. Not
-    ## frozen, it follows the plot it was opened from: its filters (and
-    ## Aux toggle), and the kills of its traces.
+    ## frozen, it follows that plot: the selection, or what the view shows
+    ## of the record with none, and the record, the sort, the kills and the
+    ## filters. Frozen, it keeps the traces and the file it had.
     id*: int ## from 1, as `state`'s `plots` lists them
     view*: AnalysisView
     params*: AnalysisParams
-    frozen*: bool ## keeps what it shows: follows nothing
+    frozen*: bool ## keeps the traces and the file it had when frozen
     panel*: PanelId ## the plot it is of
     file*: string ## its file's name
     record*: string ## the record's FFID, or its place in the file
@@ -573,6 +574,12 @@ type
     cursorOn*: int ## the plot it is held in (curve views: 0 the top one)
     front*: int ## bumped when it is to be brought forward
     revision*: int ## bumped on every change
+    pickSession*: int = -1 ## the plot's file when the traces were last chosen
+    pickGather*: int = -1 ## and the record
+    pickSelected*: int = -1 ## the selection's revision then
+    pickOrder*: uint64 ## the plot's sort generation then
+    pickSource*: uint64 ## the record's generation then
+    pickShown*: int = -1 ## how many traces the plot had laid out then
 
 const MaxAnalysisWindows* = 32 ## analysis windows open at once, at most
 
@@ -588,7 +595,9 @@ func viewName*(v: AnalysisView): string =
 
 func label*(w: AnalysisWindow): string =
   ## What a window is of, in words: "trace 12 · FFID 151 · shot.sgd".
-  if w.traces.len == 0: return "nothing"
+  if w.traces.len == 0:
+    if w.file.len > 0: return "nothing · " & w.file
+    return "nothing"
   result = if w.traces.len == 1: "trace " & $(w.first + 1) else: $w.traces.len & " traces"
   if w.record.len > 0: result.add " · " & w.record
   if w.file.len > 0: result.add " · " & w.file

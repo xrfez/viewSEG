@@ -372,7 +372,7 @@ proc drawNewPlot(input: MenuInput; res: var MenuResult) =
   if marked != nil: marked[].mark("menu.window.newplot")
   tip(if input.plotTraces > 0: "A window of the " & $input.plotTraces & " selected traces: " &
         "a spectrogram, their envelope and instantaneous phase, the phase spectrum, a " &
-        "cross-correlation against a pilot. It follows the Seismic window's filters and kills"
+        "cross-correlation against a pilot. It follows the Seismic window unless frozen"
       else: SelectTracesFirst)
   if open:
     for e in PlotEntries:

@@ -54,8 +54,8 @@ proc tip(text: string) =
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
 
-const PlotFreeze* = "the window keeps what it shows. Off: it follows the Seismic " &
-  "window's filters (and Aux toggle) and the kills of its traces"
+const PlotFreeze* = "the window keeps the traces and the file it shows. Off: it " &
+  "follows the Seismic window (the selection, or the record's traces, and the filters)"
   ## The Freeze pin's sentence, after "Freeze (on): " or "Freeze (off): "
 
 proc follow(line: ControlLine; width: float32) =
@@ -556,7 +556,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   marks.markWindow(name)
   drawSettings(st, w, name, t, marks, res)
   let r = w.result
-  var words = w.label
+  var words = if w.frozen: "Frozen · " & w.label else: w.label
   if w.filters.len > 0:
     words.add " · filters: " & w.filters
     if r.passedBy > 0: words.add " (" & passedWords(r.passedBy) & ")"

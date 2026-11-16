@@ -1,7 +1,8 @@
 ## The analysis windows (New plot) in `AppState`: opened from a plot's
 ## traces, asked of their reader (`core/analysisreader`), following the
-## plot they came from, closed. Included in `core/state`, after the
-## spectrum windows, whose helpers it shares.
+## plot they came from the way the spectrum windows do (`sameFollow`),
+## closed. Included in `core/state`, after the spectrum windows, whose
+## helpers it shares.
 
 const MaxVibratorTraces* = 16
   ## traces a vibrator signature is opened on at most: those its roles
@@ -36,6 +37,11 @@ proc traceNames*(state: AppState; w: AnalysisWindow): seq[string] =
   for t in w.traces:
     let i = state.findTrace(t)
     result.add(if i >= 0: "trace " & $(t - state.sessions[i].base + 1) else: "trace ?")
+
+func analysisQueued*(state: AppState): int =
+  ## Analysis requests waiting to be served (not the one under way). Quick
+  ## selection changes must not leave a pile: the latest of a window wins.
+  if state.analysisReader.isNil: 0 else: state.analysisReader.queued
 
 func plotsWaiting*(state: AppState): seq[string] =
   ## The windows whose numbers are on their way, by title.
@@ -144,6 +150,60 @@ proc askPlot(state: var AppState; w: int): bool =
   state.analysisReaderFor(s.path).ask a
   true
 
+proc stampPick(state: var AppState; w, k, i: int) =
+  ## Remembers what chose window `plots[w]`'s traces, so a later change of
+  ## the selection, the record, the file or the sort asks again.
+  template pw: untyped = state.plots[w]
+  template p: untyped = state.panels[k]
+  pw.pickSession = int(state.sessions[i].id)
+  pw.pickGather = if p.layers.len > 0: p.layers[0].source.gather else: -1
+  pw.pickSelected = state.selection.selectedRevision
+  pw.pickOrder = p.orderGen
+  pw.pickSource = p.sourceGen
+  pw.pickShown = p.shown.len
+
+func pickChanged(state: AppState; w, k, i: int): bool =
+  ## Whether the plot's choice of traces moved on since window `plots[w]`
+  ## last followed it.
+  template pw: untyped = state.plots[w]
+  template p: untyped = state.panels[k]
+  let gather = if p.layers.len > 0: p.layers[0].source.gather else: -1
+  pw.pickSession != int(state.sessions[i].id) or pw.pickGather != gather or
+    pw.pickSelected != state.selection.selectedRevision or pw.pickOrder != p.orderGen or
+    pw.pickSource != p.sourceGen or pw.pickShown != p.shown.len
+
+proc shapeOpened(state: AppState; view: AnalysisView; i: int; traces: var seq[int]) =
+  ## The traces a new window of `view` is opened on, from the ones chosen:
+  ## an envelope or a phase spectrum keeps the first; a vibrator signature
+  ## opened on one takes the record's next three; an f-k opened on fewer
+  ## than `MinFkTraces` takes the record's seismic traces; more than
+  ## `MaxPlotTraces` are cut down (an f-k: the first, side by side; another
+  ## view: spread evenly).
+  if traces.len == 0 or i < 0: return
+  let s = state.sessions[i]
+  if view in {avEnvelope, avPhase} and traces.len > 1: traces.setLen 1
+  if view == avVibrator:
+    if traces.len == 1:
+      let g = s.gatherOf(traces[0])
+      if g in 0 ..< s.gathers.len:
+        let record = s.gathers[g].traces
+        if traces[0] in record:
+          for t in traces[0] + 1 .. min(traces[0] + 3, record.b): traces.add t
+    if traces.len > MaxVibratorTraces: traces.setLen MaxVibratorTraces
+  if view == avFk:
+    if traces.len < MinFkTraces:
+      let g = s.gatherOf(traces[0])
+      if g in 0 ..< s.gathers.len:
+        var record: seq[int] = @[]
+        for t in s.gathers[g].traces:
+          if isSeismic(s.filePtr[].index, t): record.add t
+        if record.len >= MinFkTraces: traces = record
+    if traces.len > MaxPlotTraces: traces.setLen MaxPlotTraces
+  if traces.len > MaxPlotTraces:
+    var kept: seq[int] = @[]
+    for j in evenly(traces.len, MaxPlotTraces): kept.add traces[j]
+    traces = kept
+
 proc openPlot(state: var AppState; cmd: Command) =
   ## `ckOpenPlot`: a new analysis window of `cmd.plotTraces` (else the
   ## selected traces of the panel's file, else the trace under the
@@ -186,35 +246,11 @@ proc openPlot(state: var AppState; cmd: Command) =
     state.ignore(cmd, if ids.len == 0: "no trace is selected or under the pointer in " & s.name
                       else: "none of the traces is in " & s.name)
     return
-  if cmd.plotView in {avEnvelope, avPhase} and traces.len > 1:
-    traces.setLen 1 # a view of one trace: the first chosen
-  if cmd.plotView == avVibrator:
-    if traces.len == 1:
-      # one trace: it and the record's next channels, as Ref, GF, M, B
-      let g = s.gatherOf(traces[0])
-      if g in 0 ..< s.gathers.len:
-        let record = s.gathers[g].traces # (a run of the file's traces)
-        if traces[0] in record:
-          for t in traces[0] + 1 .. min(traces[0] + 3, record.b): traces.add t
-    if traces.len > MaxVibratorTraces: traces.setLen MaxVibratorTraces
-  if cmd.plotView == avFk:
-    if traces.len < MinFkTraces:
-      # too few for an f-k: the seismic traces of the first one's record
-      let g = s.gatherOf(traces[0])
-      if g in 0 ..< s.gathers.len:
-        var record: seq[int] = @[]
-        for t in s.gathers[g].traces:
-          if isSeismic(s.filePtr[].index, t): record.add t
-        if record.len >= MinFkTraces: traces = record
-    if traces.len > MaxPlotTraces:
-      # the first ones, side by side: taken evenly, their spacing would not be
-      state.log.add(sevInfo, s.name, "An f-k of the first " & $MaxPlotTraces & " of the " &
-        $traces.len & " traces.")
-      traces.setLen MaxPlotTraces
-  if traces.len > MaxPlotTraces:
-    var kept: seq[int] = @[]
-    for j in evenly(traces.len, MaxPlotTraces): kept.add traces[j]
-    traces = kept
+  if cmd.plotView == avFk and traces.len >= MinFkTraces and traces.len > MaxPlotTraces:
+    # the first ones, side by side: taken evenly, their spacing would not be
+    state.log.add(sevInfo, s.name, "An f-k of the first " & $MaxPlotTraces & " of the " &
+      $traces.len & " traces.")
+  state.shapeOpened(cmd.plotView, i, traces)
   if cmd.plotParams.reference >= 0 and state.findTrace(cmd.plotParams.reference) < 0:
     state.ignore(cmd, "the reference trace " & $cmd.plotParams.reference &
       " is in no open file")
@@ -230,6 +266,7 @@ proc openPlot(state: var AppState; cmd: Command) =
     state.plots.delete state.plots.high
     state.ignore(cmd, s.name & " is busy (a job needs it to itself)")
     return
+  state.stampPick(state.plots.high, k, i)
   if outside > 0:
     state.log.add(sevWarning, s.name, $outside & " of the traces given are not in " & s.name &
       ": left out of the plot.")
@@ -278,7 +315,10 @@ proc closePlot(state: var AppState; cmd: Command) =
     return
   if not state.analysisReader.isNil: state.analysisReader.cancel(cmd.plot)
   var files: seq[SessionId] = @[]
-  for t in [state.plots[w].traces[0], state.plots[w].params.reference]:
+  var mentioned: seq[int] = @[]
+  if state.plots[w].traces.len > 0: mentioned.add state.plots[w].traces[0]
+  mentioned.add state.plots[w].params.reference
+  for t in mentioned:
     let i = state.findTrace(t)
     if i >= 0: files.add state.sessions[i].id
   state.plots.delete w
@@ -298,34 +338,218 @@ proc takeAnalysis(state: var AppState; m: sink Msg) =
     pw.result = move m.analysis
     inc pw.revision
 
+proc gatherOrder(state: AppState; k, i: int): seq[int] =
+  ## File indices of the gather `panels[k]` shows, in the order shown once
+  ## the reader has said, else the gather's own order.
+  result = @[]
+  if state.panels[k].layers.len == 0: return
+  let s = state.sessions[i]
+  let g = state.panels[k].layers[0].source.gather
+  if g notin 0 ..< s.gathers.len: return
+  if state.panels[k].shown.len > 0: result = state.panels[k].shown
+  else:
+    for t in s.gathers[g].traces: result.add t
+
+proc gatherFile(state: AppState; k, i: int): seq[int] =
+  ## The gather's traces in file order, auxiliary ones included.
+  result = @[]
+  if state.panels[k].layers.len == 0: return
+  let s = state.sessions[i]
+  let g = state.panels[k].layers[0].source.gather
+  if g in 0 ..< s.gathers.len:
+    for t in s.gathers[g].traces: result.add t
+
+func recordHasAux(state: AppState; k, i: int): bool =
+  ## Whether the record on show has an auxiliary trace (a pilot, a time break).
+  let s = state.sessions[i]
+  let f = s.filePtr
+  if state.panels[k].layers.len == 0: return false
+  let g = state.panels[k].layers[0].source.gather
+  if g notin 0 ..< s.gathers.len: return false
+  for t in s.gathers[g].traces:
+    if t in 0 ..< f[].len and not isSeismic(f[].index, t): return true
+  false
+
+proc firstSweep(state: AppState; k, i: int): int =
+  ## The record's sweep (trace code 6), else its first auxiliary trace; -1
+  ## for none. The keys are the file's, already read.
+  result = -1
+  let s = state.sessions[i]
+  let f = s.filePtr
+  if state.panels[k].layers.len == 0: return
+  let g = state.panels[k].layers[0].source.gather
+  if g notin 0 ..< s.gathers.len: return
+  var aux = -1
+  for t in s.gathers[g].traces:
+    if t in 0 ..< f[].len and not isSeismic(f[].index, t):
+      if aux < 0: aux = t
+      if f[].traceKeys(t).traceCode == SweepTraceCode: return t
+  result = aux
+
+proc selectedHere(state: AppState; i: int; order: openArray[int]): seq[int] =
+  ## Selected traces of the record `order` lists, in that order.
+  result = @[]
+  if not state.selection.anySelected: return
+  let base = state.sessions[i].base
+  for t in order:
+    if base + t in state.selection.selected: result.add t
+
+proc defaultOf(state: AppState; view: AnalysisView; k, i: int; order: seq[int]):
+    (seq[int], string) =
+  ## What `view` shows of the record with no selection, and why it cannot
+  ## when the record has nothing for it.
+  case view
+  of avEnvelope, avPhase:
+    if order.len == 0: return (@[], "the plot shows no trace")
+    (@[order[0]], "")
+  of avSpectrogram, avCorrelation:
+    if order.len == 0: return (@[], "the plot shows no trace")
+    var traces = order
+    state.shapeOpened(view, i, traces)
+    (traces, "")
+  of avVibrator:
+    let pilot = state.firstSweep(k, i)
+    if pilot < 0: return (@[], "this record has no pilot")
+    var traces = @[pilot]
+    state.shapeOpened(avVibrator, i, traces)
+    (traces, "")
+  of avFk:
+    var seismic: seq[int] = @[]
+    let s = state.sessions[i]
+    let f = s.filePtr
+    let src = if order.len > 0: order else: state.gatherFile(k, i)
+    for t in src:
+      if t in 0 ..< f[].len and isSeismic(f[].index, t): seismic.add t
+    if seismic.len < MinFkTraces:
+      return (@[], "an f-k needs " & $MinFkTraces & " traces at least; this record has " &
+        $seismic.len)
+    if seismic.len > MaxPlotTraces: seismic.setLen MaxPlotTraces
+    (seismic, "")
+
+proc blockPlot(state: var AppState; w, i: int; problem: string) =
+  ## The window stays open and says `problem`; nothing is asked.
+  template pw: untyped = state.plots[w]
+  if not state.analysisReader.isNil: state.analysisReader.cancel(pw.id)
+  let name = if i >= 0: state.sessions[i].name else: ""
+  if pw.result.problem == problem and pw.traces.len == 0 and not pw.waiting and pw.file == name:
+    return
+  pw.waiting = false
+  pw.traces.setLen 0
+  pw.file = name
+  pw.record = ""
+  pw.result = AnalysisResult(view: pw.view, problem: problem)
+  pw.since = state.plotGen + 1
+  inc pw.revision
+
+proc followFilters(state: var AppState; w, k: int) =
+  ## Window `plots[w]`, not frozen, follows the plot's filters and the kills
+  ## of the traces it already shows. `sameFollow` is the spectrum windows'
+  ## comparison.
+  template pw: untyped = state.plots[w]
+  let i = state.findTrace(if pw.traces.len > 0: pw.traces[0] else: -1)
+  if i < 0 or state.panels[k].layers.len == 0: return
+  let pr = spectrumFilters(state.panels[k])
+  let s = state.sessions[i]
+  var fileTraces: seq[int] = @[]
+  for t in pw.traces:
+    if t in s: fileTraces.add t - s.base
+  let e = state.editsAt(s.path)
+  var killed = killedOf(e, fileTraces)
+  killed.sort()
+  let ownMoved = e.revision != pw.editsSeen and ownKeyOf(e, fileTraces) != pw.ownKey
+  let now = LiveKey(session: s.id, traces: fileTraces, processing: pr, killed: killed)
+  let was = LiveKey(session: s.id, traces: fileTraces, processing: pw.processing,
+    killed: pw.killed)
+  if not sameFollow(now, was) or ownMoved:
+    let kept = pw.processing
+    pw.processing = pr
+    if state.askPlot(w): pw.filters = filtersText(pr)
+    else: pw.processing = kept
+  elif e.revision != pw.editsSeen:
+    pw.editsSeen = e.revision
+
+proc repick(state: var AppState; w, k, i: int): bool =
+  ## Chooses window `plots[w]`'s traces again from the plot (the selection,
+  ## else what the view shows with none) and asks; true when that replaced
+  ## the filter follow. A record that cannot feed the view is said, and the
+  ## window stays open.
+  let view = state.plots[w].view
+  let order = state.gatherOrder(k, i)
+  var seed = state.selectedHere(i, order)
+  var problem = ""
+  if seed.len == 0:
+    (seed, problem) = state.defaultOf(view, k, i, order)
+  else:
+    state.shapeOpened(view, i, seed)
+    if view == avVibrator and not state.recordHasAux(k, i):
+      problem = "this record has no pilot"
+    elif view == avFk and seed.len < MinFkTraces:
+      problem = "an f-k needs " & $MinFkTraces & " traces at least; this record has " &
+        $seed.len
+  if problem.len > 0 or seed.len == 0:
+    if problem.len == 0: problem = "the plot shows no trace"
+    state.stampPick(w, k, i)
+    state.blockPlot(w, i, problem)
+    return true
+  let s = state.sessions[i]
+  var ids: seq[int] = @[]
+  for t in seed: ids.add t + s.base
+  template pw: untyped = state.plots[w]
+  let pr = spectrumFilters(state.panels[k])
+  if ids == pw.traces and pr == pw.processing:
+    state.stampPick(w, k, i)
+    return false
+  let kept = pw.processing
+  let oldTraces = pw.traces
+  let oldFirst = pw.first
+  let oldFile = pw.file
+  let oldRecord = pw.record
+  pw.file = s.name
+  pw.record = s.recordText(seed[0])
+  pw.traces = ids
+  pw.first = seed[0]
+  pw.processing = pr
+  if state.askPlot(w):
+    pw.filters = filtersText(pr)
+    state.stampPick(w, k, i)
+    return true
+  pw.processing = kept
+  pw.traces = oldTraces
+  pw.first = oldFirst
+  pw.file = oldFile
+  pw.record = oldRecord
+  false
+
+proc releaseFollowed(state: var AppState; before: seq[SessionId]) =
+  ## A file an unfrozen window has followed away from, which no panel shows
+  ## and no window still uses, is closed.
+  for id in before:
+    if state.findSession(id) >= 0 and not state.panels.anyIt(it.layers.anyIt(it.shows(id))) and
+        not state.plotsUse(id):
+      let i = state.findSession(id)
+      if i >= 0: state.closeSession(i, quiet = true)
+
 proc followPlots(state: var AppState) =
-  ## After every change: each window not frozen follows the filters of the
-  ## plot it was opened from (and its Aux toggle; shown raw or not alike),
-  ## and the kills of its traces, asked again when either changed. Its
-  ## traces stay those it was opened on.
+  ## After every change: each window not frozen follows the Seismic plot it
+  ## was opened from, by the spectrum windows' follow (`sameFollow`). The
+  ## selection in the record on show wins; with none, the view's own traces
+  ## of that record. A new file is followed. Frozen, a window keeps the
+  ## traces and the file it had. Filters and kills of the traces it shows
+  ## are followed too, unless a repick already asked.
+  var before: seq[SessionId] = @[]
+  for w in 0 ..< state.plots.len:
+    if not state.plots[w].frozen and state.plots[w].traces.len > 0:
+      let i = state.findTrace(state.plots[w].traces[0])
+      if i >= 0: before.add state.sessions[i].id
   for w in 0 ..< state.plots.len:
     template pw: untyped = state.plots[w]
-    if not pw.frozen:
-      let k = state.findPanel(pw.panel)
-      let i = state.findTrace(if pw.traces.len > 0: pw.traces[0] else: -1)
-      if k >= 0 and i >= 0 and state.panels[k].layers.len > 0:
-        let pr = spectrumFilters(state.panels[k])
-        let s = state.sessions[i]
-        let e = state.editsAt(s.path)
-        var killsMoved = false
-        if e.revision != pw.editsSeen:
-          var traces: seq[int] = @[]
-          for t in pw.traces:
-            if t in s: traces.add t - s.base
-          var killed = killedOf(e, traces)
-          killed.sort()
-          killsMoved = killed != pw.killed
-          let ownMoved = ownKeyOf(e, traces) != pw.ownKey
-          if not killsMoved and not ownMoved:
-            pw.editsSeen = e.revision # other traces' edits: nothing to ask
-          if ownMoved: killsMoved = true
-        if pr != pw.processing or killsMoved:
-          let was = pw.processing
-          pw.processing = pr
-          if state.askPlot(w): pw.filters = filtersText(pr)
-          else: pw.processing = was # asked again once it can be
+    if pw.frozen: continue
+    let k = state.findPanel(pw.panel)
+    if k < 0 or state.panels[k].layers.len == 0: continue
+    let i = state.shownFile(k)
+    if i < 0: continue
+    if state.pickChanged(w, k, i):
+      if not state.repick(w, k, i): state.followFilters(w, k)
+    else:
+      state.followFilters(w, k)
+  state.releaseFollowed(before)
