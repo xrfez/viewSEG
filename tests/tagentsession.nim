@@ -96,6 +96,8 @@ const Reached = {
   "headers.asDisplayed": "", "headers.columns": "", "headers.tableFields": "",
   "headers.tableScope": "", "hideKilled": "",
   "tray.icon": "", "tray.minimize": "",
+  # the Seismic gear's Look tab only: no command sets the four component colours
+  "componentColours": "",
   "spectrum.window.scale": "open spectrum", "spectrum.window.logFrequency": "open spectrum",
   "spectrum.window.time": "open spectrum", "spectrum.window.raw": "open spectrum",
   "spectrum.window.processed": "open spectrum", "spectrum.window.phase": "open spectrum",
