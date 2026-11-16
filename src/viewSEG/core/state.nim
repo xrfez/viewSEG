@@ -934,6 +934,14 @@ type
     leftAnalysisReaders: seq[AnalysisReader]
       ## analysis readers left stuck in a drive that does not answer
 
+proc addPanel*(state: var AppState): PanelId =
+  ## Another trace panel, empty until a file is shown in it.
+  result = PanelId(state.nextPanel)
+  inc state.nextPanel
+  state.panels.add Panel(id: result)
+  state.tiles.add newSeq[Tile]()
+  state.readers.add PanelReader()
+
 proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     jobHistory: Natural = DefaultJobHistory; indexCache = "";
     watchEvery = WatchInterval): AppState =
@@ -5751,7 +5759,7 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
   for j, s in state.sessions:
     if s.path == path: i = j
   if i >= 0:
-    if state.shownFile(k) != i: state.showReplacing(k, state.sessions[i].id, 0)
+    if state.shownFile(k) != i: state.showReplacing(k, state.sessions[i].id, gather)
   else:
     var o = -1
     for j, p in state.opening:

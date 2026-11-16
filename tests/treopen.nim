@@ -33,6 +33,8 @@
 ## choice asked for when that open succeeds, never silently closed.
 ## A carried survey join is said to be matching when it starts, and kept
 ## only once that match succeeds (or dropped, and why, when it fails).
+## Every panel showing the file keeps its own record across a successful
+## reopen.
 ##
 ## Seen to fail (the failing reopen): with the trace-count test taken out of
 ## `adopt` (`elif false`), "stays as it was"; (the carried state): with
@@ -46,7 +48,9 @@
 ## file were dropped"; (the watch cancelling the reopen): with `closeSession`
 ## cancelling that open, "the file was gone after it changed"; (the join
 ## said kept at once): with `carryOver` adding "kept the survey join" when
-## the match is only submitted, "said kept before the match".
+## the match is only submitted, "said kept before the match"; (another
+## panel's record): with `showPath` showing gather 0 of a file already
+## open, "the other panel came back at the first record".
 ##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
@@ -517,4 +521,24 @@ block carriedJoinIsDroppedWhenItFails:
     doAssert st.settle(st.sessions.len == 1 and st.log.has("dropped the survey join")),
       "a join that failed was not said dropped"
     doAssert st.joinedOf(st.sessions[0].id) < 0, "a failed join was kept"
+    st.shutdown()
+
+block eachPanelKeepsItsRecord:
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    let second = st.addPanel()
+    st.showIt(path)
+    st.apply Command(kind: ckGather, panel: MainPanel, gather: 2)
+    doAssert st.settle(st.panel(MainPanel).layers[0].source.gather == 2)
+    st.apply Command(kind: ckShowFile, panel: second, path: path)
+    doAssert st.settle(st.panel(second).layers[0].source.gather == 0)
+    st.apply Command(kind: ckGather, panel: second, gather: 1)
+    doAssert st.settle(st.panel(second).layers[0].source.gather == 1)
+    st.reopen(path, OpenChoice(verifyAll: true))
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].facts.opened.choice.verifyAll and
+      st.panel(MainPanel).laidOut and st.panel(second).laidOut), "not reopened"
+    doAssert st.panel(MainPanel).layers[0].source.gather == 2, "the first panel lost its record"
+    doAssert st.panel(second).layers[0].source.gather == 1,
+      "the other panel came back at the first record"
     st.shutdown()
