@@ -242,4 +242,32 @@ block vibrator:
   doAssert st.plots[w].ownLine.find("own filter") >= 0, st.plots[w].ownLine
   st.shutdown()
 
+block referenceOwnFollows:
+  ## Seen to fail: with the reference's own filter left out of the follow
+  ## test (`followFilters`), "the correlation did not ask again when the
+  ## reference's own filter changed" (the pilot is not one of its traces).
+  var st = initAppState()
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  let base = st.sessions[0].base
+  let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
+  doAssert "trace 49" in st.plots[w].reference, st.plots[w].reference
+  let pilot = base + 48
+  let asks0 = st.plots[w].asks
+  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[pilot], on: true,
+    processing: band(40, 60).spec, filterPlace: fpAfter)
+  doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
+    "the correlation did not ask again when the reference's own filter changed"
+  doAssert "own filter" in st.plots[w].result.note, st.plots[w].result.note
+  # frozen: the same change asks nothing
+  st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: st.plots[w].params,
+    plotFrozen: true)
+  doAssert st.settle(not st.plots[w].waiting)
+  let asks1 = st.plots[w].asks
+  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[pilot], on: true,
+    processing: band(50, 70).spec, filterPlace: fpAfter)
+  doAssert st.settle(not st.plots[w].waiting)
+  doAssert st.plots[w].asks == asks1, "a frozen correlation asked again"
+  st.shutdown()
+
 echo "townalways: ok"

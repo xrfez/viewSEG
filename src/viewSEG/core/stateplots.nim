@@ -85,6 +85,18 @@ func firstAux(s: Session; trace: int): int =
     for t in s.gathers[g].traces:
       if t in 0 ..< f[].len and not isSeismic(f[].index, t): return t
 
+proc refKeyOf(state: var AppState; s: Session; traces: seq[int]; r: int): string =
+  ## The own filter of a correlation's reference, as a key, the reference
+  ## `askPlot` reads: trace `r` of an open file, else the first auxiliary
+  ## trace of `s` (`traces`: the shown traces, as indices of `s`).
+  let j = state.findTrace(r)
+  if j >= 0:
+    let rs = state.sessions[j]
+    result = ownKeyOf(state.editsAt(rs.path), @[r - rs.base])
+  elif traces.len > 0:
+    let aux = s.firstAux(traces[0])
+    if aux >= 0: result = ownKeyOf(state.editsAt(s.path), @[aux])
+
 proc askPlot(state: var AppState; w: int): bool =
   ## Asks the reader for window `plots[w]`'s numbers of its traces, with
   ## the filters it has; false when its file is not open any more or cannot
@@ -140,6 +152,8 @@ proc askPlot(state: var AppState; w: int): bool =
   if not pw.frozen:
     pw.own = ownOfTraces(e, traces)
     pw.ownKey = ownKeyOf(e, traces)
+    pw.refKey = if pw.view == avCorrelation: state.refKeyOf(s, traces, pw.params.reference)
+                else: ""
   a.own = pw.own
   inc state.plotGen
   a.gen = state.plotGen
@@ -460,10 +474,12 @@ proc followFilters(state: var AppState; w, k: int) =
   var killed = killedOf(e, fileTraces)
   killed.sort()
   let ownMoved = e.revision != pw.editsSeen and ownKeyOf(e, fileTraces) != pw.ownKey
+  let refMoved = pw.view == avCorrelation and
+    state.refKeyOf(s, fileTraces, pw.params.reference) != pw.refKey
   let now = LiveKey(session: s.id, traces: fileTraces, processing: pr, killed: killed)
   let was = LiveKey(session: s.id, traces: fileTraces, processing: pw.processing,
     killed: pw.killed)
-  if not sameFollow(now, was) or ownMoved:
+  if not sameFollow(now, was) or ownMoved or refMoved:
     let kept = pw.processing
     pw.processing = pr
     if state.askPlot(w): pw.filters = filtersText(pr)
