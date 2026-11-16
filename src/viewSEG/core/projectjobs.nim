@@ -23,7 +23,7 @@
 
 import std/[monotimes, os, strutils, times]
 import parseSEG
-import displaypresets, filememory, filesystem, identity, inbox, jobs, join, layouts,
+import diskio, displaypresets, filememory, filesystem, identity, inbox, jobs, join, layouts,
   persist, processing, project, projectnif, session, survey, surveystore, threads
 
 type NewProject* = object
@@ -171,13 +171,18 @@ proc makeProject(dir: string; np: NewProject; brought: var int): ProjectDoc =
     for i in countdown(madeDirs.high, 0): discard fs.tryRemoveDir(madeDirs[i])
     raise
 
-proc openProjectWork*(dir: string; to: Poster; make = false; np = NewProject()): JobWork =
+proc openProjectWork*(dir: string; to: Poster; make = false; np = NewProject();
+    writes: ptr DiskIo = nil): JobWork =
   ## The work of a job that opens (with `make`, first makes) the project in
-  ## folder `dir` and posts what it found (`pnOpened`).
+  ## folder `dir` and posts what it found (`pnOpened`). A close queues the
+  ## project document and does not wait: every field of that document (the
+  ## reference choice, the presets, the processing, the survey) is written
+  ## before this job reads it, or a fast reopen would load the one from before.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var news = ProjectNews(dir: dir, kind: pnOpened, created: make)
     {.cast(gcsafe).}:
       try:
+        if not make and writes != nil: writes.flush()
         ctx.setPhase(if make: "making the project" else: "reading the project")
         if make:
           news.doc = makeProject(dir, np, news.brought)

@@ -733,3 +733,11 @@ proc flush*(x: DiskIo) =
     withLock x.p.lock:
       while x.p.started and (x.p.tasks.len > 0 or x.p.busy):
         wait(x.p.idle, x.p.lock)
+
+proc flush*(x: ptr DiskIo) {.gcsafe.} =
+  ## `flush` of the disk thread `x` points at, for a job that must read a
+  ## document a queued write has not landed yet. The pointer is not owned.
+  if x == nil or x.p == nil: return
+  withLock x.p.lock:
+    while x.p.started and (x.p.tasks.len > 0 or x.p.busy):
+      wait(x.p.idle, x.p.lock)
