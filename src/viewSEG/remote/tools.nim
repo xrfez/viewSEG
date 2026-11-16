@@ -593,8 +593,7 @@ proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
   let reference = max(sp.raw.peakOf, sp.processed.peakOf)
   proc atBin(amps: seq[float64]; k: int): JsonNode =
     if k notin 0 ..< amps.len: newJNull()
-    else: %*{"amplitude": toJson(amps[k]), "db": toJson(if reference > 0 and amps[k] > 0:
-      20 * log10(amps[k] / reference) else: NaN)}
+    else: %*{"amplitude": toJson(amps[k]), "db": toJson(levelDb(amps[k], reference))}
   let k = w.cursor.x
   let cursor = if not w.cursor.held: %*{"held": false}
                else: %*{"held": true, "bin": k, "hz": toJson(float64(k) * sp.binHz),

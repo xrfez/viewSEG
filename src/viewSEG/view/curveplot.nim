@@ -192,14 +192,28 @@ func yText*(y: float64; unit: string): string =
     if result == "-0.0": result = "0.0"
   else: result = valueText(y, 4)
 
+func unitOf(p: CurvePlot; c: Curve): string {.inline.} =
+  ## The unit curve `c`'s readings are in.
+  if c.reads.len > 0 and c.unit.len > 0: c.unit else: p.yUnit
+
 func readoutText*(p: CurvePlot; r: Reading): string =
-  ## A reading in words: "12.5 Hz   raw -23.4 dB   processed -40.1 dB"; ""
-  ## for none.
+  ## A reading in words: "12.5 Hz   raw -23.4 dB   processed -40.1 dB"
+  ## ("raw -" where a curve has no value); "" for none.
   if r.index < 0: return ""
   result = p.xText(r.x) & (if p.xUnit.len > 0: " " & p.xUnit else: "")
   for i, c in p.curves:
     if i < r.values.len:
-      let unit = if c.reads.len > 0 and c.unit.len > 0: c.unit else: p.yUnit
+      let unit = p.unitOf(c)
       result.add "   " & (if c.short.len > 0: c.short else: c.name) & " " &
         yText(r.values[i], unit) &
-        (if unit.len > 0: " " & unit else: "")
+        (if unit.len > 0 and not r.values[i].isNaN: " " & unit else: "")
+
+func valueBoxText*(p: CurvePlot; r: Reading; curve: int): string =
+  ## What the cursor's box on the value axis says for `curve`: its value as
+  ## the readout says it (so the two never differ: a curve drawn clamped at
+  ## the floor, or a gain in dB drawn on a linear axis, says its reading,
+  ## not where it is drawn), with its unit when the axis's is another;
+  ## "" when it has none there.
+  if curve notin 0 ..< min(p.curves.len, r.values.len) or r.values[curve].isNaN: return ""
+  let unit = p.unitOf(p.curves[curve])
+  yText(r.values[curve], unit) & (if unit != p.yUnit and unit.len > 0: " " & unit else: "")

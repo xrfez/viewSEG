@@ -7,7 +7,7 @@
 ## reached some of the traces; and its lines of words: what it is of,
 ## what was left out, over which time.
 
-import std/[math, strutils]
+import std/[math, sequtils, strutils]
 import ../core/[orientation, spectra]
 import curveplot, theme
 
@@ -62,8 +62,12 @@ func spectrumPlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
   let reference = max(sp.raw.peakOf, sp.processed.peakOf)
   let colours = curveColours(t)
   template add(called: string; amps: seq[float64]; ink: Rgba) =
+    # In dB drawn at the floor at least, read at its true level (none for an
+    # amplitude of 0, as agents are told): the readout and the axis agree.
     result.curves.add Curve(name: called, colour: ink,
-      ys: (if db: dbOf(amps, reference, FloorDb) else: amps))
+      ys: (if db: dbOf(amps, reference, FloorDb) else: amps),
+      reads: (if db: amps.mapIt(levelDb(it, reference)) else: @[]),
+      unit: (if db: "dB" else: ""))
   # In `drawnCurves`' order (the response first, so the data is drawn over
   # it), which the held cursor's curve counts in.
   for c in w.drawnCurves:

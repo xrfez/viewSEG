@@ -5,7 +5,9 @@
 ##
 ## - the helpers: a time window in samples, traces spread evenly, the
 ##   lowest free FFT window number, dB on one reference, the curve plot's
-##   limits, nearest point and readout, a window's plot and words; which of
+##   limits, nearest point and readout (a level below the floor read as it
+##   is, on the axis's box too; none for an amplitude of 0; a held cursor
+##   never at 0 Hz on a logarithmic axis), a window's plot and words; which of
 ##   a plot's traces its filters reach;
 ## - an FFT window of one trace peaks on the sine's bin, at its amplitude,
 ##   from 0 Hz to Nyquist, with the sine's phase there, and says what it is
@@ -224,6 +226,57 @@ block helpers:
   doAssert valueText(24.4140625) == "24.4" and valueText(0.000122) == "0.000122" and
     valueText(-120.0) == "-120" and valueText(250.0) == "250"
   doAssert CurvePlot().isEmpty and not p.isEmpty
+  # The screen, the readout and agents say one level: a curve below the
+  # floor is drawn at it but reads its own level, on the axis's box too;
+  # an amplitude of 0 (a trace of zeros) has none ("-", an agent's null),
+  # not the floor. (Seen to fail with the curves read as drawn, as before:
+  # "raw -120.0 dB".)
+  doAssert levelDb(1e-7, 1) == -140 and levelDb(0, 1).isNaN and levelDb(1, 0).isNaN
+  var quiet = SpectrumWindow(id: 1, traces: @[0],
+    spectrum: Spectrum(raw: @[1.0, 1e-7, 0.0], binHz: 1, averaged: 1))
+  var qp = quiet.spectrumPlot(builtinTheme(tmLight))
+  var qr = qp.readingOf(1)
+  doAssert qr.drawn[0] == FloorDb and qp.readoutText(qr) == "1 Hz   raw -140.0 dB" and
+    qp.valueBoxText(qr, 0) == "-140.0", qp.readoutText(qr) & " / " & qp.valueBoxText(qr, 0)
+  qr = qp.readingOf(2)
+  doAssert qp.readoutText(qr) == "2 Hz   raw -" and qp.valueBoxText(qr, 0) == "",
+    qp.readoutText(qr)
+  quiet.spectrum.raw = @[0.0, 0.0, 0.0] # every amplitude 0
+  qp = quiet.spectrumPlot(builtinTheme(tmLight))
+  doAssert qp.readoutText(qp.readingOf(1)) == "1 Hz   raw -", qp.readoutText(qp.readingOf(1))
+  # The response's box says its gain in dB, as the readout does, on a
+  # linear axis too (with its unit there: the axis is of amplitudes); the
+  # raw curve's, its amplitude. (Seen to fail with the box writing the curve
+  # as drawn, as before: "-120.0" for the raw curve below the floor above.)
+  quiet.spectrum = Spectrum(raw: @[2.0, 2.0, 2.0], binHz: 1, averaged: 1, filtered: 1,
+    responseHz: @[0.0, 1, 2], response: @[1.0, 0.25, 1e-9])
+  quiet.display.scale = ssLinear
+  qp = quiet.spectrumPlot(builtinTheme(tmLight))
+  qr = qp.readingOf(1)
+  doAssert qp.curves.len == 2 and qp.valueBoxText(qr, 0) == "-12.0 dB" and
+    qp.valueBoxText(qr, 1) == "2" and "response -12.0 dB" in qp.readoutText(qr),
+    qp.valueBoxText(qr, 0) & " / " & qp.readoutText(qr)
+  quiet.display.scale = ssDb
+  qp = quiet.spectrumPlot(builtinTheme(tmLight))
+  qr = qp.readingOf(2) # the response below the floor: drawn at it, read at -180
+  doAssert qr.drawn[0] == FloorDb and qp.valueBoxText(qr, 0) == "-180.0" and
+    "response -180.0 dB" in qp.readoutText(qr), qp.valueBoxText(qr, 0)
+  # On a logarithmic axis, 0 Hz is not drawn: a cursor held there is at the
+  # first bin drawn, in core (agents) as on the screen, and the first Right
+  # moves it. (Seen to fail with every bin held, as before: bin 0 held,
+  # bin 1 drawn.)
+  quiet.display.logFrequency = true
+  doAssert quiet.shownBins == 1 .. 2
+  quiet.holdAt(PlotCursor(held: true, x: 0, y: 1))
+  doAssert quiet.cursor == PlotCursor(held: true, x: 1, y: 1) and quiet.cursorHz == 1,
+    $quiet.cursor
+  quiet.holdAt(quiet.cursor.moved(cmNext, [3, 2]))
+  doAssert quiet.cursor.x == 2
+  quiet.display.logFrequency = false
+  quiet.holdAt(PlotCursor(held: true, x: 0, y: 1))
+  doAssert quiet.cursor.x == 0
+  quiet.display.logFrequency = true # turned on while held at 0 Hz: at the first drawn
+  doAssert quiet.followCursor() and quiet.cursor.x == 1
   # the sum over blocks of traces: as one block (power, not amplitude)
   var keys = newSeq[TraceKeys](3)
   var lengths = @[64, 64, 64]

@@ -11,7 +11,8 @@
 ## pointer, on the curve nearest it (or where the keys hold it: a
 ## `PlotCursor` the caller keeps), a dot on each curve, and from the
 ## cursor's curve a line to each axis, with the exact x and value written
-## on the axis over its tick labels (`xText`, `yText`); the reading goes
+## on the axis over its tick labels (`xText`, `valueBoxText`: the value the
+## readout says, where the curve is drawn clamped or in another unit too); the reading goes
 ## back to the caller, which says every curve's value in words
 ## (`readoutText`), with the point and curve under the pointer, for the
 ## keys to start from.
@@ -183,8 +184,8 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
     let (xlo, xhi) = if turned: axisBox(wl, xs, saY, qy, pos, area, cross, t)
                      else: axisBox(wl, xs, saX, qx, pos, area, cross, t)
     marks.markRect(id & ".cursor x", xlo, xhi)
-    if valued:
-      let ys = yText(v, p.yUnit)
+    let ys = p.valueBoxText(result.reading, result.curve) # the readout's value
+    if valued and ys.len > 0:
       let (ylo, yhi) = if turned: axisBox(wl, ys, saX, qx, pos, area, cross, t)
                        else: axisBox(wl, ys, saY, qy, pos, area, cross, t)
       marks.markRect(id & ".cursor value", ylo, yhi)

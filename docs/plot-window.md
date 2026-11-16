@@ -1265,9 +1265,14 @@ and level written on the axis over its tick labels. The line under the plot read
 frequency and each curve's level there ("24.4 Hz   raw -3.1 dB   processed -40.2 dB"),
 rounded as the axes need: the frequency to the spacing of the bins ("60.1" at 0.24 Hz,
 "60.00" at 0.06 Hz), dB and degrees to a tenth (never "-0.0"), linear amplitudes to
-four significant digits. **The keys** (the window has the focus once clicked): Left /
+four significant digits. The box on the value axis says what the line under the plot
+says for the cursor's curve: a level below the -120 dB floor is drawn at the floor but
+read as it is ("-140.0"), the filters' response is read in dB on a linear axis too
+("-12.0 dB", its unit then written), and an amplitude of 0 has no level ("raw -", no
+box; agents get null), never the floor's -120. **The keys** (the window has the focus once clicked): Left /
 Right move the cursor one frequency bin, Home / End to the first and last, Up / Down to
-another curve; the keys then hold it, and it stays where they put it when the pointer
+another curve (on a logarithmic axis, which leaves 0 Hz out, Home goes to the first
+bin drawn, and the cursor is never held where it is not drawn); the keys then hold it, and it stays where they put it when the pointer
 leaves the plot, so they can step it across a notch; the line under the plot starts
 "Held ·" (its tooltip says which keys move it and how to let it go), and moving the
 pointer over the plot, or Esc, lets it go. Held, it keeps its frequency and its curve:

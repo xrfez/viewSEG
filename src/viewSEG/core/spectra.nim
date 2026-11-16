@@ -225,8 +225,11 @@ func drawnCurves*(w: SpectrumWindow): seq[SpectrumCurve] =
   if w.display.processed and w.spectrum.processed.len > 0: result.add scProcessed
 
 func shownBins*(w: SpectrumWindow): Slice[int] =
-  ## The bins `w`'s frequency axis shows (`0 .. -1` for none).
-  0 .. w.spectrum.raw.len - 1
+  ## The bins `w`'s frequency axis shows: every one, but 0 Hz on a
+  ## logarithmic axis, so a cursor held is never where it is not drawn
+  ## (`0 .. -1` for none).
+  let n = w.spectrum.raw.len
+  (if w.display.logFrequency and n > 1: 1 else: 0) .. n - 1
 
 func cursorAt*(w: SpectrumWindow): PlotCursor =
   ## Where `w`'s held cursor is drawn: the bin nearest the frequency it is
@@ -493,6 +496,14 @@ proc dbOf*(amps: openArray[float64]; reference: float64; floorDb = -120.0): seq[
   toDbInto(amps, result, dbAbsolute, floorDb = -1000.0)
   let shift = if reference > 0 and reference < Inf: 20 * log10(reference) else: 0.0
   for x in result.mitems: x = max(x - shift, floorDb)
+
+func levelDb*(amp, reference: float64): float64 =
+  ## `amp` in dB against `reference`, `20·log10(amp / reference)`, unclamped
+  ## (what a spectrum's cursor reads, the window and agents alike); NaN when
+  ## there is no level: an amplitude of 0 (or not finite), or no reference
+  ## (a spectrum of zeros).
+  if reference > 0 and reference < Inf and amp > 0 and amp < Inf: 20 * log10(amp / reference)
+  else: NaN
 
 func peakOf*(amps: openArray[float64]): float64 =
   ## The largest finite amplitude; 0 for none.
