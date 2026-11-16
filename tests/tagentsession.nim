@@ -274,6 +274,9 @@ withFixtures fx:
     doAssert st.references.entries.len >= 1, "the reference was not stored"
     let rid = st.references.entries[0].id
     st.agent(%*{"kind": "select reference", "refId": rid})
+    st.agent(%*{"kind": "view reference", "refId": rid})
+    doAssert st.refViews.len >= 1, "view reference opened no window"
+    st.agent(%*{"kind": "close reference view", "refWindow": st.refViews[0].id})
     st.agent(%*{"kind": "generate reference", "refGenerate": {"name": "agent sweep",
       "law": "linear", "f1Hz": 8, "f2Hz": 40, "durationMs": 1000, "dtMs": 2, "amplitude": 1}})
     var sweep = ""

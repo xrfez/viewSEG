@@ -164,6 +164,8 @@ schema (in the tool list) gives every field and value; the most used:
 | `rename reference` | `refId`, `refNewName` | Renames a reference. A name already used is refused |
 | `delete reference` | `refId` | Removes a reference from the archive in force |
 | `copy reference` | `refId` | Copies a reference of the main archive into the project open |
+| `view reference` | `refId` | Opens that reference in its own window: samples against time, and its amplitude spectrum. The file under QC stays open |
+| `close reference view` | `refWindow` | Closes that window |
 | `theme` | `theme` (a theme file's name, as View > Theme lists them: `tokyo-night`, `catppuccin-latte`; `""` follows the system) | Draws the program in that theme, as View > Theme does; for the session only. `state`'s `program` says the theme in effect (`theme`) and the themes there are (`themes`) |
 | `clear edits`, `reverse all`, `back`, `map back`, `hover`, `clear selection`, `close`, `load survey`, `unload survey`, `cancel job`, ... | | As in the windows |
 

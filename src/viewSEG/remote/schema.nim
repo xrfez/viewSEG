@@ -40,7 +40,8 @@ const
     ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckTheme, ckOpenPlot, ckPlotDisplay,
     ckPlotCursor, ckClosePlot, ckNewProject, ckOpenProject,
     ckCloseProject, ckReopen, ckListReferences, ckStoreReference, ckGenerateReference,
-    ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference}
+    ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference,
+    ckViewReference, ckCloseRefView}
     ## what the `command` tool carries out: named one by one, so that a kind
     ## added to `Command` (an export, editing headers in place) is refused
     ## until it is put here, or among those refused, on purpose. The survey
