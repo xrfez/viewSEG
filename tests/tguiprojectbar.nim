@@ -10,13 +10,17 @@
 ##   button does not overlap or move the other toolbar buttons; at a narrow
 ##   window the name gives way and the icon remains;
 ## - the light / dark button is gone from the bar; View > Light / dark still
-##   changes the theme, and View > Theme still lists the themes.
+##   changes the theme, and View > Theme still lists the themes;
+## - the toolbar has exactly one project button, this one: the older Open
+##   project button at the left is gone.
 ##
 ## Checked at 1152 x 720 and 125 % (SDL_VIDEO_X11_SCALING_FACTOR), the size
 ## a small laptop opens at.
 ##
 ## Seen to fail: with the theme button still drawn at the right of the bar
-## and no project label, "no project shows No project" did not happen.
+## and no project label, "no project shows No project" did not happen. With
+## the older Open project button still on the left, "the toolbar has 2
+## project buttons" failed.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -74,6 +78,11 @@ proc clearOfOthers(f: FrameInfo) =
   ## The project button is on the bar and covers no other toolbar button.
   let btn = f.markOf("tool.project")
   doAssert btn.size.x > 0 and btn.size.y > 0, "no project button on the bar"
+  var projectButtons = 0
+  for n in f.markNames("tool."):
+    if n == "tool.project" or n == "tool.Open project": inc projectButtons
+  doAssert projectButtons == 1, "the toolbar has " & $projectButtons & " project buttons"
+  doAssert f.markOf("tool.Open project").size.x == 0, "the Open project button is still there"
   let bar = f.markOf("toolbar")
   doAssert btn.pos.x + btn.size.x <= bar.pos.x + bar.size.x + 1, "the project leaves the bar"
   for n in f.markNames("tool."):

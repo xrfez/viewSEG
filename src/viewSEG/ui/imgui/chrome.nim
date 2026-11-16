@@ -5,8 +5,8 @@
 ## its polarity reversed; a right click on the bar chooses them and their
 ## order), and tool buttons (a Nerd Font icon or
 ## a seismic `Symbol`) with tooltips that name their shortcut. The toolbar holds
-## application-level actions only (open a file, a folder or a project, the
-## jobs, and at the right end the project that is open); display and gather
+## application-level actions only (open a file or a folder, the jobs, and at
+## the right end the project that is open and its Project menu); display and gather
 ## controls belong to the plot windows, which use `symbolButton`. Also the
 ## sample header table that shows the look until the real header table exists.
 ##
@@ -187,7 +187,7 @@ type
   ToolbarResult* = object
     ## What the toolbar asks for.
     actions*: set[MenuAction]
-    openProject*: string ## a recent project chosen from Open project's menu
+    openProject*: string ## a recent project chosen from the Project menu's list
     fft*: bool           ## FFT of the Seismic window's selection
     plot*: bool          ## a New plot view of that selection
     plotView*: AnalysisView
@@ -344,11 +344,10 @@ proc drawProjectButton(p: ProjectBar; size: float32; t: Theme; marks: var Marks;
 
 proc drawToolbar*(t: Theme; marks: var Marks; input: MenuInput;
     project: ProjectBar): ToolbarResult =
-  ## The icon toolbar under the menu bar: opening files, folders and
-  ## projects, a button per plot of the Seismic window's selection, the
-  ## jobs, and at the right end the project that is open (or "No project").
-  ## A right click on Open project opens the recent projects. A click on the
-  ## project opens the Project menu's items. Plot buttons are greyed while
+  ## The icon toolbar under the menu bar: opening files and folders, a button
+  ## per plot of the Seismic window's selection, the jobs, and at the right
+  ## end the project that is open (or "No project"). A click on the project
+  ## opens the Project menu's items. Plot buttons are greyed while
   ## `input.plotTraces` is 0.
   let style = igGetStyle()
   let size = round(igGetFontSize() * IconScale + 2 * style.FramePadding.y + 2)
@@ -363,14 +362,6 @@ proc drawToolbar*(t: Theme; marks: var Marks; input: MenuInput;
     if iconButton(IconOpenFolder, "Open folder", shortcutName(maOpenFolder), size, t, marks,
         tipText = menuLabel(maOpenFolder)):
       result.actions.incl maOpenFolder
-    igSameLine(0, GroupGap)
-    if iconButton(IconProject, "Open project", "", size, t, marks,
-        tipText = menuLabel(maOpenProject) & ": a project's folder (the folder that holds " &
-          "its project.nif)"):
-      result.actions.incl maOpenProject
-    if igBeginPopupContextItem("##recentprojects", ImGui_PopupFlags_MouseButtonRight.cint):
-      drawRecentProjects(input.recentProjects, result.openProject, addr marks, "tool.project.")
-      igEndPopup()
     let plotsOn = input.plotTraces > 0
     igSameLine(0, GroupGap)
     for i, e in PlotEntries:
