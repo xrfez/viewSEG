@@ -14,7 +14,11 @@
 ## ```
 ## [viewSEG][Windows]
 ## Hidden=jobs,records
+## Shortcuts=1
 ## ```
+##
+## `Shortcuts` is whether Help > Keyboard shortcuts is open (1 or 0). A
+## layout that does not say is closed.
 ##
 ## A layout without it (a preset, one written by an earlier build) shows
 ## every window, and so does one that does not name a window (one a later
@@ -40,6 +44,7 @@ type
     hidden*: set[AppWindow] ## not drawn: unticked in the Window menu
     front: set[AppWindow]   ## brought forward when next drawn
     unknown: set[AppWindow] ## the layout arranged last does not name them
+    shortcutsOpen*: bool    ## Help > Keyboard shortcuts is open
     dockspace*: ImGuiID     ## the main window's dockspace
 
 const
@@ -79,8 +84,10 @@ func named*(text: string; w: AppWindow): bool =
 # ------------------------------------------------- the settings handler --
 
 proc readInit(ctx: ptr ImGuiContext; h: ptr ImGuiSettingsHandler) {.cdecl.} =
-  # Before a layout is read: every window shown unless it says otherwise.
+  # Before a layout is read: every window shown unless it says otherwise,
+  # and the shortcut list closed unless the layout says it is open.
   cast[ptr WindowsUi](h.UserData).hidden = {}
+  cast[ptr WindowsUi](h.UserData).shortcutsOpen = false
 
 proc readOpen(ctx: ptr ImGuiContext; h: ptr ImGuiSettingsHandler;
     name: cstring): pointer {.cdecl.} =
@@ -91,10 +98,15 @@ proc readLine(ctx: ptr ImGuiContext; h: ptr ImGuiSettingsHandler; entry: pointer
   let text = $line
   if text.startsWith("Hidden="):
     cast[ptr WindowsUi](entry).hidden = hiddenOf(text.substr("Hidden=".len))
+  elif text.startsWith("Shortcuts="):
+    cast[ptr WindowsUi](entry).shortcutsOpen = text.substr("Shortcuts=".len).strip == "1"
 
 proc writeAll(ctx: ptr ImGuiContext; h: ptr ImGuiSettingsHandler;
     buf: ptr ImGuiTextBuffer) {.cdecl.} =
-  let text = hiddenSection(cast[ptr WindowsUi](h.UserData).hidden)
+  let w = cast[ptr WindowsUi](h.UserData)
+  var text = hiddenSection(w.hidden)
+  if text.endsWith("\n\n"): text.setLen(text.len - 1)
+  text.add "Shortcuts=" & (if w.shortcutsOpen: "1" else: "0") & "\n\n"
   ImGuiTextBuffer_append(buf, text.cstring, nil)
 
 proc installHandler*(w: var WindowsUi) =

@@ -856,6 +856,7 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Ctrl + Alt + O | Open folder |
 | Ctrl + W | Close the file the plot shows |
 | Ctrl + Q | Quit |
+| F1 | Help > Keyboard shortcuts: the list of keys and mouse gestures (docs/user/keyboard-shortcuts.md) |
 | Ctrl + Z | Edit > Undo: take back the last change to the edits of the file the Seismic window shows (a kill, a restore, a polarity change, reverse all, a clearing, an import), whichever window has the focus; a text field keeps its own Ctrl + Z |
 | Ctrl + Shift + Z, Ctrl + Y | Edit > Redo: make the change undone last again |
 | Drop files or a folder on the window | A folder: list it and show its first file; one file: show it and list its folder; several files: list them and show the first |

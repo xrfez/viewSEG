@@ -13,7 +13,7 @@ import std/[math, strutils]
 import imguin/cimgui
 import ../../core/state
 import ../../view/theme
-import chrome, icons, plotsort, style
+import chrome, icons, plotsort, shortcutkeys, style
 
 const
   bandNames: array[PassBand, string] = ["None", "Low-cut", "High-cut", "Band-pass"]
@@ -362,8 +362,7 @@ proc openOwnFilter*() =
 proc filterKeys*(p: Panel; cmds: var seq[Command]) =
   ## `P`, while the plot window has the focus: raw or processed.
   let pr = p.layers[0].processing
-  if not igGetIO_Nil().WantTextInput and pr.hasFilters and
-      igShortcut_Nil(ImGui_Key_P.cint, 0):
+  if not igGetIO_Nil().WantTextInput and pr.hasFilters and pressed("plot.raw"):
     var n = pr
     n.raw = not pr.raw
     p.send(n, cmds)

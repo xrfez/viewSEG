@@ -265,6 +265,12 @@ task samples, "Write the synthetic sample set into samples/":
   selfExec "r --hints:off --warnings:off tools/sampledata.nim"
 
 # ---------------------------------------------------------------- coverage --
+task shortcuts, "Rewrite docs/user/keyboard-shortcuts.md from the shortcut table":
+  ## tools/shortcutspage.nim: the page is the table in core/shortcuts, menu
+  ## rows included from the menu's action table. `nim r tools/shortcutspage.nim
+  ## check` only checks; tests/tshortcuts.nim does that.
+  selfExec "r --hints:off --warnings:off tools/shortcutspage.nim write"
+
 task coverage, "Rewrite docs/coverage.md's summary, then check the page against the libraries":
   ## tools/coverage.nim: every name parseSEG and processSEG export (at the
   ## locked commits; the next releases when linked at deps/next/<library>) is

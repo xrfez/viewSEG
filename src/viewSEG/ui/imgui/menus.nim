@@ -16,12 +16,13 @@
 ## Window puts the windows right (Reset the windows, Bring all windows onto
 ## this screen), says whether the program's icon is in the tray and whether
 ## minimizing hides it there, shows, hides and brings forward each window,
-## and loads and saves layouts; Help says what viewSEG is (About: its version
-## and its libraries').
+## and loads and saves layouts; Help lists the keyboard shortcuts (F1) and
+## says what viewSEG is (About: its version and its libraries').
 
 import std/os
 import imguin/cimgui
 import ../../core/[analysis, layouts]
+import ../../core/shortcuts as shortcutTable
 import ../../view/theme
 import icons, marks, plotviews, thememenu, windows
 
@@ -49,7 +50,7 @@ type
     maSaveLayout = "Save layout as...",
     maShowFiles = "Files", maShowRecords = "Records", maShowMap = "Map",
     maShowHeaders = "Headers", maShowJobs = "Jobs", maShowMessages = "Messages",
-    maAbout = "About viewSEG"
+    maShortcuts = "Keyboard shortcuts", maAbout = "About viewSEG"
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
@@ -126,7 +127,8 @@ const
     maResetWindows: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_R.cint,
     maBringWindows: 0, maSaveLayout: 0,
     maShowFiles: 0, maShowRecords: 0, maShowMap: 0, maShowHeaders: 0, maShowJobs: 0,
-    maShowMessages: 0, maAbout: 0]
+    maShowMessages: 0,
+    maShortcuts: ImGui_Key_F1.cint, maAbout: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
@@ -141,7 +143,7 @@ const
     maResetWindows: IconHome, maBringWindows: IconFit, maSaveLayout: IconSave,
     maShowFiles: IconList, maShowRecords: IconRecords, maShowMap: IconMap,
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog,
-    maAbout: IconInfo]
+    maShortcuts: IconList, maAbout: IconInfo]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog, awSpectrum: IconPulse]
@@ -170,6 +172,17 @@ proc redoShortcut*(): string =
   ## Both of Redo's bindings, named as the others are (Ctrl is Cmd on macOS).
   shortcutName(maRedo) & ", " &
     $igGetKeyChordName(ImGui_Mod_Ctrl.cint or ImGui_Key_Y.cint)
+
+proc namedRows*(): seq[shortcutTable.ShortcutRow] =
+  ## The shortcut list, menu rows named as this platform names them
+  ## (`shortcutName`; Redo keeps both bindings).
+  result = shortcutTable.shortcutRows()
+  for r in result.mitems:
+    if r.menu.len == 0: continue
+    for a in MenuAction:
+      if $a == r.menu:
+        if a == maRedo: r.keys = redoShortcut()
+        elif shortcuts[a] != 0: r.keys = shortcutName(a)
 
 func menuLabel*(a: MenuAction): string =
   ## What `a` is called, the same words in its menu, its button and its tooltip.
@@ -520,6 +533,8 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
     let help = igBeginMenu("Help", true)
     marks.mark("menu.Help")
     if help:
+      item(maShortcuts, result)
+      tip("Every key and mouse gesture, and what it does (F1)")
       item(maAbout, result)
       tip("viewSEG's version, and those of the libraries it is built on")
       igEndMenu()

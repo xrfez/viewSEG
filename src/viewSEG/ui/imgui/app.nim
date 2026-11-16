@@ -45,6 +45,7 @@ import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import ../../view/jobstatus
 import aboutbox, agentshot, chrome, dpi, filelist, fonts, frames, headerswindow, icons,
+  shortcutswindow,
   jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows, projectwindow,
   recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows
 
@@ -97,6 +98,7 @@ type
     titled: string                             ## the main window's title, as set last
     reopen: ReopenUi                           ## the "Reopen with options" dialog
     about: AboutUi                             ## Help > About viewSEG
+    shortcuts: ShortcutsUi                     ## Help > Keyboard shortcuts
     spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
     plotWins: PlotWindowsUi                    ## the analysis windows (New plot)
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
@@ -179,7 +181,8 @@ type
     ## Keys a test can press (`pressKey`).
     skEquals, skMinus, skKeypadPlus, skKeypadMinus, skLeft, skRight, skUp, skDown,
     skBackspace, skZero, skEscape, skEnter, skCtrl, skShift, skAlt, skTab, skHome, skEnd,
-    skPageUp, skPageDown, skW, skG, skR, skK, skZ, skLeftBracket, skRightBracket, skM, skY, skP, skF
+    skPageUp, skPageDown, skW, skG, skR, skK, skZ, skLeftBracket, skRightBracket, skM, skY, skP, skF,
+    skF1
 
   SimMod* = enum
     smCtrl, smShift, smAlt
@@ -441,7 +444,7 @@ proc pressKey*(frame: FrameInfo; key: SimKey; down: bool; mods: set[SimMod] = {}
     SDL_SCANCODE_LALT, SDL_SCANCODE_TAB, SDL_SCANCODE_HOME, SDL_SCANCODE_END,
     SDL_SCANCODE_PAGEUP, SDL_SCANCODE_PAGEDOWN, SDL_SCANCODE_W, SDL_SCANCODE_G, SDL_SCANCODE_R,
     SDL_SCANCODE_K, SDL_SCANCODE_Z, SDL_SCANCODE_LEFTBRACKET, SDL_SCANCODE_RIGHTBRACKET,
-    SDL_SCANCODE_M, SDL_SCANCODE_Y, SDL_SCANCODE_P, SDL_SCANCODE_F]
+    SDL_SCANCODE_M, SDL_SCANCODE_Y, SDL_SCANCODE_P, SDL_SCANCODE_F, SDL_SCANCODE_F1]
   var m = 0'u16
   if smCtrl in mods: m = m or uint16(SDL_KMOD_LCTRL)
   if smShift in mods: m = m or uint16(SDL_KMOD_LSHIFT)
@@ -860,6 +863,7 @@ func everyWindow(core: AppState): seq[string] =
   for w in AppWindow: result.add $w
   result.add "join"
   result.add "memory"
+  result.add "shortcuts"
   for w in core.spectra:
     if w.id != LiveSpectrum: result.add "fft-" & $w.id
 
@@ -968,6 +972,10 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
     of maImportSurvey: ui.join.open()
     of maReopen: ui.openReopen()
     of maAbout: ui.about.open()
+    of maShortcuts:
+      ui.shortcuts.open()
+      ui.windows.shortcutsOpen = true
+      igMarkIniSettingsDirty_Nil()
     of maUndo: ui.core.apply Command(kind: ckUndoEdit, panel: MainPanel)
     of maRedo: ui.core.apply Command(kind: ckRedoEdit, panel: MainPanel)
     of maClearEdits: ui.core.apply Command(kind: ckClearEdits, panel: MainPanel)
@@ -1376,6 +1384,12 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   for c in reopen.mitems:
     ui.core.apply move c
   ui.about.drawAbout(ui.theme, ui.marks)
+  if ui.windows.shortcutsOpen and not ui.shortcuts.shown:
+    ui.shortcuts.shown = true
+  ui.shortcuts.drawShortcuts(ui.theme, ui.marks)
+  if ui.shortcuts.shown != ui.windows.shortcutsOpen:
+    ui.windows.shortcutsOpen = ui.shortcuts.shown
+    igMarkIniSettingsDirty_Nil()
   ui.drawSaveLayout()
   ui.drawDropHint()
   if ui.windows.shows(awJobs):

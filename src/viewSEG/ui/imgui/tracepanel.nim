@@ -92,6 +92,7 @@ import ../../core/[components, geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
 import ../../view/[displayheader, maplayers, plotink, strip, theme, timeaxis]
 import chrome, dpi, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort,
+  shortcutkeys,
   plotviews, style,
   symbols
 
@@ -1653,14 +1654,14 @@ proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
   if igGetIO_Nil().WantTextInput: return
   template p: untyped = st.panels[k]
   if under >= 0:
-    if igShortcut_Nil(ImGui_Key_R.cint, 0):
+    if pressed("plot.reverse"):
       res.commands.add editCommand(st, p, under, teReversed)
-    if igShortcut_Nil(ImGui_Key_K.cint, 0):
+    if pressed("plot.kill"):
       res.commands.add editCommand(st, p, under, teKilled)
-    if igShortcut_Nil(ImGui_Key_M.cint, 0):
+    if pressed("plot.station"):
       let c = stationCommand(st, k, under)
       if c.points.len > 0: res.commands.add c
-    if igShortcut_Nil(ImGui_Key_F.cint, 0):
+    if pressed("plot.fft"):
       res.commands.add fftCommand(st, p, under)
 
 func editColour*(has: set[TraceEdit]; shownFilter: bool): Role =
@@ -2003,7 +2004,7 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
     after = fitted(lim, after.columns, after.rows)
     remember = true
     tp.gesture = gsNone
-  if once(ImGui_Key_Backspace.cint):
+  if pressed("plot.back"):
     res.commands.add Command(kind: ckBack, panel: p.id)
   # Alt + the arrows along the traces: the next or previous trace selected
   # (Left / Right, or Up / Down when time is across).
@@ -2022,7 +2023,7 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
   if once(ImGui_Key_End.cint): to = count - 1
   if count > 0 and clamp(to, 0, count - 1) != current:
     res.commands.add Command(kind: ckGather, panel: p.id, gather: clamp(to, 0, count - 1))
-  if once(ctrl or ImGui_Key_G.cint): tp.goto.open = true
+  if pressed("plot.goto"): tp.goto.open = true
   gainKeys(p, res.commands)
   filterKeys(p, res.commands)
   if once(ImGui_Key_Escape.cint): # innermost first: a drag, a thumb, the selection
