@@ -81,7 +81,8 @@ const Reached = {
   "plot.processing.aux": "processing", "plot.processing.dc": "processing",
   "plot.processing.band": "processing", "plot.processing.f1": "processing",
   "plot.processing.f2": "processing", "plot.processing.f3": "processing",
-  "plot.processing.f4": "processing", "plot.processing.notches": "processing", "scale.length": "", "scale.speed": "",
+  "plot.processing.f4": "processing", "plot.processing.notches": "processing", "scale.length": "",
+  "scale.speed": "",
   "calibrations": "", "readout": "", "sortPresets": "", "customOrder": "sort",
   "messages.autoScroll": "", "messages.hidden": "", "cursorLine": "",
   "files.followLatest": "", "files.prepareNext": "", "map.info": "", "map.lengths": "",
@@ -466,7 +467,10 @@ withFixtures fx:
     doAssert again.settings.readout == @[rfTime, rfAmplitude]
   block aReopenOfNoFile:
     # Seen to fail: "nope.sgy is opened again" was logged, and the choice kept
-    # for the path that is no file. A file that cannot be opened is refused.
+    # for the path that is no file. The open job decides: a file that cannot be
+    # opened gives one failure message and keeps no choice; a file that exists
+    # outside the file list is opened (with a pre-check of the list, "was
+    # opened" failed).
     var st = appIn(dir)
     st.apply Command(kind: ckOpen, paths: @[mine])
     doAssert st.settle(st.sessions.len == 1)
@@ -476,13 +480,19 @@ withFixtures fx:
       "openChoice": toJson(OpenChoice(verifyAll: true))}), applied)
     doAssert applied, answer
     doAssert st.settle(busy(st, fe).len == 0), $busy(st, fe)
-    let said = missing & " is not a file that can be opened"
-    var logged = false
+    var failures = 0
     for e in st.log:
-      if "Ignored \"reopen\": " & said in e.text: logged = true
-      doAssert "is opened again" notin e.text, e.text
-    doAssert logged, "the refusal was not said"
+      if "Cannot open " & missing in e.text: inc failures
+    doAssert failures == 1, "the failure was said " & $failures & " times"
     doAssert st.openChoiceOf(canonical(missing)).isDefault, "a choice kept for no file"
+    doAssert st.sessions.len == 1 and st.sessions[0].path == canonical(mine)
+    let outside = agentDir / "outside.sgy"
+    copyFile(mine, outside)
+    discard st.runCommand(fe, $(%*{"kind": "reopen", "reopenPath": outside,
+      "openChoice": toJson(OpenChoice(verifyAll: true))}), applied)
+    doAssert st.settle(st.sessions.len >= 1 and
+      st.sessions.anyIt(it.path == canonical(outside) and it.facts.opened.choice.verifyAll)),
+      "a file outside the file list was not opened"
     st.shutdown()
 
   block aTableAskedBeyondTheLimits:

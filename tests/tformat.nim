@@ -24,7 +24,7 @@ const
     "src/viewSEG/ui/imgui/icons.nim", "src/viewSEG/ui/imgui/memorywindow.nim",
     "src/viewSEG/ui/imgui/menus.nim", "src/viewSEG/ui/imgui/spectrumwindow.nim",
     "src/viewSEG/view/curveplot.nim",
-    "src/viewSEG/view/filetable.nim", "tests/tagentsession.nim", "tests/tguiprocessing.nim",
+    "src/viewSEG/view/filetable.nim", "tests/tguiprocessing.nim",
     "tests/tguiroutes.nim", "tests/tguispectra.nim", "tests/tnetwork.nim", "tests/treadout.nim",
     "tests/trecordqc.nim", "tests/tshotcache.nim", "tests/utils/fixtures.nim", "tools/coverage.nim"]
     ## relative to the repository's root

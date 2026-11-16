@@ -5790,15 +5790,6 @@ proc reopen(state: var AppState; i: int; now: bool) =
   state.closeSession(i, quiet = true, keepLayers = true)
   if now: state.showAgain(path)
 
-func openableAgain(state: AppState; path: string): bool =
-  ## Whether an agent's reopen of `path` (canonical) can go on: a file open
-  ## now, or one listed (a file gone from its folder is no longer listed).
-  ## Decided from what the watch saw, so that the UI thread does not look at
-  ## the disk.
-  for s in state.sessions:
-    if s.path == path: return true
-  state.files.find(path) >= 0
-
 proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: CommandOrigin) =
   ## "Reopen with options": `path` (canonical) opened anew with `choice`,
   ## which its later opens this run take too, in the panels that show it
@@ -6492,8 +6483,6 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckDisplayPreset: state.displayPreset(cmd)
   of ckReopen:
     if cmd.reopenPath.len == 0: state.ignore(cmd, "no file was named")
-    elif cmd.origin == coAgent and not state.openableAgain(canonical(cmd.reopenPath)):
-      state.ignore(cmd, cmd.reopenPath & " is not a file that can be opened")
     elif cmd.origin == coAgent and cmd.openChoice.demuxDir.len > 0:
       state.ignore(cmd, "agent control writes no file, and a demultiplexed copy is one: " &
         "its folder is the user's to choose")
