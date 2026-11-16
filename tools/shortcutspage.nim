@@ -6,7 +6,7 @@
 ##   nim r tools/shortcutspage.nim check
 ##   nim r tools/shortcutspage.nim write
 
-import std/os
+import std/[os, strutils]
 import ../src/viewSEG/core/shortcuts
 
 proc pagePath*(): string =
