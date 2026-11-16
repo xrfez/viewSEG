@@ -112,6 +112,17 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
         ImPlot_SetNextFillStyle(vec4(c.colour), 0.16)
         ImPlot_PlotShaded_doublePtrdoublePtrInt(c.name.cstring, xs, ys, cint(n),
           c.shadeTo, 0, 0, cint(sizeof(float64)))
+      if c.marks:
+        let size = 2.5 * c.width * width
+        ImPlot_SetNextMarkerStyle(ImPlot_Marker_Circle.cint, size, vec4(c.colour), 0,
+          vec4(c.colour))
+        if turned:
+          ImPlot_PlotScatter_doublePtrdoublePtr(c.name.cstring, ys, xs, cint(n), 0, 0,
+            cint(sizeof(float64)))
+        else:
+          ImPlot_PlotScatter_doublePtrdoublePtr(c.name.cstring, xs, ys, cint(n), 0, 0,
+            cint(sizeof(float64)))
+        continue
       ImPlot_SetNextLineStyle(vec4(c.colour), c.width * width)
       if turned:
         ImPlot_PlotLine_doublePtrdoublePtr(c.name.cstring, ys, xs, cint(n), 0, 0,

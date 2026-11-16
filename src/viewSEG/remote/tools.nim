@@ -526,8 +526,16 @@ proc plotJson(w: AnalysisWindow; limit: int): JsonNode =
     var curves = newJArray()
     for c in p.curves:
       var ys = newJArray()
-      for i in at: ys.add toJson(if i < c.ys.len: c.ys[i] else: NaN)
-      curves.add %*{"name": c.name, "ys": ys}
+      if c.xs.len > 0:
+        # its own xs (a limit's two ends): all of them
+        var own = newJArray()
+        for i in evenlyOf(c.xs.len, limit):
+          own.add toJson(c.xs[i])
+          ys.add toJson(if i < c.ys.len: c.ys[i] else: NaN)
+        curves.add %*{"name": c.name, "style": $c.style, "xs": own, "ys": ys}
+      else:
+        for i in at: ys.add toJson(if i < c.ys.len: c.ys[i] else: NaN)
+        curves.add %*{"name": c.name, "style": $c.style, "ys": ys}
     plots.add %*{"title": p.title, "x": p.xLabel, "y": p.yLabel, "xs": xs, "curves": curves}
   result = %*{"id": w.id, "title": w.title, "view": $w.view, "frozen": w.frozen,
     "params": toJson(w.params), "traces": clipped(w.traces, limit), "reference": w.reference,
@@ -535,6 +543,13 @@ proc plotJson(w: AnalysisWindow; limit: int): JsonNode =
     "cursorOn": w.cursorOn,
     "problem": r.problem, "note": r.note, "used": r.used, "leftOut": r.leftOut,
     "dtMs": toJson(r.dtMs), "plots": plots}
+  if r.table.len > 0:
+    var rows = newJArray()
+    for row in r.table:
+      var cells = newJArray()
+      for c in row: cells.add newJString(c)
+      rows.add cells
+    result["table"] = rows
   if r.view == avCorrelation and r.plots.len > 0:
     var lags = newJArray()
     for c in 0 ..< r.plots[0].curves.len div 2:

@@ -3,6 +3,10 @@
 ## plot they came from, closed. Included in `core/state`, after the
 ## spectrum windows, whose helpers it shares.
 
+const MaxVibratorTraces* = 16
+  ## traces a vibrator signature is opened on at most: those its roles
+  ## choose from
+
 const MaxPlotTraces* = 256
   ## traces a spectrogram averages at most (more chosen are taken evenly);
   ## a curve view draws the first `MaxAnalysisCurves`
@@ -25,6 +29,13 @@ func selectedIn*(state: AppState; i: int): int =
     let s = state.sessions[i]
     for t in state.selection.selected:
       if t in s: inc result
+
+proc traceNames*(state: AppState; w: AnalysisWindow): seq[string] =
+  ## Window `w`'s traces as the curves call them ("trace 12": its place in
+  ## its file), in its order; "trace ?" for one whose file is not open.
+  for t in w.traces:
+    let i = state.findTrace(t)
+    result.add(if i >= 0: "trace " & $(t - state.sessions[i].base + 1) else: "trace ?")
 
 func plotsWaiting*(state: AppState): seq[string] =
   ## The windows whose numbers are on their way, by title.
@@ -118,7 +129,8 @@ proc openPlot(state: var AppState; cmd: Command) =
   ## `ckOpenPlot`: a new analysis window of `cmd.plotTraces` (else the
   ## selected traces of the panel's file, else the trace under the
   ## pointer), asked for at once; an envelope or a phase spectrum is of the
-  ## first of them.
+  ## first of them; a vibrator signature opened on one trace takes it and
+  ## the record's next three (Ref, GF, M, B, as wireline records have them).
   let k = state.findPanel(if cmd.plotOf == NoPanel: MainPanel else: cmd.plotOf)
   let i = if k >= 0: state.shownFile(k) else: -1
   if k < 0:
@@ -150,6 +162,15 @@ proc openPlot(state: var AppState; cmd: Command) =
     return
   if cmd.plotView in {avEnvelope, avPhase} and traces.len > 1:
     traces.setLen 1 # a view of one trace: the first chosen
+  if cmd.plotView == avVibrator:
+    if traces.len == 1:
+      # one trace: it and the record's next channels, as Ref, GF, M, B
+      let g = s.gatherOf(traces[0])
+      if g in 0 ..< s.gathers.len:
+        let record = s.gathers[g].traces # (a run of the file's traces)
+        if traces[0] in record:
+          for t in traces[0] + 1 .. min(traces[0] + 3, record.b): traces.add t
+    if traces.len > MaxVibratorTraces: traces.setLen MaxVibratorTraces
   if traces.len > MaxPlotTraces:
     var kept: seq[int] = @[]
     for j in evenly(traces.len, MaxPlotTraces): kept.add traces[j]

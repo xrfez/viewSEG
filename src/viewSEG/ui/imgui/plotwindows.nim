@@ -22,7 +22,9 @@ import ../../core/[colourmaps, plotcursor, state]
 import ../../view/[analysisview, curveplot, theme]
 import curveplot as curves, icons, marks, placement, spectrumwindow, style
 
-const PlotSize = (640'f32, 620'f32) ## a window's first size, at 100 %
+const
+  PlotSize = (640'f32, 620'f32)     ## a window's first size, at 100 %
+  VibratorSize = (760'f32, 900'f32) ## a vibrator signature's: its roles and four plots
 
 type
   PlotWindowsUi* = object
@@ -70,6 +72,150 @@ proc numberBox(id: string; value: float64; width: float32; typed: var float64): 
   discard igInputDouble(id.cstring, addr v, 0, 0, "%.4g", 0)
   typed = float64(v)
   igIsItemDeactivatedAfterEdit()
+
+proc limitBox(id: string; value: float64; width: float32; typed: var float64): bool =
+  ## A box for a limit, empty when it has none (NaN): true once the user
+  ## has finished typing into it; nothing typed (or not a number) is none.
+  var buf: array[32, char]
+  let text = if value.isNaN: ""
+             elif value == round(value) and abs(value) < 1e15: $int64(value)
+             else: $value
+  for i, c in text:
+    if i < buf.high: buf[i] = c
+  igSetNextItemWidth(width)
+  discard igInputText(id.cstring, cast[cstring](addr buf[0]), csize_t(buf.len),
+    ImGui_InputTextFlags_CharsScientific.cint, nil, nil)
+  let got = $cast[cstring](addr buf[0])
+  typed = try: parseFloat(got.strip) except ValueError: NaN
+  igIsItemDeactivatedAfterEdit()
+
+proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: float32;
+    marks: var Marks; p: var AnalysisParams; frozen, changed: var bool) =
+  ## A vibrator signature's roles (a table: role, trace, polarity), its
+  ## masses and harmonics, Limits and Freeze, and the limits (shown on, in
+  ## boxes).
+  let names = st.traceNames(w)
+  let combo = round(igCalcTextSize("trace 00000", nil, false, -1).x + igGetFrameHeight() +
+    2 * igGetStyle().FramePadding.x)
+  let polar = round(igCalcTextSize("as recorded", nil, false, -1).x + igGetFrameHeight() +
+    2 * igGetStyle().FramePadding.x)
+  const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint
+  if igBeginTable(("##roles" & name).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
+    igTableSetupColumn("Role", 0, 0, 0)
+    igTableSetupColumn("Trace", 0, 0, 0)
+    igTableSetupColumn("Polarity", 0, 0, 0)
+    igTableHeadersRow()
+    template roleRow(role: string; field: untyped; what: string) =
+      igTableNextRow(0, 0)
+      discard igTableSetColumnIndex(0)
+      igAlignTextToFramePadding()
+      igTextUnformatted(role, nil)
+      tip(what)
+      discard igTableSetColumnIndex(1)
+      igSetNextItemWidth(combo)
+      let now = p.roles.field
+      let shown = if now in 0 ..< names.len: names[now] else: "none"
+      if igBeginCombo(("##" & role).cstring, shown.cstring, 0):
+        if igSelectable_Bool("none", now < 0, 0, ImVec2_c(x: 0, y: 0)) and now >= 0:
+          (p.roles.field, changed) = (-1, true)
+        for i, n in names:
+          igPushID_Int(cint(i))
+          if igSelectable_Bool(n.cstring, i == now, 0, ImVec2_c(x: 0, y: 0)) and i != now:
+            (p.roles.field, changed) = (i, true)
+          igPopID()
+        igEndCombo()
+      marks.mark(name & ".role " & role)
+    template polarityCombo(role: string; field: untyped; what: string) =
+      discard igTableSetColumnIndex(2)
+      igSetNextItemWidth(polar)
+      if igBeginCombo(("##polarity " & role).cstring, ($p.roles.field).cstring, 0):
+        for v in Polarity:
+          if igSelectable_Bool(($v).cstring, v == p.roles.field, 0, ImVec2_c(x: 0, y: 0)) and
+              v != p.roles.field:
+            (p.roles.field, changed) = (v, true)
+        igEndCombo()
+      tip(what)
+    roleRow("Ref", reference, "The reference: the pilot, the phase origin")
+    discard igTableSetColumnIndex(2)
+    igTextUnformatted("as recorded", nil)
+    roleRow("GF", groundForce, "The ground force, as recorded")
+    polarityCombo("GF", groundForcePolarity, "Reversed: times -1. Automatic: reversed " &
+      "when its mean phase to the reference is past ±90° (wiring)")
+    roleRow("M", mass, "The reaction mass's acceleration")
+    polarityCombo("M", massPolarity, "M's and B's polarity, together (the baseplate moves " &
+      "against the mass). Automatic needs both and both masses: it is decided from the " &
+      "force they make")
+    roleRow("B", baseplate, "The baseplate's acceleration")
+    discard igTableSetColumnIndex(2)
+    igTextUnformatted("with M", nil)
+    igEndTable()
+  var typed = 0.0
+  template label(text: string) =
+    igAlignTextToFramePadding()
+    igTextUnformatted(cstring(text), nil)
+    igSameLine(0, -1)
+  label("Masses: reaction")
+  if limitBox("##reaction", p.reactionMassKg, box, typed) and
+      not (typed <= 0) and typed != p.reactionMassKg:
+    (p.reactionMassKg, changed) = (typed, true)
+  marks.mark(name & ".reaction mass")
+  tip("The reaction mass, kg: with the baseplate's, the ground force is generated from M " &
+    "and B (Mr·M + Mb·B), drawn over the recorded one. Empty: none")
+  igSameLine(0, -1)
+  label("kg  baseplate")
+  if limitBox("##baseplate", p.baseplateMassKg, box, typed) and
+      not (typed <= 0) and typed != p.baseplateMassKg:
+    (p.baseplateMassKg, changed) = (typed, true)
+  marks.mark(name & ".baseplate mass")
+  tip("The baseplate's mass, kg. Empty: none")
+  igSameLine(0, -1)
+  label("kg  harmonics to")
+  var h = cint(p.harmonics)
+  igSetNextItemWidth(box)
+  if igInputInt("##harmonics", addr h, 0, 0, 0) and h in 2 .. 16 and h != p.harmonics:
+    (p.harmonics, changed) = (int(h), true)
+  tip("The highest harmonic tracked (2 to 16): THD sums them from the 2nd")
+  igSameLine(0, -1)
+  if igCheckbox("Limits", addr p.limitsOn): changed = true
+  marks.mark(name & ".limits")
+  tip("On: the limits drawn on the plots, the points past them marked, and a pass or " &
+    "fail table per signal; judged on the ground forces over the sweep less its tapers")
+  igSameLine(0, -1)
+  if igCheckbox("Freeze", addr frozen): changed = true
+  marks.mark(name & ".freeze")
+  tip("On: the window keeps what it shows. Off: it follows the Seismic window's filters " &
+    "(and Aux toggle) and the kills of its traces")
+  if p.limitsOn:
+    # the limits on lines of their own, each going to the next when the
+    # line has no room for it
+    let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
+    var first = true
+    template limit(text, id: string; field: untyped; unit, what: string) =
+      # "text [box] unit", on this line when it fits
+      if not first:
+        let need = igCalcTextSize(text, nil, false, -1).x + box +
+          igCalcTextSize(unit, nil, false, -1).x + 4 * igGetStyle().ItemSpacing.x
+        if igGetItemRectMax().x + need <= right: igSameLine(0, 2 * igGetStyle().ItemSpacing.x)
+      first = false
+      igAlignTextToFramePadding()
+      igTextUnformatted(cstring(text), nil)
+      igSameLine(0, -1)
+      if limitBox(id, p.limits.field, box, typed) and
+          not (typed.isNaN and p.limits.field.isNaN) and typed != p.limits.field:
+        (p.limits.field, changed) = (typed, true)
+      tip(what)
+      if unit.len > 0:
+        igSameLine(0, -1)
+        igTextUnformatted(cstring(unit), nil)
+    limit("Phase ±", "##phase", phaseDeg, "°", "The largest |phase| at a point, degrees")
+    limit("mean", "##meanphase", meanPhaseDeg, "°", "The largest mean |phase|, degrees")
+    limit("THD", "##thd", thdPct, "%", "The largest THD at a point, %")
+    limit("mean", "##meanthd", meanThdPct, "%", "The largest mean THD, %")
+    limit("harmonic", "##harmonic", harmonicPct, "%",
+      "The largest level of any one harmonic at a point, % of the fundamental")
+    limit("force from", "##forcelow", forceLow, "", "The smallest fundamental at a point")
+    limit("to", "##forcehigh", forceHigh, "", "The largest fundamental at a point")
+    limit("peak", "##peak", peakForce, "", "The largest peak at a point (the hold-down weight)")
 
 proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Marks;
     res: var PlotWindowsOutput) =
@@ -159,17 +305,20 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
     tip("The lags shown either side of 0, ms")
     igSameLine(0, -1)
     label("ms")
-  if w.view != avEnvelope:
+  of avVibrator:
+    drawVibratorSettings(st, w, name, box, marks, p, frozen, changed)
+  if w.view notin {avEnvelope, avVibrator}:
     # on this line when it fits, else the next
     let wide = igGetFrameHeight() + igGetStyle().ItemInnerSpacing.x +
       igCalcTextSize("Freeze", nil, false, -1).x
     # (the cursor is on the next line: its start and the room to the right)
     let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
     if igGetItemRectMax().x + igGetStyle().ItemSpacing.x + wide <= right: igSameLine(0, -1)
-  if igCheckbox("Freeze", addr frozen): changed = true
-  marks.mark(name & ".freeze")
-  tip("On: the window keeps what it shows. Off: it follows the Seismic window's filters " &
-    "(and Aux toggle) and the kills of its traces")
+  if w.view != avVibrator:
+    if igCheckbox("Freeze", addr frozen): changed = true
+    marks.mark(name & ".freeze")
+    tip("On: the window keeps what it shows. Off: it follows the Seismic window's filters " &
+      "(and Aux toggle) and the kills of its traces")
   if changed:
     res.commands.add Command(kind: ckPlotDisplay, plot: w.id, plotParams: p,
       plotFrozen: frozen)
@@ -280,6 +429,29 @@ proc drawImage(ui: var PlotWindowsUi; w: AnalysisWindow; name: string; t: Theme;
     # the pointer moved over the image: it takes the cursor back
     res.commands.add Command(kind: ckPlotCursor, plot: w.id, plotCursor: PlotCursor())
 
+proc drawTable(name: string; table: seq[seq[string]]; t: Theme; marks: var Marks) =
+  ## A vibrator signature's table: a row per signal, its first the
+  ## columns' names; a cell that says "fail" in the error colour.
+  let cols = table[0].len
+  const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint or
+    ImGui_TableFlags_ScrollX.cint
+  let h = igGetTextLineHeightWithSpacing() * float32(table.len + 1)
+  if igBeginTable(("##table" & name).cstring, cint(cols), flags, ImVec2_c(x: 0, y: h), 0):
+    for c in table[0]: igTableSetupColumn(c.cstring, 0, 0, 0)
+    igTableHeadersRow()
+    for row in table[1 .. ^1]:
+      igTableNextRow(0, 0)
+      for i, cell in row:
+        discard igTableSetColumnIndex(cint(i))
+        if cell.startsWith("fail"):
+          igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlError]))
+          igTextUnformatted(cell.cstring, nil)
+          igPopStyleColor(1)
+        else:
+          igTextUnformatted(cell.cstring, nil)
+    igEndTable()
+    marks.mark(name & ".table")
+
 proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     marks: var Marks; res: var PlotWindowsOutput) =
   ## A window's contents: its settings, its words, its plots and reading.
@@ -297,6 +469,8 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   elif r.note.len > 0: igTextWrapped("%s", r.note.cstring)
   igPopStyleColor(1)
   marks.mark(name & ".summary")
+  if r.table.len > 1 and w.params.limitsOn and r.problem.len == 0:
+    drawTable(name, r.table, t, marks)
   let focused = igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint)
   let lineH = igGetTextLineHeightWithSpacing()
   let avail = igGetContentRegionAvail()
@@ -309,8 +483,17 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     var uis = ui.curves.getOrDefault(w.id)
     if uis.len != plots.len: uis.setLen plots.len
     let gap = igGetStyle().ItemSpacing.y
-    let each = max(60'f32, (avail.y - lineH - gap * float32(max(plots.len - 1, 0))) /
-      float32(max(plots.len, 1)))
+    # Each plot the room shared out, but no lower than nine lines: below
+    # that the plots scroll, in a region of their own.
+    let room = avail.y - lineH
+    var each = (room - gap * float32(max(plots.len - 1, 0))) / float32(max(plots.len, 1))
+    let scrolls = each < round(igGetFontSize() * 9)
+    var wide = avail.x
+    if scrolls:
+      each = round(igGetFontSize() * 9)
+      discard igBeginChild_Str(("##plots" & name).cstring, ImVec2_c(x: 0, y: max(room, 60)),
+        0, 0)
+      wide = igGetContentRegionAvail().x
     # The cursor: held by the keys in one plot (and at the same x in the
     # plots that share its x axis), else under the pointer.
     let on = clamp(w.cursorOn, 0, max(plots.len - 1, 0))
@@ -324,13 +507,14 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
       let held = if w.cursor.held and plots.len > 0 and (i == on or p.sameXs(plots[on])):
                    PlotCursor(held: true, x: w.cursor.x, y: (if i == on: w.cursor.y else: 0))
                  else: PlotCursor()
-      let o = uis[i].drawCurvePlot(name & ".plot " & $i, p, t, ImVec2_c(x: avail.x, y: each),
+      let o = uis[i].drawCurvePlot(name & ".plot " & $i, p, t, ImVec2_c(x: wide, y: each),
         key, marks, held)
       if o.hovered:
         (hoveredOn, under, moved) = (i, o.under, o.moved)
         text = p.readoutText(o.reading)
       elif held.held and i == on:
         text = p.readoutText(o.reading)
+    if scrolls: igEndChild()
     ui.curves[w.id] = uis
     if w.cursor.held and text.len > 0: text = HeldNote & text
     # The keys: Left / Right a point, Home / End the ends, Up / Down another
@@ -369,7 +553,7 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
       y: vp.WorkPos.y + vp.WorkSize.y))
   for w in st.plots:
     ids.add w.id
-    placeNext(w.id, PlotSize, scale)
+    placeNext(w.id, (if w.view == avVibrator: VibratorSize else: PlotSize), scale)
     var open = true
     if igBegin(w.windowTitle.cstring, addr open, 0):
       ui.drawBody(st, w, t, marks, res)

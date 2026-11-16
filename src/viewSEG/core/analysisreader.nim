@@ -24,7 +24,7 @@ import std/[algorithm, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
-import analysis, filesystem, inbox, jobs, log, processing, threads
+import analysis, filesystem, inbox, jobs, log, processing, threads, vibanalysis
 
 type
   AnalysisAsk* = object
@@ -273,6 +273,25 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 if own in 0 ..< signals.len and answer.problem.len == 0:
                   answer.note.add "; " & keptNames[own] & " is the reference itself: its " &
                     "autocorrelation (a peak at 0 ms, 0 dB, 0°)"
+          of avVibrator:
+            # each role's trace: its place among those asked about, then
+            # among those read (one left out has no role)
+            let places = [vsReference: a.params.roles.reference,
+              vsGroundForce: a.params.roles.groundForce, vsMass: a.params.roles.mass,
+              vsBaseplate: a.params.roles.baseplate]
+            var at: array[VibRole, int]
+            var missing: seq[string] = @[]
+            for role in VibRole:
+              let q = places[role]
+              at[role] = if q in 0 ..< a.traces.len: keptList.find(a.traces[q]) else: -1
+              if q in 0 ..< a.traces.len and at[role] < 0: missing.add $role
+            let n = answer.leftOut
+            answer = vibratorOf(kept, keptNames, at, dtMs, a.params)
+            answer.leftOut = n
+            if missing.len > 0:
+              let words = missing.join(", ") & " left out (killed, dead or unreadable)"
+              if answer.problem.len > 0: answer.problem.add "; " & words
+              else: answer.note.add "; " & words
           answer.gen = a.gen
           answer.id = a.id
           if through.len > 0 and answer.problem.len == 0:

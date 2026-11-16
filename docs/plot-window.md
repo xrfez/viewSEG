@@ -582,6 +582,7 @@ traces work it out again; its traces stay those it was opened on.
 | **Envelope and instantaneous phase** | the first trace | the trace and its envelope; its instantaneous phase (°); its instantaneous frequency (Hz) | `hilbertInto` |
 | **Phase spectrum** | the first trace | amplitude (dB) and phase against frequency | `amplitudeInto` |
 | **Cross-correlation** | each trace (up to 8) against a reference | the correlation coefficient and its envelope against lag; the amplitude ratio (dB) and phase difference (°) per frequency | `crossCorrelateInto`, `compareInto` |
+| **Vibrator signature** | a vibrator unit: its reference (Ref), ground force (GF), reaction-mass (M) and baseplate (B) traces | against sweep time: the phase to the reference (GF, GF from M and B, M, B); the force (fundamental and peak); the frequency (Ref's, the ground forces'); the distortion (THD, each harmonic, %); a table per signal | `analyzeVibrators` |
 
 Each window's first line holds its view's settings; a change works it out again.
 
@@ -602,9 +603,33 @@ Each window's first line holds its view's settings; a change works it out again.
   first selected trace the reference, in this file or another one open (Sweep0's pilot,
   say), sampled at the same interval. A trace that is the reference delayed by τ peaks at
   +τ (the words under the title give each trace's peak). A trace that is the reference
-  itself is said to be: its curve is its autocorrelation (peak at 0, 0 dB, 0°). The amplitude ratio and the
-  phase difference are given where the reference's amplitude is within the same N dB
-  (20) of its peak. The lags shown: ±250 ms at first.
+  itself is said to be: its curve is its autocorrelation (peak at 0, 0 dB, 0°). The
+  amplitude ratio and the phase difference are given where the reference's amplitude is
+  within the same N dB (20) of its peak. The lags shown: ±250 ms at first.
+- **Vibrator signature** (wireline tests, start-up QC of a vibrator):
+  - **Roles.** A table gives each role its trace among the window's: by default the
+    order Ref, GF, M, B. Opened on one trace (the pilot), the window takes it and the
+    record's next three channels, as wireline records have them; on several, the first
+    four are the roles and the others can be chosen (16 at most). A role can be "none";
+    Ref cannot.
+  - **Polarity.** GF as recorded, reversed, or **automatic** (reversed when its mean
+    phase to the reference is past ±90°: wiring). M and B take one polarity, together
+    (the baseplate moves against the mass: one reversed alone would make their force a
+    difference); automatic needs both and both masses. Ref is the phase origin.
+  - **GF from M and B.** With the reaction mass and the baseplate's mass entered (kg;
+    empty at first, as no default fits every vibrator), `GF (M, B) = Mr·M + Mb·B` is
+    drawn over the recorded GF in every plot, and its row added to the table.
+  - **Harmonics** tracked to the 5th at first (2 to 16); THD sums them from the 2nd.
+  - **Limits** (off at first; **Limits** turns them on): the largest |phase| at a point
+    (10° at first) and its mean (5°), THD at a point (40 %) and its mean (20 %), any one
+    harmonic (%), the fundamental's lowest and highest, the largest peak (empty: none).
+    On, they are drawn on the plots as thin lines in the error colour, the points past
+    them marked, and the table shows each signal's statistics with **pass** or **fail**
+    and the limits failed. They are judged on the two ground forces over the sweep less
+    its tapers (the span is said under the title); M and B are summarised, not judged.
+  - The values are as recorded (no calibration yet): the force in the recorded units,
+    or a weighted sum of M and B's recorded values.
+  - All four plots share sweep time, so the held cursor reads them at the same time.
 - The **envelope** is the analytic signal's modulus; the instantaneous phase its
   argument; the instantaneous frequency the phase's step between the samples either
   side, in Hz.

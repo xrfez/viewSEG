@@ -14,6 +14,9 @@
 ## - the plot's right-click menu > New plot > Cross-correlation opens a
 ##   window of the trace under the pointer against the record's pilot;
 ## - closed (`close plot`), a window goes;
+## - Window > New plot > Vibrator signature on four selected traces shows
+##   its roles' table and four plots; Limits draws the phase limits and
+##   shows the table;
 ## - seven more windows each open inside the main window.
 ##
 ## Seen to fail: with the image's keys not read (`keyMove` never called),
@@ -24,7 +27,8 @@
 ## each number from the middle, whether or not they fit (`placeNext` not
 ## used), "new plot 5 at (pos: (x: 492.0, y: 272.0), size: (x: 640.0, y:
 ## 620.0)) is not inside the main window's (pos: (x: 0.0, y: 67.0), size:
-## (x: 1400.0, y: 806.0))" (it opened as a window of its own, outside).
+## (x: 1400.0, y: 806.0))" (it opened as a window of its own, outside); with
+## the vibrator signature's table not drawn, "limits on did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -167,6 +171,35 @@ withFixtures fx:
       doAssert w.id == 1, "the number of the window closed is not taken again"
       doAssert w.traces == @[2] and w.result.problem == "" and "pilot" in w.reference,
         $w.traces & " " & w.result.problem & " " & w.reference)
+  # a vibrator signature of four selected traces: its roles in a table
+  # (Ref, GF, M, B, in their order), its four plots; Limits shows the table
+  step("four selected", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckSelect, traces: @[0, 1, 2, 3], mode: smReplace)),
+    proc (f: FrameInfo): bool = f.core.selection.selectedCount == 4)
+  click("menu.Window")
+  to("menu.window.newplot")
+  click("menu.newplot." & $avVibrator)
+  step("a vibrator signature", noop, proc (f: FrameInfo): bool =
+    result = f.core.plots.len == 2 and not f.core.plots[1].waiting and
+      f.markOf("new plot 2.plot 3.data").size.x > 0
+    if result:
+      let w = f.core.plots[1]
+      doAssert w.view == avVibrator and w.traces == @[0, 1, 2, 3], $w.traces
+      doAssert w.result.problem == "" and w.result.plots.len == 4, w.result.problem
+      for role in ["Ref", "GF", "M", "B"]:
+        doAssert f.markOf("new plot 2.role " & role).size.x > 0, "no role " & role)
+  click("new plot 2.limits")
+  step("limits on", noop, proc (f: FrameInfo): bool =
+    result = f.core.plots[1].params.limitsOn and not f.core.plots[1].waiting and
+      f.markOf("new plot 2.table").size.x > 0
+    if result:
+      var limits = 0
+      for c in f.core.plots[1].result.plots[0].curves:
+        if c.style == csLimit: inc limits
+      doAssert limits == 2, $limits & " phase limits drawn")
+  step("the vibrator signature closed", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckClosePlot, plot: 2)),
+    proc (f: FrameInfo): bool = f.core.plots.len == 1)
   # more windows, each placed a step lower and to the right: every one
   # inside the main window (one past its edge would open as a window of its
   # own, outside it, where nobody looks)

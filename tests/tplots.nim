@@ -24,7 +24,10 @@
 ## trace asked about taken instead); with `showReplacing` not asking
 ## `plotsUse`, "the pilot's file was closed under its window"; without the
 ## note of a signal that is the reference, "Against trace 2: trace 2 peaks
-## at 0.0 ms; trace 3 peaks at 10.0 ms; ...".
+## at 0.0 ms; trace 3 peaks at 10.0 ms; ..."; with a vibrator signature
+## opened on one trace kept to it, `traces == @[...]` "@[0]"; with the
+## settings compared field by field as Nim does (NaN unequal to itself),
+## "the same settings asked again".
 
 import std/[math, os, strutils]
 import parseSEG
@@ -180,5 +183,31 @@ withFixtures fx:
     st.apply Command(kind: ckClearSelection)
     st.apply Command(kind: ckOpenPlot, plotView: avEnvelope)
     doAssert st.plots.len == 3 and "no trace is selected" in st.log.lastText, st.log.lastText
+
+  block vibrator:
+    # opened on the pilot alone: it and the record's next three, as Ref,
+    # GF, M, B; trace 4 (B) is killed above: left out, said
+    st.apply Command(kind: ckOpenPlot, plotView: avVibrator, plotTraces: @[s.base])
+    let w = st.plots.high
+    doAssert st.plots[w].traces == @[s.base, s.base + 1, s.base + 2, s.base + 3],
+      $st.plots[w].traces
+    doAssert st.settle(st.answered(w))
+    var r = st.plots[w].result
+    doAssert r.problem == "", r.problem
+    doAssert r.plots.len == 4 and r.plots[0].title == "Phase to the reference"
+    doAssert "Ref trace 1 · GF trace 2 · M trace 3" in r.note and "B left out" in r.note and
+      "enter both masses" notin r.note, r.note
+    # the roles assigned otherwise: trace 2 the reference, the pilot its GF
+    var p = st.plots[w].params
+    p.roles.reference = 1
+    p.roles.groundForce = 0
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p)
+    doAssert st.settle(st.answered(w) and st.plots[w].result.gen == st.plots[w].asked)
+    r = st.plots[w].result
+    doAssert "Ref trace 2 · GF trace 1" in r.note, r.note
+    # the same settings again (NaN masses and limits among them): not asked again
+    let asks = st.plots[w].asks
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p)
+    doAssert st.plots[w].asks == asks, "the same settings asked again"
   discard st.shutdown()
 echo "tplots: ok"

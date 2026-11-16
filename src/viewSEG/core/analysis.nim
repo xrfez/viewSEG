@@ -9,6 +9,7 @@
 ## | Envelope | the trace, its envelope, its instantaneous phase and frequency | `hilbertInto` |
 ## | Phase spectrum | amplitude (dB) and phase against frequency | `amplitudeInto` |
 ## | Cross-correlation | each trace against a reference: against lag, and compared per frequency | `crossCorrelateInto`, `compareInto` |
+## | Vibrator signature | a unit's Ref, GF, M and B against sweep time: phase, force, frequency, distortion (`core/vibanalysis`) | `analyzeVibrators` |
 ##
 ## Every number here is processSEG's but for what it leaves to the caller:
 ## the envelope's instantaneous frequency (the analytic signal's phase step
@@ -22,11 +23,11 @@
 
 import std/math
 import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
-import processSEG/vibroseis/crosscorrelate
+import processSEG/vibroseis/[crosscorrelate, vibqc]
 import processSEG/core/workspace
 import colourmaps, panels, plotcursor, processing
 
-export ColourMap, PlotCursor
+export ColourMap, PlotCursor, Polarity, VibLimits
 
 type
   AnalysisView* = enum
@@ -35,6 +36,20 @@ type
     avEnvelope = "envelope"
     avPhase = "phase spectrum"
     avCorrelation = "cross-correlation"
+    avVibrator = "vibrator signature"
+
+  VibRoles* = object
+    ## A vibrator signature's roles: each one's place among the window's
+    ## traces (0: the first), -1 for none; by default the order Ref, GF,
+    ## M, B. M and B take one polarity, as a pair (the baseplate moves
+    ## against the mass: one reversed alone would turn the force they make
+    ## into a difference).
+    reference*: int = 0 ## the pilot (required)
+    groundForce*: int = 1 ## the ground force, recorded
+    mass*: int = 2 ## the reaction mass's acceleration
+    baseplate*: int = 3 ## the baseplate's acceleration
+    groundForcePolarity*: Polarity = poAsRecorded
+    massPolarity*: Polarity = poAsRecorded ## M's and B's
 
   AnalysisParams* = object
     ## An analysis window's settings (each view uses its own).
@@ -52,11 +67,32 @@ type
       ## cross-correlation: the reference trace, survey-wide id; -1: none
       ## chosen (the first trace of the window then)
     maxLagMs*: float64 = 250.0 ## cross-correlation: the lags shown, either side of 0
+    roles*: VibRoles ## vibrator signature: which trace is which
+    reactionMassKg*: float64 = NaN
+      ## vibrator signature: the reaction mass, kg, for the ground force
+      ## generated from M and B; NaN: none entered (no generated force)
+    baseplateMassKg*: float64 = NaN ## vibrator signature: the baseplate's mass, kg
+    harmonics*: int = 5 ## vibrator signature: the highest harmonic tracked (2 .. 16)
+    limitsOn*: bool = false
+      ## vibrator signature: the limits drawn, the points past them marked
+      ## and a pass or fail table shown
+    limits*: VibLimits = VibLimits(phaseDeg: 10, meanPhaseDeg: 5, thdPct: 40,
+      meanThdPct: 20)
+      ## vibrator signature: the limits (NaN: none); judged on the ground
+      ## forces over the sweep less its tapers
+
+  CurveStyle* = enum
+    ## How a curve is drawn.
+    csLine = "line"         ## a line: the data
+    csLimit = "limit"       ## a limit: a thin line in the colour of a failure
+    csPast = "past a limit" ## the points past a limit, marked
 
   AnalysisCurve* = object
     ## A curve of a plot: a value per x (NaN where there is none).
     name*: string
     ys*: seq[float64]
+    xs*: seq[float64] ## its own xs, ascending (a limit's two ends); empty: the plot's
+    style*: CurveStyle
 
   AnalysisPlot* = object
     ## Curves over one x axis.
@@ -82,11 +118,28 @@ type
     view*: AnalysisView
     plots*: seq[AnalysisPlot]
     image*: AnalysisImage ## a spectrogram's; empty otherwise
-    used*: int            ## traces it is of
-    leftOut*: int         ## of those asked about: killed, dead, not decoded
+    table*: seq[seq[string]]
+      ## a vibrator signature's summary per signal, the first row the
+      ## columns' names; empty for none
+    used*: int ## traces it is of
+    leftOut*: int ## of those asked about: killed, dead, not decoded
     dtMs*: float64
-    note*: string         ## what the numbers are, in words (shown under the plot)
-    problem*: string      ## why there is none; "" when there is one
+    note*: string ## what the numbers are, in words (shown under the plot)
+    problem*: string ## why there is none; "" when there is one
+
+func `==`*(a, b: AnalysisParams): bool =
+  ## Whether two settings are the same, a NaN (a limit or a mass not set)
+  ## equal to a NaN.
+  func same(x, y: float64): bool {.inline.} = x == y or (x.isNaN and y.isNaN)
+  for x, y in fields(a, b):
+    when x is float64:
+      if not same(x, y): return false
+    elif x is VibLimits:
+      for u, v in fields(x, y):
+        if not same(u, v): return false
+    else:
+      if x != y: return false
+  true
 
 const
   MaxAnalysisCurves* = 8 ## traces a curve view draws at most (the first ones)
@@ -409,6 +462,7 @@ func viewName*(v: AnalysisView): string =
   of avEnvelope: "Envelope and instantaneous phase"
   of avPhase: "Phase spectrum"
   of avCorrelation: "Cross-correlation"
+  of avVibrator: "Vibrator signature"
 
 func label*(w: AnalysisWindow): string =
   ## What a window is of, in words: "trace 12 · FFID 151 · shot.sgd".

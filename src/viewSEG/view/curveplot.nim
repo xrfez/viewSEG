@@ -39,6 +39,7 @@ type
       ## against amplitudes reads in dB); empty: `ys`
     unit*: string ## the readout's unit of `reads`; "": the plot's `yUnit`
     short*: string ## its name in the readout, when shorter than the legend's; "": `name`
+    marks*: bool ## drawn as marks at its points, not a line (points past a limit)
 
   CurvePlot* = object
     ## Curves over one shared axis.

@@ -9,13 +9,25 @@ import ../core/[analysis, plotcursor]
 import curveplot, theme
 
 func curvePlots*(r: AnalysisResult; t: Theme): seq[CurvePlot] =
-  ## The result's plots as curve plots: each curve a colour of the theme's
-  ## series, in order; a NaN where a curve has no value.
+  ## The result's plots as curve plots: each data curve a colour of the
+  ## theme's series, in order; a limit a thin line in the error colour, the
+  ## points past one marked in it; a NaN where a curve has no value.
   for p in r.plots:
     var c = CurvePlot(xLabel: p.xLabel, yLabel: p.yLabel, xUnit: p.xUnit, yUnit: p.yUnit,
       xs: p.xs)
-    for i, curve in p.curves:
-      c.curves.add Curve(name: curve.name, colour: t.series[i mod t.series.len], ys: curve.ys)
+    var i = 0
+    for curve in p.curves:
+      case curve.style
+      of csLine:
+        c.curves.add Curve(name: curve.name, colour: t.series[i mod t.series.len],
+          ys: curve.ys, xs: curve.xs)
+        inc i
+      of csLimit:
+        c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: curve.ys,
+          xs: curve.xs, width: 1)
+      of csPast:
+        c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: curve.ys,
+          xs: curve.xs, marks: true)
     result.add c
 
 func cellAt*(img: AnalysisImage; x, y: float64): PlotCursor =
