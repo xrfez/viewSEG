@@ -750,14 +750,14 @@ again in the windows that show it, at the record they show; its kills and polari
 reversals stay, and so do the selection, the FFT and plot windows of its traces, and the
 survey join, when the file has as many traces as before (the join is matched again:
 Messages say it was kept once that match succeeds, or that it was dropped and why if it
-fails; with another count the Messages say what was dropped). The file is opened first and
-replaces the one shown only when it has traces: if the options read it as nothing (a SEG-Y
-file named SEG-D), the file stays as it was, one message says why, and the options are not
-kept. The options hold for that file until viewSEG quits. **Defaults** puts every option
-back. A file opened with options says so: its Seismic window's title and a line above the
-plot ("Opened as SEG-D · every header checked"; hover it for the full words), and its
-tooltip in the Files list. Its shots on the map are read with the same options. The file
-is only read, never changed.
+fails or matches none of its traces; with another count the Messages say what was
+dropped). The file is opened first and replaces the one shown only when it has traces: if
+the options read it as nothing (a SEG-Y file named SEG-D), the file stays as it was, one
+message says why, and the options are not kept. The options hold for that file until
+viewSEG quits. **Defaults** puts every option back. A file opened with options says so:
+its Seismic window's title and a line above the plot ("Opened as SEG-D · every header
+checked"; hover it for the full words), and its tooltip in the Files list. Its shots on
+the map are read with the same options. The file is only read, never changed.
 
 **Help > About viewSEG** gives viewSEG's version and those of parseSEG, processSEG, Dear
 ImGui, SDL, the OpenGL driver and the compiler, with **Copy** for a bug report.
