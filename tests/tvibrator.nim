@@ -252,4 +252,16 @@ block meanAbsPhase:
       doAssert row[^1] == "fail: mean phase", row[^1]
   doAssert found
 
+block noGroundForce:
+  # no recorded ground force, the masses making one: its plot is the force
+  # from M and B, labelled in that unit (kg x as recorded), not as the force's.
+  # Seen to fail: "Force (as recorded)" as the plot's axis.
+  let r = vibratorOf(unitRows, names, [vsReference: 0, vsGroundForce: -1, vsMass: 2,
+    vsBaseplate: 3], Dt, params)
+  doAssert r.problem == "", r.problem
+  let f = r.plots[1]
+  doAssert f.title == "Force from M and B" and f.yLabel == "GF (M, B) (kg × as recorded)",
+    f.title & " / " & f.yLabel
+  doAssert f.curves.len == 2 and f.curves[0].name == "GF (M, B) fundamental", $f.curves.len
+
 echo "tvibrator: ok"

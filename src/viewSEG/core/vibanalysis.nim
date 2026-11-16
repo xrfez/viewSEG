@@ -141,8 +141,12 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     if s in u.signals: phase.curves.add AnalysisCurve(name: $s, ys: u.tracks[s].phaseDeg)
   # Force: the recorded ground force and the weighted sum of the masses are in
   # different units (counts; kg x counts): a plot, an axis and a unit each
-  var force = AnalysisPlot(title: "Force", xLabel: "Sweep time (ms)", xUnit: "ms",
-    yLabel: "Force (" & forceUnit(u.units[main]) & ")", xs: xs)
+  # (with no recorded ground force, the force is the one from M and B: its unit)
+  let fromMasses = main == vsWeightedSum
+  var force = AnalysisPlot(xLabel: "Sweep time (ms)", xUnit: "ms", xs: xs,
+    title: (if fromMasses: "Force from M and B" else: "Force"),
+    yLabel: (if fromMasses: "GF (M, B) (" & weightedUnit(u.units[vsWeightedSum]) & ")"
+    else: "Force (" & forceUnit(u.units[main]) & ")"))
   var generated = AnalysisPlot(title: "Force from M and B", xLabel: "Sweep time (ms)",
     xUnit: "ms", yLabel: "GF (M, B) (" & weightedUnit(u.units[vsWeightedSum]) & ")", xs: xs)
   for s in forces:
