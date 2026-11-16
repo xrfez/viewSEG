@@ -802,7 +802,9 @@ that asking again gets it whole.
 ## Mouse and keys
 
 **One gesture, one action.** Each row is one input; no input appears twice for the same
-window. Keys act on the focused window (the plot, the map or the file list); the
+window. Keys act on the focused window (the plot, the map or the file list); a key
+while the pointer is over the plot acts on the plot, so a menu click that left the
+focus elsewhere does not swallow it. The
 application keys work everywhere. **The click that brings a window forward does only
 that** (the user: "should be only when window i already active"): a click selects a
 trace, shows a file or shows a record only in a window that had the focus already; the

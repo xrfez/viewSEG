@@ -321,12 +321,15 @@ proc drawGainControls*(p: Panel; box: var GainBox; t: Theme; marks: var Marks;
   tip("More gain, " & significant(GainStepDb, 2) & " dB; held, it repeats (" & dbKeysTip & ")")
   igPopItemFlag()
 
-proc gainKeys*(p: Panel; cmds: var seq[Command]) =
-  ## The gain amount's keys, while the plot window has the focus: `]` or
-  ## keypad `*` for more, `[` or keypad `/` for less, repeating while held;
-  ## with Shift, 12 dB a step.
+proc gainKeys*(p: Panel; over: bool; cmds: var seq[Command]) =
+  ## The gain amount's keys, while the plot window has the focus, or the
+  ## pointer is over it: `]` or keypad `*` for more, `[` or keypad `/` for
+  ## less, repeating while held; with Shift, 12 dB a step.
+  let route = if over and not igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint):
+      ImGui_InputFlags_RouteGlobal.cint or ImGui_InputFlags_RouteOverFocused.cint
+    else: 0
   template pressed(key: untyped; mods = 0): bool =
-    igShortcut_Nil(cint(mods) or key.cint, ImGui_InputFlags_Repeat.cint)
+    igShortcut_Nil(cint(mods) or key.cint, ImGui_InputFlags_Repeat.cint or route)
   let d = p.layers[0].display
   var db = 0.0
   for (mods, step) in [(0, GainStepDb), (ImGui_Mod_Shift.int, GainShiftStepDb)]:

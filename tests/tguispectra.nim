@@ -20,7 +20,9 @@
 ##   off by a click, and a frozen one keeps its traces (the panel) or its
 ##   filters (the FFT) while the plot changes, following them again unfrozen.
 ##
-## Seen to fail: with the pin's click not flipping `frozen` (the caller's
+## Seen to fail: with plot keys only on the focused window, after the Window
+## menu the focusing click missed the plot (the Operations menu had moved it)
+## and "killed did not happen"; with the pin's click not flipping `frozen` (the caller's
 ## `frozen = not frozen` left out), "fft 1 frozen did not happen"; with Freeze
 ## still a checkbox at the end of the line, "freeze
 ## not on the first row"; with Phase still after Visible time, "phase is not

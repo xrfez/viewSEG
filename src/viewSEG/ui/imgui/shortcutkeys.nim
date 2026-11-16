@@ -42,3 +42,19 @@ proc pressed*(id: string; flags: cint = 0): bool =
   let chord = imguiChord(chordOf(id))
   if chord == 0: return false
   igShortcut_Nil(chord, flags)
+
+proc plotShortcut*(chord: cint; flags: cint; over: bool): bool =
+  ## `chord` for the plot. While it has the focus, the focused route. While
+  ## the pointer is over it and a menu click left the focus on another
+  ## window, the key still acts on the plot.
+  if chord == 0: return false
+  var route = flags
+  if over and not igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint):
+    route = route or ImGui_InputFlags_RouteGlobal.cint or
+      ImGui_InputFlags_RouteOverFocused.cint
+  igShortcut_Nil(chord, route)
+
+proc plotPressed*(id: string; over: bool; flags: cint = 0): bool =
+  ## Row `id`'s chord for the plot: the focused route, or, while the pointer
+  ## is over the plot, even if a menu click left the focus elsewhere.
+  plotShortcut(imguiChord(chordOf(id)), flags, over)

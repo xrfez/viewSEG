@@ -361,10 +361,11 @@ proc openOwnFilter*() =
   ## Opens the trace-filter popover. Called the frame after the menu item.
   igOpenPopup_Str(ownId, 0)
 
-proc filterKeys*(p: Panel; cmds: var seq[Command]) =
-  ## `P`, while the plot window has the focus: raw or processed.
+proc filterKeys*(p: Panel; over: bool; cmds: var seq[Command]) =
+  ## `P`, while the plot window has the focus, or the pointer is over it:
+  ## raw or processed.
   let pr = p.layers[0].processing
-  if not igGetIO_Nil().WantTextInput and pr.hasFilters and pressed("plot.raw"):
+  if not igGetIO_Nil().WantTextInput and pr.hasFilters and plotPressed("plot.raw", over):
     var n = pr
     n.raw = not pr.raw
     p.send(n, cmds)

@@ -33,6 +33,7 @@ type
 
   StoreDialog* = object
     ask: bool
+    wasOpen: bool
     trace: int
     name: string
     fromMs, toMs, durationMs: float64
@@ -181,7 +182,12 @@ proc drawStore*(d: var StoreDialog; st: AppState; t: Theme; marks: var Marks): s
   if d.ask:
     igOpenPopup_Str(id.cstring, 0)
     d.ask = false
-  if not igBeginPopupModal(id.cstring, nil, ImGui_WindowFlags_AlwaysAutoResize.cint): return
+  let open = igBeginPopupModal(id.cstring, nil, ImGui_WindowFlags_AlwaysAutoResize.cint)
+  if d.wasOpen and not open:
+    # The modal had the keys. Give them back to the plot, which this is drawn from.
+    igSetWindowFocus_Nil()
+  d.wasOpen = open
+  if not open: return
   marks.markWindow("store")
   igTextWrapped("%s", "The stored samples are the file's raw samples: no plot filters, " &
     "no trace filter, no gain, no polarity edit.")

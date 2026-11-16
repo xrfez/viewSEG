@@ -1698,22 +1698,24 @@ func stationCommand(st: AppState; k, under: int): Command =
     st.stationRole(k)), pointMode: smReplace)
 
 proc editKeys(st: AppState; k, under: int; res: var PanelOutput) =
-  ## The trace operations' keys, while the plot has the focus: `R` reverses
-  ## the polarity of the trace under the pointer (or of the selection that
-  ## holds it) or puts it back, `K` kills or restores it, `M` selects its
-  ## station on the map, `F` opens its FFT window. Undo and redo are the
-  ## Edit menu's, from any window.
+  ## The trace operations' keys, while the plot has the focus, or while the
+  ## pointer is over a trace (a menu click can leave the focus elsewhere):
+  ## `R` reverses the polarity of the trace under the pointer (or of the
+  ## selection that holds it) or puts it back, `K` kills or restores it,
+  ## `M` selects its station on the map, `F` opens its FFT window. Undo and
+  ## redo are the Edit menu's, from any window.
   if igGetIO_Nil().WantTextInput: return
   template p: untyped = st.panels[k]
-  if under >= 0:
-    if pressed("plot.reverse"):
+  let over = under >= 0
+  if over:
+    if plotPressed("plot.reverse", over):
       res.commands.add editCommand(st, p, under, teReversed)
-    if pressed("plot.kill"):
+    if plotPressed("plot.kill", over):
       res.commands.add editCommand(st, p, under, teKilled)
-    if pressed("plot.station"):
+    if plotPressed("plot.station", over):
       let c = stationCommand(st, k, under)
       if c.points.len > 0: res.commands.add c
-    if pressed("plot.fft"):
+    if plotPressed("plot.fft", over):
       res.commands.add fftCommand(st, p, under)
 
 func editColour*(has: set[TraceEdit]; shownFilter: bool): Role =
@@ -2132,8 +2134,14 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
   ## in the screen's directions on a plot turned `m`.
   let io = igGetIO_Nil()
   if io.WantTextInput: return # typing into a box
-  template held(chord: cint): bool = igShortcut_Nil(chord, ImGui_InputFlags_Repeat.cint)
-  template once(chord: cint): bool = igShortcut_Nil(chord, 0)
+  # A menu click can leave the focus on another window. A key while the
+  # pointer is over the plot still acts on the plot.
+  let route = if hovered and not igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint):
+      ImGui_InputFlags_RouteGlobal.cint or ImGui_InputFlags_RouteOverFocused.cint
+    else: 0
+  template held(chord: cint): bool =
+    igShortcut_Nil(chord, ImGui_InputFlags_Repeat.cint or route)
+  template once(chord: cint): bool = igShortcut_Nil(chord, route)
   const
     ctrl = ImGui_Mod_Ctrl.cint
     shift = ImGui_Mod_Shift.cint
@@ -2176,7 +2184,7 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
     after = fitted(lim, after.columns, after.rows)
     remember = true
     tp.gesture = gsNone
-  if pressed("plot.back"):
+  if plotPressed("plot.back", hovered):
     res.commands.add Command(kind: ckBack, panel: p.id)
   # Alt + the arrows along the traces: the next or previous trace selected
   # (Left / Right, or Up / Down when time is across).
@@ -2195,9 +2203,9 @@ proc handleKeys(tp: var TracePanelUi; after: var Viewport; view: Viewport; plot:
   if once(ImGui_Key_End.cint): to = count - 1
   if count > 0 and clamp(to, 0, count - 1) != current:
     res.commands.add Command(kind: ckGather, panel: p.id, gather: clamp(to, 0, count - 1))
-  if pressed("plot.goto"): tp.goto.open = true
-  gainKeys(p, res.commands)
-  filterKeys(p, res.commands)
+  if plotPressed("plot.goto", hovered): tp.goto.open = true
+  gainKeys(p, hovered, res.commands)
+  filterKeys(p, hovered, res.commands)
   if once(ImGui_Key_Escape.cint): # innermost first: a drag, a thumb, the selection
     if tp.drag.kind != dkNone:
       if tp.drag.kind == dkPan and tp.drag.moved: after = tp.drag.start
