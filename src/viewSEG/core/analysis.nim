@@ -565,6 +565,8 @@ type
     ownKey*: string ## the own filters of its traces when it asked last
     refKey*: string ## a correlation's reference's own filter when it asked last
     own*: seq[FilterEntry] ## those filters, kept while the window is frozen
+    reversed*: seq[int]
+      ## file indices reversed when it asked last, ascending, kept while frozen
     result*: AnalysisResult ## the newest answer taken in
     asked*: uint64 ## the newest request's gen
     since*: uint64 ## answers to requests from before this are not its
@@ -605,6 +607,18 @@ func ownLine*(w: AnalysisWindow): string =
     let at = entryAt(w.own, t - base)
     if at >= 0: own[i] = w.own[at].filter
   ownShownWords(w.first, own)
+
+func reverseLine*(w: AnalysisWindow): string =
+  ## What the window says of its traces' reversal, in the place it names an
+  ## own filter: "Trace 12: reversed", or how many. "" for none.
+  if w.traces.len == 0: return ""
+  let base = w.traces[0] - w.first
+  var on = newSeq[bool](w.traces.len)
+  for i, t in w.traces:
+    let fileTrace = t - base
+    for r in w.reversed:
+      if r == fileTrace: on[i] = true
+  reverseShownWords(w.first, on)
 
 func label*(w: AnalysisWindow): string =
   ## What a window is of, in words: "trace 12 · FFID 151 · shot.sgd".

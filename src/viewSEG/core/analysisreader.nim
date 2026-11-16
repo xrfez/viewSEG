@@ -13,11 +13,13 @@
 ##   another interval, or with none, is left out and counted, `atOtherInterval`,
 ##   as the spectrum reader does); a reference trace
 ##   for a correlation, from the same file or another one.
-## - **Filters.** The plot's filters first (`Processing`, shown raw or not
-##   alike; an f-k asked raw leaves them out), made for the traces' interval,
-##   run on whole traces; an auxiliary trace goes through them only when the
-##   Aux toggle says so, as in the plot. Each trace's own filter runs after
-##   them, always, and instead of them when it says so.
+## - **Filters.** A reversed trace is multiplied by -1 first (a sign flip,
+##   before anything else; no box turns it off). The plot's filters first
+##   after that (`Processing`, shown raw or not alike; an f-k asked raw
+##   leaves them out), made for the traces' interval, run on whole traces;
+##   an auxiliary trace goes through them only when the Aux toggle says so,
+##   as in the plot. Each trace's own filter runs after them, always, and
+##   instead of them when it says so.
 ## - **Holds.** The caller holds the files (`Jobs.hold`) before it asks; the
 ##   reader ends the holds (`HoldRelease`) once it has served the request or
 ##   given it up, and `ask` and `cancel` end those of the requests they drop.
@@ -45,6 +47,7 @@ type
     offsetUnit*: SurveyUnit   ## the unit of the file's trace offsets
     names*: seq[string]       ## per trace, what the curves call it: "trace 12"
     killed*: seq[int]         ## those of `traces` killed, ascending: left out
+    reversed*: seq[int]       ## those of `traces` reversed, ascending: samples times -1 first
     own*: seq[FilterEntry]    ## traces that carry a filter of their own, ascending
     processing*: Processing   ## the plot's filters and its Aux toggle
     refFile*: ptr SeismicFile ## a correlation's reference's file (held); nil: none
@@ -53,6 +56,7 @@ type
     refTrace*: int = -1       ## its index in `refFile`
     refName*: string
     refOwn*: seq[FilterEntry] ## the reference's own filter, when it has one
+    refReversed*: bool        ## the reference is reversed
 
   ReaderObj = object
     lock: Lock
@@ -157,6 +161,14 @@ func unionAsc(a, b: openArray[int]): seq[int] =
     if i < a.len and a[i] == x: inc i
     if j < b.len and b[j] == x: inc j
 
+proc negateListed(rows: var seq[seq[float32]]; list, reversed: openArray[int]) =
+  ## Multiplies each listed trace that is reversed by -1, before the plot's
+  ## filters and each trace's own filter. A sign flip, not a filter.
+  if reversed.len == 0 or rows.len == 0: return
+  for i, t in list:
+    if i < rows.len and reversed.binarySearch(t) >= 0:
+      for v in rows[i].mitems: v = -v
+
 proc applyRowsOwn(b: RowBlock[float32]; live: TraceRows; dtMs: float64;
     list: openArray[int]; own: openArray[FilterEntry]; ws: var Workspace) =
   ## Each listed trace's own frequency filter, on the rows of `b`.
@@ -184,15 +196,17 @@ proc applyRowsOwn(b: RowBlock[float32]; live: TraceRows; dtMs: float64;
         plan.apply(b, initChunkMeta(live, dtMs, 0, skip), ws)
 
 proc filtered(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
-    pr: Processing; own: openArray[FilterEntry]; dtMs: float64; passed: var int;
-    plotOn = true): string =
-  ## `rows` (traces `list` of `f`) through the plot's filters `pr` at `dtMs`
-  ## when `plotOn` (an f-k asked raw leaves them out), then through each
-  ## trace's own filter (`own`), always. An own filter that runs instead leaves the
+    pr: Processing; own: openArray[FilterEntry]; reversed: openArray[int];
+    dtMs: float64; passed: var int; plotOn = true): string =
+  ## `rows` (traces `list` of `f`) with each reversed trace multiplied by -1
+  ## first (`reversed`), then through the plot's filters `pr` at `dtMs` when
+  ## `plotOn` (an f-k asked raw leaves them out), then through each trace's
+  ## own filter (`own`), always. An own filter that runs instead leaves the
   ## plot's filters off that trace. An auxiliary trace goes through the
   ## plot's filters only when `pr.aux` (the others, `passed` of them, are
   ## passed by); its own filter runs either way. What the plot's filters
   ## are, in words, or why they did not run; "" when they were not applied.
+  negateListed(rows, list, reversed)
   passed = 0
   var q = pr
   q.raw = false
@@ -307,7 +321,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
         let plotOn = not (a.view == avFk and a.params.fkRaw) # f-k raw: the plot's filters only
         var passed = 0
         var through = if kept.len > 0: filtered(kept, f, keptList, a.processing,
-          a.own, dtMs, passed, plotOn) else: ""
+          a.own, a.reversed, dtMs, passed, plotOn) else: ""
         if passed > 0 and through.startsWith("through "):
           # the filters did not touch these: the words must not say they did
           if passed == kept.len:
@@ -360,8 +374,11 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 let refOwn = if a.refOwn.len > 0: a.refOwn
                              elif a.refPath == a.path: a.own
                              else: @[]
-                let refThrough = filtered(refRows, rf, @[rt], a.processing, refOwn, dtMs,
-                  refPassed)
+                let refFlip = if a.refTrace >= 0: a.refReversed
+                              else: a.reversed.binarySearch(rt) >= 0
+                let refRev = if refFlip: @[rt] else: newSeq[int]()
+                let refThrough = filtered(refRows, rf, @[rt], a.processing, refOwn, refRev,
+                  dtMs, refPassed)
                 if refPassed > 0 and refThrough.startsWith("through "):
                   inc passed
                   let words = "the reference (" & refName & ") is not filtered: " & AuxFilterOff
@@ -428,6 +445,10 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             if refLine.len > 0:
               answer.note = (if answer.note.len > 0: answer.note & "; " else: "") &
                 "reference, " & refLine
+            if a.refReversed:
+              let revLine = reverseShownWords(a.refTrace, [true])
+              answer.note = (if answer.note.len > 0: answer.note & "; " else: "") &
+                "reference, " & revLine
       except OSError as e:
         answer.problem = "it cannot be read now: " & e.msg
       except ValueError as e:

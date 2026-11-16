@@ -5,8 +5,10 @@
 ## The UI thread leaves a request per window (`ask`): an open file, the
 ## traces, the time window, the plot's filters. The reader reads what it
 ## does not hold of those traces (a selection-mode `Prefetcher` over whole
-## traces), keeps their samples as decoded, applies each trace's own
-## filter (part of the trace, in the raw curve), computes the raw and,
+## traces), keeps their samples as decoded, multiplies a reversed trace by
+## -1 (part of the trace, before its own filter; no box turns it off),
+## applies each trace's own filter (part of the trace, in the raw curve),
+## computes the raw and,
 ## when the plot has a filter on, the processed spectrum, and posts the
 ## answer (`mkSpectrum`). The plot's filters are made here, for the traces'
 ## own sample interval, and the answer says what they reached
@@ -63,6 +65,7 @@ type
     size*: int64           ## its size when it was opened; -1 when not known
     traces*: seq[int]      ## indices in the file
     killed*: seq[int]      ## those of them killed, ascending: left out
+    reversed*: seq[int]    ## those reversed, ascending: samples times -1 first
     own*: seq[FilterEntry] ## those that carry a filter of their own, ascending
     fromMs*, toMs*: float64 = NaN
       ## the time window; NaN: the whole trace
@@ -231,9 +234,10 @@ proc applyBlockOwn(b: RowBlock[float32]; live: TraceRows; dtMs: float64;
 proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
     cache: var Cache; answer: var Spectrum): bool =
   ## The raw and processed spectra of `list` (traces at hand, live, of one
-  ## interval) into `answer`. The raw curve is each trace with its own
-  ## filter; the processed curve and the response are the plot's filters
-  ## only. False when a newer request came first.
+  ## interval) into `answer`. A reversed trace is multiplied by -1 first.
+  ## The raw curve is each trace with its own filter; the processed curve
+  ## and the response are the plot's filters only. False when a newer
+  ## request came first.
   let f = a.file
   var longest = 0
   for t in list: longest = max(longest, cache.traces[t].samples.len)
@@ -259,6 +263,10 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   let ownAll = ownPerTrace(a.own, list)
   if pr.hasFilters: answer.filters = pr.describe
   answer.ownNote = ownShownWords(list[0], ownAll)
+  var reversedOn = newSeq[bool](list.len)
+  for i, t in list:
+    if a.reversed.binarySearch(t) >= 0: reversedOn[i] = true
+  answer.reverseNote = reverseShownWords(list[0], reversedOn)
   # The response is the plot's filters only. A trace's own filter is already
   # in the raw curve, and does not unlock Processed or Response.
   let responsePipe = if filtering: filters else: initPipeline()
@@ -334,10 +342,16 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
       except ValueError as e:
         answer.filterProblem = e.msg
         filtering = false
-    # The raw curve is the trace with its own filter, before the plot's.
-    # Processed, when the plot has a filter on, is the plot's filters then
-    # the own filter, as the Seismic plot runs them (instead: the plot's
-    # left out, so the two curves are the same).
+    # A reversed trace times -1 first, then its own filter: the raw curve.
+    # Processed, when the plot has a filter on, is that sign, the plot's
+    # filters, then the own filter, as the Seismic plot runs them (instead:
+    # the plot's left out, so the two curves are the same).
+    if a.reversed.len > 0:
+      for k, t in part:
+        if failed.binarySearch(k) < 0 and a.reversed.binarySearch(t) >= 0:
+          let row = k * cols
+          let n = cache.traces[t].samples.len
+          for j in 0 ..< n: work[row + j] = -work[row + j]
     var filed: seq[float32] = @[]
     if filtering: filed = work
     applyBlockOwn(b, live, dtMs, ownHere, failed, ws)

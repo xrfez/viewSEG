@@ -6,7 +6,8 @@
 ## - **The amplitude flags** of processSEG's `qc/amplitude` with its default
 ##   thresholds (`AmplitudeParams()`): each seismic trace's statistics
 ##   (`traceAmplitudeInto`, a chunk of traces at a time, so a record of any
-##   size is read in bounded memory) after that trace's own filter, then the
+##   size is read in bounded memory) after a reversed trace is multiplied by
+##   -1 and that trace's own filter, then the
 ##   record's (`recordAmplitude`, over its seismic traces: weak and noisy
 ##   against their median).
 ## - **Against the template** (the relation records of the record's domain:
@@ -227,6 +228,16 @@ proc completeness(hits: var array[MapFilter, FilterHits]; f: SeismicFile; base: 
     return
   hits.placeTraces(f.index.keys, base, traces, g, record, domain)
 
+proc negateQc(samples: var Tensor[float32]; part: Slice[int]; reversed: openArray[int]) =
+  ## Multiplies each reversed trace of `part` by -1, before its own filter
+  ## and the amplitude flags. A sign flip, not a filter.
+  if reversed.len == 0: return
+  let b = rowBlock(samples)
+  for i in 0 ..< part.len:
+    if reversed.binarySearch(part.a + i) >= 0:
+      let row = b.rowPtr(i)
+      for j in 0 ..< b.cols: row[j] = -row[j]
+
 proc applyOwnQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
     own: openArray[FilterEntry]; ws: var Workspace) =
   ## Each trace of `part`'s own frequency filter, on `samples`, before the
@@ -272,7 +283,7 @@ proc applyOwnQc(samples: var Tensor[float32]; f: SeismicFile; part: Slice[int];
 proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base, gather: int;
     traces: Slice[int]; domain: RelationDomain; relations: ptr SurveyGeometry;
     against: string; recordMatch: RecordMatch; traceMatch: TraceMatch; placed: Placed;
-    samples: bool; own: seq[FilterEntry]; to: Poster): JobWork =
+    samples: bool; own: seq[FilterEntry]; reversed: seq[int]; to: Poster): JobWork =
   ## The work of a job that reads gather `gather` (`traces`) of open file
   ## `session` (`file`, at `path`; its trace 0 is survey-wide `base`) and
   ## posts what the filters in `TraceFilters` find in it (`mkRecordQc`):
@@ -284,7 +295,8 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
   ## Without `samples` (only the template box, or filters of the keys, ask),
   ## from the keys alone: the filters that need the samples (not decodable,
   ## the amplitude flags) are said not checked. `own` is each trace's own
-  ## filter, applied before the amplitude flags. Submitted with the file in
+  ## filter; `reversed` the traces multiplied by -1 first, both before the
+  ## amplitude flags. Submitted with the file in
   ## `reads`; `relations` is read in place, never copied.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var hits: array[MapFilter, FilterHits]
@@ -307,6 +319,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
         fs.mappedRead(path) # (tests: the drive's next pages come late)
         var log: DiagLog
         var samples = f.readTraces(part, 0 ..< cols, log)
+        if reversed.len > 0: negateQc(samples, part, reversed)
         if own.len > 0: applyOwnQc(samples, f, part, own, ws)
         var failed: seq[int]
         for d in log:

@@ -130,6 +130,10 @@ type
     ownNote*: string
       ## the own filters of the traces it is of: "Trace 12: own filter,
       ## band-pass 10-60 Hz", or "N traces have their own filter"; "" for none
+    reverseNote*: string
+      ## the reversed traces it is of: "Trace 12: reversed", or "N traces
+      ## are reversed"; "" for none. A reversal is part of the trace, as an
+      ## own filter is: no box turns it off
     insteadNote*: string
       ## "this trace uses its own filter instead of the plot's" when the
       ## plot's filters do not apply because the trace's own filter runs
@@ -329,8 +333,9 @@ func filterText*(w: SpectrumWindow): string =
   ## processed: the auxiliary trace is not filtered: ... (the plot's
   ## filters: notch 60 Hz)"; "no filters on the plot: the raw curve only";
   ## what Nyquist cut of them after it. A trace's own filter is named after
-  ## that (`ownNote`), and, where it runs instead of the plot's, that the
-  ## plot's filters did not apply (`insteadNote`).
+  ## that (`ownNote`), a reversal the same way (`reverseNote`), and, where
+  ## the own filter runs instead of the plot's, that the plot's filters did
+  ## not apply (`insteadNote`).
   template sp: untyped = w.spectrum
   if sp.raw.len == 0: return ""
   if sp.filters.len == 0: result = "no filters on the plot: the raw curve only"
@@ -350,6 +355,7 @@ func filterText*(w: SpectrumWindow): string =
   if sp.filterNote.len > 0: result.add ". " & sp.filterNote
   if sp.insteadNote.len > 0: result.add ". " & sp.insteadNote
   if sp.ownNote.len > 0: result.add ". " & sp.ownNote
+  if sp.reverseNote.len > 0: result.add ". " & sp.reverseNote
 
 func auxUnfiltered*(w: SpectrumWindow): bool {.inline.} =
   ## Whether auxiliary traces of `w`'s spectrum were left unfiltered because

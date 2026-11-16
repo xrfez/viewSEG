@@ -104,7 +104,7 @@ from std/unicode import runeSubStr
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
-from processing import changesSamples, ownShownWords
+from processing import changesSamples, ownShownWords, reverseShownWords
 import analysis, analysisreader, closer, components, diskio, edits, filejobs, filelist, filememory,
   filesystem, identity, inbox, inspector, jobs, join, layouts, log, mapstate, memoryjobs,
   panels, persist, pick, project, projectjobs, projectnif, reader, recordqc, selection, session,
@@ -1831,6 +1831,18 @@ func ownLine*(state: AppState; p: Panel): string =
     if has: own[k] = f
   ownShownWords(p.shown[0], own)
 
+func reverseLine*(state: AppState; p: Panel): string =
+  ## What the plot says of the reversed traces it shows, in the place it
+  ## names an own filter: "Trace 12: reversed", or how many. "" for none.
+  if p.layers.len == 0 or not p.laidOut or p.shown.len == 0: return ""
+  let i = state.findSession(p.layers[0].source.file)
+  if i < 0: return ""
+  let e = state.editsAt(state.sessions[i].path)
+  var on = newSeq[bool](p.shown.len)
+  for k, t in p.shown:
+    if e.has(teReversed, t): on[k] = true
+  reverseShownWords(p.shown[0], on)
+
 func ownChangesSamples*(state: AppState; w: SpectrumWindow): bool =
   ## Whether a trace `w` shows has an own filter that changes its samples
   ## (a frequency filter, or one that runs instead of the plot's).
@@ -2828,11 +2840,18 @@ func recordText(s: Session; trace: int): string =
   else: "record " & $(g + 1)
 
 func ownKeyOf(e: FileEdits; traces: openArray[int]): string =
-  ## The own filters of `traces`, as a key: a change of one asks a spectrum
-  ## or an analysis again.
+  ## The own filters of `traces`, and which of them are reversed, as a key:
+  ## a change of one asks a spectrum or an analysis again.
   for t in traces:
     let (has, f) = e.ownOf(t)
     if has: result.add $t & ":" & $f.place & ":" & $f.spec & ";"
+    if e.has(teReversed, t): result.add $t & ":r;"
+
+proc reversedOf(e: FileEdits; traces: openArray[int]): seq[int] =
+  ## Those of `traces` reversed in `e`, ascending.
+  for t in traces:
+    if e.has(teReversed, t): result.add t
+  result.sort()
 
 func ownOfTraces(e: FileEdits; traces: openArray[int]): seq[FilterEntry] =
   ## The own filters of `traces`, ascending.
@@ -2863,6 +2882,7 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   var killed = killedOf(e, traces) # (under its key: `keyOf`)
   killed.sort()
   let own = ownOfTraces(e, traces)
+  let reversed = reversedOf(e, traces)
   inc state.spectrumGen
   template sw: untyped = state.spectra[w]
   sw.asked = state.spectrumGen
@@ -2875,7 +2895,8 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   inc sw.revision
   state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
     session: int(s.id), file: s.filePtr, path: s.path, size: s.size, traces: traces,
-    killed: killed, own: own, fromMs: window[0], toMs: window[1], processing: processing)
+    killed: killed, reversed: reversed, own: own, fromMs: window[0], toMs: window[1],
+    processing: processing)
   true
 
 func spread(list: var seq[int]; samples: int) =
@@ -2960,7 +2981,7 @@ proc followLive(state: var AppState) =
   ## The live panel, while on screen and not frozen, asked again when what
   ## it is of changed (the traces in view or selected, the record, the
   ## file, the time in view, the filters, a kill, a shown trace's own
-  ## filter). Nothing is asked while it is hidden.
+  ## filter or reversal). Nothing is asked while it is hidden.
   template live: untyped = state.spectra[0]
   if live.display != state.settings.spectrum.live:
     live.display = state.settings.spectrum.live
@@ -5688,6 +5709,7 @@ proc followRecordQc(state: var AppState) =
   var gatherTraces = newSeq[int](tr.len)
   for i in 0 ..< tr.len: gatherTraces[i] = tr.a + i
   let own = ownOfTraces(state.editsAt(s.path), gatherTraces)
+  let reversed = reversedOf(state.editsAt(s.path), gatherTraces)
   let key = (s.id, g.gather, s.keysRevision, (if rel.isNil: nil else: cast[pointer](rel)),
     domain, state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
     ownKeyOf(state.editsAt(s.path), gatherTraces))
@@ -5703,7 +5725,7 @@ proc followRecordQc(state: var AppState) =
     lane: jlBackground, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
     state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
-    own, state.inbox.poster))
+    own, reversed, state.inbox.poster))
   if not rel.isNil: state.qcHeld.add (q.job, rel)
 
 proc takeRecordQc(state: var AppState; m: sink Msg) =

@@ -1278,8 +1278,13 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         drawGainControls(p, tp.gainBox, t, marks, res.commands, res.notes)
     of sgFilters:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
+        var named = st.ownLine(p)
+        let rev = st.reverseLine(p)
+        if rev.len > 0:
+          if named.len > 0: named.add "\n"
+          named.add rev
         drawFilterControls(p, hasAux(st, p), st.filterReach(p), t, marks, res.commands,
-          st.ownLine(p))
+          named)
     of sgSort:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         tp.sortShown = sortLabel(p.layers[0].order, st.settings.sortPresets)

@@ -410,6 +410,20 @@ func ownShownWords*(firstTrace: int; own: openArray[OwnFilter]): string =
   elif n == 1: "1 trace has its own filter"
   else: $n & " traces have their own filter"
 
+func reverseShownWords*(firstTrace: int; on: openArray[bool]): string =
+  ## What a window says of the reversed traces it shows, in the place it
+  ## names an own filter. One trace: "Trace 12: reversed" (`firstTrace` its
+  ## index in the file, from 0). One of several: "1 trace is reversed".
+  ## Several: "N traces are reversed". "" when none is reversed.
+  var n = 0
+  for b in on:
+    if b: inc n
+  if n == 0: ""
+  elif n == 1 and on.len == 1:
+    "Trace " & $(firstTrace + 1) & ": reversed"
+  elif n == 1: "1 trace is reversed"
+  else: $n & " traces are reversed"
+
 func insteadWords*(nInstead, nShown: int): string =
   ## What a window says when a trace's own filter runs instead of the plot's,
   ## so the plot's filters do not apply to it. "" for none.
