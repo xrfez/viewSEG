@@ -263,6 +263,14 @@ proc drawProjects(input: MenuInput; res: var MenuResult) =
   tip("Go back to working without a project: its files and survey are closed, your own " &
     "windows, presets and filters come back")
 
+proc drawProjectItems*(input: MenuInput; marks: var Marks): MenuResult =
+  ## The Project menu's items, for that menu and for the toolbar's project
+  ## button. The caller has a menu or a popup open.
+  let saved = marked
+  marked = addr marks
+  drawProjects(input, result)
+  marked = saved
+
 proc drawImports(res: var MenuResult) =
   ## File > Import: everything that is read in, each from here only.
   let open = igBeginMenu((IconOpenFile & "  Import").cstring, true)
@@ -501,8 +509,7 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       result.themeMenu = drawThemeMenu(input.themes, input.theme, input.follows,
         IconTheme & "  Theme", marks)
       (result.pickedTheme, result.theme) = (result.themeMenu.picked, result.themeMenu.theme)
-      if igMenuItem_Bool(label(maToggleTheme).cstring, nil, false, true):
-        result.actions.incl maToggleTheme
+      item(maToggleTheme, result)
       tip("Switch to the other mode's default theme")
       igEndMenu()
     let window = igBeginMenu("Window", true)

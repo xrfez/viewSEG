@@ -287,7 +287,11 @@ with the user's own windows, presets and filters. There is no Save: a project is
 as it changes.
 
 **The window says which project is open:** the title (`viewSEG - Land 2026`, with
-`(read-only)` when it is) and the **Project window** (Project > Project...): its name and
+`(read-only)` when it is), the right end of the toolbar (the project's icon and its name,
+the same `(read-only)` when it is, or "No project"; a long name is shortened in the
+middle; a click opens the Project menu's items; the tooltip is the folder and, in one
+line, how many survey files and data folders the project holds) and the **Project window**
+(Project > Project...): its name and
 place, why it is read-only, its data folders (found, missing with Locate..., each with
 List), Add a data folder..., the survey (its counts; on the map, loading, being copied;
 each file as copied in, changed, or its original not found; how long it took to make from

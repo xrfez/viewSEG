@@ -1201,7 +1201,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   ui.marks.setLen 0
   let shownAt = ui.core.shownFile(ui.core.findPanel(MainPanel))
   template e: untyped = ui.core.editsOf(ui.core.findPanel(MainPanel))
-  let menu = drawMainMenu(MenuInput(undo: e.undoText, redo: e.redoText,
+  let menuInput = MenuInput(undo: e.undoText, redo: e.redoText,
     edited: not e.isEmpty, editedName: (if shownAt >= 0: ui.core.sessions[shownAt].name
     else: ""), memoryShown: ui.memory.shown, themes: ui.themes, theme: ui.selected,
     follows: DefaultThemeNames[resolveTheme(ui.choice, ui.system)],
@@ -1216,7 +1216,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     trayProblem: ui.trayProblem, trayAvailable: trayShown(),
     plotTraces: ui.core.selectedIn(shownAt), recentProjects: ui.core.settings.recentProjects,
     projectName: (if ui.core.inProject: ui.core.project.doc.name else: ""),
-    projectShown: ui.project.shown), ui.marks)
+    projectShown: ui.project.shown)
+  let menu = drawMainMenu(menuInput, ui.marks)
   if menu.newPlot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)
   if menu.openProject.len > 0:
@@ -1257,8 +1258,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     s.recentFiles.setLen 0
     s.recentFolders.setLen 0
     ui.core.apply Command(kind: ckSettings, settings: s)
-  let bar = drawToolbar(ui.theme, ui.marks, ui.core.settings.recentProjects,
-    ui.core.selectedIn(shownAt))
+  let p = ui.core.project
+  let bar = drawToolbar(ui.theme, ui.marks, menuInput, ProjectBar(
+    open: ui.core.inProject, name: p.doc.name, path: p.dir, readOnly: p.readOnly,
+    dataFolders: p.doc.data.len, surveyFiles: p.doc.survey.len))
   result.incl bar.actions
   if bar.openProject.len > 0:
     ui.core.apply Command(kind: ckOpenProject, projectPath: bar.openProject)

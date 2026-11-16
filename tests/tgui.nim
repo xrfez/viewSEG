@@ -32,7 +32,7 @@ import viewSEG/ui/imgui/[app, shell, symbols]
 const
   frames = 5
   repoAssets = currentSourcePath().parentDir.parentDir / "assets"
-  appTools = ["tool.Open file", "tool.Open folder", "tool.Light / dark theme"]
+  appTools = ["tool.Open file", "tool.Open folder", "tool.project"]
   stockBlue = Rgba(r: 66, g: 150, b: 250, a: 255) # Dear ImGui's accent
 
 type Shot = object
@@ -55,7 +55,7 @@ proc render(opts: RunOptions; save = ""): Shot =
       shot = Shot(width: f.width, height: f.height, theme: f.theme, scale: f.scale,
         pixels: f.readFrame(), messages: f.messages)
       for n in @["toolbar", "statusbar", "seismic", "headers", "headers.tab summary",
-          "table.note"] & @appTools:
+          "table.note", "tool.Light / dark theme"] & @appTools:
         shot.marks.add (n, f.markOf(n))
       for sym in Symbol:
         shot.marks.add ("tool." & $sym, f.markOf("tool." & $sym))
@@ -118,6 +118,8 @@ proc checkLook(s: Shot; t: Theme) =
   doAssert glyph >= 10, t.name & ": the Open file icon left " & $glyph & " pixels"
   for name in appTools:
     doAssert s.mark(name).size.x > 0, t.name & ": no " & name & " button"
+  doAssert s.mark("tool.Light / dark theme").size.x == 0,
+    t.name & ": the light / dark button is still on the bar"
   for sym in Symbol:
     doAssert s.mark("tool." & $sym).size.x == 0, t.name & ": " & $sym & " on the toolbar"
   let blue = s.count(Rect(size: vec2(s.width.float32, s.height.float32)),

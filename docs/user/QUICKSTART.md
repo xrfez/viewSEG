@@ -36,7 +36,13 @@ folder (`viewSEG --paths` shows where it is).
 **Project**, between File and Edit, holds this job's folder: **New project...** makes
 one, **Open project...** and **Recent projects** open one, **Project...** opens its
 window (ticked while it is open) and **Close project** goes back to working without one.
-The toolbar's Open project button is the same as **Project > Open project...**.
+The toolbar's Open project button is the same as **Project > Open project...**. The right
+end of the toolbar names the project that is open (its icon, then its name; **(read-only)**
+when it is), or dim **No project** when none is. A long name is shortened in the middle,
+and at a narrow window the name gives way and the icon stays. Click it for the same items
+as the Project menu. Rest the pointer on it for the project's folder and, in one line,
+how many survey files and data folders it holds. The theme is changed from **View >
+Theme** and **View > Light / dark**, not from the toolbar.
 
 Files and folders can also be dragged from a file manager and dropped on the window.
 

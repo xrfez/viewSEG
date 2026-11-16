@@ -6,14 +6,14 @@
 ## order), and tool buttons (a Nerd Font icon or
 ## a seismic `Symbol`) with tooltips that name their shortcut. The toolbar holds
 ## application-level actions only (open a file, a folder or a project, the
-## jobs, the theme); display and gather controls belong to the
-## plot windows, which use `symbolButton`. Also the sample header table that
-## shows the look until the real header table exists.
+## jobs, and at the right end the project that is open); display and gather
+## controls belong to the plot windows, which use `symbolButton`. Also the
+## sample header table that shows the look until the real header table exists.
 ##
 ## Each piece records where it drew its named parts in `Marks`, so tests can
 ## look at the right pixels.
 
-import std/[math, strutils]
+import std/[math, os, strutils, unicode]
 import imguin/cimgui
 import ../../core/[geometry, jobs, pick, readout]
 import ../../view/[jobstatus, theme]
@@ -49,9 +49,10 @@ type
 
 const readoutMenu = "##readoutfields"
 
-proc tooltip(text, shortcut: string; t: Theme) =
+proc tooltip(text, shortcut: string; t: Theme; marks: ptr Marks = nil; markName = "") =
   ## The last item's tooltip: `text` (one line a `\n`), then the shortcut in
-  ## dim text. Shown on a disabled item too.
+  ## dim text. Shown on a disabled item too. `markName`, when given, is marked
+  ## while the tooltip is open.
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
       ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
     var rest = text
@@ -65,6 +66,7 @@ proc tooltip(text, shortcut: string; t: Theme) =
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
       igTextUnformatted(shortcut.cstring, nil)
       igPopStyleColor(1)
+    if not marks.isNil and markName.len > 0: marks[].mark(markName)
     igEndTooltip()
 
 proc toolButton(id: string; size: float32; selected: bool; t: Theme;
@@ -190,6 +192,15 @@ type
     plot*: bool          ## a New plot view of that selection
     plotView*: AnalysisView
 
+  ProjectBar* = object
+    ## The project the toolbar's right end shows. None while `open` is false.
+    open*: bool
+    name*: string   ## the project's name
+    path*: string   ## its folder
+    readOnly*: bool ## the window title's "(read-only)"
+    dataFolders*: int
+    surveyFiles*: int
+
 const barFlags = ImGui_WindowFlags_NoScrollbar.cint or ImGui_WindowFlags_NoSavedSettings.cint or
   ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoDecoration.cint
 
@@ -211,12 +222,134 @@ proc beginBar(name: string; dir: ImGuiDir; height: float32; t: Theme): bool =
     ImDrawList_AddLine(igGetWindowDrawList(), ImVec2_c(x: wp.x, y: y),
       ImVec2_c(x: wp.x + ws.x, y: y), u32(t.roles[rlBorder]), 1)
 
-proc drawToolbar*(t: Theme; marks: var Marks; recentProjects: openArray[string];
-    plotTraces: int): ToolbarResult =
+const
+  Ellipsis = "…"
+  NoProject = "No project"
+  OpenOrCreate = "Open or create a project"
+  ProjectPopup = "##projectmenu"
+
+proc shortenMiddle(text: string; maxWidth: float32): string =
+  ## `text` fitting `maxWidth`, cut in the middle with an ellipsis. "" when
+  ## even the ellipsis does not fit.
+  if text.len == 0 or maxWidth <= 0: return ""
+  if igCalcTextSize(text.cstring, nil, false, -1).x <= maxWidth: return text
+  if igCalcTextSize(Ellipsis.cstring, nil, false, -1).x > maxWidth: return ""
+  let rs = text.toRunes
+  var lo = 0
+  var hi = rs.len
+  while lo <= hi:
+    let keep = (lo + hi) div 2
+    let left = keep div 2
+    let right = keep - left
+    var candidate = $rs[0 ..< left]
+    candidate.add Ellipsis
+    if right > 0: candidate.add $rs[rs.len - right .. ^1]
+    if igCalcTextSize(candidate.cstring, nil, false, -1).x <= maxWidth:
+      result = candidate
+      lo = keep + 1
+    else:
+      hi = keep - 1
+
+proc drawGlyph(icon: string; box: ImVec2_c; size: float32; col: Rgba) =
+  let (font, px) = (igGetFont(), round(size * 0.68))
+  let ts = ImFont_CalcTextSizeA(font, px, high(float32), 0, icon.cstring, nil, nil)
+  ImDrawList_AddText_FontPtr(igGetWindowDrawList(), font, px,
+    ImVec2_c(x: round(box.x + (size - ts.x) / 2), y: round(box.y + (size - ts.y) / 2)),
+    u32(col), icon.cstring, nil, 0, nil)
+
+func folderName(path: string): string =
+  var s = path
+  while s.len > 0 and s[^1] in {DirSep, AltSep}: s.setLen(s.len - 1)
+  let at = max(s.rfind(DirSep), s.rfind(AltSep))
+  if at >= 0: s[at + 1 .. ^1] else: s
+
+func shownName(p: ProjectBar): string =
+  ## The name on the button: the project's, or its folder's, and the window
+  ## title's read-only mark. There is no unsaved mark: a project is written
+  ## as it changes, and neither the title nor the menus mark that.
+  if not p.open: return ""
+  result = if p.name.len > 0: p.name else: folderName(p.path)
+  if p.readOnly: result.add " (read-only)"
+
+func holdings(p: ProjectBar): string =
+  ## What the project holds, in one line, from counts the state already has.
+  let files = $p.surveyFiles & (if p.surveyFiles == 1: " survey file" else: " survey files")
+  let folders = $p.dataFolders & (if p.dataFolders == 1: " data folder" else: " data folders")
+  files & ", " & folders
+
+func projectTip(p: ProjectBar): string =
+  if not p.open: OpenOrCreate else: p.path & "\n" & holdings(p)
+
+proc drawProjectButton(p: ProjectBar; size: float32; t: Theme; marks: var Marks;
+    input: MenuInput; res: var ToolbarResult) =
+  ## The right end of the toolbar: the project, or dim "No project". A click
+  ## opens the Project menu's items. A long name is shortened in the middle;
+  ## at the narrowest the icon stays and the name goes. Never wider than the
+  ## room left after the other buttons, so it neither moves nor covers them.
+  igSameLine(0, GroupGap)
+  let room = igGetContentRegionAvail().x
+  if room < 8: return
+  let style = igGetStyle()
+  let (gap, pad) = (style.ItemSpacing.x, style.FramePadding.x)
+  var label = ""
+  var iconOnly = false
+  if not p.open:
+    let full = igCalcTextSize(NoProject.cstring, nil, false, -1).x + 2 * pad
+    if full <= room: label = NoProject
+    else:
+      label = shortenMiddle(NoProject, room - 2 * pad)
+      if label.len == 0: return
+  else:
+    let name = shownName(p)
+    let textRoom = room - size - gap - pad
+    let least = igCalcTextSize(Ellipsis.cstring, nil, false, -1).x + 8
+    if textRoom < least: iconOnly = true
+    else:
+      label = shortenMiddle(name, textRoom)
+      if label.len == 0 or label == Ellipsis:
+        iconOnly = true
+        label = ""
+  let textW = if label.len == 0: 0'f32
+              else: igCalcTextSize(label.cstring, nil, false, -1).x
+  var width = if not p.open: textW + 2 * pad
+              elif iconOnly: size
+              else: size + gap + textW + pad
+  if width > room: width = room
+  if room > width: igSetCursorPosX(igGetCursorPosX() + room - width)
+  let popup = igIsPopupOpen_Str(ProjectPopup, 0)
+  let (clicked, pos) = toolButton("##projectbar", size, popup, t, width)
+  marks.mark("tool.project")
+  if label.len > 0: marks.mark("tool.project.label:" & label)
+  let col = if p.open: t.roles[rlText] else: t.roles[rlTextDim]
+  if p.open: drawGlyph(IconProject, pos, size, col)
+  if label.len > 0:
+    let ts = igCalcTextSize(label.cstring, nil, false, -1)
+    let x = if p.open: pos.x + size + gap else: pos.x + (width - ts.x) / 2
+    let y = round(pos.y + (size - ts.y) / 2)
+    ImDrawList_AddText_FontPtr(igGetWindowDrawList(), igGetFont(), igGetFontSize(),
+      ImVec2_c(x: round(x), y: y), u32(col), label.cstring, nil, 0, nil)
+    marks.markRect("tool.project.name", ImVec2_c(x: round(x), y: y),
+      ImVec2_c(x: round(x) + ts.x, y: y + ts.y))
+  let tip = projectTip(p)
+  let corner = igGetItemRectMax()
+  tooltip(tip, "", t, addr marks, "tool.project.tip:" & tip)
+  if clicked: igOpenPopup_Str(ProjectPopup, 0)
+  igSetNextWindowPos(ImVec2_c(x: corner.x, y: corner.y), ImGui_Cond_Appearing.cint,
+    ImVec2_c(x: 1, y: 0))
+  if igBeginPopup(ProjectPopup, 0):
+    let asked = drawProjectItems(input, marks)
+    res.actions.incl asked.actions
+    if asked.openProject.len > 0: res.openProject = asked.openProject
+    igEndPopup()
+
+proc drawToolbar*(t: Theme; marks: var Marks; input: MenuInput;
+    project: ProjectBar): ToolbarResult =
   ## The icon toolbar under the menu bar: opening files, folders and
   ## projects, a button per plot of the Seismic window's selection, the
-  ## jobs, and the theme toggle. A right click on Open project opens the
-  ## recent projects. Plot buttons are greyed while `plotTraces` is 0.
+  ## jobs, and at the right end the project that is open (or "No project").
+  ## A right click on Open project opens the recent projects. A click on the
+  ## project opens the Project menu's items. Plot buttons are greyed while
+  ## `input.plotTraces` is 0.
   let style = igGetStyle()
   let size = round(igGetFontSize() * IconScale + 2 * style.FramePadding.y + 2)
   let height = size + 2 * round(style.FramePadding.y)
@@ -236,9 +369,9 @@ proc drawToolbar*(t: Theme; marks: var Marks; recentProjects: openArray[string];
           "its project.nif)"):
       result.actions.incl maOpenProject
     if igBeginPopupContextItem("##recentprojects", ImGui_PopupFlags_MouseButtonRight.cint):
-      drawRecentProjects(recentProjects, result.openProject, addr marks, "tool.project.")
+      drawRecentProjects(input.recentProjects, result.openProject, addr marks, "tool.project.")
       igEndPopup()
-    let plotsOn = plotTraces > 0
+    let plotsOn = input.plotTraces > 0
     igSameLine(0, GroupGap)
     for i, e in PlotEntries:
       if i > 0: igSameLine(0, ButtonGap)
@@ -250,14 +383,7 @@ proc drawToolbar*(t: Theme; marks: var Marks; recentProjects: openArray[string];
     igSameLine(0, GroupGap)
     if iconButton(IconTasks, "Jobs", "", size, t, marks):
       result.actions.incl maShowJobs
-    igSameLine(0, ButtonGap)
-    # the theme toggle sits at the right end
-    let avail = igGetContentRegionAvail().x
-    if avail > size:
-      igSetCursorPosX(igGetCursorPosX() + avail - size)
-    if iconButton(IconTheme, "Light / dark theme", "", size, t, marks,
-        tipText = menuLabel(maToggleTheme)):
-      result.actions.incl maToggleTheme
+    drawProjectButton(project, size, t, marks, input, result)
   igEnd()
 
 func valueChars(f: ReadoutField): int =
