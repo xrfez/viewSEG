@@ -15,9 +15,12 @@
 ## in `core` only) let `p.fileExists`, `os.dirExists(p)` and `fileExists p`
 ## through (`theScanSeesEveryForm`), and did not see the agent's `headers`
 ## tool read a trace's headers on the UI thread (`s.file.traceHeaders` in
-## `remote/tools`, before it read them on a job).
+## `remote/tools`, before it read them on a job). The scan is written by
+## hand, not with `std/re` (which needs libpcre at run time); with its look
+## back for a qualifier left out, `theScanSeesEveryForm` says "not seen: if
+## p.fileExists".
 
-import std/[monotimes, os, re, sequtils, strutils, times]
+import std/[monotimes, os, sequtils, strutils, times]
 import viewSEG/core/[filejobs, filekinds, threads]
 import utils/[faultyfs, waiting]
 
@@ -115,25 +118,49 @@ proc callsIn(text: string; names: openArray[string]): seq[tuple[line: int; name:
   ## Each use of a call of `names` in Nim source `text`, however it is
   ## written: a call, a command, a method call, module-qualified; never one
   ## through the seam (`fs.`), nor a declaration of a proc of that name.
-  let word = re(r"(\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*)?\b(" & names.join("|") & r")\b(\*?)")
+  ## A use is the whole word, after an optional `qualifier .` (a word, then
+  ## a dot, spaces around it) and before an optional export `*`; one use is
+  ## never the qualifier of the next.
   for i, raw in toSeq(text.splitLines).pairs:
     let line = code(raw)
     if line.strip.len == 0: continue
-    var at = 0
-    var m: array[3, string]
-    while true:
-      let (a, b) = line.findBounds(word, m, at)
-      if a < 0: break
+    var at = 0 # where the next use may begin
+    var w = 0
+    while w < line.len:
+      if line[w] notin IdentStartChars or (w > 0 and line[w - 1] in IdentChars):
+        inc w
+        continue
+      var e = w
+      while e < line.len and line[e] in IdentChars: inc e
+      let name = line[w ..< e]
+      if name notin names:
+        w = e
+        continue
+      var a = w # where the use begins: its qualifier, if any
+      var qualifier = ""
+      var q = w - 1
+      while q >= at and line[q] in Whitespace: dec q
+      if q >= at and line[q] == '.':
+        var s = q - 1
+        while s >= at and line[s] in Whitespace: dec s
+        let last = s
+        while s >= at and line[s] in IdentChars: dec s
+        inc s
+        if s <= last and line[s] in IdentStartChars and (s == 0 or line[s - 1] notin IdentChars):
+          a = s
+          qualifier = line[s .. last] & "."
+      let exported = e < line.len and line[e] == '*'
+      let b = if exported: e else: e - 1 # where the use ends
       at = b + 1
-      let qualifier = m[0].replace(" ", "")
+      w = at
       if qualifier == "fs.": continue # through the seam
-      if m[2] == "*" or line[0 ..< a].strip.endsWith("proc") or
+      if exported or line[0 ..< a].strip.endsWith("proc") or
           line[0 ..< a].strip.endsWith("func") or line[0 ..< a].strip.endsWith("iterator"):
         continue # its declaration
       let after = line[b + 1 .. ^1]
       let called = qualifier.len > 0 or after.startsWith("(") or
         (after.startsWith(" ") and after.strip.len > 0 and after.strip[0] notin {'=', ':', ',', ')', ']'})
-      if called: result.add (i + 1, m[1])
+      if called: result.add (i + 1, name)
 
 block theScanSeesEveryForm:
   for form in ["if fileExists(p): discard", "if p.fileExists: discard", "discard os.dirExists(p)",
