@@ -808,8 +808,8 @@ The map uses the same gestures wherever the meaning carries over, always at equa
 | Shift + left click | **Select a range:** the stations of the line from the point clicked last to this one (of the same file and role), and their traces, in place of the selection; the point clicked last stays where the next range starts |
 | Left drag | **Pan** |
 | Shift + left drag | **Box select:** every point of a shown layer in the box, and their traces (replaces the selection; with Ctrl too, adds to it) |
-| Ruler, then left drag | **Measure**, as Ctrl + left drag does. The button stays on until clicked again; a click without a drag still selects. Panning stays on the middle button and the arrow keys |
-| Ctrl + left drag | **Measure:** a line from press to release, its length and grid bearing beside it, until Esc. Works with Ruler off |
+| Ruler, then left drag | **Measure**, as Ctrl + left drag does. The button stays on until clicked again; clicking it while it is on takes the line away. A click without a drag still selects. Panning stays on the middle button and the arrow keys |
+| Ctrl + left drag | **Measure:** a line from press to release, its length and grid bearing beside it, and the Ruler turns on (the button lights), until Esc or until the button is clicked off |
 | Right drag | **Box zoom:** as close as shows the whole box, at equal aspect |
 | Right click | **The menu of the point under the cursor:** show its record (a source with traces), select it and its traces, add it to the selection or take it out, hide its layer; over no point, "No point here". Layers and fit are in the strip |
 | Middle drag | Pan |
@@ -1015,7 +1015,9 @@ under the pointer then, as desktop programs do.
 - **A scale bar** (1, 2 or 5 times a power of ten, at most 150 pixels long) in the plot's
   bottom-left corner and a **north arrow** (grid north) in its top-right one.
 - **The strip:** Layers, zoom out, zoom in, fit, back, Ruler (a left drag then measures;
-  the button stays on until clicked again), and the gear: where the point under
+  the button lights, in the same colour as the other on toggles, and stays on until
+  clicked again; clicking it while it is on takes the line away. Ctrl + drag measures
+  and turns it on too), and the gear: where the point under
   the pointer is described, beside the pointer (the default) or in a strip along the map's
   bottom (kept when nothing is pointed at, so the map does not change size).
 - **Levels of detail.** When the points outnumber the pixels, the map draws a point per

@@ -489,8 +489,8 @@ The gestures are the plot's:
 | Click a receiver (Ctrl+click: any dot) | Select it and its traces (Ctrl: add it, or take it out) |
 | Shift+click a dot | Select the stations of its line from the dot you clicked last to this one |
 | Shift+drag | Select every dot in the box, and their traces (Ctrl+Shift+drag adds) |
-| Ruler, then left drag | Measure, as Ctrl+drag does. The button stays on until clicked again; a click without a drag still selects |
-| Ctrl+drag | Measure, also with Ruler off: the distance and the grid bearing, until Esc |
+| Ruler, then left drag | Measure, as Ctrl+drag does. The button stays on until clicked again; clicking it while it is on takes the line away. A click without a drag still selects |
+| Ctrl+drag | Measure, and turns Ruler on (the button lights): the distance and the grid bearing, until Esc or until the button is clicked off |
 | Right-click a dot | Show its record (a source), select it, add it to the selection or take it out, hide its layer |
 | Esc | The drag going on, else the ruler, else the selection |
 
@@ -503,7 +503,10 @@ nothing says,
 axes show no values. **Ruler** in the strip (after zoom, before the gear) turns measuring
 on: drag on the map for the distance and the grid bearing, in the unit the gear's Lengths
 shows (m, ft, ftUS; the survey's own number, with no unit, when nothing says what it is).
-The button stays lit until you click it again. With it off, Ctrl+drag still measures.
+The button lights in the same colour as the other on toggles, and stays lit until you
+click it again. Clicking it while it is on takes the line and its reading away, and the
+next line starts fresh. Ctrl+drag measures too, and turns Ruler on, so the button lights
+whichever way the line was started. Esc takes the line away and leaves the button on.
 The gear's **Lengths** shows the scale bar's and the ruler's lengths
 in another unit instead, converted exactly (1 ft = 0.3048 m, 1 ftUS = 1200/3937 m).
 

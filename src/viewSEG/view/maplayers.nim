@@ -321,6 +321,36 @@ func lengthUnitName*(u: SurveyUnit): string =
   of suArcSeconds: "arc seconds"
   of suDms: "degrees, minutes and seconds"
 
+type
+  MapRuler* = object
+    ## The map's one ruler, on or off. On, the button is lit and a plain
+    ## drag measures. A line, when one is drawn, runs from `a` to `b`
+    ## (`shown`). Off, there is no line.
+    on*: bool
+    shown*: bool
+    a*, b*: MapPoint
+
+proc placeRuler*(r: var MapRuler; a, b: MapPoint) =
+  ## A measure draws the line and turns the ruler on, whichever way it
+  ## was started (Ctrl+drag, or a plain drag while it is already on).
+  r.on = true
+  r.shown = true
+  r.a = a
+  r.b = b
+
+proc clickRuler*(r: var MapRuler) =
+  ## The button. Off turns measure mode on, with no line. On turns it off
+  ## and clears the line, so the next one starts fresh.
+  if r.on: r = MapRuler()
+  else: r.on = true
+
+proc endRulerLine*(r: var MapRuler) =
+  ## Escape ends the line. The mode stays, so the button stays lit and the
+  ## next plain drag still measures.
+  r.shown = false
+  r.a = MapPoint()
+  r.b = MapPoint()
+
 func rulerReading*(distance: float64; lengths: tuple[unit: SurveyUnit; factor: float64]): string =
   ## The ruler's length: `distance` (survey units) in the unit lengths are
   ## shown in, with that unit's short name (`m`, `ft`, `ftUS`). An unknown
