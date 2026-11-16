@@ -3,7 +3,7 @@
     "parseSEG": {
       "dir": "$deps/parseSEG",
       "url": "https://github.com/xrfez/parseSEG",
-      "commit": "f2b1856efa52cd32629799a821391e984ebe45f9",
+      "commit": "bef173ee65aa61c3f340eb82e79bb5a24866895f",
       "version": ""
     },
     "processSEG": {
@@ -128,7 +128,7 @@
       "# Dependencies",
       "",
       "requires \"nim >= 2.4.0\"",
-      "requires \"https://github.com/xrfez/parseSEG >= 0.14.0\"",
+      "requires \"https://github.com/xrfez/parseSEG >= 0.15.0\"",
       "requires \"https://github.com/xrfez/processSEG >= 0.6.0\"",
       "requires \"https://github.com/dinau/imguin >= 1.92.9.0\"",
       "requires \"https://github.com/dinau/sdl3_nim >= 3.4.18.0\"",
