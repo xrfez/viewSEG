@@ -1,6 +1,11 @@
 ## The layer rules of docs/architecture.md: only `ui/` may know the GUI toolkit,
 ## and the lower layers never import the ones above them. Checked from the import
 ## statements of every module under src/viewSEG/.
+##
+## And no file under src/, tests/ or tools/ imports `std/re`, `std/nre` or
+## `std/pcre`: they load libpcre (PCRE1) at run time, which newer Linux
+## releases no longer ship. Seen to fail: with tests/tfilesystem.nim importing
+## `re` again, `noRegexEngine` names it.
 
 import std/[os, sequtils, strutils]
 
@@ -41,6 +46,16 @@ proc imports(text: string): seq[string] =
       if name.len > 0: result.add name
     inList = line.endsWith(",") or ('[' in line and ']' notin line)
 
+const
+  rootDir = currentSourcePath().parentDir.parentDir
+  pcreModules = ["re", "nre", "pcre"] ## the std modules that load libpcre
+
+proc pcreImports(file, text: string): seq[string] =
+  ## Each import in `text` of a module that loads libpcre.
+  for imp in imports(text):
+    if imp.replace('\\', '/').split('/')[^1] in pcreModules:
+      result.add file & " imports " & imp
+
 proc violations(layer, file, text: string, banned: openArray[string]): seq[string] =
   for imp in imports(text):
     let parts = imp.replace('\\', '/').split('/')
@@ -75,3 +90,18 @@ block checkerCatchesViolations:
     ["ui", "gpu", "view", "platform"]).len == 2 # the layer and the toolkit
   doAssert violations("core", "c.nim", "from ../remote/tools import busy\n",
     ["remote"]).len == 1
+
+block noRegexEngine:
+  var problems: seq[string]
+  for dir in ["src", "tests", "tools"]:
+    for file in walkDirRec(rootDir / dir):
+      if file.endsWith(".nim") or file.endsWith(".nims"):
+        problems.add pcreImports(file.relativePath(rootDir), readFile(file))
+  doAssert problems.len == 0, "libpcre at run time (write the match by hand):\n  " &
+    problems.join("\n  ")
+
+block regexCheckerCatchesImports:
+  doAssert pcreImports("a.nim", "import std/[os, re]\nfrom std/nre import find\n" &
+    "import\n  strutils,\n  pure/re\nimport pcre\n").len == 4
+  doAssert pcreImports("b.nim", "import std/[os, strutils]\nimport nre2, parseutils\n" &
+    "import ../core/regions\n").len == 0
