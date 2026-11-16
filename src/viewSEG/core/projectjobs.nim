@@ -256,17 +256,20 @@ proc stopAtCancel(ctx: JobContext; done, total: int64): bool =
   if not ctx.progress(done, total): raise newException(JobCancelledError, "cancelled")
   true
 
-proc copyIn(ctx: JobContext; dir, source, name: string): string =
-  ## Copies `source` into the project's survey copies as `name`, in pieces,
-  ## each one a place for a cancel (the copy's temporary file is removed
-  ## then); its path relative to the project folder. The temporary file is
-  ## named for the job: no other job's is the same.
+proc copyIn(ctx: JobContext; dir, source, name: string; tmps: var seq[(string, string)]):
+    string =
+  ## Copies `source` for the project's survey copies as `name`, in pieces,
+  ## each one a place for a cancel (the temporary file is removed then); its
+  ## path relative to the project folder. The copy is written beside its
+  ## place, to a temporary file named for the job (no other job's is the
+  ## same), noted in `tmps` (temporary, final): `commitCopies` puts it in
+  ## place once the survey that reads it is written.
   result = SurveyCopies & "/" & name
   let dest = dir.partOf(result)
   let tmp = dest & "." & $int(ctx.id) & ".tmp"
   fs.createDir(dest.parentDir)
+  tmps.add (tmp, dest)
   var (src, dst) = (File(nil), File(nil))
-  var ok = false
   if not fs.open(src, source, fmRead): raise newException(IOError, "cannot read " & source)
   try:
     if not fs.open(dst, tmp, fmWrite): raise newException(IOError, "cannot write " & tmp)
@@ -282,61 +285,119 @@ proc copyIn(ctx: JobContext; dir, source, name: string): string =
         done += n
         discard stopAtCancel(ctx, done, total)
       flushFile(dst)
-      ok = true
     finally:
       close(dst)
   finally:
     close(src)
-    if not ok: discard fs.tryRemoveFile(tmp)
-  fs.moveFile(tmp, dest)
+
+proc commitCopies(tmps: seq[(string, string)]) =
+  ## Puts the copies written to temporary files in place.
+  for (tmp, dest) in tmps: fs.moveFile(tmp, dest)
+
+proc dropCopies(tmps: seq[(string, string)]) =
+  ## Removes the temporary files of copies that were not put in place.
+  for (tmp, _) in tmps: discard fs.tryRemoveFile(tmp)
+
+proc sweepTemporaries(dir: string) =
+  ## Removes the temporary copies an earlier run left (it was cut short): no
+  ## job of this program has any, the survey folder being exclusive.
+  let copies = dir.partOf(SurveyCopies)
+  try:
+    if fs.dirExists(copies):
+      for kind, path in fs.walkDir(copies):
+        if kind == pcFile and path.endsWith(".tmp"): discard fs.tryRemoveFile(path)
+  except OSError:
+    discard
+
+proc resolveResume(dir: string; f: ImportFile): string =
+  ## The original of a file of an import that was cut short, if it is the
+  ## file the import began with: at the path recorded (relative to the
+  ## project, or absolute; never searched for beside the project or by its
+  ## name), of the size and the first and last 64 KiB recorded. "" when it
+  ## is not.
+  if not f.known: return ""
+  var places: seq[string] = @[]
+  if f.original.path.len > 0:
+    places.add normalizedPath(dir / f.original.path.replace('/', DirSep))
+  if f.original.absolute.len > 0 and f.original.absolute notin places:
+    places.add f.original.absolute
+  for path in places:
+    try:
+      if fs.fileExists(path):
+        var t: Time
+        let id = quickIdentity(path, t)
+        if id.size == f.size and id.quick == f.quick: return path
+    except IOError, OSError:
+      discard
 
 proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy];
-    to: Poster; places: seq[ProjectPath] = @[]): JobWork =
+    to: Poster; resume: seq[ImportFile] = @[]): JobWork =
   ## The work of a job that copies survey files `files` into the project in
   ## `dir` (a file already a copy of it is kept as it is), writes
-  ## `survey.bin` from the copies and posts both (`pnKept`). Copies of
-  ## `existing` no longer named are removed. With `places` (one per file),
-  ## each file is looked for at them (an import that a close or a quit
-  ## cut short, taken up again at the next open).
+  ## `survey.bin` from the copies and posts both (`pnKept`); the copies come
+  ## in place only after `survey.bin` is written, and a job that fails or is
+  ## cancelled leaves none. Copies of `existing` no longer named are removed.
+  ## It first posts the identity of each original (`pnImporting`), which the
+  ## project document keeps. With `resume` (one per file: an import that a
+  ## close or a quit cut short, taken up again at the next open), each
+  ## original is taken only if it is the file the import began with.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var news = ProjectNews(dir: dir, kind: pnKept)
+    var tmps: seq[(string, string)] = @[]
     {.cast(gcsafe).}:
       try:
+        sweepTemporaries(dir)
         var taken: seq[string] = @[]
         let copies = dir.partOf(SurveyCopies)
-        for i, jf0 in files:
-          var jf = jf0
-          if i < places.len:
-            jf.path = ""
-            for c in places[i].candidates(dir):
-              if c.len > 0 and fs.fileExists(c):
-                jf.path = c
-                break
-            if jf.path.len == 0:
-              raise newException(IOError, places[i].displayName & ", a file of the survey " &
-                "being copied in, is not found")
-          ctx.setPhase "copying " & jf.path.extractFilename & " into the project"
-          if jf.path.isInside(copies):
+        var paths: seq[string] = @[]
+        for i, jf in files:
+          if i < resume.len:
+            let path = resolveResume(dir, resume[i])
+            if path.len == 0:
+              raise newException(IOError, "the import of the survey was interrupted and its " &
+                "files are not as they were (" & resume[i].original.displayName & "): import " &
+                "the survey again")
+            paths.add path
+          else: paths.add jf.path
+        if resume.len == 0: # the identities the document keeps, until the copy is whole
+          var identities = ProjectNews(dir: dir, kind: pnImporting)
+          for i, jf in files:
+            var f = ImportFile(kind: jf.kind, role: jf.role, original: placeOf(dir, paths[i]))
+            if not paths[i].isInside(copies):
+              var t: Time
+              let id = quickIdentity(paths[i], t)
+              (f.known, f.size, f.modified, f.quick) = (true, id.size, t, id.quick)
+            identities.identities.add f
+          to.post(ctx.id, identities)
+        var sources: seq[string] = @[]
+        for i, jf in files:
+          let path = paths[i]
+          ctx.setPhase "copying " & path.extractFilename & " into the project"
+          if path.isInside(copies):
             var kept = false
             for c in existing:
-              if dir.partOf(c.copy) == jf.path:
+              if dir.partOf(c.copy) == path:
                 news.copies.add c
+                sources.add ""
                 taken.add c.copy.extractFilename
                 kept = true
-            if not kept: raise newException(IOError, jf.path & " is not a survey file of it")
+            if not kept: raise newException(IOError, path & " is not a survey file of it")
           else:
             var t: Time
-            let id = quickIdentity(jf.path, t)
-            let name = copyName(jf.path.extractFilename, taken)
+            let id = quickIdentity(path, t)
+            let name = copyName(path.extractFilename, taken)
             taken.add name
-            let copy = ctx.copyIn(dir, jf.path, name)
+            let copy = ctx.copyIn(dir, path, name, tmps)
+            sources.add tmps[^1][0]
             news.copies.add SurveyCopy(kind: jf.kind, role: jf.role, copy: copy,
-              original: placeOf(dir, jf.path), size: id.size, modified: t, quick: id.quick,
-              full: fullHash(dir.partOf(copy), proc (done, total: int64): bool =
+              original: placeOf(dir, path), size: id.size, modified: t, quick: id.quick,
+              full: fullHash(tmps[^1][0], proc (done, total: int64): bool =
               ctx.stopAtCancel(done, total)))
           if not ctx.progress(i + 1, files.len + 1):
             raise newException(JobCancelledError, "cancelled")
-        news.store = writeStore(dir, news.copies, ctx)
+        news.store = writeStore(dir, news.copies, ctx, sources)
+        commitCopies(tmps)
+        tmps.setLen 0
         for c in existing:
           var still = false
           for x in news.copies:
@@ -347,20 +408,28 @@ proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy
             let old = dir.partOf(c.copy)
             if old.parentDir == copies: discard fs.tryRemoveFile(old)
       except JobCancelledError:
+        dropCopies(tmps)
         raise
       except CatchableError as e:
+        dropCopies(tmps)
         news.keptFailure = e.msg.splitLines()[0]
     to.post(ctx.id, news)
 
 proc updateSurveyWork*(dir: string; copies: seq[SurveyCopy]; originals: seq[OriginalLook];
     to: Poster): JobWork =
   ## The work of a job that copies the originals that changed (`osChanged`
-  ## in `originals`) over their copies in the project in `dir`, writes
-  ## `survey.bin` again and posts it (`pnKept`, `updated`).
+  ## in `originals`) for their copies in the project in `dir`, writes
+  ## `survey.bin` again from them and only then puts them over the copies,
+  ## and posts it (`pnKept`, `updated`). An update refused (an original written
+  ## while it is copied) or cancelled leaves the copies, the document and
+  ## `survey.bin` as they were.
   result = proc (ctx: JobContext) {.gcsafe.} =
     var news = ProjectNews(dir: dir, kind: pnKept, updated: true, copies: copies)
+    var tmps: seq[(string, string)] = @[]
     {.cast(gcsafe).}:
       try:
+        sweepTemporaries(dir)
+        var sources = newSeq[string](copies.len)
         for i, c in copies:
           if i < originals.len and originals[i].state == osChanged:
             let src = originals[i].path
@@ -370,11 +439,14 @@ proc updateSurveyWork*(dir: string; copies: seq[SurveyCopy]; originals: seq[Orig
             var t: Time
             var id: FileIdentity
             var same = false
+            let mark = tmps.len
             for attempt in 1 .. 2:
               var before: Time
               let first = quickIdentity(src, before)
               ctx.setPhase "copying " & src.extractFilename & " into the project again"
-              discard ctx.copyIn(dir, src, c.copy.extractFilename)
+              dropCopies(tmps[mark ..< tmps.len])
+              tmps.setLen mark
+              discard ctx.copyIn(dir, src, c.copy.extractFilename, tmps)
               id = quickIdentity(src, t)
               same = id.size == first.size and id.quick == first.quick and t == before
               if same: break
@@ -384,13 +456,18 @@ proc updateSurveyWork*(dir: string; copies: seq[SurveyCopy]; originals: seq[Orig
             news.copies[i].size = id.size
             news.copies[i].modified = t
             news.copies[i].quick = id.quick
-            news.copies[i].full = fullHash(dir.partOf(c.copy), proc (done, total: int64): bool =
+            news.copies[i].full = fullHash(tmps[^1][0], proc (done, total: int64): bool =
               ctx.stopAtCancel(done, total))
             news.copies[i].original = placeOf(dir, src)
-        news.store = writeStore(dir, news.copies, ctx)
+            sources[i] = tmps[^1][0]
+        news.store = writeStore(dir, news.copies, ctx, sources)
+        commitCopies(tmps)
+        tmps.setLen 0
       except JobCancelledError:
+        dropCopies(tmps)
         raise
       except CatchableError as e:
+        dropCopies(tmps)
         news.keptFailure = e.msg.splitLines()[0]
     to.post(ctx.id, news)
 

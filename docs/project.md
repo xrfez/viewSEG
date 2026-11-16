@@ -136,7 +136,14 @@ cut-short `survey.bin` in place.
 and units are written to `project.nif` at once, as `(importing ...)`, and Messages says
 the survey "is being copied into the project", not that it is. Close project, or a quit,
 while the copy runs stops it and keeps what was written; the next open copies the
-originals again and makes the survey, with a message. The `(importing ...)` entry goes
+originals again and makes the survey, with a message. The entry records each original's
+size, modified time and first-and-last-64-KiB hash when the copy begins; the resume takes
+only a file of that identity at the recorded path (never one found beside the project or by
+its name). Anything else (an original changed or gone, an entry without an identity) is
+not copied: Messages says the import was interrupted and its files are not as they were,
+the survey is to be imported again, and the entry is cleared. The copies are written to
+temporary files and put in place only once `survey.bin` is written, so a failed or
+abandoned copy leaves none. The `(importing ...)` entry goes
 when the copy is whole (or when it failed: the user then imports the survey again).
 
 **When an original changes.** After the open, the program looks at each survey file's original

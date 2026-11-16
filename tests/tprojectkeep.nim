@@ -24,6 +24,10 @@
 ## (Not seen to fail: a close's cancel already makes the inbox drop the job's
 ## messages, so `staleSurveyJobs` is a second guard.)
 ##
+## - A resumed import takes only a file with the identity recorded when the
+##   import began, at the path recorded; a hostile project.nif cannot make
+##   the open copy another file.
+##
 ## Seen to fail: with the temporary name of `survey.bin` made from the
 ## process id, "the temporary name"; with the originals looked at inside `openProjectWork`, "the
 ## originals were looked at before the open ended"; with `markImporting` not called, "the import is not in
@@ -31,7 +35,7 @@
 ## copied at the next open".
 import std/[os, sequtils, strutils, times]
 import parseSEG
-import viewSEG/core/[project, state]
+import viewSEG/core/[identity, project, projectnif, state]
 import utils/[fixtures, steps, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
@@ -71,7 +75,8 @@ withFixtures fx:
       st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
       doAssert st.settle(st.inProject and st.projectOpening.len == 0)
       st.importSurvey(survey)
-      doAssert st.settle(st.project.survey == srKeeping and st.said("is being copied")),
+      doAssert st.settle(st.project.survey == srKeeping and st.said("is being copied") and
+        st.project.doc.importing.allIt(it.known)),
         "the copy did not begin: " & $st.project.survey
       doAssert not st.said("is copied into"), "said copied before it was"
       if how == "close":
@@ -261,4 +266,39 @@ withFixtures fx:
     doAssert again.surveyLayers == 0, "the cancelled restore's layers landed on the map: " &
       $again.surveyLayers
     again.shutdown()
+  block hostileImport:
+    # A project.nif that names an import to resume copies nothing it was not
+    # recorded as: no identity, or another file's, is refused with a message,
+    # and the entry is cleared.
+    let secret = fx.dir / "secret.txt"
+    writeFile(secret, "private\n".repeat(20_000))
+    var t: Time
+    let real = quickIdentity(secret, t)
+    for how in ["no identity", "other size", "replaced after"]:
+      let job = fx.dir / ("Job hostile " & how)
+      var st = start(config)
+      st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+      doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+      st.flushFiles()
+      st.shutdown()
+      var problems: seq[string]
+      var doc = readProject(readFile(job / "project.nif"), "project.nif", problems)
+      var f = ImportFile(kind: jkSps, original: ProjectPath(absolute: secret))
+      if how != "no identity":
+        (f.known, f.size, f.modified, f.quick) = (true, real.size, t, real.quick)
+      if how == "other size": f.size += 1
+      doc.importing = @[f]
+      writeFile(job / "project.nif", projectDocument(doc))
+      if how == "replaced after": writeFile(secret, "other\n".repeat(20_000))
+      var again = start(config)
+      again.apply Command(kind: ckOpenProject, projectPath: job)
+      doAssert again.settle(again.inProject and again.project.survey == srFailed),
+        how & ": the open did not refuse it: " & $again.project.survey
+      doAssert again.said("interrupted and its files are not as they were"), how & ": not said"
+      doAssert not fileExists(job / "survey" / "files" / "secret.txt"), how & ": copied"
+      doAssert not again.project.doc.hasImport, how & ": the entry stays"
+      again.flushFiles()
+      again.shutdown()
+      for f in walkFiles(job / "survey" / "files" / "*"): doAssert false, "a copy is left: " & f
+      writeFile(secret, "private\n".repeat(20_000))
 echo "tprojectkeep: done"

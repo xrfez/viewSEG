@@ -58,6 +58,10 @@ type
     kind*: JoinFileKind
     role*: CsvRole
     original*: ProjectPath
+    known*: bool ## the original's identity below was taken
+    size*: int64 ## the original's size when the import began
+    modified*: Time ## its modification time then
+    quick*: uint64 ## its first and last 64 KiB's hash then (`quickIdentity`)
 
   StoreInfo* = object
     ## `survey.bin` as written: none while `bytes` is 0.
@@ -132,6 +136,7 @@ type
     pnSurvey    ## its survey made from `survey.bin`: the joins' geometry (the map's
                 ## layers come as `mkSurvey`, one a file)
     pnKept      ## survey files copied into it and `survey.bin` written
+    pnImporting ## the identity of the originals an import began to copy
     pnLooked    ## its data folders looked at again
     pnOriginals ## its survey originals looked at (a job of their own: they may be large and far)
 
@@ -162,6 +167,8 @@ type
       store*: StoreInfo
       keptFailure*: string
       updated*: bool                ## the copies were updated from their originals
+    of pnImporting:
+      identities*: seq[ImportFile]
     of pnLooked, pnOriginals:
       discard
 

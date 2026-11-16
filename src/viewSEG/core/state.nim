@@ -4425,7 +4425,7 @@ proc restoreSurvey(state: var AppState; layers: bool) =
     restoreWork(p.dir, p.doc, layers, state.inbox.poster))
   inc p.revision
 
-proc keepSurvey(state: var AppState; files: seq[JoinFile]; places: seq[ProjectPath] = @[]) =
+proc keepSurvey(state: var AppState; files: seq[JoinFile]; resume: seq[ImportFile] = @[]) =
   ## Copies survey files `files` into the project and writes its
   ## `survey.bin` (`keepSurveyWork`).
   template p: untyped = state.project
@@ -4433,7 +4433,7 @@ proc keepSurvey(state: var AppState; files: seq[JoinFile]; places: seq[ProjectPa
   p.survey = srKeeping
   p.surveyJob = state.jobs.submit(JobSpec(title: "Keep the survey in the project",
     lane: jlBackground, exclusive: @[p.dir.partOf(SurveyFolder)]), keepSurveyWork(p.dir, files,
-        p.doc.survey, state.inbox.poster, places))
+    p.doc.survey, state.inbox.poster, resume))
   inc p.revision
 
 proc markImporting(state: var AppState; files: seq[JoinFile]) =
@@ -4588,14 +4588,11 @@ proc takeOpened(state: var AppState; m: sink Msg) =
       p.surveyNote = "a survey was being copied in, and the project is read-only"
     else:
       var files: seq[JoinFile] = @[]
-      var places: seq[ProjectPath] = @[]
-      for f in p.doc.importing:
-        files.add JoinFile(kind: f.kind, role: f.role)
-        places.add f.original
+      for f in p.doc.importing: files.add JoinFile(kind: f.kind, role: f.role)
       p.layersAfterKeep = true
       state.log.add(sevInfo, "project", "The survey of the project " & p.doc.name & " was " &
         "being copied in when it was last open: it is copied again now.")
-      state.keepSurvey(files, places)
+      state.keepSurvey(files, p.doc.importing)
   elif p.doc.hasSurvey:
     if news.storeThere: state.restoreSurvey(layers = true)
     else:
@@ -4724,6 +4721,16 @@ proc takeProject(state: var AppState; m: sink Msg) =
       p.lookJob = NoJob
       p.folders = move m.news.folders
       inc p.revision
+  of pnImporting:
+    template p: untyped = state.project
+    if m.job == p.surveyJob and m.news.dir == p.dir and p.doc.hasImport and not p.readOnly:
+      # what the originals were when the copy began: the document keeps it,
+      # for an open that finds the copy cut short
+      for i, f in m.news.identities:
+        if i < p.doc.importing.len and p.doc.importing[i].original.path == f.original.path and
+            p.doc.importing[i].original.absolute == f.original.absolute:
+          p.doc.importing[i] = f
+      state.projectChanged()
   of pnOriginals:
     template p: untyped = state.project
     if m.job == p.originalsJob and m.news.dir == p.dir:

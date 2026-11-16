@@ -250,12 +250,15 @@ proc syncFile(f: File; name: string) =
   elif defined(windows):
     if c_commit(c_fileno(f)) != 0: raise newException(IOError, "the disk did not keep " & name)
 
-proc writeStore*(dir: string; files: openArray[SurveyCopy]; ctx: JobContext): StoreInfo =
+proc writeStore*(dir: string; files: openArray[SurveyCopy]; ctx: JobContext;
+    sources: seq[string] = @[]): StoreInfo =
   ## Reads the copies `files` of the project in `dir` and writes what they
   ## hold to its `survey.bin` (the module's documentation); the counts of
   ## stations and relations it holds, its size and hash. Raises `IOError`
   ## when a copy cannot be read or the store not written,
-  ## `JobCancelledError` at a cancel. Worker-only.
+  ## `JobCancelledError` at a cancel. Worker-only. A copy is read from
+  ## `sources[i]` when that names one (a copy not yet in place), else from
+  ## its place in the project.
   let path = dir.partOf(SurveyStoreName)
   let tmp = path & "." & $int(ctx.id) & ".tmp" # the job's own: no other job's is the same
   fs.createDir(path.parentDir)
@@ -267,25 +270,28 @@ proc writeStore*(dir: string; files: openArray[SurveyCopy]; ctx: JobContext): St
     var head = StoreMagic
     head.raw uint32(StoreFormat)
     w.emit head
+    func readFrom(i: int; c: SurveyCopy): string =
+      if i < sources.len and sources[i].len > 0: sources[i] else: dir.partOf(c.copy)
     var total = 0'i64
-    for c in files:
-      try: total += fs.getFileSize(dir.partOf(c.copy))
+    for i, c in files:
+      try: total += fs.getFileSize(readFrom(i, c))
       except OSError: discard
     var done = 0'i64
-    for c in files:
-      let src = dir.partOf(c.copy)
+    for i, c in files:
+      let src = readFrom(i, c)
+      let fin = dir.partOf(c.copy)
       var info: FileInfo
       try: info = fs.getFileInfo(src)
       except OSError: raise newException(IOError, "the copy " & c.copy & " is not there")
       let fk = if c.kind == jkCsv: fkUnknown else: sniff(src)
-      var sf = StoredFile(copy: c.copy, name: src.extractFilename, kind: c.kind, fileKind: fk,
+      var sf = StoredFile(copy: c.copy, name: fin.extractFilename, kind: c.kind, fileKind: fk,
         role: c.role, size: info.size, modified: info.lastWriteTime)
       ctx.setPhase "keeping " & sf.name
       case c.kind
       of jkSps:
         var started = false
         var pw = addr w
-        let domain = relationDomainOf(src)
+        let domain = relationDomainOf(fin)
         var res = addr result
         eachSpsChunk(src, ctx, done, total, proc (part: SpsFile) =
           if not started:
@@ -310,7 +316,7 @@ proc writeStore*(dir: string; files: openArray[SurveyCopy]; ctx: JobContext): St
       of jkP1:
         let text = readText(src, 64 * 1024 * 1024)
         done += text.len
-        let pf = parseP1(text, src)
+        let pf = parseP1(text, fin)
         w.fileBlock(sf, rdSource, sps21)
         for lf in pf.files:
           w.p1Block(lf)

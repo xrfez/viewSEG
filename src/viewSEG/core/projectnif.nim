@@ -132,6 +132,10 @@ proc projectDocument*(d: ProjectDoc): string =
       w.choice("kind", KindNames[f.kind])
       if f.kind == jkCsv: w.choice("role", RoleNames[f.role])
       w.place f.original
+      if f.known:
+        w.value("size", f.size)
+        w.modified f.modified
+        w.value("quick", hex(f.quick))
       w.close
     w.close
   if d.hasProcessing: w.writeProcessing(d.processing)
@@ -248,6 +252,15 @@ proc importFiles(r: var Reading; n: NifNode; d: var ProjectDoc) =
         elif r.place(k, f.original): discard
         elif k.tag == "kind": r.choice(k, KindNames, f.kind)
         elif k.tag == "role": r.choice(k, RoleNames, f.role)
+        elif k.tag == "size": r.integer(k, f.size)
+        elif k.tag == "modified":
+          if k.kids.len == 2 and k.kids[0].kind == nkInt and k.kids[1].kind == nkInt and
+              k.kids[1].intVal in 0 ..< 1_000_000_000:
+            f.modified = initTime(k.kids[0].intVal, int(k.kids[1].intVal))
+          else: r.problem(k, "(modified) needs seconds and nanoseconds")
+        elif k.tag == "quick":
+          r.hash(k, f.quick)
+          f.known = true
       if f.original.path.len == 0 and f.original.absolute.len == 0:
         r.problem(c, "an imported file names no original; it is left out")
       elif d.importing.len < 4096: d.importing.add f
