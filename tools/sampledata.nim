@@ -1,0 +1,581 @@
+## Synthetic sample set for screenshots, docs and demos.
+##
+##   nim samples
+##
+## Writes samples/ once. Float samples are not regenerated in tests: the
+## committed files are what a viewer opens. One noise seed, the library
+## default. Wavelets, the sweep, the noise, the SPS files and the SEG files
+## come from parseSEG and processSEG.
+##
+## Land coordinates are US survey feet on a State Plane-sized origin.
+## Ocean-bottom coordinates are metres. The vibroseis record is one land
+## source point and one receiver line, an 8-80 Hz sweep with 3 s of listen.
+
+import std/[math, os, strutils, times]
+import parseSEG, processSEG
+
+const
+  DtLand = 2.0
+  LandSamples = 750                  ## 1.5 s at 2 ms
+  LandUs = 2000.0
+  QcRecord = 3
+  DeadChannel = 12                   ## line 1001, station 112
+  ReversedChannel = 28               ## line 1001, station 128
+  HumChannel = 64                    ## line 1002, station 116
+  HumHz = 60.0
+  HumAmp = 1.5
+  NoiseSigma = 0.02
+  RcvLines = [1001.0, 1002.0]
+  RcvFirst = 101
+  RcvCount = 48
+  RcvSpacing = 110.0
+  LineGap = 440.0
+  SrcLine = 2001.0
+  SrcFirst = 101
+  ShotCount = 6
+  ShotStep = 220.0
+  OriginE = 2_000_000.0
+  OriginN = 500_000.0
+  SrcE = OriginE + 23.5 * RcvSpacing ## between stations 124 and 125
+  SrcN0 = OriginN - LineGap
+  VibDt = 4.0
+  SweepMs = 8000.0
+  ListenMs = 3000.0
+  VibTaperMs = 300.0
+  SweepF1 = 8.0
+  SweepF2 = 80.0
+  PhaseLag = 6.0
+  ObnDt = 2.0
+  ObnSamples = 1000                  ## 2 s at 2 ms
+  ObnUs = 2000.0
+  Water = 1500.0
+  NodeDepth = 60.0
+  GunDepth = 6.0
+  Reflector = 333.0                  ## m below the surface; zero-offset PP is 400 ms
+  Shear = 1000.0
+  GhostDelay = 80.0                  ## two-way water time at the node, ms
+  NodeLine = 3001.0
+  NodeFirst = 101
+  NodeCount = 24
+  NodeSpacing = 50.0
+  GunLine = 4001.0
+  GunFirst = 101
+  GunCount = 4
+  GunSpacing = 100.0
+  ObnE = 500_000.0
+  ObnN = 5_800_000.0
+  ObnScale = 10_000.0                ## 8036 counts per unit amplitude
+  MaxBytes = 6 * 1000 * 1000
+
+type Station = object
+  line, point, easting, northing, elevation: float64
+
+proc fail(log: DiagLog; what: string) =
+  if log.isFatal or log.count(sevError) > 0:
+    echo what
+    for d in log: echo d
+    quit what & " failed"
+
+proc unixUtc(year: int; month: Month; day, hour: int): float64 =
+  float64(initDateTime(day, month, year, hour, 0, 0, utc()).toTime.toUnix)
+
+proc signedOffset(src, rcv: Station): float64 =
+  let dx = rcv.easting - src.easting
+  let dy = rcv.northing - src.northing
+  let d = hypot(dx, dy)
+  if d == 0: 0.0
+  elif dx != 0: (if dx > 0: d else: -d)
+  else: (if dy > 0: d else: -d)
+
+proc landElev(easting, northing: float64): float64 =
+  ## Tenths of a foot: 0.4 ft per station east, 1 ft per line north.
+  820.0 + 0.4 * (easting - OriginE) / RcvSpacing + (northing - OriginN) / LineGap
+
+proc header(code, description, data: string): SpsHeader =
+  SpsHeader(code: code, description: description, data: data)
+
+proc surveyHeaders(unitName, factor, projection, zone, datum: string): seq[SpsHeader] =
+  @[header("00", "SPS format version num.", "SPS 2.1;"),
+    header("12", "Geodetic datum spheroid", datum & ";"),
+    header("18", "Projection type", projection & ";"),
+    header("19", "Zone", zone & ";"),
+    header("20", "Description of grid units", unitName & ";"),
+    header("201", "Factor to meters", factor & ";")]
+
+proc saveSps(f: SpsFile; path: string) =
+  fail(writeSps(f, path), path)
+
+proc spsPoint(kind: SpsPointKind; st: Station; code: string; depth, water,
+    uphole: float64): SpsPoint =
+  result = initSpsPoint(kind)
+  result.line = st.line
+  result.point = st.point
+  result.index = 1
+  result.code = code
+  result.easting = st.easting
+  result.northing = st.northing
+  result.elevation = st.elevation
+  if not depth.isNaN: result.pointDepth = depth
+  if not water.isNaN: result.waterDepth = water
+  if not uphole.isNaN: result.upholeTime = uphole
+
+proc spsRelation(record: int; src: Station; fromCh, toCh, inc: int;
+    rcvLine, fromRcv, toRcv: float64): SpsRelation =
+  result = initSpsRelation()
+  result.fieldRecord = record
+  result.recordIncrement = 1
+  result.instrumentCode = '1'
+  result.srcLine = src.line
+  result.srcPoint = src.point
+  result.srcIndex = 1
+  result.fromChannel = fromCh
+  result.toChannel = toCh
+  result.channelIncrement = inc
+  result.rcvLine = rcvLine
+  result.fromReceiver = fromRcv
+  result.toReceiver = toRcv
+  result.rcvIndex = 1
+
+proc landReceiver(line: float64; station: int): Station =
+  let e = OriginE + float64(station - RcvFirst) * RcvSpacing
+  let n = OriginN + (line - RcvLines[0]) / (RcvLines[1] - RcvLines[0]) * LineGap
+  Station(line: line, point: float64(station), easting: e, northing: n,
+    elevation: landElev(e, n))
+
+proc landSource(shot: int): Station =
+  let n = SrcN0 + float64(shot) * ShotStep
+  Station(line: SrcLine, point: float64(SrcFirst + shot), easting: SrcE,
+    northing: n, elevation: landElev(SrcE, n))
+
+proc landSpread(): seq[Station] =
+  ## Channels 1..48 line 1001, 49..96 line 1002, stations 101..148.
+  for line in RcvLines:
+    for s in RcvFirst ..< RcvFirst + RcvCount:
+      result.add landReceiver(line, s)
+
+proc writeLandSps(dir: string) =
+  let headers = surveyHeaders("US survey feet", "0.3048006096",
+    "State Plane Coordinate System", "Texas South Central", "NAD83")
+  var s, r, x = SpsFile(headers: headers)
+  for shot in 0 ..< ShotCount:
+    let src = landSource(shot)
+    s.points.add spsPoint(pkSource, src, "E1", 30, NaN, 12)
+    x.relations.add spsRelation(shot + 1, src, 1, RcvCount, 1, RcvLines[0],
+      float64(RcvFirst), float64(RcvFirst + RcvCount - 1))
+    x.relations.add spsRelation(shot + 1, src, RcvCount + 1, 2 * RcvCount, 1,
+      RcvLines[1], float64(RcvFirst), float64(RcvFirst + RcvCount - 1))
+  for st in landSpread():
+    r.points.add spsPoint(pkReceiver, st, "G1", NaN, NaN, NaN)
+  saveSps(s, dir / "land.s")
+  saveSps(r, dir / "land.r")
+  saveSps(x, dir / "land.x")
+
+proc crsFeet(): string =
+  "((OGP:P1/11 CRS))\n" &
+    "HC,1,4,0,CRS,1,0,1,projected,NAD83 / Texas South Central\n" &
+    "HC,1,5,0,Map Projection,1,0,Texas South Central\n" &
+    "HC,1,5,1,Projection Method,1,9802,Lambert Conic Conformal (2SP)\n" &
+    "HC,1,5,2,False easting,1,8806,2000000,1,US survey foot\n" &
+    "HC,1,5,2,False northing,1,8807,500000,1,US survey foot\n" &
+    "HC,1,6,1,US survey foot\n"
+
+proc crsMetres(): string =
+  "((OGP:P1/11 CRS))\n" &
+    "HC,1,4,0,CRS,1,0,1,projected,WGS 84 / UTM zone 15N\n" &
+    "HC,1,5,0,Map Projection,1,0,UTM zone 15N\n" &
+    "HC,1,5,2,False easting,1,8806,500000,1,metre\n" &
+    "HC,1,5,2,False northing,1,8807,0,1,metre\n" &
+    "HC,1,6,1,metre\n"
+
+proc segdOpts(interval: float64; n: int; feet: bool; time: float64;
+    format = sd8058): SegdOutputOptions =
+  SegdOutputOptions(sampleIntervalUs: interval, numSamples: n, format: format,
+    units: (if feet: cuFeet else: cuMeters),
+    crsText: (if feet: crsFeet() else: crsMetres()), time: time)
+
+proc traceKey(record, channel: int; src, rcv: Station; haveRcv: bool;
+    time, interval: float64; status: TraceStatus; sensor: uint8): TraceKeys =
+  result = initTraceKeys()
+  result.record = float64(record)
+  result.channel = float64(channel)
+  result.srcLine = src.line
+  result.srcPoint = src.point
+  result.srcIndex = 1
+  result.srcX = src.easting
+  result.srcY = src.northing
+  result.srcZ = src.elevation
+  if haveRcv:
+    result.rcvLine = rcv.line
+    result.rcvPoint = rcv.point
+    result.rcvIndex = 1
+    result.rcvX = rcv.easting
+    result.rcvY = rcv.northing
+    result.rcvZ = rcv.elevation
+    result.cmpX = (src.easting + rcv.easting) / 2
+    result.cmpY = (src.northing + rcv.northing) / 2
+    result.offset = signedOffset(src, rcv)
+  result.t0Ms = 0
+  result.intervalUs = interval
+  result.time = time
+  result.status = status
+  result.sensorType = sensor
+  result.component = sensor
+  if status == tsDead: result.traceCode = 2
+  elif status == tsLive: result.traceCode = 1
+
+proc fillLand(shot: var Tensor[float32]; offsets: openArray[float64];
+    seed: int64; qc: bool) =
+  shot.addLinear(offsets, DtLand, t0Ms = 8, velocity = 2500, freqHz = 40)
+  shot.addLinear(offsets, DtLand, t0Ms = 60, velocity = 7000, freqHz = 25,
+    amp = 0.65)
+  shot.addHyperbola(offsets, DtLand, t0Ms = 220, velocity = 6500, freqHz = 30,
+    amp = 0.8)
+  shot.addHyperbola(offsets, DtLand, t0Ms = 520, velocity = 9500, freqHz = 22,
+    amp = 0.5)
+  shot.addLinear(offsets, DtLand, t0Ms = 0, velocity = 850, freqHz = 10, amp = 1.5)
+  shot.addLinear(offsets, DtLand, t0Ms = 0, velocity = 850, freqHz = 14, amp = 1.0)
+  let b = rowBlock(shot)
+  for r in 0 ..< b.len:
+    let arrive = linearMs(0, 850, offsets[r])
+    for k in 1 .. 5:
+      let centre = arrive + float64(k) * 100.0
+      if centre < 1400:
+        addRicker(b.row(r), DtLand, centre, 10, amp = 1.2 * exp(-0.4 * float64(k)))
+  shot.addNoise(NoiseSigma, seed)
+  if qc:
+    for j in 0 ..< b.cols: b.row(DeadChannel - 1)[j] = 0
+    for j in 0 ..< b.cols:
+      b.row(ReversedChannel - 1)[j] = -b.row(ReversedChannel - 1)[j]
+    addSinusoid(b.row(HumChannel - 1), DtLand, HumHz, amp = HumAmp)
+
+proc auxTrace(n: int; centre, freq, amp: float64): seq[float32] =
+  result = newSeq[float32](n)
+  addRicker(result, DtLand, centre, freq, amp = amp)
+
+proc writeLand(dir, scratch: string; t0: float64): seq[float64] =
+  ## Seismic traces of shots.sgd and a seismic-only copy converted to
+  ## shots.sgy (the copy is deleted). Returns each SEG-Y trace's offset.
+  let spread = landSpread()
+  var offsets = newSeq[float64](spread.len)
+  let opts = segdOpts(LandUs, LandSamples, true, t0)
+  let temp = scratch / "land-seismic.sgd"
+  var full = openSeismicWriter(dir / "shots.sgd", opts)
+  var seis = openSeismicWriter(temp, opts)
+  for shot in 0 ..< ShotCount:
+    let src = landSource(shot)
+    for i, rcv in spread:
+      offsets[i] = signedOffset(src, rcv)
+    var data = zeros[float32](spread.len, LandSamples)
+    let seed = DefaultNoiseSeed + int64(shot) * 1000
+    fillLand(data, offsets, seed, qc = shot + 1 == QcRecord)
+    let b = rowBlock(data)
+    let time = t0 + 30.0 * float64(shot)
+    for i, rcv in spread:
+      let dead = shot + 1 == QcRecord and i + 1 == DeadChannel
+      let status = if dead: tsDead else: tsLive
+      let at = if i == 0: time else: NaN
+      let k = traceKey(shot + 1, i + 1, src, rcv, true, at, LandUs, status, 2)
+      full.writeTrace(k, b.row(i))
+      seis.writeTrace(k, b.row(i))
+      result.add offsets[i]
+    var tb = auxTrace(LandSamples, 0, 80, 1.0)
+    var uh = auxTrace(LandSamples, 12, 60, 0.8)
+    let none = Station()
+    let ktb = traceKey(shot + 1, 97, src, none, false, NaN, LandUs,
+      tsAuxiliary, 0)
+    let kuh = traceKey(shot + 1, 98, src, none, false, NaN, LandUs,
+      tsAuxiliary, 0)
+    full.writeTrace(ktb, tb, channelType = sctTimeBreak)
+    full.writeTrace(kuh, uh, channelType = sctUpHole)
+  fail(full.close(), "shots.sgd")
+  fail(seis.close(), "seismic copy")
+  var g = initSurveyGeometry()
+  for name in ["land.s", "land.r", "land.x"]: g.addSps(dir / name)
+  let conv = convertWithGeometry(temp, dir / "shots.sgy", g,
+    ConvertOptions(format: st5))
+  fail(conv, "shots.sgy")
+  removeFile(temp)
+
+proc fixSegy(path, journal: string; offsets: openArray[float64]) =
+  var ed = openEditor(path, journal)
+  var bad = false
+  try:
+    let deadAt = (QcRecord - 1) * RcvCount * 2 + (DeadChannel - 1)
+    if not ed.setTraceField(deadAt, "trace.traceIdCode", 2):
+      echo ed.log
+      bad = true
+    var i = 0
+    while i < offsets.len and not bad:
+      let stored = int32(round(offsets[i]))
+      if not ed.setTraceField(i, "trace.offset", stored):
+        echo "offset ", i, " refused"
+        echo ed.log
+        bad = true
+      inc i
+  finally:
+    ed.close()
+  if fileExists(journal): removeFile(journal)
+  if bad: quit "could not finish " & path
+
+proc addSpike(row: var openArray[float32]; sweep: openArray[float32];
+    delay: int; amp: float32) =
+  var j = 0
+  var k = delay
+  if k < 0:
+    j = -k
+    k = 0
+  while j < sweep.len and k < row.len:
+    row[k] += amp * sweep[j]
+    inc j
+    inc k
+
+proc place(row: var openArray[float32]; sweep: openArray[float32]; timeMs,
+    amp: float64) =
+  addSpike(row, sweep, int(round(timeMs / VibDt)), float32(amp))
+
+proc fillVib(row: var openArray[float32]; sweep: openArray[float32];
+    offset: float64) =
+  place(row, sweep, linearMs(8, 2500, offset), 1.0)
+  place(row, sweep, linearMs(60, 7000, offset), 0.65)
+  place(row, sweep, hyperbolicMs(220, 6500, offset), 0.8)
+  place(row, sweep, hyperbolicMs(520, 9500, offset), 0.5)
+  let arrive = linearMs(0, 850, offset)
+  place(row, sweep, arrive, 1.5)
+  for k in 1 .. 5:
+    place(row, sweep, arrive + float64(k) * 100.0, 1.2 * exp(-0.4 * float64(k)))
+
+proc writeVib(dir: string; t0: float64) =
+  let spec = linearSweep(SweepF1, SweepF2, SweepMs, VibDt,
+    initSweepTaper(VibTaperMs, VibTaperMs))
+  let pilot = generatePilot(spec, float32)
+  let nRec = spec.sweepLen + int(ListenMs / VibDt) - 1
+  let nOut = nRec - pilot.len + 1
+  doAssert nOut == int(ListenMs / VibDt), "listen length " & $nOut
+  var force = spec
+  force.amplitude = 2.0
+  let gf = force.sweepHarmonics(float32, [
+    SweepHarmonic(phaseDeg: PhaseLag),
+    SweepHarmonic(order: 2, amp: 0.08),
+    SweepHarmonic(order: 3, amp: 0.04)], samples = nRec)
+  let src = landSource(QcRecord - 1)
+  var spread: seq[Station] = @[]
+  for s in RcvFirst ..< RcvFirst + RcvCount:
+    spread.add landReceiver(RcvLines[0], s)
+  var raw = zeros[float32](spread.len + 1, nRec)
+  let b = rowBlock(raw)
+  for i, rcv in spread:
+    fillVib(b.row(i), pilot.samples, signedOffset(src, rcv))
+    addNoise(b.row(i), NoiseSigma, DefaultNoiseSeed + 10_000 + int64(i))
+  for j in 0 ..< pilot.len: b.row(spread.len)[j] = pilot.samples[j]
+  var keys = newSeq[TraceKeys](raw.shape[0])
+  var counts = newSeq[int](raw.shape[0])
+  for i in 0 ..< keys.len:
+    keys[i] = initTraceKeys()
+    keys[i].status = if i < spread.len: tsLive else: tsAuxiliary
+    keys[i].t0Ms = 0
+    keys[i].intervalUs = VibDt * 1000
+    counts[i] = nRec
+  let meta = initChunkMeta(rowsOf(keys, counts), dtMs = VibDt)
+  let plan = initCorrelationPlan(float32, pilot, VibDt, nRec)
+  doAssert plan.outSamples == nOut
+  var ws = initWorkspace()
+  ws.reserve(plan.workspaceSize)
+  var corr = zeros[float32](raw.shape[0], plan.outSamples)
+  plan.correlateInto(raw, corr, meta, ws)
+  let opts = segdOpts(VibDt * 1000, nRec, true, t0)
+  var w = openSeismicWriter(dir / "vib_uncorrelated.sgd", opts)
+  let cb = rowBlock(corr)
+  for i, rcv in spread:
+    let at = if i == 0: t0 else: NaN
+    let k = traceKey(1, i + 1, src, rcv, true, at, VibDt * 1000, tsLive, 2)
+    w.writeTrace(k, b.row(i))
+  let none = Station()
+  var kp = traceKey(1, spread.len + 1, src, none, false, NaN, VibDt * 1000,
+    tsAuxiliary, 0)
+  var kg = kp
+  kg.channel = float64(spread.len + 2)
+  w.writeTrace(kp, b.row(spread.len), channelType = sctSourceRefPilot)
+  w.writeTrace(kg, gf, channelType = sctSourceSigMeasured)
+  fail(w.close(), "vib_uncorrelated.sgd")
+  let copts = segdOpts(VibDt * 1000, nOut, true, t0)
+  var c = openSeismicWriter(dir / "vib_correlated.sgd", copts)
+  for i, rcv in spread:
+    let at = if i == 0: t0 else: NaN
+    let k = traceKey(1, i + 1, src, rcv, true, at, VibDt * 1000, tsLive, 2)
+    c.writeTrace(k, cb.row(i))
+  var ka = traceKey(1, spread.len + 1, src, none, false, NaN, VibDt * 1000,
+    tsAuxiliary, 0)
+  c.writeTrace(ka, cb.row(spread.len), channelType = sctTrueRefSweep)
+  fail(c.close(), "vib_correlated.sgd")
+
+proc obnNode(station: int): Station =
+  let e = ObnE + float64(station - NodeFirst) * NodeSpacing
+  Station(line: NodeLine, point: float64(station), easting: e, northing: ObnN,
+    elevation: -NodeDepth)
+
+proc obnGun(shot: int): Station =
+  let centre = ObnE + float64(NodeCount - 1) * NodeSpacing / 2
+  let e = centre - GunSpacing * 1.5 + float64(shot) * GunSpacing
+  Station(line: GunLine, point: float64(GunFirst + shot), easting: e,
+    northing: ObnN, elevation: -GunDepth)
+
+proc writeObnSps(dir: string) =
+  let headers = surveyHeaders("Metres", "1.0", "Universal Transverse Mercator",
+    "15N", "WGS 84")
+  var s, r, x = SpsFile(headers: headers)
+  for shot in 0 ..< GunCount:
+    let src = obnGun(shot)
+    s.points.add spsPoint(pkSource, src, "A1", GunDepth, GunDepth, NaN)
+    # Channel increment 4: four components at each of the 24 stations.
+    # toChannel is the first channel of the last station (93), so the run
+    # is a whole number of stations.
+    x.relations.add spsRelation(shot + 1, src, 1, 1 + (NodeCount - 1) * 4, 4,
+      NodeLine, float64(NodeFirst), float64(NodeFirst + NodeCount - 1))
+  for st in NodeFirst ..< NodeFirst + NodeCount:
+    r.points.add spsPoint(pkReceiver, obnNode(st), "N1", NaN, NodeDepth, NaN)
+  saveSps(s, dir / "obn.s")
+  saveSps(r, dir / "obn.r")
+  saveSps(x, dir / "obn.x")
+
+proc slant(dx, dz: float64): float64 = hypot(dx, dz)
+
+proc fillObn(row: var openArray[float32]; kind: int; dx: float64; seed: int64) =
+  ## kind 0 hydrophone, 1 vertical, 2 inline, 3 crossline.
+  let down = slant(dx, NodeDepth - GunDepth)
+  let directMs = down / Water * 1000
+  let downLeg = slant(dx, Reflector - GunDepth)
+  let upLeg = slant(dx, Reflector - NodeDepth)
+  let ppMs = (downLeg + upLeg) / Water * 1000
+  let psMs = downLeg / Water * 1000 + upLeg / Shear * 1000
+  let horiz = dx / max(downLeg, 1.0)
+  if kind <= 1:
+    addRicker(row, ObnDt, directMs, 80, amp = 0.9 * (if kind == 1: -0.8 else: 1.0))
+    addRicker(row, ObnDt, ppMs, 80, amp = 0.8)
+    addRicker(row, ObnDt, ppMs + GhostDelay, 80,
+      amp = 0.45 * (if kind == 1: -1.0 else: 1.0))
+  if kind == 2:
+    addRicker(row, ObnDt, ppMs, 80, amp = 0.35 * horiz)
+    addRicker(row, ObnDt, psMs, 25, amp = 0.7 * horiz)
+  elif kind == 3:
+    addRicker(row, ObnDt, psMs, 25, amp = 0.1 * horiz)
+  addNoise(row, NoiseSigma, seed)
+
+proc toCounts(row: var openArray[float32]) =
+  ## 24-bit integer counts. A unit amplitude is `ObnScale` counts.
+  for j in 0 ..< row.len:
+    row[j] = float32(round(float64(row[j]) * ObnScale))
+
+proc writeObn(dir: string; t0: float64) =
+  let opts = segdOpts(ObnUs, ObnSamples, false, t0, sd8036)
+  var w = openSeismicWriter(dir / "obn.sgd", opts)
+  let sensors = [1'u8, 2, 3, 4]
+  for shot in 0 ..< GunCount:
+    let src = obnGun(shot)
+    let time = t0 + 60.0 * float64(shot)
+    var ch = 1
+    for st in NodeFirst ..< NodeFirst + NodeCount:
+      let rcv = obnNode(st)
+      let dx = rcv.easting - src.easting
+      for kind, sensor in sensors:
+        var row = newSeq[float32](ObnSamples)
+        let seed = DefaultNoiseSeed + 20_000 + int64(shot) * 1000 + int64(ch)
+        fillObn(row, kind, dx, seed)
+        toCounts(row)
+        let at = if ch == 1: time else: NaN
+        let k = traceKey(shot + 1, ch, src, rcv, true, at, ObnUs, tsLive, sensor)
+        w.writeTrace(k, row)
+        inc ch
+  fail(w.close(), "obn.sgd")
+
+proc near(a, b: float64; tol: float64): bool =
+  abs(a - b) <= tol
+
+proc checkLand(dir: string) =
+  var y = openSeismic(dir / "shots.sgy", keys = true)
+  var d = openSeismic(dir / "shots.sgd", keys = true)
+  doAssert y.len == ShotCount * RcvCount * 2, "SEG-Y traces " & $y.len
+  doAssert d.recordCount == ShotCount
+  doAssert y.summary.formatCode == 5
+  doAssert y.index.segy.binary.measurementSystem == 2, "measurement system"
+  var seismic: seq[int] = @[]
+  var dead = 0
+  for i in 0 ..< d.len:
+    let k = d.traceKeys(i)
+    if k.status != tsAuxiliary: seismic.add i
+    if k.status == tsDead: inc dead
+  doAssert seismic.len == y.len, "seismic traces " & $seismic.len
+  doAssert dead == 1, "SEG-D dead traces " & $dead
+  let ys = y.readTraces(0 ..< y.len)
+  var worst = 0'f32
+  for i, s in seismic:
+    let row = d.readTraces(s .. s)
+    for j in 0 ..< LandSamples:
+      worst = max(worst, abs(ys[i, j] - row[0, j]))
+  doAssert worst == 0, "SEG-Y and SEG-D differ by " & $worst
+  let deadAt = (QcRecord - 1) * RcvCount * 2 + (DeadChannel - 1)
+  let kd = y.traceKeys(deadAt)
+  doAssert kd.status == tsDead, "dead reads as " & $kd.status
+  doAssert kd.record == float64(QcRecord) and kd.channel == float64(DeadChannel)
+  doAssert kd.rcvLine == RcvLines[0] and kd.rcvPoint == float64(RcvFirst + DeadChannel - 1),
+    "dead station " & $kd.rcvLine & " " & $kd.rcvPoint
+  doAssert near(kd.srcX, SrcE, 0.05) and near(kd.rcvZ, landElev(kd.rcvX, kd.rcvY), 0.05),
+    "coordinates " & $kd.srcX & " " & $kd.rcvZ
+  doAssert abs(kd.offset) > 1, "offset " & $kd.offset
+  let rev = y.traceKeys(deadAt + (ReversedChannel - DeadChannel))
+  doAssert rev.channel == float64(ReversedChannel) and rev.status == tsLive
+  y.close()
+  d.close()
+  let sps = parseSps(readFile(dir / "land.s"))
+  doAssert sps.gridUnit.name == "US survey feet"
+  doAssert abs(sps.gridUnit.metres - 1200.0 / 3937.0) < 1e-9
+
+proc checkObn(dir: string) =
+  var f = openSeismic(dir / "obn.sgd", keys = true)
+  doAssert f.recordCount == GunCount and f.len == GunCount * NodeCount * 4
+  doAssert f.summary.coordinateUnits == cuMeters, $f.summary.coordinateUnits
+  let sensors = [1'u8, 2, 3, 4]
+  for i in 0 ..< NodeCount * 4:
+    let k = f.traceKeys(i)
+    doAssert k.sensorType == sensors[i mod 4] and k.component == sensors[i mod 4],
+      "sensor " & $i & " is " & $k.sensorType
+    doAssert k.rcvPoint == float64(NodeFirst + i div 4)
+  f.close()
+  let sps = parseSps(readFile(dir / "obn.r"))
+  doAssert sps.gridUnit.name == "Metres" and abs(sps.gridUnit.metres - 1) < 1e-9
+
+proc report(root: string) =
+  var total = 0'i64
+  for kind, path in walkDir(root / "samples"):
+    if kind == pcDir:
+      for k, f in walkDir(path):
+        if k == pcFile:
+          let n = getFileSize(f)
+          total += n
+          echo f.extractFilename, " ", n, " bytes"
+  echo "samples/ ", total, " bytes"
+  if total > MaxBytes:
+    quit "samples/ is " & $total & " bytes, over " & $MaxBytes
+
+proc main() =
+  let root = currentSourcePath().parentDir.parentDir
+  let scratch = root / ".scratch"
+  createDir(scratch)
+  createDir(root / "samples" / "land")
+  createDir(root / "samples" / "vib")
+  createDir(root / "samples" / "obn")
+  let landT = unixUtc(2026, mMar, 1, 0)
+  let vibT = unixUtc(2026, mMar, 1, 12)
+  let obnT = unixUtc(2026, mMar, 2, 0)
+  let land = root / "samples" / "land"
+  writeLandSps(land)
+  let offsets = writeLand(land, scratch, landT)
+  fixSegy(land / "shots.sgy", scratch / "shots.journal", offsets)
+  checkLand(land)
+  writeVib(root / "samples" / "vib", vibT)
+  writeObnSps(root / "samples" / "obn")
+  writeObn(root / "samples" / "obn", obnT)
+  checkObn(root / "samples" / "obn")
+  report(root)
+  echo "wrote samples/"
+
+main()

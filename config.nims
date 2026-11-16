@@ -251,6 +251,12 @@ task depsSync, "Check out every unmounted dependency at its locked commit":
 task depsCheck, "Verify atlas.lock, nim.cfg and deps/ agree":
   selfExec depsTool & "check"
 
+# ------------------------------------------------------------------ samples --
+task samples, "Write the synthetic sample set into samples/":
+  ## tools/sampledata.nim writes samples/ once. The files are committed;
+  ## nothing regenerates them and compares bytes.
+  selfExec "r --hints:off --warnings:off tools/sampledata.nim"
+
 # ---------------------------------------------------------------- coverage --
 task coverage, "Rewrite docs/coverage.md's summary, then check the page against the libraries":
   ## tools/coverage.nim: every name parseSEG and processSEG export (at the
