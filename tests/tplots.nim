@@ -271,6 +271,24 @@ withFixtures fx:
     doAssert st.plots[1].result.passedBy == 0 and "through" in st.plots[1].result.note,
       st.plots[1].result.note
 
+  block closedWhileWorking:
+    # the file closed while its f-k is worked out: the request is given up,
+    # and the window says so and waits for nothing
+    var g = initAppState()
+    let long = fx.longTraceSegy(60000, 256)
+    g.apply Command(kind: ckShowFile, panel: MainPanel, path: long)
+    doAssert g.settle(g.sessions.len == 1 and g.panel(MainPanel).laidOut)
+    let gs = g.sessions[0]
+    var all: seq[int] = @[]
+    for i in 0 ..< 256: all.add gs.base + i
+    g.apply Command(kind: ckOpenPlot, plotView: avFk, plotTraces: all)
+    doAssert g.plots.len == 1 and g.plots[0].waiting, g.log.lastText
+    g.apply Command(kind: ckClose, file: gs.id)
+    doAssert g.settle(g.plotsWaiting.len == 0), "still waiting: " & $g.plotsWaiting
+    doAssert g.plots[0].result.problem == "its file was closed", g.plots[0].result.problem
+    doAssert g.sessions.len == 0
+    discard g.shutdown()
+
   block cursorAndClose:
     let id = st.plots[1].id
     st.apply Command(kind: ckPlotCursor, plot: id, plotCursor: PlotCursor(held: true, x: 5,

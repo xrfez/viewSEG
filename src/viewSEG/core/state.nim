@@ -2208,12 +2208,20 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
         (s.path in job.spec.reads or s.path in job.spec.exclusive):
       discard state.jobs.cancel(job.id)
   state.selection.forget(s.id, s.traceIds)
-  if not state.analysisReader.isNil:
-    # the analysis windows of the file: what is being worked out for them stops
-    for w in state.plots:
-      if (w.traces.len > 0 and w.traces[0] in s) or
-          (w.view == avCorrelation and w.params.reference >= 0 and w.params.reference in s):
-        state.analysisReader.cancel(w.id)
+  # the analysis windows of the file: what is being worked out for them stops,
+  # and a window waiting for it says why and waits for nothing
+  for k in 0 ..< state.plots.len:
+    template pw: untyped = state.plots[k]
+    let ofFile = pw.traces.len > 0 and pw.traces[0] in s
+    let ofRef = pw.view == avCorrelation and pw.params.reference >= 0 and
+      pw.params.reference in s
+    if ofFile or ofRef:
+      if not state.analysisReader.isNil: state.analysisReader.cancel(pw.id)
+      if pw.waiting:
+        pw.waiting = false
+        pw.result.problem = if ofFile: "its file was closed"
+                            else: "its reference's file was closed"
+        inc pw.revision
   let joined = state.joinedOf(s.id)
   if joined >= 0: state.joins.delete(joined)
   let positions = state.survey.findTraces(s.id)
