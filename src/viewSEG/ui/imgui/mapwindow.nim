@@ -237,6 +237,9 @@ func pointTexts*(mu: MapUi): seq[string] =
 func rulerText*(mu: MapUi): lent string {.inline.} = mu.rulerText
   ## What the ruler says ("1250.0 ft, bearing 090.0°"); "" with none (for tests).
 
+func rulerOn*(mu: MapUi): bool {.inline.} = mu.rulerOn
+  ## Whether the Ruler button is on: a plain left drag measures (for tests).
+
 func scaleText*(mu: MapUi): lent string {.inline.} = mu.scaleText
 func scaleBarShown*(mu: MapUi): ScaleBar {.inline.} = mu.scale
   ## The scale bar drawn last: its length (in the unit it names) and its

@@ -17,7 +17,9 @@
 ##   again), `-` zooms out, the arrows pan, Ctrl + 0 fits,
 ##   Backspace goes back, a right drag zooms to the box, a Shift drag
 ##   selects the points in its box, a Ctrl drag measures (length and
-##   bearing) until Esc, and Esc then clears the selection;
+##   bearing) until Esc, and Esc then clears the selection; the Ruler button
+##   turns the Ruler on, a plain drag then measures the same reading, a click
+##   still selects, and Esc drops the line and leaves the button on;
 ## - the right-click menu over a receiver names it and hides its layer;
 ## - the strip along the bottom describes the point instead of the popup
 ##   when the settings say so; a scale bar says its length;
@@ -33,7 +35,8 @@
 ## Shift drag selects" found no point selected; with the axes' values back,
 ## "no values on the axes" found a left margin of 94 px; with a Ctrl press
 ## always starting the ruler (as it did), "Ctrl + click adds the point"
-## found 1 point selected.
+## found 1 point selected; with a plain drag not measuring under the Ruler
+## button, "a plain drag measures" found no reading.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-*.png there.
@@ -88,6 +91,7 @@ proc main() =
     var p, q: Vec2
     var backs = 0
     var saved: seq[string]
+    var measured = "" # the Ctrl drag's reading, which a plain drag with the Ruler must match
 
     proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
       steps.add Step(name: name, act: act, done: done)
@@ -336,6 +340,7 @@ proc main() =
         doAssert abs(parseFloat(parts[3].strip(chars = {'\xC2', '\xB0'})) - 90) < 1,
           f.mapWindow.rulerText
         doAssert f.core.selection.points.len == 9, "the ruler changed the selection"
+        measured = f.mapWindow.rulerText
         f.shot("map-fixture-ruler.png"))
 
     step("Esc takes the ruler away", proc (f: FrameInfo) = f.chord(skEscape),
@@ -344,6 +349,66 @@ proc main() =
       if result: doAssert f.core.selection.points.len == 9)
 
     step("Esc again clears the selection", proc (f: FrameInfo) = f.chord(skEscape),
+      proc (f: FrameInfo): bool =
+      f.core.selection.points.len == 0)
+
+    # the Ruler button: a plain drag measures while it is on, as a Ctrl drag does
+    proc stripButtonAt(f: FrameInfo; mark: string): Vec2 =
+      let r = f.markOf(mark)
+      doAssert r.size.x > 0, mark & " is not shown"
+      vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
+    step("the Ruler button turns it on", proc (f: FrameInfo) =
+      let r = f.markOf("map.ruler button")
+      # the name is drawn beside the icon: a button about twice as wide as high
+      doAssert r.size.x > 2 * r.size.y, "the Ruler button is an icon alone: " & $r
+      p = stripButtonAt(f, "map.ruler button")
+      f.moveMouse(p), proc (f: FrameInfo): bool =
+      if wait == 3: f.pressMouse(p, true)
+      if wait == 5: f.pressMouse(p, false)
+      result = wait > 6 and f.mapWindow.rulerOn
+      if result: doAssert f.mapWindow.rulerText.len == 0)
+    step("a plain drag measures as the Ctrl drag did", proc (f: FrameInfo) =
+      let (x0, y0) = mapRcv(0, 0)
+      let (x1, y1) = mapRcv(0, 8)
+      p = f.screen(x0, y0)
+      q = f.screen(x1, y1)
+      (p, q) = (vec2(round(p.x), round(p.y)), vec2(round(q.x), round(q.y)))
+      was = f.mapWindow.mapShown
+      f.moveMouse(p)
+      f.pressMouse(p, true)
+      f.moveMouse(vec2((p.x + q.x) / 2, p.y))
+      f.moveMouse(q), proc (f: FrameInfo): bool =
+      if wait == 3: f.pressMouse(q, false)
+      result = wait > 5 and f.mapWindow.rulerText.len > 0 and f.markOf("map.ruler").size.x > 0
+      if result:
+        doAssert f.mapWindow.rulerText == measured,
+          "a plain drag reads " & f.mapWindow.rulerText & ", a Ctrl drag " & measured
+        doAssert sameMapView(f.mapWindow.mapShown, was), "a plain drag panned the map"
+        doAssert f.core.selection.points.len == 0, "the ruler changed the selection")
+    step("a click without a drag still selects a station", proc (f: FrameInfo) =
+      # on the measured line's receiver line, in view (the view has moved on since fit)
+      let (x, y) = mapRcv(0, 4)
+      p = f.screen(x, y)
+      f.moveMouse(p), proc (f: FrameInfo): bool =
+      if wait == 3: f.pressMouse(p, true)
+      if wait == 5: f.pressMouse(p, false)
+      result = wait > 6 and f.core.selection.points.len == 1
+      if result:
+        doAssert f.core.selection.points[0].role == prReceiver
+        doAssert f.mapWindow.rulerOn)
+    step("Esc drops the line and the Ruler stays on", proc (f: FrameInfo) = f.chord(skEscape),
+      proc (f: FrameInfo): bool =
+      result = wait > 3 and f.mapWindow.rulerText.len == 0
+      if result:
+        doAssert f.mapWindow.rulerOn, "Esc turned the Ruler off"
+        doAssert f.core.selection.points.len == 1, "Esc cleared the selection")
+    step("the Ruler button turns it off", proc (f: FrameInfo) =
+      p = stripButtonAt(f, "map.ruler button")
+      f.moveMouse(p), proc (f: FrameInfo): bool =
+      if wait == 3: f.pressMouse(p, true)
+      if wait == 5: f.pressMouse(p, false)
+      result = wait > 6 and not f.mapWindow.rulerOn)
+    step("Esc clears the selection again", proc (f: FrameInfo) = f.chord(skEscape),
       proc (f: FrameInfo): bool =
       f.core.selection.points.len == 0)
 
