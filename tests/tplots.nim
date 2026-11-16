@@ -24,19 +24,23 @@
 ##   of 120 %, a floor above 0 dB, one harmonic) are ignored and said with
 ##   their range; a setting the view does not use is not judged.
 ##
-## Seen to fail: with the agent's settings not judged, "plots.len == before + 1"
-## (the zero window taken); with the trace with no interval taken as 1 ms, "the reference
-## is sampled at 2.0 ms, the traces at 1.0 ms"; with `followPlots` not called, "the filters were not
-## followed: 1 asks"; with the record's pilot not taken as the default
-## reference (`firstAux`), `"pilot" in st.plots[0].reference` (the first
-## trace asked about taken instead); with `showReplacing` not asking
-## `plotsUse`, "the pilot's file was closed under its window"; without the
-## note of a signal that is the reference, "Against trace 2: trace 2 peaks
-## at 0.0 ms; trace 3 peaks at 10.0 ms; ..."; with a vibrator signature
-## opened on one trace kept to it, `traces == @[...]` "@[0]"; with the
-## settings compared field by field as Nim does (NaN unequal to itself),
-## "the same settings asked again"; with an f-k's Raw not heeded, `"raw (the
-## filters left out)" in r.note and "through" notin r.note`.
+## - a frozen window keeps the kills it was frozen with, a kill made after
+##   the freeze not taken when a setting changes.
+##
+## Seen to fail: with a frozen window's kills taken from the plot again, "the
+## kill made after the freeze is taken: (3, 1)"; with the agent's settings not
+## judged, "plots.len == before + 1" (the zero window taken); with the trace with
+## no interval taken as 1 ms, "the reference is sampled at 2.0 ms, the traces at
+## 1.0 ms"; with `followPlots` not called, "the filters were not followed: 1
+## asks"; with the record's pilot not taken as the default reference
+## (`firstAux`), `"pilot" in st.plots[0].reference` (the first trace asked about
+## taken instead); with `showReplacing` not asking `plotsUse`, "the pilot's file
+## was closed under its window"; without the note of a signal that is the
+## reference, "Against trace 2: trace 2 peaks at 0.0 ms; trace 3 peaks at 10.0
+## ms; ..."; with a vibrator signature opened on one trace kept to it, `traces ==
+## @[...]` "@[0]"; with the settings compared field by field as Nim does (NaN
+## unequal to itself), "the same settings asked again"; with an f-k's Raw not
+## heeded, `"raw (the filters left out)" in r.note and "through" notin r.note`.
 
 import std/[math, os, strutils]
 import parseSEG
@@ -214,6 +218,35 @@ withFixtures fx:
     doAssert r.atOtherInterval == 1, "the trace at another interval is not counted: " &
         $r.atOtherInterval
     discard g.shutdown()
+
+  block frozenKeepsItsKills:
+    # frozen, a window keeps the kills it was frozen with: a kill made after
+    # the freeze is not taken when one of its settings changes (trace 4 is
+    # restored here, and killed again after, as the vibrator block expects)
+    let w = 0
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[s.base + 3],
+      on: false)
+    discard st.drainInbox()
+    doAssert st.settle(st.answered(w) and st.plots[w].killed.len == 0), $st.plots[w].killed
+    var p = st.plots[w].params
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p,
+      plotFrozen: true)
+    doAssert st.plots[w].frozen and st.settle(st.answered(w))
+    st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[s.base + 3],
+      on: true)
+    discard st.drainInbox()
+    p.maxLagMs = 200
+    let asks = st.plots[w].asks
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p,
+      plotFrozen: true)
+    doAssert st.plots[w].asks == asks + 1, "the setting was not asked again"
+    doAssert st.settle(st.answered(w) and st.plots[w].result.gen == st.plots[w].asked)
+    let r = st.plots[w].result
+    doAssert r.leftOut == 0 and r.used == 4, "the kill made after the freeze is taken: " &
+      $(r.used, r.leftOut)
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p,
+      plotFrozen: false)
+    discard st.drainInbox()
 
   block cursorAndClose:
     let id = st.plots[1].id

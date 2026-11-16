@@ -111,7 +111,8 @@ proc askPlot(state: var AppState; w: int): bool =
   if not state.jobs.hold(s.path):
     if a.refFile != nil: discard state.jobs.holdRelease.release(a.refPath)
     return false
-  var killed = killedOf(state.editsAt(s.path), traces)
+  # frozen: the kills it was frozen with; else the plot's now
+  var killed = if pw.frozen: pw.killed else: killedOf(state.editsAt(s.path), traces)
   killed.sort()
   a.killed = killed
   inc state.plotGen

@@ -577,7 +577,8 @@ one's is left out too, and counted "at another interval", as a spectrum window d
 trace with no sample interval of its own takes its file's, and is left out when it has
 none. Unless **Freeze** is ticked, a window follows the
 plot it was opened from: new filters, the Aux toggle, a kill or a restore of one of its
-traces work it out again; its traces stay those it was opened on.
+traces work it out again; its traces stay those it was opened on. Frozen, a window keeps
+the kills it had when it was frozen, and a change of its settings works out from those.
 
 | View | Of | Shows | processSEG |
 |---|---|---|---|
