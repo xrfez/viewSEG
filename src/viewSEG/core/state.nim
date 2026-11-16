@@ -806,6 +806,8 @@ type
     saidPositions: HashSet[string]
       ## files whose positions' problems were said; folders said to hold no coordinates
     panels: seq[Panel]
+    heldBack: seq[PanelId]
+      ## panels that could not show their file: a job had it to itself
     sessions: seq[Session]
     opening, closing: seq[Pending]
     files: FileList ## the file list
@@ -1990,11 +1992,13 @@ proc newSource(state: var AppState; k: int) =
         src = ReaderSource(gen: p.sourceGen, file: s.filePtr, path: s.path, size: s.size,
           traces: s.gathers[g].traces, filter: p.layers[0].filter, order: p.layers[0].order,
           hidden: p.hidden)
+        state.heldBack.keepItIf(it != p.id)
       elif s.path == state.joining.path and state.joining.step == jpJoining:
         busy = true # shown once the join is done
         if p.id notin state.joining.paused: state.joining.paused.add p.id
       else:
         busy = true
+        if p.id notin state.heldBack: state.heldBack.add p.id
         state.log.add(sevWarning, s.name, s.name & " is busy (a job needs it to itself), " &
           "so it is not shown.")
   # Nothing to read (no file, or a file with no traces): the reader posts no
@@ -5648,6 +5652,26 @@ proc endMapWork(state: var AppState; job: JobInfo): bool =
       inc state.spreads.revision
       state.log.add(sevWarning, "map", state.spreads.words[0])
 
+proc showHeldBack(state: var AppState; path: string) =
+  ## Panels that could not show `path` while a job had it to itself (the close
+  ## of the open it replaced, still queued when the new one was shown) are
+  ## shown now that the job has ended.
+  var again: seq[int]
+  var kept: seq[PanelId]
+  for id in state.heldBack:
+    let k = state.findPanel(id)
+    if k < 0: continue
+    var mine = false
+    if state.panels[k].layers.len > 0:
+      let src = state.panels[k].layers[0].source
+      if src.kind == lsRecord:
+        let i = state.findSession(src.file)
+        if i >= 0 and state.sessions[i].path == path: mine = true
+    if mine: again.add k
+    else: kept.add id
+  state.heldBack = kept
+  for k in again: state.newSource(k)
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
   if state.endProjectWork(job): return
@@ -5706,10 +5730,12 @@ proc onFinished(state: var AppState; job: JobInfo) =
       return
   for i, p in state.closing:
     if p.job == job.id:
-      let name = p.path.extractFilename
+      let path = p.path
+      let name = path.extractFilename
       if job.state == jsDone and not p.quiet: state.log.add(sevInfo, name, "Closed " & name & ".")
       state.release(move state.closing[i].session) # nothing reads it now
       state.closing.delete(i)
+      state.showHeldBack(path)
       return
   let old = state.oldScans.find(job.id)
   if old >= 0: # replaced by a newer listing: nothing to say

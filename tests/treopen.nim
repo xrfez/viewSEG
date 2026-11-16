@@ -56,7 +56,9 @@
 ## panel's record): with `showPath` showing gather 0 of a file already
 ## open, "the other panel came back at the first record"; (a cut while a
 ## reopen is kept): with the size read before the open (`openSession`
-## reading it first), "said cut short again".
+## reading it first), "said cut short again"; (the close still having the
+## file when the new open is shown): with that panel not shown again when
+## the close ends, "not shown once the close ended".
 ##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
@@ -95,6 +97,11 @@ proc showIt(st: var AppState; path: string) =
   st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
   doAssert st.settle(st.sessions.len == 1 and st.sessions[0].path == path and
     st.panel(MainPanel).laidOut), "not shown: " & path
+
+proc jobsIdle(st: AppState): bool =
+  for j in st.jobs.list:
+    if j.state in {jsQueued, jsRunning}: return false
+  true
 
 proc pump(st: var AppState; n = 100) =
   for i in 0 ..< n:
@@ -192,10 +199,10 @@ block anotherStandardNamed:
     doAssert summaryLines(st.shownSession, 0).valueOf("Read as") == "SEG-D, as chosen"
     # Named SEG-Y, it has no traces: it stays as it was, with the choice it had.
     st.reopen(path, OpenChoice(standard: scSegy))
-    st.pump(150)
-    doAssert st.shownSession.file.kind == skSegd and st.shownSession.len > 0
+    doAssert st.settle(st.log.has("failed") and not st.shownSession.isNil and
+      st.shownSession.file.kind == skSegd and st.shownSession.len > 0),
+      "the failed reopen did not end"
     doAssert st.openChoiceOf(canonical(path)).standard == scSegd, "the failed choice was kept"
-    doAssert st.log.has("failed")
     doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
     st.shutdown()
 
@@ -237,7 +244,7 @@ block failedReopenKeepsTheFile:
       on: true)
     let logged = st.log.len
     st.reopen(path, OpenChoice(standard: scSegd))
-    st.pump(150)
+    doAssert st.settle(st.log.has("stays as it was")), "the failed reopen did not end"
     doAssert st.opens(path.extractFilename) == 2
     doAssert st.sessions.len == 1 and st.sessions[0].id == id, "a failed reopen replaced the file"
     doAssert st.sessions[0].len == SurveyTraces
@@ -350,9 +357,9 @@ block supersededReopenKeepsNoChoice:
     st.showIt(path)
     st.reopen(path, OpenChoice(standard: scSegd))
     st.reopen(path, OpenChoice(standard: scSeg2))
-    st.pump(200)
-    doAssert st.sessions.len == 1 and st.sessions[0].file.kind == skSegy and
-      st.sessions[0].len == SurveyTraces, "the file was replaced"
+    doAssert st.settle(st.log.has("stays as it was") and st.jobsIdle and
+      st.sessions.len == 1 and st.sessions[0].file.kind == skSegy and
+      st.sessions[0].len == SurveyTraces), "the failed reopens did not end"
     doAssert st.openChoiceOf(canonical(path)).isDefault, "the untried choice was kept"
     st.apply Command(kind: ckClose, file: st.sessions[0].id)
     doAssert st.settle(st.sessions.len == 0)
@@ -594,3 +601,45 @@ block cutDuringKeptReopenIsReadOnce:
     doAssert st.sessions[0].facts.opened.choice.verifyAll
     st.shutdown()
   releaseAll()
+
+var
+  delayJobEnd: Gate
+  hookHeld: Gate
+
+proc delayHook(id: JobId; phase: string; back: bool) {.nimcall, gcsafe, raises: [].} =
+  ## Holds the lane after a job's work returns, so a close queued next is
+  ## still queued when the new open is shown.
+  discard id
+  discard phase
+  if not back: return
+  hookHeld.open()
+  var n = 0
+  while not delayJobEnd.isOpen and n < 30000:
+    sleep 1
+    inc n
+
+block shownOnceTheCloseEnds:
+  # The open's lane is held after the reopen posts, so the close of the open
+  # it replaces is still queued when the new one is shown: the panel cannot
+  # take the file, and must be shown once that close ends.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.showIt(path)
+    doAssert st.settle(st.jobsIdle), "a job was still running"
+    delayJobEnd.close()
+    hookHeld.close()
+    setJobHook(delayHook)
+    try:
+      st.reopen(path, OpenChoice(verifyAll: true))
+      doAssert waitUntil(hookHeld.isOpen), "the reopen did not finish its work"
+      discard st.drainInbox() # taken in while the lane is held in the hook
+      doAssert st.log.has("is busy"), "the close did not hold the file"
+      doAssert not st.panel(MainPanel).laidOut, "shown while the close still had the file"
+      delayJobEnd.open()
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
+        st.sessions[0].facts.opened.choice.verifyAll), "not shown once the close ended"
+    finally:
+      delayJobEnd.open()
+      setJobHook(nil)
+    st.shutdown()
