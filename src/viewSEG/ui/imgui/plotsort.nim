@@ -1,19 +1,20 @@
-## The plot window's trace order: a sort button in its strip per preset
-## of the settings (`Settings.sortPresets`, by default `SortPresets`:
-## Line/Station, By Flag, By Component), and a fourth, **Custom...**, that
-## opens the popover of the user's own keys, which starts from the keys used
-## last (`Settings.customOrder`).
+## The plot window's trace order: one drop-down in its strip. Its label is
+## "Sort: " and what is in use (a preset's name, "file order", or "custom").
+## The list is the file's order, each preset of the settings
+## (`Settings.sortPresets`, by default `SortPresets`: Line/Station, By Flag,
+## By Component), and **Custom...**, which opens the popover of the user's
+## own keys, starting from the keys used last (`Settings.customOrder`).
 ##
-## The button of the order in use is drawn selected (Custom... while keys of
-## the user's own are); clicking a selected preset again goes back to the
-## file's order, and so does "File order" in the popover. A button whose
-## keys the traces have none of is greyed out. A change is a `ckSort`: the
-## panel's reader sorts, off the UI thread, and the plot keeps drawing the
-## old order until the new one comes.
+## A preset the traces have none of the keys of is greyed, unless it is the
+## order in use. Picking the preset already in use does nothing; the file's
+## order is the "File order" row. A change is a `ckSort`: the panel's reader
+## sorts, off the UI thread, and the plot keeps drawing the old order until
+## the new one comes.
 
+import std/math
 import imguin/cimgui
 import ../../core/state
-import ../../view/theme
+import ../../view/[strip, theme]
 import chrome, icons, style
 
 const sortKeysId* = "##sortkeys" ## the popover of the user's own keys
@@ -39,44 +40,39 @@ proc toggle*(label: string; selected: bool; t: Theme): bool =
   result = igButton(label.cstring, ImVec2_c(x: 0, y: 0))
   if selected: igPopStyleColor(2)
 
-proc drawSortButtons*(p: Panel; presets: openArray[SortPreset]; t: Theme; marks: var Marks;
-    cmds: var seq[Command]) =
-  ## The strip's sort buttons, one per preset, the one of the order in use
-  ## selected.
+proc drawSortCombo*(p: Panel; s: Settings; marks: var Marks; cmds: var seq[Command]): bool =
+  ## The strip's sort drop-down. True when Custom... was clicked: the caller
+  ## opens the popover (`openSortKeys`), in the window's ID scope.
+  let presets = s.sortPresets
   let order = p.layers[0].order
-  let current = presetOf(order, presets)
-  const again = "\nClick the selected sort button again for the file's order."
-  for i, s in presets:
-    if i > 0: igSameLine(0, 2)
-    # A button whose keys the traces have none of would change nothing.
-    var usable = i == current
-    for k in s.keys:
-      if k.field in p.known: usable = true
-    igBeginDisabled(not usable)
-    if toggle(s.name & "##sort", i == current, t):
-      p.send(if i == current: @[] else: s.keys, cmds)
-    igEndDisabled()
-    marks.mark("plot.sort." & s.name)
-    if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
-        ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
-      let text = "Sort the traces by " & describe(s.keys) &
-        (if usable: "." else: " (these traces have none of them).") & again & "\nNow: " &
-        describe(order) & "."
-      igTextUnformatted(text.cstring, nil)
-      igEndTooltip()
-
-proc drawCustomSort*(p: Panel; presets: openArray[SortPreset]; t: Theme;
-    marks: var Marks): bool =
-  ## The strip's Custom... button, selected while the order in use is keys
-  ## of the user's own. True when it was clicked: the caller opens the
-  ## popover (`openSortKeys`).
-  let order = p.layers[0].order
-  let own = order.len > 0 and presetOf(order, presets) < 0
-  result = toggle("Custom...##sortcustom", own, t)
-  marks.mark("plot.sort.custom")
-  tip("Sort the traces by keys of your own: header fields, the first first, each " &
-    "ascending or descending." & (if own: "\nNow: " & describe(order) &
-    ".\nFile order, in the list it opens, gives the file's order back." else: ""))
+  let label = sortLabel(order, presets)
+  let style = igGetStyle()
+  igSetNextItemWidth(round(igCalcTextSize(label.cstring, nil, false, -1).x +
+    igGetFrameHeight() + 3 * style.FramePadding.x))
+  if igBeginCombo("##sort", label.cstring, 0):
+    for row in sortRows(order, presets, p.known):
+      case row.kind
+      of srSeparator:
+        igSeparator()
+      of srFileOrder, srPreset, srCustom:
+        let id = row.label & "##sortrow"
+        if row.greyed: igBeginDisabled(true)
+        let clicked = igSelectable_Bool(id.cstring, row.inUse, 0, ImVec2_c(x: 0, y: 0))
+        if row.greyed: igEndDisabled()
+        if row.kind == srPreset: marks.mark("plot.sort." & row.label)
+        elif row.kind == srCustom: marks.mark("plot.sort.custom")
+        else: marks.mark("plot.sort.file order")
+        if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+            ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+          igTextUnformatted(row.tip.cstring, nil)
+          igEndTooltip()
+        if clicked:
+          let pick = sortPick(row, presets)
+          if pick.acts: p.send(pick.order, cmds)
+          if pick.opensCustom: result = true
+    igEndCombo()
+  marks.mark("plot.sort")
+  tip(sortTip(order))
 
 proc openSortKeys*(ks: var SortKeysUi; p: Panel; s: Settings) =
   ## Opens the popover at the mouse with the order in use when it is the
