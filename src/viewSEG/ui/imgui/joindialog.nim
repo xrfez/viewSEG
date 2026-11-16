@@ -496,6 +496,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     igSameLine(0, -1)
     if igButton("Close", ImVec2_c(x: 0, y: 0)): ui.shown = false
     marks.marked("join.close")
+    tip("Close this window (the survey already imported stays)")
     if busy:
       igSameLine(0, -1)
       let info = st.jobs.info(underWay.job)
@@ -514,6 +515,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
         if igSmallButton((IconStop & " Cancel").cstring):
           result.commands.add Command(kind: ckCancelJob, job: underWay.job)
         marks.marked("join.cancel")
+        tip("Ask the import to stop")
     if changed:
       var s = st.settings
       s.join = opts

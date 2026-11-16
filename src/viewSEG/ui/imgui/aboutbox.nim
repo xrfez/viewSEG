@@ -68,8 +68,14 @@ proc drawAbout*(ui: var AboutUi; t: Theme; marks: var Marks) =
   if igButton("Copy", ImVec2_c(x: 0, y: 0)):
     igSetClipboardText(aboutText(ui.lines).cstring)
   marks.mark("about.copy")
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igTextUnformatted("Copy the version lines to the clipboard", nil)
+    igEndTooltip()
   igSameLine(0, -1)
   if igButton("Close", ImVec2_c(x: 0, y: 0)) or igIsKeyPressed_Bool(ImGui_Key_Escape, false):
     igCloseCurrentPopup()
   marks.mark("about.close")
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igTextUnformatted("Close this box (Escape)", nil)
+    igEndTooltip()
   igEndPopup()

@@ -86,10 +86,12 @@ proc drawChooser(ui: var TableUi; st: AppState; answer: TableAnswer; standard: S
     if igIsWindowAppearing(): igSetKeyboardFocusHere(0)
     discard igInputTextWithHint("##filter", "Filter fields", cast[cstring](addr ui.chooser[0]),
       csize_t(ui.chooser.len), 0, nil, nil)
+    tip("Show only the fields whose name or description holds this text")
     let filter = ($cast[cstring](addr ui.chooser[0])).toLowerAscii
     igSameLine(0, -1)
     if igSmallButton("Defaults"): st.setFields(@DefaultTableFields, commands)
     marks.mark("table.chooser defaults")
+    tip("The columns a trace table shows at first")
     var fields = st.settings.headers.tableFields
     var changed = false
     if igBeginChild_Str("##fields", ImVec2_c(x: igGetFontSize() * 30, y: igGetFontSize() * 24),
@@ -179,6 +181,8 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
       commands.add Command(kind: ckSettings, settings: x)
       ui.view.rows = 0 .. -1
     marks.mark("table.scope " & $s)
+    tip(if s == tsRecord: "Show one row per trace of the record shown"
+        else: "Show one row per trace of the whole file")
   sameLineIfRoom("Columns...", 2)
   ui.drawChooser(st, answer, ses.facts.summary.standard, t, marks, commands)
   sameLineIfRoom("Graph: Receiver point")

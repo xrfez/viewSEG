@@ -314,7 +314,7 @@ proc drawLayouts(input: MenuInput; res: var MenuResult) =
       if not e.preset:
         igPushID_Int(cint(i))
         if igMenuItem_Bool(e.name.cstring, nil, false, true): res.loadLayout = e.path
-        tip(e.path)
+        tip("Arrange the windows as this layout does.\n" & e.path)
         igPopID()
     igEndMenu()
   tip(if mine: "Arrange the windows as a layout you saved does"
@@ -498,6 +498,7 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       (result.pickedTheme, result.theme) = (result.themeMenu.picked, result.themeMenu.theme)
       if igMenuItem_Bool(label(maToggleTheme).cstring, nil, false, true):
         result.actions.incl maToggleTheme
+      tip("Switch to the other mode's default theme")
       igEndMenu()
     let window = igBeginMenu("Window", true)
     marks.mark("menu.Window")

@@ -165,4 +165,5 @@ proc drawReopen*(ui: var ReopenUi; t: Theme; marks: var Marks): seq[Command] =
     ui.path = ""
     igCloseCurrentPopup()
   marks.mark("reopen.cancel")
+  tip("Close this box without reopening the file (Escape)")
   igEndPopup()

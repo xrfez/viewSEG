@@ -670,11 +670,19 @@ proc drawSetsPage(ui: var HeadersUi; t: Theme; marks: var Marks) =
   if igSmallButton("Previous##setspage"): dec ui.setsPage
   igEndDisabled()
   marks.mark("headers.sets previous")
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+    igTextUnformatted("The channel sets before these", nil)
+    igEndTooltip()
   igSameLine(0, -1)
   igBeginDisabled(page.b + 1 >= ui.sets)
   if igSmallButton("Next##setspage"): inc ui.setsPage
   igEndDisabled()
   marks.mark("headers.sets next")
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+    igTextUnformatted("The channel sets after these", nil)
+    igEndTooltip()
   igSameLine(0, -1)
   dim(t, "Sets " & $(page.a + 1) & " to " & $(page.b + 1) & " of " & $ui.sets)
   marks.mark("headers.sets page")

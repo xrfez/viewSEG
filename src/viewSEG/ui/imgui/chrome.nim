@@ -376,6 +376,7 @@ proc jobField(job: JobStatus; t: Theme; marks: var Marks; res: var StatusOutput)
         res.cancel = job.job
       igEndDisabled()
       marks.mark("status.cancel")
+      tooltip("Ask this job to stop", "", t)
     igPopStyleVar(1)
   let others = job.others
   if others.len > 0:

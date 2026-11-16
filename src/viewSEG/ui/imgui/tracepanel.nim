@@ -874,11 +874,13 @@ proc drawScaleSettings(tp: var TracePanelUi; st: AppState; marks: var Marks;
         s.scale.length != u:
       s.scale.length = u
       res.commands.add Command(kind: ckSettings, settings: s)
+    tip("Show the scales in " & (if u == luInch: "inches" else: "centimetres"))
   var speed = s.scale.speed
   if igCheckbox(("Time as speed (" & $s.scale.length & "/s, not ms/" & $s.scale.length &
       ")").cstring, addr speed):
     s.scale.speed = speed
     res.commands.add Command(kind: ckSettings, settings: s)
+  tip("Show time as a speed instead of milliseconds per inch or centimetre")
   igSeparatorText("Screen")
   let cal = s.calibration(mon.name)
   igTextUnformatted((mon.name & ": " & formatFloat(ppi, ffDecimal, 1) & " pixels per inch " &
@@ -890,6 +892,7 @@ proc drawScaleSettings(tp: var TracePanelUi; st: AppState; marks: var Marks;
   igBeginDisabled(mon.widthPx <= 0 or mon.heightPx <= 0)
   igSetNextItemWidth(numberWidth)
   discard igInputDouble("##diagonal", addr tp.calib.diagonal, 0, 0, "%.1f", 0)
+  tip("The monitor's diagonal, in inches, as its specification gives it")
   igSameLine(0, 4)
   igTextUnformatted("inch diagonal", nil)
   igSameLine(0, -1)
@@ -909,15 +912,18 @@ proc drawScaleSettings(tp: var TracePanelUi; st: AppState; marks: var Marks;
   igTextUnformatted("Or hold a ruler to the screen and make this bar", nil)
   igSetNextItemWidth(numberWidth)
   discard igInputDouble("##rulerlength", addr tp.calib.rulerLength, 0, 0, "%.1f", 0)
+  tip("How long the ruler you hold to the screen is")
   for u in LengthUnit:
     igSameLine(0, -1)
     if igRadioButton_Bool(($u & "##ruler").cstring, tp.calib.rulerUnit == u):
       tp.calib.rulerUnit = u
+    tip("The ruler's unit")
   igSameLine(0, -1)
   igTextUnformatted("long:", nil)
   igSetNextItemWidth(round(igGetFontSize() * 24))
   discard igSliderFloat("##rulerpx", addr tp.calib.rulerPx, 50, 2400, "%.0f pixels",
     ImGui_SliderFlags_AlwaysClamp.cint)
+  tip("Drag until the bar matches the ruler you hold to the screen")
   let dl = igGetWindowDrawList()
   let at = igGetCursorScreenPos()
   let w = tp.calib.rulerPx / max(fb, 0.01)
@@ -935,12 +941,14 @@ proc drawScaleSettings(tp: var TracePanelUi; st: AppState; marks: var Marks;
       res.commands.add Command(kind: ckSettings, settings: s)
     except ValueError as e:
       res.notes.add "Cannot calibrate the screen: " & e.msg & "."
+  tip("Use the bar's length as this monitor's calibration")
   if not cal.isNaN:
     igSameLine(0, -1)
     if igButton("Forget the calibration", ImVec2_c(x: 0, y: 0)):
       s.calibrate(mon.name, NaN)
       tp.calib.rulerPx = 0
       res.commands.add Command(kind: ckSettings, settings: s)
+    tip("Forget this monitor's calibration and use the assumed size")
 
 template stripGroup(tp: var TracePanelUi; g: StripGroup; firstEdge, fullEdge, spacing,
     lift: float32; started, onFirst: var bool; body: untyped) =
@@ -1375,10 +1383,12 @@ proc drawStartScreen(t: Theme; recent, folders: openArray[string]; marks: var Ma
   if igButton((IconOpenFile & "  " & menuLabel(maOpenFile)).cstring, big):
     res.actions.incl maOpenFile
   marks.mark("plot.open file")
+  tip(menuLabel(maOpenFile) & " (" & shortcutName(maOpenFile) & ")")
   igSetCursorPosX(top.x + max(0, (avail.x - big.x) / 2))
   if igButton((IconOpenFolder & "  " & menuLabel(maOpenFolder)).cstring, big):
     res.actions.incl maOpenFolder
   marks.mark("plot.open folder")
+  tip(menuLabel(maOpenFolder) & " (" & shortcutName(maOpenFolder) & ")")
   let hint = "Ctrl+O opens a file, Ctrl+Alt+O a folder; files and folders can also be " &
     "dropped on the window."
   let w = igCalcTextSize(hint.cstring, nil, false, -1).x
@@ -1516,10 +1526,13 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   if igMenuItem_Bool("Reverse polarity", "R", teReversed in has, under >= 0):
     res.commands.add editCommand(st, p, under, teReversed)
   marks.mark("plot.menu.reverse")
+  tip("Reverse this trace's polarity (R). A tick means it is reversed; a click puts it back.")
   if igMenuItem_Bool((if teKilled in has: "Restore" else: "Kill").cstring, "K", false,
       under >= 0):
     res.commands.add editCommand(st, p, under, teKilled)
   marks.mark("plot.menu.kill")
+  tip(if teKilled in has: "Restore this killed trace (K)"
+      else: "Kill this trace: leave it out of the plot and the processing (K)")
   let fft = fftEntry()
   if igMenuItem_Bool((fft.icon & "  " & fft.name & " in a new window").cstring,
       fft.shortcut.cstring, false, under >= 0):
@@ -1528,6 +1541,7 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   tip(fft.sentence)
   let newPlot = igBeginMenu("New plot", under >= 0)
   marks.mark("plot.menu.newplot")
+  tip("Open a plot of the selected traces")
   if newPlot:
     for e in PlotEntries:
       if not e.fft:
@@ -1545,22 +1559,26 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   if igMenuItem_Bool(station.cstring, "M", false, tp.menuStations.points.len > 0):
     res.commands.add tp.menuStations
   marks.mark("plot.menu.station")
+  tip("Select this trace's station on the map (M)")
   igSeparator()
   # An operation on the samples (processSEG's polarityOp), not a colour.
   let reversed = p.layers[0].reversed
   if igMenuItem_Bool("Reverse polarity of all traces", nil, reversed, true):
     res.commands.add Command(kind: ckReverseAll, panel: p.id, reverse: not reversed)
   marks.mark("plot.menu.reverse all")
+  tip("Reverse the polarity of every trace in the plot")
   igSeparator()
   template e: untyped = st.editsOf(k) # not copied
   let undo = if e.canUndo: "Undo " & e.undoText else: "Undo"
   if igMenuItem_Bool(undo.cstring, "Ctrl+Z", false, e.canUndo):
     res.commands.add Command(kind: ckUndoEdit, panel: p.id)
   marks.mark("plot.menu.undo")
+  tip("Take back the last edit of this file (Ctrl+Z)")
   let redo = if e.canRedo: "Redo " & e.redoText else: "Redo"
   if igMenuItem_Bool(redo.cstring, "Ctrl+Shift+Z", false, e.canRedo):
     res.commands.add Command(kind: ckRedoEdit, panel: p.id)
   marks.mark("plot.menu.redo")
+  tip("Make the last undone edit again (Ctrl+Shift+Z)")
   if igMenuItem_Bool("Clear all edits for this file", nil, false, not e.isEmpty):
     res.commands.add Command(kind: ckClearEdits, panel: p.id)
   marks.mark("plot.menu.clear")

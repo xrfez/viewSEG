@@ -58,6 +58,10 @@ proc entry(label, file: string; t: Theme; ticked: bool; room: string; res: var T
   marks.mark("menu.theme." & (if file.len == 0: "follow" else: file))
   if igIsItemHovered(ImGui_HoveredFlags_Stationary.cint or ImGui_HoveredFlags_DelayShort.cint):
     (res.rests, res.rested) = (true, file)
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igTextUnformatted((if file.len == 0: "Follow the system's light or dark theme"
+      else: "Use this theme").cstring, nil)
+    igEndTooltip()
   drawSwatch(at, t)
 
 proc drawThemeMenu*(themes: openArray[ThemeFile]; current, follows: string; label: string;

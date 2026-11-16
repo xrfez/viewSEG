@@ -62,6 +62,7 @@ proc drawJobs*(title: string; st: AppState; t: Theme; marks: var Marks): JobsOut
       igSameLine(0, -1)
       igTextUnformatted(r.title.cstring, nil)
       marks.mark("jobs.running " & r.title)
+      tip(if r.detail.len > 0: r.detail else: "This job is running")
       let width = max(igGetFontSize() * 6, igGetContentRegionAvail().x -
         igCalcTextSize("Cancel", nil, false, -1).x - 6 * style.FramePadding.x)
       let fraction = if r.fraction >= 0: r.fraction else: -float32(igGetTime())

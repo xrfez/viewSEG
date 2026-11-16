@@ -113,6 +113,7 @@ proc drawNew(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks: va
     discard igInputText("##projectname", cast[cstring](addr ui.name[0]), csize_t(ui.name.len),
       0, nil, nil)
     marks.mark("newproject.name")
+    tip("The project's name: its folder is made under this name")
     let name = ($cast[cstring](addr ui.name[0])).strip
     igTextUnformatted("Made in", nil)
     igSameLine(igGetFontSize() * 7, -1)
@@ -153,6 +154,7 @@ proc drawNew(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks: va
       "copy too)")
     discard igCheckbox("Take my display presets", addr ui.takePresets)
     marks.mark("newproject.presets")
+    tip("Copy the display presets kept on this computer into the project")
     let why = if name.len == 0: "a name is needed" else: projectNameProblem(name)
     let dir = if ui.place.len > 0 and name.len > 0: ui.place / name else: ""
     var inside = ""
@@ -301,6 +303,7 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
           igSameLine(0, -1)
           if igSmallButton("List"):
             res.commands.add Command(kind: ckBrowse, paths: @[look.path], showFirst: true)
+          tip("List this folder in Files and show its first seismic file")
         igPopID()
       if button(IconOpenFolder & "  Add a data folder...", "project.adddata",
           "Another folder of the job's seismic files", not p.readOnly, marks):

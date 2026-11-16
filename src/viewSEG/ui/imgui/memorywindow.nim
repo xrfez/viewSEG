@@ -95,12 +95,14 @@ proc drawConfirm(ui: var MemoryUi; res: var MemoryOutput; marks: var Marks) =
       ui.going.setLen 0
       igCloseCurrentPopup()
     marks.mark("memory.confirm.remove")
+    tip("Forget these files' kills and polarity reversals (the files themselves stay)")
     igSameLine(0, -1)
     if igButton("Cancel", ImVec2_c(x: 0, y: 0)) or igIsKeyPressed_Bool(ImGui_Key_Escape,
         false):
       ui.going.setLen 0
       igCloseCurrentPopup()
     marks.mark("memory.confirm.cancel")
+    tip("Keep them in the file memory (Escape)")
     igEndPopup()
 
 proc drawMemory*(ui: var MemoryUi; title: string; st: AppState; t: Theme;
@@ -229,6 +231,7 @@ proc drawMemory*(ui: var MemoryUi; title: string; st: AppState; t: Theme;
     discard igInputInt("days", addr ui.days, 1, 30, 0)
     ui.days = clamp(ui.days, 0, 100_000)
     marks.mark("memory.days")
+    tip("Files not opened for this many days or more are the ones that button forgets")
     ui.drawConfirm(result, marks)
     ui.focus.settle()
   igEnd()

@@ -51,7 +51,8 @@ type
     toggleFollow*: bool ## "Follow the latest" was clicked
 
 proc tip(text: string) =
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
     igPushTextWrapPos(igGetFontSize() * 30)
     igTextUnformatted(text.cstring, nil)
     igPopTextWrapPos()
@@ -158,7 +159,11 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
   igTableSetupColumn("Size", ImGui_TableColumnFlags_PreferSortDescending.cint, 0, 2)
   igTableSetupColumn("Modified", ImGui_TableColumnFlags_PreferSortDescending.cint, 0, 3)
   igPushItemFlag(ImGui_ItemFlags_NoTabStop.cint, true) # the list is one stop of Tab
-  igTableHeadersRow()
+  igTableNextRow(ImGui_TableRowFlags_Headers.cint, 0)
+  for c, name in ["Name", "Type", "Size", "Modified"]:
+    if igTableSetColumnIndex(cint(c)):
+      igTableHeader(name.cstring)
+      tip("Click to sort by " & name)
   igPopItemFlag()
   let specs = igTableGetSortSpecs()
   if specs != nil and specs.SpecsCount > 0:

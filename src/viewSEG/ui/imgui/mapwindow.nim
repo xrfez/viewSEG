@@ -370,6 +370,7 @@ proc layerRow(l: MapLayerView; i: int; marks: var Marks; res: var MapOutput) =
   ## One layer of the popover: its colour, its own toggle and its points.
   igPushID_Int(cint(i))
   swatch(l.colour, "##colour")
+  tip("This layer's colour")
   igSameLine(0, -1)
   var on = l.own
   let label = l.name & (if l.points > 0: "  (" & $l.points & ")" else: "")
@@ -377,6 +378,7 @@ proc layerRow(l: MapLayerView; i: int; marks: var Marks; res: var MapOutput) =
     res.commands.add Command(kind: ckMapLayer, mapLayer: l.key, shown: on)
   marks.mark("map.layer " & (if l.key.kind == mlHighlight: "highlight"
     else: l.file & " " & roleWord(l.role)))
+  tip("Show or hide this layer")
   igPopID()
 
 const groupTips: array[MapGroup, string] = [
@@ -688,6 +690,8 @@ proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; mar
         s.map.info = m
         res.commands.add Command(kind: ckSettings, settings: s)
       marks.mark("map.more." & $m)
+      tip(if m == miPopup: "Describe the point in a popup beside the pointer"
+          else: "Describe the point in a strip along the map's bottom")
     igSeparatorText("Lengths (the scale bar, the ruler)")
     let u = st.surveyUnit
     let convertible = not metresPerUnit(u).isNaN
@@ -707,6 +711,9 @@ proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; mar
           ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
         igTextUnformatted("Nothing says what the survey's unit is, so lengths cannot be " &
           "converted (the scale bar says \"units\")", nil)
+        igEndTooltip()
+      elif igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+        igTextUnformatted("The unit of the scale bar, the ruler and the lengths read out", nil)
         igEndTooltip()
     igEndPopup()
 
@@ -1233,6 +1240,7 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
         if igMenuItem_Bool("Show its record", "Click", false, true):
           res.commands.add Command(kind: ckShowPoints, points: mu.menuPoints)
         marks.mark("map menu.show")
+        tip("Show the record this point belongs to (Click)")
       # Each listed file that holds the shot; a click shows the first when no
       # open file has its traces.
       for k in 0 ..< min(places.len, menuShots):
@@ -1242,6 +1250,7 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
           res.commands.add Command(kind: ckShowPoints, points: mu.menuPoints,
             shotPath: places[k].path)
         marks.mark(if k == 0 and traces == 0: "map menu.show" else: "map menu.shot " & $k)
+        tip("Show this file's record of the shot")
       if places.len > menuShots:
         igTextDisabled("%s", ("... and " & $(places.len - menuShots) & " more").cstring)
       let what = if traces == 0: "Select it"
@@ -1253,11 +1262,14 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
         res.commands.add Command(kind: ckSelectPoints, points: mu.menuPoints,
           pointMode: smReplace)
       marks.mark("map menu.select")
+      tip("Select this point, and its traces in the plot when it has them")
       let toggle = if selected: "Take it out of the selection" else: "Add it to the selection"
       if igMenuItem_Bool(toggle.cstring, "Ctrl+Click", false, true):
         res.commands.add Command(kind: ckSelectPoints, points: mu.menuPoints,
           pointMode: (if selected: smRemove else: smAdd))
       marks.mark("map menu.add")
+      tip(if selected: "Take this point out of the selection (Ctrl+Click)"
+          else: "Add this point to the selection (Ctrl+Click)")
       igSeparator()
       let i = st.survey.find(mu.menuPoints[0].layer)
       if i >= 0:
@@ -1266,6 +1278,7 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
         if igMenuItem_Bool(("Hide the " & name).cstring, nil, false, true):
           res.commands.add Command(kind: ckMapLayer, mapLayer: key, shown: false)
         marks.mark("map menu.hide")
+        tip("Hide this layer (show it again from Layers)")
     igEndPopup()
 
 func markStyle(t: Theme; f: MapFilter; ink: MapInk; scale: float32): MapStyle =

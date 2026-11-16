@@ -160,14 +160,23 @@ proc strip(view: var LogView; log: MessageLog; t: Theme; marks: var Marks;
       text.add line(e) & "\n"
     igSetClipboardText(text.cstring)
   marks.mark("messages.copy")
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igTextUnformatted("Copy the lines shown to the clipboard", nil)
+    igEndTooltip()
   igSameLine(0, 4)
   if igSmallButton((IconClearAll & " Clear").cstring):
     view.cleared = log.nextSerial
   marks.mark("messages.clear")
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igTextUnformatted("Empty this window (the session's log file keeps everything)", nil)
+    igEndTooltip()
   igSameLine(0, 4)
   if igSmallButton((IconExport & " " & menuLabel(maExportLog)).cstring):
     res.exportLog = true
   marks.mark("messages.export")
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igTextUnformatted("Write every message of this session to a text file of your choice", nil)
+    igEndTooltip()
 
 proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
     settings: MessagesView; marks: var Marks): LogOutput =

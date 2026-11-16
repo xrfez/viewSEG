@@ -199,6 +199,7 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
             let name = igTableGetColumnName_Int(cint(c))
             igTableHeader(name)
             marks.mark("records.header " & $name)
+            tip("Click to sort by " & $name)
         igPopItemFlag()
         let specs = igTableGetSortSpecs()
         if specs != nil and specs.SpecsCount > 0:
@@ -231,6 +232,7 @@ proc drawRecordList*(ui: var RecordListUi; title: string; st: AppState; panel: P
                 ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)) and
                 i != current and ui.focus.acts:
               result.commands.add Command(kind: ckGather, panel: panel, gather: i)
+            tip("Show this record")
             if missing > 0: igPopStyleColor(1)
             popRowTabStop()
             ui.keys.afterRow()
