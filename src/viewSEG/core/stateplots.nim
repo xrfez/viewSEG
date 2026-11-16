@@ -125,9 +125,14 @@ proc askPlot(state: var AppState; w: int): bool =
     if a.refFile != nil: discard state.jobs.holdRelease.release(a.refPath)
     return false
   # frozen: the kills it was frozen with; else the plot's now
-  var killed = if pw.frozen: pw.killed else: killedOf(state.editsAt(s.path), traces)
+  let e = state.editsAt(s.path)
+  var killed = if pw.frozen: pw.killed else: killedOf(e, traces)
   killed.sort()
   a.killed = killed
+  if not pw.frozen:
+    pw.own = ownOfTraces(e, traces)
+    pw.ownKey = ownKeyOf(e, traces)
+  a.own = pw.own
   inc state.plotGen
   a.gen = state.plotGen
   pw.asked = state.plotGen
@@ -315,7 +320,10 @@ proc followPlots(state: var AppState) =
           var killed = killedOf(e, traces)
           killed.sort()
           killsMoved = killed != pw.killed
-          if not killsMoved: pw.editsSeen = e.revision # other traces' edits: nothing to ask
+          let ownMoved = ownKeyOf(e, traces) != pw.ownKey
+          if not killsMoved and not ownMoved:
+            pw.editsSeen = e.revision # other traces' edits: nothing to ask
+          if ownMoved: killsMoved = true
         if pr != pw.processing or killsMoved:
           let was = pw.processing
           pw.processing = pr

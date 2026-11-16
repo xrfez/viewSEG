@@ -191,6 +191,7 @@ func editNote*(p: Pick): string =
   if p.keys.status == tsDead: result = "dead"
   for (edit, word) in [(teKilled, "killed"), (teReversed, "polarity reversed")]:
     if edit in p.edits: result.add (if result.len > 0: ", " else: "") & word
+  if p.filterNote.len > 0: result.add (if result.len > 0: ", " else: "") & p.filterNote
 
 func cleaned*(fields: openArray[ReadoutField]): seq[ReadoutField] =
   ## `fields` in their order, each once.

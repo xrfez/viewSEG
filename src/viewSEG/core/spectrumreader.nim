@@ -61,6 +61,7 @@ type
     size*: int64           ## its size when it was opened; -1 when not known
     traces*: seq[int]      ## indices in the file
     killed*: seq[int]      ## those of them killed, ascending: left out
+    own*: seq[FilterEntry] ## those that carry a filter of their own, ascending
     fromMs*, toMs*: float64 = NaN
       ## the time window; NaN: the whole trace
     processing*: Processing
@@ -192,6 +193,46 @@ proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Ca
   clearCycleRoots()
   if given: result = -1
 
+func unionAsc(a, b: openArray[int]): seq[int] =
+  result = newSeqOfCap[int](a.len + b.len)
+  var i, j = 0
+  while i < a.len or j < b.len:
+    let x = if j >= b.len or (i < a.len and a[i] <= b[j]): a[i] else: b[j]
+    if result.len == 0 or result[^1] != x: result.add x
+    if i < a.len and a[i] == x: inc i
+    if j < b.len and b[j] == x: inc j
+
+func blockOwn(own: openArray[FilterEntry]; traces: openArray[int]): seq[OwnFilter] =
+  ## One filter per row of `traces`; the default (not stored) where it has none.
+  result = newSeq[OwnFilter](traces.len)
+  for k, t in traces:
+    let at = entryAt(own, t)
+    if at >= 0: result[k] = own[at].filter
+
+proc applyBlockOwn(b: RowBlock[float32]; live: TraceRows; dtMs: float64;
+    own: openArray[OwnFilter]; failed: openArray[int]; ws: var Workspace) =
+  ## Each row's own frequency filter. A failed row is left as it is.
+  var seen: seq[int]
+  for k, f in own:
+    if f.spec.hasFilters and failed.binarySearch(k) < 0 and k notin seen:
+      var group = @[k]
+      seen.add k
+      for j in k + 1 ..< own.len:
+        if own[j] == f and failed.binarySearch(j) < 0:
+          group.add j
+          seen.add j
+      var skip = newSeqOfCap[int](b.len - group.len)
+      var g = 0
+      for row in 0 ..< b.len:
+        if g < group.len and group[g] == row: inc g
+        else: skip.add row
+      let pipe = f.ownPipeline(dtMs)
+      if pipe.len > 0:
+        let plan = pipe.compile(float32, dtMs, b.cols, recordSamples = b.cols)
+        ws.reserve(plan)
+        let meta = initChunkMeta(live, dtMs, 0, skip)
+        plan.apply(b, meta, ws)
+
 proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
     cache: var Cache; answer: var Spectrum): bool =
   ## The raw and processed spectra of `list` (traces at hand, live, of one
@@ -243,6 +284,7 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   var plan: PipelinePlan[float32]
   var planCols = -1
   var ws = initWorkspace()
+  var showedOwn = false
   var work: seq[float32]
   var at = 0
   while at < list.len:
@@ -279,16 +321,32 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
       except ValueError as e:
         answer.filterProblem = e.msg
         filtering = false
-    if filtering:
+    let ownHere = blockOwn(a.own, part)
+    var ownRuns = false
+    for f in ownHere:
+      if f.spec.hasFilters or f.place == fpInstead: ownRuns = true
+    if filtering or ownRuns:
       # Through the filters, and in the processed curve, only the rows they
       # reach: with the Aux toggle off processSEG passes an auxiliary row by,
       # and the sum leaves it out (it is not live), so it is not counted as
-      # processed.
+      # processed. A row whose own filter runs instead of the plot's is left
+      # out of the plot's filter, then each own filter runs.
+      var instead: seq[int]
+      for k, f in ownHere:
+        if f.place == fpInstead: instead.add k
       let meta = if pr.aux: initChunkMeta(live, dtMs, 0, failed)
                  else: initChunkMeta(rows, dtMs, 0, failed)
-      plan.apply(b, meta, ws)
+      if filtering:
+        if instead.len == 0: plan.apply(b, meta, ws)
+        else:
+          let skip = unionAsc(failed, instead)
+          let plotMeta = if pr.aux: initChunkMeta(live, dtMs, 0, skip)
+                         else: initChunkMeta(rows, dtMs, 0, skip)
+          plan.apply(b, plotMeta, ws)
+      applyBlockOwn(b, live, dtMs, ownHere, failed, ws)
       discard processed.add(b, meta, window.a)
       answer.processedPhase = processed.phaseOf()
+      if ownRuns: showedOwn = true
     at += n
     # given up between blocks only: a spectrum computed whole is posted, so
     # the live panel moves on while a pan sends newer requests
@@ -298,7 +356,7 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   answer.raw = raw.amplitudes
   answer.averaged = raw.used
   answer.failed += list.len - raw.used
-  if filtering:
+  if filtering or showedOwn:
     answer.filtered = processed.used
     if not pr.aux: answer.passedBy = raw.used - processed.used
     if processed.used > 0: answer.processed = processed.amplitudes

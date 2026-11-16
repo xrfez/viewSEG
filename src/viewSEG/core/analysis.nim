@@ -559,6 +559,8 @@ type
     filters*: string ## them in words; "" for none
     killed*: seq[int] ## its traces killed when it asked last (indices in the file)
     editsSeen*: int ## its file's edits' revision then
+    ownKey*: string ## the own filters of its traces when it asked last
+    own*: seq[FilterEntry] ## those filters, kept while the window is frozen
     result*: AnalysisResult ## the newest answer taken in
     asked*: uint64 ## the newest request's gen
     since*: uint64 ## answers to requests from before this are not its

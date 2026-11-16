@@ -29,6 +29,7 @@ type
     raw*: float32 = NaN       ## the file's sample there, before anything; NaN when not held
     binned*: int = 1          ## samples behind `amplitude`: more than 1 zoomed out
     edits*: set[TraceEdit]    ## the trace's edits, as drawn: killed, reversed
+    filterNote*: string       ## its own filter, in words; "" for none
     joined*: set[JoinGroup]   ## the groups of its keys a geometry join gave
 
 func noPick*(): Pick =

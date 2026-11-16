@@ -164,6 +164,7 @@ type
     cursorCurve*: SpectrumCurve ## and the curve it reads
     killed*: seq[int] ## its traces killed when it asked last (indices in the file)
     editsSeen*: int ## its file's edits' revision then
+    ownKey*: string ## the own filters of its traces when it asked last
     spectrum*: Spectrum ## the newest answer taken in
     asked*: uint64 ## the newest request's gen; 0 for none
     since*: uint64

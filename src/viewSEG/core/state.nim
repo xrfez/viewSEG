@@ -166,6 +166,7 @@ type
     ckImportLayout = "import layout"     ## load such a file and keep it among the layouts
     ckExportLog = "export messages"      ## write the messages to a file of the user's
     ckEdit = "edit traces"               ## kill or restore traces, reverse their polarity or not
+    ckOwnFilter = "own filter"           ## set or remove a trace's own frequency filter
     ckUndoEdit = "undo edit"             ## take back the newest change to the edits of a panel's file
     ckRedoEdit = "redo edit"             ## make the change to its edits undone last again
     ckClearEdits = "clear edits"         ## take every edit of a panel's file away
@@ -247,7 +248,7 @@ type
       position*: int ## 0 runs next
     of ckGather, ckView, ckDisplay, ckHeader, ckSort, ckReverseAll, ckBack, ckShowFile,
         ckShowTrace, ckEdit, ckUndoEdit, ckRedoEdit, ckClearEdits, ckExportEdits, ckImportEdits,
-        ckFilter, ckRetry, ckStopReading, ckPrepare, ckProcessing, ckDisplayPreset:
+        ckFilter, ckRetry, ckStopReading, ckPrepare, ckProcessing, ckDisplayPreset, ckOwnFilter:
       panel*: PanelId ## the panel's id (1: the Seismic window; 0 retries the folder)
       gather*: int ## ckGather: index into the file's gathers
       path*: string ## ckShowFile, ckShowTrace: the file to show; ckPrepare: the next
@@ -261,8 +262,8 @@ type
       order*: seq[SortKey] ## ckSort: layer 0's keys, the first first; empty: the file's order
       reverse*: bool ## ckReverseAll: every trace of layer 0 reversed, or none
       edit*: TraceEdit ## ckEdit: killed, or reversed
-      edited*: seq[int] ## ckEdit: survey-wide ids of traces of the panel's file
-      on*: bool ## ckEdit: the edit given (true) or taken away
+      edited*: seq[int] ## ckEdit, ckOwnFilter: survey-wide ids of traces of the panel's file
+      on*: bool ## ckEdit, ckOwnFilter: given (true) or taken away
       filter*: TraceFilter ## ckFilter: layer 0's traces (seismic, auxiliary, components)
       listPath*: string
         ## ckExportEdits, ckImportEdits: the list's file (`.nif`, or `.csv`)
@@ -271,7 +272,10 @@ type
         ## the list does not taken off (one step), instead of the list's added
       processing*: Processing
         ## ckProcessing: layer 0's filters (DC removal, pass band, notches),
-        ## shown raw or processed, the auxiliary traces filtered or not
+        ## shown raw or processed, the auxiliary traces filtered or not;
+        ## ckOwnFilter: the trace's own frequency filters (raw and aux are not used)
+      filterPlace*: FilterPlace
+        ## ckOwnFilter: after the plot's filters, or instead of them
       presetAction*: PresetAction
         ## ckDisplayPreset: draw the panel as the preset says (its orientation
         ## kept), save the panel's display under the name (replacing a preset
@@ -650,6 +654,9 @@ type
       ## survey-wide ids
     edits: seq[set[TraceEdit]]
       ## theirs, when shown as displayed
+    own: seq[OwnFilter]
+      ## each trace's own filter, when shown as displayed; the default for none
+    hasOwn: seq[bool]
     displayed: bool
     shown: SessionId
       ## the file the plot shows, when traces are shown as displayed (only
@@ -1798,6 +1805,15 @@ func editsAt(state: AppState; path: string): lent FileEdits =
     return state.edits[state.keyOf(path)]
   state.noEdits
 
+func ownAt*(state: AppState; path: string; trace: int): tuple[has: bool; filter: OwnFilter] =
+  ## The own filter of file-index `trace` at `path`; none when the file has none.
+  if state.keyOf(path) in state.edits:
+    result = state.edits[state.keyOf(path)].ownOf(trace)
+
+func hasEditAt*(state: AppState; path: string; trace: int; edit: TraceEdit): bool =
+  ## Whether file-index `trace` at `path` has edit `edit`.
+  state.keyOf(path) in state.edits and state.edits[state.keyOf(path)].has(edit, trace)
+
 func editsOf*(state: AppState; panelIndex: int): lent FileEdits =
   ## The edits of the file `panels[panelIndex]` shows; none when it shows
   ## none or the file has none. Not a copy: the screen asks every frame, so
@@ -2093,13 +2109,25 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
                             else: (ReadAhead, KeepAhead, MaxAheadValues)
   let flow = p.layers[0].displayPipeline(state.gatherKind(p.layers[0]))
   let filters = p.layers[0].processing.filterPipeline(p.layout)
+  var reversed, killed: seq[int]
+  var own: seq[FilterEntry]
+  let (i, traces) = state.shownTraces(k)
+  if i >= 0 and state.keyOf(state.sessions[i].path) in state.edits:
+    template e: untyped = state.edits[state.keyOf(state.sessions[i].path)]
+    reversed = e.listIn(teReversed, traces)
+    killed = e.listIn(teKilled, traces)
+    own = e.filtersIn(traces)
+  let ownHz = i >= 0 and state.keyOf(state.sessions[i].path) in state.edits and
+    state.edits[state.keyOf(state.sessions[i].path)].ownNeedsWhole(traces)
   # While it filters, whole traces: a filter's margin grows as its ramp
   # narrows, and the samples the reader holds must still be enough after
   # a slider has moved, so that it filters them again without a read. The
   # filters' own margin is not worked out here: whole traces hold it, and
   # working it out takes processSEG long for narrow notches (seconds for a
-  # few with many harmonics), on this thread, at every view.
-  let margin = if filters.len > 0: max(displayMargin(flow, p.layout.dtMs), p.layout.samples)
+  # few with many harmonics), on this thread, at every view. A trace's own
+  # frequency filter asks for the same, so its edges are outside the window.
+  let margin = if filters.len > 0 or ownHz:
+                 max(displayMargin(flow, p.layout.dtMs), p.layout.samples)
                else: displayMargin(flow, p.layout.dtMs)
   let wiggles = p.layers[0].display.drawsWiggles
   if p.pending.gen == p.requestGen:
@@ -2118,12 +2146,6 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
   inc p.requestGen
   req.gen = p.requestGen
   p.pending = req
-  var reversed, killed: seq[int]
-  let (i, traces) = state.shownTraces(k)
-  if i >= 0 and state.keyOf(state.sessions[i].path) in state.edits:
-    template e: untyped = state.edits[state.keyOf(state.sessions[i].path)]
-    reversed = e.listIn(teReversed, traces)
-    killed = e.listIn(teKilled, traces)
   # The record's level is taken over all of the record (`basis`), whatever
   # the view later: its first request when that is all of it (a tile of it
   # gives the level), else every trace or every few, a few reads
@@ -2134,6 +2156,7 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
   let asked = ReaderRequest(read: req, fields: p.shownFields, flow: flow,
     filters: filters, filterAux: p.layers[0].processing.aux,
     clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
+    own: own,
     raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0,
     basis: first and req.sameReach(p.basis))
   if p.relevel and not p.levelAsked and not req.sameReach(p.basis):
@@ -2572,7 +2595,17 @@ proc followInspect(state: var AppState) =
   want.joins = state.joinReport.serial
   want.displayed = view.asDisplayed and ipTraceSamples in ins.parts
   if want.displayed:
-    for t in want.traces: want.edits.add state.traceEdits(t)
+    for t in want.traces:
+      want.edits.add state.traceEdits(t)
+      let i = state.findTrace(t)
+      if i >= 0:
+        let s = state.sessions[i]
+        let (has, f) = state.editsAt(s.path).ownOf(t - s.base)
+        want.hasOwn.add has
+        want.own.add f
+      else:
+        want.hasOwn.add false
+        want.own.add OwnFilter()
     if shown >= 0:
       let layer = state.panels[k].layers[0]
       want.shown = state.sessions[shown].id
@@ -2582,6 +2615,7 @@ proc followInspect(state: var AppState) =
       want.display = layer.display
   template was: untyped = state.asked
   if want.parts == was.parts and want.traces == was.traces and want.edits == was.edits and
+      want.own == was.own and want.hasOwn == was.hasOwn and
       want.joins == was.joins and want.displayed == was.displayed and
       want.table == was.table and want.tableOf == was.tableOf and
       want.shown == was.shown and want.record == was.record and
@@ -2628,6 +2662,8 @@ proc followInspect(state: var AppState) =
       let s = state.sessions[i]
       req.traces.add InspectTrace(id: t, at: state.fileOf(req, held, i), trace: t - s.base,
         edits: (if want.displayed: want.edits[n] else: {}),
+        own: (if want.displayed and n < want.own.len: want.own[n] else: OwnFilter()),
+        hasOwn: want.displayed and n < want.hasOwn.len and want.hasOwn[n],
         displayed: want.displayed and i == shown)
   if not state.inspector.isNil and state.inspector.silentFor >= StallAfter:
     # Stuck in a drive that does not answer: a request that does not need
@@ -2709,6 +2745,24 @@ func recordText(s: Session; trace: int): string =
   elif abs(s.records[g].record) < 1e15: "FFID " & $int64(s.records[g].record)
   else: "record " & $(g + 1)
 
+func ownKeyOf(e: FileEdits; traces: openArray[int]): string =
+  ## The own filters of `traces`, as a key: a change of one asks a spectrum
+  ## or an analysis again.
+  for t in traces:
+    let (has, f) = e.ownOf(t)
+    if has: result.add $t & ":" & $f.place & ":" & $f.spec & ";"
+
+func ownOfTraces(e: FileEdits; traces: openArray[int]): seq[FilterEntry] =
+  ## The own filters of `traces`, ascending.
+  if traces.len == 0: return
+  var lo = traces[0]
+  var hi = traces[0]
+  for t in traces:
+    if t < lo: lo = t
+    if t > hi: hi = t
+  for f in e.filtersIn(lo .. hi):
+    if f.trace in traces: result.add f
+
 func killedOf(e: FileEdits; traces: openArray[int]): seq[int] =
   ## Those of `traces` killed in `e`, in their order. `e` comes from
   ## `editsAt`, which finds a file's edits under any of its paths.
@@ -2723,19 +2777,22 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   ## be held (a job needs it to itself).
   let s = state.sessions[i]
   if not state.jobs.hold(s.path): return false
-  var killed = killedOf(state.editsAt(s.path), traces) # (under its key: `keyOf`)
+  let e = state.editsAt(s.path)
+  var killed = killedOf(e, traces) # (under its key: `keyOf`)
   killed.sort()
+  let own = ownOfTraces(e, traces)
   inc state.spectrumGen
   template sw: untyped = state.spectra[w]
   sw.asked = state.spectrumGen
   sw.waiting = true
   sw.killed = killed
-  sw.editsSeen = state.editsAt(s.path).revision
+  sw.editsSeen = e.revision
+  sw.ownKey = ownKeyOf(e, traces)
   inc sw.asks
   inc sw.revision
   state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
     session: int(s.id), file: s.filePtr, path: s.path, size: s.size, traces: traces,
-    killed: killed, fromMs: window[0], toMs: window[1], processing: processing)
+    killed: killed, own: own, fromMs: window[0], toMs: window[1], processing: processing)
   true
 
 func spread(list: var seq[int]; samples: int) =
@@ -2816,7 +2873,16 @@ proc followFfts(state: var AppState) =
       if k >= 0 and state.panels[k].layers.len > 0:
         let pr = spectrumFilters(state.panels[k])
         let (killsMoved, _, revision) = state.killedNow(sw)
-        if pr != sw.processing or killsMoved:
+        var ownMoved = false
+        if revision != sw.editsSeen:
+          let i = state.findTrace(if sw.traces.len > 0: sw.traces[0] else: -1)
+          if i >= 0:
+            let s = state.sessions[i]
+            var traces: seq[int] = @[]
+            for t in sw.traces:
+              if t in s: traces.add t - s.base
+            ownMoved = ownKeyOf(state.editsAt(s.path), traces) != sw.ownKey
+        if pr != sw.processing or killsMoved or ownMoved:
           let was = sw.processing
           sw.processing = pr
           if state.askAgain(w): sw.filters = filtersText(pr)
@@ -3078,8 +3144,9 @@ proc checkEdits(state: var AppState; s: Session) =
   if was != now: state.unlink(s.path) # its other paths, a copy, did not change
   if was != now and state.edits[state.keyOf(s.path)].clearAll(kind = skSetAside):
     state.log.add(sevWarning, s.name, s.name & " changed on disk after its traces were " &
-      "edited, so its kills and polarity reversals are set aside: by trace number they may " &
-      "not fit the traces it holds now. Edit > Undo (Ctrl+Z) brings them back. They stay " &
+      "edited, so its kills, polarity reversals and trace filters are set aside: by trace " &
+      "number they may not fit the traces it holds now. Edit > Undo (Ctrl+Z) brings them " &
+      "back. They stay " &
       "remembered for the file as it was.")
 
 proc editsChanged(state: var AppState; path: string; step = EditStep(kind: skChange)) =
@@ -6161,6 +6228,21 @@ proc editTraces(state: var AppState; cmd: Command) =
       changed = e.nextUndo
       said = describe(changed).capitalizeAscii & "."
       state.editStamps[s.path] = (s.size, s.modified) # made on the file as it is now
+  of ckOwnFilter:
+    var traces: seq[int]
+    for t in cmd.edited:
+      if t in s: traces.add t - s.base
+    if cmd.edited.len == 0: state.ignore(cmd, "no trace was named")
+    elif traces.len < cmd.edited.len:
+      state.ignore(cmd, plural(cmd.edited.len - traces.len, "trace") & " of " &
+        $cmd.edited.len & " are not in " & s.name)
+    let n = if cmd.on: e.setOwnFilters(traces, bounded(OwnFilter(spec: cmd.processing,
+      place: cmd.filterPlace)), keep)
+            else: e.clearOwnFilters(traces, keep)
+    if n > 0:
+      changed = e.nextUndo
+      said = describe(changed).capitalizeAscii & "."
+      state.editStamps[s.path] = (s.size, s.modified)
   of ckReverseAll:
     if e.setAllReversed(cmd.reverse, keep):
       changed = e.nextUndo
@@ -6772,7 +6854,7 @@ proc applyCommand(state: var AppState; cmd: Command) =
           # next ones of a run (a slider dragged) ask for the view alone.
           state.resample(k, relevel = true, readAhead = first)
           p.filterGen = p.requestGen
-  of ckEdit, ckReverseAll, ckUndoEdit, ckRedoEdit, ckClearEdits:
+  of ckEdit, ckReverseAll, ckUndoEdit, ckRedoEdit, ckClearEdits, ckOwnFilter:
     # Reversing every trace is an edit of the file, so not a setting: kept with it.
     state.editTraces(cmd)
   of ckExportEdits: state.exportEdits(cmd)

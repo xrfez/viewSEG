@@ -121,6 +121,8 @@ type
     clipPercentile*: float64
     reversed*: seq[int]       ## the gather's traces whose polarity is reversed, ascending
     killed*: seq[int]         ## the gather's traces killed, ascending
+    own*: seq[FilterEntry]
+      ## the gather's traces that carry a filter of their own, ascending
     raw*: bool                ## the tile carries the samples as the file has them too
     chunkTraces*: int         ## traces per read from the file; 0: `ChunkTraces`
     basis*: bool
@@ -449,6 +451,10 @@ type Preparing = object
   filterPlan: PipelinePlan[float32]
   filterAux: bool
   filtered: int              ## rows passed to the pool for the filters
+  ownAt: seq[int]            ## per row of the request: index into `ownKeys`, or -1
+  ownKeys: seq[OwnFilter]
+  ownPlans: seq[PipelinePlan[float32]]
+  ownReady: seq[bool]
   processing: bool
   plan: PipelinePlan[float32]
   firstSample: int           ## the trace sample of column 0
@@ -460,6 +466,51 @@ proc poolOf(rd: var Reader): lent ProcessPool =
   if rd.pool.workers == 0:
     rd.pool = newProcessPool(clamp(countProcessors() div 2, 1, 4))
   rd.pool
+
+func unionAsc(a, b: openArray[int]): seq[int] =
+  ## The values of `a` and of `b` (both ascending), ascending, each once.
+  result = newSeqOfCap[int](a.len + b.len)
+  var i, j = 0
+  while i < a.len or j < b.len:
+    let x = if j >= b.len or (i < a.len and a[i] <= b[j]): a[i] else: b[j]
+    if result.len == 0 or result[^1] != x: result.add x
+    if i < a.len and a[i] == x: inc i
+    if j < b.len and b[j] == x: inc j
+
+func ownIndex(own: openArray[FilterEntry]; trace: int): int =
+  ## Where `trace` sits in `own` (ascending); -1 when it has no filter.
+  var lo = 0
+  var hi = own.len
+  while lo < hi:
+    let mid = (lo + hi) shr 1
+    if own[mid].trace < trace: lo = mid + 1
+    else: hi = mid
+  if lo < own.len and own[lo].trace == trace: lo else: -1
+
+proc applyOwn(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: TraceRows;
+    first: int; passed: openArray[int]) =
+  ## Each row's own filter, after the plot's (a row set to "instead" was
+  ## left out of those). A killed, dead or undecoded row stays blank.
+  for key, ready in pr.ownReady:
+    if ready:
+      var group: seq[int]
+      for k in 0 ..< b.len:
+        if pr.ownAt[first + k] == key and passed.binarySearch(k) < 0: group.add k
+      if group.len > 0:
+        var skip = newSeqOfCap[int](b.len - group.len)
+        var g = 0
+        for k in 0 ..< b.len:
+          if g < group.len and group[g] == k: inc g
+          else: skip.add k
+        var keys: seq[TraceKeys]
+        var lengths: seq[int]
+        let live = initChunkMeta(rows.auxLiveRows(keys, lengths), rd.layout.dtMs,
+          pr.firstSample, skip)
+        try:
+          rd.poolOf.apply(pr.ownPlans[key], b, live)
+        except ValueError as e:
+          rd.tellFilters("A trace's filter stopped on " & rd.name & ": " & e.msg)
+          pr.ownReady[key] = false
 
 proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: TraceRows;
     first: int; failedRows: openArray[int]) =
@@ -490,18 +541,30 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
           reversePolarity(b.row(k, meta.liveSamples(k, b.cols)))
     if pr.filtering and b.len > 0:
       try:
+        var instead: seq[int]
+        if pr.ownAt.len > 0:
+          for k in 0 ..< b.len:
+            let oi = pr.ownAt[first + k]
+            if oi >= 0 and pr.ownKeys[oi].place == fpInstead: instead.add k
         if pr.filterAux and rows.hasAuxiliary:
           var keys: seq[TraceKeys]
           var lengths: seq[int]
+          let skip = if instead.len == 0: passed else: unionAsc(passed, instead)
           let live = initChunkMeta(rows.auxLiveRows(keys, lengths), rd.layout.dtMs,
-            pr.firstSample, passed)
+            pr.firstSample, skip)
           rd.poolOf.apply(pr.filterPlan, b, live)
-        else:
+        elif instead.len == 0:
           rd.poolOf.apply(pr.filterPlan, b, meta)
+        else:
+          let skip = unionAsc(passed, instead)
+          let plotMeta = initChunkMeta(rows, rd.layout.dtMs, pr.firstSample, skip)
+          rd.poolOf.apply(pr.filterPlan, b, plotMeta)
         pr.filtered += b.len
       except ValueError as e:
         rd.tellFilters("The filters stopped on " & rd.name & ": " & e.msg)
         pr.filtering = false
+    if pr.ownAt.len > 0 and b.len > 0:
+      rd.applyOwn(pr, b, rows, first, passed)
     if pr.processing: rd.poolOf.apply(pr.plan, b, meta)
   except ValueError as e:
     rd.note(sevError, "The display processing stopped on " & rd.name & ": " & e.msg)
@@ -630,6 +693,33 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
       if pr.edits[row] != {}: any = true
     if any: tile.edits = pr.edits
     else: pr.edits.setLen 0
+  if req.own.len > 0:
+    pr.ownAt = newSeq[int](q.count)
+    for i in pr.ownAt.mitems: i = -1
+    for row, t in list:
+      let at = ownIndex(req.own, t)
+      if at >= 0:
+        let f = req.own[at].filter
+        var key = -1
+        for i, k in pr.ownKeys:
+          if k == f: key = i
+        if key < 0:
+          pr.ownKeys.add f
+          key = pr.ownKeys.high
+          var plan: PipelinePlan[float32]
+          var ready = false
+          if f.spec.hasFilters:
+            try:
+              let pipe = f.ownPipeline(rd.layout.dtMs)
+              if pipe.len > 0:
+                plan = pipe.compile(float32, rd.layout.dtMs, cols,
+                  recordSamples = rd.layout.samples)
+                ready = true
+            except ValueError as e:
+              rd.tellFilters("A trace's filter cannot run on " & rd.name & ": " & e.msg)
+          pr.ownPlans.add plan
+          pr.ownReady.add ready
+        pr.ownAt[row] = key
 
   template cutRaw(b: RowBlock[float32]; first: int) =
     ## Rows `first ..< first + b.len` of the tile's raw samples, from `b` as

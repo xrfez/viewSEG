@@ -104,6 +104,8 @@ type
     at*: int               ## its file: an index into `InspectRequest.files`
     trace*: int            ## its index in its file
     edits*: set[TraceEdit] ## as displayed: its edits
+    own*: OwnFilter        ## as displayed: its own filter, when `hasOwn`
+    hasOwn*: bool
     displayed*: bool       ## its samples as displayed (its file is shown in the plot)
 
   InspectRequest* = object
@@ -286,7 +288,8 @@ proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
     if blank or not (abs(x) < Inf): x = 0
   if not blank and teReversed in t.edits: reversePolarity(d.samples) # as the reader does
   let list = [t.trace]
-  if not blank and req.filters.len > 0:
+  let plotIt = not blank and req.filters.len > 0 and not (t.hasOwn and t.own.place == fpInstead)
+  if plotIt:
     let plan = req.filters.compile(float32, d.dtMs, whole, recordSamples = n)
     ws.reserve(plan)
     var keys: seq[TraceKeys]
@@ -294,6 +297,15 @@ proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
     let rows = if req.filterAux: f[].rowsOf(list).auxLiveRows(keys, lengths)
                else: f[].rowsOf(list)
     plan.apply(rowBlock(d.samples, 1, whole), initChunkMeta(rows, d.dtMs, 0), ws)
+  if not blank and t.hasOwn and t.own.spec.hasFilters:
+    let pipe = t.own.ownPipeline(d.dtMs)
+    if pipe.len > 0:
+      let plan = pipe.compile(float32, d.dtMs, whole, recordSamples = n)
+      ws.reserve(plan)
+      var keys: seq[TraceKeys]
+      var lengths: seq[int]
+      let rows = f[].rowsOf(list).auxLiveRows(keys, lengths)
+      plan.apply(rowBlock(d.samples, 1, whole), initChunkMeta(rows, d.dtMs, 0), ws)
   if not blank and req.flow.len > 0:
     let plan = req.flow.compile(float32, d.dtMs, whole, recordSamples = n)
     ws.reserve(plan)
