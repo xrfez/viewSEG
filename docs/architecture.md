@@ -1311,7 +1311,7 @@ type
     id: SessionId
     base: int                # survey-wide id of trace 0; bases are never reused
     path: string
-    size: int64              # the file's size and time just before it was opened
+    size: int64              # the file's size and time when the open finished
     modified: Time
     file: SeismicFile        # parseSEG, move-only
     gathers: seq[Gather]

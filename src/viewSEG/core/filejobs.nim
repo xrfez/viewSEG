@@ -73,21 +73,27 @@ proc openSession*(path: string; progress: Progress = nil; cache = "";
   ## reads the file. Raises `IOError` or `OSError` when the file cannot be
   ## opened, and parseSEG's `SegCancelledError` when `progress` returns
   ## false; problems with the data are in the file's log instead. The
-  ## session keeps the file's size and time from just before it was opened,
-  ## so a change made meanwhile is seen as one (`Session.size`).
+  ## session keeps the file's size and time from when the open finishes
+  ## (`Session.size`), not from before it. A file cut while this open reads
+  ## is the file the session holds, so the watch does not open it again for
+  ## that cut. Reading the size at the start and refusing a session that no
+  ## longer matches would not stop while the file keeps changing: each open
+  ## would mismatch and another would start.
   assertWorkerThread()
   # Checked here too, for a plainer message, and because parseSEG 0.11 loses
   # a small allocation when it cannot open the file it is given.
   if not fs.fileExists(path):
     raise newException(IOError, "there is no such file")
-  let info = fs.getFileInfo(path)
   fs.mappedRead(path) # the walk of its headers reads the map
   # parseSEG's record sources are objects with methods, which Nim cannot
   # prove GC-safe. Opening touches no global GC'd memory: parseSEG's viewer
   # guide opens files on a job thread, as here.
+  var opened: SeismicFile
   {.cast(gcsafe).}:
-    result = newSession(path, openSeismic(path, keys = true, progress = progress,
-      opts = openOptions(choice, cache)), info.size, info.lastWriteTime, choice)
+    opened = openSeismic(path, keys = true, progress = progress,
+      opts = openOptions(choice, cache))
+  let info = fs.getFileInfo(path)
+  result = newSession(path, move opened, info.size, info.lastWriteTime, choice)
 
 func cutShort*(f: SeismicFile): bool =
   ## Whether the file ends before a structure it announces is complete

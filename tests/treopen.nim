@@ -30,7 +30,9 @@
 ## another shifts only the ids that lay in the reopened file. Traces
 ## selected in another file, and points selected on the map, stay selected.
 ## A file that changes on disk while a reopen is reading ends open: with the
-## choice asked for when that open succeeds, never silently closed.
+## choice asked for when that open succeeds, never silently closed. One cut
+## short while that open is kept ends as the file is on disk now, once: the
+## watch does not say that new open was cut short and open it again.
 ## A carried survey join is said to be matching when it starts, and kept
 ## only once that match succeeds (or dropped, and why, when it fails).
 ## Every panel showing the file keeps its own record across a successful
@@ -52,7 +54,9 @@
 ## join said to leave the file as it was): with the import's cancel and
 ## failure texts used for a carried join, "is as it was"; (another
 ## panel's record): with `showPath` showing gather 0 of a file already
-## open, "the other panel came back at the first record".
+## open, "the other panel came back at the first record"; (a cut while a
+## reopen is kept): with the size read before the open (`openSession`
+## reading it first), "said cut short again".
 ##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
@@ -64,6 +68,7 @@ import std/[os, strutils, times]
 import parseSEG
 import viewSEG/core/filejobs
 import viewSEG/core/state {.all.}
+import viewSEG/core/watch
 import viewSEG/view/headerviews
 import utils/[faultyfs, fixtures, waiting]
 
@@ -545,3 +550,47 @@ block eachPanelKeepsItsRecord:
     doAssert st.panel(second).layers[0].source.gather == 1,
       "the other panel came back at the first record"
     st.shutdown()
+
+func cutShorts(log: MessageLog): int =
+  for e in log:
+    if "cut short" in e.text: inc result
+
+block cutDuringKeptReopenIsReadOnce:
+  # The open is held after it has read the file's size, the file is cut, and
+  # the watch sees it. The kept open comes back as the file is now; the watch's
+  # next look must not say that session was cut short and open the file again.
+  install()
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let name = path.extractFilename
+    var st = initAppState(watchEvery = initDuration(hours = 1))
+    st.showIt(path)
+    let before = st.sessions[0].len
+    st.folderWatch.stop() # the looks below are the test's, not the watch thread's
+    fault(path, fkHang, {foMapped})
+    st.reopen(path, OpenChoice(verifyAll: true))
+    doAssert waitUntil(hung() > 0), "the reopen was not held after it read the size"
+    let whole = readFile(path)
+    writeFile(path, whole[0 ..< whole.len div 2])
+    let nowSize = getFileSize(path)
+    let nowTime = getLastModificationTime(path)
+    proc postWatch() =
+      st.mailbox.post Msg(kind: mkWatched, watched: @[WatchedFile(path: canonical(path),
+        exists: true, kind: fkSegy, size: nowSize, modified: nowTime, changing: false)])
+    postWatch()
+    discard st.drainInbox()
+    releaseAll()
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].facts.opened.choice.verifyAll and
+      st.sessions[0].len > 0 and st.sessions[0].len < before), "the reopen did not come back"
+    let cuts = st.log.cutShorts
+    let opens = st.opens(name)
+    postWatch() # the look once the new session is open
+    discard st.drainInbox()
+    doAssert st.log.cutShorts == cuts, "said cut short again (" & $st.log.cutShorts & ")"
+    doAssert st.sessions.len == 1 and st.sessions[0].size == nowSize,
+      "not the file as it is now: size " & $(if st.sessions.len == 0: "gone" else:
+      $st.sessions[0].size) & ", the file is " & $nowSize
+    doAssert st.opens(name) == opens, "opened again (" & $st.opens(name) & ")"
+    doAssert st.sessions[0].facts.opened.choice.verifyAll
+    st.shutdown()
+  releaseAll()
