@@ -232,10 +232,15 @@ func displayName*(p: ProjectPath): string =
 
 func copyName*(name: string; taken: openArray[string]): string =
   ## A name for the copy of a survey file named `name` that none of `taken`
-  ## has: the name itself, else "name-2.ext" and on.
-  result = name
+  ## has: the name itself, else "name-2.ext" and on. Characters a file name
+  ## cannot have on every system (`\ / : * ? " < > |`, controls) are `_`:
+  ## the copy's place is a file name in `survey/files`.
+  var clean = name
+  for c in mitems(clean):
+    if c in {'\\', '/', ':', '*', '?', '"', '<', '>', '|'} or c < ' ': c = '_'
+  result = clean
   var n = 2
-  let (stem, ext) = (name.changeFileExt(""), name.splitFile.ext)
+  let (stem, ext) = (clean.changeFileExt(""), clean.splitFile.ext)
   while result in taken:
     result = stem & "-" & $n & ext
     inc n
