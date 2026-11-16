@@ -15,6 +15,11 @@
 ## another file (of other amplitudes) with that amplitude, not one taken
 ## again from the file.
 ##
+## The second run also clicks the explanation of Fixed (not its radio): picked,
+## and the explanations start in one column. Seen to fail: with the explanation's
+## click ignored, "picked by its explanation"; with the explanations not
+## aligned, "the explanation of ... is not in the column".
+##
 ## Seen to fail: with the plot's display not kept in the settings
 ## (`ckDisplay` not changing `Settings.plot`), and with the cutoff left out
 ## of `settings.nif`'s writer, "`"(untilMs 3000" in saved`" after the first
@@ -171,6 +176,18 @@ withFixtures fx:
   click("plot.gain")
   step("the label", noop, proc (f: FrameInfo): bool =
     f.markOf("plot.gain until").size.x > 0)
+  step("the explanations line up", noop, proc (f: FrameInfo): bool =
+    result = f.markOf("plot.gain explain " & $dgAgc).size.x > 0
+    if result:
+      let x = f.markOf("plot.gain explain " & $dgNone).pos.x
+      for g in [dgNone, dgFixed, dgNormalized, dgExponential, dgFloat, dgAgc]:
+        doAssert f.markOf("plot.gain explain " & $g).pos.x == x,
+          "the explanation of " & $g & " is not in the column of None's")
+  # a click on the explanation (not on the radio) picks the type: the second run
+  # opens as Exponential
+  click("plot.gain explain " & $dgFixed)
+  step("picked by its explanation", noop, proc (f: FrameInfo): bool =
+    f.display.gain == dgFixed)
   click("plot.gain type " & $dgFixed)
   click("plot.gain from this record")
   step("taken from the record", noop, proc (f: FrameInfo): bool =

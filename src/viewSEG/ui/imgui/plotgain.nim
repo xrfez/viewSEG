@@ -33,7 +33,7 @@ func shortName(g: DisplayGain): string =
   of dgAuto: ""
 
 func explanation(g: DisplayGain; d: DisplaySettings): string =
-  ## What follows the colon, as the drop-down said it before.
+  ## What the drop-down says after the type's name.
   case g
   of dgNone: "the samples as recorded, one scale for the record"
   of dgFixed: "one scale for every record and file, so they compare"
@@ -250,14 +250,24 @@ proc drawGainControls*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Comma
     # ticked). Clicking one unticks the box and sets that type. The list stays
     # open, so the type's settings can be set at once.
     let shown = if d.gain == dgAuto: d.effectiveGain(p.kind) else: d.gain
+    # each explanation starts in one column, past the widest radio
+    var nameW = 0'f32
     for gt in gainTypes:
-      if igRadioButton_Bool(shortName(gt).cstring, shown == gt) and d.gain != gt:
+      nameW = max(nameW, igCalcTextSize(shortName(gt).cstring, nil, false, -1).x)
+    let explainX = round(nameW + igGetFrameHeight() + style.ItemInnerSpacing.x +
+      2 * style.ItemSpacing.x)
+    for gt in gainTypes:
+      let picked = igRadioButton_Bool(shortName(gt).cstring, shown == gt)
+      marks.mark("plot.gain type " & $gt)
+      igSameLine(explainX, -1)
+      dimText(explanation(gt, d), t)
+      # a click on the explanation picks the type, as a click on the radio does
+      let clicked = igIsItemClicked(0)
+      marks.mark("plot.gain explain " & $gt)
+      if (picked or clicked) and d.gain != gt:
         var nd = d
         nd.gain = gt
         p.send(nd, cmds)
-      marks.mark("plot.gain type " & $gt)
-      igSameLine(0, -1)
-      dimText(": " & explanation(gt, d), t)
     igSeparatorText("Settings")
     settings(p, d, marks, cmds, notes)
     igEndCombo()
