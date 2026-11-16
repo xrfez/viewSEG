@@ -41,8 +41,8 @@ const
   IconSpectrogram* = "\u{EBE3}" ## nf-cod-graph_scatter
   IconEnvelope* = "\u{EBAD}" ## nf-cod-graph_left
   IconPhase* = "\u{EBD5}" ## nf-cod-compass
-  IconCorrelation* = "\u{EBCB}" ## nf-cod-arrow_swap
-  IconVibrator* = "\u{EB34}" ## nf-cod-radio_tower
+  IconCorrelation* = "\u{EAFD}" ## nf-cod-git_compare
+  IconVibrator* = "\u{EC1B}" ## nf-cod-music
   IconFk* = "\u{EC30}"  ## nf-cod-map_vertical
   IconRuler* = "\u{EA96}" ## nf-cod-symbol_ruler
   IconLayers* = ""     ## nf-cod-layers
