@@ -76,6 +76,21 @@ func processedReady(w: SpectrumWindow; ownChanges: bool): bool =
   if w.spectrum.raw.len > 0 and not w.waiting: return false
   true
 
+func responseTip*(w: SpectrumWindow; ownChanges: bool): string =
+  ## The Response box's tooltip. `ownChanges`: a shown trace's own filter
+  ## changes the samples; of one trace, the response is that trace's.
+  let own = ownChanges and w.traces.len == 1
+  let whose = if own: "this trace's filters" else: "the plot's filters"
+  if w.spectrum.hasResponse:
+    "Under the curves, the gain " & whose & " apply at each frequency (an impulse put " &
+      "through them, as the traces are), 0 dB at the top of the curves: what they do, " &
+      "where the processed curve shows what the data and the window make of it"
+  elif not w.processing.hasFilters and not ownChanges: "No filter is on in the plot"
+  elif w.spectrum.response.len > 0:
+    "The filters reached none of these traces: their response is not drawn"
+  elif own: "This trace's filters have no pass band or notch to draw"
+  else: "The plot has no pass band or notch to draw"
+
 proc drawControls(st: AppState; w: SpectrumWindow; name: string; t: Theme;
     widths: var array[3, float32]; marks: var Marks; res: var SpectraOutput) =
   ## The controls in three groups that wrap as wholes (the scale, the curves,
@@ -131,16 +146,7 @@ proc drawControls(st: AppState; w: SpectrumWindow; name: string; t: Theme;
     let responseOn = w.spectrum.hasResponse
     if lockedCheck("Response", d.response, responseOn): changed = true
     marks.mark(name & ".response")
-    let whose = if ownChanges and w.traces.len == 1: "this trace's filters"
-                else: "the plot's filters"
-    tip(if responseOn: "Under the curves, the gain " & whose & " apply at " &
-          "each frequency (an impulse put through them, as the traces are), 0 dB at the top " &
-          "of the curves: what they do, where the processed curve shows what the data and " &
-          "the window make of it"
-        elif not w.processing.hasFilters and not ownChanges: "No filter is on in the plot"
-        elif w.spectrum.response.len > 0: "The filters reached none of these traces: their " &
-          "response is not drawn"
-        else: "The plot has no pass band or notch to draw")
+    tip(w.responseTip(ownChanges))
     igSameLine(0, -1)
     if lockedCheck("Phase", d.phase, w.hasPhase): changed = true
     marks.mark(name & ".phase")

@@ -5,7 +5,10 @@
 ## - a filter on, that stored choice shows again (both ticked);
 ## - a trace's own filter alone, the plot's filters off, enables Processed
 ##   (its stored tick shows), and, the spectrum being of that one trace,
-##   Response too: its response is what that trace went through.
+##   Response too: its response is what that trace went through;
+## - that filter run instead with no frequency filter: Response is off and
+##   its tooltip says the trace's filters have nothing to draw (seen to fail
+##   as "The plot has no pass band or notch to draw").
 ##
 ## Phase, when the spectrum is not of one trace, is the same: drawn unticked
 ## while disabled, the stored choice kept. The New plot windows have no
@@ -20,7 +23,7 @@
 import std/[math, monotimes, options, os]
 import viewSEG/core/[geometry, processing, state]
 import viewSEG/view/theme
-import viewSEG/ui/imgui/app
+import viewSEG/ui/imgui/[app, spectrumwindow]
 import utils/[fixtures, waiting]
 
 type
@@ -148,6 +151,18 @@ withFixtures fx:
       doAssert false, "an own filter did not enable Processed"
     doAssert f.core.spectra[1].spectrum.hasResponse and f.ticked("fft 1.response"),
       "one trace's own filter: its response is not drawn")
+  step("the trace's own filter runs instead, with no frequency filter", proc (f: FrameInfo) =
+    let base = f.core.sessions[0].base
+    f.apply(Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
+      processing: Processing(), filterPlace: fpInstead)),
+    proc (f: FrameInfo): bool =
+      let w = f.core.spectra[1]
+      f.core.ownChangesSamples(w) and not w.waiting and not w.spectrum.hasResponse)
+  step("Response says the trace's filters have no band", noop, proc (f: FrameInfo): bool =
+    let w = f.core.spectra[1]
+    let words = w.responseTip(f.core.ownChangesSamples(w))
+    doAssert words == "This trace's filters have no pass band or notch to draw", words
+    not f.ticked("fft 1.response"))
 
   var at = 0
   var started = false
