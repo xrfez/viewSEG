@@ -12,13 +12,16 @@
 ##   says so to `core`, and shows the visible traces; hidden from the
 ##   Window menu, it leaves the screen and `core` stops asking;
 ## - "Hide killed traces" (the gear popover) leaves a trace killed with `K`
-##   out of the plot, and back in when unticked.
+##   out of the plot, and back in when unticked;
+## - the toolbar's FFT button is greyed with no trace selected (a click on it
+##   opens nothing) and, with three selected, opens their FFT window.
 ##
 ## Seen to fail: with the `F` key left out of `editKeys`, "F over trace 1
 ## did not happen"; with the readout taken at the pointer's other axis,
 ## "the readout at 24.41 Hz: 0 Hz   raw -60.1 dB"; with the panel's
 ## on-screen report left out (`drawLive` sending nothing), "the panel
-## hidden did not happen".
+## hidden did not happen"; with the toolbar's FFT dispatch left out of the
+## app, "the toolbar's FFT opens the selection's window did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -139,6 +142,31 @@ withFixtures fx:
       f.core.spectra.len == 2 and f.markOf("fft 2").size.x == 0)
   step("clear the selection", proc (f: FrameInfo) =
     f.apply(Command(kind: ckClearSelection)), after(2))
+  # the toolbar's FFT button, as the menu's FFT: greyed with no trace selected,
+  # and with traces selected it opens their window
+  var spectra = 0
+  step("no trace selected", proc (f: FrameInfo) =
+    doAssert f.core.selection.selectedCount == 0
+    spectra = f.core.spectra.len, after(1))
+  click("tool.FFT")
+  step("a click on the greyed FFT opens nothing", noop, proc (f: FrameInfo): bool =
+    doAssert f.core.spectra.len == spectra, "a greyed FFT button opened a window"
+    true)
+  step("three selected for the toolbar", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckSelect, traces: @[2, 3, 4], mode: smReplace)),
+    proc (f: FrameInfo): bool = f.core.selection.selectedCount == 3)
+  click("tool.FFT")
+  step("the toolbar's FFT opens the selection's window", noop, proc (f: FrameInfo): bool =
+    result = f.core.spectra.len == spectra + 1
+    if result:
+      let w = f.core.spectra[^1]
+      doAssert w.traces.len == 3, "the toolbar's FFT has " & $w.traces.len & " traces"
+      doAssert f.markOf("fft " & $w.id).size.x > 0, "its window is not shown")
+  step("the toolbar's window closed", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckCloseSpectrum, spectrum: f.core.spectra[^1].id)),
+    proc (f: FrameInfo): bool = f.core.spectra.len == spectra)
+  step("clear the selection again", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckClearSelection)), after(2))
   # the live panel, as an agent shows it: brought forward, on screen
   step("the panel shown", proc (f: FrameInfo) =
     f.apply(Command(kind: ckSpectrumPanel, onScreen: true, origin: coAgent)), after(4))
@@ -155,6 +183,12 @@ withFixtures fx:
     result = not f.core.spectra[0].shown
     if result: doAssert f.markOf("spectrum").size.x == 0)
   # killed traces hidden
+  # the toolbar's clicks took the keyboard focus: a focusing click gives it back
+  # to the plot (it selects nothing)
+  step("the plot's focus again", proc (f: FrameInfo) =
+    pointAt = f.traceX(1)
+    f.pressMouse(pointAt, true)
+    f.pressMouse(pointAt, false), after(3))
   step("over trace 2", proc (f: FrameInfo) = f.moveMouse(f.traceX(1)),
     proc (f: FrameInfo): bool = f.pick.found and f.pick.position == 1)
   key("K", skK)

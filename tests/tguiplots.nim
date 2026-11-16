@@ -19,7 +19,10 @@
 ##   shows the table;
 ## - an f-k of the record: its image's cursor, held by the keys, reads the
 ##   wavenumber (per trace), the frequency, dB and the apparent velocity;
-## - seven more windows each open inside the main window.
+## - seven more windows each open inside the main window;
+## - the toolbar's Spectrogram button is greyed with no trace selected (a
+##   click on it opens nothing) and, with two selected, opens the window the
+##   menu opens.
 ##
 ## Seen to fail: with the image's keys not read (`keyMove` never called),
 ## "Right did not move the cursor"; with the menu's entry not sent
@@ -31,7 +34,9 @@
 ## 620.0)) is not inside the main window's (pos: (x: 0.0, y: 67.0), size:
 ## (x: 1400.0, y: 806.0))" (it opened as a window of its own, outside); with
 ## the vibrator signature's table not drawn, "limits on did not happen";
-## with an f-k's velocity not read, "0.0 /trace · 125.2 Hz: -49.35 dB".
+## with an f-k's velocity not read, "0.0 /trace · 125.2 Hz: -49.35 dB";
+## with the toolbar's Spectrogram dispatch left out of the app, "the toolbar's
+## Spectrogram opens its window did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 
@@ -293,6 +298,28 @@ withFixtures fx:
             r.pos.x + r.size.x <= room.pos.x + room.size.x and
             r.pos.y + r.size.y <= room.pos.y + room.size.y,
             "new plot " & $w.id & " at " & $r & " is not inside the main window's " & $room)
+
+  # the toolbar's Spectrogram button, as Window > New plot > Spectrogram: greyed
+  # with no trace selected, and with two selected it opens their window
+  var plots = 0
+  step("no trace selected", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckClearSelection)), after(2))
+  step("the greyed Spectrogram button", proc (f: FrameInfo) =
+    doAssert f.core.selection.selectedCount == 0
+    plots = f.core.plots.len, after(1))
+  click("tool." & avSpectrogram.viewName)
+  step("a click on it opens nothing", noop, proc (f: FrameInfo): bool =
+    doAssert f.core.plots.len == plots, "a greyed Spectrogram button opened a window"
+    true)
+  step("two selected for the toolbar", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckSelect, traces: @[0, 1], mode: smReplace)),
+    proc (f: FrameInfo): bool = f.core.selection.selectedCount == 2)
+  click("tool." & avSpectrogram.viewName)
+  step("the toolbar's Spectrogram opens its window", noop, proc (f: FrameInfo): bool =
+    result = f.core.plots.len == plots + 1
+    if result:
+      let w = f.core.plots[^1]
+      doAssert w.view == avSpectrogram and w.traces == @[0, 1], $w.view & " " & $w.traces)
 
   var at = 0
   var started = false
