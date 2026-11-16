@@ -5,9 +5,8 @@
 ##
 ## Seen to fail: with the FFT row moved after Spectrogram, "FFT is first";
 ## with Spectrogram and Envelope given the same icon, "icons are distinct";
-## with the shortcut moved after the select-first sentence, "shortcut before
-## the select-first"; with correlation put back on the swap arrows, "correlation
-## compares".
+## with the shortcut a bare "F", "shortcut before the select-first"; with
+## correlation put back on the swap arrows, "correlation compares".
 
 import std/[sets, strutils]
 import viewSEG/core/analysis
@@ -63,7 +62,7 @@ block tip:
   # the select-first sentence ends the tip, and the shortcut comes before it
   doAssert off.endsWith(SelectTracesFirst), off
   let at = off.find(SelectTracesFirst)
-  doAssert off[0 ..< at].endsWith("\nF\n"), "shortcut before the select-first: " & off
-  doAssert PlotEntries[0].tip(true).endsWith("\nF"), "shortcut ends an enabled tip"
+  doAssert off[0 ..< at].endsWith("\nShortcut: F\n"), "shortcut before the select-first: " & off
+  doAssert PlotEntries[0].tip(true).endsWith("\nShortcut: F"), "shortcut ends an enabled tip"
 
 echo "tplotviews: ok"

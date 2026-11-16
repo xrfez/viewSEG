@@ -52,9 +52,9 @@ func fftEntry*(): PlotEntry =
   PlotEntries[0]
 
 func tip*(e: PlotEntry; enabled: bool): string =
-  ## The toolbar tooltip: the name, what it shows, the shortcut, and, when
-  ## no trace is selected, what to do first. That last sentence always ends
-  ## the text, so the shortcut comes before it.
+  ## The toolbar tooltip: the name, what it shows, the shortcut ("Shortcut: F"),
+  ## and, when no trace is selected, what to do first. That last sentence
+  ## always ends the text, so the shortcut comes before it.
   result = e.name & "\n" & e.sentence
-  if e.shortcut.len > 0: result.add "\n" & e.shortcut
+  if e.shortcut.len > 0: result.add "\nShortcut: " & e.shortcut
   if not enabled: result.add "\n" & SelectTracesFirst

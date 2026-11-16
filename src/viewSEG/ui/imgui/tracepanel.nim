@@ -510,10 +510,19 @@ proc drawHeaderChoice(p: Panel; marks: var Marks; prefix: string; res: var Panel
           header: HeaderChoice(auto: false, fields: fields))
   igEndDisabled()
 
-proc tip(text: string) =
-  ## The last item's tooltip.
+proc tip(text: string; dim = Rgba()) =
+  ## The last item's tooltip. A line that starts "Shortcut: " is drawn in
+  ## `dim` when that colour is set.
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
-    igTextUnformatted(text.cstring, nil)
+    var rest = text
+    while rest.len > 0:
+      let nl = rest.find('\n')
+      let row = if nl >= 0: rest[0 ..< nl] else: rest
+      rest = if nl >= 0: rest[nl + 1 .. ^1] else: ""
+      let shade = dim.a > 0 and row.startsWith("Shortcut: ")
+      if shade: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(dim))
+      igTextUnformatted(row.cstring, nil)
+      if shade: igPopStyleColor(1)
     igEndTooltip()
 
 proc tipAlways(text: string) =
@@ -1409,12 +1418,12 @@ proc drawStartScreen(t: Theme; recent, folders: openArray[string]; marks: var Ma
   if igButton((IconOpenFile & "  " & menuLabel(maOpenFile)).cstring, big):
     res.actions.incl maOpenFile
   marks.mark("plot.open file")
-  tip(menuLabel(maOpenFile) & " (" & shortcutName(maOpenFile) & ")")
+  tip(menuLabel(maOpenFile) & "\nShortcut: " & shortcutName(maOpenFile), t.roles[rlTextDim])
   igSetCursorPosX(top.x + max(0, (avail.x - big.x) / 2))
   if igButton((IconOpenFolder & "  " & menuLabel(maOpenFolder)).cstring, big):
     res.actions.incl maOpenFolder
   marks.mark("plot.open folder")
-  tip(menuLabel(maOpenFolder) & " (" & shortcutName(maOpenFolder) & ")")
+  tip(menuLabel(maOpenFolder) & "\nShortcut: " & shortcutName(maOpenFolder), t.roles[rlTextDim])
   let hint = "Ctrl+O opens a file, Ctrl+Alt+O a folder; files and folders can also be " &
     "dropped on the window."
   let w = igCalcTextSize(hint.cstring, nil, false, -1).x

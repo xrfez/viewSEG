@@ -24,7 +24,7 @@
 ## incomplete. "Follow the latest", at the foot, shows each new file once it
 ## is whole; off, the plot stays on the file the user chose.
 
-import std/[os, times]
+import std/[os, strutils, times]
 import imguin/cimgui
 import ../../core/[geometry, state]
 import ../../view/[filetable, theme]
@@ -50,11 +50,21 @@ type
     actions*: set[MenuAction]
     toggleFollow*: bool ## "Follow the latest" was clicked
 
-proc tip(text: string) =
+proc tip(text: string; dim = Rgba()) =
+  ## The last item's tooltip. A line that starts "Shortcut: " is drawn in
+  ## `dim` when that colour is set (the same words and dim style as the toolbar).
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
       ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
     igPushTextWrapPos(igGetFontSize() * 30)
-    igTextUnformatted(text.cstring, nil)
+    var rest = text
+    while rest.len > 0:
+      let nl = rest.find('\n')
+      let row = if nl >= 0: rest[0 ..< nl] else: rest
+      rest = if nl >= 0: rest[nl + 1 .. ^1] else: ""
+      let shade = dim.a > 0 and row.startsWith("Shortcut: ")
+      if shade: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(dim))
+      igTextUnformatted(row.cstring, nil)
+      if shade: igPopStyleColor(1)
     igPopTextWrapPos()
     igEndTooltip()
 
@@ -130,7 +140,7 @@ proc drawFolderRow(ui: var FileListUi; f: FileList; recent: openArray[string]; t
     res.actions.incl maOpenFolder
   marks.mark("files.open folder")
   focused(marks)
-  tip(menuLabel(maOpenFolder) & " (" & shortcutName(maOpenFolder) & ")")
+  tip(menuLabel(maOpenFolder) & "\nShortcut: " & shortcutName(maOpenFolder), t.roles[rlTextDim])
   igSameLine(0, -1)
   let asked = if f.folder.len > 0: @[f.folder] else: f.asked
   igBeginDisabled(asked.len == 0)

@@ -51,21 +51,24 @@ const readoutMenu = "##readoutfields"
 
 proc tooltip(text, shortcut: string; t: Theme; marks: ptr Marks = nil; markName = "") =
   ## The last item's tooltip: `text` (one line a `\n`), then the shortcut in
-  ## dim text. Shown on a disabled item too. `markName`, when given, is marked
-  ## while the tooltip is open.
+  ## dim text as "Shortcut: …". A line of `text` that already starts that way
+  ## is dim too. Shown on a disabled item too. `markName`, when given, is
+  ## marked while the tooltip is open.
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
       ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+    proc line(s: string; same = false) =
+      if same: igSameLine(0, -1)
+      let dim = s.startsWith("Shortcut: ")
+      if dim: igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+      igTextUnformatted(s.cstring, nil)
+      if dim: igPopStyleColor(1)
     var rest = text
     while rest.len > 0:
       let nl = rest.find('\n')
-      let line = if nl >= 0: rest[0 ..< nl] else: rest
+      let row = if nl >= 0: rest[0 ..< nl] else: rest
       rest = if nl >= 0: rest[nl + 1 .. ^1] else: ""
-      igTextUnformatted(line.cstring, nil)
-    if shortcut.len > 0:
-      if '\n' notin text: igSameLine(0, -1)
-      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
-      igTextUnformatted(shortcut.cstring, nil)
-      igPopStyleColor(1)
+      line(row)
+    if shortcut.len > 0: line("Shortcut: " & shortcut, same = '\n' notin text)
     if not marks.isNil and markName.len > 0: marks[].mark(markName)
     igEndTooltip()
 
