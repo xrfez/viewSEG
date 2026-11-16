@@ -872,7 +872,11 @@ under the pointer then, as desktop programs do.
   record's receivers, the hovered and selected points, and from each other. A mark keeps
   its size on the screen at every zoom (22, 18, 26 and 14 pixels across at 100 % for the
   four kinds, so marks of two kinds on one station nest), and every marked point is drawn
-  however far out the map is (none thinned, unlike the stations); where marks fall on one
+  however far out the map is (none thinned, unlike the stations), one glyph a place
+  however many things a filter marks there (a station with 5 000 dead traces is one mark,
+  where it was 5 000 or more, each drawn twice with its halo; with the 63 traces of a shot
+  killed, each marked at its file's own position and its survey station's, 61 glyphs go to
+  the GPU where 124 did); where marks fall on one
   another, the point under the pointer says how many of each lie under it ("Marked here: 1
   dead in the headers, 3 noisy, 2 missing from the template"; `view/maplayers`' `markSpots`
   merges a filter's marks by place, each thing once, in a grid, and `markedHere` looks only

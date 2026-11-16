@@ -165,6 +165,9 @@ type
     near: seq[(MapFilter, int)]
       ## what the marks under the pointer mark (`markedHere`), when the info was made
     nearFound: MarksNear ## `markedHere`'s last finding, reset when the marks change
+    markCounts: array[MapFilter, tuple[places, glyphs: int]]
+      ## per filter shown, the places it marks (a thing at each of its
+      ## points) and the glyphs uploaded for them (one a place)
     marked: seq[seq[MapPoint]]
       ## the marked points: the sources with a file in the folder listed
     marksRev: int
@@ -243,6 +246,11 @@ func mapMenuSelect*(mu: MapUi): lent string {.inline.} = mu.menuSelect
 func mapSelectedDrawn*(mu: MapUi): int {.inline.} = mu.selectedDrawn.len
   ## The selected points the highlight draws: all of them, or about one a
   ## pixel and a half when there are many (for tests).
+
+func mapMarkCounts*(mu: MapUi; f: MapFilter): tuple[places, glyphs: int] {.inline.} =
+  ## Of filter `f`'s marks, the places it marks (a thing at each of its
+  ## points) and the glyphs uploaded for them: one a place (for tests).
+  mu.markCounts[f]
 
 func mapImagesDrawn*(mu: MapUi): int {.inline.} = mu.renderer.imagesDrawn
   ## How many map images were drawn (an idle map draws none; for tests).
@@ -941,13 +949,16 @@ proc followMarks(mu: var MapUi; st: AppState) =
   mu.hitIndex = filterIndex(mu.hits)
   mu.markSpots.setLen 0
   mu.nearFound = MarksNear()
+  reset mu.markCounts
   for f in MapFilter:
     if f in st.settings.map.filters:
+      # one glyph a place, however many things it marks there (a station
+      # with 5 000 dead traces: one mark, its count in the hover)
       let places = st.filterPlaces(f, mu.hits[f])
-      var at = newSeqOfCap[MapPoint](places.len)
-      for p in places: at.add p.at
-      mu.marked.add at
-      mu.markSpots.add (f, markSpots(places))
+      let spots = markSpots(places)
+      mu.marked.add spots.positions
+      mu.markCounts[f] = (places.len, spots.spots.len)
+      mu.markSpots.add (f, spots)
   let b = st.survey.bounds
   mu.renderer.setMarks(if b.isEmpty: mapPoint(0, 0) else: mapPoint(b.minX, b.minY), mu.marked)
   inc mu.marksRev

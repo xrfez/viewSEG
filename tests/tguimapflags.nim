@@ -15,10 +15,16 @@
 ##   fall on one another.
 ## - Zoomed in as far as the map goes, the mark is the same size on the
 ##   screen.
+## - With every trace of the shot killed, each receiver is one mark, though
+##   each trace is marked at its file's own position and its survey
+##   station's, one place: the glyphs are merged by place before they go to
+##   the GPU.
 ##
 ## Seen to fail: with the marks drawn as they were (a disc a pixel larger
 ## than the stations' where they crowd), "dead in the headers: N pixels of
-## its mark round (1, 2) at the farthest zoom" (0).
+## its mark round (1, 2) at the farthest zoom" (0); with a glyph uploaded
+## for each place marked, as at first, "a mark a receiver" found 124 glyphs
+## for 124 places.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves map-flags-*.png there.
@@ -135,6 +141,20 @@ proc main() =
           filterInk(f.theme, mfDead, ink.background))
         doAssert n >= 20, "zoomed in: " & $n & " pixels of the dead mark"
         f.shot("map-flags-near.png"))
+    step("every trace killed: a mark a receiver", proc (f: FrameInfo) =
+      var all: seq[int]
+      for i in 1 .. 3 * 21: all.add f.core.sessions[0].base + i # (trace 0: the time break)
+      f.apply(Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: all,
+        on: true)), proc (f: FrameInfo): bool =
+      result = f.core.filterHits[mfKilled].count == 63 and wait > 6
+      if result:
+        let (places, glyphs) = f.mapWindow.mapMarkCounts(mfKilled)
+        echo "tguimapflags: 63 traces killed: ", places, " places marked, ", glyphs,
+          " glyphs uploaded"
+        # each trace at its file's own position and its survey station's, one
+        # spot: a glyph a receiver (of the 63, those the map can place: the
+        # planted defects move or unplace a few)
+        doAssert glyphs in 55 .. 63 and places >= 2 * glyphs - 2, $(places, glyphs))
 
     proc onFrame(f: FrameInfo) =
       if f.index == 0: f.moveMouse(vec2(4, 4))

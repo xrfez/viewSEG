@@ -17,8 +17,9 @@
 ## another, drawn between the layers and the highlight, or over the
 ## highlight from `MapFrame.marksAbove` on (the filters' marks: glyphs of a
 ## size in pixels of their own, never thinned, a halo round each so it reads
-## over the stations). Every marked point is drawn whatever the zoom: points
-## on one pixel make one mark.
+## over the stations). Every marked point is drawn whatever the zoom; the
+## frontend gives one point a place a filter marks (`view/maplayers`'
+## `markSpots`), however many things it marks there.
 ##
 ## Drawing is skipped when nothing it depends on changed since the last
 ## image (`MapFrame`): an idle map costs the GPU nothing.
