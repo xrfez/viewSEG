@@ -5,7 +5,8 @@
 ##
 ## Each shows a line of its view's settings (a spectrogram's frame length,
 ## overlap, floor and colour map; a phase spectrum's dB threshold and
-## unwrapping; a correlation's reference and lags) and Freeze, what it is
+## unwrapping; a correlation's reference and lags) and Freeze, a pin at the
+## right of that line's first row, what it is
 ## of and through which filters, then its plots: an image in a density
 ## colour map with its scale (a spectrogram), or curve plots (`curveplot`)
 ## one under another, and what the cursor reads. The image's cursor follows
@@ -48,14 +49,18 @@ type
     commands*: seq[Command]
 
 proc tip(text: string) =
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
 
-const PlotFreeze = "On: the window keeps what it shows. Off: it follows the Seismic " &
+const PlotFreeze* = "On: the window keeps what it shows. Off: it follows the Seismic " &
   "window's filters (and Aux toggle) and the kills of its traces"
+  ## The Freeze pin's sentence, after "Freeze (on): " or "Freeze (off): "
 
 proc follow(line: ControlLine; width: float32) =
+  ## The next control of `width` on this line when it fits before the Freeze
+  ## pin (or the window's right, once the line has wrapped), else the next.
   if line.fitsBefore(width, igGetStyle().ItemSpacing.x):
     igSameLine(0, -1)
 
@@ -65,6 +70,9 @@ proc textBoxWidth(text: string; box: float32): float32 =
 proc checkWidth(label: string): float32 =
   igGetFrameHeight() + igGetStyle().ItemInnerSpacing.x +
     igCalcTextSize(label.cstring, nil, false, -1).x
+
+proc buttonWidth(text: string): float32 =
+  igCalcTextSize(text, nil, false, -1).x + 2 * igGetStyle().FramePadding.x
 
 func markName*(w: AnalysisWindow): string =
   ## The window's mark (and screenshot target): "new plot 2".
@@ -115,9 +123,9 @@ proc limitBox(id: string; value: float64; width: float32; typed: var float64): b
 
 proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: float32;
     t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool) =
-  ## A vibrator signature's roles (a table: role, trace, polarity), its
-  ## masses and harmonics, Limits and Freeze, and the limits (shown on, in
-  ## boxes).
+  ## A vibrator signature's roles (a table: role, trace, polarity), then its
+  ## masses, harmonics and Limits..., with Freeze at the right of that line.
+  ## Limits... opens the check and the eight boxes.
   let names = st.traceNames(w)
   let combo = round(igCalcTextSize("trace 00000", nil, false, -1).x + igGetFrameHeight() +
     2 * igGetStyle().FramePadding.x)
@@ -200,24 +208,25 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   if igInputInt("##harmonics", addr h, 0, 0, 0) and HarmonicRange.allows(float64(h)) and h != p.harmonics:
     (p.harmonics, changed) = (int(h), true)
   tip("The highest harmonic tracked (2 to 16): THD sums them from the 2nd")
-  line.follow(checkWidth("Limits"))
-  if igCheckbox("Limits", addr p.limitsOn): changed = true
-  marks.mark(name & ".limits")
-  tip("On: the limits drawn on the plots, the points past them marked, and a pass or " &
-    "fail table per signal; judged on the ground forces over the sweep less its tapers")
-  if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks): changed = true
+  line.follow(buttonWidth("Limits..."))
   if p.limitsOn:
-    # the limits on lines of their own, each going to the next when the
-    # line has no room for it
-    let right = igGetCursorScreenPos().x + igGetContentRegionAvail().x
-    var first = true
+    igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(t.roles[rlSelection]))
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
+  let openLimits = igButton("Limits...", ImVec2_c(x: 0, y: 0))
+  if p.limitsOn: igPopStyleColor(2)
+  if openLimits: igOpenPopup_Str("##limits", 0)
+  marks.mark(name & ".limits")
+  tip("The limits (" & (if p.limitsOn: "on" else: "off") & "): click to set them and " &
+    "whether they are checked. On, they are drawn on the plots, the points past them " &
+    "marked, and a pass or fail table shown per signal; judged on the ground forces " &
+    "over the sweep less its tapers")
+  if igBeginPopup("##limits", 0):
+    if igCheckbox("Check against limits", addr p.limitsOn): changed = true
+    marks.mark(name & ".limits.check")
+    tip("On: the limits drawn on the plots, the points past them marked, and a pass or " &
+      "fail table per signal; judged on the ground forces over the sweep less its tapers")
+    igBeginDisabled(not p.limitsOn)
     template limit(text, id: string; field: untyped; unit, what: string) =
-      # "text [box] unit", on this line when it fits
-      if not first:
-        let need = igCalcTextSize(text, nil, false, -1).x + box +
-          igCalcTextSize(unit, nil, false, -1).x + 4 * igGetStyle().ItemSpacing.x
-        if igGetItemRectMax().x + need <= right: igSameLine(0, 2 * igGetStyle().ItemSpacing.x)
-      first = false
       igAlignTextToFramePadding()
       igTextUnformatted(cstring(text), nil)
       igSameLine(0, -1)
@@ -237,11 +246,14 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     limit("force from", "##forcelow", forceLow, "", "The smallest fundamental at a point")
     limit("to", "##forcehigh", forceHigh, "", "The largest fundamental at a point")
     limit("peak", "##peak", peakForce, "", "The largest peak at a point (the hold-down weight)")
+    igEndDisabled()
+    igEndPopup()
+  if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks): changed = true
 
 proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks: var Marks;
     res: var PlotWindowsOutput) =
-  ## The view's settings and Freeze, on a line that wraps; a change is a
-  ## `ckPlotDisplay`.
+  ## The view's settings, wrapping before the Freeze pin at the right of the
+  ## first row; a change is a `ckPlotDisplay`.
   var p = w.params
   var frozen = w.frozen
   var changed = false
@@ -251,6 +263,9 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
     igAlignTextToFramePadding()
     igTextUnformatted(cstring(text), nil)
     igSameLine(0, -1)
+  template unit(text: string) =
+    igAlignTextToFramePadding()
+    igTextUnformatted(cstring(text), nil)
   template mapCombo() =
     igSetNextItemWidth(round(igCalcTextSize("Red-white-blue", nil, false, -1).x +
       igGetFrameHeight() + 2 * igGetStyle().FramePadding.x))
@@ -262,104 +277,113 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       igEndCombo()
     marks.mark(name & ".map")
     tip("The colour map, as density's")
-  let line = beginControlLine()
-  case w.view
-  of avSpectrogram:
-    label("Frame")
-    if numberBox("##window", p.windowMs, box, typed) and WindowMsRange.allows(typed):
-      (p.windowMs, changed) = (typed, true)
-    marks.mark(name & ".frame")
-    tip("Each frame's length (a Hann window): longer resolves frequency finer and time " &
-      "coarser (a frame of W ms resolves about 2/W kHz)")
-    igSameLine(0, -1)
-    label("ms  overlap")
-    if numberBox("##overlap", p.overlap, box, typed) and OverlapRange.allows(typed):
-      (p.overlap, changed) = (typed, true)
-    marks.mark(name & ".overlap")
-    tip("How much a frame overlaps the next, % (0 to 95)")
-    igSameLine(0, -1)
-    label("%  floor")
-    if numberBox("##floor", p.floorDb, box, typed) and FloorDbRange.allows(typed):
-      (p.floorDb, changed) = (typed, true)
-    marks.mark(name & ".floor")
-    tip("The lowest dB drawn: the colour map's low end (0 dB is the largest amplitude)")
-    igSameLine(0, -1)
-    label("dB")
-    mapCombo()
-  of avEnvelope: discard
-  of avPhase:
-    label("Phase where within")
-    if numberBox("##within", p.phaseWithinDb, box, typed) and PhaseWithinRange.allows(typed):
-      (p.phaseWithinDb, changed) = (typed, true)
-    marks.mark(name & ".within")
-    tip("The phase is drawn where the amplitude is within this many dB of its peak: " &
-      "elsewhere it is noise")
-    igSameLine(0, -1)
-    label("dB of the peak")
-    if igCheckbox("Unwrapped", addr p.unwrap): changed = true
-    marks.mark(name & ".unwrap")
-    tip("On: the phase unwrapped along frequency (a delay is a straight line). Off: within " &
-      "-180 to 180 degrees")
-  of avCorrelation:
-    label("Reference: " & (if w.reference.len > 0: w.reference else: "the first trace"))
-    let sel = st.selection
-    var first = -1
-    for t in sel.selected:
-      if first < 0 or t < first: first = t
-    igBeginDisabled(first < 0)
-    if igSmallButton("The selected trace"):
-      (p.reference, changed) = (first, true)
-    igEndDisabled()
-    marks.mark(name & ".reference selected")
-    tip("Correlate against the selected trace (the first, when several are): a pilot, in " &
-      "this file or another one open (Sweep0's pilot, say)")
-    igSameLine(0, -1)
-    igBeginDisabled(p.reference < 0)
-    if igSmallButton("The first auxiliary trace"):
-      (p.reference, changed) = (-1, true)
-    igEndDisabled()
-    marks.mark(name & ".reference pilot")
-    tip("Correlate against the record's first auxiliary trace (its pilot when it is a " &
-      "sweep, a time break on a dynamite record), else the first trace of the window")
-    igSameLine(0, -1)
-    label("lags ±")
-    if numberBox("##lags", p.maxLagMs, box, typed) and LagMsRange.allows(typed):
-      (p.maxLagMs, changed) = (typed, true)
-    marks.mark(name & ".lags")
-    tip("The lags shown either side of 0, ms")
-    igSameLine(0, -1)
-    label("ms")
-  of avFk:
-    label("From")
-    if limitBox("##from", p.fkFromMs, box, typed) and
-        not (typed.isNaN and p.fkFromMs.isNaN) and typed != p.fkFromMs:
-      (p.fkFromMs, changed) = (typed, true)
-    marks.mark(name & ".from")
-    tip("The box's first time, ms (empty: the traces' start)")
-    igSameLine(0, -1)
-    label("to")
-    if limitBox("##to", p.fkToMs, box, typed) and
-        not (typed.isNaN and p.fkToMs.isNaN) and typed != p.fkToMs:
-      (p.fkToMs, changed) = (typed, true)
-    marks.mark(name & ".to")
-    tip("The box's last time, ms (empty: the traces' end)")
-    igSameLine(0, -1)
-    label("ms  floor")
-    if numberBox("##floor", p.floorDb, box, typed) and FloorDbRange.allows(typed):
-      (p.floorDb, changed) = (typed, true)
-    tip("The lowest dB drawn: the colour map's low end (0 dB is the largest amplitude)")
-    igSameLine(0, -1)
-    label("dB")
-    mapCombo()
-    igSameLine(0, -1)
-    if igCheckbox("Raw", addr p.fkRaw): changed = true
-    marks.mark(name & ".raw")
-    tip("On: the traces as recorded. Off: through the Seismic window's filters, so the " &
-      "effect of a filter shows")
-  of avVibrator:
+  let mapW = round(igCalcTextSize("Red-white-blue", nil, false, -1).x +
+    igGetFrameHeight() + 2 * igGetStyle().FramePadding.x)
+  if w.view == avVibrator:
     drawVibratorSettings(st, w, name, box, t, marks, p, frozen, changed)
-  if w.view != avVibrator and line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks):
-    changed = true
+  else:
+    let line = beginControlLine()
+    case w.view
+    of avSpectrogram:
+      label("Frame")
+      if numberBox("##window", p.windowMs, box, typed) and WindowMsRange.allows(typed):
+        (p.windowMs, changed) = (typed, true)
+      marks.mark(name & ".frame")
+      tip("Each frame's length (a Hann window): longer resolves frequency finer and time " &
+        "coarser (a frame of W ms resolves about 2/W kHz)")
+      line.follow(textBoxWidth("ms  overlap", box))
+      label("ms  overlap")
+      if numberBox("##overlap", p.overlap, box, typed) and OverlapRange.allows(typed):
+        (p.overlap, changed) = (typed, true)
+      marks.mark(name & ".overlap")
+      tip("How much a frame overlaps the next, % (0 to 95)")
+      line.follow(textBoxWidth("%  floor", box) + igGetStyle().ItemSpacing.x +
+        igCalcTextSize("dB", nil, false, -1).x)
+      label("%  floor")
+      if numberBox("##floor", p.floorDb, box, typed) and FloorDbRange.allows(typed):
+        (p.floorDb, changed) = (typed, true)
+      marks.mark(name & ".floor")
+      tip("The lowest dB drawn: the colour map's low end (0 dB is the largest amplitude)")
+      igSameLine(0, -1)
+      unit("dB")
+      line.follow(mapW)
+      mapCombo()
+    of avEnvelope: discard
+    of avPhase:
+      label("Phase where within")
+      if numberBox("##within", p.phaseWithinDb, box, typed) and PhaseWithinRange.allows(typed):
+        (p.phaseWithinDb, changed) = (typed, true)
+      marks.mark(name & ".within")
+      tip("The phase is drawn where the amplitude is within this many dB of its peak: " &
+        "elsewhere it is noise")
+      igSameLine(0, -1)
+      unit("dB of the peak")
+      line.follow(checkWidth("Unwrapped"))
+      if igCheckbox("Unwrapped", addr p.unwrap): changed = true
+      marks.mark(name & ".unwrap")
+      tip("On: the phase unwrapped along frequency (a delay is a straight line). Off: within " &
+        "-180 to 180 degrees")
+    of avCorrelation:
+      label("Reference: " & (if w.reference.len > 0: w.reference else: "the first trace"))
+      let sel = st.selection
+      var first = -1
+      for tr in sel.selected:
+        if first < 0 or tr < first: first = tr
+      igBeginDisabled(first < 0)
+      if igSmallButton("The selected trace"):
+        (p.reference, changed) = (first, true)
+      igEndDisabled()
+      marks.mark(name & ".reference selected")
+      tip("Correlate against the selected trace (the first, when several are): a pilot, in " &
+        "this file or another one open (Sweep0's pilot, say)")
+      line.follow(buttonWidth("The first auxiliary trace"))
+      igBeginDisabled(p.reference < 0)
+      if igSmallButton("The first auxiliary trace"):
+        (p.reference, changed) = (-1, true)
+      igEndDisabled()
+      marks.mark(name & ".reference pilot")
+      tip("Correlate against the record's first auxiliary trace (its pilot when it is a " &
+        "sweep, a time break on a dynamite record), else the first trace of the window")
+      line.follow(textBoxWidth("lags ±", box) + igGetStyle().ItemSpacing.x +
+        igCalcTextSize("ms", nil, false, -1).x)
+      label("lags ±")
+      if numberBox("##lags", p.maxLagMs, box, typed) and LagMsRange.allows(typed):
+        (p.maxLagMs, changed) = (typed, true)
+      marks.mark(name & ".lags")
+      tip("The lags shown either side of 0, ms")
+      igSameLine(0, -1)
+      unit("ms")
+    of avFk:
+      label("From")
+      if limitBox("##from", p.fkFromMs, box, typed) and
+          not (typed.isNaN and p.fkFromMs.isNaN) and typed != p.fkFromMs:
+        (p.fkFromMs, changed) = (typed, true)
+      marks.mark(name & ".from")
+      tip("The box's first time, ms (empty: the traces' start)")
+      line.follow(textBoxWidth("to", box))
+      label("to")
+      if limitBox("##to", p.fkToMs, box, typed) and
+          not (typed.isNaN and p.fkToMs.isNaN) and typed != p.fkToMs:
+        (p.fkToMs, changed) = (typed, true)
+      marks.mark(name & ".to")
+      tip("The box's last time, ms (empty: the traces' end)")
+      line.follow(textBoxWidth("ms  floor", box) + igGetStyle().ItemSpacing.x +
+        igCalcTextSize("dB", nil, false, -1).x)
+      label("ms  floor")
+      if numberBox("##floor", p.floorDb, box, typed) and FloorDbRange.allows(typed):
+        (p.floorDb, changed) = (typed, true)
+      tip("The lowest dB drawn: the colour map's low end (0 dB is the largest amplitude)")
+      igSameLine(0, -1)
+      unit("dB")
+      line.follow(mapW)
+      mapCombo()
+      line.follow(checkWidth("Raw"))
+      if igCheckbox("Raw", addr p.fkRaw): changed = true
+      marks.mark(name & ".raw")
+      tip("On: the traces as recorded. Off: through the Seismic window's filters, so the " &
+        "effect of a filter shows")
+    of avVibrator: discard
+    if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks): changed = true
   if changed:
     res.commands.add Command(kind: ckPlotDisplay, plot: w.id, plotParams: p,
       plotFrozen: frozen)

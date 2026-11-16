@@ -207,6 +207,7 @@ withFixtures fx:
       for role in ["Ref", "GF", "M", "B"]:
         doAssert f.markOf("new plot 2.role " & role).size.x > 0, "no role " & role)
   click("new plot 2.limits")
+  click("new plot 2.limits.check")
   step("limits on", noop, proc (f: FrameInfo): bool =
     result = f.core.plots[1].params.limitsOn and not f.core.plots[1].waiting and
       f.markOf("new plot 2.table").size.x > 0
