@@ -675,6 +675,10 @@ type
       ## the document `doc` as it was brought back before the hash of every
       ## byte confirmed it: written back as it was when the hash says it
       ## was another file's
+    heldEarlier: seq[FileRecord]
+      ## earlier outputs of its name found while a record of the same quick
+      ## identity still waits for the hash (it may be the file's own, and
+      ## cover them): said once it has come
     provDocs: seq[string]
       ## the documents holding edits that are not confirmed by a hash of every
       ## byte: those made while `brought` was being checked (written here, never
@@ -3256,6 +3260,12 @@ proc sayUnconfirmed(state: var AppState; i: int; c: FileRecord) =
     " (" & keptWords(c.edits) & ") were not yet confirmed as this file's when viewSEG closed: " &
     "they are kept apart (Project window: Apply or Forget).")
 
+proc sayEarlierNew(state: var AppState; path: string; c: FileRecord; own: EditLists) =
+  ## `sayEarlier`, unless the edits of `c` are on the file already (`own`:
+  ## applied with "Apply them to this file", or the same made again): those
+  ## are no earlier output's to say.
+  if c.edits.isEmpty or not c.edits.minus(own).isEmpty: state.sayEarlier(path, c)
+
 func earlierOf*(state: AppState; path: string): seq[FileRecord] =
   ## What is remembered about earlier outputs of the name of open file
   ## `path`: other files, whose edits are not its own.
@@ -3279,8 +3289,9 @@ proc takeEarlier(state: var AppState; m: sink Msg) =
     # Edits that are on this file already (applied with "Apply them to this
     # file", or the same made again) are no earlier output's to say.
     if c.unconfirmed: state.sayUnconfirmed(i, c)
-    elif c.edits.isEmpty or not c.edits.minus(state.editsAt(m.earlierPath).kept).isEmpty:
-      state.sayEarlier(m.earlierPath, c)
+    elif not state.remembered[i].hashed and state.remembered[i].waiting.len > 0:
+      state.remembered[i].heldEarlier.add c
+    else: state.sayEarlierNew(m.earlierPath, c, state.editsAt(m.earlierPath).kept)
 
 proc takeIdentified(state: var AppState; m: sink Msg) =
   ## A file's quick identity and the documents of it: those that are about
@@ -3362,7 +3373,7 @@ proc takeHashed(state: var AppState; m: sink Msg) =
       " meanwhile (" & keptWords(own) & ") stay with it."))
     var was = if r.brought.doc == r.doc: r.brought else: other
     if was.path == r.path:
-      state.sayEarlier(r.path, was)
+      state.sayEarlierNew(r.path, was, own)
     if r.seenAside: # the time this file was opened is not that one's
       if not state.readOnlyProject:
         state.diskIo.remove(state.store.docPath(r.doc).seenName, "when " & name & " was opened")
@@ -3391,12 +3402,16 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     # brought back, which takes them.
     let own = if r.ownDoc: r.doc else: ""
     let waiting = move r.waiting
+    var others: seq[FileRecord] = @[]
     for c in waiting:
       if (r.doc.len == 0 or r.ownDoc) and c.identity.fullKnown and
           c.identity.full == r.identity.full:
         state.applyRecord(i, c)
       elif c.path == r.path and c.identity.fullKnown and c.identity.full != r.identity.full:
-        state.sayEarlier(r.path, c) # the same size and ends, other contents
+        others.add c # the same size and ends, other contents
+    others.add move(r.heldEarlier)
+    for c in others: # said once the file's own are in: those of it are no earlier output's
+      state.sayEarlierNew(r.path, c, state.editsAt(r.path).kept)
     if own.len > 0 and r.doc != own:
       if not state.readOnlyProject:
         state.diskIo.remove(state.store.docPath(own), "what is remembered about " & name)
@@ -3407,6 +3422,7 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     r.savedRev = -1 # its document gets the hash (not one with parts it cannot read)
   if r.doc.len == 0 and not state.editsAt(r.path).kept.isEmpty:
     r.savedRev = -1 # edits made before it was known: a document of its own
+  for c in move(r.heldEarlier): state.sayEarlierNew(r.path, c, state.editsAt(r.path).kept)
   state.linkSame(i)
 
 proc endMemoryWork(state: var AppState; job: JobInfo): bool =

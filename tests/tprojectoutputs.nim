@@ -159,6 +159,37 @@ withFixtures fx:
       doAssert c.edits.lists[teKilled].len != 2, "the applied earlier output is listed again"
     again.shutdown()
 
+  block appliedOtherTime:
+    # The same size and ends, other contents, the time moved (the earlier
+    # output waits for the hash): once applied, it is not said again when
+    # the time moves again.
+    let t1 = initTime(t0.toUnix + 100, 0)
+    let t2 = initTime(t0.toUnix + 200, 0)
+    writeFile(a, b)
+    setLastModificationTime(a, t1)
+    var st = start(config)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject)
+    st.showFile(a)
+    var doc = ""
+    doAssert st.settle(st.remembering(a).confirmed and st.earlierOf(a).len >= 1)
+    for c in st.earlierOf(a):
+      if c.edits.lists[teKilled].len == 2: doc = c.doc
+    doAssert doc.len > 0, "the earlier output is not listed"
+    st.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: st.store.docPath(doc))
+    doAssert st.settle(st.killed(5) and st.killed(6))
+    st.flushFiles()
+    st.shutdown()
+    setLastModificationTime(a, t2)
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject)
+    again.showFile(a)
+    doAssert again.settle(again.remembering(a).confirmed and again.killed(5) and
+      again.jobs.active.len == 0)
+    doAssert not again.said("not applied"), "the applied earlier output is said again"
+    again.shutdown()
+
   block otherTraces: # output again with fewer traces: listed, not offered
     copyFile(fx.manyTracesSegy(Traces - 1, 40), a)
     var st = start(config)
