@@ -160,10 +160,11 @@ type
       ## what each filter found, as the marks show it
     hitIndex: FilterIndex
       ## `hits`' traces as sets
-    markPlaces: seq[(MapFilter, seq[MarkPlace])]
-      ## what each filter shown marks, and where (`followMarks`)
+    markSpots: seq[(MapFilter, MarkSpots)]
+      ## what each filter shown marks, merged by place, and where (`followMarks`)
     near: seq[(MapFilter, int)]
       ## what the marks under the pointer mark (`markedHere`), when the info was made
+    nearFound: MarksNear ## `markedHere`'s last finding, reset when the marks change
     marked: seq[seq[MapPoint]]
       ## the marked points: the sources with a file in the folder listed
     marksRev: int
@@ -938,14 +939,15 @@ proc followMarks(mu: var MapUi; st: AppState) =
     for p in st.shots.pointRefs: mu.marked[0].add st.shownAt(p)
   mu.hits = st.filterHits
   mu.hitIndex = filterIndex(mu.hits)
-  mu.markPlaces.setLen 0
+  mu.markSpots.setLen 0
+  mu.nearFound = MarksNear()
   for f in MapFilter:
     if f in st.settings.map.filters:
       let places = st.filterPlaces(f, mu.hits[f])
       var at = newSeqOfCap[MapPoint](places.len)
       for p in places: at.add p.at
       mu.marked.add at
-      mu.markPlaces.add (f, places)
+      mu.markSpots.add (f, markSpots(places))
   let b = st.survey.bounds
   mu.renderer.setMarks(if b.isEmpty: mapPoint(0, 0) else: mapPoint(b.minX, b.minY), mu.marked)
   inc mu.marksRev
@@ -1376,7 +1378,7 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       under = st.pointsAt(at, float64(pickRadius) * view.width / float64(max(size.x, 1)))
       # survey units of half a pixel at 100 %
       let perMark = view.perPixel * float64(fb.x) / 2
-      near = markedHere(mu.markPlaces, at, proc (f: MapFilter): float64 =
+      near = mu.nearFound.markedHere(mu.markSpots, at, proc (f: MapFilter): float64 =
         float64(MarkSizes[FilterMarks[f].family]) * perMark)
     elif hovered:
       res.cursor = coordinatesText(view.mapAt(plot, v2(igGetIO_Nil().MousePos)),

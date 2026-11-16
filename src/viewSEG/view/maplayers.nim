@@ -24,7 +24,7 @@
 ## `selected` colour, as in the plot; the receivers of the record on show in a
 ## darker shade of the receivers' colour, its source larger and outlined.
 
-import std/[hashes, intsets, math, os, strutils]
+import std/[algorithm, hashes, intsets, math, os, sets, strutils]
 from parseSEG import GatherKind, gkReceiver, gkUnknown, known, recordsAt, stationKey
 import ../core/[geometry, state]
 import plotink, theme
@@ -474,20 +474,176 @@ proc filterPlaces*(st: AppState; f: MapFilter; h: FilterHits): seq[MarkPlace] =
   for k in h.stations: station(plannedRole(st.shownDomain), k)
   for k in h.sources: station(prSource, k)
 
-func markedHere*(marks: openArray[(MapFilter, seq[MarkPlace])]; at: MapPoint;
+type
+  MarkSpot* = object
+    ## One place a filter marks, however many things it marks there: one
+    ## glyph.
+    at*: MapPoint
+    first*, count*: int32
+      ## its things: `MarkSpots.keys[first ..< first + count]`, each once
+
+  MarkSpots* = object
+    ## What one filter marks, merged by place (`markSpots`), with a grid
+    ## over the places so the hover finds those under the pointer without
+    ## looking at the others.
+    spots*: seq[MarkSpot]
+    keys*: seq[int64] ## each spot's things, a run a spot
+    lo: MapPoint ## the grid's lower-left corner
+    cell: float64 ## its cells' side, survey units
+    side: int ## cells across and up
+    cellStart: seq[int32]
+      ## per cell, row by row, and one more: its first spot (the spots are
+      ## kept cell by cell)
+
+  MarksNear* = object
+    ## What `markedHere` found last: the spots under the pointer, filter by
+    ## filter, and what they count, so a pointer that stays over the same
+    ## marks costs a look at the grid and no counting.
+    at: seq[seq[int32]]
+    counts: seq[(MapFilter, int)]
+    valid: bool
+
+proc markSpots*(places: openArray[MarkPlace]): MarkSpots =
+  ## `places` (a filter's, `filterPlaces`) merged by place: one spot a
+  ## position, with the things marked there each once. Places that are not
+  ## numbers (not drawn) are left out.
+  ##
+  ## The places are sorted into the grid's cells (a counting sort), each
+  ## cell's few by position and thing, and a pass over them makes the spots
+  ## in the grid's order: no table of positions (a million places, 350 ms
+  ## with one).
+  var b = Bounds(minX: Inf, minY: Inf, maxX: -Inf, maxY: -Inf)
+  var n = 0
+  for p in places:
+    if not (p.at.x.isNaN or p.at.y.isNaN):
+      b.incl(p.at.x, p.at.y)
+      inc n
+  if n == 0: return
+  # about one place a cell, at most 1024 cells across
+  result.side = clamp(int(sqrt(float64(n))), 1, 1024)
+  result.lo = mapPoint(b.minX, b.minY)
+  result.cell = max(b.width, b.height) / float64(result.side)
+  if not (result.cell > 0 and result.cell < Inf): (result.side, result.cell) = (1, 1.0)
+  let side = result.side
+  func cellOf(m: MarkSpots; p: MapPoint): int32 {.inline.} =
+    let cx = int(clamp((p.x - m.lo.x) / m.cell, 0.0, float64(m.side - 1)))
+    let cy = int(clamp((p.y - m.lo.y) / m.cell, 0.0, float64(m.side - 1)))
+    int32(cy * m.side + cx)
+  var start = newSeq[int32](side * side + 1)
+  for p in places:
+    if not (p.at.x.isNaN or p.at.y.isNaN): inc start[result.cellOf(p.at) + 1]
+  for c in 1 .. side * side: start[c] += start[c - 1]
+  var sorted = newSeq[MarkPlace](n)
+  block:
+    var fill = start
+    for p in places:
+      if not (p.at.x.isNaN or p.at.y.isNaN):
+        let c = result.cellOf(p.at)
+        sorted[fill[c]] = p
+        inc fill[c]
+  func before(a, b: MarkPlace): int =
+    result = cmp(a.at.x, b.at.x)
+    if result == 0: result = cmp(a.at.y, b.at.y)
+    if result == 0: result = cmp(a.key, b.key)
+  result.cellStart = newSeq[int32](side * side + 1)
+  result.keys = newSeqOfCap[int64](n)
+  for c in 0 ..< side * side:
+    let (a, z) = (int(start[c]), int(start[c + 1]))
+    if z - a > 1:
+      var one = true # one position (a station): only the things to sort
+      for k in a + 1 ..< z:
+        if sorted[k].at != sorted[a].at:
+          one = false
+          break
+      if not one: sort(sorted.toOpenArray(a, z - 1), before)
+      elif not isSorted(sorted.toOpenArray(a, z - 1), before):
+        sort(sorted.toOpenArray(a, z - 1), before)
+    for k in a ..< z:
+      let p = sorted[k]
+      if k == a or p.at != sorted[k - 1].at:
+        result.spots.add MarkSpot(at: p.at, first: int32(result.keys.len))
+        inc result.cellStart[c + 1]
+      elif p.key == sorted[k - 1].key: continue # one thing listed twice at one place
+      result.keys.add p.key
+      inc result.spots[^1].count
+  for c in 1 .. side * side: result.cellStart[c] += result.cellStart[c - 1]
+
+func positions*(m: MarkSpots): seq[MapPoint] =
+  ## Where `m`'s glyphs are: one a spot.
+  result = newSeqOfCap[MapPoint](m.spots.len)
+  for s in m.spots: result.add s.at
+
+func things*(m: MarkSpots): int {.inline.} = m.keys.len
+  ## The marks' things, a spot's each once (one at two spots counts twice).
+
+proc spotsNear(m: MarkSpots; at: MapPoint; r: float64; dst: var seq[int32]) =
+  ## Into `dst`: the spots of `m` within `r` of `at`, from the grid's cells
+  ## that reach.
+  dst.setLen 0
+  if m.spots.len == 0 or not (r >= 0) or at.x.isNaN or at.y.isNaN: return
+  let span = float64(m.side) * m.cell
+  if at.x + r < m.lo.x or at.y + r < m.lo.y or at.x - r > m.lo.x + span or
+      at.y - r > m.lo.y + span:
+    return
+  func cellAt(v, lo, cell: float64; side: int): int =
+    int(clamp(floor((v - lo) / cell), 0.0, float64(side - 1)))
+  let (cx0, cx1) = (cellAt(at.x - r, m.lo.x, m.cell, m.side), cellAt(at.x + r, m.lo.x, m.cell,
+    m.side))
+  let (cy0, cy1) = (cellAt(at.y - r, m.lo.y, m.cell, m.side), cellAt(at.y + r, m.lo.y, m.cell,
+    m.side))
+  for cy in cy0 .. cy1:
+    # a row's cells from cx0 to cx1 are one run of the spots
+    for k in m.cellStart[cy * m.side + cx0] ..< m.cellStart[cy * m.side + cx1 + 1]:
+      let p = m.spots[k].at
+      if hypot(p.x - at.x, p.y - at.y) <= r: dst.add k
+
+proc markedHere*(near: var MarksNear; marks: openArray[(MapFilter, MarkSpots)]; at: MapPoint;
     reach: proc (f: MapFilter): float64 {.noSideEffect.}): seq[(MapFilter, int)] =
   ## How many things each filter marks with a mark that covers `at` (its
   ## glyph `reach(f)` survey units round its place), each thing once: where
-  ## marks crowd onto one spot of the screen, what lies there.
-  result = @[]
-  for (f, places) in marks:
-    let r = reach(f)
-    var keys: seq[int64] = @[]
-    for p in places:
-      if abs(p.at.x - at.x) <= r and abs(p.at.y - at.y) <= r and
-          hypot(p.at.x - at.x, p.at.y - at.y) <= r and p.key notin keys:
-        keys.add p.key
-    if keys.len > 0: result.add (f, keys.len)
+  ## marks crowd onto one spot of the screen, what lies there. `near` holds
+  ## what was found last: the same spots under the pointer are not counted
+  ## again (reset it when the marks change).
+  if near.at.len != marks.len:
+    near.at.setLen marks.len
+    near.valid = false
+  var same = near.valid
+  var found: seq[int32]
+  # (`marks[i][1]`, not a tuple unpacked in the `for`: that copies the spots)
+  for i in 0 ..< marks.len:
+    marks[i][1].spotsNear(at, reach(marks[i][0]), found)
+    if found != near.at[i]:
+      same = false
+      near.at[i] = found
+  if same: return near.counts
+  near.counts.setLen 0
+  for i in 0 ..< marks.len:
+    template m: untyped = marks[i][1]
+    let f = marks[i][0]
+    template hit: untyped = near.at[i]
+    var n = 0
+    if hit.len == 1: n = int(m.spots[hit[0]].count)
+    elif hit.len > 1:
+      # One thing may be marked at two spots (its file's position and its
+      # station's): counted once. The largest spot's things are counted as
+      # they are, and the others' that it lacks (its keys are sorted: a
+      # binary search each) once each, so a station of 20 000 marked traces
+      # beside a few others costs a few searches, not a set of 20 000.
+      var big = hit[0]
+      for s in hit:
+        if m.spots[s].count > m.spots[big].count: big = s
+      let b = m.spots[big]
+      template bigKeys: untyped = m.keys.toOpenArray(int(b.first), int(b.first + b.count) - 1)
+      var others = initHashSet[int64]()
+      for s in hit:
+        if s != big:
+          let x = m.spots[s]
+          for k in x.first ..< x.first + x.count:
+            if bigKeys.binarySearch(m.keys[k]) < 0: others.incl m.keys[k]
+      n = int(b.count) + others.len
+    if n > 0: near.counts.add (f, n)
+  near.valid = true
+  near.counts
 
 func markedHereText*(counts: openArray[(MapFilter, int)]): string =
   ## "Marked here: 1 dead in the headers, 2 noisy" ("" for nothing).
