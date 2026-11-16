@@ -229,8 +229,11 @@ proc drawShownFile(ui: var ProjectUi; st: AppState; t: Theme; marks: var Marks;
       res.commands.add Command(kind: ckImportEdits, panel: MainPanel,
         listPath: st.store.docPath(c.doc))
     igSameLine(0, -1)
-    if button("Forget them", "project.earlier.forget." & $i, "Remove what is remembered " &
-        "about the earlier output (said in Messages)", true, marks) and ui.focusProject.acts:
+    if button("Forget them", "project.earlier.forget." & $i,
+        (if st.project.readOnly: "Not offered: the project is open read-only (" &
+          st.project.whyReadOnly & ")"
+        else: "Remove what is remembered about the earlier output (said in Messages)"),
+        not st.project.readOnly, marks) and ui.focusProject.acts:
       res.commands.add Command(kind: ckForgetFiles, forget: @[c.doc])
     igPopID()
 

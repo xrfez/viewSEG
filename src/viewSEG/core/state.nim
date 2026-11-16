@@ -2947,6 +2947,11 @@ proc identify(state: var AppState; s: Session) =
     lane: jlInteractive), identifyWork(s.path, state.store, state.inbox.poster))
   state.memoryWork.add r.job
 
+proc readOnlyProject(state: AppState): bool =
+  ## A project is open and another program has it: nothing is written into
+  ## its store (what is remembered is kept in memory for the session).
+  state.project.dir.len > 0 and state.project.readOnly
+
 proc applyRecord(state: var AppState; i: int; c: FileRecord) =
   ## Brings back what document `c` remembers about `remembered[i]`'s file,
   ## and says so.
@@ -2966,8 +2971,9 @@ proc applyRecord(state: var AppState; i: int; c: FileRecord) =
   if not c.damaged: r.savedRev = -1
   else:
     state.knownDocs[c.doc].opened = r.opened
-    state.diskIo.replace(state.store.docPath(c.doc).seenName, seenDocument(r.opened),
-      "when " & name & " was opened")
+    if not state.readOnlyProject:
+      state.diskIo.replace(state.store.docPath(c.doc).seenName, seenDocument(r.opened),
+        "when " & name & " was opened")
     r.seenAside = true
   if c.edits.isEmpty: return
   state.edits.mgetOrPut(state.keyOf(r.path), FileEdits()).remembered(c.edits)
@@ -3188,14 +3194,16 @@ proc takeHashed(state: var AppState; m: sink Msg) =
     if was.path == r.path:
       state.sayEarlier(r.path, was)
     if r.seenAside: # the time this file was opened is not that one's
-      state.diskIo.remove(state.store.docPath(r.doc).seenName, "when " & name & " was opened")
+      if not state.readOnlyProject:
+        state.diskIo.remove(state.store.docPath(r.doc).seenName, "when " & name & " was opened")
       r.seenAside = false
     if r.brought.doc == r.doc:
       # What was written of this file meanwhile (its name, its edits) went
       # into the other file's document: that one is put back as it was.
       state.knownDocs[r.doc] = r.brought
-      state.diskIo.replace(state.store.docPath(r.doc), r.brought,
-        "what is remembered about " & r.brought.name)
+      if not state.readOnlyProject:
+        state.diskIo.replace(state.store.docPath(r.doc), r.brought,
+          "what is remembered about " & r.brought.name)
     else: state.knownDocs.del r.doc
     r.brought = FileRecord()
     r.doc = ""
@@ -3218,7 +3226,8 @@ proc takeHashed(state: var AppState; m: sink Msg) =
       elif c.path == r.path and c.identity.fullKnown and c.identity.full != r.identity.full:
         state.sayEarlier(r.path, c) # the same size and ends, other contents
     if own.len > 0 and r.doc != own:
-      state.diskIo.remove(state.store.docPath(own), "what is remembered about " & name)
+      if not state.readOnlyProject:
+        state.diskIo.remove(state.store.docPath(own), "what is remembered about " & name)
       state.knownDocs.del own
     elif own.len > 0: r.savedRev = -1 # its document gets the hash
   elif not state.knownDocs.getOrDefault(r.doc).identity.fullKnown and
@@ -3508,6 +3517,9 @@ proc forgetFiles(state: var AppState; cmd: Command) =
   ## log; a file open now that they were about is shown as it is on disk.
   if not keeps(cmd.origin):
     state.ignore(cmd, "what is remembered about files is the user's: an agent cannot remove it")
+    return
+  if state.readOnlyProject:
+    state.ignore(cmd, "the project is open read-only (" & state.project.whyReadOnly & ")")
     return
   for doc in cmd.forget:
     if not doc.isDocName:
