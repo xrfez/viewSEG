@@ -343,8 +343,9 @@ type
         ## ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumCursor, ckStepTrace:
         ## the window (0 the live panel; FFT windows from 1, as `state`'s
         ## `spectra` lists them); ckStepTrace: an FFT window of one trace
-        ## steps from its trace and shows the new one, as does one of a
-        ## selection; 0 steps the plot's selection
+        ## steps from its trace and shows the new one, one of a selection
+        ## from the selection; a frozen one keeps its trace and steps the
+        ## plot's selection; 0 steps the plot's selection
       spectrumOf*: PanelId
         ## ckSpectrum, ckStepTrace: the panel whose file, view and filters it
         ## is of (1: the Seismic window)
@@ -5627,11 +5628,12 @@ proc holdCursor(state: var AppState; cmd: Command) =
 proc stepTrace(state: var AppState; cmd: Command) =
   ## `ckStepTrace`: the next (or previous) trace of the record, in the
   ## order shown, selected alone, and the plot scrolled to keep it in view.
-  ## From an FFT window of one trace, or of a selection: from its trace (the
-  ## selection's), and the window shows the new trace. Else from the
+  ## From an FFT window of one trace: from its trace; else from the
   ## selection (the trace clicked last; else its last, or its first going
   ## back: `stepStart`), else the trace under the pointer, else the first in
-  ## view.
+  ## view. An FFT window (of one trace or a selection) then shows the new
+  ## trace, unless frozen: a frozen one keeps its own and steps the plot's
+  ## selection, as the plot's keys do.
   if cmd.stepBy == 0:
     state.ignore(cmd, "a step of 0 traces")
     return
@@ -5649,8 +5651,11 @@ proc stepTrace(state: var AppState; cmd: Command) =
     return
   template p: untyped = state.panels[k]
   let s = state.sessions[i]
+  # A frozen FFT window keeps its trace: it steps the plot's selection.
+  let frozen = w > 0 and state.spectra[w].frozen
   var start = -1
-  if w > 0 and state.spectra[w].traces.len == 1 and state.spectra[w].traces[0] in s:
+  if w > 0 and not frozen and state.spectra[w].traces.len == 1 and
+      state.spectra[w].traces[0] in s:
     start = p.shown.find(state.spectra[w].traces[0] - s.base)
   if start < 0: start = state.selection.stepStart(p.shown, s.base, cmd.stepBy)
   let to = if start >= 0: start + cmd.stepBy
@@ -5673,8 +5678,11 @@ proc stepTrace(state: var AppState; cmd: Command) =
     inc p.jumps # set by `core`: the frontend follows
     state.requestView(k)
     state.settleGain(k, cmd.origin)
-  # The FFT window it was pressed in shows the new trace.
-  if w > 0 and not state.spectra[w].frozen:
+  # The FFT window it was pressed in shows the new trace, unless frozen.
+  if frozen and cmd.origin == coAgent:
+    state.log.add(sevInfo, "spectrum", state.spectra[w].title & " is frozen: it keeps its " &
+      "trace (the plot's selection stepped to trace " & $(p.shown[to] + 1) & ")")
+  if w > 0 and not frozen:
     template sw: untyped = state.spectra[w]
     (sw.traces, sw.first, sw.chosen, sw.chosenCount) = (@[trace], p.shown[to], soTrace, 1)
     sw.record = s.recordText(p.shown[to])

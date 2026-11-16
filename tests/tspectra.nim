@@ -29,7 +29,8 @@
 ## - stepping through the record (`ckStepTrace`, Alt + arrow): the next and
 ##   previous trace in the order shown, killed ones too, not past its ends
 ##   (said), the plot scrolled to keep it in view, an FFT window of one
-##   trace moved to the next; a window's cursor held within its bins and let
+##   trace moved to the next (a frozen one keeps its trace and steps the
+##   selection); a window's cursor held within its bins and let
 ##   go (`ckSpectrumCursor`), at its frequency and on its curve when a
 ##   notch's finer bins come and curves appear or go;
 ## - several windows at once, each its own; one closed while it computes
@@ -414,6 +415,19 @@ withFixtures fx:
     doAssert ": trace 7 ·" in st.spectra[w].title, st.spectra[w].title
     doAssert st.answered(w) and st.settle(st.spectra[w].spectrum.asked == 1 and
       st.spectra[w].spectrum.raw.peakBin == SpectrumSineBin)
+    # Frozen, it keeps its trace, and Alt + arrows in it step the plot's
+    # selection, from the selection: never stuck on its own trace + 1.
+    # (Seen to fail stepping from the window's trace, as before: the
+    # selection stayed [7].)
+    var frozen = st.spectra[w].display
+    st.apply Command(kind: ckSpectrumDisplay, spectrum: st.spectra[w].id, spectrumShow: frozen,
+      frozen: true)
+    for k in 1 .. 2: step(1, st.spectra[w].id)
+    doAssert selectedNow == @[base + 8] and st.spectra[w].traces == @[base + 6],
+      "a frozen window's step: selected " & $selectedNow & ", the window " &
+      $st.spectra[w].traces
+    st.apply Command(kind: ckSpectrumDisplay, spectrum: st.spectra[w].id, spectrumShow: frozen,
+      frozen: false)
     # its cursor, held by the keys or an agent: within its bins, let go
     template sw: untyped = st.spectra[w]
     st.apply Command(kind: ckSpectrumCursor, spectrum: sw.id,

@@ -128,9 +128,10 @@ proc drawControls(w: SpectrumWindow; name: string; marks: var Marks; res: var Sp
   if igCheckbox("Freeze", addr frozen): changed = true
   marks.mark(name & ".freeze")
   tip(if w.id == LiveSpectrum: "Keep this spectrum while the Seismic window moves on"
-      else: "Keep the filters this spectrum went through while the plot's change; off: " &
-        "it follows the plot's filters and its Aux toggle (its traces stay those it was " &
-        "opened on)")
+      else: "Keep this spectrum: the filters it went through while the plot's change, " &
+        "and its trace while Alt + arrows step the plot's selection; off: it follows the " &
+        "plot's filters and its Aux toggle (its traces stay those it was opened on, but " &
+        "for Alt + arrows)")
   if changed:
     res.commands.add Command(kind: ckSpectrumDisplay, spectrum: w.id, spectrumShow: d,
       frozen: frozen)

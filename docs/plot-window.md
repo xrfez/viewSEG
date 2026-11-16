@@ -1288,9 +1288,13 @@ Alt + Left select the next / previous trace of the record in the order shown (Al
 from the trace clicked last (else the selection's last, or first going back; else the
 trace under the pointer; else the first in view), the plot scrolled by as little as
 keeps it in view. Traces the trace filter hides are skipped; killed traces shown are not
-(they are there to step over). In an FFT window of one trace (or of a selection), Alt +
-Right / Left select the next / previous trace after its own, and the window shows it; in
-the Spectrum panel they step the plot's selection, which the panel follows. (Alt + Left
+(they are there to step over). In an FFT window of one trace, Alt + Right / Left select
+the next / previous trace after its own, and the window shows it; in one of a selection
+they step from the selection, and the window shows the trace stepped to. A frozen FFT
+window keeps what it shows: its trace stays, and Alt + arrows in it step the plot's
+selection (from the selection, as in the plot), so they are never stuck on the trace
+after its own. In the Spectrum panel they step the plot's selection, which the panel
+follows. (Alt + Left
 was also "back" in the plot; back is Backspace now, so the user's request wins.)
 
 **Off the screen's thread.** The spectra are computed by a reader of their own (`core/
