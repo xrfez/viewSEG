@@ -660,7 +660,7 @@ proc drawStrip(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; mar
       igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(t.roles[rlSelection]))
       igPushStyleColor_Vec4(ImGui_Col_ButtonHovered.cint, vec4(t.roles[rlHover]))
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
-    if button(IconRuler & "##ruler", marks, "map.ruler button"):
+    if button(IconRuler & "  Ruler##ruler", marks, "map.ruler button"):
       mu.rulerOn = not mu.rulerOn
     if on: igPopStyleColor(3)
     tip("Ruler (on/off): drag on the map to measure a distance and bearing, in " &
