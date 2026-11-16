@@ -91,7 +91,8 @@ import imguin/cimgui
 import ../../core/[geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
 import ../../view/[displayheader, maplayers, plotink, theme, timeaxis]
-import chrome, dpi, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort, style,
+import chrome, dpi, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort,
+  plotviews, style,
   symbols
 
 export PaperBackground, PaperInk
@@ -1384,19 +1385,22 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
       under >= 0):
     res.commands.add editCommand(st, p, under, teKilled)
   marks.mark("plot.menu.kill")
-  if igMenuItem_Bool("FFT in a new window", "F", false, under >= 0):
+  let fft = fftEntry()
+  if igMenuItem_Bool((fft.icon & "  " & fft.name & " in a new window").cstring, fft.shortcut,
+      false, under >= 0):
     res.commands.add fftCommand(st, p, under)
   marks.mark("plot.menu.fft")
-  tip("The amplitude spectrum of this trace (of the selection: their average), raw and " &
-    "through the filters, in a window of its own; killed traces are left out")
+  tip(fft.sentence)
   let newPlot = igBeginMenu("New plot", under >= 0)
   marks.mark("plot.menu.newplot")
   if newPlot:
-    for v in AnalysisView:
-      if igMenuItem_Bool(v.viewName.cstring, nil, false, true):
-        res.commands.add Command(kind: ckOpenPlot, plotOf: p.id, plotView: v,
-          plotTraces: st.selection.targets(under))
-      marks.mark("plot.menu.newplot." & $v)
+    for e in PlotEntries:
+      if not e.fft:
+        if igMenuItem_Bool((e.icon & "  " & e.name).cstring, nil, false, true):
+          res.commands.add Command(kind: ckOpenPlot, plotOf: p.id, plotView: e.view,
+            plotTraces: st.selection.targets(under))
+        tip(e.sentence)
+        marks.mark("plot.menu.newplot." & $e.view)
     igEndMenu()
   # Its station on the map: the receiver (in a receiver gather, the source).
   let role = $st.stationRole(k)

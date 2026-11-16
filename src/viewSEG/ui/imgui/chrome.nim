@@ -17,7 +17,7 @@ import std/[math, strutils]
 import imguin/cimgui
 import ../../core/[geometry, jobs, pick, readout]
 import ../../view/[jobstatus, theme]
-import fonts, icons, marks, menus, style, symbols
+import fonts, icons, marks, menus, plotviews, style, symbols
 
 export marks
 
@@ -61,7 +61,7 @@ proc tooltip(text, shortcut: string; t: Theme) =
       rest = if nl >= 0: rest[nl + 1 .. ^1] else: ""
       igTextUnformatted(line.cstring, nil)
     if shortcut.len > 0:
-      igSameLine(0, -1)
+      if '\n' notin text: igSameLine(0, -1)
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
       igTextUnformatted(shortcut.cstring, nil)
       igPopStyleColor(1)
@@ -99,7 +99,7 @@ proc iconButton*(icon, text, shortcut: string; size: float32; t: Theme;
   ImDrawList_AddText_FontPtr(igGetWindowDrawList(), font, px,
     ImVec2_c(x: round(pos.x + (size - ts.x) / 2), y: round(pos.y + (size - ts.y) / 2)),
     u32(col), icon.cstring, nil, 0, nil)
-  if tipText.len > 0: tooltip(tipText, "", t) else: tooltip(text, shortcut, t)
+  if tipText.len > 0: tooltip(tipText, shortcut, t) else: tooltip(text, shortcut, t)
   clicked
 
 proc symbolButton*(sym: Symbol; size: float32; t: Theme; marks: var Marks;
@@ -124,6 +124,9 @@ type
     ## What the toolbar asks for.
     actions*: set[MenuAction]
     openProject*: string ## a recent project chosen from Open project's menu
+    fft*: bool           ## FFT of the Seismic window's selection
+    plot*: bool          ## a New plot view of that selection
+    plotView*: AnalysisView
 
 const barFlags = ImGui_WindowFlags_NoScrollbar.cint or ImGui_WindowFlags_NoSavedSettings.cint or
   ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoDecoration.cint
@@ -146,10 +149,12 @@ proc beginBar(name: string; dir: ImGuiDir; height: float32; t: Theme): bool =
     ImDrawList_AddLine(igGetWindowDrawList(), ImVec2_c(x: wp.x, y: y),
       ImVec2_c(x: wp.x + ws.x, y: y), u32(t.roles[rlBorder]), 1)
 
-proc drawToolbar*(t: Theme; marks: var Marks; recentProjects: openArray[string]): ToolbarResult =
+proc drawToolbar*(t: Theme; marks: var Marks; recentProjects: openArray[string];
+    plotTraces: int): ToolbarResult =
   ## The icon toolbar under the menu bar: opening files, folders and
-  ## projects, and the theme toggle. A right click on Open project opens
-  ## the recent projects.
+  ## projects, a button per plot of the Seismic window's selection, the
+  ## jobs, and the theme toggle. A right click on Open project opens the
+  ## recent projects. Plot buttons are greyed while `plotTraces` is 0.
   let style = igGetStyle()
   let size = round(igGetFontSize() * IconScale + 2 * style.FramePadding.y + 2)
   let height = size + 2 * round(style.FramePadding.y)
@@ -168,7 +173,15 @@ proc drawToolbar*(t: Theme; marks: var Marks; recentProjects: openArray[string])
     if igBeginPopupContextItem("##recentprojects", ImGui_PopupFlags_MouseButtonRight.cint):
       drawRecentProjects(recentProjects, result.openProject, addr marks, "tool.project.")
       igEndPopup()
-    igSameLine(0, ButtonGap)
+    let plotsOn = plotTraces > 0
+    igSameLine(0, GroupGap)
+    for i, e in PlotEntries:
+      if i > 0: igSameLine(0, ButtonGap)
+      if iconButton(e.icon, e.name, e.shortcut, size, t, marks, enabled = plotsOn,
+          tipText = e.tip(plotsOn)):
+        if e.fft: result.fft = true
+        else: (result.plot, result.plotView) = (true, e.view)
+    igSameLine(0, GroupGap)
     if iconButton(IconTasks, "Jobs", "", size, t, marks):
       result.actions.incl maShowJobs
     igSameLine(0, ButtonGap)

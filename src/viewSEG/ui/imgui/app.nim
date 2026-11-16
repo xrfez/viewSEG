@@ -1257,10 +1257,16 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     s.recentFiles.setLen 0
     s.recentFolders.setLen 0
     ui.core.apply Command(kind: ckSettings, settings: s)
-  let bar = drawToolbar(ui.theme, ui.marks, ui.core.settings.recentProjects)
+  let bar = drawToolbar(ui.theme, ui.marks, ui.core.settings.recentProjects,
+    ui.core.selectedIn(shownAt))
   result.incl bar.actions
   if bar.openProject.len > 0:
     ui.core.apply Command(kind: ckOpenProject, projectPath: bar.openProject)
+  if bar.fft:
+    ui.core.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
+      spectrumShow: ui.core.settings.spectrum.window)
+  if bar.plot:
+    ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: bar.plotView)
   let job = jobStatus(ui.core.jobs.active, getMonoTime(), fs.now())
   # The readout is last frame's pick: the bar is drawn before the plot.
   let status = drawStatusBar(ui.fonts, ui.theme,

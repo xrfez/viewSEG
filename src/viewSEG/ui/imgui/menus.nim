@@ -21,7 +21,7 @@ import std/os
 import imguin/cimgui
 import ../../core/[analysis, layouts]
 import ../../view/theme
-import icons, marks, thememenu, windows
+import icons, marks, plotviews, thememenu, windows
 
 type
   MenuAction* = enum
@@ -349,12 +349,14 @@ proc drawNewPlot(input: MenuInput; res: var MenuResult) =
   tip(if input.plotTraces > 0: "A window of the " & $input.plotTraces & " selected traces: " &
         "a spectrogram, their envelope and instantaneous phase, the phase spectrum, a " &
         "cross-correlation against a pilot. It follows the Seismic window's filters and kills"
-      else: "Select traces in the Seismic window first (or right-click one there)")
+      else: SelectTracesFirst)
   if open:
-    for v in AnalysisView:
-      if igMenuItem_Bool(v.viewName.cstring, nil, false, true):
-        (res.newPlot, res.newPlotView) = (true, v)
-      if marked != nil: marked[].mark("menu.newplot." & $v)
+    for e in PlotEntries:
+      if not e.fft:
+        if igMenuItem_Bool((e.icon & "  " & e.name).cstring, nil, false, true):
+          (res.newPlot, res.newPlotView) = (true, e.view)
+        tip(e.sentence)
+        if marked != nil: marked[].mark("menu.newplot." & $e.view)
     igEndMenu()
 
 proc drawWindowMenu(input: MenuInput; res: var MenuResult) =

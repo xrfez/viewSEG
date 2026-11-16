@@ -37,6 +37,13 @@ const
   IconTable* = ""      ## nf-cod-table
   IconPlot* = ""       ## nf-cod-graph_line
   IconPulse* = ""      ## nf-cod-pulse
+  IconFft* = "\u{EB03}" ## nf-cod-graph
+  IconSpectrogram* = "\u{EBE3}" ## nf-cod-graph_scatter
+  IconEnvelope* = "\u{EBAD}" ## nf-cod-graph_left
+  IconPhase* = "\u{EBD5}" ## nf-cod-compass
+  IconCorrelation* = "\u{EBCB}" ## nf-cod-arrow_swap
+  IconVibrator* = "\u{EB34}" ## nf-cod-radio_tower
+  IconFk* = "\u{EC30}"  ## nf-cod-map_vertical
   IconLayers* = ""     ## nf-cod-layers
   IconTarget* = ""     ## nf-cod-target
   IconLocation* = ""   ## nf-cod-location
@@ -68,6 +75,7 @@ const
     IconSettings, IconLog, IconMap, IconFilter, IconEye, IconEyeOff, IconZoomIn,
     IconZoomOut, IconFit, IconPlay, IconStep, IconPrevious, IconNext, IconWarning,
     IconError, IconInfo, IconClose, IconCheck, IconTheme, IconTable, IconPlot, IconPulse,
+    IconFft, IconSpectrogram, IconEnvelope, IconPhase, IconCorrelation, IconVibrator, IconFk,
     IconLayers, IconTarget, IconLocation, IconRefresh, IconArrowUp, IconArrowDown, IconTrash,
     IconCopy, IconClearAll, IconTasks, IconList, IconGoTo, IconExport, IconHistory,
     IconRecordBack, IconRecordNext, IconRecords, IconNew, IconWriting, IconFollow,
