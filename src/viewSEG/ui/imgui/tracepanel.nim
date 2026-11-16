@@ -16,8 +16,8 @@
 ## view with `core/zoom`: wheel zoom about the cursor (Ctrl: up and down
 ## only, Shift or the sideways wheel: across only), `+` / `-`, Ctrl + arrows
 ## for one axis, drag to pan (left or middle button), right drag to zoom to a
-## box, arrows to pan, Ctrl + 0 to fit, Backspace or Alt + Left for back,
-## Esc to cancel a drag, and the scroll bars (`plotbars`) beside the plot
+## box, arrows to pan, Ctrl + 0 to fit, Backspace for back (Alt + arrows
+## step through the record's traces), Esc to cancel a drag, and the scroll bars (`plotbars`) beside the plot
 ## when part of the data is out of view. No view ever shows anything past
 ## the data, and a new plot size keeps the scale from the top-left corner
 ## (`core/zoom`). In the wiggle modes no view is zoomed out past one pixel a
@@ -1145,7 +1145,7 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
     igEndDisabled()
     if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
         ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
-      igTextUnformatted("Back to the view before (Backspace, Alt+Left)", nil)
+      igTextUnformatted("Back to the view before (Backspace)", nil)
       igEndTooltip()
   # the record shown, the one before and after
   let (current, count) = recordOf(st, p)
