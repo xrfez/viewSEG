@@ -152,6 +152,63 @@ func `==`*(a, b: AnalysisParams): bool =
       if x != y: return false
   true
 
+type
+  SettingRange* = object
+    ## The values an analysis window's setting may take: the GUI's boxes and
+    ## an agent's `plotParams` alike judge a value by it, so they agree.
+    ## Finite always; `lo` and `hi` are included unless `loOpen` or `hiOpen`.
+    lo*, hi*: float64
+    loOpen*, hiOpen*: bool
+    words*: string ## the range in words, for a message
+
+const
+  WindowMsRange* = SettingRange(lo: 0, loOpen: true, hi: Inf, words: "above 0 ms")
+  OverlapRange* = SettingRange(lo: 0, hi: 95, words: "from 0 to 95 %")
+  FloorDbRange* = SettingRange(lo: -Inf, hi: 0, hiOpen: true, words: "below 0 dB")
+  PhaseWithinRange* = SettingRange(lo: 0, loOpen: true, hi: Inf, words: "above 0 dB")
+  LagMsRange* = SettingRange(lo: 0, loOpen: true, hi: Inf, words: "above 0 ms")
+  HarmonicRange* = SettingRange(lo: 2, hi: 16, words: "from 2 to 16")
+  MassKgRange* = SettingRange(lo: 0, loOpen: true, hi: Inf, words: "above 0 kg")
+  NumberRange* = SettingRange(lo: -Inf, hi: Inf, words: "a number")
+    ## a time, or a limit: any finite value
+
+func allows*(r: SettingRange; v: float64): bool =
+  ## Whether `v` is a finite value within `r`; NaN (a setting that may be
+  ## none) is not one.
+  if v.isNaN or abs(v) == Inf: return false
+  (if r.loOpen: v > r.lo else: v >= r.lo) and (if r.hiOpen: v < r.hi else: v <= r.hi)
+
+func settingProblem*(p: AnalysisParams; view: AnalysisView): string =
+  ## Why `p` cannot be the settings of a window of `view`, naming the first
+  ## setting the view uses that is out of its range, and that range; ""
+  ## when it can. A null (NaN) is refused, except where the setting may be
+  ## none: an f-k's box ends, the vibrator's masses and limits.
+  template check(name: string; v: float64; r: SettingRange; none = false) =
+    if not (r.allows(v) or (none and v.isNaN)):
+      return name & " must be " & r.words & ", not " &
+        (if v.isNaN: "null" else: $v)
+  case view
+  of avSpectrogram:
+    check("windowMs", p.windowMs, WindowMsRange)
+    check("overlap", p.overlap, OverlapRange)
+    check("floorDb", p.floorDb, FloorDbRange)
+  of avEnvelope: discard
+  of avPhase:
+    check("phaseWithinDb", p.phaseWithinDb, PhaseWithinRange)
+  of avCorrelation:
+    check("maxLagMs", p.maxLagMs, LagMsRange)
+  of avFk:
+    check("fkFromMs", p.fkFromMs, NumberRange, none = true)
+    check("fkToMs", p.fkToMs, NumberRange, none = true)
+    check("floorDb", p.floorDb, FloorDbRange)
+  of avVibrator:
+    check("reactionMassKg", p.reactionMassKg, MassKgRange, none = true)
+    check("baseplateMassKg", p.baseplateMassKg, MassKgRange, none = true)
+    check("harmonics", float64(p.harmonics), HarmonicRange)
+    for name, v in fieldPairs(p.limits):
+      check(name, v, NumberRange, none = true)
+  ""
+
 const
   MinFkTraces* = 4       ## an f-k needs at least these many traces
   MaxAnalysisCurves* = 8 ## traces a curve view draws at most (the first ones)

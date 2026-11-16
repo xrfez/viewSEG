@@ -145,6 +145,10 @@ proc openPlot(state: var AppState; cmd: Command) =
   if state.plots.len >= MaxAnalysisWindows:
     state.ignore(cmd, $MaxAnalysisWindows & " plot windows are open; close one first")
     return
+  let problem = settingProblem(cmd.plotParams, cmd.plotView)
+  if problem.len > 0:
+    state.ignore(cmd, problem)
+    return
   let s = state.sessions[i]
   var ids = cmd.plotTraces
   if ids.len == 0:
@@ -220,6 +224,10 @@ proc showPlot(state: var AppState; cmd: Command) =
     state.ignore(cmd, "there is no plot window " & $cmd.plot)
     return
   template pw: untyped = state.plots[w]
+  let problem = settingProblem(cmd.plotParams, pw.view)
+  if problem.len > 0:
+    state.ignore(cmd, problem)
+    return
   if cmd.plotParams.reference >= 0 and state.findTrace(cmd.plotParams.reference) < 0:
     state.ignore(cmd, "the reference trace " & $cmd.plotParams.reference &
       " is in no open file")

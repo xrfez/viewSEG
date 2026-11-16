@@ -156,7 +156,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     igSameLine(0, -1)
   label("Masses: reaction")
   if limitBox("##reaction", p.reactionMassKg, box, typed) and
-      not (typed <= 0) and typed != p.reactionMassKg:
+      (typed.isNaN or MassKgRange.allows(typed)) and typed != p.reactionMassKg:
     (p.reactionMassKg, changed) = (typed, true)
   marks.mark(name & ".reaction mass")
   tip("The reaction mass, kg: with the baseplate's, the ground force is generated from M " &
@@ -164,7 +164,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   igSameLine(0, -1)
   label("kg  baseplate")
   if limitBox("##baseplate", p.baseplateMassKg, box, typed) and
-      not (typed <= 0) and typed != p.baseplateMassKg:
+      (typed.isNaN or MassKgRange.allows(typed)) and typed != p.baseplateMassKg:
     (p.baseplateMassKg, changed) = (typed, true)
   marks.mark(name & ".baseplate mass")
   tip("The baseplate's mass, kg. Empty: none")
@@ -172,7 +172,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   label("kg  harmonics to")
   var h = cint(p.harmonics)
   igSetNextItemWidth(box)
-  if igInputInt("##harmonics", addr h, 0, 0, 0) and h in 2 .. 16 and h != p.harmonics:
+  if igInputInt("##harmonics", addr h, 0, 0, 0) and HarmonicRange.allows(float64(h)) and h != p.harmonics:
     (p.harmonics, changed) = (int(h), true)
   tip("The highest harmonic tracked (2 to 16): THD sums them from the 2nd")
   igSameLine(0, -1)
@@ -244,20 +244,20 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
   case w.view
   of avSpectrogram:
     label("Frame")
-    if numberBox("##window", p.windowMs, box, typed) and typed > 0:
+    if numberBox("##window", p.windowMs, box, typed) and WindowMsRange.allows(typed):
       (p.windowMs, changed) = (typed, true)
     marks.mark(name & ".frame")
     tip("Each frame's length (a Hann window): longer resolves frequency finer and time " &
       "coarser (a frame of W ms resolves about 2/W kHz)")
     igSameLine(0, -1)
     label("ms  overlap")
-    if numberBox("##overlap", p.overlap, box, typed) and typed >= 0 and typed <= 95:
+    if numberBox("##overlap", p.overlap, box, typed) and OverlapRange.allows(typed):
       (p.overlap, changed) = (typed, true)
     marks.mark(name & ".overlap")
     tip("How much a frame overlaps the next, % (0 to 95)")
     igSameLine(0, -1)
     label("%  floor")
-    if numberBox("##floor", p.floorDb, box, typed) and typed < 0:
+    if numberBox("##floor", p.floorDb, box, typed) and FloorDbRange.allows(typed):
       (p.floorDb, changed) = (typed, true)
     marks.mark(name & ".floor")
     tip("The lowest dB drawn: the colour map's low end (0 dB is the largest amplitude)")
@@ -267,7 +267,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
   of avEnvelope: discard
   of avPhase:
     label("Phase where within")
-    if numberBox("##within", p.phaseWithinDb, box, typed) and typed > 0:
+    if numberBox("##within", p.phaseWithinDb, box, typed) and PhaseWithinRange.allows(typed):
       (p.phaseWithinDb, changed) = (typed, true)
     marks.mark(name & ".within")
     tip("The phase is drawn where the amplitude is within this many dB of its peak: " &
@@ -301,7 +301,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
       "first trace of the window")
     igSameLine(0, -1)
     label("lags ±")
-    if numberBox("##lags", p.maxLagMs, box, typed) and typed > 0:
+    if numberBox("##lags", p.maxLagMs, box, typed) and LagMsRange.allows(typed):
       (p.maxLagMs, changed) = (typed, true)
     marks.mark(name & ".lags")
     tip("The lags shown either side of 0, ms")
@@ -323,7 +323,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; marks: var Mark
     tip("The box's last time, ms (empty: the traces' end)")
     igSameLine(0, -1)
     label("ms  floor")
-    if numberBox("##floor", p.floorDb, box, typed) and typed < 0:
+    if numberBox("##floor", p.floorDb, box, typed) and FloorDbRange.allows(typed):
       (p.floorDb, changed) = (typed, true)
     tip("The lowest dB drawn: the colour map's low end (0 dB is the largest amplitude)")
     igSameLine(0, -1)

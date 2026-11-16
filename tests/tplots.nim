@@ -20,7 +20,12 @@
 ## - a trace with no sample interval of its own is left out and counted, and
 ##   the window's interval is the others' 2 ms, not 1 ms.
 ##
-## Seen to fail: with the trace with no interval taken as 1 ms, "the reference
+## - an agent's settings out of the GUI's ranges (a null window, an overlap
+##   of 120 %, a floor above 0 dB, one harmonic) are ignored and said with
+##   their range; a setting the view does not use is not judged.
+##
+## Seen to fail: with the agent's settings not judged, "plots.len == before + 1"
+## (the zero window taken); with the trace with no interval taken as 1 ms, "the reference
 ## is sampled at 2.0 ms, the traces at 1.0 ms"; with `followPlots` not called, "the filters were not
 ## followed: 1 asks"; with the record's pilot not taken as the default
 ## reference (`firstAux`), `"pilot" in st.plots[0].reference` (the first
@@ -269,5 +274,49 @@ withFixtures fx:
     doAssert st.settle(st.answered(w) and st.plots[w].result.gen == st.plots[w].asked)
     r = st.plots[w].result
     doAssert "raw (the filters left out)" in r.note and "through" notin r.note, r.note
+  block agentSettings:
+    # an agent's settings are judged as the GUI's boxes judge them: null, not
+    # finite or out of the range the boxes allow is ignored, said with the
+    # range; a value in range is taken
+    let before = st.plots.len
+    var ok = AnalysisParams()
+    st.apply Command(kind: ckOpenPlot, plotView: avSpectrogram, plotTraces: @[s.base],
+      plotParams: ok)
+    doAssert st.plots.len == before + 1, st.log.lastText
+    let shown = st.plots.len - 1
+    var bad = AnalysisParams()
+    bad.windowMs = 0
+    st.apply Command(kind: ckOpenPlot, plotView: avSpectrogram, plotTraces: @[s.base],
+      plotParams: bad)
+    doAssert st.plots.len == before + 1 and "windowMs must be above 0 ms, not 0.0" in
+      st.log.lastText, st.log.lastText
+    bad.windowMs = NaN
+    st.apply Command(kind: ckOpenPlot, plotView: avSpectrogram, plotTraces: @[s.base],
+      plotParams: bad)
+    doAssert st.plots.len == before + 1 and "windowMs must be above 0 ms, not null" in
+      st.log.lastText, st.log.lastText
+    bad = AnalysisParams()
+    bad.overlap = 120
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[shown].id, plotParams: bad)
+    doAssert st.plots[shown].params.overlap == 75.0 and
+      "overlap must be from 0 to 95 %, not 120.0" in st.log.lastText, st.log.lastText
+    bad = AnalysisParams()
+    bad.floorDb = 3
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[shown].id, plotParams: bad)
+    doAssert st.plots[shown].params.floorDb == -60.0 and
+      "floorDb must be below 0 dB, not 3.0" in st.log.lastText, st.log.lastText
+    # a vibrator's harmonics are judged on it; a setting the view does not use is not
+    var vib = AnalysisParams()
+    vib.harmonics = 1
+    st.apply Command(kind: ckOpenPlot, plotView: avVibrator, plotTraces: @[s.base],
+      plotParams: vib)
+    doAssert st.plots.len == before + 1 and "harmonics must be from 2 to 16, not 1.0" in
+      st.log.lastText, st.log.lastText
+    var env = AnalysisParams()
+    env.windowMs = NaN
+    st.apply Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[s.base],
+      plotParams: env)
+    doAssert st.plots.len == before + 2, st.log.lastText
+    discard st.drainInbox()
   discard st.shutdown()
 echo "tplots: ok"
