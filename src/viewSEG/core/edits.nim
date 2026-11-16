@@ -1,7 +1,7 @@
 ## Edits to traces: the traces of a file whose polarity is reversed, the
-## traces killed, and the polarity of all its traces reversed. They are
-## lists kept beside the file, by the trace's index in it, and the file
-## itself is never changed.
+## traces killed, the polarity of all its traces reversed, and a trace's
+## own frequency filter. They are lists kept beside the file, by the
+## trace's index in it, and the file itself is never changed.
 ##
 ## - **Reversed:** the trace's samples times -1, as processSEG's
 ##   `reversePolarity` (`polarityOp`) makes them, before any processing or
@@ -11,6 +11,9 @@
 ## - **All reversed:** every trace of the file reversed (`setAllReversed`),
 ##   as the plot's "Reverse polarity of all traces" asks; a trace reversed on
 ##   its own as well is reversed twice, so as recorded.
+## - **Own filter:** a trace's frequency filters (`OwnFilter`), run after
+##   the plot's or instead of them. A killed trace keeps its filter; the
+##   kill wins on screen (the row stays blank).
 ##
 ## **History.** Every change is a step (`EditStep`): what it gave and what it
 ## took away, per list. `undo` takes the newest step back and keeps it for
@@ -42,6 +45,9 @@
 ## each request.
 
 import std/algorithm
+import processing
+
+export OwnFilter, FilterPlace, FilterEntry, NotchFilter, filterWords, bounded
 
 const
   MaxSteps* = 1000 ## steps kept per file for undo, the oldest dropped first
@@ -63,12 +69,14 @@ type
     skAllReversed = "all"    ## the polarity of every trace reversed, or put back
     skImport = "import"      ## edits taken in from a file
     skSetAside = "set aside" ## every edit taken away: the file changed on disk
+    skFilter = "filter"      ## a trace's own filter set or removed
 
   ListsChange = object
     ## What a step does to the lists kept, where that is not what it does
     ## to those shown.
     added, removed: array[TraceEdit, seq[int]]
     allChanged, allBefore, allAfter: bool
+    filterOn, filterOff: seq[FilterSnap]
 
   EditStep* = object
     ## One change of a file's edits: what it gave and took away.
@@ -81,13 +89,24 @@ type
     source*: string             ## skImport: the file's name
     allChanged*: bool           ## the polarity of all traces changed with it
     allBefore*, allAfter*: bool ## all reversed before and after it
-    keptOwn: bool               ## what is kept changes by `keptChange`
-    keptChange: ListsChange     ## what it does to what is kept, with `keptOwn`
+    filterOn*, filterOff*: seq[FilterSnap]
+      ## skFilter, and a clear or an import that moved filters: each changed
+      ## trace's filter after the step, and before it
+    keptOwn: bool ## what is kept changes by `keptChange`
+    keptChange: ListsChange ## what it does to what is kept, with `keptOwn`
+
+  FilterSnap* = object
+    ## A trace's own filter at one side of a step.
+    trace*: int
+    had*: bool         ## it had a filter
+    filter*: OwnFilter ## that filter, when `had`
 
   EditLists* = object
-    ## A file's edits: each list ascending, each trace once.
+    ## A file's edits: each list ascending, each trace once. `filters` is
+    ## ascending by trace, each trace once.
     lists*: array[TraceEdit, seq[int]]
     allReversed*: bool
+    filters*: seq[FilterEntry]
 
   FileEdits* = object
     ## The edits of one file's traces, by their index in the file: those
@@ -123,11 +142,69 @@ func span(list: openArray[int]; traces: Slice[int]): Slice[int] =
 
 func isEmpty*(l: EditLists): bool =
   ## Whether `l` holds no edit.
-  not l.allReversed and l.lists[teReversed].len == 0 and l.lists[teKilled].len == 0
+  not l.allReversed and l.lists[teReversed].len == 0 and l.lists[teKilled].len == 0 and
+    l.filters.len == 0
 
 func count*(l: EditLists): int =
-  ## How many edits `l` holds: traces per list, and all reversed as one.
-  l.lists[teReversed].len + l.lists[teKilled].len + ord(l.allReversed)
+  ## How many edits `l` holds: traces per list, a filter as one, and all
+  ## reversed as one.
+  l.lists[teReversed].len + l.lists[teKilled].len + l.filters.len + ord(l.allReversed)
+
+func placeOf(filters: openArray[FilterEntry]; trace: int): tuple[at: int; found: bool] =
+  ## Where `trace` sits in `filters` (ascending), and whether it is there.
+  var lo = 0
+  var hi = filters.len
+  while lo < hi:
+    let mid = (lo + hi) shr 1
+    if filters[mid].trace < trace: lo = mid + 1
+    else: hi = mid
+  (lo, lo < filters.len and filters[lo].trace == trace)
+
+func hasFilter*(l: EditLists; trace: int): bool {.inline.} =
+  ## Whether trace `trace` carries a filter.
+  placeOf(l.filters, trace).found
+
+func filterOf*(l: EditLists; trace: int): OwnFilter =
+  ## The filter trace `trace` carries; the default (none stored) when it has none.
+  let (at, found) = placeOf(l.filters, trace)
+  if found: l.filters[at].filter else: OwnFilter()
+
+func snapOf(l: EditLists; trace: int): FilterSnap =
+  ## Trace `trace`'s filter as a step would put it back.
+  let (at, found) = placeOf(l.filters, trace)
+  if found: FilterSnap(trace: trace, had: true, filter: l.filters[at].filter)
+  else: FilterSnap(trace: trace, had: false)
+
+func snapsAll(l: EditLists; had: bool): seq[FilterSnap] =
+  ## Every filter of `l`, as snaps with `had` (false: each removed).
+  result = newSeqOfCap[FilterSnap](l.filters.len)
+  for e in l.filters:
+    result.add FilterSnap(trace: e.trace, had: had, filter: e.filter)
+
+proc assignFilter(l: var EditLists; trace: int; had: bool; f: OwnFilter) =
+  ## Puts `f` on trace `trace` (`had`), or takes its filter away.
+  let (at, found) = placeOf(l.filters, trace)
+  if had:
+    if found: l.filters[at].filter = f
+    else: l.filters.insert(FilterEntry(trace: trace, filter: f), at)
+  elif found:
+    l.filters.delete(at)
+
+proc applySnaps(l: var EditLists; snaps: openArray[FilterSnap]) =
+  for s in snaps: l.assignFilter(s.trace, s.had, s.filter)
+
+func filtersIn*(l: EditLists; traces: Slice[int]): seq[FilterEntry] =
+  ## The filters of traces in `traces`, ascending.
+  let (a, _) = placeOf(l.filters, traces.a)
+  result = newSeqOfCap[FilterEntry](l.filters.len - a)
+  for i in a ..< l.filters.len:
+    if l.filters[i].trace > traces.b: break
+    result.add l.filters[i]
+
+func anyFilter*(l: EditLists; traces: Slice[int]): bool =
+  ## Whether a trace in `traces` carries a filter.
+  let (a, _) = placeOf(l.filters, traces.a)
+  a < l.filters.len and l.filters[a].trace <= traces.b
 
 func sortedTraces*(traces: openArray[int]): seq[int] =
   ## `traces` ascending, each once. Raises `ValueError` for a negative one.
@@ -177,9 +254,13 @@ func keptOf*(e: FileEdits; trace: int): set[TraceEdit] =
     if e.kept.lists[edit].binarySearch(trace) >= 0: result.incl edit
 
 func minus*(a, b: EditLists): EditLists =
-  ## The edits of `a` that `b` does not have (all reversed included).
+  ## The edits of `a` that `b` does not have (all reversed included). A
+  ## filter `b` holds with a different spec is one `b` does not have.
   for edit in TraceEdit: result.lists[edit] = difference(a.lists[edit], b.lists[edit])
   result.allReversed = a.allReversed and not b.allReversed
+  for e in a.filters:
+    let (at, found) = placeOf(b.filters, e.trace)
+    if not found or b.filters[at].filter != e.filter: result.filters.add e
 
 func shown*(e: FileEdits): lent EditLists {.inline.} = e.shown
   ## The edits as shown.
@@ -219,12 +300,37 @@ func anyIn*(e: FileEdits; traces: Slice[int]): bool =
   ## Whether a trace in `traces` has an edit (as shown).
   for edit in TraceEdit:
     if span(e.shown.lists[edit], traces).len > 0: return true
-  false
+  e.shown.anyFilter(traces)
 
 func anyKeptIn*(e: FileEdits; traces: Slice[int]): bool =
   ## Whether a trace in `traces` has an edit as kept.
   for edit in TraceEdit:
     if span(e.kept.lists[edit], traces).len > 0: return true
+  e.kept.anyFilter(traces)
+
+func hasFilter*(e: FileEdits; trace: int): bool {.inline.} =
+  ## Whether trace `trace` carries a filter (as shown).
+  e.shown.hasFilter(trace)
+
+func ownOf*(e: FileEdits; trace: int): tuple[has: bool; filter: OwnFilter] =
+  ## The filter trace `trace` carries (as shown), and whether it has one.
+  let s = e.shown.snapOf(trace)
+  (s.had, s.filter)
+
+func keptFilter*(e: FileEdits; trace: int): tuple[has: bool; filter: OwnFilter] =
+  ## The filter trace `trace` carries as kept.
+  let s = e.kept.snapOf(trace)
+  (s.had, s.filter)
+
+func filtersIn*(e: FileEdits; traces: Slice[int]): seq[FilterEntry] {.inline.} =
+  ## The filters of traces in `traces` (as shown), ascending.
+  e.shown.filtersIn(traces)
+
+func ownNeedsWhole*(e: FileEdits; traces: Slice[int]): bool =
+  ## Whether a trace in `traces` has a frequency filter of its own: the
+  ## reader then keeps whole traces, as it does while the plot filters.
+  for f in e.shown.filtersIn(traces):
+    if f.filter.spec.hasFilters: return true
   false
 
 proc turn(l: var EditLists; added, removed: array[TraceEdit, seq[int]];
@@ -237,28 +343,38 @@ proc turn(l: var EditLists; added, removed: array[TraceEdit, seq[int]];
   if allChanged: l.allReversed = allTo
 
 proc turnShown(l: var EditLists; s: EditStep; back: bool) =
-  if back: l.turn(s.removed, s.added, s.allChanged, s.allBefore)
-  else: l.turn(s.added, s.removed, s.allChanged, s.allAfter)
+  if back:
+    l.turn(s.removed, s.added, s.allChanged, s.allBefore)
+    l.applySnaps(s.filterOff)
+  else:
+    l.turn(s.added, s.removed, s.allChanged, s.allAfter)
+    l.applySnaps(s.filterOn)
 
 proc turnKept(l: var EditLists; s: EditStep; back: bool) =
   if not s.keptOwn: l.turnShown(s, back)
   else:
     template c: untyped = s.keptChange
-    if back: l.turn(c.removed, c.added, c.allChanged, c.allBefore)
-    else: l.turn(c.added, c.removed, c.allChanged, c.allAfter)
+    if back:
+      l.turn(c.removed, c.added, c.allChanged, c.allBefore)
+      l.applySnaps(c.filterOff)
+    else:
+      l.turn(c.added, c.removed, c.allChanged, c.allAfter)
+      l.applySnaps(c.filterOn)
 
 func size(s: EditStep): int =
   ## The traces `s` names, all told.
-  result = s.traces.len
+  result = s.traces.len + s.filterOn.len + s.filterOff.len
   for edit in TraceEdit:
     result += s.added[edit].len + s.removed[edit].len +
       s.keptChange.added[edit].len + s.keptChange.removed[edit].len
+  result += s.keptChange.filterOn.len + s.keptChange.filterOff.len
 
 proc keptChanges(s: var EditStep; c: sink ListsChange) =
   ## `c` is what `s` does to what is kept; noted apart only where it is not
   ## what `s` does to what is shown.
   if c.added != s.added or c.removed != s.removed or c.allChanged != s.allChanged or
-      (c.allChanged and (c.allBefore, c.allAfter) != (s.allBefore, s.allAfter)):
+      (c.allChanged and (c.allBefore, c.allAfter) != (s.allBefore, s.allAfter)) or
+      c.filterOn != s.filterOn or c.filterOff != s.filterOff:
     s.keptOwn = true
     s.keptChange = c
 
@@ -315,8 +431,10 @@ proc clearAll*(e: var FileEdits; keep = true; kind = skClear): bool =
   if result:
     var s = EditStep(kind: kind, allChanged: e.shown.allReversed, allBefore: true)
     s.removed = e.shown.lists
+    s.filterOff = e.shown.snapsAll(true)
+    s.filterOn = e.shown.snapsAll(false)
     s.keptChanges(ListsChange(removed: e.kept.lists, allChanged: e.kept.allReversed,
-      allBefore: true))
+      allBefore: true, filterOff: e.kept.snapsAll(true), filterOn: e.kept.snapsAll(false)))
     e.make(s, keep)
 
 proc setAllReversed*(e: var FileEdits; on: bool; keep = true): bool =
@@ -330,6 +448,115 @@ proc setAllReversed*(e: var FileEdits; on: bool; keep = true): bool =
       allAfter: on)
     s.keptChanges(ListsChange(allChanged: keptToo, allBefore: not on, allAfter: on))
     e.make(s, keep)
+
+proc filterDelta(before, after: EditLists): tuple[off, on: seq[FilterSnap]; n: int] =
+  ## The traces whose filter differs, as snaps before (`off`) and after (`on`).
+  var i, j = 0
+  while i < before.filters.len or j < after.filters.len:
+    let ti = if i < before.filters.len: before.filters[i].trace else: high(int)
+    let tj = if j < after.filters.len: after.filters[j].trace else: high(int)
+    if ti == tj:
+      if before.filters[i].filter != after.filters[j].filter:
+        result.off.add FilterSnap(trace: ti, had: true, filter: before.filters[i].filter)
+        result.on.add FilterSnap(trace: ti, had: true, filter: after.filters[j].filter)
+        inc result.n
+      inc i
+      inc j
+    elif ti < tj:
+      result.off.add FilterSnap(trace: ti, had: true, filter: before.filters[i].filter)
+      result.on.add FilterSnap(trace: ti, had: false)
+      inc result.n
+      inc i
+    else:
+      result.off.add FilterSnap(trace: tj, had: false)
+      result.on.add FilterSnap(trace: tj, had: true, filter: after.filters[j].filter)
+      inc result.n
+      inc j
+
+proc filterAdded(have, incoming: EditLists): tuple[off, on: seq[FilterSnap]; n: int] =
+  ## Filters of `incoming` that `have` does not, as snaps (an existing filter
+  ## is left as it is).
+  for e in incoming.filters:
+    if not have.hasFilter(e.trace):
+      result.off.add FilterSnap(trace: e.trace, had: false)
+      result.on.add FilterSnap(trace: e.trace, had: true, filter: e.filter)
+      inc result.n
+
+proc unionFilters(l: var EditLists; extra: EditLists) =
+  ## Adds the filters of `extra` that `l` does not have. One `l` already has
+  ## stays: a filter set this session is not overwritten by one remembered.
+  for e in extra.filters:
+    if not l.hasFilter(e.trace): l.assignFilter(e.trace, true, e.filter)
+
+proc preferFilters(a, b: EditLists): seq[FilterEntry] =
+  ## The filters of `a` and of `b`, ascending; where both name a trace, `a`'s.
+  result = newSeqOfCap[FilterEntry](a.filters.len + b.filters.len)
+  var i, j = 0
+  while i < a.filters.len or j < b.filters.len:
+    let ti = if i < a.filters.len: a.filters[i].trace else: high(int)
+    let tj = if j < b.filters.len: b.filters[j].trace else: high(int)
+    if ti <= tj:
+      result.add a.filters[i]
+      if ti == tj: inc j
+      inc i
+    else:
+      result.add b.filters[j]
+      inc j
+
+proc setOwnFilters*(e: var FileEdits; traces: openArray[int]; f: OwnFilter; keep = true): int =
+  ## Gives every trace of `traces` the filter `f` (already bounded), as one
+  ## step (in what is kept too with `keep`). Returns how many changed; a
+  ## change of none makes no step. Raises `ValueError` for a negative index.
+  var shownChanged, keptChanged: seq[int]
+  var off, on, kOff, kOn: seq[FilterSnap]
+  for t in sortedTraces(traces):
+    let want = FilterSnap(trace: t, had: true, filter: f)
+    let s = e.shown.snapOf(t)
+    if s != want:
+      shownChanged.add t
+      off.add s
+      on.add want
+    if keep:
+      let k = e.kept.snapOf(t)
+      if k != want:
+        keptChanged.add t
+        kOff.add k
+        kOn.add want
+  result = shownChanged.len
+  if keep and result == 0: result = keptChanged.len
+  if result > 0:
+    var step = EditStep(kind: skFilter, on: true,
+      traces: if shownChanged.len > 0: shownChanged else: keptChanged,
+      filterOff: off, filterOn: on)
+    step.keptChanges(ListsChange(filterOff: kOff, filterOn: kOn))
+    e.make(step, keep)
+
+proc clearOwnFilters*(e: var FileEdits; traces: openArray[int]; keep = true): int =
+  ## Takes the filter off every trace of `traces`, as one step (in what is
+  ## kept too with `keep`). Returns how many had one taken away, or caught
+  ## up in what is kept. Raises `ValueError` for a negative index.
+  var shownChanged, keptChanged: seq[int]
+  var off, on, kOff, kOn: seq[FilterSnap]
+  for t in sortedTraces(traces):
+    let s = e.shown.snapOf(t)
+    if s.had:
+      shownChanged.add t
+      off.add s
+      on.add FilterSnap(trace: t, had: false)
+    if keep:
+      let k = e.kept.snapOf(t)
+      if k.had:
+        keptChanged.add t
+        kOff.add k
+        kOn.add FilterSnap(trace: t, had: false)
+  result = shownChanged.len
+  if keep and result == 0: result = keptChanged.len
+  if result > 0:
+    var step = EditStep(kind: skFilter, on: false,
+      traces: if shownChanged.len > 0: shownChanged else: keptChanged,
+      filterOff: off, filterOn: on)
+    step.keptChanges(ListsChange(filterOff: kOff, filterOn: kOn))
+    e.make(step, keep)
 
 proc setTo*(e: var FileEdits; l: EditLists; source: string; keep = true): int =
   ## Makes the edits those of `l` (a record's state: what it has that the
@@ -353,6 +580,14 @@ proc setTo*(e: var FileEdits; l: EditLists; source: string; keep = true): int =
   if l.allReversed != e.kept.allReversed:
     (c.allChanged, c.allBefore, c.allAfter) = (true, e.kept.allReversed, l.allReversed)
     inc kept
+  let shownF = filterDelta(e.shown, l)
+  let keptF = filterDelta(e.kept, l)
+  s.filterOff = shownF.off
+  s.filterOn = shownF.on
+  c.filterOff = keptF.off
+  c.filterOn = keptF.on
+  result += shownF.n
+  kept += keptF.n
   if keep and result == 0: result = kept
   if result > 0:
     s.keptChanges(c)
@@ -377,6 +612,14 @@ proc takeIn*(e: var FileEdits; l: EditLists; source: string; keep = true): int =
   if l.allReversed and not e.kept.allReversed:
     (c.allChanged, c.allAfter) = (true, true)
     inc kept
+  let shownF = filterAdded(e.shown, l)
+  let keptF = filterAdded(e.kept, l)
+  s.filterOff = shownF.off
+  s.filterOn = shownF.on
+  c.filterOff = keptF.off
+  c.filterOn = keptF.on
+  result += shownF.n
+  kept += keptF.n
   if keep and result == 0: result = kept
   if result > 0:
     s.keptChanges(c)
@@ -392,6 +635,8 @@ proc remembered*(e: var FileEdits; l: EditLists) =
     e.kept.lists[edit] = union(e.kept.lists[edit], l.lists[edit])
   e.shown.allReversed = e.shown.allReversed or l.allReversed
   e.kept.allReversed = e.kept.allReversed or l.allReversed
+  e.shown.unionFilters(l)
+  e.kept.unionFilters(l)
   if e.shown != was: inc e.revision
 
 proc merge*(e: var FileEdits; other: sink FileEdits) =
@@ -406,6 +651,8 @@ proc merge*(e: var FileEdits; other: sink FileEdits) =
     e.kept.lists[edit] = union(e.kept.lists[edit], other.kept.lists[edit])
   e.shown.allReversed = e.shown.allReversed or other.shown.allReversed
   e.kept.allReversed = e.kept.allReversed or other.kept.allReversed
+  e.shown.filters = preferFilters(e.shown, other.shown)
+  e.kept.filters = preferFilters(e.kept, other.kept)
   if e.shown != wasShown: inc e.revision
   if e.kept != wasKept: inc e.keptRevision
   for r in e.redos: e.held -= r.size
@@ -429,6 +676,19 @@ proc adopt*(e: var FileEdits; l: EditLists) =
     let lost = difference(e.kept.lists[edit], l.lists[edit])
     e.shown.lists[edit] = union(difference(e.shown.lists[edit], lost), gained)
   if l.allReversed != e.kept.allReversed: e.shown.allReversed = l.allReversed
+  var i, j = 0
+  while i < e.kept.filters.len or j < l.filters.len:
+    let ti = if i < e.kept.filters.len: e.kept.filters[i].trace else: high(int)
+    let tj = if j < l.filters.len: l.filters[j].trace else: high(int)
+    let t = min(ti, tj)
+    let before = if ti == t: FilterSnap(trace: t, had: true, filter: e.kept.filters[i].filter)
+                 else: FilterSnap(trace: t, had: false)
+    let after = if tj == t: FilterSnap(trace: t, had: true, filter: l.filters[j].filter)
+                else: FilterSnap(trace: t, had: false)
+    if before != after and e.shown.snapOf(t) == before:
+      e.shown.assignFilter(t, after.had, after.filter)
+    if ti == t: inc i
+    if tj == t: inc j
   if l != e.kept:
     e.kept = l
     inc e.keptRevision
@@ -485,6 +745,10 @@ func changedIn*(s: EditStep; traces: Slice[int]): bool =
   for edit in TraceEdit:
     if span(s.added[edit], traces).len > 0 or span(s.removed[edit], traces).len > 0:
       return true
+  for snap in s.filterOn:
+    if snap.trace in traces: return true
+  for snap in s.filterOff:
+    if snap.trace in traces: return true
   false
 
 func tracesText(traces: openArray[int]): string =
@@ -503,20 +767,47 @@ func describe*(s: EditStep): string =
   of skImport:
     var n = ord(s.allChanged)
     for edit in TraceEdit: n += s.added[edit].len
+    n += s.filterOn.len
     if n == 0 and s.keptOwn: # shown already (an agent's), kept by the import
       n = ord(s.keptChange.allChanged)
       for edit in TraceEdit: n += s.keptChange.added[edit].len
+      n += s.keptChange.filterOn.len
     $n & (if n == 1: " edit" else: " edits") & " imported from " & s.source
   of skChange:
     let what = tracesText(s.traces)
     case s.edit
     of teKilled: what & (if s.on: " killed" else: " restored")
     of teReversed: "polarity of " & what & (if s.on: " reversed" else: " put back")
+  of skFilter:
+    let what = tracesText(s.traces)
+    if s.on: what & " filtered"
+    elif s.traces.len == 1: "filter of " & what & " removed"
+    else: "filters of " & what & " removed"
 
 func undoText*(e: FileEdits): string =
   ## `describe` of the step `undo` takes back, without a copy of it (the
   ## Edit menu asks every frame); "" for none.
   if e.undos.len > 0: describe(e.undos[e.undos.high]) else: ""
+
+func mergedFilters*(base, ours, theirs: EditLists): seq[FilterEntry] =
+  ## The filters of a document two programs changed from `base`: a trace
+  ## this program (`ours`) changed keeps `ours` (a removal included); a
+  ## trace it left keeps `theirs`.
+  var traces = newSeqOfCap[int](base.filters.len + ours.filters.len + theirs.filters.len)
+  for e in base.filters: traces.add e.trace
+  for e in ours.filters: traces.add e.trace
+  for e in theirs.filters: traces.add e.trace
+  traces.sort()
+  var n = 0
+  for t in traces:
+    if n == 0 or traces[n - 1] != t:
+      traces[n] = t
+      inc n
+  traces.setLen n
+  result = newSeqOfCap[FilterEntry](n)
+  for t in traces:
+    let use = if base.snapOf(t) != ours.snapOf(t): ours.snapOf(t) else: theirs.snapOf(t)
+    if use.had: result.add FilterEntry(trace: t, filter: use.filter)
 
 func redoText*(e: FileEdits): string =
   ## `describe` of the step `redo` makes again, without a copy of it; ""

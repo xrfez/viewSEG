@@ -72,6 +72,25 @@ type
     f4*: float64 = 80.0 ## Hz: the high-cut ramp ends (gain 0 above)
     notches*: seq[NotchFilter]
 
+  FilterPlace* = enum
+    ## Where a trace's own filter runs, beside the plot's.
+    fpAfter = "after"     ## after the plot's filters
+    fpInstead = "instead" ## instead of the plot's filters
+
+  OwnFilter* = object
+    ## One trace's own frequency filters (`spec`: the same DC removal, pass
+    ## band and notches a plot holds), and whether they run after the plot's
+    ## or instead of them. `spec.raw` and `spec.aux` are the plot's switches,
+    ## not a trace's: the filter always runs, and which traces are auxiliary
+    ## is the plot's choice.
+    spec*: Processing
+    place*: FilterPlace = fpAfter
+
+  FilterEntry* = object
+    ## A trace (its index in the file, from 0) and the filter it carries.
+    trace*: int
+    filter*: OwnFilter
+
   FilterReach* = enum
     ## Which of the traces a plot shows its filters reach (`reach`).
     frNone = "none" ## no filter applied: none set, or shown raw
@@ -282,6 +301,61 @@ func describe*(p: Processing): string =
     if result.len > 0: result.add ", "
     result.add (if p.dc == dcMean: "DC" else: "DC and trend")
   if result.len == 0: result = "none"
+
+func bounded*(f: OwnFilter): OwnFilter =
+  ## `f` with `spec` within what the filters take (`bounded`), and `raw` and
+  ## `aux` off: they are the plot's switches, not a trace's.
+  result = OwnFilter(spec: bounded(f.spec), place: f.place)
+  result.spec.raw = false
+  result.spec.aux = false
+
+func changesSamples*(f: OwnFilter): bool =
+  ## Whether `f` changes a trace's samples: a frequency filter, or "instead",
+  ## which leaves the plot's filters off that trace even with none of its own.
+  f.spec.hasFilters or f.place == fpInstead
+
+proc ownPipeline*(f: OwnFilter; dtMs: float64): Pipeline =
+  ## The operations `f` runs on a trace sampled every `dtMs` ms: `spec`'s
+  ## filters, always (a trace's filter is not shown raw). Empty when `spec`
+  ## asks for nothing a frequency can do.
+  var p = f.spec
+  p.raw = false
+  p.filterPipeline(dtMs)
+
+func entryAt*(own: openArray[FilterEntry]; trace: int): int =
+  ## Where `trace` sits in `own` (ascending by trace); -1 when it is not there.
+  var lo = 0
+  var hi = own.len
+  while lo < hi:
+    let mid = (lo + hi) shr 1
+    if own[mid].trace < trace: lo = mid + 1
+    else: hi = mid
+  if lo < own.len and own[lo].trace == trace: lo else: -1
+
+func filterWords*(f: OwnFilter): string =
+  ## `f` in the words a mark's tooltip says: "Band-pass 10-60 Hz, after the
+  ## plot's filters". A band-pass names the flat pass (`f2` to `f3`, where
+  ## the gain is 1); a low-cut or a high-cut names its ramp.
+  var parts: seq[string]
+  case f.spec.band
+  of pbNone: discard
+  of pbLowCut: parts.add "Low-cut " & number(f.spec.f1) & "-" & number(f.spec.f2) & " Hz"
+  of pbHighCut: parts.add "High-cut " & number(f.spec.f3) & "-" & number(f.spec.f4) & " Hz"
+  of pbBandPass:
+    parts.add "Band-pass " & number(f.spec.f2) & "-" & number(f.spec.f3) & " Hz"
+  var notches: seq[string]
+  for n in f.spec.notches:
+    if n.on:
+      var s = number(n.hz) & " Hz"
+      if n.harmonics > 1: s.add " x" & $n.harmonics
+      notches.add s
+  if notches.len > 0: parts.add "notch " & notches.join(", ")
+  if f.spec.dc == dcMean: parts.add "DC removed"
+  elif f.spec.dc == dcTrend: parts.add "DC and trend removed"
+  if parts.len == 0: parts.add "No frequency filter"
+  let where = if f.place == fpAfter: "after the plot's filters"
+              else: "instead of the plot's filters"
+  parts.join(", ") & ", " & where
 
 proc auxLiveRows*(rows: TraceRows; keys: var seq[TraceKeys]; samples: var seq[int]): TraceRows =
   ## A view of `rows` in which the auxiliary traces are live, so that a plan

@@ -19,7 +19,10 @@
 ##   (modified 1763200961 120000000))
 ##  (killed "3 7-9 120")
 ##  (reversed "12")
-##  (allReversed true))
+##  (allReversed true)
+##  (filtered
+##   (trace 5 (place "after") (band "band-pass") (dc "none")
+##    (f1 10.0) (f2 12.0) (f3 55.0) (f4 60.0))))
 ## ```
 ##
 ## **Pending documents.** Edits made on a file whose identity cannot be
@@ -250,6 +253,44 @@ proc parseTimeText(s: string; t: var Time): bool =
   except TimeParseError, ValueError:
     false
 
+proc writeFilter(w: var NifWriter; e: FilterEntry) =
+  ## One trace's filter: numbers from 1, the words the enums carry.
+  w.open "trace"
+  w.add int64(e.trace + 1)
+  w.open "place"
+  w.add $e.filter.place
+  w.close
+  w.open "dc"
+  w.add $e.filter.spec.dc
+  w.close
+  w.open "band"
+  w.add $e.filter.spec.band
+  w.close
+  for (tag, x) in [("f1", e.filter.spec.f1), ("f2", e.filter.spec.f2),
+      ("f3", e.filter.spec.f3), ("f4", e.filter.spec.f4)]:
+    w.open tag
+    w.add x
+    w.close
+  if e.filter.spec.notches.len > 0:
+    w.open "notches"
+    for n in e.filter.spec.notches:
+      w.open "notch"
+      w.open "on"
+      w.add n.on
+      w.close
+      w.open "hz"
+      w.add n.hz
+      w.close
+      w.open "width"
+      w.add n.widthHz
+      w.close
+      w.open "harmonics"
+      w.add int64(n.harmonics)
+      w.close
+      w.close
+    w.close
+  w.close
+
 proc memoryDocument*(r: FileRecord): string =
   ## `r` as the store's document (the module's documentation).
   var w = initNifWriter(breakDepth = 1)
@@ -300,6 +341,10 @@ proc memoryDocument*(r: FileRecord): string =
   if r.edits.allReversed:
     w.open "allReversed"
     w.add true
+    w.close
+  if r.edits.filters.len > 0:
+    w.open "filtered"
+    for e in r.edits.filters: w.writeFilter e
     w.close
   for n in r.later: w.add n
   w.close
@@ -367,6 +412,101 @@ proc readSeen(n: NifNode; r: var FileRecord; problems: var seq[string]) =
         else: problems.add "seen: the modification time is not a time"
       else: discard
 
+func enumText(n: NifNode): string =
+  ## A string or an identifier a node holds; "" otherwise.
+  if n.kids.len >= 1 and n.kids[0].kind in {nkString, nkIdent}: n.kids[0].text else: ""
+
+func parseEnum[T: enum](s: string; v: var T): bool =
+  for x in T:
+    if s == $x:
+      v = x
+      return true
+  false
+
+func child(n: NifNode; tag: string): NifNode =
+  for k in n.kids:
+    if k.kind == nkTree and k.tag == tag: return k
+
+func floatChild(n: NifNode; tag: string; x: var float64): bool =
+  let k = n.child(tag)
+  if k.kind == nkTree and k.kids.len >= 1 and k.kids[0].kind == nkFloat:
+    x = k.kids[0].floatVal
+    true
+  elif k.kind == nkTree and k.kids.len >= 1 and k.kids[0].kind == nkInt:
+    x = float64(k.kids[0].intVal)
+    true
+  else: false
+
+proc readNotch(n: NifNode; problems: var seq[string]): NotchFilter =
+  ## One notch. A field this version does not know is skipped, not a refusal.
+  result = NotchFilter()
+  var onSet = false
+  for k in n.kids:
+    if k.kind == nkTree:
+      case k.tag
+      of "on":
+        if k.kids.len >= 1 and k.kids[0].kind == nkIdent and k.kids[0].text in ["true", "false"]:
+          result.on = k.kids[0].text == "true"
+          onSet = true
+      of "hz":
+        if not n.floatChild("hz", result.hz): problems.add "notch: hz is not a number"
+      of "width":
+        if not n.floatChild("width", result.widthHz): problems.add "notch: width is not a number"
+      of "harmonics":
+        if k.kids.len >= 1 and k.kids[0].kind == nkInt: result.harmonics = int(k.kids[0].intVal)
+        else: problems.add "notch: harmonics is not a number"
+      else: discard
+  if not onSet: result.on = true
+
+proc readFilters(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo: int;
+    outside: var int) =
+  ## The `(filtered ...)` node: one `(trace N ...)` per trace, numbers from
+  ## 1. A child this version does not know is skipped. A trace past `upTo`
+  ## is left out and counted in `outside`.
+  for k in n.kids:
+    if k.kind != nkTree: continue
+    if k.tag != "trace": continue # a later field beside the traces
+    var number = 0
+    var got = false
+    if k.kids.len >= 1 and k.kids[0].kind == nkInt and k.kids[0].intVal >= 1 and
+        k.kids[0].intVal <= high(int32):
+      number = int(k.kids[0].intVal)
+      got = true
+    if not got:
+      problems.add "filtered: a trace is not a trace number"
+      continue
+    if number - 1 >= upTo:
+      inc outside
+      continue
+    var f = OwnFilter()
+    let place = k.child("place").enumText
+    if place.len > 0 and not parseEnum(place, f.place):
+      problems.add "filtered: \"" & place & "\" is not after or instead"
+    let band = k.child("band").enumText
+    if band.len > 0 and not parseEnum(band, f.spec.band):
+      problems.add "filtered: \"" & band & "\" is not a pass band"
+    let dc = k.child("dc").enumText
+    if dc.len > 0 and not parseEnum(dc, f.spec.dc):
+      problems.add "filtered: \"" & dc & "\" is not a DC removal"
+    discard k.floatChild("f1", f.spec.f1)
+    discard k.floatChild("f2", f.spec.f2)
+    discard k.floatChild("f3", f.spec.f3)
+    discard k.floatChild("f4", f.spec.f4)
+    let notches = k.child("notches")
+    if notches.kind == nkTree:
+      for c in notches.kids:
+        if c.kind == nkTree and c.tag == "notch":
+          f.spec.notches.add readNotch(c, problems)
+    f = bounded(f)
+    r.edits.filters.add FilterEntry(trace: number - 1, filter: f)
+  r.edits.filters.sort(proc (a, b: FilterEntry): int = cmp(a.trace, b.trace))
+  var n = 0
+  for i in 0 ..< r.edits.filters.len:
+    if n == 0 or r.edits.filters[n - 1].trace != r.edits.filters[i].trace:
+      r.edits.filters[n] = r.edits.filters[i]
+      inc n
+  r.edits.filters.setLen n
+
 proc readEditsIn(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo: int;
     outside: var int) =
   ## The edit lists of the document `n` (its top node), into `r.edits`; the
@@ -389,6 +529,8 @@ proc readEditsIn(n: NifNode; r: var FileRecord; problems: var seq[string]; upTo:
         if k.kids.len == 1 and k.kids[0].kind == nkIdent and k.kids[0].text in ["true", "false"]:
           r.edits.allReversed = k.kids[0].text == "true"
         else: problems.add "allReversed: not true or false"
+      of "filtered":
+        readFilters(k, r, problems, upTo, outside)
       else: discard
   for edit in TraceEdit:
     if runs[edit].len > 0: r.edits.lists[edit] = expandRuns(runs[edit], problems, $edit, MaxListTraces)
@@ -426,7 +568,7 @@ proc readMemory*(doc: openArray[NifNode]; name: string; problems: var seq[string
           of "unconfirmed":
             result.unconfirmed = k.kids.len == 1 and k.kids[0].kind == nkIdent and
               k.kids[0].text == "true"
-          of "killed", "reversed", "allReversed": discard # readEditsIn
+          of "killed", "reversed", "allReversed", "filtered": discard # readEditsIn
           else: result.later.add k # a later version's: kept as it is
       readEditsIn(n, result, problems, upTo, outside)
   if not found:
@@ -499,24 +641,73 @@ proc rowsOf(l: EditLists): seq[(int, TraceEdit)] =
   result.sort(proc (a, b: (int, TraceEdit)): int =
     if a[0] != b[0]: cmp(a[0], b[0]) else: cmp(a[1] == teReversed, b[1] == teReversed))
 
+proc notchText(n: NotchFilter): string =
+  ## `hz/width/harmonics`, with `/0` when the notch is off.
+  result = formatFloat(n.hz, ffDecimal, 4).strip(trailing = true, chars = {'0'}).strip(
+    trailing = true,
+    chars = {'.'}) & "/" & formatFloat(n.widthHz, ffDecimal, 4).strip(trailing = true,
+    chars = {'0'}).strip(trailing = true, chars = {'.'}) & "/" & $n.harmonics
+  if not n.on: result.add "/0"
+
+proc notchesText(ns: openArray[NotchFilter]): string =
+  var parts: seq[string]
+  for n in ns: parts.add notchText(n)
+  parts.join(";")
+
 proc editsCsv*(l: EditLists; records, channels: openArray[float64]; file: string): string =
   ## `l` as a CSV table: a row per trace and edit, ascending; `records`
   ## and `channels` are each edited trace's field record number and channel
   ## (in the order of the rows, NaN for none), as the file's keys have them,
   ## and every row names the file the list is for (`file`, its name), so a
   ## table handed on says what it is about. A file whose every trace is
-  ## reversed has a row with trace "all".
+  ## reversed has a row with trace "all". A trace's own filter is a row
+  ## whose edit is `filtered`, with the filter's columns after the file's
+  ## name (left out when no trace has one, so an older table is unchanged).
   let f = csvCell(file)
-  result = CsvHeader & "\n"
+  let extra = l.filters.len > 0
+  result = CsvHeader & (if extra: ",place,band,dc,f1,f2,f3,f4,notches" else: "") & "\n"
   if l.allReversed: result.add "all,,,reversed," & f & "\n"
   for i, (t, edit) in rowsOf(l):
     let rec = if i < records.len and records[i] == records[i]: $int64(records[i]) else: ""
     let chan = if i < channels.len and channels[i] == channels[i]: $int64(channels[i]) else: ""
-    result.add $(t + 1) & "," & rec & "," & chan & "," & $edit & "," & f & "\n"
+    result.add $(t + 1) & "," & rec & "," & chan & "," & $edit & "," & f
+    if extra: result.add ",,,,,,,"
+    result.add "\n"
+  let base = rowsOf(l).len
+  for j, e in l.filters:
+    let i = base + j
+    let rec = if i < records.len and records[i] == records[i]: $int64(records[i]) else: ""
+    let chan = if i < channels.len and channels[i] == channels[i]: $int64(channels[i]) else: ""
+    result.add $(e.trace + 1) & "," & rec & "," & chan & ",filtered," & f & "," &
+      $e.filter.place & "," & $e.filter.spec.band & "," & $e.filter.spec.dc & "," &
+      formatFloat(e.filter.spec.f1, ffDecimal, 4) & "," &
+      formatFloat(e.filter.spec.f2, ffDecimal, 4) & "," &
+      formatFloat(e.filter.spec.f3, ffDecimal, 4) & "," &
+      formatFloat(e.filter.spec.f4, ffDecimal, 4) & "," &
+      csvCell(notchesText(e.filter.spec.notches)) & "\n"
+
+proc parseNotches(s: string; problems: var seq[string]; at: string): seq[NotchFilter] =
+  if s.len == 0: return
+  for part in s.split(';'):
+    let bits = part.split('/')
+    if bits.len notin 3 .. 4:
+      problems.add at & ": \"" & part & "\" is not a notch"
+      continue
+    var n = NotchFilter(on: bits.len == 3 or bits[3] != "0")
+    var hz, width: float
+    var h: int
+    if bits[0].parseFloat(hz) == bits[0].len and bits[1].parseFloat(width) == bits[1].len and
+        bits[2].parseInt(h) == bits[2].len:
+      n.hz = hz
+      n.widthHz = width
+      n.harmonics = h
+      result.add n
+    else: problems.add at & ": \"" & part & "\" is not a notch"
 
 proc csvRows*(l: EditLists): seq[int] =
   ## The traces of the rows `editsCsv` writes, in their order.
   for (t, _) in rowsOf(l): result.add t
+  for e in l.filters: result.add e.trace
 
 func csvTrace(t: string; v: var int): bool =
   ## Whether `t` is a trace number from 1 ("12", or "12.0" as a spreadsheet
@@ -542,7 +733,9 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
   ## left out and counted in `outside`.
   var lines = text.splitLines
   if lines.len > 0 and lines[0].startsWith("\xEF\xBB\xBF"): lines[0] = lines[0][3 .. ^1]
-  var traceCol, editCol = -1
+  var traceCol, editCol, placeCol, bandCol, dcCol = -1
+  var fCol: array[4, int] = [-1, -1, -1, -1]
+  var notchCol = -1
   var sep = ','
   var first = -1
   var looked = 0
@@ -557,6 +750,14 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
             case c.toLowerAscii
             of "trace", "traceno", "trace number": traceCol = i
             of "edit", "action": editCol = i
+            of "place": placeCol = i
+            of "band": bandCol = i
+            of "dc": dcCol = i
+            of "f1": fCol[0] = i
+            of "f2": fCol[1] = i
+            of "f3": fCol[2] = i
+            of "f4": fCol[3] = i
+            of "notches": notchCol = i
             else: discard
           if traceCol >= 0: (first, sep) = (n, s)
           else: editCol = -1
@@ -577,10 +778,42 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
         case e
         of "killed", "kill", "k": edit = teKilled
         of "reversed", "reverse", "r", "polarity": edit = teReversed
+        of "filtered", "filter": edit = teKilled # not used: a filter row, below
         else:
           ok = false
           if problems.len < WordedProblems: problems.add at & ": \"" & e & "\" is not an edit"
-      if ok:
+      let filterRow = editCol >= 0 and editCol < cells.len and
+        cells[editCol].toLowerAscii in ["filtered", "filter"]
+      if filterRow:
+        ok = false # not a kill or a reversal
+        let t = if traceCol < cells.len: cells[traceCol] else: ""
+        var v: int
+        if csvTrace(t, v) and v - 1 < upTo:
+          var f = OwnFilter()
+          template cellAt(col: int): string =
+            if col >= 0 and col < cells.len: cells[col] else: ""
+          if not parseEnum(cellAt(placeCol), f.place) and cellAt(placeCol).len > 0:
+            if problems.len < WordedProblems:
+              problems.add at & ": \"" & cellAt(placeCol) & "\" is not after or instead"
+          if not parseEnum(cellAt(bandCol), f.spec.band) and cellAt(bandCol).len > 0:
+            if problems.len < WordedProblems:
+              problems.add at & ": \"" & cellAt(bandCol) & "\" is not a pass band"
+          if not parseEnum(cellAt(dcCol), f.spec.dc) and cellAt(dcCol).len > 0:
+            if problems.len < WordedProblems:
+              problems.add at & ": \"" & cellAt(dcCol) & "\" is not a DC removal"
+          var corners = [f.spec.f1, f.spec.f2, f.spec.f3, f.spec.f4]
+          for i in 0 .. 3:
+            let s = cellAt(fCol[i])
+            var x: float
+            if s.len > 0 and s.parseFloat(x) == s.len: corners[i] = x
+          (f.spec.f1, f.spec.f2, f.spec.f3, f.spec.f4) = (corners[0], corners[1], corners[2],
+            corners[3])
+          f.spec.notches = parseNotches(cellAt(notchCol), problems, at)
+          result.filters.add FilterEntry(trace: v - 1, filter: bounded(f))
+        elif v - 1 >= upTo and csvTrace(t, v): inc outside
+        elif problems.len < WordedProblems:
+          problems.add at & ": \"" & t & "\" is not a trace number"
+      elif ok:
         let t = if traceCol < cells.len: cells[traceCol] else: ""
         var v: int
         if t.toLowerAscii == "all" and edit == teReversed: result.allReversed = true
@@ -589,6 +822,8 @@ proc readEditsCsv*(text, name: string; problems: var seq[string]; upTo: int;
         elif problems.len < WordedProblems:
           problems.add at & ": \"" & t & "\" is not a trace number"
   for edit in TraceEdit: result.lists[edit] = sortedTraces(lists[edit])
+  if result.filters.len > 1:
+    result.filters.sort(proc (a, b: FilterEntry): int = cmp(a.trace, b.trace))
 
 proc readEditsCsv*(text, name: string; problems: var seq[string]): EditLists =
   ## `readEditsCsv` with every trace kept.
@@ -744,6 +979,7 @@ func merged*(base, ours, theirs: EditLists): EditLists =
     result.lists[edit] = sortedTraces(result.lists[edit] & ours.minus(base).lists[edit])
   result.allReversed = if ours.allReversed != base.allReversed: ours.allReversed
                        else: theirs.allReversed
+  result.filters = mergedFilters(base, ours, theirs)
 
 func keptWords*(l: EditLists): string =
   ## What `l` keeps, in words: "3 killed, 1 reversed, all reversed";
@@ -751,5 +987,6 @@ func keptWords*(l: EditLists): string =
   var parts: seq[string]
   if l.lists[teKilled].len > 0: parts.add $l.lists[teKilled].len & " killed"
   if l.lists[teReversed].len > 0: parts.add $l.lists[teReversed].len & " reversed"
+  if l.filters.len > 0: parts.add $l.filters.len & " filtered"
   if l.allReversed: parts.add "all reversed"
   if parts.len == 0: "nothing" else: parts.join(", ")

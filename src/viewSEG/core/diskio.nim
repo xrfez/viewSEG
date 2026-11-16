@@ -207,6 +207,8 @@ proc mergeOthers(w: var Writer; t: var Task; removing: bool): bool =
         for edit in [teKilled, teReversed]:
           if theirs.edits.lists[edit].len > 0:
             lists.add $edit & " " & runsText(theirs.edits.lists[edit])
+        if theirs.edits.filters.len > 0:
+          lists.add $theirs.edits.filters.len & " filtered"
         if theirs.edits.allReversed: lists.add "all reversed"
         w.warn("The edits of " & t.memory.name & " kept by its path in an earlier run are " &
           "not applied: it changed since (its size or time is not the same). They were: " &
