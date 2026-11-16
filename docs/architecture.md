@@ -719,14 +719,17 @@ touching the file. A SEG-Y file's stanzas and User Data attachments (`index.segy
 are read on the open job too (`StanzaFact`, `UserDataFact`).
 
 **Reopen with options** (`core/openchoice`, `ui/imgui/reopendialog`). `ckReopen` names a
-file and an `OpenChoice` (the standard, `vfFull`, two's-complement mantissas, the
-access, the demultiplexed copy's folder), kept per file for the run
-(`AppState.openChoices`) and given to every open job of that file (`openFileWork`,
-`openWork`: `openOptions`). The file is let go of and opened again in the panels that show
-it, as a file changed on disk is (`reopen`, `showAgain`), so it goes through the one open
-job. A choice that changes how the index is made neither reads nor writes the index
-cache (the cache is the default reading's), and a file with a choice is never prepared
-in the background with the defaults.
+file and an `OpenChoice` (the standard, `vfFull`, two's-complement mantissas, the access,
+the demultiplexed copy's folder), kept per file for the run (`AppState.openChoices`) and
+given to every open job of that file (`openFileWork`, `openWork`: `openOptions`). The file
+is opened again with the choice by an open job while the open one stays shown. Only when
+that open has traces does it take the open one's place (`adopt`), in every panel that
+showed it, each at the record it showed, with the selection, the analysis windows and the
+survey join carried over; when it fails, or has no traces, the file stays as it was and
+the choice is not kept. The choice is written to `openChoices` only at that swap. A choice
+that changes how the index is made neither reads nor writes the index cache (the cache is
+the default reading's), and a file with a choice is never prepared in the background with
+the defaults.
 
 **Messages.** The Messages window shows `core/log`; its toggles (auto-scroll, the
 severities hidden) are settings. A line whose location names a trace sends `ckShowTrace`
