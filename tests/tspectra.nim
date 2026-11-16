@@ -731,6 +731,32 @@ withFixtures fx:
     doAssert live.spectrum.averaged == 3
     st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base + 8],
       on: false)
+    doAssert st.answered(0)
+    # a shown trace's own filter asks again (set, undo, redo, remove); a
+    # trace not shown does not. Seen to fail with the live key omitting the
+    # own filter: "the live panel did not re-ask".
+    let at = live.asks
+    let own = Processing(band: pbBandPass, f1: 8, f2: 12, f3: 20, f4: 28)
+    let before = live.spectrum.processed
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 5], on: true,
+      processing: own, filterPlace: fpAfter)
+    doAssert live.asks == at + 1, "the live panel did not re-ask for a trace's filter"
+    doAssert st.answered(0) and live.spectrum.processed != before,
+      "the processed curve stayed at the pre-filter answer"
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+    doAssert live.asks == at + 2, "undo of a trace filter did not re-ask"
+    doAssert st.answered(0)
+    st.apply Command(kind: ckRedoEdit, panel: MainPanel)
+    doAssert live.asks == at + 3, "redo of a trace filter did not re-ask"
+    doAssert st.answered(0)
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 5], on: false)
+    doAssert live.asks == at + 4, "removing a trace filter did not re-ask"
+    doAssert st.answered(0)
+    let quiet = live.asks
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
+      processing: own, filterPlace: fpAfter)
+    doAssert live.asks == quiet, "a filter on a trace not shown re-asked"
+    st.apply Command(kind: ckUndoEdit, panel: MainPanel)
     # frozen: it keeps what it shows
     st.apply Command(kind: ckSpectrumDisplay, spectrum: 0, frozen: true,
       spectrumShow: st.settings.spectrum.live)
@@ -1028,5 +1054,28 @@ withFixtures fx:
       "cannot run: none of them is below Nyquist. Nyquist is 250 Hz at 2 ms: a notch is not " &
       "below Nyquist and left out.", five.spectra[q].filterText
     five.shutdown()
+    # An auxiliary trace's own filter is in its processed spectrum with the
+    # plot's Aux toggle off. Seen to fail with the processed sum leaving the
+    # row out: "a pilot's own filter is not in its spectrum".
+    var six = initAppState()
+    six.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.pilotSegy())
+    doAssert waitUntil((discard six.drainInbox(); six.sessions.len == 1 and
+      six.panel(MainPanel).laidOut))
+    six.apply Command(kind: ckFilter, panel: MainPanel,
+      filter: TraceFilter(seismic: true, auxiliary: true))
+    six.filters notch
+    let pb = six.sessions[0].base
+    let ownBand = Processing(band: pbBandPass, f1: 8, f2: 12, f3: 40, f4: 48)
+    six.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[pb], on: true,
+      processing: ownBand, filterPlace: fpAfter)
+    let ownWin = six.answer(@[pb])
+    template owned: untyped = six.spectra[ownWin]
+    doAssert owned.spectrum.processed.len > 0 and owned.spectrum.filtered == 1 and
+      owned.spectrum.passedBy == 0, "a pilot's own filter is not in its spectrum: " &
+      $(owned.spectrum.filtered, owned.spectrum.passedBy, owned.spectrum.processed.len)
+    doAssert "notch" notin owned.spectrum.filters, owned.spectrum.filters
+    doAssert owned.spectrum.filters == "8-12-40-48 Hz", owned.spectrum.filters
+    doAssert owned.spectrum.response.len > 0
+    six.shutdown()
   doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
 echo "tspectra: ok"

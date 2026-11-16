@@ -47,7 +47,7 @@
 import std/algorithm
 import processing
 
-export OwnFilter, FilterPlace, FilterEntry, NotchFilter, filterWords, bounded
+export OwnFilter, FilterPlace, FilterEntry, NotchFilter, filterWords, bounded, ownPerTrace
 
 const
   MaxSteps* = 1000 ## steps kept per file for undo, the oldest dropped first

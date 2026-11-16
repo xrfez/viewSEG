@@ -684,6 +684,7 @@ type
     window: (float64, float64)
     processing: Processing
     killed: seq[int]
+    own: string ## the own filters of `traces` (`ownKeyOf`)
 
   Remembered = object
     ## An opened file's place in what is remembered (`core/filememory`).
@@ -2788,6 +2789,7 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   sw.killed = killed
   sw.editsSeen = e.revision
   sw.ownKey = ownKeyOf(e, traces)
+  sw.filters = spectrumFilterWords(processing, ownPerTrace(own, traces))
   inc sw.asks
   inc sw.revision
   state.spectrumReaderFor(s.path).ask SpectrumAsk(id: sw.id, gen: state.spectrumGen,
@@ -2885,16 +2887,15 @@ proc followFfts(state: var AppState) =
         if pr != sw.processing or killsMoved or ownMoved:
           let was = sw.processing
           sw.processing = pr
-          if state.askAgain(w): sw.filters = filtersText(pr)
-          else: sw.processing = was # asked again once it can be
+          if not state.askAgain(w): sw.processing = was # asked again once it can be
         elif revision != sw.editsSeen:
           sw.editsSeen = revision # other traces' edits: nothing to ask
 
 proc followLive(state: var AppState) =
   ## The live panel, while on screen and not frozen, asked again when what
   ## it is of changed (the traces in view or selected, the record, the
-  ## file, the time in view, the filters, a kill). Nothing is asked while
-  ## it is hidden.
+  ## file, the time in view, the filters, a kill, a shown trace's own
+  ## filter). Nothing is asked while it is hidden.
   template live: untyped = state.spectra[0]
   if live.display != state.settings.spectrum.live:
     live.display = state.settings.spectrum.live
@@ -2913,10 +2914,13 @@ proc followLive(state: var AppState) =
                    (p.view.timeMs.lo, p.view.timeMs.hi)
                  else: (NaN, NaN)
     key.processing = spectrumFilters(p)
-    key.killed = killedOf(state.editsAt(state.sessions[i].path), key.traces)
+    let e = state.editsAt(state.sessions[i].path)
+    key.killed = killedOf(e, key.traces)
+    key.own = ownKeyOf(e, key.traces)
   template was: untyped = state.liveKey
   if key.session == was.session and key.traces == was.traces and
       key.processing == was.processing and key.killed == was.killed and
+      key.own == was.own and
       (key.window == was.window or (key.window[0].isNaN and was.window[0].isNaN)):
     return
   state.liveKey = key
@@ -2940,7 +2944,6 @@ proc followLive(state: var AppState) =
     live.traces = key.traces.mapIt(it + s.base)
     live.first = key.traces[0]
     live.chosenCount = count
-    live.filters = filtersText(key.processing)
     live.processing = key.processing
     live.visibleMs = state.panels[k].view.timeMs
   else:
@@ -3067,7 +3070,9 @@ proc takeSpectrum(state: var AppState; m: sink Msg) =
       m.spectrum.gen >= state.spectra[w].since and m.spectrum.gen <= state.spectra[w].asked:
     template sw: untyped = state.spectra[w]
     sw.waiting = m.spectrum.gen < sw.asked
+    let words = m.spectrum.filters
     sw.spectrum = move m.spectrum
+    if words.len > 0: sw.filters = words
     inc sw.revision
 
 include stateplots
@@ -3160,11 +3165,13 @@ proc editsChanged(state: var AppState; path: string; step = EditStep(kind: skCha
     let (i, traces) = state.shownTraces(j)
     if i >= 0 and state.keyOf(state.sessions[i].path) == state.keyOf(path):
       template layer: untyped = state.panels[j].layers[0]
+      let relevel = any or step.touches(teKilled) or step.filterOn.len > 0 or
+        step.filterOff.len > 0
       if layer.reversed != e.allReversed:
         layer.reversed = e.allReversed
-        state.resample(j, relevel = any or step.touches(teKilled))
+        state.resample(j, relevel = relevel)
       elif any or step.changedIn(traces):
-        state.resample(j, relevel = any or step.touches(teKilled))
+        state.resample(j, relevel = relevel)
 
 proc sayNotYetRemembered(state: var AppState; i: int) =
   ## Says once, when the user edits `remembered[i]`'s file before its
@@ -3285,6 +3292,7 @@ proc takePending(state: var AppState; i: int; p: FileRecord; fits: bool): string
   var lists: seq[string]
   for edit in [teKilled, teReversed]:
     if p.edits.lists[edit].len > 0: lists.add $edit & " " & runsText(p.edits.lists[edit])
+  if p.edits.filters.len > 0: lists.add $p.edits.filters.len & " filtered"
   if p.edits.allReversed: lists.add "all reversed"
   state.log.add(sevWarning, name, "The edits of " & name & " made when its drive did not " &
     "give its first and last bytes (" & p.opened.local.format("yyyy-MM-dd HH:mm") &

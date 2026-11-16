@@ -310,8 +310,18 @@ withFixtures fx:
     st.agent(%*{"kind": "own filter", "edited": [st.firstTrace], "on": true,
       "filterPlace": "after", "processing": {"band": "band-pass", "f1": 10.0, "f2": 12.0,
       "f3": 55.0, "f4": 60.0}})
+    # Seen to fail with the command unchecked (ckOwnFilter a no-op): the
+    # trace had no filter and undo did not name it.
+    let trace = st.firstTrace - st.sessions[0].base
+    let set = st.ownAt(st.sessions[0].path, trace)
+    doAssert set.has and set.filter.place == fpAfter and set.filter.spec.f2 == 12.0,
+      "the agent's filter was not set"
+    doAssert st.editsOf(0).undoText == "trace " & $(trace + 1) & " filtered",
+      st.editsOf(0).undoText
     st.agent(%*{"kind": "undo edit"})
+    doAssert not st.ownAt(st.sessions[0].path, trace).has, "undo did not take the filter away"
     st.agent(%*{"kind": "redo edit"})
+    doAssert st.ownAt(st.sessions[0].path, trace).has, "redo did not put the filter back"
     st.agent(%*{"kind": "list file memory"})
     st.flushFiles()
     doAssert remembered(dir).len == 0, "the agent's edits are remembered: " & $remembered(dir)

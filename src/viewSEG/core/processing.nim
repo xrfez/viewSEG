@@ -332,10 +332,22 @@ func entryAt*(own: openArray[FilterEntry]; trace: int): int =
     else: hi = mid
   if lo < own.len and own[lo].trace == trace: lo else: -1
 
+func ownPerTrace*(own: openArray[FilterEntry]; traces: openArray[int]): seq[OwnFilter] =
+  ## One filter per trace of `traces` (ascending); the default, not stored,
+  ## where `own` (ascending by trace) has none.
+  result = newSeq[OwnFilter](traces.len)
+  var j = 0
+  for k, t in traces:
+    while j < own.len and own[j].trace < t: inc j
+    if j < own.len and own[j].trace == t: result[k] = own[j].filter
+
 func filterWords*(f: OwnFilter): string =
   ## `f` in the words a mark's tooltip says: "Band-pass 10-60 Hz, after the
   ## plot's filters". A band-pass names the flat pass (`f2` to `f3`, where
-  ## the gain is 1); a low-cut or a high-cut names its ramp.
+  ## the gain is 1); a low-cut or a high-cut names its ramp. "Instead" with
+  ## no frequency filter is the choice to show the trace unfiltered.
+  if not f.spec.hasFilters and f.place == fpInstead:
+    return "No filter: the plot's filters are not applied"
   var parts: seq[string]
   case f.spec.band
   of pbNone: discard

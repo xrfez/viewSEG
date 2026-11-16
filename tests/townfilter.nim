@@ -9,7 +9,9 @@
 ## - the reader's row for a filtered trace equals the same filter run by hand,
 ##   after the plot's filters and instead of them, and the neighbouring rows
 ##   are the plot's, bit for bit;
-## - a spectrum of the filtered trace shows the filter (its high end is down).
+## - a spectrum of the filtered trace shows the filter: the processed curve
+##   matches the trace's own filter on a band the plot does not cut, and the
+##   response is what that trace ran, not the plot's filters alone.
 ##
 ## Seen to fail: with `prepare` not running a trace's own filter (the plot's
 ## filters only), "trace 2 after the plot's filters is not the filter run by
@@ -20,13 +22,21 @@
 ## and "the filter did not come back"; with `setOwnFilters` making no step,
 ## "undo did not put the filter back".
 ##
+## Seen to fail: with the live panel's key omitting a trace's own filter,
+## "the live panel did not re-ask"; with a filter step not releveled, "a
+## trace filter did not relevel"; with the response taken from the plot's
+## filters alone, "the response is the plot's filter alone"; with the
+## spectrum's low band not compared to the trace's own filter, the high-end
+## check passed while `applyBlockOwn` was disabled. With the pending-edits
+## warning listing kills only, "1 filtered" was not in the warning.
+##
 ## Runs on samples/land/shots.sgy.
 
-import std/[os, strutils]
+import std/[os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
-import viewSEG/core/[edits, filememory, nif, state]
+import viewSEG/core/[edits, filememory, nif, processing, state]
 import utils/waiting
 
 const root = currentSourcePath().parentDir.parentDir
@@ -163,22 +173,116 @@ block reader:
     "trace 4 instead of the plot's filters still has the plot's filter"
   doAssert u.rowOf(1) == handAfter, "trace 2 lost its filter"
   doAssert u.rowOf(2) == plotted.rowOf(2), "trace 3 changed"
+  # one trace, instead: the response and the words are that trace's filter alone
+  st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base + 3])
+  doAssert st.settle(st.spectra[^1].spectrum.processed.len > 0)
+  doAssert st.spectra[^1].spectrum.filters == "13-15-35-39 Hz", st.spectra[^1].spectrum.filters
+  doAssert "processed: 13-15-35-39 Hz" in st.spectra[^1].filterText, st.spectra[^1].filterText
+  st.apply Command(kind: ckCloseSpectrum, spectrum: st.spectra[^1].id)
   # undo removes the instead filter; the row is the plot's again
   st.apply Command(kind: ckUndoEdit, panel: MainPanel)
   doAssert st.settle(st.answered)
   doAssert st.tiles(0)[^1].rowOf(3) == plotted.rowOf(3), "undo did not put the filter back"
-  # a spectrum of the filtered trace shows the high-cut of its own filter
+  # a spectrum of the filtered trace: the own filter cuts below 10 Hz, the
+  # plot's high-cut does not, so the low band shows the trace's filter
   st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base + 1])
   doAssert st.settle(st.spectra.len > 1 and not st.spectra[^1].waiting and
     st.spectra[^1].spectrum.processed.len > 0)
   let sp = st.spectra[^1].spectrum
   doAssert sp.raw.len == sp.processed.len and sp.raw.len > 8
-  var rawHi, procHi = 0.0
-  for i in sp.raw.len * 3 div 4 ..< sp.raw.len:
-    rawHi += sp.raw[i]
-    procHi += sp.processed[i]
-  doAssert procHi < rawHi * 0.5, "the spectrum does not show the filter: high end " &
-    $procHi & " against raw " & $rawHi
+  var rawLo, procLo = 0.0
+  let loEnd = max(1, int(8.0 / sp.binHz))
+  for i in 1 .. loEnd:
+    rawLo += sp.raw[i]
+    procLo += sp.processed[i]
+  doAssert procLo < rawLo * 0.5, "the spectrum does not show the trace's own filter: low end " &
+    $procLo & " against raw " & $rawLo
+  doAssert sp.filters == "high-cut 40-50 Hz, then 10-12-40-44 Hz", sp.filters
+  doAssert "then 10-12-40-44 Hz" in st.spectra[^1].filterText, st.spectra[^1].filterText
+  var pipe = plot.filterPipeline(dt)
+  for op in after.ownPipeline(dt): pipe.add op
+  let want = appliedResponse(pipe, dt, lay.samples, sp.responseHz)
+  doAssert sp.response.len == want.len and sp.response.len > 0, $sp.response.len
+  for i, g in sp.response:
+    doAssert abs(g - want[i]) <= 1e-3, "response at " & $sp.responseHz[i] & " Hz is " & $g &
+      ", the trace's filter gives " & $want[i]
+  let plotOnly = appliedResponse(plot.filterPipeline(dt), dt, lay.samples, sp.responseHz)
+  var differ = false
+  for i, g in sp.response:
+    if abs(g - plotOnly[i]) > 1e-3: differ = true
+  doAssert differ, "the response is the plot's filter alone"
+  # several traces with their own filters: the plot's response, and the count
+  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 3], on: true,
+    processing: instead.spec, filterPlace: fpInstead)
+  doAssert st.settle(st.answered)
+  st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base + 1, base + 3])
+  doAssert st.settle(st.spectra[^1].spectrum.processed.len > 0)
+  let both = st.spectra[^1].spectrum
+  doAssert "2 traces have their own filter" in both.filters, both.filters
+  let plotResp = appliedResponse(plot.filterPipeline(dt), dt, lay.samples, both.responseHz)
+  doAssert both.response == plotResp, "a mixed window did not keep the plot's response"
   st.shutdown()
+
+block relevel:
+  # Normalized over the whole record: a trace-filter step releveled, as a
+  # plot-filter change does. Seen to fail with resample not releveled on a
+  # filter step: "a trace filter did not relevel".
+  var st = initAppState()
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+  var d = st.panel(MainPanel).layers[0].display
+  d.gain = dgNormalized
+  d.normScope = perPanel
+  st.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+  let lay = st.panel(MainPanel).layout
+  st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 800, 2 * lay.samples))
+  doAssert st.settle(st.answered)
+  st.apply Command(kind: ckProcessing, panel: MainPanel,
+    processing: Processing(band: pbHighCut, f3: 40, f4: 50))
+  doAssert st.settle(st.answered and not st.panel(MainPanel).relevel)
+  let before = st.panel(MainPanel).level.clip
+  let base = st.sessions[0].base
+  var ids: seq[int]
+  for t in 0 ..< st.sessions[0].len: ids.add base + t
+  let narrow = band(5, 8, fpInstead)
+  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: ids, on: true,
+    processing: narrow.spec, filterPlace: fpInstead)
+  doAssert st.panel(MainPanel).relevel, "a trace filter did not relevel"
+  doAssert st.settle(st.answered and not st.panel(MainPanel).relevel)
+  doAssert abs(st.panel(MainPanel).level.clip - before) > 1e-6, "the level stayed " & $before
+  st.shutdown()
+
+block changedBeforeIdentity:
+  # A pending document of filters, the file changed since: the warning lists
+  # them, as it lists kills. Seen to fail with the list omitting filters:
+  # the warning ended "They were: ."
+  let config = root / ".scratch" / "ownfilter-pending"
+  createDir(config)
+  if dirExists(config / StoreFolder):
+    for kind, p in walkDir(config / StoreFolder):
+      if kind == pcFile: removeFile(p)
+  var st = initAppState()
+  st.rememberFilesIn(config)
+  createDir(config / StoreFolder)
+  writeFile(config / StoreFolder / pendingName(land), memoryDocument(FileRecord(
+    identity: FileIdentity(size: getFileSize(land) + 1), name: "shots.sgy", path: land,
+    opened: getTime(), modified: getLastModificationTime(land),
+    edits: EditLists(filters: @[FilterEntry(trace: 2, filter: band(10, 60))]))))
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
+  proc warning(st: AppState): string =
+    for e in st.log:
+      if e.severity == sevWarning: result = e.text
+  doAssert st.settle("1 filtered" in warning(st)), warning(st)
+  doAssert not st.ownAt(land, 2).has, "the dropped filter was applied"
+  st.shutdown()
+
+block words:
+  doAssert filterWords(OwnFilter(place: fpInstead)) ==
+    "No filter: the plot's filters are not applied"
+  let plot = Processing(band: pbHighCut, f3: 40, f4: 50)
+  doAssert spectrumFilterWords(plot, [band(8, 20)]) == "high-cut 40-50 Hz, then 6-8-20-24 Hz"
+  doAssert spectrumFilterWords(plot, [band(40, 80, fpInstead)]) == "38-40-80-84 Hz"
+  doAssert spectrumFilterWords(plot, [band(8, 20), band(40, 80, fpInstead)]) ==
+    "high-cut 40-50 Hz, 2 traces have their own filter"
 
 echo "townfilter: ok"

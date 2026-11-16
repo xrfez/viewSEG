@@ -202,13 +202,6 @@ func unionAsc(a, b: openArray[int]): seq[int] =
     if i < a.len and a[i] == x: inc i
     if j < b.len and b[j] == x: inc j
 
-func blockOwn(own: openArray[FilterEntry]; traces: openArray[int]): seq[OwnFilter] =
-  ## One filter per row of `traces`; the default (not stored) where it has none.
-  result = newSeq[OwnFilter](traces.len)
-  for k, t in traces:
-    let at = entryAt(own, t)
-    if at >= 0: result[k] = own[at].filter
-
 proc applyBlockOwn(b: RowBlock[float32]; live: TraceRows; dtMs: float64;
     own: openArray[OwnFilter]; failed: openArray[int]; ws: var Workspace) =
   ## Each row's own frequency filter. A failed row is left as it is.
@@ -254,14 +247,31 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   var filtering = pr.hasFilters
   let filters = if filtering: pr.filterPipeline(dtMs) else: initPipeline()
   if filtering:
-    answer.filters = pr.describe
     answer.filterAux = pr.aux
     answer.filterNote = pr.limitNote(dtMs)
     if filters.len == 0:
       answer.filterProblem = "none of them is below Nyquist"
       filtering = false
+  let ownAll = ownPerTrace(a.own, list)
+  var plotRan = true
+  if list.len == 1:
+    plotRan = pr.aux or f[].traceKeys(list[0]).status != tsAuxiliary
+  let words = spectrumFilterWords(pr, ownAll, plotRan)
+  if words.len > 0: answer.filters = words
+  # One trace with its own filter: the response is what that trace ran
+  # (the plot's then the trace's, or the trace's alone). Several traces
+  # keep the plot's response; the words say how many have their own.
+  var responsePipe = if filtering: filters else: initPipeline()
+  if list.len == 1 and ownAll[0].changesSamples:
+    let alone = ownAll[0].place == fpInstead or not plotRan
+    if alone:
+      responsePipe = ownAll[0].ownPipeline(dtMs)
+      answer.filterNote = ownAll[0].spec.limitNote(dtMs)
+      if responsePipe.len > 0: answer.filterProblem = ""
+    elif ownAll[0].spec.hasFilters:
+      for op in ownAll[0].ownPipeline(dtMs): responsePipe.add op
   # Finer bins for a narrow filter (`spectrumNfft`).
-  let specs = if filtering: filters.filterSpecs else: @[]
+  let specs = responsePipe.filterSpecs
   var narrowest = Inf
   for s in specs: narrowest = min(narrowest, s.narrowestRampHz)
   let nfft = spectrumNfft(window.len, dtMs, narrowest)
@@ -271,11 +281,11 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
   # own; computed again only for other filters, interval or length.
   if specs.len > 0:
     var key = $dtMs & "|" & $longest & "|"
-    for op in filters: key.add $op & ";"
+    for op in responsePipe: key.add $op & ";"
     if key != cache.responseOf:
       try:
         cache.responseHz = responseGrid(specs, nyquistHz(dtMs))
-        cache.response = appliedResponse(filters, dtMs, longest, cache.responseHz)
+        cache.response = appliedResponse(responsePipe, dtMs, longest, cache.responseHz)
         cache.responseOf = key
       except ValueError:
         cache.responseOf = ""
@@ -321,30 +331,39 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
       except ValueError as e:
         answer.filterProblem = e.msg
         filtering = false
-    let ownHere = blockOwn(a.own, part)
+    let ownHere = ownPerTrace(a.own, part)
     var ownRuns = false
     for f in ownHere:
       if f.spec.hasFilters or f.place == fpInstead: ownRuns = true
     if filtering or ownRuns:
       # Through the filters, and in the processed curve, only the rows they
-      # reach: with the Aux toggle off processSEG passes an auxiliary row by,
-      # and the sum leaves it out (it is not live), so it is not counted as
-      # processed. A row whose own filter runs instead of the plot's is left
-      # out of the plot's filter, then each own filter runs.
+      # reach: with the Aux toggle off processSEG passes an auxiliary row by.
+      # A row whose own filter ran is still in the processed curve (the Aux
+      # toggle decides the plot's filters only). A row whose own filter runs
+      # instead of the plot's is left out of the plot's filter, then each
+      # own filter runs.
       var instead: seq[int]
       for k, f in ownHere:
         if f.place == fpInstead: instead.add k
-      let meta = if pr.aux: initChunkMeta(live, dtMs, 0, failed)
-                 else: initChunkMeta(rows, dtMs, 0, failed)
+      let plotMeta = if pr.aux: initChunkMeta(live, dtMs, 0, failed)
+                     else: initChunkMeta(rows, dtMs, 0, failed)
+      var passed = failed
+      if not pr.aux:
+        for k in 0 ..< ownHere.len:
+          if rows.keysAt(k).status == tsAuxiliary and not ownHere[k].changesSamples and
+              failed.binarySearch(k) < 0:
+            passed.add k
+        passed.sort()
+      let sumMeta = if pr.aux: plotMeta else: initChunkMeta(live, dtMs, 0, passed)
       if filtering:
-        if instead.len == 0: plan.apply(b, meta, ws)
+        if instead.len == 0: plan.apply(b, plotMeta, ws)
         else:
           let skip = unionAsc(failed, instead)
-          let plotMeta = if pr.aux: initChunkMeta(live, dtMs, 0, skip)
-                         else: initChunkMeta(rows, dtMs, 0, skip)
-          plan.apply(b, plotMeta, ws)
+          let skipped = if pr.aux: initChunkMeta(live, dtMs, 0, skip)
+                        else: initChunkMeta(rows, dtMs, 0, skip)
+          plan.apply(b, skipped, ws)
       applyBlockOwn(b, live, dtMs, ownHere, failed, ws)
-      discard processed.add(b, meta, window.a)
+      discard processed.add(b, sumMeta, window.a)
       answer.processedPhase = processed.phaseOf()
       if ownRuns: showedOwn = true
     at += n

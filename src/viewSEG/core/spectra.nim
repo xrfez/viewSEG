@@ -28,17 +28,22 @@
 ##
 ## **Raw and processed.** The raw curve is of the samples as the file has
 ## them; the processed one of the same samples through the plot's filters
-## (`core/processing`, made for the spectrum's own sample interval), run on
-## whole traces before the window is cut, so the filters' edges never fall
-## in it. A plot shown raw still gets the processed curve: the two compare.
-## The processed curve is of the traces the filters reach only: an
-## auxiliary trace goes through them only when the plot's Aux toggle says
-## so (`Processing.aux`), so with it off the processed curve leaves the
-## auxiliary traces out (`passedBy` counts them), and with no trace reached
-## there is none; nor is there when the filters cannot run at the traces'
-## interval (`filterProblem`). The answer says which (`filtered`,
-## `passedBy`, `filterNote`), so the words never claim a filter that was
-## not applied.
+## (`core/processing`, made for the spectrum's own sample interval) and
+## each trace's own filter, run on whole traces before the window is cut,
+## so the filters' edges never fall in it. A plot shown raw still gets the
+## processed curve: the two compare. The processed curve is of the traces
+## the filters reach only: an auxiliary trace goes through the plot's
+## filters only when the Aux toggle says so (`Processing.aux`), so with it
+## off the processed curve leaves an auxiliary trace out (`passedBy` counts
+## it) unless that trace has a filter of its own, which is in the curve
+## either way. With no trace reached there is none; nor is there when the
+## filters cannot run at the traces' interval (`filterProblem`). The answer
+## says which (`filtered`, `passedBy`, `filterNote`), so the words never
+## claim a filter that was not applied. One trace with its own filter: the
+## response and the words are what that trace went through (the plot's then
+## the trace's, or the trace's alone when it runs instead, or when the
+## plot's did not reach it). Several traces, any with their own: the plot's
+## response, and the words say how many.
 ##
 ## The work runs on a thread of its own (`core/spectrumreader`); `AppState`
 ## keeps the windows (`SpectrumWindow`).
@@ -283,6 +288,36 @@ func auxText(n: int): string =
 
 const AuxOff* = "Filters > Filter the Aux traces too is off"
   ## where the plot's Aux toggle is, as the words name it
+
+func spectrumFilterWords*(plot: Processing; own: openArray[OwnFilter];
+    plotRan = true): string =
+  ## What a spectrum's filter line names. One trace with its own filter:
+  ## the plot's then the trace's, or the trace's alone when it runs instead
+  ## of the plot's (or the plot's did not reach it, `plotRan` false: an
+  ## auxiliary trace with the Aux toggle off). Several traces, any with
+  ## their own: the plot's words, and how many. "" when nothing is set.
+  var n = 0
+  var lone = OwnFilter()
+  for f in own:
+    if f.changesSamples:
+      inc n
+      lone = f
+  let plotWords = if plot.hasFilters: describe(plot) else: ""
+  if own.len == 1 and n == 1:
+    let f = lone
+    if f.place == fpInstead or not plotRan:
+      if f.spec.hasFilters: result = describe(f.spec)
+      else: result = "none, instead of the plot's filters"
+    elif plotWords.len > 0 and f.spec.hasFilters:
+      result = plotWords & ", then " & describe(f.spec)
+    elif f.spec.hasFilters: result = describe(f.spec)
+    else: result = plotWords
+  elif n > 0:
+    let note = if n == 1: "1 trace has its own filter"
+               else: $n & " traces have their own filter"
+    if plotWords.len > 0: result = plotWords & ", " & note
+    else: result = note
+  else: result = plotWords
 
 func filterText*(w: SpectrumWindow): string =
   ## What the processed curve went through, in words, as the answer says
