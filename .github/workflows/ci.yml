@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, phase1 ]
     paths:
       - '**'
       - '!**.md'
@@ -27,11 +27,14 @@ jobs:
 
       # GUI build libraries, xvfb and SDL 3.4.18 from source: keep in step with
       # the nim-dev image the devcontainer uses (Ubuntu and Debian ship no SDL 3.4).
+      # Mesa's llvmpipe (libgl1-mesa-dri; libgl-dev and libegl-dev bring its GLX
+      # and EGL) draws under Xvfb; dbus-daemon gives the tray tests a session bus
+      # of their own (they skip those parts without it).
       - name: Install system libraries
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            xvfb xauth libgl1-mesa-dri cmake ninja-build pkg-config \
+            xvfb xauth libgl1-mesa-dri dbus-daemon cmake ninja-build pkg-config \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
             libxinerama-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             libdecor-0-dev libegl-dev libgl-dev libgles-dev libdbus-1-dev libudev-dev
@@ -43,8 +46,9 @@ jobs:
           path: ~/sdl3
           key: sdl3-3.4.18-${{ runner.os }}-${{ runner.arch }}-v1
 
-      # Static and shared, like the image. config.nims links libSDL3.a (found
-      # through pkg-config), so the tests need no libSDL3.so at run time.
+      # Static and shared, like the image. config.nims takes SDL's headers and
+      # libSDL3.a from pkg-config (this prefix is not a default include path),
+      # so the tests need no libSDL3.so at run time.
       - name: Build SDL3
         if: steps.sdl3-cache.outputs.cache-hit != 'true'
         run: |
