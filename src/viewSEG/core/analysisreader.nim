@@ -418,8 +418,10 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
           answer.notDrawn = notDrawn
           if through.len > 0 and answer.problem.len == 0:
             answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & through
-          if a.view == avCorrelation and a.refTrace >= 0 and a.refTrace notin keptList and
-              answer.problem.len == 0:
+          # named here unless it is one of this file's shown traces
+          let refHere = a.refPath.len == 0 or a.refPath == a.path
+          if a.view == avCorrelation and a.refTrace >= 0 and
+              (not refHere or a.refTrace notin keptList) and answer.problem.len == 0:
             let named = if a.refOwn.len > 0: a.refOwn
                         elif a.refPath == a.path or a.refPath.len == 0: a.own
                         else: @[]
