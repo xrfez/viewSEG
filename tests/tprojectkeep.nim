@@ -27,7 +27,8 @@
 ## - An Update refused (an original written during both tries) or cancelled
 ##   leaves the copies, the document and survey.bin as they were.
 ##
-## Seen to fail: with `resolveResume` taking an absolute path outside the project and its data
+## Seen to fail: with `commitCopies` moving one by one with no set-aside, "the first copy
+## was left replaced"; with `resolveResume` taking an absolute path outside the project and its data
 ## folders, "is not in the project or its data folders"; with it refusing a copy that is
 ## inside survey/files, "the cut-short import of the existing copies was not taken up"; with
 ## `sweepTemporaries` removing every `*.tmp`, "the survey file day1.tmp
@@ -423,4 +424,44 @@ withFixtures fx:
     again.shutdown()
     doAssert fileExists(kept), "the survey file day1.tmp was swept as a temporary file"
     doAssert not fileExists(job / "survey" / "files" / "r.7.tmp"), "a job's temporary file stays"
+  block commitFails: # a move failing midway puts the old copies back: never a mixture
+    let job = fx.dir / "Job commit"
+    let (s, r, x) = fx.surveySps()
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+    doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+    st.apply Command(kind: ckJoin, joinFile: NoSession, joinFiles: @[
+      JoinFile(path: s, kind: jkSps), JoinFile(path: r, kind: jkSps),
+      JoinFile(path: x, kind: jkSps)])
+    doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore and
+      not st.project.doc.hasImport)
+    st.flushFiles()
+    st.shutdown()
+    proc grow(path: string) =
+      var sf = readSps(path)
+      var p = sf.points[^1]
+      p.point += 1
+      p.pointName = ""
+      sf.points.add p
+      sf.order.setLen 0
+      sleep 20
+      doAssert writeSps(sf, path).len == 0
+    let files = job / "survey" / "files"
+    let sBefore = readFile(files / s.extractFilename)
+    grow(s)
+    grow(r)
+    # the second copy's place cannot take a file: its move fails after the first
+    removeFile(files / r.extractFilename)
+    createDir(files / r.extractFilename / "inside")
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject and again.project.offer)
+    again.apply Command(kind: ckUpdateSurvey)
+    doAssert again.settle(again.said("could not be kept")), "the update did not fail"
+    again.flushFiles()
+    again.shutdown()
+    doAssert readFile(files / s.extractFilename) == sBefore, "the first copy was left replaced"
+    for f in walkFiles(files / "*"):
+      doAssert f.extractFilename in [s.extractFilename, x.extractFilename],
+        "a file is left: " & f
 echo "tprojectkeep: done"

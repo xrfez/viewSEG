@@ -293,9 +293,29 @@ proc copyIn(ctx: JobContext; dir, source, name: string; tmps: var seq[(string, s
   finally:
     close(src)
 
-proc commitCopies(tmps: seq[(string, string)]) =
-  ## Puts the copies written to temporary files in place.
-  for (tmp, dest) in tmps: fs.moveFile(tmp, dest)
+proc commitCopies(tmps: seq[(string, string)]; job: JobId) =
+  ## Puts the copies written to temporary files in place: each old copy is
+  ## first set aside (a name made from the job), the new one moved in. When a
+  ## move fails, the new ones put in place are removed and the old ones come
+  ## back, so the copies are never a mixture of both; the set-aside ones are
+  ## removed when all is in place.
+  var aside: seq[(string, string)] = @[] # (copy, where its old one is)
+  var placed: seq[string] = @[]
+  try:
+    for (tmp, dest) in tmps:
+      if fs.fileExists(dest):
+        let old = dest & "." & $int(job) & ".old"
+        fs.moveFile(dest, old)
+        aside.add (dest, old)
+      fs.moveFile(tmp, dest)
+      placed.add dest
+  except CatchableError:
+    for dest in placed: discard fs.tryRemoveFile(dest)
+    for (dest, old) in aside:
+      try: fs.moveFile(old, dest)
+      except CatchableError: discard # nothing more can be done: the old copy stays under its set-aside name
+    raise
+  for (_, old) in aside: discard fs.tryRemoveFile(old)
 
 proc dropCopies(tmps: seq[(string, string)]) =
   ## Removes the temporary files of copies that were not put in place.
@@ -436,7 +456,7 @@ proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy
           if not ctx.progress(i + 1, files.len + 1):
             raise newException(JobCancelledError, "cancelled")
         news.store = writeStore(dir, news.copies, ctx, sources)
-        commitCopies(tmps)
+        commitCopies(tmps, ctx.id)
         tmps.setLen 0
         for c in existing:
           var still = false
@@ -503,7 +523,7 @@ proc updateSurveyWork*(dir: string; copies: seq[SurveyCopy]; originals: seq[Orig
             news.copies[i].changedModified = Time()
             sources[i] = tmps[^1][0]
         news.store = writeStore(dir, news.copies, ctx, sources)
-        commitCopies(tmps)
+        commitCopies(tmps, ctx.id)
         tmps.setLen 0
       except JobCancelledError:
         dropCopies(tmps)
