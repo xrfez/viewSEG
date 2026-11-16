@@ -4,7 +4,9 @@
 ## that reads the table cannot drift from `viewName`.
 ##
 ## Seen to fail: with the FFT row moved after Spectrogram, "FFT is first";
-## with Spectrogram and Envelope given the same icon, "icons are distinct".
+## with Spectrogram and Envelope given the same icon, "icons are distinct";
+## with the shortcut moved after the select-first sentence, "shortcut before
+## the select-first".
 
 import std/[sets, strutils]
 import viewSEG/core/analysis
@@ -49,5 +51,10 @@ block tip:
   doAssert off.startsWith("FFT\n")
   doAssert SelectTracesFirst in off
   doAssert SelectTracesFirst notin PlotEntries[0].tip(true)
+  # the select-first sentence ends the tip, and the shortcut comes before it
+  doAssert off.endsWith(SelectTracesFirst), off
+  let at = off.find(SelectTracesFirst)
+  doAssert off[0 ..< at].endsWith("\nF\n"), "shortcut before the select-first: " & off
+  doAssert PlotEntries[0].tip(true).endsWith("\nF"), "shortcut ends an enabled tip"
 
 echo "tplotviews: ok"

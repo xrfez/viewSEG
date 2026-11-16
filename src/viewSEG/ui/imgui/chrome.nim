@@ -177,7 +177,8 @@ proc drawToolbar*(t: Theme; marks: var Marks; recentProjects: openArray[string];
     igSameLine(0, GroupGap)
     for i, e in PlotEntries:
       if i > 0: igSameLine(0, ButtonGap)
-      if iconButton(e.icon, e.name, e.shortcut, size, t, marks, enabled = plotsOn,
+      # the shortcut is in the tip's text, so it is not appended again
+      if iconButton(e.icon, e.name, "", size, t, marks, enabled = plotsOn,
           tipText = e.tip(plotsOn)):
         if e.fft: result.fft = true
         else: (result.plot, result.plotView) = (true, e.view)
