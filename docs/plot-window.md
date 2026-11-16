@@ -177,12 +177,16 @@
     A *reference* amplitude is drawn at **full scale** at 0 dB: at the ends of the
     density colour map (black for positive and white for negative in grey, blue and red
     in red-white-blue, yellow and dark purple in viridis), and a wiggle's full swing (the
-    trace overlap); the types differ
-    in what they do to the samples and in where the reference comes from:
+     trace overlap); the types differ
+     in what they do to the samples and in where the reference comes from. The drop-down's
+     first row is **Let viewSEG choose** (ticked by default), with dim text naming the type
+     it picked for this record; under a line, the six types are radios. The bar says
+     "Gain: auto (AGC 500 ms)" or "Gain: auto (none)" while viewSEG chooses, and
+     "Gain: AGC 500 ms" when the user picked the type:
 
     | Type | On the samples | Reference (full scale at 0 dB) | Settings |
     |---|---|---|---|
-    | Automatic (default) | AGC on shot and receiver records, nothing on stacked data | as AGC or None | the AGC window |
+    | Let viewSEG choose (default; not a type) | AGC on shot and receiver records, nothing on stacked data | as AGC or None | the AGC window |
     | None | nothing | the record's clip percentile of \|x\| (99 by default), held while panning | |
     | Fixed | nothing | one amplitude, the same for every record and file until changed, so records compare; taken from the record shown when Fixed is chosen | the amplitude; "From this record" |
     | Normalized | each trace to the same level (per trace), or nothing (whole record) | that level: RMS, peak or clip percentile, of each trace or of the record | per trace or the whole record; the level |
@@ -202,7 +206,7 @@
 
     | Setting | Default |
     |---|---|
-    | Gain type | Automatic: AGC on shot and receiver records, none on stacked data |
+    | Gain | Let viewSEG choose (AGC on shot and receiver records, none on stacked data) |
     | AGC window | 500 ms |
     | Fixed amplitude | none until Fixed is chosen: then the record's clip percentile |
     | Normalized | each trace, to its clip percentile |

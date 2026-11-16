@@ -12,40 +12,36 @@
 
 import std/math
 import imguin/cimgui
-import ../../core/[readout, state]
+import ../../core/[gainlabel, readout, state]
 import ../../view/theme
-import chrome
+import chrome, style
 
 const
-  gainTypes = [dgAuto, dgNone, dgFixed, dgNormalized, dgExponential, dgFloat, dgAgc]
+  gainTypes = [dgNone, dgFixed, dgNormalized, dgExponential, dgFloat, dgAgc]
   dbKeysTip = "] or keypad * for more, [ or keypad / for less; with Shift, " &
     "12 dB a step"
 
-proc label(d: DisplaySettings; kind: GatherKind): string =
-  ## What the type control says: the type in use and its main setting.
-  result = case d.effectiveGain(kind)
-    of dgAgc: "AGC " & $int(round(d.agcWindowMs)) & " ms"
-    of dgNone: "none"
-    of dgFixed: "fixed"
-    of dgNormalized: "normalized, " & (if d.normScope == perTrace: "each trace" else: "record")
-    of dgExponential:
-      let shape = if d.timeGain == tgDbPerSecond: significant(d.dbPerS, 3) & " dB/s"
-                  else: "t^" & significant(d.power, 3)
-      "exponential, " & shape & " to " & $int(round(d.untilMs)) & " ms"
-    of dgFloat: "float"
-    of dgAuto: "automatic"
-  if d.gain == dgAuto: result.add " (auto)"
-
-func describe(g: DisplayGain; d: DisplaySettings): string =
-  ## A type as the drop-down lists it.
+func shortName(g: DisplayGain): string =
+  ## A type's name in the drop-down. Automatic is not one of them.
   case g
-  of dgAuto: "Automatic: AGC on shot and receiver records, none on stacked data"
-  of dgNone: "None: the samples as recorded, one scale for the record"
-  of dgFixed: "Fixed: one scale for every record and file, so they compare"
-  of dgNormalized: "Normalized: every trace, or the record, to the same level"
-  of dgExponential: "Exponential: more gain later in the record"
-  of dgFloat: "Float: the scale follows the data in view"
-  of dgAgc: "AGC: automatic gain control, " & $int(round(d.agcWindowMs)) & " ms window"
+  of dgNone: "None"
+  of dgFixed: "Fixed"
+  of dgNormalized: "Normalized"
+  of dgExponential: "Exponential"
+  of dgFloat: "Float"
+  of dgAgc: "AGC"
+  of dgAuto: ""
+
+func explanation(g: DisplayGain; d: DisplaySettings): string =
+  ## What follows the colon, as the drop-down said it before.
+  case g
+  of dgNone: "the samples as recorded, one scale for the record"
+  of dgFixed: "one scale for every record and file, so they compare"
+  of dgNormalized: "every trace, or the record, to the same level"
+  of dgExponential: "more gain later in the record"
+  of dgFloat: "the scale follows the data in view"
+  of dgAgc: "automatic gain control, " & $int(round(d.agcWindowMs)) & " ms window"
+  of dgAuto: ""
 
 proc tip(text: string) =
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
@@ -223,29 +219,51 @@ proc settings(p: Panel; d: DisplaySettings; marks: var Marks; cmds: var seq[Comm
   of dgAuto: discard # effectiveGain never gives it
   drawClip(p, d, marks, cmds, notes)
 
+proc dimText(text: string; t: Theme) =
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+  igTextUnformatted(text.cstring, nil)
+  igPopStyleColor(1)
+
 proc drawGainControls*(p: Panel; t: Theme; marks: var Marks; cmds: var seq[Command];
     notes: var seq[string]) =
-  ## The gain type's drop-down (its settings in it), then the gain amount:
-  ## -, a box in dB, +.
+  ## The gain drop-down (a checkbox for letting viewSEG choose, then the six
+  ## types, then the type's settings), then the gain amount: -, a box in dB, +.
   let d = p.layers[0].display
-  let text = "Gain: " & label(d, p.kind)
+  let text = gainBarLabel(d, p.kind)
   let style = igGetStyle()
   igSetNextItemWidth(round(igCalcTextSize(text.cstring, nil, false, -1).x +
     igGetFrameHeight() + 3 * style.FramePadding.x))
   if igBeginCombo("##gain", text.cstring, ImGui_ComboFlags_HeightLargest.cint):
+    var choose = d.gain == dgAuto
+    if igCheckbox("Let viewSEG choose", addr choose):
+      var nd = d
+      nd.gain = if choose: dgAuto else: d.effectiveGain(p.kind)
+      p.send(nd, cmds)
+    marks.mark("plot.gain choose")
+    tip("AGC on shot and receiver records, none on stacked data. Untick to pick the " &
+      "type yourself.")
+    igSameLine(0, -1)
+    dimText(gainNow(d, p.kind), t)
+    marks.mark("plot.gain now")
+    igSeparator()
+    # the radio of the type in use (the one viewSEG picked, while the box is
+    # ticked). Clicking one unticks the box and sets that type. The list stays
+    # open, so the type's settings can be set at once.
+    let shown = if d.gain == dgAuto: d.effectiveGain(p.kind) else: d.gain
     for gt in gainTypes:
-      # the drop-down stays open, so the type's settings can be set at once
-      if igSelectable_Bool(describe(gt, d).cstring, d.gain == gt,
-          ImGui_SelectableFlags_NoAutoClosePopups.cint, ImVec2_c(x: 0, y: 0)) and d.gain != gt:
+      if igRadioButton_Bool(shortName(gt).cstring, shown == gt) and d.gain != gt:
         var nd = d
         nd.gain = gt
         p.send(nd, cmds)
       marks.mark("plot.gain type " & $gt)
+      igSameLine(0, -1)
+      dimText(": " & explanation(gt, d), t)
     igSeparatorText("Settings")
     settings(p, d, marks, cmds, notes)
     igEndCombo()
   marks.mark("plot.gain")
-  tip("Gain type: how amplitudes are scaled for display. Its settings are in this list.")
+  tip("Gain: how amplitudes are scaled for display. Let viewSEG choose, or pick a type; " &
+    "its settings are in this list.")
   # the amount: the buttons repeat while held, 12 dB a step with Shift
   let step = if igGetIO_Nil().KeyShift: GainShiftStepDb else: GainStepDb
   igSameLine(0, 8)

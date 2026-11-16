@@ -356,16 +356,23 @@ the one clicked last to this one, in the order shown; Esc clears the selection. 
 traces are drawn in the theme's accent colour (another of its colours where the accent
 is too close to the traces). Nothing is read again for any of this.
 
-**Gain.** The drop-down in the strip picks the gain type, and its settings are in the
-same list: Automatic (AGC on shot and receiver records, none on stacked data), None,
-Fixed (one scale for every record, so records compare), Normalized (every trace, or the
-record, to the same level), Exponential (more gain later in the record: dB per second,
-or a power of time, rising until the time in its "until" box, 2 000 ms at first, and
-held after it, so the deep part of the record is not blown out), Float (the scale
-follows what is in view) and AGC. At the bottom of the list, **Clip at the ... th
-percentile** sets which amplitude is drawn at full scale (the colour map's ends: black
-and white in grey; a wiggle's full swing): 99 % of |x| at first; 98 clips harder (more
-of the record at full scale), 100 is the peak. Beside it stands the amplitude
+**Gain.** The drop-down in the strip shows the gain, and its settings are in the same
+list. The first row is a checkbox, **Let viewSEG choose**, ticked at first: AGC on shot
+and receiver records, none on stacked data. Beside it, dim text says what that picks for
+the record shown (**now: AGC 500 ms**, or **now: none, stacked data**). Untick the box
+to pick the type yourself; ticking it again hands the choice back. Under a line, the six
+types are radios, the one in use selected (the one viewSEG picked, while the box is
+ticked; clicking a radio unticks the box and sets that type): **None** (the samples as
+recorded, one scale for the record), **Fixed** (one scale for every record, so records
+compare), **Normalized** (every trace, or the record, to the same level), **Exponential**
+(more gain later in the record: dB per second, or a power of time, rising until the time
+in its "until" box, 2 000 ms at first, and held after it, so the deep part of the record
+is not blown out), **Float** (the scale follows what is in view) and **AGC**. The bar
+says **Gain: AGC 500 ms** when you chose it, and **Gain: auto (AGC 500 ms)** or
+**Gain: auto (none)** when viewSEG chose. At the bottom of the list, **Full scale at the
+... th percentile** sets which amplitude is drawn at full scale (the colour map's ends:
+black and white in grey; a wiggle's full swing): 99 % of |x| at first; 98 clips harder
+(more of the record at full scale), 100 is the peak. Beside it stands the amplitude
 that gives now. It never reads the file again. Beside the drop-down, the
 gain amount in dB works with every type, from -300 to +300 dB: type a value, click - or
 +, or press `]` and `[` (keypad `*` and `/`), 3 dB a step or 12 dB with Shift; the
