@@ -9,7 +9,10 @@
 ## - a box (from, to) is of those times only: a wave outside it is not seen;
 ## - the spacing: regular offsets give it, a split spread's signed offsets
 ##   too, irregular ones none, then receivers' coordinates along the line;
-## - fewer than four traces, nothing (said).
+## - fewer than four traces, nothing (said);
+## - whole offsets of a fractional spacing (33.528 m stored as 33 and 34 m
+##   steps) are regular at 33.53, a missing trace is not. Seen to fail: with
+##   the step's 1 % test on each step, "spacing nan, want 33.53".
 ##
 ## Seen to fail: with the wavenumber not turned (the transform's own
 ## sign), "peak at -14.58333333333333 cycles/km, want 15.0"; with the
@@ -129,6 +132,16 @@ block spacing:
   let s = spacingOf(nan, [0.0, 30, 60, 90], [0.0, 40, 80, 120])
   doAssert s.spacing == 50 and s.source == "receiver coordinates", $s
   doAssert spacingOf(nan, nan, nan).spacing.isNaN
+
+block fractionalSpacingWholeOffsets:
+  # a group interval of 33.528 m stored as whole metres (steps of 33 and 34):
+  # regular at 33.53, as the header's whole unit allows; a trace missing is not
+  var pos: seq[float64] = @[]
+  for i in 0 ..< 48: pos.add float64(round(float64(i) * 33.528))
+  let sp = regularSpacing(pos)
+  doAssert abs(sp - 33.53) <= 0.01, "spacing " & $sp & ", want 33.53"
+  pos.delete(20)
+  doAssert regularSpacing(pos).isNaN, "a missing trace read as regular"
 
 block tooFew:
   let r = fkOf(planeWave(1)[0 .. 2], Dx, "offsets", suMetres, Dt, 0, AnalysisParams())

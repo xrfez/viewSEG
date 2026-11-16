@@ -34,21 +34,19 @@ const
   FkTaper* = 0.1 ## the fraction of the box tapered at each end, on both axes
 
 func regularSpacing*(positions: openArray[float64]): float64 =
-  ## The step between neighbouring `positions` when every one is within 1
-  ## % of their median (and the median not 0); NaN otherwise, or for fewer
-  ## than two, or any NaN.
+  ## The step of `positions` when each one is within max(1 % of the step,
+  ## one header unit) of its place on the even line from the first to the
+  ## last, so whole numbers of a fractional step pass and a gap does not;
+  ## NaN otherwise, for fewer than two, any NaN, or no step (0).
   if positions.len < 2: return NaN
-  var steps = newSeq[float64](positions.len - 1)
-  for i in 1 ..< positions.len:
-    steps[i - 1] = positions[i] - positions[i - 1]
-    if steps[i - 1].isNaN: return NaN
-  var sorted = steps
-  sorted.sort()
-  let median = sorted[sorted.len div 2]
-  if median == 0 or median.isNaN: return NaN
-  for s in steps:
-    if abs(s - median) > 0.01 * abs(median): return NaN
-  abs(median)
+  for p in positions:
+    if p.isNaN: return NaN
+  let step = (positions[^1] - positions[0]) / float64(positions.len - 1)
+  if step == 0: return NaN
+  let tolerance = max(0.01 * abs(step), 1.0)
+  for i, p in positions:
+    if abs(p - (positions[0] + float64(i) * step)) > tolerance: return NaN
+  abs(step)
 
 func spacingOf*(offsets: openArray[float64]; rcvX, rcvY: openArray[float64]):
     tuple[spacing: float64; source: string] =
