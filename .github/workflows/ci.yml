@@ -21,6 +21,7 @@ concurrency:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 120 # the test step alone takes about 55 minutes on 4 cores
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -120,6 +121,7 @@ jobs:
   # packaged with `nim package`.
   windows-exe:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
