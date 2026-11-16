@@ -156,6 +156,8 @@ type
     recentProjects*: seq[string]                  ## the project folders opened last, newest first
     lastProject*: string                          ## the project open at the quit; "" for none
     reopenProject*: bool = true                   ## start with the project open at the quit
+    referenceId*: string
+      ## the reference the plots use when no project is open; "" is the file's own pilot
     plot*: PlotDefaults
     scale*: ScaleUnits                            ## per inch or cm; time as ms per length or speed
     calibrations*: seq[Calibration]               ## one per calibrated monitor

@@ -558,6 +558,8 @@ type
     traces*: seq[int] ## survey-wide ids, in the order drawn
     first*: int ## the first one's index in its file
     reference*: string ## a correlation's reference, in words
+    archiveSeen*: string ## the archive reference it was asked with; "" the file's
+    archiveRev*: int = -1 ## the archive's revision then
     processing*: Processing ## the plot's filters when it asked last
     filters*: string ## them in words; "" for none
     killed*: seq[int] ## its traces killed when it asked last (indices in the file)

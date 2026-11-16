@@ -88,7 +88,9 @@ func firstAux(s: Session; trace: int): int =
 proc refKeyOf(state: var AppState; s: Session; traces: seq[int]; r: int): string =
   ## The own filter of a correlation's reference, as a key, the reference
   ## `askPlot` reads: trace `r` of an open file, else the first auxiliary
-  ## trace of `s` (`traces`: the shown traces, as indices of `s`).
+  ## trace of `s` (`traces`: the shown traces, as indices of `s`). An archive
+  ## reference has no own filter: "".
+  if state.chosenRef.len > 0: return ""
   let j = state.findTrace(r)
   if j >= 0:
     let rs = state.sessions[j]
@@ -120,7 +122,29 @@ proc askPlot(state: var AppState; w: int): bool =
   a.unit = if imported: state.joins[joined].units.file else: headerUnitOf(s.crs)
   # the offsets' unit: the import's when joined, else the header's measurement system
   a.offsetUnit = if imported: state.joins[joined].units.file else: offsetUnitOf(s.crs)
-  if pw.view == avCorrelation:
+  if pw.view in {avCorrelation, avVibrator} and state.chosenRef.len > 0:
+    # an archive reference stands in for the file's pilot
+    if not state.refsLoaded:
+      a.archiveGone = "the reference archive is still being read"
+      a.archiveName = state.chosenRef
+    else:
+      let at = state.refs.findId(state.chosenRef)
+      if at < 0:
+        a.archiveGone = "the reference \"" & state.chosenRef &
+          "\" is no longer in the archive"
+        a.archiveName = state.chosenRef
+      elif state.refs.entries[at].missing:
+        a.archiveGone = "the reference \"" & state.refs.entries[at].name &
+          "\" is no longer in the archive (its file is missing)"
+        a.archiveName = state.refs.entries[at].name
+      else:
+        let e = state.refs.entries[at]
+        a.archivePath = state.refsHome / e.file
+        a.archiveName = e.name
+        a.archiveIntervalUs = e.intervalUs
+    a.refName = a.archiveName & " (archive)"
+    pw.reference = a.refName
+  elif pw.view == avCorrelation:
     let r = pw.params.reference
     let j = state.findTrace(r)
     if j >= 0:
@@ -174,6 +198,9 @@ proc askPlot(state: var AppState; w: int): bool =
   inc pw.asks
   inc pw.revision
   state.analysisReaderFor(s.path).ask a
+  if pw.view in {avCorrelation, avVibrator}:
+    pw.archiveSeen = state.chosenRef
+    pw.archiveRev = state.refsRev
   true
 
 proc stampPick(state: var AppState; w, k, i: int) =
@@ -740,6 +767,9 @@ proc followPlots(state: var AppState) =
   for w in 0 ..< state.plots.len:
     template pw: untyped = state.plots[w]
     if pw.frozen: continue
+    if pw.view in {avCorrelation, avVibrator} and
+        (pw.archiveSeen != state.chosenRef or pw.archiveRev != state.refsRev):
+      discard state.askPlot(w)
     let k = state.findPanel(pw.panel)
     if k < 0 or state.panels[k].layers.len == 0: continue
     let i = state.shownFile(k)

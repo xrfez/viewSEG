@@ -90,6 +90,8 @@ type
     processing*: Processing        ## the plot's filters in the project
     hasProcessing*: bool           ## `processing` was set in the project (else the user's stand)
     hasPresets*: bool              ## `displayPresets` were set in the project (else the user's)
+    referenceId*: string
+      ## the reference the plots use in this project; "" is the file's own pilot
     later*: seq[NifNode]
       ## what the document holds that this version does not know (a later
       ## version's), written back as it was

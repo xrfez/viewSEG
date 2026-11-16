@@ -107,13 +107,13 @@ from processSEG/pipeline import Pipeline, items, initPipeline
 from processing import changesSamples, ownShownWords, reverseShownWords
 import analysis, analysisreader, closer, components, diskio, edits, filejobs, filelist, filememory,
   filesystem, identity, inbox, inspector, jobs, join, layouts, log, mapstate, memoryjobs,
-  panels, persist, pick, project, projectjobs, projectnif, reader, recordqc, selection, session,
-  settings, shots, spectra, spectrumreader, spread, survey, surveyjobs, threads, tiles, watch,
-  zoom
+  panels, persist, pick, project, projectjobs, projectnif, reader, recordqc, referencejobs,
+  references, selection, session, settings, shots, spectra, spectrumreader, spread, survey,
+  surveyjobs, threads, tiles, watch, zoom
 
 export analysis, edits, filelist, filememory, identity, inbox, jobs, join, layouts, log,
-  mapstate, panels, persist, pick, project, recordqc, selection, session, settings, shots,
-  spectra, spread, survey, threads, tiles, zoom
+  mapstate, panels, persist, pick, project, recordqc, references, selection, session, settings,
+  shots, spectra, spread, survey, threads, tiles, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues, MaxTableRows
 export tracetable
 export WatchInterval
@@ -227,6 +227,20 @@ type
     ckReopen = "reopen"
       ## open a file again with other options (its standard, its headers all checked,
       ## two's-complement mantissas, mapped or not), in the panels that show it
+    ckListReferences = "list references"
+      ## read the reference archive in force (and the main one, when a project is open)
+    ckStoreReference = "store reference"
+      ## store a trace's raw samples, cut to a time window, as a named reference
+    ckGenerateReference = "generate reference"
+      ## make a sweep with processSEG and store it as a named reference
+    ckSelectReference = "select reference"
+      ## the reference the plots use; "" is the file's own pilot
+    ckDeleteReference = "delete reference"
+      ## remove a reference from the archive in force
+    ckRenameReference = "rename reference"
+      ## give a reference another name (a name already used is refused)
+    ckCopyReference = "copy reference"
+      ## copy a reference of the main archive into the project open
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -438,7 +452,22 @@ type
       folderAction*: FolderAction ## add, remove, or locate (found at `folderPath`)
       folderPath*: string ## the folder added or removed, or where a missing one is now
       folderWas*: string ## locate: the missing folder, as the project names it
-    of ckCloseProject, ckUpdateSurvey: discard
+    of ckCloseProject, ckUpdateSurvey, ckListReferences: discard
+    of ckStoreReference:
+      refStore*: StoredReference
+        ## ckStoreReference: the trace (a survey-wide id), the window in ms
+        ## (`toMs` below 0: the trace's end) and the name
+    of ckGenerateReference:
+      refGenerate*: GeneratedReference
+        ## ckGenerateReference: the sweep (frequencies, length, sample interval,
+        ## tapers, type, amplitude). `dtMs` 0: the file on show. `name` "":
+        ## one made from the parameters
+    of ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference:
+      refId*: string
+        ## ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference:
+        ## the reference's id; "" for ckSelectReference is the file's own pilot
+      refNewName*: string
+        ## ckRenameReference: the new name
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -864,6 +893,15 @@ type
       ## per file with edits: its size and time when they were made
     store: Store
       ## where what is remembered about files is kept; nowhere until `rememberFilesIn`
+    refsHome: string
+      ## the archive in force (`references` of the project, or the program's own)
+    mainRefsHome: string ## the program's own archive
+    refs: ReferenceIndex ## the archive in force, as last read
+    mainRefs: ReferenceIndex ## the program's own, listed beside a project's
+    chosenRef: string ## the reference the plots use; "" is the file's own pilot
+    refsLoaded: bool
+    mainRefsLoaded: bool
+    refsRev: int ## bumps when the archive or the choice changes, so a plot asks again
     remembered: seq[Remembered]
       ## the files opened this run, by path, and where their edits are kept
     knownDocs: Table[string, FileRecord]
@@ -1137,6 +1175,8 @@ proc saveProject(state: var AppState; first = false) =
 
 # ----------------------------------------------------------- file memory --
 
+proc loadReferences(state: var AppState; folder: string; main: bool)
+
 proc rememberFilesIn*(state: var AppState; dir: string) =
   ## From now on, remembers the trace edits of the files opened (the user's
   ## own: `keeps`) in `dir`'s `StoreFolder` (`core/filememory`), by each
@@ -1148,10 +1188,39 @@ proc rememberFilesIn*(state: var AppState; dir: string) =
   state.store = Store(home: dir / StoreFolder)
   state.userStore = state.store.home
   state.diskIo.sweep(state.store.home, ProgramStart) # what a write cut short left
+  state.mainRefsHome = referencesFolder(dir)
+  if state.project.dir.len == 0:
+    state.refsHome = state.mainRefsHome
+    state.chosenRef = state.settings.referenceId
+    state.loadReferences(state.mainRefsHome, main = true)
 
 func store*(state: AppState): lent Store {.inline.} =
   ## Where what is remembered about files is kept.
   state.store
+
+func references*(state: AppState): lent ReferenceIndex {.inline.} =
+  ## The reference archive in force, as last read.
+  state.refs
+
+func mainReferences*(state: AppState): lent ReferenceIndex {.inline.} =
+  ## The program's own reference archive, listed beside a project's.
+  state.mainRefs
+
+func chosenReference*(state: AppState): string {.inline.} =
+  ## The reference the plots use; "" is the file's own pilot.
+  state.chosenRef
+
+func referencesHome*(state: AppState): string {.inline.} =
+  ## The folder of the archive in force; "" when none was set.
+  state.refsHome
+
+func referencesLoaded*(state: AppState): bool {.inline.} =
+  ## Whether the archive in force has been read this run.
+  state.refsLoaded
+
+func referenceArchiveTitle*(state: AppState): string =
+  ## Which archive the window shows: the project's name, or the main one.
+  if state.project.dir.len > 0: "project " & state.project.doc.name else: "main"
 
 func keyOf(state: AppState; path: string): string =
   ## The key of `edits` of the file at `path`: its own path, or that of
@@ -4876,6 +4945,11 @@ proc leaveProject(state: var AppState; restoreUser: bool) =
     if job != NoJob: discard state.jobs.cancel(job)
   state.releaseLock()
   state.store = Store(home: state.userStore)
+  state.refsHome = state.mainRefsHome
+  state.refs = state.mainRefs
+  state.refsLoaded = state.mainRefsLoaded
+  state.chosenRef = state.settings.referenceId
+  inc state.refsRev
   var s = state.settings
   if p.doc.hasPresets: s.displayPresets = p.userPresets
   if p.doc.hasProcessing: s.plot.processing = p.userProcessing
@@ -5038,6 +5112,15 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   inc p.revision
   state.store = Store(home: dir / ProjectStoreFolder)
   if not p.readOnly: state.diskIo.sweep(state.store.home, ProgramStart)
+  if state.refsHome == state.mainRefsHome:
+    state.mainRefs = state.refs
+    state.mainRefsLoaded = state.refsLoaded
+  state.refsHome = referencesFolder(dir)
+  state.refs = ReferenceIndex()
+  state.refsLoaded = false
+  state.chosenRef = p.doc.referenceId
+  inc state.refsRev
+  state.loadReferences(state.refsHome, main = false)
   state.change(by, s):
     s.recentProjects.addRecent(dir, MaxRecent)
     s.lastProject = dir
@@ -6607,6 +6690,174 @@ proc stepTrace(state: var AppState; cmd: Command) =
     state.log.add(sevInfo, "spectrum", state.spectra[w].title & " is frozen: it keeps its " &
       "trace (the plot's selection stepped to trace " & $(p.shown[to] + 1) & ")")
 
+proc loadReferences(state: var AppState; folder: string; main: bool) =
+  ## Reads the archive in `folder`, off this thread.
+  if folder.len == 0: return
+  discard state.jobs.submit(JobSpec(title: "Read the reference archive", lane: jlInteractive),
+    listWork(folder, main, state.inbox.poster))
+
+proc refsWritable(state: AppState): string =
+  ## Why the archive in force cannot be written; "" when it can.
+  if state.refsHome.len == 0: "there is no reference archive in this run"
+  elif state.inProject and state.project.readOnly:
+    "the project is open read-only (" & state.project.whyReadOnly & ")"
+  else: ""
+
+proc keepChoice(state: var AppState; origin: CommandOrigin; id: string) =
+  ## The plots use reference `id` ("" : the file's own pilot). Kept in the
+  ## project when one is open, else in the settings, and only when the user
+  ## asked (`keeps`).
+  state.chosenRef = id
+  inc state.refsRev
+  if state.inProject:
+    if keeps(origin) and not state.project.readOnly:
+      state.project.doc.referenceId = id
+      state.projectChanged()
+    elif keeps(origin) and state.project.readOnly:
+      state.log.add(sevWarning, "references", "The project is read-only: this choice is " &
+        "for this run only.")
+  else:
+    state.change(origin, s): s.referenceId = id
+
+proc shownDtMs(state: AppState): float64 =
+  ## The sample interval of the file the Seismic window shows, in ms; 0 when
+  ## it shows none, or the headers give none.
+  let k = state.findPanel(MainPanel)
+  if k < 0 or not state.panels[k].laidOut or state.panels[k].layout.noInterval: return 0
+  state.panels[k].layout.dtMs
+
+func shownIntervalMs*(state: AppState): float64 {.inline.} =
+  ## `shownDtMs`, for the Generate dialog's default.
+  state.shownDtMs
+
+proc storeReference(state: var AppState; cmd: Command) =
+  let why = state.refsWritable
+  if why.len > 0:
+    state.ignore(cmd, why)
+    return
+  let name = cmd.refStore.name.strip
+  if name.len == 0:
+    state.ignore(cmd, "a reference needs a name")
+    return
+  if state.refsLoaded:
+    let problem = state.refs.nameProblem(name)
+    if problem.len > 0:
+      state.ignore(cmd, problem)
+      return
+  let i = state.findTrace(cmd.refStore.trace)
+  if i < 0:
+    state.ignore(cmd, "the trace is in no open file")
+    return
+  let s = state.sessions[i]
+  let local = cmd.refStore.trace - s.base
+  var record = NaN
+  let g = s.gatherOf(local)
+  if g >= 0 and g < s.records.len: record = s.records[g].record
+  let span = indexedSpan(s.filePtr, local)
+  discard state.jobs.submit(JobSpec(title: "Store a reference", lane: jlInteractive,
+    reads: @[s.path]), storeWork(s.filePtr, s.path, s.size, local, cmd.refStore.fromMs,
+    cmd.refStore.toMs, span.intervalUs, record, s.name, name, state.refsHome, local + 1,
+    state.inbox.poster))
+
+proc generateReference(state: var AppState; cmd: Command) =
+  let why = state.refsWritable
+  if why.len > 0:
+    state.ignore(cmd, why)
+    return
+  var g = cmd.refGenerate
+  if not (g.dtMs > 0): g.dtMs = state.shownDtMs
+  if not (g.dtMs > 0):
+    state.ignore(cmd, "no sample interval: name one, or show a file that has one")
+    return
+  if g.name.strip.len == 0: g.name = defaultGenerateName(g)
+  if state.refsLoaded:
+    let problem = state.refs.nameProblem(g.name)
+    if problem.len > 0:
+      state.ignore(cmd, problem)
+      return
+  discard state.jobs.submit(JobSpec(title: "Generate a reference", lane: jlInteractive),
+    generateWork(g, state.refsHome, state.inbox.poster))
+
+proc selectReference(state: var AppState; cmd: Command) =
+  let id = cmd.refId
+  if id.len > 0 and state.refsLoaded and state.refs.findId(id) < 0:
+    state.ignore(cmd, "there is no reference \"" & id & "\" in the archive")
+    return
+  state.keepChoice(cmd.origin, id)
+  if id.len == 0:
+    state.log.add(sevInfo, "references", "The plots use the file's own pilot.")
+  else:
+    let i = state.refs.findId(id)
+    let name = if i >= 0: state.refs.entries[i].name else: id
+    state.log.add(sevInfo, "references", "The plots use the reference \"" & name & "\".")
+
+proc deleteReference(state: var AppState; cmd: Command) =
+  let why = state.refsWritable
+  if why.len > 0:
+    state.ignore(cmd, why)
+    return
+  if cmd.refId.len == 0:
+    state.ignore(cmd, "no reference was named")
+    return
+  discard state.jobs.submit(JobSpec(title: "Delete a reference", lane: jlInteractive),
+    deleteWork(state.refsHome, cmd.refId, state.inbox.poster))
+
+proc renameReference(state: var AppState; cmd: Command) =
+  let why = state.refsWritable
+  if why.len > 0:
+    state.ignore(cmd, why)
+    return
+  if cmd.refId.len == 0:
+    state.ignore(cmd, "no reference was named")
+    return
+  if cmd.refNewName.strip.len == 0:
+    state.ignore(cmd, "a reference needs a name")
+    return
+  discard state.jobs.submit(JobSpec(title: "Rename a reference", lane: jlInteractive),
+    renameWork(state.refsHome, cmd.refId, cmd.refNewName, state.inbox.poster))
+
+proc copyReference(state: var AppState; cmd: Command) =
+  if not state.inProject:
+    state.ignore(cmd, "no project is open")
+    return
+  let why = state.refsWritable
+  if why.len > 0:
+    state.ignore(cmd, why)
+    return
+  if state.mainRefsHome.len == 0:
+    state.ignore(cmd, "there is no main archive in this run")
+    return
+  if cmd.refId.len == 0:
+    state.ignore(cmd, "no reference was named")
+    return
+  discard state.jobs.submit(JobSpec(title: "Copy a reference into the project",
+    lane: jlInteractive), copyWork(state.mainRefsHome, state.refsHome, cmd.refId,
+    state.inbox.poster))
+
+proc takeReferences(state: var AppState; m: sink Msg) =
+  ## A reference job's result.
+  let n = m.refNews
+  if n.home.len > 0 and n.home == state.mainRefsHome:
+    state.mainRefs = n.index
+    state.mainRefsLoaded = true
+  if n.home.len > 0 and n.home == state.refsHome:
+    state.refs = n.index
+    state.refsLoaded = true
+    inc state.refsRev
+  if n.act == raFailed or (n.act == raListed and n.failure.len > 0):
+    if n.failure.len > 0:
+      state.log.add(sevWarning, "references", n.failure & ".")
+  elif n.act == raStored:
+    state.log.add(sevInfo, "references", "Stored the reference \"" & n.name & "\".")
+  elif n.act == raGenerated:
+    state.log.add(sevInfo, "references", "Generated the reference \"" & n.name & "\".")
+  elif n.act == raRenamed:
+    state.log.add(sevInfo, "references", "Renamed the reference to \"" & n.name & "\".")
+  elif n.act == raDeleted:
+    state.log.add(sevInfo, "references", "Deleted the reference \"" & n.name & "\".")
+  elif n.act == raCopied:
+    state.log.add(sevInfo, "references", "Copied \"" & n.name & "\" into the project.")
+
 proc applyCommand(state: var AppState; cmd: Command) =
   case cmd.kind
   of ckOpen:
@@ -6885,6 +7136,16 @@ proc applyCommand(state: var AppState; cmd: Command) =
   of ckOpenProject:
     if cmd.projectPath.len == 0: state.ignore(cmd, "no project was named")
     else: state.openProject(projectDirOf(canonical(cmd.projectPath)), cmd.origin)
+  of ckListReferences:
+    state.loadReferences(state.refsHome, main = false)
+    if state.inProject and state.mainRefsHome.len > 0:
+      state.loadReferences(state.mainRefsHome, main = true)
+  of ckStoreReference: state.storeReference(cmd)
+  of ckGenerateReference: state.generateReference(cmd)
+  of ckSelectReference: state.selectReference(cmd)
+  of ckDeleteReference: state.deleteReference(cmd)
+  of ckRenameReference: state.renameReference(cmd)
+  of ckCopyReference: state.copyReference(cmd)
   of ckCloseProject:
     if not state.inProject: state.ignore(cmd, "no project is open")
     else:
@@ -7246,6 +7507,7 @@ proc drainInbox*(state: var AppState): bool =
       if i >= 0: state.heads[i] = move m.surveyHead
     of mkProject: state.takeProject(move m)
     of mkEarlier: state.takeEarlier(move m)
+    of mkReferences: state.takeReferences(move m)
     of mkSpreads: state.takeSpreads(move m)
     of mkShots: state.takeShots(move m)
     of mkRecordQc: state.takeRecordQc(move m)

@@ -139,6 +139,7 @@ proc projectDocument*(d: ProjectDoc): string =
         w.value("quick", hex(f.quick))
       w.close
     w.close
+  w.value("referenceId", d.referenceId)
   if d.hasProcessing: w.writeProcessing(d.processing)
   if d.hasPresets: w.writeDisplayPresets(d.displayPresets)
   for n in d.later: w.add n
@@ -337,6 +338,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
       of "displayPresets":
         result.displayPresets = readDisplayPresets(c, name, r.problems)
         result.hasPresets = true
+      of "referenceId": r.text(c, result.referenceId)
       else: result.later.add c
   if result.version == 0:
     r.problem(doc[root], "(project) gives no (version); read as version " & $ProjectVersion)

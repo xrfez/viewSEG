@@ -31,7 +31,8 @@ import std/[algorithm, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
-import analysis, filesystem, fkanalysis, inbox, jobs, join, log, processing, threads, vibanalysis
+import analysis, filesystem, fkanalysis, inbox, jobs, join, log, processing, references, threads,
+  vibanalysis
 
 type
   AnalysisAsk* = object
@@ -60,6 +61,10 @@ type
     refOwn*: seq[FilterEntry] ## the reference's own filter, when it has one
     refReversed*: bool        ## the reference is effectively reversed
     refAllReversed*: bool     ## reverse-all was on in the reference's file
+    archivePath*: string      ## a reference from the archive, instead of a trace
+    archiveName*: string
+    archiveIntervalUs*: float64
+    archiveGone*: string      ## selected, but not usable: said, and nothing is drawn
 
   ReaderObj = object
     lock: Lock
@@ -349,54 +354,95 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             answer = phaseOf(kept[0], keptNames[0], dtMs, a.params)
             (answer.leftOut, answer.atOtherInterval) = n
           of avCorrelation:
-            # the reference: its own trace, read and filtered as the others
-            let rf = if a.refFile != nil: a.refFile else: f
-            let rt = if a.refTrace >= 0: a.refTrace else: keptList[0]
-            let rpath = if a.refFile != nil: a.refPath else: a.path
-            var refRows: seq[seq[float32]] = @[]
-            var refFailed: seq[bool] = @[]
-            if rt notin 0 ..< rf[].len:
-              answer.problem = "the reference trace is not in its file"
-            else:
-              if not p.readRows(rf, rpath, @[rt], a.id, refRows, refFailed): return false
-              let rk = rf[].traceKeys(rt)
-              let rus = if rk.intervalUs > 0 and rk.intervalUs < Inf: rk.intervalUs
-                        else: rf[].sampleIntervalUs(rt)
-              let rdt = rus / 1000
-              if refFailed[0] or refRows[0].len == 0:
-                answer.problem = "the reference trace could not be read"
-              elif not (rus > 0 and rus < Inf):
-                answer.problem = "the reference trace is at another interval: it has " &
-                  "no sample interval"
-              elif not sameDt(rdt, dtMs):
-                answer.problem = "the reference is sampled at " & $rdt & " ms, the traces at " &
-                  $dtMs & " ms"
+            # the reference: an archive reference, or its own trace, read and
+            # filtered as the others
+            if a.archiveGone.len > 0 or a.archivePath.len > 0:
+              if a.archiveGone.len > 0:
+                answer.problem = a.archiveGone
               else:
-                let refName = if a.refName.len > 0: a.refName else: keptNames[0]
-                var refPassed = 0
-                let refOwn = if a.refOwn.len > 0: a.refOwn
-                             elif a.refPath == a.path: a.own
-                             else: @[]
-                let refFlip = if a.refTrace >= 0: a.refReversed
-                              else: a.reversed.binarySearch(rt) >= 0
-                let refRev = if refFlip: @[rt] else: newSeq[int]()
-                let refThrough = filtered(refRows, rf, @[rt], a.processing, refOwn, refRev,
-                  dtMs, refPassed)
-                if refPassed > 0 and refThrough.startsWith("through "):
-                  inc passed
-                  let words = "the reference (" & refName & ") is not filtered: " & AuxFilterOff
-                  through = if through.len > 0: through & "; " & words else: words
-                var signals: seq[(string, seq[float32])] = @[]
-                for i in 0 ..< min(kept.len, MaxAnalysisCurves):
-                  signals.add (keptNames[i], kept[i])
-                let n = (answer.leftOut, answer.atOtherInterval)
-                answer = correlationOf(signals, refRows[0], refName, dtMs, a.params, stop)
-                (answer.leftOut, answer.atOtherInterval) = n
-                # a signal that is the reference itself: its autocorrelation
-                let own = if rf == f: keptList.find(rt) else: -1
-                if own in 0 ..< signals.len and answer.problem.len == 0:
-                  answer.note.add "; " & keptNames[own] & " is the reference itself: its " &
-                    "autocorrelation (a peak at 0 ms, 0 dB, 0°)"
+                var refSamples: seq[float32] = @[]
+                var rus = a.archiveIntervalUs
+                try:
+                  var read: tuple[samples: seq[float32]; intervalUs: float64]
+                  {.cast(gcsafe).}:
+                    read = readReferenceFile(a.archivePath)
+                  refSamples = read.samples
+                  if read.intervalUs > 0: rus = read.intervalUs
+                except CatchableError as e:
+                  answer.problem = "the reference \"" & a.archiveName &
+                    "\" is no longer in the archive (" & e.msg & ")"
+                if answer.problem.len == 0:
+                  let rdt = rus / 1000
+                  if not (rus > 0 and rus < Inf):
+                    answer.problem = "the reference trace is at another interval: it has " &
+                      "no sample interval"
+                  elif not sameDt(rdt, dtMs):
+                    answer.problem = intervalRefusal(rdt, dtMs)
+                  elif refSamples.len == 0:
+                    answer.problem = "the reference trace could not be read"
+                  else:
+                    let refName = a.archiveName & " (archive)"
+                    var signals: seq[(string, seq[float32])] = @[]
+                    for i in 0 ..< min(kept.len, MaxAnalysisCurves):
+                      signals.add (keptNames[i], kept[i])
+                    let n = (answer.leftOut, answer.atOtherInterval)
+                    answer = correlationOf(signals, refSamples, refName, dtMs, a.params, stop)
+                    (answer.leftOut, answer.atOtherInterval) = n
+                    let rule = if kept.len > 0: lengthRule(refSamples.len, kept[0].len) else: ""
+                    if rule.len > 0 and answer.problem.len == 0:
+                      answer.note = "Reference: " & refName & ". " & rule &
+                        (if answer.note.len > 0: ". " & answer.note else: "")
+                    elif answer.problem.len == 0:
+                      answer.note = "Reference: " & refName &
+                        (if answer.note.len > 0: ". " & answer.note else: "")
+            else:
+              let rf = if a.refFile != nil: a.refFile else: f
+              let rt = if a.refTrace >= 0: a.refTrace else: keptList[0]
+              let rpath = if a.refFile != nil: a.refPath else: a.path
+              var refRows: seq[seq[float32]] = @[]
+              var refFailed: seq[bool] = @[]
+              if rt notin 0 ..< rf[].len:
+                answer.problem = "the reference trace is not in its file"
+              else:
+                if not p.readRows(rf, rpath, @[rt], a.id, refRows, refFailed): return false
+                let rk = rf[].traceKeys(rt)
+                let rus = if rk.intervalUs > 0 and rk.intervalUs < Inf: rk.intervalUs
+                          else: rf[].sampleIntervalUs(rt)
+                let rdt = rus / 1000
+                if refFailed[0] or refRows[0].len == 0:
+                  answer.problem = "the reference trace could not be read"
+                elif not (rus > 0 and rus < Inf):
+                  answer.problem = "the reference trace is at another interval: it has " &
+                    "no sample interval"
+                elif not sameDt(rdt, dtMs):
+                  answer.problem = "the reference is sampled at " & $rdt & " ms, the traces at " &
+                    $dtMs & " ms"
+                else:
+                  let refName = if a.refName.len > 0: a.refName else: keptNames[0]
+                  var refPassed = 0
+                  let refOwn = if a.refOwn.len > 0: a.refOwn
+                               elif a.refPath == a.path: a.own
+                               else: @[]
+                  let refFlip = if a.refTrace >= 0: a.refReversed
+                                else: a.reversed.binarySearch(rt) >= 0
+                  let refRev = if refFlip: @[rt] else: newSeq[int]()
+                  let refThrough = filtered(refRows, rf, @[rt], a.processing, refOwn, refRev,
+                    dtMs, refPassed)
+                  if refPassed > 0 and refThrough.startsWith("through "):
+                    inc passed
+                    let words = "the reference (" & refName & ") is not filtered: " & AuxFilterOff
+                    through = if through.len > 0: through & "; " & words else: words
+                  var signals: seq[(string, seq[float32])] = @[]
+                  for i in 0 ..< min(kept.len, MaxAnalysisCurves):
+                    signals.add (keptNames[i], kept[i])
+                  let n = (answer.leftOut, answer.atOtherInterval)
+                  answer = correlationOf(signals, refRows[0], refName, dtMs, a.params, stop)
+                  (answer.leftOut, answer.atOtherInterval) = n
+                  # a signal that is the reference itself: its autocorrelation
+                  let own = if rf == f: keptList.find(rt) else: -1
+                  if own in 0 ..< signals.len and answer.problem.len == 0:
+                    answer.note.add "; " & keptNames[own] & " is the reference itself: its " &
+                      "autocorrelation (a peak at 0 ms, 0 dB, 0°)"
           of avFk:
             # the trace spacing, from the keys of the traces read
             var offsets, xs, ys: seq[float64] = @[]
@@ -413,23 +459,68 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             (answer.leftOut, answer.atOtherInterval) = n
           of avVibrator:
             # each role's trace: its place among those asked about, then
-            # among those read (one left out has no role)
-            let places = [vsReference: a.params.roles.reference,
-              vsGroundForce: a.params.roles.groundForce, vsMass: a.params.roles.mass,
-              vsBaseplate: a.params.roles.baseplate]
-            var at: array[VibRole, int]
-            var missing: seq[string] = @[]
-            for role in VibRole:
-              let q = places[role]
-              at[role] = if q in 0 ..< a.traces.len: keptList.find(a.traces[q]) else: -1
-              if q in 0 ..< a.traces.len and at[role] < 0: missing.add $role
-            let n = (answer.leftOut, answer.atOtherInterval)
-            answer = vibratorOf(kept, keptNames, at, dtMs, a.params)
-            (answer.leftOut, answer.atOtherInterval) = n
-            if missing.len > 0:
-              let words = missing.join(", ") & " left out (killed, dead or unreadable)"
-              if answer.problem.len > 0: answer.problem.add "; " & words
-              else: answer.note.add "; " & words
+            # among those read (one left out has no role). An archive
+            # reference replaces the reference role's samples.
+            if a.archiveGone.len > 0:
+              answer.problem = a.archiveGone
+            else:
+              var rows = kept
+              var names = keptNames
+              var archiveSamples: seq[float32] = @[]
+              var refused = false
+              if a.archivePath.len > 0:
+                try:
+                  var read: tuple[samples: seq[float32]; intervalUs: float64]
+                  {.cast(gcsafe).}:
+                    read = readReferenceFile(a.archivePath)
+                  let rus = if read.intervalUs > 0: read.intervalUs else: a.archiveIntervalUs
+                  let rdt = rus / 1000
+                  if not (rus > 0 and rus < Inf):
+                    answer.problem = "the reference trace is at another interval: it has " &
+                      "no sample interval"
+                    refused = true
+                  elif not sameDt(rdt, dtMs):
+                    answer.problem = intervalRefusal(rdt, dtMs)
+                    refused = true
+                  else:
+                    archiveSamples = read.samples
+                except CatchableError as e:
+                  answer.problem = "the reference \"" & a.archiveName &
+                    "\" is no longer in the archive (" & e.msg & ")"
+                  refused = true
+              if not refused:
+                let places = [vsReference: a.params.roles.reference,
+                  vsGroundForce: a.params.roles.groundForce, vsMass: a.params.roles.mass,
+                  vsBaseplate: a.params.roles.baseplate]
+                var at: array[VibRole, int]
+                var missing: seq[string] = @[]
+                for role in VibRole:
+                  let q = places[role]
+                  at[role] = if q in 0 ..< a.traces.len: keptList.find(a.traces[q]) else: -1
+                  if q in 0 ..< a.traces.len and at[role] < 0 and a.archivePath.len == 0:
+                    missing.add $role
+                if archiveSamples.len > 0:
+                  let refName = a.archiveName & " (archive)"
+                  if at[vsReference] >= 0:
+                    rows[at[vsReference]] = archiveSamples
+                    names[at[vsReference]] = refName
+                  else:
+                    rows.add archiveSamples
+                    names.add refName
+                    at[vsReference] = rows.high
+                let n = (answer.leftOut, answer.atOtherInterval)
+                answer = vibratorOf(rows, names, at, dtMs, a.params)
+                (answer.leftOut, answer.atOtherInterval) = n
+                if archiveSamples.len > 0 and answer.problem.len == 0:
+                  let refName = a.archiveName & " (archive)"
+                  let rule = if kept.len > 0: lengthRule(archiveSamples.len, kept[0].len) else: ""
+                  let line = "Reference: " & refName &
+                    (if rule.len > 0: ". " & rule else: "")
+                  answer.note = line & (if answer.note.len > 0: ". " & answer.note else: "")
+                if missing.len > 0:
+                  let words = missing.join(", ") & " left out (killed, dead or unreadable)"
+                  if answer.problem.len > 0: answer.problem.add "; " & words
+                  else: answer.note.add "; " & words
           if answer.cancelled: return false # its window closed or asked again: nothing to say
           answer.gen = a.gen
           answer.id = a.id

@@ -285,6 +285,7 @@ proc settingsDocument*(s: Settings): string =
   w.close()
   w.value("lastProject", s.lastProject)
   w.value("reopenProject", s.reopenProject)
+  w.value("referenceId", s.referenceId)
   w.open("plot")
   w.display(s.plot.display)
   w.value("seismic", s.plot.seismic)
@@ -776,6 +777,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       of "recentProjects": r.strings(c, result.recentProjects)
       of "lastProject": r.text(c, result.lastProject, allowEmpty = true)
       of "reopenProject": r.flag(c, result.reopenProject)
+      of "referenceId": r.text(c, result.referenceId, allowEmpty = true)
       of "plot": r.plot(c, result.plot)
       of "scale":
         for k in c.kids:

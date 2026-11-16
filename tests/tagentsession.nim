@@ -109,7 +109,8 @@ const Reached = {
   "spectrum.live.phase": "spectrum display", "spectrum.live.scale": "spectrum display",
   "spectrum.live.logFrequency": "spectrum display", "spectrum.live.time": "spectrum display",
   "spectrum.live.raw": "spectrum display", "spectrum.live.processed": "spectrum display",
-  "displayPresets": "display preset"}.toTable
+  "displayPresets": "display preset",
+  "referenceId": "select reference"}.toTable
 
 proc flatten[T](x: T; at: string; into: var OrderedTable[string, string]) =
   ## Every setting in `x` by its path ("plot.display.mode"), with its value
@@ -267,6 +268,16 @@ withFixtures fx:
     doAssert st.panel(MainPanel).layers[0].processing == Filters, "not what the agent asked"
     let t = st.firstTrace + 3
     st.agent(%*{"kind": "hover", "trace": t})
+    st.agent(%*{"kind": "list references"})
+    st.agent(%*{"kind": "store reference", "refStore": {"name": "agent pilot",
+      "trace": st.firstTrace, "fromMs": 0, "toMs": -1}})
+    doAssert st.references.entries.len >= 1, "the reference was not stored"
+    let rid = st.references.entries[0].id
+    st.agent(%*{"kind": "select reference", "refId": rid})
+    st.agent(%*{"kind": "generate reference", "refGenerate": {"name": "agent sweep",
+      "law": "linear", "f1Hz": 8, "f2Hz": 40, "durationMs": 1000, "dtMs": 2, "amplitude": 1}})
+    st.agent(%*{"kind": "rename reference", "refId": rid, "refNewName": "agent pilot renamed"})
+    st.agent(%*{"kind": "delete reference", "refId": rid})
     st.agent(%*{"kind": "select", "traces": [t]})
     st.agent(%*{"kind": "headers shown", "inspect": ["trace headers", "trace samples"]})
     doAssert st.inspection.answer.traces.len == 1, "the Headers window's reader read nothing"
@@ -381,6 +392,10 @@ withFixtures fx:
     st.agent(%*{"kind": "new project", "projectPath": fx.dir / "the agent's job",
       "dataFolders": [agentDir]})
     doAssert st.inProject and st.settings.lastProject == fx.dir / "the agent's job"
+    if st.mainReferences.entries.len > 0:
+      st.agent(%*{"kind": "copy reference", "refId": st.mainReferences.entries[0].id})
+    else:
+      st.agent(%*{"kind": "copy reference", "refId": "none"})
     st.agent(%*{"kind": "close project"})
     st.agent(%*{"kind": "open project", "projectPath": fx.dir / "the agent's job"})
     doAssert st.inProject
@@ -426,6 +441,11 @@ withFixtures fx:
     st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
       spectrumTraces: @[st.firstTrace], spectrumShow: FftShown)
     st.apply Command(kind: ckSpectrumDisplay, spectrum: LiveSpectrum, spectrumShow: LiveShown)
+    st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "window pilot",
+      trace: st.firstTrace, fromMs: 0, toMs: -1))
+    doAssert st.settle(st.references.entries.len >= 1 and busy(st, fe).len == 0),
+      "the window's reference was not stored"
+    st.apply Command(kind: ckSelectReference, refId: st.references.entries[0].id)
     st.apply Command(kind: ckNewProject, projectPath: fx.dir / "my job", dataFolders: @[agentDir])
     doAssert st.settle(st.inProject and busy(st, fe).len == 0)
     var d = st.panel(MainPanel).layers[0].display

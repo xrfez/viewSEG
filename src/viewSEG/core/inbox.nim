@@ -12,7 +12,7 @@
 import std/[locks, times]
 import parseSEG
 import analysis, edits, filelist, filememory, identity, join, jobs, layouts, log, mapkinds,
-  nif, panels, project, session, shotfiles, spectra, survey, tiles
+  nif, panels, project, references, session, shotfiles, spectra, survey, tiles
 
 type
   MsgKind* = enum
@@ -53,6 +53,7 @@ type
     mkSurveyHead ## what a survey file's headers say of its unit, for the import's window
     mkProject ## what a project's job found (`core/projectjobs`)
     mkEarlier ## what is remembered about earlier outputs of a file's name (`earlierOutputs`)
+    mkReferences ## a reference archive read or changed (`core/references`)
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -259,6 +260,8 @@ type
       earlierOf*: FileIdentity ## its identity, which none of them is
       earlier*: seq[FileRecord] ## the documents of earlier outputs of its name
       earlierProblems*: seq[string]
+    of mkReferences:
+      refNews*: ReferenceNews ## moved, never shared
 
   InboxObj = object
     lock: Lock
