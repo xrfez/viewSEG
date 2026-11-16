@@ -1,7 +1,7 @@
 ## The map's scale bar names the survey's unit and is as long as it says, in
 ## the running frontend, headless: on `mapSps`'s spread with its grid units
 ## given as metres, international feet and US survey feet (H20 `feet`, H201
-## 0.3048006096, as the Morgantown survey gives them), and not given; then
+## 0.3048006096, as a land survey gives them), and not given; then
 ## with the map's settings showing lengths in metres for the US survey feet
 ## survey. Each time: the bar's label ("m", "ft", "ftUS", "units"), its
 ## length in pixels against the map's scale (and the factor), its line drawn

@@ -15,13 +15,14 @@
 ## filter of neither, and `ckFilter` refuses one.)
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
-## `VIEWSEG_SCREENSHOTS=<dir>` saves aux-morgantown.png and gain-exponential.png
-## there when the example files are present (local only).
+## `VIEWSEG_SCREENSHOTS=<dir>` saves aux-land.png and gain-exponential.png
+## there when the private land record is present (local only).
 
 import std/[math, monotimes, options, os, strutils]
 import parseSEG
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/[app, icons]
+import privatefiles
 import utils/[fixtures, waiting]
 
 type
@@ -150,12 +151,11 @@ withFixtures fx:
 
 # ------------------------------------------------------------ screenshots --
 
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
-let morgantown = examples / "00000151_12900_11300.sgd"
+let landSegd = privateFile("landSegd")
 
-if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and fileExists(morgantown):
-  # Morgantown's record with its three auxiliary traces shown among the
-  # seismic ones (aux-morgantown.png); then the gain drop-down open on the
+if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and landSegd.len > 0:
+  # The private land record with its three auxiliary traces shown among the
+  # seismic ones (aux-land.png); then the gain drop-down open on the
   # Exponential type's settings, with its cutoff (gain-exponential.png).
   let shots = getEnv("VIEWSEG_SCREENSHOTS")
   createDir(shots)
@@ -179,7 +179,7 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and fileExists(morgantown):
         next 1
     of 1:
       if f.answered and wait > 30 and f.title == "Seismic + Aux":
-        if f.savePng(shots / "aux-morgantown.png"): saved.add "aux-morgantown.png"
+        if f.savePng(shots / "aux-land.png"): saved.add "aux-land.png"
         var d = f.panel.layers[0].display
         d.gain = dgExponential
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
@@ -194,7 +194,7 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and fileExists(morgantown):
         f.stop()
     else: f.stop()
     if overdue(f.index, 3000, since): f.stop()
-  let code = run(RunOptions(openPaths: @[morgantown], windowSize: (1600, 1000),
+  let code = run(RunOptions(openPaths: @[landSegd], windowSize: (1600, 1000),
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onShot))
   removeDir(tmp)

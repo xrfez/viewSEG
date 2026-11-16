@@ -6,12 +6,12 @@
 ## (.vendor "viewSEG")
 ## (project
 ##  (version 1)
-##  (name "Morgantown 2026")
+##  (name "Land 2026")
 ##  (created "2026-11-15T21:40:00Z")
 ##  (data (folder (path "../field/day1") (absolute "/mnt/field/day1")))
 ##  (survey
-##   (file (kind sps) (role column) (copy "survey/files/morgantown.sps")
-##    (path "../survey/morgantown.sps") (absolute "/mnt/survey/morgantown.sps")
+##   (file (kind sps) (role column) (copy "survey/files/land.sps")
+##    (path "../survey/land.sps") (absolute "/mnt/survey/land.sps")
 ##    (size 4812733) (modified 1763200961 120000000) (quick "9a0c51f3e2d4b6a7"))
 ##   (join (trailingDigits false) (multiComponent false) (coordinates fill) ...)
 ##   (units (survey usFeet) (file usFeet) (surveyFromHeaders false) (fileFromHeaders true))

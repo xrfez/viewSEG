@@ -26,7 +26,7 @@ import viewSEG/core/[jobs, join, nif, processing, project, projectnif, surveysto
 import utils/[fixtures, waiting]
 
 block document:
-  var d = ProjectDoc(name: "Morgantown 2026", created: initTime(1_763_240_400, 0))
+  var d = ProjectDoc(name: "Land 2026", created: initTime(1_763_240_400, 0))
   d.data = @[ProjectPath(path: "../field/day1", absolute: "/mnt/field/day1")]
   d.survey = @[SurveyCopy(kind: jkSps, copy: "survey/files/a.sps",
     original: ProjectPath(path: "../survey/a.sps", absolute: "/mnt/survey/a.sps"),
@@ -65,18 +65,18 @@ block document:
   doAssert problems.len == 1 and "line" in problems[0], $problems
 
 block places:
-  let dir = "/jobs/Morgantown 2026"
+  let dir = "/jobs/Land 2026"
   let p = placeOf(dir, "/jobs/field/day1")
   doAssert p.path == "../field/day1" and p.absolute == "/jobs/field/day1", $p
   # copied with its data to another drive: its own copy first, then the old
   # place, then a folder of that name beside the project
-  doAssert p.candidates("/media/usb/Morgantown 2026") == @["/media/usb/field/day1",
+  doAssert p.candidates("/media/usb/Land 2026") == @["/media/usb/field/day1",
     "/jobs/field/day1", "/media/usb/day1"], "a project copied with its data finds its " &
-    "own copy first: " & $p.candidates("/media/usb/Morgantown 2026")
+    "own copy first: " & $p.candidates("/media/usb/Land 2026")
   let m = p.moved("/jobs/field", "/mnt/field")
   doAssert m.absolute == "/mnt/field/day1", m.absolute
-  doAssert "/jobs/Morgantown 2026/x".isInside("/jobs/Morgantown 2026") and
-    not "/jobs/Morgantown 20267".isInside("/jobs/Morgantown 2026")
+  doAssert "/jobs/Land 2026/x".isInside("/jobs/Land 2026") and
+    not "/jobs/Land 20267".isInside("/jobs/Land 2026")
   doAssert projectDirOf("/a/b/project.nif") == "/a/b" and projectDirOf("/a/b") == "/a/b"
   doAssert projectNameProblem("").len > 0 and projectNameProblem("a/b").len > 0 and
       projectNameProblem("Job 1") == ""

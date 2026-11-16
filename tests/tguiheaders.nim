@@ -65,17 +65,18 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves headers-*.png there, and, with the
 ## example files present (local only), each tab of a SEG-Y and a SEG-D
-## example (headers-inglewood-*.png, headers-morgantown-*.png: the pictures
+## example (headers-segy3d-*.png, headers-land-*.png: the pictures
 ## in docs/images), the Headers window made larger by dragging its
 ## splitters and taken alone, the files shown from a folder of the
 ## fixtures (linked), so that no picture names the computer's folders;
-## Morgantown also joined with its survey files, the headers' coordinates
-## replaced (its Trace > Header and Summary then).
+## the land record also joined with its survey files, the headers'
+## coordinates replaced (its Trace > Header and Summary then).
 
 import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/[agentshot, app, headerswindow]
+import privatefiles
 import utils/[faultyfs, fixtures, waiting]
 
 func centre(r: Rect): Vec2 =
@@ -449,8 +450,6 @@ block aDriveThatStopsAnswering:
     doAssert uiCalls().len == 0, "the UI thread called the file system:\n" & uiCalls().join("\n")
 
 # Screenshots of each tab on the example files (local only).
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
-
 proc drag(f: FrameInfo; wait: int; start: Vec2; by: Vec2) =
   ## A drag from `start` by `by` over frames 2 to 12 of a step, as a hand
   ## would.
@@ -548,20 +547,19 @@ block theJoinedValues:
             "the receiver X the survey lacks is in the accent colour"))],
       fx.dir / "cache")
 
-if shots.len > 0 and dirExists(examples):
+if shots.len > 0 and (privateFile("landSegd").len > 0 or privateFile("segy3d").len > 0):
   withFixtures fx:
-    # Shown from a folder of the fixtures, linked: the Summary names that
-    # folder, not the computer's.
+    # Shown from a folder of the fixtures, linked under a neutral name: the
+    # Summary names that folder, not the computer's, and not the private file.
     createDir(fx.dir / "examples")
-    let sps = examples / "sps" / "PGI_NNE_West_Morgantown_3D_Post261019_NAD27_SPCS_WV_N_USFeet"
     var survey: seq[JoinFile]
-    for ext in [".sps", ".rps", ".xps"]:
-      if fileExists(sps & ext): survey.add JoinFile(path: sps & ext, kind: jkSps)
-    for (example, name, segd) in [("BO_3D-Inglewood_rev21_v7.sgy", "inglewood", false),
-        ("00000151_12900_11300.sgd", "morgantown", true)]:
-      let path = fx.dir / "examples" / example
-      if fileExists(examples / example):
-        createSymlink(examples / example, path)
+    for p in privateFiles("landSps", "landRps", "landXps"):
+      survey.add JoinFile(path: p, kind: jkSps)
+    for (key, name, segd) in [("segy3d", "segy3d", false), ("landSegd", "land", true)]:
+      let src = privateFile(key)
+      if src.len > 0:
+        let path = fx.dir / "examples" / (name & src.splitFile.ext)
+        createSymlink(src, path)
         var steps = @[("shown", Step(proc (f: FrameInfo; wait: int): bool =
           f.laidOut and wait > 10))]
         steps.add enlarge()

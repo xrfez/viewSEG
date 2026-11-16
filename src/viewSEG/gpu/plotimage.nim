@@ -19,7 +19,7 @@
 ## two stripes (columns, or rows when time is across) are drawn again, as the whole image is (cleared, every tile
 ## in its order), with the rest of the image kept, so the image is the one a
 ## whole drawing makes, at the cost of two traces' columns instead of the
-## plot's (on software OpenGL, a whole Morgantown record in wiggles took
+## plot's (on software OpenGL, a whole land record in wiggles took
 ## about 30 ms a hover).
 ##
 ## Everything here runs on the UI thread with the frontend's GL context

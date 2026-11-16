@@ -52,14 +52,14 @@ block sinceSerial:
 block diagnosticsKeepTheirPlace:
   var diags: DiagLog
   diags.report(sevWarning, dcBadValue, "format code 0 is not defined", 4340,
-    Location(file: "63.sgd", record: 0, field: "GH1.formatCode"))
+    Location(file: "sample.sgd", record: 0, field: "GH1.formatCode"))
   diags.report(sevError, dcTruncated, "the trace ends early", -1,
-    Location(file: "63.sgd", record: 0, trace: 3))
+    Location(file: "sample.sgd", record: 0, trace: 3))
   var log = initMessageLog()
-  log.add(sevInfo, "open", "Opening 63.sgd")
-  log.add(diags, "63.sgd")
+  log.add(sevInfo, "open", "Opening sample.sgd")
+  log.add(diags, "sample.sgd")
   doAssert log.len == 3
-  doAssert log[1].severity == sevWarning and log[1].source == "63.sgd"
+  doAssert log[1].severity == sevWarning and log[1].source == "sample.sgd"
   doAssert log[1].text == "format code 0 is not defined"
   doAssert log[1].offset == 4340 and log[1].loc.field == "GH1.formatCode"
   doAssert log[2].severity == sevError and log[2].loc.trace == 3 and log[2].offset == -1

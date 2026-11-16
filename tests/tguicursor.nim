@@ -30,6 +30,7 @@ import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/[displayheader, plotink, theme, timeaxis]
 import viewSEG/ui/imgui/[app, symbols]
+import privatefiles
 import utils/[fixtures, waiting]
 
 type
@@ -262,12 +263,10 @@ withFixtures fx:
   echo "tguicursor: ", steps.len, " steps, ", looks, " looks, ", moves, " moves"
 
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
-# local only), the cursor's time line is saved on the Morgantown record,
-# zoomed in, as wiggles on paper (cursor-morgantown.png) and as density on
-# the theme's colours (cursor-morgantown-density.png): docs/images/
+# local only), the cursor's time line is saved on the private land record,
+# zoomed in, as wiggles on paper (cursor-land.png) and as density on
+# the theme's colours (cursor-land-density.png): docs/images/
 # holds the committed ones.
-
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 
 proc cursorShot(path, file: string; mode: DisplayMode; colours: PlotColours;
     traces, timeMs: Span) =
@@ -320,10 +319,10 @@ proc cursorShot(path, file: string; mode: DisplayMode; colours: PlotColours;
   echo "tguicursor: saved ", dir / file
 
 if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
-  let morgantown = examples / "00000151_12900_11300.sgd"
-  if fileExists(morgantown):
+  let landSegd = privateFile("landSegd")
+  if landSegd.len > 0:
     createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-    cursorShot(morgantown, "cursor-morgantown.png", dmWiggle, pcPaper,
+    cursorShot(landSegd, "cursor-land.png", dmWiggle, pcPaper,
       Span(lo: 999.5, hi: 1039.5), Span(lo: 400, hi: 1000))
-    cursorShot(morgantown, "cursor-morgantown-density.png", dmDensity, pcTheme,
+    cursorShot(landSegd, "cursor-land-density.png", dmDensity, pcTheme,
       Span(lo: 799.5, hi: 1199.5), Span(lo: 0, hi: 2000))

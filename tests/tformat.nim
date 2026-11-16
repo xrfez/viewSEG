@@ -9,9 +9,12 @@
 ## waiting.nim"; with `src/viewSEG/core/state.nim` back on the list after it
 ## was formatted, "formatted now: take it off NotYet"; with
 ## `docs/screenshots/old.png` written into README.md, the public-docs check
-## named that mention and the image link that does not resolve.
+## named that mention and the image link that does not resolve. With a
+## private sample's file name written into README.md, the private-names
+## check named that file (skipped when `exampleFiles/names.cfg` is absent).
 
 import std/[algorithm, os, osproc, strutils, tempfiles]
+import privatefiles
 
 const
   root = currentSourcePath().parentDir.parentDir
@@ -133,3 +136,34 @@ block publicDocsStayLocal:
           problems.add rel & " image link does not resolve: " & target
   doAssert problems.len == 0, "\n" & problems.join("\n")
   echo "tformat: public docs name no private pictures, image links resolve"
+
+block privateNamesStayOut:
+  ## No tracked file contains a file name from exampleFiles/names.cfg, in
+  ## its path or its text. Skipped when that mapping is absent.
+  let names = listedNames()
+  if names.len == 0:
+    echo "tformat: private names not checked (no exampleFiles/names.cfg)"
+  else:
+    let (output, code) = execCmdEx("git ls-files -z", workingDir = root)
+    doAssert code == 0, "git ls-files failed: " & output
+    var problems: seq[string]
+    for rel in output.split('\0'):
+      if rel.len == 0:
+        continue
+      var hit = ""
+      for name in names:
+        if name in rel:
+          hit = name
+          break
+      if hit.len > 0:
+        problems.add rel & " path contains " & hit
+      elif fileExists(root / rel):
+        let text = readFile(root / rel)
+        for name in names:
+          if name in text:
+            hit = name
+            break
+        if hit.len > 0:
+          problems.add rel & " contains " & hit
+    doAssert problems.len == 0, "a private file name is tracked:\n" & problems.join("\n")
+    echo "tformat: no tracked file names a private sample"

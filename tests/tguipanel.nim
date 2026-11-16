@@ -30,6 +30,7 @@ import std/[math, monotimes, options, os, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
+import privatefiles
 import utils/[fixtures, waiting]
 
 const
@@ -320,8 +321,6 @@ withFixtures fx:
 # local only), the plot window is saved on real records as record-*.png:
 # docs/images/ holds the committed ones.
 
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
-
 proc recordShot(path, file: string; traces = Span(); timeMs = Span(); light = false) =
   ## Opens `path` in a 1600 × 1000 window, shows `traces` and `timeMs` (the
   ## whole gather when empty) with the default display, and saves the frame
@@ -405,14 +404,14 @@ proc gainShot(path, file: string; gain: DisplayGain; gainDb: float64; traces, ti
   echo "tguipanel: saved ", dir / file
 
 if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
-  let morgantown = examples / "00000151_12900_11300.sgd"
-  let inglewood = examples / "BO_3D-Inglewood_rev21_v7.sgy"
-  if fileExists(morgantown):
+  let landSegd = privateFile("landSegd")
+  let segy3d = privateFile("segy3d")
+  if landSegd.len > 0:
     createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-    recordShot(morgantown, "record-morgantown.png")
-    recordShot(morgantown, "record-morgantown-lines.png", Span(lo: -0.5, hi: 450.5),
+    recordShot(landSegd, "record-land.png")
+    recordShot(landSegd, "record-land-lines.png", Span(lo: -0.5, hi: 450.5),
       Span(lo: 0, hi: 2000))
-    gainShot(morgantown, "gain-morgantown.png", dgExponential, 6, Span(lo: -0.5, hi: 450.5),
+    gainShot(landSegd, "gain-land.png", dgExponential, 6, Span(lo: -0.5, hi: 450.5),
       Span(lo: 0, hi: 2000))
-  if fileExists(inglewood):
-    recordShot(inglewood, "record-inglewood.png", light = true)
+  if segy3d.len > 0:
+    recordShot(segy3d, "record-segy3d.png", light = true)

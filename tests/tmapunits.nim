@@ -4,7 +4,7 @@
 ##
 ## - SPS grid units: metres ("m"), international feet ("ft", 0.3048 m a
 ##   unit), US survey feet ("ftUS": H20 `feet` with H201 0.3048006096, as
-##   the Morgantown survey says them), and nothing said, or words without a
+##   a land survey says them), and nothing said, or words without a
 ##   factor that name no unit known: not given (the scale bar says "units");
 ## - the units confirmed with a join come first;
 ## - a seismic file's own coordinate units when no survey file says;

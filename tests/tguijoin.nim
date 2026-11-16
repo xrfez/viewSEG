@@ -37,15 +37,16 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves join-*.png there, and with the example
-## files present the Morgantown record joined with its S, R and X files
-## (`join-morgantown-1.png`: the record beside its map, a trace hovered;
-## `join-morgantown-2.png`: the window with what the join did).
+## files present the private land record joined with its S, R and X files
+## (`join-land-1.png`: the record beside its map, a trace hovered;
+## `join-land-2.png`: the window with what the join did).
 
 import std/[math, monotimes, options, os, strutils]
 import parseSEG
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/theme
+import privatefiles
 import utils/[fixtures, waiting]
 
 type
@@ -301,17 +302,15 @@ proc importNoFile() =
 importAdded()
 importNoFile()
 
-# ------------------------------------------------------ Morgantown: shots --
-# With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (local
-# only): the Morgantown record in the "Plot and map" layout, its S, R and X
+# ------------------------------------------------- land survey: shots --
+# With `VIEWSEG_SCREENSHOTS=<dir>` and the private files present (local
+# only): the land record in the "Plot and map" layout, its S, R and X
 # files imported (put on the map, the headers' coordinates replaced by the
 # survey's), a trace hovered: its source and receiver lit on the map.
 
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
-
-proc morgantown(dir: string) =
-  let base = examples / "sps" / "PGI_NNE_West_Morgantown_3D_Post261019_NAD27_SPCS_WV_N_USFeet"
-  let record = examples / "00000151_12900_11300.sgd"
+proc landSurvey(dir: string) =
+  let survey = privateFiles("landSps", "landRps", "landXps")
+  let record = privateFile("landSegd")
   let preset = currentSourcePath().parentDir.parentDir / "assets" / "layouts" / "Plot and map.nif"
   var stage = 0
   var wait = 0
@@ -330,7 +329,7 @@ proc morgantown(dir: string) =
       if f.core.survey.layers.len >= 1 and f.core.panels[k].laidOut and
           f.core.tiles(k).len > 0 and f.core.layoutLoads > loads and wait > 30:
         var files: seq[JoinFile]
-        for e in [".sps", ".rps", ".xps"]: files.add JoinFile(path: base & e, kind: jkSps)
+        for p in survey: files.add JoinFile(path: p, kind: jkSps)
         f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: files,
           joinOptions: JoinOptions(coordinates: hcReplace), joinUnits: JoinUnits(
           survey: suUsFeet, file: suUsFeet))
@@ -338,14 +337,14 @@ proc morgantown(dir: string) =
     of 1:
       if f.core.joinReport.serial > 0 and not f.core.importing and
           f.core.tiles(k).len > 0 and f.core.tiles(k)[^1].joined.len > 0 and wait > 20:
-        echo "tguijoin: Morgantown: ", f.core.joinReport.words.join(" ")
+        echo "tguijoin: land survey: ", f.core.joinReport.words.join(" ")
         let plot = f.markOf("plot.data")
         f.moveMouse(vec2(round(plot.pos.x + plot.size.x * 0.62), round(plot.pos.y +
           plot.size.y * 0.4)))
         next 2
     of 2:
       if wait == 30:
-        if f.core.selection.hoverAt.len > 0 and f.savePng(dir / "join-morgantown-1.png"):
+        if f.core.selection.hoverAt.len > 0 and f.savePng(dir / "join-land-1.png"):
           inc saved
         f.moveMouse(vec2(4, 4))
         next 3
@@ -369,7 +368,7 @@ proc morgantown(dir: string) =
           f.pressMouse(item.centre, false)
       if wait == 30: f.moveMouse(f.markOf("statusbar").centre) # no tooltip over the window
       if wait == 40:
-        if f.markOf("join.report").size.x > 0 and f.savePng(dir / "join-morgantown-2.png"):
+        if f.markOf("join.report").size.x > 0 and f.savePng(dir / "join-land-2.png"):
           inc saved
         f.stop()
     else: discard
@@ -379,10 +378,11 @@ proc morgantown(dir: string) =
     theme: forceDark, indexCacheDir: some(tmp),
     userThemeDir: some(tmp / "no-user-themes"), onFrame: onFrame))
   removeDir(tmp)
-  doAssert code == 0 and saved == 2, "no screenshots of Morgantown (stage " & $stage &
+  doAssert code == 0 and saved == 2, "no screenshots of the land survey (stage " & $stage &
     ", saved " & $saved & ")"
-  echo "tguijoin: saved ", dir / "join-morgantown-1.png", " and -2.png"
+  echo "tguijoin: saved ", dir / "join-land-1.png", " and -2.png"
 
-if shots.len > 0 and fileExists(examples / "00000151_12900_11300.sgd"):
+if shots.len > 0 and privateFile("landSegd").len > 0 and
+    privateFiles("landSps", "landRps", "landXps").len == 3:
   createDir(shots)
-  morgantown(shots)
+  landSurvey(shots)

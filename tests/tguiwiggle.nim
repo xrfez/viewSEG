@@ -54,6 +54,7 @@ import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state, wiggle]
 import viewSEG/view/[plotink, theme]
 import viewSEG/ui/imgui/app
+import privatefiles
 import utils/[fixtures, waiting]
 
 const
@@ -545,13 +546,11 @@ withFixtures fx:
 
 # ------------------------------------------------- screenshots of real data --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
-# local only), the plot window is saved zoomed in on the Morgantown record in
+# local only), the plot window is saved zoomed in on the private land record in
 # every mode, and as it opens (at the wiggle mode's limit, a trace a pixel),
 # one trace hovered and one selected, as wiggle-*.png
 # (docs/images/ holds the committed ones), and the frame times while
 # panning in each mode are printed.
-
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 
 proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
     traces, timeMs: Span; colours = pcPaper) =
@@ -632,21 +631,21 @@ proc wiggleShot(path, file: string; mode: DisplayMode; fills: set[WiggleFill];
     formatFloat(times[^1], ffDecimal, 1), " ms"
 
 if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
-  let morgantown = examples / "00000151_12900_11300.sgd"
-  if fileExists(morgantown):
+  let landSegd = privateFile("landSegd")
+  if landSegd.len > 0:
     createDir(getEnv("VIEWSEG_SCREENSHOTS"))
     let traces = Span(lo: 999.5, hi: 1039.5)
     let timeMs = Span(lo: 400, hi: 1000)
-    wiggleShot(morgantown, "wiggle-morgantown.png", dmWiggle, {wfPositive}, traces, timeMs)
-    wiggleShot(morgantown, "wiggle-morgantown-line.png", dmWiggle, {}, traces, timeMs)
-    wiggleShot(morgantown, "wiggle-morgantown-both.png", dmWiggle, {wfPositive, wfNegative},
+    wiggleShot(landSegd, "wiggle-land.png", dmWiggle, {wfPositive}, traces, timeMs)
+    wiggleShot(landSegd, "wiggle-land-line.png", dmWiggle, {}, traces, timeMs)
+    wiggleShot(landSegd, "wiggle-land-both.png", dmWiggle, {wfPositive, wfNegative},
       traces, timeMs)
-    wiggleShot(morgantown, "wiggle-morgantown-density.png", dmWiggleDensity, {}, traces,
+    wiggleShot(landSegd, "wiggle-land-density.png", dmWiggleDensity, {}, traces,
       timeMs)
-    wiggleShot(morgantown, "wiggle-morgantown-theme.png", dmWiggle, {wfPositive}, traces,
+    wiggleShot(landSegd, "wiggle-land-theme.png", dmWiggle, {wfPositive}, traces,
       timeMs, pcTheme)
-    wiggleShot(morgantown, "density-morgantown-highlight.png", dmDensity, {},
+    wiggleShot(landSegd, "density-land-highlight.png", dmDensity, {},
       Span(lo: 899.5, hi: 1299.5), Span(lo: 0, hi: 2500))
     # as it opens: wiggles at one pixel a trace, from the first trace
-    wiggleShot(morgantown, "wiggle-morgantown-limit.png", dmWiggle, {wfPositive}, Span(),
+    wiggleShot(landSegd, "wiggle-land-limit.png", dmWiggle, {wfPositive}, Span(),
       Span())

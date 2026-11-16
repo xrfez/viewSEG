@@ -7,7 +7,7 @@
 ##   plot. File > Import > Survey...: the SEG-Y file's row reads feet. Add
 ##   files... (the test's dialog answers) with the survey's S, R and X
 ##   files, whose headers say "feet" and 0.3048006096 m a unit (H20, H201:
-##   US survey feet, as the user's Morgantown survey does): with nothing
+##   US survey feet, as the private land survey does): with nothing
 ##   typed, the survey's row reads US survey feet with "The SPS headers say
 ##   ..." under it, and the SEG-Y file's US survey feet with "The headers say
 ##   feet; taken as US survey feet, as the survey says";
@@ -39,6 +39,7 @@ import std/[math, monotimes, options, os]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/[app, joindialog]
 import viewSEG/view/maplayers
+import privatefiles
 import utils/[fixtures, waiting]
 
 type
@@ -195,18 +196,16 @@ proc unitsOnce() =
 
 unitsOnce()
 
-# ------------------------------------------------- Morgantown: pictures --
-# With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (local
-# only): the user's Morgantown record, its S, R and X files (US survey feet)
+# ------------------------------------------------ land survey: pictures --
+# With `VIEWSEG_SCREENSHOTS=<dir>` and the private files present (local
+# only): the land record, its S, R and X files (US survey feet)
 # added in the window, the window before Import and after.
 
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
-
-proc morgantown(dir: string) =
-  let base = examples / "sps" / "PGI_NNE_West_Morgantown_3D_Post261019_NAD27_SPCS_WV_N_USFeet"
-  let record = examples / "00000151_12900_11300.sgd"
+proc landSurvey(dir: string) =
+  let survey = privateFiles("landSps", "landRps", "landXps")
+  let record = privateFile("landSegd")
   let answer = proc (kind: DialogKind; location: string): seq[string] =
-    if kind == dkJoinFiles: @[base & ".sps", base & ".rps", base & ".xps"] else: @[]
+    if kind == dkJoinFiles: survey else: @[]
   var steps: seq[Step]
   steps.add Step(name: "the record", act: proc (f: FrameInfo) = discard,
     done: proc (f: FrameInfo): bool =
@@ -229,20 +228,21 @@ proc morgantown(dir: string) =
       surveyFromHeaders: true, fileFromHeaders: true) and
       f.markOf("join.survey said").size.x > 0
     if result:
-      echo "tguijoinunits: Morgantown: ", f.joinWindow.fileNote
-      discard f.savePng(dir / "joinunits-morgantown-1.png"))
+      echo "tguijoinunits: land survey: ", f.joinWindow.fileNote
+      discard f.savePng(dir / "joinunits-land-1.png"))
   steps.add Step(name: "Import", act: proc (f: FrameInfo) =
     f.click(f.markOf("join.run").centre), done: proc (f: FrameInfo): bool =
     result = f.core.joinReport.serial > 0 and not f.core.importing and
       f.markOf("join.report").size.x > 0 and f.core.unitsOf == "ftUS"
     if result:
       f.moveMouse(vec2(4, 4))
-      discard f.savePng(dir / "joinunits-morgantown-2.png"))
+      discard f.savePng(dir / "joinunits-land-2.png"))
   let tmp = getTempDir() / ("viewseg-joinunits-" & $getCurrentProcessId())
   drive(steps, @[record], tmp, answer)
   removeDir(tmp)
-  echo "tguijoinunits: saved ", dir / "joinunits-morgantown-1.png", " and -2.png"
+  echo "tguijoinunits: saved ", dir / "joinunits-land-1.png", " and -2.png"
 
-if shots.len > 0 and fileExists(examples / "00000151_12900_11300.sgd"):
+if shots.len > 0 and privateFile("landSegd").len > 0 and
+    privateFiles("landSps", "landRps", "landXps").len == 3:
   createDir(shots)
-  morgantown(shots)
+  landSurvey(shots)

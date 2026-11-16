@@ -24,7 +24,7 @@
 ## bar says why; Shift + click selects the stations along a line.
 ##
 ## A hover in the plot draws the stripes of the two traces it changes, not
-## the whole image (Morgantown in wiggles: about 40 ms a hover on software
+## the whole image (a land record in wiggles: about 40 ms a hover on software
 ## OpenGL before), and the image is the reference's after it. Seen to fail:
 ## with every hover drawing the whole image, "to the next trace" found every
 ## column drawn; with stripes a fifth of a trace wide, 750 pixels differed
@@ -40,12 +40,13 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves link-*.png there, and with the example
-## files present the Morgantown screenshots and frame times.
+## files present the land survey screenshots and frame times.
 
 import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/[maplayers, plotink]
+import privatefiles
 import utils/[fixtures, plotref, waiting]
 
 type
@@ -416,15 +417,13 @@ proc byStation() =
 fromTheHeaders()
 byStation()
 
-# ------------------------------------------- Morgantown: screenshots, times --
-# With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (local
-# only), the Morgantown record with its S, R and X files, in the "Plot and
+# ------------------------------------------ land survey: screenshots, times --
+# With `VIEWSEG_SCREENSHOTS=<dir>` and the private files present (local
+# only), the land record with its S, R and X files, in the "Plot and
 # map" layout: the pointer on a trace in the plot (its source and receiver
 # lit on the map, the record's spread marked), then on a receiver on the map
 # (its trace lit in the plot); and the frame times while the pointer sweeps
 # over each (printed, for the record).
-
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 
 func median(xs: seq[float64]): float64 =
   let s = xs.sorted
@@ -432,9 +431,9 @@ func median(xs: seq[float64]): float64 =
 
 func ms(x: float64): string = formatFloat(x, ffDecimal, 1)
 
-proc morgantown(dir: string) =
-  let base = examples / "sps" / "PGI_NNE_West_Morgantown_3D_Post261019_NAD27_SPCS_WV_N_USFeet"
-  let record = examples / "00000151_12900_11300.sgd"
+proc landSurvey(dir: string) =
+  let survey = privateFiles("landSps", "landRps", "landXps")
+  let record = privateFile("landSegd")
   let preset = currentSourcePath().parentDir.parentDir / "assets" / "layouts" / "Plot and map.nif"
   var stage = 0
   var wait = 0
@@ -476,7 +475,7 @@ proc morgantown(dir: string) =
         f.moveMouse(vec2(round(plot.pos.x + plot.size.x * 0.62), round(plot.pos.y +
           plot.size.y * 0.4)))
       if wait == 185:
-        if f.core.selection.hoverAt.len > 0 and f.savePng(dir / "link-morgantown-1.png"):
+        if f.core.selection.hoverAt.len > 0 and f.savePng(dir / "link-land-1.png"):
           inc saved
         for p in f.core.selection.hoverAt:
           if p.role == prReceiver: rcv = f.core.positionOf(p)
@@ -493,24 +492,25 @@ proc morgantown(dir: string) =
         let p = f.mapWindow.mapShown.screenAt(f.mapWindow.mapPlot, rcv)
         f.moveMouse(vec2(round(p.x), round(p.y)))
       if wait == 150:
-        if f.core.selection.hoverTraces.len > 0 and f.savePng(dir / "link-morgantown-2.png"):
+        if f.core.selection.hoverTraces.len > 0 and f.savePng(dir / "link-land-2.png"):
           inc saved
-        echo "tguilink: Morgantown: the map's pointer on ", f.mapWindow.pointTexts.join(" | "),
+        echo "tguilink: land survey: the map's pointer on ", f.mapWindow.pointTexts.join(" | "),
           "; ", f.core.selection.hoverTraces.len, " traces lit"
         f.stop()
     else: discard
     if overdue(f.index, 8000, start): f.stop()
   let tmp = getTempDir() / ("viewseg-linkshots-" & $getCurrentProcessId())
-  let code = run(RunOptions(openPaths: @[record, base & ".sps", base & ".rps",
-    base & ".xps"], windowSize: (1600, 1000), theme: forceDark, indexCacheDir: some(tmp),
+  let code = run(RunOptions(openPaths: @[record] & survey, windowSize: (1600, 1000),
+    theme: forceDark, indexCacheDir: some(tmp),
     userThemeDir: some(tmp / "no-user-themes"), onFrame: onFrame))
   removeDir(tmp)
-  doAssert code == 0 and saved == 2, "no screenshots of Morgantown (stage " & $stage & ")"
-  echo "tguilink: Morgantown frames: idle ", ms(median(idle)), " ms; pointer over the plot ",
+  doAssert code == 0 and saved == 2, "no screenshots of the land survey (stage " & $stage & ")"
+  echo "tguilink: land survey frames: idle ", ms(median(idle)), " ms; pointer over the plot ",
     ms(median(overPlot)), " ms median (slowest ", ms(max(overPlot)), "); over the map ",
     ms(median(overMap)), " ms median (slowest ", ms(max(overMap)), "); saved ",
-    dir / "link-morgantown-1.png", " and -2.png"
+    dir / "link-land-1.png", " and -2.png"
 
-if shots.len > 0 and fileExists(examples / "00000151_12900_11300.sgd"):
+if shots.len > 0 and privateFile("landSegd").len > 0 and
+    privateFiles("landSps", "landRps", "landXps").len == 3:
   createDir(shots)
-  morgantown(shots)
+  landSurvey(shots)

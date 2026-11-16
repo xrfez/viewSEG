@@ -338,7 +338,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       igEndDisabled()
       marks.mark(name & ".reference selected")
       tip("Correlate against the selected trace (the first, when several are): a pilot, in " &
-        "this file or another one open (Sweep0's pilot, say)")
+        "this file or another one open (a sweep's pilot, say)")
       line.follow(buttonWidth("The first auxiliary trace"))
       igBeginDisabled(p.reference < 0)
       if igSmallButton("The first auxiliary trace"):

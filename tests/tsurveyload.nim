@@ -1,6 +1,6 @@
 ## Survey files and positions through the application state: SPS and P1
 ## files are told apart by their first bytes (also when the first 4 KiB
-## hold header records only, as the Morgantown files' do) and listed as
+## hold header records only, as the land survey files do) and listed as
 ## what they are; `ckLoadSurvey` loads them on a job with progress into the
 ## survey, with what is wrong in them said in the log; File > Open, a drop
 ## and a click in the file list send a survey file to the survey and leave
@@ -13,8 +13,8 @@
 ## file's text line names ("CLT4960") are the import's numbers on the map
 ## (the trailing digits, a line name mapped), also for a file the import
 ## finds loaded with other options.
-## With `exampleFiles/sps/` present, the Morgantown S, R and X files load,
-## and its record's traces find their receivers there by station.
+## With the private land survey present, its S, R and X files load, and its
+## record's traces find their receivers there by station.
 ##
 ## Seen to fail: with `surveyKind` judging only data records (no word from
 ## a name), `kindsOfHeads` found the headers-only file unknown; with the open
@@ -30,13 +30,14 @@
 ## found no receiver; with a P1 line name read as a number only
 ## (`parseFloat`, as before), `textLineNames` found @[nan, nan, nan], not 4960.
 ##
-## Runs alone: it measures the time the Morgantown survey takes to load, and
+## Runs alone: it measures the time the land survey takes to load, and
 ## bounds the frame that takes in an opened file (20 ms).
 
 import std/[monotimes, os, strutils, times]
 import parseSEG
 import viewSEG/core/[filejobs, state, surveyjobs]
 import viewSEG/view/filetable
+import privatefiles
 import utils/[fixtures, owntime, waiting]
 when not defined(windows):
   from std/posix import nil
@@ -436,28 +437,27 @@ block textLineNames:
     doAssert st.fileLayer(path).lines == @[12.0, 12.0, 12.0], $st.fileLayer(path).lines
     st.shutdown()
 
-block morgantown:
-  # Local only: the user's example survey.
-  let dir = currentSourcePath().parentDir.parentDir / "exampleFiles"
-  let stem = dir / "sps" / "PGI_NNE_West_Morgantown_3D_Post261019_NAD27_SPCS_WV_N_USFeet"
-  if fileExists(stem & ".xps"):
+block landSurvey:
+  # Local only: the private land survey, named in exampleFiles/names.cfg.
+  let survey = privateFiles("landSps", "landRps", "landXps")
+  if survey.len == 3:
     var st = initAppState()
     let start = epochTime()
-    st.load(stem & ".sps", stem & ".rps", stem & ".xps")
+    st.load(survey[0], survey[1], survey[2])
     doAssert st.settle(st.survey.layers.len == 3 and st.idle()), st.log.lastLines
     let seconds = epochTime() - start
-    let r = st.fileLayer(stem & ".rps")
-    let s = st.fileLayer(stem & ".sps")
-    let x = st.fileLayer(stem & ".xps")
+    let s = st.fileLayer(survey[0])
+    let r = st.fileLayer(survey[1])
+    let x = st.fileLayer(survey[2])
     doAssert r.kind == fkSpsReceiver and s.kind == fkSpsSource and x.kind == fkSpsRelation
     doAssert r.points[prReceiver].len > 1000 and s.points[prSource].len > 1000
     doAssert x.relationRuns > 100_000
-    doAssert r.gridUnit.measurementSystem == 2, "Morgantown is in US survey feet"
-    echo "  Morgantown: ", r.points[prReceiver].len, " receivers, ", s.points[prSource].len,
+    doAssert r.gridUnit.measurementSystem == 2, "the land survey is in US survey feet"
+    echo "  land survey: ", r.points[prReceiver].len, " receivers, ", s.points[prSource].len,
       " sources, ", x.relationRuns, " relation records of ", x.relationRecords,
       " records; loaded in ", formatFloat(seconds, ffDecimal, 2), " s"
-    let record = dir / "00000151_12900_11300.sgd"
-    if fileExists(record):
+    let record = privateFile("landSegd")
+    if record.len > 0:
       st.apply Command(kind: ckOpen, paths: @[record])
       doAssert st.settle(st.sessions.len == 1 and st.survey.layers.len == 4), st.log.lastLines
       let f = st.sessions[0]
@@ -467,6 +467,6 @@ block morgantown:
         if k.isSeismic:
           for p in st.survey.tracePoints(f.base + t, k):
             if p.layer == r.id and p.role == prReceiver: inc found
-      echo "  Morgantown record: ", found, " of ", f.len, " traces find their receiver"
+      echo "  land survey record: ", found, " of ", f.len, " traces find their receiver"
       doAssert found > f.len div 2
     st.shutdown()

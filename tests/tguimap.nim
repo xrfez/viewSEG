@@ -45,6 +45,7 @@ import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/maplayers
+import privatefiles
 import utils/[fixtures, waiting]
 
 type
@@ -560,17 +561,15 @@ linked()
 
 # ------------------------------------------------- screenshots of real data --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
-# local only), the Morgantown survey (its S, R and X files) is drawn with
+# local only), the private land survey (its S, R and X files) is drawn with
 # its record open, in the "Plot and map" layout: at fit with the pointer on
 # a trace in the plot (its source and receiver lit up on the map), and
 # zoomed in on the record's source with the pointer on a receiver (what the
 # map says of it): docs/images/ holds the committed ones.
 
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
-
-proc morgantown(dir: string) =
-  let base = examples / "sps" / "PGI_NNE_West_Morgantown_3D_Post261019_NAD27_SPCS_WV_N_USFeet"
-  let record = examples / "00000151_12900_11300.sgd"
+proc landSurvey(dir: string) =
+  let survey = privateFiles("landSps", "landRps", "landXps")
+  let record = privateFile("landSegd")
   let preset = currentSourcePath().parentDir.parentDir / "assets" / "layouts" / "Plot and map.nif"
   var stage = 0
   var wait = 0
@@ -595,7 +594,7 @@ proc morgantown(dir: string) =
         (stage, wait) = (1, 0)
     of 1:
       if wait > 20 and f.core.selection.hover >= 0:
-        if f.savePng(dir / "map-morgantown-1.png"): inc saved
+        if f.savePng(dir / "map-land-1.png"): inc saved
         # zoom in about the record's source, and point at a receiver near it
         let hl = f.core.highlightOf
         var src, rcv = mapPoint(NaN, NaN)
@@ -628,20 +627,21 @@ proc morgantown(dir: string) =
         let p = v.screenAt(f.mapWindow.mapPlot, best)
         f.moveMouse(vec2(round(p.x), round(p.y)))
       if wait > 30 and f.mapWindow.hoveredPoints.len > 0:
-        if f.savePng(dir / "map-morgantown-2.png"): inc saved
-        echo "tguimap: Morgantown: ", f.mapWindow.pointTexts.join(" | "), "; scale bar ",
+        if f.savePng(dir / "map-land-2.png"): inc saved
+        echo "tguimap: land survey: ", f.mapWindow.pointTexts.join(" | "), "; scale bar ",
           f.mapWindow.scaleText, "; ", f.mapCursor
         f.stop()
     else: discard
     if overdue(f.index, 6000, start): f.stop()
   let tmp = getTempDir() / ("viewseg-mapshots-" & $getCurrentProcessId())
-  let code = run(RunOptions(openPaths: @[record, base & ".sps", base & ".rps",
-    base & ".xps"], windowSize: (1600, 1000), theme: forceDark, indexCacheDir: some(tmp),
+  let code = run(RunOptions(openPaths: @[record] & survey, windowSize: (1600, 1000),
+    theme: forceDark, indexCacheDir: some(tmp),
     userThemeDir: some(tmp / "no-user-themes"), onFrame: onFrame))
   removeDir(tmp)
-  doAssert code == 0 and saved == 2, "no screenshots of Morgantown (stage " & $stage & ")"
-  echo "tguimap: saved ", dir / "map-morgantown-1.png", " and -2.png"
+  doAssert code == 0 and saved == 2, "no screenshots of the land survey (stage " & $stage & ")"
+  echo "tguimap: saved ", dir / "map-land-1.png", " and -2.png"
 
-if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and fileExists(examples / "00000151_12900_11300.sgd"):
+if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and privateFile("landSegd").len > 0 and
+    privateFiles("landSps", "landRps", "landXps").len == 3:
   createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-  morgantown(getEnv("VIEWSEG_SCREENSHOTS"))
+  landSurvey(getEnv("VIEWSEG_SCREENSHOTS"))

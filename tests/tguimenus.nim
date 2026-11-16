@@ -31,6 +31,7 @@ import std/[math, monotimes, options, os, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
+import privatefiles
 import utils/[fixtures, waiting]
 
 type
@@ -264,11 +265,9 @@ withFixtures fx:
   echo "tguimenus: ", steps.len, " steps; the tick ", ticks
 
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
-# local only), the plot's menu is saved open over a trace of the Morgantown
-# record (menu-morgantown.png), and the display header's menu
-# (header-menu-morgantown.png): docs/images/ holds the committed ones.
-
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
+# local only), the plot's menu is saved open over a trace of the private land
+# record (menu-land.png), and the display header's menu
+# (header-menu-land.png): docs/images/ holds the committed ones.
 
 proc menuShot(path, file: string; header: bool) =
   ## Opens `path` in a 1600 × 1000 window zoomed in on 40 traces, right-clicks
@@ -321,8 +320,8 @@ proc menuShot(path, file: string; header: bool) =
   echo "tguimenus: saved ", dir / file
 
 if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
-  let morgantown = examples / "00000151_12900_11300.sgd"
-  if fileExists(morgantown):
+  let landSegd = privateFile("landSegd")
+  if landSegd.len > 0:
     createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-    menuShot(morgantown, "menu-morgantown.png", header = false)
-    menuShot(morgantown, "header-menu-morgantown.png", header = true)
+    menuShot(landSegd, "menu-land.png", header = false)
+    menuShot(landSegd, "header-menu-land.png", header = true)

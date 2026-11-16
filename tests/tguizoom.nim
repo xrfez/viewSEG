@@ -40,6 +40,7 @@
 import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
+import privatefiles
 import utils/[fixtures, waiting]
 
 type
@@ -627,8 +628,6 @@ main()
 # as zoom-*.png, with the pointer on a trace so the status bar reads it out:
 # docs/images/ holds the committed ones.
 
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
-
 proc zoomShots(path, name: string; tracesPerInch, msPerInch: float64; centre: DataPoint;
     notches: float32; hover1, hover2: DataPoint) =
   ## Opens `path` in a 1600 x 1000 window, sets the scales from the
@@ -696,8 +695,8 @@ proc zoomShots(path, name: string; tracesPerInch, msPerInch: float64; centre: Da
   echo "tguizoom: saved ", dir / (name & "-1.png"), " and -2.png"
 
 if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
-  let morgantown = examples / "00000151_12900_11300.sgd"
-  if fileExists(morgantown):
+  let landSegd = privateFile("landSegd")
+  if landSegd.len > 0:
     createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-    zoomShots(morgantown, "zoom-morgantown", 50, 400, DataPoint(x: 240, tMs: 250), 6,
+    zoomShots(landSegd, "zoom-land", 50, 400, DataPoint(x: 240, tMs: 250), 6,
       DataPoint(x: 120, tMs: 700), DataPoint(x: 232, tMs: 330))

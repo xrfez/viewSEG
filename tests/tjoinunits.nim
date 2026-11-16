@@ -50,7 +50,7 @@
 ## file, "a last line without a line end: (unit: feet, ...)"; with the unit
 ## words matched whole, as first written,
 ## "unit words read wrong: \"Meters (m)\": not given, ..."; with H201's
-## factor left out of the SPS reading (the name only), "Morgantown's
+## factor left out of the SPS reading (the name only), "the land survey's
 ## headers: feet" (not US survey feet); with
 ## `fileUnitOf` taking the headers' "feet" as it is, "feet, US survey feet:
 ## feet"; with `unitsDisagree` counting SEG-Y's "feet" against US survey
@@ -62,14 +62,14 @@ import viewSEG/core/[session, state]
 import viewSEG/view/maplayers
 import utils/[faultyfs, fixtures, waiting]
 
-const Morgantown = """H00 SPS format version num.     SPS 2.1;
-H01 Description of survey area  ,Post_261019;
-H12 Geodetic datum,-spheroid    NAD27 (CONUSClarke 1866  6378206.400 294.9786982
+const LandHeaders = """H00 SPS format version num.     SPS 2.1;
+H01 Description of survey area  ,Test area;
+H12 Geodetic datum,-spheroid    Clarke 1866;
 H18 Projection type             State Plane Coordinate System;
 H20 Description of grid units   feet;
 H201Factor to meters            0.3048006096;
-H232Grid coord. at origin       00609601.22E 00000000.00N;
-S      12900.00     11300.00  1V1                   1958449.9 352553.3 356.0  10000
+H232Grid coord. at origin       00001000.00E 00002000.00N;
+S          1.00         1.00  1V1                         1000.0   2000.0  10.0      0
 """
 
 func sps(grid, factor: string): string =
@@ -104,8 +104,8 @@ block unitWords:
   doAssert headerUnitOf(FileCrs(units: cuFeet, lengthUnit: "U.S. Survey Foot")) == suUsFeet
 
 block spsHeaders:
-  let m = headUnitOf(Morgantown, jkSps)
-  doAssert m.unit == suUsFeet, "Morgantown's headers: " & $m.unit
+  let m = headUnitOf(LandHeaders, jkSps)
+  doAssert m.unit == suUsFeet, "the land survey's headers: " & $m.unit
   doAssert m.said == "\"feet\" (H20), 0.3048006096 m a unit (H201)", m.said
   doAssert headUnitOf(sps("feet", "0.3048"), jkSps).unit == suFeet
   doAssert headUnitOf(sps("Metres", "1.0"), jkSps).unit == suMetres
@@ -127,7 +127,7 @@ block spsHeaders:
   doAssert none.unit == suNotGiven and none.said == "", $none
   doAssert headUnitOf("", jkSps).unit == suNotGiven
   # Header records after the first point record are not read.
-  doAssert headUnitOf("H00 SPS format version num.     SPS 2.1;\n" & Morgantown.splitLines[^2] &
+  doAssert headUnitOf("H00 SPS format version num.     SPS 2.1;\n" & LandHeaders.splitLines[^2] &
     "\n" & sps("Metres", "1.0"), jkSps).unit == suNotGiven
   # 80-byte cards without line ends; a last line cut short is passed by.
   var cards = ""

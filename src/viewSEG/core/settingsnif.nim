@@ -10,8 +10,8 @@
 ##  (window (x 120) (y 80) (width 1280) (height 800) (maximized false))
 ##  (recentFiles "/data/shot1.sgd")
 ##  (recentFolders "/data")
-##  (recentProjects "/jobs/Morgantown 2026")
-##  (lastProject "/jobs/Morgantown 2026")
+##  (recentProjects "/jobs/Land 2026")
+##  (lastProject "/jobs/Land 2026")
 ##  (reopenProject true)
 ##  (plot
 ##   (orientation timeDown)

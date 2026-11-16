@@ -66,7 +66,7 @@ block naturalOrder:
   doAssert naturalCmp("shot2", "shot10") < 0
   doAssert naturalCmp("Shot1", "shot2") < 0
   doAssert naturalCmp("a", "B") < 0
-  doAssert naturalCmp("00000151_12900", "00000152_1") < 0
+  doAssert naturalCmp("00000011_9000", "00000012_1") < 0
   doAssert naturalCmp("x007.sgd", "x7.sgd") != 0, "two names are never equal"
   doAssert naturalCmp("line9.sgy", "line10.sgy") < 0
   let e = FileEntry(name: "Shot_0151.SGD")

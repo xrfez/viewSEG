@@ -34,13 +34,14 @@
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves turn-*.png there, and with the example
-## files present the Morgantown and sweep pilot screenshots, both ways, and
+## files present the land record and sweep pilot screenshots, both ways, and
 ## frame times while panning in each orientation.
 
 import std/[algorithm, math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/[displayheader, timeaxis]
 import viewSEG/ui/imgui/app
+import privatefiles
 import utils/[fixtures, plotref, waiting]
 
 type
@@ -439,11 +440,9 @@ main()
 
 # ------------------------------------- real data: screenshots, frame times --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (local
-# only), the Morgantown record and the sweep pilot are saved both ways, and
+# only), the private land record and the sweep pilot are saved both ways, and
 # the frame times while panning along the traces are measured in each
 # orientation (the time between frames, a key held down).
-
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 
 proc realShots(path, name: string; view: Viewport; measure: bool) =
   ## Opens `path` in a 1600 x 1000 window, shows `view` and saves
@@ -529,7 +528,7 @@ proc realShots(path, name: string; view: Viewport; measure: bool) =
     theme: forceDark, indexCacheDir: some(tmp), userThemeDir: some(tmp / "no-user-themes"),
     onFrame: onFrame))
   removeDir(tmp)
-  doAssert code == 0 and stage >= 4, "no screenshots of " & path & " (stage " & $stage & ")"
+  doAssert code == 0 and stage >= 4, "no screenshots of " & name & " (stage " & $stage & ")"
   if measure:
     for o in Orientation:
       var s = times[o]
@@ -541,14 +540,14 @@ proc realShots(path, name: string; view: Viewport; measure: bool) =
 
 if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
   createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-  let morgantown = examples / "00000151_12900_11300.sgd"
-  if fileExists(morgantown):
+  let landSegd = privateFile("landSegd")
+  if landSegd.len > 0:
     # lines 100 to 108 near the source: the first breaks and the ground roll
-    realShots(morgantown, "morgantown", Viewport(traces: Span(lo: 99.5, hi: 159.5),
+    realShots(landSegd, "land", Viewport(traces: Span(lo: 99.5, hi: 159.5),
       timeMs: Span(lo: 0, hi: 1500)), measure = false)
-    realShots(morgantown, "morgantown", Viewport(traces: Span(lo: 1000, hi: 1400),
+    realShots(landSegd, "land", Viewport(traces: Span(lo: 1000, hi: 1400),
       timeMs: Span(lo: 0, hi: 2000)), measure = true)
-  let sweep = examples / "Sweep0.sgy"
-  if fileExists(sweep):
+  let sweep = privateFile("sweepSegy")
+  if sweep.len > 0:
     realShots(sweep, "pilot", Viewport(traces: Span(lo: -1, hi: 1e9),
       timeMs: Span(lo: 0, hi: 600)), measure = false)

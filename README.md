@@ -42,7 +42,9 @@ machine: `docs/windows.md`.
 
 `nim depsCheck` verifies that `atlas.lock`, `nim.cfg` and `deps/` agree
 (`tools/deps.nim`). `nim help` lists every task. The test suite also runs optional
-checks on private files when a folder `exampleFiles/` exists, and skips them otherwise.
+checks on private files when a folder `exampleFiles/` exists (its untracked
+`names.cfg` maps a neutral key to each file; `tests/privatefiles.example.cfg`
+says what each key needs), and skips them otherwise.
 
 ## Packaging
 

@@ -44,6 +44,7 @@ import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, screens, state]
 import viewSEG/ui/imgui/app
 import viewSEG/view/theme
+import privatefiles
 import utils/[fixtures, waiting]
 
 type
@@ -281,14 +282,12 @@ withFixtures fx:
   echo "tguiwindows: ", next.len, " steps in the second run"
 
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
-# local only), the menus are saved open over the Morgantown record: File >
+# local only), the menus are saved open over the private land record: File >
 # Import (menus-import.png), File > Export (menus-export.png) and Window
 # (menus-window.png); docs/images/ holds the committed ones.
 
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
-
 proc menuShots(dir: string) =
-  let record = examples / "00000151_12900_11300.sgd"
+  let record = privateFile("landSegd")
   let shots = [("menu.File", "menu.Import", "menus-import.png"),
     ("menu.File", "menu.Export", "menus-export.png"), ("menu.Window", "", "menus-window.png")]
   var stage = 0
@@ -322,6 +321,6 @@ proc menuShots(dir: string) =
   doAssert code == 0 and saved.len == shots.len, "screenshots saved: " & $saved
   echo "tguiwindows: saved ", saved.join(", "), " in ", dir
 
-if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and fileExists(examples / "00000151_12900_11300.sgd"):
+if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and privateFile("landSegd").len > 0:
   createDir(getEnv("VIEWSEG_SCREENSHOTS"))
   menuShots(getEnv("VIEWSEG_SCREENSHOTS"))

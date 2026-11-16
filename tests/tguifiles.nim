@@ -28,6 +28,7 @@ import std/[math, monotimes, options, os, strutils, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/theme
 import viewSEG/ui/imgui/app
+import privatefiles
 import utils/[fixtures, waiting]
 
 type Snapshot = tuple[bytes: string; time: Time]
@@ -236,8 +237,6 @@ withFixtures fx:
 
 # ------------------------------------------------------------ screenshots --
 
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
-
 proc answered(f: FrameInfo): bool =
   let k = f.core.findPanel(MainPanel)
   let p = f.core.panels[k]
@@ -245,7 +244,8 @@ proc answered(f: FrameInfo): bool =
   p.laidOut and not p.pending.isEmpty and p.pending.gen == p.requestGen and tiles.len > 0 and
     tiles[^1].request == p.pending
 
-if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and dirExists(examples):
+let landSegd = privateFile("landSegd")
+if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and landSegd.len > 0:
   let shots = getEnv("VIEWSEG_SCREENSHOTS")
   createDir(shots)
   var saved = false
@@ -262,7 +262,7 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and dirExists(examples):
       f.stop()
     if overdue(f.index, 2000, since): f.stop()
   let tmp = getTempDir() / ("viewseg-files-" & $getCurrentProcessId())
-  let code = run(RunOptions(openPaths: @[examples / "00000151_12900_11300.sgd"],
+  let code = run(RunOptions(openPaths: @[landSegd],
     windowSize: (1600, 1000), theme: forceDark, indexCacheDir: some(tmp),
     userThemeDir: some(tmp / "no-user-themes"), onFrame: onShot))
   removeDir(tmp)

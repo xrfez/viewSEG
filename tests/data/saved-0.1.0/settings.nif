@@ -9,7 +9,7 @@
   (width 1280)
   (height 800)
   (maximized false))
- (recentFiles "/workspaces/viewSEG/exampleFiles/63.sgd")
+ (recentFiles "/workspaces/viewSEG/exampleFiles/sample.sgd")
  (recentFolders "/workspaces/viewSEG/exampleFiles")
  (plot
   (mode wiggle)

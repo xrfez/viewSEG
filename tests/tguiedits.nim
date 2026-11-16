@@ -26,10 +26,10 @@
 ##   (remembered, back at the next run) is shown there in brackets;
 ## - the file is never changed.
 ##
-## With the Morgantown example present (local only), the time from a key to
+## With the private land record present (local only), the time from a key to
 ## the new picture is measured, zoomed in on 40 traces, and with
 ## `VIEWSEG_SCREENSHOTS=<dir>` that record is saved with one trace killed and
-## one reversed (`edits-morgantown.png`, `edits-morgantown-density.png`).
+## one reversed (`edits-land.png`, `edits-land-density.png`).
 ##
 ## Seen to fail: with the wiggle shader drawing killed traces (its collapse
 ## left out: a flat line at the baseline), "killed: 350 pixels of the
@@ -46,12 +46,13 @@
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ##
 ## Runs alone: it measures the time from a key to the new picture (on
-##   Morgantown, where exampleFiles/ holds it).
+##   the private land record, where exampleFiles/ holds it).
 
 import std/[algorithm, math, monotimes, options, os, sequtils, strutils, tables, times]
 import viewSEG/core/[geometry, state]
 import viewSEG/view/plotink
 import viewSEG/ui/imgui/app
+import privatefiles
 import utils/[fixtures, plotref, waiting]
 
 type
@@ -433,13 +434,11 @@ withFixtures fx:
   echo "tguiedits: ", steps.len, " steps"
 
 # With the example files present (they are local only), the time from a key
-# to the new picture on the Morgantown record, zoomed in on 40 traces, is
+# to the new picture on the private land record, zoomed in on 40 traces, is
 # measured; with `VIEWSEG_SCREENSHOTS=<dir>` the record is saved with one
 # trace killed and one reversed: docs/images/ holds the committed ones.
 
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
-
-proc morgantown(path: string) =
+proc landSurvey(path: string) =
   ## Opens `path` in a 1600 × 1000 window zoomed in on 40 traces, presses K
   ## and R over two traces in turn, timing each from the key to the frame
   ## that draws the new picture, and leaves one trace killed and one
@@ -516,13 +515,13 @@ proc morgantown(path: string) =
       elif wait == 1:
         f.moveMouse(screen(1012))
       elif wait == 12:
-        if f.savePng(dir / "edits-morgantown.png"): inc saved
+        if f.savePng(dir / "edits-land.png"): inc saved
         var d = p.layers[0].display
         d.mode = dmDensity
         f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
         f.moveMouse(vec2(4, 4)) # off the plot: no hover tint on the blank column
       elif wait > 30 and f.core.tiles(k).len > 0 and f.core.tiles(k)[^1].request == p.pending:
-        if f.savePng(dir / "edits-morgantown-density.png"): inc saved
+        if f.savePng(dir / "edits-land-density.png"): inc saved
         f.stop()
     else: discard
     if overdue(f.index, 5000, since): f.stop()
@@ -535,16 +534,16 @@ proc morgantown(path: string) =
   doAssert times.len == keys.len, "timed " & $times.len & " of " & $keys.len & " keys"
   var sorted = times
   sorted.sort()
-  echo "tguiedits: Morgantown, key to new picture (ms): ", times.mapIt(it.formatFloat(ffDecimal,
+  echo "tguiedits: land survey, key to new picture (ms): ", times.mapIt(it.formatFloat(ffDecimal,
     1)).join(", "), "; median ", sorted[sorted.len div 2].formatFloat(ffDecimal, 1),
     "; frames ", frames, "; ", fromHeld, " made from the samples held"
   doAssert fromHeld == keys.len, "an edit read the file"
   if dir.len > 0:
     doAssert saved == 2, "the screenshots were not saved"
-    echo "tguiedits: saved ", dir / "edits-morgantown.png", ", ", dir /
-      "edits-morgantown-density.png"
+    echo "tguiedits: saved ", dir / "edits-land.png", ", ", dir /
+      "edits-land-density.png"
 
-let example = examples / "00000151_12900_11300.sgd"
-if fileExists(example):
+let example = privateFile("landSegd")
+if example.len > 0:
   if getEnv("VIEWSEG_SCREENSHOTS").len > 0: createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-  morgantown(example)
+  landSurvey(example)

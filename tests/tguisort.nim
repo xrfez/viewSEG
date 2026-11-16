@@ -37,6 +37,7 @@ import parseSEG
 import viewSEG/core/[geometry, state]
 import viewSEG/view/[plotink, theme]
 import viewSEG/ui/imgui/app
+import privatefiles
 import utils/[fixtures, waiting]
 
 type
@@ -359,10 +360,8 @@ block buttonsWithoutTheirKeys:
 # showing line, point and component), and, when the example files are
 # present (they are local only), the popover of the user's own keys on a
 # real record sorted by offset, opened by the strip's Custom... button
-# (sort-morgantown.png): docs/images/
+# (sort-land.png): docs/images/
 # holds the committed ones.
-
-const examples = currentSourcePath().parentDir.parentDir / "exampleFiles"
 
 proc click(f: FrameInfo; at: Vec2) =
   f.pressMouse(at, true)
@@ -444,7 +443,7 @@ if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
   withFixtures fx:
     sortShot(fx.mixedOrderSegd(), "sort-components.png", SortPresets[1].keys,
       @[hfRcvLine, hfRcvPoint, hfComponent], Span(lo: -0.5, hi: 17.5), popover = false)
-  let morgantown = examples / "00000151_12900_11300.sgd"
-  if fileExists(morgantown):
-    sortShot(morgantown, "sort-morgantown.png", @[SortKey(field: hfOffset)], @[], Span(),
+  let landSegd = privateFile("landSegd")
+  if landSegd.len > 0:
+    sortShot(landSegd, "sort-land.png", @[SortKey(field: hfOffset)], @[], Span(),
       popover = true)
