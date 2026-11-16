@@ -2532,7 +2532,7 @@ proc followInspect(state: var AppState) =
     let s = state.sessions[i]
     result = held.find(s.id)
     if result < 0 and state.jobs.hold(s.path):
-      req.files.add InspectFile(file: s.filePtr, path: s.path, size: s.size)
+      req.files.add InspectFile(file: s.filePtr, path: s.path, session: s.id, size: s.size)
       held.add s.id
       result = held.high
   if want.record[0] != NoSession:

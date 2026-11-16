@@ -45,7 +45,8 @@ import std/[heapqueue, intsets, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
-import edits, filesystem, headers, inbox, jobs, log, processing, selection, threads, tracetable
+import edits, filesystem, headers, inbox, jobs, log, processing, selection, session, threads,
+  tracetable
 
 export tracetable
 
@@ -94,7 +95,8 @@ type
     ## A file a request reads, held by the caller.
     file*: ptr SeismicFile
     path*: string
-    size*: int64 ## its size when it was opened; -1 when not known
+    session*: SessionId ## the open it is read for: a reopen is another one
+    size*: int64        ## its size when it was opened; -1 when not known
 
   InspectTrace* = object
     ## A trace a request asks about.
@@ -317,7 +319,7 @@ proc readRange(f: ptr SeismicFile; name: string; traces: Slice[int];
 
 proc columnKey(f: InspectFile; ask: TableAsk; name: string): string =
   ## The key of column `name` read whole for the table's scope.
-  f.path & "\t" & $ask.traces & "\t" & $ask.joins & "\t" & name
+  f.path & "\t" & $int(f.session) & "\t" & $ask.traces & "\t" & $ask.joins & "\t" & name
 
 proc indexOf(cache: TableCache; key: string): int =
   ## The index in the cache of the column `key`; -1 for none.
@@ -373,7 +375,7 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
   let n = ask.traces.len
   template cache: untyped = p.table
   # The fields the scope's first trace has, for the column chooser.
-  let catalogueOf = f.path & "\t" & $ask.traces.a & "\t" & $ask.joins
+  let catalogueOf = f.path & "\t" & $int(f.session) & "\t" & $ask.traces.a & "\t" & $ask.joins
   if n > 0 and cache.catalogueOf != catalogueOf:
     cache.catalogue.setLen 0
     for (name, label) in KeyColumns:
@@ -413,7 +415,7 @@ proc serveTable(p: ptr InspectorObj; f: InspectFile; ask: TableAsk; why: string;
   let ordered = findKey.len > 0 or sortKey.len > 0
   if ordered:
     let orderKey = findKey & "|" & $find & "|" & sortKey & "|" & $view.descending & "|" &
-      $ask.traces & "|" & f.path & "|" & $ask.joins
+      $ask.traces & "|" & f.path & "|" & $int(f.session) & "|" & $ask.joins
     if orderKey != cache.orderKey:
       var keep: seq[bool]
       if findKey.len > 0:

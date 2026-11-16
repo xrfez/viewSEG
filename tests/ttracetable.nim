@@ -172,3 +172,50 @@ block columnsOfTheSameRequest:
       if r > 0:
         doAssert expect[1][a.rowTraces[r - 1]] <= expect[1][t], "not sorted by keys.rcvX"
     st.shutdown()
+
+proc rewriteChannels(path, into: string) =
+  ## The survey's keys written again with the channels reversed (the same
+  ## traces, the same size), into `into`, then over `path`: a file another
+  ## program rewrote in place.
+  var w = openSeismicWriter(into, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: rewritten"]))
+  var buf = newSeq[float32](Samples)
+  for shot in 0 ..< Shots:
+    for channel in 1 .. Channels:
+      var k = initTraceKeys()
+      k.record = float64(FirstRecord + shot)
+      k.channel = float64(Channels + 1 - channel)
+      k.srcPoint = FirstSrcPoint + float64(shot)
+      (k.srcX, k.srcY, k.srcZ) = (srcX(shot), OriginY, Elevation)
+      (k.rcvX, k.rcvY, k.rcvZ) = (rcvX(channel), OriginY, Elevation)
+      k.offset = abs(rcvX(channel) - srcX(shot))
+      (k.t0Ms, k.intervalUs, k.status) = (0.0, DtMs * 1000, tsLive)
+      for i in 0 ..< Samples: buf[i] = surveySample(shot, channel, i)
+      w.writeTrace(k, buf)
+  let log = w.close()
+  doAssert log.len == 0, $log
+  copyFile(into, path)
+
+block aRewrittenFileReopened:
+  # Seen to fail with the cache keyed by the path alone: the columns sorted
+  # and read before the rewrite, after a reopen, were the old file's values.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let view = TableView(fields: @["keys.channel", "keys.srcPoint"], scope: tsFile,
+      sortBy: "keys.channel", rows: 0 .. SurveyTraces - 1)
+    var a = st.table(view)
+    doAssert a.values[0][0] == 1 and a.values[SurveyTraces - 1][0] == Channels
+    rewriteChannels(path, fx.dir / "rewritten.sgy")
+    st.apply Command(kind: ckReopen, reopenPath: path, openChoice: OpenChoice())
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    a = st.table(view)
+    let now = directKeys(path, ["keys.channel"])[0]
+    doAssert a.count == SurveyTraces and a.problems.len == 0, $a.problems
+    for r in 0 ..< a.rowTraces.len:
+      doAssert a.values[r][0] == now[a.rowTraces[r]], "row " & $r & ": " &
+        $a.values[r][0] & ", the file now says " & $now[a.rowTraces[r]]
+      if r > 0: doAssert a.values[r - 1][0] <= a.values[r][0], "not sorted by the new values"
+    st.shutdown()
