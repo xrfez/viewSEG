@@ -31,6 +31,8 @@
 ## selected in another file, and points selected on the map, stay selected.
 ## A file that changes on disk while a reopen is reading ends open: with the
 ## choice asked for when that open succeeds, never silently closed.
+## A carried survey join is said to be matching when it starts, and kept
+## only once that match succeeds (or dropped, and why, when it fails).
 ##
 ## Seen to fail (the failing reopen): with the trace-count test taken out of
 ## `adopt` (`elif false`), "stays as it was"; (the carried state): with
@@ -42,7 +44,9 @@
 ## "traces of the other file were shifted"; (the selection replaced whole):
 ## with `carryOver` selecting `smReplace`, "traces selected in the other
 ## file were dropped"; (the watch cancelling the reopen): with `closeSession`
-## cancelling that open, "the file was gone after it changed".
+## cancelling that open, "the file was gone after it changed"; (the join
+## said kept at once): with `carryOver` adding "kept the survey join" when
+## the match is only submitted, "said kept before the match".
 ##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
@@ -479,3 +483,38 @@ block changedDuringReopenStaysOpen:
       st.sessions[0].facts.opened.choice.verifyAll), "the file was gone after it changed"
     st.shutdown()
   releaseAll()
+
+proc joined(st: var AppState; path, spsS, spsR, spsX: string) =
+  st.showIt(path)
+  var files: seq[JoinFile]
+  for p in [spsS, spsR, spsX]: files.add JoinFile(path: p, kind: jkSps)
+  st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: files)
+  doAssert st.settle(st.joinedOf(st.sessions[0].id) >= 0), "not joined"
+
+block carriedJoinIsKeptWhenItSucceeds:
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let sps = fx.surveySps()
+    var st = initAppState()
+    st.joined(path, sps.s, sps.r, sps.x)
+    st.reopen(path, OpenChoice(verifyAll: true))
+    doAssert st.settle(st.log.has("matching the survey again")), "the match was not said to start"
+    doAssert not st.log.has("kept the survey join"), "said kept before the match"
+    doAssert st.settle(st.sessions.len == 1 and st.joinedOf(st.sessions[0].id) >= 0 and
+      st.log.has("kept the survey join")), "a join that succeeded was not said kept"
+    st.shutdown()
+
+block carriedJoinIsDroppedWhenItFails:
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let sps = fx.surveySps()
+    var st = initAppState()
+    st.joined(path, sps.s, sps.r, sps.x)
+    removeFile(sps.x) # gone when the match runs again
+    st.reopen(path, OpenChoice(verifyAll: true))
+    doAssert st.settle(st.log.has("matching the survey again"))
+    doAssert not st.log.has("kept the survey join"), "said kept before the match"
+    doAssert st.settle(st.sessions.len == 1 and st.log.has("dropped the survey join")),
+      "a join that failed was not said dropped"
+    doAssert st.joinedOf(st.sessions[0].id) < 0, "a failed join was kept"
+    st.shutdown()

@@ -561,6 +561,9 @@ type
     held: int = -1 ## the holds on the file its job found: none (-1: it never ran)
     paused: seq[PanelId] ## the panels whose readers let go of the file for it
     auto: bool ## a file opened in a project, matched to its survey without the window
+    carried: bool
+      ## a file opened again: the match is said to start then, and kept or
+      ## dropped only once it ends
     by: CommandOrigin ## who asked for the import (the user's is kept in the project)
 
   Joined* = object
@@ -4009,12 +4012,12 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
         elif state.joinedRelations(s.id) < 0: state.checkRecords(s)
     state.loaded(job, id)
 
-proc startJoin(state: var AppState; i: int; cmd: Command)
 proc notify(state: var AppState; severity: Severity; text: string)
 proc reopen(state: var AppState; i: int; now: bool)
 proc showAgain(state: var AppState; path: string)
 proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = false;
   by: CommandOrigin; asked = OpenChoice(); forced = false)
+proc startJoin(state: var AppState; i: int; cmd: Command; carried = false)
 
 proc carryOf(state: AppState; s: Session): Carry =
   ## What `s`, an open file about to be replaced by the same file opened
@@ -4077,8 +4080,9 @@ proc carryOver(state: var AppState; c: Carry; i: int) =
           dropped.add "the survey join (an import is under way)"
         else:
           state.startJoin(i, Command(kind: ckJoin, joinFile: s.id, joinFiles: c.join.files,
-            joinOptions: c.join.options, joinUnits: c.join.units, origin: coWindow))
-          kept.add "the survey join (matched again)"
+            joinOptions: c.join.options, joinUnits: c.join.units, origin: coWindow),
+            carried = true)
+          kept.add "matching the survey again"
     else:
       if c.selected.len > 0: dropped.add "the selection"
       if c.joined: dropped.add "the survey join"
@@ -4277,7 +4281,7 @@ proc notify(state: var AppState; severity: Severity; text: string) =
 
 proc finishImport(state: var AppState)
 
-proc startJoin(state: var AppState; i: int; cmd: Command) =
+proc startJoin(state: var AppState; i: int; cmd: Command; carried = false) =
   ## `ckJoin`, the survey import. With an open file `sessions[i]`, the files
   ## are read once, on a job (`joinReadWork`), while the plot goes on reading
   ## the file: those not on the map yet (or read with other line names) are
@@ -4339,7 +4343,7 @@ proc startJoin(state: var AppState; i: int; cmd: Command) =
       state.inbox.poster, layers, reuse))
     state.joining = Joining(job: job, step: jpReading, session: s.id, path: s.path,
       name: s.name, files: files, options: cmd.joinOptions, units: cmd.joinUnits, loads: loads,
-      reused: reused, by: cmd.origin)
+      reused: reused, by: cmd.origin, carried: carried)
     state.log.add(sevInfo, s.name, "Importing the survey (" & fileNames(files) & ") for " &
       s.name & ".")
 
@@ -4431,6 +4435,14 @@ proc finishImport(state: var AppState) =
   of joCancelled: state.log.add(sevInfo, j.name, words[0])
   of joFailed: state.log.add(sevError, j.name, words[0])
   of joNone: discard
+  if j.carried:
+    case j.outcome
+    of joJoined, joNothing:
+      state.log.add(sevInfo, j.name, j.name & " kept the survey join.")
+    of joFailed, joCancelled:
+      let why = if words.len > 0: words[0] else: "the match ended"
+      state.log.add(sevWarning, j.name, j.name & " dropped the survey join: " & why)
+    of joMapOnly, joNone: discard
   state.joinReport = JoinReport(serial: state.joinReport.serial + 1, session: j.session,
     name: j.name, outcome: j.outcome, words: words, unmatched: unmatched, heldAtJoin: j.held)
   state.joining = Joining()
