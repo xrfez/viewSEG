@@ -1386,8 +1386,8 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
     res.commands.add editCommand(st, p, under, teKilled)
   marks.mark("plot.menu.kill")
   let fft = fftEntry()
-  if igMenuItem_Bool((fft.icon & "  " & fft.name & " in a new window").cstring, fft.shortcut,
-      false, under >= 0):
+  if igMenuItem_Bool((fft.icon & "  " & fft.name & " in a new window").cstring,
+      fft.shortcut.cstring, false, under >= 0):
     res.commands.add fftCommand(st, p, under)
   marks.mark("plot.menu.fft")
   tip(fft.sentence)
