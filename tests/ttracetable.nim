@@ -21,7 +21,9 @@
 ## not comparing the open, "the previous open's rows would show as current";
 ## with a column read catching only `OSError`, an `IOError` (the `fkIo` seam
 ## in `faultyfs`: `mappedRead` raises it, as an unmapped read that fails)
-## "the whole answer was dropped".
+## "the whole answer was dropped"; with the cache evicting a column this
+## request needs (`if c.key notin needed` changed to `if true`), "the sort's
+## column was evicted".
 ##
 ## Runs alone: it bounds the time a million rows take to sort (5 s).
 
@@ -306,6 +308,32 @@ block anIoErrorStaysInItsColumn:
     releaseAll()
     st.shutdown()
   releaseAll()
+
+block aNeededColumnIsNotEvicted:
+  # The cache holds 8 columns. The sort's is the oldest. Find asks for a new
+  # one. The sort's column must stay: evicting it makes the reader fail
+  # (indexOf -1) instead of answering.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let cols = ["keys.record", "keys.channel", "keys.srcLine", "keys.srcPoint",
+      "keys.rcvLine", "keys.rcvPoint", "keys.offset", "keys.ensemble"]
+    for name in cols:
+      discard st.table(TableView(fields: @[name], scope: tsFile, sortBy: name, rows: 0 .. 2))
+    let oldest = cols[0]
+    let fresh = "keys.srcX" # not among the eight: a new column, and every trace has one
+    let view = TableView(fields: @[oldest, fresh], scope: tsFile, sortBy: oldest,
+      findField: fresh, findValue: "0..1e9", rows: 0 .. 5)
+    let a = st.table(view)
+    doAssert a.problems.len == 0, $a.problems
+    doAssert a.count > 0, "the sort's column was evicted"
+    var prev = -Inf
+    for row in a.values:
+      doAssert row[0] >= prev, "not sorted by the oldest column: " & $a.values
+      prev = row[0]
+    st.shutdown()
 
 block anAnswerOfItsTraces:
   # Seen to fail: an answer of the record shown before still counted as
