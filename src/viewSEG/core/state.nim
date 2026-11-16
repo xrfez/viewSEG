@@ -4037,7 +4037,9 @@ proc carryOver(state: var AppState; c: Carry; i: int) =
       if c.selected.len > 0:
         var ids = newSeq[int](c.selected.len)
         for k, t in c.selected: ids[k] = s.base + t
-        state.selection.select(ids, smReplace)
+        # the old ids are already gone (`closeSession`); other files' traces
+        # and the map's points stay
+        state.selection.select(ids, smAdd)
         kept.add "the selection"
       for id in c.plots:
         let w = state.findPlot(id)

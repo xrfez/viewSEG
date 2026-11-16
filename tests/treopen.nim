@@ -27,7 +27,8 @@
 ## written only when that open is taken in: a second reopen at once, or a
 ## close while the open is still reading, leaves the choice the file had.
 ## A correlation whose traces are in one file and whose reference is in
-## another shifts only the ids that lay in the reopened file.
+## another shifts only the ids that lay in the reopened file. Traces
+## selected in another file, and points selected on the map, stay selected.
 ##
 ## Seen to fail (the failing reopen): with the trace-count test taken out of
 ## `adopt` (`elif false`), "stays as it was"; (the carried state): with
@@ -36,7 +37,9 @@
 ## gone, "a closed file came back"; (the choice written before the open):
 ## with `reopenWith` storing the choice before the job, "the untried choice
 ## was kept"; (a cross-file reference): with every carried id shifted,
-## "traces of the other file were shifted".
+## "traces of the other file were shifted"; (the selection replaced whole):
+## with `carryOver` selecting `smReplace`, "traces selected in the other
+## file were dropped".
 ##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
@@ -416,4 +419,37 @@ block tracesShiftLeavesAnotherFilesReference:
       "the traces were not shifted: " & $st.plots[0].traces
     doAssert st.plots[0].params.reference == baseB + 2,
       "a reference in another file was shifted: " & $st.plots[0].params.reference
+    st.shutdown()
+
+block anotherFilesSelectionStays:
+  # Traces selected in the other file, and a point selected on the map, are
+  # not the reopened file's: they stay.
+  withFixtures fx:
+    let a = fx.surveySegy()
+    let b = fx.dir / "other.sgy"
+    copyFile(a, b)
+    var st = initAppState()
+    st.showIt(a)
+    st.apply Command(kind: ckOpen, paths: @[b])
+    doAssert st.settle(st.sessions.len == 2), "the second file did not open"
+    let (baseA, baseB) = (st.baseOf(a), st.baseOf(b))
+    doAssert baseB >= 0 and baseB != baseA
+    # a window of the other file keeps it open when this one is shown again
+    st.apply Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[baseB + 1])
+    doAssert st.plots.len == 1, "the other file's window was not opened"
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: a)
+    doAssert st.settle(st.sessions.len == 2 and st.baseOf(a) == baseA)
+    st.apply Command(kind: ckSelect, traces: @[baseA + 3], mode: smReplace)
+    st.apply Command(kind: ckSelect, traces: @[baseB + 5, baseB + 6], mode: smAdd)
+    let point = PointRef(layer: SurveyLayerId(1), role: prSource, point: 3)
+    st.apply Command(kind: ckSelectPoints, points: @[point], pointMode: smAdd)
+    doAssert st.selection.selectedCount == 3 and st.selection.points == @[point]
+    st.reopen(a, OpenChoice(verifyAll: true))
+    doAssert st.settle(st.baseOf(a) != baseA and st.sessions.len == 2),
+      "the file was not opened again"
+    let newA = st.baseOf(a)
+    doAssert newA + 3 in st.selection.selected, "the reopened file's trace was not kept"
+    doAssert baseB + 5 in st.selection.selected and baseB + 6 in st.selection.selected,
+      "traces selected in the other file were dropped"
+    doAssert st.selection.points == @[point], "the map's selected points were dropped"
     st.shutdown()
