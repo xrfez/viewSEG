@@ -64,6 +64,7 @@ proc traceX(f: FrameInfo; position: int): Vec2 =
 withFixtures fx:
   var steps: seq[Step] = @[]
   var pointAt: Vec2
+  var edgeAt = 0
   var held = PlotCursor()
   proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
     steps.add Step(name: name, act: act, done: done)
@@ -220,6 +221,44 @@ withFixtures fx:
       let text = f.plotWindows.readoutOf(2)
       doAssert " /trace · " in text and " Hz: " in text and
         (text.endsWith(" traces/s") or text.endsWith("(k = 0)")), text)
+  # a window in front hides the held cursor's boxes on the axes: an
+  # envelope window (3), opened over the f-k's wavenumber box, shows its own
+  # pixels there, not the box's frame
+  proc edgeOf(f: FrameInfo; box: Rect): int =
+    ## The most pixels of one row at the box's top edge that are in the crosshair's colour.
+    let pixels = f.readFrame()
+    let c = f.theme.roles[rlCrosshair]
+    for y in int(box.pos.y) - 1 .. int(box.pos.y) + 1:
+      var n = 0
+      for x in int(box.pos.x) + 3 ..< int(box.pos.x + box.size.x) - 3:
+        let p = pixels[y * f.width + x]
+        if (p.r, p.g, p.b) == (c.r, c.g, c.b): inc n
+      result = max(result, n)
+  step("the box seen", noop, proc (f: FrameInfo): bool =
+    let box = f.markOf("new plot 2.cursor x")
+    doAssert box.size.x > 0, "the f-k's held cursor shows no box on its axis"
+    edgeAt = f.edgeOf(box)
+    doAssert edgeAt >= int(box.size.x) - 8, "the box's edge is not drawn (" & $edgeAt & " pixels)"
+    true)
+  step("an envelope in front", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[0])),
+    proc (f: FrameInfo): bool = f.core.plots.len == 3 and not f.core.plots[2].waiting and
+      f.markOf("new plot 3.plot 1.data").size.x > 0)
+  step("the box hidden", noop, proc (f: FrameInfo): bool =
+    let w = f.markOf("new plot 3")
+    let box = f.markOf("new plot 2.cursor x")
+    doAssert box.size.x > 0 and w.pos.x <= box.pos.x and w.pos.y <= box.pos.y and
+      w.pos.x + w.size.x >= box.pos.x + box.size.x and
+      w.pos.y + w.size.y >= box.pos.y + box.size.y,
+      "the envelope window " & $w & " does not cover the box " & $box
+    # the box's top edge is a line in the crosshair's colour: none of it is there now
+    let same = f.edgeOf(box)
+    doAssert same < edgeAt div 2, "the box's edge shows through the window in front (" &
+      $same & " pixels of it)"
+    true)
+  step("the envelope closed", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckClosePlot, plot: 3)),
+    proc (f: FrameInfo): bool = f.core.plots.len == 2)
   step("the f-k closed", proc (f: FrameInfo) =
     f.apply(Command(kind: ckClosePlot, plot: 2)),
     proc (f: FrameInfo): bool = f.core.plots.len == 1)

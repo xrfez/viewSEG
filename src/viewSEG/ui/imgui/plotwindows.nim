@@ -375,7 +375,7 @@ proc colourMapOf(ui: var PlotWindowsUi; m: ColourMap): int =
   ui.maps[m] - 1
 
 proc axisBox(dl: ptr ImDrawList; text: string; across: bool; at: float32; pos,
-    area: ImVec2_c; t: Theme) =
+    area: ImVec2_c; t: Theme): tuple[lo, hi: ImVec2_c] =
   ## `text` in a box on the plot's bottom axis (`across`: centred at x `at`)
   ## or its left axis (centred at y `at`), over the tick labels, as the
   ## Seismic window's cursor writes its time.
@@ -391,6 +391,7 @@ proc axisBox(dl: ptr ImDrawList; text: string; across: bool; at: float32; pos,
   ImDrawList_AddRect(dl, lo, hi, u32(t.roles[rlCrosshair]), 0, 1, 0)
   ImDrawList_AddText_Vec2(dl, ImVec2_c(x: lo.x + 3, y: lo.y + 2), u32(t.roles[rlText]),
     text.cstring, nil)
+  (lo, hi)
 
 func axisNumber(x: float64): string =
   if abs(x) >= 100 or x == round(x): formatFloat(x, ffDecimal, 1)
@@ -452,9 +453,16 @@ proc drawImage(ui: var PlotWindowsUi; w: AnalysisWindow; name: string; t: Theme;
       ImDrawList_AddLine(dl, ImVec2_c(x: pos.x, y: round(q.y) + 0.5),
         ImVec2_c(x: pos.x + area.x, y: round(q.y) + 0.5), cross, 1)
       ImDrawList_PopClipRect(dl)
-      let fg = igGetForegroundDrawList_ViewportPtr(igGetWindowViewport())
-      axisBox(fg, axisNumber(img.xOf(c.x)), true, q.x, pos, area, t)
-      axisBox(fg, axisNumber(img.yOf(c.y)), false, q.y, pos, area, t)
+      # on the window's own list, clipped to the window: a window in front hides them
+      let wl = igGetWindowDrawList()
+      let wp = igGetWindowPos()
+      let ws = igGetWindowSize()
+      ImDrawList_PushClipRect(wl, wp, ImVec2_c(x: wp.x + ws.x, y: wp.y + ws.y), true)
+      let (xlo, xhi) = axisBox(wl, axisNumber(img.xOf(c.x)), true, q.x, pos, area, t)
+      let (ylo, yhi) = axisBox(wl, axisNumber(img.yOf(c.y)), false, q.y, pos, area, t)
+      ImDrawList_PopClipRect(wl)
+      marks.markRect(name & ".cursor x", xlo, xhi)
+      marks.markRect(name & ".cursor y", ylo, yhi)
       result = img.readingText(c)
     ImPlot_EndPlot()
   igSameLine(0, -1)
