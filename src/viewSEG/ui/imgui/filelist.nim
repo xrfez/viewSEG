@@ -19,7 +19,7 @@
 ##
 ## The folder is watched (`core/watch`): a file that appears is listed and
 ## marked new (a dot in the accent colour) until it is shown; one whose size
-## or time changed at the last look is marked as being written (a pencil, in
+## or time changed at the last look is marked as being written (a spinner, in
 ## the warning colour), and one that ends before its last trace as
 ## incomplete. "Follow the latest", at the foot, shows each new file once it
 ## is whole; off, the plot stays on the file the user chose.
@@ -62,7 +62,7 @@ func filterText(ui: FileListUi): string = $cast[cstring](addr ui.filter[0])
 func markOf(e: FileEntry): string =
   ## The glyph before a file's name: being written, incomplete, new, or none.
   case e.status
-  of fsWriting: IconWriting
+  of fsWriting: IconLoading
   of fsShort: IconWarning
   of fsSteady: (if e.isNew: IconNew else: "")
 

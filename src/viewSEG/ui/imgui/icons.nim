@@ -48,8 +48,18 @@ const
   IconLayers* = ""     ## nf-cod-layers
   IconTarget* = ""     ## nf-cod-target
   IconLocation* = ""   ## nf-cod-location
-  IconQuit* = ""       ## nf-cod-close
+  IconQuit* = "\u{EA6E}" ## nf-cod-sign_out
+  IconStop* = "\u{EAD7}" ## nf-cod-debug_stop
+  IconRemove* = "\u{EB3B}" ## nf-cod-remove
   IconRefresh* = ""    ## nf-cod-refresh
+  IconReset* = "\u{EAD2}" ## nf-cod-debug_restart
+  IconHome* = "\u{EB06}" ## nf-cod-home
+  IconSync* = "\u{EA77}" ## nf-cod-sync
+  IconSurvey* = "\u{EB01}" ## nf-cod-globe
+  IconSliders* = "\u{EB52}" ## nf-cod-settings
+  IconMemory* = "\u{EA98}" ## nf-cod-archive
+  IconLoading* = "\u{EB19}" ## nf-cod-loading
+  IconLayout* = "\u{EBEB}" ## nf-cod-layout
   IconArrowUp* = ""    ## nf-cod-arrow_up
   IconArrowDown* = ""  ## nf-cod-arrow_down
   IconTrash* = ""      ## nf-cod-trash
@@ -79,10 +89,12 @@ const
     IconError, IconInfo, IconClose, IconCheck, IconTheme, IconTable, IconPlot, IconPulse,
     IconFft, IconSpectrogram, IconEnvelope, IconPhase, IconCorrelation, IconVibrator, IconFk,
     IconRuler,
-    IconLayers, IconTarget, IconLocation, IconRefresh, IconArrowUp, IconArrowDown, IconTrash,
-    IconCopy, IconClearAll, IconTasks, IconList, IconGoTo, IconExport, IconHistory,
-    IconRecordBack, IconRecordNext, IconRecords, IconNew, IconWriting, IconFollow,
-    IconAgent, IconUndo, IconRedo, IconTray, IconMinimize, IconPin]
+    IconLayers, IconTarget, IconLocation, IconQuit, IconStop, IconRemove, IconRefresh,
+    IconReset, IconHome, IconSync, IconSurvey, IconSliders, IconMemory, IconLoading,
+    IconLayout, IconArrowUp, IconArrowDown, IconTrash, IconCopy, IconClearAll, IconTasks,
+    IconList, IconGoTo, IconExport, IconHistory, IconRecordBack, IconRecordNext,
+    IconRecords, IconNew, IconWriting, IconFollow, IconAgent, IconUndo, IconRedo,
+    IconTray, IconMinimize, IconPin]
     ## for tests: every glyph above must be in the UI font
 
 func codepoint*(icon: string): int =

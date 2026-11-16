@@ -39,10 +39,12 @@ block ownIcons:
     IconSave, IconSettings, IconLog, IconMap, IconFilter, IconEye, IconEyeOff, IconZoomIn,
     IconZoomOut, IconFit, IconPlay, IconStep, IconPrevious, IconNext, IconWarning,
     IconError, IconInfo, IconClose, IconCheck, IconTheme, IconTable, IconPlot, IconPulse,
-    IconLayers, IconTarget, IconLocation, IconRefresh, IconArrowUp, IconArrowDown,
-    IconTrash, IconCopy, IconClearAll, IconTasks, IconList, IconGoTo, IconExport,
-    IconHistory, IconRecordBack, IconRecordNext, IconRecords, IconNew, IconWriting,
-    IconFollow, IconAgent, IconUndo, IconRedo, IconTray, IconMinimize]
+    IconLayers, IconTarget, IconLocation, IconQuit, IconStop, IconRemove, IconRefresh,
+    IconReset, IconHome, IconSync, IconSurvey, IconSliders, IconMemory, IconLoading,
+    IconLayout, IconArrowUp, IconArrowDown, IconTrash, IconCopy, IconClearAll, IconTasks,
+    IconList, IconGoTo, IconExport, IconHistory, IconRecordBack, IconRecordNext,
+    IconRecords, IconNew, IconWriting, IconFollow, IconAgent, IconUndo, IconRedo,
+    IconTray, IconMinimize]
   for e in PlotEntries:
     doAssert e.icon notin taken, e.name & " reuses an action icon"
 

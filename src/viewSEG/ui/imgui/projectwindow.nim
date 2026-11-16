@@ -271,7 +271,7 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
         igTextColored(vec4(t.roles[rlWarning]), "%s", (IconWarning & "  A survey file changed " &
           "since it was copied into the project. The project uses its copy until you " &
           "update it.").cstring)
-        if button(IconRefresh & "  Update from the original", "project.update",
+        if button(IconSync & "  Update from the original", "project.update",
             "Copy the originals that changed into the project again, and read them (in the " &
             "background; not while the survey is being copied in)", p.survey != srKeeping,
             marks) and ui.focusProject.acts:

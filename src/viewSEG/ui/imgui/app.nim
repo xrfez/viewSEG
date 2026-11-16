@@ -61,8 +61,8 @@ const
   filesTitle = IconList & "  Files###files"
   jobsTitle = IconTasks & "  Jobs###jobs"
   recordsTitle = IconRecords & "  Records###records"
-  joinTitle = IconMap & "  Import survey###join"
-  memoryTitle = IconHistory & "  File memory###memory"
+  joinTitle = IconSurvey & "  Import survey###join"
+  memoryTitle = IconMemory & "  File memory###memory"
   projectTitle = IconProject & "  Project###project"
   newProjectTitle = IconProject & "  New project###newproject"
   noticeSeconds = 5.0                     ## how long a notice stays on screen

@@ -126,7 +126,7 @@ proc drawSortKeys*(ks: var SortKeysUi; p: Panel; marks: var Marks; cmds: var seq
     if igArrowButton("##down", ImGui_Dir_Down): moved = (i, i + 1)
     igEndDisabled()
     igSameLine(0, 2)
-    if igSmallButton((IconClose & "##remove").cstring): removed = i
+    if igSmallButton((IconRemove & "##remove").cstring): removed = i
     tip("Remove this key")
     igPopID()
   if moved[0] >= 0: swap(ks.draft[moved[0]], ks.draft[moved[1]])

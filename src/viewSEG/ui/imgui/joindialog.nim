@@ -306,7 +306,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     var drop = -1
     for a in 0 ..< ui.added.len:
       igPushID_Int(cint(10_000 + a))
-      if igSmallButton(IconClose.cstring): drop = a
+      if igSmallButton(IconRemove.cstring): drop = a
       tip("Leave it out")
       igSameLine(0, -1)
       igTextUnformatted((ui.added[a].path.extractFilename & "  (" & $ui.added[a].kind &
@@ -482,7 +482,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
     igSeparator()
     let can = not busy and files.len > 0
     igBeginDisabled(not can)
-    if igButton((IconMap & "  Import").cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
+    if igButton((IconSurvey & "  Import").cstring, ImVec2_c(x: 0, y: 0)) and ui.focus.acts and
         can:
       result.commands.add Command(kind: ckJoin, joinFile: (if target >= 0:
         st.sessions[target].id else: NoSession), joinFiles: files, joinOptions: opts,
@@ -511,7 +511,7 @@ proc drawJoin*(ui: var JoinUi; title: string; st: AppState; t: Theme;
       # so a million traces): no Cancel then.
       if underWay.job != NoJob and (info.isNone or info.get.spec.cancellable):
         igSameLine(0, -1)
-        if igSmallButton((IconClose & " Cancel").cstring):
+        if igSmallButton((IconStop & " Cancel").cstring):
           result.commands.add Command(kind: ckCancelJob, job: underWay.job)
         marks.marked("join.cancel")
     if changed:

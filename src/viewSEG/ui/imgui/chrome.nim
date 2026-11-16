@@ -368,7 +368,7 @@ proc jobField(job: JobStatus; t: Theme; marks: var Marks; res: var StatusOutput)
     if job.cancellable:
       igSameLine(0, 8)
       igBeginDisabled(job.cancelling)
-      if igSmallButton((IconClose & " Cancel##job").cstring):
+      if igSmallButton((IconStop & " Cancel##job").cstring):
         res.cancel = job.job
       igEndDisabled()
       marks.mark("status.cancel")

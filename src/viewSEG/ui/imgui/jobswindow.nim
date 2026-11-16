@@ -68,7 +68,7 @@ proc drawJobs*(title: string; st: AppState; t: Theme; marks: var Marks): JobsOut
       igProgressBar(fraction, ImVec2_c(x: width, y: 0), r.progress.cstring)
       tip(r.detail)
       igSameLine(0, -1)
-      if small(IconClose & " Cancel", "jobs.cancel " & r.title, "Ask it to stop",
+      if small(IconStop & " Cancel", "jobs.cancel " & r.title, "Ask it to stop",
           r.canCancel, marks):
         result.commands.add Command(kind: ckCancelJob, job: r.id)
       igPopID()
@@ -100,7 +100,7 @@ proc drawJobs*(title: string; st: AppState; t: Theme; marks: var Marks): JobsOut
           "off the list (the messages stay in Messages)", true, marks):
         for r in rows.finished:
           result.commands.add Command(kind: ckRemoveJob, job: r.id)
-    let icon: array[JobState, string] = [IconInfo, IconInfo, IconCheck, IconError, IconClose]
+    let icon: array[JobState, string] = [IconInfo, IconInfo, IconCheck, IconError, IconStop]
     let colour: array[JobState, Rgba] = [t.roles[rlTextDim], t.roles[rlTextDim],
       t.roles[rlInfo], t.roles[rlError], t.roles[rlTextDim]]
     let clipper = ImGuiListClipper_ImGuiListClipper()

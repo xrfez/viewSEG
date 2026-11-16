@@ -92,7 +92,7 @@ writes into it while you work appear in the list by themselves (no refresh neede
 
 - A file that **appeared** after the folder was listed is marked with a **dot** until you
   show it.
-- A file whose size or time **changed** at the last look is marked with a **pencil** and
+- A file whose size or time **changed** at the last look is marked with a **spinner** and
   its name is dimmed: it is being written. It stays listed, and you can click it to see
   what is there so far.
 - A file that has stopped changing but **ends before its last trace** is marked with a

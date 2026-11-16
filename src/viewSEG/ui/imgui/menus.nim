@@ -131,14 +131,14 @@ const
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
     maReopen: IconRefresh,
-    maImportSurvey: IconMap, maImportSettings: IconSettings, maImportLayout: IconLayers,
-    maImportEdits: IconWriting, maExportLog: IconLog, maExportSettings: IconSettings,
-    maExportLayout: IconLayers, maExportEdits: IconWriting, maFileMemory: IconHistory,
+    maImportSurvey: IconSurvey, maImportSettings: IconSliders, maImportLayout: IconLayout,
+    maImportEdits: IconWriting, maExportLog: IconExport, maExportSettings: IconSliders,
+    maExportLayout: IconLayout, maExportEdits: IconWriting, maFileMemory: IconMemory,
     maNewProject: IconProject, maOpenProject: IconProject, maProject: IconProject,
     maCloseProject: IconClose,
-    maResetSettings: IconRefresh, maQuit: IconQuit, maUndo: IconUndo, maRedo: IconRedo,
+    maResetSettings: IconReset, maQuit: IconQuit, maUndo: IconUndo, maRedo: IconRedo,
     maClearEdits: IconClearAll, maToggleTheme: IconTheme,
-    maResetWindows: IconRefresh, maBringWindows: IconFit, maSaveLayout: IconSave,
+    maResetWindows: IconHome, maBringWindows: IconFit, maSaveLayout: IconSave,
     maShowFiles: IconList, maShowRecords: IconRecords, maShowMap: IconMap,
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog,
     maAbout: IconInfo]
@@ -150,6 +150,10 @@ const FollowHelp* = "On: each file that appears in the folder listed is shown in
   "plot once it is completely written (its size has stopped changing and it is whole). " &
   "Off: the plot stays on the file you chose; new files are marked in Files."
   ## The tooltip of "Follow the latest", in the menu and in Files
+
+func menuIcon*(a: MenuAction): string =
+  ## The glyph `a` is drawn with, in its menu and wherever that action is.
+  menuIcons[a]
 
 proc shortcutName*(a: MenuAction): string =
   ## The shortcut of `a` as shown to the user ("Ctrl+O"), or "".
@@ -295,13 +299,13 @@ proc drawLayouts(input: MenuInput; res: var MenuResult) =
   for i, e in input.layouts:
     if e.preset:
       igPushID_Int(cint(i))
-      if igMenuItem_Bool((IconLayers & "  " & e.name).cstring, nil, false, true):
+      if igMenuItem_Bool((IconLayout & "  " & e.name).cstring, nil, false, true):
         res.loadLayout = e.path
       if marked != nil: marked[].mark("menu.layout." & e.name)
       tip("Arrange the windows as this layout, which comes with viewSEG, does")
       igPopID()
     else: mine = true
-  if igBeginMenu((IconFolder & "  Load").cstring, mine):
+  if igBeginMenu((IconLayout & "  Load").cstring, mine):
     for i, e in input.layouts:
       if not e.preset:
         igPushID_Int(cint(i))
@@ -398,7 +402,7 @@ proc drawWindowMenu(input: MenuInput; res: var MenuResult) =
     tip(if w in AlwaysShown: "Always shown: a click brings it forward"
         else: "Ticked while shown. A click shows it in front when it is hidden or behind " &
           "another tab, and hides it when it is in sight")
-  if igMenuItem_Bool((IconMap & "  Import survey").cstring, nil, input.joinShown, true):
+  if igMenuItem_Bool((IconSurvey & "  Import survey").cstring, nil, input.joinShown, true):
     res.toggleJoin = true
   if marked != nil: marked[].mark("menu.window.join")
   tip("Ticked while open: a click opens it in front, or closes it")
