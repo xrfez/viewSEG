@@ -19,6 +19,11 @@
 ##   once when the original was written meanwhile), and is refused while the
 ##   survey is being copied in.
 ##
+## - The layers of a restore a close cancelled do not land on the map.
+##
+## (Not seen to fail: a close's cancel already makes the inbox drop the job's
+## messages, so `staleSurveyJobs` is a second guard.)
+##
 ## Seen to fail: with the temporary name of `survey.bin` made from the
 ## process id, "the temporary name"; with the originals looked at inside `openProjectWork`, "the
 ## originals were looked at before the open ended"; with `markImporting` not called, "the import is not in
@@ -230,5 +235,30 @@ withFixtures fx:
     doAssert again.project.doc.survey[0].size == getFileSize(survey.s),
       "the identity recorded is not that of the copy"
     doAssert readFile(job / "survey" / "files" / "survey.s") == readFile(survey.s)
+    again.shutdown()
+  block staleRestore:
+    # The layers of a restore that ended before a close, still in the inbox
+    # when the project is closed, do not land on the map.
+    let job = fx.dir / "Job stale"
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+    doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+    st.importSurvey(survey)
+    doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore and
+      not st.project.doc.hasImport)
+    st.flushFiles()
+    st.shutdown()
+    holdStep("making the survey kept in the project")
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject and
+      inStep("making the survey kept in the project").len == 1)
+    let id = inStep("making the survey kept in the project")[0]
+    releaseStep("making the survey kept in the project")
+    doAssert waitUntil(cameBack(id)), "the restore did not end"
+    again.apply Command(kind: ckCloseProject) # its layers are in the inbox still
+    discard again.drainInbox()
+    doAssert again.surveyLayers == 0, "the cancelled restore's layers landed on the map: " &
+      $again.surveyLayers
     again.shutdown()
 echo "tprojectkeep: done"

@@ -126,6 +126,39 @@ withFixtures fx:
     doAssert st.settle(not st.killed(5)), "Undo did not take them back"
     st.shutdown()
 
+  block appliedThenReopened:
+    # Output again with other ends (another quick identity): the earlier
+    # output is listed and said; after "Apply them to this file" it is not
+    # said or listed again at the next run.
+    var d = original
+    d[10] = char(ord(d[10]) xor 0x01)
+    writeFile(a, d)
+    var st = start(config)
+    st.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert st.settle(st.inProject)
+    st.showFile(a)
+    doAssert st.settle(st.earlierOf(a).len >= 1 and st.said("not applied")),
+      "not listed and said the first time"
+    var doc = ""
+    for c in st.earlierOf(a):
+      if c.edits.lists[teKilled].len == 2: doc = c.doc
+    doAssert doc.len > 0, "the earlier output with the two kills is not listed"
+    st.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: st.store.docPath(doc))
+    doAssert st.settle(st.killed(5) and st.killed(6)), "Apply did not apply them"
+    doAssert st.settle(st.remembering(a).known and st.jobs.active.len == 0)
+    st.flushFiles()
+    st.shutdown()
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject)
+    again.showFile(a)
+    doAssert again.settle(again.killed(5) and again.remembering(a).known and
+      again.jobs.active.len == 0)
+    doAssert not again.said("not applied"), "the applied earlier output is said again"
+    for c in again.earlierOf(a):
+      doAssert c.edits.lists[teKilled].len != 2, "the applied earlier output is listed again"
+    again.shutdown()
+
   block otherTraces: # output again with fewer traces: listed, not offered
     copyFile(fx.manyTracesSegy(Traces - 1, 40), a)
     var st = start(config)

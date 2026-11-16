@@ -727,6 +727,9 @@ type
     earlier: Table[string, seq[FileRecord]]
       ## per open file (by path): what is remembered about earlier outputs of
       ## its name, other files whose edits are not its own
+    staleSurveyJobs: seq[JobId]
+      ## the project's survey jobs a close cancelled: layers they posted
+      ## already are not put on the map
     earlierSaid: HashSet[string]
       ## the documents of earlier outputs said in the log, once each
     userStore: string
@@ -3199,7 +3202,11 @@ proc takeEarlier(state: var AppState; m: sink Msg) =
   if i < 0 or not sameData(state.remembered[i].identity, m.earlierOf): return
   for p in m.earlierProblems:
     state.log.add(sevWarning, m.earlierPath.extractFilename, "What is remembered: " & p & ".")
-  for c in m.earlier: state.sayEarlier(m.earlierPath, c)
+  for c in m.earlier:
+    # Edits that are on this file already (applied with "Apply them to this
+    # file", or the same made again) are no earlier output's to say.
+    if c.edits.isEmpty or not c.edits.minus(state.editsAt(m.earlierPath).kept).isEmpty:
+      state.sayEarlier(m.earlierPath, c)
 
 proc takeIdentified(state: var AppState; m: sink Msg) =
   ## A file's quick identity and the documents of it: those that are about
@@ -3800,6 +3807,7 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
       state.log.add(sevInfo, name, name & ": " & problems.join("; ") & ". They are left " &
         "off the map.")
   of loSurveyFile:
+    if job in state.staleSurveyJobs: return # a restore the project's close cancelled
     let dropped = state.droppedLoads.find(job)
     if dropped >= 0: # a cancelled import's: the map stays as it was
       state.droppedLoads.delete(dropped)
@@ -4304,6 +4312,7 @@ proc leaveProject(state: var AppState; restoreUser: bool) =
   state.forgetFileMemory()
   for job in [p.surveyJob, p.lookJob, p.originalsJob]:
     if job != NoJob: discard state.jobs.cancel(job)
+  if p.surveyJob != NoJob: state.staleSurveyJobs.add p.surveyJob
   state.releaseLock()
   state.store = Store(home: state.userStore)
   var s = state.settings

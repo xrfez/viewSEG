@@ -184,7 +184,7 @@ second.
   output's edits under the file, with **Apply them to this file** (one step: Edit > Undo
   takes it back; offered only when the two have the same number of traces, and the
   button says why when they do not) and **Forget them**. Nothing is moved onto the new
-  file by itself.
+  file by itself. Once applied, the earlier output is neither said nor listed again: its edits are the file's own.
 - **Survey originals too.** An original is "changed" only when its content is: its
   size or the hash of its first and last 64 KiB differ, or, when those agree but its
   time moved, the hash of every byte differs from its copy's. A file touched or copied
