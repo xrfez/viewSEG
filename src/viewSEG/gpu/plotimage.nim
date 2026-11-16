@@ -137,9 +137,10 @@ func columnsDrawn*(r: PlotRenderer): int {.inline.} = r.columns
   ## rows when time is across) the last drawing drew: all of them, or the
   ## stripes of the traces a hover left and reached (for tests).
 
-proc upload*(r: PlotRenderer; t: Tile): TileTextures =
-  ## The GPU's copy of `t`.
-  if r.ready: upload(t, r.maxSize) else: TileTextures(id: t.id, hoverRow: -1)
+proc upload*(r: PlotRenderer; t: Tile; slots: array[256, uint8] = default(array[256, uint8]);
+    useSlots = false): TileTextures =
+  ## The GPU's copy of `t`. `slots` colours each component when `useSlots`.
+  if r.ready: upload(t, r.maxSize, slots, useSlots) else: TileTextures(id: t.id, hoverRow: -1)
 
 proc resize(r: var PlotRenderer; width, height: int) =
   if r.target != 0 and width == r.width and height == r.height: return

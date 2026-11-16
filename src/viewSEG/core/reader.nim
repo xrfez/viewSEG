@@ -290,6 +290,8 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   var list: seq[int] = @[]
   var all = true
   var counts: array[256, int]
+  var sensors: array[256, uint8]
+  var mixed: set[uint8]
   let want = rd.src.filter.components
   for k in 0 ..< rows.len:
     let keys = rows.keysAt(k)
@@ -297,12 +299,23 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
     let kindOk = (seismic and rd.src.filter.seismic) or
       (not seismic and rd.src.filter.auxiliary)
     if kindOk and rd.src.hidden.binarySearch(g.a + k) < 0:
-      if keys.component != 0: inc counts[keys.component]
-      if passesComponent(keys.component, want): list.add g.a + k
+      let c = keys.component
+      if c != 0:
+        if counts[c] == 0: sensors[c] = keys.sensorType
+        elif sensors[c] != keys.sensorType: mixed.incl c
+        inc counts[c]
+      if passesComponent(c, want): list.add g.a + k
       else: all = false
     else:
       all = false
-  let present = tallyCounts(counts)
+  var rawCodes, rawSensors: seq[uint8] = @[]
+  var rawCounts: seq[int] = @[]
+  for code in 1'u8 .. 255'u8:
+    if counts[code] > 0:
+      rawCodes.add code
+      rawSensors.add if code in mixed: 0'u8 else: sensors[code]
+      rawCounts.add counts[code]
+  let present = buttonFaces(rawCodes, rawSensors, rawCounts)
   rd.shown = if all: Positions(traces: g)
              else: Positions(traces: g, listed: true, list: list)
   rd.positions = rd.shown
@@ -354,14 +367,15 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
       rd.note(sevWarning, "The traces shown of " & rd.name & " have no samples, so the plot " &
         "stays empty.")
   rd.layout = layout
-  var codes: seq[uint8] = @[]
+  var codes, compSensors: seq[uint8] = @[]
   var compCounts: seq[int] = @[]
   for t in present:
     codes.add t.code
     compCounts.add t.count
+    compSensors.add t.sensor
   rd.r.poster.post Msg(job: NoJob, kind: mkLayout, panel: rd.r.panel,
     sourceGen: rd.src.gen, layout: layout, known: known, widest: widest,
-    components: codes, componentCounts: compCounts)
+    components: codes, componentCounts: compCounts, componentSensors: compSensors)
   # The layout does not depend on the order, so it goes first: the panel can
   # ask for its view while the traces are sorted.
   let order = rd.src.order

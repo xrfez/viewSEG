@@ -398,17 +398,22 @@ times only; its unit is in the ms/in box (the gear's Scales tab) and in the stat
 or smaller keeps the scale and shows more or less of the record, from the same top-left
 corner, also when the whole record was in view.
 
-**Components.** A record whose traces carry more than one component (an ocean-bottom
-node: hydrophone, vertical, inline, crossline) draws each trace once, side by side as
-usual, in that component's colour: vertical green, inline yellow, crossline teal,
-hydrophone blue. Any other component stays in the normal ink. In density the colour map
-is unchanged and a thin band of the component's colour sits along the top of each trace.
-The strip gains a button per component that is present, in that order, lettered H, Z, X
-and Y (or the number). All are on at first. Turning one off drops its traces and lays
-the rest out again; the last one on stays on. The choice holds for the other records of
-the file and starts again on another file. A record with one component is unchanged: no
-buttons, the normal ink. The four colours are in the gear, on the Look tab, under
-**Component colours**, with Reset.
+**Components.** A record whose traces carry more than one component draws each trace
+once, side by side as usual. The buttons tell the components apart by the value in the
+headers (a SEG-D group index when that is set, otherwise the sensor type; a SEG-Y
+identification code). The letter and the colour come from what the trace says it is.
+A hydrophone is H, blue; a vertical, inline or crossline geophone is Z, X or Y, green,
+yellow and teal. An accelerometer of those three directions uses the same letters and
+colours, and the tooltip says accelerometer. A SEG-Y identification code 11..17 is
+named the same way. When several components share one sensor, or none is named, the
+buttons show the component number (1, 2, 3) and take those colours in order, green
+first; any further one stays in the normal ink. The tooltip says what is known. In
+density the colour map is unchanged and a thin band of the component's colour sits
+along the top of each trace. All are on at first. Turning one off drops its traces
+and lays the rest out again; the last one on stays on. The choice holds for the other
+records of the file and starts again on another file. A record with one component is
+unchanged: no buttons, the normal ink. The four colours are in the gear, on the Look
+tab, under **Component colours**, with Reset.
 
 **Sort.** The **Sort** drop-down in the strip puts the traces in another order. It says
 what is in use ("Sort: Line/Station", "Sort: file order", "Sort: custom"). The list is

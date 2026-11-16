@@ -90,19 +90,24 @@ proc buildProgram*(vertex, fragment, what: string): (GLuint, string) =
     return (0'u32, "the " & what & " shader: " & log.strip(chars = {'\0', ' ', '\n'}))
   (program, "")
 
-func marksOf(t: Tile; b: TileBlock; selected, hovered: openArray[bool]): seq[uint8] =
+func marksOf(t: Tile; b: TileBlock; selected, hovered: openArray[bool];
+    slots: array[256, uint8]; useSlots: bool): seq[uint8] =
   ## The marks of block `b`'s rows: selected (`selected[row]`; a row past
   ## its end is not), lit up from the map (`hovered[row]`), drawn blank
-  ## (killed, or dead in the file).
+  ## (killed, or dead in the file). With `useSlots`, the component colour
+  ## is `slots[code]` (the record's buttons); otherwise the code's own slot.
   result = newSeq[uint8](b.rows)
   for i in 0 ..< b.rows:
     let row = b.row + i
     if row < selected.len and selected[row]: result[i] = result[i] or SelectedMark
     if row < hovered.len and hovered[row]: result[i] = result[i] or HoveredMark
     if t.isBlank(row): result[i] = result[i] or KilledMark
-    if row < t.keys.len: result[i] = result[i] or componentMark(t.keys[row].component)
+    if row < t.keys.len:
+      let code = t.keys[row].component
+      let slot = if useSlots: int(slots[code]) else: colourSlot(code)
+      result[i] = result[i] or uint8(slot shl ComponentShift)
 
-proc upload*(t: Tile; maxSize: int): TileTextures =
+proc upload*(t: Tile; maxSize: int; slots: array[256, uint8]; useSlots: bool): TileTextures =
   ## The GPU's copy of `t`, in blocks of at most `maxSize` texels a side
   ## (half that in time when the tile has an envelope, which takes two
   ## texels a column). Nothing is selected; its blank traces (killed, dead)
@@ -128,7 +133,7 @@ proc upload*(t: Tile; maxSize: int): TileTextures =
       result.bytes += 2 * b.rows * b.cols * sizeof(float32)
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0)
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-    var marks = t.marksOf(b, [], [])
+    var marks = t.marksOf(b, [], [], slots, useSlots)
     result.marks.add newTexture()
     glTexImage2D(GL_TEXTURE_2D, 0, GLint(GL_R8), GLsizei(b.rows), 1, 0, GL_RED,
       GL_UNSIGNED_BYTE, addr marks[0])
@@ -137,16 +142,22 @@ proc upload*(t: Tile; maxSize: int): TileTextures =
   glPixelStorei(GL_UNPACK_ALIGNMENT, 4)
   glBindTexture(GL_TEXTURE_2D, GLuint(last))
 
+proc upload*(t: Tile; maxSize: int): TileTextures =
+  ## The GPU's copy of `t`, coloured by each trace's component code.
+  upload(t, maxSize, default(array[256, uint8]), false)
+
 proc setMarks*(tt: TileTextures; t: Tile; selected: openArray[bool];
-    hovered: openArray[bool] = []) =
+    hovered: openArray[bool] = []; slots: array[256, uint8] = default(array[256, uint8]);
+    useSlots = false) =
   ## Marks the rows of tile `t` (whose GPU copy `tt` is) that are selected
   ## (`selected[row]`; a row past its end is not), those lit up from the
-  ## map (`hovered[row]`), and those killed.
+  ## map (`hovered[row]`), and those killed. `slots` is the record's
+  ## component colours when `useSlots`.
   var last: GLint
   glGetIntegerv(GL_TEXTURE_BINDING_2D, addr last)
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
   for k, b in tt.blocks:
-    var marks = t.marksOf(b, selected, hovered)
+    var marks = t.marksOf(b, selected, hovered, slots, useSlots)
     glBindTexture(GL_TEXTURE_2D, tt.marks[k])
     glTexImage2D(GL_TEXTURE_2D, 0, GLint(GL_R8), GLsizei(b.rows), 1, 0, GL_RED,
       GL_UNSIGNED_BYTE, addr marks[0])

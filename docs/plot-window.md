@@ -462,24 +462,33 @@ trace) both ways.
   the map.
 - **Components.** A record is multi-component when its traces, before the component
   buttons, carry more than one distinct component (`TraceKeys.component`, the value
-  By Component sorts by: a SEG-D sensor type, or a SEG-Y trace identification code
-  when it names a component). Each trace is drawn once, side by side, never overlaid.
-  Vertical is green, inline yellow, crossline teal, hydrophone blue; any other
-  component keeps the normal ink. In a wiggle mode that colour is the line and both
-  fills (a hovered or selected trace still takes the highlight). In density the colour
-  map is unchanged and a thin band of the component's colour is drawn along the top of
-  each trace column (along the left edge when time runs across). The strip draws one
-  toggle per component present, after the Seismic / Aux toggles, in the order
-  hydrophone, vertical, inline, crossline, then any other by its number. The letter is
-  H, Z, X, Y or the number, on the component's colour; the tooltip names it and its
-  trace count. All are on at first. Turning one off removes its traces and the plot is
-  laid out again with the rest, as the Seismic / Aux filter does. The last one on
-  cannot be turned off. The choice holds across records of the same file and resets
-  when another file is shown. The buttons stay while any is off, because multi-component
-  is judged before the filter. A record with one component draws nothing new. The
-  colours are the gear's Look tab, **Component colours**: four pickers and Reset,
-  stored with the other settings. The defaults read on white paper and on a dark
-  plot. The buttons are the legend.
+  By Component sorts by: a SEG-D group index when that is set, else the sensor type;
+  a SEG-Y trace identification code when it names a component). Traces are still told
+  apart, counted and filtered by that value: one button per distinct value present.
+  Each trace is drawn once, side by side, never overlaid. The button's name, letter
+  and colour come from what the trace says it is, not from the group index. For SEG-D
+  that is `TraceKeys.sensorType` when it is a named sensor: 1 hydrophone (H, blue);
+  2, 3, 4 vertical, inline and crossline geophone (Z, X, Y: green, yellow, teal);
+  6, 7, 8 the same three as an accelerometer (the same letters and colours; the
+  tooltip says accelerometer). A SEG-Y trace leaves the sensor type unset and puts
+  the identification code in the component, so the same rule uses codes 11..17.
+  Several components with the same sensor, or with no named sensor, are labelled
+  with the component number and take the four configured colours in order, green
+  first; further ones keep the normal ink. The tooltip says what is known
+  ("component 2 (vertical geophone), 24 traces"). In a wiggle mode that colour is
+  the line and both fills (a hovered or selected trace still takes the highlight).
+  In density the colour map is unchanged and a thin band of the component's colour
+  is drawn along the top of each trace column (along the left edge when time runs
+  across). The strip draws one toggle per component present, after the Seismic / Aux
+  toggles: named sensors in the order hydrophone, vertical, inline, crossline, then
+  the numbered ones by their component. All are on at first. Turning one off removes
+  its traces and the plot is laid out again with the rest, as the Seismic / Aux
+  filter does. The last one on cannot be turned off. The choice holds across records
+  of the same file and resets when another file is shown. The buttons stay while any
+  is off, because multi-component is judged before the filter. A record with one
+  component draws nothing new. The colours are the gear's Look tab, **Component
+  colours**: four pickers and Reset, stored with the other settings. The defaults
+  read on white paper and on a dark plot. The buttons are the legend.
 - **Killed traces, and traces the file marks dead,** are drawn blank: the plot's
   background shows where the trace was, in every mode (no line and no fill among wiggles,
   no grey under density), with only the hover's tint under density alone. Hiding them instead (the traces closing up) is a

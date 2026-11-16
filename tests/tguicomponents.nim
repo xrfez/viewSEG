@@ -124,6 +124,8 @@ withFixtures fx:
       before = f.panel.layout.traces
       for code in [1'u8, 2, 3, 4]:
         doAssert f.markOf("plot.component." & $code).size.x > 0, "button " & $code & " missing"
+      for letter in ["H", "Z", "X", "Y"]:
+        doAssert f.markOf("plot.component.letter." & letter).size.x > 0, "letter " & letter
       doAssert f.markOf("plot.traces.Seismic").size.x == 0, "aux toggles on a seismic-only record"
       doAssert f.panel.componentCodes == @[1'u8, 2, 3, 4], $f.panel.componentCodes
       doAssert f.panel.layers[0].filter.components.card == 0)
@@ -228,6 +230,20 @@ withFixtures fx:
       f.save("land-unchanged.png"))
   runSteps(land, landSteps, fx.dir / "land")
   echo "tguicomponents: land ok"
+
+  var threeSteps: seq[Step]
+  proc tstep(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+    threeSteps.add Step(name: name, act: act, done: done)
+  tstep("three-component letters are 1 2 3, not H Z X", noop, proc (f: FrameInfo): bool =
+    result = f.answered and f.panel.componentCodes == @[1'u8, 2, 3]
+    if result:
+      for letter in ["1", "2", "3"]:
+        doAssert f.markOf("plot.component.letter." & letter).size.x > 0, "letter " & letter
+      for letter in ["H", "Z", "X", "Y"]:
+        doAssert f.markOf("plot.component.letter." & letter).size.x == 0,
+          "three-component.sgd showed " & letter)
+  runSteps(fx.threeComponentSegd(), threeSteps, fx.dir / "three")
+  echo "tguicomponents: three-component ok"
 
 # The land file's components, read here so a button that filtered the wrong
 # code would not match the sample (hydrophone is sensor type 1).

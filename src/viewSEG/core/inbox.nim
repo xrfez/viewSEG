@@ -84,27 +84,30 @@ type
       components*: seq[uint8]
         ## distinct components before the component filter, in button order
       componentCounts*: seq[int]    ## traces of each, before that filter
+      componentSensors*: seq[uint8]
+        ## sensor type of each, when its traces agree; 0 when they do not,
+        ## or the headers do not say (a SEG-Y trace)
     of mkOrder:
       orderPanel*: PanelId
-      orderGen*: uint64             ## the panel's newer of `sourceGen` and `orderGen` it answers
-      positions*: seq[int]          ## per position: the trace's index in its file
+      orderGen*: uint64 ## the panel's newer of `sourceGen` and `orderGen` it answers
+      positions*: seq[int] ## per position: the trace's index in its file
     of mkTile: tile*: Tile
     of mkRead:
       purpose*: ReadPurpose
       readPath*: string
       content*: string
-      readError*: string            ## why it could not be read; "" when it was
-      doc*: seq[NifNode]            ## `content` as NIF, read on the disk thread
-      docError*: string             ## why `content` is not NIF; "" when it is (or was not read)
-      layouts*: seq[SavedLayout]    ## `rpLayouts`: what `listLayouts` found
+      readError*: string ## why it could not be read; "" when it was
+      doc*: seq[NifNode] ## `content` as NIF, read on the disk thread
+      docError*: string ## why `content` is not NIF; "" when it is (or was not read)
+      layouts*: seq[SavedLayout] ## `rpLayouts`: what `listLayouts` found
     of mkListed:
-      listGen*: uint64              ## the file list's `gen` it answers
-      listed*: seq[FileEntry]       ## seismic files, in natural order
-      others*: int                  ## files found that are not seismic
-      unreadable*: int              ## files that could not be read
-      listDone*: bool               ## the scan's last message
-      listFolder*: string           ## the folder listed, once known; "" for files chosen one by one
-      listChosen*: string           ## the one file named, when only a file was named; "" otherwise
+      listGen*: uint64 ## the file list's `gen` it answers
+      listed*: seq[FileEntry] ## seismic files, in natural order
+      others*: int ## files found that are not seismic
+      unreadable*: int ## files that could not be read
+      listDone*: bool ## the scan's last message
+      listFolder*: string ## the folder listed, once known; "" for files chosen one by one
+      listChosen*: string ## the one file named, when only a file was named; "" otherwise
       listProject*: string
         ## the folder named is a project's (it holds a `project.nif`): it is
         ## opened as one, not listed; "" otherwise

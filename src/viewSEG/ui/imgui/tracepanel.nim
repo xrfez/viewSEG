@@ -323,12 +323,14 @@ func scaleTexts*(tp: TracePanelUi): (string, string) =
     b.add c
   (a, b)
 
-proc sync(tp: var TracePanelUi; tiles: openArray[Tile]; base: int; sel: Selection) =
+proc sync(tp: var TracePanelUi; tiles: openArray[Tile]; base: int; sel: Selection;
+    slots: array[256, uint8]; useSlots: bool) =
   ## Uploads the tiles the GPU does not have and frees the ones `core` no
   ## longer keeps, so `textures[i]` is the copy of `tiles[i]`; marks each
   ## one's hovered and selected traces, and those the map's pointer lights
   ## up (`base`: the survey-wide id of the file's first trace), when the
-  ## selection or the map's hover has changed since.
+  ## selection or the map's hover has changed since. `slots` is each
+  ## component's colour when `useSlots`.
   var kept: seq[TileTextures]
   for t in tiles:
     var found = -1
@@ -338,7 +340,7 @@ proc sync(tp: var TracePanelUi; tiles: openArray[Tile]; base: int; sel: Selectio
       kept.add move tp.textures[found]
       tp.textures.delete(found)
     else:
-      kept.add tp.renderer.upload(t)
+      kept.add tp.renderer.upload(t, slots, useSlots)
       inc tp.uploads
   for tt in tp.textures.mitems: tt.free()
   tp.textures = move kept
@@ -351,7 +353,7 @@ proc sync(tp: var TracePanelUi; tiles: openArray[Tile]; base: int; sel: Selectio
         tt.hoveredRevision != sel.hoveredRevision:
       t.selectedRowsInto(base, sel, tp.selected)
       t.hoveredRowsInto(base, sel, tp.lit)
-      tt.setMarks(t, tp.selected, tp.lit)
+      tt.setMarks(t, tp.selected, tp.lit, slots, useSlots)
       tt.selectionRevision = sel.selectedRevision
       tt.hoveredRevision = sel.hoveredRevision
       inc tp.marks
@@ -1268,21 +1270,21 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
         var compFirst = true
         let lineInk = plotInk(t, d).wiggle.line
-        for i, code in p.componentCodes:
+        let faces = buttonFaces(p.componentCodes, p.componentSensors, p.componentCounts)
+        for face in faces:
           if not compFirst: igSameLine(0, 2)
           compFirst = false
-          let slot = colourSlot(code)
-          let colour = if slot == 0: lineInk else: compCols[slot - 1]
-          let on = componentShown(f.components, code)
-          if componentToggle(letterOf(code), on, colour, t) and
-              toggled(p.componentCodes, f.components, code) != f.components:
+          let colour = if face.slot == 0: lineInk else: compCols[face.slot - 1]
+          let on = componentShown(f.components, face.code)
+          if componentToggle(face.letter & "##c" & $face.code, on, colour, t) and
+              toggled(p.componentCodes, f.components, face.code) != f.components:
             var nf = f
-            nf.components = toggled(p.componentCodes, f.components, code)
+            nf.components = toggled(p.componentCodes, f.components, face.code)
             res.commands.add Command(kind: ckFilter, panel: p.id, filter: nf)
-          marks.mark("plot.component." & $code)
-          let count = if i < p.componentCounts.len: p.componentCounts[i] else: 0
-          tip(nameOf(code) & ", " & $count & " traces" & (if on: " (on)" else: " (off)") &
-            (if on and toggled(p.componentCodes, f.components, code) == f.components:
+          marks.mark("plot.component." & $face.code)
+          marks.mark("plot.component.letter." & face.letter)
+          tip(face.name & ", " & $face.count & " traces" & (if on: " (on)" else: " (off)") &
+            (if on and toggled(p.componentCodes, f.components, face.code) == f.components:
               ": the plot shows it alone, so this one stays on" else: ""))
   # the gear: the right end of the first line, whatever wrapped below it
   let resume = igGetCursorScreenPos()
@@ -2073,7 +2075,9 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     let view = next.sized(turn, int(round(size.x * fb.x)), int(round(size.y * fb.y)))
     marks.markRect("plot.data", pos, ImVec2_c(x: pos.x + size.x, y: pos.y + size.y))
     if tp.gpuError.len == 0 and tp.started:
-      tp.sync(tiles, base, st.selection)
+      let faces = buttonFaces(p.componentCodes, p.componentSensors, p.componentCounts)
+      let slots = componentSlots(faces)
+      tp.sync(tiles, base, st.selection, slots, faces.len > 1)
       let d = layer.display
       let scale = displayScale(p.reference, d.gainDb)
       var shown = view # what ImPlot shows along each screen axis

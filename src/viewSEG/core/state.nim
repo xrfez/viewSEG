@@ -2042,6 +2042,7 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
       state.panels[k].layers[0].filter.components = {}
       state.panels[k].componentCodes.setLen 0
       state.panels[k].componentCounts.setLen 0
+      state.panels[k].componentSensors.setLen 0
     state.panels[k].layers[0].source = LayerSource(kind: lsRecord, file: file, gather: gather)
   # Reversing every trace is an edit of the file: each file shows its own.
   let i = state.findSession(file)
@@ -7071,6 +7072,7 @@ proc drainInbox*(state: var AppState): bool =
         p.widest = m.widest
         p.componentCodes = m.components
         p.componentCounts = m.componentCounts
+        p.componentSensors = m.componentSensors
         # The next gather at the scales of the one before; a first one fits
         # (in a wiggle mode, as far as its limit, from the first trace).
         p.view = if p.carry.traces.width > 0:

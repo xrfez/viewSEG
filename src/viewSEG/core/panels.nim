@@ -284,10 +284,12 @@ type
       ## reader; empty until it says
     componentCodes*: seq[uint8]
       ## distinct components of the gather before the component filter, in
-      ## button order (hydrophone, vertical, inline, crossline, then others);
-      ## empty until the reader says, and when the gather has none
+      ## button order; empty until the reader says, and when the gather has none
     componentCounts*: seq[int]
       ## how many traces of each `componentCodes` entry, before the filter
+    componentSensors*: seq[uint8]
+      ## sensor type of each, when its traces agree; 0 otherwise. The
+      ## button's letter and colour come from this, not from the code.
     hidden*: seq[int]
       ## the traces of the gather its reader leaves out of the positions,
       ## ascending: the killed ones, when killed traces are hidden (a setting)
