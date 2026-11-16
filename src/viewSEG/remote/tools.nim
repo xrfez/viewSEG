@@ -24,7 +24,7 @@
 
 import std/[algorithm, base64, json, math, monotimes, os, sets, strutils, times]
 import parseSEG
-import ../core/[geometry, properties, state, versions]
+import ../core/[geometry, properties, shortcuts, state, versions]
 import protocol, schema
 
 const
@@ -117,7 +117,8 @@ proc toolList*(): string =
      "inputSchema": commandSchema()},
     {"name": "state",
      "description": "What viewSEG holds now: its own folder and working folder " &
-       "(program), the file list (fileList), the open files (files), the panels " &
+        "(program, including shortcuts: each gesture's group, keys and what it does), " &
+        "the file list (fileList), the open files (files), the panels " &
        "(panels: the file, record, layout, view, display and gain, filters, display header, " &
        "order, trace filter, polarity, the traces at each position, the edits, whether " &
        "the picture is complete), the selection, the map (its view, its layers, each " &
@@ -815,8 +816,13 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
       discard
     var versions = newJObject()
     for l in aboutLines(): versions[l.name] = %l.version
+    var shortcuts = newJArray()
+    for row in shortcutRows():
+      shortcuts.add %*{"group": $row.group, "keys": row.keys, "what": row.what,
+        "mouse": row.gesture == gsMouse}
     r["program"] = %*{"folder": getAppDir(), "workingFolder": working,
-      "theme": state.settings.theme, "themes": state.themeNames, "versions": versions}
+      "theme": state.settings.theme, "themes": state.themeNames, "versions": versions,
+      "shortcuts": shortcuts}
   if "map" in wanted: r["map"] = state.mapJson(limit)
   if "survey" in wanted:
     var layers = newJArray()
