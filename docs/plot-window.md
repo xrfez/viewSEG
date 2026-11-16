@@ -579,7 +579,8 @@ when "Filter the Aux traces too" is ticked, as in the plot), less the traces kil
 marked dead (said under the title). A trace sampled at another interval than the first
 one's is left out too, and counted "at another interval", as a spectrum window does; a
 trace with no sample interval of its own takes its file's, and is left out when it has
-none. Unless **Freeze** is ticked, a window follows the
+none. Unless **Freeze** is on (the pin at the right of the first row of controls), a window
+follows the
 plot it was opened from: new filters, the Aux toggle, a kill or a restore of one of its
 traces work it out again; its traces stay those it was opened on. Frozen, a window keeps
 the kills it had when it was frozen, and a change of its settings works out from those.
@@ -604,7 +605,9 @@ window is closed or asks again (a new setting, a new filter), or its file is clo
 cross-correlation draws 8 traces: of more, only those 8 are read, and the window says how
 many were not (`notDrawn` in `state`).
 
-Each window's first line holds its view's settings; a change works it out again.
+Each window's first line holds its view's settings, the colour map last among them
+where the view has one, and Raw (an f-k) after the colour map. Freeze is the pin at the
+right of that line's first row. A change works it out again.
 
 - **Spectrogram:** the frame's length (ms; a Hann window: a frame of W ms resolves about
   2/W kHz; 128 ms at first), the frames' overlap (%, 75 at first), the floor (the lowest
@@ -664,8 +667,9 @@ Each window's first line holds its view's settings; a change works it out again.
     so neither shares the other's axis. Without accelerometer sensitivities it is
     uncalibrated, and the window says so.
   - **Harmonics** tracked to the 5th at first (2 to 16); THD sums them from the 2nd.
-  - **Limits** (off at first; **Limits** turns them on): the largest |phase| at a point
-    (10° at first) and its mean (5°), THD at a point (40 %) and its mean (20 %), any one
+  - **Limits...** (drawn selected while they are on; off at first) opens **Check against
+    limits** and the eight boxes, greyed while that check is off: the largest |phase| at a
+    point (10° at first) and its mean (5°), THD at a point (40 %) and its mean (20 %), any one
     harmonic (%), the fundamental's lowest and highest, the largest peak (empty: none).
     The force limits are in the recorded force's unit: drawn and judged on GF alone, never on
     GF (M, B), whose unit is another (with no recorded GF they apply to it).
@@ -1255,7 +1259,7 @@ plot moves on; it follows the plot's filters, its Aux toggle too, as they change
 raw or not alike: both curves are drawn), and the kills of its traces (a killed trace
 left out, a restored one taken back), computed again from the samples at hand, so the
 file is not read again. A reversed polarity changes no amplitude, and the phase is of
-the samples as recorded, so a reversal asks nothing. **Freeze** (off by default) keeps the filters it went
+the samples as recorded, so a reversal asks nothing. **Freeze** (the pin at the right of the first row, off by default) keeps the filters it went
 through while the plot's change, to compare one setting with the next; unticked, it
 follows the plot again. Closing one (its ×) drops its work if it is still being computed. A
 window's number is the lowest free one, so a window opened again takes the place the
@@ -1268,7 +1272,7 @@ file when there are some, else the traces in view, over the visible time (or the
 trace). It follows the plot as you pan, zoom,
 select, step to another record or file, kill a trace or change a filter, asking again
 only when what it is of changed; an answer older than the one shown is dropped, and while
-a pan goes on each newer answer is shown as it comes. **Freeze** keeps what it shows. It
+a pan goes on each newer answer is shown as it comes. The **Freeze** pin, at the right of the first row, keeps what it shows. It
 works only while it is on screen: hidden, behind another tab or collapsed it asks for
 nothing. A layout saved before the panel came keeps it hidden.
 
