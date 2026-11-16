@@ -201,6 +201,22 @@ func densityBandPx*(scale: float32): int =
   ## and at least 8 physical, so a HiDPI display does not shrink it.
   max(8, int(round(8 * scale)))
 
+func hiddenCaption*(faces: openArray[ComponentFace]; off: set[uint8]; shown: int): string =
+  ## What the Seismic window's title adds while a component is off;
+  ## "" when none of these traces is hidden. `shown` is the traces left.
+  var hidden = 0
+  var names: seq[string] = @[]
+  for f in faces:
+    if f.code in off:
+      hidden += f.count
+      names.add f.name
+  if hidden == 0: return ""
+  result = $hidden & " of " & $(shown + hidden) & " traces hidden: "
+  for i, n in names:
+    if i > 0: result.add ", "
+    result.add n
+  result.add " off"
+
 func componentSlots*(faces: openArray[ComponentFace]): array[256, uint8] =
   ## Colour slot of each component code in `faces` (0: the normal ink).
   for f in faces: result[f.code] = uint8(f.slot)

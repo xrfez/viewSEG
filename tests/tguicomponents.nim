@@ -16,7 +16,7 @@
 ##
 ## Needs a display: the tester gives it one. Screenshots go to .scratch/.
 
-import std/[monotimes, options, os]
+import std/[monotimes, options, os, strutils]
 import parseSEG
 import viewSEG/core/[components, geometry, state]
 import viewSEG/ui/imgui/app
@@ -134,6 +134,8 @@ withFixtures fx:
     result = f.answered and f.panel.layout.traces == before * 3 div 4
     if result:
       doAssert f.panel.layers[0].filter.components == {1'u8}
+      doAssert f.windowName("plot").find("24 of 96 traces hidden: hydrophone off") >= 0,
+        f.windowName("plot")
       doAssert f.panel.shown.len == before * 3 div 4
       for code in [1'u8, 2, 3, 4]:
         doAssert f.markOf("plot.component." & $code).size.x > 0, "button " & $code & " went"

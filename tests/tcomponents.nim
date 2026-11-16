@@ -37,6 +37,15 @@ block names:
     colourSlot(4) == 4 and colourSlot(9) == 0
   doAssert componentMark(2) == uint8(2 shl ComponentShift)
 
+block hidden_caption:
+  ## Seen to fail: with `hiddenCaption` always "", turning hydrophone off
+  ## left the Seismic title with no count of the traces hidden.
+  let faces = buttonFaces(@[1'u8, 2, 3, 4], @[1'u8, 2, 3, 4], @[24, 24, 24, 24])
+  doAssert hiddenCaption(faces, {}, 96) == ""
+  doAssert hiddenCaption(faces, {1'u8}, 72) == "24 of 96 traces hidden: hydrophone off"
+  doAssert hiddenCaption(faces, {1'u8, 2}, 48) ==
+    "48 of 96 traces hidden: hydrophone, vertical geophone off"
+
 block density_band:
   ## Seen to fail: with the band `max(8, round(4*scale))`, a 2x display stayed
   ## at 8 physical pixels.

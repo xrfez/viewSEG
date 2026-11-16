@@ -2279,13 +2279,21 @@ proc drawTracePanel*(tp: var TracePanelUi; id: string; st: AppState; panel: Pane
   ## under the mouse.
   result.pick = noPick()
   let name = st.windowTitle(panel)
-  let shown = st.shownFile(st.findPanel(panel))
+  let pk = st.findPanel(panel)
+  let shown = st.shownFile(pk)
   # Edits brought back on the file's size, ends and time are marked until
   # the hash of every byte confirms they are this file's.
   let checking = shown >= 0 and st.editsChecking(st.sessions[shown].path)
   let opened = if shown >= 0: st.sessions[shown].facts.opened.choice else: OpenChoice()
+  var hidden = ""
+  if pk >= 0 and st.panels[pk].layers.len > 0:
+    let faces = buttonFaces(st.panels[pk].componentCodes, st.panels[pk].componentSensors,
+      st.panels[pk].componentCounts)
+    hidden = hiddenCaption(faces, st.panels[pk].layers[0].filter.components,
+      st.panels[pk].layout.traces)
   let title = IconPlot & "  " & name & (if opened.isDefault: "" else: "  \u00b7  " &
-    choiceMark(opened)) & (if checking: "  (edits being checked)" else: "") & "###" & id
+    choiceMark(opened)) & (if hidden.len > 0: "  \u00b7  " & hidden else: "") &
+    (if checking: "  (edits being checked)" else: "") & "###" & id
   # Arrow keys pan the plot, so they do not move ImGui's keyboard focus here;
   # the wheel zooms, so it does not scroll the window.
   const windowFlags = ImGui_WindowFlags_NoNavInputs.cint or
