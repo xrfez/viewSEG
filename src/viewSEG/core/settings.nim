@@ -8,7 +8,8 @@
 ## the latest file, where the map shows the point under the pointer, the
 ## survey import's options (File > Import > Survey), the Headers window's
 ## tabs, toggles and columns, whether killed traces are hidden, how the
-## spectrum windows show their spectra, and the named display presets.
+## spectrum windows show their spectra, the named display presets, and the
+## colours of a multi-component record.
 ## Every field has a default.
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
@@ -20,7 +21,8 @@
 ## change from one to the other).
 
 import std/math
-import displaypresets, join, log, mapkinds, panels, readout, scales, spectra, tracetable
+import components, displaypresets, geometry, join, log, mapkinds, panels, readout, scales,
+  spectra, tracetable
 
 export displaypresets, join, mapkinds, readout, scales, spectra
 
@@ -168,6 +170,9 @@ type
     spectrum*: SpectrumOptions ## the spectrum windows' display
     displayPresets*: seq[DisplayPreset] ## named displays, in the order made
     tray*: TrayOptions ## the tray icon and minimizing to it
+    componentColours*: array[4, Rgba] = DefaultComponentColours
+      ## hydrophone, vertical, inline, crossline: the Seismic window's
+      ## component buttons and, on a multi-component record, its traces
 
 func calibration*(s: Settings; monitor: string): float64 =
   ## The calibrated pixels per inch of `monitor`; NaN when it is not

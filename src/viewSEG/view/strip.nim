@@ -9,9 +9,9 @@ import ../core/panels
 type
   StripGroup* = enum
     ## The strip's groups, left to right. The gear is not one of them: it
-    ## stays at the right end of the first row. `sgComponents` is reserved
-    ## for one toggle per component, drawn after the trace toggles; nothing
-    ## adds it to the strip yet.
+    ## stays at the right end of the first row. `sgComponents` is one toggle
+    ## per component, drawn after the trace toggles when the record has more
+    ## than one.
     sgRecord, sgZoom, sgDisplay, sgGain, sgFilters, sgSort, sgTraces, sgComponents
 
   SortRowKind* = enum
@@ -43,11 +43,17 @@ func showFills*(mode: DisplayMode): bool =
   ## The fill toggles are drawn in the two wiggle modes, not in density.
   mode != dmDensity
 
-func stripGroups*(showTraces: bool): seq[StripGroup] =
-  ## The groups drawn, in order. `sgComponents` follows `sgTraces` when a
-  ## later change draws it: the groups before it stay as they are.
+func showComponentToggles*(present: int): bool =
+  ## The component toggles are drawn when the record, before the component
+  ## filter, has more than one component. They stay while one is off.
+  present > 1
+
+func stripGroups*(showTraces: bool; showComponents = false): seq[StripGroup] =
+  ## The groups drawn, in order. `sgComponents` follows `sgTraces` when the
+  ## record has more than one component. The groups before it stay as they are.
   result = @[sgRecord, sgZoom, sgDisplay, sgGain, sgFilters, sgSort]
   if showTraces: result.add sgTraces
+  if showComponents: result.add sgComponents
 
 func sortInUse*(order: openArray[SortKey]; presets: openArray[SortPreset]): string =
   ## What the sort drop-down names: a preset's name, "file order", or "custom".

@@ -30,6 +30,11 @@ block groups:
   doAssert sgComponents notin withTraces
   # a group added after the trace toggles does not move the ones before it
   doAssert withTraces[0 ..< sgTraces.ord] == plain
+  let withComponents = stripGroups(true, true)
+  doAssert withComponents[^1] == sgComponents and withComponents[0 .. ^2] == withTraces,
+    $withComponents
+  doAssert showComponentToggles(2) and showComponentToggles(4)
+  doAssert not showComponentToggles(0) and not showComponentToggles(1)
 
 block whichGroups:
   doAssert showTraceToggles(true, true, false)

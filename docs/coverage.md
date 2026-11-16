@@ -41,11 +41,11 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.14.0: capabilities | names | processSEG 0.6.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 47 (20 in part) | 141 | 28 (21 in part) | 126 |
+| `built` | 48 (20 in part) | 142 | 28 (21 in part) | 126 |
 | `internal` | 15 | 43 | 4 | 39 |
-| `planned` | 37 | 258 | 47 | 405 |
+| `planned` | 36 | 253 | 47 | 405 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 19 | 347 | 6 | 53 |
+| `not applicable` | 19 | 351 | 6 | 53 |
 | all | 120 | 799 | 86 | 628 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
@@ -147,7 +147,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Gathers derived from geometry | `gathers`, `classify`, `Gather`, `GatherKind` | Record list, next / previous gather: the Records window, a row per gather with its kind; a click, the arrow keys or Page Up / Page Down show one | built (the Records window); not applicable (`classify`: `gathers` classifies each gather) |
 | SEG-D channel sets | `channelSets`, `traceEntry(i).channelSetIndex`, `channelType` | Channel chooser; the Records window counts a record's seismic and auxiliary traces by `channelType` | internal (the Records window's counts); planned (the channel chooser) |
 | Seismic and auxiliary traces | `isSeismic`, `TraceStatus` (`tsAuxiliary`, `tsDead`) | Seismic window: the Seismic and Aux toggles (auxiliary traces in the same plot); dead traces never drawn, "dead" in the status bar; Records window: traces, aux and dead per record; the Aux window of its own | built (toggles, dead, counts); planned (the Aux window) |
-| Multi-component stations | `componentGroups`, `componentGroupIds`, `isMultiComponent`, `TraceKeys.component`, `ComponentGroup` | Components in colour, side-by-side layout | planned |
+| Multi-component stations | `componentGroups`, `componentGroupIds`, `isMultiComponent`, `TraceKeys.component`, `ComponentGroup` | Seismic window: each component drawn once in its colour (hydrophone blue, vertical green, inline yellow, crossline teal), with a toggle per component | built (colours and toggles, from `TraceKeys.component`); not applicable (`componentGroups`, `componentGroupIds`, `isMultiComponent`, `ComponentGroup`: the plot counts the record's own distinct components) |
 
 ### Survey files and geometry
 

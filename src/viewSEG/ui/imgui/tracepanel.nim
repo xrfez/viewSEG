@@ -88,7 +88,7 @@
 
 import std/[math, os, strutils, tables]
 import imguin/cimgui
-import ../../core/[geometry, openchoice, state, wiggle]
+import ../../core/[components, geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
 import ../../view/[displayheader, maplayers, plotink, strip, theme, timeaxis]
 import chrome, dpi, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort,
@@ -107,6 +107,7 @@ const
     ## the plot's least height, in lines of text: the strip scrolls rather
     ## than take it
   moreId = "##plotmore"
+  compPickerId = "##compcolour"
   burstSeconds = 0.6 ## wheel turns or key presses closer than this are one gesture
   boxMinPixels = 4'f32 ## a box zoom narrower than this zooms the other axis only
 
@@ -210,6 +211,8 @@ type
     bandKey: (uint64, seq[HeaderField])
     picking: int ## the colour whose picker is open (as `colourKeys` lists them)
     hex: array[12, char] ## what the picker's `#rrggbb` box holds
+    componentPicking: int ## the component colour whose picker is open (0..3)
+    componentHex: array[12, char]
     presetBox: array[4 * MaxPresetName + 1, char]
     renameBox: array[4 * MaxPresetName + 1, char]
       ## a preset's right-click menu's name box: its new name
@@ -617,6 +620,76 @@ proc drawColours(tp: var TracePanelUi; p: Panel; t: Theme; marks: var Marks;
       nd.colours = pcCustom
       res.commands.add Command(kind: ckDisplay, panel: p.id, display: nd)
     if not typing and not hexActive: tp.fillHex(if changed: picked else: was)
+    igEndPopup()
+
+proc fillComponentHex(tp: var TracePanelUi; c: Rgba) =
+  let text = toHex(Rgba(r: c.r, g: c.g, b: c.b, a: 255))
+  zeroMem(addr tp.componentHex[0], tp.componentHex.len)
+  copyMem(addr tp.componentHex[0], text.cstring, min(text.len, tp.componentHex.len - 1))
+
+proc drawComponentColours(tp: var TracePanelUi; st: AppState; t: Theme; marks: var Marks;
+    res: var PanelOutput) =
+  ## The four component colours, stored with the settings, and Reset.
+  const
+    names = ["Hydrophone", "Vertical", "Inline", "Crossline"]
+    keys = ["hydrophone", "vertical", "inline", "crossline"]
+  let stored = st.settings.componentColours
+  let size = igGetFrameHeight()
+  # One row, so the Look tab still fits the default window with the colour maps.
+  for i in 0 ..< names.len:
+    if i > 0: igSameLine(0, 8)
+    let shown = stored[i]
+    if igColorButton(("##compcolour" & keys[i]).cstring, vec4(shown),
+        ImGui_ColorEditFlags_NoAlpha.ImGuiColorEditFlags, ImVec2_c(x: size, y: size)):
+      tp.componentPicking = i
+      tp.fillComponentHex(shown)
+      igOpenPopup_Str(compPickerId, 0)
+    marks.mark("plot.component colour." & keys[i])
+    igSameLine(0, 4)
+    igTextUnformatted(names[i].cstring, nil)
+    tip(names[i] & ": the colour of that component's traces and its button")
+  igSameLine(0, 12)
+  if igButton("Reset##compcolours", ImVec2_c(x: 0, y: 0)):
+    var s = st.settings
+    s.componentColours = DefaultComponentColours
+    res.commands.add Command(kind: ckSettings, settings: s)
+  marks.mark("plot.component colour.reset")
+  tip("The component colours back to hydrophone blue, vertical green, inline yellow, " &
+    "crossline teal")
+  if igBeginPopup(compPickerId, 0):
+    marks.markWindow("plot.component colour picker")
+    let i = clamp(tp.componentPicking, 0, names.high)
+    let was = stored[i]
+    igTextUnformatted(names[i].cstring, nil)
+    var col: array[3, cfloat] = [cfloat(was.r) / 255, cfloat(was.g) / 255, cfloat(was.b) / 255]
+    var picked = was
+    var changed = false
+    if igColorPicker3("##comppicker", col, (ImGui_ColorEditFlags_NoInputs.cint or
+        ImGui_ColorEditFlags_NoSidePreview.cint).ImGuiColorEditFlags):
+      func byte(v: cfloat): uint8 = uint8(clamp(round(v * 255), 0, 255))
+      picked = Rgba(r: byte(col[0]), g: byte(col[1]), b: byte(col[2]), a: 255)
+      changed = true
+    igSetNextItemWidth(round(igCalcTextSize("#0000000", nil, false, -1).x +
+      2 * igGetStyle().FramePadding.x))
+    let hexActive = igInputText("##comphex", cast[cstring](addr tp.componentHex[0]),
+      csize_t(tp.componentHex.len), ImGui_InputTextFlags_EnterReturnsTrue.cint or
+      ImGui_InputTextFlags_AutoSelectAll.cint, nil, nil) or igIsItemDeactivatedAfterEdit()
+    let typing = igIsItemActive()
+    marks.mark("plot.component colour hex")
+    tip("The colour as #rrggbb: type one and press Enter")
+    if hexActive:
+      var c: Rgba
+      let text = $cast[cstring](addr tp.componentHex[0])
+      if parseColor(text.strip, c):
+        picked = Rgba(r: c.r, g: c.g, b: c.b, a: 255)
+        changed = true
+      else:
+        res.notes.add "A colour is written #rrggbb (as #ff8000), not \"" & text.strip & "\"."
+    if changed and picked != was:
+      var s = st.settings
+      s.componentColours[i] = picked
+      res.commands.add Command(kind: ckSettings, settings: s)
+    if not typing and not hexActive: tp.fillComponentHex(if changed: picked else: was)
     igEndPopup()
 
 func mapHelp(m: ColourMap): string =
@@ -1056,6 +1129,18 @@ proc drawPresets(tp: var TracePanelUi; st: AppState; p: Panel; marks: var Marks;
   tipAlways(if known: "Forget \"" & tp.presetPicked & "\""
             else: "Click or right-click a preset first")
 
+proc componentToggle(label: string; on: bool; colour: Rgba; t: Theme): bool =
+  ## A short letter on the component's colour. Off: the colour washed toward
+  ## the button, so it stays recognisable and clearly not on.
+  let face = if on: colour else: mix(colour, t.roles[rlFrame], 0.72)
+  let ink = if luminance(face) > 0.45: Black else: White
+  igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(face))
+  igPushStyleColor_Vec4(ImGui_Col_ButtonHovered.cint, vec4(mix(face, ink, 0.12)))
+  igPushStyleColor_Vec4(ImGui_Col_ButtonActive.cint, vec4(mix(face, ink, 0.22)))
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(ink))
+  result = igButton(label.cstring, ImVec2_c(x: 0, y: 0))
+  igPopStyleColor(4)
+
 proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks: var Marks;
     res: var PanelOutput; ask: var ViewAsk; ppi: float64; mon: MonitorInfo) =
   ## The strip at the top of the window, in groups that wrap onto more lines
@@ -1080,7 +1165,9 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
   if tp.openSort:
     tp.openSort = false
     tp.sortKeys.openSortKeys(p, st.settings)
-  for g in stripGroups(showTraceToggles(hasAux(st, p), f.seismic, f.auxiliary)):
+  let compCols = drawnComponentColours(st.settings.componentColours, plotInk(t, d).background)
+  for g in stripGroups(showTraceToggles(hasAux(st, p), f.seismic, f.auxiliary),
+      showComponentToggles(p.componentCodes.len)):
     case g
     of sgRecord:
       tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
@@ -1170,13 +1257,31 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
             ". With both, the auxiliary traces stand in the file's order among the seismic ones.")
           if not aux: igSameLine(0, 2)
     of sgComponents:
-      discard # one toggle per component is drawn here, after the trace toggles
+      tp.stripGroup(g, firstEdge, fullRight, 14, lift, started, onFirst):
+        var compFirst = true
+        let lineInk = plotInk(t, d).wiggle.line
+        for i, code in p.componentCodes:
+          if not compFirst: igSameLine(0, 2)
+          compFirst = false
+          let slot = colourSlot(code)
+          let colour = if slot == 0: lineInk else: compCols[slot - 1]
+          let on = componentShown(f.components, code)
+          if componentToggle(letterOf(code), on, colour, t) and
+              toggled(p.componentCodes, f.components, code) != f.components:
+            var nf = f
+            nf.components = toggled(p.componentCodes, f.components, code)
+            res.commands.add Command(kind: ckFilter, panel: p.id, filter: nf)
+          marks.mark("plot.component." & $code)
+          let count = if i < p.componentCounts.len: p.componentCounts[i] else: 0
+          tip(nameOf(code) & ", " & $count & " traces" & (if on: " (on)" else: " (off)") &
+            (if on and toggled(p.componentCodes, f.components, code) == f.components:
+              ": the plot shows it alone, so this one stays on" else: ""))
   # the gear: the right end of the first line, whatever wrapped below it
   let resume = igGetCursorScreenPos()
   igSetCursorScreenPos(ImVec2_c(x: fullRight - gearReserve, y: origin.y + lift))
   if button(IconSettings & "##more", t, marks, "plot.more"):
     igOpenPopup_Str(moreId, 0)
-  tip("Display presets, colours, density's colour map, the cursor time line, time across, " &
+  tip("Display presets, colours, component colours, density's colour map, the cursor time line, time across, " &
     "killed traces, trace overlap, display header, the scale boxes, scale units and " &
     "screen calibration")
   tp.gearWidth = igGetItemRectSize().x
@@ -1234,6 +1339,8 @@ proc drawControls(tp: var TracePanelUi; st: AppState; p: Panel; t: Theme; marks:
         tp.drawColours(p, t, marks, res)
         igSeparatorText("Density colour map")
         drawColourMaps(p, t, marks, res)
+        igSeparatorText("Component colours")
+        tp.drawComponentColours(st, t, marks, res)
       tab("Traces", "plot.more tab traces"):
         igSeparatorText("Wiggles")
         drawWiggleSettings(p, marks, res)
@@ -1957,11 +2064,17 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
       # one pixel of line at 100 % (no more than a quarter of a trace spacing:
       # `styleFor`), two for a hovered or selected trace
       let width = max(1.0, round(float64(fb.x)))
+      let multi = p.componentCodes.len > 1
+      let cols = drawnComponentColours(st.settings.componentColours, ink.background)
       let tex = tp.renderer.render(PlotFrame(view: shown, turn: turn,
         background: ink.background, density: d.drawsDensity, colourMap: d.colourMap,
         wiggles: d.drawsWiggles, scale: scale,
         style: d.styleFor(shown, scale, width, 2 * width), ink: ink.wiggle,
-        tint: DensityTint, marks: tp.marks), tiles, tp.textures)
+        tint: DensityTint, marks: tp.marks, componentInk: multi and d.drawsWiggles,
+        componentColours: cols,
+        bandPx: (if multi and d.drawsDensity and not d.drawsWiggles: max(8, int(round(4 * fb.x)))
+        else: 0),
+        bandEdge: (if turn.along[axTime] == saX: 1 else: 0)), tiles, tp.textures)
       tp.drawn = shown
       if tex != 0:
         # ImPlot puts uv0 at (x min, y max); the image's first row is the

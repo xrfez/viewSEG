@@ -30,7 +30,7 @@
 ## wiggle about its baseline where a positive amplitude swings towards the
 ## trace before (time across: up).
 
-import ../core/[orientation, panels, tiles, viewport, wiggle]
+import ../core/[geometry, orientation, panels, tiles, viewport, wiggle]
 import density, gl, textures
 
 type
@@ -43,7 +43,8 @@ type
     wuPxPerPos = "pxPerPos", wuMsPerPx = "msPerPx", wuLineHalf = "lineHalf",
     wuMarkedHalf = "markedHalf", wuFills = "fills", wuLine = "lineColour",
     wuPositive = "positiveColour", wuNegative = "negativeColour", wuHover = "hoverColour",
-    wuSelected = "selectedColour"
+    wuSelected = "selectedColour", wuComponentInk = "componentInk",
+    wuCompColour = "compColour[0]"
 
   WiggleProgram* = object
     ## The wiggle shader and the empty vertex array it draws from.
@@ -68,11 +69,13 @@ uniform int markedOnly;  // 1: only the hovered and selected traces
 uniform sampler2D marks;
 flat out int row;
 flat out int marked;     // 0 none, 1 selected, 2 hovered
+flat out int compKind;   // 0 normal ink, 1..4 a named component
 out float xOff;          // trace spacings from the baseline
 out float tMs;
 void main() {
   row = gl_InstanceID;
   int m = int(texelFetch(marks, ivec2(row, 0), 0).r * 255.0 + 0.5);
+  compKind = (m >> 3) & 7;
   bool selected = (m & 1) != 0;
   bool killed = (m & 2) != 0;
   bool lit = (m & 4) != 0; // lit up from the map: drawn as the hovered trace
@@ -96,8 +99,11 @@ uniform float scale, overlap, pxPerPos, msPerPx, lineHalf, markedHalf;
 uniform float swingSign; // 1, or -1: the wiggle mirrored about its baseline
 uniform int fills;       // 1 positive, 2 negative
 uniform vec4 lineColour, positiveColour, negativeColour, hoverColour, selectedColour;
+uniform int componentInk;      // 1: a named component's colour is the line and the fills
+uniform vec4 compColour[4];    // hydrophone, vertical, inline, crossline
 flat in int row;
 flat in int marked;
+flat in int compKind;
 in float xOff;
 in float tMs;
 out vec4 colour;
@@ -121,6 +127,10 @@ float covered(float lo, float hi, float x0, float x1) {
 }
 void main() {
   vec4 line = lineColour, positive = positiveColour, negative = negativeColour;
+  if (componentInk == 1 && compKind >= 1 && compKind <= 4) {
+    vec4 c = compColour[compKind - 1];
+    line = c; positive = c; negative = c;
+  }
   float halfWidth = lineHalf;
   if (marked == 2) { line = hoverColour; positive = hoverColour; negative = hoverColour; }
   if (marked == 1) { line = selectedColour; positive = selectedColour; negative = selectedColour; }
@@ -163,10 +173,12 @@ proc initWiggleProgram*(): (WiggleProgram, string) =
   glGenVertexArrays(1, addr w.vao)
   (w, "")
 
-proc use*(w: WiggleProgram; view: Viewport; m: Turn; st: WiggleStyle; ink: WiggleInk) =
+proc use*(w: WiggleProgram; view: Viewport; m: Turn; st: WiggleStyle; ink: WiggleInk;
+    componentInk: bool; componentColours: array[4, Rgba]) =
   ## Makes the program current for `view` on a plot turned as `m` says,
   ## drawn in style `st` and colours `ink`: the series on texture unit 0,
-  ## the marks on 2.
+  ## the marks on 2. With `componentInk`, a named component's line and fills
+  ## are `componentColours` (hydrophone, vertical, inline, crossline).
   glUseProgram(w.program)
   template loc(u: WiggleUniform): GLint = w.loc[u]
   glUniform1i(loc(wuSeries), 0)
@@ -191,6 +203,9 @@ proc use*(w: WiggleProgram; view: Viewport; m: Turn; st: WiggleStyle; ink: Wiggl
   uniform4(loc(wuNegative), ink.negative)
   uniform4(loc(wuHover), ink.hover)
   uniform4(loc(wuSelected), ink.selected)
+  glUniform1i(loc(wuComponentInk), GLint(componentInk))
+  for i, c in componentColours:
+    uniform4(loc(wuCompColour) + GLint(i), c)
   glBindVertexArray(w.vao)
 
 proc draw*(w: WiggleProgram; view: Viewport; t: Tile; tt: TileTextures; hoverRow: int;

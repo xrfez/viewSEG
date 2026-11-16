@@ -397,6 +397,18 @@ times only; its unit is in the ms/in box (the gear's Scales tab) and in the stat
 or smaller keeps the scale and shows more or less of the record, from the same top-left
 corner, also when the whole record was in view.
 
+**Components.** A record whose traces carry more than one component (an ocean-bottom
+node: hydrophone, vertical, inline, crossline) draws each trace once, side by side as
+usual, in that component's colour: vertical green, inline yellow, crossline teal,
+hydrophone blue. Any other component stays in the normal ink. In density the colour map
+is unchanged and a thin band of the component's colour sits along the top of each trace.
+The strip gains a button per component that is present, in that order, lettered H, Z, X
+and Y (or the number). All are on at first. Turning one off drops its traces and lays
+the rest out again; the last one on stays on. The choice holds for the other records of
+the file and starts again on another file. A record with one component is unchanged: no
+buttons, the normal ink. The four colours are in the gear, on the Look tab, under
+**Component colours**, with Reset.
+
 **Sort.** The **Sort** drop-down in the strip puts the traces in another order. It says
 what is in use ("Sort: Line/Station", "Sort: file order", "Sort: custom"). The list is
 **File order**, then each preset: **Line/Station** (receiver line, then station), **By

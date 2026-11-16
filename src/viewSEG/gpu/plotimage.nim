@@ -45,6 +45,11 @@ type
     ink*: WiggleInk
     tint*: float32         ## density alone: how far a marked trace's column is tinted
     marks*: int            ## bumped by the caller whenever a tile's marks change
+    componentInk*: bool    ## wiggles: a named component's colour is the line and the fills
+    componentColours*: array[4, Rgba]
+      ## hydrophone, vertical, inline, crossline, already readable on `background`
+    bandPx*: int           ## density alone: the component band, in pixels; 0 for none
+    bandEdge*: int         ## 0 the top of the image, 1 its left edge (time across)
 
   PlotRenderer* = object
     ## The two programs, the colour map, and the image the plot shows.
@@ -238,7 +243,9 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
   glActiveTexture(GL_TEXTURE0)
   let (hover, selected) = highlights(f.colourMap, f.ink.hover, f.ink.selected)
   let look = DensityLook(scale: f.scale, solid: not f.density, solidColour: bg,
-    tint: (if f.wiggles: 0'f32 else: f.tint), hover: hover, selected: selected)
+    tint: (if f.wiggles: 0'f32 else: f.tint), hover: hover, selected: selected,
+    bandPx: f.bandPx, bandEdge: f.bandEdge, imageW: width, imageH: height,
+    componentColours: f.componentColours)
   let n = min(tiles.len, textures.len)
   template drawAll() =
     glClear(GL_COLOR_BUFFER_BIT)
@@ -251,7 +258,7 @@ proc render*(r: var PlotRenderer; f: PlotFrame; tiles: openArray[Tile];
         r.density.draw(f.view, f.turn, tiles[i], tt, tt.hoverRow)
         if f.wiggles:
           glEnable(GL_BLEND)
-          r.wiggle.use(f.view, f.turn, f.style, f.ink)
+          r.wiggle.use(f.view, f.turn, f.style, f.ink, f.componentInk, f.componentColours)
           r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = false)
           r.wiggle.draw(f.view, tiles[i], tt, tt.hoverRow, markedOnly = true)
   if stripes.len > 0:

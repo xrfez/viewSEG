@@ -24,8 +24,9 @@
 ##   (the gather's trace keys, for the trace filter and the display header),
 ##   which nothing changes while the file is held.
 ## - **Layout.** When it is shown a gather, the reader applies the layer's
-##   trace filter (seismic or auxiliary traces; the killed ones left out
-##   when they are hidden, `ReaderSource.hidden`) and posts the panel's
+##   trace filter (seismic or auxiliary traces, and the components to show;
+##   the killed ones left out when they are hidden, `ReaderSource.hidden`)
+##   and posts the panel's
 ##   `PanelLayout` (`mkLayout`), with the header fields the traces have
 ##   values for. Requests come after that.
 ## - **Order.** Then it sorts the traces by the layer's keys
@@ -84,8 +85,8 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, pool, rows, types, workspace]
 import processSEG/gain/stats
-import edits, filesystem, inbox, jobs, log, panels, processing, readout, sorting, threads, tiles,
-  viewport, wiggle
+import components, edits, filesystem, inbox, jobs, log, panels, processing, readout, sorting,
+  threads, tiles, viewport, wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
@@ -286,15 +287,22 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   if not f[].hasKeys: # files are opened with their keys; without them nothing here works
     raise newException(ValueError, "it was opened without its trace keys")
   let rows = f[].rowsOf(g)
-  var list: seq[int]
+  var list: seq[int] = @[]
   var all = true
+  var counts: array[256, int]
+  let want = rd.src.filter.components
   for k in 0 ..< rows.len:
-    let seismic = rows.keysAt(k).isSeismic
-    if ((seismic and rd.src.filter.seismic) or (not seismic and rd.src.filter.auxiliary)) and
-        rd.src.hidden.binarySearch(g.a + k) < 0:
-      list.add g.a + k
+    let keys = rows.keysAt(k)
+    let seismic = keys.isSeismic
+    let kindOk = (seismic and rd.src.filter.seismic) or
+      (not seismic and rd.src.filter.auxiliary)
+    if kindOk and rd.src.hidden.binarySearch(g.a + k) < 0:
+      if keys.component != 0: inc counts[keys.component]
+      if passesComponent(keys.component, want): list.add g.a + k
+      else: all = false
     else:
       all = false
+  let present = tallyCounts(counts)
   rd.shown = if all: Positions(traces: g)
              else: Positions(traces: g, listed: true, list: list)
   rd.positions = rd.shown
@@ -346,8 +354,14 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
       rd.note(sevWarning, "The traces shown of " & rd.name & " have no samples, so the plot " &
         "stays empty.")
   rd.layout = layout
+  var codes: seq[uint8] = @[]
+  var compCounts: seq[int] = @[]
+  for t in present:
+    codes.add t.code
+    compCounts.add t.count
   rd.r.poster.post Msg(job: NoJob, kind: mkLayout, panel: rd.r.panel,
-    sourceGen: rd.src.gen, layout: layout, known: known, widest: widest)
+    sourceGen: rd.src.gen, layout: layout, known: known, widest: widest,
+    components: codes, componentCounts: compCounts)
   # The layout does not depend on the order, so it goes first: the panel can
   # ask for its view while the traces are sorted.
   let order = rd.src.order

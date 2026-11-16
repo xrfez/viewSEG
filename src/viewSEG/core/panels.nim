@@ -91,7 +91,10 @@ type
     auxiliary*: bool ## auxiliary traces (pilots, time breaks, uphole)
     channelSets*: seq[int] ## SEG-D channel sets to show; empty shows all
     channels*: Slice[int] = 0 .. high(int) ## channel numbers to show
-    components*: set[uint8] ## components to show; empty shows all
+    components*: set[uint8]
+      ## components to show (`TraceKeys.component`); empty shows all. A
+      ## trace with no component stays. The choice holds across records of
+      ## one file and is cleared when another file is shown.
 
   DisplayMode* = enum
     ## How a layer's traces are drawn: density is drawn only in the modes
@@ -279,6 +282,12 @@ type
       ## per position, the index in its file of the trace shown there (the
       ## gather after the trace filter, in the order shown), from the
       ## reader; empty until it says
+    componentCodes*: seq[uint8]
+      ## distinct components of the gather before the component filter, in
+      ## button order (hydrophone, vertical, inline, crossline, then others);
+      ## empty until the reader says, and when the gather has none
+    componentCounts*: seq[int]
+      ## how many traces of each `componentCodes` entry, before the filter
     hidden*: seq[int]
       ## the traces of the gather its reader leaves out of the positions,
       ## ascending: the killed ones, when killed traces are hidden (a setting)

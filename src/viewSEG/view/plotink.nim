@@ -65,6 +65,12 @@ func plotInk*(t: Theme; d: DisplaySettings): PlotInk =
       negative: pick(c.negative, paper.wiggle.negative),
       hover: pick(c.hover, paper.wiggle.hover), selected: pick(c.selected, paper.wiggle.selected)))
 
+func drawnComponentColours*(stored: array[4, Rgba]; background: Rgba): array[4, Rgba] =
+  ## `stored` (hydrophone, vertical, inline, crossline) darkened or lightened
+  ## just enough to read on `background`. A shade that already does is unchanged.
+  for i, c in stored:
+    result[i] = readableOn(opaque(c), background)
+
 func customOf*(ink: PlotInk): CustomColours =
   ## `ink` as custom colours: where the user starts from when choosing
   ## their own.

@@ -104,7 +104,7 @@ from std/unicode import runeSubStr
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
-import analysis, analysisreader, closer, diskio, edits, filejobs, filelist, filememory,
+import analysis, analysisreader, closer, components, diskio, edits, filejobs, filelist, filememory,
   filesystem, identity, inbox, inspector, jobs, join, layouts, log, mapstate, memoryjobs,
   panels, persist, pick, project, projectjobs, projectnif, reader, recordqc, selection, session,
   settings, shots, spectra, spectrumreader, spread, survey, surveyjobs, threads, tiles, watch,
@@ -263,7 +263,7 @@ type
       edit*: TraceEdit ## ckEdit: killed, or reversed
       edited*: seq[int] ## ckEdit: survey-wide ids of traces of the panel's file
       on*: bool ## ckEdit: the edit given (true) or taken away
-      filter*: TraceFilter ## ckFilter: layer 0's traces (seismic, auxiliary)
+      filter*: TraceFilter ## ckFilter: layer 0's traces (seismic, auxiliary, components)
       listPath*: string
         ## ckExportEdits, ckImportEdits: the list's file (`.nif`, or `.csv`)
       replaceEdits*: bool
@@ -2033,6 +2033,15 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
     state.panels[k].layers.add layer
     state.panels[k].header = state.settings.plot.header
   else:
+    # Another file: the component buttons start all on. A later record of
+    # this file keeps the choice.
+    var otherFile = true
+    if state.panels[k].layers[0].source.kind == lsRecord:
+      otherFile = state.panels[k].layers[0].source.file != file
+    if otherFile:
+      state.panels[k].layers[0].filter.components = {}
+      state.panels[k].componentCodes.setLen 0
+      state.panels[k].componentCounts.setLen 0
     state.panels[k].layers[0].source = LayerSource(kind: lsRecord, file: file, gather: gather)
   # Reversing every trace is an edit of the file: each file shows its own.
   let i = state.findSession(file)
@@ -6516,6 +6525,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
     elif state.panels[k].layers.len == 0: state.ignore(cmd, $cmd.panel & " shows nothing")
     elif not (cmd.filter.seismic or cmd.filter.auxiliary):
       state.ignore(cmd, "a plot shows seismic or auxiliary traces, or both")
+    elif not keepsOne(state.panels[k].componentCodes, cmd.filter.components):
+      state.ignore(cmd, "a plot keeps at least one component on")
     elif cmd.filter != state.panels[k].layers[0].filter:
       # The record's traces again, through the new filter, at the same scales.
       state.panels[k].layers[0].filter = cmd.filter
@@ -7058,6 +7069,8 @@ proc drainInbox*(state: var AppState): bool =
         p.laidOut = true
         p.known = m.known
         p.widest = m.widest
+        p.componentCodes = m.components
+        p.componentCounts = m.componentCounts
         # The next gather at the scales of the one before; a first one fits
         # (in a wiggle mode, as far as its limit, from the first trace).
         p.view = if p.carry.traces.width > 0:

@@ -22,7 +22,8 @@ type
     ## The density shader and the buffer for its quads.
     program, vao, vbo: GLuint
     locAmps, locLut, locMarks, locScale, locSolid, locSolidColour, locHover, locTint,
-      locHoverColour, locSelectedColour: GLint
+      locHoverColour, locSelectedColour, locBandPx, locBandEdge, locImageSize,
+      locCompColour: GLint
 
 const
   vertexShader = """
@@ -51,6 +52,10 @@ uniform int hoverRow;
 uniform float tint;
 uniform vec4 hoverColour;
 uniform vec4 selectedColour;
+uniform int bandPx;          // 0: no component band
+uniform int bandEdge;        // 0 top of the image, 1 its left edge
+uniform vec2 imageSize;
+uniform vec4 compColour[4];  // hydrophone, vertical, inline, crossline
 out vec4 colour;
 void main() {
   if (solid == 1) {
@@ -77,6 +82,12 @@ void main() {
     if (row == hoverRow || (m & 4) != 0) colour = mix(colour, hoverColour, tint);
     else if ((m & 1) != 0) colour = mix(colour, selectedColour, tint);
   }
+  if (bandPx > 0 && (m & 2) == 0) {
+    int kind = (m >> 3) & 7;
+    bool edge = bandEdge == 0 ? gl_FragCoord.y >= imageSize.y - float(bandPx)
+                              : gl_FragCoord.x < float(bandPx);
+    if (edge && kind >= 1 && kind <= 4) colour = compColour[kind - 1];
+  }
 }
 """
 
@@ -98,7 +109,9 @@ proc initDensityProgram*(): (DensityProgram, string) =
       (addr d.locScale, "scale"), (addr d.locSolid, "solid"),
       (addr d.locSolidColour, "solidColour"), (addr d.locHover, "hoverRow"),
       (addr d.locTint, "tint"), (addr d.locHoverColour, "hoverColour"),
-      (addr d.locSelectedColour, "selectedColour")]:
+      (addr d.locSelectedColour, "selectedColour"), (addr d.locBandPx, "bandPx"),
+      (addr d.locBandEdge, "bandEdge"), (addr d.locImageSize, "imageSize"),
+      (addr d.locCompColour, "compColour[0]")]:
     loc[] = glGetUniformLocation(program, name.cstring)
   var lastVao, lastBuf: GLint
   glGetIntegerv(GL_VERTEX_ARRAY_BINDING, addr lastVao)
@@ -124,6 +137,10 @@ type DensityLook* = object
   solidColour*: Rgba
   tint*: float32
   hover*, selected*: Rgba
+  bandPx*: int ## 0: no component band along the top of each trace column
+  bandEdge*: int ## 0 the top of the image, 1 its left edge (time across)
+  imageW*, imageH*: int
+  componentColours*: array[4, Rgba]
 
 proc use*(d: DensityProgram; look: DensityLook) =
   ## Makes the program current with `look`: the values on texture unit 0,
@@ -138,6 +155,11 @@ proc use*(d: DensityProgram; look: DensityLook) =
   glUniform1f(d.locTint, look.tint)
   uniform4(d.locHoverColour, look.hover)
   uniform4(d.locSelectedColour, look.selected)
+  glUniform1i(d.locBandPx, GLint(look.bandPx))
+  glUniform1i(d.locBandEdge, GLint(look.bandEdge))
+  glUniform2f(d.locImageSize, float32(look.imageW), float32(look.imageH))
+  for i, c in look.componentColours:
+    uniform4(d.locCompColour + GLint(i), c)
   glBindVertexArray(d.vao)
   glBindBuffer(GL_ARRAY_BUFFER, d.vbo)
 

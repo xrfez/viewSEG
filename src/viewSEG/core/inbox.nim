@@ -81,6 +81,9 @@ type
       known*: set[HeaderField]      ## the header fields the traces have values for
       widest*: array[HeaderField, int]
         ## per field, its longest value as the header shows it, in characters
+      components*: seq[uint8]
+        ## distinct components before the component filter, in button order
+      componentCounts*: seq[int]    ## traces of each, before that filter
     of mkOrder:
       orderPanel*: PanelId
       orderGen*: uint64             ## the panel's newer of `sourceGen` and `orderGen` it answers

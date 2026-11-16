@@ -19,7 +19,7 @@
 ## current. Objects are freed explicitly (`free`), never by a destructor.
 
 import std/strutils
-import ../core/[tiles, viewport, wiggle]
+import ../core/[components, tiles, viewport, wiggle]
 import gl
 
 const
@@ -100,6 +100,7 @@ func marksOf(t: Tile; b: TileBlock; selected, hovered: openArray[bool]): seq[uin
     if row < selected.len and selected[row]: result[i] = result[i] or SelectedMark
     if row < hovered.len and hovered[row]: result[i] = result[i] or HoveredMark
     if t.isBlank(row): result[i] = result[i] or KilledMark
+    if row < t.keys.len: result[i] = result[i] or componentMark(t.keys[row].component)
 
 proc upload*(t: Tile; maxSize: int): TileTextures =
   ## The GPU's copy of `t`, in blocks of at most `maxSize` texels a side

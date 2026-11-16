@@ -460,8 +460,26 @@ trace) both ways.
   lightened just enough to read on the plot's background. A trace both hovered and
   selected shows the hover. Hover and selection are survey-wide trace ids, shared with
   the map.
-- **Components** of multi-component units each have a colour and can be shown or
-  hidden one by one.
+- **Components.** A record is multi-component when its traces, before the component
+  buttons, carry more than one distinct component (`TraceKeys.component`, the value
+  By Component sorts by: a SEG-D sensor type, or a SEG-Y trace identification code
+  when it names a component). Each trace is drawn once, side by side, never overlaid.
+  Vertical is green, inline yellow, crossline teal, hydrophone blue; any other
+  component keeps the normal ink. In a wiggle mode that colour is the line and both
+  fills (a hovered or selected trace still takes the highlight). In density the colour
+  map is unchanged and a thin band of the component's colour is drawn along the top of
+  each trace column (along the left edge when time runs across). The strip draws one
+  toggle per component present, after the Seismic / Aux toggles, in the order
+  hydrophone, vertical, inline, crossline, then any other by its number. The letter is
+  H, Z, X, Y or the number, on the component's colour; the tooltip names it and its
+  trace count. All are on at first. Turning one off removes its traces and the plot is
+  laid out again with the rest, as the Seismic / Aux filter does. The last one on
+  cannot be turned off. The choice holds across records of the same file and resets
+  when another file is shown. The buttons stay while any is off, because multi-component
+  is judged before the filter. A record with one component draws nothing new. The
+  colours are the gear's Look tab, **Component colours**: four pickers and Reset,
+  stored with the other settings. The defaults read on white paper and on a dark
+  plot. The buttons are the legend.
 - **Killed traces, and traces the file marks dead,** are drawn blank: the plot's
   background shows where the trace was, in every mode (no line and no fill among wiggles,
   no grey under density), with only the hover's tint under density alone. Hiding them instead (the traces closing up) is a

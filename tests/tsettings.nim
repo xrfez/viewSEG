@@ -74,7 +74,9 @@ proc everyFieldSet(): Settings =
       colourMap: cmViridis, gain: dgFixed, fixedClip: 0.5, clipPercentile: 97)),
       DisplayPreset(name: "Wiggles", display: DisplaySettings(fills: {}, overlap: 3,
       fixedClip: 2))],
-    tray: TrayOptions(icon: false, minimize: true))
+    tray: TrayOptions(icon: false, minimize: true),
+    componentColours: [Rgba(r: 1, g: 2, b: 3, a: 255), Rgba(r: 4, g: 5, b: 6, a: 255),
+      Rgba(r: 7, g: 8, b: 9, a: 255), Rgba(r: 10, g: 11, b: 12, a: 255)])
   result.plot = PlotDefaults(
     display: DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
       fills: {wfNegative}, colours: pcCustom,

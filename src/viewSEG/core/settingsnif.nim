@@ -46,7 +46,9 @@
 ##    (response true) (phase false)))
 ##  (displayPresets
 ##   (preset "Section" (mode density) (colourMap viridis) (gain none) ...))
-##  (tray (icon true) (minimize false)))
+##  (tray (icon true) (minimize false))
+##  (componentColours (hydrophone "#2e6bb0") (vertical "#1e8a45") (inline "#b0860b")
+##   (crossline "#0e8a86")))
 ## ```
 ##
 ## Reading is forgiving where it can be and says what it did: a setting that
@@ -368,6 +370,10 @@ proc settingsDocument*(s: Settings): string =
   w.open("tray")
   w.value("icon", s.tray.icon)
   w.value("minimize", s.tray.minimize)
+  w.close()
+  w.open("componentColours")
+  const colourNames = ["hydrophone", "vertical", "inline", "crossline"]
+  for i, c in s.componentColours: w.value(colourNames[i], colourText(c))
   w.close()
   w.close()
   w.finish
@@ -854,6 +860,14 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           if k.isTree("icon"): r.flag(k, result.tray.icon)
           elif k.isTree("minimize"): r.flag(k, result.tray.minimize)
           else: r.unknown(k, "tray")
+      of "componentColours":
+        const colourNames = ["hydrophone", "vertical", "inline", "crossline"]
+        for k in c.kids:
+          var i = -1
+          for n, name in colourNames:
+            if k.isTree(name): i = n
+          if i >= 0: r.colour(k, result.componentColours[i])
+          else: r.unknown(k, "componentColours")
       else: r.unknown(c, "settings")
   if version == 0:
     r.problem(doc[root], "(settings) gives no (version); read as version " &
