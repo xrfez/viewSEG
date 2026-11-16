@@ -96,10 +96,13 @@ type
     column: int      ## its value column
     at: int64        ## the file offset of its first byte
     size: int
-    found: bool      ## `bytes` hold its block
+    nibbleStart, nibbles: int
+      ## a field of some nibbles of its bytes: the first one's place in them,
+      ## and how many; `nibbles` 0 for whole bytes
+    found: bool ## `bytes` hold its block
     bytes: seq[byte] ## its block's bytes, copied once when picked
-    base: int64      ## the file offset of `bytes[0]`
-    seek: bool       ## scroll the dump to it (picked this frame)
+    base: int64 ## the file offset of `bytes[0]`
+    seek: bool ## scroll the dump to it (picked this frame)
     tableKey: string ## what its table was made from when it was picked
 
   HeadersOutput* = object
@@ -401,7 +404,8 @@ proc drawFieldTable(ui: var HeadersUi; id: string; whole: FieldTable; st: AppSta
                   c < row.at.len and row.at[c] >= 0:
                 # a click shows the field's bytes in its block, or hides them
                 ui.hex = if picked: HexPick() else: HexPick(id: id, name: row.name, column: c,
-                  at: row.at[c], size: row.size, description: row.description, seek: true,
+                  at: row.at[c], size: row.size, nibbleStart: row.nibbleStart,
+                  nibbles: row.nibbles, description: row.description, seek: true,
                   tableKey: ui.tables[id].key)
               if joined:
                 igPopStyleColor(1)
@@ -521,8 +525,20 @@ proc drawHex(ui: var HeadersUi; id: string; blocks: openArray[RawBlock]; fonts: 
           let pos = igGetCursorScreenPos()
           for k in max(first, line * 16) ..< min(first + h.size, line * 16 + 16):
             let x = pos.x + charW * float32(dumpColumn(k - line * 16))
-            ImDrawList_AddRectFilled(dl, ImVec2_c(x: x - 1, y: pos.y),
-              ImVec2_c(x: x + 2 * charW + 1, y: pos.y + lineH), mark, 0, 0)
+            if h.nibbles == 0:
+              ImDrawList_AddRectFilled(dl, ImVec2_c(x: x - 1, y: pos.y),
+                ImVec2_c(x: x + 2 * charW + 1, y: pos.y + lineH), mark, 0, 0)
+              marks.markRect("headers.hex lit " & $(h.base + k), ImVec2_c(x: x, y: pos.y),
+                ImVec2_c(x: x + 2 * charW, y: pos.y + lineH))
+            else: # only the nibbles the field takes
+              for half in 0 .. 1:
+                if covers(h.nibbleStart, h.nibbles, k - first, half):
+                  let left = x + charW * float32(half)
+                  ImDrawList_AddRectFilled(dl, ImVec2_c(x: left - (if half == 0: 1 else: 0),
+                    y: pos.y), ImVec2_c(x: left + charW + (if half == 1: 1 else: 0),
+                    y: pos.y + lineH), mark, 0, 0)
+                  marks.markRect("headers.hex lit " & $(h.base + k) & "." & $half,
+                    ImVec2_c(x: left, y: pos.y), ImVec2_c(x: left + charW, y: pos.y + lineH))
           igTextUnformatted(dumpLine(h.bytes, h.base, line).cstring, nil)
           if line == first div 16:
             marks.mark("headers.hex field")
@@ -536,7 +552,8 @@ proc drawHex(ui: var HeadersUi; id: string; blocks: openArray[RawBlock]; fonts: 
   igSameLine(0, -1)
   if igBeginChild_Str("##readings", ImVec2_c(x: 0, y: 0), 0, 0):
     const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_SizingFixedFit.cint
-    let readings = byteReadings(h.bytes.toOpenArray(first, first + h.size - 1))
+    let readings = byteReadings(h.bytes.toOpenArray(first, first + h.size - 1), h.nibbleStart,
+      h.nibbles)
     if readings.len == 0: igTextDisabled("Read as a number: 1, 2, 3, 4 or 8 bytes only.")
     elif igBeginTable("##read", 2, flags, ImVec2_c(x: 0, y: 0), 0):
       for r in readings:

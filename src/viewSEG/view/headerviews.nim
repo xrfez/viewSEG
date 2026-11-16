@@ -24,6 +24,10 @@ type
     values*: seq[string] ## per column; "" where a column has no such field
     blockName*: string ## its block's name (`trace`, `binary`)
     size*: int ## the bytes it takes
+    nibbleStart*, nibbles*: int
+      ## a field that takes only some nibbles of its bytes (SEG-D): the first
+      ## one's place in them (0 or 1) and how many; `nibbles` 0 for a field
+      ## that takes whole bytes
     at*: seq[int64] ## per column, the file offset of its first byte; -1 where it has none
     differs*: bool ## the columns do not all hold the same value
     joined*: seq[bool]
@@ -76,6 +80,10 @@ func fieldTable*(columns: openArray[seq[FieldRow]]; labels: openArray[string];
           name: (if r.field.len > 0: r.blockName & "." & r.field else: r.blockName),
           bytes: bytesOf(r), offset: $r.offset, values: newSeq[string](columns.len),
           blockName: r.blockName, size: r.size, at: newSeq[int64](columns.len))
+        if r.firstNibble >= 0:
+          let start = r.firstNibble - 2 * (r.first - 1)
+          if not (start == 0 and r.nibbles == 2 * r.size):
+            (result.rows[k].nibbleStart, result.rows[k].nibbles) = (start, r.nibbles)
         for x in result.rows[k].at.mitems: x = -1
       result.rows[k].values[c] = r.value
       result.rows[k].at[c] = r.offset

@@ -119,28 +119,28 @@ type
     previewWanted: Option[string]
       ## the theme the pointer rests on in View > Theme ("" for Follow system),
       ## drawn after the frame until the submenu closes (`followPreview`)
-    previewing: bool                           ## `theme` is a preview of `previewName`
+    previewing: bool ## `theme` is a preview of `previewName`
     previewName: string
-    beforePreview: Theme                       ## the theme the preview replaced, to go back to
-    previewKept: bool                          ## the preview ends with a pick of another theme
-    appliedTheme: string                       ## the settings' theme last followed
-    layoutLoads: int                           ## the core's `layoutLoads` last followed
+    beforePreview: Theme ## the theme the preview replaced, to go back to
+    previewKept: bool ## the preview ends with a pick of another theme
+    appliedTheme: string ## the settings' theme last followed
+    layoutLoads: int ## the core's `layoutLoads` last followed
     layoutName: array[MaxLayoutName + 1, char] ## the name typed in "Save layout"
-    askLayoutName: bool                        ## open the "Save layout" popup this frame
+    askLayoutName: bool ## open the "Save layout" popup this frame
     keepsLayouts: bool
-    placed: bool                               ## the main window moved or changed size this frame
+    placed: bool ## the main window moved or changed size this frame
     layoutDone: bool
     running: bool
-    agent: AgentControl                        ## agent control: off until turned on
-    agentSocket: string                        ## where it listens; "" until first needed
-    version: string                            ## the program's version, for agents
-    dialogs: DialogHook                        ## `RunOptions.dialogs`
-    trayAllowed: bool                          ## `RunOptions.tray`
-    trayProblem: string                        ## why the tray icon could not be shown; "" for none
-    trayTried: bool                            ## the icon was asked for since the setting last changed
-    trayAsked: bool                            ## the session bus was asked about a tray since then
-    inTray: bool                               ## the main window is hidden in the tray
-    trayHides: int                             ## times it was hidden there (tests)
+    agent: AgentControl ## agent control: off until turned on
+    agentSocket: string ## where it listens; "" until first needed
+    version: string ## the program's version, for agents
+    dialogs: DialogHook ## `RunOptions.dialogs`
+    trayAllowed: bool ## `RunOptions.tray`
+    trayProblem: string ## why the tray icon could not be shown; "" for none
+    trayTried: bool ## the icon was asked for since the setting last changed
+    trayAsked: bool ## the session bus was asked about a tray since then
+    inTray: bool ## the main window is hidden in the tray
+    trayHides: int ## times it was hidden there (tests)
 
   FrameInfo* = object
     ## What a frame hook sees. The hook runs after the main window is drawn and
@@ -280,6 +280,12 @@ proc markOf*(frame: FrameInfo; name: string): Rect =
   result = Rect()
   for (n, r) in frame.ui.marks:
     if n == name: result = r
+
+proc markNames*(frame: FrameInfo; prefix: string): seq[string] =
+  ## The names of the parts drawn in this frame that start with `prefix`
+  ## (`markOf`), in the order drawn.
+  for (n, r) in frame.ui.marks:
+    if n.startsWith(prefix): result.add n
 
 proc windowName*(frame: FrameInfo; id: string): string =
   ## The full name of the window whose ImGui ID is `id` (`"plot"`, `"files"`
@@ -573,7 +579,7 @@ proc toggleAgent(ui: var Ui) =
     # (`currentContext` was made at start, on this thread; it is only read there.)
     discard ui.agent.start(ui.core, ui.agentSocket, ui.version, encodePng,
       find = proc (): string {.nimcall, gcsafe.} =
-        {.cast(gcsafe).}: agentSocket())
+      {.cast(gcsafe).}: agentSocket())
     if ui.agent.running: ui.agentSocket = ui.agent.path
 
 proc setAgentControl*(frame: FrameInfo; on: bool) =

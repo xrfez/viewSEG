@@ -708,7 +708,9 @@ what you type (**Clear** brings them all back). Click a value to see its field's
 below the table: its block in hexadecimal and as text with the field's bytes
 highlighted, and those bytes read every way a header could hold them (whole numbers
 big- and little-endian, signed and not, IEEE and IBM floats, BCD, text), so a value read
-in the wrong byte order or format shows what it would be; click it again to hide them.
+in the wrong byte order or format shows what it would be; click it again to hide them. A
+SEG-D field that takes only some nibbles of its bytes (the day of the year starts at the
+low nibble of a byte) lights those nibbles, not the bytes, and is read as those nibbles.
 
 The header tables list each field's **Description** (cut to fit a narrow window: point at it
 to read it whole), its values and its **Bytes** (in its block, from 1, as the standards

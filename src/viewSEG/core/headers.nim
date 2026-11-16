@@ -23,6 +23,8 @@
 
 import std/[math, strutils]
 import parseSEG
+import parseSEG/common/fieldlayout
+import parseSEG/private/fieldaccess
 import fielddocs, openchoice, tracetable
 
 export FileSummary, ChannelSetSummary, JoinGroup, openchoice
@@ -44,6 +46,10 @@ type
     size*: int
     blockOffset*: int64  ## the file offset of its block
     blockSize*: int
+    firstNibble*: int
+      ## its first nibble in its block (0 for the high nibble of the block's
+      ## first byte); -1 for a field without named layout
+    nibbles*: int ## its width in nibbles (a SEG-D BCD digit or nibble field is odd or off a byte)
 
   RawBlock* = object
     ## A header block without named fields, as its bytes.
@@ -175,12 +181,23 @@ func valueNumber(v: FieldValue): float64 =
   of fvFloat: v.floatVal
   of fvText: NaN
 
-func fieldRow*(r: HeaderRow): FieldRow =
+proc nibbleSpan(kind: HeaderBlock; field: string): (int, int) =
+  ## The first nibble in its block and the width in nibbles of `field` of a
+  ## block of type `kind` (parseSEG's layout); (-1, 0) when it has none.
+  result = (-1, 0)
+  if kind == hbRaw or field.len == 0: return
+  withBlockType(kind):
+    const table = fieldTable(BlockT)
+    for s in table:
+      if s.name == field: return (s.firstNibble - 2 * (firstByte - 1), s.nibbles)
+
+proc fieldRow*(r: HeaderRow): FieldRow =
   ## One row of a parseSEG header listing as the tables show it.
   let first = int(r.offset - r.blockOffset) + 1
   result = FieldRow(blockName: r.blockName, kind: r.kind, field: r.field, value: valueText(r.value),
     number: valueNumber(r.value), first: first, last: first + max(r.size, 1) - 1,
     offset: r.offset, size: r.size, blockOffset: r.blockOffset, blockSize: r.blockSize)
+  (result.firstNibble, result.nibbles) = nibbleSpan(r.kind, r.field)
   result.description = if r.field.len > 0: fieldDescription(r.kind, r.field)
                        else: wordsOf(result.value)
 
