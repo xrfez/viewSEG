@@ -43,7 +43,9 @@
 ## selection changed, `hoverHighlights` counted 1 tile uploaded for a
 ## hover; with the plot keeping its hover while it showed "Reading..."
 ## (as it did), `noStaleHover` found the trace of the file before hovered
-## in the frame the new file came in.
+## in the frame the new file came in. With the reference taking the left
+## trace at a tie and `onEdgeAs` left out, the density look had 15 pixels
+## of column 144 off, as CI's llvmpipe had with the right one.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ##
@@ -114,12 +116,12 @@ func column(s: Shot; position: float64): int =
 func row(s: Shot; tMs: float64): int =
   int(floor((tMs - s.view.timeMs.lo) / s.view.timeMs.width * float64(s.h)))
 
-proc expected(s: Shot; i, j: int): Rgba =
+proc expected(s: Shot; i, j: int; nudge = 0.0): Rgba =
   ## What image pixel (`i`, `j`) should show: the tiles oldest first (but
   ## for those a newer one covers in view: `hidden`), each its area
   ## (density or the background) then its wiggles, the marked traces again
-  ## on top.
-  let (x, t) = (s.xOf(i), s.tOf(j))
+  ## on top. `nudge` moves the pixel's centre by that many traces.
+  let (x, t) = (s.xOf(i) + nudge, s.tOf(j))
   result = s.ink.background
   for k, tile in s.tiles:
     if not s.tiles.hidden(k, s.view):
@@ -147,14 +149,31 @@ proc expected(s: Shot; i, j: int): Rgba =
 
 func close(a, b: Rgba; tol = tolerance): bool = distance(a, b) <= tol
 
+const edge = 1e-4
+  ## traces: about a 400th of a pixel here, and far above the shader's
+  ## float32 error at the position of a trace (a few millionths)
+
+proc onEdgeAs(s: Shot; i, j: int; got: Rgba): bool =
+  ## Whether density pixel (`i`, `j`) has its centre on the edge between
+  ## two traces and shows one of them. There the nearest trace is a tie:
+  ## the reference (float64) takes the right one, the shader (float32
+  ## positions, interpolated across the quad) either, by the GPU's rounding.
+  ## 578 columns over 24 traces put column 144 on trace 5.5 exactly; CI's
+  ## llvmpipe drew trace 5 there, this machine's trace 6. A column off an
+  ## edge shows the same trace either side, so it is checked as before.
+  if not s.density: return false
+  let (left, right) = (s.expected(i, j, -edge), s.expected(i, j, edge))
+  left != right and (close(got, left) or close(got, right))
+
 proc mismatches(s: Shot; step = 2): (int, int) =
-  ## Image pixels on a grid that differ from `expected`, and the pixels
-  ## looked at.
+  ## Image pixels on a grid that differ from `expected` (a density pixel on
+  ## the edge between two traces may show either: `onEdgeAs`), and the
+  ## pixels looked at.
   for j in countup(0, s.h - 1, step):
     for i in countup(0, s.w - 1, step):
       inc result[1]
       let want = s.expected(i, j)
-      if not close(s.at(i, j), want):
+      if not close(s.at(i, j), want) and not s.onEdgeAs(i, j, s.at(i, j)):
         if result[0] < 5:
           echo "  pixel (", i, ", ", j, "): ", toHex(s.at(i, j)), ", expected ", toHex(want)
         inc result[0]
