@@ -27,7 +27,8 @@
 ## - each Freeze pin toggles (the envelope and the vibrator signature): frozen
 ##   on, the window keeps its filters while the plot's change; off, it follows.
 ##
-## Seen to fail: with the pin's click not flipping `frozen`, "frozen new plot
+## Seen to fail: with the Limits label left as "harmonic", "no label Harmonic";
+## with the pin's click not flipping `frozen`, "frozen new plot
 ## 1.freeze did not happen"; with the image's keys not read (`keyMove` never called),
 ## "Right did not move the cursor"; with the menu's entry not sent
 ## (`newPlot` dropped in the app), "Window > New plot did not open a window";
@@ -243,7 +244,7 @@ withFixtures fx:
       for c in f.core.plots[1].result.plots[0].curves:
         if c.style == csLimit: inc limits
       doAssert limits == 2, $limits & " phase limits drawn"
-      for label in ["Phase ±", "Phase mean", "THD", "THD mean", "harmonic", "Force from",
+      for label in ["Phase ±", "Phase mean", "THD", "THD mean", "Harmonic", "Force from",
           "Force to", "Peak force"]:
         doAssert f.markOf("new plot 2.limit " & label).size.x > 0, "no label " & label)
   key("Esc closes the limits", skEscape) # the popover is over the pin: Esc shuts it

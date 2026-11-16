@@ -242,7 +242,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     limit("Phase mean", "##meanphase", meanPhaseDeg, "°", "The largest mean |phase|, degrees")
     limit("THD", "##thd", thdPct, "%", "The largest THD at a point, %")
     limit("THD mean", "##meanthd", meanThdPct, "%", "The largest mean THD, %")
-    limit("harmonic", "##harmonic", harmonicPct, "%",
+    limit("Harmonic", "##harmonic", harmonicPct, "%",
       "The largest level of any one harmonic at a point, % of the fundamental")
     limit("Force from", "##forcelow", forceLow, "", "The smallest fundamental at a point")
     limit("Force to", "##forcehigh", forceHigh, "", "The largest fundamental at a point")

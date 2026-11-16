@@ -692,7 +692,7 @@ right of that line's first row. A change works it out again.
   - **Limits...** (drawn selected while they are on; off at first) opens **Check against
     limits** and the eight boxes, greyed while that check is off: the largest |phase| at a
     point (10° at first) and its mean (5°), THD at a point (40 %) and its mean (20 %), any one
-    harmonic (%), the fundamental's lowest and highest, the largest peak (empty: none).
+    Harmonic (%), the fundamental's lowest and highest, the largest peak (empty: none).
     The force limits are in the recorded force's unit: drawn and judged on GF alone, never on
     GF (M, B), whose unit is another (with no recorded GF they apply to it).
     On, they are drawn on the plots as thin lines in the error colour, the points past
