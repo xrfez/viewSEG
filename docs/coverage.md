@@ -39,14 +39,14 @@ next part's.
 
 Capabilities are the rows below, each counted by the first part of its status ("in part": built, with a part still planned or to plan). Names are the names each library exports, enum values not counted, each at the most advanced status of the rows that name it.
 
-| Status | parseSEG 0.12.1: capabilities | names | processSEG 0.5.0: capabilities | names |
+| Status | parseSEG 0.14.0: capabilities | names | processSEG 0.6.0: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 47 (20 in part) | 141 | 28 (21 in part) | 126 |
-| `internal` | 14 | 42 | 4 | 39 |
-| `planned` | 36 | 256 | 45 | 393 |
+| `internal` | 15 | 43 | 4 | 39 |
+| `planned` | 37 | 258 | 47 | 405 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 19 | 347 | 6 | 53 |
-| all | 118 | 796 | 84 | 616 |
+| all | 120 | 799 | 86 | 628 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -158,6 +158,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Survey files read with progress and cancel | `readSps(..., progress)`, `readP1(..., progress)`, `SpsOptions` (`skipBinary`, `maxJunkBytes`), `looksLikeSps` (a head of header records) | Loading survey files and File → Import → Survey: one call with parseSEG's progress and cancel, in place of the viewer's 4 MiB chunks and its own test of a head of header records | planned |
 | Survey-file problems | `SurveyGeometry.log`, `SpsFile.log`, `P1File.log` | Messages: each file's first 20 problems by line, then a count; what was left off the map (no coordinates, at (0, 0)) and stations given twice | built; not applicable (`P1File`: the type `parseP1` gives, never named) |
 | Station tables | `table`, `sourceCount`, `receiverCount`, `relationCount`, `records` | The survey's own layers (stations found by key as `lookup` finds them); `relationCount` and `records` give a relation file's counts; the map's layers, a point's station in what the map says of it | built; not applicable (`sourceCount`, `receiverCount`: the survey counts its own layers) |
+| Room for a large file's relation runs | `reserveRelations` | internal: the survey import's builder makes room for a large X file's relation runs before its join (`SurveyFileBuilder.reserveRelations`, core/survey); nothing calls that wrapper yet, so the lists grow by copies | internal |
 | Join by station, with statistics | `applySurvey(f, g, stats, overwrite)`, `joinStations`, `JoinStats`, `JoinMatch`, `stationKey` | File → Import → Survey: worked out on copies of the keys first (`joinStations` and `applySurvey` per trace), then joined with the readers stopped; matched and unmatched traces, how they matched, why none did, the headers' coordinates kept or replaced, in plain words and in Messages; linked highlighting fills the stations a hovered trace's headers lack from the loaded relation file | built |
 | Traces by join outcome (conflict, ambiguous, unmatched) | `joinStations` per trace | Import survey: "Select unmatched traces" (the survey lacks the source or receiver); conflicting and ambiguous traces counted in the words; a selection per outcome, to come | built (unmatched); to plan (priority 1: a selection per outcome) |
 | Join options: line names, trailing digits, multi-component, one tape | `mapLine`, `trailingDigits`, `multiComponent`, `tape` | Import survey window, Options (remembered): line names as numbers, trailing digits, several channels per station; one tape, to come | built (but `tape`); to plan (priority 2: one tape as an option) |
@@ -180,6 +181,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Write traces like the input, any subset and order | `openSeismicWriter(path, like)`, `writeTrace(src, trace, samples)`, `headerOverride`, `SeismicWriter`, `HeaderOverride`, `close` | Export processed traces; export the file without killed traces | planned |
 | Write with in-memory geometry | `writeTrace(..., keys, fields)` | Export with joined geometry and edits | planned |
 | New SEG-Y from keys | `openSeismicWriter(path, SegyOutputOptions)`, `writeTrace(keys, samples)` | Export a selection, a generated pilot or a stack as SEG-Y | planned |
+| New SEG-D Rev 3 from keys | `openSeismicWriter(path, SegdOutputOptions)`, `SegdOutputOptions` (`revision`, `format`, `sampleIntervalUs`, `numSamples`, `units`, `crsText`, `time`), `SegdChannelType` with every channel-type value (`sctAcceleration`, `sctAcousticRange`, `sctAcousticRefMeasured`, `sctAcousticRefNominal`, `sctAngle`, `sctAuxDataTrailer`, `sctCalibration`, `sctClockTimeBreak`, `sctCurrent`, `sctDepth`, `sctEm`, `sctExternalData`, `sctFieldTimeBreak`, `sctOther`, `sctPressure`, `sctRadioRefSweep`, `sctRadioSimilarity`, `sctSeismic`, `sctSignatureFiltered`, `sctSignatureUnfiltered`, `sctSourceBasePlate`, `sctSourceExcitation`, `sctSourceMass`, `sctSourceOther`, `sctSourceOverload`, `sctSourceRefPilot`, `sctSourceRefSweep`, `sctSourceSigEstimated`, `sctSourceSigFiltered`, `sctSourceSigMeasured`, `sctSourceSigUnfiltered`, `sctSourceValve`, `sctTension`, `sctTilt`, `sctTimeBreak`, `sctTimeCounter`, `sctTrueRefSweep`, `sctUnused`, `sctUpHole`, `sctVelocity`, `sctVoltage`, `sctWaterBreak`, `sctWind`, `sctWirelineRefSweep`), `writeTrace(keys, samples, overrides, channelType)` | Export a selection as SEG-D; the synthetic sample set (tools/sampledata) | planned |
 | Per-standard streaming writers | `openSegyWriter`, `openSegdWriter`, `writeSegd`, `openSeg2Writer`, `SegyWriter`, `SegyWriteOptions`, `initSegyWriteOptions`, `tracesWritten`, `SegdWriter`, `SegdWriteOptions`, `writeRecordHeaders`, `endRecord`, `setRev3Trailer`, `computeRev3Sizes`, `MaxFixedBlock`, `Seg2Writer`, `Seg2WriteOptions`, `initSeg2File`, `abandon` | Conversion and the test suite's fixtures | not applicable (the viewer writes through `openSeismicWriter` and `convertFile`; its tests build their fixtures with these) |
 
 ### Header edits
@@ -355,6 +357,7 @@ name, so these are building blocks for code that works on raw headers.
 |---|---|---|---|
 | Sweep tapers (nine shapes) | `initSweepTaper`, `TaperShape`, `applyTaper`, `taperWeight`, `noTaper`, `SweepTaper`, `checkFits` | Compare pilots: generated pilot's tapers | planned |
 | Sweep generation (linear, dB/octave, dB/Hz, exponential, table) | `linearSweep`, `dbPerOctaveSweep`, `dbPerHzSweep`, `exponentialSweep`, `tableSweep`, `generatePilot`, `sweepSamples`, `SweepSpec`, `SweepLaw`, `SweepPoint`, `sweepLen`, `sweepInto` | Compare pilots: generated source | planned |
+| Sweep harmonics (known distortion) | `SweepHarmonic`, `sweepHarmonics`, `sweepHarmonicsInto` | Sample vibrator records with known distortion, to check the vibrator QC | planned |
 | Instantaneous frequency and phase | `frequencyAt`, `phaseAt` | Compare pilots: frequency at the cursor | planned |
 | Recorded pilot from a trace | `pilotFromTrace`, `pilotFromRow`, `sweepFromHeaders`, `energyAbove`, `initPilot`, `Pilot` (`lengthMs`) | Compare pilots: recorded source | planned |
 | Pilot resampled to the data | `resamplePilot` | Compare pilots | planned |
@@ -386,13 +389,19 @@ name, so these are building blocks for code that works on raw headers.
 | Listed against generated relations | `compareRelations`, `RecordAgreement`, `jaccard`, `listedFraction`, `describePatches` | The map's filter "spread not the template": the shots whose X record agrees with the template the records describe far less than the survey's do; receivers dropped in the field, per shot | built (the filter); planned (per shot) |
 | A template's edges and placement | `PatchEdge`, `PatchPlacement`, `NumberMap`, `PatchBox`, `PatchShot`, `hasTemplate`, `hasDistance` | The template's options where X records are generated (above): the map's template box makes its shots (`PatchShot`) | built (the map's template box); planned (the edge and placement options) |
 
+### Synthetic data
+
+| Capability | Library calls | Viewer feature | Status |
+|---|---|---|---|
+| Synthetic wavelets, arrivals and noise | `ricker`, `addRicker`, `addSinusoid`, `linearMs`, `hyperbolicMs`, `addLinear`, `addHyperbola`, `addNoise`, `DefaultNoiseSeed` | The synthetic sample set (tools/sampledata); test fixtures | planned |
+
 ## In the next library release
 
-None at present: parseSEG 0.12.0 and processSEG 0.5.0, the releases this repository pins,
+None at present: parseSEG 0.14.0 and processSEG 0.6.0, the releases this repository pins,
 are in the tables above. While a release is being prepared, a working tree of it can be
 linked at `deps/next/parseSEG` or `deps/next/processSEG`; the check then reads its committed
-`HEAD` and holds the tables of this section, `### parseSEG (after 0.12.0)` and
-`### processSEG (after 0.5.0)`, to the names it adds.
+`HEAD` and holds the tables of this section, `### parseSEG (after 0.14.0)` and
+`### processSEG (after 0.6.0)`, to the names it adds.
 
 ## Not exposed
 

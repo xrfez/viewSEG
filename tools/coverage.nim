@@ -133,7 +133,9 @@ const
     "isSeismic": "parseSEG's is called (`f.index.isSeismic(t)`, core/shots, core/state); " &
       "the viewer's own is `FileKind.isSeismic` (core/filekinds)",
     "cutShort": "the viewer's own: core/filejobs (the file's log has `dcTruncated`) and " &
-      "core/reader (a `stat` before each read); parseSEG's is not called yet"}
+      "core/reader (a `stat` before each read); parseSEG's is not called yet",
+    "reserveRelations": "the viewer's `SurveyFileBuilder.reserveRelations` (core/survey), " &
+      "which calls parseSEG's where it compiles (core/surveyjobs)"}
     ## Library names `src/` names for something of its own too (a field, its
     ## own proc), each checked by hand, with what src/ does with them: a text
     ## search cannot tell them from the library's (`check`)
