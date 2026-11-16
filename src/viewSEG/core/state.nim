@@ -485,6 +485,9 @@ type
     replacesOpen: bool
       ## a reopen of a file that was open: the new session is dropped when
       ## that session is gone before it arrives (the file was closed)
+    revived: bool
+      ## the file was let go of to be shown again (it changed on disk) while
+      ## this reopen was still reading: the new session is shown all the same
     swapped: bool ## a reopen: its file took the place of the open one (its job ends quietly)
 
   Carry = object
@@ -2234,7 +2237,14 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
   for job in state.jobs.list:
     if job.state in {jsQueued, jsRunning} and
         (s.path in job.spec.reads or s.path in job.spec.exclusive):
-      discard state.jobs.cancel(job.id)
+      # A file changing on disk is let go of to be shown again. The reopen
+      # the user asked for is that showing: cancelling it and then attaching
+      # to the cancelled open would leave the file closed.
+      var kept = false
+      if keepLayers:
+        for o in state.opening:
+          if o.job == job.id and o.reopened and not o.unwanted: kept = true
+      if not kept: discard state.jobs.cancel(job.id)
   state.selection.forget(s.id, s.traceIds)
   # the analysis windows of the file: what is being worked out for them stops,
   # and a window waiting for it says why and waits for nothing
@@ -4003,6 +4013,8 @@ proc startJoin(state: var AppState; i: int; cmd: Command)
 proc notify(state: var AppState; severity: Severity; text: string)
 proc reopen(state: var AppState; i: int; now: bool)
 proc showAgain(state: var AppState; path: string)
+proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = false;
+  by: CommandOrigin; asked = OpenChoice(); forced = false)
 
 proc carryOf(state: AppState; s: Session): Carry =
   ## What `s`, an open file about to be replaced by the same file opened
@@ -4090,10 +4102,18 @@ proc carryOver(state: var AppState; c: Carry; i: int) =
         text &= " (it has " & plural(s.len, "trace") & ", it had " & plural(c.count, "trace") & ")"
     state.log.add(sevInfo, s.name, text & ".")
 
+proc openAsItWas(state: var AppState; o: Pending) =
+  ## The file was let go of to be shown again, and the reopen did not take:
+  ## open it with the choice in force, so it is not left closed.
+  let panel = if o.panel == NoPanel: MainPanel else: o.panel
+  let k = state.findPanel(panel)
+  if k >= 0: state.showPath(k, o.path, o.gather, by = o.by)
+
 proc reopenFailed(state: var AppState; o: Pending; s: Session; why: string) =
   ## A reopen with options whose file did not open with traces: the file is
   ## as it was, the choice too (it is written only once a reopen is taken
-  ## in), and the log says so once.
+  ## in), and the log says so once. One the watch already let go of is
+  ## opened again as it was.
   var problems, errors = 0
   var first = ""
   for d in s.file.log:
@@ -4104,9 +4124,14 @@ proc reopenFailed(state: var AppState; o: Pending; s: Session; why: string) =
   let name = o.path.extractFilename
   let text = "Reopening " & name & " with " & choiceText(o.tried) & " failed: " & why &
     (if first.len > 0: " (" & first & (if problems > 1: "; and " & $(problems - 1) &
-      " more problems" else: "") & ")" else: "") & ". It stays as it was."
+      " more problems" else: "") & ")" else: "") &
+    (if o.revived: ". It is opened again as it was." else: ". It stays as it was.")
   state.log.add(sevError, name, text)
   state.notify(sevError, text)
+  if o.revived:
+    for p in state.opening.mitems:
+      if p.job == o.job: p.unwanted = true
+    state.openAsItWas(o)
 
 proc adopt(state: var AppState; s: sink Session; job: JobId) =
   ## Takes in a file an open job opened, and shows its first gather (or the
@@ -4142,9 +4167,10 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
     var old = -1
     for j, x in state.sessions:
       if x.path == s.path: old = j
-    if o.replacesOpen and old < 0:
-      # Closed before this open arrived: the close stands. Not swapped, so
-      # the job's end says nothing of an open that was not taken in.
+    if o.replacesOpen and old < 0 and not o.revived:
+      # Closed before this open arrived, and nothing asked to show it again:
+      # the close stands. Not swapped, so the job's end says nothing of an
+      # open that was not taken in.
       state.release(s)
       if panel == MainPanel: state.chooseShown()
       return
@@ -4229,7 +4255,12 @@ proc endOpening(state: var AppState; i: int; how: JobState; error = "") =
   if o.unwanted or o.swapped: return
   case how
   of jsFailed:
-    state.log.add(sevError, name, "Cannot open " & p & ": " & error)
+    if o.reopened and o.revived:
+      state.log.add(sevError, name, "Cannot open " & p & ": " & error &
+        ". It is opened again as it was.")
+      state.openAsItWas(o)
+    else:
+      state.log.add(sevError, name, "Cannot open " & p & ": " & error)
   of jsCancelled: state.log.add(sevInfo, name, "Opening " & name & " was cancelled.")
   else: discard # done: `adopt` took the file
   if how in {jsFailed, jsCancelled} and o.panel == MainPanel:
@@ -5710,9 +5741,12 @@ proc showPath(state: var AppState; k: int; path: string; gather = 0; follow = fa
   else:
     var o = -1
     for j, p in state.opening:
-      if p.path == path and not p.unwanted: o = j
+      if p.path == path and not p.unwanted:
+        let info = state.jobs.info(p.job)
+        if info.isNone or info.get.state != jsCancelled: o = j
     if o >= 0:
       state.opening[o].panel = panel
+      if state.opening[o].reopened: state.opening[o].revived = true
       if not follow: state.opening[o].follow = false # the user's own choice: shown as it is
       if keeps(by): state.opening[o].by = by # the user asked for it too
     elif not forced and not state.prepared.session.isNil and state.prepared.session.path == path and

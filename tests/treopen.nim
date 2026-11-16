@@ -29,6 +29,8 @@
 ## A correlation whose traces are in one file and whose reference is in
 ## another shifts only the ids that lay in the reopened file. Traces
 ## selected in another file, and points selected on the map, stay selected.
+## A file that changes on disk while a reopen is reading ends open: with the
+## choice asked for when that open succeeds, never silently closed.
 ##
 ## Seen to fail (the failing reopen): with the trace-count test taken out of
 ## `adopt` (`elif false`), "stays as it was"; (the carried state): with
@@ -39,7 +41,8 @@
 ## was kept"; (a cross-file reference): with every carried id shifted,
 ## "traces of the other file were shifted"; (the selection replaced whole):
 ## with `carryOver` selecting `smReplace`, "traces selected in the other
-## file were dropped".
+## file were dropped"; (the watch cancelling the reopen): with `closeSession`
+## cancelling that open, "the file was gone after it changed".
 ##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
@@ -49,7 +52,8 @@
 
 import std/[os, strutils, times]
 import parseSEG
-import viewSEG/core/[filejobs, state]
+import viewSEG/core/filejobs
+import viewSEG/core/state {.all.}
 import viewSEG/view/headerviews
 import utils/[faultyfs, fixtures, waiting]
 
@@ -453,3 +457,25 @@ block anotherFilesSelectionStays:
       "traces selected in the other file were dropped"
     doAssert st.selection.points == @[point], "the map's selected points were dropped"
     st.shutdown()
+
+block changedDuringReopenStaysOpen:
+  # The open is held in its read when the watch says the file changed: the
+  # close that shows it again must not cancel that open and then attach to
+  # the cancelled one. The file ends open, with the choice asked for.
+  install()
+  withFixtures fx:
+    let path = fx.surveySegy()
+    var st = initAppState()
+    st.showIt(path)
+    let size = st.sessions[0].size
+    fault(path, fkHang, {foMapped})
+    st.reopen(path, OpenChoice(verifyAll: true))
+    doAssert waitUntil(hung() > 0), "the reopen was not held in its read"
+    st.mailbox.post Msg(kind: mkWatched, watched: @[WatchedFile(path: canonical(path),
+      exists: true, kind: fkSegy, size: size + 1, modified: getTime(), changing: false)])
+    discard st.drainInbox()
+    releaseAll()
+    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].path == canonical(path) and
+      st.sessions[0].facts.opened.choice.verifyAll), "the file was gone after it changed"
+    st.shutdown()
+  releaseAll()
