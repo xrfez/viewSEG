@@ -215,18 +215,30 @@ proc copyIn(dir, source, name: string): string =
   fs.moveFile(tmp, dest)
 
 proc keepSurveyWork*(dir: string; files: seq[JoinFile]; existing: seq[SurveyCopy];
-    to: Poster): JobWork =
+    to: Poster; places: seq[ProjectPath] = @[]): JobWork =
   ## The work of a job that copies survey files `files` into the project in
   ## `dir` (a file already a copy of it is kept as it is), writes
   ## `survey.bin` from the copies and posts both (`pnKept`). Copies of
-  ## `existing` no longer named are removed.
+  ## `existing` no longer named are removed. With `places` (one per file),
+  ## each file is looked for at them (an import that a close or a quit
+  ## cut short, taken up again at the next open).
   result = proc (ctx: JobContext) {.gcsafe.} =
     var news = ProjectNews(dir: dir, kind: pnKept)
     {.cast(gcsafe).}:
       try:
         var taken: seq[string] = @[]
         let copies = dir.partOf(SurveyCopies)
-        for i, jf in files:
+        for i, jf0 in files:
+          var jf = jf0
+          if i < places.len:
+            jf.path = ""
+            for c in places[i].candidates(dir):
+              if c.len > 0 and fs.fileExists(c):
+                jf.path = c
+                break
+            if jf.path.len == 0:
+              raise newException(IOError, places[i].displayName & ", a file of the survey " &
+                "being copied in, is not found")
           ctx.setPhase "copying " & jf.path.extractFilename & " into the project"
           if jf.path.isInside(copies):
             var kept = false

@@ -90,7 +90,7 @@ proc projectDocument*(d: ProjectDoc): string =
     w.place f
     w.close
   w.close
-  if d.hasSurvey:
+  if d.hasSurvey or d.hasImport:
     w.open "survey"
     for f in d.survey:
       w.open "file"
@@ -123,6 +123,15 @@ proc projectDocument*(d: ProjectDoc): string =
       w.value("sources", int64(d.store.sources))
       w.value("receivers", int64(d.store.receivers))
       w.value("relations", int64(d.store.relations))
+      w.close
+    w.close
+  if d.hasImport:
+    w.open "importing"
+    for f in d.importing:
+      w.open "file"
+      w.choice("kind", KindNames[f.kind])
+      if f.kind == jkCsv: w.choice("role", RoleNames[f.role])
+      w.place f.original
       w.close
     w.close
   if d.hasProcessing: w.writeProcessing(d.processing)
@@ -230,6 +239,20 @@ proc surveyFile(r: var Reading; n: NifNode; d: var ProjectDoc) =
     r.problem(n, "a survey file's copy is not a file in survey/files; it is left out")
   else: d.survey.add f
 
+proc importFiles(r: var Reading; n: NifNode; d: var ProjectDoc) =
+  for c in n.kids:
+    if c.isTree("file"):
+      var f = ImportFile()
+      for k in c.kids:
+        if k.kind != nkTree: r.problem(k, "(file) holds trees")
+        elif r.place(k, f.original): discard
+        elif k.tag == "kind": r.choice(k, KindNames, f.kind)
+        elif k.tag == "role": r.choice(k, RoleNames, f.role)
+      if f.original.path.len == 0 and f.original.absolute.len == 0:
+        r.problem(c, "an imported file names no original; it is left out")
+      elif d.importing.len < 4096: d.importing.add f
+    else: r.problem(c, "(importing) holds files")
+
 proc units(r: var Reading; n: NifNode; u: var JoinUnits) =
   for k in n.kids:
     if k.isTree("survey"): r.choice(k, UnitNames, u.survey)
@@ -289,6 +312,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
       of "created": r.time(c, result.created)
       of "data": r.folders(c, result)
       of "survey": r.survey(c, result)
+      of "importing": r.importFiles(c, result)
       of "processing":
         result.processing = readProcessing(c, name, Processing(), r.problems)
         result.hasProcessing = true

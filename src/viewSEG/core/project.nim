@@ -52,6 +52,13 @@ type
     quick*: uint64 ## its first and last 64 KiB's hash then (`quickIdentity`)
     full*: uint64 ## the hash of every byte of its copy (`fullHash`); 0 when not known
 
+  ImportFile* = object
+    ## A survey file of an import that is being copied into the project: its
+    ## original, until the copy is whole and a `SurveyCopy` takes its place.
+    kind*: JoinFileKind
+    role*: CsvRole
+    original*: ProjectPath
+
   StoreInfo* = object
     ## `survey.bin` as written: none while `bytes` is 0.
     format*: int
@@ -66,6 +73,7 @@ type
     created*: Time
     data*: seq[ProjectPath]        ## the data folders, the first listed when the project opens
     survey*: seq[SurveyCopy]       ## the survey files imported, in the order imported
+    importing*: seq[ImportFile]    ## an import being copied in: taken up at the next open
     options*: JoinOptions          ## the import's options
     units*: JoinUnits              ## its units, as the user confirmed them or the headers said
     notes*: seq[string]            ## what the survey files' headers say of the datum and the units
@@ -158,6 +166,10 @@ type
 func hasSurvey*(d: ProjectDoc): bool {.inline.} =
   ## Whether a survey was imported into the project.
   d.survey.len > 0
+
+func hasImport*(d: ProjectDoc): bool {.inline.} =
+  ## Whether an import is being copied into the project.
+  d.importing.len > 0
 
 func hasStore*(d: ProjectDoc): bool {.inline.} =
   ## Whether `survey.bin` was written for it.

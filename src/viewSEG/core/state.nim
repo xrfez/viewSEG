@@ -570,6 +570,7 @@ type
     geometry: ref SurveyGeometry    ## its survey, as the joins read it; nil until made
     joinSurvey: JoinSurvey
     queue: seq[SessionId]           ## files opened, to be matched to its survey
+    layersAfterKeep: bool           ## the copy under way began at the open: the map's layers follow it
     docRev, savedRev: int
     changedAt: MonoTime
     userArrangement: string         ## the user's own window arrangement, back when the project closes
@@ -4294,6 +4295,9 @@ proc leaveProject(state: var AppState; restoreUser: bool) =
   if p.dir.len == 0: return
   state.saveProject()
   if state.layoutSaved != state.layoutRev: state.saveArrangement()
+  if p.surveyJob != NoJob and p.survey == srKeeping and p.doc.hasImport:
+    state.log.add(sevWarning, "project", "The survey was still being copied into the project " &
+      p.doc.name & ": the copy stops here, and is taken up when the project is next opened.")
   state.clearSession()
   state.forgetFileMemory()
   for job in [p.surveyJob, p.lookJob]:
@@ -4339,15 +4343,25 @@ proc restoreSurvey(state: var AppState; layers: bool) =
     restoreWork(p.dir, p.doc, layers, state.inbox.poster))
   inc p.revision
 
-proc keepSurvey(state: var AppState; files: seq[JoinFile]) =
+proc keepSurvey(state: var AppState; files: seq[JoinFile]; places: seq[ProjectPath] = @[]) =
   ## Copies survey files `files` into the project and writes its
   ## `survey.bin` (`keepSurveyWork`).
   template p: untyped = state.project
   if p.surveyJob != NoJob: discard state.jobs.cancel(p.surveyJob)
   p.survey = srKeeping
   p.surveyJob = state.jobs.submit(JobSpec(title: "Keep the survey in the project",
-    lane: jlBackground), keepSurveyWork(p.dir, files, p.doc.survey, state.inbox.poster))
+    lane: jlBackground), keepSurveyWork(p.dir, files, p.doc.survey, state.inbox.poster, places))
   inc p.revision
+
+proc markImporting(state: var AppState; files: seq[JoinFile]) =
+  ## Writes the import to the project document at once (its files, as
+  ## their originals, with the options and units): a close or a quit before
+  ## the copy is whole leaves it there, and the next open copies it.
+  template p: untyped = state.project
+  p.doc.importing.setLen 0
+  for f in files:
+    if p.doc.importing.len < 4096:
+      p.doc.importing.add ImportFile(kind: f.kind, role: f.role, original: placeOf(p.dir, f.path))
 
 proc keepImport(state: var AppState) =
   ## The import ending now, the user's, kept in the project open: its files
@@ -4365,10 +4379,12 @@ proc keepImport(state: var AppState) =
   if not j.geometry.isNil and j.relations.isNil: # (stations and relations in one)
     p.geometry = j.geometry
     p.joinSurvey = j.survey
+  state.markImporting(j.files)
   state.projectChanged()
   state.keepSurvey(j.files)
-  state.log.add(sevInfo, "project", "The survey (" & fileNames(j.files) & ") is copied into " &
-    "the project " & p.doc.name & ": it is not imported again.")
+  state.log.add(sevInfo, "project", "The survey (" & fileNames(j.files) & ") is being copied " &
+    "into the project " & p.doc.name & ": it is not imported again. If the project is closed " &
+    "or the program quits first, the copy is taken up at the next open.")
 
 proc lookAgain(state: var AppState) =
   template p: untyped = state.project
@@ -4468,7 +4484,23 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   if not news.created and first.len > 0:
     state.startListing(@[first], first, "", by)
   state.sayOriginals()
-  if p.doc.hasSurvey:
+  if p.doc.hasImport:
+    # An import was being copied in when the project was closed or the
+    # program quit: copied again from the originals.
+    if p.readOnly:
+      p.survey = srFailed
+      p.surveyNote = "a survey was being copied in, and the project is read-only"
+    else:
+      var files: seq[JoinFile] = @[]
+      var places: seq[ProjectPath] = @[]
+      for f in p.doc.importing:
+        files.add JoinFile(kind: f.kind, role: f.role)
+        places.add f.original
+      p.layersAfterKeep = true
+      state.log.add(sevInfo, "project", "The survey of the project " & p.doc.name & " was " &
+        "being copied in when it was last open: it is copied again now.")
+      state.keepSurvey(files, places)
+  elif p.doc.hasSurvey:
     if news.storeThere: state.restoreSurvey(layers = true)
     else:
       # The survey kept is not there (a copy without it): made again from the copies.
@@ -4478,7 +4510,9 @@ proc takeOpened(state: var AppState; m: sink Msg) =
       if p.readOnly:
         p.survey = srFailed
         p.surveyNote = "survey.bin is not there, and the project is read-only"
-      else: state.keepSurvey(files)
+      else:
+        p.layersAfterKeep = true
+        state.keepSurvey(files)
   if news.created and useSurvey:
     var files: seq[JoinFile] = @[]
     for i in 0 ..< state.survey.layers.len:
@@ -4495,6 +4529,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
           p.geometry = last.geometry
           p.joinSurvey = last.survey
       p.doc.imported = getTime()
+      state.markImporting(files)
       state.projectChanged()
       state.keepSurvey(files)
   if news.created:
@@ -4508,14 +4543,20 @@ proc takeKept(state: var AppState; m: sink Msg) =
   if m.job != p.surveyJob or news.dir != p.dir: return
   p.surveyJob = NoJob
   inc p.revision
+  let layers = p.layersAfterKeep
+  p.layersAfterKeep = false
   if news.keptFailure.len > 0:
     p.survey = srFailed
     p.surveyNote = news.keptFailure
+    if p.doc.hasImport: # not taken up again at every open: the user imports it again
+      p.doc.importing.setLen 0
+      state.projectChanged()
     state.log.add(sevError, "project", "The survey could not be kept in the project " &
       p.doc.name & ": " & news.keptFailure & ".")
     return
   p.doc.survey = move news.copies
   p.doc.store = news.store
+  p.doc.importing.setLen 0
   state.projectChanged()
   state.log.add(sevInfo, "project", (if news.updated: "The survey files that changed were " &
     "copied into the project again; the survey" else: "The survey") & " is kept in the project " &
@@ -4523,7 +4564,7 @@ proc takeKept(state: var AppState; m: sink Msg) =
     ", " & formatSize(news.store.bytes, includeSpace = true) & ").")
   state.lookAgain() # its originals, as copied now
   if news.updated: state.restoreSurvey(layers = true)
-  elif p.geometry.isNil: state.restoreSurvey(layers = false)
+  elif p.geometry.isNil: state.restoreSurvey(layers = layers)
   else: p.survey = srLoaded
   for s in state.sessions:
     if state.joinedOf(s.id) < 0 and s.id notin p.queue: p.queue.add s.id

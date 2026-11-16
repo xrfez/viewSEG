@@ -126,6 +126,13 @@ of at most 65 536, a P1 logical file's shotpoints, a CSV table's text; an end bl
 an XXH64 hash of every byte before it. The whole file's hash is checked before anything
 in it is used.
 
+**While the survey is being copied in.** The import's files (their originals), options
+and units are written to `project.nif` at once, as `(importing ...)`, and Messages says
+the survey "is being copied into the project", not that it is. Close project, or a quit,
+while the copy runs stops it and keeps what was written; the next open copies the
+originals again and makes the survey, with a message. The `(importing ...)` entry goes
+when the copy is whole (or when it failed: the user then imports the survey again).
+
 **When an original changes.** At open, the program looks at each survey file's original
 (on a job: a share may not answer): its size, modification time and quick hash (the size
 and an XXH64 hash of its first and last 64 KiB). One that changed (an S file that grew
