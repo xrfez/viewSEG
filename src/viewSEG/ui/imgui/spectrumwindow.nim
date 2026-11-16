@@ -13,7 +13,7 @@
 ## `ckSpectrumPanel` when the live panel comes on screen or leaves it (it
 ## works only while on screen).
 
-import std/[math, sequtils, tables]
+import std/[math, sequtils, strutils, tables]
 import imguin/cimgui
 import ../../core/state
 import ../../view/[curveplot, spectrumview, theme]
@@ -38,9 +38,23 @@ type
     bringForward*: bool ## the live panel is to be brought forward (an agent showed it)
 
 proc tip(text: string) =
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
+
+proc lockedCheck(label: string; stored: var bool; enabled: bool): bool =
+  ## The checkbox, drawn unticked while `enabled` is not, without writing
+  ## that into `stored` (the choice shows again as soon as it is enabled).
+  ## True when the stored choice changed.
+  var shown = enabled and stored
+  if not enabled: igBeginDisabled(true)
+  let clicked = igCheckbox(label.cstring, addr shown)
+  if not enabled: igEndDisabled()
+  if enabled and clicked and shown != stored:
+    stored = shown
+    return true
+  false
 
 func markName(w: SpectrumWindow): string =
   ## The window's mark (and screenshot target): "spectrum", "fft 1", ...
@@ -53,8 +67,17 @@ func fftTitle*(w: SpectrumWindow): string =
 
 const GroupGap = 14'f32 ## between the spectrum line's groups, as on the Seismic strip
 
-proc drawControls(w: SpectrumWindow; name: string; t: Theme; widths: var array[3, float32];
-    marks: var Marks; res: var SpectraOutput) =
+func processedReady(w: SpectrumWindow; ownChanges: bool): bool =
+  ## Whether Processed can be ticked: a processed curve is there, or the
+  ## plot's filters or a shown trace's own filter change the samples and the
+  ## answer in hand has not already said they produced none.
+  if w.spectrum.processed.len > 0: return true
+  if not (w.processing.hasFilters or ownChanges): return false
+  if w.spectrum.raw.len > 0 and not w.waiting: return false
+  true
+
+proc drawControls(st: AppState; w: SpectrumWindow; name: string; t: Theme;
+    widths: var array[3, float32]; marks: var Marks; res: var SpectraOutput) =
   ## The controls in three groups that wrap as wholes (the scale, the curves,
   ## Visible time), before the Freeze pin; each change is a `ckSpectrumDisplay`.
   var d = w.display
@@ -93,33 +116,45 @@ proc drawControls(w: SpectrumWindow; name: string; t: Theme; widths: var array[3
     marks.mark(name & ".raw")
     tip("The samples as the file has them")
     igSameLine(0, -1)
-    igBeginDisabled(w.spectrum.processed.len == 0)
-    if igCheckbox("Processed", addr d.processed): changed = true
-    igEndDisabled()
+    let ownChanges = st.ownChangesSamples(w)
+    let processedOn = w.processedReady(ownChanges)
+    if lockedCheck("Processed", d.processed, processedOn): changed = true
     marks.mark(name & ".processed")
-    tip(if w.spectrum.processed.len > 0: "Through the plot's filters: " & w.spectrum.filters
+    tip(if processedOn and w.spectrum.filters.len > 0:
+          "Through the plot's filters: " & w.spectrum.filters
+        elif processedOn: "Through the shown trace's own filter"
+        elif not w.processing.hasFilters and not ownChanges: "No filter is on in the plot"
         elif w.spectrum.filters.len > 0: "No processed curve: " & w.filterText
-        else: "The plot has no filters (Filters in the Seismic window's strip)")
+        else: "No filter is on in the plot")
     igSameLine(0, -1)
-    igBeginDisabled(not w.spectrum.hasResponse)
-    if igCheckbox("Response", addr d.response): changed = true
-    igEndDisabled()
+    let responseOn = w.spectrum.hasResponse
+    if lockedCheck("Response", d.response, responseOn): changed = true
     marks.mark(name & ".response")
-    tip(if w.spectrum.hasResponse: "Under the curves, the gain the plot's filters apply at " &
+    tip(if responseOn: "Under the curves, the gain the plot's filters apply at " &
           "each frequency (an impulse put through them, as the traces are), 0 dB at the top " &
           "of the curves: what they do, where the processed curve shows what the data and " &
           "the window make of it"
+        elif not w.processing.hasFilters: "No filter is on in the plot"
         elif w.spectrum.response.len > 0: "The filters reached none of these traces: their " &
           "response is not drawn"
         else: "The plot has no pass band or notch to draw")
     igSameLine(0, -1)
-    igBeginDisabled(not w.hasPhase)
-    if igCheckbox("Phase", addr d.phase): changed = true
-    igEndDisabled()
+    if lockedCheck("Phase", d.phase, w.hasPhase): changed = true
     marks.mark(name & ".phase")
-    tip(if w.hasPhase: "The phase of this trace (degrees, from the window's first sample), " &
-          "under its amplitude"
+    tip(if w.hasPhase: "The phase of this trace, under its amplitude. " & PhaseHelp
         else: "The phase is drawn for the spectrum of one trace")
+    igSameLine(0, -1)
+    let pictureW = round(igCalcTextSize("Magnitude 0-180", nil, false, -1).x +
+      igGetFrameHeight() + 2 * igGetStyle().FramePadding.x)
+    igSetNextItemWidth(pictureW)
+    if igBeginCombo("##phase picture", ($d.phasePicture).cstring, 0):
+      for v in PhasePicture:
+        if igSelectable_Bool(($v).cstring, v == d.phasePicture, 0, ImVec2_c(x: 0, y: 0)) and
+            v != d.phasePicture:
+          (d.phasePicture, changed) = (v, true)
+      igEndCombo()
+    marks.mark(name & ".phase picture")
+    tip("Phase: " & $d.phasePicture & ". " & PhaseHelp)
   group(2):
     var visible = d.time == stVisible
     if igCheckbox("Visible time", addr visible):
@@ -207,7 +242,7 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
   let name = w.markName
   marks.markWindow(name)
   var widths = ui.widths.getOrDefault(w.id)
-  drawControls(w, name, t, widths, marks, res)
+  drawControls(st, w, name, t, widths, marks, res)
   ui.widths[w.id] = widths
   # What it is of (the live panel's title does not say), and what was left out.
   let words = (if w.id == LiveSpectrum: w.label & " · " else: "") & w.summaryText &
@@ -223,8 +258,9 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
   template sp: untyped = w.spectrum
   # Fitted again for other data: another scale, axis or bins (the linear
   # live panel at each answer, its range moves with the traces).
-  let key = $w.display.scale & $w.display.logFrequency & $p.isEmpty & $sp.nfft &
-    $sp.binHz & (if w.display.scale == ssLinear and w.id == LiveSpectrum: $sp.gen else: "")
+  let key = $w.display.scale & $w.display.logFrequency & $w.display.phasePicture &
+    $p.isEmpty & $sp.nfft & $sp.binHz &
+    (if w.display.scale == ssLinear and w.id == LiveSpectrum: $sp.gen else: "")
   let phased = w.display.phase and w.hasPhase
   let h = max(80'f32, avail.y - lineH)
   let o = ui.plots.mgetOrPut(w.id, CurvePlotUi()).drawCurvePlot(name, p, t,
@@ -238,6 +274,7 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
                      y: max(q.curves.mapIt(it.name).find($w.cursorCurve), 0))
       else: PlotCursor()))
     if po.hovered: text = q.readoutText(po.reading)
+    elif q.aside.len > 0 and text.find(q.aside) < 0: text.add "   " & q.aside
   if w.cursor.held and text.len > 0: text = HeldNote & text
   ui.readout[w.id] = text
   ui.readAt[w.id] = o.reading.index

@@ -657,9 +657,17 @@ right of that line's first row. A change works it out again.
   dB drawn, -60 at first) and the colour map (density's maps; viridis at first). Each
   frame is placed at its centre's time.
 - **Phase spectrum:** the phase is drawn **only where the amplitude is within N dB of its
-  peak** (20 dB at first): elsewhere it is noise. **Unwrapped** (on at first) joins it
-  along frequency, so a delay is a straight line (`-360·f·τ` degrees); off, it stays
-  within ±180°. The phase is from the trace's first sample, of the whole trace,
+  peak** (20 dB at first): elsewhere it is noise, a gap, and the unwrap starts again on
+  the far side from the last drawn value. The picture is **Magnitude 0-180** at first
+  (the absolute value of the wrapped phase, axis fixed 0 to 180). **Signed +-180** is
+  the wrapped phase, with the same gaps. **Unwrapped** joins it along frequency, so a
+  delay is a straight line (`-360·f·τ` degrees) and the axis may be large. **Delay
+  removed** takes that line's best straight fit off (a pure time delay; the readout
+  says it in ms), which leaves a linear sweep as a parabola. The cursor reads the phase
+  as drawn and, unless the picture is signed, the signed value in brackets. A sweep's
+  phase climbs steeply because its delay grows with frequency; for vibrator QC, read
+  the phase against the pilot in the vibrator signature plot. The phase is from the
+  trace's first sample, of the whole trace,
   untapered, **zero-padded to 4 times its length**: between bins the phase of energy
   arriving at time t steps 360°·t/(4T), at most a quarter turn for any t within the
   trace (length T), so the unwrap cannot alias. Unpadded, a step passes half a turn once
@@ -1342,13 +1350,24 @@ raw, so the two compare. Of one trace that has its own filter, the response and 
 words are what that trace went through: the plot's filters then the trace's, or the
 trace's alone when it runs instead of the plot's (or when the plot's did not reach an
 auxiliary trace). Of several traces with their own filters, the response stays the
-plot's and the words add how many. In
+plot's and the words add how many. **Processed** is available when the plot's filters or
+a shown trace's own filter change the samples. **Processed** and **Response** are drawn
+unticked, and do not toggle, while no filter is on; the stored choice shows again when a
+filter is. In
 dB both are on one scale, 0 dB at the larger peak of the two (a filter's cut shows as
 the gap between them), and the line of words says which amplitude that is ("0 dB =
 amplitude 0.000142 (raw peak)"): each window has a 0 dB of its own, so two windows
 compare by it; linear, in the file's sample units. The frequency axis can be
 logarithmic (0 Hz is then left out). A spectrum of one trace has its phase too (Phase:
-degrees, from the window's first sample, drawn under the amplitude).
+degrees, from the window's first sample, drawn under the amplitude). The picture is
+**Magnitude 0-180** at first (absolute value, axis fixed 0 to 180); **Signed +-180**,
+**Unwrapped** and **Delay removed** are the other choices, kept with the window's other
+choices. Where the amplitude is more than 60 dB below that curve's peak the phase is
+not drawn, and the unwrap does not run across the gap. The readout gives the phase as
+drawn and, unless the picture is signed, the signed value in brackets; Delay removed
+also says the delay in ms. A sweep's phase climbs steeply because its delay grows with
+frequency; for vibrator QC, read the phase against the pilot in the vibrator signature
+plot. **Phase** is drawn unticked while the spectrum is not of one trace, the choice kept.
 
 **The filter's response.** Under the curves, a thin faint line over a fainter shade
 (the pass band reads as a lit area behind the data, which is drawn over it), the gain

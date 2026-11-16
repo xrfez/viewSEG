@@ -710,17 +710,25 @@ that has its own filter, the response and the line of words are what that trace 
 through (the strip's filters then the trace's, or the trace's alone when it runs
 instead). Of several traces that do not share one filter, the response stays the strip's
 and the words say how many have their own. The live panel asks again when a trace it
-shows gains, changes or loses its filter. In dB both are on one scale (0 dB at the larger peak,
-whose amplitude the window's line of words gives, so that two windows compare);
-**Linear** shows the amplitude itself (a sine of amplitude A reads A). **Log frequency**
-spreads the low frequencies out. **Visible time** takes the spectrum over the time the
-plot showed when the window opened, instead of the whole trace. For one trace, **Phase**
-(with the curves) draws its phase under its amplitude. The same line, in the same order,
-is on an FFT window and on the live Spectrum panel; the **Freeze** pin sits at the right
-of its first row. Point at the plot: the line under it reads the
-frequency and each curve's level. The wheel zooms, a drag pans, a double click shows it
-all again. The window's line of words says how many traces were averaged and what was
-left out (killed, dead, unreadable).
+shows gains, changes or loses its filter. **Processed** and **Response** are drawn
+unticked, and will not toggle, while no filter is on (neither the strip's nor a shown
+trace's own); your choice is kept and shows again as soon as a filter is. In dB both
+are on one scale (0 dB at the larger peak, whose amplitude the window's line of words
+gives, so that two windows compare); **Linear** shows the amplitude itself (a sine of
+amplitude A reads A). **Log frequency** spreads the low frequencies out. **Visible time**
+takes the spectrum over the time the plot showed when the window opened, instead of the
+whole trace. For one trace, **Phase** (with the curves) draws its phase under its
+amplitude. The picture is **Magnitude 0-180** at first (the absolute value, on a fixed
+0 to 180 axis); **Signed +-180**, **Unwrapped** and **Delay removed** are the other
+choices. Where the amplitude is more than 60 dB below the peak the phase is left out, so
+the noise outside a sweep's band is not drawn. A sweep's phase climbs steeply because
+its delay grows with frequency; for vibrator QC, read the phase against the pilot in the
+vibrator signature plot. The same line, in the same order, is on an FFT window and on
+the live Spectrum panel; the **Freeze** pin sits at the right of its first row. Point at
+the plot: the line under it reads the frequency and each curve's level, and, when the
+phase picture is not the signed one, the signed value in brackets. The wheel zooms, a
+drag pans, a double click shows it all again. The window's line of words says how many
+traces were averaged and what was left out (killed, dead, unreadable).
 
 **Window > Spectrum** is the same, docked and live (a tab beside the map at first): the
 spectrum of the traces the Seismic window shows (of the selection, when you have one),

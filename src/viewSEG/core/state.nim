@@ -104,6 +104,7 @@ from std/unicode import runeSubStr
 import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
+from processing import changesSamples
 import analysis, analysisreader, closer, components, diskio, edits, filejobs, filelist, filememory,
   filesystem, identity, inbox, inspector, jobs, join, layouts, log, mapstate, memoryjobs,
   panels, persist, pick, project, projectjobs, projectnif, reader, recordqc, selection, session,
@@ -1810,6 +1811,17 @@ func ownAt*(state: AppState; path: string; trace: int): tuple[has: bool; filter:
   ## The own filter of file-index `trace` at `path`; none when the file has none.
   if state.keyOf(path) in state.edits:
     result = state.edits[state.keyOf(path)].ownOf(trace)
+
+func ownChangesSamples*(state: AppState; w: SpectrumWindow): bool =
+  ## Whether a trace `w` shows has an own filter that changes its samples
+  ## (a frequency filter, or one that runs instead of the plot's).
+  for t in w.traces:
+    let i = state.findTrace(t)
+    if i >= 0:
+      let s = state.sessions[i]
+      let (has, f) = state.ownAt(s.path, t - s.base)
+      if has and f.changesSamples: return true
+  false
 
 func hasEditAt*(state: AppState; path: string; trace: int; edit: TraceEdit): bool =
   ## Whether file-index `trace` at `path` has edit `edit`.
