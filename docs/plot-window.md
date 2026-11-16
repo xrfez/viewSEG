@@ -865,12 +865,17 @@ under the pointer then, as desktop programs do.
   the theme each: `flag_failed` for dead, not decodable, all zero, not a number;
   `flag_amplitude` for noisy, clipped, spiky, constant, weak, DC offset; `flag_edited` for
   killed and reversed; `flag_spread` for missing, not in the template, twice, spread not the
-  template), its shape the filter within the kind: dead a square, killed an X, noisy a
-  circle, missing from the template a triangle, reversed a diamond (the rest:
-  `core/mapkinds`' `FilterMarks`, no two alike). The colours meet the themes' rules: 3
+  template), and so does its outline, so the kind reads without the colour (failed traces a
+  square, amplitude flags a circle, edits a diamond, the spread a triangle: no two kinds
+  share a shape, for a viewer who cannot tell two of the colours apart); a symbol inside
+  says the filter within the kind (none, an X, a plus, a bar, an upright bar or a ring):
+  dead a plain square, noisy a plain circle, missing from the template a plain triangle,
+  reversed a plain diamond, killed an X in a diamond (the rest: `core/mapkinds`'
+  `FilterMarks`, no two alike; `tthemes` checks that every two are told apart without
+  colour, as a protanope, deuteranope or tritanope sees them, in every theme). The colours meet the themes' rules: 3
   against the map's background and 20 (deltaE) from the sources, the receivers, the
   record's receivers, the hovered and selected points, and from each other. A mark keeps
-  its size on the screen at every zoom (22, 18, 26 and 14 pixels across at 100 % for the
+  its size on the screen at every zoom (26, 22, 30 and 18 pixels across at 100 % for the
   four kinds, so marks of two kinds on one station nest), and every marked point is drawn
   however far out the map is (none thinned, unlike the stations), one glyph a place
   however many things a filter marks there (a station with 5 000 dead traces is one mark,

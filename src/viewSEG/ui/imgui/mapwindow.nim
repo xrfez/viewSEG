@@ -68,10 +68,13 @@ const
   shotRing = 6'f32
     ## how much wider than its source's disc the ring round a source with a
     ## file in the folder is, pixels at 100 %
-  MarkSizes: array[FlagFamily, float32] = [22'f32, 18, 26, 14]
+  MarkSizes: array[FlagFamily, float32] = [26'f32, 22, 30, 18]
     ## the marks of each kind of finding (failed, amplitude, edits, the
     ## spread), pixels across at 100 %: apart, so marks of two kinds on one
-    ## station nest
+    ## station nest (the spread's triangle inside the amplitude's circle,
+    ## inside the failed traces' square, inside the edits' diamond), each
+    ## with room inside for its filter's symbol
+  Glyphs: array[FlagShape, GlyphKind] = [gkSquare, gkCircle, gkDiamond, gkTriangle]
   MarkStroke = 2.5'f32
     ## their outlines' width
   MarkHalo = 1.5'f32
@@ -320,7 +323,7 @@ proc swatch(c: Rgba; id: string) =
   discard igColorButton(id.cstring, vec4(c), ImGui_ColorEditFlags_NoTooltip.cint or
     ImGui_ColorEditFlags_NoPicker.cint, ImVec2_c(x: s, y: s))
 
-proc glyphIcon(c, background: Rgba; shape: FlagShape; id: string) =
+proc glyphIcon(c, background: Rgba; shape: FlagShape; symbol: FlagSymbol; id: string) =
   ## A filter's mark as the map draws it, on the map's background, the size
   ## of a swatch: the legend of the filters' marks.
   let s = igGetFrameHeight() * 0.8
@@ -328,8 +331,8 @@ proc glyphIcon(c, background: Rgba; shape: FlagShape; id: string) =
   discard igInvisibleButton(id.cstring, ImVec2_c(x: s, y: s), 0)
   let dl = igGetWindowDrawList()
   ImDrawList_AddRectFilled(dl, at, ImVec2_c(x: at.x + s, y: at.y + s), u32(background), 2, 0)
-  let (cx, cy, r) = (at.x + s / 2, at.y + s / 2, s / 2 - 2.5)
-  let (col, w) = (u32(c), 2'f32)
+  let (cx, cy, r) = (at.x + s / 2, at.y + s / 2, s / 2 - 1.5)
+  let (col, w) = (u32(c), 1.6'f32)
   template p(dx, dy: float32): ImVec2_c = ImVec2_c(x: cx + dx, y: cy + dy)
   case shape
   of shCircle: ImDrawList_AddCircle(dl, p(0, 0), r, col, 0, w)
@@ -337,13 +340,25 @@ proc glyphIcon(c, background: Rgba; shape: FlagShape; id: string) =
   of shDiamond: ImDrawList_AddQuad(dl, p(0, -r), p(r, 0), p(0, r), p(-r, 0), col, w)
   of shTriangle: ImDrawList_AddTriangle(dl, p(0, -r), p(0.866 * r, 0.5 * r),
     p(-0.866 * r, 0.5 * r), col, w)
-  of shPlus:
-    ImDrawList_AddLine(dl, p(-r, 0), p(r, 0), col, w)
-    ImDrawList_AddLine(dl, p(0, -r), p(0, r), col, w)
-  of shCross:
-    let k = 0.75 * r
-    ImDrawList_AddLine(dl, p(-k, -k), p(k, k), col, w)
-    ImDrawList_AddLine(dl, p(-k, k), p(k, -k), col, w)
+  # the symbol inside, as the map's shader draws it
+  let k = 0.6 * r * (case shape
+    of shCircle: 1'f32
+    of shSquare: 0.82
+    of shDiamond: 0.7071
+    of shTriangle: 0.6)
+  let ws = w * 0.8
+  case symbol
+  of syNone: discard
+  of syCross:
+    let q = 0.8 * k
+    ImDrawList_AddLine(dl, p(-q, -q), p(q, q), col, ws)
+    ImDrawList_AddLine(dl, p(-q, q), p(q, -q), col, ws)
+  of syPlus:
+    ImDrawList_AddLine(dl, p(-k, 0), p(k, 0), col, ws)
+    ImDrawList_AddLine(dl, p(0, -k), p(0, k), col, ws)
+  of syBar: ImDrawList_AddLine(dl, p(-k, 0), p(k, 0), col, ws)
+  of syUpright: ImDrawList_AddLine(dl, p(0, -k), p(0, k), col, ws)
+  of syRing: ImDrawList_AddCircle(dl, p(0, 0), 0.7 * k, col, 0, ws)
 
 proc layerRow(l: MapLayerView; i: int; marks: var Marks; res: var MapOutput) =
   ## One layer of the popover: its colour, its own toggle and its points.
@@ -515,7 +530,8 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
   for f in MapFilter:
     igPushID_Int(cint(ord(f) + 1000))
     # its mark, as the map draws it: a shape of its own, the colour of its kind
-    glyphIcon(filterInk(t, f, ink.background), ink.background, FilterMarks[f].shape, "##mark")
+    glyphIcon(filterInk(t, f, ink.background), ink.background, f.shapeOf, FilterMarks[f].symbol,
+      "##mark")
     marks.mark("map.filter mark " & $f)
     igSameLine(0, -1)
     var on = f in st.settings.map.filters
@@ -527,7 +543,8 @@ proc drawFilters(st: AppState; hits: array[MapFilter, FilterHits]; t: Theme; mar
     marks.mark("map.filter " & $f)
     tip(filterTips[f] & (if h.note.len > 0 and h.state == fsNotChecked: ".\nNot checked: " &
       h.note & "." elif h.note.len > 0 and h.state == fsDone: " (" & h.note & ")." else: ".") &
-      "\nMarked on the map with a " & $FilterMarks[f].shape & " in the colour of " &
+      "\nMarked on the map with a " & $f.shapeOf & (if FilterMarks[f].symbol == syNone: ""
+      else: " with " & $FilterMarks[f].symbol & " inside") & ": the shape and the colour of " &
       $FilterMarks[f].family & ".")
     if on and h.traces.len > 0:
       igSameLine(0, -1)
@@ -1235,10 +1252,10 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
 
 func markStyle(t: Theme; f: MapFilter; ink: MapInk; scale: float32): MapStyle =
   ## How filter `f`'s points are marked, at UI scale `scale`.
-  let (family, shape) = FilterMarks[f]
+  let (family, symbol) = FilterMarks[f]
   MapStyle(colour: filterInk(t, f, ink.background), edge: ink.background,
     size: MarkSizes[family] * scale, edgeWidth: MarkStroke * scale, halo: MarkHalo * scale,
-    glyph: GlyphKind(ord(shape) + 1))
+    glyph: Glyphs[FamilyShapes[family]], symbol: GlyphSymbol(ord(symbol)))
 
 proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink: MapInk;
     t: Theme; marks: var Marks; res: var MapOutput; ask: MapAskKind) =

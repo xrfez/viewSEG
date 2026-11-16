@@ -32,8 +32,10 @@
 ## **Marks** (`FilterMark`): each filter marks its stations on the map with
 ## a glyph of its own: a colour for its kind of finding (`FlagFamily`: a
 ## failed trace, an amplitude flag, the user's edit, the spread; the theme
-## gives each its role) and a shape within the kind (`FlagShape`), so no two
-## filters mark alike.
+## gives each its role) and an outline for it too (`FamilyShapes`: no two
+## kinds share one, so the kind reads without the colour, as for a viewer who
+## cannot tell the colours apart), with a symbol inside for the filter
+## within the kind (`FlagSymbol`), so no two filters mark alike.
 
 import parseSEG
 
@@ -94,16 +96,26 @@ type
     ffSpread = "the spread"    ## missing, not in the template, twice, ... spread differs
 
   FlagShape* = enum
-    ## The glyph a filter's mark is drawn as, round its station.
-    shCircle = "circle"
+    ## The outline of a kind of finding's marks, round its station: one a
+    ## kind, so the kind reads without its colour.
     shSquare = "square"
+    shCircle = "circle"
     shDiamond = "diamond"
     shTriangle = "triangle"
-    shPlus = "plus"
-    shCross = "cross"
 
-  FilterMark* = tuple[family: FlagFamily; shape: FlagShape]
-    ## how a filter's points are marked on the map
+  FlagSymbol* = enum
+    ## What a filter's mark holds inside its kind's outline, over its
+    ## station: no two filters of a kind alike.
+    syNone = "nothing"
+    syCross = "an X"
+    syPlus = "a plus"
+    syBar = "a bar"
+    syUpright = "an upright bar"
+    syRing = "a ring"
+
+  FilterMark* = tuple[family: FlagFamily; symbol: FlagSymbol]
+    ## how a filter's points are marked on the map: its kind's colour and
+    ## outline (`FamilyShapes`), and a symbol of its own inside
 
   FilterState* = enum
     ## How far a filter's finding is.
@@ -122,22 +134,28 @@ type
     note*: string              ## what it counts, or why it is not checked
 
 const
-  FilterMarks*: array[MapFilter, FilterMark] = [(ffFailed, shSquare), (ffFailed, shPlus),
-    (ffEdited, shCross), (ffAmplitude, shCircle), (ffAmplitude, shSquare),
-    (ffAmplitude, shTriangle), (ffAmplitude, shDiamond), (ffAmplitude, shPlus),
-    (ffAmplitude, shCross), (ffFailed, shDiamond), (ffFailed, shTriangle), (ffSpread, shTriangle),
-    (ffSpread, shSquare), (ffSpread, shDiamond), (ffSpread, shPlus), (ffSpread, shCross),
-    (ffEdited, shDiamond), (ffSpread, shCircle)]
+  FamilyShapes*: array[FlagFamily, FlagShape] = [shSquare, shCircle, shDiamond, shTriangle]
+    ## each kind of finding's outline: failed traces a square, amplitude
+    ## flags a circle, the user's edits a diamond, the spread a triangle
+  FilterMarks*: array[MapFilter, FilterMark] = [(ffFailed, syNone), (ffFailed, syPlus),
+    (ffEdited, syCross), (ffAmplitude, syNone), (ffAmplitude, syBar),
+    (ffAmplitude, syUpright), (ffAmplitude, syRing), (ffAmplitude, syCross),
+    (ffAmplitude, syPlus), (ffFailed, syRing), (ffFailed, syCross), (ffSpread, syNone),
+    (ffSpread, syPlus), (ffSpread, syRing), (ffSpread, syBar), (ffSpread, syUpright),
+    (ffEdited, syNone), (ffSpread, syCross)]
     ## each filter's mark, in `MapFilter`'s order: no two alike, and the
-    ## filters most used of different shapes too (dead a square, killed an X
-    ## over its station, noisy a circle, missing from the template a
-    ## triangle, reversed a diamond); auxiliary traces and those without a
+    ## filters most used plain outlines (dead a square, noisy a circle,
+    ## missing from the template a triangle, reversed a diamond; killed an X
+    ## in a diamond, over its station); auxiliary traces and those without a
     ## position are counted, not marked
   TraceFilters* = {mfDead, mfUndecodable, mfNoisy, mfClipped, mfSpiky, mfConstant, mfWeak,
     mfDcOffset, mfAllZero, mfNotANumber, mfMissing, mfUnlisted, mfDuplicate, mfAuxiliary}
     ## the filters found by reading the record shown on a job (`core/recordqc`)
   MaxTemplateLines* = 1000 ## a patch's lines, at most
   MaxTemplateChannels* = 100_000 ## a patch's stations on a line, at most
+
+func shapeOf*(f: MapFilter): FlagShape {.inline.} = FamilyShapes[FilterMarks[f].family]
+  ## The outline filter `f`'s marks are drawn with: its kind's.
 
 func bounded*(t: TemplateSpec): TemplateSpec =
   ## `t` with each value in its range: a patch of 1 to `MaxTemplateLines`

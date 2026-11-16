@@ -44,7 +44,7 @@ type
   MapUniform = enum
     muOffset = "offset", muScale = "scale", muSize = "size", muEdge = "edgeWidth",
     muHollow = "hollow", muFill = "fill", muEdgeColour = "edge", muGlyph = "glyph",
-    muHalo = "haloWidth", muPass = "pass"
+    muHalo = "haloWidth", muPass = "pass", muSymbol = "symbol"
 
   MapShapeKind* = enum
     skDisc ## filled
@@ -54,16 +54,23 @@ type
     ## A mark's outline (`MapStyle.glyph`): none for a disc or ring.
     gkNone, gkCircle, gkSquare, gkDiamond, gkTriangle, gkPlus, gkCross
 
+  GlyphSymbol* = enum
+    ## What a mark holds inside its outline (`MapStyle.symbol`), drawn as
+    ## the outline is, a little thinner, its size what the outline has room
+    ## for.
+    gsNone, gsCross, gsPlus, gsBar, gsUpright, gsRing
+
   MapStyle* = object
     ## How one set of points is drawn.
     colour*: Rgba
-    edge*: Rgba         ## the outline's colour
-    size*: float32      ## the diameter, in pixels
-    edgeWidth*: float32 ## the outline's width, in pixels; 0 for none
+    edge*: Rgba          ## the outline's colour
+    size*: float32       ## the diameter, in pixels
+    edgeWidth*: float32  ## the outline's width, in pixels; 0 for none
     shape*: MapShapeKind
     glyph*: GlyphKind
       ## a mark's outline, drawn `edgeWidth` wide in `colour` with a halo
       ## `halo` wide on each side in `edge`; `shape` is then not used
+    symbol*: GlyphSymbol ## inside the glyph's outline
     halo*: float32
 
   MapDraw* = object
@@ -135,7 +142,7 @@ void main() {
   fragmentShader = """
 #version 330 core
 uniform float size, edgeWidth, haloWidth;
-uniform int hollow, glyph, pass; // pass: 1 a mark's halo, 2 its outline
+uniform int hollow, glyph, symbol, pass; // pass: 1 a mark's halo, 2 its outline
 uniform vec4 fill, edge;
 out vec4 colour;
 float segment(vec2 p, vec2 a, vec2 b) {
@@ -159,8 +166,25 @@ void main() {
       float k = r * 0.75;
       d = min(segment(p, vec2(-k, -k), vec2(k, k)), segment(p, vec2(-k, k), vec2(k, -k)));
     }
-    float stroke = clamp(edgeWidth / 2.0 - d + 0.5, 0.0, 1.0);
-    float around = clamp(edgeWidth / 2.0 + haloWidth - d + 0.5, 0.0, 1.0);
+    float ds = 1e9; // pixels from the symbol's strokes
+    if (symbol > 0) {
+      // its arms: most of the room inside the outline (the outline's inner radius)
+      float k = 0.6 * r * (glyph == 1 ? 1.0 : glyph == 2 ? 0.82 : glyph == 3 ? 0.7071068 :
+        glyph == 4 ? 0.6 : 1.0);
+      if (symbol == 1) {
+        float q = k * 0.8;
+        ds = min(segment(p, vec2(-q, -q), vec2(q, q)), segment(p, vec2(-q, q), vec2(q, -q)));
+      } else if (symbol == 2) {
+        ds = min(segment(p, vec2(-k, 0.0), vec2(k, 0.0)), segment(p, vec2(0.0, -k), vec2(0.0, k)));
+      } else if (symbol == 3) ds = segment(p, vec2(-k, 0.0), vec2(k, 0.0));
+      else if (symbol == 4) ds = segment(p, vec2(0.0, -k), vec2(0.0, k));
+      else ds = abs(length(p) - k * 0.7);
+    }
+    float sw = edgeWidth * 0.7; // the symbol's stroke
+    float stroke = max(clamp(edgeWidth / 2.0 - d + 0.5, 0.0, 1.0),
+      clamp(sw / 2.0 - ds + 0.5, 0.0, 1.0));
+    float around = max(clamp(edgeWidth / 2.0 + haloWidth - d + 0.5, 0.0, 1.0),
+      clamp(sw / 2.0 + haloWidth - ds + 0.5, 0.0, 1.0));
     // premultiplied; the halos of every mark first, so none covers another's outline
     colour = pass == 1 ? vec4(edge.rgb, 1.0) * around : vec4(fill.rgb, 1.0) * stroke;
     if (colour.a <= 0.0) discard;
@@ -351,6 +375,7 @@ proc use(r: MapRenderer; f: MapFrame; origin: MapPoint; st: MapStyle) =
   glUniform1f(loc(muEdge), st.edgeWidth)
   glUniform1i(loc(muHollow), GLint(st.shape == skRing))
   glUniform1i(loc(muGlyph), GLint(ord(st.glyph)))
+  glUniform1i(loc(muSymbol), GLint(ord(st.symbol)))
   glUniform1f(loc(muHalo), st.halo)
   uniform4(loc(muFill), st.colour)
   uniform4(loc(muEdgeColour), st.edge)

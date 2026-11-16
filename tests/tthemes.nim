@@ -21,6 +21,9 @@
 ##   the marks of the map's filters (a colour for failed traces, amplitude
 ##   flags, edits and the spread) 3 against the background, 20 from all of
 ##   those and from each other;
+## - every two of those marks told apart without their colours (by their
+##   shapes, or else 10 apart as a protanope, deuteranope or tritanope sees
+##   them), in the built-in themes too;
 ## - each file names, in its comment, the roles viewSEG moved to meet them;
 ## - text 4.5 on a pressed item (`active`) and on selected text in an input
 ##   (`text_selection`, itself 1.08 off the frame); secondary and status text
@@ -50,7 +53,7 @@
 ## ("Last Horizon: warning on selection 1.49 < 3.0", "Everforest Dark: text
 ## on text_selection 4.17 < 4.5" ...).
 
-import std/[os, sequtils, strformat, strutils]
+import std/[math, os, sequtils, strformat, strutils]
 import viewSEG/core/[geometry, mapkinds, panels, survey]
 import viewSEG/view/[maplayers, plotink, theme]
 
@@ -188,6 +191,66 @@ block readable:
     checkUi(t)
     checkPlot(t)
     checkMap(t)
+  doAssert problems.len == 0, $problems.len & " problems:\n" & problems.join("\n")
+
+# Colour blindness: Machado, Oliveira and Fernandes (2009), severity 1, on
+# linear RGB.
+type Vision = enum protanopia, deuteranopia, tritanopia
+const Machado: array[Vision, array[3, array[3, float64]]] = [
+  [[0.152286, 1.052583, -0.204868], [0.114503, 0.786281, 0.099216],
+    [-0.003882, -0.048116, 1.051998]],
+  [[0.367322, 0.860646, -0.227968], [0.280085, 0.672501, 0.047413],
+    [-0.011820, 0.042940, 0.968881]],
+  [[1.255528, -0.076749, -0.178779], [-0.078411, 0.930809, 0.147602],
+    [0.004733, 0.691367, 0.303900]]]
+
+func seen(c: Rgba; v: Vision): Rgba =
+  ## `c` as a viewer with vision `v` sees it.
+  func linear(u: uint8): float64 =
+    let x = float64(u) / 255
+    if x <= 0.04045: x / 12.92 else: pow((x + 0.055) / 1.055, 2.4)
+  func encoded(x: float64): uint8 =
+    let y = clamp(x, 0, 1)
+    uint8(round(255 * (if y <= 0.0031308: 12.92 * y else: 1.055 * pow(y, 1 / 2.4) - 0.055)))
+  let l = [linear(c.r), linear(c.g), linear(c.b)]
+  var o: array[3, float64]
+  for i in 0 .. 2:
+    for j in 0 .. 2: o[i] += Machado[v][i][j] * l[j]
+  Rgba(r: encoded(o[0]), g: encoded(o[1]), b: encoded(o[2]), a: c.a)
+
+block marksWithoutColour:
+  # Every two filters' marks are told apart by a viewer who cannot tell
+  # some colours apart (protanopia, deuteranopia, tritanopia), in every
+  # shipped theme and both built-in ones, on both backgrounds: by their
+  # shape (the kind's outline and the symbol inside; the kinds' sizes,
+  # 4 pixels apart, are not counted), or else by their colours as that
+  # viewer sees them, 10 apart (deltaE). The marks' shapes alone tell every
+  # two apart. Seen to fail with each filter's shape as it was (a shape a
+  # filter, shared across the kinds: dead and clipped both squares): 70
+  # problems ("Miasma, paper, protanopia: noisy from spread not the template
+  # 1.6 < 10", "Flexoki Light, paper, deuteranopia: all zero from reversed
+  # 1.8 < 10" ...).
+  const Marked = {MapFilter.low .. MapFilter.high} - {mfAuxiliary, mfNoPosition}
+  var shapes: seq[(FlagShape, FlagSymbol)]
+  for f in Marked:
+    let g = (f.shapeOf, FilterMarks[f].symbol)
+    doAssert g notin shapes, $f & " is marked as another filter is: " & $g
+    shapes.add g
+  var themes = @[builtinTheme(tmDark), builtinTheme(tmLight)]
+  for (file, _, _) in Shipped: themes.add load(file)
+  var problems: seq[string]
+  for t in themes:
+    for colours in [pcPaper, pcTheme]:
+      let ink = mapInk(t, colours)
+      for v in Vision:
+        for f in Marked:
+          for g in Marked:
+            if g > f and (f.shapeOf, FilterMarks[f].symbol) ==
+                (g.shapeOf, FilterMarks[g].symbol):
+              let d = deltaE(seen(filterInk(t, f, ink.background), v),
+                seen(filterInk(t, g, ink.background), v))
+              if d < 10:
+                problems.add &"{t.name}, {colours}, {v}: {f} from {g} {d:.1f} < 10"
   doAssert problems.len == 0, $problems.len & " problems:\n" & problems.join("\n")
 
 block adjustmentsNoted:
