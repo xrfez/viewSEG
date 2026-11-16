@@ -27,11 +27,20 @@ const
   VibratorSize = (760'f32, 900'f32) ## a vibrator signature's: its roles and four plots
 
 type
+  HeatCache = object
+    ## An image cut down to the plot's pixels (`reduceImage`), kept while what it
+    ## was made from (the answer, the view, the plot's size) is the same.
+    gen: uint64
+    view: array[4, float64]
+    pixels: array[2, int]
+    cells: ImageReduction
+
   PlotWindowsUi* = object
     ## The analysis windows' state between frames.
     curves: Table[int, seq[CurvePlotUi]] ## per window id, per plot
     under: Table[int, PlotCursor]        ## per window id: the cell under the pointer last frame
     readout*: Table[int, string]         ## per window id: what its cursor read last frame (tests)
+    heat: Table[int, HeatCache]          ## per window id: the image as drawn, cut to the pixels
     maps: array[ColourMap, int]          ## ImPlot's index of each density colour map + 1; 0: not added
 
   PlotWindowsOutput* = object
@@ -410,12 +419,23 @@ proc drawImage(ui: var PlotWindowsUi; w: AnalysisWindow; name: string; t: Theme;
     ImPlot_SetupAxesLimits(x0, x1, y0, y1, ImPlot_Cond_Once.cint)
     ImPlot_SetupAxisLimitsConstraints(ImAxis_X1.cint, x0, x1)
     ImPlot_SetupAxisLimitsConstraints(ImAxis_Y1.cint, y0, y1)
-    var values = img.topDown
-    ImPlot_PlotHeatmap_FloatPtr("##image", addr values[0], cint(img.rows), cint(img.cols),
-      cdouble(img.lo), cdouble(img.hi), nil, ImPlotPoint_c(x: x0, y: y0),
-      ImPlotPoint_c(x: x1, y: y1), 0)
     let pos = ImPlot_GetPlotPos()
     let area = ImPlot_GetPlotSize()
+    # only what is in view, cut to the pixels (the largest value of each bin),
+    # redone when the answer, the view or the size changes: never a copy of
+    # every cell a frame
+    let lim = ImPlot_GetPlotLimits(ImAxis_X1.cint, ImAxis_Y1.cint)
+    let view = [lim.X.Min, lim.X.Max, lim.Y.Min, lim.Y.Max]
+    let pixels = [max(1, int(area.x)), max(1, int(area.y))]
+    if w.id notin ui.heat or ui.heat[w.id].gen != w.result.gen or ui.heat[w.id].view != view or
+        ui.heat[w.id].pixels != pixels:
+      ui.heat[w.id] = HeatCache(gen: w.result.gen, view: view, pixels: pixels,
+        cells: img.reduceImage(view[0], view[1], view[2], view[3], pixels[0], pixels[1]))
+    template cut: untyped = ui.heat[w.id].cells
+    if cut.cols > 0:
+      ImPlot_PlotHeatmap_FloatPtr("##image", addr cut.values[0], cint(cut.rows), cint(cut.cols),
+        cdouble(img.lo), cdouble(img.hi), nil, ImPlotPoint_c(x: cut.xMin, y: cut.yMin),
+        ImPlotPoint_c(x: cut.xMax, y: cut.yMax), 0)
     marks.markRect(name & ".image", pos, ImVec2_c(x: pos.x + area.x, y: pos.y + area.y))
     if ImPlot_IsPlotHovered():
       let m = ImPlot_GetPlotMousePos(ImAxis_X1.cint, ImAxis_Y1.cint)
@@ -595,8 +615,13 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
   for id in gone:
     ui.curves.del id
     ui.under.del id
+    ui.heat.del id
     ui.readout.del id
 
 func readoutOf*(ui: PlotWindowsUi; id: int): string =
   ## What window `id`'s cursor read last frame; "" for nothing (tests).
   ui.readout.getOrDefault(id, "")
+
+func cellsDrawn*(ui: PlotWindowsUi; id: int): int =
+  ## The cells window `id`'s image hands ImPlot to draw (tests).
+  if id in ui.heat: ui.heat[id].cells.cols * ui.heat[id].cells.rows else: 0

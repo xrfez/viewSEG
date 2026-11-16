@@ -68,6 +68,53 @@ func topDown*(img: AnalysisImage): seq[float32] =
       result[k] = img.valueAt(col, row)
       inc k
 
+const MaxDrawnCells* = 300_000
+  ## the most cells an image view hands the toolkit to draw: a plot has a few
+  ## hundred thousand pixels at most, and a cell drawn is a rectangle a frame
+
+type ImageReduction* = object
+  ## The part of an image in view, cut down to about the plot's pixels: each
+  ## cell the largest value of the bin of image cells it stands for.
+  cols*, rows*: int ## the cells drawn
+  values*: seq[float32] ## row by row, the highest y first, as `topDown`
+  xMin*, xMax*, yMin*, yMax*: float64 ## where they are drawn, in the image's x and y
+  binCols*, binRows*: int ## image cells to a drawn one, along x and along y
+
+func reduceImage*(img: AnalysisImage; xLo, xHi, yLo, yHi: float64; pxW, pxH: int): ImageReduction =
+  ## The cells of `img` in view (x from `xLo` to `xHi`, y from `yLo` to `yHi`)
+  ## cut down to at most `pxW` x `pxH` drawn cells (and `MaxDrawnCells`),
+  ## each the largest of its bin, so that a bright cell is never averaged
+  ## away. Bins are whole numbers of cells from the first in view; the last
+  ## bin may reach past the image (filled with its floor, drawn off it).
+  if img.isEmpty or xHi.isNaN or xLo.isNaN or yHi.isNaN or yLo.isNaN: return
+  let c0 = clamp(int(floor((min(xLo, xHi) - img.x0) / img.dx)), 0, img.cols - 1)
+  let c1 = clamp(int(ceil((max(xLo, xHi) - img.x0) / img.dx)), c0, img.cols - 1)
+  let r0 = clamp(int(floor((min(yLo, yHi) - img.y0) / img.dy)), 0, img.rows - 1)
+  let r1 = clamp(int(ceil((max(yLo, yHi) - img.y0) / img.dy)), r0, img.rows - 1)
+  let (nc, nr) = (c1 - c0 + 1, r1 - r0 + 1)
+  var (fx, fy) = ((nc + max(pxW, 1) - 1) div max(pxW, 1), (nr + max(pxH, 1) - 1) div max(pxH, 1))
+  fx = max(fx, 1)
+  fy = max(fy, 1)
+  while ((nc + fx - 1) div fx) * ((nr + fy - 1) div fy) > MaxDrawnCells:
+    if (nc + fx - 1) div fx >= (nr + fy - 1) div fy: inc fx else: inc fy
+  let (oc, orows) = ((nc + fx - 1) div fx, (nr + fy - 1) div fy)
+  result = ImageReduction(cols: oc, rows: orows, binCols: fx, binRows: fy,
+    values: newSeq[float32](oc * orows))
+  for v in result.values.mitems: v = img.lo
+  for c in c0 .. c1:
+    let bx = (c - c0) div fx
+    let base = c * img.rows
+    for by in 0 ..< orows:
+      let at = (orows - 1 - by) * oc + bx
+      var m = result.values[at]
+      for r in r0 + by * fy ..< min(r0 + (by + 1) * fy, r1 + 1):
+        m = max(m, img.values[base + r])
+      result.values[at] = m
+  result.xMin = img.xOf(c0) - img.dx / 2
+  result.xMax = result.xMin + float64(oc * fx) * img.dx
+  result.yMin = img.yOf(r0) - img.dy / 2
+  result.yMax = result.yMin + float64(orows * fy) * img.dy
+
 func keyMove*(up, down, left, right, home, ending: bool): CursorMove =
   ## The cursor's move for the keys pressed in an image view, whose second
   ## axis grows upwards (Up: a row higher, the next one): none for no key.

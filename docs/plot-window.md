@@ -656,6 +656,13 @@ Each window's first line holds its view's settings; a change works it out again.
   side, in Hz. Where the envelope is 60 dB or more below its peak the phase is noise,
   so no frequency is drawn there (and the window's words say so).
 
+**Drawing an image.** An image view (a spectrogram, an f-k) draws what is in view cut down
+to about the plot's pixels (at most 300 000 cells): each drawn cell is the largest value of
+the image's cells it stands for, so a strong event is never averaged away. It is redone only
+when the answer, the view or the window's size changes, and the cursor reads the exact cell
+of the whole image. A long f-k (256 traces over 60 s) therefore costs no more to show than a
+short one.
+
 **The cursor.** In a spectrogram the cursor follows the pointer, a line to each axis with
 its exact value written on the axis, and the line under the image reads its time,
 frequency and dB. While the window has the focus (a click on it), the keys hold it:
