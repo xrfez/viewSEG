@@ -241,6 +241,113 @@ proc drawFilterControls*(p: Panel; hasAux: bool; reach: FilterReach; t: Theme;
       else: "Raw (off): click to see the traces without the filters, under the same " &
         "gain (" & rawKeyTip & ")")
 
+const ownId = "##ownfilter"
+
+proc drawOwnFilter*(draft: var OwnFilter; mixed: bool; n: int; dtMs: float64;
+    pos: ImVec2_c; marks: var Marks): bool =
+  ## The popover that sets a trace's own filter: the plot's filter controls,
+  ## in the same order and words, then whether it runs after the plot's
+  ## filters or instead of them, then Apply. True when Apply is clicked.
+  ## Aux and Raw are the plot's switches, not a trace's, so they are not here.
+  if not igBeginPopup(ownId, 0): return false
+  marks.markWindow("plot.ownfilter popup")
+  let title = if n == 1: "Filter this trace" else: "Filter " & $n & " traces"
+  igTextUnformatted(title.cstring, nil)
+  if mixed:
+    igTextDisabled("the selected traces have different filters")
+    marks.mark("plot.ownfilter mixed")
+  let dt = dtMs
+  let nyq = if dt > 0 and dt < Inf: 500 / dt else: MaxFilterHz
+  let w = round(igGetFontSize() * 16)
+  var pr = draft.spec
+  igSeparatorText("DC removal")
+  for dc in DcRemoval:
+    if dc != DcRemoval.low: igSameLine(0, -1)
+    if igRadioButton_Bool((dcNames[dc] & "##odc").cstring, pr.dc == dc) and pr.dc != dc:
+      pr.dc = dc
+    marks.mark("plot.ownfilter dc " & $dc)
+  igSeparatorText("Pass band")
+  for b in PassBand:
+    if b != PassBand.low: igSameLine(0, -1)
+    if igRadioButton_Bool((bandNames[b] & "##oband").cstring, pr.band == b) and pr.band != b:
+      pr.band = b
+    marks.mark("plot.ownfilter band " & $b)
+  let half = round(w / 2)
+  let lead = round(igCalcTextSize("High-cut", nil, false, -1).x + 2 * igGetStyle().ItemSpacing.x)
+  template rampLabel(text: string) =
+    igAlignTextToFramePadding()
+    igTextUnformatted(text, nil)
+    igSameLine(lead, -1)
+  if pr.band.hasLow:
+    rampLabel("Low-cut")
+    discard hertz("##of1", pr.f1, 0, min(pr.f2, nyq) - MinRampHz, half)
+    marks.mark("plot.ownfilter f1")
+    igSameLine(0, -1)
+    igTextUnformatted("to", nil)
+    igSameLine(0, -1)
+    discard hertz("##of2", pr.f2, pr.f1 + MinRampHz, if pr.band.hasHigh: min(pr.f3, nyq) else: nyq,
+      half)
+    marks.mark("plot.ownfilter f2")
+  if pr.band.hasHigh:
+    rampLabel("High-cut")
+    discard hertz("##of3", pr.f3, if pr.band.hasLow: pr.f2 else: MinRampHz,
+      min(pr.f4, nyq) - MinRampHz, half)
+    marks.mark("plot.ownfilter f3")
+    igSameLine(0, -1)
+    igTextUnformatted("to", nil)
+    igSameLine(0, -1)
+    discard hertz("##of4", pr.f4, pr.f3 + MinRampHz, nyq, half)
+    marks.mark("plot.ownfilter f4")
+  igSeparatorText("Notches")
+  var drop = -1
+  for i, notch in pr.notches:
+    igPushID_Int(cint(i))
+    var on = notch.on
+    if igCheckbox("##on", addr on): pr.notches[i].on = on
+    marks.mark("plot.ownfilter notch " & $i & " on")
+    igSameLine(0, -1)
+    igTextUnformatted("at", nil)
+    igSameLine(0, -1)
+    discard hertz("##hz", pr.notches[i].hz, 1, nyq, round(w * 0.5))
+    igSameLine(0, -1)
+    igTextUnformatted("width", nil)
+    igSameLine(0, -1)
+    discard hertz("##width", pr.notches[i].widthHz, MinNotchWidthHz, 20, round(w * 0.4))
+    igSameLine(0, -1)
+    var h = cint(notch.harmonics)
+    igSetNextItemWidth(round(w * 0.3))
+    if igSliderInt("##harmonics", addr h, 1, cint(MaxHarmonics), "x%d", 0.ImGuiSliderFlags):
+      pr.notches[i].harmonics = int(h)
+    igSameLine(0, -1)
+    if igSmallButton("Remove"): drop = i
+    igPopID()
+  if drop >= 0: pr.notches.delete(drop)
+  igBeginDisabled(pr.notches.len >= MaxNotches)
+  for hz in NotchPresets:
+    if igButton(("+ " & $int(hz) & " Hz").cstring, ImVec2_c(x: 0, y: 0)):
+      pr.notches.add NotchFilter(hz: hz, harmonics: 3)
+    igSameLine(0, -1)
+  if igButton("+ Notch", ImVec2_c(x: 0, y: 0)): pr.notches.add NotchFilter()
+  igEndDisabled()
+  if igButton("No filters", ImVec2_c(x: 0, y: 0)): pr = Processing()
+  igSeparatorText("When")
+  if igRadioButton_Bool("After the plot's filters", draft.place == fpAfter):
+    draft.place = fpAfter
+  marks.mark("plot.ownfilter after")
+  if igRadioButton_Bool("Instead of the plot's filters", draft.place == fpInstead):
+    draft.place = fpInstead
+  marks.mark("plot.ownfilter instead")
+  draft.spec = pr
+  igSeparator()
+  result = igButton("Apply", ImVec2_c(x: 0, y: 0))
+  marks.mark("plot.ownfilter apply")
+  if result: igCloseCurrentPopup()
+  igEndPopup()
+
+proc openOwnFilter*() =
+  ## Opens the trace-filter popover. Called the frame after the menu item.
+  igOpenPopup_Str(ownId, 0)
+
 proc filterKeys*(p: Panel; cmds: var seq[Command]) =
   ## `P`, while the plot window has the focus: raw or processed.
   let pr = p.layers[0].processing

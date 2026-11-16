@@ -19,7 +19,7 @@ import imguin/cimgui
 from parseSEG import SeismicKind
 import ../../core/state
 import ../../view/[headerviews, theme]
-import chrome, fonts, marks, style
+import chrome, fonts, icons, marks, style
 
 const FindRangeExample* = "10..20"
   ## The range example, in the Find hint and in its tooltip
@@ -325,7 +325,13 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
         igTableSetBgColor(ImGui_TableBgTarget_RowBg1.cint, pointedBg, -1)
         if row < 400: marks.mark("table.pointed " & $row)
       discard igTableNextColumn()
-      let number = if trace >= 0: $(trace + 1) else: ""
+      let (hasF, filt) = if trace >= 0: st.ownAt(ses.path, trace) else: (false, OwnFilter())
+      let killed = trace >= 0 and st.hasEditAt(ses.path, trace, teKilled)
+      let reversed = trace >= 0 and st.hasEditAt(ses.path, trace, teReversed)
+      var number = if trace >= 0: $(trace + 1) else: ""
+      if killed: number.add " K"
+      if reversed: number.add " R"
+      if hasF: number.add " " & IconFilter
       if igSelectable_Bool((number & "##row").cstring, false,
           ImGui_SelectableFlags_SpanAllColumns.cint or
           ImGui_SelectableFlags_AllowDoubleClick.cint, ImVec2_c(x: 0, y: 0)) and id >= 0:
@@ -344,6 +350,9 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
             mode: (if io.KeyCtrl: smToggle else: smReplace))
           ui.lastClicked = row
       if igIsItemHovered(0) and id >= 0: over = id
+      if hasF and igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
+        igSetTooltip("%s", filterWords(filt).cstring)
+      if hasF and row < 400: marks.mark("table.filter " & $row)
       if row < 400: marks.mark("table.row " & $row)
       if id >= 0 and igBeginPopupContextItem("##rowmenu", ImGui_PopupFlags_MouseButtonRight.cint):
         marks.markWindow("table.menu")

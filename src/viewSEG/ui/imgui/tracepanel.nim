@@ -196,6 +196,11 @@ type
       ## what its "Select its receiver on the map" sends, found when it opened
     menuPick: Pick ## what lay under the pointer when it opened, held while it is open
     menuMouse: ImVec2_c ## where the pointer was then
+    ownAsk: bool ## the menu asked for the filter popover: open it next frame
+    ownTraces: seq[int] ## survey-wide ids the popover sets a filter on
+    ownDraft: OwnFilter ## the filter the popover is editing
+    ownMixed: bool ## the selection holds different filters: the draft starts empty
+    ownPos: ImVec2_c ## where the popover opens
     cursorText: string ## the time the cursor's time line showed last; "" for none
     cursorHeader: seq[string] ## the header values it showed over the rows; none for none
     focus: FocusClicks ## a click selects only in a window that had the focus
@@ -1497,6 +1502,22 @@ func targetOf(under: int; pick: Pick; sel: Selection): string =
     if n == 1: "1 selected trace" else: $n & " selected traces"
   else: "Trace " & $(pick.trace + 1)
 
+func startingFilter(st: AppState; ids: openArray[int]): tuple[filter: OwnFilter; mixed: bool] =
+  ## The filter the popover starts from: the one every trace of `ids` has,
+  ## or empty when they differ (`mixed`) or none has one.
+  var seen = false
+  for id in ids:
+    let i = st.findTrace(id)
+    let cur = if i < 0: OwnFilter()
+              else:
+                let (has, f) = st.ownAt(st.sessions[i].path, id - st.sessions[i].base)
+                if has: f else: OwnFilter()
+    if not seen:
+      result.filter = cur
+      seen = true
+    elif cur != result.filter:
+      return (OwnFilter(), true)
+
 func editCommand(st: AppState; p: Panel; under: int; edit: TraceEdit): Command =
   ## Edit `edit` of what a trace operation acts on with the pointer over
   ## trace `under` (survey-wide; the selection when `under` is in it): given
@@ -1535,6 +1556,31 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   marks.mark("plot.menu.kill")
   tip(if teKilled in has: "Restore this killed trace (K)"
       else: "Kill this trace: leave it out of the plot and the processing (K)")
+  let targets = if under >= 0: st.selection.targets(under) else: @[]
+  let filterMany = targets.len > 1
+  let filterItem = if filterMany: "Filter " & $targets.len & " selected traces..."
+                   else: "Filter this trace..."
+  if igMenuItem_Bool(filterItem.cstring, nil, false, under >= 0):
+    tp.ownAsk = true
+    tp.ownTraces = targets
+    tp.ownPos = igGetIO_Nil().MousePos
+    let start = st.startingFilter(targets)
+    tp.ownDraft = start.filter
+    tp.ownMixed = start.mixed
+  marks.mark("plot.menu.filter")
+  tip("Give this trace its own frequency filter, after the plot's filters or instead of them")
+  var anyFilter = false
+  for id in targets:
+    let file = st.findTrace(id)
+    if file >= 0 and st.ownAt(st.sessions[file].path, id - st.sessions[file].base).has:
+      anyFilter = true
+  if anyFilter:
+    let removeItem = if filterMany: "Remove the filters of " & $targets.len & " traces"
+                     else: "Remove the trace's filter"
+    if igMenuItem_Bool(removeItem.cstring, nil, false, true):
+      res.commands.add Command(kind: ckOwnFilter, panel: p.id, edited: targets, on: false)
+    marks.mark("plot.menu.removefilter")
+    tip("Take this trace's own filter away (the plot's filters stay)")
   let fft = fftEntry()
   if igMenuItem_Bool((fft.icon & "  " & fft.name & " in a new window").cstring,
       fft.shortcut.cstring, false, under >= 0):
@@ -1584,8 +1630,9 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   if igMenuItem_Bool("Clear all edits for this file", nil, false, not e.isEmpty):
     res.commands.add Command(kind: ckClearEdits, panel: p.id)
   marks.mark("plot.menu.clear")
-  tipAlways("Kills and polarity reversals are remembered beside the file, never written " &
-    "into it;\nclearing them shows the traces as the file has them (Ctrl+Z brings them back).")
+  tipAlways("Kills, polarity reversals and a trace's own filter are remembered beside the " &
+    "file, never written into it;\nclearing them shows the traces as the file has them " &
+    "(Ctrl+Z brings them back).")
   igEndPopup()
 
 func stationCommand(st: AppState; k, under: int): Command =
@@ -1661,14 +1708,20 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
       let trace = tiles[k].traces[row]
       let has = if pos in vis and not newer: e.editsOf(trace) else: {}
       let kept = if pos in vis and not newer: e.keptOf(trace) else: {}
-      if has != {} or kept != {}:
-        func letters(s: set[TraceEdit]): string =
-          (if teKilled in s: "K" else: "") & (if teReversed in s: "R" else: "")
+      let (shownF, shownFilter) = if pos in vis and not newer: e.ownOf(trace)
+                                  else: (false, OwnFilter())
+      let (keptF, keptFilter) = if pos in vis and not newer: e.keptFilter(trace)
+                                else: (false, OwnFilter())
+      if has != {} or kept != {} or shownF or keptF:
+        func letters(s: set[TraceEdit]; filtered: bool): string =
+          (if teKilled in s: "K" else: "") & (if teReversed in s: "R" else: "") &
+            (if filtered: IconFilter else: "")
         let session = has - kept # shown, not remembered
         let hidden = kept - has # remembered, not shown
-        var text = letters(has)
-        if session != {}: text.add "*"
-        if hidden != {}: text.add "(" & letters(hidden) & ")"
+        var text = letters(has, shownF)
+        if session != {} or (shownF and not keptF): text.add "*"
+        if hidden != {} or (keptF and not shownF):
+          text.add "(" & letters(hidden, keptF and not shownF) & ")"
         let colour = if has == {}: u32(t.roles[rlTextDim])
                      else: u32(t.roles[if teKilled in has: rlError else: rlAccent])
         let c = traceAt(view, m, plotPos, plotSize, float64(pos))
@@ -1690,7 +1743,12 @@ proc drawEditRow(e: FileEdits; tiles: openArray[Tile]; view: Viewport;
           marks.markRect("plot.header.edit " & $(trace + 1), lo, hi)
           if session != {}: marks.markRect("plot.header.edit " & $(trace + 1) & " session", lo, hi)
           if hidden != {}: marks.markRect("plot.header.edit " & $(trace + 1) & " hidden", lo, hi)
+          if shownF or keptF:
+            marks.markRect("plot.header.filter " & $(trace + 1), lo, hi)
           inc marked
+        if (shownF or keptF) and igIsMouseHoveringRect(lo, hi, true):
+          let words = if shownF: filterWords(shownFilter) else: filterWords(keptFilter)
+          igSetTooltip("%s", words.cstring)
   ImDrawList_PopClipRect(dl)
 
 proc drawHeaderMenu(p: Panel; marks: var Marks; res: var PanelOutput) =
@@ -2223,6 +2281,14 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   ImPlot_PopStyleColor(1)
   if menu: igOpenPopup_Str(menuId, 0)
   tp.drawTraceMenu(st, k, marks, res)
+  if tp.ownAsk:
+    tp.ownAsk = false
+    igSetNextWindowPos(tp.ownPos, ImGui_Cond_Appearing.cint, ImVec2_c(x: 0, y: 0))
+    openOwnFilter()
+  if tp.ownTraces.len > 0 and drawOwnFilter(tp.ownDraft, tp.ownMixed, tp.ownTraces.len,
+      st.panels[k].layout.dtMs, tp.ownPos, marks):
+    res.commands.add Command(kind: ckOwnFilter, panel: st.panels[k].id, edited: tp.ownTraces,
+      on: true, processing: tp.ownDraft.spec, filterPlace: tp.ownDraft.place)
   drawHeaderMenu(p, marks, res)
   tp.sortKeys.drawSortKeys(p, marks, res.commands)
   tp.drawGoTo(st, p, marks, res)

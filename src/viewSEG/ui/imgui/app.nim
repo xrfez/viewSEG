@@ -1293,6 +1293,11 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.marks)
   result.incl plot.actions
   ui.pick = plot.pick
+  if ui.pick.found and ui.pick.trace >= 0:
+    let shown = ui.core.shownFile(ui.core.findPanel(MainPanel))
+    if shown >= 0:
+      let (has, f) = ui.core.ownAt(ui.core.sessions[shown].path, ui.pick.trace)
+      if has: ui.pick.filterNote = filterWords(f)
   for n in plot.notes:
     ui.say(n, mlWarning)
   for c in plot.commands.mitems:

@@ -361,7 +361,7 @@ proc drawEditMenu(input: MenuInput; res: var MenuResult) =
   if igMenuItem_Bool(label(maClearEdits).cstring, nil, false, input.edited):
     res.actions.incl maClearEdits
   if marked != nil: marked[].mark("menu." & $maClearEdits)
-  tip(if input.edited: "Take away every kill and polarity reversal of " & input.editedName &
+  tip(if input.edited: "Take away every kill, polarity reversal and trace filter of " & input.editedName &
         ", so its traces are shown as the file holds them (Undo brings them back). The " &
         "file itself is never changed"
       else: "No edits to clear")
