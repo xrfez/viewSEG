@@ -1,9 +1,12 @@
 ## New plot windows in the running frontend, on samples/land/shots.sgy, then
 ## samples/vib/vib_uncorrelated.sgd in the same plot.
 ##
-## Three kinds (spectrogram, envelope, phase): a selection change is followed;
-## Freeze keeps one on its traces; opening the other file leaves the frozen
-## one on shots.sgy and moves the others; unfreezing follows.
+## Spectrogram, envelope and phase, then an FFT window and the Spectrum panel:
+## a selection change is followed; Freeze keeps one on its traces; opening
+## another file leaves the frozen one and moves the others; unfreezing
+## follows; closing the file leaves a frozen window's numbers. The Headers
+## window has no Freeze pin: its Trace tab follows the selection, and a new
+## file.
 ##
 ## Seen to fail: with the windows locked to the traces that opened them,
 ## "an unfrozen window did not follow the selection".
@@ -15,11 +18,13 @@
 import std/[math, options, os, strutils]
 import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
+import viewSEG/view/headerviews
 import utils/fixtures
 
 const root = currentSourcePath().parentDir.parentDir
 let land = root / "samples" / "land" / "shots.sgy"
 let vib = root / "samples" / "vib" / "vib_uncorrelated.sgd"
+let obn = root / "samples" / "obn" / "obn.sgd"
 
 type
   Step = object
@@ -36,7 +41,7 @@ proc answered(f: FrameInfo): bool =
   f.panel.laidOut and tiles.len > 0 and tiles[^1].request == f.panel.pending and
     f.panel.pending.gen == f.panel.requestGen
 
-doAssert fileExists(land) and fileExists(vib)
+doAssert fileExists(land) and fileExists(vib) and fileExists(obn)
 
 withFixtures fx:
   var steps: seq[Step] = @[]
@@ -121,6 +126,87 @@ withFixtures fx:
   step("unfrozen, it follows", noop, proc (f: FrameInfo): bool =
     result = not f.core.plots[2].frozen and "vib_uncorrelated.sgd" in f.core.plots[2].file and
       f.core.plots[2].traces != frozenTraces)
+  step("FFT of the plot", proc (f: FrameInfo) =
+    let i = f.core.shownFile(f.core.findPanel(MainPanel))
+    let b = f.core.sessions[i].base
+    f.apply(Command(kind: ckSpectrum, spectrumTraces: @[b])),
+    proc (f: FrameInfo): bool =
+      f.core.spectra.len == 2 and not f.core.spectra[1].waiting and
+        f.markOf("fft 1.freeze").size.x > 0)
+  click("menu.Window")
+  click("menu.window.spectrum")
+  step("spectrum on screen", noop, proc (f: FrameInfo): bool =
+    f.core.spectra[0].shown and f.markOf("spectrum.freeze").size.x > 0 and
+      f.markOf("headers").size.x > 0 and f.markOf("headers.freeze").size.x == 0)
+  step("select two on the vib file", proc (f: FrameInfo) =
+    let i = f.core.shownFile(f.core.findPanel(MainPanel))
+    let b = f.core.sessions[i].base
+    f.apply(Command(kind: ckSelect, traces: @[b + 2, b + 3], mode: smReplace)),
+    proc (f: FrameInfo): bool =
+      let i = f.core.shownFile(f.core.findPanel(MainPanel))
+      let b = f.core.sessions[i].base
+      result = not f.core.spectra[1].waiting and not f.core.spectra[0].waiting and
+        not f.core.plots[0].waiting
+      if result:
+        doAssert f.core.spectra[1].traces == @[b + 2, b + 3],
+          "the FFT window did not follow: " & $f.core.spectra[1].traces
+        doAssert f.core.spectra[0].traces == @[b + 2, b + 3],
+          "the Spectrum panel did not follow: " & $f.core.spectra[0].traces
+        doAssert f.core.plots[0].traces == @[b + 2, b + 3]
+        doAssert "vib_uncorrelated.sgd" in chosenLine(f.core, true),
+          chosenLine(f.core, true))
+  click("fft 1.freeze")
+  click("spectrum.freeze")
+  step("fft and spectrum frozen", noop, proc (f: FrameInfo): bool =
+    result = f.core.spectra[1].frozen and f.core.spectra[0].frozen
+    if result:
+      frozenTraces = f.core.spectra[1].traces
+      frozenFile = f.core.spectra[1].file)
+  step("open obn", proc (f: FrameInfo) =
+    f.apply(Command(kind: ckShowFile, panel: MainPanel, path: obn)),
+    proc (f: FrameInfo): bool =
+      let i = f.core.shownFile(f.core.findPanel(MainPanel))
+      result = i >= 0 and f.core.sessions[i].path == obn and f.answered and
+        not f.core.plots[0].waiting
+      if result:
+        doAssert f.core.spectra[1].traces == frozenTraces and f.core.spectra[1].file == frozenFile,
+          "a frozen FFT window followed the new file"
+        doAssert f.core.spectra[0].frozen and f.core.spectra[0].file == frozenFile,
+          "a frozen Spectrum panel followed the new file"
+        doAssert "obn.sgd" in f.core.plots[0].file, f.core.plots[0].file
+        # the selection is still the vib traces: the frozen windows keep that
+        # file open, and Headers follows the selection, not the file on show
+        doAssert "vib_uncorrelated.sgd" in chosenLine(f.core, true), chosenLine(f.core, true))
+  click("fft 1.freeze")
+  step("fft unfrozen follows obn", noop, proc (f: FrameInfo): bool =
+    result = not f.core.spectra[1].frozen and not f.core.spectra[1].waiting and
+      "obn.sgd" in f.core.spectra[1].file and f.core.spectra[1].traces != frozenTraces)
+  click("spectrum.freeze")
+  step("spectrum unfrozen follows obn", noop, proc (f: FrameInfo): bool =
+    result = not f.core.spectra[0].frozen and not f.core.spectra[0].waiting and
+      "obn.sgd" in f.core.spectra[0].file)
+  step("select on obn, headers follow", proc (f: FrameInfo) =
+    let i = f.core.shownFile(f.core.findPanel(MainPanel))
+    let b = f.core.sessions[i].base
+    f.apply(Command(kind: ckSelect, traces: @[b], mode: smReplace)),
+    proc (f: FrameInfo): bool =
+      "obn.sgd" in chosenLine(f.core, true))
+  click("fft 1.freeze")
+  step("fft frozen again", noop, proc (f: FrameInfo): bool =
+    result = f.core.spectra[1].frozen and f.core.spectra[1].spectrum.raw.len > 0
+    if result:
+      frozenTraces = f.core.spectra[1].traces
+      frozenFile = f.core.spectra[1].file)
+  step("close the file", proc (f: FrameInfo) =
+    let i = f.core.shownFile(f.core.findPanel(MainPanel))
+    f.apply(Command(kind: ckClose, file: f.core.sessions[i].id)),
+    proc (f: FrameInfo): bool =
+      result = f.core.shownFile(f.core.findPanel(MainPanel)) < 0
+      if result:
+        doAssert f.core.spectra[1].frozen and f.core.spectra[1].traces == frozenTraces and
+          f.core.spectra[1].file == frozenFile and f.core.spectra[1].spectrum.raw.len > 0,
+          "closing the file dropped the frozen FFT window"
+        doAssert not f.core.spectra[1].waiting)
 
   var at = 0
   var started = false

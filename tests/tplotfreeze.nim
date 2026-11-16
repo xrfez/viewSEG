@@ -20,8 +20,9 @@
 ## Seen to fail: with the windows locked to the traces that opened them,
 ## "the spectrogram did not follow the selection".
 ##
-## Break to see it fail: in `followPlots`, skip the repick (the window keeps
-## the traces it was opened on).
+## Break to see it fail: in `followSpectra`, skip the repick (an FFT window
+## keeps the traces it was opened on: "the FFT window did not follow the
+## selection"). The same skip in `followPlots` fails the New plot blocks.
 
 import std/strutils
 import viewSEG/core/state
@@ -169,6 +170,101 @@ withFixtures fx:
       st.answered(vw) and st.plots[vw].result.problem == ""),
       "it did not recover: " & st.plots[vw].result.problem
     st.apply Command(kind: ckClosePlot, plot: st.plots[vw].id)
+
+  block fftFollowsUnlessFrozen:
+    ## An FFT window follows the same rule as a New plot window. Seen to
+    ## fail while `followFfts` left its traces as opened: "the FFT window
+    ## did not follow the selection".
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.panel(MainPanel).laidOut and
+      st.sessions[st.shownFile(st.findPanel(MainPanel))].path == path)
+    s = st.sessions[st.shownFile(st.findPanel(MainPanel))]
+    st.apply Command(kind: ckSelect, traces: ids(s, @[0, 1]), mode: smReplace)
+    st.apply Command(kind: ckSpectrum, spectrumTraces: @[s.base])
+    doAssert st.spectra.len > 1, st.log[st.log.len - 1].text
+    let fw = st.spectra.high
+    let fid = st.spectra[fw].id
+    doAssert st.spectra[fw].traces == @[s.base], "opened on the trace asked for"
+    doAssert not st.spectra[fw].frozen
+    doAssert st.settle(st.spectra[fw].spectrum.raw.len > 0)
+    st.apply Command(kind: ckSelect, traces: ids(s, @[4, 5]), mode: smReplace)
+    doAssert st.spectra[fw].traces == ids(s, @[4, 5]),
+      "the FFT window did not follow the selection: " & $st.spectra[fw].traces
+    st.apply Command(kind: ckClearSelection)
+    doAssert st.spectra[fw].traces.len > 0, "with no selection the FFT window shows nothing"
+    let asks = st.spectra[fw].asks
+    st.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
+    doAssert st.settle(st.panel(MainPanel).laidOut and st.panel(MainPanel).shown.len > 0)
+    s = st.sessions[0]
+    doAssert st.spectra[fw].file == s.name
+    doAssert st.findTrace(st.spectra[fw].traces[0]) == 0
+    doAssert st.spectra[fw].traces[0] >= s.base + Channels,
+      "the FFT window did not follow the record: " & $st.spectra[fw].traces
+    doAssert st.spectra[fw].asks > asks, "the FFT window did not ask again for the record"
+    var show = st.spectra[fw].display
+    st.apply Command(kind: ckSpectrumDisplay, spectrum: fid, spectrumShow: show, frozen: true)
+    let frozen = st.spectra[fw].traces
+    let file = st.spectra[fw].file
+    let frozenAsks = st.spectra[fw].asks
+    doAssert "Frozen" in st.spectra[fw].title, st.spectra[fw].title
+    st.apply Command(kind: ckSelect, traces: ids(s, @[8]), mode: smReplace)
+    doAssert st.spectra[fw].traces == frozen and st.spectra[fw].asks == frozenAsks,
+      "a frozen FFT window followed the selection"
+    let other = fx.pilotSegy()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: other)
+    doAssert st.settle(st.sessions.len >= 1 and st.panel(MainPanel).laidOut and
+      st.sessions[st.shownFile(st.findPanel(MainPanel))].path == other)
+    doAssert st.spectra[fw].traces == frozen and st.spectra[fw].file == file,
+      "a frozen FFT window followed the new file: " & st.spectra[fw].file
+    doAssert st.findTrace(frozen[0]) >= 0, "the frozen FFT window's file was closed under it"
+    st.apply Command(kind: ckSpectrumDisplay, spectrum: fid, spectrumShow: show, frozen: false)
+    doAssert not st.spectra[fw].frozen and st.spectra[fw].file != file,
+      "unfreezing the FFT window did not follow: " & st.spectra[fw].file
+    st.apply Command(kind: ckCloseSpectrum, spectrum: fid)
+
+  block liveFollowsRecord:
+    ## The live panel follows the record on show, not a selection left in
+    ## another record. Seen to fail while `liveTraces` took any selected
+    ## trace of the file: "the live panel stayed on the other record".
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.panel(MainPanel).laidOut and
+      st.sessions[st.shownFile(st.findPanel(MainPanel))].path == path)
+    s = st.sessions[st.shownFile(st.findPanel(MainPanel))]
+    st.apply Command(kind: ckGather, panel: MainPanel, gather: 0)
+    doAssert st.settle(st.panel(MainPanel).laidOut)
+    st.apply Command(kind: ckSelect, traces: ids(s, @[2, 3]), mode: smReplace)
+    st.apply Command(kind: ckSpectrumPanel, onScreen: true)
+    doAssert st.spectra[0].shown and st.spectra[0].traces == ids(s, @[2, 3])
+    st.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
+    doAssert st.settle(st.panel(MainPanel).laidOut)
+    doAssert st.spectra[0].traces.len == 0 or st.spectra[0].traces[0] >= s.base + Channels,
+      "the live panel stayed on the other record: " & $st.spectra[0].traces & " " &
+      st.spectra[0].record
+    st.apply Command(kind: ckSpectrumPanel, onScreen: false)
+
+  block otherPlotKindsFollow:
+    ## Correlation and f-k use the same follow as the other New plot kinds.
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+    doAssert st.settle(st.panel(MainPanel).laidOut and
+      st.sessions[st.shownFile(st.findPanel(MainPanel))].path == path)
+    s = st.sessions[st.shownFile(st.findPanel(MainPanel))]
+    st.apply Command(kind: ckGather, panel: MainPanel, gather: 0)
+    doAssert st.settle(st.panel(MainPanel).laidOut)
+    st.apply Command(kind: ckSelect, traces: ids(s, @[0, 1, 2, 3]), mode: smReplace)
+    st.apply Command(kind: ckOpenPlot, plotView: avCorrelation)
+    st.apply Command(kind: ckOpenPlot, plotView: avFk)
+    let c = st.plots.high - 1
+    let fk = st.plots.high
+    doAssert st.plots[c].view == avCorrelation and st.plots[fk].view == avFk
+    doAssert st.plots[c].traces == ids(s, @[0, 1, 2, 3])
+    doAssert st.plots[fk].traces == ids(s, @[0, 1, 2, 3])
+    st.apply Command(kind: ckSelect, traces: ids(s, @[4, 5, 6, 7]), mode: smReplace)
+    doAssert st.plots[c].traces == ids(s, @[4, 5, 6, 7]),
+      "the correlation did not follow: " & $st.plots[c].traces
+    doAssert st.plots[fk].traces == ids(s, @[4, 5, 6, 7]),
+      "the f-k did not follow: " & $st.plots[fk].traces
+    st.apply Command(kind: ckClosePlot, plot: st.plots[fk].id)
+    st.apply Command(kind: ckClosePlot, plot: st.plots[c].id)
 
   block closeFrozenFile:
     st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
