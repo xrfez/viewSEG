@@ -264,7 +264,8 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
           "update it.").cstring)
         if button(IconRefresh & "  Update from the original", "project.update",
             "Copy the originals that changed into the project again, and read them (in the " &
-            "background)", true, marks) and ui.focusProject.acts:
+            "background; not while the survey is being copied in)", p.survey != srKeeping,
+            marks) and ui.focusProject.acts:
           res.commands.add Command(kind: ckUpdateSurvey)
         igSameLine(0, -1)
         igTextDisabled("or leave it: the copy stays")

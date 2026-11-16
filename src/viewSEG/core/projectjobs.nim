@@ -342,10 +342,23 @@ proc updateSurveyWork*(dir: string; copies: seq[SurveyCopy]; originals: seq[Orig
         for i, c in copies:
           if i < originals.len and originals[i].state == osChanged:
             let src = originals[i].path
-            ctx.setPhase "copying " & src.extractFilename & " into the project again"
+            # The identity taken after the copy, and the same as before it: a
+            # file written while it was copied is not recorded as a state the
+            # copy is not (one more try, then it is refused).
             var t: Time
-            let id = quickIdentity(src, t)
-            discard ctx.copyIn(dir, src, c.copy.extractFilename)
+            var id: FileIdentity
+            var same = false
+            for attempt in 1 .. 2:
+              var before: Time
+              let first = quickIdentity(src, before)
+              ctx.setPhase "copying " & src.extractFilename & " into the project again"
+              discard ctx.copyIn(dir, src, c.copy.extractFilename)
+              id = quickIdentity(src, t)
+              same = id.size == first.size and id.quick == first.quick and t == before
+              if same: break
+            if not same:
+              raise newException(IOError, src.extractFilename & " changed while it was " &
+                "copied; update again when it is not being written")
             news.copies[i].size = id.size
             news.copies[i].modified = t
             news.copies[i].quick = id.quick

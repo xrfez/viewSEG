@@ -15,6 +15,10 @@
 ## - A keep's temporary files are named for its job; two keeps never run at
 ##   once (the survey folder is exclusive); a cancel stops the copy.
 ##
+## - Update from the original takes the identity after the copy (tried again
+##   once when the original was written meanwhile), and is refused while the
+##   survey is being copied in.
+##
 ## Seen to fail: with the temporary name of `survey.bin` made from the
 ## process id, "the temporary name"; with the originals looked at inside `openProjectWork`, "the
 ## originals were looked at before the open ended"; with `markImporting` not called, "the import is not in
@@ -186,4 +190,45 @@ withFixtures fx:
     st.shutdown()
     for dir in [job / "survey", job / "survey" / "files"]:
       for f in walkFiles(dir / "*.tmp"): doAssert false, "a temporary file is left: " & f
+  block updateWhileWritten:
+    # An original written while Update copies it: the identity recorded is
+    # that of the copy (taken after, and the same as before, or tried again).
+    let job = fx.dir / "Job update"
+    var st = start(config)
+    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+    doAssert st.settle(st.inProject and st.projectOpening.len == 0)
+    st.importSurvey(survey)
+    doAssert st.settle(st.project.survey == srLoaded and st.project.doc.hasStore and
+      not st.project.doc.hasImport)
+    st.flushFiles()
+    st.shutdown()
+    proc grow(path: string) =
+      var sf = readSps(path)
+      var p = sf.points[^1]
+      p.point += 1
+      p.pointName = ""
+      p.easting += 50
+      sf.points.add p
+      sf.order.setLen 0
+      sleep 20 # a later modification time
+      doAssert writeSps(sf, path).len == 0
+    grow(survey.s)
+    var again = start(config)
+    again.apply Command(kind: ckOpenProject, projectPath: job)
+    doAssert again.settle(again.inProject and again.project.survey == srLoaded and
+      again.project.offer)
+    holdStep("copying survey.s into the project again")
+    again.apply Command(kind: ckUpdateSurvey)
+    doAssert again.settle(inStep("copying survey.s into the project again").len == 1)
+    again.apply Command(kind: ckUpdateSurvey) # not while it is being copied
+    doAssert again.said("is being copied into the project")
+    grow(survey.s) # written while it is copied
+    releaseStep("copying survey.s into the project again")
+    doAssert again.settle(again.project.survey == srLoaded and not again.project.offer and
+      again.project.originals.allIt(it.state == osAsCopied)), "the update did not end: " &
+      $again.project.survey & " " & again.project.surveyNote
+    doAssert again.project.doc.survey[0].size == getFileSize(survey.s),
+      "the identity recorded is not that of the copy"
+    doAssert readFile(job / "survey" / "files" / "survey.s") == readFile(survey.s)
+    again.shutdown()
 echo "tprojectkeep: done"

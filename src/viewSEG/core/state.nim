@@ -4564,7 +4564,8 @@ proc takeKept(state: var AppState; m: sink Msg) =
   p.layersAfterKeep = false
   if news.keptFailure.len > 0:
     p.rebuilding = false
-    p.survey = srFailed
+    # An update that was refused leaves the survey as it was, on the map.
+    p.survey = if news.updated and not p.geometry.isNil: srLoaded else: srFailed
     p.surveyNote = news.keptFailure
     if p.doc.hasImport: # not taken up again at every open: the user imports it again
       p.doc.importing.setLen 0
@@ -6195,6 +6196,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
     template p: untyped = state.project
     if not state.inProject: state.ignore(cmd, "no project is open")
     elif p.readOnly: state.ignore(cmd, "the project is open read-only (" & p.whyReadOnly & ")")
+    elif p.survey == srKeeping:
+      state.ignore(cmd, "the survey is being copied into the project: update it when it is")
     elif not p.originals.anyIt(it.state == osChanged):
       state.ignore(cmd, "no survey file of the project changed since it was copied in")
     else:
