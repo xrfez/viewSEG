@@ -63,8 +63,8 @@ const
   recordsTitle = IconRecords & "  Records###records"
   joinTitle = IconMap & "  Import survey###join"
   memoryTitle = IconHistory & "  File memory###memory"
-  projectTitle = IconFolder & "  Project###project"
-  newProjectTitle = IconFolder & "  New project###newproject"
+  projectTitle = IconProject & "  Project###project"
+  newProjectTitle = IconProject & "  New project###newproject"
   noticeSeconds = 5.0                     ## how long a notice stays on screen
   CheckFrames = 8                         ## frames after a layout's arrival to look for windows off screen
   failureLogName* = "startup-failure.log" ## in the log folder; the last failure only
@@ -1257,7 +1257,10 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     s.recentFiles.setLen 0
     s.recentFolders.setLen 0
     ui.core.apply Command(kind: ckSettings, settings: s)
-  result.incl drawToolbar(ui.theme, ui.marks)
+  let bar = drawToolbar(ui.theme, ui.marks, ui.core.settings.recentProjects)
+  result.incl bar.actions
+  if bar.openProject.len > 0:
+    ui.core.apply Command(kind: ckOpenProject, projectPath: bar.openProject)
   let job = jobStatus(ui.core.jobs.active, getMonoTime(), fs.now())
   # The readout is last frame's pick: the bar is drawn before the plot.
   let status = drawStatusBar(ui.fonts, ui.theme,

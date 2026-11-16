@@ -13,6 +13,7 @@ const
   IconOpenFiles* = ""  ## nf-cod-files
   IconOpenFolder* = "" ## nf-cod-folder_opened
   IconFolder* = ""     ## nf-cod-folder
+  IconProject* = "\u{EB30}" ## nf-cod-project
   IconSave* = ""       ## nf-cod-save
   IconSettings* = ""   ## nf-cod-settings_gear
   IconLog* = ""        ## nf-cod-output
@@ -63,7 +64,7 @@ const
   IconTray* = "\u{EB09}" ## nf-cod-inbox
   IconMinimize* = "\u{EABA}" ## nf-cod-chrome_minimize
 
-  AllIcons* = [IconOpenFile, IconOpenFiles, IconOpenFolder, IconFolder, IconSave,
+  AllIcons* = [IconOpenFile, IconOpenFiles, IconOpenFolder, IconFolder, IconProject, IconSave,
     IconSettings, IconLog, IconMap, IconFilter, IconEye, IconEyeOff, IconZoomIn,
     IconZoomOut, IconFit, IconPlay, IconStep, IconPrevious, IconNext, IconWarning,
     IconError, IconInfo, IconClose, IconCheck, IconTheme, IconTable, IconPlot, IconPulse,

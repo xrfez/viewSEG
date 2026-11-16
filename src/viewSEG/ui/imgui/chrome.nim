@@ -5,7 +5,8 @@
 ## its polarity reversed; a right click on the bar chooses them and their
 ## order), and tool buttons (a Nerd Font icon or
 ## a seismic `Symbol`) with tooltips that name their shortcut. The toolbar holds
-## application-level actions only; display and gather controls belong to the
+## application-level actions only (open a file, a folder or a project, the
+## jobs, the theme); display and gather controls belong to the
 ## plot windows, which use `symbolButton`. Also the sample header table that
 ## shows the look until the real header table exists.
 ##
@@ -49,9 +50,16 @@ type
 const readoutMenu = "##readoutfields"
 
 proc tooltip(text, shortcut: string; t: Theme) =
-  ## The last item's tooltip: `text`, then the shortcut in dim text.
-  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
-    igTextUnformatted(text.cstring, nil)
+  ## The last item's tooltip: `text` (one line a `\n`), then the shortcut in
+  ## dim text. Shown on a disabled item too.
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
+      ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
+    var rest = text
+    while rest.len > 0:
+      let nl = rest.find('\n')
+      let line = if nl >= 0: rest[0 ..< nl] else: rest
+      rest = if nl >= 0: rest[nl + 1 .. ^1] else: ""
+      igTextUnformatted(line.cstring, nil)
     if shortcut.len > 0:
       igSameLine(0, -1)
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
@@ -74,18 +82,24 @@ proc toolButton(id: string; size: float32; selected: bool; t: Theme): (bool, ImV
   (clicked, pos)
 
 proc iconButton*(icon, text, shortcut: string; size: float32; t: Theme;
-    marks: var Marks; selected = false): bool =
-  ## A toolbar button showing a Nerd Font `icon`, centred.
+    marks: var Marks; selected = false; tipText = ""; enabled = true): bool =
+  ## A toolbar button showing a Nerd Font `icon`, centred. `tipText` replaces
+  ## the tooltip built from `text` and `shortcut`. A button that is not
+  ## `enabled` is drawn dim and does not click, and its tooltip still shows.
+  if not enabled: igBeginDisabled(true)
   let (clicked, pos) = toolButton("##" & text, size, selected, t)
+  if not enabled: igEndDisabled()
   marks.mark("tool." & text)
   # Codicons sit small in their em box: draw them at two thirds of the button
   let (font, px) = (igGetFont(), round(size * 0.68))
   let ts = ImFont_CalcTextSizeA(font, px, high(float32), 0, icon.cstring, nil, nil)
-  let col = if selected: t.roles[rlAccent] else: t.roles[rlText]
+  let col = if not enabled: t.roles[rlTextDim]
+            elif selected: t.roles[rlAccent]
+            else: t.roles[rlText]
   ImDrawList_AddText_FontPtr(igGetWindowDrawList(), font, px,
     ImVec2_c(x: round(pos.x + (size - ts.x) / 2), y: round(pos.y + (size - ts.y) / 2)),
     u32(col), icon.cstring, nil, 0, nil)
-  tooltip(text, shortcut, t)
+  if tipText.len > 0: tooltip(tipText, "", t) else: tooltip(text, shortcut, t)
   clicked
 
 proc symbolButton*(sym: Symbol; size: float32; t: Theme; marks: var Marks;
@@ -100,6 +114,16 @@ proc symbolButton*(sym: Symbol; size: float32; t: Theme; marks: var Marks;
     size - 2 * inset, symbolColours(t, selected), turned)
   tooltip($sym & note, "", t)
   clicked
+
+const
+  ButtonGap = 2'f32 ## between buttons of one group
+  GroupGap = 14'f32 ## between groups, as on the Seismic strip
+
+type
+  ToolbarResult* = object
+    ## What the toolbar asks for.
+    actions*: set[MenuAction]
+    openProject*: string ## a recent project chosen from Open project's menu
 
 const barFlags = ImGui_WindowFlags_NoScrollbar.cint or ImGui_WindowFlags_NoSavedSettings.cint or
   ImGui_WindowFlags_NoScrollWithMouse.cint or ImGui_WindowFlags_NoDecoration.cint
@@ -122,10 +146,10 @@ proc beginBar(name: string; dir: ImGuiDir; height: float32; t: Theme): bool =
     ImDrawList_AddLine(igGetWindowDrawList(), ImVec2_c(x: wp.x, y: y),
       ImVec2_c(x: wp.x + ws.x, y: y), u32(t.roles[rlBorder]), 1)
 
-proc drawToolbar*(t: Theme; marks: var Marks): set[MenuAction] =
-  ## The icon toolbar under the menu bar: opening files and folders, and the
-  ## theme toggle. Returns the actions it asks for.
-  result = {}
+proc drawToolbar*(t: Theme; marks: var Marks; recentProjects: openArray[string]): ToolbarResult =
+  ## The icon toolbar under the menu bar: opening files, folders and
+  ## projects, and the theme toggle. A right click on Open project opens
+  ## the recent projects.
   let style = igGetStyle()
   let size = round(igGetFontSize() * IconScale + 2 * style.FramePadding.y + 2)
   let height = size + 2 * round(style.FramePadding.y)
@@ -133,20 +157,27 @@ proc drawToolbar*(t: Theme; marks: var Marks): set[MenuAction] =
     marks.markWindow("toolbar")
     igSetCursorPosY(round((height - size) / 2))
     if iconButton(IconOpenFile, "Open file", shortcutName(maOpenFile), size, t, marks):
-      result.incl maOpenFile
-    igSameLine(0, 2)
+      result.actions.incl maOpenFile
+    igSameLine(0, ButtonGap)
     if iconButton(IconOpenFolder, "Open folder", shortcutName(maOpenFolder), size, t, marks):
-      result.incl maOpenFolder
-    igSameLine(0, 2)
+      result.actions.incl maOpenFolder
+    igSameLine(0, GroupGap)
+    if iconButton(IconProject, "Open project", "", size, t, marks,
+        tipText = "Open project: a project's folder (the folder that holds its project.nif)"):
+      result.actions.incl maOpenProject
+    if igBeginPopupContextItem("##recentprojects", ImGui_PopupFlags_MouseButtonRight.cint):
+      drawRecentProjects(recentProjects, result.openProject, addr marks, "tool.project.")
+      igEndPopup()
+    igSameLine(0, ButtonGap)
     if iconButton(IconTasks, "Jobs", "", size, t, marks):
-      result.incl maShowJobs
-    igSameLine(0, 2)
+      result.actions.incl maShowJobs
+    igSameLine(0, ButtonGap)
     # the theme toggle sits at the right end
     let avail = igGetContentRegionAvail().x
     if avail > size:
       igSetCursorPosX(igGetCursorPosX() + avail - size)
     if iconButton(IconTheme, "Light / dark theme", "", size, t, marks):
-      result.incl maToggleTheme
+      result.actions.incl maToggleTheme
   igEnd()
 
 func valueChars(f: ReadoutField): int =

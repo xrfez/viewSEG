@@ -132,7 +132,7 @@ const
     maImportSurvey: IconMap, maImportSettings: IconSettings, maImportLayout: IconLayers,
     maImportEdits: IconWriting, maExportLog: IconLog, maExportSettings: IconSettings,
     maExportLayout: IconLayers, maExportEdits: IconWriting, maFileMemory: IconHistory,
-    maNewProject: IconFolder, maOpenProject: IconOpenFolder, maProject: IconFolder,
+    maNewProject: IconProject, maOpenProject: IconProject, maProject: IconProject,
     maCloseProject: IconClose,
     maResetSettings: IconRefresh, maQuit: IconQuit, maUndo: IconUndo, maRedo: IconRedo,
     maClearEdits: IconClearAll, maToggleTheme: IconTheme,
@@ -205,6 +205,24 @@ proc drawRecent(recent, folders: openArray[string]; res: var MenuResult) =
         res.clearRecent = true
     igEndMenu()
 
+proc drawRecentProjects*(projects: openArray[string]; chosen: var string;
+    marks: ptr Marks; prefix: string; idBase = 0) =
+  ## The recent-projects list: each row the project's icon and its folder's
+  ## name, or "No project opened yet". `prefix` marks the rows (`prefix` &
+  ## the index, `prefix` & "none" when there is none).
+  if projects.len == 0:
+    igTextDisabled("No project opened yet")
+    if marks != nil: marks[].mark(prefix & "none")
+  for i, path in projects:
+    igPushID_Int(cint(idBase + i))
+    let name = path.extractFilename
+    if igMenuItem_Bool((IconProject & "  " & (if name.len > 0: name else: path)).cstring, nil,
+        false, true):
+      chosen = path
+    if marks != nil: marks[].mark(prefix & $i)
+    tip(path)
+    igPopID()
+
 proc drawProjects(input: MenuInput; res: var MenuResult) =
   ## File's project entries: New, Open, the recent ones, the Project window
   ## and Close.
@@ -216,16 +234,7 @@ proc drawProjects(input: MenuInput; res: var MenuResult) =
   let open = igBeginMenu((IconHistory & "  Recent projects").cstring, true)
   if marked != nil: marked[].mark("menu.Recent projects")
   if open:
-    if input.recentProjects.len == 0: igTextDisabled("No project opened yet")
-    for i, path in input.recentProjects:
-      igPushID_Int(cint(2000 + i))
-      let name = path.extractFilename
-      if igMenuItem_Bool((IconFolder & "  " & (if name.len > 0: name else: path)).cstring, nil,
-          false, true):
-        res.openProject = path
-      if marked != nil: marked[].mark("menu.project." & $i)
-      tip(path)
-      igPopID()
+    drawRecentProjects(input.recentProjects, res.openProject, marked, "menu.project.", 2000)
     igEndMenu()
   if igMenuItem_Bool(label(maProject).cstring, nil, input.projectShown, true):
     res.actions.incl maProject
