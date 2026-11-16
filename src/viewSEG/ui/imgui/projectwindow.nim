@@ -308,8 +308,8 @@ proc drawProject(ui: var ProjectUi; title: string; st: AppState; t: Theme; marks
         res.askAt = p.dir.parentDir
       igSeparatorText("Survey")
       if not p.doc.hasSurvey:
-        igTextDisabled("None imported: File > Import > Survey... imports it into the project, " &
-          "once.")
+        igTextDisabled("None imported: File > Import > Import survey imports it into the " &
+          "project, once.")
       else:
         let state = case p.survey
           of srNone: "not loaded"

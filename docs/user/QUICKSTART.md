@@ -27,9 +27,9 @@ folder (`viewSEG --paths` shows where it is).
 
 | Action | Shortcut |
 |---|---|
-| Open a file | Ctrl+O |
-| Open several files | Ctrl+Shift+O |
-| Open a folder | Ctrl+Alt+O |
+| Open file... | Ctrl+O |
+| Open files... | Ctrl+Shift+O |
+| Open folder... | Ctrl+Alt+O |
 | Close the file shown | Ctrl+W |
 | Quit | Ctrl+Q |
 
@@ -72,7 +72,7 @@ background, so a folder of thousands of files lists without opening any of them.
   skip ten, **Home / End** go to the first and last. They do so wherever the focus is in
   the window, but in the filter box, which keeps its keys.
 - **Tab / Shift+Tab** move between the window's controls, as in any window: the folder's
-  drop-down, its two buttons, the filter, **Latest** and the list (one stop, at the file
+  drop-down, its two buttons, the filter, **Follow the latest file** and the list (one stop, at the file
   shown); **Space** or **Enter** acts on the control reached.
 - **Filter by name:** type in the box over the table; only the files whose names hold
   every word typed are shown.
@@ -99,7 +99,7 @@ writes into it while you work appear in the list by themselves (no refresh neede
   warning sign: it is still being written (the writer paused), or it was cut short.
 - The line under the table counts the new files and those being written.
 
-By default the Seismic window **stays on the file you chose**. Turn on **Latest** (the
+By default the Seismic window **stays on the file you chose**. Turn on **Follow the latest file** (the
 button beside the filter box, or **File > Follow the latest file**; it is remembered) to
 show each new file as soon as it is completely written: its size has stopped changing
 and it holds every trace it announces. A file still being written is never shown early;
@@ -566,7 +566,7 @@ as large as each other.
 ### Import a survey
 
 Field records often carry stations, or only record and channel numbers, and no
-coordinates. **File > Import > Survey...** imports the survey: its files are put on the
+coordinates. **File > Import > Import survey** imports the survey: its files are put on the
 map (as File > Open puts survey files there) and its stations are matched to an open
 seismic file's traces, so that each trace has its source's and receiver's coordinates
 (and its stations, offset and midpoint): **in memory only, the file itself is never
@@ -648,7 +648,7 @@ options).
 bin/viewSEG exampleFiles/00000151_12900_11300.sgd exampleFiles/sps/*.?ps
 ```
 
-then File > Import > Survey..., Import (or open only the record, and choose the three
+then File > Import > Import survey, Import (or open only the record, and choose the three
 files with Add files...): 5519 source points and 6385 receiver points are on the map, and
 the Morgantown record's 3954 seismic traces all match by their headers' stations; its
 headers' coordinates agree with the survey's to 0.1 ftUS (choose "replace those the
@@ -800,8 +800,8 @@ for all of it), jobs that failed. Its strip:
 - **Auto-scroll:** on, the list follows new messages; off, it stays where you scrolled.
 - **Copy** puts the lines shown on the clipboard (right-click a line to copy only it).
 - **Clear** empties the window; the session's log file keeps everything.
-- **Export...** writes every message to a text file of your choice (never over a seismic
-  file viewSEG has open or lists: it refuses, and says so), as File > Export > Messages...
+- **Export messages...** writes every message to a text file of your choice (never over a seismic
+  file viewSEG has open or lists: it refuses, and says so), as File > Export > Export messages...
   does.
 
 Click a message that names a trace (a damaged trace, say) to see that trace: its record is

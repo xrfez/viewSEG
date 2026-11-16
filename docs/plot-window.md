@@ -824,7 +824,7 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Ctrl + Shift + Z, Ctrl + Y | Edit > Redo: make the change undone last again |
 | Drop files or a folder on the window | A folder: list it and show its first file; one file: show it and list its folder; several files: list them and show the first |
 | Up / Down (file list focused) | Step to the next / previous file and show it in the same plot, keeping the display settings and the scales (wherever the focus is in the window, but in the filter box) |
-| Tab / Shift + Tab | Move between the controls of the window that has the focus, as in every window (the user: "tab should move between options in the window not files"): in the file list the folder's drop-down, its buttons, the filter, "Latest" and the list (one stop, at the file shown); Space or Enter acts on the control reached |
+| Tab / Shift + Tab | Move between the controls of the window that has the focus, as in every window (the user: "tab should move between options in the window not files"): in the file list the folder's drop-down, its buttons, the filter, "Follow the latest file" and the list (one stop, at the file shown); Space or Enter acts on the control reached |
 | Page Down / Page Up, Home / End (file list focused) | Ten files on / back; the first / last file |
 | Click a file in the file list (focused) | Show it in the plot, in place of the one shown |
 | Up / Down, Page Up / Page Down, Home / End (record list focused) | The next / previous record, a page on / back, the first / last record, in the order the list shows (a click on a column's header sorts it), shown in the plot |
@@ -1113,7 +1113,7 @@ program's core: neither window talks to the other, each draws what the core hold
   shown (FFID 12)", "No trace here: no seismic file is open".
 
 **Where the positions come from, before a survey is imported for the seismic file**
-(File > Import > Survey...: it writes the survey's stations and coordinates into the
+(File > Import > Import survey: it writes the survey's stations and coordinates into the
 file's keys, never into the file; then a trace whose headers lack its stations finds them
 too):
 
@@ -1448,7 +1448,7 @@ vibrator analysis's plots (signal, spectrum, correlation, phase) are made with i
 
 With no file open, the plot area shows a start screen instead of an empty dock:
 
-- **Open a file…** (Ctrl + O) and **Open a folder…** (Ctrl + Alt + O), as large buttons;
+- **Open file...** (Ctrl + O) and **Open folder...** (Ctrl + Alt + O), as large buttons;
 - the recent folders and files, newest first, each one click away;
 - a line saying that files can also be dropped on the window.
 

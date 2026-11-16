@@ -9,7 +9,7 @@
 ## with its count, **Auto-scroll** (on, the list follows new messages; off,
 ## it stays where the user left it), **Copy** (the lines shown, to the
 ## clipboard), **Clear** (empties the window; the session's log file keeps
-## everything) and **Export...** (a text file). The toggles are settings.
+## everything) and **Export messages...** (a text file). The toggles are settings.
 ## Clicking a line that names a trace shows that trace in the plot window,
 ## selected (opening its file first when it is no longer open), unless the
 ## click only brought the window forward (`focus`); a right click copies the
@@ -22,7 +22,7 @@ import std/[os, strutils, times]
 import imguin/cimgui
 import ../../core/[geometry, log, settings]
 import ../../view/theme
-import focus, icons, marks, style
+import focus, icons, marks, menus, style
 
 type
   MessageLevel* = enum
@@ -49,7 +49,7 @@ type
     ## What the window asks for.
     view*: MessagesView ## its toggles as they are now (the settings keep them)
     changed*: bool      ## ... and they changed
-    exportLog*: bool    ## Export... was clicked: ask where
+    exportLog*: bool    ## Export messages... was clicked: ask where
     showPath*: string   ## a line naming a trace was clicked: show it; "" for none
     showTrace*: int     ## ... this trace
     showRecord*: int    ## ... of this SEG-D record (-1: of the file)
@@ -165,7 +165,7 @@ proc strip(view: var LogView; log: MessageLog; t: Theme; marks: var Marks;
     view.cleared = log.nextSerial
   marks.mark("messages.clear")
   igSameLine(0, 4)
-  if igSmallButton((IconExport & " Export...").cstring):
+  if igSmallButton((IconExport & " " & menuLabel(maExportLog)).cstring):
     res.exportLog = true
   marks.mark("messages.export")
 

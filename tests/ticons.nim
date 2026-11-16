@@ -3,10 +3,11 @@
 ## import survey do not borrow close, refresh or the map.
 ##
 ## Seen to fail: with IconQuit set back to IconClose, "icons are distinct";
-## with maResetSettings given IconRefresh, "reset settings is not a re-read".
+## with maResetSettings given IconRefresh, "reset settings is not a re-read";
+## with Import survey labelled "Survey..." again, "survey words".
 
 import std/[sets, strutils]
-import viewSEG/ui/imgui/[icons, menus]
+import viewSEG/ui/imgui/[headerstable, icons, menus]
 
 block glyphs:
   var seen: HashSet[string]
@@ -41,5 +42,18 @@ block oneEach:
   doAssert menuIcon(maQuit) == IconQuit
   doAssert menuIcon(maClose) == IconClose
   doAssert menuIcon(maCloseProject) == IconClose
+
+block words:
+  doAssert menuLabel(maOpenFile) == "Open file...", "open file words"
+  doAssert menuLabel(maOpenFolder) == "Open folder..."
+  doAssert menuLabel(maToggleTheme) == "Light / dark", "theme words"
+  doAssert menuLabel(maImportSurvey) == "Import survey", "survey words"
+  doAssert menuLabel(maExportLog) == "Export messages...", "export messages words"
+  doAssert menuLabel(maImportSettings) == "Import settings..."
+  doAssert menuLabel(maExportSettings) == "Export settings..."
+  doAssert FollowWords == "Follow the latest file"
+  doAssert "kills and polarity reversals stay" in ReopenTip
+  doAssert FindRangeExample in findValueTip()
+  doAssert "1001..1010" notin findValueTip(), "one range example"
 
 echo "ticons: ok"

@@ -21,6 +21,14 @@ import ../../core/state
 import ../../view/[headerviews, theme]
 import chrome, fonts, marks, style
 
+const FindRangeExample* = "10..20"
+  ## The range example, in the Find hint and in its tooltip
+
+func findValueTip*(): string =
+  ## The Find box's tooltip: the same range example as the hint.
+  "Keep the rows whose field holds this value, or a value in this range (" &
+    FindRangeExample & "); empty: every row"
+
 type
   TableUi* = object
     ## The tab's own state between frames.
@@ -207,11 +215,10 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
   marks.mark("table.find field")
   igSameLine(0, -1)
   igSetNextItemWidth(igGetFontSize() * 10)
-  discard igInputTextWithHint("##findvalue", "a value, or 10..20", cast[cstring](
-    addr ui.find[0]), csize_t(ui.find.len), 0, nil, nil)
+  discard igInputTextWithHint("##findvalue", ("a value, or " & FindRangeExample).cstring,
+    cast[cstring](addr ui.find[0]), csize_t(ui.find.len), 0, nil, nil)
   marks.mark("table.find value")
-  tip("Keep the rows whose field holds this value, or a value in this range " &
-    "(1001..1010); empty: every row")
+  tip(findValueTip())
   let typed = $cast[cstring](addr ui.find[0])
   if typed != ui.view.findValue:
     ui.view.findValue = typed

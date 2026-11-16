@@ -480,7 +480,7 @@ joined with its survey (below). Code outside `core/survey` indexes the survey's 
 accessor makes ARC copy the whole seq first, every layer (a hundred megabytes for a
 million points), each time.
 
-**The survey import** (`core/join`, `ckJoin`, File > Import > Survey...; `ui/imgui/joindialog`,
+**The survey import** (`core/join`, `ckJoin`, File > Import > Import survey; `ui/imgui/joindialog`,
 the "Import survey" window). The user imports a survey; the code keeps parseSEG's word for
 what it does, a join. Its SPS and P1 files not on the map yet, or read with other line
 names than the import's options, are put on it from what the join below reads (each a
@@ -838,7 +838,7 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   never write over a seismic file the program has open, is opening or closing, or lists.
   In the menus every import is under File > Import (the survey, settings, a layout) and
   every export under File > Export (the messages, the settings, the layout), each there
-  only (the Messages window's own Export... button aside).
+  only (the Messages window's own Export messages... button aside).
 - **Who changed it: what is saved.** Every `Command` carries where it came from
   (`origin`: `coWindow`, the default, or `coAgent`, which only agent control's `command`
   tool sets). A change from either changes what the program shows and uses; only the

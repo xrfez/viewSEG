@@ -1372,11 +1372,11 @@ proc drawStartScreen(t: Theme; recent, folders: openArray[string]; marks: var Ma
   let top = igGetCursorPos()
   igSetCursorPos(ImVec2_c(x: top.x + max(0, (avail.x - big.x) / 2),
     y: top.y + max(0, avail.y / 2 - big.y * 1.6)))
-  if igButton((IconOpenFile & "  Open a file...").cstring, big):
+  if igButton((IconOpenFile & "  " & menuLabel(maOpenFile)).cstring, big):
     res.actions.incl maOpenFile
   marks.mark("plot.open file")
   igSetCursorPosX(top.x + max(0, (avail.x - big.x) / 2))
-  if igButton((IconOpenFolder & "  Open a folder...").cstring, big):
+  if igButton((IconOpenFolder & "  " & menuLabel(maOpenFolder)).cstring, big):
     res.actions.incl maOpenFolder
   marks.mark("plot.open folder")
   let hint = "Ctrl+O opens a file, Ctrl+Alt+O a folder; files and folders can also be " &

@@ -12,7 +12,7 @@
 ## few.
 ##
 ## **Keys.** Tab and Shift + Tab move between the window's controls (the
-## folder's drop-down, its buttons, the filter, "Latest", the list), as in
+## folder's drop-down, its buttons, the filter, "Follow the latest file", the list), as in
 ## every window; Space or Enter acts on the one Tab reached. The arrow keys,
 ## Page Up and Page Down (ten files) and Home and End step through the files
 ## wherever the focus is in the window, but in the filter box (`listkeys`).
@@ -129,7 +129,7 @@ proc drawFolderRow(ui: var FileListUi; f: FileList; recent: openArray[string]; t
     res.actions.incl maOpenFolder
   marks.mark("files.open folder")
   focused(marks)
-  tip("Open a folder (" & shortcutName(maOpenFolder) & ")")
+  tip(menuLabel(maOpenFolder) & " (" & shortcutName(maOpenFolder) & ")")
   igSameLine(0, -1)
   let asked = if f.folder.len > 0: @[f.folder] else: f.asked
   igBeginDisabled(asked.len == 0)
@@ -250,7 +250,7 @@ proc footer(f: FileList; shown: int; t: Theme) =
   elif f.scanning:
     text = "Listing... " & $f.entries.len & " seismic files so far"
   elif f.title.len == 0:
-    text = "Open a folder to list its seismic files."
+    text = menuLabel(maOpenFolder) & " to list its seismic files."
   else:
     var surveys = 0
     for e in f.entries:
@@ -306,7 +306,7 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
     ui.drawFolderRow(f, st.settings.recentFolders, t, marks, result)
     # The filter, then "Follow the latest" at the row's end.
     let following = st.settings.files.followLatest
-    let label = IconFollow & " Latest"
+    let label = IconFollow & " " & FollowWords
     let style = igGetStyle()
     let w = igCalcTextSize(label.cstring, nil, false, -1).x + 2 * style.FramePadding.x
     igSetNextItemWidth(max(4 * igGetFontSize(), igGetContentRegionAvail().x - w -
@@ -326,7 +326,7 @@ proc drawFileList*(ui: var FileListUi; title: string; st: AppState; t: Theme;
     if following: igPopStyleColor(2)
     marks.mark("files.follow")
     focused(marks)
-    tip("Follow the latest file: " & (if following: "on" else: "off") & ".\n" & FollowHelp)
+    tip(FollowWords & ": " & (if following: "on" else: "off") & ".\n" & FollowHelp)
     ui.drawRows(st, f, t, marks, result)
     footer(f, ui.table.rows.len, t)
     marks.mark("files.footer")

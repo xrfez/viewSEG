@@ -40,7 +40,7 @@ import imguin/cimgui
 from parseSEG import SeismicKind, skSegy, skSegd, skSeg2, skUnknown
 import ../../core/state
 import ../../view/[byteview, headerviews, theme]
-import chrome, focus, fonts, headerstable, style
+import chrome, focus, fonts, headerstable, menus, style
 
 type
   CachedTable = object
@@ -164,8 +164,7 @@ proc drawSummary(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; marks:
   if igButton("Reopen with options...##summary", ImVec2_c(x: 0, y: 0)): output.reopen = true
   marks.mark("headers.summary reopen")
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint):
-    igSetTooltip("%s", ("Open the file again as another standard, with every trace header " &
-      "checked, with two's-complement mantissas, mapped or not").cstring)
+    igSetTooltip("%s", ReopenTip.cstring)
   # Made again when the file, its gather, its keys or the joins change, and
   # twice a second (the record's counts, a relation file loaded): not every
   # frame.

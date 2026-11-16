@@ -146,10 +146,17 @@ const
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog, awSpectrum: IconPulse]
 
-const FollowHelp* = "On: each file that appears in the folder listed is shown in the " &
-  "plot once it is completely written (its size has stopped changing and it is whole). " &
-  "Off: the plot stays on the file you chose; new files are marked in Files."
-  ## The tooltip of "Follow the latest", in the menu and in Files
+const
+  FollowWords* = "Follow the latest file"
+    ## The action's words, in the menu and on the Files button
+  FollowHelp* = "On: each file that appears in the folder listed is shown in the " &
+    "plot once it is completely written (its size has stopped changing and it is whole). " &
+    "Off: the plot stays on the file you chose; new files are marked in Files."
+    ## The tooltip of Follow the latest file, in the menu and in Files
+  ReopenTip* = "Open the file the plot window shows again, with other options: its " &
+    "standard when it is read as the wrong one, every trace header checked, " &
+    "two's-complement mantissas, mapped or not. Its kills and polarity reversals stay"
+    ## File > Reopen with options... and the Headers Summary button
 
 func menuIcon*(a: MenuAction): string =
   ## The glyph `a` is drawn with, in its menu and wherever that action is.
@@ -159,16 +166,13 @@ proc shortcutName*(a: MenuAction): string =
   ## The shortcut of `a` as shown to the user ("Ctrl+O"), or "".
   if shortcuts[a] == 0: "" else: $igGetKeyChordName(shortcuts[a])
 
-func shownAs(a: MenuAction): string =
-  ## What `a` is called in its menu: in File > Import and File > Export,
-  ## what is imported or exported.
-  case a
-  of maImportSurvey: "Survey..."
-  of maImportSettings, maExportSettings: "Settings..."
-  of maImportLayout, maExportLayout: "Layout..."
-  of maExportLog: "Messages..."
-  of maImportEdits, maExportEdits: "Trace edits..."
-  else: $a
+func menuLabel*(a: MenuAction): string =
+  ## What `a` is called, the same words in its menu, its button and its tooltip.
+  ## Import survey opens a window, so it has no ellipsis; the others that open
+  ## a dialog keep the one their name has.
+  if a == maImportSurvey: "Import survey" else: $a
+
+func shownAs(a: MenuAction): string = menuLabel(a)
 
 proc label(a: MenuAction): string =
   menuIcons[a] & "  " & shownAs(a)
@@ -443,10 +447,8 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       igBeginDisabled(not input.canClose)
       item(maReopen, result)
       igEndDisabled()
-      tip("Open the file the plot window shows again, with other options: its standard " &
-        "when it is read as the wrong one, every trace header checked, two's-complement " &
-        "mantissas, mapped or not. Its kills and polarity reversals stay")
-      if igMenuItem_Bool((IconFollow & "  Follow the latest file").cstring, nil,
+      tip(ReopenTip)
+      if igMenuItem_Bool((IconFollow & "  " & FollowWords).cstring, nil,
           input.followLatest, true):
         result.toggleFollow = true
       tip(FollowHelp)

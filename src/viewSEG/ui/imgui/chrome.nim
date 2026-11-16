@@ -223,14 +223,17 @@ proc drawToolbar*(t: Theme; marks: var Marks; recentProjects: openArray[string];
   if beginBar("##toolbar", ImGuiDir_Up, height, t):
     marks.markWindow("toolbar")
     igSetCursorPosY(round((height - size) / 2))
-    if iconButton(IconOpenFile, "Open file", shortcutName(maOpenFile), size, t, marks):
+    if iconButton(IconOpenFile, "Open file", shortcutName(maOpenFile), size, t, marks,
+        tipText = menuLabel(maOpenFile)):
       result.actions.incl maOpenFile
     igSameLine(0, ButtonGap)
-    if iconButton(IconOpenFolder, "Open folder", shortcutName(maOpenFolder), size, t, marks):
+    if iconButton(IconOpenFolder, "Open folder", shortcutName(maOpenFolder), size, t, marks,
+        tipText = menuLabel(maOpenFolder)):
       result.actions.incl maOpenFolder
     igSameLine(0, GroupGap)
     if iconButton(IconProject, "Open project", "", size, t, marks,
-        tipText = "Open project: a project's folder (the folder that holds its project.nif)"):
+        tipText = menuLabel(maOpenProject) & ": a project's folder (the folder that holds " &
+          "its project.nif)"):
       result.actions.incl maOpenProject
     if igBeginPopupContextItem("##recentprojects", ImGui_PopupFlags_MouseButtonRight.cint):
       drawRecentProjects(recentProjects, result.openProject, addr marks, "tool.project.")
@@ -252,7 +255,8 @@ proc drawToolbar*(t: Theme; marks: var Marks; recentProjects: openArray[string];
     let avail = igGetContentRegionAvail().x
     if avail > size:
       igSetCursorPosX(igGetCursorPosX() + avail - size)
-    if iconButton(IconTheme, "Light / dark theme", "", size, t, marks):
+    if iconButton(IconTheme, "Light / dark theme", "", size, t, marks,
+        tipText = menuLabel(maToggleTheme)):
       result.actions.incl maToggleTheme
   igEnd()
 

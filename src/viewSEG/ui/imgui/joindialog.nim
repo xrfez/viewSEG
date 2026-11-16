@@ -1,4 +1,4 @@
-## The "Import survey" window (File > Import > Survey...): a survey's files
+## The "Import survey" window (File > Import > Import survey): a survey's files
 ## put on the map (as File > Open loads them) and matched to an open file's
 ## traces, in memory (`ckJoin`, `core/join`; the code keeps parseSEG's word,
 ## the join); with no file open, put on the map only.
