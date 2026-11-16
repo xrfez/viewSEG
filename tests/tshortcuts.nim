@@ -41,10 +41,11 @@ func keySuffixes(text: string): seq[string] =
 
 proc keysHandled(): seq[string] =
   ## Toolkit keys named in ui/imgui, where the program tests them.
+  ## `ImGui_Key_None` is the "no key" value of `imguiKey`, not a key.
   for f in walkDirRec(imguiDir):
     if f.endsWith(".nim"):
       for name in keySuffixes(readFile(f)):
-        if name notin result: result.add name
+        if name != "None" and name notin result: result.add name
 
 block menu_shortcuts_are_rows:
   let menus = readFile(root / "src" / "viewSEG" / "ui" / "imgui" / "menus.nim")
