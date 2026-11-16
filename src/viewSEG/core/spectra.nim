@@ -250,17 +250,29 @@ func followCursor*(w: var SpectrumWindow): bool =
   result = c != w.cursor
   if result: w.cursor = c
 
-func holdAt*(w: var SpectrumWindow; at: PlotCursor) =
+func holdAt*(w: var SpectrumWindow; at: PlotCursor): seq[string] {.discardable.} =
   ## `w`'s cursor held at bin `at.x` (its frequency) and on the curve drawn
   ## `at.y` (0 the first in the legend), each within those the plot shows
-  ## (`shownBins`, `drawnCurves`); let go when `at.held` is false.
+  ## (`shownBins`, `drawnCurves`); let go when `at.held` is false. Returns
+  ## what it moved to get within them, in words (none for nothing).
   if not at.held:
     w.cursor = PlotCursor()
     return
   let bins = w.shownBins
   let x = clamp(at.x, bins.a, max(bins.b, bins.a))
+  if x != at.x:
+    result.add "bin " & $at.x & " is not on its frequency axis (bins " & $bins.a & " to " &
+      $bins.b & (if bins.a > 0: ": 0 Hz is off a logarithmic one" else: "") &
+      "): held at bin " & $x
   let curves = w.drawnCurves
-  if curves.len > 0: w.cursorCurve = curves[clamp(at.y, 0, curves.high)]
+  if curves.len == 0:
+    if at.y != 0: result.add "it draws no curve: curve " & $at.y & " is not there"
+  else:
+    let y = clamp(at.y, 0, curves.high)
+    if y != at.y:
+      result.add "curve " & $at.y & " is not drawn (curves 0 to " & $curves.high &
+        "): held on curve " & $y & " (" & $curves[y] & ")"
+    w.cursorCurve = curves[y]
   w.cursorHz = float64(x) * w.spectrum.binHz
   w.cursor.held = true
   discard w.followCursor()

@@ -277,6 +277,11 @@ block helpers:
   doAssert quiet.cursor.x == 0
   quiet.display.logFrequency = true # turned on while held at 0 Hz: at the first drawn
   doAssert quiet.followCursor() and quiet.cursor.x == 1
+  # past the bins and the curves: held within both, and said
+  let said = quiet.holdAt(PlotCursor(held: true, x: 9, y: 9))
+  doAssert quiet.cursor == PlotCursor(held: true, x: 2, y: 1) and said == @[
+    "bin 9 is not on its frequency axis (bins 1 to 2: 0 Hz is off a logarithmic one): held " &
+    "at bin 2", "curve 9 is not drawn (curves 0 to 1): held on curve 1 (raw)"], $said
   # the sum over blocks of traces: as one block (power, not amplitude)
   var keys = newSeq[TraceKeys](3)
   var lengths = @[64, 64, 64]

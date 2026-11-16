@@ -273,6 +273,18 @@ withFixtures fx:
     st.agent(%*{"kind": "spectrum cursor", "spectrum": st.spectra[1].id,
       "cursor": {"held": true, "x": 3, "y": 0}})
     doAssert st.spectra[1].cursor.held and st.spectra[1].cursor.x == 3, "the agent's cursor"
+    # past the plot's bins and curves: within them, and the reply says so
+    # (seen to fail with the words not logged: the reply said nothing)
+    block clamped:
+      var applied = false
+      let answer = st.runCommand(fe, $(%*{"kind": "spectrum cursor",
+        "spectrum": st.spectra[1].id, "cursor": {"held": true, "x": 99999, "y": 99}}), applied)
+      template c: untyped = st.spectra[1].cursor
+      doAssert applied and c.x == st.spectra[1].spectrum.raw.high and
+        c.y == max(st.spectra[1].drawnCurves.high, 0), $c # (it draws none: all hidden)
+      let done = parseJson(parseJson(answer)["content"][0]["text"].getStr)
+      doAssert not done["ignored"].getBool and "bin 99999 is not on its frequency axis" in
+        $done["messages"] and "curve 99 is not there" in $done["messages"], answer
     st.agent(%*{"kind": "step trace", "spectrum": st.spectra[1].id, "stepBy": 1})
     doAssert st.spectra[1].traces.len == 1 and st.spectra[1].traces != @[t] and
       st.spectra[1].traces[0] in st.selection.selected, "the agent's step: " &

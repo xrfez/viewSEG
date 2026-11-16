@@ -5622,7 +5622,9 @@ proc holdCursor(state: var AppState; cmd: Command) =
     state.ignore(cmd, sw.title & " has no spectrum to put its cursor on")
     return
   let was = (sw.cursor, sw.cursorHz, sw.cursorCurve)
-  sw.holdAt(cmd.cursor) # a frequency and a curve, kept so by `followSpectrum`
+  let moved = sw.holdAt(cmd.cursor) # a frequency and a curve, kept so by `followSpectrum`
+  if cmd.origin == coAgent: # the keys never ask past the plot
+    for words in moved: state.log.add(sevInfo, "spectrum", sw.title & "'s cursor: " & words)
   if (sw.cursor, sw.cursorHz, sw.cursorCurve) != was: inc sw.revision
 
 proc stepTrace(state: var AppState; cmd: Command) =
