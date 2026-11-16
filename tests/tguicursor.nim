@@ -1,6 +1,6 @@
 ## The cursor's time line in the running frontend, headless, driven by SDL
 ## mouse events: off by default (nothing drawn under the pointer); a click on
-## the strip's toggle turns it on and the settings keep it; then, on paper
+## its toggle in the gear's Look tab turns it on and the settings keep it; then, on paper
 ## and on the theme's colours, in wiggle and in density mode, a thin line in
 ## the crosshair colour runs along the pointer's pixel row from the plot's
 ## left edge to the pointer, and not past it nor on the rows beside it, and
@@ -177,13 +177,31 @@ withFixtures fx:
       doAssert f.markOf("plot.cursor line").size.x == 0 and f.tracePanel.cursorText == "" and
         f.tracePanel.cursorHeader.len == 0, "drawn while off"
       doAssert f.share(int(q.y), int(plot.pos.x) + 2, int(q.x) - 3) <= 0.02, "a line while off")
+  step("to the gear", proc (f: FrameInfo) =
+    f.moveMouse(f.markOf("plot.more").centre), proc (f: FrameInfo): bool = true)
+  step("the gear", proc (f: FrameInfo) =
+    let c = f.markOf("plot.more").centre
+    f.pressMouse(c, true)
+    f.pressMouse(c, false), proc (f: FrameInfo): bool =
+    f.markOf("plot.more popover").size.x > 100 and wait > 4)
+  step("to Look", proc (f: FrameInfo) =
+    f.moveMouse(f.markOf("plot.more tab look").centre), proc (f: FrameInfo): bool = wait > 2)
+  step("Look", proc (f: FrameInfo) =
+    let c = f.markOf("plot.more tab look").centre
+    f.pressMouse(c, true)
+    f.pressMouse(c, false), proc (f: FrameInfo): bool =
+    f.markOf("plot.Cursor time line").size.x > 0)
   step("point at the toggle", proc (f: FrameInfo) =
     q = f.markOf("plot." & $syCursorTime).centre
-    doAssert q.x > 0, "no toggle in the strip"
+    doAssert q.x > 0, "no toggle in the gear's Look tab"
     f.moveMouse(q), proc (f: FrameInfo): bool = wait > 2)
   step("turn it on", proc (f: FrameInfo) =
     f.pressMouse(q, true)
     f.pressMouse(q, false), proc (f: FrameInfo): bool = f.core.settings.cursorLine)
+  step("close the gear", proc (f: FrameInfo) =
+    f.pressKey(skEscape, true)
+    f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
+    f.markOf("plot.more popover").size.x == 0)
   lookStep(dmWiggle, pcPaper)
   lookStep(dmDensity, pcPaper)
   lookStep(dmWiggle, pcTheme)
