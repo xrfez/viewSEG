@@ -22,9 +22,14 @@
 ## the geometry join, the record and the FFT windows (at the new ids); with
 ## another count it drops them and says so.
 ##
+## A reopen whose open has already posted is not adopted after the file was
+## closed: the close stands, the new session is released.
+##
 ## Seen to fail (the failing reopen): with the trace-count test taken out of
 ## `adopt` (`elif false`), "stays as it was"; (the carried state): with
-## `carryOver` not called, "the selection was lost".
+## `carryOver` not called, "the selection was lost"; (the close after a
+## posted reopen): with `adopt` adding the new session when the old one is
+## gone, "a closed file came back".
 ##
 ## Seen to fail: with the choice not given to the open job (`openFileWork`
 ## called without `choice` in `showPath`), "not reopened with every header
@@ -69,6 +74,17 @@ proc pump(st: var AppState; n = 100) =
 
 proc reopen(st: var AppState; path: string; c: OpenChoice; origin = coWindow) =
   st.apply Command(origin: origin, kind: ckReopen, reopenPath: path, openChoice: c)
+
+proc openIds(st: AppState; name: string): seq[JobId] =
+  for j in st.jobs.list:
+    if j.spec.title == "Open " & name: result.add j.id
+
+proc postedSince(st: AppState; name: string; known: seq[JobId]): bool =
+  ## Whether an open of `name` started after `known` has posted (done, not
+  ## yet taken in).
+  for j in st.jobs.list:
+    if j.spec.title == "Open " & name and j.id notin known and j.state == jsDone:
+      return true
 
 block optionsForParseSEG:
   doAssert OpenChoice().isDefault and OpenChoice().usesCache
@@ -275,4 +291,22 @@ block anotherTraceCountDropsWhatItKept:
     doAssert st.spectra.len == 1, "the FFT window of the old traces was kept"
     doAssert st.log.has("dropped the selection, 1 plot window (it has " & $(count + 1) &
       " traces, it had " & $count & " traces)"), "what was dropped was not said"
+    st.shutdown()
+
+block closedAfterTheOpenPostedStaysClosed:
+  # The open job has posted (jsDone) and the inbox has not been drained: closing
+  # then does not cancel it. The new session must not undo the close.
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let name = path.extractFilename
+    var st = initAppState()
+    st.showIt(path)
+    let id = st.sessions[0].id
+    let known = st.openIds(name)
+    st.reopen(path, OpenChoice(verifyAll: true))
+    doAssert waitUntil(st.postedSince(name, known)), "the reopen did not post"
+    st.apply Command(kind: ckClose, file: id)
+    doAssert st.sessions.len == 0, "the close did not take the file out"
+    doAssert st.settle(st.sessions.len == 0), "a closed file came back"
+    doAssert st.sessions.len == 0, "a closed file came back"
     st.shutdown()

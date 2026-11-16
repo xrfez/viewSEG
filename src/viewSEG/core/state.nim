@@ -484,6 +484,9 @@ type
     tried: OpenChoice ## a reopen: the choice it asks for
     before: OpenChoice ## a reopen: the choice the file had before (put back when it fails)
     hadBefore: bool ## a reopen: the file had a choice (not the defaults)
+    replacesOpen: bool
+      ## a reopen of a file that was open: the new session is dropped when
+      ## that session is gone before it arrives (the file was closed)
     swapped: bool ## a reopen: its file took the place of the open one (its job ends quietly)
 
   Carry = object
@@ -4130,14 +4133,20 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
       state.release(s) # nothing else has it
       if panel == MainPanel: state.chooseShown()
       return
+    var old = -1
+    for j, x in state.sessions:
+      if x.path == s.path: old = j
+    if o.replacesOpen and old < 0:
+      # Closed before this open arrived: the close stands. Not swapped, so
+      # the job's end says nothing of an open that was not taken in.
+      state.release(s)
+      if panel == MainPanel: state.chooseShown()
+      return
     # Opened: takes the open file's place, which lets go of its panels. The
     # file's shots are read again, as the options say.
     state.opening[reopened].swapped = true
     state.shots.forget(state.survey, @[s.path])
     state.shots.listedRev = -1
-    var old = -1
-    for j, x in state.sessions:
-      if x.path == s.path: old = j
     if old >= 0:
       swap = true
       carry = state.carryOf(state.sessions[old])
@@ -5890,7 +5899,7 @@ proc reopenWith(state: var AppState; path: string; choice: OpenChoice; by: Comma
     whole = false, lines = state.settings.join, choice = choice))
   state.opening.add Pending(job: job, path: path, panel: if panel == NoPanel: MainPanel
     else: panel, gather: gather, by: by, reopened: true, tried: choice, before: before,
-    hadBefore: hadBefore)
+    hadBefore: hadBefore, replacesOpen: true)
 
 proc onDisk(state: var AppState; w: WatchedFile) =
   ## What the watch saw of a file that is open, or that a panel waits for:
