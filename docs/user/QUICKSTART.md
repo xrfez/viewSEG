@@ -723,7 +723,7 @@ plot: it shows the traces it was opened on until the plot changes, then the sele
 the record on show, or the traces in view when nothing is selected, and a new record or
 file. Freeze keeps those traces and that file; the title names them ("Frozen · trace 12 ·
 FFID 1 · shots.sgy"). Unfreezing follows at once.
-Two curves: **raw**, the trace with its own filter (before the strip's filters), and
+Two curves: **raw**, the trace with its own filter (without the strip's filters), and
 **processed**, through the strip's filters only (a band-pass shows as the processed
 curve falling away outside its corners, a notch as a dip at its frequency). A trace's
 own filter is always in the raw curve: there is no box that leaves it out. The window

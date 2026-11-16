@@ -327,4 +327,23 @@ block insteadCount:
     st.spectra[w].filterText
   st.shutdown()
 
+block filterOrderWords:
+  ## Seen to fail: the guides and the reader's comments said the own filter
+  ## runs before the plot's filters; every graph applies the plot's filters
+  ## first and the own filter after (placement "after"), or the own filter
+  ## alone ("instead"). The check reads the words, not the order.
+  let guide = readFile(root / "docs" / "plot-window.md")
+  doAssert "run after them (named under the title:" in guide,
+    "docs/plot-window.md does not say the own filter runs after the plot's filters"
+  doAssert "own filter, before the" notin guide, "docs/plot-window.md still says before"
+  let quick = readFile(root / "docs" / "user" / "QUICKSTART.md")
+  doAssert "(without the strip's filters)" in quick, "QUICKSTART.md does not say without"
+  doAssert "(before the strip's filters)" notin quick, "QUICKSTART.md still says before"
+  let reader = readFile(root / "src" / "viewSEG" / "core" / "analysisreader.nim")
+  doAssert "The plot's filters first" in reader,
+    "analysisreader.nim's header does not say the plot's filters run first"
+  doAssert "through the plot's filters `pr` at `dtMs`" in reader,
+    "analysisreader.nim's filtered comment does not say the plot's filters run first"
+  doAssert "Each trace's own filter always, then" notin reader, "analysisreader.nim header"
+
 echo "townalways: ok"

@@ -621,12 +621,12 @@ processSEG offers. It is in two places:
 
 Each view is a window of its own that docks, titled by what it shows ("Spectrogram 2:
 3 traces · FFID 1 · shots.sgy"). Its numbers are worked out off the screen's thread,
-from the traces read whole, each with its own filter (named under the title: "Trace 12:
-own filter, band-pass 10-60 Hz", or "N traces have their own filter"), then through the
-Seismic window's filters (an auxiliary trace only when "Filter the Aux traces too" is
-ticked, as in the plot; a trace whose own filter runs instead of the plot's does not
-go through them). An f-k's **Raw** leaves the plot's filters out and still applies each
-trace's own filter. Killed traces and those marked dead are left out (said under the title). A trace sampled at another interval than the first
+from the traces read whole, through the Seismic window's filters (an auxiliary
+trace only when "Filter the Aux traces too" is ticked, as in the plot; a trace whose own
+filter runs instead of the plot's does not go through them), then each with its own
+filter, run after them (named under the title: "Trace 12: own filter, band-pass 10-60
+Hz", or "N traces have their own filter"). An f-k's **Raw** leaves the plot's filters
+out and still applies each trace's own filter. Killed traces and those marked dead are left out (said under the title). A trace sampled at another interval than the first
 one's is left out too, and counted "at another interval", as a spectrum window does; a
 trace with no sample interval of its own takes its file's, and is left out when it has
 none. Unless **Freeze** is on (the pin at the right of the first row of controls), a window
@@ -1366,7 +1366,7 @@ counted in the window's line of words: killed traces, traces the file marks dead
 that cannot be read or hold a sample that is not a number, and traces at another sample
 interval than the first. Auxiliary traces count as seismic ones do (a pilot's spectrum).
 
-**Raw and processed.** The raw curve is the trace with its own filter, before the
+**Raw and processed.** The raw curve is the trace with its own filter, without the
 plot's filters; the processed one is those samples through the plot's filters only
 (Filters in the strip), run on whole traces before the window is cut, also when the
 plot is shown raw, so the two compare. A trace's own filter is part of the trace: it

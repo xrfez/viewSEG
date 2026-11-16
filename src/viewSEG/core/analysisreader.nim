@@ -13,12 +13,11 @@
 ##   another interval, or with none, is left out and counted, `atOtherInterval`,
 ##   as the spectrum reader does); a reference trace
 ##   for a correlation, from the same file or another one.
-## - **Filters.** Each trace's own filter always, then the plot's filters
-##   (`Processing`, shown raw or not alike; an f-k asked raw leaves the
-##   plot's filters out), made for the traces' interval, run on whole
-##   traces; an auxiliary trace goes through the plot's filters only when
-##   the Aux toggle says so, as in the plot. A trace's own filter runs on
-##   it either way, and instead of the plot's when it says so.
+## - **Filters.** The plot's filters first (`Processing`, shown raw or not
+##   alike; an f-k asked raw leaves them out), made for the traces' interval,
+##   run on whole traces; an auxiliary trace goes through them only when the
+##   Aux toggle says so, as in the plot. Each trace's own filter runs after
+##   them, always, and instead of them when it says so.
 ## - **Holds.** The caller holds the files (`Jobs.hold`) before it asks; the
 ##   reader ends the holds (`HoldRelease`) once it has served the request or
 ##   given it up, and `ask` and `cancel` end those of the requests they drop.
@@ -187,9 +186,9 @@ proc applyRowsOwn(b: RowBlock[float32]; live: TraceRows; dtMs: float64;
 proc filtered(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
     pr: Processing; own: openArray[FilterEntry]; dtMs: float64; passed: var int;
     plotOn = true): string =
-  ## `rows` (traces `list` of `f`) through each trace's own filter (`own`),
-  ## always, then the plot's filters `pr` at `dtMs` when `plotOn` (an f-k
-  ## asked raw leaves them out). An own filter that runs instead leaves the
+  ## `rows` (traces `list` of `f`) through the plot's filters `pr` at `dtMs`
+  ## when `plotOn` (an f-k asked raw leaves them out), then through each
+  ## trace's own filter (`own`), always. An own filter that runs instead leaves the
   ## plot's filters off that trace. An auxiliary trace goes through the
   ## plot's filters only when `pr.aux` (the others, `passed` of them, are
   ## passed by); its own filter runs either way. What the plot's filters
