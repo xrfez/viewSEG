@@ -30,7 +30,7 @@
 ## it can; the program then opens the project read-only.
 
 import std/[strutils, times]
-import displaypresets, identity, join, nif, processing, project, settingsnif
+import identity, join, nif, processing, project, settingsnif
 
 const
   KindNames: array[JoinFileKind, string] = ["sps", "p1", "csv"]

@@ -23,8 +23,8 @@
 
 import std/[monotimes, os, strutils, times]
 import parseSEG
-import displaypresets, filekinds, filememory, filesystem, identity, inbox, jobs, join, layouts,
-  nif, persist, processing, project, projectnif, session, survey, surveystore, threads
+import displaypresets, filememory, filesystem, identity, inbox, jobs, join, layouts,
+  persist, processing, project, projectnif, session, survey, surveystore, threads
 
 type NewProject* = object
   ## What Project > New project makes.

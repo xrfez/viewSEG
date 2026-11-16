@@ -25,7 +25,7 @@
 ##
 ## Pure: samples in, an `AnalysisResult` out; never raises.
 
-import std/[algorithm, math]
+import std/math
 import processSEG/fft/plan
 import processSEG/core/workspace
 import analysis, join
