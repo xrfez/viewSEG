@@ -14,13 +14,13 @@ func curvePlots*(r: AnalysisResult; t: Theme): seq[CurvePlot] =
   ## points past one marked in it; a NaN where a curve has no value.
   for p in r.plots:
     var c = CurvePlot(xLabel: p.xLabel, yLabel: p.yLabel, xUnit: p.xUnit, yUnit: p.yUnit,
-      xs: p.xs)
+      xs: p.xs, yFloor: p.yLo, yCeil: p.yHi, aside: p.aside)
     var i = 0
     for curve in p.curves:
       case curve.style
       of csLine:
         c.curves.add Curve(name: curve.name, colour: t.series[i mod t.series.len],
-          ys: curve.ys, xs: curve.xs)
+          ys: curve.ys, xs: curve.xs, brackets: curve.brackets)
         inc i
       of csLimit:
         c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: curve.ys,

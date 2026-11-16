@@ -43,9 +43,9 @@
 ##  (hideKilled false)
 ##  (spectrum
 ##   (window (scale db) (logFrequency false) (time whole) (raw true) (processed true)
-##    (response true) (phase false))
+##    (response true) (phase false) (phasePicture magnitude))
 ##   (live (scale db) (logFrequency false) (time visible) (raw true) (processed true)
-##    (response true) (phase false)))
+##    (response true) (phase false) (phasePicture magnitude)))
 ##  (displayPresets
 ##   (preset "Section" (mode density) (colourMap viridis) (gain none) ...))
 ##  (tray (icon true) (minimize false))
@@ -108,6 +108,8 @@ const
   HeaderColumnNames: array[HeaderColumn, string] = ["description", "name", "bytes", "offset"]
   SpectrumScaleNames: array[SpectrumScale, string] = ["db", "linear"]
   SpectrumTimeNames: array[SpectrumTime, string] = ["whole", "visible"]
+  PhasePictureNames: array[PhasePicture, string] = ["magnitude", "signed", "unwrapped",
+    "delayRemoved"]
   ReadoutNames: array[ReadoutField, string] = ["time", "trace", "channel", "receiver",
     "source", "ffid", "offset", "amplitude", "shotTime", "cursorUtc", "sample", "cdp",
     "inline", "crossline", "sourceXY", "receiverXY", "midpointXY", "sourceZ", "receiverZ",
@@ -126,7 +128,7 @@ func persistedNames*(): seq[seq[string]] =
     @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
     @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames,
-    @TableScopeNames]
+    @PhasePictureNames, @TableScopeNames]
 
 # ----------------------------------------------------------------- writing --
 
@@ -225,6 +227,7 @@ proc spectrumDisplay(w: var NifWriter; tag: string; d: SpectrumDisplay) =
   w.value("processed", d.processed)
   w.value("response", d.response)
   w.value("phase", d.phase)
+  w.choice("phasePicture", PhasePictureNames[d.phasePicture])
   w.close()
 
 proc writeJoinOptions*(w: var NifWriter; j: JoinOptions) =
@@ -720,6 +723,7 @@ proc spectrumDisplay(r: var Reading; n: NifNode; d: var SpectrumDisplay) =
     elif k.isTree("processed"): r.flag(k, d.processed)
     elif k.isTree("response"): r.flag(k, d.response)
     elif k.isTree("phase"): r.flag(k, d.phase)
+    elif k.isTree("phasePicture"): r.choice(k, PhasePictureNames, d.phasePicture)
     else: r.unknown(k, n.tag)
 
 proc readJoinOptions*(n: NifNode; name: string; base: JoinOptions;

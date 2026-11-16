@@ -54,7 +54,9 @@ import processSEG/pipeline
 import processSEG/fft/spectrum
 import processSEG/filter/[design, edges]
 import processSEG/core/[rows, types, workspace]
-import panels, plotcursor, processing, viewport
+import panels, phasepicture, plotcursor, processing, viewport
+
+export phasepicture
 
 export plotcursor
 
@@ -80,6 +82,8 @@ type
     processed*: bool = true ## the curve through the filters is drawn
     response*: bool = true  ## the filters' own response is drawn (when there are some)
     phase*: bool            ## a one-trace spectrum's phase is drawn under its amplitude
+    phasePicture*: PhasePicture = ppMagnitude
+      ## which picture of that phase is drawn (magnitude by default)
 
   SpectrumCurve* = enum
     ## A curve of a spectrum window's plot, in the order drawn (`drawnCurves`).

@@ -5,7 +5,7 @@
 ##
 ## Each shows a line of its view's settings (a spectrogram's frame length,
 ## overlap, floor and colour map; a phase spectrum's dB threshold and
-## unwrapping; a correlation's reference and lags) and Freeze, a pin at the
+## phase picture; a correlation's reference and lags) and Freeze, a pin at the
 ## right of that line's first row, what it is
 ## of and through which filters, then its plots: an image in a density
 ## colour map with its scale (a spectrogram), or curve plots (`curveplot`)
@@ -321,11 +321,19 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
         "elsewhere it is noise")
       igSameLine(0, -1)
       unit("dB of the peak")
-      line.follow(checkWidth("Unwrapped"))
-      if igCheckbox("Unwrapped", addr p.unwrap): changed = true
-      marks.mark(name & ".unwrap")
-      tip("On: the phase unwrapped along frequency (a delay is a straight line). Off: within " &
-        "-180 to 180 degrees")
+      let pictureW = round(igCalcTextSize("Magnitude 0-180", nil, false, -1).x +
+        igGetFrameHeight() + 2 * igGetStyle().FramePadding.x)
+      line.follow(textBoxWidth("Phase:", pictureW))
+      label("Phase:")
+      igSetNextItemWidth(pictureW)
+      if igBeginCombo("##picture", ($p.phasePicture).cstring, 0):
+        for v in PhasePicture:
+          if igSelectable_Bool(($v).cstring, v == p.phasePicture, 0, ImVec2_c(x: 0, y: 0)) and
+              v != p.phasePicture:
+            (p.phasePicture, changed) = (v, true)
+        igEndCombo()
+      marks.mark(name & ".phase picture")
+      tip("Phase: " & $p.phasePicture & ". " & PhaseHelp)
     of avCorrelation:
       label("Reference: " & (if w.reference.len > 0: w.reference else: "the first trace"))
       let sel = st.selection
@@ -611,6 +619,8 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
         text = p.readoutText(o.reading)
     if scrolls: igEndChild()
     ui.curves[w.id] = uis
+    for p in plots:
+      if p.aside.len > 0 and text.find(p.aside) < 0: text.add "   " & p.aside
     if w.cursor.held and text.len > 0: text = HeldNote & text
     # The keys: Left / Right a point, Home / End the ends, Up / Down another
     # curve, from where the cursor is held, else from under the pointer.

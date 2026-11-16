@@ -14,10 +14,12 @@
 ##
 ## Every number here is processSEG's but for what it leaves to the caller:
 ## the envelope's instantaneous frequency (the analytic signal's phase step
-## between samples, `instantaneousHz`), the phase unwrapped along frequency
-## and shown only where the amplitude is within `phaseWithinDb` of its peak
-## (`unwrapWhere`: elsewhere the phase is noise), and the spectrogram of
-## several traces, their power average (as the spectrum windows average).
+## between samples, `instantaneousHz`), the phase spectrum drawn as its
+## picture asks (`phasepicture`: magnitude by default, signed, unwrapped or
+## with the delay taken off) and only where the amplitude is within
+## `phaseWithinDb` of its peak (elsewhere the phase is noise), and the
+## spectrogram of several traces, their power average (as the spectrum
+## windows average).
 ##
 ## The procs are pure: they take samples and give an `AnalysisResult`, and
 ## never raise (a problem is said in `problem`).
@@ -26,9 +28,10 @@ import std/math
 import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/[crosscorrelate, vibqc]
 import processSEG/core/workspace
-import colourmaps, panels, plotcursor, processing
+import colourmaps, panels, phasepicture, plotcursor, processing
 
 export ColourMap, PlotCursor, Polarity, VibLimits
+export phasepicture
 
 type
   AnalysisView* = enum
@@ -65,7 +68,8 @@ type
     phaseWithinDb*: float64 = 20.0
       ## phase spectrum: the phase is shown where the amplitude is within
       ## this of the peak (elsewhere it is noise)
-    unwrap*: bool = true ## phase spectrum: unwrapped along frequency (else -180 to 180)
+    phasePicture*: PhasePicture = ppMagnitude
+      ## phase spectrum: which picture is drawn (magnitude by default)
     reference*: int = -1
       ## cross-correlation: the reference trace, survey-wide id; -1: none
       ## chosen (the first trace of the window then)
@@ -98,6 +102,9 @@ type
     name*: string
     ys*: seq[float64]
     xs*: seq[float64] ## its own xs, ascending (a limit's two ends); empty: the plot's
+    brackets*: seq[float64]
+      ## a second value the readout adds in brackets, per x (a phase's signed
+      ## value); empty or NaN: none
     style*: CurveStyle
 
   AnalysisPlot* = object
@@ -107,6 +114,10 @@ type
     yLabel*, yUnit*: string
     xs*: seq[float64]
     curves*: seq[AnalysisCurve]
+    yLo*, yHi*: float64 = NaN
+      ## the value axis, fixed, when both are numbers (a phase magnitude's
+      ## 0 to 180); NaN: the data's
+    aside*: string ## appended to the cursor readout (a delay taken off, in ms)
 
   AnalysisImage* = object
     ## Values over a grid: column `i` at x `x0 + i·dx`, row `j` at y `y0 +
@@ -376,25 +387,9 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64): Anal
 
 func unwrapWhere*(phaseDeg: openArray[float64]; shown: openArray[bool]): seq[float64] =
   ## `phaseDeg` (per bin, -180 to 180) unwrapped along the bins that are
-  ## `shown` (a jump of more than half a turn between one shown bin and
-  ## the next is taken as a whole turn the other way); NaN at the others.
-  result = newSeq[float64](phaseDeg.len)
-  var last = NaN
-  var offset = 0.0
-  for k in 0 ..< phaseDeg.len:
-    if not shown[k] or phaseDeg[k].isNaN:
-      result[k] = NaN
-    else:
-      if not last.isNaN:
-        var v = phaseDeg[k] + offset
-        while v - last > 180:
-          offset -= 360
-          v -= 360
-        while v - last < -180:
-          offset += 360
-          v += 360
-      result[k] = phaseDeg[k] + offset
-      last = result[k]
+  ## `shown` (`unwrapPhase`): a jump of more than half a turn from the last
+  ## drawn bin is a whole turn the other way, and a gap is not crossed.
+  unwrapPhase(phaseDeg, shown)
 
 const PhasePadding* = 4
   ## the phase spectrum's transform is this many times the trace's length
@@ -409,8 +404,8 @@ proc phaseOf*(x: openArray[float32]; name: string; dtMs: float64;
   ## The amplitude (dB from its peak) and the phase (degrees, from the
   ## trace's first sample) of the whole trace against frequency, the trace
   ## zero-padded to `PhasePadding` times its length; the phase where the
-  ## amplitude is within `p.phaseWithinDb` of the peak only, unwrapped along
-  ## frequency when `p.unwrap`.
+  ## amplitude is within `p.phaseWithinDb` of the peak only, drawn as
+  ## `p.phasePicture` asks.
   result = AnalysisResult(view: avPhase, dtMs: dtMs, used: 1)
   if x.len < 2:
     result.problem = "the trace has no samples"
@@ -436,22 +431,28 @@ proc phaseOf*(x: openArray[float32]; name: string; dtMs: float64;
     db[k] = toDb(float64(amp[k]), peak)
     shown[k] = db[k] >= -within
     deg[k] = radToDeg(float64(ph[k]))
-  let phase = if p.unwrap: unwrapWhere(deg, shown)
-              else:
-                var w = newSeq[float64](deg.len)
-                for k in 0 ..< deg.len: w[k] = if shown[k]: deg[k] else: NaN
-                w
+  let drawn = drawnPhase(deg, shown, hz, p.phasePicture)
+  var phaseCurve = AnalysisCurve(name: name, ys: drawn.ys)
+  if p.phasePicture != ppSigned: phaseCurve.brackets = drawn.signed
+  var phasePlot = AnalysisPlot(title: "Phase", xLabel: "Frequency (Hz)", xUnit: "Hz",
+    yLabel: "Phase (°)", yUnit: "°", xs: hz, curves: @[phaseCurve])
+  if p.phasePicture == ppMagnitude:
+    (phasePlot.yLo, phasePlot.yHi) = (0.0, 180.0)
+  if p.phasePicture == ppDelayRemoved: phasePlot.aside = delayWords(drawn.delayMs)
   result.plots = @[
     AnalysisPlot(title: "Amplitude", xLabel: "Frequency (Hz)", xUnit: "Hz",
       yLabel: "Amplitude (dB)", yUnit: "dB", xs: hz,
       curves: @[AnalysisCurve(name: name, ys: db)]),
-    AnalysisPlot(title: "Phase", xLabel: "Frequency (Hz)", xUnit: "Hz",
-      yLabel: "Phase (°)", yUnit: "°", xs: hz,
-      curves: @[AnalysisCurve(name: name, ys: phase)])]
+    phasePlot]
+  let picture = case p.phasePicture
+    of ppMagnitude: "as its absolute value (0 to 180 degrees), "
+    of ppSigned: "within -180 to 180 degrees, "
+    of ppUnwrapped: "unwrapped along frequency, "
+    of ppDelayRemoved: "unwrapped, with its best straight line (a pure time delay) taken off, "
   result.note = "Phase from the trace's first sample (the trace zero-padded to " &
-    $PhasePadding & " times its length), " &
-    (if p.unwrap: "unwrapped along frequency, " else: "") &
-    "where the amplitude is within " & $within & " dB of its peak"
+    $PhasePadding & " times its length), " & picture &
+    "where the amplitude is within " & $within & " dB of its peak. " & PhaseHelp
+  if phasePlot.aside.len > 0: result.note.add " " & phasePlot.aside & "."
 
 # ------------------------------------------------------- cross-correlation --
 

@@ -40,6 +40,9 @@ type
     unit*: string ## the readout's unit of `reads`; "": the plot's `yUnit`
     short*: string ## its name in the readout, when shorter than the legend's; "": `name`
     marks*: bool ## drawn as marks at its points, not a line (points past a limit)
+    brackets*: seq[float64]
+      ## a second value the readout adds in brackets, per x (a phase's signed
+      ## value, when the picture is not the signed one); empty or NaN: none
 
   CurvePlot* = object
     ## Curves over one shared axis.
@@ -50,7 +53,11 @@ type
     logX*: bool              ## the x axis is logarithmic (its positive values only)
     along*: ScreenAxis = saX ## x across from the left, or (`saY`) down from the top
     yFloor*: float64 = NaN   ## the lowest value shown (a dB floor); NaN: the data's
-    note*: string            ## shown over an empty plot: why it is empty
+    yCeil*: float64 = NaN
+      ## with `yFloor`, both numbers: the value axis is exactly that span,
+      ## with no padding (a phase magnitude's 0 to 180)
+    note*: string ## shown over an empty plot: why it is empty
+    aside*: string ## appended to the readout (a delay taken off, in ms)
 
   Reading* = object
     ## What the cursor reads at an x: the nearest point of each curve.
@@ -60,6 +67,8 @@ type
     drawn*: seq[float64]
       ## per curve, its drawn value there (at its own nearest x for a curve
       ## with its own); NaN where it has none
+    brackets*: seq[float64]
+      ## per curve, the bracketed value there; NaN where it has none
 
 func isEmpty*(p: CurvePlot): bool =
   ## Whether `p` has nothing to draw.
@@ -103,9 +112,10 @@ func xLimits*(p: CurvePlot): Span =
   else: Span(lo: p.xs[a] - 0.5, hi: p.xs[a] + 0.5)
 
 func yLimits*(p: CurvePlot): Span =
-  ## The value axis's limits: the curves' smallest and largest finite
-  ## values over the x shown (from `yFloor` when it is given), with a
-  ## twentieth of the range more at each end; 0 to 1 for none.
+  ## The value axis's limits: exactly `yFloor` to `yCeil` when both are
+  ## numbers, else the curves' smallest and largest finite values over the
+  ## x shown (from `yFloor` when it is given), with a twentieth of the range
+  ## more at each end; 0 to 1 for none.
   var lo = Inf
   var hi = -Inf
   let a = p.firstShown
@@ -117,6 +127,7 @@ func yLimits*(p: CurvePlot): Span =
           y.classify notin {fcNan, fcInf, fcNegInf}:
         lo = min(lo, y)
         hi = max(hi, y)
+  if not p.yFloor.isNaN and not p.yCeil.isNaN: return Span(lo: p.yFloor, hi: p.yCeil)
   if not p.yFloor.isNaN and lo < p.yFloor: lo = p.yFloor
   if lo > hi: return Span(lo: 0, hi: 1)
   let pad = if hi > lo: (hi - lo) / 20 else: max(abs(hi) / 20, 0.5)
@@ -149,6 +160,7 @@ func readingAt*(p: CurvePlot; x: float64): Reading =
       let said = if c.reads.len > 0: c.reads else: c.ys
       result.values.add(if j in 0 ..< said.len: said[j] else: NaN)
       result.drawn.add(if j in 0 ..< c.ys.len: c.ys[j] else: NaN)
+      result.brackets.add(if j in 0 ..< c.brackets.len: c.brackets[j] else: NaN)
 
 func valueText*(x: float64; digits = 3): string =
   ## `x` with `digits` significant digits at least, and none past the point
@@ -199,7 +211,8 @@ func unitOf(p: CurvePlot; c: Curve): string {.inline.} =
 
 func readoutText*(p: CurvePlot; r: Reading): string =
   ## A reading in words: "12.5 Hz   raw -23.4 dB   processed -40.1 dB"
-  ## ("raw -" where a curve has no value); "" for none.
+  ## ("raw -" where a curve has no value; a bracketed signed value when the
+  ## curve has one); "" for none. The plot's `aside` follows, when it has one.
   if r.index < 0: return ""
   result = p.xText(r.x) & (if p.xUnit.len > 0: " " & p.xUnit else: "")
   for i, c in p.curves:
@@ -208,6 +221,9 @@ func readoutText*(p: CurvePlot; r: Reading): string =
       result.add "   " & (if c.short.len > 0: c.short else: c.name) & " " &
         yText(r.values[i], unit) &
         (if unit.len > 0 and not r.values[i].isNaN: " " & unit else: "")
+      if i < r.brackets.len and not r.brackets[i].isNaN:
+        result.add " (signed " & yText(r.brackets[i], unit) & ")"
+  if p.aside.len > 0: result.add "   " & p.aside
 
 func valueBoxText*(p: CurvePlot; r: Reading; curve: int): string =
   ## What the cursor's box on the value axis says for `curve`: its value as

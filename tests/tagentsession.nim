@@ -102,7 +102,10 @@ const Reached = {
   "spectrum.window.scale": "open spectrum", "spectrum.window.logFrequency": "open spectrum",
   "spectrum.window.time": "open spectrum", "spectrum.window.raw": "open spectrum",
   "spectrum.window.processed": "open spectrum", "spectrum.window.phase": "open spectrum",
-  "spectrum.window.response": "open spectrum", "spectrum.live.response": "spectrum display",
+  "spectrum.window.response": "open spectrum",
+  "spectrum.window.phasePicture": "open spectrum",
+  "spectrum.live.response": "spectrum display",
+  "spectrum.live.phasePicture": "spectrum display",
   "spectrum.live.phase": "spectrum display", "spectrum.live.scale": "spectrum display",
   "spectrum.live.logFrequency": "spectrum display", "spectrum.live.time": "spectrum display",
   "spectrum.live.raw": "spectrum display", "spectrum.live.processed": "spectrum display",
@@ -154,10 +157,10 @@ const Keys = @[SortKey(field: hfOffset, descending: true), SortKey(field: hfChan
 const Header = HeaderChoice(auto: false, fields: @[hfSrcLine, hfChannel])
 const
   FftShown = SpectrumDisplay(scale: ssLinear, logFrequency: true, time: stVisible, raw: false,
-    processed: false, response: false, phase: true)
+    processed: false, response: false, phase: true, phasePicture: ppSigned)
     ## an FFT window shown otherwise than by default
   LiveShown = SpectrumDisplay(scale: ssLinear, logFrequency: true, time: stWhole, raw: false,
-    processed: false, response: false, phase: true)
+    processed: false, response: false, phase: true, phasePicture: ppUnwrapped)
     ## the live panel shown otherwise than by default
 
 const Filters = Processing(raw: true, aux: true, dc: dcTrend, band: pbBandPass, f1: 3, f2: 6,

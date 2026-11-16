@@ -121,14 +121,15 @@ block phaseOfAnImpulse:
   var x = newSeq[float32](n)
   x[m] = 1
   # an impulse's amplitude is flat: every bin within 20 dB, the phase a line
-  let r = phaseOf(x, "impulse", DtMs, AnalysisParams(phaseWithinDb: 20, unwrap: true))
+  let r = phaseOf(x, "impulse", DtMs, AnalysisParams(phaseWithinDb: 20,
+    phasePicture: ppUnwrapped))
   doAssert r.problem == ""
   let hz = r.plots[1].xs
   let ph = r.plots[1].curves[0].ys
   for k in 1 ..< hz.len - 1:
     let want = -360 * hz[k] * float64(m) * DtMs / 1000
     doAssert near(ph[k], want, 1e-3), "phase at " & $hz[k] & " Hz: " & $ph[k] & ", want " & $want
-  let wrapped = phaseOf(x, "impulse", DtMs, AnalysisParams(unwrap: false))
+  let wrapped = phaseOf(x, "impulse", DtMs, AnalysisParams(phasePicture: ppSigned))
   for v in wrapped.plots[1].curves[0].ys:
     doAssert v.isNaN or abs(v) <= 180 + 1e-3, $v
   # a band-limited pulse: no phase where its amplitude is 20 dB under its peak
@@ -164,7 +165,8 @@ block phaseOfALongSweep:
     if t <= T:
       let taper = min(1.0, min(t, T - t) / 0.25) # 250 ms ramps
       x[i] = float32(taper * sin(2 * PI * (f0 * t + (f1 - f0) / (2 * T) * t * t)))
-  let r = phaseOf(x, "sweep", DtMs, AnalysisParams(phaseWithinDb: 20, unwrap: true))
+  let r = phaseOf(x, "sweep", DtMs, AnalysisParams(phaseWithinDb: 20,
+    phasePicture: ppUnwrapped))
   doAssert r.problem == "", r.problem
   let hz = r.plots[1].xs
   let ph = r.plots[1].curves[0].ys

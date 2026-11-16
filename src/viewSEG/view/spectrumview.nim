@@ -8,7 +8,7 @@
 ## what was left out, over which time.
 
 import std/[math, sequtils, strutils]
-import ../core/[orientation, spectra]
+import ../core/[orientation, phasepicture, spectra]
 import curveplot, theme
 
 const
@@ -89,17 +89,34 @@ func hasPhase*(w: SpectrumWindow): bool {.inline.} =
 
 func phasePlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
   ## A one-trace window's phase, in degrees against frequency, its raw and
-  ## processed curves as its amplitude plot draws them.
+  ## processed curves as its amplitude plot draws them, in the picture the
+  ## window asks for. Below `PhaseFloorDb` of that curve's peak the phase
+  ## is left out. Magnitude is drawn on a fixed 0 to 180 axis.
   template sp: untyped = w.spectrum
+  let picture = w.display.phasePicture
   result = CurvePlot(xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Phase (degrees)",
     yUnit: "deg", logX: w.display.logFrequency, along: along)
+  if picture == ppMagnitude: (result.yFloor, result.yCeil) = (0.0, 180.0)
   if not w.hasPhase: return
   result.xs = newSeq[float64](sp.rawPhase.len)
   for k in 0 ..< sp.rawPhase.len: result.xs[k] = float64(k) * sp.binHz
   let colours = curveColours(t)
-  if w.display.raw: result.curves.add Curve(name: "raw", colour: colours[0], ys: sp.rawPhase)
+  var named: seq[tuple[name: string; ms: float64]] = @[]
+  template addPhase(called: string; phase, amp: seq[float64]; ink: Rgba) =
+    if phase.len > 0:
+      let drawn = drawnPhase(phase, shownAbove(amp, PhaseFloorDb), result.xs, picture)
+      var curve = Curve(name: called, colour: ink, ys: drawn.ys)
+      if picture != ppSigned: curve.brackets = drawn.signed
+      result.curves.add curve
+      if picture == ppDelayRemoved: named.add (called, drawn.delayMs)
+  if w.display.raw: addPhase("raw", sp.rawPhase, sp.raw, colours[0])
   if w.display.processed and sp.processedPhase.len > 0:
-    result.curves.add Curve(name: "processed", colour: colours[1], ys: sp.processedPhase)
+    addPhase("processed", sp.processedPhase, sp.processed, colours[1])
+  var said: seq[string] = @[]
+  for d in named:
+    if not d.ms.isNaN:
+      said.add (if named.len > 1: d.name & " " else: "") & delayWords(d.ms)
+  if said.len > 0: result.aside = said.join("   ")
 
 func timeText(sp: Spectrum): string =
   if sp.fromMs.isNaN: "" else: valueText(sp.fromMs) & " to " & valueText(sp.toMs) & " ms"
