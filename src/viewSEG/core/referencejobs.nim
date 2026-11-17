@@ -210,6 +210,13 @@ proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
           news.note = "not filtered: " & AuxFilterOff
         else:
           news.note = through
+        # `filtered` words the plot's filters only: the trace's own filter,
+        # which runs whatever they are, is named here (a pilot with no plot
+        # filter on would else say nothing of it)
+        let ownAt = entryAt(own, trace)
+        if ownAt >= 0 and own[ownAt].filter.changesSamples:
+          let words = "its own filter: " & ownBrief(own[ownAt].filter)
+          news.note = if news.note.len > 0: news.note & "; " & words else: words
       elif flip:
         for v in samples.mitems: v = -v
       let (cut, problem) = cutPilot(samples, dt, rule, record)

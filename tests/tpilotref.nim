@@ -6,7 +6,8 @@
 ## "the cut is not exact"; with a missing auxiliary trace falling back to the
 ## first trace, "no sentence for a missing trace"; with the reversal not read
 ## for the pilot, "a reversed pilot is not turned over"; with the rule stored
-## with a file, "a rule has a file".
+## with a file, "a rule has a file"; with the note not naming the pilot's own
+## filter (the plot's filters off), "the pilot's own filter is not named".
 
 import std/[json, math, monotimes, os, strutils, times]
 import parseSEG
@@ -305,9 +306,25 @@ proc main*() =
       let own = st.shownPilot(rule)
       doAssert own.samples != plain.samples and own.samples.len == plain.samples.len,
         "the pilot's own filter is not in the preview"
+      doAssert "its own filter: " in own.note and ownBrief(OwnFilter(spec: spec)) in own.note,
+        "the note does not name the pilot's own filter: " & own.note
       st.apply Command(kind: ckUndoEdit, panel: MainPanel)
       st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing())
       doAssert st.shownPilot(rule).samples == plain.samples
+
+    block the_note_names_a_filter_of_the_pilots_own_alone:
+      # With the plot's filters off, `filtered` words nothing: the dialog's note
+      # under "From FFID 1 ..." still says which filter the pilot went through.
+      let rule = PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000)
+      let spec = Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16)
+      doAssert st.shownPilot(rule).note.len == 0, "a plain pilot has a note"
+      st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
+        processing: spec, filterPlace: fpAfter)
+      let own = st.shownPilot(rule)
+      doAssert own.note == "its own filter: " & ownBrief(OwnFilter(spec: spec)),
+        "the pilot's own filter is not named: \"" & own.note & "\""
+      st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+      doAssert st.shownPilot(rule).note.len == 0
 
     block a_killed_pilot_is_not_used:
       st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base],
