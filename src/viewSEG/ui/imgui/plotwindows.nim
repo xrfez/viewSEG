@@ -117,7 +117,7 @@ proc numberBox(id: string; value: float64; width: float32; typed: var float64): 
   ## A box for a number: true once the user has finished typing into it.
   var v = cdouble(value)
   igSetNextItemWidth(width)
-  discard igInputDouble(id.cstring, addr v, 0, 0, "%.4g", 0)
+  discard igInputDouble(id.cstring, addr v, 0, 0, "%.9g", 0)
   typed = float64(v)
   igIsItemDeactivatedAfterEdit()
 
