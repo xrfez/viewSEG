@@ -5505,7 +5505,10 @@ proc takeOpened(state: var AppState; m: sink Msg) =
       "project last found " & (if missing.len == 1: "it" else: "them") & ": Locate... in the " &
       "Project window says where " & (if missing.len == 1: "it is" else: "they are") & " now.")
   if not news.created and first.len > 0:
-    state.startListing(@[first], first, "", by)
+    # the folder the Files panel listed last in this project, else its first data folder
+    # (the scan finds out whether the last one is still there)
+    let start = if p.doc.lastFolder.len > 0: p.doc.lastFolder else: first
+    state.startListing(@[start], start, "", by)
   state.lookAtOriginals()
   if p.doc.hasImport:
     # An import was being copied in when the project was closed or the
@@ -6540,6 +6543,10 @@ proc takeListed(state: var AppState; m: sink Msg) =
     f.folder = m.listFolder
     f.title = m.listFolder
     state.change(state.listedBy, st): st.recentFolders.addRecent(m.listFolder, MaxRecent)
+    if state.project.dir.len > 0 and keeps(state.listedBy) and not state.project.readOnly and
+        state.project.doc.lastFolder != m.listFolder:
+      state.project.doc.lastFolder = m.listFolder # the project opens on it again
+      state.projectChanged()
   for e in m.listed:
     if e.kind.isSurvey and e.path in state.loadNamed: state.loadSurvey(e.path, quiet = true)
   f.merge(m.listed)

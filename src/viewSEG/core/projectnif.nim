@@ -141,6 +141,7 @@ proc projectDocument*(d: ProjectDoc): string =
     w.close
   w.value("referenceId", d.referenceId)
   for c in d.vibRoles: w.value("vibRole", c)
+  if d.lastFolder.len > 0: w.value("lastFolder", d.lastFolder)
   case d.vendorChoice.mode
   of vmAutomatic: discard
   of vmNamed: w.value("vendorMap", d.vendorChoice.name)
@@ -344,6 +345,7 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
         result.displayPresets = readDisplayPresets(c, name, r.problems)
         result.hasPresets = true
       of "referenceId": r.text(c, result.referenceId)
+      of "lastFolder": r.text(c, result.lastFolder)
       of "vibRole":
         var text = ""
         r.text(c, text)

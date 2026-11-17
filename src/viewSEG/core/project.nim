@@ -93,6 +93,9 @@ type
     hasPresets*: bool              ## `displayPresets` were set in the project (else the user's)
     referenceId*: string
       ## the reference the plots use in this project; "" is the file's own pilot
+    lastFolder*: string
+      ## the folder the Files panel listed last in this project; listed again when the
+      ## project opens, if it is still there
     vibRoles*: seq[string]
       ## the vibrator signature's roles chosen by hand in this project, per file layout
       ## (`choiceText`)

@@ -78,6 +78,11 @@ shows the newest ones); the file dialogs start in the folder of the last file op
 
 ## Step through a folder
 
+The folder listed last is remembered: in the project when one is open (it is listed again
+when the project opens, in place of its data folder, if it is still there), else in your
+settings (listed again when viewSEG starts), and File > Open file, Open files and Open
+folder start in it.
+
 A folder with no seismic files but with subfolders (a data folder with one folder a day, say)
 is listed empty, and the Files panel says so under the list: "No seismic files here; 2
 subfolders". Open one of the subfolders.
