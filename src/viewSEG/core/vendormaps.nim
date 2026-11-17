@@ -41,8 +41,7 @@ const
     "folder, is the guide to the format of a map. File > Reload vendor maps (or opening a " &
     "project) picks up a map dropped here while the program runs.\n"
     ## what the program writes in `README.txt` of each folder it makes
-  VendorGuide* = staticRead(currentSourcePath().parentDir.parentDir.parentDir.parentDir /
-    "vendormaps" / VendorGuideName)
+  VendorGuide* = staticRead("../../../vendormaps/WRITING-A-MAP.md")
     ## the guide, written beside the note (the repository's `vendormaps/WRITING-A-MAP.md`;
     ## `tvendorguide` checks it against parseSEG's)
 
