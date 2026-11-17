@@ -665,7 +665,7 @@ settings works out from the traces it is frozen on.
 | View | Of | Shows | processSEG |
 |---|---|---|---|
 | **Spectrogram** | the traces (several: their power average) | amplitude against time and frequency, in dB from the largest, in a density colour map, with its scale | `spectrogramInto` |
-| **Envelope and instantaneous phase** | the first trace | the trace and its envelope; its instantaneous phase (°); its instantaneous frequency (Hz) | `hilbertInto` |
+| **Envelope and instantaneous phase** | the first trace | the trace and its envelope; its instantaneous phase (°); its instantaneous frequency (Hz) | `analyticInto` |
 | **Phase spectrum** | the first trace | amplitude (dB) and phase against frequency | `amplitudeInto` |
 | **Cross-correlation** | each trace (up to 8) against a reference | the correlation coefficient and its envelope against lag; the amplitude ratio (dB) and phase difference (°) per frequency | `crossCorrelateInto`, `compareInto` |
 | **Vibrator signature** | a vibrator unit: its reference (Ref), ground force (GF), reaction-mass (M) and baseplate (B) traces | against sweep time: the phase to the reference (GF, GF from M and B, M, B); the force (fundamental and peak); the frequency (Ref's, the ground forces'); the distortion (THD, each harmonic, %); a table per signal | `analyzeVibrators` |

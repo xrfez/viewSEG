@@ -6,15 +6,14 @@
 ## | View | What | From processSEG |
 ## |---|---|---|
 ## | Spectrogram | amplitude against time and frequency, in dB, an image | `spectrogramInto` |
-## | Envelope | the trace, its envelope, its instantaneous phase and frequency | `hilbertInto` |
+## | Envelope | the trace, its envelope, its instantaneous phase and frequency | `analyticInto` |
 ## | Phase spectrum | amplitude (dB) and phase against frequency | `amplitudeInto` |
 ## | Cross-correlation | each trace against a reference: against lag, and compared per frequency | `crossCorrelateInto`, `compareInto` |
 ## | Vibrator signature | a unit's Ref, GF, M and B against sweep time: phase, force, frequency, distortion (`core/vibanalysis`) | `analyzeVibrators` |
 ## | f-k | a box of traces × time: amplitude against frequency and wavenumber, an image (`core/fkanalysis`) | `forward` (composed) |
 ##
 ## Every number here is processSEG's but for what it leaves to the caller:
-## the envelope's instantaneous frequency (the analytic signal's phase step
-## between samples, `instantaneousHz`), the phase spectrum drawn as its
+## the phase spectrum drawn as its
 ## picture asks (`phasepicture`: unwrapped by default, magnitude, signed or
 ## with the delay taken off) and only where the amplitude is within
 ## `phaseWithinDb` of its peak (elsewhere the phase is noise), and the
@@ -267,9 +266,6 @@ func valueAt*(img: AnalysisImage; col, row: int): float32 {.inline.} =
   ## The value at column `col` and row `row`.
   img.values[col * img.rows + row]
 
-func toDb(amp, peak: float64): float64 {.inline.} =
-  if amp > 0 and peak > 0: 20 * log10(amp / peak) else: -Inf
-
 # ------------------------------------------------------------ spectrogram --
 
 proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
@@ -304,16 +300,15 @@ proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
       return
     sg.spectrogramInto(r, amp, ws)
     for k in 0 ..< amp.len: power[k] += amp[k] * amp[k]
-  var peak = 0.0
-  for k in 0 ..< power.len:
-    power[k] = sqrt(power[k] / float64(rows.len))
-    peak = max(peak, power[k])
+  for k in 0 ..< power.len: power[k] = sqrt(power[k] / float64(rows.len))
+  var db = newSeq[float64](power.len)
   let floor = min(p.floorDb, -1)
   var img = AnalysisImage(cols: sg.frames, rows: sg.bins, x0: t0Ms, dx: float64(hop) * dtMs,
     y0: 0, dy: sg.binHz(1), xLabel: "Time (ms)", xUnit: "ms", yLabel: "Frequency (Hz)",
     yUnit: "Hz", unit: "dB", lo: float32(floor), hi: 0)
   img.values = newSeq[float32](power.len)
-  for k in 0 ..< power.len: img.values[k] = float32(max(toDb(power[k], peak), floor))
+  toDbInto(power, db, dbPeak, floor)
+  for k in 0 ..< power.len: img.values[k] = float32(db[k])
   result.image = img
   result.note = $windowLen & "-sample frames (" & $(float64(windowLen) * dtMs) &
       " ms, Hann) every " &
@@ -321,31 +316,6 @@ proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
     (if rows.len > 1: "; the power average of " & $rows.len & " traces" else: "")
 
 # --------------------------------------------------------------- envelope --
-
-func instantaneousHz*(x, h: openArray[float32]; dtMs: float64): seq[float64] =
-  ## The instantaneous frequency of the analytic signal `x + i·h`, per
-  ## sample: the step of its phase between the samples either side
-  ## (wrapped to one turn), in Hz. NaN where the signal is exactly zero
-  ## (there or either side), and where the envelope is 60 dB or more below
-  ## its peak (`envelope < peak * 0.001`): the phase of what is nearly
-  ## nothing is noise.
-  result = newSeq[float64](x.len)
-  let n = x.len
-  var env = newSeq[float64](n)
-  var peak = 0.0
-  for i in 0 ..< n:
-    env[i] = hypot(float64(x[i]), float64(h[i]))
-    peak = max(peak, env[i])
-  for i in 0 ..< n:
-    let a = max(i - 1, 0)
-    let b = min(i + 1, n - 1)
-    if b == a or env[i] == 0 or env[i] < peak * 0.001 or env[a] == 0 or env[b] == 0:
-      result[i] = NaN
-    else:
-      var d = arctan2(float64(h[b]), float64(x[b])) - arctan2(float64(h[a]), float64(x[a]))
-      while d > PI: d -= 2 * PI
-      while d <= -PI: d += 2 * PI
-      result[i] = d / (2 * PI * float64(b - a) * dtMs / 1000)
 
 proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64): AnalysisResult =
   ## The trace `x`, its envelope, its instantaneous phase (degrees) and its
@@ -362,16 +332,13 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64): Anal
     return
   var ws = initWorkspace()
   ws.reserve(hp.workspaceSize)
-  var h = newSeq[float32](x.len)
-  hp.hilbertInto(x, h, ws)
+  var env, phase, freq = newSeq[float64](x.len)
+  hp.analyticInto(x, dtMs, env, phase, freq, ws)
   var times = newSeq[float64](x.len)
-  var signal, env, phase = newSeq[float64](x.len)
+  var signal = newSeq[float64](x.len)
   for i in 0 ..< x.len:
     times[i] = t0Ms + float64(i) * dtMs
     signal[i] = float64(x[i])
-    env[i] = hypot(float64(x[i]), float64(h[i]))
-    phase[i] = if env[i] > 0: radToDeg(arctan2(float64(h[i]), float64(x[i]))) else: NaN
-  let freq = instantaneousHz(x, h, dtMs)
   result.plots = @[
     AnalysisPlot(title: "Amplitude", xLabel: "Time (ms)", xUnit: "ms", yLabel: "Amplitude",
       xs: times, curves: @[AnalysisCurve(name: name, ys: signal),
@@ -424,14 +391,13 @@ proc phaseOf*(x: openArray[float32]; name: string; dtMs: float64;
   ws.reserve(sp.workspaceSize)
   var amp, ph = newSeq[float32](sp.bins)
   sp.amplitudeInto(x, amp, ph, ws)
-  var peak = 0.0
-  for a in amp: peak = max(peak, float64(a))
-  var hz, db, deg = newSeq[float64](sp.bins)
+  var hz, db, deg, ampHz = newSeq[float64](sp.bins)
   var shown = newSeq[bool](sp.bins)
   let within = abs(p.phaseWithinDb)
+  for k in 0 ..< sp.bins: ampHz[k] = float64(amp[k])
+  toDbInto(ampHz, db, dbPeak, -Inf)
   for k in 0 ..< sp.bins:
     hz[k] = sp.binHz(k)
-    db[k] = toDb(float64(amp[k]), peak)
     shown[k] = db[k] >= -within
     deg[k] = radToDeg(float64(ph[k]))
   let drawn = drawnPhase(deg, shown, hz, p.phasePicture)
@@ -501,12 +467,10 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
   var refAmp, refPhase = newSeq[float64](cp.bins)
   cp.crossCorrelateInto(reference, reference, c, ws)
   cp.lagSpectrumInto(c, refAmp, refPhase, ws)
-  var refPeak = 0.0
-  for a in refAmp:
-    if not a.isNaN: refPeak = max(refPeak, a)
+  var refDb = newSeq[float64](cp.bins)
+  toDbInto(refAmp, refDb, dbPeak, -Inf)
   var inBand = newSeq[bool](cp.bins)
-  for k in 0 ..< cp.bins:
-    inBand[k] = refPeak > 0 and toDb(refAmp[k], refPeak) >= -abs(p.phaseWithinDb)
+  for k in 0 ..< cp.bins: inBand[k] = refDb[k] >= -abs(p.phaseWithinDb)
   for (name, s) in signals:
     if stop.stopped:
       result.cancelled = true
