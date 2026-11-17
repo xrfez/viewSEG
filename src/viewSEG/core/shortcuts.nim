@@ -48,6 +48,8 @@ const
     ("maClose", "Close", sgFiles, "Close the file the plot shows"),
     ("maQuit", "Quit", sgFiles, "Quit"),
     ("maUndo", "Undo", sgEdits, "Undo the last edit of the file shown"),
+    ("maSelectAll", "Select all traces", sgEdits,
+      "Select every trace the Seismic window shows"),
     ("maRedo", "Redo", sgEdits, "Redo the edit undone last"),
     ("maResetWindows", "Reset the windows", sgWindows,
       "Put every window back as at a first start"),

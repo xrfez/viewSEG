@@ -997,6 +997,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       igMarkIniSettingsDirty_Nil()
     of maUndo: ui.core.apply Command(kind: ckUndoEdit, panel: MainPanel)
     of maRedo: ui.core.apply Command(kind: ckRedoEdit, panel: MainPanel)
+    of maSelectAll: ui.core.apply Command(kind: ckSelect, all: true, mode: smReplace)
     of maClearEdits: ui.core.apply Command(kind: ckClearEdits, panel: MainPanel)
     of maFileMemory:
       if ui.memory.shown: ui.memory.shown = false else: ui.memory.open()

@@ -45,7 +45,8 @@ type
     maSettings = "Settings...",
     maResetSettings = "Reset the settings",
     maQuit = "Quit",
-    maUndo = "Undo", maRedo = "Redo", maClearEdits = "Clear all edits for this file",
+    maUndo = "Undo", maRedo = "Redo", maSelectAll = "Select all traces",
+        maClearEdits = "Clear all edits for this file",
     maToggleTheme = "Light / dark",
     maResetWindows = "Reset the windows",
     maBringWindows = "Bring all windows onto this screen",
@@ -132,6 +133,7 @@ const
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
     maUndo: ImGui_Mod_Ctrl.cint or ImGui_Key_Z.cint,
     maRedo: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_Z.cint,
+    maSelectAll: ImGui_Mod_Ctrl.cint or ImGui_Key_A.cint,
     maClearEdits: 0,
     maToggleTheme: 0,
     maResetWindows: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_R.cint,
@@ -150,6 +152,7 @@ const
     maNewProject: IconProject, maOpenProject: IconProject, maProject: IconProject,
     maCloseProject: IconClose, maSettings: IconSettings,
     maResetSettings: IconReset, maQuit: IconQuit, maUndo: IconUndo, maRedo: IconRedo,
+    maSelectAll: IconList,
     maClearEdits: IconClearAll, maToggleTheme: IconTheme,
     maResetWindows: IconHome, maBringWindows: IconFit, maSaveLayout: IconSave,
     maShowFiles: IconList, maShowRecords: IconRecords, maShowMap: IconMap,
@@ -400,6 +403,13 @@ proc drawEditMenu(input: MenuInput; res: var MenuResult) =
   tip(if input.redo.len > 0: "Make the change undone last again: " & input.redo
       else: "Nothing undone to make again")
   igSeparator()
+  if igMenuItem_Bool((menuIcons[maSelectAll] & "  " & $maSelectAll).cstring,
+      shortcutName(maSelectAll).cstring, false, input.canClose):
+    res.actions.incl maSelectAll
+  if marked != nil: marked[].mark("menu." & $maSelectAll)
+  tip("Select every trace the Seismic window shows (as its Seismic / Aux switches and the " &
+    "hidden killed traces leave them)")
+  igSeparator()
   if igMenuItem_Bool(label(maClearEdits).cstring, nil, false, input.edited):
     res.actions.incl maClearEdits
   if marked != nil: marked[].mark("menu." & $maClearEdits)
@@ -478,7 +488,7 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
   marked = addr marks
   let typing = igGetIO_Nil().WantTextInput # a text field keeps its own Ctrl+Z
   for a in MenuAction:
-    if shortcuts[a] != 0 and not (typing and a in {maUndo, maRedo}) and
+    if shortcuts[a] != 0 and not (typing and a in {maUndo, maRedo, maSelectAll}) and
         igShortcut_Nil(shortcuts[a], ImGui_InputFlags_RouteGlobal.cint):
       result.actions.incl a
   if not typing and igShortcut_Nil(ImGui_Mod_Ctrl.cint or ImGui_Key_Y.cint,

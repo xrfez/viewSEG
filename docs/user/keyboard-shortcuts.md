@@ -55,6 +55,7 @@ Mouse gestures are listed after the keys of each group.
 |---|---|
 | Ctrl+Z | Undo the last edit of the file shown |
 | Ctrl+Shift+Z, Ctrl+Y | Redo the edit undone last |
+| Ctrl+A | Select every trace the Seismic window shows |
 | R | Reverse the polarity of the trace under the pointer, or put it back |
 | K | Kill the trace under the pointer, or restore it |
 | F | Open the amplitude spectrum of the trace under the pointer |

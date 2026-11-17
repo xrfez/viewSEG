@@ -335,6 +335,9 @@ type
     of ckSelect:
       traces*: seq[int] ## survey-wide trace ids
       mode*: SelectMode ## how they change the selection
+      all*: bool
+        ## true: `traces` is every trace the Seismic window shows (the Seismic / Aux choice
+        ## and the hidden killed traces applied), whatever `traces` says (Edit > Select all)
     of ckClearSelection, ckResetSettings, ckFileMemory: discard
     of ckForgetFiles:
       forget*: seq[string]
@@ -8009,11 +8012,16 @@ proc applyCommand(state: var AppState; cmd: Command) =
       discard state.selection.setHover(trace, state.pointsOfTrace(trace))
   of ckSelect:
     var known: seq[int]
-    for t in cmd.traces:
+    var asked = cmd.traces
+    if cmd.all:
+      let k = state.findPanel(MainPanel)
+      let i = if k >= 0: state.shownFile(k) else: -1
+      asked = if i >= 0: state.panels[k].allShown(state.sessions[i].base) else: @[]
+    for t in asked:
       if state.findTrace(t) >= 0: known.add t
-    if known.len < cmd.traces.len:
-      state.ignore(cmd, plural(cmd.traces.len - known.len, "trace") & " of " &
-        $cmd.traces.len & " are in no open file")
+    if known.len < asked.len:
+      state.ignore(cmd, plural(asked.len - known.len, "trace") & " of " &
+        $asked.len & " are in no open file")
     if known.len > 0 or cmd.mode == smReplace:
       state.selection.select(known, cmd.mode)
   of ckClearSelection:

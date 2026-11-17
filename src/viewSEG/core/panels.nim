@@ -617,6 +617,12 @@ func viewLimits*(p: Panel; columns: int): ViewLimits {.inline.} =
   ## positions.
   p.viewLimits(p.layout, columns)
 
+func allShown*(p: Panel; base: int): seq[int] =
+  ## Every trace `p` shows, in the order shown, as survey-wide ids (its file's trace 0 is
+  ## `base`): after the Seismic / Aux choice and the killed traces it hides. What Select
+  ## all selects. Empty until the reader has said what is shown.
+  for k in p.shown: result.add base + k
+
 func rangeOf*(p: Panel; base, anchor, to: int): seq[int] =
   ## The traces `p` shows from survey-wide trace `anchor` to `to`, both
   ## included, in the order shown, as survey-wide ids (its file's trace 0 is
