@@ -752,11 +752,11 @@ Each kind of graph window remembers the options you set in it, and a new window 
 opens with them, also after a restart: an FFT window's scale, log frequency, curves and
 phase picture; a spectrogram's frame, overlap, floor and colour map; a phase spectrum's
 threshold and picture; a cross-correlation's lags; a vibrator signature's masses, harmonics
-and limits; an f-k's floor, colour map and Raw. Windows already open keep their own. What is
+and limits; an f-k's floor, colour map and Raw; an envelope's phase. Windows already open keep their own. What is
 not an option is not remembered: the traces, the vibrator's roles, the f-k's time box,
 Freeze, the zoom. **Reset options** (on the window's control line) puts the built-in options
-back, and they become the remembered ones. The envelope and node orientation plots have no
-options.
+back, and they become the remembered ones. The node orientation plot has no options (the
+envelope's is its Phase drop-down, "Against the reference" or "Of the trace itself").
 Two curves: **raw**, the trace with its own filter (without the strip's filters), and
 **processed**, through the strip's filters only (a band-pass shows as the processed
 curve falling away outside its corners, a notch as a dip at its frequency). A trace's

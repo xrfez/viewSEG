@@ -60,6 +60,12 @@ proc tip(text: string) =
 const ResetTip = "Back to the built-in options for this kind of plot. They are then what a " &
   "new window of this kind opens with"
 
+const PhaseAgainstTips = [
+  paReference: "The trace's instantaneous phase minus the chosen reference's, in degrees, " &
+    "against time: 0 where the two keep step. Needs a reference chosen in References",
+  paSelf: "The trace's own instantaneous phase: it turns once per cycle, so it only shows " &
+    "the frequency"]
+
 const PlotFreeze* = "keep these traces while the plot moves on"
   ## The Freeze pin's sentence. The pin's tooltip is that, after "Freeze: ".
 
@@ -388,7 +394,25 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       unit("dB")
       line.follow(mapW)
       mapCombo()
-    of avEnvelope, avOrientation: discard
+    of avOrientation: discard
+    of avEnvelope:
+      let againstW = round(igCalcTextSize("Against the reference", nil, false, -1).x +
+        igGetFrameHeight() + 2 * igGetStyle().FramePadding.x)
+      label("Phase:")
+      igSetNextItemWidth(againstW)
+      if igBeginCombo("##against", ($p.phaseAgainst).cstring, 0):
+        for v in PhaseAgainst:
+          if igSelectable_Bool(($v).cstring, v == p.phaseAgainst, 0, ImVec2_c(x: 0, y: 0)) and
+              v != p.phaseAgainst:
+            (p.phaseAgainst, changed) = (v, true)
+          marks.mark(name & ".against " & $v)
+          tip(PhaseAgainstTips[v])
+        igEndCombo()
+      marks.mark(name & ".against")
+      tip(PhaseAgainstTips[p.phaseAgainst])
+      if w.reference.len > 0:
+        line.follow(textBoxWidth("Reference: " & w.reference, 0))
+        label("Reference: " & w.reference)
     of avPhase:
       label("Phase where within")
       if numberBox("##within", p.phaseWithinDb, box, typed) and PhaseWithinRange.allows(typed):
