@@ -1,0 +1,60 @@
+# Vendor header maps
+
+The SEG-D and SEG-Y standards leave some header blocks to the maker of the recording system:
+SEG-D extended and external headers and user blocks, SEG-Y extended textual stanzas and
+unassigned header bytes. Without a description of such a block viewSEG shows its bytes. A
+**vendor header map** is that description: a text file ending in `.nif` that names the
+fields of a block, where each begins and how to read it. With a map that applies to the
+file, the Headers window shows the fields by name, with their values.
+
+## Where to put a map
+
+viewSEG loads every `*.nif` file of these `vendormaps` folders, in this order of preference:
+
+1. **The project's**: the `vendormaps` folder of the project open. New project makes it; a
+   project made earlier gets it when it is opened writable (a project open read-only is left
+   alone). Use it for maps that belong to one job: they travel with the project.
+2. **Yours**: `vendormaps` in your viewSEG settings folder (`viewSEG --paths` prints where
+   that is). Make the folder if it is not there.
+3. **Beside the program**: `vendormaps` next to the viewSEG executable. A release comes with
+   one; viewSEG makes it at start when the program's folder can be written to, and says
+   nothing when it cannot.
+4. **The environment's**: each folder named in `PARSESEG_VENDOR_PATH`.
+
+`viewSEG --paths` lists the folders that exist, and `State`'s `vendorMaps` (agent control)
+says what each gave.
+
+Each folder viewSEG makes holds `README.txt` and `WRITING-A-MAP.md`, the guide to the format of
+a map. A file already there is never replaced.
+
+## Reload
+
+Opening or closing a project loads the maps again, and so does **File > Reload vendor maps**:
+a map dropped in while viewSEG runs is used without a restart, and the files already open
+show the new decode (the Vendor tab of the Headers window, File headers). Reading the folders
+happens in the background; the window does not wait for it.
+
+## What the window shows
+
+The **Vendor** tab of File headers lists each decoded block under the name of the map that
+decoded it, its fields by name with their values, units and labels. A block no map applies
+to stays as its bytes in the tab it had. The file's own bytes are never changed. The Trace tab
+and the trace table do not show vendor fields: a trace's own vendor header is not decoded.
+
+## Which map is used
+
+A map says which files it is for (format, revision, manufacturer code, serial number, text
+of the textual header). When several apply to the same block, the one that says the most about
+the file is used; of two that say the same, the one of the folder first in the list above. Of
+two maps with the same name the first folder's is the only one loaded, so a project can
+replace a map of the program's by keeping a copy of the same name.
+
+## Messages
+
+Each load says one line in Messages: "3 vendor header maps loaded: 2 from the project, 1
+beside the program". When no map is found anywhere that is said once, as information.
+
+A map that does not load gets one line naming its file and the reason, in parseSEG's words
+("line 12: unknown encoding"); the other maps load all the same. "Loaded, with a note" means
+the map works but parseSEG saw something worth a look, such as two fields that overlap. Check a
+map before dropping it in with `parseSEG vendormap check map.nif`.

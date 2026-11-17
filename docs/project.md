@@ -28,6 +28,7 @@ Land 2026/                  the project folder: this is what is opened
     files/                  copies of the survey files imported (SPS, SEG P1, CSV tables)
     survey.bin              the survey as imported: what parseSEG read from the copies
   cache/                    what can be made again; safe to delete
+  vendormaps/               the project's vendor header maps (*.nif), with a note and the guide to writing one
   owner.nif                 who has the project open (a note; the lock is below)
   .lock                     the lock between programs, held while the project is open
 ```
@@ -50,6 +51,9 @@ Land 2026/                  the project folder: this is what is opened
 - **`survey/survey.bin`** is what parseSEG read from the copies, in a compact binary form
   (below). Opening the project reads it instead of the survey files.
 - **`cache/`** holds only what the program can make again from the data.
+- **`vendormaps/`** holds vendor header maps for this job, preferred to the user's and the
+  program's (docs/user/vendor-maps.md). It is made with the project, and added when a project
+  without it is opened writable; a read-only project is left alone.
 - **Data folders are never written to**: not the project, not a cache, not a lock. A
   project is refused a place inside one of its own data folders.
 

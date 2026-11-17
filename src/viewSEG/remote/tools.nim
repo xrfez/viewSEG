@@ -31,7 +31,7 @@ const
   ToolNames* = ["command", "state", "headers", "screenshot", "wait"]
   StateParts* = ["program", "fileList", "files", "panels", "selection", "map", "jobs",
     "messages", "survey", "headers", "memory", "spectra", "displayPresets", "plots", "project",
-    "properties", "compare"]
+    "properties", "compare", "vendorMaps"]
   ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "headers", "messages",
     "jobs", "toolbar", "statusbar", "spectrum", "fft", "compare"]
     ## what `screenshot` takes a picture of: the whole window, the Seismic
@@ -746,6 +746,23 @@ proc projectJson(state: AppState; limit: int): JsonNode =
     "filters": p.doc.hasProcessing, "opening": state.projectOpening,
     "earlierOutputs": earlier}
 
+proc vendorMapsJson(state: AppState): JsonNode =
+  ## The `vendorMaps` part: the folders maps are loaded from, in order of
+  ## preference, the maps loaded, and what went wrong with a map.
+  let load = state.vendorLoad
+  var folders = newJArray()
+  for f in load.folders:
+    folders.add %*{"path": f.dir, "from": $f.origin, "exists": f.there, "maps": f.loaded}
+  var maps = newJArray()
+  for m in load.maps:
+    maps.add %*{"name": m.name, "file": m.file, "folder": m.folder, "from": $m.origin,
+      "appliesTo": m.appliesTo}
+  var problems = newJArray()
+  for p in load.problems:
+    problems.add %*{"file": p.file, "problem": p.text, "loaded": p.loaded}
+  %*{"folders": folders, "maps": maps, "problems": problems, "shadowed": load.shadowed,
+    "loads": state.vendorGen}
+
 proc propertiesJson(state: AppState): JsonNode =
   ## The properties of the file the Seismic window shows, as its Headers
   ## window's Summary gives them (sections of lines: what it is, how it was
@@ -887,6 +904,7 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
     r["plots"] = list
   if "project" in wanted: r["project"] = state.projectJson(limit)
   if "compare" in wanted: r["compare"] = state.compareJson
+  if "vendorMaps" in wanted: r["vendorMaps"] = state.vendorMapsJson
   if "memory" in wanted:
     let m = state.memoryList
     var files = newJArray()

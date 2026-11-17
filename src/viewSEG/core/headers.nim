@@ -25,9 +25,9 @@ import std/[math, strutils]
 import parseSEG
 import parseSEG/common/fieldlayout
 import parseSEG/private/fieldaccess
-import fielddocs, openchoice, tracetable
+import fielddocs, openchoice, tracetable, vendormaps
 
-export FileSummary, ChannelSetSummary, JoinGroup, openchoice
+export FileSummary, ChannelSetSummary, JoinGroup, openchoice, vendormaps
 
 const
   MaxRawBytes* = 1024 * 1024 ## the bytes of a block without named fields kept to show, at most
@@ -132,6 +132,7 @@ type
     table*: TableAnswer       ## the trace table's rows (when asked for)
     recordPath*: string       ## the file of `record`; "" for none
     record*: RecordHeaders    ## a SEG-D record's headers (when asked for)
+    vendor*: VendorShown      ## what the vendor maps decode of the file shown (when asked for)
     traces*: seq[TraceDetail] ## the traces asked for, in the order asked
 
 func latin1*(text: openArray[char]): string =

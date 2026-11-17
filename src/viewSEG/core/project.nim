@@ -13,6 +13,7 @@
 ##   survey/files/        copies of the survey files imported
 ##   survey/survey.bin    the survey as imported (`core/surveystore`)
 ##   cache/               what can be made again
+##   vendormaps/          the project's vendor header maps (`core/vendormaps`)
 ##   owner.nif, .lock     who has the project open, and the lock between programs
 ## ```
 

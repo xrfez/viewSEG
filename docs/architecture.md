@@ -721,6 +721,18 @@ highlighted, and reads them every way (`view/byteview`, through parseSEG's codec
 touching the file. A SEG-Y file's stanzas and User Data attachments (`index.segy.extended`)
 are read on the open job too (`StanzaFact`, `UserDataFact`).
 
+**Vendor header maps** (`core/vendormaps`, `core/vendorjobs`, docs/user/vendor-maps.md). The
+frontend gives `core` the folders (`setVendorFolders`: the settings folder's, beside the
+program's, the environment's; `platform/paths` knows where they are); `core` puts the project's
+first. A load (`loadVendorFolders`, a job: it reads the disk through the seam) goes through
+parseSEG's `loadVendorMap`, `checkVendorMap` and `addMap` into one `VendorRegistry`, published
+for the threads that decode (`currentVendors`); it is made again when a project opens or
+closes and by `ckReloadVendors`. The Headers window's reader decodes the file shown
+(`vendorBlocks`, from parseSEG's index in memory: `InspectRequest.vendorAt`) and the answer
+carries the load it was made with, so a reload asks again. A map of a name already loaded from
+an earlier folder is left out; parseSEG chooses among the rest by how much of the file their
+`match` says, the first loaded winning a tie.
+
 **Reopen with options** (`core/openchoice`, `ui/imgui/reopendialog`). `ckReopen` names a
 file and an `OpenChoice` (the standard, `vfFull`, two's-complement mantissas, the access,
 the demultiplexed copy's folder), kept per file for the run (`AppState.openChoices`) and

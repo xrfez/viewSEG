@@ -46,7 +46,7 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
 import cutfile, edits, filesystem, headers, inbox, jobs, log, processing, selection, session,
-  threads, tracetable
+  threads, tracetable, vendormaps
 
 export tracetable
 
@@ -112,8 +112,12 @@ type
     ## What the Headers window asks the inspector for.
     gen*: uint64
     files*: seq[InspectFile]
-    recordAt*: int = -1 ## the file of the SEG-D record asked for; -1 for none
-    record*: int = -1   ## that record's index in its file
+    recordAt*: int = -1     ## the file of the SEG-D record asked for; -1 for none
+    record*: int = -1       ## that record's index in its file
+    vendorAt*: int = -1
+      ## the file whose vendor blocks (`core/vendormaps`) are asked for; -1 for none
+    vendorRecord*: int = -1 ## its SEG-D record; -1 for another standard
+    vendorGen*: int         ## the maps' load the answer is made with (`VendorShown.gen`)
     traces*: seq[InspectTrace]
     headers*: bool      ## read the traces' header fields
     samples*: bool      ## read their samples
@@ -493,6 +497,9 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
         answer.record = readRecordHeaders(f.file[], req.record)
       except CatchableError as e:
         answer.record = RecordHeaders(record: req.record, problem: readProblem(e))
+  if req.vendorAt in 0 ..< req.files.len and why[req.vendorAt].len == 0:
+    let f = req.files[req.vendorAt]
+    answer.vendor = vendorBlocks(f.file[], req.vendorRecord, currentVendors(), req.vendorGen)
   if req.table.at in 0 ..< req.files.len:
     let f = req.files[req.table.at]
     # Closed already: not read, so its columns are not cached again.

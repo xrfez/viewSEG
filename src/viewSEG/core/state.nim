@@ -109,11 +109,11 @@ import analysis, analysisreader, closer, compare, comparejobs, components, diski
   filelist, filememory, filesystem, identity, inbox, inspector, jobs, join, layouts, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
   recordqc, referencejobs, references, selection, session, settings, shots, spectra,
-  spectrumreader, spread, survey, surveyjobs, threads, tiles, watch, zoom
+  spectrumreader, spread, survey, surveyjobs, threads, tiles, vendorjobs, vendormaps, watch, zoom
 
 export analysis, compare, edits, filelist, filememory, identity, inbox, jobs, join, layouts, log,
   mapstate, panels, persist, pick, project, recordqc, references, selection, session, settings,
-  shots, spectra, spread, survey, threads, tiles, zoom
+  shots, spectra, spread, survey, threads, tiles, vendormaps, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues, MaxTableRows
 export tracetable
 export WatchInterval
@@ -227,6 +227,9 @@ type
     ckReopen = "reopen"
       ## open a file again with other options (its standard, its headers all checked,
       ## two's-complement mantissas, mapped or not), in the panels that show it
+    ckReloadVendors = "reload vendor maps"
+      ## read the vendor header maps again (the project's, the user's, the program's, the
+      ## environment's): files open show the new decode
     ckListReferences = "list references"
       ## read the reference archive in force (and the main one, when a project is open)
     ckStoreReference = "store reference"
@@ -479,7 +482,7 @@ type
       folderAction*: FolderAction ## add, remove, or locate (found at `folderPath`)
       folderPath*: string ## the folder added or removed, or where a missing one is now
       folderWas*: string ## locate: the missing folder, as the project names it
-    of ckCloseProject, ckUpdateSurvey, ckListReferences: discard
+    of ckCloseProject, ckUpdateSurvey, ckListReferences, ckReloadVendors: discard
     of ckStoreReference:
       refStore*: StoredReference
         ## ckStoreReference: the trace (a survey-wide id), the window in ms
@@ -748,6 +751,10 @@ type
       ## its traces are read so); NoSession otherwise
     record: (SessionId, int)
       ## a SEG-D record: its file and index; (NoSession, -1) for none
+    vendor: (SessionId, int)
+      ## the file whose vendor blocks the File headers tab shows, and its SEG-D
+      ## record (-1 for another standard); (NoSession, -1) for none
+    vendorGen: int ## the maps' load it was asked with
     flow: (bool, string, GatherKind)
       ## the plot's polarity, its pipeline's steps (`stepsText`), the
       ## gather's kind
@@ -770,6 +777,16 @@ type
     processing: Processing
     killed: seq[int]
     own: string ## the own filters of `traces` (`ownKeyOf`)
+
+  VendorState* = object
+    ## The vendor header maps (`core/vendormaps`).
+    folders: seq[VendorFolder]
+      ## the program's, the user's and the environment's, as the frontend gave them
+    load: VendorLoad ## the newest load taken in
+    asked: int       ## loads asked for; a load older than the last asked is dropped
+    gen: int         ## the load taken in: what a decode of a file was made with
+    job: JobId
+    saidNone: bool   ## "no maps" was said, and no map has been found since
 
   Remembered = object
     ## An opened file's place in what is remembered (`core/filememory`).
@@ -972,6 +989,7 @@ type
       ## (newer than the disk until the disk thread has written them)
     memoryList: MemoryList
     memoryJob: JobId ## the listing under way; `NoJob` for none
+    vendor: VendorState
     memoryLooks: seq[JobId]
       ## the looks of the listing shown at its files (`lookWork`), the one
       ## under way last: what they post is taken, also late (a drive that
@@ -1074,7 +1092,8 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
     files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob,
     preparing: (NoJob, ""), prepared: (NoJob, nil), memoryJob: NoJob,
-    compareJobA: NoJob, compareJobB: NoJob, comparePicJob: NoJob)
+    compareJobA: NoJob, compareJobB: NoJob, comparePicJob: NoJob,
+    vendor: VendorState(job: NoJob))
   result.panels.add Panel(id: MainPanel)
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
@@ -2873,6 +2892,13 @@ proc followInspect(state: var AppState) =
     if g in 0 ..< s.gathers.len:
       let r = s.file.segdRecordOf(s.gathers[g].traces.a)
       if r >= 0: want.record = (s.id, r)
+  want.vendor = (NoSession, -1)
+  want.vendorGen = state.vendor.gen
+  if ipRecord in ins.parts and shown >= 0:
+    let s = state.sessions[shown]
+    let g = state.panels[k].layers[0].source.gather
+    want.vendor = (s.id, if g in 0 ..< s.gathers.len: s.file.segdRecordOf(s.gathers[g].traces.a)
+                         else: -1)
   let traceParts = ins.parts * {ipTraceHeaders, ipTraceSamples}
   if traceParts != {}: want.traces = ins.chosen.traces
   want.tableOf = (NoSession, 0 .. -1)
@@ -2911,11 +2937,14 @@ proc followInspect(state: var AppState) =
       want.joins == was.joins and want.displayed == was.displayed and
       want.table == was.table and want.tableOf == was.tableOf and
       want.shown == was.shown and want.record == was.record and
+      want.vendor == was.vendor and want.vendorGen == was.vendorGen and
       want.flow == was.flow and want.display.sameProcessing(was.display, want.flow[2]):
     return
   state.asked = want
-  if want.record[0] == NoSession and want.traces.len == 0 and want.tableOf[0] == NoSession:
+  if want.record[0] == NoSession and want.traces.len == 0 and want.tableOf[0] == NoSession and
+      want.vendor[0] == NoSession:
     if ins.answer.traces.len > 0 or ins.answer.recordPath.len > 0 or
+        ins.answer.vendor.path.len > 0 or
         ins.answer.table.path.len > 0:
       ins.answer = Inspected()
       inc ins.revision
@@ -2940,6 +2969,10 @@ proc followInspect(state: var AppState) =
   if want.record[0] != NoSession:
     req.recordAt = state.fileOf(req, held, state.findSession(want.record[0]))
     req.record = want.record[1]
+  if want.vendor[0] != NoSession:
+    req.vendorAt = state.fileOf(req, held, state.findSession(want.vendor[0]))
+    req.vendorRecord = want.vendor[1]
+    req.vendorGen = want.vendorGen
   if want.displayed and shown >= 0:
     let layer = state.panels[k].layers[0]
     req.flow = layer.displayPipeline(state.gatherKind(layer))
@@ -5224,6 +5257,56 @@ proc sayOriginals(state: var AppState) =
       "they were") & " copied into the project " & p.doc.name & "; the project uses its " &
       "copy until you choose Update from the original (the Project window).")
 
+proc vendorFolders(state: AppState): seq[VendorFolder] =
+  ## The folders the maps are loaded from, in order of preference: the
+  ## project's, then those the frontend gave.
+  if state.project.dir.len > 0:
+    result.add VendorFolder(dir: state.project.dir.partOf(VendorFolderName), origin: voProject)
+  result.add state.vendor.folders
+
+proc reloadVendorMaps(state: var AppState) =
+  ## Reads the vendor header maps again, on a job; `takeVendor` takes them in.
+  inc state.vendor.asked
+  state.vendor.job = state.jobs.submit(JobSpec(title: "Read the vendor header maps",
+    lane: jlInteractive), vendorWork(state.vendorFolders, state.vendor.asked,
+    state.inbox.poster))
+
+proc setVendorFolders*(state: var AppState; folders: sink seq[VendorFolder]) =
+  ## The folders to load vendor header maps from besides the project's (the
+  ## user's settings folder, beside the program, the environment's), in order
+  ## of preference; loads them.
+  state.vendor.folders = folders
+  state.reloadVendorMaps()
+
+proc takeVendor(state: var AppState; m: sink Msg) =
+  ## A load of the vendor maps: made the registry in force, and said in a line
+  ## of Messages each (what it loaded, what it left out, and why).
+  if m.vendorGen < state.vendor.asked: return # a newer load is on its way
+  state.vendor.job = NoJob
+  state.vendor.load = move m.vendorLoad
+  inc state.vendor.gen
+  template load: untyped = state.vendor.load
+  publishVendors(load.registry)
+  if load.maps.len > 0:
+    state.vendor.saidNone = false
+    state.log.add(sevInfo, "vendor maps", load.summaryLine & ".")
+  elif load.folders.len > 0 and not state.vendor.saidNone:
+    state.vendor.saidNone = true
+    state.log.add(sevInfo, "vendor maps", "No vendor header maps found (looked in " &
+      load.foldersText & "): the vendor blocks of a file stay as bytes.")
+  for p in load.problems:
+    state.log.add(sevWarning, "vendor maps", p.problemLine, Location(file: p.file))
+  for line in load.shadowed:
+    state.log.add(sevInfo, "vendor maps", "The vendor header map " & line & ".")
+
+func vendorLoad*(state: AppState): lent VendorLoad {.inline.} =
+  ## The vendor maps loaded, what they apply to and what went wrong.
+  state.vendor.load
+
+func vendorGen*(state: AppState): int {.inline.} =
+  ## How many loads of the maps were taken in; a decode made with an earlier one is stale.
+  state.vendor.gen
+
 proc takeOpened(state: var AppState; m: sink Msg) =
   ## A project opened (or made) by its job: the session becomes its own.
   template p: untyped = state.project
@@ -5293,6 +5376,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
     inc state.layoutRev # the windows as they are, the project's own from now on
     state.layoutAt = getMonoTime()
   state.logProblems("project", news.problems)
+  state.reloadVendorMaps()
   state.log.add(sevInfo, "project", (if news.created: "Made the project " else:
     "Opened the project ") & p.doc.name & " (" & dir & ")" &
     (if p.readOnly: ", read-only: " & p.whyReadOnly & "; nothing is written to it" else: "") &
@@ -7752,6 +7836,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
       state.leaveProject(restoreUser = true)
       state.change(cmd.origin, s): s.lastProject = ""
       state.log.add(sevInfo, "project", "Closed the project " & name & ".")
+      state.reloadVendorMaps()
+  of ckReloadVendors: state.reloadVendorMaps()
   of ckProjectFolder: state.projectFolder(cmd)
   of ckUpdateSurvey:
     template p: untyped = state.project
@@ -8110,6 +8196,7 @@ proc drainInbox*(state: var AppState): bool =
       let i = state.surveyHead(m.surveyHead.file.path)
       if i >= 0: state.heads[i] = move m.surveyHead
     of mkProject: state.takeProject(move m)
+    of mkVendor: state.takeVendor(move m)
     of mkEarlier: state.takeEarlier(move m)
     of mkReferences: state.takeReferences(move m)
     of mkCompare: state.takeCompare(move m)

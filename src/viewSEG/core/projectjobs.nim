@@ -24,7 +24,7 @@
 import std/[monotimes, os, strutils, times]
 import parseSEG
 import diskio, displaypresets, filememory, filesystem, identity, inbox, jobs, join, layouts,
-  persist, processing, project, projectnif, session, survey, surveystore, threads
+  persist, processing, project, projectnif, session, survey, surveystore, threads, vendormaps
 
 type NewProject* = object
   ## What Project > New project makes.
@@ -140,7 +140,8 @@ proc makeProject(dir: string; np: NewProject; brought: var int): ProjectDoc =
     if not fs.dirExists(dir):
       fs.createDir(dir)
       madeDirs.add dir
-    for part in [ProjectStoreFolder, SurveyFolder, SurveyCopies, CacheFolder]:
+    for part in [ProjectStoreFolder, SurveyFolder, SurveyCopies, CacheFolder,
+        VendorFolderName]:
       let folder = dir.partOf(part)
       if not fs.dirExists(folder):
         fs.createDir(folder)
@@ -152,6 +153,9 @@ proc makeProject(dir: string; np: NewProject; brought: var int): ProjectDoc =
     if np.takeProcessing: (result.processing, result.hasProcessing) = (np.processing, true)
     madeFiles.add documentOf(dir)
     writeWhole(documentOf(dir), projectDocument(result))
+    for (name, text) in VendorNotes:
+      madeFiles.add dir.partOf(VendorFolderName) / name
+      writeWhole(dir.partOf(VendorFolderName) / name, text)
     if np.bringFrom.len > 0 and np.data.len > 0:
       var problems: seq[string] = @[]
       for r in listRecords(Store(home: np.bringFrom), problems, look = false):
@@ -170,6 +174,18 @@ proc makeProject(dir: string; np: NewProject; brought: var int): ProjectDoc =
     for i in countdown(madeFiles.high, 0): discard fs.tryRemoveFile(madeFiles[i])
     for i in countdown(madeDirs.high, 0): discard fs.tryRemoveDir(madeDirs[i])
     raise
+
+proc prepareVendorFolder(dir: string) =
+  ## The project's `vendormaps` folder and its notes, made when they are not
+  ## there (a project made by an older program); what cannot be made is left,
+  ## and nothing says so. Never replaces a file.
+  let folder = dir.partOf(VendorFolderName)
+  try:
+    if not fs.dirExists(folder): fs.createDir(folder)
+    for (name, text) in VendorNotes:
+      if not fs.fileExists(folder / name): writeWhole(folder / name, text)
+  except CatchableError:
+    discard
 
 proc openProjectWork*(dir: string; to: Poster; make = false; np = NewProject();
     writes: ptr DiskIo = nil): JobWork =
@@ -198,6 +214,7 @@ proc openProjectWork*(dir: string; to: Poster; make = false; np = NewProject();
         if news.doc.name.len == 0: news.doc.name = untitled(dir)
         news.lock = fs.lockFile(dir / LockName, initDuration())
         if news.lock.locked:
+          if news.doc.version <= ProjectVersion: prepareVendorFolder(dir) # (a read-only project is left alone)
           try:
             writeWhole(dir / OwnerName, ownerDocument(Owner(host: hostName(),
               user: getEnv("USER", getEnv("USERNAME")), pid: getCurrentProcessId(),
