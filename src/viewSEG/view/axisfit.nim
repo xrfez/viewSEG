@@ -36,6 +36,26 @@ type
     ## Which axes to set to the data's limits this frame.
     x*, y*: bool
 
+const RelativeMinSpan* = 1e-3
+  ## the smallest span of an axis of a quantity with no unit of its own (as recorded):
+  ## this fraction of the larger limit's magnitude
+
+func minSpanOf*(unit: string; lo, hi: float64): float64 =
+  ## The smallest span an auto-fitted axis of a quantity in `unit` shows, so that constant
+  ## data is a flat line and rounding noise is not stretched to fill the pane: a phase
+  ## 2° (±1°), dB 1, percent 1, Hz 1; any other (a dimensionless or "as recorded" quantity):
+  ## a thousandth of the larger limit's magnitude, and 1e-12 at the least.
+  case unit
+  of "°", "deg", "degrees": 2.0
+  of "dB", "%", "Hz": 1.0
+  else: max(RelativeMinSpan * max(abs(lo), abs(hi)), 1e-12)
+
+func atLeast*(s: Span; minSpan: float64): Span =
+  ## `s`, widened about its middle to span `minSpan` when it is narrower.
+  if not (s.hi - s.lo < minSpan): return s
+  let mid = (s.lo + s.hi) / 2
+  Span(lo: mid - minSpan / 2, hi: mid + minSpan / 2)
+
 func near(a, b: Span): bool =
   let tol = 1e-9 * max(1.0, max(abs(b.hi - b.lo), max(abs(b.lo), abs(b.hi))))
   abs(a.lo - b.lo) <= tol and abs(a.hi - b.hi) <= tol

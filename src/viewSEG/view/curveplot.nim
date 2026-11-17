@@ -17,6 +17,7 @@
 
 import std/[math, strutils]
 import ../core/[geometry, orientation, viewport]
+import axisfit
 
 export Span
 
@@ -203,7 +204,7 @@ func yLimits*(p: CurvePlot): Span =
   ## The value axis's limits: exactly `yFloor` to `yCeil` when both are
   ## numbers, else the curves' smallest and largest finite values over the
   ## x shown (from `yFloor` when it is given), with a twentieth of the range
-  ## more at each end; 0 to 1 for none.
+  ## more at each end, and never narrower than `minSpanOf` the y unit; 0 to 1 for none.
   var lo = Inf
   var hi = -Inf
   let a = p.firstShown
@@ -219,7 +220,8 @@ func yLimits*(p: CurvePlot): Span =
   if not p.yFloor.isNaN and lo < p.yFloor: lo = p.yFloor
   if lo > hi: return Span(lo: 0, hi: 1)
   let pad = if hi > lo: (hi - lo) / 20 else: max(abs(hi) / 20, 0.5)
-  Span(lo: lo - pad, hi: hi + pad)
+  # a span under what the quantity can show (`minSpanOf`) is rounding noise or a constant
+  Span(lo: lo - pad, hi: hi + pad).atLeast(minSpanOf(p.yUnit, lo, hi))
 
 func nearestIndex*(p: CurvePlot; x: float64): int =
   ## The index of the x nearest `x` (on a logarithmic axis, nearest on the

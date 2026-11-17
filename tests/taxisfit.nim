@@ -6,12 +6,33 @@
 ## Seen to fail: with `plan` ignoring `optionKey`, "an option change fits
 ## both"; with the zoomed flag never set in `seen`, "a zoomed y is kept";
 ## with the data's change not compared, "new data fits y".
+## With `yLimits` not widening to `minSpanOf`, "minimumSpan" saw a flat 0 on a span of 1.
 
-import viewSEG/view/axisfit
+import std/math
+import viewSEG/view/[axisfit, curveplot]
 
 func span(lo, hi: float64): Span = Span(lo: lo, hi: hi)
 
+proc minimumSpan() =
+  ## Seen to fail: with `yLimits` not widening, "rounding noise" saw an axis of 4e-7 degrees
+  ## (the old pad of a twentieth of the noise); with the unit ignored, "dB" saw 0.6.
+  func plotOf(unit: string; ys: seq[float64]): CurvePlot =
+    CurvePlot(yUnit: unit, xs: @[0.0, 1.0, 2.0],
+      curves: @[Curve(name: "c", ys: ys)])
+  for (unit, want) in [("°", 2.0), ("dB", 1.0), ("%", 1.0), ("Hz", 1.0)]:
+    let flat = plotOf(unit, @[0.0, 0.0, 0.0]).yLimits
+    doAssert abs((flat.hi - flat.lo) - want) < 1e-9, unit & " flat: " & $flat
+    let noisy = plotOf(unit, @[1e-6, -2e-6, 3e-6]).yLimits
+    doAssert noisy.hi - noisy.lo >= want - 1e-9, unit & " noise: " & $noisy
+    let real = plotOf(unit, @[0.0, 50.0, 100.0]).yLimits
+    doAssert real.hi - real.lo > 100 and real.hi - real.lo < 112, "real data is not widened"
+  # a quantity with no unit: a thousandth of its magnitude, however small it is
+  let tiny = plotOf("", @[2e-9, 2e-9 * (1 + 1e-9), 2e-9]).yLimits
+  doAssert tiny.hi - tiny.lo >= 2e-9 * RelativeMinSpan * 0.999, $tiny
+  doAssert tiny.hi - tiny.lo < 2e-9, "but not a whole magnitude: " & $tiny
+
 proc main*() =
+  minimumSpan()
   var f: AxisFit
   let x = span(0, 100)
   let y = span(-1, 1)
