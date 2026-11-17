@@ -1,8 +1,10 @@
 ## The Generate dialog, headless: both plots, the preview key, and the
 ## parameter field.
 ##
-## Seen to fail: with the preview key leaving out the taper shape, "Kaiser
-## shows its parameter and changes the key did not happen".
+## Seen to fail: with the signal drawn as a line through points again (no dense
+## signal given to the plot), "both plots appear" did not happen (no
+## `generate.preview.band`); with the preview key leaving out the taper shape,
+## "Kaiser shows its parameter and changes the key did not happen".
 
 import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[geometry, state]
@@ -77,6 +79,8 @@ proc main*() =
         f.markOf("generate.spectrum.data").size.x > 0 and
         f.markOf("generate.param").size.x == 0 and
         f.markOf("generate.phase").size.x > 0 and
+        f.markOf("generate.preview.band").size.x > 0 and
+        f.markOf("generate.preview.samples").size.x == 0 and
         f.markOf("generate.computing").size.x == 0
       if result: keyBefore = f.previewKey)
 

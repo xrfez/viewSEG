@@ -13,9 +13,10 @@ two plots take the extra room, and it does not shrink so far that the settings, 
 plots or the buttons leave the window. The settings are in three groups.
 
 **Sweep.** The name (a default is filled from the parameters, such as "Linear 8-80 Hz
-8 s"), the start and end frequency, the length, the sample interval (the file on show,
-when there is one), the amplitude (1 unless you set another) and the sweep type: linear,
-exponential, dB/octave or dB/Hz. dB/octave and dB/Hz also ask for the boost.
+8 s"), the start and end frequency (Hz), the length (ms), the sample interval (ms; the
+file on show, when there is one), the amplitude (1 unless you set another) and the
+type: linear, exponential, dB/octave or dB/Hz. dB/octave and dB/Hz also ask for the
+boost (dB).
 
 **Taper.** The shape of the ramp at each end, every shape processSEG offers, and the
 length of the start and end ramps. Cosine squared is the usual one, and the default.
@@ -24,13 +25,15 @@ that shape's usual value; a value processSEG refuses is said in the dialog and G
 is disabled. A length of 0 is no ramp at that end. A negative length is refused the
 same way, and Generate stays disabled while it stands.
 
-**Phase.** One number, in degrees. 0 starts the sweep at zero. 180 reverses the
+**Phase.** The start phase (deg), one number. 0 starts the sweep at zero. 180 reverses the
 polarity; there is no separate polarity control.
 
-Under the settings, the whole sweep is drawn against time, as a line through each
-column's peaks. The ends of that line are the true samples there, so a taper is only
-as wide as it is: a short taper on a long sweep is a couple of pixels until the plot
-is zoomed. Under it is the amplitude spectrum in dB against frequency. The frequency
+Under the settings, the whole sweep is drawn against time. While the plot holds more
+samples than it has pixel columns, each column is drawn from its smallest to its
+largest sample, as a filled band, so a long sweep reads as an envelope and a taper
+as the band narrowing; no sample is skipped. Zoom in until a column holds about one
+sample and the line runs through the true samples. Neither plot has a legend: the
+axes say what is drawn. Under it is the amplitude spectrum in dB against frequency. The frequency
 axis fits the sweep's band, with about a quarter of
 the band spare on each side, held within 0 to Nyquist; it fits again when the
 frequencies change. Both follow the settings. A long sweep is worked out in the

@@ -1,7 +1,9 @@
 ## Generate a reference: taper shape, phase, a preview that keeps every peak,
 ## and settings an older archive does not name.
 ##
-## Seen to fail: with `columnEnvelope` taking every Nth sample again, the
+## Seen to fail: with `signalBand` taking every Nth sample (a stride of 4 lands
+## on the zeros), "outside its column's band"; with `columnEnvelope` taking every Nth
+## sample again, the
 ## column extremes were not the samples' min and max; with `sweepSpec`
 ## forcing cosine squared, "tpLinear is not processSEG's sweep"; with the
 ## phase forced to zero, "a quarter-cycle phase matches a phase of zero";
@@ -90,6 +92,49 @@ proc main*() =
       "t=end shows " & $env.ys[^1] & " not the true sample " & $samples[^1]
     doAssert abs(float64(samples[0])) < 1e-3, "the taper does not start at 0"
     doAssert abs(float64(samples[^1])) < 1e-3, "the taper does not end at 0"
+
+  block a_long_sweep_is_a_band:
+    # 60 s at 0.5 ms (120 001 samples) in 800 columns: a band of each
+    # column's extremes. Every sample is inside its column's band, the true
+    # extremes are kept, and the tapers narrow the band to nothing.
+    let g = GeneratedReference(law: rlLinear, f1Hz: 8, f2Hz: 80, durationMs: 60_000,
+      dtMs: 0.5, taperStartMs: 500, taperEndMs: 500, amplitude: 1, taperShape: tpCos2)
+    let samples = generateSamples(g)
+    let band = signalBand(samples, 0.0, g.dtMs, 0.0, 60_000.0, 800)
+    doAssert not band.exact
+    doAssert band.xs.len > 2 and band.xs.len == band.lo.len and band.xs.len == band.hi.len
+    doAssert band.xs.len <= 802, $band.xs.len
+    for i in 0 ..< band.xs.len:
+      doAssert band.lo[i] <= band.hi[i], "column " & $i & " has min above max"
+      if i > 0: doAssert band.xs[i] > band.xs[i - 1]
+    # each sample is in the column whose start time is at or before it
+    var col = 0
+    var trueMin = Inf
+    var trueMax = -Inf
+    for i, v in samples:
+      let t = float64(i) * g.dtMs
+      while col + 1 < band.xs.len - 1 and band.xs[col + 1] <= t + 1e-9: inc col
+      doAssert float64(v) >= band.lo[col] - 1e-9 and float64(v) <= band.hi[col] + 1e-9,
+        "sample " & $i & " is outside its column's band"
+      trueMin = min(trueMin, float64(v))
+      trueMax = max(trueMax, float64(v))
+    doAssert abs(min(band.lo) - trueMin) < 1e-9 and abs(max(band.hi) - trueMax) < 1e-9,
+      "the band lost the true extremes"
+    doAssert band.hi[0] - band.lo[0] < 0.05, "the start taper does not narrow the band"
+    doAssert band.hi[^2] - band.lo[^2] < 0.05, "the end taper does not narrow the band"
+    var wide = 0.0
+    for i in band.xs.len div 3 ..< band.xs.len * 2 div 3:
+      wide = max(wide, band.hi[i] - band.lo[i])
+    doAssert wide > 1.8, "the middle of the sweep is not full width, got " & $wide
+    # zoomed to a few samples the band is the samples themselves
+    let zoom = signalBand(samples, 0.0, g.dtMs, 100.0, 110.0, 800)
+    doAssert zoom.exact, "a short range is not drawn through its samples"
+    doAssert zoom.xs.len in 21 .. 25, $zoom.xs.len
+    for i in 0 ..< zoom.xs.len:
+      doAssert zoom.lo[i] == zoom.hi[i]
+      doAssert zoom.lo[i] == float64(samples[int(round(zoom.xs[i] / g.dtMs))])
+    doAssert signalBand(samples, 0.0, 0.0, 0.0, 10.0, 800).xs.len == 0
+    doAssert signalBand(newSeq[float32](), 0.0, 1.0, 0.0, 10.0, 800).xs.len == 0
 
   block each_shape_is_processSEG:
     var previous: seq[float32] = @[]

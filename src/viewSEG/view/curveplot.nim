@@ -44,6 +44,16 @@ type
       ## a second value the readout adds in brackets, per x (a phase's signed
       ## value, when the picture is not the signed one); empty or NaN: none
 
+  DenseSignal* = object
+    ## A long signal the frontend draws itself, as a filled band of each pixel
+    ## column's extremes when the view holds more samples than columns, and as
+    ## a line through the true samples when it does not. The plot's `curves`
+    ## keep a coarse copy for the view's limits and the cursor. The samples
+    ## belong to the caller, who keeps them alive for the frame.
+    values*: ptr UncheckedArray[float32] ## nil: none
+    count*: int
+    x0*, dx*: float64 ## sample `i` is at `x0 + i·dx`
+
   CurvePlot* = object
     ## Curves over one shared axis.
     xLabel*, yLabel*: string ## the axes' names with their units: "Frequency (Hz)"
@@ -61,6 +71,8 @@ type
       ## both numbers, with `xCeil` above `xFloor`: the x axis is exactly
       ## that span, not the data's first and last x (a spectrum fitted to a
       ## sweep's band)
+    dense*: DenseSignal ## drawn in place of the first curve; none by default
+    legend*: bool = true ## the legend box; a plot of one series does not need it
     note*: string ## shown over an empty plot: why it is empty
     aside*: string ## appended to the readout (a delay taken off, in ms)
 

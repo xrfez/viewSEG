@@ -512,6 +512,53 @@ proc columnEnvelope*(values: openArray[float32]; x0, dx: float64; columns: int):
   if result.xs[^1] <= result.xs[^2]:
     result.xs[^2] = result.xs[^1] - dx * 0.25
 
+type SignalBand* = object
+  ## A signal prepared for the pixel columns of a plot (`signalBand`).
+  exact*: bool
+    ## the true samples (one value each: `lo` equals `hi`), because the range
+    ## holds about one sample per column or fewer; else the extremes per column
+  xs*: seq[float64] ## each column's first sample time (an exact band: each sample's)
+  lo*, hi*: seq[float64] ## each column's smallest and largest sample
+
+proc signalBand*(values: openArray[float32]; x0, dx, xLo, xHi: float64; columns: int):
+    SignalBand =
+  ## The samples of `values` (sample `i` at `x0 + i·dx`) from `xLo` to `xHi`
+  ## (one sample beyond each end, so a line enters the view) for a plot
+  ## `columns` pixels wide. At most `columns` samples: every one, `exact`.
+  ## More: the smallest and largest sample of each column (`minMaxInto`), so
+  ## no sample is skipped, and the last point repeats the final column at the
+  ## last sample's time. Empty when there is nothing in range.
+  if values.len == 0 or not (dx > 0 and dx < Inf) or xLo.isNaN or xHi.isNaN: return
+  let cols = max(columns, 1)
+  let first = clamp(int(floor((min(xLo, xHi) - x0) / dx)) - 1, 0, values.high)
+  let last = clamp(int(ceil((max(xLo, xHi) - x0) / dx)) + 1, 0, values.high)
+  if last < first: return
+  let m = last - first + 1
+  if m <= cols:
+    result.exact = true
+    result.xs = newSeq[float64](m)
+    result.lo = newSeq[float64](m)
+    result.hi = newSeq[float64](m)
+    for i in 0 ..< m:
+      result.xs[i] = x0 + float64(first + i) * dx
+      result.lo[i] = float64(values[first + i])
+      result.hi[i] = result.lo[i]
+    return
+  let step = (m + cols - 1) div cols
+  let bins = (m + step - 1) div step
+  var dst = newSeq[float32](bins * 2)
+  minMaxInto(values.toOpenArray(first, last), step, dst)
+  result.xs = newSeq[float64](bins + 1)
+  result.lo = newSeq[float64](bins + 1)
+  result.hi = newSeq[float64](bins + 1)
+  for b in 0 ..< bins:
+    result.xs[b] = x0 + float64(first + b * step) * dx
+    result.lo[b] = float64(min(dst[b * 2], dst[b * 2 + 1]))
+    result.hi[b] = float64(max(dst[b * 2], dst[b * 2 + 1]))
+  result.xs[bins] = x0 + float64(last) * dx
+  result.lo[bins] = result.lo[bins - 1]
+  result.hi[bins] = result.hi[bins - 1]
+
 func spectrumAxis*(f1, f2, nyquist: float64): tuple[lo, hi: float64] =
   ## The spectrum plot's frequency axis for a sweep from `f1` to `f2`: the
   ## band plus a quarter of it on each side, held within 0 .. Nyquist. A

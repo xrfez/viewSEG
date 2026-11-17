@@ -42,7 +42,7 @@ type
     stable: int        ## frames the settings have stayed put
     askedGen, shownGen: int
     signalPlot, spectrumPlot: CurvePlotUi
-    viewPlots: Table[int, tuple[time, spec: CurvePlotUi]]
+    viewPlots: Table[int, tuple[time, spec: CurvePlotUi, ys: seq[float32], rev: int]]
 
   StoreDialog* = object
     ask: bool
@@ -156,7 +156,9 @@ proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; marks: var Marks)
   if ui.previewSamples.len > 1 and ui.previewDt > 0:
     let env = columnEnvelope(ui.previewSamples, 0.0, ui.previewDt, cols)
     var time = CurvePlot(xLabel: "Time (ms)", xUnit: "ms", yLabel: "Amplitude",
-      xs: env.xs, curves: @[Curve(name: "sweep", colour: ink, ys: env.ys)])
+      xs: env.xs, curves: @[Curve(name: "sweep", colour: ink, ys: env.ys)], legend: false,
+      dense: DenseSignal(values: cast[ptr UncheckedArray[float32]](addr ui.previewSamples[0]),
+      count: ui.previewSamples.len, x0: 0.0, dx: ui.previewDt))
     discard curves.drawCurvePlot(ui.signalPlot, "generate.preview", time, t,
       ImVec2_c(x: -1, y: plotH), fit, marks)
   if ui.previewDb.len > 1 and ui.previewHz.len > 1:
@@ -175,7 +177,7 @@ proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; marks: var Marks)
     for i in 0 ..< n: db[i] = float32(ui.previewDb[i0 + i])
     let env = columnEnvelope(db, ui.previewHz[i0], dx, cols)
     var spec = CurvePlot(xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude (dB)",
-      yUnit: "dB", xs: env.xs, xFloor: axis.lo, xCeil: axis.hi,
+      yUnit: "dB", xs: env.xs, xFloor: axis.lo, xCeil: axis.hi, legend: false,
       curves: @[Curve(name: "amplitude", colour: ink, ys: env.ys)])
     discard curves.drawCurvePlot(ui.spectrumPlot, "generate.spectrum", spec, t,
       ImVec2_c(x: -1, y: plotH), spectrumFitKey(ui.shownGen, ui.previewF1,
@@ -237,19 +239,19 @@ proc drawGenerate(ui: var ReferencesUi; t: Theme; marks: var Marks): ReferencesO
     0, nil, nil)
   marks.mark("generate.name")
   igSeparatorText("Sweep")
-  discard number("Start Hz", ui.genF1, "generate.f1", marks)
-  discard number("End Hz", ui.genF2, "generate.f2", marks)
-  discard number("Length ms", ui.genLength, "generate.length", marks)
-  discard number("Sample interval ms", ui.genDt, "generate.dt", marks)
+  discard number("Start frequency (Hz)", ui.genF1, "generate.f1", marks)
+  discard number("End frequency (Hz)", ui.genF2, "generate.f2", marks)
+  discard number("Length (ms)", ui.genLength, "generate.length", marks)
+  discard number("Sample interval (ms)", ui.genDt, "generate.dt", marks)
   discard number("Amplitude", ui.genAmp, "generate.amplitude", marks)
-  if combo("Sweep", lawTitle(ui.genLaw), "generate.law", marks):
+  if combo("Type", lawTitle(ui.genLaw), "generate.law", marks):
     for law in ReferenceLaw:
       if igSelectable_Bool(lawTitle(law).cstring, law == ui.genLaw, 0, ImVec2_c(x: 0, y: 0)):
         ui.genLaw = law
       marks.mark("generate.law " & $law)
     igEndCombo()
   if ui.genLaw in {rlDbPerOctave, rlDbPerHz}:
-    discard number("Boost dB", ui.genBoost, "generate.boost", marks)
+    discard number("Boost (dB)", ui.genBoost, "generate.boost", marks)
   igSeparatorText("Taper")
   if combo("Shape", taperShapeTitle(ui.genShape), "generate.shape", marks,
       ImGui_ComboFlags_HeightLargest.cint):
@@ -268,10 +270,10 @@ proc drawGenerate(ui: var ReferencesUi; t: Theme; marks: var Marks): ReferencesO
       of tpGaussian: "Gaussian sigma, in ramp lengths, above 0"
       of tpPower: "Power exponent, above 0; 1 is a linear ramp"
       else: "")
-  discard number("Taper start ms", ui.genTaper0, "generate.taper0", marks)
-  discard number("Taper end ms", ui.genTaper1, "generate.taper1", marks)
+  discard number("Taper start (ms)", ui.genTaper0, "generate.taper0", marks)
+  discard number("Taper end (ms)", ui.genTaper1, "generate.taper1", marks)
   igSeparatorText("Phase")
-  discard number("Phase", ui.genPhase, "generate.phase", marks)
+  discard number("Start phase (deg)", ui.genPhase, "generate.phase", marks)
   tip("Degrees. 180 reverses the polarity")
   let g = ui.asked
   let key = settingsKey(g)
@@ -562,11 +564,6 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
     marks.mark("references.confirm.cancel")
     igEndPopup()
 
-proc timesOf(w: RefView): seq[float64] =
-  result = newSeq[float64](w.ys.len)
-  let dt = if w.dtMs > 0: w.dtMs else: 1.0
-  for i in 0 ..< w.ys.len: result[i] = w.fromMs + float64(i) * dt
-
 proc thinPair(xs, ys: seq[float64]): (seq[float64], seq[float64]) =
   if ys.len <= 4000: return (xs, ys)
   let step = max(1, ys.len div 4000)
@@ -598,15 +595,22 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
       else:
         var uis = ui.viewPlots.getOrDefault(w.id)
         let ink = t.roles[rlAccent]
-        let xs = timesOf(w)
-        let (tx, ty) = thinPair(xs, w.ys)
+        if uis.rev != w.revision + 1 or uis.ys.len != w.ys.len:
+          uis.rev = w.revision + 1
+          uis.ys = newSeq[float32](w.ys.len)
+          for i, v in w.ys: uis.ys[i] = float32(v)
+        let dt = if w.dtMs > 0: w.dtMs else: 1.0
+        let env = columnEnvelope(uis.ys, w.fromMs, dt, 1024)
         var time = CurvePlot(xLabel: "Time (ms)", xUnit: "ms", yLabel: "Amplitude",
-          xs: tx, curves: @[Curve(name: w.name, colour: ink, ys: ty)])
+          xs: env.xs, curves: @[Curve(name: w.name, colour: ink, ys: env.ys)], legend: false)
+        if uis.ys.len > 1:
+          time.dense = DenseSignal(values: cast[ptr UncheckedArray[float32]](addr uis.ys[0]),
+            count: uis.ys.len, x0: w.fromMs, dx: dt)
         discard curves.drawCurvePlot(uis.time, "reference.view.time", time, t,
           ImVec2_c(x: -1, y: igGetFontSize() * 12), $w.revision, marks)
         let (hx, hy) = thinPair(w.hz, w.amps)
         var spec = CurvePlot(xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude",
-          xs: hx, curves: @[Curve(name: "amplitude", colour: ink, ys: hy)])
+          xs: hx, curves: @[Curve(name: "amplitude", colour: ink, ys: hy)], legend: false)
         if hy.len == 0: spec.note = "No spectrum."
         discard curves.drawCurvePlot(uis.spec, "reference.view.spectrum", spec, t,
           ImVec2_c(x: -1, y: igGetFontSize() * 12), "s" & $w.revision, marks)

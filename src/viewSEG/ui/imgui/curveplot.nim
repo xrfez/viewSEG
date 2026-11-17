@@ -19,7 +19,7 @@
 
 import std/math
 import imguin/cimgui
-import ../../core/plotcursor
+import ../../core/[plotcursor, references]
 import ../../view/[curveplot, plotink, theme]
 import marks, style
 
@@ -32,6 +32,7 @@ type
     screenKey: string
     screen: seq[Curve] ## peak-kept for the range on screen; redone when it changes
     haveScreen: bool
+    band: SignalBand   ## a dense signal's columns for the range on screen
 
   CurveOutput* = object
     reading*: Reading
@@ -73,9 +74,16 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   ## data of another kind: a new scale, another axis), else where the user
   ## left it; `id` names it (`marks`: `id & ".data"`, the plotting area).
   result.reading = Reading(index: -1, x: NaN)
-  const flags = ImPlot_Flags_NoTitle.cint or ImPlot_Flags_NoMenus.cint or
-    ImPlot_Flags_NoMouseText.cint
-  if not ImPlot_BeginPlot(("##" & id).cstring, size, flags): return
+  let flags = ImPlot_Flags_NoTitle.cint or ImPlot_Flags_NoMenus.cint or
+    ImPlot_Flags_NoMouseText.cint or (if p.legend: 0 else: ImPlot_Flags_NoLegend.cint)
+  # The last x tick label is centred on the plot's right edge: leave it room.
+  let pad = ImPlot_GetStyle().PlotPadding
+  ImPlot_PushStyleVar_Vec2(ImPlot_StyleVar_PlotPadding.cint,
+    ImVec2_c(x: max(pad.x, igGetFontSize() * 2), y: pad.y))
+  let began = ImPlot_BeginPlot(("##" & id).cstring, size, flags)
+  if not began:
+    ImPlot_PopStyleVar(1)
+    return
   let turned = p.along == saY
   let (xAxis, yAxis) = if turned: (ImAxis_Y1.cint, ImAxis_X1.cint)
                        else: (ImAxis_X1.cint, ImAxis_Y1.cint)
@@ -105,13 +113,34 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   let px = max(1, int(if turned: area.y else: area.x))
   if not ui.haveScreen or ui.screenKey != fitKey or ui.screenPx != px or
       ui.screenLo != lim.X.Min or ui.screenHi != lim.X.Max:
-    ui.screen = p.forScreen(lim.X.Min, lim.X.Max, px)
+    ui.screen = if p.dense.count > 0: @[] else: p.forScreen(lim.X.Min, lim.X.Max, px)
+    if p.dense.count > 0:
+      ui.band = signalBand(toOpenArray(p.dense.values, 0, p.dense.count - 1), p.dense.x0,
+        p.dense.dx, lim.X.Min, lim.X.Max, px)
     ui.screenLo = lim.X.Min
     ui.screenHi = lim.X.Max
     ui.screenPx = px
     ui.screenKey = fitKey
     ui.haveScreen = true
   let width = max(1'f32, round(igGetIO_Nil().DisplayFramebufferScale.x))
+  if p.dense.count > 0 and ui.band.xs.len > 0 and p.curves.len > 0:
+    let colour = p.curves[0].colour
+    let b = addr ui.band
+    let xs = cast[ptr cdouble](unsafeAddr b.xs[0])
+    let lo = cast[ptr cdouble](unsafeAddr b.lo[0])
+    let hi = cast[ptr cdouble](unsafeAddr b.hi[0])
+    let n = cint(b.xs.len)
+    # which way it is drawn, for the tests
+    marks.markRect(id & (if b.exact: ".samples" else: ".band"), pos,
+      ImVec2_c(x: pos.x + area.x, y: pos.y + area.y))
+    if not b.exact:
+      ImPlot_SetNextFillStyle(vec4(colour), 0.55)
+      ImPlot_PlotShaded_doublePtrdoublePtrdoublePtr("##band".cstring, xs, lo, hi, n, 0, 0,
+        cint(sizeof(float64)))
+      ImPlot_SetNextLineStyle(vec4(colour), 1 * width)
+      ImPlot_PlotLine_doublePtrdoublePtr("##hi".cstring, xs, hi, n, 0, 0, cint(sizeof(float64)))
+    ImPlot_SetNextLineStyle(vec4(colour), (if b.exact: 1.5 else: 1) * width)
+    ImPlot_PlotLine_doublePtrdoublePtr("##lo".cstring, xs, lo, n, 0, 0, cint(sizeof(float64)))
   for c in ui.screen:
     let cxs = p.xsOf(c)
     var from0 = 0
@@ -219,3 +248,4 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
     ImDrawList_AddText_Vec2(dl, ImVec2_c(x: pos.x + max(0, (area.x - ts.x) / 2),
       y: pos.y + max(0, (area.y - ts.y) / 2)), u32(t.roles[rlTextDim]), p.note.cstring, nil)
   ImPlot_EndPlot()
+  ImPlot_PopStyleVar(1)
