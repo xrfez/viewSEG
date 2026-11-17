@@ -30,7 +30,7 @@ const
     PlotEntry(view: avPhase, icon: IconPhase,
       sentence: "Amplitude and phase against frequency."),
     PlotEntry(view: avCorrelation, icon: IconCorrelation,
-      sentence: "Each selected trace against a reference, by lag and by frequency."),
+      sentence: "Each selected trace against the chosen reference, by lag and by frequency."),
     PlotEntry(view: avVibrator, icon: IconVibrator,
       sentence: "A unit's reference, ground force, mass and baseplate through the sweep."),
     PlotEntry(view: avFk, icon: IconFk,

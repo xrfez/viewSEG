@@ -12,7 +12,8 @@
 ##   holds it a sample on in that plot, with the time written on the axis
 ##   and the reading "Held · ...";
 ## - the plot's right-click menu > New plot > Cross-correlation opens a
-##   window of the trace under the pointer against the record's pilot;
+##   window of the trace under the pointer; with no reference chosen it says
+##   so and the old reference buttons are gone;
 ## - closed (`close plot`), a window goes;
 ## - Window > New plot > Vibrator signature on four selected traces shows
 ##   its roles' table and four plots; Limits... opens the check, and
@@ -216,8 +217,11 @@ proc main*() =
       if result:
         let w = f.core.plots[0]
         doAssert w.id == 1, "the number of the window closed is not taken again"
-        doAssert w.traces == @[2] and w.result.problem == "" and "pilot" in w.reference,
-          $w.traces & " " & w.result.problem & " " & w.reference)
+        doAssert w.traces == @[2] and w.result.problem == NoReferenceChosen and
+          w.result.plots.len == 0, $w.traces & " " & w.result.problem
+        doAssert f.markOf("new plot 1.reference selected").size.x == 0
+        doAssert f.markOf("new plot 1.reference pilot").size.x == 0
+        doAssert f.markOf("new plot 1.references").size.x > 0, "no References button")
     # a vibrator signature of four selected traces: its roles in a table
     # (Ref, GF, M, B, in their order), its four plots; Limits... opens the
     # check, and checking it shows the table

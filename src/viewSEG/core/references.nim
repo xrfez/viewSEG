@@ -194,6 +194,20 @@ func intervalRefusal*(refMs, fileMs: float64): string =
   ## interval is not the file's. Nothing is resampled.
   "the reference is " & msWords(refMs) & " ms, this file is " & msWords(fileMs) & " ms"
 
+const NoReferenceChosen* = "No reference is chosen. Choose one in References."
+  ## A cross-correlation with no reference selected in References.
+
+const NoneChoiceLabel* = "None"
+  ## The References control that selects no reference.
+
+const NoneChoiceTip* =
+  "Vibrator plots then use the file's own pilot. A correlation needs a chosen reference."
+  ## What that control says: vibrator plots use the file's pilot; a correlation does not.
+
+func referenceGone*(name: string): string =
+  ## A cross-correlation whose chosen reference is not in the archive.
+  "The reference \"" & name & "\" is no longer in the archive."
+
 func lengthRule*(refLen, traceLen: int): string =
   ## How a plot uses a reference whose length is not the trace's: the same
   ## rule as a file's own pilot (the longer side sets the length, the

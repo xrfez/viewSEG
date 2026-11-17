@@ -133,25 +133,6 @@ proc baseOf(st: AppState; path: string): int =
   for s in st.sessions:
     if s.path == want: return s.base
 
-proc twoFiles(st: var AppState; a, b: string): tuple[baseA, baseB: int] =
-  ## `a` shown, `b` open beside it. The frozen plot of `a`'s traces keeps
-  ## `a` open when `b` is shown (unfrozen, it would follow to `b`).
-  st.showIt(a)
-  st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
-    plotTraces: @[st.sessions[0].base + 3, st.sessions[0].base + 4])
-  doAssert st.plots.len == 1, "the correlation window was not opened"
-  st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: st.plots[0].params,
-    plotFrozen: true)
-  st.apply Command(kind: ckOpen, paths: @[b])
-  doAssert st.settle(st.sessions.len == 2), "the second file did not open"
-  result = (st.baseOf(a), st.baseOf(b))
-  doAssert result.baseB >= 0 and result.baseB != result.baseA, "the second file has no ids"
-  var p = st.plots[0].params
-  p.reference = result.baseB + 2
-  st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p, plotFrozen: true)
-  doAssert st.plots[0].traces == @[result.baseA + 3, result.baseA + 4]
-  doAssert st.plots[0].params.reference == result.baseB + 2
-
 proc joined(st: var AppState; path, spsS, spsR, spsX: string) =
   st.showIt(path)
   var files: seq[JoinFile]
@@ -465,42 +446,6 @@ proc main*() =
       doAssert st.settle(st.sessions.len == 1 and st.baseOf(b) >= 0 and
         st.plots[0].file == "other.sgy"), "the window did not follow to the new file"
       doAssert st.baseOf(a) < 0, "the file followed away from was kept open"
-      st.shutdown()
-
-  block referenceInAnotherFileIsShiftedAlone:
-    # Reopen the reference's file: its id moves, the other file's traces do not.
-    withFixtures fx:
-      let a = fx.surveySegy()
-      let b = fx.dir / "other.sgy"
-      copyFile(a, b)
-      var st = initAppState()
-      let (baseA, baseB) = st.twoFiles(a, b)
-      st.reopen(b, OpenChoice(verifyAll: true))
-      doAssert st.settle(st.baseOf(b) != baseB and st.sessions.len == 2 and st.plots.len == 1),
-        "the file was not opened again"
-      let newB = st.baseOf(b)
-      doAssert st.plots[0].traces == @[baseA + 3, baseA + 4],
-        "traces of the other file were shifted: " & $st.plots[0].traces
-      doAssert st.plots[0].params.reference == newB + 2,
-        "the reference was not shifted: " & $st.plots[0].params.reference
-      st.shutdown()
-
-  block tracesShiftLeavesAnotherFilesReference:
-    # Reopen the traces' file: they move, a reference in the other file does not.
-    withFixtures fx:
-      let a = fx.surveySegy()
-      let b = fx.dir / "other.sgy"
-      copyFile(a, b)
-      var st = initAppState()
-      let (baseA, baseB) = st.twoFiles(a, b)
-      st.reopen(a, OpenChoice(verifyAll: true))
-      doAssert st.settle(st.baseOf(a) != baseA and st.sessions.len == 2 and st.plots.len == 1),
-        "the file was not opened again"
-      let newA = st.baseOf(a)
-      doAssert st.plots[0].traces == @[newA + 3, newA + 4],
-        "the traces were not shifted: " & $st.plots[0].traces
-      doAssert st.plots[0].params.reference == baseB + 2,
-        "a reference in another file was shifted: " & $st.plots[0].params.reference
       st.shutdown()
 
   block anotherFilesSelectionStays:

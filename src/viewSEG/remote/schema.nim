@@ -223,7 +223,12 @@ proc decode*[T](n: JsonNode; x: var T; path: string; problems: var seq[string]) 
             found = true
             decode(v, f, path & "." & name, problems)
         if not found:
-          problems.add path & ": no field " & escapeJson(key.substr(0, 79))
+          when T is AnalysisParams:
+            # A window saved before the correlation's own reference went: the
+            # field is ignored, the chosen reference is the only one.
+            if key == "reference": found = true
+          if not found:
+            problems.add path & ": no field " & escapeJson(key.substr(0, 79))
   else:
     {.error: "no JSON form for " & $T.}
 

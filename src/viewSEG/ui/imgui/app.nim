@@ -1376,6 +1376,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   for n in plotWins.notes: ui.say(n, mlWarning)
   for c in plotWins.commands.mitems:
     ui.core.apply move c
+  if plotWins.openReferences:
+    ui.refs.open()
+    ui.core.apply Command(kind: ckListReferences)
   if spectra.bringForward: ui.windows.bringForward(awSpectrum)
   for c in spectra.commands.mitems:
     ui.core.apply move c

@@ -103,13 +103,6 @@ proc main*() =
           break
       f.close()
       doAssert seismic >= 0
-      st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
-        plotTraces: @[s.base + seismic])
-      doAssert st.plots.len >= 1, st.log[st.log.len - 1].text
-      let filePlot = st.plots.high
-      doAssert st.settle(st.answered(filePlot)), "no correlation of the file's pilot"
-      doAssert st.plots[filePlot].result.problem == "", st.plots[filePlot].result.problem
-      let fileCurve = st.plots[filePlot].result.plots[0].curves[0].ys
       st.apply Command(kind: ckSelectReference, refId: e.id)
       st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
         plotTraces: @[s.base + seismic])
@@ -120,9 +113,11 @@ proc main*() =
       doAssert st.plots[archPlot].result.problem == "", st.plots[archPlot].result.problem
       doAssert "Reference: the pilot (archive)" in st.plots[archPlot].result.note,
         st.plots[archPlot].result.note
-      doAssert "(archive)" in st.plots[archPlot].reference, st.plots[archPlot].reference
-      doAssert st.plots[archPlot].result.plots[0].curves[0].ys == fileCurve,
-        "archive correlation is not the file's pilot"
+      doAssert st.plots[archPlot].reference == "the pilot", st.plots[archPlot].reference
+      let got = st.plots[archPlot].result.plots[0].curves[0].ys
+      let want = correlationOf([("trace", rawOf(vib, seismic))], raw, "the pilot",
+        dt / 1000, AnalysisParams()).plots[0].curves[0].ys
+      doAssert got == want, "archive correlation is not the stored pilot"
 
     block the_choice_is_followed_unless_frozen:
       # another choice asks an unfrozen window again, not a frozen one; the
@@ -149,9 +144,9 @@ proc main*() =
       st.apply Command(kind: ckSelectReference, refId: e.id)
       doAssert st.settle(st.plots[free].asks > freeAsks and st.answered(free)),
         "an unfrozen correlation did not ask again for the archive reference"
-      doAssert "(archive)" in st.plots[free].reference, st.plots[free].reference
+      doAssert st.plots[free].reference == "the pilot", st.plots[free].reference
       doAssert st.plots[held].asks == heldAsks, "a frozen correlation asked again"
-      doAssert "(archive)" notin st.plots[held].reference, st.plots[held].reference
+      doAssert st.plots[held].reference != "the pilot", st.plots[held].reference
       let archiveAsks = st.plots[free].asks
       st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[id], on: true,
         processing: Processing(band: pbBandPass, f1: 10, f2: 14, f3: 50, f4: 70),
@@ -198,15 +193,16 @@ proc main*() =
       var said = false
       for entry in st.log:
         if "\"a window\"" in entry.text and "no longer in the archive" in entry.text and
-            "file's own pilot" in entry.text:
+            "No reference is chosen. Choose one in References." in entry.text:
           said = true
       doAssert said, "the name was not said once"
       doAssert "a window" in st.plots[usingIt].goneNote, st.plots[usingIt].goneNote
       st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
         plotTraces: @[s.base + pilot])
       let next = st.plots.high
-      doAssert st.settle(st.answered(next) and st.plots[next].result.problem.len == 0),
-        "the next plot did not work: " & st.plots[next].result.problem
+      doAssert st.settle(st.plots[next].result.problem == NoReferenceChosen),
+        "the next correlation fell back: " & st.plots[next].result.problem
+      doAssert st.plots[next].result.plots.len == 0, "the next correlation drew a curve"
 
     block project_switches_the_archive:
       st.apply Command(kind: ckSelectReference, refId: "")

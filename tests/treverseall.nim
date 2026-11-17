@@ -5,21 +5,18 @@
 ##   phase by 180 degrees, turns its correlation peak into a trough of the
 ##   same size, and leaves the amplitude spectrum, the envelope, the
 ##   spectrogram and the neighbours alone;
-## - a reversed reference flips every trace's coefficient, in this file or
-##   another;
-## - the window names it ("Trace 2: reversed", "N traces are reversed",
-##   "reference, Trace N: reversed");
+## - the window names it ("Trace 2: reversed", "N traces are reversed");
 ## - an open window that is not frozen asks again when a shown trace's
-##   reversal, or the reference's, is set, cleared or undone; a frozen one
-##   does not;
+##   reversal is set, cleared or undone; a frozen one does not;
+## - a correlation uses the chosen reference, which stays as stored;
 ## - the map's amplitude flags are unchanged.
 ##
 ## Reverse-all (`FileEdits.allReversed`) is the same flip: alone, every graph
 ## moves 180 degrees and says "All traces are reversed" once; together with a
 ## per-trace reversal it cancels, in every graph, and that trace is not called
 ## reversed. An unfrozen window asks again when reverse-all is set, cleared,
-## undone or redone; a frozen one does not. A reference follows its own file's
-## reverse-all.
+## undone or redone; a frozen one does not. A correlation's chosen reference
+## stays as stored, so reverse-all of the traces flips the coefficient.
 ##
 ## Seen to fail: with the sign flip left out of `filtered` and the spectrum
 ## reader's raw curve, "the phase spectrum did not move 180 degrees". Leaving
@@ -29,11 +26,9 @@
 
 import std/[math, os, strutils]
 import viewSEG/core/[analysis, processing, state]
-import utils/waiting
+import utils/[chosenref, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
-let vib = root / "samples" / "vib" / "vib_uncorrelated.sgd"
-let vibOther = root / "samples" / "vib" / "vib_correlated.sgd"
 
 proc angDiff(a, b: float64): float64 =
   var d = a - b
@@ -111,37 +106,6 @@ proc reverseAll(st: var AppState; on: bool) =
 proc coeff(r: AnalysisResult; signal: int): seq[float64] =
   r.plots[0].curves[2 * signal].ys
 
-proc baseOf(st: AppState; path: string): int =
-  for s in st.sessions:
-    if s.path == path: return s.base
-  doAssert false, "no open file for " & path
-
-proc correlateOther(reversed: bool): array[3, seq[float64]] =
-  ## Vib traces 2-4 against trace 3 of the other file, that trace reversed
-  ## or not. The note is checked here; the coefficients are returned.
-  var st = initAppState()
-  st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
-  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-  let refTrace = st.sessions[0].base + 2
-  if reversed: st.reverse(@[refTrace], true)
-  st.apply Command(kind: ckOpen, paths: @[vib])
-  doAssert st.settle(st.sessions.len == 2)
-  st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
-  doAssert st.settle(st.panel(MainPanel).laidOut and st.sessions.len == 2)
-  let base = baseOf(st, vib)
-  let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
-  var p = st.plots[w].params
-  p.reference = refTrace
-  st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p, plotFrozen: false)
-  doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
-  doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
-  if reversed:
-    doAssert "reference, Trace 3: reversed" in st.plots[w].result.note, st.plots[w].result.note
-  else:
-    doAssert "reference, " notin st.plots[w].result.note, st.plots[w].result.note
-  for i in 0 .. 2: result[i] = st.plots[w].result.coeff(i)
-  discard st.shutdown()
-
 proc saysAll(text: string): bool =
   AllReversedWords in text
 
@@ -152,6 +116,7 @@ proc listsTraces(text: string): bool =
 
 proc main*() =
   let land = root / "samples" / "land" / "shots.sgy"
+  let vib = root / "samples" / "vib" / "vib_uncorrelated.sgd"
 
   block words:
     doAssert reverseShownWords(11, [true]) == "Trace 12: reversed"
@@ -190,6 +155,8 @@ proc main*() =
     let phase = st.openPlot(avPhase, @[base + 1])
     let phaseBefore = st.plots[phase].result.plots[1].curves[0].ys
     let phaseAmp = st.plots[phase].result.plots[0].curves[0].ys
+    discard st.chooseStored(root / ".scratch" / ("rev-land-" & $getCurrentProcessId()),
+      base + 4, "land ref")
     let corr = st.openPlot(avCorrelation, @[base, base + 1])
     let corrBefore = st.plots[corr].result.coeff(1)
     let neighCorr = st.plots[corr].result.coeff(0)
@@ -258,27 +225,6 @@ proc main*() =
       doAssert st.recordQc.hits[m].traces == beforeFlags[m], "the amplitude flags changed (" & $m & ")"
     st.shutdown()
 
-  block reversedReference:
-    var st = initAppState()
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
-    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-    let base = st.sessions[0].base
-    let w = st.openPlot(avCorrelation, @[base, base + 1, base + 2])
-    var p = st.plots[w].params
-    p.reference = base + 4
-    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p, plotFrozen: false)
-    doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
-    doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
-    var before: array[3, seq[float64]]
-    for i in 0 .. 2: before[i] = st.plots[w].result.coeff(i)
-    st.reverse(@[base + 4], true)
-    doAssert st.settle(st.plots[w].asks >= 2 and not st.plots[w].waiting)
-    for i in 0 .. 2:
-      doAssert negated(before[i], st.plots[w].result.coeff(i)),
-        "a reversed reference did not flip trace " & $(i + 1)
-    doAssert "reference, Trace 5: reversed" in st.plots[w].result.note, st.plots[w].result.note
-    st.shutdown()
-
   block vibrator:
     var st = initAppState()
     st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
@@ -301,67 +247,6 @@ proc main*() =
     doAssert moved.n > 8 and moved.ok > moved.n * 9 div 10,
       "the vibrator phase did not move 180 degrees: " & $moved.ok & " of " & $moved.n
     doAssert st.plots[w].reverseLine.find("reversed") >= 0, st.plots[w].reverseLine
-    st.shutdown()
-
-  block referenceInOtherFile:
-    let plain = correlateOther(false)
-    let flipped = correlateOther(true)
-    for i in 0 .. 2:
-      doAssert negated(plain[i], flipped[i]),
-        "a reversed reference in another file did not flip trace " & $(i + 1)
-    # cleared in its own file: the window asks again, and the line goes
-    var st = initAppState()
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
-    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-    let refTrace = st.sessions[0].base + 2
-    st.reverse(@[refTrace], true)
-    st.apply Command(kind: ckOpen, paths: @[vib])
-    doAssert st.settle(st.sessions.len == 2)
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
-    doAssert st.settle(st.panel(MainPanel).laidOut)
-    let base = baseOf(st, vib)
-    let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
-    var p = st.plots[w].params
-    p.reference = refTrace
-    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p, plotFrozen: false)
-    doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
-    doAssert "reference, Trace 3: reversed" in st.plots[w].result.note, st.plots[w].result.note
-    let asks0 = st.plots[w].asks
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
-    st.reverse(@[refTrace], false)
-    doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
-      "the correlation did not ask again when the reference's reversal was cleared"
-    doAssert "reference, Trace 3: reversed" notin st.plots[w].result.note, st.plots[w].result.note
-    st.shutdown()
-
-  block referenceAsksAgain:
-    ## The pilot is the reference and not one of the shown traces.
-    var st = initAppState()
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
-    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-    let base = st.sessions[0].base
-    let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
-    doAssert "trace 49" in st.plots[w].reference, st.plots[w].reference
-    let pilot = base + 48
-    let asks0 = st.plots[w].asks
-    st.reverse(@[pilot], true)
-    doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
-      "the correlation did not ask again when the reference was reversed"
-    doAssert "reference, Trace 49: reversed" in st.plots[w].result.note, st.plots[w].result.note
-    let asks1 = st.plots[w].asks
-    st.apply Command(kind: ckUndoEdit, panel: MainPanel)
-    doAssert st.settle(st.plots[w].asks > asks1 and not st.plots[w].waiting),
-      "the correlation did not ask again when the reference's reversal was undone"
-    doAssert "reference, Trace 49: reversed" notin st.plots[w].result.note, st.plots[w].result.note
-    st.reverse(@[pilot], true)
-    doAssert st.settle(not st.plots[w].waiting)
-    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: st.plots[w].params,
-      plotFrozen: true)
-    doAssert st.settle(not st.plots[w].waiting)
-    let asks2 = st.plots[w].asks
-    st.apply Command(kind: ckClearEdits, panel: MainPanel)
-    doAssert st.settle(not st.plots[w].waiting)
-    doAssert st.plots[w].asks == asks2, "a frozen correlation asked again when the reversal was cleared"
     st.shutdown()
 
   block askAgain:
@@ -430,6 +315,8 @@ proc main*() =
     let instBefore = st.plots[env].result.plots[1].curves[0].ys
     let phase = st.openPlot(avPhase, @[base + 1])
     let phaseBefore = st.plots[phase].result.plots[1].curves[0].ys
+    discard st.chooseStored(root / ".scratch" / ("rev-all-" & $getCurrentProcessId()),
+      base + 4, "all ref")
     let corr = st.openPlot(avCorrelation, @[base, base + 1])
     let corrBefore = st.plots[corr].result.coeff(1)
     let neighCorr = st.plots[corr].result.coeff(0)
@@ -463,11 +350,11 @@ proc main*() =
     doAssert ph.n > 8 and ph.ok > ph.n * 9 div 10,
       "reverse-all did not move the phase plot: " & $ph.ok & " of " & $ph.n
     doAssert saysAll(st.plots[phase].reverseLine), st.plots[phase].reverseLine
-    # same file: signal and reference both flip, so the coefficient holds
-    doAssert closeSeq(corrBefore, st.plots[corr].result.coeff(1), 1e-3),
-      "reverse-all of signal and reference changed the correlation"
-    doAssert closeSeq(neighCorr, st.plots[corr].result.coeff(0), 1e-3),
-      "reverse-all changed the neighbour's correlation"
+    # the chosen reference stays as stored, so reverse-all of the traces flips
+    doAssert negated(corrBefore, st.plots[corr].result.coeff(1)),
+      "reverse-all did not flip the correlation"
+    doAssert negated(neighCorr, st.plots[corr].result.coeff(0)),
+      "reverse-all did not flip the neighbour's correlation"
     doAssert saysAll(st.plots[corr].reverseLine), st.plots[corr].reverseLine
     doAssert "reference, Trace" notin st.plots[corr].result.note, st.plots[corr].result.note
     # undo asks again and puts the phase back
@@ -503,10 +390,9 @@ proc main*() =
     let instBefore = st.plots[env].result.plots[1].curves[0].ys
     let phase = st.openPlot(avPhase, @[base + 1])
     let phaseBefore = st.plots[phase].result.plots[1].curves[0].ys
+    discard st.chooseStored(root / ".scratch" / ("rev-cancel-" & $getCurrentProcessId()),
+      base + 4, "cancel ref")
     let corr = st.openPlot(avCorrelation, @[base, base + 1])
-    var p = st.plots[corr].params
-    p.reference = base + 4
-    st.apply Command(kind: ckPlotDisplay, plot: st.plots[corr].id, plotParams: p, plotFrozen: false)
     doAssert st.settle(st.plots[corr].result.gen == st.plots[corr].asked and not st.plots[corr].waiting)
     let corrBefore = st.plots[corr].result.coeff(1)
     let neighBefore = st.plots[corr].result.coeff(0)
@@ -530,15 +416,13 @@ proc main*() =
     doAssert closeSeq(phaseBefore, st.plots[phase].result.plots[1].curves[0].ys, 1e-3),
       "reverse-all did not cancel the reversal in the phase plot"
     doAssert "reversed" notin st.plots[phase].reverseLine, st.plots[phase].reverseLine
-    # trace 2 cancels; the reference and the neighbour stay reversed, so trace 2's
-    # coefficient flips and the neighbour's (both reversed) holds
-    doAssert negated(corrBefore, st.plots[corr].result.coeff(1)),
-      "a cancelled trace against a reversed reference did not flip"
-    doAssert closeSeq(neighBefore, st.plots[corr].result.coeff(0), 1e-3),
-      "the neighbour's correlation changed under reverse-all"
+    # trace 2 cancels (as recorded); the neighbour stays reversed; the reference
+    # stays as stored, so trace 2's coefficient holds and the neighbour's flips
+    doAssert closeSeq(corrBefore, st.plots[corr].result.coeff(1), 1e-3),
+      "a cancelled trace against the stored reference flipped"
+    doAssert negated(neighBefore, st.plots[corr].result.coeff(0)),
+      "the neighbour's correlation did not flip under reverse-all"
     doAssert "Trace 2: reversed" notin st.plots[corr].reverseLine, st.plots[corr].reverseLine
-    doAssert "reference, Trace 5: reversed" notin st.plots[corr].result.note, st.plots[
-        corr].result.note
     st.shutdown()
 
   block reverseAllFrozen:
@@ -578,48 +462,6 @@ proc main*() =
     doAssert st.settle(not st.spectra[spec].waiting and not st.plots[plot].waiting)
     doAssert st.spectra[spec].asks == asksS and st.plots[plot].asks == asksP,
       "a frozen window asked again when reverse-all was redone"
-    st.shutdown()
-
-  block reverseAllOtherFile:
-    ## A reference in another open file follows that file's reverse-all.
-    var st = initAppState()
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
-    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-    let refTrace = st.sessions[0].base + 2
-    st.apply Command(kind: ckOpen, paths: @[vib])
-    doAssert st.settle(st.sessions.len == 2)
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
-    doAssert st.settle(st.panel(MainPanel).laidOut and st.sessions.len == 2)
-    let base = baseOf(st, vib)
-    let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
-    var p = st.plots[w].params
-    p.reference = refTrace
-    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p, plotFrozen: false)
-    doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
-    doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
-    var before: array[3, seq[float64]]
-    for i in 0 .. 2: before[i] = st.plots[w].result.coeff(i)
-    let asks0 = st.plots[w].asks
-    # the other file, in another panel, so this window keeps the traces it shows
-    let second = st.addPanel()
-    st.apply Command(kind: ckShowFile, panel: second, path: vibOther)
-    doAssert st.settle(st.panel(second).laidOut and st.sessions.len == 2)
-    st.apply Command(kind: ckReverseAll, panel: second, reverse: true)
-    doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
-      "the correlation did not ask again when the reference file's reverse-all was set"
-    for i in 0 .. 2:
-      doAssert negated(before[i], st.plots[w].result.coeff(i)),
-        "reverse-all of the reference file did not flip trace " & $(i + 1)
-    doAssert "reference, " & AllReversedWords in st.plots[w].result.note, st.plots[w].result.note
-    doAssert "reference, Trace" notin st.plots[w].result.note, st.plots[w].result.note
-    # the reference's own reversal cancels that file's reverse-all
-    st.apply Command(kind: ckEdit, panel: second, edit: teReversed, edited: @[refTrace], on: true)
-    doAssert st.settle(not st.plots[w].waiting)
-    for i in 0 .. 2:
-      doAssert closeSeq(before[i], st.plots[w].result.coeff(i), 1e-3),
-        "the reference's own reversal did not cancel reverse-all"
-    doAssert "reference, Trace" notin st.plots[w].result.note, st.plots[w].result.note
-    doAssert "reference, " & AllReversedWords notin st.plots[w].result.note, st.plots[w].result.note
     st.shutdown()
 
   block liveReverseAll:

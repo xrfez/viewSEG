@@ -342,10 +342,11 @@ selection when that trace is selected. Then:
   an envelope, a correlation, a vibrator signature, an f-k, the map's amplitude flags)
   see the reversed data. There is no box that leaves it out. A window that names a
   trace's own filter names the reversal the same way ("Trace 12: reversed"; of several,
-  "N traces are reversed"; a correlation's reference, "reference, Trace 1: reversed").
+  "N traces are reversed").
   Ticked while the trace under the pointer is reversed; choose it again to put it
-  back. An open window that is not frozen asks again when a trace it shows, or its
-  reference, is reversed, put back or undone.
+  back. An open window that is not frozen asks again when a trace it shows is reversed,
+  put back or undone. A cross-correlation's reference is the one chosen in References
+  and is not reversed with the file.
 - **Kill** (`K`): the trace is drawn blank (the plot's background, in every display mode)
   and left out of whatever the gain computes over the record (Float, Normalized for the
   whole record, the automatic level), so a noisy trace stops setting the brightness. Over
@@ -925,7 +926,8 @@ reversals stay, and so do the selection, the FFT and plot windows of its traces,
 survey join, when the file has as many traces as before (the join is matched again:
 Messages say it was kept once that match succeeds, or that it was dropped and why if it
 fails or matches none of its traces; with another count the Messages say what was
-dropped). The file is opened first and replaces the one shown only when it has traces: if
+dropped). A frozen plot window keeps the picture it showed. The file is opened first
+and replaces the one shown only when it has traces: if
 the options read it as nothing (a SEG-Y file named SEG-D), the file stays as it was, one
 message says why, and the options are not kept. The options hold for that file until
 viewSEG quits. **Defaults** puts every option back. A file opened with options says so:

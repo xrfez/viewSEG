@@ -21,7 +21,7 @@
 
 import std/[math, os, strutils]
 import viewSEG/core/[analysis, processing, state]
-import utils/waiting
+import utils/[chosenref, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
 
@@ -74,15 +74,9 @@ proc spectrumOf(st: var AppState; trace: int): int =
   result = st.spectra.high
   doAssert st.settle(st.spectra[result].spectrum.raw.len > 0 and not st.spectra[result].waiting)
 
-proc baseOf(st: AppState; path: string): int =
-  for s in st.sessions:
-    if s.path == path: return s.base
-  doAssert false, "no open session for " & path
-
 proc main*() =
   let land = root / "samples" / "land" / "shots.sgy"
   let vib = root / "samples" / "vib" / "vib_uncorrelated.sgd"
-  let vibOther = root / "samples" / "vib" / "vib_correlated.sgd"
 
   block landGraphs:
     var st = initAppState()
@@ -104,6 +98,8 @@ proc main*() =
     let env = st.openPlot(avEnvelope, @[base + 1])
     let phase = st.openPlot(avPhase, @[base + 1])
     let phasePower = st.plots[phase].result.plots[0].ampOutside(20)
+    discard st.chooseStored(root / ".scratch" / ("own-land-" & $getCurrentProcessId()),
+      base + 3, "own ref")
     let corr = st.openPlot(avCorrelation, @[base, base + 1])
     var fkTraces: seq[int]
     for i in 0 .. 7: fkTraces.add base + i
@@ -248,67 +244,6 @@ proc main*() =
     doAssert loud > 10 and inBand > loud * 8 div 10, "the sweep's frequency left the band: " &
       $inBand & " of " & $loud
     doAssert st.plots[w].ownLine.find("own filter") >= 0, st.plots[w].ownLine
-    st.shutdown()
-
-  block referenceOwnFollows:
-    ## Seen to fail: with the reference's own filter left out of the follow
-    ## test (`followFilters`), "the correlation did not ask again when the
-    ## reference's own filter changed" (the pilot is not one of its traces).
-    var st = initAppState()
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
-    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-    let base = st.sessions[0].base
-    let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
-    doAssert "trace 49" in st.plots[w].reference, st.plots[w].reference
-    let pilot = base + 48
-    let asks0 = st.plots[w].asks
-    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[pilot], on: true,
-      processing: band(40, 60).spec, filterPlace: fpAfter)
-    doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
-      "the correlation did not ask again when the reference's own filter changed"
-    doAssert "own filter" in st.plots[w].result.note, st.plots[w].result.note
-    # frozen: the same change asks nothing
-    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: st.plots[w].params,
-      plotFrozen: true)
-    doAssert st.settle(not st.plots[w].waiting)
-    let asks1 = st.plots[w].asks
-    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[pilot], on: true,
-      processing: band(50, 70).spec, filterPlace: fpAfter)
-    doAssert st.settle(not st.plots[w].waiting)
-    doAssert st.plots[w].asks == asks1, "a frozen correlation asked again"
-    st.shutdown()
-
-  block referenceInOtherFile:
-    ## Seen to fail: with the reference's file index also a shown trace's index,
-    ## the note's "reference, " line was skipped although the reference is in
-    ## another file. Also: the reference's own filter, cleared in its own file,
-    ## asks again. Both vibrator files are sampled at 4 ms, so the correlation runs.
-    var st = initAppState()
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
-    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-    let otherBase = st.sessions[0].base
-    let refTrace = otherBase + 2
-    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[refTrace], on: true,
-      processing: band(40, 60).spec, filterPlace: fpAfter)
-    st.apply Command(kind: ckOpen, paths: @[vib])
-    doAssert st.settle(st.sessions.len == 2), "the second file did not open"
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
-    doAssert st.settle(st.panel(MainPanel).laidOut and st.sessions.len == 2)
-    let base = baseOf(st, vib)
-    let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
-    var p = st.plots[w].params
-    p.reference = refTrace # index 2 of the other file: also a shown index here
-    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p, plotFrozen: false)
-    doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
-    doAssert "reference, " in st.plots[w].result.note, st.plots[w].result.note
-    doAssert "own filter" in st.plots[w].result.note, st.plots[w].result.note
-    # the reference's own filter cleared in its own file: asks again
-    let asks0 = st.plots[w].asks
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
-    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[refTrace], on: false)
-    doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
-      "the correlation did not ask again when the reference's own filter was cleared"
-    doAssert "reference, " notin st.plots[w].result.note, st.plots[w].result.note
     st.shutdown()
 
   block insteadCount:

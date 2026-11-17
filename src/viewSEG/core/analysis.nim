@@ -70,9 +70,6 @@ type
       ## this of the peak (elsewhere it is noise)
     phasePicture*: PhasePicture = ppUnwrapped
       ## phase spectrum: which picture is drawn (unwrapped by default)
-    reference*: int = -1
-      ## cross-correlation: the reference trace, survey-wide id; -1: none
-      ## chosen (the first trace of the window then)
     maxLagMs*: float64 = 250.0 ## cross-correlation: the lags shown, either side of 0
     fkFromMs*: float64 = NaN ## f-k: the box's first time, ms; NaN: the traces' start
     fkToMs*: float64 = NaN ## f-k: its last time, ms; NaN: the traces' end
@@ -563,14 +560,13 @@ type
     traces*: seq[int] ## survey-wide ids, in the order drawn
     first*: int ## the first one's index in its file
     reference*: string ## a correlation's reference, in words
-    archiveSeen*: string ## the archive reference it was asked with; "" the file's
+    archiveSeen*: string ## the chosen reference it was asked with; "" for none
     archiveRev*: int = -1 ## the archive's revision then
     processing*: Processing ## the plot's filters when it asked last
     filters*: string ## them in words; "" for none
     killed*: seq[int] ## its traces killed when it asked last (indices in the file)
     editsSeen*: int ## its file's edits' revision then
     ownKey*: string ## the own filters of its traces when it asked last
-    refKey*: string ## a correlation's reference's own filter when it asked last
     own*: seq[FilterEntry] ## those filters, kept while the window is frozen
     reversed*: seq[int]
       ## file indices effectively reversed when it asked last, ascending, kept

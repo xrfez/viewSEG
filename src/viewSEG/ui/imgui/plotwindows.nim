@@ -5,7 +5,7 @@
 ##
 ## Each shows a line of its view's settings (a spectrogram's frame length,
 ## overlap, floor and colour map; a phase spectrum's dB threshold and
-## phase picture; a correlation's reference and lags) and Freeze, a pin at the
+## phase picture; a correlation's chosen reference and lags) and Freeze, a pin at the
 ## right of that line's first row, what it is
 ## of and through which filters, then its plots: an image in a density
 ## colour map with its scale (a spectrogram), or curve plots (`curveplot`)
@@ -47,7 +47,8 @@ type
 
   PlotWindowsOutput* = object
     commands*: seq[Command]
-    notes*: seq[string] ## a value the boxes refused, in the unit the user typed
+    notes*: seq[string]   ## a value the boxes refused, in the unit the user typed
+    openReferences*: bool ## the References button was pressed
 
 proc tip(text: string) =
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
@@ -394,26 +395,11 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       marks.mark(name & ".phase picture")
       tip("Phase: " & $p.phasePicture & ". " & PhaseHelp)
     of avCorrelation:
-      label("Reference: " & (if w.reference.len > 0: w.reference else: "the first trace"))
-      let sel = st.selection
-      var first = -1
-      for tr in sel.selected:
-        if first < 0 or tr < first: first = tr
-      igBeginDisabled(first < 0)
-      if igSmallButton("The selected trace"):
-        (p.reference, changed) = (first, true)
-      igEndDisabled()
-      marks.mark(name & ".reference selected")
-      tip("Correlate against the selected trace (the first, when several are): a pilot, in " &
-        "this file or another one open (a sweep's pilot, say)")
-      line.follow(buttonWidth("The first auxiliary trace"))
-      igBeginDisabled(p.reference < 0)
-      if igSmallButton("The first auxiliary trace"):
-        (p.reference, changed) = (-1, true)
-      igEndDisabled()
-      marks.mark(name & ".reference pilot")
-      tip("Correlate against the record's first auxiliary trace (its pilot when it is a " &
-        "sweep, a time break on a dynamite record), else the first trace of the window")
+      label("Reference: " & (if w.reference.len > 0: w.reference else: "none"))
+      line.follow(buttonWidth("References"))
+      if igSmallButton("References##bar"): res.openReferences = true
+      marks.mark(name & ".references")
+      tip("Open References, where the reference is chosen")
       line.follow(textBoxWidth("lags ±", box) + igGetStyle().ItemSpacing.x +
         igCalcTextSize("ms", nil, false, -1).x)
       label("lags ±")
@@ -631,9 +617,12 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   if w.waiting: words.add " · working it out..."
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextWrapped("%s", words.cstring)
-  if w.goneNote.len > 0: igTextWrapped("%s", w.goneNote.cstring)
-  elif r.problem.len > 0: igTextWrapped("%s", ("Nothing to show: " & r.problem).cstring)
-  elif r.note.len > 0:
+  let refProblem = w.view == avCorrelation and not w.waiting and r.problem.len > 0 and
+    r.plots.len == 0 and r.image.isEmpty
+  if w.goneNote.len > 0 and not refProblem: igTextWrapped("%s", w.goneNote.cstring)
+  elif r.problem.len > 0 and not refProblem:
+    igTextWrapped("%s", ("Nothing to show: " & r.problem).cstring)
+  elif r.note.len > 0 and not refProblem:
     igTextWrapped("%s", shownNote(r.note, w.params.reactionMassKg, w.params.baseplateMassKg,
       st.settings.units).cstring)
   igPopStyleColor(1)
@@ -644,7 +633,12 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   let lineH = igGetTextLineHeightWithSpacing()
   let avail = igGetContentRegionAvail()
   var text = ""
-  if not r.image.isEmpty:
+  if refProblem:
+    igTextWrapped("%s", r.problem.cstring)
+    if igSmallButton("References##area"): res.openReferences = true
+    marks.mark(name & ".references")
+    tip("Open References, where the reference is chosen")
+  elif not r.image.isEmpty:
     text = ui.drawImage(w, name, t, ImVec2_c(x: avail.x, y: max(80'f32, avail.y - lineH)),
       marks, focused, res)
   else:

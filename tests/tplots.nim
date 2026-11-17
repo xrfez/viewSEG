@@ -2,19 +2,15 @@
 ## of a pilot sweep (an auxiliary trace) and four seismic traces, each the
 ## sweep 10 ms later than the one before:
 ##
-## - a cross-correlation of the seismic traces takes the record's pilot as
-##   its reference when none is chosen, and each trace peaks at its delay
-##   (10, 20, 30, 40 ms); with a seismic trace chosen as the reference, the
-##   delays are from it, and the note says the reference is one of the
-##   signals (its autocorrelation);
+## - a cross-correlation of the seismic traces uses the chosen reference (the
+##   record's pilot, stored), and each trace peaks at its delay (10, 20, 30,
+##   40 ms); with none chosen it says so and draws nothing;
 ## - a spectrogram of the pilot rises with the sweep; the envelope and the
 ##   phase spectrum of a trace come back with their curves;
 ## - not frozen, a window follows the plot it was opened from: new filters
 ##   ask again (and the note says what they are), a kill of one of its
 ##   traces asks again and leaves it out; frozen, it asks nothing;
-## - a reference in another file (a pilot sweep's own) is taken, and that
-##   file stays open while the window uses it, when the record is shown
-##   again (showing a file closes the one shown before otherwise);
+
 ## - its cursor is held where a command puts it; closed, it goes; a window
 ##   with no trace to show is refused;
 ## - a trace with no sample interval of its own is left out and counted, and
@@ -46,7 +42,7 @@ import std/[math, os, strutils]
 import parseSEG
 import viewSEG/core/[edits, log, processing, state]
 import viewSEG/view/analysisview
-import utils/[fixtures, waiting]
+import utils/[chosenref, fixtures, waiting]
 
 const
   DtMs = 2.0
@@ -166,6 +162,7 @@ proc main*() =
     st.apply Command(kind: ckFilter, panel: MainPanel, filter: TraceFilter(seismic: true,
       auxiliary: true))
     doAssert st.settle(st.panel(MainPanel).laidOut)
+    discard st.chooseStored(fx.dir / "refs", s.base, "the pilot")
 
     block correlation:
       st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
@@ -174,53 +171,25 @@ proc main*() =
       doAssert st.settle(st.answered(0)), "no answer"
       let r = st.plots[0].result
       doAssert r.problem == "", r.problem
-      doAssert "pilot" in st.plots[0].reference, st.plots[0].reference
+      doAssert st.plots[0].reference == "the pilot", st.plots[0].reference
       for c in 0 .. 3:
         let lag = r.peakLagMs(c)
         doAssert abs(lag - Delay * float64(c + 1)) < 1e-9, "trace " & $(c + 2) & " peaks at " &
           $lag & " ms, want " & $(Delay * float64(c + 1))
-      # a seismic trace as the reference: the delays are from it
-      var p = st.plots[0].params
-      p.reference = s.base + 1
-      st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p)
-      doAssert st.settle(st.answered(0) and st.plots[0].result.gen == st.plots[0].asked)
-      doAssert abs(st.plots[0].result.peakLagMs(1) - Delay) < 1e-9,
-        "the delays are from trace 2: " & $st.plots[0].result.peakLagMs(1) & " ms"
-      # trace 2 is one of the signals: the window says it is the reference itself
-      doAssert "trace 2 is the reference itself" in st.plots[0].result.note,
-        st.plots[0].result.note
 
-    block aPilotOfAnotherFile:
-      # the reference in another file (a pilot sweep's own file): chosen while
-      # that file is shown, kept open when the record is shown again. Frozen,
-      # so opening the pilot does not move the window off the record.
-      let pilot = fx.pilotSegy()
+    block followsSelection:
+      # frozen, opening another file does not move the window; unfrozen, it
+      # takes the selection
       var held = st.plots[0].params
       st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: held,
         plotFrozen: true)
-      st.apply Command(kind: ckOpen, paths: @[pilot])
-      doAssert st.settle(st.sessions.len == 2 and st.panel(MainPanel).laidOut and
-        st.sessions[st.shownFile(st.findPanel(MainPanel))].path == pilot)
-      let other = st.sessions[st.findSession(st.sessions[1].id)]
-      var p = st.plots[0].params
-      p.reference = other.base
-      st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p, plotFrozen: true)
-      doAssert st.settle(st.answered(0) and st.plots[0].result.gen == st.plots[0].asked)
-      doAssert st.plots[0].result.problem == "", st.plots[0].result.problem
-      doAssert "pilot.sgy" in st.plots[0].reference, st.plots[0].reference
-      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
-      doAssert st.settle(st.panel(MainPanel).laidOut and
-        st.sessions[st.shownFile(st.findPanel(MainPanel))].path == path)
-      doAssert st.findTrace(other.base) >= 0, "the pilot's file was closed under its window"
-      s = st.sessions[st.findSession(s.id)]
-      # back to the record's own pilot
-      p.reference = -1
-      st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p, plotFrozen: true)
-      doAssert st.settle(st.answered(0) and st.plots[0].result.gen == st.plots[0].asked)
-      # unfrozen, it follows the selection: put the four seismic traces back
+      st.apply Command(kind: ckSelect, traces: @[s.base + 2], mode: smReplace)
+      doAssert st.plots[0].traces == @[s.base + 1, s.base + 2, s.base + 3, s.base + 4],
+        "a frozen window followed the selection"
+      st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: held,
+        plotFrozen: false)
       st.apply Command(kind: ckSelect, traces: @[s.base + 1, s.base + 2, s.base + 3, s.base + 4],
         mode: smReplace)
-      st.apply Command(kind: ckPlotDisplay, plot: st.plots[0].id, plotParams: p, plotFrozen: false)
       doAssert st.plots[0].traces == @[s.base + 1, s.base + 2, s.base + 3, s.base + 4],
         "unfrozen, it did not take the selection: " & $st.plots[0].traces
 
@@ -279,6 +248,7 @@ proc main*() =
       g.apply Command(kind: ckShowFile, panel: MainPanel, path: gap)
       doAssert g.settle(g.sessions.len == 1 and g.panel(MainPanel).laidOut)
       let gs = g.sessions[0]
+      discard g.chooseStored(fx.dir / "refs-gap", gs.base, "gap ref")
       g.apply Command(kind: ckOpenPlot, plotView: avCorrelation, plotTraces: @[gs.base + 3,
         gs.base + 1, gs.base + 2, gs.base + 4])
       doAssert g.plots.len == 1, g.log.lastText
@@ -330,10 +300,9 @@ proc main*() =
       let spec = st.plots[1].result # a spectrogram of the pilot alone
       doAssert spec.passedBy == 1 and "the auxiliary trace is not filtered" in spec.note and
         "through" notin spec.note, $spec.passedBy & ": " & spec.note
-      let corr = st.plots[0].result # the traces filtered, the pilot not
-      doAssert corr.passedBy == 1 and "the reference" in corr.note and
-        "is not filtered: Filters > Filter the Aux traces too is off" in corr.note and
-        "through" in corr.note, $corr.passedBy & ": " & corr.note
+      let corr = st.plots[0].result # the seismic traces filtered; the archive reference stays raw
+      doAssert corr.passedBy == 0 and "through" in corr.note and
+        "is not filtered" notin corr.note, $corr.passedBy & ": " & corr.note
       # the same filters with Aux on: nothing passed by
       var on = band
       on.aux = true
@@ -389,6 +358,8 @@ proc main*() =
       doAssert st.plots.len == 3 and "no trace is selected" in st.log.lastText, st.log.lastText
 
     block vibrator:
+      # the file's pilot, not the archive reference chosen for the correlation
+      st.apply Command(kind: ckSelectReference, refId: "")
       # opened on the pilot alone: it and the record's next three, as Ref,
       # GF, M, B; trace 4 (B) is killed above: left out, said
       st.apply Command(kind: ckOpenPlot, plotView: avVibrator, plotTraces: @[s.base])
@@ -533,6 +504,7 @@ proc main*() =
       var st = initAppState()
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.longTraceSegy(1000, 12))
       doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      discard st.chooseStored(fx.dir / "refs-long", st.sessions[0].base, "long ref")
       var all: seq[int] = @[]
       for i in 0 ..< 12: all.add st.sessions[0].base + i
       st.apply Command(kind: ckOpenPlot, plotView: avCorrelation, plotTraces: all)
@@ -543,22 +515,19 @@ proc main*() =
       doAssert r.plots[0].curves.len == 16, $r.plots[0].curves.len # 8 and their envelopes
       discard st.shutdown()
 
-  block firstAuxiliary:
-    # the default reference is a pilot only when the trace says sweep (code 6);
-    # a time break (code 4) is "the first auxiliary trace"
+  block noChosenReference:
+    # neither a sweep nor a time break is taken when no reference is chosen
     withFixtures fx:
-      for (name, code, words) in [("sweep.sgy", 6'i16, "the pilot, trace 1"),
-          ("break.sgy", 4'i16, "the first auxiliary trace, trace 1")]:
+      for (name, code) in [("sweep.sgy", 6'i16), ("break.sgy", 4'i16)]:
         var st = initAppState()
         st.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.auxRecord(name, code))
         doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-        st.apply Command(kind: ckFilter, panel: MainPanel, filter: TraceFilter(seismic: true,
-          auxiliary: true))
-        doAssert st.settle(st.panel(MainPanel).laidOut)
         let base = st.sessions[0].base
         st.apply Command(kind: ckOpenPlot, plotView: avCorrelation, plotTraces: @[base + 1, base + 2])
-        doAssert st.settle(st.answered(0)), "no answer"
-        doAssert st.plots[0].reference == words, name & ": " & st.plots[0].reference
+        doAssert st.plots.len == 1, st.log.lastText
+        doAssert st.plots[0].result.problem == NoReferenceChosen, name & ": " &
+          st.plots[0].result.problem
+        doAssert st.plots[0].result.plots.len == 0, name & " drew a curve"
         discard st.shutdown()
 
   block feetAndMetres:

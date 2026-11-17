@@ -547,8 +547,8 @@ shown as it was left. It is not a setting. On the Seismic picture it runs proces
 `polarityOp` first on every trace the window reads, before its gain, so the picture, the
 gain's statistics, the status bar's amplitude and Headers shown as displayed see the
 reversed data. The same reversal applies in every graph of the file: a spectrum and its
-phase, a spectrogram, an envelope and its instantaneous phase, a correlation (a reference
-follows its own file's reverse-all), a vibrator
+phase, a spectrogram, an envelope and its instantaneous phase, a correlation (the
+traces correlated; the chosen reference stays as stored), a vibrator
 signature, an f-k, and the live spectrum panel. A window that is not frozen asks again
 when reverse-all is set, cleared, undone or redone; a frozen one does not. With it on,
 the line under a graph says "All traces are reversed" once, and does not also list every
@@ -562,12 +562,12 @@ traces' samples are negated (processSEG's `reversePolarity` on their live sample
 `polarityOp` does) where the window's reader prepares them, before the pipeline and the
 gain. The same sign flip, before that trace's own filter and the plot's filters, is part
 of every graph of the trace: a spectrum and its phase, a spectrogram, an envelope and
-its instantaneous phase, a correlation (also when the reversed trace is the reference,
-in this file or another), a vibrator signature, an f-k, and the map's amplitude flags.
+its instantaneous phase, a correlation, a vibrator signature, an f-k, and the map's amplitude flags.
 No box turns it off. A window that names a trace's own filter names the reversal the
-same way ("Trace 12: reversed", "N traces are reversed", "reference, Trace 1: reversed").
-An open window that is not frozen asks again when a trace it shows, or its reference,
-is reversed, put back or undone; a frozen one does not. Headers shown as recorded, the
+same way ("Trace 12: reversed", "N traces are reversed").
+An open window that is not frozen asks again when a trace it shows
+is reversed, put back or undone; a frozen one does not. A cross-correlation's reference
+is the one chosen in References and stays as stored. Headers shown as recorded, the
 hex view and the status bar's raw amplitude stay the file's samples. A trace reversed
 both ways (this edit and reverse all) is as recorded everywhere, on the plot and in every
 graph, and a graph does not call it reversed. A trace the file marks
@@ -644,8 +644,7 @@ filter runs instead of the plot's does not go through them), then each with its 
 filter, run after them (named under the title: "Trace 12: own filter, band-pass 10-60
 Hz", or "N traces have their own filter"). A reversed trace is multiplied by -1 first,
 before its own filter and the plot's filters, and named the same way ("Trace 12:
-reversed", or "N traces are reversed"; a correlation's reference, "reference, Trace 1:
-reversed"). Reverse-all is that same sign flip, said once ("All traces are reversed");
+reversed", or "N traces are reversed"). Reverse-all is that same sign flip, said once ("All traces are reversed");
 a trace reversed on its own as well is as recorded, and is not called reversed. No box
 turns it off. An f-k's **Raw** leaves the plot's filters
 out and still applies each trace's own filter and a reversal. Killed traces and those marked dead are left out (said under the title). A trace sampled at another interval than the first
@@ -674,8 +673,7 @@ settings works out from the traces it is frozen on.
 
 Auxiliary traces go through the filters only when "Filter the Aux traces too" is ticked: when
 it is not, the window says how many the filters passed by (under the title, "the auxiliary trace is
-not filtered: Filters > Filter the Aux traces too is off"; in a cross-correlation the reference
-too, when it is one), as the spectrum windows do, and `state`'s `passedBy` counts them.
+not filtered: Filters > Filter the Aux traces too is off"), as the spectrum windows do, and `state`'s `passedBy` counts them. A cross-correlation's reference is the chosen archive reference and is not filtered.
 
 One reader thread works out every window's numbers in turn, and a long computation (an f-k,
 a spectrogram, a correlation) is given up between its steps, within about 100 ms, when its
@@ -708,19 +706,20 @@ right of that line's first row. A change works it out again.
   arriving at time t steps 360°·t/(4T), at most a quarter turn for any t within the
   trace (length T), so the unwrap cannot alias. Unpadded, a step passes half a turn once
   t is past T/2, and a sweep's phase (which falls all the way) turned and rose there.
-- **Cross-correlation:** the reference is the one selected in Operations > References
-  when one is (it says "Reference: <name> (archive)"); a different sample interval is
-  said and not drawn; a shorter reference is zero-padded and a longer one is not cut,
-  as a file's own pilot is), otherwise **the record's first auxiliary trace** at first
-  (the window calls it "the pilot" when its SEG-Y trace identification code says sweep, 6;
-  a dynamite record's is its time break, so it is "the first auxiliary trace"; SEG-D
-  channel types are not read, so a SEG-D one is that too), else the first trace of the window; **The selected trace** makes the
-  first selected trace the reference, in this file or another one open (the pilot of
-  `samples/vib/vib_uncorrelated.sgd`, say), sampled at the same interval. A trace that is the reference delayed by τ peaks at
-  +τ (the words under the title give each trace's peak). A trace that is the reference
-  itself is said to be: its curve is its autocorrelation (peak at 0, 0 dB, 0°). The
-  amplitude ratio and the phase difference are given where the reference's amplitude is
-  within the same N dB (20) of its peak. The lags shown: ±250 ms at first.
+- **Cross-correlation:** the reference is the one chosen in Operations > References,
+  and only that. The bar says "Reference: <name>" and **References** opens that window.
+  Nothing else chooses a reference from here. With none chosen, the plot area says
+  "No reference is chosen. Choose one in References." With the chosen one gone,
+  or a sample interval that is not the traces', the plot area says which in one sentence
+  and does not draw; the same button is there. A shorter reference is zero-padded and a
+  longer one is not cut, as a file's own pilot is. Its samples are used as stored: the
+  plot's filters and a trace's own filter do not apply to them. Changing the choice
+  redraws every open correlation that is not frozen; a frozen one keeps what it showed,
+  including when the file is opened again.
+  A trace delayed by τ from the reference peaks at +τ (the words under the title give
+  each trace's peak). The amplitude ratio and the phase difference are given where the
+  reference's amplitude is within the same N dB (20) of its peak. The lags shown: ±250 ms
+  at first.
 - **f-k:** the box's times (**From**, **to**, ms; empty: the traces' ends), the floor and
   the colour map as a spectrogram's, and **Raw** (off at first: through the Seismic
   window's filters, so the effect of a filter shows; on: the plot's filters left out.

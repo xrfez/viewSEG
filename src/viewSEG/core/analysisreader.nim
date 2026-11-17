@@ -11,8 +11,8 @@
 ##   the file marks dead and those that cannot be decoded (the answer counts
 ##   them, `leftOut`), at the first one's sample interval (a trace sampled at
 ##   another interval, or with none, is left out and counted, `atOtherInterval`,
-##   as the spectrum reader does); a reference trace
-##   for a correlation, from the same file or another one.
+##   as the spectrum reader does); a correlation's reference is the chosen
+##   archive reference, read raw (no plot filter, no own filter).
 ## - **Filters.** An effectively reversed trace is multiplied by -1 first (own
 ##   reversal or reverse-all, not both; a sign flip, before anything else; no
 ##   box turns it off). The plot's filters first
@@ -37,34 +37,27 @@ import analysis, filesystem, fkanalysis, inbox, jobs, join, log, processing, ref
 type
   AnalysisAsk* = object
     ## What an analysis window asks the reader for.
-    id*: int                  ## the window's
+    id*: int                ## the window's
     gen*: uint64
     view*: AnalysisView
     params*: AnalysisParams
-    file*: ptr SeismicFile    ## held by the caller
+    file*: ptr SeismicFile  ## held by the caller
     path*: string
-    size*: int64              ## its size when it was opened; -1 when not known
-    traces*: seq[int]         ## indices in the file, in the order drawn
-    unit*: SurveyUnit         ## the unit of the file's distances (coordinates)
-    offsetUnit*: SurveyUnit   ## the unit of the file's trace offsets
-    names*: seq[string]       ## per trace, what the curves call it: "trace 12"
-    killed*: seq[int]         ## those of `traces` killed, ascending: left out
-    reversed*: seq[int]       ## those of `traces` effectively reversed, ascending: samples times -1 first
-    allReversed*: bool        ## reverse-all was on for this file
-    own*: seq[FilterEntry]    ## traces that carry a filter of their own, ascending
-    processing*: Processing   ## the plot's filters and its Aux toggle
-    refFile*: ptr SeismicFile ## a correlation's reference's file (held); nil: none
-    refPath*: string
-    refSize*: int64 = -1
-    refTrace*: int = -1       ## its index in `refFile`
+    size*: int64            ## its size when it was opened; -1 when not known
+    traces*: seq[int]       ## indices in the file, in the order drawn
+    unit*: SurveyUnit       ## the unit of the file's distances (coordinates)
+    offsetUnit*: SurveyUnit ## the unit of the file's trace offsets
+    names*: seq[string]     ## per trace, what the curves call it: "trace 12"
+    killed*: seq[int]       ## those of `traces` killed, ascending: left out
+    reversed*: seq[int]     ## those of `traces` effectively reversed, ascending: samples times -1 first
+    allReversed*: bool      ## reverse-all was on for this file
+    own*: seq[FilterEntry]  ## traces that carry a filter of their own, ascending
+    processing*: Processing ## the plot's filters and its Aux toggle
     refName*: string
-    refOwn*: seq[FilterEntry] ## the reference's own filter, when it has one
-    refReversed*: bool        ## the reference is effectively reversed
-    refAllReversed*: bool     ## reverse-all was on in the reference's file
-    archivePath*: string      ## a reference from the archive, instead of a trace
+    archivePath*: string    ## a reference from the archive, instead of a trace
     archiveName*: string
     archiveIntervalUs*: float64
-    archiveGone*: string      ## selected, but not usable: said, and nothing is drawn
+    archiveGone*: string    ## selected, but not usable: said, and nothing is drawn
 
   ReaderObj = object
     lock: Lock
@@ -273,8 +266,6 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
   var answer = AnalysisResult(gen: a.gen, id: a.id, view: a.view)
   let f = a.file
   var why = unreadable(a.path, a.size)
-  if why.len == 0 and a.refFile != nil and a.refPath != a.path:
-    why = unreadable(a.refPath, a.refSize)
   if why.len > 0:
     answer.problem = why
   else:
@@ -354,8 +345,8 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             answer = phaseOf(kept[0], keptNames[0], dtMs, a.params)
             (answer.leftOut, answer.atOtherInterval) = n
           of avCorrelation:
-            # the reference: an archive reference, or its own trace, read and
-            # filtered as the others
+            # the chosen archive reference only, read raw; none is said and
+            # nothing is drawn
             if a.archiveGone.len > 0 or a.archivePath.len > 0:
               if a.archiveGone.len > 0:
                 answer.problem = a.archiveGone
@@ -396,53 +387,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                       answer.note = "Reference: " & refName &
                         (if answer.note.len > 0: ". " & answer.note else: "")
             else:
-              let rf = if a.refFile != nil: a.refFile else: f
-              let rt = if a.refTrace >= 0: a.refTrace else: keptList[0]
-              let rpath = if a.refFile != nil: a.refPath else: a.path
-              var refRows: seq[seq[float32]] = @[]
-              var refFailed: seq[bool] = @[]
-              if rt notin 0 ..< rf[].len:
-                answer.problem = "the reference trace is not in its file"
-              else:
-                if not p.readRows(rf, rpath, @[rt], a.id, refRows, refFailed): return false
-                let rk = rf[].traceKeys(rt)
-                let rus = if rk.intervalUs > 0 and rk.intervalUs < Inf: rk.intervalUs
-                          else: rf[].sampleIntervalUs(rt)
-                let rdt = rus / 1000
-                if refFailed[0] or refRows[0].len == 0:
-                  answer.problem = "the reference trace could not be read"
-                elif not (rus > 0 and rus < Inf):
-                  answer.problem = "the reference trace is at another interval: it has " &
-                    "no sample interval"
-                elif not sameDt(rdt, dtMs):
-                  answer.problem = "the reference is sampled at " & $rdt & " ms, the traces at " &
-                    $dtMs & " ms"
-                else:
-                  let refName = if a.refName.len > 0: a.refName else: keptNames[0]
-                  var refPassed = 0
-                  let refOwn = if a.refOwn.len > 0: a.refOwn
-                               elif a.refPath == a.path: a.own
-                               else: @[]
-                  let refFlip = if a.refTrace >= 0: a.refReversed
-                                else: a.reversed.binarySearch(rt) >= 0
-                  let refRev = if refFlip: @[rt] else: newSeq[int]()
-                  let refThrough = filtered(refRows, rf, @[rt], a.processing, refOwn, refRev,
-                    dtMs, refPassed)
-                  if refPassed > 0 and refThrough.startsWith("through "):
-                    inc passed
-                    let words = "the reference (" & refName & ") is not filtered: " & AuxFilterOff
-                    through = if through.len > 0: through & "; " & words else: words
-                  var signals: seq[(string, seq[float32])] = @[]
-                  for i in 0 ..< min(kept.len, MaxAnalysisCurves):
-                    signals.add (keptNames[i], kept[i])
-                  let n = (answer.leftOut, answer.atOtherInterval)
-                  answer = correlationOf(signals, refRows[0], refName, dtMs, a.params, stop)
-                  (answer.leftOut, answer.atOtherInterval) = n
-                  # a signal that is the reference itself: its autocorrelation
-                  let own = if rf == f: keptList.find(rt) else: -1
-                  if own in 0 ..< signals.len and answer.problem.len == 0:
-                    answer.note.add "; " & keptNames[own] & " is the reference itself: its " &
-                      "autocorrelation (a peak at 0 ms, 0 dB, 0°)"
+              answer.problem = NoReferenceChosen
           of avFk:
             # the trace spacing, from the keys of the traces read
             var offsets, xs, ys: seq[float64] = @[]
@@ -528,31 +473,6 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
           answer.notDrawn = notDrawn
           if through.len > 0 and answer.problem.len == 0:
             answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & through
-          # named here unless it is one of this file's shown traces
-          let refHere = a.refPath.len == 0 or a.refPath == a.path
-          if a.view == avCorrelation and a.refTrace >= 0 and
-              (not refHere or a.refTrace notin keptList) and answer.problem.len == 0:
-            let named = if a.refOwn.len > 0: a.refOwn
-                        elif a.refPath == a.path or a.refPath.len == 0: a.own
-                        else: @[]
-            let refLine = ownShownWords(a.refTrace, ownPerTrace(named, @[a.refTrace]))
-            if refLine.len > 0:
-              answer.note = (if answer.note.len > 0: answer.note & "; " else: "") &
-                "reference, " & refLine
-            if a.refReversed:
-              # same file, and the shown traces already say reverse-all once:
-              # do not say it again for the reference
-              var shownOn = newSeq[bool](a.traces.len)
-              for i, t in a.traces:
-                if a.reversed.binarySearch(t) >= 0: shownOn[i] = true
-              let shownLine = if a.traces.len == 0: ""
-                              else: reverseShownWords(a.traces[0], shownOn, a.allReversed)
-              let covered = refHere and shownLine == AllReversedWords
-              if not covered:
-                let revLine = if a.refAllReversed: AllReversedWords
-                              else: reverseShownWords(a.refTrace, [true])
-                answer.note = (if answer.note.len > 0: answer.note & "; " else: "") &
-                  "reference, " & revLine
       except OSError as e:
         answer.problem = "it cannot be read now: " & e.msg
       except ValueError as e:
@@ -566,7 +486,6 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
 
 proc release(p: ptr ReaderObj; a: AnalysisAsk) =
   discard p.holds.release(a.path)
-  if a.refFile != nil: discard p.holds.release(a.refPath)
 
 proc run(p: ptr ReaderObj) {.thread.} =
   markWorkerThread()
@@ -620,7 +539,6 @@ proc `=destroy`*(x: AnalysisReader) =
     if not x.p.started:
       for a in x.p.queue:
         discard x.p.holds.release(a.path)
-        if a.refFile != nil: discard x.p.holds.release(a.refPath)
       deinitCond(x.p.changed)
       deinitLock(x.p.lock)
       `=destroy`(x.p[])

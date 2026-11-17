@@ -308,7 +308,7 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; home: string; writabl
       if igRadioButton_Bool("##use", used):
         res.commands.add Command(kind: ckSelectReference, refId: (if used: "" else: e.id))
       marks.mark(markPrefix & ".use." & $n)
-      tip(if used: "The plots use this reference. Click again for the file's own pilot."
+      tip(if used: "The plots use this reference. Click again for none."
           else: "Use this reference in the plots")
     discard igTableNextColumn()
     igBeginDisabled(e.missing or e.blocked or home.len == 0)
@@ -370,10 +370,10 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
     if not st.referencesLoaded: igTextDisabled("Reading...")
     for p in st.references.problems:
       igTextWrapped("%s", p.cstring)
-    if igRadioButton_Bool("From the file", st.chosenReference.len == 0):
+    if igRadioButton_Bool(NoneChoiceLabel, st.chosenReference.len == 0):
       result.commands.add Command(kind: ckSelectReference, refId: "")
-    marks.mark("references.fromfile")
-    tip("The plots use the file's own pilot, as before")
+    marks.mark("references.none")
+    tip(NoneChoiceTip)
     let writable = not (st.inProject and st.project.readOnly)
     const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_Borders.cint or
       ImGui_TableFlags_ScrollY.cint or ImGui_TableFlags_Resizable.cint or

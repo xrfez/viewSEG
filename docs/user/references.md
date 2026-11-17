@@ -1,8 +1,8 @@
 # References
 
-A reference is one trace of samples: a vibrator pilot or a sweep, with a name. Plots that
-need a reference (a cross-correlation, the vibrator signature's reference) use it when the
-file has none, or when you want another than the file's.
+A reference is one trace of samples: a vibrator pilot or a sweep, with a name. A
+cross-correlation always uses the one chosen here. A vibrator signature uses it instead
+of the file's pilot when one is chosen.
 
 **Operations > References** holds two items.
 
@@ -46,12 +46,16 @@ window its amplitude spectrum. The Seismic window, the open file, and every othe
 stay as they were. The window shows that reference until you close it. If you rename the
 reference, the title follows. If you delete it, the window says so.
 
-**Use** selects the one reference the plots use. **From the file** is the default: the
-plots use the file's own pilot, as they did before. One reference at most is selected.
+**Use** selects the one reference the plots use. **None** is the default: no
+reference is chosen. Vibrator plots then use the file's own pilot. A
+correlation needs a chosen reference. The Correlation window says
+"No reference is chosen. Choose one in References."
+One reference at most is selected.
 The choice is kept in the project when one is open, and otherwise across restarts.
 Opening or closing a project switches the archive and the choice. A plot whose reference
-was deleted says the reference's name, and the choice goes back to From the file, so the
-next plot works.
+was deleted says the reference's name, and the choice goes back to None. The log says
+"No reference is chosen. Choose one in References." An
+open cross-correlation that is not frozen says that name and does not draw.
 
 ## Store a trace
 
@@ -72,8 +76,12 @@ it is not saved with the archive or the project.
 
 ## What a plot does with it
 
-When a reference is selected, a cross-correlation and a vibrator signature use it instead
-of the file's pilot, and say so: "Reference: <name> (archive)". Its samples are used as
+A cross-correlation always uses the reference chosen here, and no other. Its bar says
+"Reference: <name>" and a button opens this window. With none chosen, the plot area says
+"No reference is chosen. Choose one in References." With the chosen one
+gone, or a different sample interval, the plot area says which and does not draw. A
+vibrator signature uses the chosen reference instead of the file's pilot when one is
+selected, and says so: "Reference: <name> (archive)". Its samples are used as
 stored: neither the plot's filters nor a trace's own filter apply to them. An open plot
 that is not frozen follows the choice; a frozen one keeps the reference it had.
 

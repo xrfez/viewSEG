@@ -234,7 +234,8 @@ type
     ckGenerateReference = "generate reference"
       ## make a sweep with processSEG and store it as a named reference
     ckSelectReference = "select reference"
-      ## the reference the plots use; "" is the file's own pilot
+      ## the reference the plots use; "" is none (a correlation draws nothing;
+      ## a vibrator signature uses the file's pilot)
     ckDeleteReference = "delete reference"
       ## remove a reference from the archive in force
     ckRenameReference = "rename reference"
@@ -444,7 +445,9 @@ type
         ## its selected traces there, else the trace under the pointer
       plotParams*: AnalysisParams
         ## ckOpenPlot, ckPlotDisplay: its settings (frame length and overlap,
-        ## the phase's dB threshold, the reference trace, the lags, ...)
+        ## the phase's dB threshold, the lags, ...). A cross-correlation uses
+        ## the reference chosen with ckSelectReference, and no other; an old
+        ## `reference` field here is ignored
       plotFrozen*: bool ## ckPlotDisplay: it keeps what it shows
       plotCursor*: PlotCursor ## ckPlotCursor: where its cursor is held
       plotCursorOn*: int
@@ -483,8 +486,8 @@ type
         ckViewReference, ckCloseRefView:
       refId*: string
         ## ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference,
-        ## ckViewReference: the reference's id; "" for ckSelectReference is the
-        ## file's own pilot
+        ## ckViewReference: the reference's id; "" for ckSelectReference is none
+        ## (a correlation draws nothing; a vibrator signature uses the file's pilot)
       refNewName*: string
         ## ckRenameReference: the new name
       refWindow*: int
@@ -930,7 +933,9 @@ type
     mainRefsHome: string ## the program's own archive
     refs: ReferenceIndex ## the archive in force, as last read
     mainRefs: ReferenceIndex ## the program's own, listed beside a project's
-    chosenRef: string ## the reference the plots use; "" is the file's own pilot
+    chosenRef: string
+      ## the reference the plots use; "" is none (a vibrator signature then
+      ## uses the file's pilot; a correlation draws nothing)
     refsLoaded: bool
     mainRefsLoaded: bool
     refsRev: int ## bumps when the archive or the choice changes, so a plot asks again
@@ -1250,7 +1255,7 @@ func mainReferences*(state: AppState): lent ReferenceIndex {.inline.} =
   state.mainRefs
 
 func chosenReference*(state: AppState): string {.inline.} =
-  ## The reference the plots use; "" is the file's own pilot.
+  ## The reference the plots use; "" is none.
   state.chosenRef
 
 func referencesHome*(state: AppState): string {.inline.} =
@@ -2548,9 +2553,7 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
   for k in 0 ..< state.plots.len:
     template pw: untyped = state.plots[k]
     let ofFile = pw.traces.len > 0 and pw.traces[0] in s
-    let ofRef = pw.view == avCorrelation and pw.params.reference >= 0 and
-      pw.params.reference in s
-    if ofFile or ofRef:
+    if ofFile:
       if not state.analysisReader.isNil: state.analysisReader.cancel(pw.id)
       if pw.waiting:
         pw.waiting = false
@@ -2558,8 +2561,7 @@ proc closeSession(state: var AppState; i: int; quiet = false; keepLayers = false
         # frozen spectrum window does). One still waiting for its first
         # answer says why.
         if pw.result.gen == 0:
-          pw.result.problem = if ofFile: "its file was closed"
-                              else: "its reference's file was closed"
+          pw.result.problem = "its file was closed"
         inc pw.revision
   for k in 0 ..< state.spectra.len:
     template sw: untyped = state.spectra[k]
@@ -4396,9 +4398,7 @@ proc carryOf(state: AppState; s: Session): Carry =
   let j = state.joinedOf(s.id)
   if j >= 0: (result.joined, result.join) = (true, state.joins[j])
   for w in state.plots:
-    if (w.traces.len > 0 and w.traces[0] in s) or
-        (w.view == avCorrelation and w.params.reference >= 0 and w.params.reference in s):
-      result.plots.add w.id
+    if w.traces.len > 0 and w.traces[0] in s: result.plots.add w.id
   for w in state.spectra:
     if w.id != LiveSpectrum and w.traces.len > 0 and w.traces[0] in s: result.spectra.add w.id
 
@@ -4406,7 +4406,8 @@ proc carryOver(state: var AppState; c: Carry; i: int) =
   ## Puts what `c` kept on the file `sessions[i]`, which replaced the one it
   ## was taken from: with the same trace count, the selection, the join and
   ## the windows of its traces (at the new ids; an id that lay in another
-  ## file is left where it is); with another, none of them.
+  ## file is left where it is). A frozen window keeps the picture it had.
+  ## With another trace count, none of them.
   ## Says in one line what was kept or dropped.
   let s = state.sessions[i]
   var kept, dropped: seq[string]
@@ -4426,14 +4427,13 @@ proc carryOver(state: var AppState; c: Carry; i: int) =
       for id in c.plots:
         let w = state.findPlot(id)
         if w >= 0:
-          # A window may mix this file's traces with another's (a correlation
-          # against a trace in another file): only this file's ids move.
+          # A window may mix this file's traces with another's: only this
+          # file's ids move.
           for t in state.plots[w].traces.mitems:
             if t in old: t += shift
-          if state.plots[w].params.reference in old:
-            state.plots[w].params.reference += shift
           inc state.plots[w].revision
-          discard state.askPlot(w)
+          # Frozen: the picture it had stays. Asking again would recompute it.
+          if not state.plots[w].frozen: discard state.askPlot(w)
       for id in c.spectra:
         let w = state.findSpectrum(id)
         if w >= 0:
@@ -6830,7 +6830,7 @@ proc refsWritable(state: AppState): string =
   else: ""
 
 proc keepChoice(state: var AppState; origin: CommandOrigin; id: string) =
-  ## The plots use reference `id` ("" : the file's own pilot). Kept in the
+  ## The plots use reference `id` ("" : none). Kept in the
   ## project when one is open, else in the settings, and only when the user
   ## asked (`keeps`).
   state.chosenRef = id
@@ -6915,7 +6915,7 @@ proc selectReference(state: var AppState; cmd: Command) =
     return
   state.keepChoice(cmd.origin, id)
   if id.len == 0:
-    state.log.add(sevInfo, "references", "The plots use the file's own pilot.")
+    state.log.add(sevInfo, "references", NoReferenceChosen)
   else:
     let i = state.refs.findId(id)
     let name = if i >= 0: state.refs.entries[i].name else: id
@@ -7003,14 +7003,13 @@ proc copyReference(state: var AppState; cmd: Command) =
     lane: jlInteractive), copyWork(state.mainRefsHome, state.refsHome, cmd.refId,
     state.inbox.poster))
 
-proc goneNote(name: string): string =
-  "The reference \"" & name & "\" is no longer in the archive. The plots use the file's own pilot."
-
 proc clearGoneChoice(state: var AppState; name: string) =
-  ## The chosen reference was deleted: one message, and the choice is the
-  ## file's own pilot, so the next plot works.
+  ## The chosen reference was deleted: the choice goes back to none. An open
+  ## correlation that is not frozen says the name and draws nothing. The log
+  ## says to choose one in References: a correlation does not use the file's
+  ## pilot. A vibrator signature does, and its note says so.
   if state.chosenRef.len == 0: return
-  let msg = goneNote(name)
+  let sentence = referenceGone(name)
   state.chosenRef = ""
   inc state.refsRev
   if state.inProject:
@@ -7019,11 +7018,13 @@ proc clearGoneChoice(state: var AppState; name: string) =
       state.projectChanged()
   else:
     state.change(coWindow, s): s.referenceId = ""
-  state.log.add(sevInfo, "references", msg)
+  state.log.add(sevInfo, "references", sentence & " " & NoReferenceChosen)
   for w in 0 ..< state.plots.len:
-    if state.plots[w].view in {avCorrelation, avVibrator}:
-      state.plots[w].goneNote = msg
-      state.plots[w].result.note = msg
+    if state.plots[w].view == avCorrelation and not state.plots[w].frozen:
+      state.showCorrelationProblem(w, sentence, name)
+    elif state.plots[w].view == avVibrator:
+      state.plots[w].goneNote = sentence & " The choice is the file's own pilot."
+      state.plots[w].result.note = state.plots[w].goneNote
       state.plots[w].reference = ""
       inc state.plots[w].revision
 
