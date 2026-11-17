@@ -545,6 +545,11 @@ and their order.
 
 ## The map
 
+Only seismic traces are placed on the map. A file whose coordinates are on its auxiliary
+traces only (a vibrator's reference and force traces, say) is not "without coordinates":
+Messages says that only auxiliary traces carry them and that they are not placed. A line
+about traces left off the map is said once for a folder, so files of one kind do not repeat it.
+
 The **Map** window (right of the plot at a first start; Window > Map brings it
 forward) draws the survey: each survey file's **sources** (the theme's red) and
 **receivers** (its blue, or its green where the blue is the selection's colour, as in

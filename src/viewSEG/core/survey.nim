@@ -112,6 +112,7 @@ type
     keysRevision*: int    ## traces: the keys it was made from (parseSEG's `keysRevision`)
     traces*: int          ## traces: the file's traces
     auxiliary*: int       ## traces: of those, not seismic (no position taken)
+    auxLocated*: int      ## traces: of those, with a source or receiver coordinate in the headers
     points*: array[PointRole, PointSet]
     counts*: array[PointRole, Positions]
     relations*: ref SurveyGeometry
@@ -338,6 +339,12 @@ proc place(b: var TraceLayerBuilder; r: PointRole; t: int; x, y, z, line, point:
   b.layer.stationOf[r][t] = station
   b.layer.pointOf[r][t] = max(at, -1)
 
+func hasCoordinates(k: TraceKeys): bool =
+  ## Whether the headers give the trace a source or a receiver position (a pair
+  ## of numbers, not both 0).
+  for (x, y) in [(k.srcX, k.srcY), (k.rcvX, k.rcvY)]:
+    if finite(x) and finite(y) and not (x == 0 and y == 0): return true
+
 proc add*(b: var TraceLayerBuilder; keys: openArray[TraceKeys]) =
   ## Takes the keys of the next `keys.len` traces. Raises `ValueError` past
   ## the file's last trace.
@@ -348,6 +355,7 @@ proc add*(b: var TraceLayerBuilder; keys: openArray[TraceKeys]) =
     inc b.next
     if not k.isSeismic:
       inc b.layer.auxiliary
+      if hasCoordinates(k): inc b.layer.auxLocated
       for r in PointRole:
         b.layer.pointOf[r][t] = -1
         b.layer.stationOf[r][t] = -1

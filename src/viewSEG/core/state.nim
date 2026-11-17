@@ -4447,23 +4447,35 @@ proc takeSurvey(state: var AppState; layer: sink SurveyLayer; job: JobId) =
     if i < 0 or state.sessions[i].keysRevision != layer.keysRevision: return
     let placed = layer.points[prSource].len + layer.points[prReceiver].len
     let stations = layer.stationCount(prSource) + layer.stationCount(prReceiver)
+    let located = layer.auxLocated
     discard state.survey.add(layer)
     if placed == 0:
       # Field records often carry stations only: said once a folder, and not
       # once survey files are loaded.
-      let folder = "no coordinates: " & path.parentDir
+      let folder = (if located > 0: "only auxiliary coordinates: " else: "no coordinates: ") &
+        path.parentDir
       var surveyFiles = false # by index: `anyIt` would copy every layer
       for i in 0 ..< state.survey.layers.len:
         if state.survey.layers[i].origin == loSurveyFile: surveyFiles = true
-      if folder notin state.saidPositions and not surveyFiles:
+      if folder notin state.saidPositions and (located > 0 or not surveyFiles):
         state.saidPositions.incl folder
-        state.log.add(sevInfo, name, name & " carries no source or receiver coordinates" &
-          (if stations > 0: " (its traces name their stations): load its survey files " &
-            "(SPS, P1) to place it on the map." else: "."))
-    elif problems.len > 0 and path notin state.saidPositions:
-      state.saidPositions.incl path
-      state.log.add(sevInfo, name, name & ": " & problems.join("; ") & ". They are left " &
-        "off the map.")
+        if located > 0:
+          # the headers do give coordinates, on traces that are not seismic
+          state.log.add(sevInfo, name, "Only auxiliary traces of " & name & " carry " &
+            "coordinates (" & plural(located, "trace") & "), and auxiliary traces " &
+            "are not placed on the map.")
+        else:
+          state.log.add(sevInfo, name, name & " carries no source or receiver coordinates" &
+            (if stations > 0: " (its traces name their stations): load its survey files " &
+              "(SPS, P1) to place it on the map." else: "."))
+    elif problems.len > 0:
+      # the same words for the same folder once: a folder of files of one kind does not
+      # say them again at every file
+      let said = "unplaced: " & path.parentDir & ": " & problems.join("; ")
+      if said notin state.saidPositions:
+        state.saidPositions.incl said
+        state.log.add(sevInfo, name, name & ": " & problems.join("; ") & ". They are left " &
+          "off the map.")
   of loSurveyFile:
     let dropped = state.droppedLoads.find(job)
     if dropped >= 0: # a cancelled import's: the map stays as it was

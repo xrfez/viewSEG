@@ -5,10 +5,11 @@
 ##
 ## - `vibFourSegy()`: SEG-Y rev 1, IEEE float, four traces of one record with
 ##   trace identification codes 21, 19, 18, 20 (reference, baseplate, reaction
-##   mass, ground force); the last is `VibLoud` times larger.
+##   mass, ground force); the last is `VibLoud` times larger. Coordinates on all
+##   four, which are auxiliary.
 ## - `vibThirteenSegy()`: thirteen traces with codes 21, 19, 18, 20, 29, 28, 30,
 ##   33, 34, 35, 36, 1, 1; every field record number 0; the binary header claims
-##   `VibClaimed` traces per ensemble.
+##   `VibClaimed` traces per ensemble. Coordinates on traces 10 to 12 only.
 ## - `vibPlainSegy()`: four auxiliary traces with code 6 (sweep): no vibrator
 ##   codes.
 ## - `zeroBinarySegy()`: `vibPlainSegy`'s traces with the binary header's samples per
@@ -37,7 +38,7 @@ func vibSample*(trace, i: int): float32 =
   float32((1.0 + 0.25 * float64(trace)) * sin(phase + 0.1 * float64(trace)))
 
 proc writeVib(path: string; codes: openArray[int16]; record: float64; loud: bool;
-    claimed = 0) =
+    claimed = 0; located: set[0 .. 15] = {}) =
   var w = openSeismicWriter(path, SegyOutputOptions(revision: SegyRevision(major: 1, minor: 0),
     traceSorting: 1, measurementSystem: 1, text: @["C01 viewSEG test fixture: vibrator codes"]))
   var buf = newSeq[float32](VibSamples)
@@ -51,6 +52,9 @@ proc writeVib(path: string; codes: openArray[int16]; record: float64; loud: bool
     # the writer keeps a code only when the status agrees with it
     k.status = if code == 1: tsLive elif code in 18'i16 .. 21'i16 or code == 6: tsAuxiliary
                else: tsUnknown
+    if n in located:
+      (k.srcX, k.srcY, k.rcvX, k.rcvY) = (500_000.0 + float64(n), 6_000_000.0 + float64(n),
+        500_100.0 + float64(n), 6_000_100.0 + float64(n))
     w.writeTrace(k, buf)
   let log = w.close()
   doAssert log.len == 0, $log
@@ -63,11 +67,11 @@ proc writeVib(path: string; codes: openArray[int16]; record: float64; loud: bool
 
 proc vibFourSegy*(fx: Fixtures): string =
   result = fx.dir / "vib-four.sgy"
-  if not fileExists(result): writeVib(result, VibFourCodes, 1, true)
+  if not fileExists(result): writeVib(result, VibFourCodes, 1, true, located = {0, 1, 2, 3})
 
 proc vibThirteenSegy*(fx: Fixtures): string =
   result = fx.dir / "vib-thirteen.sgy"
-  if not fileExists(result): writeVib(result, VibThirteenCodes, 0, false, VibClaimed)
+  if not fileExists(result): writeVib(result, VibThirteenCodes, 0, false, VibClaimed, located = {9, 10, 11})
 
 proc vibPlainSegy*(fx: Fixtures): string =
   result = fx.dir / "vib-plain.sgy"
