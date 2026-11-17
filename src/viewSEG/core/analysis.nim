@@ -11,6 +11,7 @@
 ## | Cross-correlation | each trace against a reference: against lag, and compared per frequency | `crossCorrelateInto`, `compareInto` |
 ## | Vibrator signature | a unit's Ref, GF, M and B against sweep time: phase, force, frequency, distortion (`core/vibanalysis`) | `analyzeVibrators` |
 ## | f-k | a box of traces × time: amplitude against frequency and wavenumber, an image (`core/fkanalysis`) | `forward` (composed) |
+## | Node orientation | roll, pitch and azimuth from the traces' orientation headers, one point per trace; no samples are read | parseSEG's `traceOrientation` |
 ##
 ## Every number here is processSEG's but for what it leaves to the caller:
 ## the phase spectrum drawn as its
@@ -42,6 +43,7 @@ type
     avCorrelation = "cross-correlation"
     avVibrator = "vibrator signature"
     avFk = "f-k"
+    avOrientation = "node orientation"
 
   VibRoles* = object
     ## A vibrator signature's roles: each one's place among the window's
@@ -240,7 +242,7 @@ func settingProblem*(p: AnalysisParams; view: AnalysisView): string =
     check("windowMs", p.windowMs, WindowMsRange)
     check("overlap", p.overlap, OverlapRange)
     check("floorDb", p.floorDb, FloorDbRange)
-  of avEnvelope: discard
+  of avEnvelope, avOrientation: discard
   of avPhase:
     check("phaseWithinDb", p.phaseWithinDb, PhaseWithinRange)
   of avCorrelation:
@@ -266,6 +268,37 @@ func isEmpty*(img: AnalysisImage): bool {.inline.} = img.cols == 0 or img.rows =
 func valueAt*(img: AnalysisImage; col, row: int): float32 {.inline.} =
   ## The value at column `col` and row `row`.
   img.values[col * img.rows + row]
+
+# ------------------------------------------------------------ orientation --
+
+const NoOrientation* = "These traces carry no orientation header."
+  ## said by a node orientation plot of traces none of which has one
+
+proc orientationOf*(angles: openArray[array[3, float64]]): AnalysisResult =
+  ## Roll, pitch and azimuth, degrees, against the traces in the order given
+  ## (x = 1, 2, ...): `angles[i]` is trace `i`'s, NaN for each angle of a
+  ## trace with no orientation header (a gap in the lines, never a zero).
+  result = AnalysisResult(view: avOrientation, used: angles.len)
+  var any = false
+  var plot = AnalysisPlot(title: "Node orientation", xLabel: "Trace in the plot",
+    yLabel: "Angle (degrees)", yUnit: "deg")
+  for name in ["roll", "pitch", "azimuth"]:
+    plot.curves.add AnalysisCurve(name: name, style: csLine)
+  for i, a in angles:
+    plot.xs.add float64(i + 1)
+    for c in 0 .. 2:
+      plot.curves[c].ys.add a[c]
+      if not a[c].isNaN: any = true
+  if not any:
+    result.problem = NoOrientation
+    return
+  var missing = 0
+  for a in angles:
+    if a[0].isNaN and a[1].isNaN and a[2].isNaN: inc missing
+  result.plots = @[plot]
+  result.note = "Roll about X (inline), pitch about Y (crossline), azimuth about Z (down), " &
+    "from each trace's orientation header; one point per trace as shown" &
+    (if missing > 0: "; " & $missing & " without one (a gap)" else: "")
 
 # ------------------------------------------------------------ spectrogram --
 
@@ -575,6 +608,7 @@ func viewName*(v: AnalysisView): string =
   of avCorrelation: "Cross-correlation"
   of avVibrator: "Vibrator signature"
   of avFk: "f-k"
+  of avOrientation: "Node orientation"
 
 func ownLine*(w: AnalysisWindow): string =
   ## What the window says of its traces' own filters, in the place it names

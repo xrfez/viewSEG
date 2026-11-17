@@ -372,7 +372,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       unit("dB")
       line.follow(mapW)
       mapCombo()
-    of avEnvelope: discard
+    of avEnvelope, avOrientation: discard
     of avPhase:
       label("Phase where within")
       if numberBox("##within", p.phaseWithinDb, box, typed) and PhaseWithinRange.allows(typed):

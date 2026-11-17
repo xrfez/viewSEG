@@ -41,12 +41,12 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.15.0: capabilities | names | processSEG 0.7.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 49 (20 in part) | 145 | 33 (23 in part) | 142 |
+| `built` | 50 (20 in part) | 146 | 33 (23 in part) | 142 |
 | `internal` | 15 | 43 | 4 | 38 |
 | `planned` | 35 | 250 | 45 | 402 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 20 | 356 | 6 | 66 |
-| all | 121 | 804 | 89 | 653 |
+| `not applicable` | 20 | 355 | 6 | 66 |
+| all | 122 | 804 | 89 | 653 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
 
@@ -125,7 +125,8 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Inline and crossline of post-stack volumes | `TraceKeys.inline`, `crossline` | "Go to inline / crossline", inline or crossline sections | planned |
 | Datum, uphole and statics fields, scaled | `traceStatics`, `traceStaticsInto`, `TraceStatics`, `initTraceStatics` | Statics column group in the header table; statics graph strip | planned |
 | SEG-D general, channel set and Rev 3 blocks (position, source description, sensor, time drift, orientation) | `index.segdRecords`, `recordHeaders`, `SegdSourceDescription`, `SegdSensorInfo`, `SegdTimeDrift`, `SegdOrientation` | Headers window, File headers of the record shown: General (typed Rev 3 blocks' fields included), Channel sets, Extended, External, skew and trailer as bytes | built; not applicable (`SegdSourceDescription`, `SegdSensorInfo`, `SegdTimeDrift`, `SegdOrientation`: their fields reach the Headers window as `recordHeaders` rows) |
-| A trace's or a record's orientation block, read on its own | `traceOrientation`, `recordOrientation`, `TraceOrientation`, `initTraceOrientation`, `BlockTypeOrientation` | Not read as its own value: the Headers window shows Rev 3 blocks through `recordHeaders` | not applicable |
+| A trace's orientation block (roll, pitch, azimuth) | `traceOrientation` | New plot > Node orientation: the three angles of each trace of the record shown, as three lines (read by the analysis reader, off the UI thread) | built |
+| A record's orientation block, the block's own type and writer | `recordOrientation`, `TraceOrientation`, `initTraceOrientation`, `BlockTypeOrientation` | Not read as their own values: the Headers window shows Rev 3 blocks through `recordHeaders` | not applicable |
 | SEG-2 keyword strings and notes | `seg2Strings`, `seg2Trace`, `noteLines`, typed getters; the strings as `traceHeaders` and `fileHeaders` rows | Headers window: File (the file descriptor block's fields and strings) and Trace > Header (the trace's); notes in File properties to come | built (headers); planned (notes) |
 | UTC and GPS time | `TraceKeys.time`, `generalHeaderUtc`, `timestampToUnix`, `gpsMinusUtc` | Status bar: shot time and time within the record | built (the status bar's fields "shot time" and "UTC at the cursor", from `TraceKeys.time`); not applicable (`generalHeaderUtc`, `timestampToUnix`, `gpsMinusUtc`: parseSEG puts the time in the keys) |
 | Values joined from survey files, by group | `joinedTraces`, `joinedGroups`, `JoinGroup`, `changedGroups` | Values from the survey (an import) are drawn in the accent colour in the display header, the cursor's header box and the status bar (`Tile.joined`), and in the Headers window's Trace > Header table, a row per key the join gave above the header's own fields, marked per trace; the Summary names the join, its files and the units confirmed | built; not applicable (`changedGroups`: parseSEG's join records what it changed) |

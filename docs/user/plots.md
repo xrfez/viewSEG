@@ -184,6 +184,16 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Careful.** Wavenumbers past the traces' spatial Nyquist wrap around. An irregular spacing makes the axis per trace, and the picture only a guide.
 
+## Node orientation
+
+**Shows.** The node's roll (about X, inline), pitch (about Y, crossline) and azimuth (about Z, down) in degrees (up), for each trace in the order the plot shows them (across): three lines.
+
+**Computed from.** The traces the plot shows. The orientation header each trace carries: no samples are read, and the plot's filters do not matter. A trace without one leaves a gap in the lines. One point is drawn per trace as shown, so a record with several components per shot repeats each reading once for each component.
+
+**Reading it.** A constant line is a node at rest. A step or a drift in the lines means the node moved (it was bumped, dragged or settled) at that trace; the traces after it were recorded in the new orientation.
+
+**Careful.** Azimuth jumps where it wraps past 180 or 360 degrees without the node having moved. A header may state an orientation that was not measured.
+
 ## Header graph
 
 **Shows.** The value of the graphed column (up) for each row of the table, the rows in the order shown (across): a band from the least to the most of each run of rows, and a line along the most.

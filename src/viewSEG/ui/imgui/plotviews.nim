@@ -34,7 +34,9 @@ const
     PlotEntry(view: avVibrator, icon: IconVibrator,
       sentence: "A unit's reference, ground force, mass and baseplate through the sweep."),
     PlotEntry(view: avFk, icon: IconFk,
-      sentence: "Amplitude against frequency and wavenumber.")]
+      sentence: "Amplitude against frequency and wavenumber."),
+    PlotEntry(view: avOrientation, icon: IconOrientation,
+      sentence: "Roll, pitch and azimuth of the node along the record's traces.")]
     ## FFT, then Window > New plot's views, in that menu's order.
 
 func name*(e: PlotEntry): string =

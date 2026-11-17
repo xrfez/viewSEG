@@ -287,6 +287,18 @@ func pickChanged(state: AppState; w, k, i: int): bool =
     pw.pickSelected != state.selection.selectedRevision or pw.pickOrder != p.orderGen or
     pw.pickSource != p.sourceGen or pw.pickShown != p.shown.len
 
+proc gatherOrder(state: AppState; k, i: int): seq[int] =
+  ## File indices of the gather `panels[k]` shows, in the order shown once
+  ## the reader has said, else the gather's own order.
+  result = @[]
+  if state.panels[k].layers.len == 0: return
+  let s = state.sessions[i]
+  let g = state.panels[k].layers[0].source.gather
+  if g notin 0 ..< s.gathers.len: return
+  if state.panels[k].shown.len > 0: result = state.panels[k].shown
+  else:
+    for t in s.gathers[g].traces: result.add t
+
 proc shapeOpened(state: AppState; view: AnalysisView; i: int; traces: var seq[int]) =
   ## The traces a new window of `view` is opened on, from the ones chosen:
   ## an envelope or a phase spectrum keeps the first; a vibrator signature
@@ -345,6 +357,9 @@ proc openPlot(state: var AppState; cmd: Command) =
     return
   let s = state.sessions[i]
   var ids = cmd.plotTraces
+  if ids.len == 0 and cmd.plotView == avOrientation:
+    # the traces the plot shows, in its order, whatever is selected
+    for t in state.gatherOrder(k, i): ids.add t + s.base
   if ids.len == 0:
     for t in state.selection.selected:
       if t in s: ids.add t
@@ -445,18 +460,6 @@ proc takeAnalysis(state: var AppState; m: sink Msg) =
     pw.result = move m.analysis
     inc pw.revision
 
-proc gatherOrder(state: AppState; k, i: int): seq[int] =
-  ## File indices of the gather `panels[k]` shows, in the order shown once
-  ## the reader has said, else the gather's own order.
-  result = @[]
-  if state.panels[k].layers.len == 0: return
-  let s = state.sessions[i]
-  let g = state.panels[k].layers[0].source.gather
-  if g notin 0 ..< s.gathers.len: return
-  if state.panels[k].shown.len > 0: result = state.panels[k].shown
-  else:
-    for t in s.gathers[g].traces: result.add t
-
 proc gatherFile(state: AppState; k, i: int): seq[int] =
   ## The gather's traces in file order, auxiliary ones included.
   result = @[]
@@ -509,7 +512,7 @@ proc defaultOf(state: AppState; view: AnalysisView; k, i: int; order: seq[int]):
   of avEnvelope, avPhase:
     if order.len == 0: return (@[], "the plot shows no trace")
     (@[order[0]], "")
-  of avSpectrogram, avCorrelation:
+  of avSpectrogram, avCorrelation, avOrientation:
     if order.len == 0: return (@[], "the plot shows no trace")
     var traces = order
     state.shapeOpened(view, i, traces)
@@ -586,7 +589,7 @@ proc repick(state: var AppState; w, k, i: int): bool =
   ## window stays open.
   let view = state.plots[w].view
   let order = state.gatherOrder(k, i)
-  var seed = state.selectedHere(i, order)
+  var seed = if view == avOrientation: newSeq[int]() else: state.selectedHere(i, order)
   var problem = ""
   if seed.len == 0:
     (seed, problem) = state.defaultOf(view, k, i, order)

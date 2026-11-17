@@ -48,6 +48,7 @@ type
     pkVibFrequency = "Vibrator signature: frequency"
     pkVibDistortion = "Vibrator signature: distortion"
     pkFk = "f-k"
+    pkOrientation = "Node orientation"
     pkHeaderGraph = "Header graph"
     pkMap = "Map"
     pkGenerateSignal = "Generate: signal"
@@ -471,6 +472,21 @@ func fkText(f: ExplainFacts): string =
     part("Careful", "Wavenumbers past the traces' spatial Nyquist wrap around. An irregular " &
       "spacing makes the axis per trace, and the picture only a guide."))
 
+func orientationText(f: ExplainFacts): string =
+  join4(part("Shows", "The node's roll (about X, inline), pitch (about Y, crossline) and " &
+      "azimuth (about Z, down) in degrees (up), for each trace in the order the plot " &
+      "shows them (across): three lines."),
+    part("Computed from", f.what("The traces the plot shows."), "The orientation header " &
+      "each trace carries: no samples are read, and the plot's filters do not matter. " &
+      "A trace without one leaves a gap in the lines.",
+      "One point is drawn per trace as shown, so a record with several components per " &
+      "shot repeats each reading once for each component."),
+    part("Reading it", "A constant line is a node at rest. A step or a drift in the " &
+      "lines means the node moved (it was bumped, dragged or settled) at that trace; " &
+      "the traces after it were recorded in the new orientation."),
+    part("Careful", "Azimuth jumps where it wraps past 180 or 360 degrees without the " &
+      "node having moved. A header may state an orientation that was not measured."))
+
 func headerGraphText(f: ExplainFacts): string =
   join4(part("Shows", "The value of " & (if f.column.len > 0: "the column \"" & f.column &
       "\"" else: "the graphed column") & " (up) for each row of the table, the rows in the " &
@@ -610,6 +626,7 @@ func explain*(kind: PlotKind; f = ExplainFacts()): string =
   of pkVibFrequency: f.vibFrequencyText
   of pkVibDistortion: f.vibDistortionText
   of pkFk: f.fkText
+  of pkOrientation: f.orientationText
   of pkHeaderGraph: f.headerGraphText
   of pkMap: f.mapText
   of pkGenerateSignal: f.generateSignalText
@@ -632,13 +649,14 @@ func viewKinds*(v: AnalysisView): seq[PlotKind] =
   of avCorrelation: @[pkCorrelation, pkCorrelationRatio, pkCorrelationPhase]
   of avVibrator: @[pkVibPhase, pkVibForce, pkVibForceMB, pkVibFrequency, pkVibDistortion]
   of avFk: @[pkFk]
+  of avOrientation: @[pkOrientation]
 
 func kindOfPane*(v: AnalysisView; title: string): PlotKind =
   ## The kind of the pane of a window of view `v` that the result calls `title`
   ## (`AnalysisPlot.title`); the view's first kind for a title it does not know.
   let all = v.viewKinds
   case v
-  of avSpectrogram, avFk: all[0]
+  of avSpectrogram, avFk, avOrientation: all[0]
   of avEnvelope:
     case title
     of "Instantaneous phase": pkInstPhase

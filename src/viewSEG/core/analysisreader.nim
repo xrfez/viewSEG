@@ -27,7 +27,7 @@
 ## - **A file cut short, or that cannot be looked at,** is not read: the
 ##   answer says why. Each read is marked through the seam (`fs.mappedRead`).
 
-import std/[algorithm, locks, monotimes, os, strutils, times]
+import std/[algorithm, locks, math, monotimes, options, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
@@ -271,6 +271,28 @@ proc filtered*(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
     if instead.len > 0: result.add ". " & insteadWords(instead.len, list.len)
   elif applyPlot: result = "the filters (none of them below Nyquist) did not run"
 
+proc orientationAnswer(p: ptr ReaderObj; a: AnalysisAsk): AnalysisResult =
+  ## A node orientation plot: the three angles of each trace's header, in
+  ## degrees (NaN for a trace without one); no samples are read.
+  let f = a.file
+  var angles: seq[array[3, float64]] = @[]
+  try:
+    p.beat(a.path)
+    for t in a.traces:
+      var row = [NaN, NaN, NaN]
+      if t in 0 ..< f[].len:
+        fs.mappedRead(a.path)
+        let o = f[].traceOrientation(t)
+        if o.isSome:
+          let v = o.get
+          row = [radToDeg(float64(v.rotationX)), radToDeg(float64(v.rotationY)),
+            radToDeg(float64(v.rotationZ))]
+      angles.add row
+      if angles.len mod 256 == 0: p.beat(a.path)
+    result = orientationOf(angles)
+  except CatchableError as e:
+    result.problem = "it cannot be read now: " & e.msg
+
 proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
   ## Reads, works out and posts what `a` asks for; false when a newer
   ## request came first (nothing is posted).
@@ -279,6 +301,8 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
   var why = unreadable(a.path, a.size)
   if why.len > 0:
     answer.problem = why
+  elif a.view == avOrientation:
+    answer = p.orientationAnswer(a)
   else:
     # the traces to read: live, not killed, at the first one's interval
     var list: seq[int] = @[]
@@ -462,6 +486,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             let unit = if source == "offsets": a.offsetUnit else: a.unit
             answer = fkOf(kept, spacing, source, unit, dtMs, t0Ms, a.params, stop)
             (answer.leftOut, answer.atOtherInterval) = n
+          of avOrientation: discard # answered above, before any sample is read
           of avVibrator:
             # each role's trace: its place among those asked about, then
             # among those read (one left out has no role). An archive

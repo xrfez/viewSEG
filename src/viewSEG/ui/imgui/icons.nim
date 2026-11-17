@@ -46,6 +46,7 @@ const
   IconCorrelation* = "\u{EAFD}" ## nf-cod-git_compare
   IconVibrator* = "\u{F0D1}"    ## nf-fa-truck
   IconFk* = "\u{EC30}"          ## nf-cod-map_vertical
+  IconOrientation* = "\u{EB65}" ## three angles
   IconRuler* = "\u{EA96}"       ## nf-cod-symbol_ruler
   IconLayers* = ""           ## nf-cod-layers
   IconTarget* = ""           ## nf-cod-target
@@ -91,6 +92,7 @@ const
     IconZoomOut, IconFit, IconPlay, IconStep, IconPrevious, IconNext, IconWarning,
     IconError, IconInfo, IconClose, IconCheck, IconTheme, IconTable, IconPlot, IconPulse,
     IconFft, IconSpectrogram, IconEnvelope, IconPhase, IconCorrelation, IconVibrator, IconFk,
+    IconOrientation,
     IconRuler,
     IconLayers, IconTarget, IconLocation, IconQuit, IconStop, IconRemove, IconRefresh,
     IconReset, IconHome, IconSync, IconSurvey, IconSliders, IconMemory, IconLoading,
