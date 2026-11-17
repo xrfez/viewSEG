@@ -136,7 +136,7 @@ func part(label: string; sentences: varargs[string]): string =
 func join4(shows, computed, reading, careful: string): string =
   result = shows
   for p in [computed, reading, careful]:
-    if p.len > 0: result.add "\n" & p
+    if p.len > 0: result.add "\n\n" & p
 
 func closed(s: string): string =
   ## `s` with a full stop at its end, "" for none.
@@ -862,5 +862,6 @@ func explainPage*(): string =
   for kind in PlotKind:
     result.add "\n## " & $kind & "\n"
     for line in kind.explain.splitLines:
+      if line.len == 0: continue
       let at = line.find(": ")
       result.add "\n**" & line[0 ..< at] & ".** " & line[at + 2 .. ^1] & "\n"

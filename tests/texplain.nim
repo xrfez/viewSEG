@@ -191,6 +191,7 @@ proc main*() =
     for kind in PlotKind:
       doAssert ("\n## " & $kind & "\n") in page, "the page has no section for " & $kind
       for line in explain(kind).splitLines:
+        if line.len == 0: continue
         doAssert line[line.find(": ") + 2 .. ^1] in page, "the page lacks a line of " & $kind
 
   block every_file_that_draws_a_plot_draws_its_icon:
