@@ -56,167 +56,172 @@ proc sourcePoint(st: AppState; line, k: int): PointRef =
 
 func done(x: ShotIndex; n: int): bool =
   x.shotFiles == n and x.pending.len == 0 and x.jobPaths.len == 0 and x.job == NoJob
-
-install()
 const Shot = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 5)]
 
-withFixtures fx:
-  let sps = fx.mapSps()
-  let folder = fx.dir / "shots"
-  createDir(folder)
-  var paths: seq[string]
-  for (line, k) in Shot:
-    paths.add fx.mapShotSegy(line, k, name = "shots" / "shot-" & $mapRecord(line, k) & ".sgy")
-  let cache = fx.dir / "cache"
+proc main*() =
 
-  var before: seq[(string, Time)]
-  for p in paths: before.add (readFile(p), getLastModificationTime(p))
+  install()
 
-  block listedAndMatched:
-    var st = initAppState(indexCache = cache)
-    st.apply Command(kind: ckBrowse, paths: @[folder])
-    doAssert st.settle(not st.fileList.scanning and st.fileList.entries.len == 5)
-    for _ in 0 .. 20: discard st.drainInbox()
-    doAssert st.shots.shotFiles == 0 and st.shots.job == NoJob,
-      "nothing read without a survey file's sources"
-    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
-    doAssert st.settle(st.shots.done(5)), "the folder's shots: " & $st.shots.shotFiles
-    doAssert st.shots.pointRefs.len == 5, $st.shots.pointRefs.len
+  withFixtures fx:
+    let sps = fx.mapSps()
+    let folder = fx.dir / "shots"
+    createDir(folder)
+    var paths: seq[string]
     for (line, k) in Shot:
-      let at = st.shots.shotsAt(st.sourcePoint(line, k))
-      doAssert at.len == 1 and at[0].record == float64(MapFfid + mapRecord(line, k)) and
-        at[0].gather == 0, $at
-    doAssert st.shots.shotsAt(st.sourcePoint(1, 1)).len == 0, "a source with no file"
-    # A click on a source whose file is not open: shown, at its record.
-    doAssert st.sessions.len == 0
-    st.apply Command(kind: ckShowPoints, points: @[st.sourcePoint(1, 5)])
-    let want = folder / "shot-" & $mapRecord(1, 5) & ".sgy"
-    doAssert st.settle(st.sessions.len == 1 and st.selection.activeGather.file ==
-      st.sessions[0].id), "the click showed no file"
-    doAssert st.sessions[0].path == want and st.fileList.chosen == want
-    for i, p in paths: # read, never written
-      doAssert readFile(p) == before[i][0] and getLastModificationTime(p) == before[i][1], p
-    # A file gone from the folder: its source no longer has a file.
-    removeFile(paths[0])
-    st.apply Command(kind: ckBrowse, paths: @[folder])
-    doAssert st.settle(not st.fileList.scanning and st.shots.done(4)), $st.shots.shotFiles
-    doAssert st.shots.shotsAt(st.sourcePoint(0, 0)).len == 0 and st.shots.pointRefs.len == 4
-    discard fx.mapShotSegy(0, 0, name = "shots" / "shot-" & $mapRecord(0, 0) & ".sgy")
-    doAssert uiCalls().len == 0, "the UI thread called the file system: " & $uiCalls()
-    st.shutdown()
+      paths.add fx.mapShotSegy(line, k, name = "shots" / "shot-" & $mapRecord(line, k) & ".sgy")
+    let cache = fx.dir / "cache"
 
-  block listedAgain:
-    # Another run: every file's shots from the cache, no file opened.
-    resetCounts()
-    var st = initAppState(indexCache = cache)
-    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
-    st.apply Command(kind: ckBrowse, paths: @[folder])
-    doAssert st.settle(st.shots.done(5)), $st.shots.shotFiles
-    doAssert st.shots.pointRefs.len == 5
-    for p in paths[1 .. ^1]: # (the first was written again since)
-      doAssert calls(foMapped, p) == 0, "listed again: " & $calls(foMapped, p) &
-        " mapped reads of " & p
-    st.shutdown()
+    var before: seq[(string, Time)]
+    for p in paths: before.add (readFile(p), getLastModificationTime(p))
 
-  block aFileThatDoesNotAnswer:
-    removeDir(cache)
-    resetCounts()
-    var st = initAppState(indexCache = cache)
-    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
-    let stuck = paths[2]
-    fault(stuck, fkHang, {foMapped}) # (the listing reads its first bytes as before)
-    st.apply Command(kind: ckBrowse, paths: @[folder])
-    doAssert st.settle(hung() == 1), "the file does not answer"
-    advanceFsClock(StallAfter + initDuration(seconds = 1))
-    doAssert st.settle(st.shots.shotFiles == 4 and st.shots.later.len == 1 and
-      st.shots.job == NoJob), "the rest read: " & $st.shots.shotFiles & " of 5"
-    doAssert stuck notin st.shots.files and st.shots.later[0].path == stuck
-    # Not tried again while the first try still hangs (each try that hangs
-    # holds a thread until the drive answers: one a minute, for ever).
-    for _ in 1 .. 2:
-      advanceFsClock(RetryAfter + initDuration(seconds = 1))
-      discard waitUntil((discard st.drainInbox(); hung() > 1), initDuration(seconds = 2))
-      doAssert hung() == 1, $hung() & " tries of the file hang"
-      doAssert st.shots.later.len == 1 and st.shots.later[0].path == stuck
-    release(stuck)
-    doAssert waitUntil(hung() == 0)
-    advanceFsClock(RetryAfter)
-    doAssert st.settle(st.shots.done(5) and st.shots.later.len == 0), "tried again"
-    doAssert st.shots.pointRefs.len == 5
-    doAssert uiCalls().len == 0, $uiCalls()
-    st.shutdown()
+    block listedAndMatched:
+      var st = initAppState(indexCache = cache)
+      st.apply Command(kind: ckBrowse, paths: @[folder])
+      doAssert st.settle(not st.fileList.scanning and st.fileList.entries.len == 5)
+      for _ in 0 .. 20: discard st.drainInbox()
+      doAssert st.shots.shotFiles == 0 and st.shots.job == NoJob,
+        "nothing read without a survey file's sources"
+      st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+      doAssert st.settle(st.shots.done(5)), "the folder's shots: " & $st.shots.shotFiles
+      doAssert st.shots.pointRefs.len == 5, $st.shots.pointRefs.len
+      for (line, k) in Shot:
+        let at = st.shots.shotsAt(st.sourcePoint(line, k))
+        doAssert at.len == 1 and at[0].record == float64(MapFfid + mapRecord(line, k)) and
+          at[0].gather == 0, $at
+      doAssert st.shots.shotsAt(st.sourcePoint(1, 1)).len == 0, "a source with no file"
+      # A click on a source whose file is not open: shown, at its record.
+      doAssert st.sessions.len == 0
+      st.apply Command(kind: ckShowPoints, points: @[st.sourcePoint(1, 5)])
+      let want = folder / "shot-" & $mapRecord(1, 5) & ".sgy"
+      doAssert st.settle(st.sessions.len == 1 and st.selection.activeGather.file ==
+        st.sessions[0].id), "the click showed no file"
+      doAssert st.sessions[0].path == want and st.fileList.chosen == want
+      for i, p in paths: # read, never written
+        doAssert readFile(p) == before[i][0] and getLastModificationTime(p) == before[i][1], p
+      # A file gone from the folder: its source no longer has a file.
+      removeFile(paths[0])
+      st.apply Command(kind: ckBrowse, paths: @[folder])
+      doAssert st.settle(not st.fileList.scanning and st.shots.done(4)), $st.shots.shotFiles
+      doAssert st.shots.shotsAt(st.sourcePoint(0, 0)).len == 0 and st.shots.pointRefs.len == 4
+      discard fx.mapShotSegy(0, 0, name = "shots" / "shot-" & $mapRecord(0, 0) & ".sgy")
+      doAssert uiCalls().len == 0, "the UI thread called the file system: " & $uiCalls()
+      st.shutdown()
 
-  block oneShotTwoFiles:
-    # The older file listed first (its name), the newer second.
-    let twice = fx.dir / "twice"
-    createDir(twice)
-    let older = twice / "a-older.sgy"
-    let newer = twice / "b-newer.sgy"
-    copyFile(paths[1], older)
-    copyFile(paths[1], newer)
-    let t = getTime()
-    setLastModificationTime(older, t - initDuration(hours = 2))
-    setLastModificationTime(newer, t - initDuration(hours = 1))
-    var st = initAppState(indexCache = fx.dir / "cache-twice")
-    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
-    st.apply Command(kind: ckBrowse, paths: @[twice])
-    doAssert st.settle(st.shots.done(2)), $st.shots.shotFiles
-    let source = st.sourcePoint(0, 1)
-    var at = st.shots.shotsAt(source)
-    doAssert at.len == 2 and at[0].path == newer and at[1].path == older,
-      "the newer file first: " & $at
-    # The survey matched again (loaded again): the same order.
-    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
-    doAssert st.settle(st.jobs.active.len == 0 and st.shots.surveyRev == st.survey.revision)
-    at = st.shots.shotsAt(st.sourcePoint(0, 1))
-    doAssert at.len == 2 and at[0].path == newer, "matched again: " & $at
-    st.apply Command(kind: ckShowPoints, points: @[st.sourcePoint(0, 1)])
-    doAssert st.settle(st.sessions.len == 1 and st.selection.activeGather.file ==
-      st.sessions[0].id) and st.sessions[0].path == newer, "a click shows the newer"
-    st.apply Command(kind: ckShowPoints, points: @[st.sourcePoint(0, 1)], shotPath: older)
-    doAssert st.settle((let i = st.findSession(st.selection.activeGather.file);
-      i >= 0 and st.sessions[i].path == older)), "the menu's other file"
-    st.shutdown()
+    block listedAgain:
+      # Another run: every file's shots from the cache, no file opened.
+      resetCounts()
+      var st = initAppState(indexCache = cache)
+      st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+      st.apply Command(kind: ckBrowse, paths: @[folder])
+      doAssert st.settle(st.shots.done(5)), $st.shots.shotFiles
+      doAssert st.shots.pointRefs.len == 5
+      for p in paths[1 .. ^1]: # (the first was written again since)
+        doAssert calls(foMapped, p) == 0, "listed again: " & $calls(foMapped, p) &
+          " mapped reads of " & p
+      st.shutdown()
 
-  block aFolderThatDoesNotAnswer:
-    removeDir(cache)
-    resetCounts()
-    var st = initAppState(indexCache = cache)
-    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
-    fault(folder, fkHang, {foMapped}) # every file of the folder
-    st.apply Command(kind: ckBrowse, paths: @[folder])
-    doAssert st.settle(hung() == 1), "the first file does not answer"
-    for _ in 1 .. 6:
+    block aFileThatDoesNotAnswer:
+      removeDir(cache)
+      resetCounts()
+      var st = initAppState(indexCache = cache)
+      st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+      let stuck = paths[2]
+      fault(stuck, fkHang, {foMapped}) # (the listing reads its first bytes as before)
+      st.apply Command(kind: ckBrowse, paths: @[folder])
+      doAssert st.settle(hung() == 1), "the file does not answer"
       advanceFsClock(StallAfter + initDuration(seconds = 1))
-      discard waitUntil((discard st.drainInbox(); hung() > MaxHanging),
-        initDuration(milliseconds = 500))
-    doAssert hung() == MaxHanging, $hung() & " files' reads hang"
-    doAssert st.shots.waiting and st.shots.job == NoJob and st.shots.pending.len > 0,
-      "the folder does not answer: said"
-    release(folder)
-    doAssert waitUntil(hung() == 0)
-    for _ in 1 .. 3:
-      advanceFsClock(RetryAfter + initDuration(seconds = 1))
-      discard st.settle(st.shots.done(5) and st.shots.later.len == 0)
-    doAssert st.shots.done(5) and st.shots.later.len == 0 and not st.shots.waiting,
-      "read on: " & $st.shots.shotFiles & " of 5"
-    doAssert st.shots.pointRefs.len == 5
-    doAssert uiCalls().len == 0, $uiCalls()
-    st.shutdown()
+      doAssert st.settle(st.shots.shotFiles == 4 and st.shots.later.len == 1 and
+        st.shots.job == NoJob), "the rest read: " & $st.shots.shotFiles & " of 5"
+      doAssert stuck notin st.shots.files and st.shots.later[0].path == stuck
+      # Not tried again while the first try still hangs (each try that hangs
+      # holds a thread until the drive answers: one a minute, for ever).
+      for _ in 1 .. 2:
+        advanceFsClock(RetryAfter + initDuration(seconds = 1))
+        discard waitUntil((discard st.drainInbox(); hung() > 1), initDuration(seconds = 2))
+        doAssert hung() == 1, $hung() & " tries of the file hang"
+        doAssert st.shots.later.len == 1 and st.shots.later[0].path == stuck
+      release(stuck)
+      doAssert waitUntil(hung() == 0)
+      advanceFsClock(RetryAfter)
+      doAssert st.settle(st.shots.done(5) and st.shots.later.len == 0), "tried again"
+      doAssert st.shots.pointRefs.len == 5
+      doAssert uiCalls().len == 0, $uiCalls()
+      st.shutdown()
 
-  block readWithTheOptionsOfTheFile:
-    let own = fx.dir / "own-cache"
-    var st = initAppState(indexCache = own)
-    let chosen = canonical(paths[2])
-    st.apply Command(kind: ckReopen, reopenPath: chosen, openChoice: OpenChoice(verifyAll: true))
-    doAssert st.settle(st.sessions.len == 1 and st.sessions[0].facts.opened.choice.verifyAll)
-    st.apply Command(kind: ckBrowse, paths: @[folder])
-    st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
-    doAssert st.settle(st.shots.done(5)), "the folder's shots: " & $st.shots.shotFiles
-    doAssert st.shots.pointRefs.len == 5, $st.shots.pointRefs.len
-    for i, p in paths:
-      doAssert fileExists(shotCacheFile(own, p)) == (i != 2),
-        "a shot cache of a file read with options: " & p
-    st.shutdown()
+    block oneShotTwoFiles:
+      # The older file listed first (its name), the newer second.
+      let twice = fx.dir / "twice"
+      createDir(twice)
+      let older = twice / "a-older.sgy"
+      let newer = twice / "b-newer.sgy"
+      copyFile(paths[1], older)
+      copyFile(paths[1], newer)
+      let t = getTime()
+      setLastModificationTime(older, t - initDuration(hours = 2))
+      setLastModificationTime(newer, t - initDuration(hours = 1))
+      var st = initAppState(indexCache = fx.dir / "cache-twice")
+      st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+      st.apply Command(kind: ckBrowse, paths: @[twice])
+      doAssert st.settle(st.shots.done(2)), $st.shots.shotFiles
+      let source = st.sourcePoint(0, 1)
+      var at = st.shots.shotsAt(source)
+      doAssert at.len == 2 and at[0].path == newer and at[1].path == older,
+        "the newer file first: " & $at
+      # The survey matched again (loaded again): the same order.
+      st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+      doAssert st.settle(st.jobs.active.len == 0 and st.shots.surveyRev == st.survey.revision)
+      at = st.shots.shotsAt(st.sourcePoint(0, 1))
+      doAssert at.len == 2 and at[0].path == newer, "matched again: " & $at
+      st.apply Command(kind: ckShowPoints, points: @[st.sourcePoint(0, 1)])
+      doAssert st.settle(st.sessions.len == 1 and st.selection.activeGather.file ==
+        st.sessions[0].id) and st.sessions[0].path == newer, "a click shows the newer"
+      st.apply Command(kind: ckShowPoints, points: @[st.sourcePoint(0, 1)], shotPath: older)
+      doAssert st.settle((let i = st.findSession(st.selection.activeGather.file);
+        i >= 0 and st.sessions[i].path == older)), "the menu's other file"
+      st.shutdown()
 
-echo "tshots: ok"
+    block aFolderThatDoesNotAnswer:
+      removeDir(cache)
+      resetCounts()
+      var st = initAppState(indexCache = cache)
+      st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+      fault(folder, fkHang, {foMapped}) # every file of the folder
+      st.apply Command(kind: ckBrowse, paths: @[folder])
+      doAssert st.settle(hung() == 1), "the first file does not answer"
+      for _ in 1 .. 6:
+        advanceFsClock(StallAfter + initDuration(seconds = 1))
+        discard waitUntil((discard st.drainInbox(); hung() > MaxHanging),
+          initDuration(milliseconds = 500))
+      doAssert hung() == MaxHanging, $hung() & " files' reads hang"
+      doAssert st.shots.waiting and st.shots.job == NoJob and st.shots.pending.len > 0,
+        "the folder does not answer: said"
+      release(folder)
+      doAssert waitUntil(hung() == 0)
+      for _ in 1 .. 3:
+        advanceFsClock(RetryAfter + initDuration(seconds = 1))
+        discard st.settle(st.shots.done(5) and st.shots.later.len == 0)
+      doAssert st.shots.done(5) and st.shots.later.len == 0 and not st.shots.waiting,
+        "read on: " & $st.shots.shotFiles & " of 5"
+      doAssert st.shots.pointRefs.len == 5
+      doAssert uiCalls().len == 0, $uiCalls()
+      st.shutdown()
+
+    block readWithTheOptionsOfTheFile:
+      let own = fx.dir / "own-cache"
+      var st = initAppState(indexCache = own)
+      let chosen = canonical(paths[2])
+      st.apply Command(kind: ckReopen, reopenPath: chosen, openChoice: OpenChoice(verifyAll: true))
+      doAssert st.settle(st.sessions.len == 1 and st.sessions[0].facts.opened.choice.verifyAll)
+      st.apply Command(kind: ckBrowse, paths: @[folder])
+      st.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
+      doAssert st.settle(st.shots.done(5)), "the folder's shots: " & $st.shots.shotFiles
+      doAssert st.shots.pointRefs.len == 5, $st.shots.pointRefs.len
+      for i, p in paths:
+        doAssert fileExists(shotCacheFile(own, p)) == (i != 2),
+          "a shot cache of a file read with options: " & p
+      st.shutdown()
+
+  echo "tshots: ok"
+
+when isMainModule:
+  main()

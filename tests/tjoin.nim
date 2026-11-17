@@ -89,76 +89,6 @@ proc surveyFiles(st: AppState): int =
   for l in st.survey.layers:
     if l.origin == loSurveyFile: inc result
 
-block distancesSayTheirUnit:
-  # The headers' coordinates kept, the survey's up to 0.1 from them: said
-  # in the unit confirmed, else the survey files' (H201: US survey feet),
-  # else "units".
-  var p = JoinPlan(traces: 10, seismic: 10, matched: 10)
-  p.given[prReceiver] = 10
-  p.differ[prReceiver] = 0.1
-  var g = initSurveyGeometry()
-  func said(p: JoinPlan; u: SurveyUnit): string = planWords(p, JoinSurvey(), JoinOptions(), u).join(" ")
-  doAssert "the survey's are up to 0.1 units from them" in p.said(wordsUnit(suNotGiven, g,
-    suNotGiven)), p.said(suNotGiven)
-  g.addSps(parseSps("H00 SPS format version num.     SPS 2.1;\n" &
-    "H20 Description of grid units   feet;\nH201Factor to meters            0.3048006096;\n",
-    "units.s"))
-  doAssert g.gridUnit.known, "the H201 is read"
-  let u = wordsUnit(suNotGiven, g, suMetres)
-  doAssert u == suUsFeet and "up to 0.1 ftUS from them" in p.said(u), p.said(u)
-  doAssert wordsUnit(suMetres, g, suNotGiven) == suMetres, "the unit confirmed first"
-
-block onTheMap:
-  withFixtures fx:
-    let path = fx.stationsSegd()
-    let survey = fx.surveySps()
-    var st = initAppState()
-    st.opened(path)
-    doAssert st.surveyFiles == 0
-    st.join(sps(survey.s, survey.r, survey.x))
-    doAssert st.joinReport.outcome == joJoined, st.words
-    let (s, r) = (st.survey.findFile(survey.s), st.survey.findFile(survey.r))
-    doAssert s >= 0, "the S file is not on the map"
-    doAssert st.survey.layers[s].points[prSource].len == Shots,
-      $st.survey.layers[s].points[prSource].len
-    doAssert r >= 0 and st.survey.layers[r].points[prReceiver].len == Channels
-    doAssert st.survey.findFile(survey.x) >= 0 and st.surveyFiles == 3
-    doAssert st.survey.findTraces(st.sessions[0].id) >= 0, "the file's own positions went"
-    doAssert st.words.startsWith("On the map: " & $Shots & " source points and " & $Channels &
-      " receiver points (survey.s, survey.r, survey.x). 12 of 24 seismic traces matched"),
-      st.words
-    var said = false
-    for e in st.log:
-      if e.text.startsWith("Survey imported for stations-only.sgd (survey.s, survey.r, " &
-          "survey.x): On the map:"): said = true
-    doAssert said, "the log does not say what is on the map"
-    # The records checked once, against the survey imported (not first
-    # against the X file the import put on the map).
-    doAssert st.settle(st.jobs.active.len == 0)
-    var checks: seq[string]
-    for j in st.jobs.list:
-      if j.spec.title.startsWith("Check the records of"): checks.add j.spec.title
-    doAssert checks == @["Check the records of stations-only.sgd against the survey imported"],
-      "the records checked " & $checks.len & " times: " & $checks
-    # Again: nothing is loaded twice.
-    let layers = st.survey.layers.len
-    st.join(sps(survey.s, survey.r, survey.x))
-    doAssert st.survey.layers.len == layers and st.surveyFiles == 3, $st.survey.layers.len
-    echo "tjoin: on the map: ", st.joinReport.words[0]
-block onTheMapOnly: # no file open
-  withFixtures fx:
-    let survey = fx.surveySps()
-    var st = initAppState()
-    st.apply Command(kind: ckJoin, joinFiles: sps(survey.s, survey.r))
-    doAssert st.importing
-    doAssert st.settle(st.joinReport.serial > 0 and not st.importing), "it did not end"
-    doAssert st.joinReport.outcome == joMapOnly, $st.joinReport.outcome
-    doAssert st.surveyFiles == 2 and st.survey.layers[st.survey.findFile(survey.s)].points[
-      prSource].len == Shots
-    doAssert "No seismic file is open, so no trace was matched" in st.words, st.words
-    doAssert st.words.startsWith("On the map: " & $Shots & " source points"), st.words
-    echo "tjoin: no file open: ", st.words
-
 proc readsAgain(st: var AppState; path: string): bool =
   ## The main panel's reader holds the file again and a tile made after the
   ## join came.
@@ -166,337 +96,413 @@ proc readsAgain(st: var AppState; path: string): bool =
   st.settle(st.jobs.held(path) == 1 and st.tiles(k).len > 0 and
     st.tiles(k)[^1].request.gen >= st.panel(MainPanel).samplesGen)
 
-block stationsJoined:
-  withFixtures fx:
-    let path = fx.stationsSegd()
-    let survey = fx.surveySps()
-    var st = initAppState()
-    st.opened(path)
-    doAssert st.jobs.held(path) == 1, "the panel's reader holds the file"
-    doAssert st.sessions[0].file.keysRevision == 0
-    st.join(sps(survey.s, survey.r, survey.x), units = JoinUnits(survey: suMetres))
-    let r = st.joinReport
-    doAssert r.outcome == joJoined, $r.outcome & ": " & st.words
-    doAssert r.heldAtJoin == 0, "no reader held the file: " & $r.heldAtJoin
-    doAssert st.sessions[0].file.keysRevision == 1
-    doAssert "12 of 24 seismic traces matched the survey" in st.words, st.words
-    doAssert "12 seismic traces are not matched: the survey has no receiver station for them." in
-      st.words, st.words
-    doAssert "were all (0, 0), so the survey's take their place" in st.words, st.words
-    doAssert "1 auxiliary trace is left alone" in st.words, st.words
-    doAssert r.unmatched == 12
-    # Traces 1 .. 12: line 100, points 101 .. 112, in the R file; 13 .. 24:
-    # line 101, in no survey file. The source (1 / 1001) is in the S file.
-    for t in 1 .. 2 * SegdChannels:
-      let k = st.keysOf(t)
-      doAssert near(k.srcX, srcX(0)) and near(k.srcY, OriginY), "trace " & $t & "'s source"
-      if t <= SegdChannels:
-        doAssert near(k.rcvX, rcvX(t)) and near(k.rcvY, OriginY), "receiver " & $(100 + t) &
-          " is placed: trace " & $t & " " & $k.rcvX
-        doAssert jgReceiverXy in st.sessions[0].file.index.joinedGroups(t)
-        doAssert near(k.offset, abs(rcvX(t) - srcX(0)), 1e-9), "its offset"
-      else:
-        doAssert k.rcvX == 0 and k.rcvY == 0, "trace " & $t & " keeps its header's (0, 0)"
-    doAssert st.keysOf(0).srcX.isNaN or not st.keysOf(0).isSeismic # the time break: alone
-    let joined = st.joinedOf(st.sessions[0].id)
-    doAssert joined >= 0 and st.joins[joined].plan.unmatched == toSeq(SegdChannels + 1 ..
-      2 * SegdChannels)
-    # The plot reads the file again, from the joined keys.
-    doAssert st.readsAgain(path), "the panel reads the file again"
-    let tile = st.tiles(st.findPanel(MainPanel))[^1]
-    var lit = 0
-    for row in 0 ..< tile.traces.len:
-      if tile.traces[row] in 1 .. SegdChannels:
-        doAssert near(tile.keys[row].rcvX, rcvX(tile.traces[row]))
-        doAssert jgReceiverXy in tile.joinedAt(row)
-        inc lit
-    doAssert lit == SegdChannels, "the tile's joined keys: " & $lit
-    # The map: the file's positions read again from the joined keys.
-    doAssert st.settle(st.survey.findTraces(st.sessions[0].id) >= 0 and
-      st.survey.layers[st.survey.findTraces(st.sessions[0].id)].keysRevision == 1)
-    let own = st.survey.layers[st.survey.findTraces(st.sessions[0].id)]
-    doAssert own.points[prReceiver].len == SegdChannels, $own.points[prReceiver].len
-    doAssert own.points[prSource].len == 1
-    doAssert st.unitsOf == "m", "the units confirmed: " & st.unitsOf
-    # Select unmatched traces: line 101's.
-    st.apply Command(kind: ckSelectUnmatched, unmatchedOf: st.sessions[0].id)
-    doAssert st.selection.selected.len == SegdChannels
-    for t in SegdChannels + 1 .. 2 * SegdChannels:
-      doAssert st.sessions[0].base + t in st.selection.selected
-    doAssert "12 unmatched traces of stations-only.sgd selected, 12 in the record shown" in
-      st.log[st.log.len - 1].text, st.log[st.log.len - 1].text
-    # Joined again with the same files: nothing more changes, and the plot is not stopped.
-    st.join(sps(survey.s, survey.r))
-    doAssert st.joinReport.outcome == joJoined and st.joinReport.heldAtJoin == -1
-    doAssert st.sessions[0].file.keysRevision == 1
-    doAssert "No trace's keys changed" in st.words, st.words
-    doAssert "The coordinates the headers give are kept: they are the survey's." in st.words,
-      st.words
-    echo "tjoin: stations: ", st.words
+proc main*() =
 
-block byRecordAndChannel:
-  withFixtures fx:
-    let path = fx.recordOnlySegd()
-    let survey = fx.surveySps()
-    var st = initAppState()
-    st.opened(path)
-    doAssert st.keysOf(1).rcvLine.isNaN and st.keysOf(1).rcvX.isNaN
-    doAssert st.sessions[0].records[0].planned == -1
-    # The R file loaded: its receivers find no trace of a record whose headers
-    # name no station, until the join gives them their stations.
-    st.apply Command(kind: ckLoadSurvey, paths: @[survey.r])
-    doAssert st.settle(st.survey.findFile(survey.r) >= 0)
-    proc receiver(st: AppState; point: float64): PointRef =
-      let i = st.survey.findFile(survey.r)
-      PointRef(layer: st.survey.layers[i].id, role: prReceiver, point: st.survey.layers[
-        i].stationPoint(prReceiver, Station(line: RcvLine, point: point, index: 1)))
-    let base = st.sessions[0].base
-    doAssert st.survey.tracesAt(st.receiver(FirstRcvPoint)).len == 0
-    st.join(sps(survey.s, survey.r, fx.segdRelation()))
-    doAssert st.joinReport.outcome == joJoined, st.words
-    doAssert st.joinReport.heldAtJoin == 0
-    let plan = st.joins[0].plan
-    doAssert plan.matches[jmRecord] == SegdChannels and plan.matched == SegdChannels, $plan.matches
-    doAssert "by record and channel, through the relation file" in st.words, st.words
-    for t in 1 .. SegdChannels:
-      let k = st.keysOf(t)
-      doAssert k.rcvLine == RcvLine and k.rcvPoint == FirstRcvPoint + float64(t - 1)
-      doAssert k.srcLine == SrcLine and k.srcPoint == FirstSrcPoint
-      doAssert near(k.rcvX, rcvX(t)) and near(k.srcX, srcX(0))
-    # The R file's receivers and the traces are linked both ways now.
-    doAssert st.settle(st.survey.layers[st.survey.findTraces(st.sessions[0].id)].keysRevision == 1)
-    doAssert st.survey.tracesAt(st.receiver(FirstRcvPoint + 4)) == @[base + 5]
-    doAssert st.receiver(FirstRcvPoint + 4) in st.survey.tracePointsOf(base + 5)
-    # The records are checked against the joined relation records.
-    doAssert st.settle(st.sessions[0].records[0].planned == SegdChannels), "records checked"
-    doAssert st.sessions[0].records[0].plannedMissing == 0
-    doAssert st.sessions[0].records[0].unlisted == 0
-    doAssert "segd.x" in st.sessions[0].checkedAgainst, st.sessions[0].checkedAgainst
-    echo "tjoin: by record and channel: ", st.words
-
-block csvTable:
-  withFixtures fx:
-    # Read alone: delimiters, a header row or none, rows that cannot be used.
+  block distancesSayTheirUnit:
+    # The headers' coordinates kept, the survey's up to 0.1 from them: said
+    # in the unit confirmed, else the survey files' (H201: US survey feet),
+    # else "units".
+    var p = JoinPlan(traces: 10, seismic: 10, matched: 10)
+    p.given[prReceiver] = 10
+    p.differ[prReceiver] = 0.1
     var g = initSurveyGeometry()
-    var problems: seq[string]
-    var skipped = 0
-    let text = "# stations\nKind;Line;Station;Easting;Northing;Elevation\nS;1;1001;10;20;3\n" &
-      "R;100;101;11;21;\nR;100;x;1;2;3\nQ;100;102;1;2;3\n\nR;100;103;13;23;4\n"
-    doAssert g.addCsv(text, "t.csv", crColumn, problems, skipped) == 3
-    doAssert skipped == 2 and problems.len == 2, $problems
-    doAssert "t.csv line 5: its line or point is not a number" in problems[0], problems[0]
-    doAssert "neither S nor R" in problems[1], problems[1]
-    doAssert g.sourceCount == 1 and g.receiverCount == 2
-    doAssert g.table.receivers[stationKey(100, 103, 0)].x == 13
-    var h = initSurveyGeometry()
-    problems.setLen 0
-    doAssert h.addCsv("100\t101\t5\t6\n100\t102\t7\t8\n", "r.txt", crReceivers, problems,
-      skipped) == 2
-    doAssert h.receiverCount == 2 and h.sourceCount == 0 and problems.len == 0
-    problems.setLen 0
-    doAssert h.addCsv("line,point,x,y\n1,2,3,4\n", "k.csv", crColumn, problems, skipped) == 0
-    doAssert problems.len == 1 and "choose its role" in problems[0], $problems
-    # Joined to a record whose headers name stations.
-    let path = fx.stationsSegd()
-    var csv = "kind,line,point,x,y,z\nS," & $SrcLine & "," & $FirstSrcPoint & "," & $srcX(0) &
-      "," & $OriginY & ",100\n"
-    for c in 1 .. SegdChannels:
-      csv.add "R," & $RcvLine & "," & $(FirstRcvPoint + float64(c - 1)) & "," & $rcvX(c) & "," &
-        $OriginY & ",100\n"
-    writeFile(fx.dir / "stations.csv", csv)
-    var st = initAppState()
-    st.opened(path)
-    st.join(@[JoinFile(path: fx.dir / "stations.csv", kind: jkCsv, role: crColumn)])
-    doAssert st.joinReport.outcome == joJoined, st.words
-    doAssert st.joinReport.heldAtJoin == 0
-    doAssert st.joins[0].plan.matched == SegdChannels and st.joins[0].survey.csvRows == 13
-    for t in 1 .. SegdChannels:
-      doAssert near(st.keysOf(t).rcvX, rcvX(t)) and near(st.keysOf(t).srcX, srcX(0))
-    echo "tjoin: CSV: ", st.words
+    func said(p: JoinPlan; u: SurveyUnit): string = planWords(p, JoinSurvey(), JoinOptions(),
+        u).join(" ")
+    doAssert "the survey's are up to 0.1 units from them" in p.said(wordsUnit(suNotGiven, g,
+      suNotGiven)), p.said(suNotGiven)
+    g.addSps(parseSps("H00 SPS format version num.     SPS 2.1;\n" &
+      "H20 Description of grid units   feet;\nH201Factor to meters            0.3048006096;\n",
+      "units.s"))
+    doAssert g.gridUnit.known, "the H201 is read"
+    let u = wordsUnit(suNotGiven, g, suMetres)
+    doAssert u == suUsFeet and "up to 0.1 ftUS from them" in p.said(u), p.said(u)
+    doAssert wordsUnit(suMetres, g, suNotGiven) == suMetres, "the unit confirmed first"
 
-block nothingMatched:
-  withFixtures fx:
-    let path = fx.stationsSegd()
-    # The survey numbers its lines 100 times larger than the headers do.
-    let header = SpsHeader(code: "00", description: "SPS format version num.", data: "SPS 2.1;")
-    proc point(kind: SpsPointKind; line, pt, x: float64): SpsPoint =
-      SpsPoint(kind: kind, line: line, point: pt, index: 1, code: "G1", easting: x,
-        northing: OriginY, elevation: Elevation, dayOfYear: -1, hour: -1, minute: -1, second: -1)
-    var s, r = SpsFile(headers: @[header])
-    s.points.add point(pkSource, SrcLine * 100, FirstSrcPoint, srcX(0))
-    for c in 1 .. SegdChannels:
-      r.points.add point(pkReceiver, RcvLine * 100, FirstRcvPoint + float64(c - 1), rcvX(c))
-    doAssert writeSps(s, fx.dir / "big.s").len == 0 and writeSps(r, fx.dir / "big.r").len == 0
-    var st = initAppState()
-    st.opened(path)
-    st.join(sps(fx.dir / "big.s", fx.dir / "big.r"))
-    doAssert st.joinReport.outcome == joNothing, $st.joinReport.outcome
-    doAssert st.joinReport.heldAtJoin == -1, "the readers were not stopped"
-    doAssert st.sessions[0].file.keysRevision == 0
-    doAssert "No seismic trace was matched to the survey" in st.words, st.words
-    doAssert "24 seismic traces are not matched: the survey has neither their source nor " &
-      "their receiver station." in st.words, st.words
-    doAssert "the headers' receiver lines (100 to 101) are not the survey's (10000): the " &
-      "survey numbers its lines 100 times larger, so the line numbering differs" in st.words,
-      st.words
-    doAssert "the headers' source lines (1) are not the survey's (100)" in st.words, st.words
-    doAssert st.log[st.log.len - 1].severity == sevWarning
-    doAssert "The survey matches none of the traces of stations-only.sgd" in
-      st.log[st.log.len - 1].text, st.log[st.log.len - 1].text
-    doAssert st.joinedOf(st.sessions[0].id) < 0
-    echo "tjoin: nothing matched: ", st.words
-    # Line names that are text (SPS 1.0): passed by, then matched by their trailing digits.
-    var s10, r10 = SpsFile(revision: sps10, headers: @[SpsHeader(code: "00",
-      description: "SPS format version num.", data: "SPS001,")])
-    var p = point(pkSource, NaN, FirstSrcPoint, srcX(0))
-    p.lineName = "SL1"
-    s10.points.add p
-    for c in 1 .. SegdChannels:
-      var q = point(pkReceiver, NaN, FirstRcvPoint + float64(c - 1), rcvX(c))
-      q.lineName = "RL100"
-      r10.points.add q
-    doAssert writeSps(s10, fx.dir / "named.s").len == 0
-    doAssert writeSps(r10, fx.dir / "named.r").len == 0
-    st.join(sps(fx.dir / "named.s", fx.dir / "named.r"))
-    doAssert st.joinReport.outcome == joNothing, st.words
-    doAssert "the survey files name lines with text (\"SL1\", \"RL100\"), so 13 records were " &
-      "passed by: turn on \"Use the trailing digits of line names\"" in st.words, st.words
-    st.join(sps(fx.dir / "named.s", fx.dir / "named.r"), JoinOptions(trailingDigits: true))
-    doAssert st.joinReport.outcome == joJoined, st.words
-    doAssert st.joins[0].plan.matched == SegdChannels
-    doAssert near(st.keysOf(1).rcvX, rcvX(1))
-    echo "tjoin: matched by trailing digits: ", st.words
+  block onTheMap:
+    withFixtures fx:
+      let path = fx.stationsSegd()
+      let survey = fx.surveySps()
+      var st = initAppState()
+      st.opened(path)
+      doAssert st.surveyFiles == 0
+      st.join(sps(survey.s, survey.r, survey.x))
+      doAssert st.joinReport.outcome == joJoined, st.words
+      let (s, r) = (st.survey.findFile(survey.s), st.survey.findFile(survey.r))
+      doAssert s >= 0, "the S file is not on the map"
+      doAssert st.survey.layers[s].points[prSource].len == Shots,
+        $st.survey.layers[s].points[prSource].len
+      doAssert r >= 0 and st.survey.layers[r].points[prReceiver].len == Channels
+      doAssert st.survey.findFile(survey.x) >= 0 and st.surveyFiles == 3
+      doAssert st.survey.findTraces(st.sessions[0].id) >= 0, "the file's own positions went"
+      doAssert st.words.startsWith("On the map: " & $Shots & " source points and " & $Channels &
+        " receiver points (survey.s, survey.r, survey.x). 12 of 24 seismic traces matched"),
+        st.words
+      var said = false
+      for e in st.log:
+        if e.text.startsWith("Survey imported for stations-only.sgd (survey.s, survey.r, " &
+            "survey.x): On the map:"): said = true
+      doAssert said, "the log does not say what is on the map"
+      # The records checked once, against the survey imported (not first
+      # against the X file the import put on the map).
+      doAssert st.settle(st.jobs.active.len == 0)
+      var checks: seq[string]
+      for j in st.jobs.list:
+        if j.spec.title.startsWith("Check the records of"): checks.add j.spec.title
+      doAssert checks == @["Check the records of stations-only.sgd against the survey imported"],
+        "the records checked " & $checks.len & " times: " & $checks
+      # Again: nothing is loaded twice.
+      let layers = st.survey.layers.len
+      st.join(sps(survey.s, survey.r, survey.x))
+      doAssert st.survey.layers.len == layers and st.surveyFiles == 3, $st.survey.layers.len
+      echo "tjoin: on the map: ", st.joinReport.words[0]
+  block onTheMapOnly: # no file open
+    withFixtures fx:
+      let survey = fx.surveySps()
+      var st = initAppState()
+      st.apply Command(kind: ckJoin, joinFiles: sps(survey.s, survey.r))
+      doAssert st.importing
+      doAssert st.settle(st.joinReport.serial > 0 and not st.importing), "it did not end"
+      doAssert st.joinReport.outcome == joMapOnly, $st.joinReport.outcome
+      doAssert st.surveyFiles == 2 and st.survey.layers[st.survey.findFile(survey.s)].points[
+        prSource].len == Shots
+      doAssert "No seismic file is open, so no trace was matched" in st.words, st.words
+      doAssert st.words.startsWith("On the map: " & $Shots & " source points"), st.words
+      echo "tjoin: no file open: ", st.words
 
-var gate: Gate
+  block stationsJoined:
+    withFixtures fx:
+      let path = fx.stationsSegd()
+      let survey = fx.surveySps()
+      var st = initAppState()
+      st.opened(path)
+      doAssert st.jobs.held(path) == 1, "the panel's reader holds the file"
+      doAssert st.sessions[0].file.keysRevision == 0
+      st.join(sps(survey.s, survey.r, survey.x), units = JoinUnits(survey: suMetres))
+      let r = st.joinReport
+      doAssert r.outcome == joJoined, $r.outcome & ": " & st.words
+      doAssert r.heldAtJoin == 0, "no reader held the file: " & $r.heldAtJoin
+      doAssert st.sessions[0].file.keysRevision == 1
+      doAssert "12 of 24 seismic traces matched the survey" in st.words, st.words
+      doAssert "12 seismic traces are not matched: the survey has no receiver station for them." in
+        st.words, st.words
+      doAssert "were all (0, 0), so the survey's take their place" in st.words, st.words
+      doAssert "1 auxiliary trace is left alone" in st.words, st.words
+      doAssert r.unmatched == 12
+      # Traces 1 .. 12: line 100, points 101 .. 112, in the R file; 13 .. 24:
+      # line 101, in no survey file. The source (1 / 1001) is in the S file.
+      for t in 1 .. 2 * SegdChannels:
+        let k = st.keysOf(t)
+        doAssert near(k.srcX, srcX(0)) and near(k.srcY, OriginY), "trace " & $t & "'s source"
+        if t <= SegdChannels:
+          doAssert near(k.rcvX, rcvX(t)) and near(k.rcvY, OriginY), "receiver " & $(100 + t) &
+            " is placed: trace " & $t & " " & $k.rcvX
+          doAssert jgReceiverXy in st.sessions[0].file.index.joinedGroups(t)
+          doAssert near(k.offset, abs(rcvX(t) - srcX(0)), 1e-9), "its offset"
+        else:
+          doAssert k.rcvX == 0 and k.rcvY == 0, "trace " & $t & " keeps its header's (0, 0)"
+      doAssert st.keysOf(0).srcX.isNaN or not st.keysOf(0).isSeismic # the time break: alone
+      let joined = st.joinedOf(st.sessions[0].id)
+      doAssert joined >= 0 and st.joins[joined].plan.unmatched == toSeq(SegdChannels + 1 ..
+        2 * SegdChannels)
+      # The plot reads the file again, from the joined keys.
+      doAssert st.readsAgain(path), "the panel reads the file again"
+      let tile = st.tiles(st.findPanel(MainPanel))[^1]
+      var lit = 0
+      for row in 0 ..< tile.traces.len:
+        if tile.traces[row] in 1 .. SegdChannels:
+          doAssert near(tile.keys[row].rcvX, rcvX(tile.traces[row]))
+          doAssert jgReceiverXy in tile.joinedAt(row)
+          inc lit
+      doAssert lit == SegdChannels, "the tile's joined keys: " & $lit
+      # The map: the file's positions read again from the joined keys.
+      doAssert st.settle(st.survey.findTraces(st.sessions[0].id) >= 0 and
+        st.survey.layers[st.survey.findTraces(st.sessions[0].id)].keysRevision == 1)
+      let own = st.survey.layers[st.survey.findTraces(st.sessions[0].id)]
+      doAssert own.points[prReceiver].len == SegdChannels, $own.points[prReceiver].len
+      doAssert own.points[prSource].len == 1
+      doAssert st.unitsOf == "m", "the units confirmed: " & st.unitsOf
+      # Select unmatched traces: line 101's.
+      st.apply Command(kind: ckSelectUnmatched, unmatchedOf: st.sessions[0].id)
+      doAssert st.selection.selected.len == SegdChannels
+      for t in SegdChannels + 1 .. 2 * SegdChannels:
+        doAssert st.sessions[0].base + t in st.selection.selected
+      doAssert "12 unmatched traces of stations-only.sgd selected, 12 in the record shown" in
+        st.log[st.log.len - 1].text, st.log[st.log.len - 1].text
+      # Joined again with the same files: nothing more changes, and the plot is not stopped.
+      st.join(sps(survey.s, survey.r))
+      doAssert st.joinReport.outcome == joJoined and st.joinReport.heldAtJoin == -1
+      doAssert st.sessions[0].file.keysRevision == 1
+      doAssert "No trace's keys changed" in st.words, st.words
+      doAssert "The coordinates the headers give are kept: they are the survey's." in st.words,
+        st.words
+      echo "tjoin: stations: ", st.words
 
-block cancelled:
-  withFixtures fx:
-    let path = fx.stationsSegd()
-    let survey = fx.surveySps()
-    var st = initAppState()
-    st.opened(path)
-    # While the survey files are read: a million receivers take a while.
-    let big = fx.bigSps(1000, 1000)
-    st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: sps(big))
-    let reading = st.joinUnderWay.job
-    doAssert reading != NoJob and st.joinUnderWay.step == jpReading
-    st.apply Command(kind: ckCancelJob, job: reading)
-    doAssert st.settle(st.joinUnderWay.job == NoJob)
-    doAssert st.joinReport.outcome == joCancelled, $st.joinReport.outcome
-    doAssert "The survey import was cancelled: stations-only.sgd is as it was, and so is " &
-      "the map." == st.words, st.words
-    doAssert st.sessions[0].file.keysRevision == 0 and st.jobs.held(path) == 1
-    doAssert st.settle(not st.surveyLoading(big))
-    doAssert st.surveyFiles == 0, "the map holds " & $st.surveyFiles &
-      " survey files after the cancel"
-    # While the join waits for the file: another job reads it.
-    gate.close()
-    discard st.jobs.submit(JobSpec(title: "Read it", lane: jlBackground, reads: @[path]),
-      proc (ctx: JobContext) {.gcsafe.} = gate.waitAt(ctx))
-    st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id,
-      joinFiles: sps(survey.s, survey.r))
-    doAssert st.settle(st.joinUnderWay.step == jpJoining and st.jobs.held(path) == 0),
-      "the panel's reader let go of the file"
-    let k = st.findPanel(MainPanel)
-    doAssert st.tiles(k).len > 0, "the tiles stay drawn meanwhile"
-    # The record shown again meanwhile (its auxiliary trace too): it waits for
-    # the join, quietly.
-    let said = st.log.len
-    st.apply Command(kind: ckFilter, panel: MainPanel,
-      filter: TraceFilter(seismic: true, auxiliary: true))
-    doAssert not st.panel(MainPanel).laidOut
-    for e in said ..< st.log.len:
-      doAssert "busy" notin st.log[e].text, st.log[e].text
-    st.apply Command(kind: ckCancelJob, job: st.joinUnderWay.job)
-    doAssert st.settle(st.joinUnderWay.job == NoJob)
-    doAssert st.joinReport.outcome == joCancelled
-    doAssert st.sessions[0].file.keysRevision == 0
-    doAssert st.keysOf(1).rcvX == 0, "the keys as they were"
-    doAssert st.settle(not st.surveyLoading(survey.s) and not st.surveyLoading(survey.r))
-    doAssert st.surveyFiles == 0, "the map holds " & $st.surveyFiles &
-      " survey files after the cancel"
-    doAssert st.readsAgain(path) and st.panel(MainPanel).laidOut,
-      "the panel reads the file again"
-    gate.open()
-    # The same join, let through, does it.
-    st.join(sps(survey.s, survey.r))
-    doAssert st.joinReport.outcome == joJoined and st.sessions[0].file.keysRevision == 1
-    echo "tjoin: cancelled twice, then joined"
+  block byRecordAndChannel:
+    withFixtures fx:
+      let path = fx.recordOnlySegd()
+      let survey = fx.surveySps()
+      var st = initAppState()
+      st.opened(path)
+      doAssert st.keysOf(1).rcvLine.isNaN and st.keysOf(1).rcvX.isNaN
+      doAssert st.sessions[0].records[0].planned == -1
+      # The R file loaded: its receivers find no trace of a record whose headers
+      # name no station, until the join gives them their stations.
+      st.apply Command(kind: ckLoadSurvey, paths: @[survey.r])
+      doAssert st.settle(st.survey.findFile(survey.r) >= 0)
+      proc receiver(st: AppState; point: float64): PointRef =
+        let i = st.survey.findFile(survey.r)
+        PointRef(layer: st.survey.layers[i].id, role: prReceiver, point: st.survey.layers[
+          i].stationPoint(prReceiver, Station(line: RcvLine, point: point, index: 1)))
+      let base = st.sessions[0].base
+      doAssert st.survey.tracesAt(st.receiver(FirstRcvPoint)).len == 0
+      st.join(sps(survey.s, survey.r, fx.segdRelation()))
+      doAssert st.joinReport.outcome == joJoined, st.words
+      doAssert st.joinReport.heldAtJoin == 0
+      let plan = st.joins[0].plan
+      doAssert plan.matches[jmRecord] == SegdChannels and plan.matched == SegdChannels, $plan.matches
+      doAssert "by record and channel, through the relation file" in st.words, st.words
+      for t in 1 .. SegdChannels:
+        let k = st.keysOf(t)
+        doAssert k.rcvLine == RcvLine and k.rcvPoint == FirstRcvPoint + float64(t - 1)
+        doAssert k.srcLine == SrcLine and k.srcPoint == FirstSrcPoint
+        doAssert near(k.rcvX, rcvX(t)) and near(k.srcX, srcX(0))
+      # The R file's receivers and the traces are linked both ways now.
+      doAssert st.settle(st.survey.layers[st.survey.findTraces(st.sessions[0].id)].keysRevision == 1)
+      doAssert st.survey.tracesAt(st.receiver(FirstRcvPoint + 4)) == @[base + 5]
+      doAssert st.receiver(FirstRcvPoint + 4) in st.survey.tracePointsOf(base + 5)
+      # The records are checked against the joined relation records.
+      doAssert st.settle(st.sessions[0].records[0].planned == SegdChannels), "records checked"
+      doAssert st.sessions[0].records[0].plannedMissing == 0
+      doAssert st.sessions[0].records[0].unlisted == 0
+      doAssert "segd.x" in st.sessions[0].checkedAgainst, st.sessions[0].checkedAgainst
+      echo "tjoin: by record and channel: ", st.words
 
-block cancelledPutsBack:
-  # Survey files already on the map, imported again with other line names
-  # (so read again, their layers made from the import's read in place of
-  # theirs) and cancelled after that: the map has its layers back, as they
-  # were (their ids, their points).
-  withFixtures fx:
-    let path = fx.stationsSegd()
-    let survey = fx.surveySps()
-    var st = initAppState()
-    st.opened(path)
-    st.apply Command(kind: ckLoadSurvey, paths: @[survey.s, survey.r])
-    doAssert st.settle(st.surveyFiles == 2 and not st.surveyLoading(survey.s) and
-      not st.surveyLoading(survey.r))
-    var before: seq[(SurveyLayerId, string, int)]
-    for l in st.survey.layers:
-      if l.origin == loSurveyFile:
-        before.add (l.id, l.path, l.points[prSource].len + l.points[prReceiver].len)
-    # the join held at its step by another job reading the file, the files on
-    # the map again from its read
-    gate.close()
-    discard st.jobs.submit(JobSpec(title: "Read it", lane: jlBackground, reads: @[path]),
-      proc (ctx: JobContext) {.gcsafe.} = gate.waitAt(ctx))
-    st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id,
-      joinFiles: sps(survey.s, survey.r), joinOptions: JoinOptions(trailingDigits: true))
-    doAssert st.settle(st.joinUnderWay.step == jpJoining)
-    var replaced = 0
-    for l in st.survey.layers:
-      if l.origin == loSurveyFile and before.allIt(it[0] != l.id): inc replaced
-    doAssert replaced == 2, "the import's loads replaced " & $replaced & " layers"
-    st.apply Command(kind: ckCancelJob, job: st.joinUnderWay.job)
-    doAssert st.settle(st.joinUnderWay.job == NoJob)
-    gate.open()
-    doAssert st.joinReport.outcome == joCancelled
-    doAssert "The survey import was cancelled: stations-only.sgd is as it was, and so is " &
-      "the map." == st.words, st.words
-    var after: seq[(SurveyLayerId, string, int)]
-    for l in st.survey.layers:
-      if l.origin == loSurveyFile:
-        after.add (l.id, l.path, l.points[prSource].len + l.points[prReceiver].len)
-    doAssert after == before, "the map after the cancel: " & $after & ", before: " & $before
-    echo "tjoin: a cancelled import put back the 2 layers it replaced"
+  block csvTable:
+    withFixtures fx:
+      # Read alone: delimiters, a header row or none, rows that cannot be used.
+      var g = initSurveyGeometry()
+      var problems: seq[string]
+      var skipped = 0
+      let text = "# stations\nKind;Line;Station;Easting;Northing;Elevation\nS;1;1001;10;20;3\n" &
+        "R;100;101;11;21;\nR;100;x;1;2;3\nQ;100;102;1;2;3\n\nR;100;103;13;23;4\n"
+      doAssert g.addCsv(text, "t.csv", crColumn, problems, skipped) == 3
+      doAssert skipped == 2 and problems.len == 2, $problems
+      doAssert "t.csv line 5: its line or point is not a number" in problems[0], problems[0]
+      doAssert "neither S nor R" in problems[1], problems[1]
+      doAssert g.sourceCount == 1 and g.receiverCount == 2
+      doAssert g.table.receivers[stationKey(100, 103, 0)].x == 13
+      var h = initSurveyGeometry()
+      problems.setLen 0
+      doAssert h.addCsv("100\t101\t5\t6\n100\t102\t7\t8\n", "r.txt", crReceivers, problems,
+        skipped) == 2
+      doAssert h.receiverCount == 2 and h.sourceCount == 0 and problems.len == 0
+      problems.setLen 0
+      doAssert h.addCsv("line,point,x,y\n1,2,3,4\n", "k.csv", crColumn, problems, skipped) == 0
+      doAssert problems.len == 1 and "choose its role" in problems[0], $problems
+      # Joined to a record whose headers name stations.
+      let path = fx.stationsSegd()
+      var csv = "kind,line,point,x,y,z\nS," & $SrcLine & "," & $FirstSrcPoint & "," & $srcX(0) &
+        "," & $OriginY & ",100\n"
+      for c in 1 .. SegdChannels:
+        csv.add "R," & $RcvLine & "," & $(FirstRcvPoint + float64(c - 1)) & "," & $rcvX(c) & "," &
+          $OriginY & ",100\n"
+      writeFile(fx.dir / "stations.csv", csv)
+      var st = initAppState()
+      st.opened(path)
+      st.join(@[JoinFile(path: fx.dir / "stations.csv", kind: jkCsv, role: crColumn)])
+      doAssert st.joinReport.outcome == joJoined, st.words
+      doAssert st.joinReport.heldAtJoin == 0
+      doAssert st.joins[0].plan.matched == SegdChannels and st.joins[0].survey.csvRows == 13
+      for t in 1 .. SegdChannels:
+        doAssert near(st.keysOf(t).rcvX, rcvX(t)) and near(st.keysOf(t).srcX, srcX(0))
+      echo "tjoin: CSV: ", st.words
 
-block cancelInTheStep:
-  # The step that changes the keys runs to its end: a cancel then is refused,
-  # and the step is never left behind as cancelled while it still works.
-  withFixtures fx:
-    let path = fx.stationsSegd()
-    let survey = fx.surveySps()
-    var st = initAppState()
-    st.opened(path)
-    installSteps()
-    holdStep("matching") # the step, as a join of millions of traces holds it
-    let before = st.joinReport.serial
-    st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id,
-      joinFiles: sps(survey.s, survey.r, survey.x), joinUnits: JoinUnits(survey: suMetres))
-    doAssert st.settle(inStep("matching").len == 1), "the join's step runs"
-    let job = st.joinUnderWay.job
-    let said = st.log.len
-    st.apply Command(kind: ckCancelJob, job: job)
-    var refused = false
-    for e in said ..< st.log.len:
-      if "cannot be cancelled" in st.log[e].text: refused = true
-    doAssert refused, "the cancel is refused, and said so"
-    advanceFsClock(initDuration(seconds = 10)) # far past any grace: still not abandoned
-    for _ in 1 .. 3: discard st.drainInbox()
-    doAssert st.joinUnderWay.job == job and st.joinReport.serial == before,
-      "still joining: " & st.words
-    doAssert not st.jobs.info(job).get.abandoned
-    releaseStep("matching")
-    doAssert st.settle(st.joinReport.serial > before)
-    doAssert st.joinReport.outcome == joJoined, $st.joinReport.outcome & ": " & st.words
-    doAssert st.sessions[0].file.keysRevision == 1
-    doAssert st.readsAgain(path) and st.panel(MainPanel).laidOut,
-      "the panel reads the file again"
-    echo "tjoin: a cancel in the step refused, the join done"
+  block nothingMatched:
+    withFixtures fx:
+      let path = fx.stationsSegd()
+      # The survey numbers its lines 100 times larger than the headers do.
+      let header = SpsHeader(code: "00", description: "SPS format version num.", data: "SPS 2.1;")
+      proc point(kind: SpsPointKind; line, pt, x: float64): SpsPoint =
+        SpsPoint(kind: kind, line: line, point: pt, index: 1, code: "G1", easting: x,
+          northing: OriginY, elevation: Elevation, dayOfYear: -1, hour: -1, minute: -1, second: -1)
+      var s, r = SpsFile(headers: @[header])
+      s.points.add point(pkSource, SrcLine * 100, FirstSrcPoint, srcX(0))
+      for c in 1 .. SegdChannels:
+        r.points.add point(pkReceiver, RcvLine * 100, FirstRcvPoint + float64(c - 1), rcvX(c))
+      doAssert writeSps(s, fx.dir / "big.s").len == 0 and writeSps(r, fx.dir / "big.r").len == 0
+      var st = initAppState()
+      st.opened(path)
+      st.join(sps(fx.dir / "big.s", fx.dir / "big.r"))
+      doAssert st.joinReport.outcome == joNothing, $st.joinReport.outcome
+      doAssert st.joinReport.heldAtJoin == -1, "the readers were not stopped"
+      doAssert st.sessions[0].file.keysRevision == 0
+      doAssert "No seismic trace was matched to the survey" in st.words, st.words
+      doAssert "24 seismic traces are not matched: the survey has neither their source nor " &
+        "their receiver station." in st.words, st.words
+      doAssert "the headers' receiver lines (100 to 101) are not the survey's (10000): the " &
+        "survey numbers its lines 100 times larger, so the line numbering differs" in st.words,
+        st.words
+      doAssert "the headers' source lines (1) are not the survey's (100)" in st.words, st.words
+      doAssert st.log[st.log.len - 1].severity == sevWarning
+      doAssert "The survey matches none of the traces of stations-only.sgd" in
+        st.log[st.log.len - 1].text, st.log[st.log.len - 1].text
+      doAssert st.joinedOf(st.sessions[0].id) < 0
+      echo "tjoin: nothing matched: ", st.words
+      # Line names that are text (SPS 1.0): passed by, then matched by their trailing digits.
+      var s10, r10 = SpsFile(revision: sps10, headers: @[SpsHeader(code: "00",
+        description: "SPS format version num.", data: "SPS001,")])
+      var p = point(pkSource, NaN, FirstSrcPoint, srcX(0))
+      p.lineName = "SL1"
+      s10.points.add p
+      for c in 1 .. SegdChannels:
+        var q = point(pkReceiver, NaN, FirstRcvPoint + float64(c - 1), rcvX(c))
+        q.lineName = "RL100"
+        r10.points.add q
+      doAssert writeSps(s10, fx.dir / "named.s").len == 0
+      doAssert writeSps(r10, fx.dir / "named.r").len == 0
+      st.join(sps(fx.dir / "named.s", fx.dir / "named.r"))
+      doAssert st.joinReport.outcome == joNothing, st.words
+      doAssert "the survey files name lines with text (\"SL1\", \"RL100\"), so 13 records were " &
+        "passed by: turn on \"Use the trailing digits of line names\"" in st.words, st.words
+      st.join(sps(fx.dir / "named.s", fx.dir / "named.r"), JoinOptions(trailingDigits: true))
+      doAssert st.joinReport.outcome == joJoined, st.words
+      doAssert st.joins[0].plan.matched == SegdChannels
+      doAssert near(st.keysOf(1).rcvX, rcvX(1))
+      echo "tjoin: matched by trailing digits: ", st.words
 
-echo "tjoin: done"
+  var gate: Gate
+
+  block cancelled:
+    withFixtures fx:
+      let path = fx.stationsSegd()
+      let survey = fx.surveySps()
+      var st = initAppState()
+      st.opened(path)
+      # While the survey files are read: a million receivers take a while.
+      let big = fx.bigSps(1000, 1000)
+      st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id, joinFiles: sps(big))
+      let reading = st.joinUnderWay.job
+      doAssert reading != NoJob and st.joinUnderWay.step == jpReading
+      st.apply Command(kind: ckCancelJob, job: reading)
+      doAssert st.settle(st.joinUnderWay.job == NoJob)
+      doAssert st.joinReport.outcome == joCancelled, $st.joinReport.outcome
+      doAssert "The survey import was cancelled: stations-only.sgd is as it was, and so is " &
+        "the map." == st.words, st.words
+      doAssert st.sessions[0].file.keysRevision == 0 and st.jobs.held(path) == 1
+      doAssert st.settle(not st.surveyLoading(big))
+      doAssert st.surveyFiles == 0, "the map holds " & $st.surveyFiles &
+        " survey files after the cancel"
+      # While the join waits for the file: another job reads it.
+      gate.close()
+      discard st.jobs.submit(JobSpec(title: "Read it", lane: jlBackground, reads: @[path]),
+        proc (ctx: JobContext) {.gcsafe.} = gate.waitAt(ctx))
+      st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id,
+        joinFiles: sps(survey.s, survey.r))
+      doAssert st.settle(st.joinUnderWay.step == jpJoining and st.jobs.held(path) == 0),
+        "the panel's reader let go of the file"
+      let k = st.findPanel(MainPanel)
+      doAssert st.tiles(k).len > 0, "the tiles stay drawn meanwhile"
+      # The record shown again meanwhile (its auxiliary trace too): it waits for
+      # the join, quietly.
+      let said = st.log.len
+      st.apply Command(kind: ckFilter, panel: MainPanel,
+        filter: TraceFilter(seismic: true, auxiliary: true))
+      doAssert not st.panel(MainPanel).laidOut
+      for e in said ..< st.log.len:
+        doAssert "busy" notin st.log[e].text, st.log[e].text
+      st.apply Command(kind: ckCancelJob, job: st.joinUnderWay.job)
+      doAssert st.settle(st.joinUnderWay.job == NoJob)
+      doAssert st.joinReport.outcome == joCancelled
+      doAssert st.sessions[0].file.keysRevision == 0
+      doAssert st.keysOf(1).rcvX == 0, "the keys as they were"
+      doAssert st.settle(not st.surveyLoading(survey.s) and not st.surveyLoading(survey.r))
+      doAssert st.surveyFiles == 0, "the map holds " & $st.surveyFiles &
+        " survey files after the cancel"
+      doAssert st.readsAgain(path) and st.panel(MainPanel).laidOut,
+        "the panel reads the file again"
+      gate.open()
+      # The same join, let through, does it.
+      st.join(sps(survey.s, survey.r))
+      doAssert st.joinReport.outcome == joJoined and st.sessions[0].file.keysRevision == 1
+      echo "tjoin: cancelled twice, then joined"
+
+  block cancelledPutsBack:
+    # Survey files already on the map, imported again with other line names
+    # (so read again, their layers made from the import's read in place of
+    # theirs) and cancelled after that: the map has its layers back, as they
+    # were (their ids, their points).
+    withFixtures fx:
+      let path = fx.stationsSegd()
+      let survey = fx.surveySps()
+      var st = initAppState()
+      st.opened(path)
+      st.apply Command(kind: ckLoadSurvey, paths: @[survey.s, survey.r])
+      doAssert st.settle(st.surveyFiles == 2 and not st.surveyLoading(survey.s) and
+        not st.surveyLoading(survey.r))
+      var before: seq[(SurveyLayerId, string, int)]
+      for l in st.survey.layers:
+        if l.origin == loSurveyFile:
+          before.add (l.id, l.path, l.points[prSource].len + l.points[prReceiver].len)
+      # the join held at its step by another job reading the file, the files on
+      # the map again from its read
+      gate.close()
+      discard st.jobs.submit(JobSpec(title: "Read it", lane: jlBackground, reads: @[path]),
+        proc (ctx: JobContext) {.gcsafe.} = gate.waitAt(ctx))
+      st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id,
+        joinFiles: sps(survey.s, survey.r), joinOptions: JoinOptions(trailingDigits: true))
+      doAssert st.settle(st.joinUnderWay.step == jpJoining)
+      var replaced = 0
+      for l in st.survey.layers:
+        if l.origin == loSurveyFile and before.allIt(it[0] != l.id): inc replaced
+      doAssert replaced == 2, "the import's loads replaced " & $replaced & " layers"
+      st.apply Command(kind: ckCancelJob, job: st.joinUnderWay.job)
+      doAssert st.settle(st.joinUnderWay.job == NoJob)
+      gate.open()
+      doAssert st.joinReport.outcome == joCancelled
+      doAssert "The survey import was cancelled: stations-only.sgd is as it was, and so is " &
+        "the map." == st.words, st.words
+      var after: seq[(SurveyLayerId, string, int)]
+      for l in st.survey.layers:
+        if l.origin == loSurveyFile:
+          after.add (l.id, l.path, l.points[prSource].len + l.points[prReceiver].len)
+      doAssert after == before, "the map after the cancel: " & $after & ", before: " & $before
+      echo "tjoin: a cancelled import put back the 2 layers it replaced"
+
+  block cancelInTheStep:
+    # The step that changes the keys runs to its end: a cancel then is refused,
+    # and the step is never left behind as cancelled while it still works.
+    withFixtures fx:
+      let path = fx.stationsSegd()
+      let survey = fx.surveySps()
+      var st = initAppState()
+      st.opened(path)
+      installSteps()
+      holdStep("matching") # the step, as a join of millions of traces holds it
+      let before = st.joinReport.serial
+      st.apply Command(kind: ckJoin, joinFile: st.sessions[0].id,
+        joinFiles: sps(survey.s, survey.r, survey.x), joinUnits: JoinUnits(survey: suMetres))
+      doAssert st.settle(inStep("matching").len == 1), "the join's step runs"
+      let job = st.joinUnderWay.job
+      let said = st.log.len
+      st.apply Command(kind: ckCancelJob, job: job)
+      var refused = false
+      for e in said ..< st.log.len:
+        if "cannot be cancelled" in st.log[e].text: refused = true
+      doAssert refused, "the cancel is refused, and said so"
+      advanceFsClock(initDuration(seconds = 10)) # far past any grace: still not abandoned
+      for _ in 1 .. 3: discard st.drainInbox()
+      doAssert st.joinUnderWay.job == job and st.joinReport.serial == before,
+        "still joining: " & st.words
+      doAssert not st.jobs.info(job).get.abandoned
+      releaseStep("matching")
+      doAssert st.settle(st.joinReport.serial > before)
+      doAssert st.joinReport.outcome == joJoined, $st.joinReport.outcome & ": " & st.words
+      doAssert st.sessions[0].file.keysRevision == 1
+      doAssert st.readsAgain(path) and st.panel(MainPanel).laidOut,
+        "the panel reads the file again"
+      echo "tjoin: a cancel in the step refused, the join done"
+
+  echo "tjoin: done"
+
+when isMainModule:
+  main()

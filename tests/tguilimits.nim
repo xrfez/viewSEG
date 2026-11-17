@@ -78,7 +78,7 @@ proc snapshot(path: string): Snapshot = (readFile(path), getLastModificationTime
 
 func near(a, b: float64; eps = 1e-6): bool = abs(a - b) <= eps * max(1.0, abs(b))
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let path = fx.longSpreadSegy()
     let before = snapshot(path)
@@ -369,8 +369,6 @@ proc main() =
     echo "tguilimits: ", steps.len, " steps on ", columns, " columns"
     doAssert snapshot(path) == before, "showing the file changed it"
 
-main()
-
 proc edges() =
   ## The margin of the wiggle modes, on the survey fixture (24 traces, gain
   ## None: the samples as they are, the strongest clipped at the overlap)
@@ -563,4 +561,11 @@ proc edges() =
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
     echo "tguilimits: ", steps.len, " steps of the margins"
 
-edges()
+proc main*() =
+
+  runMain()
+
+  edges()
+
+when isMainModule:
+  main()

@@ -59,7 +59,7 @@ proc marked(img: seq[Rgba]; width: int; at: Vec2; c: Rgba): int =
       if hypot(float(dx), float(dy)) <= 14 and distance(img[y * width + x], c) <= 12:
         inc result
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let sps = fx.mapSps()
     let shotPath = fx.mapShotSegd(0, 2, {MapDefect.low .. MapDefect.high})
@@ -181,4 +181,9 @@ proc main() =
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
     echo "tguimapflags: ", steps.len, " steps"
 
-main()
+proc main*() =
+
+  runMain()
+
+when isMainModule:
+  main()

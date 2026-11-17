@@ -77,102 +77,107 @@ proc said(f: FrameInfo; words: string; severity: Severity): bool =
   for e in f.core.log:
     if e.severity == severity and words in e.text: return true
 
-withFixtures fx:
-  let path = fx.surveySegy()
-  let config = fx.dir / "config"
-  createDir(config)
-  let assets = currentSourcePath().parentDir.parentDir / "assets"
-  proc options(reset = false): RunOptions =
-    RunOptions(openPaths: @[path], theme: forceDark, persist: true,
-      configDir: some(config), logDir: some(fx.dir / "logs"),
-      indexCacheDir: some(fx.dir / "cache"), userThemeDir: some(fx.dir / "no-user-themes"),
-      assetDirs: some(@[assets]), resetWindows: reset)
+proc main*() =
 
-  # A first run: the default arrangement, as Dear ImGui writes it.
-  var plain = ""
-  var screen: Rect
-  proc first(f: FrameInfo) =
-    if f.index == 20:
-      plain = f.layoutText
-      screen = f.screens[0]
-      f.stop()
-  doAssert run(RunOptions(maxFrames: 100, windowSize: (1400, 900), theme: forceDark,
-    userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-    onFrame: first)) == 0
-  doAssert "[Docking]" in plain and screen.size.x > 0, plain
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let config = fx.dir / "config"
+    createDir(config)
+    let assets = currentSourcePath().parentDir.parentDir / "assets"
+    proc options(reset = false): RunOptions =
+      RunOptions(openPaths: @[path], theme: forceDark, persist: true,
+        configDir: some(config), logDir: some(fx.dir / "logs"),
+        indexCacheDir: some(fx.dir / "cache"), userThemeDir: some(fx.dir / "no-user-themes"),
+        assetDirs: some(@[assets]), resetWindows: reset)
 
-  proc writeFiles(window: WindowPlacement; imgui: string) =
-    var s = Settings()
-    s.window = window
-    s.files.followLatest = true # a setting --reset-windows leaves alone
-    writeFile(config / SettingsFileName, settingsDocument(s))
-    writeFile(config / LayoutFileName, layoutDocument(Layout(imgui: imgui)))
+    # A first run: the default arrangement, as Dear ImGui writes it.
+    var plain = ""
+    var screen: Rect
+    proc first(f: FrameInfo) =
+      if f.index == 20:
+        plain = f.layoutText
+        screen = f.screens[0]
+        f.stop()
+    doAssert run(RunOptions(maxFrames: 100, windowSize: (1400, 900), theme: forceDark,
+      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+      onFrame: first)) == 0
+    doAssert "[Docking]" in plain and screen.size.x > 0, plain
 
-  proc defaultPlace(f: FrameInfo; what: string) =
-    let m = f.mainWindowRect
-    doAssert m.inside(screen), "the main window is not on the screen " & what & ": " & $m
-    let c = vec2(1280, 800).centredOn(screen)
-    doAssert abs(m.pos.x - c.pos.x) <= 1 and abs(m.pos.y - c.pos.y) <= 1 and
-      m.size == c.size, "the main window is not in the middle of the screen at its " &
-      "default size " & what & ": " & $m & ", not " & $c
+    proc writeFiles(window: WindowPlacement; imgui: string) =
+      var s = Settings()
+      s.window = window
+      s.files.followLatest = true # a setting --reset-windows leaves alone
+      writeFile(config / SettingsFileName, settingsDocument(s))
+      writeFile(config / LayoutFileName, layoutDocument(Layout(imgui: imgui)))
 
-  # ----------------------------------------------- --reset-windows --
-  writeFiles(WindowPlacement(x: 6000, y: 4000, width: 1300, height: 850), plain.rearranged([
-    ("files", Rect(pos: vec2(screen.size.x - 150, 300), size: vec2(400, 300))),
-    ("jobs", Rect(pos: vec2(300, 300), size: vec2(320, 220)))], "records"))
-  var checked = false
-  proc reset(f: FrameInfo) =
-    if f.shown and f.index >= 30:
-      for id in ids:
-        let w = f.windowPlace(id)
-        doAssert w.shown, id & " is not shown after --reset-windows"
-        doAssert w.docked and not w.apart, id & " is not docked after --reset-windows"
-        doAssert w.rect.inside(f.mainWindowRect), id & " is outside the main window"
-      doAssert f.hiddenWindows == {}, $f.hiddenWindows
-      f.defaultPlace("after --reset-windows")
-      doAssert f.said("Started with --reset-windows", sevInfo), "nothing says so"
-      doAssert f.core.settings.files.followLatest, "another setting was reset"
-      checked = true
-      f.stop()
-  doAssert run(options(reset = true).withHook(reset)) == 0
-  doAssert checked, "the run ended before the windows were checked"
-  var problems: seq[string]
-  let saved = readLayout(readFile(config / LayoutFileName), LayoutFileName, problems).imgui
-  doAssert "Hidden=\n" in saved and "Pos=" & $int(screen.size.x - 150) notin saved,
-    "the scrambled layout is still saved: " & saved
-
-  # ------------------------------- the main window off every screen --
-  writeFiles(WindowPlacement(x: 6000, y: 4000, width: 1300, height: 850), plain.rearranged([
-    ("headers", Rect(pos: vec2(5000, 4000), size: vec2(400, 300)))], ""))
-  checked = false
-  proc offScreen(f: FrameInfo) =
-    if f.shown and f.index >= 30:
-      f.defaultPlace("when its saved place is off every screen")
-      doAssert f.said("off every screen (on a monitor that is not there now?)", sevWarning),
-        "nothing says the main window was off every screen"
-      let h = f.windowPlace("headers")
-      doAssert h.apart and h.rect.inside(screen), "headers is not on the screen: " & $h.rect
-      doAssert f.said("The layout put Headers", sevWarning), "nothing says headers was"
-      for id in ["plot", "files", "records", "map", "jobs", "Messages"]:
-        doAssert f.windowPlace(id).docked, id & " is not docked as the layout says"
-      checked = true
-      f.stop()
-  doAssert run(options().withHook(offScreen)) == 0
-  doAssert checked, "the run ended before the windows were checked"
-  let kept = readFile(config / SettingsFileName)
-  doAssert "(x 6000)" notin kept, "the place off every screen is still saved: " & kept
-
-  # ------------------------------- larger than any screen --
-  writeFiles(WindowPlacement(x: 100, y: 50, width: 3000, height: 2000), plain)
-  checked = false
-  proc large(f: FrameInfo) =
-    if f.shown and f.index >= 20:
+    proc defaultPlace(f: FrameInfo; what: string) =
       let m = f.mainWindowRect
-      doAssert m.inside(screen), "the main window is not on the screen: " & $m
-      doAssert m.size == screen.size, "the main window does not fill the screen: " & $m
-      doAssert f.said("is larger than any screen", sevWarning), "nothing says so"
-      checked = true
-      f.stop()
-  doAssert run(options().withHook(large)) == 0
-  doAssert checked, "the run ended before the window was checked"
-  echo "tguistartplace: the screen ", screen
+      doAssert m.inside(screen), "the main window is not on the screen " & what & ": " & $m
+      let c = vec2(1280, 800).centredOn(screen)
+      doAssert abs(m.pos.x - c.pos.x) <= 1 and abs(m.pos.y - c.pos.y) <= 1 and
+        m.size == c.size, "the main window is not in the middle of the screen at its " &
+        "default size " & what & ": " & $m & ", not " & $c
+
+    # ----------------------------------------------- --reset-windows --
+    writeFiles(WindowPlacement(x: 6000, y: 4000, width: 1300, height: 850), plain.rearranged([
+      ("files", Rect(pos: vec2(screen.size.x - 150, 300), size: vec2(400, 300))),
+      ("jobs", Rect(pos: vec2(300, 300), size: vec2(320, 220)))], "records"))
+    var checked = false
+    proc reset(f: FrameInfo) =
+      if f.shown and f.index >= 30:
+        for id in ids:
+          let w = f.windowPlace(id)
+          doAssert w.shown, id & " is not shown after --reset-windows"
+          doAssert w.docked and not w.apart, id & " is not docked after --reset-windows"
+          doAssert w.rect.inside(f.mainWindowRect), id & " is outside the main window"
+        doAssert f.hiddenWindows == {}, $f.hiddenWindows
+        f.defaultPlace("after --reset-windows")
+        doAssert f.said("Started with --reset-windows", sevInfo), "nothing says so"
+        doAssert f.core.settings.files.followLatest, "another setting was reset"
+        checked = true
+        f.stop()
+    doAssert run(options(reset = true).withHook(reset)) == 0
+    doAssert checked, "the run ended before the windows were checked"
+    var problems: seq[string]
+    let saved = readLayout(readFile(config / LayoutFileName), LayoutFileName, problems).imgui
+    doAssert "Hidden=\n" in saved and "Pos=" & $int(screen.size.x - 150) notin saved,
+      "the scrambled layout is still saved: " & saved
+
+    # ------------------------------- the main window off every screen --
+    writeFiles(WindowPlacement(x: 6000, y: 4000, width: 1300, height: 850), plain.rearranged([
+      ("headers", Rect(pos: vec2(5000, 4000), size: vec2(400, 300)))], ""))
+    checked = false
+    proc offScreen(f: FrameInfo) =
+      if f.shown and f.index >= 30:
+        f.defaultPlace("when its saved place is off every screen")
+        doAssert f.said("off every screen (on a monitor that is not there now?)", sevWarning),
+          "nothing says the main window was off every screen"
+        let h = f.windowPlace("headers")
+        doAssert h.apart and h.rect.inside(screen), "headers is not on the screen: " & $h.rect
+        doAssert f.said("The layout put Headers", sevWarning), "nothing says headers was"
+        for id in ["plot", "files", "records", "map", "jobs", "Messages"]:
+          doAssert f.windowPlace(id).docked, id & " is not docked as the layout says"
+        checked = true
+        f.stop()
+    doAssert run(options().withHook(offScreen)) == 0
+    doAssert checked, "the run ended before the windows were checked"
+    let kept = readFile(config / SettingsFileName)
+    doAssert "(x 6000)" notin kept, "the place off every screen is still saved: " & kept
+
+    # ------------------------------- larger than any screen --
+    writeFiles(WindowPlacement(x: 100, y: 50, width: 3000, height: 2000), plain)
+    checked = false
+    proc large(f: FrameInfo) =
+      if f.shown and f.index >= 20:
+        let m = f.mainWindowRect
+        doAssert m.inside(screen), "the main window is not on the screen: " & $m
+        doAssert m.size == screen.size, "the main window does not fill the screen: " & $m
+        doAssert f.said("is larger than any screen", sevWarning), "nothing says so"
+        checked = true
+        f.stop()
+    doAssert run(options().withHook(large)) == 0
+    doAssert checked, "the run ended before the window was checked"
+    echo "tguistartplace: the screen ", screen
+
+when isMainModule:
+  main()

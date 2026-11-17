@@ -26,18 +26,23 @@ proc published(): seq[string] =
           ".sh", ".cmd"] and f != currentSourcePath():
         result.add f
 
-block detector:
-  doAssert mentionsPlan("see PLAN.md") and mentionsPlan("until Phase 1 brings")
-  doAssert mentionsPlan("(phase 2)") and not mentionsPlan("zero phase filter")
-  doAssert not mentionsPlan("Phase") and not mentionsPlan("emphase 2")
+proc main*() =
 
-block noPlanReferences:
-  var found: seq[string]
-  for f in published():
-    if fileExists(f):
-      var n = 0
-      for line in readFile(f).splitLines:
-        inc n
-        if mentionsPlan(line):
-          found.add f.relativePath(root) & ":" & $n & ": " & line.strip
-  doAssert found.len == 0, "references to the local plan:\n  " & found.join("\n  ")
+  block detector:
+    doAssert mentionsPlan("see PLAN.md") and mentionsPlan("until Phase 1 brings")
+    doAssert mentionsPlan("(phase 2)") and not mentionsPlan("zero phase filter")
+    doAssert not mentionsPlan("Phase") and not mentionsPlan("emphase 2")
+
+  block noPlanReferences:
+    var found: seq[string]
+    for f in published():
+      if fileExists(f):
+        var n = 0
+        for line in readFile(f).splitLines:
+          inc n
+          if mentionsPlan(line):
+            found.add f.relativePath(root) & ":" & $n & ": " & line.strip
+    doAssert found.len == 0, "references to the local plan:\n  " & found.join("\n  ")
+
+when isMainModule:
+  main()

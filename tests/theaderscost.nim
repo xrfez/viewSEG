@@ -18,28 +18,33 @@ import std/[monotimes, times]
 import viewSEG/core/[inspector, state]
 import utils/[fixtures, waiting]
 
-block hoversWithALargeSelection:
-  const Traces = 200_000
-  withFixtures fx:
-    var st = initAppState()
-    let path = fx.manyTracesSegy(Traces)
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
-    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-    let base = st.sessions[0].base
-    var all = newSeq[int](Traces)
-    for i in 0 ..< Traces: all[i] = base + i
-    st.apply Command(kind: ckSelect, traces: all, mode: smReplace)
-    st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders})
-    doAssert st.inspection.chosen.total == Traces and
-      st.inspection.chosen.traces.len == MaxInspected
-    doAssert st.inspection.chosen.traces[0] == base and
-      st.inspection.chosen.traces[^1] == base + MaxInspected - 1
-    let start = getMonoTime()
-    for i in 0 ..< 200:
-      st.apply Command(kind: ckHover, trace: base + 100 + i mod 2)
-    let ms = (getMonoTime() - start).inMilliseconds
-    echo "theaderscost: 200 hovers with ", Traces, " traces selected: ", ms, " ms"
-    doAssert st.selection.hover == base + 101
-    doAssert st.inspection.chosen.total == Traces
-    doAssert ms < 200, "200 hovers took " & $ms & " ms"
-    st.shutdown()
+proc main*() =
+
+  block hoversWithALargeSelection:
+    const Traces = 200_000
+    withFixtures fx:
+      var st = initAppState()
+      let path = fx.manyTracesSegy(Traces)
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      let base = st.sessions[0].base
+      var all = newSeq[int](Traces)
+      for i in 0 ..< Traces: all[i] = base + i
+      st.apply Command(kind: ckSelect, traces: all, mode: smReplace)
+      st.apply Command(kind: ckInspect, inspect: {ipTraceHeaders})
+      doAssert st.inspection.chosen.total == Traces and
+        st.inspection.chosen.traces.len == MaxInspected
+      doAssert st.inspection.chosen.traces[0] == base and
+        st.inspection.chosen.traces[^1] == base + MaxInspected - 1
+      let start = getMonoTime()
+      for i in 0 ..< 200:
+        st.apply Command(kind: ckHover, trace: base + 100 + i mod 2)
+      let ms = (getMonoTime() - start).inMilliseconds
+      echo "theaderscost: 200 hovers with ", Traces, " traces selected: ", ms, " ms"
+      doAssert st.selection.hover == base + 101
+      doAssert st.inspection.chosen.total == Traces
+      doAssert ms < 200, "200 hovers took " & $ms & " ms"
+      st.shutdown()
+
+when isMainModule:
+  main()

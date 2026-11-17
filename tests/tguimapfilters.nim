@@ -47,7 +47,7 @@ proc ring(f: FrameInfo; at: Vec2; c: Rgba): int =
       if d >= 3 and d <= 9 and same(f.readPixel(int(round(at.x)) + dx,
           int(round(at.y)) + dy), c): inc result
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let sps = fx.mapSps()
     let shotPath = fx.mapShotSegd(0, 2, {MapDefect.low .. MapDefect.high})
@@ -151,4 +151,9 @@ proc main() =
     doAssert failed.len == 0, failed
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
 
-main()
+proc main*() =
+
+  runMain()
+
+when isMainModule:
+  main()

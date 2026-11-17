@@ -49,45 +49,50 @@ proc lines(f: FrameInfo): (int, string) =
   for i in 1 ..< centres.len:
     if centres[i] - centres[i - 1] > 4: inc result[0]
 
-withFixtures fx:
-  let long = Processing(band: pbBandPass, f1: 12, f2: 20, f3: 60, f4: 80, dc: dcMean,
-    notches: @[NotchFilter(hz: 50, harmonics: 3), NotchFilter(hz: 60)])
-  var stage = 0
-  var waited = 0 # frames since the stage began, at `since`
-  var since = getMonoTime()
-  var seen: seq[(string, int, string)]
-  proc measure(f: FrameInfo; what: string) =
-    let (n, said) = f.lines()
-    seen.add (what, n, said)
-  proc onFrame(f: FrameInfo) =
-    inc waited
-    template next(n: int) = (stage, waited, since) = (n, 0, getMonoTime())
-    case stage
-    of 0:
-      if f.core.panels.len > 0 and f.answered and waited > 3:
-        doAssert f.panel.layout.traces == 24
-        f.measure("no filter")
-        f.apply Command(kind: ckProcessing, panel: MainPanel, processing: long)
-        next 1
-    of 1:
-      if f.answered and waited > 3:
-        f.measure("filters: " & describe(f.panel.layers[0].processing))
-        var raw = long
-        raw.raw = true
-        f.apply Command(kind: ckProcessing, panel: MainPanel, processing: raw)
-        next 2
-    of 2:
-      if f.answered and waited > 3:
-        f.measure("filters shown raw")
-        stage = 3
-        f.stop()
-    else: discard
-    if overdue(waited, 3000, since): f.stop() # given up: the stage is said below
-  let code = run(RunOptions(openPaths: @[fx.twoSetSegd()],
-    windowSize: (1280, 800), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
-    indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert stage == 3, "stopped at stage " & $stage
-  for (what, n, said) in seen:
-    echo "tguistrip: ", what, ": ", n, " lines"
-    doAssert n <= 3, what & ": the strip takes " & $n & " lines: " & said
+proc main*() =
+
+  withFixtures fx:
+    let long = Processing(band: pbBandPass, f1: 12, f2: 20, f3: 60, f4: 80, dc: dcMean,
+      notches: @[NotchFilter(hz: 50, harmonics: 3), NotchFilter(hz: 60)])
+    var stage = 0
+    var waited = 0 # frames since the stage began, at `since`
+    var since = getMonoTime()
+    var seen: seq[(string, int, string)]
+    proc measure(f: FrameInfo; what: string) =
+      let (n, said) = f.lines()
+      seen.add (what, n, said)
+    proc onFrame(f: FrameInfo) =
+      inc waited
+      template next(n: int) = (stage, waited, since) = (n, 0, getMonoTime())
+      case stage
+      of 0:
+        if f.core.panels.len > 0 and f.answered and waited > 3:
+          doAssert f.panel.layout.traces == 24
+          f.measure("no filter")
+          f.apply Command(kind: ckProcessing, panel: MainPanel, processing: long)
+          next 1
+      of 1:
+        if f.answered and waited > 3:
+          f.measure("filters: " & describe(f.panel.layers[0].processing))
+          var raw = long
+          raw.raw = true
+          f.apply Command(kind: ckProcessing, panel: MainPanel, processing: raw)
+          next 2
+      of 2:
+        if f.answered and waited > 3:
+          f.measure("filters shown raw")
+          stage = 3
+          f.stop()
+      else: discard
+      if overdue(waited, 3000, since): f.stop() # given up: the stage is said below
+    let code = run(RunOptions(openPaths: @[fx.twoSetSegd()],
+      windowSize: (1280, 800), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
+      indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert stage == 3, "stopped at stage " & $stage
+    for (what, n, said) in seen:
+      echo "tguistrip: ", what, ": ", n, " lines"
+      doAssert n <= 3, what & ": the strip takes " & $n & " lines: " & said
+
+when isMainModule:
+  main()

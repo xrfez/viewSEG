@@ -38,33 +38,6 @@ proc workerCheckUnmarked() {.thread.} =
   assertWorkerThread() # an unmarked thread may do worker things
   doAssert threadRole() == trUnknown
 
-block workerOnlyOnUi:
-  withFixtures fx:
-    let path = fx.surveySegy()
-    markUiThread()
-    doAssert threadRole() == trUi
-    when ThreadGuards:
-      var message = ""
-      try:
-        discard openSession(path)
-      except AssertionDefect as e:
-        message = e.msg
-      clearCycleRoots()
-      doAssert "filejobs.nim(" in message and "off the UI thread" in message and
-        "marked UI" in message, message
-    else:
-      doAssert openSession(path).len > 0 # compiled out: it just runs
-    markWorkerThread()
-    let s = openSession(path) # on a worker it is fine
-    doAssert s.len > 0
-    s.filePtr[].close()
-
-block uiOnlyOnWorker:
-  var t: Thread[void]
-  createThread(t, uiCheckOnWorker)
-  joinThread(t)
-  doAssert failedOnWorker.load == ThreadGuards
-
 proc openAndHandOver(arg: (string, Poster)) {.thread.} =
   markWorkerThread()
   var s = openSession(arg[0])
@@ -75,23 +48,55 @@ proc openAndHandOver(arg: (string, Poster)) {.thread.} =
     listedAfterClear.store(GC_prepareOrc())
   arg[1].post Msg(job: NoJob, kind: mkOpened, session: move s)
 
-block handOverAfterOpen:
-  withFixtures fx:
-    let box = initInbox()
-    var t: Thread[(string, Poster)]
-    createThread(t, openAndHandOver, (fx.surveySegy(), box.poster))
-    joinThread(t)
-    var mail: seq[Msg]
-    box.drainInto(mail)
-    doAssert mail.len == 1 and mail[0].session.len == SurveyTraces
-    when defined(gcOrc):
-      if listedAfterOpen.load == 0:
-        echo "tthreadguards: opening listed no possible cycles any more"
-      doAssert listedAfterClear.load == 0, "the worker still lists " &
-        $listedAfterClear.load & " objects it handed over"
-    mail.setLen 0 # the file is released here, on the main thread
+proc main*() =
 
-block unmarked:
-  var t: Thread[void]
-  createThread(t, workerCheckUnmarked)
-  joinThread(t)
+  block workerOnlyOnUi:
+    withFixtures fx:
+      let path = fx.surveySegy()
+      markUiThread()
+      doAssert threadRole() == trUi
+      when ThreadGuards:
+        var message = ""
+        try:
+          discard openSession(path)
+        except AssertionDefect as e:
+          message = e.msg
+        clearCycleRoots()
+        doAssert "filejobs.nim(" in message and "off the UI thread" in message and
+          "marked UI" in message, message
+      else:
+        doAssert openSession(path).len > 0 # compiled out: it just runs
+      markWorkerThread()
+      let s = openSession(path) # on a worker it is fine
+      doAssert s.len > 0
+      s.filePtr[].close()
+
+  block uiOnlyOnWorker:
+    var t: Thread[void]
+    createThread(t, uiCheckOnWorker)
+    joinThread(t)
+    doAssert failedOnWorker.load == ThreadGuards
+
+  block handOverAfterOpen:
+    withFixtures fx:
+      let box = initInbox()
+      var t: Thread[(string, Poster)]
+      createThread(t, openAndHandOver, (fx.surveySegy(), box.poster))
+      joinThread(t)
+      var mail: seq[Msg]
+      box.drainInto(mail)
+      doAssert mail.len == 1 and mail[0].session.len == SurveyTraces
+      when defined(gcOrc):
+        if listedAfterOpen.load == 0:
+          echo "tthreadguards: opening listed no possible cycles any more"
+        doAssert listedAfterClear.load == 0, "the worker still lists " &
+          $listedAfterClear.load & " objects it handed over"
+      mail.setLen 0 # the file is released here, on the main thread
+
+  block unmarked:
+    var t: Thread[void]
+    createThread(t, workerCheckUnmarked)
+    joinThread(t)
+
+when isMainModule:
+  main()

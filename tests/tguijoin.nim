@@ -228,8 +228,6 @@ proc joinWindow() =
     drive(steps, @[path, sps.s, sps.r, sps.x], fx.dir)
     echo "tguijoin: the window, ", steps.len, " steps; Tab went through ", seen.join(", ")
 
-joinWindow()
-
 proc onTheMap(f: FrameInfo; sps: SpsPaths) =
   ## The S file's sources and the R file's receivers are on the map, which
   ## shows the whole survey.
@@ -298,9 +296,6 @@ proc importNoFile() =
           f.core.joinReport.words.join(" "), $f.core.joinReport.words)
     drive(steps, @[], fx.dir, dialogs = answer)
     echo "tguijoin: no file open, ", steps.len, " steps"
-
-importAdded()
-importNoFile()
 
 # ------------------------------------------------- land survey: shots --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the private files present (local
@@ -382,7 +377,16 @@ proc landSurvey(dir: string) =
     ", saved " & $saved & ")"
   echo "tguijoin: saved ", dir / "join-land-1.png", " and -2.png"
 
-if shots.len > 0 and privateFile("landSegd").len > 0 and
-    privateFiles("landSps", "landRps", "landXps").len == 3:
-  createDir(shots)
-  landSurvey(shots)
+proc main*() =
+
+  joinWindow()
+  importAdded()
+  importNoFile()
+
+  if shots.len > 0 and privateFile("landSegd").len > 0 and
+      privateFiles("landSps", "landRps", "landXps").len == 3:
+    createDir(shots)
+    landSurvey(shots)
+
+when isMainModule:
+  main()

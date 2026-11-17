@@ -93,157 +93,162 @@ proc agent(s: Scenario) {.thread.} =
   c.close()
   results.send(("done", $parseJson(st.text)["panels"][0]))
 
-withFixtures fx:
-  let mine = fx.surveySegy()
-  let folder = fx.dir / "agent"
-  createDir(folder)
-  let theirs = folder / "theirs.sgy"
-  copyFile(fx.longSpreadSegy(), theirs)
-  let config = fx.dir / "config"
-  let logs = fx.dir / "logs"
-  let socket = fx.dir / "agent.sock"
-  let settingsFile = config / SettingsFileName
-  var before: Settings # kept when the agent connected
+proc main*() =
 
-  block withAnAgent:
-    results.open()
-    var thread: Thread[Scenario]
-    var stage = 0
-    var wait = 0 # frames since the stage began, at `since`
-    var since = getMonoTime()
-    var at: Vec2
-    var problem = ""
-    proc onFrame(f: FrameInfo) =
-      inc wait
-      template fail(why: string) =
-        problem = why
-        f.stop()
-      template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
-      case stage
-      of 0: # the user's file shown: the agent connects
-        if f.laidOut and wait > 3:
-          before = f.core.keptSettings
-          doAssert before.recentFiles == @[mine],
-            "the user's file is not among the recent files kept: " & $before.recentFiles
-          createThread(thread, agent, (socket, theirs))
-          next 1
-        elif overdue(wait, 400, since): fail("the user's file was not shown")
-      of 1:
-        let (ok, msg) = results.tryRecv()
-        if ok and msg[0] == "problem": fail(msg[1])
-        elif ok and msg[0] == "done":
-          # what is shown is the agent's
-          let p = parseJson(msg[1])
-          doAssert p["file"]["path"].getStr == theirs, $p["file"]
-          doAssert p["display"]["mode"].getStr == "density" and
-            p["display"]["gain"].getStr == "normalized", $p["display"]
-          doAssert p["order"] == %*[{"field": "channel", "descending": true}], $p["order"]
-          doAssert p["header"] == %*{"auto": false, "fields": ["channel", "FFID"]}, $p["header"]
-          doAssert f.shownDisplay.mode == dmDensity and f.shownDisplay.gain == dgNormalized
-          doAssert f.core.settings.recentFiles[0] == theirs and
-            f.core.settings.plot.order == AgentOrder, "the session does not hold the agent's"
-          doAssert settingsDocument(f.core.keptSettings) == settingsDocument(before),
-            "the agent changed the settings kept"
-          # the user: another mode, with a real click in the strip
-          at = f.markOf("plot." & $syWiggleDensity).centre
-          doAssert at.x > 0, "no mode button"
-          f.moveMouse(at)
-          next 2
-        elif overdue(wait, 3000, since): fail("the agent did not finish")
-      of 2:
-        if wait == 2: f.pressMouse(at, true)
-        if wait == 3: f.pressMouse(at, false)
-        if f.shownDisplay.mode == dmWiggleDensity:
-          doAssert f.shownDisplay.gain == dgNormalized, "the click changed the gain"
-          f.stop()
-          stage = 3
-        elif overdue(wait, 60, since): fail("the click did not change the mode")
-      else: discard
-    let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
-      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-      persist: true, configDir: some(config), logDir: some(logs), openPaths: @[mine],
-      agent: true, agentSocket: socket, onFrame: onFrame))
-    if stage > 0: joinThread(thread)
-    results.close()
-    doAssert code == 0 and problem.len == 0, problem
-    doAssert stage == 3, "the first run stopped at stage " & $stage
-  let first = readBack(settingsFile)
-  doAssert first.plot.display.mode == dmWiggleDensity, "the user's mode was not saved: " &
-    $first.plot.display.mode
-  doAssert first.plot.display.gain == before.plot.display.gain,
-    "the agent's gain was saved: " & $first.plot.display.gain
-  doAssert first.plot.order == before.plot.order, "the agent's sort was saved"
-  doAssert first.plot.header == before.plot.header, "the agent's display header was saved"
-  doAssert theirs notin first.recentFiles, "the agent's file is in the recent files"
-  doAssert first.recentFiles == before.recentFiles and
-    first.recentFolders == before.recentFolders, $first.recentFiles & " " & $first.recentFolders
-  var expected = before
-  expected.plot.display.mode = dmWiggleDensity
-  expected.window = first.window # where the window was: the user's
-  doAssert settingsDocument(first) == settingsDocument(expected),
-    "the settings saved are not the user's: " & settingsDocument(first)
-  var logged = ""
-  for kind, f in walkDir(logs):
-    if f.extractFilename.startsWith(SessionLogPrefix): logged.add readFile(f)
-  doAssert "test agent 1 (agent 1): command {\"kind\":\"display\"" in logged and
-    "\"kind\":\"show file\"" in logged, "the session log lacks the agent's commands"
-  echo "tguiagentsession: the agent's display, sort, header and file not saved; the user's ",
-    "mode saved"
+  withFixtures fx:
+    let mine = fx.surveySegy()
+    let folder = fx.dir / "agent"
+    createDir(folder)
+    let theirs = folder / "theirs.sgy"
+    copyFile(fx.longSpreadSegy(), theirs)
+    let config = fx.dir / "config"
+    let logs = fx.dir / "logs"
+    let socket = fx.dir / "agent.sock"
+    let settingsFile = config / SettingsFileName
+    var before: Settings # kept when the agent connected
 
-  block byHand:
-    var stage = 0
-    var wait = 0 # frames since the stage began, at `since`
-    var since = getMonoTime()
-    var at: Vec2
-    proc onFrame(f: FrameInfo) =
-      inc wait
-      template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
-      case stage
-      of 0: # the start screen lists the user's file only
-        if wait == 3:
-          doAssert f.markOf("plot.recent 0").size.x > 0, "no recent file on the start screen"
-          doAssert f.markOf("plot.recent 1").size.x <= 0 and
-            f.markOf("plot.recent folder 1").size.x <= 0,
-            "the start screen lists what the agent opened"
-          at = f.markOf("plot.recent 0").centre
-          f.moveMouse(at)
-        if wait == 5: f.pressMouse(at, true)
-        if wait == 6:
-          f.pressMouse(at, false)
-          next 1
-      of 1: # as the user left the plot
-        if f.laidOut:
-          doAssert f.core.sessions[0].path == mine
-          let p = f.core.panels[f.core.findPanel(MainPanel)]
-          doAssert p.layers[0].display.mode == dmWiggleDensity and
-            p.layers[0].display.gain == before.plot.display.gain, $p.layers[0].display
-          doAssert p.layers[0].order == before.plot.order and p.header == before.plot.header
-          # the agent's changes, made through the windows
-          var d = p.layers[0].display
-          d.mode = dmDensity
-          d.gain = dgNormalized
-          f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
-          f.apply Command(kind: ckSort, panel: MainPanel, order: AgentOrder)
-          f.apply Command(kind: ckHeader, panel: MainPanel,
-            header: HeaderChoice(auto: false, fields: AgentHeader))
-          f.apply Command(kind: ckShowFile, panel: MainPanel, path: theirs, listFolder: true)
-          next 2
-        doAssert not overdue(wait, 300, since), "the recent file did not open"
-      of 2:
-        if f.core.sessions.len == 1 and f.core.sessions[0].path == theirs and f.laidOut:
+    block withAnAgent:
+      results.open()
+      var thread: Thread[Scenario]
+      var stage = 0
+      var wait = 0 # frames since the stage began, at `since`
+      var since = getMonoTime()
+      var at: Vec2
+      var problem = ""
+      proc onFrame(f: FrameInfo) =
+        inc wait
+        template fail(why: string) =
+          problem = why
           f.stop()
-          stage = 3
-        doAssert not overdue(wait, 300, since), "the file was not shown"
-      else: discard
-    doAssert run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
-      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-      persist: true, configDir: some(config), logDir: some(logs), onFrame: onFrame)) == 0
-    doAssert stage == 3, "the second run stopped at stage " & $stage
-  let second = readBack(settingsFile)
-  doAssert second.plot.display.mode == dmDensity and
-    second.plot.display.gain == dgNormalized, $second.plot.display
-  doAssert second.plot.order == AgentOrder and second.plot.header.fields == AgentHeader and
-    not second.plot.header.auto, $second.plot
-  doAssert second.recentFiles == @[theirs, mine] and folder in second.recentFolders,
-    $second.recentFiles & " " & $second.recentFolders
-  echo "tguiagentsession: the same changes through the windows saved; ok"
+        template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
+        case stage
+        of 0: # the user's file shown: the agent connects
+          if f.laidOut and wait > 3:
+            before = f.core.keptSettings
+            doAssert before.recentFiles == @[mine],
+              "the user's file is not among the recent files kept: " & $before.recentFiles
+            createThread(thread, agent, (socket, theirs))
+            next 1
+          elif overdue(wait, 400, since): fail("the user's file was not shown")
+        of 1:
+          let (ok, msg) = results.tryRecv()
+          if ok and msg[0] == "problem": fail(msg[1])
+          elif ok and msg[0] == "done":
+            # what is shown is the agent's
+            let p = parseJson(msg[1])
+            doAssert p["file"]["path"].getStr == theirs, $p["file"]
+            doAssert p["display"]["mode"].getStr == "density" and
+              p["display"]["gain"].getStr == "normalized", $p["display"]
+            doAssert p["order"] == %*[{"field": "channel", "descending": true}], $p["order"]
+            doAssert p["header"] == %*{"auto": false, "fields": ["channel", "FFID"]}, $p["header"]
+            doAssert f.shownDisplay.mode == dmDensity and f.shownDisplay.gain == dgNormalized
+            doAssert f.core.settings.recentFiles[0] == theirs and
+              f.core.settings.plot.order == AgentOrder, "the session does not hold the agent's"
+            doAssert settingsDocument(f.core.keptSettings) == settingsDocument(before),
+              "the agent changed the settings kept"
+            # the user: another mode, with a real click in the strip
+            at = f.markOf("plot." & $syWiggleDensity).centre
+            doAssert at.x > 0, "no mode button"
+            f.moveMouse(at)
+            next 2
+          elif overdue(wait, 3000, since): fail("the agent did not finish")
+        of 2:
+          if wait == 2: f.pressMouse(at, true)
+          if wait == 3: f.pressMouse(at, false)
+          if f.shownDisplay.mode == dmWiggleDensity:
+            doAssert f.shownDisplay.gain == dgNormalized, "the click changed the gain"
+            f.stop()
+            stage = 3
+          elif overdue(wait, 60, since): fail("the click did not change the mode")
+        else: discard
+      let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
+        userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+        persist: true, configDir: some(config), logDir: some(logs), openPaths: @[mine],
+        agent: true, agentSocket: socket, onFrame: onFrame))
+      if stage > 0: joinThread(thread)
+      results.close()
+      doAssert code == 0 and problem.len == 0, problem
+      doAssert stage == 3, "the first run stopped at stage " & $stage
+    let first = readBack(settingsFile)
+    doAssert first.plot.display.mode == dmWiggleDensity, "the user's mode was not saved: " &
+      $first.plot.display.mode
+    doAssert first.plot.display.gain == before.plot.display.gain,
+      "the agent's gain was saved: " & $first.plot.display.gain
+    doAssert first.plot.order == before.plot.order, "the agent's sort was saved"
+    doAssert first.plot.header == before.plot.header, "the agent's display header was saved"
+    doAssert theirs notin first.recentFiles, "the agent's file is in the recent files"
+    doAssert first.recentFiles == before.recentFiles and
+      first.recentFolders == before.recentFolders, $first.recentFiles & " " & $first.recentFolders
+    var expected = before
+    expected.plot.display.mode = dmWiggleDensity
+    expected.window = first.window # where the window was: the user's
+    doAssert settingsDocument(first) == settingsDocument(expected),
+      "the settings saved are not the user's: " & settingsDocument(first)
+    var logged = ""
+    for kind, f in walkDir(logs):
+      if f.extractFilename.startsWith(SessionLogPrefix): logged.add readFile(f)
+    doAssert "test agent 1 (agent 1): command {\"kind\":\"display\"" in logged and
+      "\"kind\":\"show file\"" in logged, "the session log lacks the agent's commands"
+    echo "tguiagentsession: the agent's display, sort, header and file not saved; the user's ",
+      "mode saved"
+
+    block byHand:
+      var stage = 0
+      var wait = 0 # frames since the stage began, at `since`
+      var since = getMonoTime()
+      var at: Vec2
+      proc onFrame(f: FrameInfo) =
+        inc wait
+        template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
+        case stage
+        of 0: # the start screen lists the user's file only
+          if wait == 3:
+            doAssert f.markOf("plot.recent 0").size.x > 0, "no recent file on the start screen"
+            doAssert f.markOf("plot.recent 1").size.x <= 0 and
+              f.markOf("plot.recent folder 1").size.x <= 0,
+              "the start screen lists what the agent opened"
+            at = f.markOf("plot.recent 0").centre
+            f.moveMouse(at)
+          if wait == 5: f.pressMouse(at, true)
+          if wait == 6:
+            f.pressMouse(at, false)
+            next 1
+        of 1: # as the user left the plot
+          if f.laidOut:
+            doAssert f.core.sessions[0].path == mine
+            let p = f.core.panels[f.core.findPanel(MainPanel)]
+            doAssert p.layers[0].display.mode == dmWiggleDensity and
+              p.layers[0].display.gain == before.plot.display.gain, $p.layers[0].display
+            doAssert p.layers[0].order == before.plot.order and p.header == before.plot.header
+            # the agent's changes, made through the windows
+            var d = p.layers[0].display
+            d.mode = dmDensity
+            d.gain = dgNormalized
+            f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+            f.apply Command(kind: ckSort, panel: MainPanel, order: AgentOrder)
+            f.apply Command(kind: ckHeader, panel: MainPanel,
+              header: HeaderChoice(auto: false, fields: AgentHeader))
+            f.apply Command(kind: ckShowFile, panel: MainPanel, path: theirs, listFolder: true)
+            next 2
+          doAssert not overdue(wait, 300, since), "the recent file did not open"
+        of 2:
+          if f.core.sessions.len == 1 and f.core.sessions[0].path == theirs and f.laidOut:
+            f.stop()
+            stage = 3
+          doAssert not overdue(wait, 300, since), "the file was not shown"
+        else: discard
+      doAssert run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
+        userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+        persist: true, configDir: some(config), logDir: some(logs), onFrame: onFrame)) == 0
+      doAssert stage == 3, "the second run stopped at stage " & $stage
+    let second = readBack(settingsFile)
+    doAssert second.plot.display.mode == dmDensity and
+      second.plot.display.gain == dgNormalized, $second.plot.display
+    doAssert second.plot.order == AgentOrder and second.plot.header.fields == AgentHeader and
+      not second.plot.header.auto, $second.plot
+    doAssert second.recentFiles == @[theirs, mine] and folder in second.recentFolders,
+      $second.recentFiles & " " & $second.recentFolders
+    echo "tguiagentsession: the same changes through the windows saved; ok"
+
+when isMainModule:
+  main()

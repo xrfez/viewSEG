@@ -24,9 +24,6 @@ import viewSEG/core/[analysis, processing, state]
 import utils/waiting
 
 const root = currentSourcePath().parentDir.parentDir
-let land = root / "samples" / "land" / "shots.sgy"
-let vib = root / "samples" / "vib" / "vib_uncorrelated.sgd"
-let vibOther = root / "samples" / "vib" / "vib_correlated.sgd"
 
 proc band(lo, hi: float64; place = fpAfter): OwnFilter =
   bounded(OwnFilter(spec: Processing(band: pbBandPass, f1: lo - 4, f2: lo, f3: hi, f4: hi + 4),
@@ -77,273 +74,281 @@ proc spectrumOf(st: var AppState; trace: int): int =
   result = st.spectra.high
   doAssert st.settle(st.spectra[result].spectrum.raw.len > 0 and not st.spectra[result].waiting)
 
-block landGraphs:
-  var st = initAppState()
-  st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
-  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-  let base = st.sessions[0].base
-  let lay = st.panel(MainPanel).layout
-  st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 800, 2 * lay.samples))
-  doAssert st.settle(st.answered)
-  let beforeTile = st.tiles(0)[^1]
-  let neigh = st.spectrumOf(base)
-  let neighPower = st.spectra[neigh].spectrum.spectrumOutside(20)
-  doAssert neighPower > 0, "trace 1 has no energy below 20 Hz"
-  let plain = st.spectrumOf(base + 1)
-  let plainPower = st.spectra[plain].spectrum.spectrumOutside(20)
-  doAssert plainPower > 0, "trace 2 has no energy below 20 Hz"
-  let spec = st.openPlot(avSpectrogram, @[base + 1])
-  let specPower = st.plots[spec].result.image.imageOutside(20)
-  let env = st.openPlot(avEnvelope, @[base + 1])
-  let phase = st.openPlot(avPhase, @[base + 1])
-  let phasePower = st.plots[phase].result.plots[0].ampOutside(20)
-  let corr = st.openPlot(avCorrelation, @[base, base + 1])
-  var fkTraces: seq[int]
-  for i in 0 .. 7: fkTraces.add base + i
-  let fk = st.openPlot(avFk, fkTraces)
-  let fkPower = st.plots[fk].result.image.imageOutside(20)
-  let own = band(40, 60)
-  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 1], on: true,
-    processing: own.spec, filterPlace: fpAfter)
-  doAssert st.settle(st.answered)
-  let afterTile = st.tiles(0)[^1]
-  doAssert afterTile.rowOf(1) != beforeTile.rowOf(1), "the plot did not filter trace 2"
-  doAssert afterTile.rowOf(0) == beforeTile.rowOf(0), "the plot changed trace 1"
-  doAssert st.ownLine(st.panel(MainPanel)).len > 0
-  # the spectrum of the filtered trace asks again; the neighbour does not
-  doAssert st.spectra[neigh].spectrum.raw.len > 0
-  doAssert st.spectra[neigh].asks == 1, "the neighbour spectrum was asked again"
-  doAssert st.settle(st.spectra[plain].spectrum.gen > 0 and not st.spectra[plain].waiting and
-    st.spectra[plain].asks >= 2)
-  let filtered = st.spectra[plain].spectrum
-  let cut = filtered.spectrumOutside(20)
-  doAssert cut < plainPower * 0.25, "the spectrum's raw curve does not show the own filter: " &
-    $cut & " against " & $plainPower
-  doAssert filtered.processed.len == 0 and not filtered.hasResponse,
-    "an own filter alone unlocked processing"
-  doAssert "Trace 2: own filter, band-pass 40-60 Hz" in st.spectra[plain].filterText,
-    st.spectra[plain].filterText
-  doAssert st.spectra[plain].display.processed, "the stored Processed choice was cleared"
-  doAssert st.settle(st.plots[spec].result.gen == st.plots[spec].asked and
-    not st.plots[spec].waiting)
-  let specCut = st.plots[spec].result.image.imageOutside(20)
-  doAssert specCut < specPower * 0.25, "the spectrogram does not show the own filter: " &
-    $specCut & " against " & $specPower
-  doAssert st.plots[spec].ownLine.find("Trace 2: own filter, band-pass 40-60 Hz") >= 0,
-    st.plots[spec].ownLine
-  doAssert st.settle(st.plots[env].result.gen == st.plots[env].asked and not st.plots[env].waiting)
-  let freq = st.plots[env].result.plots[2].curves[0].ys
-  var inBand, loud = 0
-  let envY = st.plots[env].result.plots[0].curves[1].ys
-  var peak = 0.0
-  for e in envY: peak = max(peak, e)
-  for i, f in freq:
-    if envY[i] > peak * 0.1 and not f.isNaN:
-      inc loud
-      if f >= 30 and f <= 70: inc inBand
-  doAssert loud > 20 and inBand > loud * 8 div 10, "the envelope's frequency left the band: " &
-    $inBand & " of " & $loud
-  doAssert st.settle(st.plots[phase].result.gen == st.plots[phase].asked and
-    not st.plots[phase].waiting)
-  let phaseCut = st.plots[phase].result.plots[0].ampOutside(20)
-  doAssert phaseCut < phasePower * 0.25, "the phase spectrum does not show the own filter: " &
-    $phaseCut & " against " & $phasePower
-  doAssert st.settle(st.plots[corr].result.gen == st.plots[corr].asked and
-    not st.plots[corr].waiting)
-  doAssert st.plots[corr].result.problem == "", st.plots[corr].result.problem
-  let ratio = st.plots[corr].result.plots[1]
-  var low = 0.0
-  var nLow = 0
-  for i, f in ratio.xs:
-    if (f < 35 or f > 70) and f > 2 and i < ratio.curves[1].ys.len and
-        not ratio.curves[1].ys[i].isNaN:
-      low += ratio.curves[1].ys[i]
-      inc nLow
-  doAssert nLow > 4 and low / float64(nLow) < -12, "the correlation does not show the filter: " &
-    $nLow & " points, " & $(low / float64(max(nLow, 1))) & " dB"
-  doAssert st.settle(st.plots[fk].result.gen == st.plots[fk].asked and not st.plots[fk].waiting)
-  let fkCut = st.plots[fk].result.image.imageOutside(20)
-  doAssert abs(fkCut - fkPower) / fkPower > 0.05, "the f-k ignored the one trace's own filter: " &
-    $fkCut & " against " & $fkPower
-  var rawParams = st.plots[fk].params
-  rawParams.fkRaw = true
-  st.apply Command(kind: ckPlotDisplay, plot: st.plots[fk].id, plotParams: rawParams)
-  doAssert st.settle(st.plots[fk].result.gen == st.plots[fk].asked and not st.plots[fk].waiting)
-  doAssert st.plots[fk].result.note.find("the plot's filters left out") >= 0,
-    st.plots[fk].result.note
-  let fkRawCut = st.plots[fk].result.image.imageOutside(20)
-  doAssert abs(fkRawCut - fkPower) / fkPower > 0.05, "f-k Raw left the own filter out: " &
-    $fkRawCut & " against " & $fkPower
-  # four traces, all with the filter: energy below the band is gone
-  var four: seq[int]
-  for i in 10 .. 13: four.add base + i
-  let plainFk = st.openPlot(avFk, four)
-  let plainFkPower = st.plots[plainFk].result.image.imageOutside(20)
-  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: four, on: true,
-    processing: own.spec, filterPlace: fpAfter)
-  doAssert st.settle(st.plots[plainFk].result.gen == st.plots[plainFk].asked and
-    not st.plots[plainFk].waiting)
-  let fourCut = st.plots[plainFk].result.image.imageOutside(20)
-  doAssert fourCut < plainFkPower * 0.25, "an f-k of filtered traces kept energy below the band: " &
-    $fourCut & " against " & $plainFkPower
-  # the map's amplitude flags, for display
-  var settings = st.settings
-  settings.map.filters = {mfWeak, mfAllZero}
-  st.apply Command(kind: ckSettings, settings: settings)
-  doAssert st.settle(st.recordQc.job == NoJob and st.recordQc.hits[mfWeak].state == fsDone)
-  let flagged = base + 1 in st.recordQc.hits[mfWeak].traces or
-    base + 1 in st.recordQc.hits[mfAllZero].traces
-  doAssert flagged, "the amplitude flags did not see the own filter"
-  doAssert base notin st.recordQc.hits[mfWeak].traces and
-    base notin st.recordQc.hits[mfAllZero].traces, "the neighbour was flagged"
-  st.shutdown()
-
-block insteadEquals:
-  var st = initAppState()
-  st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
-  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-  let base = st.sessions[0].base
-  st.apply Command(kind: ckProcessing, panel: MainPanel,
-    processing: Processing(band: pbHighCut, f3: 80, f4: 100))
-  let own = band(40, 60, fpInstead)
-  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 1], on: true,
-    processing: own.spec, filterPlace: fpInstead)
-  let w = st.spectrumOf(base + 1)
-  let sp = st.spectra[w].spectrum
-  doAssert sp.processed == sp.raw, "instead: processed is not the raw curve"
-  doAssert st.spectra[w].filterText.find("this trace uses its own filter instead of the plot's") >= 0,
-    st.spectra[w].filterText
-  doAssert sp.filters == "high-cut 80-100 Hz", sp.filters
-  st.shutdown()
-
-block vibrator:
-  var st = initAppState()
-  st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
-  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-  let base = st.sessions[0].base
-  var traces: seq[int]
-  for i in 0 .. 3: traces.add base + i
-  let w = st.openPlot(avVibrator, traces)
-  doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
-  let before = st.plots[w].result.refHz
-  let own = band(40, 60)
-  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
-    processing: own.spec, filterPlace: fpAfter)
-  doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
-  doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
-  let after = st.plots[w].result.refHz
-  doAssert after != before, "the vibrator signature ignored the own filter"
-  var inBand, loud = 0
-  for f in after:
-    if not f.isNaN and f > 1:
-      inc loud
-      if f >= 30 and f <= 70: inc inBand
-  doAssert loud > 10 and inBand > loud * 8 div 10, "the sweep's frequency left the band: " &
-    $inBand & " of " & $loud
-  doAssert st.plots[w].ownLine.find("own filter") >= 0, st.plots[w].ownLine
-  st.shutdown()
-
-block referenceOwnFollows:
-  ## Seen to fail: with the reference's own filter left out of the follow
-  ## test (`followFilters`), "the correlation did not ask again when the
-  ## reference's own filter changed" (the pilot is not one of its traces).
-  var st = initAppState()
-  st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
-  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-  let base = st.sessions[0].base
-  let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
-  doAssert "trace 49" in st.plots[w].reference, st.plots[w].reference
-  let pilot = base + 48
-  let asks0 = st.plots[w].asks
-  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[pilot], on: true,
-    processing: band(40, 60).spec, filterPlace: fpAfter)
-  doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
-    "the correlation did not ask again when the reference's own filter changed"
-  doAssert "own filter" in st.plots[w].result.note, st.plots[w].result.note
-  # frozen: the same change asks nothing
-  st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: st.plots[w].params,
-    plotFrozen: true)
-  doAssert st.settle(not st.plots[w].waiting)
-  let asks1 = st.plots[w].asks
-  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[pilot], on: true,
-    processing: band(50, 70).spec, filterPlace: fpAfter)
-  doAssert st.settle(not st.plots[w].waiting)
-  doAssert st.plots[w].asks == asks1, "a frozen correlation asked again"
-  st.shutdown()
-
 proc baseOf(st: AppState; path: string): int =
   for s in st.sessions:
     if s.path == path: return s.base
   doAssert false, "no open session for " & path
 
-block referenceInOtherFile:
-  ## Seen to fail: with the reference's file index also a shown trace's index,
-  ## the note's "reference, " line was skipped although the reference is in
-  ## another file. Also: the reference's own filter, cleared in its own file,
-  ## asks again. Both vibrator files are sampled at 4 ms, so the correlation runs.
-  var st = initAppState()
-  st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
-  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-  let otherBase = st.sessions[0].base
-  let refTrace = otherBase + 2
-  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[refTrace], on: true,
-    processing: band(40, 60).spec, filterPlace: fpAfter)
-  st.apply Command(kind: ckOpen, paths: @[vib])
-  doAssert st.settle(st.sessions.len == 2), "the second file did not open"
-  st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
-  doAssert st.settle(st.panel(MainPanel).laidOut and st.sessions.len == 2)
-  let base = baseOf(st, vib)
-  let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
-  var p = st.plots[w].params
-  p.reference = refTrace # index 2 of the other file: also a shown index here
-  st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p, plotFrozen: false)
-  doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
-  doAssert "reference, " in st.plots[w].result.note, st.plots[w].result.note
-  doAssert "own filter" in st.plots[w].result.note, st.plots[w].result.note
-  # the reference's own filter cleared in its own file: asks again
-  let asks0 = st.plots[w].asks
-  st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
-  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[refTrace], on: false)
-  doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
-    "the correlation did not ask again when the reference's own filter was cleared"
-  doAssert "reference, " notin st.plots[w].result.note, st.plots[w].result.note
-  st.shutdown()
+proc main*() =
+  let land = root / "samples" / "land" / "shots.sgy"
+  let vib = root / "samples" / "vib" / "vib_uncorrelated.sgd"
+  let vibOther = root / "samples" / "vib" / "vib_correlated.sgd"
 
-block insteadCount:
-  ## Seen to fail: "1 traces use their own filter instead of the plot's" for one
-  ## instead-trace among two shown traces (the count is "1 trace uses").
-  var st = initAppState()
-  st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
-  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-  let base = st.sessions[0].base
-  st.apply Command(kind: ckProcessing, panel: MainPanel,
-    processing: Processing(band: pbHighCut, f3: 20, f4: 30))
-  st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 1], on: true,
-    processing: band(40, 60, fpInstead).spec, filterPlace: fpInstead)
-  st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base, base + 1])
-  let w = st.spectra.high
-  doAssert st.settle(st.spectra[w].spectrum.raw.len > 0 and not st.spectra[w].waiting)
-  doAssert "1 trace uses its own filter instead of the plot's" in st.spectra[w].filterText,
-    st.spectra[w].filterText
-  st.shutdown()
+  block landGraphs:
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let base = st.sessions[0].base
+    let lay = st.panel(MainPanel).layout
+    st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 800, 2 * lay.samples))
+    doAssert st.settle(st.answered)
+    let beforeTile = st.tiles(0)[^1]
+    let neigh = st.spectrumOf(base)
+    let neighPower = st.spectra[neigh].spectrum.spectrumOutside(20)
+    doAssert neighPower > 0, "trace 1 has no energy below 20 Hz"
+    let plain = st.spectrumOf(base + 1)
+    let plainPower = st.spectra[plain].spectrum.spectrumOutside(20)
+    doAssert plainPower > 0, "trace 2 has no energy below 20 Hz"
+    let spec = st.openPlot(avSpectrogram, @[base + 1])
+    let specPower = st.plots[spec].result.image.imageOutside(20)
+    let env = st.openPlot(avEnvelope, @[base + 1])
+    let phase = st.openPlot(avPhase, @[base + 1])
+    let phasePower = st.plots[phase].result.plots[0].ampOutside(20)
+    let corr = st.openPlot(avCorrelation, @[base, base + 1])
+    var fkTraces: seq[int]
+    for i in 0 .. 7: fkTraces.add base + i
+    let fk = st.openPlot(avFk, fkTraces)
+    let fkPower = st.plots[fk].result.image.imageOutside(20)
+    let own = band(40, 60)
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 1], on: true,
+      processing: own.spec, filterPlace: fpAfter)
+    doAssert st.settle(st.answered)
+    let afterTile = st.tiles(0)[^1]
+    doAssert afterTile.rowOf(1) != beforeTile.rowOf(1), "the plot did not filter trace 2"
+    doAssert afterTile.rowOf(0) == beforeTile.rowOf(0), "the plot changed trace 1"
+    doAssert st.ownLine(st.panel(MainPanel)).len > 0
+    # the spectrum of the filtered trace asks again; the neighbour does not
+    doAssert st.spectra[neigh].spectrum.raw.len > 0
+    doAssert st.spectra[neigh].asks == 1, "the neighbour spectrum was asked again"
+    doAssert st.settle(st.spectra[plain].spectrum.gen > 0 and not st.spectra[plain].waiting and
+      st.spectra[plain].asks >= 2)
+    let filtered = st.spectra[plain].spectrum
+    let cut = filtered.spectrumOutside(20)
+    doAssert cut < plainPower * 0.25, "the spectrum's raw curve does not show the own filter: " &
+      $cut & " against " & $plainPower
+    doAssert filtered.processed.len == 0 and not filtered.hasResponse,
+      "an own filter alone unlocked processing"
+    doAssert "Trace 2: own filter, band-pass 40-60 Hz" in st.spectra[plain].filterText,
+      st.spectra[plain].filterText
+    doAssert st.spectra[plain].display.processed, "the stored Processed choice was cleared"
+    doAssert st.settle(st.plots[spec].result.gen == st.plots[spec].asked and
+      not st.plots[spec].waiting)
+    let specCut = st.plots[spec].result.image.imageOutside(20)
+    doAssert specCut < specPower * 0.25, "the spectrogram does not show the own filter: " &
+      $specCut & " against " & $specPower
+    doAssert st.plots[spec].ownLine.find("Trace 2: own filter, band-pass 40-60 Hz") >= 0,
+      st.plots[spec].ownLine
+    doAssert st.settle(st.plots[env].result.gen == st.plots[env].asked and not st.plots[env].waiting)
+    let freq = st.plots[env].result.plots[2].curves[0].ys
+    var inBand, loud = 0
+    let envY = st.plots[env].result.plots[0].curves[1].ys
+    var peak = 0.0
+    for e in envY: peak = max(peak, e)
+    for i, f in freq:
+      if envY[i] > peak * 0.1 and not f.isNaN:
+        inc loud
+        if f >= 30 and f <= 70: inc inBand
+    doAssert loud > 20 and inBand > loud * 8 div 10, "the envelope's frequency left the band: " &
+      $inBand & " of " & $loud
+    doAssert st.settle(st.plots[phase].result.gen == st.plots[phase].asked and
+      not st.plots[phase].waiting)
+    let phaseCut = st.plots[phase].result.plots[0].ampOutside(20)
+    doAssert phaseCut < phasePower * 0.25, "the phase spectrum does not show the own filter: " &
+      $phaseCut & " against " & $phasePower
+    doAssert st.settle(st.plots[corr].result.gen == st.plots[corr].asked and
+      not st.plots[corr].waiting)
+    doAssert st.plots[corr].result.problem == "", st.plots[corr].result.problem
+    let ratio = st.plots[corr].result.plots[1]
+    var low = 0.0
+    var nLow = 0
+    for i, f in ratio.xs:
+      if (f < 35 or f > 70) and f > 2 and i < ratio.curves[1].ys.len and
+          not ratio.curves[1].ys[i].isNaN:
+        low += ratio.curves[1].ys[i]
+        inc nLow
+    doAssert nLow > 4 and low / float64(nLow) < -12, "the correlation does not show the filter: " &
+      $nLow & " points, " & $(low / float64(max(nLow, 1))) & " dB"
+    doAssert st.settle(st.plots[fk].result.gen == st.plots[fk].asked and not st.plots[fk].waiting)
+    let fkCut = st.plots[fk].result.image.imageOutside(20)
+    doAssert abs(fkCut - fkPower) / fkPower > 0.05, "the f-k ignored the one trace's own filter: " &
+      $fkCut & " against " & $fkPower
+    var rawParams = st.plots[fk].params
+    rawParams.fkRaw = true
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[fk].id, plotParams: rawParams)
+    doAssert st.settle(st.plots[fk].result.gen == st.plots[fk].asked and not st.plots[fk].waiting)
+    doAssert st.plots[fk].result.note.find("the plot's filters left out") >= 0,
+      st.plots[fk].result.note
+    let fkRawCut = st.plots[fk].result.image.imageOutside(20)
+    doAssert abs(fkRawCut - fkPower) / fkPower > 0.05, "f-k Raw left the own filter out: " &
+      $fkRawCut & " against " & $fkPower
+    # four traces, all with the filter: energy below the band is gone
+    var four: seq[int]
+    for i in 10 .. 13: four.add base + i
+    let plainFk = st.openPlot(avFk, four)
+    let plainFkPower = st.plots[plainFk].result.image.imageOutside(20)
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: four, on: true,
+      processing: own.spec, filterPlace: fpAfter)
+    doAssert st.settle(st.plots[plainFk].result.gen == st.plots[plainFk].asked and
+      not st.plots[plainFk].waiting)
+    let fourCut = st.plots[plainFk].result.image.imageOutside(20)
+    doAssert fourCut < plainFkPower * 0.25, "an f-k of filtered traces kept energy below the band: " &
+      $fourCut & " against " & $plainFkPower
+    # the map's amplitude flags, for display
+    var settings = st.settings
+    settings.map.filters = {mfWeak, mfAllZero}
+    st.apply Command(kind: ckSettings, settings: settings)
+    doAssert st.settle(st.recordQc.job == NoJob and st.recordQc.hits[mfWeak].state == fsDone)
+    let flagged = base + 1 in st.recordQc.hits[mfWeak].traces or
+      base + 1 in st.recordQc.hits[mfAllZero].traces
+    doAssert flagged, "the amplitude flags did not see the own filter"
+    doAssert base notin st.recordQc.hits[mfWeak].traces and
+      base notin st.recordQc.hits[mfAllZero].traces, "the neighbour was flagged"
+    st.shutdown()
 
-block filterOrderWords:
-  ## Seen to fail: the guides and the reader's comments said the own filter
-  ## runs before the plot's filters; every graph applies the plot's filters
-  ## first and the own filter after (placement "after"), or the own filter
-  ## alone ("instead"). The check reads the words, not the order.
-  let guide = readFile(root / "docs" / "plot-window.md")
-  doAssert "run after them (named under the title:" in guide,
-    "docs/plot-window.md does not say the own filter runs after the plot's filters"
-  doAssert "own filter, before the" notin guide, "docs/plot-window.md still says before"
-  let quick = readFile(root / "docs" / "user" / "QUICKSTART.md")
-  doAssert "(without the strip's filters)" in quick, "QUICKSTART.md does not say without"
-  doAssert "(before the strip's filters)" notin quick, "QUICKSTART.md still says before"
-  let reader = readFile(root / "src" / "viewSEG" / "core" / "analysisreader.nim")
-  doAssert "The plot's filters first" in reader,
-    "analysisreader.nim's header does not say the plot's filters run first"
-  doAssert "through the plot's filters `pr` at `dtMs`" in reader,
-    "analysisreader.nim's filtered comment does not say the plot's filters run first"
-  doAssert "Each trace's own filter always, then" notin reader, "analysisreader.nim header"
+  block insteadEquals:
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let base = st.sessions[0].base
+    st.apply Command(kind: ckProcessing, panel: MainPanel,
+      processing: Processing(band: pbHighCut, f3: 80, f4: 100))
+    let own = band(40, 60, fpInstead)
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 1], on: true,
+      processing: own.spec, filterPlace: fpInstead)
+    let w = st.spectrumOf(base + 1)
+    let sp = st.spectra[w].spectrum
+    doAssert sp.processed == sp.raw, "instead: processed is not the raw curve"
+    doAssert st.spectra[w].filterText.find("this trace uses its own filter instead of the plot's") >= 0,
+      st.spectra[w].filterText
+    doAssert sp.filters == "high-cut 80-100 Hz", sp.filters
+    st.shutdown()
 
-echo "townalways: ok"
+  block vibrator:
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let base = st.sessions[0].base
+    var traces: seq[int]
+    for i in 0 .. 3: traces.add base + i
+    let w = st.openPlot(avVibrator, traces)
+    doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
+    let before = st.plots[w].result.refHz
+    let own = band(40, 60)
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
+      processing: own.spec, filterPlace: fpAfter)
+    doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
+    doAssert st.plots[w].result.problem == "", st.plots[w].result.problem
+    let after = st.plots[w].result.refHz
+    doAssert after != before, "the vibrator signature ignored the own filter"
+    var inBand, loud = 0
+    for f in after:
+      if not f.isNaN and f > 1:
+        inc loud
+        if f >= 30 and f <= 70: inc inBand
+    doAssert loud > 10 and inBand > loud * 8 div 10, "the sweep's frequency left the band: " &
+      $inBand & " of " & $loud
+    doAssert st.plots[w].ownLine.find("own filter") >= 0, st.plots[w].ownLine
+    st.shutdown()
+
+  block referenceOwnFollows:
+    ## Seen to fail: with the reference's own filter left out of the follow
+    ## test (`followFilters`), "the correlation did not ask again when the
+    ## reference's own filter changed" (the pilot is not one of its traces).
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let base = st.sessions[0].base
+    let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
+    doAssert "trace 49" in st.plots[w].reference, st.plots[w].reference
+    let pilot = base + 48
+    let asks0 = st.plots[w].asks
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[pilot], on: true,
+      processing: band(40, 60).spec, filterPlace: fpAfter)
+    doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
+      "the correlation did not ask again when the reference's own filter changed"
+    doAssert "own filter" in st.plots[w].result.note, st.plots[w].result.note
+    # frozen: the same change asks nothing
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: st.plots[w].params,
+      plotFrozen: true)
+    doAssert st.settle(not st.plots[w].waiting)
+    let asks1 = st.plots[w].asks
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[pilot], on: true,
+      processing: band(50, 70).spec, filterPlace: fpAfter)
+    doAssert st.settle(not st.plots[w].waiting)
+    doAssert st.plots[w].asks == asks1, "a frozen correlation asked again"
+    st.shutdown()
+
+  block referenceInOtherFile:
+    ## Seen to fail: with the reference's file index also a shown trace's index,
+    ## the note's "reference, " line was skipped although the reference is in
+    ## another file. Also: the reference's own filter, cleared in its own file,
+    ## asks again. Both vibrator files are sampled at 4 ms, so the correlation runs.
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let otherBase = st.sessions[0].base
+    let refTrace = otherBase + 2
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[refTrace], on: true,
+      processing: band(40, 60).spec, filterPlace: fpAfter)
+    st.apply Command(kind: ckOpen, paths: @[vib])
+    doAssert st.settle(st.sessions.len == 2), "the second file did not open"
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vib)
+    doAssert st.settle(st.panel(MainPanel).laidOut and st.sessions.len == 2)
+    let base = baseOf(st, vib)
+    let w = st.openPlot(avCorrelation, @[base + 1, base + 2, base + 3])
+    var p = st.plots[w].params
+    p.reference = refTrace # index 2 of the other file: also a shown index here
+    st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p, plotFrozen: false)
+    doAssert st.settle(st.plots[w].result.gen == st.plots[w].asked and not st.plots[w].waiting)
+    doAssert "reference, " in st.plots[w].result.note, st.plots[w].result.note
+    doAssert "own filter" in st.plots[w].result.note, st.plots[w].result.note
+    # the reference's own filter cleared in its own file: asks again
+    let asks0 = st.plots[w].asks
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: vibOther)
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[refTrace], on: false)
+    doAssert st.settle(st.plots[w].asks > asks0 and not st.plots[w].waiting),
+      "the correlation did not ask again when the reference's own filter was cleared"
+    doAssert "reference, " notin st.plots[w].result.note, st.plots[w].result.note
+    st.shutdown()
+
+  block insteadCount:
+    ## Seen to fail: "1 traces use their own filter instead of the plot's" for one
+    ## instead-trace among two shown traces (the count is "1 trace uses").
+    var st = initAppState()
+    st.apply Command(kind: ckShowFile, panel: MainPanel, path: land)
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    let base = st.sessions[0].base
+    st.apply Command(kind: ckProcessing, panel: MainPanel,
+      processing: Processing(band: pbHighCut, f3: 20, f4: 30))
+    st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base + 1], on: true,
+      processing: band(40, 60, fpInstead).spec, filterPlace: fpInstead)
+    st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: @[base, base + 1])
+    let w = st.spectra.high
+    doAssert st.settle(st.spectra[w].spectrum.raw.len > 0 and not st.spectra[w].waiting)
+    doAssert "1 trace uses its own filter instead of the plot's" in st.spectra[w].filterText,
+      st.spectra[w].filterText
+    st.shutdown()
+
+  block filterOrderWords:
+    ## Seen to fail: the guides and the reader's comments said the own filter
+    ## runs before the plot's filters; every graph applies the plot's filters
+    ## first and the own filter after (placement "after"), or the own filter
+    ## alone ("instead"). The check reads the words, not the order.
+    let guide = readFile(root / "docs" / "plot-window.md")
+    doAssert "run after them (named under the title:" in guide,
+      "docs/plot-window.md does not say the own filter runs after the plot's filters"
+    doAssert "own filter, before the" notin guide, "docs/plot-window.md still says before"
+    let quick = readFile(root / "docs" / "user" / "QUICKSTART.md")
+    doAssert "(without the strip's filters)" in quick, "QUICKSTART.md does not say without"
+    doAssert "(before the strip's filters)" notin quick, "QUICKSTART.md still says before"
+    let reader = readFile(root / "src" / "viewSEG" / "core" / "analysisreader.nim")
+    doAssert "The plot's filters first" in reader,
+      "analysisreader.nim's header does not say the plot's filters run first"
+    doAssert "through the plot's filters `pr` at `dtMs`" in reader,
+      "analysisreader.nim's filtered comment does not say the plot's filters run first"
+    doAssert "Each trace's own filter always, then" notin reader, "analysisreader.nim header"
+
+  echo "townalways: ok"
+
+when isMainModule:
+  main()

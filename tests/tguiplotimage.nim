@@ -125,13 +125,18 @@ proc onFrame(f: FrameInfo) =
   check("one sample", tileAt(0, 3, 1, 0, 2).offReference(view(-0.5, 2.5, -1, 1, 300, 20)))
   f.stop()
 
-withFixtures fx:
-  let code = run(RunOptions(maxFrames: 100, windowSize: (640, 480), theme: forceDark,
-    userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-    onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert results.len == 10, "only " & $results.len & " checks ran"
-  for (name, off) in results:
-    echo "tguiplotimage: ", name, ": ", off, " pixels off the reference"
-  for (name, off) in results:
-    doAssert off == 0, name & ": " & $off & " pixels off the reference"
+proc main*() =
+
+  withFixtures fx:
+    let code = run(RunOptions(maxFrames: 100, windowSize: (640, 480), theme: forceDark,
+      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+      onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert results.len == 10, "only " & $results.len & " checks ran"
+    for (name, off) in results:
+      echo "tguiplotimage: ", name, ": ", off, " pixels off the reference"
+    for (name, off) in results:
+      doAssert off == 0, name & ": " & $off & " pixels off the reference"
+
+when isMainModule:
+  main()

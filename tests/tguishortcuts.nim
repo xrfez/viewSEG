@@ -52,35 +52,40 @@ proc drive(steps: seq[Step]; opts: RunOptions) =
   doAssert code == 0, "run() exit code " & $code
   doAssert failed.len == 0, failed
   doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
-
-let tmp = getTempDir() / ("viewseg-shortcuts-" & $getCurrentProcessId())
-createDir(tmp)
-createDir(repo / ".scratch")
 var steps: seq[Step]
 proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
   steps.add Step(name: name, act: act, done: done)
 proc noop(f: FrameInfo) = discard
 
-step("the window is up", noop, proc (f: FrameInfo): bool =
-  f.markOf("menu.Help").size.x > 0 and f.markOf("shortcuts").size.x == 0)
-step("F1 opens the list", proc (f: FrameInfo) =
-  f.pressKey(skF1, true)
-  f.pressKey(skF1, false), proc (f: FrameInfo): bool =
-  let open = f.markOf("shortcuts").size.x > 40 and f.markOf("shortcuts.filter").size.x > 0 and
-    f.markOf("shortcuts.row menu.maOpenFile").size.x > 0
-  if open: discard f.savePng(repo / ".scratch" / "shortcuts.png")
-  open)
-step("zoom filters the list", proc (f: FrameInfo) =
-  f.typeText("zoom"), proc (f: FrameInfo): bool =
-  f.markOf("shortcuts.row plot.zoomKeys").size.x > 0 and
-    f.markOf("shortcuts.row menu.maOpenFile").size.x == 0)
-step("Escape closes the list", proc (f: FrameInfo) =
-  f.pressKey(skEscape, true)
-  f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
-  f.markOf("shortcuts").size.x == 0)
+proc main*() =
 
-drive(steps, RunOptions(theme: forceDark, windowSize: (1400, 900),
-  assetDirs: some(@[repo / "assets"]), userThemeDir: some(tmp / "themes"),
-  configDir: some(tmp), logDir: some(tmp / "logs"), indexCacheDir: some(tmp / "cache"),
-  persist: false))
-removeDir(tmp)
+  let tmp = getTempDir() / ("viewseg-shortcuts-" & $getCurrentProcessId())
+  createDir(tmp)
+  createDir(repo / ".scratch")
+
+  step("the window is up", noop, proc (f: FrameInfo): bool =
+    f.markOf("menu.Help").size.x > 0 and f.markOf("shortcuts").size.x == 0)
+  step("F1 opens the list", proc (f: FrameInfo) =
+    f.pressKey(skF1, true)
+    f.pressKey(skF1, false), proc (f: FrameInfo): bool =
+    let open = f.markOf("shortcuts").size.x > 40 and f.markOf("shortcuts.filter").size.x > 0 and
+      f.markOf("shortcuts.row menu.maOpenFile").size.x > 0
+    if open: discard f.savePng(repo / ".scratch" / "shortcuts.png")
+    open)
+  step("zoom filters the list", proc (f: FrameInfo) =
+    f.typeText("zoom"), proc (f: FrameInfo): bool =
+    f.markOf("shortcuts.row plot.zoomKeys").size.x > 0 and
+      f.markOf("shortcuts.row menu.maOpenFile").size.x == 0)
+  step("Escape closes the list", proc (f: FrameInfo) =
+    f.pressKey(skEscape, true)
+    f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
+    f.markOf("shortcuts").size.x == 0)
+
+  drive(steps, RunOptions(theme: forceDark, windowSize: (1400, 900),
+    assetDirs: some(@[repo / "assets"]), userThemeDir: some(tmp / "themes"),
+    configDir: some(tmp), logDir: some(tmp / "logs"), indexCacheDir: some(tmp / "cache"),
+    persist: false))
+  removeDir(tmp)
+
+when isMainModule:
+  main()

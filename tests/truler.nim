@@ -42,32 +42,37 @@ proc loaded(fx: Fixtures; name, words, factor: string): AppState =
   result.apply Command(kind: ckLoadSurvey, paths: @[sps.s, sps.r])
   doAssert result.settle(result.survey.layers.len == 2), name
 
-withFixtures fx:
-  block metres:
-    var st = fx.loaded("metres", "Metres", "1.0")
-    st.check(1500, "metres", "m")
-    doAssert rulerReading(1500, (suMetres, 1.0)) == "1500 m", "metres"
+proc main*() =
 
-  block feet:
-    var st = fx.loaded("feet", "Feet", "0.3048")
-    st.check(1000, "feet", "ft")
-    st.lengthsIn(dlMetres)
-    doAssert st.shownLengths.unit == suMetres
-    doAssert rulerReading(1, st.shownLengths) == expect(0.3048, "m")
+  withFixtures fx:
+    block metres:
+      var st = fx.loaded("metres", "Metres", "1.0")
+      st.check(1500, "metres", "m")
+      doAssert rulerReading(1500, (suMetres, 1.0)) == "1500 m", "metres"
 
-  block usFeet:
-    var st = fx.loaded("usfeet", "feet", "0.3048006096")
-    st.check(1200, "US survey feet", "ftUS")
-    st.lengthsIn(dlFeet)
-    doAssert st.shownLengths.unit == suFeet
-    let n = 1200 * (1200 / 3937) / 0.3048
-    doAssert rulerReading(1200, st.shownLengths) == expect(n, "ft"), "US survey feet"
+    block feet:
+      var st = fx.loaded("feet", "Feet", "0.3048")
+      st.check(1000, "feet", "ft")
+      st.lengthsIn(dlMetres)
+      doAssert st.shownLengths.unit == suMetres
+      doAssert rulerReading(1, st.shownLengths) == expect(0.3048, "m")
 
-  block notKnown:
-    var st = fx.loaded("none", "", "")
-    st.check(2.5, "not known", "")
-    doAssert rulerReading(2.5, (suNotGiven, 1.0)) == "2.50", "not known"
-    st.lengthsIn(dlMetres)
-    doAssert rulerReading(2.5, st.shownLengths) == "2.50", "nothing converted"
+    block usFeet:
+      var st = fx.loaded("usfeet", "feet", "0.3048006096")
+      st.check(1200, "US survey feet", "ftUS")
+      st.lengthsIn(dlFeet)
+      doAssert st.shownLengths.unit == suFeet
+      let n = 1200 * (1200 / 3937) / 0.3048
+      doAssert rulerReading(1200, st.shownLengths) == expect(n, "ft"), "US survey feet"
 
-echo "truler: ok"
+    block notKnown:
+      var st = fx.loaded("none", "", "")
+      st.check(2.5, "not known", "")
+      doAssert rulerReading(2.5, (suNotGiven, 1.0)) == "2.50", "not known"
+      st.lengthsIn(dlMetres)
+      doAssert rulerReading(2.5, st.shownLengths) == "2.50", "nothing converted"
+
+  echo "truler: ok"
+
+when isMainModule:
+  main()

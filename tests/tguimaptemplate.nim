@@ -64,7 +64,7 @@ proc encloses(box, inner: Rect; pad = 7.0'f32): bool =
     abs(box.pos.x + box.size.x - (inner.pos.x + inner.size.x + pad)) <= 2 and
     abs(box.pos.y + box.size.y - (inner.pos.y + inner.size.y + pad)) <= 2
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let sps = fx.mapSps()
     let xps = fx.mapXps()
@@ -191,4 +191,9 @@ proc main() =
     doAssert failed.len == 0, failed
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
 
-main()
+proc main*() =
+
+  runMain()
+
+when isMainModule:
+  main()

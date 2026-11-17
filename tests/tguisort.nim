@@ -67,7 +67,7 @@ proc expected(keys: seq[TraceKeys]; traces: seq[int]; order: openArray[SortKey])
 
 func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let path = fx.mixedOrderSegd()
     let before = snapshot(path)
@@ -305,55 +305,6 @@ proc main() =
       " hovers, " & $looked & " looks"
     doAssert snapshot(path) == before, "sorting changed the file"
 
-main()
-
-block buttonsWithoutTheirKeys:
-  # The survey's traces have no receiver line, point or component: the
-  # three buttons are greyed out, and a click on one changes nothing.
-  withFixtures fx:
-    var stage = 0
-    var wait = 0 # frames since the stage began, at `since`
-    var since = getMonoTime()
-    var clicks = 0
-    var order: seq[SortKey] = @[SortKey(field: hfTrace)] # not what is checked for
-    var b: Vec2
-    proc onFrame(f: FrameInfo) =
-      let p = f.core.panels[f.core.findPanel(MainPanel)]
-      inc wait
-      case stage
-      of 0:
-        if p.laidOut and f.markOf("plot.sort").size.x > 0 and wait > 10:
-          b = f.markOf("plot.sort").centre
-          f.moveMouse(b)
-          (stage, wait, since) = (1, 0, getMonoTime())
-      of 1:
-        if wait > 2:
-          f.pressMouse(b, true)
-          f.pressMouse(b, false)
-          (stage, wait, since) = (2, 0, getMonoTime())
-      of 2:
-        if f.markOf("plot.sort.Line/Station").size.x > 0:
-          b = f.markOf("plot.sort.Line/Station").centre
-          f.moveMouse(b)
-          (stage, wait, since) = (3, 0, getMonoTime())
-      of 3:
-        if wait > 2:
-          f.pressMouse(b, true)
-          f.pressMouse(b, false)
-          inc clicks
-          (stage, wait, since) = (4, 0, getMonoTime())
-      of 4:
-        if wait > 12:
-          order = p.layers[0].order
-          f.stop()
-      else: discard
-      if overdue(wait, 1500, since): f.stop()
-    let code = run(RunOptions(openPaths: @[fx.surveySegy()],
-      theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
-      indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
-    doAssert code == 0 and stage == 4 and clicks == 1, "stage " & $stage
-    doAssert order.len == 0, "a greyed-out button sorted: " & $order
-
 # ------------------------------------------------------------ screenshots --
 # With `VIEWSEG_SCREENSHOTS=<dir>`, the sort buttons are saved on the
 # mixed-order fixture (sort-components.png: By Flag, the display header
@@ -438,12 +389,66 @@ proc sortShot(path, file: string; order: seq[SortKey]; header: seq[HeaderField];
   doAssert code == 0 and saved, "no screenshot of " & path & " (stage " & $stage & ")"
   echo "tguisort: saved ", dir / file
 
-if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
-  createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-  withFixtures fx:
-    sortShot(fx.mixedOrderSegd(), "sort-components.png", SortPresets[1].keys,
-      @[hfRcvLine, hfRcvPoint, hfComponent], Span(lo: -0.5, hi: 17.5), popover = false)
-  let landSegd = privateFile("landSegd")
-  if landSegd.len > 0:
-    sortShot(landSegd, "sort-land.png", @[SortKey(field: hfOffset)], @[], Span(),
-      popover = true)
+proc main*() =
+
+  runMain()
+
+  block buttonsWithoutTheirKeys:
+    # The survey's traces have no receiver line, point or component: the
+    # three buttons are greyed out, and a click on one changes nothing.
+    withFixtures fx:
+      var stage = 0
+      var wait = 0 # frames since the stage began, at `since`
+      var since = getMonoTime()
+      var clicks = 0
+      var order: seq[SortKey] = @[SortKey(field: hfTrace)] # not what is checked for
+      var b: Vec2
+      proc onFrame(f: FrameInfo) =
+        let p = f.core.panels[f.core.findPanel(MainPanel)]
+        inc wait
+        case stage
+        of 0:
+          if p.laidOut and f.markOf("plot.sort").size.x > 0 and wait > 10:
+            b = f.markOf("plot.sort").centre
+            f.moveMouse(b)
+            (stage, wait, since) = (1, 0, getMonoTime())
+        of 1:
+          if wait > 2:
+            f.pressMouse(b, true)
+            f.pressMouse(b, false)
+            (stage, wait, since) = (2, 0, getMonoTime())
+        of 2:
+          if f.markOf("plot.sort.Line/Station").size.x > 0:
+            b = f.markOf("plot.sort.Line/Station").centre
+            f.moveMouse(b)
+            (stage, wait, since) = (3, 0, getMonoTime())
+        of 3:
+          if wait > 2:
+            f.pressMouse(b, true)
+            f.pressMouse(b, false)
+            inc clicks
+            (stage, wait, since) = (4, 0, getMonoTime())
+        of 4:
+          if wait > 12:
+            order = p.layers[0].order
+            f.stop()
+        else: discard
+        if overdue(wait, 1500, since): f.stop()
+      let code = run(RunOptions(openPaths: @[fx.surveySegy()],
+        theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
+        indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
+      doAssert code == 0 and stage == 4 and clicks == 1, "stage " & $stage
+      doAssert order.len == 0, "a greyed-out button sorted: " & $order
+
+  if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
+    createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+    withFixtures fx:
+      sortShot(fx.mixedOrderSegd(), "sort-components.png", SortPresets[1].keys,
+        @[hfRcvLine, hfRcvPoint, hfComponent], Span(lo: -0.5, hi: 17.5), popover = false)
+    let landSegd = privateFile("landSegd")
+    if landSegd.len > 0:
+      sortShot(landSegd, "sort-land.png", @[SortKey(field: hfOffset)], @[], Span(),
+        popover = true)
+
+when isMainModule:
+  main()

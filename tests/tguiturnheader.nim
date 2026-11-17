@@ -53,69 +53,74 @@ proc fields(f: FrameInfo; shown: seq[HeaderField]) =
 
 proc sameTime(a, b: Span): bool = abs(a.lo - b.lo) < 1e-6 and abs(a.hi - b.hi) < 1e-6
 
-withFixtures fx:
-  var plotX = 0'f32
-  var stage = 0
-  var wait = 0 # frames since the step began, at `since`
-  var since = getMonoTime()
-  var reached: seq[string]
-  let steps: seq[(string, Step)] = @[
-    ("shown", Step(proc (f: FrameInfo; wait: int): bool =
-      result = f.panel.laidOut and f.answered and wait > 3)),
-    ("time across, the channel", Step(proc (f: FrameInfo; wait: int): bool =
-      if wait == 1:
-        var d = f.panel.layers[0].display
-        d.mode = dmDensity # (no limit of a trace a pixel)
-        d.orientation = orTimeAcross
-        f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
-        f.fields(@[hfChannel])
-      if wait == 6: f.view(0, 99)
-      result = wait > 12 and f.answered and f.panel.view.traces.lo < 1)),
-    ("the first traces", Step(proc (f: FrameInfo; wait: int): bool =
-      result = wait > 4 and f.answered
-      if result:
-        doAssert f.panel.widest[hfChannel] == len($Traces), $f.panel.widest
-        plotX = f.markOf("plot.data").pos.x
-        doAssert sameTime(f.panel.view.timeMs, f.wholeTime),
-          "the time shown is " & $f.panel.view.timeMs & " of " & $f.wholeTime)),
-    ("the last traces", Step(proc (f: FrameInfo; wait: int): bool =
-      if wait == 1: f.view(Traces - 100, Traces - 1)
-      result = wait > 4 and f.answered and f.panel.view.traces.hi > Traces - 2
-      if result:
-        let x = f.markOf("plot.data").pos.x
-        doAssert x == plotX, "the plot moved by " & $(x - plotX) & " pixels as the view panned"
-        doAssert sameTime(f.panel.view.timeMs, f.wholeTime),
-          "the time shown is " & $f.panel.view.timeMs & " of " & $f.wholeTime)),
-    ("more fields", Step(proc (f: FrameInfo; wait: int): bool =
-      if wait == 1: f.fields(@[hfRecord, hfTrace, hfChannel])
-      result = wait > 8 and f.answered
-      if result:
-        doAssert f.markOf("plot.data").pos.x > plotX, "the header is no wider"
-        doAssert sameTime(f.panel.view.timeMs, f.wholeTime),
-          "the time shown is " & $f.panel.view.timeMs & " of " & $f.wholeTime)),
-    ("time down, fewer fields", Step(proc (f: FrameInfo; wait: int): bool =
-      if wait == 1:
-        var d = f.panel.layers[0].display
-        d.orientation = orTimeDown
-        f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
-      if wait == 6: f.view(0, 99)
-      if wait == 12: f.fields(@[hfChannel])
-      result = wait > 20 and f.answered
-      if result:
-        doAssert sameTime(f.panel.view.timeMs, f.wholeTime),
-          "time down: the time shown is " & $f.panel.view.timeMs & " of " & $f.wholeTime))]
-  proc onFrame(f: FrameInfo) =
-    inc wait
-    if stage < steps.len:
-      if steps[stage][1](f, wait):
-        reached.add steps[stage][0]
-        inc stage
-        (wait, since) = (0, getMonoTime())
-      else: doAssert not overdue(wait, 400, since), "stopped at \"" & steps[stage][0] &
-        "\" after " & $reached
-    else: f.stop()
-  let code = run(RunOptions(openPaths: @[fx.manyTracesSegy(Traces, 500)],
-    windowSize: (1600, 1000), theme: forceDark, onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert stage == steps.len, "stopped at stage " & $stage & " after " & $reached
-  echo "tguiturnheader: ", reached.join(", ")
+proc main*() =
+
+  withFixtures fx:
+    var plotX = 0'f32
+    var stage = 0
+    var wait = 0 # frames since the step began, at `since`
+    var since = getMonoTime()
+    var reached: seq[string]
+    let steps: seq[(string, Step)] = @[
+      ("shown", Step(proc (f: FrameInfo; wait: int): bool =
+        result = f.panel.laidOut and f.answered and wait > 3)),
+      ("time across, the channel", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1:
+          var d = f.panel.layers[0].display
+          d.mode = dmDensity # (no limit of a trace a pixel)
+          d.orientation = orTimeAcross
+          f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+          f.fields(@[hfChannel])
+        if wait == 6: f.view(0, 99)
+        result = wait > 12 and f.answered and f.panel.view.traces.lo < 1)),
+      ("the first traces", Step(proc (f: FrameInfo; wait: int): bool =
+        result = wait > 4 and f.answered
+        if result:
+          doAssert f.panel.widest[hfChannel] == len($Traces), $f.panel.widest
+          plotX = f.markOf("plot.data").pos.x
+          doAssert sameTime(f.panel.view.timeMs, f.wholeTime),
+            "the time shown is " & $f.panel.view.timeMs & " of " & $f.wholeTime)),
+      ("the last traces", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1: f.view(Traces - 100, Traces - 1)
+        result = wait > 4 and f.answered and f.panel.view.traces.hi > Traces - 2
+        if result:
+          let x = f.markOf("plot.data").pos.x
+          doAssert x == plotX, "the plot moved by " & $(x - plotX) & " pixels as the view panned"
+          doAssert sameTime(f.panel.view.timeMs, f.wholeTime),
+            "the time shown is " & $f.panel.view.timeMs & " of " & $f.wholeTime)),
+      ("more fields", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1: f.fields(@[hfRecord, hfTrace, hfChannel])
+        result = wait > 8 and f.answered
+        if result:
+          doAssert f.markOf("plot.data").pos.x > plotX, "the header is no wider"
+          doAssert sameTime(f.panel.view.timeMs, f.wholeTime),
+            "the time shown is " & $f.panel.view.timeMs & " of " & $f.wholeTime)),
+      ("time down, fewer fields", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1:
+          var d = f.panel.layers[0].display
+          d.orientation = orTimeDown
+          f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+        if wait == 6: f.view(0, 99)
+        if wait == 12: f.fields(@[hfChannel])
+        result = wait > 20 and f.answered
+        if result:
+          doAssert sameTime(f.panel.view.timeMs, f.wholeTime),
+            "time down: the time shown is " & $f.panel.view.timeMs & " of " & $f.wholeTime))]
+    proc onFrame(f: FrameInfo) =
+      inc wait
+      if stage < steps.len:
+        if steps[stage][1](f, wait):
+          reached.add steps[stage][0]
+          inc stage
+          (wait, since) = (0, getMonoTime())
+        else: doAssert not overdue(wait, 400, since), "stopped at \"" & steps[stage][0] &
+          "\" after " & $reached
+      else: f.stop()
+    let code = run(RunOptions(openPaths: @[fx.manyTracesSegy(Traces, 500)],
+      windowSize: (1600, 1000), theme: forceDark, onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert stage == steps.len, "stopped at stage " & $stage & " after " & $reached
+    echo "tguiturnheader: ", reached.join(", ")
+
+when isMainModule:
+  main()

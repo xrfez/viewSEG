@@ -63,79 +63,84 @@ proc writeRecords(path: string) =
   trace(3, 2, 1, 2)
   doAssert w.close().len == 0, "the three-record file was not written"
 
-withFixtures fx:
-  let path = fx.dir / "comp-across.sgd"
-  writeRecords(path)
-  var steps: seq[Step]
-  var pointAt: Vec2
-  proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
-    steps.add Step(name: name, act: act, done: done)
-  proc noop(f: FrameInfo) = discard
-  proc after(n: int): proc (f: FrameInfo): bool =
-    var frames = 0
-    result = proc (f: FrameInfo): bool =
-      inc frames
-      frames >= n
-  proc click(mark: string) =
-    step("to " & mark, proc (f: FrameInfo) =
-      let r = f.markOf(mark)
-      doAssert r.size.x > 0, mark & " is not shown"
-      pointAt = r.centre
-      f.moveMouse(pointAt), after(2))
-    step("click " & mark, proc (f: FrameInfo) =
-      f.pressMouse(pointAt, true)
-      f.pressMouse(pointAt, false), after(2))
-  step("record 1, both components", noop, proc (f: FrameInfo): bool =
-    result = f.answered and f.panel.layout.traces == 4 and
-      f.panel.componentCodes == @[1'u8, 2]
-    if result:
-      doAssert f.panel.layers[0].filter.components.card == 0
-      doAssert f.saidRestore == 0)
-  click("plot.component.1")
-  step("component 1 off", noop, proc (f: FrameInfo): bool =
-    result = f.answered and f.panel.layout.traces == 2
-    if result: doAssert f.panel.layers[0].filter.components == {1'u8})
-  click("plot.next record")
-  step("a component first seen later is shown", noop, proc (f: FrameInfo): bool =
-    result = f.answered and f.panel.componentCodes == @[1'u8, 5] and f.panel.layout.traces == 2
-    if result:
-      doAssert f.panel.layers[0].filter.components == {1'u8},
-        "the new component was stored as off: " & $f.panel.layers[0].filter.components
-      doAssert f.markOf("plot.component.5").size.x > 0
-      doAssert f.saidRestore == 0)
-  click("plot.next record")
-  step("every component off is shown again", noop, proc (f: FrameInfo): bool =
-    result = f.answered and f.panel.layout.traces == 2 and f.panel.componentCodes == @[1'u8]
-    if result:
-      doAssert f.panel.layers[0].filter.components.card == 0, "the off set was kept"
-      doAssert f.saidRestore == 1, "restore was logged " & $f.saidRestore & " times")
-  var at = 0
-  var started = false
-  var wait = 0
-  var since = getMonoTime()
-  var failed = ""
-  proc onFrame(f: FrameInfo) =
-    if f.index == 0: f.moveMouse(vec2(4, 4))
-    if at >= steps.len or failed.len > 0:
-      f.stop()
-      return
-    if not started:
-      steps[at].act(f)
-      started = true
-      wait = 0
-      since = getMonoTime()
-    else:
-      inc wait
-      if wait >= 2 and steps[at].done(f):
-        inc at
-        started = false
-      elif overdue(wait, 400, since):
-        failed = steps[at].name & " did not happen"
+proc main*() =
+
+  withFixtures fx:
+    let path = fx.dir / "comp-across.sgd"
+    writeRecords(path)
+    var steps: seq[Step]
+    var pointAt: Vec2
+    proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+      steps.add Step(name: name, act: act, done: done)
+    proc noop(f: FrameInfo) = discard
+    proc after(n: int): proc (f: FrameInfo): bool =
+      var frames = 0
+      result = proc (f: FrameInfo): bool =
+        inc frames
+        frames >= n
+    proc click(mark: string) =
+      step("to " & mark, proc (f: FrameInfo) =
+        let r = f.markOf(mark)
+        doAssert r.size.x > 0, mark & " is not shown"
+        pointAt = r.centre
+        f.moveMouse(pointAt), after(2))
+      step("click " & mark, proc (f: FrameInfo) =
+        f.pressMouse(pointAt, true)
+        f.pressMouse(pointAt, false), after(2))
+    step("record 1, both components", noop, proc (f: FrameInfo): bool =
+      result = f.answered and f.panel.layout.traces == 4 and
+        f.panel.componentCodes == @[1'u8, 2]
+      if result:
+        doAssert f.panel.layers[0].filter.components.card == 0
+        doAssert f.saidRestore == 0)
+    click("plot.component.1")
+    step("component 1 off", noop, proc (f: FrameInfo): bool =
+      result = f.answered and f.panel.layout.traces == 2
+      if result: doAssert f.panel.layers[0].filter.components == {1'u8})
+    click("plot.next record")
+    step("a component first seen later is shown", noop, proc (f: FrameInfo): bool =
+      result = f.answered and f.panel.componentCodes == @[1'u8, 5] and f.panel.layout.traces == 2
+      if result:
+        doAssert f.panel.layers[0].filter.components == {1'u8},
+          "the new component was stored as off: " & $f.panel.layers[0].filter.components
+        doAssert f.markOf("plot.component.5").size.x > 0
+        doAssert f.saidRestore == 0)
+    click("plot.next record")
+    step("every component off is shown again", noop, proc (f: FrameInfo): bool =
+      result = f.answered and f.panel.layout.traces == 2 and f.panel.componentCodes == @[1'u8]
+      if result:
+        doAssert f.panel.layers[0].filter.components.card == 0, "the off set was kept"
+        doAssert f.saidRestore == 1, "restore was logged " & $f.saidRestore & " times")
+    var at = 0
+    var started = false
+    var wait = 0
+    var since = getMonoTime()
+    var failed = ""
+    proc onFrame(f: FrameInfo) =
+      if f.index == 0: f.moveMouse(vec2(4, 4))
+      if at >= steps.len or failed.len > 0:
         f.stop()
-  let code = run(RunOptions(openPaths: @[path], windowSize: (1400, 900), theme: forceDark,
-    userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-    onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert failed.len == 0, failed
-  doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
-  echo "tguicompfilter: ok"
+        return
+      if not started:
+        steps[at].act(f)
+        started = true
+        wait = 0
+        since = getMonoTime()
+      else:
+        inc wait
+        if wait >= 2 and steps[at].done(f):
+          inc at
+          started = false
+        elif overdue(wait, 400, since):
+          failed = steps[at].name & " did not happen"
+          f.stop()
+    let code = run(RunOptions(openPaths: @[path], windowSize: (1400, 900), theme: forceDark,
+      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+      onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert failed.len == 0, failed
+    doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
+    echo "tguicompfilter: ok"
+
+when isMainModule:
+  main()

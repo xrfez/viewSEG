@@ -57,7 +57,7 @@ func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y +
 func bottom(r: Rect): float32 = r.pos.y + r.size.y
 func right(r: Rect): float32 = r.pos.x + r.size.x
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let path = fx.surveySegy()
     var steps: seq[Step]
@@ -436,8 +436,6 @@ proc main() =
     for (name, off, seen) in shots:
       doAssert off == 0, name & ": " & $off & " of " & $seen & " pixels off the reference"
 
-main()
-
 # ------------------------------------- real data: screenshots, frame times --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (local
 # only), the private land record and the sweep pilot are saved both ways, and
@@ -538,16 +536,23 @@ proc realShots(path, name: string; view: Viewport; measure: bool) =
         formatFloat(s[s.len * 9 div 10], ffDecimal, 1), " ms, slowest ",
         formatFloat(s[^1], ffDecimal, 1), " ms (", s.len, " frames)"
 
-if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
-  createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-  let landSegd = privateFile("landSegd")
-  if landSegd.len > 0:
-    # lines 100 to 108 near the source: the first breaks and the ground roll
-    realShots(landSegd, "land", Viewport(traces: Span(lo: 99.5, hi: 159.5),
-      timeMs: Span(lo: 0, hi: 1500)), measure = false)
-    realShots(landSegd, "land", Viewport(traces: Span(lo: 1000, hi: 1400),
-      timeMs: Span(lo: 0, hi: 2000)), measure = true)
-  let sweep = privateFile("sweepSegy")
-  if sweep.len > 0:
-    realShots(sweep, "pilot", Viewport(traces: Span(lo: -1, hi: 1e9),
-      timeMs: Span(lo: 0, hi: 600)), measure = false)
+proc main*() =
+
+  runMain()
+
+  if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
+    createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+    let landSegd = privateFile("landSegd")
+    if landSegd.len > 0:
+      # lines 100 to 108 near the source: the first breaks and the ground roll
+      realShots(landSegd, "land", Viewport(traces: Span(lo: 99.5, hi: 159.5),
+        timeMs: Span(lo: 0, hi: 1500)), measure = false)
+      realShots(landSegd, "land", Viewport(traces: Span(lo: 1000, hi: 1400),
+        timeMs: Span(lo: 0, hi: 2000)), measure = true)
+    let sweep = privateFile("sweepSegy")
+    if sweep.len > 0:
+      realShots(sweep, "pilot", Viewport(traces: Span(lo: -1, hi: 1e9),
+        timeMs: Span(lo: 0, hi: 600)), measure = false)
+
+when isMainModule:
+  main()

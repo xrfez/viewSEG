@@ -1,4 +1,5 @@
 ## The map's thinning of a large highlight (`core/mapthin`): of 842 000
+## Separate binary: it runs itself again and reads its own arguments.
 ## selected points (a box over most of a dense survey), one a cell of a
 ## pixel and a half is kept, every selected point in the view's area has a
 ## kept one in its own cell (the highlight's edge stays where the
@@ -57,7 +58,7 @@ proc checkThinned(points, kept: openArray[MapPoint]; a: ThinArea; what: string) 
       doAssert a.cellOf(p) in cells, what & ": a selected point with no kept point in its cell"
   doAssert inArea == 0 or kept.len > 0, what
 
-proc main() =
+proc runMain() =
   var r = initRand(1)
   var points = newSeq[MapPoint](Selected)
   for p in points.mitems: p = mapPoint(r.rand(Side), r.rand(Side))
@@ -121,12 +122,17 @@ proc main() =
     kept.thinned(points, a, taken)
     checkThinned(points, kept, a, "a huge view")
 
-when defined(posix):
-  # the program again, with a 1 MB stack (`ulimit -s` sets the main thread's)
-  if paramCount() == 1 and paramStr(1) == "--small-stack": main()
+proc main*() =
+
+  when defined(posix):
+    # the program again, with a 1 MB stack (`ulimit -s` sets the main thread's)
+    if paramCount() == 1 and paramStr(1) == "--small-stack": runMain()
+    else:
+      let code = execShellCmd("ulimit -s 1024 && exec " & quoteShell(getAppFilename()) &
+        " --small-stack")
+      doAssert code == 0, "the thinning failed on a 1 MB stack: exit " & $code
   else:
-    let code = execShellCmd("ulimit -s 1024 && exec " & quoteShell(getAppFilename()) &
-      " --small-stack")
-    doAssert code == 0, "the thinning failed on a 1 MB stack: exit " & $code
-else:
+    runMain()
+
+when isMainModule:
   main()

@@ -110,212 +110,6 @@ proc capture(f: FrameInfo): Shot =
     result.marks.add (name, f.markOf(name))
   for field in p.shownFields: result.header.add $field
 
-withFixtures fx:
-  let path = fx.surveySegy()
-  let before = snapshot(path)
-  var stage = 0
-  var waited = 0 # frames since the stage began, at `since`
-  var since = getMonoTime()
-  var whole, zoomed, wider: Shot
-  var theme: Theme
-  type Amount = object
-    ## A gain type's picture before and after +6.02 dB, and whether that read.
-    gain: DisplayGain
-    before, after: Shot
-    gens: (uint64, uint64)
-    ids: (seq[uint64], seq[uint64])
-  var amounts: seq[Amount]
-  var button: (float64, uint64, Vec2) # gain before the + button, the request then, its centre
-  proc ids(f: FrameInfo): seq[uint64] =
-    for t in f.core.tiles(f.core.findPanel(MainPanel)): result.add t.id
-  proc onFrame(f: FrameInfo) =
-    inc waited
-    let k = f.core.findPanel(MainPanel)
-    let p = f.core.panels[k]
-    # xvfb starts the pointer at the screen's centre, over the plot: a
-    # hovered trace's column would be tinted
-    if f.index == 0: f.moveMouse(vec2(4, 4))
-    case stage
-    of 0: # the file opens; show the samples as they are, as density, for exact values
-      if p.laidOut:
-        var d = p.layers[0].display
-        d.gain = dgNone
-        d.mode = dmDensity
-        f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
-        stage = 1
-    of 1:
-      if f.answered:
-        whole = f.capture
-        theme = f.theme
-        # traces 5 .. 15, 100 .. 300 ms: several pixels per sample
-        var v = p.view
-        v.traces = Span(lo: 4.5, hi: 15.5)
-        v.timeMs = Span(lo: 100, hi: 300)
-        f.showView(v)
-        stage = 2
-    of 2:
-      if f.answered and f.tracePanel.drawnView.timeMs.lo == 100:
-        zoomed = f.capture
-        var v = p.view
-        v.traces = Span(lo: -1.5, hi: 23.5) # a trace's width past the first one
-        v.timeMs = Span(lo: -20, hi: 998)
-        f.showView(v)
-        stage = 3
-    of 3:
-      if f.answered and f.tracePanel.drawnView.traces.hi > 20:
-        wider = f.capture
-        stage = 4
-    of 4: # each gain type, then +6.02 dB on top of it
-      if amounts.len == ord(DisplayGain.high) + 1:
-        let b = f.markOf("plot.gain more")
-        button[2] = vec2(round(b.pos.x + b.size.x / 2), round(b.pos.y + b.size.y / 2))
-        f.moveMouse(button[2])
-        stage = 7
-      else:
-        var d = p.layers[0].display.withGainDb(0)
-        d.gain = DisplayGain(amounts.len)
-        f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
-        amounts.add Amount(gain: d.gain)
-        (waited, since) = (0, getMonoTime())
-        stage = 5
-    of 5:
-      if f.answered and not p.reference.isNaN and waited > 2:
-        amounts[^1].before = f.capture
-        amounts[^1].gens[0] = p.requestGen
-        amounts[^1].ids[0] = f.ids
-        f.apply Command(kind: ckDisplay, panel: MainPanel,
-          display: p.layers[0].display.withGainDb(20 * log10(2.0)))
-        (waited, since) = (0, getMonoTime())
-        stage = 6
-    of 6:
-      if waited > 1: # drawn with the new amount
-        amounts[^1].after = f.capture
-        amounts[^1].gens[1] = p.requestGen
-        amounts[^1].ids[1] = f.ids
-        stage = 4
-    of 7: # the + button, clicked
-      if waited > 2:
-        button[0] = p.layers[0].display.gainDb
-        button[1] = p.requestGen
-        f.pressMouse(button[2], true)
-        f.pressMouse(button[2], false)
-        (waited, since) = (0, getMonoTime())
-        stage = 8
-    of 8:
-      if p.layers[0].display.gainDb != button[0]:
-        doAssert p.layers[0].display.gainDb == button[0] + GainStepDb, $p.layers[0].display.gainDb
-        doAssert p.requestGen == button[1], "the + button read again"
-        stage = 9
-        f.stop()
-    else: discard
-    if overdue(waited, 1500, since): f.stop() # given up: the checks below say what is missing
-  let code = run(RunOptions(openPaths: @[path], theme: forceDark,
-    maxTextureSize: textureLimit, userThemeDir: some(fx.dir / "no-user-themes"),
-    indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert stage == 9, "stopped at stage " & $stage & " (gain " & $amounts.len & ")"
-
-  block wholeGather:
-    let s = whole
-    doAssert s.plot.size.x > 300 and s.plot.size.y > 200, $s.plot
-    doAssert s.tiles.len >= 1 and s.tiles[^1].request.count == Channels
-    doAssert s.tiles[^1].columns > textureLimit, "the tile fits one texture: no blocks"
-    let (bad, seen) = s.mismatches()
-    echo "tguipanel: whole gather, ", seen, " pixels, ", bad, " off the reference"
-    doAssert bad == 0, $bad & " of " & $seen & " pixels differ from the reference"
-    doAssert s.header == @["FFID", "channel"], $s.header
-
-  block zoomedIn:
-    let s = zoomed
-    let r = s.tiles[^1].request
-    doAssert r.stride == 1 and r.decimation == 1, $r
-    doAssert s.plot.size.y / (s.view.timeMs.width / DtMs) > 2, "not zoomed in"
-    let (bad, seen) = s.mismatches(step = 2)
-    echo "tguipanel: zoomed in, ", seen, " pixels, ", bad, " off the reference"
-    doAssert bad == 0, $bad & " of " & $seen & " pixels differ from the reference"
-
-  block noPaperPastTheData:
-    # asked for a view past the first trace and before the record's start,
-    # the plot shows the data to its edges
-    let s = wider
-    doAssert s.view.traces == Span(lo: -0.5, hi: 23.5) and s.view.timeMs == Span(lo: 0, hi: 998),
-      "the view went past the data: " & $s.view
-    let (bad, seen) = s.mismatches()
-    doAssert bad == 0, $bad & " of " & $seen & " pixels differ from the reference"
-    var paper = 0
-    let x = int(s.plot.pos.x) + 3 # just inside the left edge (its border is drawn over it)
-    for y in int(s.plot.pos.y) + 3 ..< int(s.plot.pos.y + s.plot.size.y) - 3:
-      if s.pixels[y * s.width + x] == PaperBackground: inc paper
-    doAssert paper < int(s.plot.size.y / 4), $paper & " paper pixels down the left edge"
-
-  block gainAmountUnderEveryType:
-    # +6.02 dB doubles the shader's scale: the pixels match the CPU
-    # reference at the new scale, many change, and nothing is read again.
-    for a in amounts:
-      doAssert a.gens[0] == a.gens[1] and a.ids[0] == a.ids[1], $a.gain & ": the amount read again"
-      doAssert abs(a.after.scale - 2 * a.before.scale) <= 1e-5 * abs(a.after.scale),
-        $a.gain & ": scale " & $a.before.scale & " became " & $a.after.scale
-      let (bad, seen) = a.after.mismatches()
-      doAssert bad == 0, $a.gain & ": " & $bad & " of " & $seen & " pixels off the reference"
-      var changed = 0
-      let p = a.after.plot
-      for y in countup(int(p.pos.y) + 3, int(p.pos.y + p.size.y) - 4, 3):
-        for x in countup(int(p.pos.x) + 3, int(p.pos.x + p.size.x) - 4, 3):
-          if distance(a.before.pixels[y * a.before.width + x],
-              a.after.pixels[y * a.after.width + x]) > 6:
-            inc changed
-      doAssert changed > seen div 10, $a.gain & ": only " & $changed & " pixels changed"
-      echo "tguipanel: ", a.gain, " +6 dB, ", changed, " of ", seen, " pixels changed"
-
-  block controlsInTheWindow:
-    let s = whole
-    let density = s.mark("plot.Greyscale density")
-    doAssert density.size.x > 0, "no display mode buttons in the plot window"
-    doAssert s.mark("plot.Wiggle").size.x > 0
-    doAssert s.mark("tool.Greyscale density").size.x == 0, "a display mode on the toolbar"
-    let bar = s.mark("toolbar")
-    doAssert density.pos.y > bar.pos.y + bar.size.y, "the mode buttons sit on the toolbar"
-    # the selected mode's button carries the selection colour behind its symbol
-    var lit = 0
-    for y in int(density.pos.y) ..< int(density.pos.y + density.size.y):
-      for x in int(density.pos.x) ..< int(density.pos.x + density.size.x):
-        if distance(s.pixels[y * s.width + x], theme.roles[rlSelection]) <= 2: inc lit
-    doAssert lit > int(density.size.x * density.size.y / 4),
-      "the selected mode is not marked: " & $lit & " pixels"
-
-  doAssert snapshot(path) == before, "showing the file changed it"
-
-  block narrowWindowWrapsTheStrip:
-    # In a narrow window the strip's controls wrap onto more lines, inside
-    # the window, above the plot; nothing makes the window scroll.
-    const strip = ["plot.Greyscale density", "plot.Wiggle", "plot.zoom out", "plot.zoom in",
-      "plot.fit", "plot.back", "plot.sort", "plot.record", "plot.gain", "plot.filters",
-      "plot.more"]
-    var marks: seq[(string, Rect)]
-    let start = getMonoTime()
-    proc onNarrow(f: FrameInfo) =
-      if f.answered and f.markOf("plot.data").size.x > 0:
-        for name in @strip & @["seismic", "plot.data"]:
-          marks.add (name, f.markOf(name))
-        f.stop()
-      if overdue(f.index, 1500, start): f.stop()
-    let code = run(RunOptions(openPaths: @[path], windowSize: (640, 720),
-      theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
-      indexCacheDir: some(fx.dir / "cache"), onFrame: onNarrow))
-    doAssert code == 0 and marks.len > 0, "the narrow window never showed the plot"
-    let s = Shot(marks: marks)
-    let win = s.mark("seismic")
-    let data = s.mark("plot.data")
-    var lowest = 0'f32
-    for name in strip:
-      let m = s.mark(name)
-      doAssert m.size.x > 0, name & " is not drawn"
-      doAssert m.pos.x >= win.pos.x and m.pos.x + m.size.x <= win.pos.x + win.size.x,
-        name & " is outside the window: " & $m & " in " & $win
-      lowest = max(lowest, m.pos.y + m.size.y)
-    doAssert data.pos.y >= lowest and data.pos.x + data.size.x <= win.pos.x + win.size.x and
-      data.pos.y + data.size.y <= win.pos.y + win.size.y, "the plot " & $data & " in " & $win
-
 # ------------------------------------------------- screenshots of real data --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
 # local only), the plot window is saved on real records as record-*.png:
@@ -403,15 +197,226 @@ proc gainShot(path, file: string; gain: DisplayGain; gainDb: float64; traces, ti
   doAssert code == 0 and saved, "no screenshot of " & path
   echo "tguipanel: saved ", dir / file
 
-if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
-  let landSegd = privateFile("landSegd")
-  let segy3d = privateFile("segy3d")
-  if landSegd.len > 0:
-    createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-    recordShot(landSegd, "record-land.png")
-    recordShot(landSegd, "record-land-lines.png", Span(lo: -0.5, hi: 450.5),
-      Span(lo: 0, hi: 2000))
-    gainShot(landSegd, "gain-land.png", dgExponential, 6, Span(lo: -0.5, hi: 450.5),
-      Span(lo: 0, hi: 2000))
-  if segy3d.len > 0:
-    recordShot(segy3d, "record-segy3d.png", light = true)
+proc main*() =
+
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let before = snapshot(path)
+    var stage = 0
+    var waited = 0 # frames since the stage began, at `since`
+    var since = getMonoTime()
+    var whole, zoomed, wider: Shot
+    var theme: Theme
+    type Amount = object
+      ## A gain type's picture before and after +6.02 dB, and whether that read.
+      gain: DisplayGain
+      before, after: Shot
+      gens: (uint64, uint64)
+      ids: (seq[uint64], seq[uint64])
+    var amounts: seq[Amount]
+    var button: (float64, uint64, Vec2) # gain before the + button, the request then, its centre
+    proc ids(f: FrameInfo): seq[uint64] =
+      for t in f.core.tiles(f.core.findPanel(MainPanel)): result.add t.id
+    proc onFrame(f: FrameInfo) =
+      inc waited
+      let k = f.core.findPanel(MainPanel)
+      let p = f.core.panels[k]
+      # xvfb starts the pointer at the screen's centre, over the plot: a
+      # hovered trace's column would be tinted
+      if f.index == 0: f.moveMouse(vec2(4, 4))
+      case stage
+      of 0: # the file opens; show the samples as they are, as density, for exact values
+        if p.laidOut:
+          var d = p.layers[0].display
+          d.gain = dgNone
+          d.mode = dmDensity
+          f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+          stage = 1
+      of 1:
+        if f.answered:
+          whole = f.capture
+          theme = f.theme
+          # traces 5 .. 15, 100 .. 300 ms: several pixels per sample
+          var v = p.view
+          v.traces = Span(lo: 4.5, hi: 15.5)
+          v.timeMs = Span(lo: 100, hi: 300)
+          f.showView(v)
+          stage = 2
+      of 2:
+        if f.answered and f.tracePanel.drawnView.timeMs.lo == 100:
+          zoomed = f.capture
+          var v = p.view
+          v.traces = Span(lo: -1.5, hi: 23.5) # a trace's width past the first one
+          v.timeMs = Span(lo: -20, hi: 998)
+          f.showView(v)
+          stage = 3
+      of 3:
+        if f.answered and f.tracePanel.drawnView.traces.hi > 20:
+          wider = f.capture
+          stage = 4
+      of 4: # each gain type, then +6.02 dB on top of it
+        if amounts.len == ord(DisplayGain.high) + 1:
+          let b = f.markOf("plot.gain more")
+          button[2] = vec2(round(b.pos.x + b.size.x / 2), round(b.pos.y + b.size.y / 2))
+          f.moveMouse(button[2])
+          stage = 7
+        else:
+          var d = p.layers[0].display.withGainDb(0)
+          d.gain = DisplayGain(amounts.len)
+          f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+          amounts.add Amount(gain: d.gain)
+          (waited, since) = (0, getMonoTime())
+          stage = 5
+      of 5:
+        if f.answered and not p.reference.isNaN and waited > 2:
+          amounts[^1].before = f.capture
+          amounts[^1].gens[0] = p.requestGen
+          amounts[^1].ids[0] = f.ids
+          f.apply Command(kind: ckDisplay, panel: MainPanel,
+            display: p.layers[0].display.withGainDb(20 * log10(2.0)))
+          (waited, since) = (0, getMonoTime())
+          stage = 6
+      of 6:
+        if waited > 1: # drawn with the new amount
+          amounts[^1].after = f.capture
+          amounts[^1].gens[1] = p.requestGen
+          amounts[^1].ids[1] = f.ids
+          stage = 4
+      of 7: # the + button, clicked
+        if waited > 2:
+          button[0] = p.layers[0].display.gainDb
+          button[1] = p.requestGen
+          f.pressMouse(button[2], true)
+          f.pressMouse(button[2], false)
+          (waited, since) = (0, getMonoTime())
+          stage = 8
+      of 8:
+        if p.layers[0].display.gainDb != button[0]:
+          doAssert p.layers[0].display.gainDb == button[0] + GainStepDb, $p.layers[0].display.gainDb
+          doAssert p.requestGen == button[1], "the + button read again"
+          stage = 9
+          f.stop()
+      else: discard
+      if overdue(waited, 1500, since): f.stop() # given up: the checks below say what is missing
+    let code = run(RunOptions(openPaths: @[path], theme: forceDark,
+      maxTextureSize: textureLimit, userThemeDir: some(fx.dir / "no-user-themes"),
+      indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert stage == 9, "stopped at stage " & $stage & " (gain " & $amounts.len & ")"
+
+    block wholeGather:
+      let s = whole
+      doAssert s.plot.size.x > 300 and s.plot.size.y > 200, $s.plot
+      doAssert s.tiles.len >= 1 and s.tiles[^1].request.count == Channels
+      doAssert s.tiles[^1].columns > textureLimit, "the tile fits one texture: no blocks"
+      let (bad, seen) = s.mismatches()
+      echo "tguipanel: whole gather, ", seen, " pixels, ", bad, " off the reference"
+      doAssert bad == 0, $bad & " of " & $seen & " pixels differ from the reference"
+      doAssert s.header == @["FFID", "channel"], $s.header
+
+    block zoomedIn:
+      let s = zoomed
+      let r = s.tiles[^1].request
+      doAssert r.stride == 1 and r.decimation == 1, $r
+      doAssert s.plot.size.y / (s.view.timeMs.width / DtMs) > 2, "not zoomed in"
+      let (bad, seen) = s.mismatches(step = 2)
+      echo "tguipanel: zoomed in, ", seen, " pixels, ", bad, " off the reference"
+      doAssert bad == 0, $bad & " of " & $seen & " pixels differ from the reference"
+
+    block noPaperPastTheData:
+      # asked for a view past the first trace and before the record's start,
+      # the plot shows the data to its edges
+      let s = wider
+      doAssert s.view.traces == Span(lo: -0.5, hi: 23.5) and s.view.timeMs == Span(lo: 0, hi: 998),
+        "the view went past the data: " & $s.view
+      let (bad, seen) = s.mismatches()
+      doAssert bad == 0, $bad & " of " & $seen & " pixels differ from the reference"
+      var paper = 0
+      let x = int(s.plot.pos.x) + 3 # just inside the left edge (its border is drawn over it)
+      for y in int(s.plot.pos.y) + 3 ..< int(s.plot.pos.y + s.plot.size.y) - 3:
+        if s.pixels[y * s.width + x] == PaperBackground: inc paper
+      doAssert paper < int(s.plot.size.y / 4), $paper & " paper pixels down the left edge"
+
+    block gainAmountUnderEveryType:
+      # +6.02 dB doubles the shader's scale: the pixels match the CPU
+      # reference at the new scale, many change, and nothing is read again.
+      for a in amounts:
+        doAssert a.gens[0] == a.gens[1] and a.ids[0] == a.ids[1], $a.gain & ": the amount read again"
+        doAssert abs(a.after.scale - 2 * a.before.scale) <= 1e-5 * abs(a.after.scale),
+          $a.gain & ": scale " & $a.before.scale & " became " & $a.after.scale
+        let (bad, seen) = a.after.mismatches()
+        doAssert bad == 0, $a.gain & ": " & $bad & " of " & $seen & " pixels off the reference"
+        var changed = 0
+        let p = a.after.plot
+        for y in countup(int(p.pos.y) + 3, int(p.pos.y + p.size.y) - 4, 3):
+          for x in countup(int(p.pos.x) + 3, int(p.pos.x + p.size.x) - 4, 3):
+            if distance(a.before.pixels[y * a.before.width + x],
+                a.after.pixels[y * a.after.width + x]) > 6:
+              inc changed
+        doAssert changed > seen div 10, $a.gain & ": only " & $changed & " pixels changed"
+        echo "tguipanel: ", a.gain, " +6 dB, ", changed, " of ", seen, " pixels changed"
+
+    block controlsInTheWindow:
+      let s = whole
+      let density = s.mark("plot.Greyscale density")
+      doAssert density.size.x > 0, "no display mode buttons in the plot window"
+      doAssert s.mark("plot.Wiggle").size.x > 0
+      doAssert s.mark("tool.Greyscale density").size.x == 0, "a display mode on the toolbar"
+      let bar = s.mark("toolbar")
+      doAssert density.pos.y > bar.pos.y + bar.size.y, "the mode buttons sit on the toolbar"
+      # the selected mode's button carries the selection colour behind its symbol
+      var lit = 0
+      for y in int(density.pos.y) ..< int(density.pos.y + density.size.y):
+        for x in int(density.pos.x) ..< int(density.pos.x + density.size.x):
+          if distance(s.pixels[y * s.width + x], theme.roles[rlSelection]) <= 2: inc lit
+      doAssert lit > int(density.size.x * density.size.y / 4),
+        "the selected mode is not marked: " & $lit & " pixels"
+
+    doAssert snapshot(path) == before, "showing the file changed it"
+
+    block narrowWindowWrapsTheStrip:
+      # In a narrow window the strip's controls wrap onto more lines, inside
+      # the window, above the plot; nothing makes the window scroll.
+      const strip = ["plot.Greyscale density", "plot.Wiggle", "plot.zoom out", "plot.zoom in",
+        "plot.fit", "plot.back", "plot.sort", "plot.record", "plot.gain", "plot.filters",
+        "plot.more"]
+      var marks: seq[(string, Rect)]
+      let start = getMonoTime()
+      proc onNarrow(f: FrameInfo) =
+        if f.answered and f.markOf("plot.data").size.x > 0:
+          for name in @strip & @["seismic", "plot.data"]:
+            marks.add (name, f.markOf(name))
+          f.stop()
+        if overdue(f.index, 1500, start): f.stop()
+      let code = run(RunOptions(openPaths: @[path], windowSize: (640, 720),
+        theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
+        indexCacheDir: some(fx.dir / "cache"), onFrame: onNarrow))
+      doAssert code == 0 and marks.len > 0, "the narrow window never showed the plot"
+      let s = Shot(marks: marks)
+      let win = s.mark("seismic")
+      let data = s.mark("plot.data")
+      var lowest = 0'f32
+      for name in strip:
+        let m = s.mark(name)
+        doAssert m.size.x > 0, name & " is not drawn"
+        doAssert m.pos.x >= win.pos.x and m.pos.x + m.size.x <= win.pos.x + win.size.x,
+          name & " is outside the window: " & $m & " in " & $win
+        lowest = max(lowest, m.pos.y + m.size.y)
+      doAssert data.pos.y >= lowest and data.pos.x + data.size.x <= win.pos.x + win.size.x and
+        data.pos.y + data.size.y <= win.pos.y + win.size.y, "the plot " & $data & " in " & $win
+
+  if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
+    let landSegd = privateFile("landSegd")
+    let segy3d = privateFile("segy3d")
+    if landSegd.len > 0:
+      createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+      recordShot(landSegd, "record-land.png")
+      recordShot(landSegd, "record-land-lines.png", Span(lo: -0.5, hi: 450.5),
+        Span(lo: 0, hi: 2000))
+      gainShot(landSegd, "gain-land.png", dgExponential, 6, Span(lo: -0.5, hi: 450.5),
+        Span(lo: 0, hi: 2000))
+    if segy3d.len > 0:
+      recordShot(segy3d, "record-segy3d.png", light = true)
+
+when isMainModule:
+  main()

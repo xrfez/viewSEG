@@ -85,27 +85,6 @@ proc load(file: string): Theme =
   result = loadTheme(assetThemes / file & ThemeExt, tmDark, messages)
   doAssert messages.len == 0, file & ": " & $messages
 
-block allShipped:
-  # the Omarchy themes that may ship, and Everforest Light, under its own
-  # name and mode; those that may not are not there
-  var found: seq[string]
-  for f in themeFiles([assetThemes]): found.add f.name
-  doAssert found == Shipped.mapIt(it[0]), $found
-  for gone in ["retro-82", "ristretto"]:
-    doAssert gone notin found, gone & " is shipped"
-    doAssert gone in readFile(assetThemes / "README.md"), gone & ": the README says nothing"
-  for (file, name, mode) in Shipped:
-    let t = load(file)
-    doAssert t.name == name, file & " is called " & t.name
-    doAssert t.mode == mode, file & " is " & $t.mode
-    let text = readFile(assetThemes / file & ThemeExt)
-    doAssert "mode = \"" & $mode & "\"" in text, file & " does not say its mode"
-    doAssert text.startsWith("# viewSEG theme: " & name), file & "'s first line"
-    if file notin ["everforest-dark", "everforest-light"]:
-      doAssert "Omarchy's " & file & " theme" in text, file & " does not say where it is from"
-  doAssert load("everforest-dark") == EverforestDark
-  doAssert load("everforest-light") == EverforestLight
-
 proc checkUi(t: Theme) =
   let r = t.roles
   let surfaces = [("window", r[rlWindow]), ("popup", r[rlPopup]), ("bar", r[rlBar]),
@@ -185,14 +164,6 @@ proc checkMap(t: Theme) =
       for j in 0 ..< i:
         atLeast(at & what & " from " & flags[j][0], deltaE(c, flags[j][1]), 20)
 
-block readable:
-  for (file, _, _) in Shipped:
-    let t = load(file)
-    checkUi(t)
-    checkPlot(t)
-    checkMap(t)
-  doAssert problems.len == 0, $problems.len & " problems:\n" & problems.join("\n")
-
 # Colour blindness: Machado, Oliveira and Fernandes (2009), severity 1, on
 # linear RGB.
 type Vision = enum protanopia, deuteranopia, tritanopia
@@ -218,87 +189,121 @@ func seen(c: Rgba; v: Vision): Rgba =
     for j in 0 .. 2: o[i] += Machado[v][i][j] * l[j]
   Rgba(r: encoded(o[0]), g: encoded(o[1]), b: encoded(o[2]), a: c.a)
 
-block marksWithoutColour:
-  # Every two filters' marks are told apart by a viewer who cannot tell
-  # some colours apart (protanopia, deuteranopia, tritanopia), in every
-  # shipped theme and both built-in ones, on both backgrounds: by their
-  # shape (the kind's outline and the symbol inside; the kinds' sizes,
-  # 4 pixels apart, are not counted), or else by their colours as that
-  # viewer sees them, 10 apart (deltaE). The marks' shapes alone tell every
-  # two apart. Seen to fail with each filter's shape as it was (a shape a
-  # filter, shared across the kinds: dead and clipped both squares): 70
-  # problems ("Miasma, paper, protanopia: noisy from spread not the template
-  # 1.6 < 10", "Flexoki Light, paper, deuteranopia: all zero from reversed
-  # 1.8 < 10" ...).
-  const Marked = {MapFilter.low .. MapFilter.high} - {mfAuxiliary, mfNoPosition}
-  var shapes: seq[(FlagShape, FlagSymbol)]
-  for f in Marked:
-    let g = (f.shapeOf, FilterMarks[f].symbol)
-    doAssert g notin shapes, $f & " is marked as another filter is: " & $g
-    shapes.add g
-  var themes = @[builtinTheme(tmDark), builtinTheme(tmLight)]
-  for (file, _, _) in Shipped: themes.add load(file)
-  var problems: seq[string]
-  for t in themes:
-    for colours in [pcPaper, pcTheme]:
-      let ink = mapInk(t, colours)
-      for v in Vision:
-        for f in Marked:
-          for g in Marked:
-            if g > f and (f.shapeOf, FilterMarks[f].symbol) ==
-                (g.shapeOf, FilterMarks[g].symbol):
-              let d = deltaE(seen(filterInk(t, f, ink.background), v),
-                seen(filterInk(t, g, ink.background), v))
-              if d < 10:
-                problems.add &"{t.name}, {colours}, {v}: {f} from {g} {d:.1f} < 10"
-  doAssert problems.len == 0, $problems.len & " problems:\n" & problems.join("\n")
+proc main*() =
 
-block adjustmentsNoted:
-  # each file says which roles viewSEG moves for it, and only those
-  for (file, _, _) in Shipped:
-    let t = load(file)
-    let lines = readFile(assetThemes / file & ThemeExt).splitLines
-    var said = "(nothing)"
-    for i, line in lines:
-      if line.startsWith(Marker) and i + 2 < lines.len:
-        said = lines[i + 2].strip(chars = {'#', ' '})
-    let moved = adjustedRoles(t.palette, t.mode).mapIt($it)
-    doAssert said == (if moved.len == 0: "none" else: moved.join(", ")),
-      file & ".toml says it moves " & said & ", viewSEG moves " & $moved
+  block allShipped:
+    # the Omarchy themes that may ship, and Everforest Light, under its own
+    # name and mode; those that may not are not there
+    var found: seq[string]
+    for f in themeFiles([assetThemes]): found.add f.name
+    doAssert found == Shipped.mapIt(it[0]), $found
+    for gone in ["retro-82", "ristretto"]:
+      doAssert gone notin found, gone & " is shipped"
+      doAssert gone in readFile(assetThemes / "README.md"), gone & ": the README says nothing"
+    for (file, name, mode) in Shipped:
+      let t = load(file)
+      doAssert t.name == name, file & " is called " & t.name
+      doAssert t.mode == mode, file & " is " & $t.mode
+      let text = readFile(assetThemes / file & ThemeExt)
+      doAssert "mode = \"" & $mode & "\"" in text, file & " does not say its mode"
+      doAssert text.startsWith("# viewSEG theme: " & name), file & "'s first line"
+      if file notin ["everforest-dark", "everforest-light"]:
+        doAssert "Omarchy's " & file & " theme" in text, file & " does not say where it is from"
+    doAssert load("everforest-dark") == EverforestDark
+    doAssert load("everforest-light") == EverforestLight
 
-block repairs:
-  # A palette that fails is repaired: a light theme's yellow warnings are
-  # darkened; a grey palette's marks come from the built-in theme.
-  var p = EverforestLight.palette
-  p[bcYellow] = rgb(0xffd700)
-  let t = makeTheme("yellow", tmLight, p)
-  doAssert contrast(t.roles[rlWarning], t.roles[rlWindow]) >= 3.0
-  doAssert rlWarning in adjustedRoles(p, tmLight)
-  var grey: Palette
-  for k in BaseColor: grey[k] = rgb(0x808080)
-  (grey[bcBackground], grey[bcForeground]) = (rgb(0x101010), rgb(0xe0e0e0))
-  let g = makeTheme("grey", tmDark, grey)
-  problems.setLen 0
-  checkPlot(g)
-  checkMap(g)
-  doAssert problems.len == 0, problems.join("\n")
-  doAssert g.roles[rlHighlight] != rgb(0x808080)
-
-block userThemes:
-  # Themes a user may drop in, which the derivation must still make usable:
-  # every colour the same (grey, black, white), and a light theme with a
-  # dark bar (the menu bar's text drawn in the one text colour).
-  problems.setLen 0
-  for (name, c) in [("one grey", 0x808080), ("all black", 0x000000), ("all white", 0xffffff)]:
-    var p: Palette
-    for k in BaseColor: p[k] = rgb(c.uint32)
-    for mode in ThemeMode:
-      let t = makeTheme(name & " " & $mode, mode, p)
+  block readable:
+    for (file, _, _) in Shipped:
+      let t = load(file)
       checkUi(t)
       checkPlot(t)
       checkMap(t)
-  var p = EverforestLight.palette
-  p[bcDarkBackground] = rgb(0x202020)
-  let bar = makeTheme("light, dark bar", tmLight, p)
-  checkUi(bar)
-  doAssert problems.len == 0, $problems.len & " problems:\n" & problems.join("\n")
+    doAssert problems.len == 0, $problems.len & " problems:\n" & problems.join("\n")
+
+  block marksWithoutColour:
+    # Every two filters' marks are told apart by a viewer who cannot tell
+    # some colours apart (protanopia, deuteranopia, tritanopia), in every
+    # shipped theme and both built-in ones, on both backgrounds: by their
+    # shape (the kind's outline and the symbol inside; the kinds' sizes,
+    # 4 pixels apart, are not counted), or else by their colours as that
+    # viewer sees them, 10 apart (deltaE). The marks' shapes alone tell every
+    # two apart. Seen to fail with each filter's shape as it was (a shape a
+    # filter, shared across the kinds: dead and clipped both squares): 70
+    # problems ("Miasma, paper, protanopia: noisy from spread not the template
+    # 1.6 < 10", "Flexoki Light, paper, deuteranopia: all zero from reversed
+    # 1.8 < 10" ...).
+    const Marked = {MapFilter.low .. MapFilter.high} - {mfAuxiliary, mfNoPosition}
+    var shapes: seq[(FlagShape, FlagSymbol)]
+    for f in Marked:
+      let g = (f.shapeOf, FilterMarks[f].symbol)
+      doAssert g notin shapes, $f & " is marked as another filter is: " & $g
+      shapes.add g
+    var themes = @[builtinTheme(tmDark), builtinTheme(tmLight)]
+    for (file, _, _) in Shipped: themes.add load(file)
+    var problems: seq[string]
+    for t in themes:
+      for colours in [pcPaper, pcTheme]:
+        let ink = mapInk(t, colours)
+        for v in Vision:
+          for f in Marked:
+            for g in Marked:
+              if g > f and (f.shapeOf, FilterMarks[f].symbol) ==
+                  (g.shapeOf, FilterMarks[g].symbol):
+                let d = deltaE(seen(filterInk(t, f, ink.background), v),
+                  seen(filterInk(t, g, ink.background), v))
+                if d < 10:
+                  problems.add &"{t.name}, {colours}, {v}: {f} from {g} {d:.1f} < 10"
+    doAssert problems.len == 0, $problems.len & " problems:\n" & problems.join("\n")
+
+  block adjustmentsNoted:
+    # each file says which roles viewSEG moves for it, and only those
+    for (file, _, _) in Shipped:
+      let t = load(file)
+      let lines = readFile(assetThemes / file & ThemeExt).splitLines
+      var said = "(nothing)"
+      for i, line in lines:
+        if line.startsWith(Marker) and i + 2 < lines.len:
+          said = lines[i + 2].strip(chars = {'#', ' '})
+      let moved = adjustedRoles(t.palette, t.mode).mapIt($it)
+      doAssert said == (if moved.len == 0: "none" else: moved.join(", ")),
+        file & ".toml says it moves " & said & ", viewSEG moves " & $moved
+
+  block repairs:
+    # A palette that fails is repaired: a light theme's yellow warnings are
+    # darkened; a grey palette's marks come from the built-in theme.
+    var p = EverforestLight.palette
+    p[bcYellow] = rgb(0xffd700)
+    let t = makeTheme("yellow", tmLight, p)
+    doAssert contrast(t.roles[rlWarning], t.roles[rlWindow]) >= 3.0
+    doAssert rlWarning in adjustedRoles(p, tmLight)
+    var grey: Palette
+    for k in BaseColor: grey[k] = rgb(0x808080)
+    (grey[bcBackground], grey[bcForeground]) = (rgb(0x101010), rgb(0xe0e0e0))
+    let g = makeTheme("grey", tmDark, grey)
+    problems.setLen 0
+    checkPlot(g)
+    checkMap(g)
+    doAssert problems.len == 0, problems.join("\n")
+    doAssert g.roles[rlHighlight] != rgb(0x808080)
+
+  block userThemes:
+    # Themes a user may drop in, which the derivation must still make usable:
+    # every colour the same (grey, black, white), and a light theme with a
+    # dark bar (the menu bar's text drawn in the one text colour).
+    problems.setLen 0
+    for (name, c) in [("one grey", 0x808080), ("all black", 0x000000), ("all white", 0xffffff)]:
+      var p: Palette
+      for k in BaseColor: p[k] = rgb(c.uint32)
+      for mode in ThemeMode:
+        let t = makeTheme(name & " " & $mode, mode, p)
+        checkUi(t)
+        checkPlot(t)
+        checkMap(t)
+    var p = EverforestLight.palette
+    p[bcDarkBackground] = rgb(0x202020)
+    let bar = makeTheme("light, dark bar", tmLight, p)
+    checkUi(bar)
+    doAssert problems.len == 0, $problems.len & " problems:\n" & problems.join("\n")
+
+when isMainModule:
+  main()

@@ -47,54 +47,59 @@ proc keysHandled(): seq[string] =
       for name in keySuffixes(readFile(f)):
         if name != "None" and name notin result: result.add name
 
-block menu_shortcuts_are_rows:
-  let menus = readFile(root / "src" / "viewSEG" / "ui" / "imgui" / "menus.nim")
-  doAssert undescribedMenus(menus).len == 0, "a menu shortcut has no words: " &
-    undescribedMenus(menus).join(", ")
-  let rows = shortcutRows()
-  for r in menuRowsFrom(menus):
-    var found = false
-    for row in rows:
-      if row.id == r.id and r.keys in row.keys: found = true
-    doAssert found, "menu shortcut " & r.keys & " is in no row (" & r.id & ")"
-  doAssert rows.anyIt(it.id == "menu.maOpenFile" and "Ctrl+O" in it.keys)
-  doAssert rows.anyIt(it.id == "menu.maRedo" and "Ctrl+Y" in it.keys),
-    "Redo's other binding is missing"
+proc main*() =
 
-block no_two_rows_claim_the_same_keys:
-  let dup = sameKeys(shortcutRows())
-  doAssert dup.len == 0, "two rows claim the same keys: " & dup.join("; ")
-  var doubled = shortcutRows()
-  doubled.add doubled[0]
-  doAssert sameKeys(doubled).len == 1, "a repeated keys string was not seen"
+  block menu_shortcuts_are_rows:
+    let menus = readFile(root / "src" / "viewSEG" / "ui" / "imgui" / "menus.nim")
+    doAssert undescribedMenus(menus).len == 0, "a menu shortcut has no words: " &
+      undescribedMenus(menus).join(", ")
+    let rows = shortcutRows()
+    for r in menuRowsFrom(menus):
+      var found = false
+      for row in rows:
+        if row.id == r.id and r.keys in row.keys: found = true
+      doAssert found, "menu shortcut " & r.keys & " is in no row (" & r.id & ")"
+    doAssert rows.anyIt(it.id == "menu.maOpenFile" and "Ctrl+O" in it.keys)
+    doAssert rows.anyIt(it.id == "menu.maRedo" and "Ctrl+Y" in it.keys),
+      "Redo's other binding is missing"
 
-block filter_matches_keys_and_words:
-  let rows = shortcutRows()
-  let zoom = filtered(rows, "zoom")
-  doAssert zoom.len > 0, "zoom matched nothing"
-  for r in zoom:
-    doAssert r.matches("zoom")
-  doAssert not shortcutRows()[0].matches("zoom") or "zoom" in shortcutRows()[0].what.toLowerAscii
-  let ctrl = filtered(rows, "CTRL")
-  doAssert ctrl.len > 0 and ctrl.anyIt("Ctrl" in it.keys)
-  doAssert filtered(rows, "").len == rows.len
-  doAssert filtered(rows, "no-such-gesture").len == 0
+  block no_two_rows_claim_the_same_keys:
+    let dup = sameKeys(shortcutRows())
+    doAssert dup.len == 0, "two rows claim the same keys: " & dup.join("; ")
+    var doubled = shortcutRows()
+    doubled.add doubled[0]
+    doAssert sameKeys(doubled).len == 1, "a repeated keys string was not seen"
 
-block every_handled_key_is_in_a_row:
-  let covered = coveredKeys()
-  var missing: seq[string] = @[]
-  for name in keysHandled():
-    if name notin covered: missing.add "ImGui_Key_" & name & " is in no row"
-  doAssert missing.len == 0, missing.join("\n")
-  # The scan sees a key, and a key the table names is not reported missing.
-  doAssert "F" in keySuffixes("if igShortcut_Nil(ImGui_Key_F.cint, 0):")
-  doAssert keySuffixes("## ImGui_Key_F in a comment").len == 0
-  doAssert "Zed" notin covered
+  block filter_matches_keys_and_words:
+    let rows = shortcutRows()
+    let zoom = filtered(rows, "zoom")
+    doAssert zoom.len > 0, "zoom matched nothing"
+    for r in zoom:
+      doAssert r.matches("zoom")
+    doAssert not shortcutRows()[0].matches("zoom") or "zoom" in shortcutRows()[0].what.toLowerAscii
+    let ctrl = filtered(rows, "CTRL")
+    doAssert ctrl.len > 0 and ctrl.anyIt("Ctrl" in it.keys)
+    doAssert filtered(rows, "").len == rows.len
+    doAssert filtered(rows, "no-such-gesture").len == 0
 
-block the_page_is_the_table:
-  let problems = checkPage()
-  doAssert problems.len == 0, problems.join("\n")
-  let page = keyboardPage()
-  doAssert page.startsWith("# Keyboard shortcuts\n")
-  doAssert "Ctrl+O" in page and "Ctrl + drag" in page and "F1" in page
-  doAssert "Open a file" in page
+  block every_handled_key_is_in_a_row:
+    let covered = coveredKeys()
+    var missing: seq[string] = @[]
+    for name in keysHandled():
+      if name notin covered: missing.add "ImGui_Key_" & name & " is in no row"
+    doAssert missing.len == 0, missing.join("\n")
+    # The scan sees a key, and a key the table names is not reported missing.
+    doAssert "F" in keySuffixes("if igShortcut_Nil(ImGui_Key_F.cint, 0):")
+    doAssert keySuffixes("## ImGui_Key_F in a comment").len == 0
+    doAssert "Zed" notin covered
+
+  block the_page_is_the_table:
+    let problems = checkPage()
+    doAssert problems.len == 0, problems.join("\n")
+    let page = keyboardPage()
+    doAssert page.startsWith("# Keyboard shortcuts\n")
+    doAssert "Ctrl+O" in page and "Ctrl + drag" in page and "F1" in page
+    doAssert "Open a file" in page
+
+when isMainModule:
+  main()

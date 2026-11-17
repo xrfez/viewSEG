@@ -30,73 +30,78 @@ proc said(st: AppState; words: string): bool =
   for e in st.log:
     if words in e.text: return true
 
-withFixtures fx:
-  let config = fx.dir / "config"
-  block notEmpty:
-    let job = fx.dir / "Holding"
-    createDir job
-    writeFile(job / "keep.txt", "not a project's")
-    var st = start(config)
-    st.apply Command(kind: ckNewProject, projectPath: job)
-    doAssert st.settle(st.said("is not empty")), "the refusal is not said"
-    discard st.settle(st.jobs.active.len == 0)
-    doAssert not st.inProject and not fileExists(job / ProjectFileName), "a project was made"
-    doAssert readFile(job / "keep.txt") == "not a project's", "the folder's file changed"
-    st.shutdown()
-  block linkToProject:
-    let job = fx.dir / "Linked"
-    createDir job
-    let link = fx.dir / "link"
-    createSymlink(job, link)
-    var st = start(config)
-    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[link])
-    doAssert st.settle(st.said("inside its data folder")), "the link is not refused"
-    discard st.settle(st.jobs.active.len == 0)
-    doAssert not fileExists(job / ProjectFileName), "a project was made in its data folder"
-    st.shutdown()
-  block locateInside:
-    let job = fx.dir / "Located"
-    let field = fx.dir / "field"
-    createDir field
-    var st = start(config)
-    st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
-    doAssert st.settle(st.inProject)
-    let was = st.project.doc.data[0].absolute
-    st.apply Command(kind: ckProjectFolder, folderAction: faLocate, folderWas: was,
-      folderPath: job / "moved")
-    doAssert st.settle(st.said("cannot hold")), "the refusal is not said"
-    doAssert st.project.doc.data[0].absolute == was, "the data folder was moved inside"
-    st.shutdown()
-  block fileManagerFiles:
-    # a folder holding only what a file manager leaves (.DS_Store, desktop.ini,
-    # Thumbs.db) is empty: a project is made there, and those files stay
-    let job = fx.dir / "Managed"
-    createDir job
-    for name in [".DS_Store", "desktop.ini", "Thumbs.db"]: writeFile(job / name, "x")
-    var st = start(config)
-    st.apply Command(kind: ckNewProject, projectPath: job)
-    doAssert st.settle(st.inProject), "a folder with only those files is refused"
-    doAssert fileExists(job / "Thumbs.db") and fileExists(job / ProjectFileName)
-    st.shutdown()
-  block failedMakeTakesBack:
-    # a make that fails part-way removes what it made (folders and the
-    # document) and nothing it did not: the folder as it was, and a retry
-    # in it works
-    install()
-    let job = fx.dir / "Retried"
-    createDir job
-    writeFile(job / "Thumbs.db", "not a project's")
-    fault(job / CacheFolder, fkFail)
-    var st = start(config)
-    st.apply Command(kind: ckNewProject, projectPath: job)
-    doAssert st.settle(st.said("Cannot make the project")), "the failure is not said"
-    discard st.settle(st.jobs.active.len == 0)
-    doAssert not st.inProject
-    doAssert fileExists(job / "Thumbs.db") and readFile(job / "Thumbs.db") == "not a project's"
-    doAssert not dirExists(job / "survey") and not dirExists(job / ProjectStoreFolder) and
-      not fileExists(job / ProjectFileName), "what the failed make made is still there"
-    fault(job / CacheFolder, fkNone)
-    st.apply Command(kind: ckNewProject, projectPath: job)
-    doAssert st.settle(st.inProject), "a retry in the same folder fails"
-    st.shutdown()
-echo "tprojectdatafolder: done"
+proc main*() =
+
+  withFixtures fx:
+    let config = fx.dir / "config"
+    block notEmpty:
+      let job = fx.dir / "Holding"
+      createDir job
+      writeFile(job / "keep.txt", "not a project's")
+      var st = start(config)
+      st.apply Command(kind: ckNewProject, projectPath: job)
+      doAssert st.settle(st.said("is not empty")), "the refusal is not said"
+      discard st.settle(st.jobs.active.len == 0)
+      doAssert not st.inProject and not fileExists(job / ProjectFileName), "a project was made"
+      doAssert readFile(job / "keep.txt") == "not a project's", "the folder's file changed"
+      st.shutdown()
+    block linkToProject:
+      let job = fx.dir / "Linked"
+      createDir job
+      let link = fx.dir / "link"
+      createSymlink(job, link)
+      var st = start(config)
+      st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[link])
+      doAssert st.settle(st.said("inside its data folder")), "the link is not refused"
+      discard st.settle(st.jobs.active.len == 0)
+      doAssert not fileExists(job / ProjectFileName), "a project was made in its data folder"
+      st.shutdown()
+    block locateInside:
+      let job = fx.dir / "Located"
+      let field = fx.dir / "field"
+      createDir field
+      var st = start(config)
+      st.apply Command(kind: ckNewProject, projectPath: job, dataFolders: @[field])
+      doAssert st.settle(st.inProject)
+      let was = st.project.doc.data[0].absolute
+      st.apply Command(kind: ckProjectFolder, folderAction: faLocate, folderWas: was,
+        folderPath: job / "moved")
+      doAssert st.settle(st.said("cannot hold")), "the refusal is not said"
+      doAssert st.project.doc.data[0].absolute == was, "the data folder was moved inside"
+      st.shutdown()
+    block fileManagerFiles:
+      # a folder holding only what a file manager leaves (.DS_Store, desktop.ini,
+      # Thumbs.db) is empty: a project is made there, and those files stay
+      let job = fx.dir / "Managed"
+      createDir job
+      for name in [".DS_Store", "desktop.ini", "Thumbs.db"]: writeFile(job / name, "x")
+      var st = start(config)
+      st.apply Command(kind: ckNewProject, projectPath: job)
+      doAssert st.settle(st.inProject), "a folder with only those files is refused"
+      doAssert fileExists(job / "Thumbs.db") and fileExists(job / ProjectFileName)
+      st.shutdown()
+    block failedMakeTakesBack:
+      # a make that fails part-way removes what it made (folders and the
+      # document) and nothing it did not: the folder as it was, and a retry
+      # in it works
+      install()
+      let job = fx.dir / "Retried"
+      createDir job
+      writeFile(job / "Thumbs.db", "not a project's")
+      fault(job / CacheFolder, fkFail)
+      var st = start(config)
+      st.apply Command(kind: ckNewProject, projectPath: job)
+      doAssert st.settle(st.said("Cannot make the project")), "the failure is not said"
+      discard st.settle(st.jobs.active.len == 0)
+      doAssert not st.inProject
+      doAssert fileExists(job / "Thumbs.db") and readFile(job / "Thumbs.db") == "not a project's"
+      doAssert not dirExists(job / "survey") and not dirExists(job / ProjectStoreFolder) and
+        not fileExists(job / ProjectFileName), "what the failed make made is still there"
+      fault(job / CacheFolder, fkNone)
+      st.apply Command(kind: ckNewProject, projectPath: job)
+      doAssert st.settle(st.inProject), "a retry in the same folder fails"
+      st.shutdown()
+  echo "tprojectdatafolder: done"
+
+when isMainModule:
+  main()

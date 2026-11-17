@@ -80,7 +80,7 @@ proc pixel(f: FrameInfo; at: Vec2): Rgba = f.readPixel(int(floor(at.x)), int(flo
 
 func same(a, b: Rgba): bool = a.r == b.r and a.g == b.g and a.b == b.b
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let sps = fx.mapSps()
     let shots = getEnv("VIEWSEG_SCREENSHOTS")
@@ -570,9 +570,6 @@ proc linked() =
     doAssert done, "the hovered trace's receiver was not lit up (stage " & $stage & ")"
     echo "tguimap: the plot's trace ", traced, " lit up on the map"
 
-main()
-linked()
-
 # ------------------------------------------------- screenshots of real data --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
 # local only), the private land survey (its S, R and X files) is drawn with
@@ -655,7 +652,15 @@ proc landSurvey(dir: string) =
   doAssert code == 0 and saved == 2, "no screenshots of the land survey (stage " & $stage & ")"
   echo "tguimap: saved ", dir / "map-land-1.png", " and -2.png"
 
-if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and privateFile("landSegd").len > 0 and
-    privateFiles("landSps", "landRps", "landXps").len == 3:
-  createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-  landSurvey(getEnv("VIEWSEG_SCREENSHOTS"))
+proc main*() =
+
+  runMain()
+  linked()
+
+  if getEnv("VIEWSEG_SCREENSHOTS").len > 0 and privateFile("landSegd").len > 0 and
+      privateFiles("landSps", "landRps", "landXps").len == 3:
+    createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+    landSurvey(getEnv("VIEWSEG_SCREENSHOTS"))
+
+when isMainModule:
+  main()

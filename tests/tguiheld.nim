@@ -99,7 +99,7 @@ proc commonest(f: FrameInfo; r: Rect): Rgba =
     if counts[k][1] > counts[best][1]: best = k
   counts[best][0]
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let sps = fx.surveySps()
     let segy = fx.surveySegy()
@@ -406,5 +406,10 @@ proc joined() =
     doAssert problem.len == 0, problem
     echo "tguiheld: joined, the menu said \"", said, "\" and selected as many"
 
-main()
-joined()
+proc main*() =
+
+  runMain()
+  joined()
+
+when isMainModule:
+  main()

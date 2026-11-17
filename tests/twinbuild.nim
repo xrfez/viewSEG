@@ -14,22 +14,27 @@
 
 import std/[os, osproc, strutils]
 
-when defined(windows):
-  echo "twinbuild: skipped on Windows (a native build is the check there)"
-else:
-  let
-    root = currentSourcePath().parentDir.parentDir
-    cache = getTempDir() / "viewSEG-twinbuild-" & $getCurrentProcessId()
-  # imguin asks `nimble path glfw` when it compiles for Windows: the stub in
-  # tools/winbuild answers nothing, as `nim winRelease` has it.
-  putEnv("PATH", root / "tools" / "winbuild" & ":" & getEnv("PATH"))
-  try:
-    let build = execCmdEx(quoteShellCommand([getCurrentCompilerExe(), "c", "--hints:off",
-      "--warnings:off", "--os:windows", "--cpu:amd64", "--compileOnly", "-d:release",
-      "-d:danger", "-d:windresExe=true", "--nimcache:" & cache, root / "src" / "viewSEG.nim"]),
-      workingDir = root)
-    doAssert build.exitCode == 0, "the program does not compile for Windows:\n" &
-      build.output.strip
-  finally:
-    removeDir(cache)
-  echo "twinbuild: ok"
+proc main*() =
+
+  when defined(windows):
+    echo "twinbuild: skipped on Windows (a native build is the check there)"
+  else:
+    let
+      root = currentSourcePath().parentDir.parentDir
+      cache = getTempDir() / "viewSEG-twinbuild-" & $getCurrentProcessId()
+    # imguin asks `nimble path glfw` when it compiles for Windows: the stub in
+    # tools/winbuild answers nothing, as `nim winRelease` has it.
+    putEnv("PATH", root / "tools" / "winbuild" & ":" & getEnv("PATH"))
+    try:
+      let build = execCmdEx(quoteShellCommand([getCurrentCompilerExe(), "c", "--hints:off",
+        "--warnings:off", "--os:windows", "--cpu:amd64", "--compileOnly", "-d:release",
+        "-d:danger", "-d:windresExe=true", "--nimcache:" & cache, root / "src" / "viewSEG.nim"]),
+        workingDir = root)
+      doAssert build.exitCode == 0, "the program does not compile for Windows:\n" &
+        build.output.strip
+    finally:
+      removeDir(cache)
+    echo "twinbuild: ok"
+
+when isMainModule:
+  main()

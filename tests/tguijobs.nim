@@ -33,8 +33,6 @@ proc opening(ctx: JobContext) {.gcsafe.} =
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
-
-let tmp = getTempDir() / ("viewseg-tguijobs-" & $getCurrentProcessId())
 var
   stage = 0
   wait = 0             # frames since the stage began, at `since`
@@ -110,18 +108,25 @@ proc onFrame(f: FrameInfo) =
   else: f.stop()
   if overdue(f.index, 2000, since): f.stop()
 
-let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
-  indexCacheDir: some(tmp / "cache"), userThemeDir: some(tmp / "no-user-themes"),
-  onFrame: onFrame))
-removeDir(tmp)
-doAssert code == 0, "run() exit code " & $code
-doAssert hiddenFirst, "the Jobs window was in front from the start"
-doAssert shownAfterClick, "the job field did not bring the Jobs window forward"
-doAssert moved, "down did not move QC 1"
-doAssert removed, "remove did not take QC 2 off the list"
-doAssert cancelled, "Cancel did not stop Open"
-doAssert noticed, "no notice"
-doAssert cleared, "Clear the list left finished jobs"
-doAssert reached.len == 7, "stopped after " & $reached
-doAssert saved
-echo "tguijobs: ", reached
+proc main*() =
+
+  let tmp = getTempDir() / ("viewseg-tguijobs-" & $getCurrentProcessId())
+
+  let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
+    indexCacheDir: some(tmp / "cache"), userThemeDir: some(tmp / "no-user-themes"),
+    onFrame: onFrame))
+  removeDir(tmp)
+  doAssert code == 0, "run() exit code " & $code
+  doAssert hiddenFirst, "the Jobs window was in front from the start"
+  doAssert shownAfterClick, "the job field did not bring the Jobs window forward"
+  doAssert moved, "down did not move QC 1"
+  doAssert removed, "remove did not take QC 2 off the list"
+  doAssert cancelled, "Cancel did not stop Open"
+  doAssert noticed, "no notice"
+  doAssert cleared, "Clear the list left finished jobs"
+  doAssert reached.len == 7, "stopped after " & $reached
+  doAssert saved
+  echo "tguijobs: ", reached
+
+when isMainModule:
+  main()

@@ -44,7 +44,7 @@ proc ring(f: FrameInfo; at: Vec2; c: Rgba): int =
 
 const Shot = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 5)]
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let sps = fx.mapSps()
     let folder = fx.dir / "shots"
@@ -146,4 +146,9 @@ proc main() =
     doAssert failed.len == 0, failed
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
 
-main()
+proc main*() =
+
+  runMain()
+
+when isMainModule:
+  main()

@@ -126,82 +126,84 @@ proc checkLook(s: Shot; t: Theme) =
     proc (c: Rgba): bool = distance(c, stockBlue) <= 30)
   doAssert blue == 0, t.name & ": " & $blue & " pixels of Dear ImGui's blue"
 
-let themeDir = repoAssets / "themes"
-let tmp = getTempDir() / ("viewseg_tgui_" & $getCurrentProcessId())
-let noUserThemes = some(tmp / "no-user-themes")
-createDir(tmp)
-var toolbar100 = 0'f32
-try:
-  block themes:
-    for (choice, builtin, file) in [(forceDark, EverforestDark, "shell-dark.png"),
-        (forceLight, EverforestLight, "shell-light.png")]:
-      let s = render(RunOptions(theme: choice, userThemeDir: noUserThemes), file)
-      doAssert s.theme == builtin, s.theme.name # the shipped file, loaded unchanged
-      doAssert s.warnings.len == 0, $s.warnings
-      s.checkLook(builtin)
-      if choice == forceDark:
-        toolbar100 = s.mark("toolbar").size.y
-      echo "tgui: ", s.theme.name, " ", s.width, "x", s.height, " scale ", s.scale,
-        ": checks pass"
+proc main*() =
 
-  block liveThemeChanges:
-    # The system switches to light, then the user picks a theme in the menu,
-    # then goes back to following the system: each restyles the next frame.
-    var seen: seq[string]
-    let code = run(RunOptions(maxFrames: 7, userThemeDir: noUserThemes,
-      onFrame: proc (f: FrameInfo) =
-      seen.add f.theme.name
-      case f.index
-      of 1: postShellEvent(ShellEvent(kind: seThemeChanged, theme: stDark))
-      of 3: postShellEvent(ShellEvent(kind: seThemeChanged, theme: stLight))
-      of 4: f.chooseTheme("everforest-dark")
-      of 5: f.chooseTheme("")
-      else: discard))
-    doAssert code == 0
-    doAssert seen[2 .. 6] == @["Everforest Dark", "Everforest Dark", "Everforest Light",
-      "Everforest Dark", "Everforest Light"], $seen
-    echo "tgui: live theme changes: ", seen[2 .. 6]
+  let themeDir = repoAssets / "themes"
+  let tmp = getTempDir() / ("viewseg_tgui_" & $getCurrentProcessId())
+  let noUserThemes = some(tmp / "no-user-themes")
+  createDir(tmp)
+  var toolbar100 = 0'f32
+  try:
+    block themes:
+      for (choice, builtin, file) in [(forceDark, EverforestDark, "shell-dark.png"),
+          (forceLight, EverforestLight, "shell-light.png")]:
+        let s = render(RunOptions(theme: choice, userThemeDir: noUserThemes), file)
+        doAssert s.theme == builtin, s.theme.name # the shipped file, loaded unchanged
+        doAssert s.warnings.len == 0, $s.warnings
+        s.checkLook(builtin)
+        if choice == forceDark:
+          toolbar100 = s.mark("toolbar").size.y
+        echo "tgui: ", s.theme.name, " ", s.width, "x", s.height, " scale ", s.scale,
+          ": checks pass"
 
-  block missingFonts:
-    # Assets without fonts/: the built-in font, a warning, and a full frame.
-    let assets = tmp / "assets-nofonts"
-    createDir(assets / "themes")
-    copyFile(themeDir / "everforest-dark.toml", assets / "themes" / "everforest-dark.toml")
-    let s = render(RunOptions(theme: forceDark, assetDirs: some(@[assets]),
-      userThemeDir: noUserThemes))
-    doAssert s.has("Fonts: `JetBrainsMonoNerdFontPropo-Regular.ttf` not found") and
-      s.has("Using the built-in font"), $s.messages
-    doAssert s.theme == EverforestDark
-    let r = s.mark("headers")
-    doAssert distance(s.at(int(r.pos.x + r.size.x) - 6, int(r.pos.y + r.size.y) - 6),
-      EverforestDark.roles[rlWindow]) <= 1
-    echo "tgui: missing fonts: ", s.warnings[0]
+    block liveThemeChanges:
+      # The system switches to light, then the user picks a theme in the menu,
+      # then goes back to following the system: each restyles the next frame.
+      var seen: seq[string]
+      let code = run(RunOptions(maxFrames: 7, userThemeDir: noUserThemes,
+        onFrame: proc (f: FrameInfo) =
+        seen.add f.theme.name
+        case f.index
+        of 1: postShellEvent(ShellEvent(kind: seThemeChanged, theme: stDark))
+        of 3: postShellEvent(ShellEvent(kind: seThemeChanged, theme: stLight))
+        of 4: f.chooseTheme("everforest-dark")
+        of 5: f.chooseTheme("")
+        else: discard))
+      doAssert code == 0
+      doAssert seen[2 .. 6] == @["Everforest Dark", "Everforest Dark", "Everforest Light",
+        "Everforest Dark", "Everforest Light"], $seen
+      echo "tgui: live theme changes: ", seen[2 .. 6]
 
-  block unreadableFontsAndNoAssets:
-    let assets = tmp / "assets-badfonts"
-    createDir(assets / "fonts")
-    let real = readFile(repoAssets / "fonts" / DefaultFonts[frMono])
-    writeFile(assets / "fonts" / DefaultFonts[frUi], "this is not a font")
-    writeFile(assets / "fonts" / DefaultFonts[frMono], real[0 ..< 4096]) # truncated
-    writeFile(assets / "fonts" / DefaultFonts[frHeading], "")
-    let s = render(RunOptions(theme: forceLight, assetDirs: some(@[assets]),
-      userThemeDir: noUserThemes))
-    doAssert s.has(DefaultFonts[frUi] & " is not a TrueType or OpenType font"), $s.messages
-    doAssert s.has(DefaultFonts[frMono] & " is not a TrueType or OpenType font")
-    doAssert s.has(DefaultFonts[frHeading] & " is not a TrueType or OpenType font") # empty
-    doAssert s.theme == EverforestLight # no theme file there: the built-in one
-    let none = render(RunOptions(theme: forceDark, assetDirs: some(newSeq[string]()),
-      userThemeDir: noUserThemes))
-    doAssert none.has("No assets folder found") and none.has("Using the built-in font")
-    doAssert none.theme == EverforestDark
-    echo "tgui: unreadable fonts and no assets: fall back, logged"
+    block missingFonts:
+      # Assets without fonts/: the built-in font, a warning, and a full frame.
+      let assets = tmp / "assets-nofonts"
+      createDir(assets / "themes")
+      copyFile(themeDir / "everforest-dark.toml", assets / "themes" / "everforest-dark.toml")
+      let s = render(RunOptions(theme: forceDark, assetDirs: some(@[assets]),
+        userThemeDir: noUserThemes))
+      doAssert s.has("Fonts: `JetBrainsMonoNerdFontPropo-Regular.ttf` not found") and
+        s.has("Using the built-in font"), $s.messages
+      doAssert s.theme == EverforestDark
+      let r = s.mark("headers")
+      doAssert distance(s.at(int(r.pos.x + r.size.x) - 6, int(r.pos.y + r.size.y) - 6),
+        EverforestDark.roles[rlWindow]) <= 1
+      echo "tgui: missing fonts: ", s.warnings[0]
 
-  block anotherPalette:
-    # A theme that is not Everforest, in the same format, chosen by name from
-    # the user's theme folder (as VIEWSEG_THEME=slate would).
-    let user = tmp / "user-themes"
-    createDir(user)
-    writeFile(user / "slate.toml", """
+    block unreadableFontsAndNoAssets:
+      let assets = tmp / "assets-badfonts"
+      createDir(assets / "fonts")
+      let real = readFile(repoAssets / "fonts" / DefaultFonts[frMono])
+      writeFile(assets / "fonts" / DefaultFonts[frUi], "this is not a font")
+      writeFile(assets / "fonts" / DefaultFonts[frMono], real[0 ..< 4096]) # truncated
+      writeFile(assets / "fonts" / DefaultFonts[frHeading], "")
+      let s = render(RunOptions(theme: forceLight, assetDirs: some(@[assets]),
+        userThemeDir: noUserThemes))
+      doAssert s.has(DefaultFonts[frUi] & " is not a TrueType or OpenType font"), $s.messages
+      doAssert s.has(DefaultFonts[frMono] & " is not a TrueType or OpenType font")
+      doAssert s.has(DefaultFonts[frHeading] & " is not a TrueType or OpenType font") # empty
+      doAssert s.theme == EverforestLight # no theme file there: the built-in one
+      let none = render(RunOptions(theme: forceDark, assetDirs: some(newSeq[string]()),
+        userThemeDir: noUserThemes))
+      doAssert none.has("No assets folder found") and none.has("Using the built-in font")
+      doAssert none.theme == EverforestDark
+      echo "tgui: unreadable fonts and no assets: fall back, logged"
+
+    block anotherPalette:
+      # A theme that is not Everforest, in the same format, chosen by name from
+      # the user's theme folder (as VIEWSEG_THEME=slate would).
+      let user = tmp / "user-themes"
+      createDir(user)
+      writeFile(user / "slate.toml", """
 # a blue-grey test palette with an amber accent
 name = "Slate"
 mode = "dark"
@@ -225,31 +227,34 @@ blue = "#47a3f3"
 magenta = "#da4a91"
 brown = "#8d6e63"
 """)
-    putEnv("VIEWSEG_THEME", "slate")
-    let s = render(RunOptions(userThemeDir: some(user)))
-    delEnv("VIEWSEG_THEME")
-    doAssert s.theme.name == "Slate", s.theme.name
-    doAssert s.warnings.len == 0, $s.warnings
-    doAssert s.theme.roles[rlWindow] == rgb(0x1f2933)
-    doAssert s.theme.roles[rlAccent] == rgb(0xe3a33b)
-    s.checkLook(s.theme) # background, bars, gaps and the accent all changed
-    echo "tgui: a non-Everforest theme file restyles background and accent"
+      putEnv("VIEWSEG_THEME", "slate")
+      let s = render(RunOptions(userThemeDir: some(user)))
+      delEnv("VIEWSEG_THEME")
+      doAssert s.theme.name == "Slate", s.theme.name
+      doAssert s.warnings.len == 0, $s.warnings
+      doAssert s.theme.roles[rlWindow] == rgb(0x1f2933)
+      doAssert s.theme.roles[rlAccent] == rgb(0xe3a33b)
+      s.checkLook(s.theme) # background, bars, gaps and the accent all changed
+      echo "tgui: a non-Everforest theme file restyles background and accent"
 
-  block doubleScale:
-    # SDL's X11 driver takes its content scale from this variable. Under another
-    # video driver (SDL_VIDEO_DRIVER=wayland) it does not apply: skip there.
-    if getEnv("SDL_VIDEO_DRIVER") notin ["", "x11"]:
-      echo "tgui: 200 % check skipped (SDL_VIDEO_DRIVER=", getEnv("SDL_VIDEO_DRIVER"), ")"
-    else:
-      putEnv("SDL_VIDEO_X11_SCALING_FACTOR", "2")
-      let big = render(RunOptions(theme: forceDark, userThemeDir: noUserThemes),
-        "shell-dark-200.png")
-      delEnv("SDL_VIDEO_X11_SCALING_FACTOR")
-      doAssert big.scale == 2, "scale " & $big.scale
-      let h = big.mark("toolbar").size.y
-      doAssert h >= 1.8 * toolbar100, "toolbar " & $h & " px at 200 %, " & $toolbar100 &
-        " at 100 %"
-      big.checkLook(EverforestDark)
-      echo "tgui: 200 %: ", big.width, "x", big.height, ", toolbar ", h, " px"
-finally:
-  removeDir(tmp)
+    block doubleScale:
+      # SDL's X11 driver takes its content scale from this variable. Under another
+      # video driver (SDL_VIDEO_DRIVER=wayland) it does not apply: skip there.
+      if getEnv("SDL_VIDEO_DRIVER") notin ["", "x11"]:
+        echo "tgui: 200 % check skipped (SDL_VIDEO_DRIVER=", getEnv("SDL_VIDEO_DRIVER"), ")"
+      else:
+        putEnv("SDL_VIDEO_X11_SCALING_FACTOR", "2")
+        let big = render(RunOptions(theme: forceDark, userThemeDir: noUserThemes),
+          "shell-dark-200.png")
+        delEnv("SDL_VIDEO_X11_SCALING_FACTOR")
+        doAssert big.scale == 2, "scale " & $big.scale
+        let h = big.mark("toolbar").size.y
+        doAssert h >= 1.8 * toolbar100, "toolbar " & $h & " px at 200 %, " & $toolbar100 &
+          " at 100 %"
+        big.checkLook(EverforestDark)
+        echo "tgui: 200 %: ", big.width, "x", big.height, ", toolbar ", h, " px"
+  finally:
+    removeDir(tmp)
+
+when isMainModule:
+  main()

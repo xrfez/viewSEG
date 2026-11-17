@@ -89,7 +89,6 @@ proc laidOut(f: FrameInfo): bool =
 func shown(f: FrameInfo; mark: string): bool = f.markOf(mark).size.x > 0
 
 let shots = getEnv("VIEWSEG_SCREENSHOTS")
-if shots.len > 0: createDir(shots)
 
 proc shoot(f: FrameInfo; name: string) =
   if shots.len > 0:
@@ -170,285 +169,6 @@ proc answered(f: FrameInfo; ids: openArray[int]): bool =
     for k, d in a.traces:
       if d.id != ids[k]: result = false
 
-withFixtures fx:
-  runSteps(fx.surveySegy(), [
-    ("summary", Step(proc (f: FrameInfo; wait: int): bool =
-      result = f.laidOut and f.shown("headers.summary value Traces") and wait > 5
-      if result:
-        doAssert f.core.settings.headers.tab == htSummary
-        doAssert f.shown("headers.summary value Sample interval")
-        doAssert f.shown("headers.summary.heading")
-        f.shoot("headers-summary-segy.png"))),
-    ("file headers", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.tab file")
-      result = wait > 8
-      if result:
-        doAssert f.core.settings.headers.tab == htFile,
-          "the File headers tab was not remembered"
-        doAssert not f.shown("headers.summary"), "the summary is still shown"
-        doAssert f.shown("headers.file tab Text") and f.shown("##text")
-        f.shoot("headers-text-segy.png"))),
-    ("binary", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.file tab Binary")
-      result = wait > 8 and f.shown("headers.binary binary.jobId 0")
-      if result:
-        doAssert not f.shown("headers.binary name binary.jobId"), "the Name column is shown"
-        f.shoot("headers-binary-segy.png"))),
-    ("name column", Step(proc (f: FrameInfo; wait: int): bool =
-      if wait == 1:
-        var s = f.core.settings
-        s.headers.columns = {hcDescription, hcName, hcBytes}
-        f.apply Command(kind: ckSettings, settings: s)
-      result = wait > 4
-      if result:
-        doAssert f.shown("headers.binary name binary.jobId"),
-          "the Name column did not follow the settings"
-        doAssert f.core.settings.headers.columns == {hcDescription, hcName, hcBytes},
-          "the table changed the settings: " & $f.core.settings.headers.columns))],
-    fx.dir / "cache")
-
-  runSteps(fx.areasSegd(), [
-    ("shown", Step(proc (f: FrameInfo; wait: int): bool = f.laidOut and wait > 3)),
-    ("file headers", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.tab file")
-      result = wait > 8 and f.shown("headers.general gh1.fileNumber 0")
-      doAssert result or not overdue(wait, 300, began),
-        "the record's general headers never came"
-      if result:
-        doAssert ipRecord in f.core.inspection.parts
-        f.shoot("headers-general-segd.png"))),
-    ("channel sets", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.file tab Channel sets")
-      result = wait > 8 and f.shown("headers.sets st1cs1.channelType 0")
-      if result:
-        doAssert f.shown("headers.sets differs st1cs1.channelType"),
-          "the channel types that differ are not marked"
-        doAssert not f.shown("headers.sets differs st1cs1.scanTypeNumber")
-        f.shoot("headers-sets-segd.png"))),
-    ("external", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.file tab External")
-      result = wait > 8 and f.shown("headers.bytes external line 0")
-      if result: f.shoot("headers-external-segd.png")))],
-    fx.dir / "cache")
-
-  # A record of 600 channel sets (more than the 512 columns a table can
-  # have): 64 side by side, a page at a time.
-  runSteps(fx.manySetsSegd(600), [
-    ("shown", Step(proc (f: FrameInfo; wait: int): bool = # (auxiliary traces only)
-      f.core.panels[f.core.findPanel(MainPanel)].laidOut and wait > 3)),
-    ("file headers", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.tab file")
-      result = wait > 8 and f.shown("headers.general gh1.fileNumber 0")
-      doAssert result or not overdue(wait, 300, began),
-        "the record's general headers never came")),
-    ("channel sets", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.file tab Channel sets")
-      result = wait > 8 and f.shown("headers.sets st1cs1.channelType 0")
-      if result:
-        doAssert f.shown("headers.sets page") and f.shown("headers.sets next"),
-          "no line of the pages"
-        f.shoot("headers-sets-many-segd.png"))),
-    ("next page", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.sets next")
-      # (a row is named by its first column's set: now set 65)
-      result = wait > 8 and f.shown("headers.sets st1cs65.channelType 0")
-      if result: f.shoot("headers-sets-many-next-segd.png"))),
-    ("last page", Step(proc (f: FrameInfo; wait: int): bool =
-      for k in 0 ..< 8: f.click(wait - 10 * k, "headers.sets next")
-      result = wait > 90 and f.shown("headers.sets st1cs577.channelType 0")))],
-    fx.dir / "cache")
-
-  # The Summary's picked line goes when another record is shown (its lines
-  # are another record's).
-  runSteps(fx.surveySegy(), [
-    ("shown", Step(proc (f: FrameInfo; wait: int): bool =
-      f.laidOut and f.shown("headers.summary Standard") and wait > 3)),
-    ("a line picked", Step(proc (f: FrameInfo; wait: int): bool =
-      # (twice: the first click only brings the window forward)
-      f.clickAt(wait, f.markOf("headers.summary Standard").centre, twice = true)
-      result = wait > 12 and f.headersWindow.summaryPicked >= 0)),
-    ("another record", Step(proc (f: FrameInfo; wait: int): bool =
-      if wait == 1: f.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
-      result = wait > 8 and f.laidOut and
-        f.core.panels[f.core.findPanel(MainPanel)].layers[0].source.gather == 1
-      if result:
-        doAssert f.headersWindow.summaryPicked == -1, "the line picked stayed"))],
-    fx.dir / "cache")
-
-  # The Data tab says when the file gives no sample interval (the times
-  # count samples), and when a trace has no samples.
-  let noSamples = fx.dir / "no-samples.sgy"
-  block:
-    var bytes = readFile(fx.demoFile("survey.sgy"))
-    bytes[3220] = '\0' # samples per trace, bytes 3221-3222
-    bytes[3221] = '\0'
-    writeFile(noSamples, bytes)
-  for (path, mark) in [(fx.noIntervalSegy(), "headers.data no interval"),
-      (noSamples, "headers.data none")]:
-    runSteps(path, [
-      ("shown", Step(proc (f: FrameInfo; wait: int): bool =
-        result = f.core.panels[f.core.findPanel(MainPanel)].laidOut and wait > 3
-        if result: f.apply Command(kind: ckSelect, traces: @[f.core.sessions[0].base + 1],
-          mode: smReplace))),
-      ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
-        f.click(wait, "headers.tab trace")
-        wait > 8 and f.shown("headers.trace tab data"))),
-      ("data", Step(proc (f: FrameInfo; wait: int): bool =
-        f.click(wait, "headers.trace tab data")
-        result = wait > 8 and f.shown(mark)
-        if result: f.shoot("headers-" & mark.replace(' ', '-') & ".png")))],
-      fx.dir / "cache")
-
-  # The Trace tab: empty until a trace is chosen; the trace under the
-  # pointer, kept when the pointer leaves the plot; a click selects one, its
-  # header fields and samples; Ctrl + click a second, two columns and the
-  # fields that differ marked; cleared, the trace under the pointer again;
-  # "Follow the pointer" off, empty.
-  runSteps(fx.surveySegy(), [
-    ("shown", Step(proc (f: FrameInfo; wait: int): bool =
-      f.laidOut and f.core.panels[0].shown.len == Channels and wait > 3)),
-    ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.tab trace")
-      result = wait > 8
-      if result:
-        doAssert f.core.settings.headers.tab == htTrace
-        doAssert f.shown("headers.chosen") and f.core.inspection.chosen.by == cbNone
-        doAssert not f.shown("headers.trace tab header"), "a trace is shown with none chosen"
-        doAssert f.core.inspection.parts == {}, "read for nothing: " &
-          $f.core.inspection.parts)),
-    ("the trace under the pointer", Step(proc (f: FrameInfo; wait: int): bool =
-      if wait == 1: f.moveMouse(f.pointAt(3))
-      result = wait > 4 and f.answered([f.idAt(3)]) and f.shown("headers.trace trace.fieldRecord 0")
-      if result:
-        doAssert f.core.inspection.chosen.by == cbPlotPointer
-        doAssert ipTraceHeaders in f.core.inspection.parts)),
-    ("kept when the pointer leaves", Step(proc (f: FrameInfo; wait: int): bool =
-      if wait == 1: f.moveMouse(f.markOf("headers.chosen").centre)
-      result = wait > 6
-      if result:
-        doAssert f.core.selection.hover == -1
-        doAssert f.core.inspection.chosen.traces == @[f.idAt(3)], "the trace pointed at went"
-        doAssert f.shown("headers.trace trace.fieldRecord 0"))),
-    ("a click selects a trace", Step(proc (f: FrameInfo; wait: int): bool =
-      f.clickAt(wait, f.pointAt(5), twice = true)
-      result = wait > 12 and f.answered([f.idAt(5)])
-      if result:
-        doAssert f.core.inspection.chosen.by == cbSelection
-        let d = f.core.inspection.answer.traces[0]
-        for r in d.rows:
-          if r.field == "traceNumberInField": doAssert r.value == "6", r.value
-        doAssert f.shown("headers.trace trace.traceNumberInField 0")
-        f.shoot("headers-trace-header-segy.png"))),
-    ("its samples", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.trace tab data")
-      result = wait > 8 and f.shown("headers.data 0 0") and
-        f.core.inspection.answer.traces[0].samples.len == Samples
-      if result:
-        doAssert f.core.settings.headers.traceTab == ttData
-        doAssert ipTraceSamples in f.core.inspection.parts
-        let d = f.core.inspection.answer.traces[0]
-        for i in 0 ..< Samples: doAssert d.samples[i] == surveySample(0, 6, i), $i)),
-    ("the cursor's row", Step(proc (f: FrameInfo; wait: int): bool =
-      if wait == 1: f.moveMouse(f.pointAt(5))
-      result = wait > 6 and f.shown("headers.data cursor")
-      if result:
-        let r = f.markOf("headers.data cursor")
-        let table = f.markOf("headers.data")
-        doAssert r.pos.y >= table.pos.y and r.pos.y + r.size.y <= table.pos.y + table.size.y,
-          "the cursor's row is not in view: " & $r & " in " & $table
-        f.shoot("headers-trace-data-segy.png"))),
-    ("Ctrl + click a second", Step(proc (f: FrameInfo; wait: int): bool =
-      f.clickAt(wait, f.pointAt(9), twice = true, mods = {smCtrl}) # the plot had not the focus
-      result = wait > 12 and f.answered([f.idAt(5), f.idAt(9)]) and f.shown("headers.data 0 1")
-      if result:
-        doAssert f.core.inspection.answer.traces[1].samples[100] == surveySample(0, 10, 100))),
-    ("two columns, differences marked", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.trace tab header")
-      result = wait > 8 and f.answered([f.idAt(5), f.idAt(9)]) and
-        f.shown("headers.trace trace.fieldRecord 0") and
-        f.core.inspection.answer.traces[1].rows.len > 0
-      if result:
-        doAssert f.shown("headers.trace differs trace.traceNumberInField"),
-          "the channels that differ are not marked"
-        doAssert not f.shown("headers.trace differs trace.fieldRecord"),
-          "the same field record is marked"
-        f.shoot("headers-trace-two-segy.png")
-        # The first trace's values in view in the default layout (the window
-        # docked at the bottom right, about 400 pixels wide), without
-        # scrolling sideways.
-        let w = f.markOf("headers")
-        let v = f.markOf("headers.trace trace.fieldRecord 0")
-        doAssert v.pos.x >= w.pos.x and v.pos.x + v.size.x <= w.pos.x + w.size.x,
-          "the first value is out of view: " & $v & " in the window " & $w)),
-    ("cleared: the trace under the pointer", Step(proc (f: FrameInfo; wait: int): bool =
-      f.clickAt(wait, f.pointAt(11)) # a focusing click: the plot gets the keys
-      if wait == 8: f.pressKey(skEscape, true)
-      if wait == 9: f.pressKey(skEscape, false)
-      result = wait > 12 and f.core.selection.selected.len == 0 and f.answered([f.idAt(11)])
-      if result: doAssert f.core.inspection.chosen.by == cbPlotPointer)),
-    ("Follow the pointer off: empty", Step(proc (f: FrameInfo; wait: int): bool =
-      f.click(wait, "headers.follow")
-      if wait == 10: f.moveMouse(f.pointAt(13))
-      result = wait > 16
-      if result:
-        doAssert not f.core.settings.headers.followPointer
-        doAssert f.core.selection.hover >= 0, "the pointer is not over a trace"
-        doAssert f.core.inspection.chosen.by == cbNone, $f.core.inspection.chosen
-        doAssert not f.shown("headers.trace tab header"), "a trace is still shown"
-        doAssert f.core.inspection.answer.traces.len == 0
-        f.shoot("headers-trace-none-segy.png")))],
-    fx.dir / "cache")
-
-# A drive that stops answering: a hung read of a trace header leaves the
-# window drawing, and says so; a failing one says why.
-block aDriveThatStopsAnswering:
-  install()
-  withFixtures fx:
-    let far = fx.dir / "far"
-    createDir(far)
-    copyFile(fx.surveySegy, far / "a.sgy")
-    var last = MonoTime()
-    var worst = initDuration()
-    var advanced = false
-    runSteps(far / "a.sgy", [
-      ("shown", Step(proc (f: FrameInfo; wait: int): bool =
-        f.laidOut and f.core.panels[0].shown.len == Channels and wait > 3)),
-      ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
-        f.click(wait, "headers.tab trace")
-        wait > 8 and f.core.settings.headers.tab == htTrace)),
-      ("a header read hangs", Step(proc (f: FrameInfo; wait: int): bool =
-        if wait == 1:
-          fault(far / "a.sgy", fkHang, {foHeaders})
-          f.moveMouse(f.pointAt(3))
-          last = getMonoTime()
-        let now = getMonoTime()
-        worst = max(worst, now - last)
-        last = now
-        if not advanced and hung() >= 1:
-          advanceFsClock(StallAfter + initDuration(seconds = 1)) # as if it had not answered since
-          advanced = true
-        result = advanced and wait > 10 and f.shown("headers.waiting")
-        if result:
-          doAssert f.core.inspection.waiting and f.core.inspection.chosen.traces == @[f.idAt(3)]
-          doAssert "not answering for" in f.core.headersWait.words, f.core.headersWait.words
-          f.shoot("headers-not-answering.png"))),
-      ("the drive answers", Step(proc (f: FrameInfo; wait: int): bool =
-        if wait == 1: release(far / "a.sgy")
-        result = wait > 3 and f.answered([f.idAt(3)]) and not f.shown("headers.waiting") and
-          f.shown("headers.trace trace.fieldRecord 0"))),
-      ("a header read fails", Step(proc (f: FrameInfo; wait: int): bool =
-        if wait == 1:
-          fault(far / "a.sgy", fkFail, {foHeaders})
-          f.moveMouse(f.pointAt(6))
-        result = wait > 3 and f.answered([f.idAt(6)]) and f.shown("headers.problem")
-        if result:
-          let d = f.core.inspection.answer.traces[0]
-          doAssert "cannot be read now" in d.problem and d.rows.len == 0, d.problem
-          release(far / "a.sgy")))],
-      fx.dir / "cache")
-    doAssert worst < initDuration(seconds = 5), "a frame waited " & $worst & " for the drive"
-    doAssert uiCalls().len == 0, "the UI thread called the file system:\n" & uiCalls().join("\n")
-
 # Screenshots of each tab on the example files (local only).
 proc drag(f: FrameInfo; wait: int; start: Vec2; by: Vec2) =
   ## A drag from `start` by `by` over frames 2 to 12 of a step, as a hand
@@ -510,93 +230,380 @@ proc inked(f: FrameInfo; mark: string; ink: Rgba): int =
       if abs(p.r.int - ink.r.int) + abs(p.g.int - ink.g.int) + abs(p.b.int - ink.b.int) <= 48:
         inc result
 
-block theJoinedValues:
+proc main*() =
+  if shots.len > 0: createDir(shots)
+
   withFixtures fx:
-    let survey = fx.surveySps()
-    var files: seq[JoinFile]
-    for p in [survey.s, survey.r, survey.x]: files.add JoinFile(path: p, kind: jkSps)
-    runSteps(fx.stationsSegd(), @[
-      ("shown", Step(proc (f: FrameInfo; wait: int): bool = f.laidOut and wait > 3))] &
-      enlarge() & @[
-      ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
-        f.click(wait, "headers.tab trace")
-        wait > 8 and f.core.settings.headers.tab == htTrace)),
-      ("two traces", Step(proc (f: FrameInfo; wait: int): bool =
-        let base = f.core.sessions[0].base
-        if wait == 1:
-          f.apply Command(kind: ckSelect, traces: @[base + 1, base + SegdChannels + 1],
-            mode: smReplace)
-        wait > 4 and f.answered([base + 1, base + SegdChannels + 1]) and
-          f.shown("headers.trace ext1.receiverLineNumber 1"))),
-      ("joined", Step(proc (f: FrameInfo; wait: int): bool =
-        if wait == 1:
-          f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: files,
-            joinUnits: JoinUnits(survey: suMetres))
-        result = wait > 4 and f.core.joinReport.serial > 0 and not f.core.inspection.waiting and
-          f.shown("headers.trace keys.rcvX 1")
+    runSteps(fx.surveySegy(), [
+      ("summary", Step(proc (f: FrameInfo; wait: int): bool =
+        result = f.laidOut and f.shown("headers.summary value Traces") and wait > 5
         if result:
-          doAssert f.core.joinReport.outcome == joJoined, $f.core.joinReport.words
-          doAssert f.shown("headers.trace joined keys.rcvX 0"), "the joined receiver X is not marked"
-          doAssert not f.shown("headers.trace joined keys.rcvX 1"), "the other trace's is"
-          f.shoot("headers-trace-joined-segd.png")
-          let accent = f.theme.roles[rlAccent]
-          let lit = f.inked("headers.trace joined keys.rcvX 0", accent)
-          doAssert lit > 0, "the joined receiver X is not in the accent colour: " & $lit &
-            " pixels"
-          doAssert f.inked("headers.trace keys.rcvX 1", accent) == 0,
-            "the receiver X the survey lacks is in the accent colour"))],
+          doAssert f.core.settings.headers.tab == htSummary
+          doAssert f.shown("headers.summary value Sample interval")
+          doAssert f.shown("headers.summary.heading")
+          f.shoot("headers-summary-segy.png"))),
+      ("file headers", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.tab file")
+        result = wait > 8
+        if result:
+          doAssert f.core.settings.headers.tab == htFile,
+            "the File headers tab was not remembered"
+          doAssert not f.shown("headers.summary"), "the summary is still shown"
+          doAssert f.shown("headers.file tab Text") and f.shown("##text")
+          f.shoot("headers-text-segy.png"))),
+      ("binary", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.file tab Binary")
+        result = wait > 8 and f.shown("headers.binary binary.jobId 0")
+        if result:
+          doAssert not f.shown("headers.binary name binary.jobId"), "the Name column is shown"
+          f.shoot("headers-binary-segy.png"))),
+      ("name column", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1:
+          var s = f.core.settings
+          s.headers.columns = {hcDescription, hcName, hcBytes}
+          f.apply Command(kind: ckSettings, settings: s)
+        result = wait > 4
+        if result:
+          doAssert f.shown("headers.binary name binary.jobId"),
+            "the Name column did not follow the settings"
+          doAssert f.core.settings.headers.columns == {hcDescription, hcName, hcBytes},
+            "the table changed the settings: " & $f.core.settings.headers.columns))],
       fx.dir / "cache")
 
-if shots.len > 0 and (privateFile("landSegd").len > 0 or privateFile("segy3d").len > 0):
-  withFixtures fx:
-    # Shown from a folder of the fixtures, linked under a neutral name: the
-    # Summary names that folder, not the computer's, and not the private file.
-    createDir(fx.dir / "examples")
-    var survey: seq[JoinFile]
-    for p in privateFiles("landSps", "landRps", "landXps"):
-      survey.add JoinFile(path: p, kind: jkSps)
-    for (key, name, segd) in [("segy3d", "segy3d", false), ("landSegd", "land", true)]:
-      let src = privateFile(key)
-      if src.len > 0:
-        let path = fx.dir / "examples" / (name & src.splitFile.ext)
-        createSymlink(src, path)
-        var steps = @[("shown", Step(proc (f: FrameInfo; wait: int): bool =
-          f.laidOut and wait > 10))]
-        steps.add enlarge()
-        steps.add tabShot("summary", "headers.tab summary", "headers-" & name & "-summary.png")
-        steps.add tabShot("file headers", "headers.tab file", "headers-" & name & "-file.png")
-        if segd:
-          steps.add tabShot("channel sets", "headers.file tab Channel sets",
-            "headers-" & name & "-sets.png")
-        else:
-          steps.add tabShot("binary", "headers.file tab Binary", "headers-" & name & "-binary.png")
-        steps.add tabShot("trace", "headers.tab trace", "headers-" & name & "-trace-none.png")
-        steps.add ("select two traces", Step(proc (f: FrameInfo; wait: int): bool =
-          if wait < 20: f.clickAt(wait, f.pointAt(40), twice = true)
-          else: f.clickAt(wait - 20, f.pointAt(41), mods = {smCtrl})
-          wait > 40 and f.core.inspection.answer.traces.len == 2 and
-            not f.core.inspection.waiting))
-        steps.add tabShot("header", "headers.trace tab header",
-          "headers-" & name & "-trace-header.png")
-        steps.add tabShot("data", "headers.trace tab data", "headers-" & name & "-trace-data.png")
-        if segd and survey.len == 3:
-          # joined with its survey, the headers' coordinates replaced: the
-          # values the join gave, marked
-          steps.add ("join", Step(proc (f: FrameInfo; wait: int): bool =
-            if wait == 1:
-              f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: survey,
-                joinOptions: JoinOptions(coordinates: hcReplace),
-                joinUnits: JoinUnits(survey: suUsFeet, file: suUsFeet))
-            result = f.core.joinReport.serial > 0 and f.core.joinUnderWay.job == NoJob and
-              not f.core.inspection.waiting and f.core.inspection.answer.traces.len == 2 and
-              f.core.inspection.answer.traces[0].joined != {}
-            if result: doAssert f.core.joinReport.outcome == joJoined))
-          var since = MonoTime()
-          steps.add ("its notice gone", Step(proc (f: FrameInfo; wait: int): bool =
-            if wait == 1: since = getMonoTime()
-            getMonoTime() - since > initDuration(seconds = 6))) # (a notice stays 5 s)
-          steps.add tabShot("joined", "headers.trace tab header",
-            "headers-" & name & "-trace-joined.png")
-          steps.add tabShot("summary joined", "headers.tab summary",
-            "headers-" & name & "-summary-joined.png")
-        runSteps(path, steps, fx.dir / "cache", limit = 3000)
+    runSteps(fx.areasSegd(), [
+      ("shown", Step(proc (f: FrameInfo; wait: int): bool = f.laidOut and wait > 3)),
+      ("file headers", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.tab file")
+        result = wait > 8 and f.shown("headers.general gh1.fileNumber 0")
+        doAssert result or not overdue(wait, 300, began),
+          "the record's general headers never came"
+        if result:
+          doAssert ipRecord in f.core.inspection.parts
+          f.shoot("headers-general-segd.png"))),
+      ("channel sets", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.file tab Channel sets")
+        result = wait > 8 and f.shown("headers.sets st1cs1.channelType 0")
+        if result:
+          doAssert f.shown("headers.sets differs st1cs1.channelType"),
+            "the channel types that differ are not marked"
+          doAssert not f.shown("headers.sets differs st1cs1.scanTypeNumber")
+          f.shoot("headers-sets-segd.png"))),
+      ("external", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.file tab External")
+        result = wait > 8 and f.shown("headers.bytes external line 0")
+        if result: f.shoot("headers-external-segd.png")))],
+      fx.dir / "cache")
+
+    # A record of 600 channel sets (more than the 512 columns a table can
+    # have): 64 side by side, a page at a time.
+    runSteps(fx.manySetsSegd(600), [
+      ("shown", Step(proc (f: FrameInfo; wait: int): bool = # (auxiliary traces only)
+        f.core.panels[f.core.findPanel(MainPanel)].laidOut and wait > 3)),
+      ("file headers", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.tab file")
+        result = wait > 8 and f.shown("headers.general gh1.fileNumber 0")
+        doAssert result or not overdue(wait, 300, began),
+          "the record's general headers never came")),
+      ("channel sets", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.file tab Channel sets")
+        result = wait > 8 and f.shown("headers.sets st1cs1.channelType 0")
+        if result:
+          doAssert f.shown("headers.sets page") and f.shown("headers.sets next"),
+            "no line of the pages"
+          f.shoot("headers-sets-many-segd.png"))),
+      ("next page", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.sets next")
+        # (a row is named by its first column's set: now set 65)
+        result = wait > 8 and f.shown("headers.sets st1cs65.channelType 0")
+        if result: f.shoot("headers-sets-many-next-segd.png"))),
+      ("last page", Step(proc (f: FrameInfo; wait: int): bool =
+        for k in 0 ..< 8: f.click(wait - 10 * k, "headers.sets next")
+        result = wait > 90 and f.shown("headers.sets st1cs577.channelType 0")))],
+      fx.dir / "cache")
+
+    # The Summary's picked line goes when another record is shown (its lines
+    # are another record's).
+    runSteps(fx.surveySegy(), [
+      ("shown", Step(proc (f: FrameInfo; wait: int): bool =
+        f.laidOut and f.shown("headers.summary Standard") and wait > 3)),
+      ("a line picked", Step(proc (f: FrameInfo; wait: int): bool =
+        # (twice: the first click only brings the window forward)
+        f.clickAt(wait, f.markOf("headers.summary Standard").centre, twice = true)
+        result = wait > 12 and f.headersWindow.summaryPicked >= 0)),
+      ("another record", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1: f.apply Command(kind: ckGather, panel: MainPanel, gather: 1)
+        result = wait > 8 and f.laidOut and
+          f.core.panels[f.core.findPanel(MainPanel)].layers[0].source.gather == 1
+        if result:
+          doAssert f.headersWindow.summaryPicked == -1, "the line picked stayed"))],
+      fx.dir / "cache")
+
+    # The Data tab says when the file gives no sample interval (the times
+    # count samples), and when a trace has no samples.
+    let noSamples = fx.dir / "no-samples.sgy"
+    block:
+      var bytes = readFile(fx.demoFile("survey.sgy"))
+      bytes[3220] = '\0' # samples per trace, bytes 3221-3222
+      bytes[3221] = '\0'
+      writeFile(noSamples, bytes)
+    for (path, markSrc) in [(fx.noIntervalSegy(), "headers.data no interval"),
+        (noSamples, "headers.data none")]:
+      # A closure cannot capture the loop variable (it is lent inside a proc).
+      let mark = markSrc & ""
+      runSteps(path, [
+        ("shown", Step(proc (f: FrameInfo; wait: int): bool =
+          result = f.core.panels[f.core.findPanel(MainPanel)].laidOut and wait > 3
+          if result: f.apply Command(kind: ckSelect, traces: @[f.core.sessions[0].base + 1],
+            mode: smReplace))),
+        ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
+          f.click(wait, "headers.tab trace")
+          wait > 8 and f.shown("headers.trace tab data"))),
+        ("data", Step(proc (f: FrameInfo; wait: int): bool =
+          f.click(wait, "headers.trace tab data")
+          result = wait > 8 and f.shown(mark)
+          if result: f.shoot("headers-" & mark.replace(' ', '-') & ".png")))],
+        fx.dir / "cache")
+
+    # The Trace tab: empty until a trace is chosen; the trace under the
+    # pointer, kept when the pointer leaves the plot; a click selects one, its
+    # header fields and samples; Ctrl + click a second, two columns and the
+    # fields that differ marked; cleared, the trace under the pointer again;
+    # "Follow the pointer" off, empty.
+    runSteps(fx.surveySegy(), [
+      ("shown", Step(proc (f: FrameInfo; wait: int): bool =
+        f.laidOut and f.core.panels[0].shown.len == Channels and wait > 3)),
+      ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.tab trace")
+        result = wait > 8
+        if result:
+          doAssert f.core.settings.headers.tab == htTrace
+          doAssert f.shown("headers.chosen") and f.core.inspection.chosen.by == cbNone
+          doAssert not f.shown("headers.trace tab header"), "a trace is shown with none chosen"
+          doAssert f.core.inspection.parts == {}, "read for nothing: " &
+            $f.core.inspection.parts)),
+      ("the trace under the pointer", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1: f.moveMouse(f.pointAt(3))
+        result = wait > 4 and f.answered([f.idAt(3)]) and f.shown("headers.trace trace.fieldRecord 0")
+        if result:
+          doAssert f.core.inspection.chosen.by == cbPlotPointer
+          doAssert ipTraceHeaders in f.core.inspection.parts)),
+      ("kept when the pointer leaves", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1: f.moveMouse(f.markOf("headers.chosen").centre)
+        result = wait > 6
+        if result:
+          doAssert f.core.selection.hover == -1
+          doAssert f.core.inspection.chosen.traces == @[f.idAt(3)], "the trace pointed at went"
+          doAssert f.shown("headers.trace trace.fieldRecord 0"))),
+      ("a click selects a trace", Step(proc (f: FrameInfo; wait: int): bool =
+        f.clickAt(wait, f.pointAt(5), twice = true)
+        result = wait > 12 and f.answered([f.idAt(5)])
+        if result:
+          doAssert f.core.inspection.chosen.by == cbSelection
+          let d = f.core.inspection.answer.traces[0]
+          for r in d.rows:
+            if r.field == "traceNumberInField": doAssert r.value == "6", r.value
+          doAssert f.shown("headers.trace trace.traceNumberInField 0")
+          f.shoot("headers-trace-header-segy.png"))),
+      ("its samples", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.trace tab data")
+        result = wait > 8 and f.shown("headers.data 0 0") and
+          f.core.inspection.answer.traces[0].samples.len == Samples
+        if result:
+          doAssert f.core.settings.headers.traceTab == ttData
+          doAssert ipTraceSamples in f.core.inspection.parts
+          let d = f.core.inspection.answer.traces[0]
+          for i in 0 ..< Samples: doAssert d.samples[i] == surveySample(0, 6, i), $i)),
+      ("the cursor's row", Step(proc (f: FrameInfo; wait: int): bool =
+        if wait == 1: f.moveMouse(f.pointAt(5))
+        result = wait > 6 and f.shown("headers.data cursor")
+        if result:
+          let r = f.markOf("headers.data cursor")
+          let table = f.markOf("headers.data")
+          doAssert r.pos.y >= table.pos.y and r.pos.y + r.size.y <= table.pos.y + table.size.y,
+            "the cursor's row is not in view: " & $r & " in " & $table
+          f.shoot("headers-trace-data-segy.png"))),
+      ("Ctrl + click a second", Step(proc (f: FrameInfo; wait: int): bool =
+        f.clickAt(wait, f.pointAt(9), twice = true, mods = {smCtrl}) # the plot had not the focus
+        result = wait > 12 and f.answered([f.idAt(5), f.idAt(9)]) and f.shown("headers.data 0 1")
+        if result:
+          doAssert f.core.inspection.answer.traces[1].samples[100] == surveySample(0, 10, 100))),
+      ("two columns, differences marked", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.trace tab header")
+        result = wait > 8 and f.answered([f.idAt(5), f.idAt(9)]) and
+          f.shown("headers.trace trace.fieldRecord 0") and
+          f.core.inspection.answer.traces[1].rows.len > 0
+        if result:
+          doAssert f.shown("headers.trace differs trace.traceNumberInField"),
+            "the channels that differ are not marked"
+          doAssert not f.shown("headers.trace differs trace.fieldRecord"),
+            "the same field record is marked"
+          f.shoot("headers-trace-two-segy.png")
+          # The first trace's values in view in the default layout (the window
+          # docked at the bottom right, about 400 pixels wide), without
+          # scrolling sideways.
+          let w = f.markOf("headers")
+          let v = f.markOf("headers.trace trace.fieldRecord 0")
+          doAssert v.pos.x >= w.pos.x and v.pos.x + v.size.x <= w.pos.x + w.size.x,
+            "the first value is out of view: " & $v & " in the window " & $w)),
+      ("cleared: the trace under the pointer", Step(proc (f: FrameInfo; wait: int): bool =
+        f.clickAt(wait, f.pointAt(11)) # a focusing click: the plot gets the keys
+        if wait == 8: f.pressKey(skEscape, true)
+        if wait == 9: f.pressKey(skEscape, false)
+        result = wait > 12 and f.core.selection.selected.len == 0 and f.answered([f.idAt(11)])
+        if result: doAssert f.core.inspection.chosen.by == cbPlotPointer)),
+      ("Follow the pointer off: empty", Step(proc (f: FrameInfo; wait: int): bool =
+        f.click(wait, "headers.follow")
+        if wait == 10: f.moveMouse(f.pointAt(13))
+        result = wait > 16
+        if result:
+          doAssert not f.core.settings.headers.followPointer
+          doAssert f.core.selection.hover >= 0, "the pointer is not over a trace"
+          doAssert f.core.inspection.chosen.by == cbNone, $f.core.inspection.chosen
+          doAssert not f.shown("headers.trace tab header"), "a trace is still shown"
+          doAssert f.core.inspection.answer.traces.len == 0
+          f.shoot("headers-trace-none-segy.png")))],
+      fx.dir / "cache")
+
+  # A drive that stops answering: a hung read of a trace header leaves the
+  # window drawing, and says so; a failing one says why.
+  block aDriveThatStopsAnswering:
+    install()
+    withFixtures fx:
+      let far = fx.dir / "far"
+      createDir(far)
+      copyFile(fx.surveySegy, far / "a.sgy")
+      var last = MonoTime()
+      var worst = initDuration()
+      var advanced = false
+      runSteps(far / "a.sgy", [
+        ("shown", Step(proc (f: FrameInfo; wait: int): bool =
+          f.laidOut and f.core.panels[0].shown.len == Channels and wait > 3)),
+        ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
+          f.click(wait, "headers.tab trace")
+          wait > 8 and f.core.settings.headers.tab == htTrace)),
+        ("a header read hangs", Step(proc (f: FrameInfo; wait: int): bool =
+          if wait == 1:
+            fault(far / "a.sgy", fkHang, {foHeaders})
+            f.moveMouse(f.pointAt(3))
+            last = getMonoTime()
+          let now = getMonoTime()
+          worst = max(worst, now - last)
+          last = now
+          if not advanced and hung() >= 1:
+            advanceFsClock(StallAfter + initDuration(seconds = 1)) # as if it had not answered since
+            advanced = true
+          result = advanced and wait > 10 and f.shown("headers.waiting")
+          if result:
+            doAssert f.core.inspection.waiting and f.core.inspection.chosen.traces == @[f.idAt(3)]
+            doAssert "not answering for" in f.core.headersWait.words, f.core.headersWait.words
+            f.shoot("headers-not-answering.png"))),
+        ("the drive answers", Step(proc (f: FrameInfo; wait: int): bool =
+          if wait == 1: release(far / "a.sgy")
+          result = wait > 3 and f.answered([f.idAt(3)]) and not f.shown("headers.waiting") and
+            f.shown("headers.trace trace.fieldRecord 0"))),
+        ("a header read fails", Step(proc (f: FrameInfo; wait: int): bool =
+          if wait == 1:
+            fault(far / "a.sgy", fkFail, {foHeaders})
+            f.moveMouse(f.pointAt(6))
+          result = wait > 3 and f.answered([f.idAt(6)]) and f.shown("headers.problem")
+          if result:
+            let d = f.core.inspection.answer.traces[0]
+            doAssert "cannot be read now" in d.problem and d.rows.len == 0, d.problem
+            release(far / "a.sgy")))],
+        fx.dir / "cache")
+      doAssert worst < initDuration(seconds = 5), "a frame waited " & $worst & " for the drive"
+      doAssert uiCalls().len == 0, "the UI thread called the file system:\n" & uiCalls().join("\n")
+
+  block theJoinedValues:
+    withFixtures fx:
+      let survey = fx.surveySps()
+      var files: seq[JoinFile]
+      for p in [survey.s, survey.r, survey.x]: files.add JoinFile(path: p, kind: jkSps)
+      runSteps(fx.stationsSegd(), @[
+        ("shown", Step(proc (f: FrameInfo; wait: int): bool = f.laidOut and wait > 3))] &
+        enlarge() & @[
+        ("trace tab", Step(proc (f: FrameInfo; wait: int): bool =
+          f.click(wait, "headers.tab trace")
+          wait > 8 and f.core.settings.headers.tab == htTrace)),
+        ("two traces", Step(proc (f: FrameInfo; wait: int): bool =
+          let base = f.core.sessions[0].base
+          if wait == 1:
+            f.apply Command(kind: ckSelect, traces: @[base + 1, base + SegdChannels + 1],
+              mode: smReplace)
+          wait > 4 and f.answered([base + 1, base + SegdChannels + 1]) and
+            f.shown("headers.trace ext1.receiverLineNumber 1"))),
+        ("joined", Step(proc (f: FrameInfo; wait: int): bool =
+          if wait == 1:
+            f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: files,
+              joinUnits: JoinUnits(survey: suMetres))
+          result = wait > 4 and f.core.joinReport.serial > 0 and not f.core.inspection.waiting and
+            f.shown("headers.trace keys.rcvX 1")
+          if result:
+            doAssert f.core.joinReport.outcome == joJoined, $f.core.joinReport.words
+            doAssert f.shown("headers.trace joined keys.rcvX 0"), "the joined receiver X is not marked"
+            doAssert not f.shown("headers.trace joined keys.rcvX 1"), "the other trace's is"
+            f.shoot("headers-trace-joined-segd.png")
+            let accent = f.theme.roles[rlAccent]
+            let lit = f.inked("headers.trace joined keys.rcvX 0", accent)
+            doAssert lit > 0, "the joined receiver X is not in the accent colour: " & $lit &
+              " pixels"
+            doAssert f.inked("headers.trace keys.rcvX 1", accent) == 0,
+              "the receiver X the survey lacks is in the accent colour"))],
+        fx.dir / "cache")
+
+  if shots.len > 0 and (privateFile("landSegd").len > 0 or privateFile("segy3d").len > 0):
+    withFixtures fx:
+      # Shown from a folder of the fixtures, linked under a neutral name: the
+      # Summary names that folder, not the computer's, and not the private file.
+      createDir(fx.dir / "examples")
+      var survey: seq[JoinFile]
+      for p in privateFiles("landSps", "landRps", "landXps"):
+        survey.add JoinFile(path: p, kind: jkSps)
+      for (key, name, segd) in [("segy3d", "segy3d", false), ("landSegd", "land", true)]:
+        let src = privateFile(key)
+        if src.len > 0:
+          let path = fx.dir / "examples" / (name & src.splitFile.ext)
+          createSymlink(src, path)
+          var steps = @[("shown", Step(proc (f: FrameInfo; wait: int): bool =
+            f.laidOut and wait > 10))]
+          steps.add enlarge()
+          steps.add tabShot("summary", "headers.tab summary", "headers-" & name & "-summary.png")
+          steps.add tabShot("file headers", "headers.tab file", "headers-" & name & "-file.png")
+          if segd:
+            steps.add tabShot("channel sets", "headers.file tab Channel sets",
+              "headers-" & name & "-sets.png")
+          else:
+            steps.add tabShot("binary", "headers.file tab Binary", "headers-" & name & "-binary.png")
+          steps.add tabShot("trace", "headers.tab trace", "headers-" & name & "-trace-none.png")
+          steps.add ("select two traces", Step(proc (f: FrameInfo; wait: int): bool =
+            if wait < 20: f.clickAt(wait, f.pointAt(40), twice = true)
+            else: f.clickAt(wait - 20, f.pointAt(41), mods = {smCtrl})
+            wait > 40 and f.core.inspection.answer.traces.len == 2 and
+              not f.core.inspection.waiting))
+          steps.add tabShot("header", "headers.trace tab header",
+            "headers-" & name & "-trace-header.png")
+          steps.add tabShot("data", "headers.trace tab data", "headers-" & name & "-trace-data.png")
+          if segd and survey.len == 3:
+            # joined with its survey, the headers' coordinates replaced: the
+            # values the join gave, marked
+            steps.add ("join", Step(proc (f: FrameInfo; wait: int): bool =
+              if wait == 1:
+                f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: survey,
+                  joinOptions: JoinOptions(coordinates: hcReplace),
+                  joinUnits: JoinUnits(survey: suUsFeet, file: suUsFeet))
+              result = f.core.joinReport.serial > 0 and f.core.joinUnderWay.job == NoJob and
+                not f.core.inspection.waiting and f.core.inspection.answer.traces.len == 2 and
+                f.core.inspection.answer.traces[0].joined != {}
+              if result: doAssert f.core.joinReport.outcome == joJoined))
+            var since = MonoTime()
+            steps.add ("its notice gone", Step(proc (f: FrameInfo; wait: int): bool =
+              if wait == 1: since = getMonoTime()
+              getMonoTime() - since > initDuration(seconds = 6))) # (a notice stays 5 s)
+            steps.add tabShot("joined", "headers.trace tab header",
+              "headers-" & name & "-trace-joined.png")
+            steps.add tabShot("summary joined", "headers.tab summary",
+              "headers-" & name & "-summary-joined.png")
+          runSteps(path, steps, fx.dir / "cache", limit = 3000)
+
+when isMainModule:
+  main()

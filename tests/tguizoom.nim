@@ -63,7 +63,7 @@ proc warned(f: FrameInfo): int =
 
 proc snapshot(path: string): Snapshot = (readFile(path), getLastModificationTime(path))
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let path = fx.surveySegy()
     let before = snapshot(path)
@@ -620,8 +620,6 @@ proc main() =
     echo "tguizoom: ", steps.len, " steps; traces read: ", counts
     doAssert snapshot(path) == before, "showing the file changed it"
 
-main()
-
 # ------------------------------------------------- screenshots of real data --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the example files present (they are
 # local only), the plot window is saved on a real record at two zoom levels
@@ -694,9 +692,16 @@ proc zoomShots(path, name: string; tracesPerInch, msPerInch: float64; centre: Da
   doAssert code == 0 and saved == 2, "no screenshots of " & path & " (stage " & $stage & ")"
   echo "tguizoom: saved ", dir / (name & "-1.png"), " and -2.png"
 
-if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
-  let landSegd = privateFile("landSegd")
-  if landSegd.len > 0:
-    createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-    zoomShots(landSegd, "zoom-land", 50, 400, DataPoint(x: 240, tMs: 250), 6,
-      DataPoint(x: 120, tMs: 700), DataPoint(x: 232, tMs: 330))
+proc main*() =
+
+  runMain()
+
+  if getEnv("VIEWSEG_SCREENSHOTS").len > 0:
+    let landSegd = privateFile("landSegd")
+    if landSegd.len > 0:
+      createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+      zoomShots(landSegd, "zoom-land", 50, 400, DataPoint(x: 240, tMs: 250), 6,
+        DataPoint(x: 120, tMs: 700), DataPoint(x: 232, tMs: 330))
+
+when isMainModule:
+  main()

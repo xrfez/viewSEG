@@ -31,75 +31,80 @@ proc start(simulate: set[StartupStep]; failures: var seq[StartupFailure]): int =
     onFailure: proc (f: StartupFailure) = got.add f).simulating(simulate))
   failures = got
 
-try:
-  block eachStepFails:
-    for step in StartupStep:
-      removeDir(logs)
+proc main*() =
+
+  try:
+    block eachStepFails:
+      for step in StartupStep:
+        removeDir(logs)
+        var failures: seq[StartupFailure]
+        let code = start({step}, failures)
+        doAssert code == 1, $step & ": exit code " & $code
+        doAssert failures.len == 1, $step & ": hook called " & $failures.len & " times"
+        let f = failures[0]
+        doAssert f.step == step, $f.step
+        doAssert ("could not " & $step & ".") in f.text, f.text
+        doAssert f.logFile == logs / failureLogName, f.logFile
+        doAssert f.logFile in f.text, "the message names the log file: " & f.text
+        let logged = readFile(f.logFile)
+        doAssert f.text in logged, logged
+        echo "tstartup: ", step, ": reported and logged"
+
+    block messageWording:
+      let t = failureText(ssGlContext, "GLX: no matching config", "/x/startup-failure.log")
+      doAssert t.startsWith("viewSEG cannot start: it could not create an OpenGL 3.3 core context.")
+      doAssert "GLX: no matching config" in t and "update it" in t
+      doAssert t.endsWith("This message is saved in /x/startup-failure.log")
+      doAssert "saved in" notin failureText(ssVideo, "", "") # no log file: not mentioned
+
+    block unwritableLogFolder:
+      # A log folder that cannot be made still reports the failure, without a file.
+      writeFile(tmp / "a-file", "")
+      var got: seq[StartupFailure]
+      let code = run(RunOptions(logDir: some(tmp / "a-file" / "logs"),
+        onFailure: proc (f: StartupFailure) = got.add f).simulating({ssWindow}))
+      doAssert code == 1 and got.len == 1
+      doAssert got[0].logFile == "" and "saved in" notin got[0].text, got[0].text
+
+    block noStderr:
+      # A program started from the desktop (on Windows, say) may have no usable
+      # stderr, and Nim raises when a write fails: the failure must still reach
+      # the message box (the hook here). Closing descriptor 2 makes writes fail
+      # that way. SDL video is not started (simulated), so nothing else takes
+      # descriptor 2 meanwhile.
+      when defined(posix):
+        let saved = dup(2)
+        discard posix.close(2)
+        var failures: seq[StartupFailure]
+        var code = -1
+        var raised = ""
+        try:
+          code = start({ssVideo}, failures)
+        except IOError as e:
+          raised = e.msg
+        discard dup2(saved, 2)
+        discard posix.close(saved)
+        doAssert raised.len == 0, "a failed write to stderr stopped the report: " & raised
+        doAssert code == 1 and failures.len == 1, $code & ", " & $failures.len
+
+    block startsAfterwards:
       var failures: seq[StartupFailure]
-      let code = start({step}, failures)
-      doAssert code == 1, $step & ": exit code " & $code
-      doAssert failures.len == 1, $step & ": hook called " & $failures.len & " times"
-      let f = failures[0]
-      doAssert f.step == step, $f.step
-      doAssert ("could not " & $step & ".") in f.text, f.text
-      doAssert f.logFile == logs / failureLogName, f.logFile
-      doAssert f.logFile in f.text, "the message names the log file: " & f.text
-      let logged = readFile(f.logFile)
-      doAssert f.text in logged, logged
-      echo "tstartup: ", step, ": reported and logged"
+      let code = start({}, failures)
+      if code != 0:
+        echo "FAIL tstartup: the window could not be opened: ", failures
+      doAssert code == 0 and failures.len == 0
 
-  block messageWording:
-    let t = failureText(ssGlContext, "GLX: no matching config", "/x/startup-failure.log")
-    doAssert t.startsWith("viewSEG cannot start: it could not create an OpenGL 3.3 core context.")
-    doAssert "GLX: no matching config" in t and "update it" in t
-    doAssert t.endsWith("This message is saved in /x/startup-failure.log")
-    doAssert "saved in" notin failureText(ssVideo, "", "") # no log file: not mentioned
-
-  block unwritableLogFolder:
-    # A log folder that cannot be made still reports the failure, without a file.
-    writeFile(tmp / "a-file", "")
-    var got: seq[StartupFailure]
-    let code = run(RunOptions(logDir: some(tmp / "a-file" / "logs"),
-      onFailure: proc (f: StartupFailure) = got.add f).simulating({ssWindow}))
-    doAssert code == 1 and got.len == 1
-    doAssert got[0].logFile == "" and "saved in" notin got[0].text, got[0].text
-
-  block noStderr:
-    # A program started from the desktop (on Windows, say) may have no usable
-    # stderr, and Nim raises when a write fails: the failure must still reach
-    # the message box (the hook here). Closing descriptor 2 makes writes fail
-    # that way. SDL video is not started (simulated), so nothing else takes
-    # descriptor 2 meanwhile.
-    when defined(posix):
-      let saved = dup(2)
-      discard posix.close(2)
+    block realFailure:
+      # Last: SDL keeps its own copy of the environment once it has read it.
+      putEnv("SDL_VIDEO_DRIVER", "no-such-driver")
       var failures: seq[StartupFailure]
-      var code = -1
-      var raised = ""
-      try:
-        code = start({ssVideo}, failures)
-      except IOError as e:
-        raised = e.msg
-      discard dup2(saved, 2)
-      discard posix.close(saved)
-      doAssert raised.len == 0, "a failed write to stderr stopped the report: " & raised
-      doAssert code == 1 and failures.len == 1, $code & ", " & $failures.len
+      let code = start({}, failures)
+      doAssert code == 1 and failures.len == 1, $code
+      doAssert failures[0].step == ssVideo
+      doAssert failures[0].reason.len > 0, "SDL gave a reason"
+      echo "tstartup: unknown video driver: ", failures[0].reason
+  finally:
+    removeDir(tmp)
 
-  block startsAfterwards:
-    var failures: seq[StartupFailure]
-    let code = start({}, failures)
-    if code != 0:
-      echo "FAIL tstartup: the window could not be opened: ", failures
-    doAssert code == 0 and failures.len == 0
-
-  block realFailure:
-    # Last: SDL keeps its own copy of the environment once it has read it.
-    putEnv("SDL_VIDEO_DRIVER", "no-such-driver")
-    var failures: seq[StartupFailure]
-    let code = start({}, failures)
-    doAssert code == 1 and failures.len == 1, $code
-    doAssert failures[0].step == ssVideo
-    doAssert failures[0].reason.len > 0, "SDL gave a reason"
-    echo "tstartup: unknown video driver: ", failures[0].reason
-finally:
-  removeDir(tmp)
+when isMainModule:
+  main()

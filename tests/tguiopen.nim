@@ -40,81 +40,86 @@ func has(lines: seq[Message]; part: string; level = mlInfo): bool =
     if part in m.text and m.level == level: return true
   false
 
-withFixtures fx:
-  let survey = fx.surveySegy()
-  let segd = fx.twoSetSegd()
-  let before = (snapshot(survey), snapshot(segd))
-  let cache = fx.dir / "cache" / "index"
-  var
-    opened = -1           # the frame both files were open in
-    scan = NoJob
-    bar, cancel: Rect
-    accent, barPixels = 0
-    clickAt = -1
-    posted = false
-    cancelled = -1
-    since = getMonoTime() # when the frames the give-up counts began
-    lines: seq[Message]
-  proc onFrame(f: FrameInfo) =
-    let k = f.core.findPanel(MainPanel)
-    let shown = f.core.shownFile(k)
-    if not posted and shown >= 0 and f.core.sessions[shown].path == survey:
-      postShellEvent ShellEvent(kind: sePathsChosen, dialog: dkOpenFile, paths: @[segd])
-      posted = true
-    if opened < 0 and shown >= 0 and f.core.sessions[shown].path == segd and
-        f.core.sessions.len == 1 and f.messages.has("Opened " & survey.extractFilename):
-      opened = f.index
-      since = getMonoTime()
-      scan = f.core.jobs.submit(JobSpec(title: "Scan the folder", lane: jlBackground),
-        scanning)
-    elif scan != NoJob and clickAt < 0 and f.core.jobs.info(scan).get.state == jsRunning and
-        f.core.jobs.info(scan).get.progress.done == 50 and f.markOf("status.cancel").size.x > 0:
-      bar = f.markOf("status.progress")
-      cancel = f.markOf("status.cancel")
-      let pixels = f.readFrame()
-      let a = f.theme.roles[rlAccent]
-      let y = int(bar.pos.y + bar.size.y / 2)
-      for x in int(bar.pos.x) ..< int(bar.pos.x + bar.size.x):
-        inc barPixels
-        if distance(pixels[y * f.width + x], a) <= 2: inc accent
-      let dir = getEnv("VIEWSEG_SCREENSHOTS")
-      if dir.len > 0:
-        createDir(dir)
-        doAssert f.savePng(dir / "open-progress.png")
-      clickAt = f.index
-      since = getMonoTime()
-      f.moveMouse(cancel.centre)
-    elif clickAt >= 0 and f.index == clickAt + 2:
-      f.pressMouse(cancel.centre, down = true)
-    elif clickAt >= 0 and f.index == clickAt + 4:
-      f.pressMouse(cancel.centre, down = false)
-    elif clickAt >= 0 and cancelled < 0 and f.core.jobs.info(scan).get.state == jsCancelled:
-      cancelled = f.index
-    elif cancelled >= 0 and f.index > cancelled + 1 and
-        f.messages.has("Scan the folder was cancelled."):
-      lines = f.messages
-      f.stop()
-    elif overdue(f.index - (if clickAt >= 0: clickAt elif opened >= 0: opened else: 0), 600,
-        since):
-      lines = f.messages # given up: the checks below say what is missing
-      f.stop()
+proc main*() =
 
-  let code = run(RunOptions(openPaths: @[survey], indexCacheDir: some(cache),
-    theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert opened >= 0, "the files did not both open: " & $lines.len
-  doAssert lines.has("Opened " & survey.extractFilename & ": 72 traces in 3 gathers."),
-    $lines
-  doAssert lines.has("Opened " & segd.extractFilename & ": ")
-  doAssert not lines.has("Closed "), "the file shown first was closed, quietly"
-  doAssert bar.size.x > 50, "no progress bar: " & $bar
-  doAssert accent >= barPixels div 2 - 8 and accent <= barPixels div 2 + 8,
-    "the bar is not half full: " & $accent & " of " & $barPixels & " pixels"
-  doAssert cancel.size.x > 0, "no Cancel button"
-  doAssert cancelled >= 0, "Cancel did nothing"
-  doAssert lines.has("Scan the folder was cancelled."), $lines
-  var caches = 0
-  for _ in walkFiles(cache / "*.pidx"): inc caches
-  doAssert caches == 2, $caches & " index caches in " & cache
-  doAssert (snapshot(survey), snapshot(segd)) == before, "opening changed a file"
-  echo "tguiopen: opened both files by frame ", opened, ", cancelled at frame ", cancelled
+  withFixtures fx:
+    let survey = fx.surveySegy()
+    let segd = fx.twoSetSegd()
+    let before = (snapshot(survey), snapshot(segd))
+    let cache = fx.dir / "cache" / "index"
+    var
+      opened = -1           # the frame both files were open in
+      scan = NoJob
+      bar, cancel: Rect
+      accent, barPixels = 0
+      clickAt = -1
+      posted = false
+      cancelled = -1
+      since = getMonoTime() # when the frames the give-up counts began
+      lines: seq[Message]
+    proc onFrame(f: FrameInfo) =
+      let k = f.core.findPanel(MainPanel)
+      let shown = f.core.shownFile(k)
+      if not posted and shown >= 0 and f.core.sessions[shown].path == survey:
+        postShellEvent ShellEvent(kind: sePathsChosen, dialog: dkOpenFile, paths: @[segd])
+        posted = true
+      if opened < 0 and shown >= 0 and f.core.sessions[shown].path == segd and
+          f.core.sessions.len == 1 and f.messages.has("Opened " & survey.extractFilename):
+        opened = f.index
+        since = getMonoTime()
+        scan = f.core.jobs.submit(JobSpec(title: "Scan the folder", lane: jlBackground),
+          scanning)
+      elif scan != NoJob and clickAt < 0 and f.core.jobs.info(scan).get.state == jsRunning and
+          f.core.jobs.info(scan).get.progress.done == 50 and f.markOf("status.cancel").size.x > 0:
+        bar = f.markOf("status.progress")
+        cancel = f.markOf("status.cancel")
+        let pixels = f.readFrame()
+        let a = f.theme.roles[rlAccent]
+        let y = int(bar.pos.y + bar.size.y / 2)
+        for x in int(bar.pos.x) ..< int(bar.pos.x + bar.size.x):
+          inc barPixels
+          if distance(pixels[y * f.width + x], a) <= 2: inc accent
+        let dir = getEnv("VIEWSEG_SCREENSHOTS")
+        if dir.len > 0:
+          createDir(dir)
+          doAssert f.savePng(dir / "open-progress.png")
+        clickAt = f.index
+        since = getMonoTime()
+        f.moveMouse(cancel.centre)
+      elif clickAt >= 0 and f.index == clickAt + 2:
+        f.pressMouse(cancel.centre, down = true)
+      elif clickAt >= 0 and f.index == clickAt + 4:
+        f.pressMouse(cancel.centre, down = false)
+      elif clickAt >= 0 and cancelled < 0 and f.core.jobs.info(scan).get.state == jsCancelled:
+        cancelled = f.index
+      elif cancelled >= 0 and f.index > cancelled + 1 and
+          f.messages.has("Scan the folder was cancelled."):
+        lines = f.messages
+        f.stop()
+      elif overdue(f.index - (if clickAt >= 0: clickAt elif opened >= 0: opened else: 0), 600,
+          since):
+        lines = f.messages # given up: the checks below say what is missing
+        f.stop()
+
+    let code = run(RunOptions(openPaths: @[survey], indexCacheDir: some(cache),
+      theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"), onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert opened >= 0, "the files did not both open: " & $lines.len
+    doAssert lines.has("Opened " & survey.extractFilename & ": 72 traces in 3 gathers."),
+      $lines
+    doAssert lines.has("Opened " & segd.extractFilename & ": ")
+    doAssert not lines.has("Closed "), "the file shown first was closed, quietly"
+    doAssert bar.size.x > 50, "no progress bar: " & $bar
+    doAssert accent >= barPixels div 2 - 8 and accent <= barPixels div 2 + 8,
+      "the bar is not half full: " & $accent & " of " & $barPixels & " pixels"
+    doAssert cancel.size.x > 0, "no Cancel button"
+    doAssert cancelled >= 0, "Cancel did nothing"
+    doAssert lines.has("Scan the folder was cancelled."), $lines
+    var caches = 0
+    for _ in walkFiles(cache / "*.pidx"): inc caches
+    doAssert caches == 2, $caches & " index caches in " & cache
+    doAssert (snapshot(survey), snapshot(segd)) == before, "opening changed a file"
+    echo "tguiopen: opened both files by frame ", opened, ", cancelled at frame ", cancelled
+
+when isMainModule:
+  main()

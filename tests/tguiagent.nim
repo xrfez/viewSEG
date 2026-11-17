@@ -249,296 +249,301 @@ proc shortLived(s: Scenario) {.thread.} =
   c.close()
   calls.send("gone")
 
-withFixtures fx:
-  let path = fx.surveySegy()
-  let before = (readFile(path), getLastModificationTime(path))
-  let socket = fx.dir / "agent.sock"
+proc main*() =
 
-  block offByDefault:
-    var frame = 0
-    var wait = 0 # frames since the stage began, at `since`
-    var since = getMonoTime()
-    var problem = ""
-    var stage = 0
-    proc onFrame(f: FrameInfo) =
-      inc frame
-      inc wait
-      template fail(why: string) =
-        problem = why
-        f.stop()
-      template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
-      # The server starts and stops on threads of its own: stages 1 and 2
-      # wait for what they check, and fail with what still does not hold.
-      template waitFor(why: string) =
-        if overdue(wait, 600, since): fail(why)
-      if stage == 0 and frame == 10:
-        if f.agentControl.running: fail("agent control is on by default")
-        elif listeningSockets() != 0: fail("a listening socket by default")
-        elif fileExists(socket) or symlinkExists(socket): fail("a socket by default")
-        elif f.markOf("status.agent").size.x > 0: fail("a sign while off")
-        else:
-          f.setAgentControl(true)
-          next 1
-      elif stage == 1 and wait > 5:
-        if f.markOf("status.agent connected").size.x > 0: fail("connected, with nobody")
-        elif listeningSockets() != 1: waitFor("no listening socket after turning it on")
-        elif f.markOf("status.agent").size.x <= 0: waitFor("no sign while on")
-        elif not f.messages.anyIt("Agent control is on" in it.text): waitFor("not said")
-        else:
-          f.setAgentControl(false)
-          next 2
-      elif stage == 2 and wait > 5:
-        if listeningSockets() != 0 or f.agentControl.running: waitFor("still listening")
-        elif fileExists(socket) or symlinkExists(socket): waitFor("the socket is still there")
-        elif f.markOf("status.agent").size.x > 0: waitFor("a sign while off")
-        else: f.stop()
-    let code = run(RunOptions(windowSize: (1200, 800), theme: forceDark,
-      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-      agentSocket: socket, onFrame: onFrame))
-    doAssert code == 0 and problem.len == 0, problem
-    echo "tguiagent: off by default, on and off from the menu's way"
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let before = (readFile(path), getLastModificationTime(path))
+    let socket = fx.dir / "agent.sock"
 
-  block theSignInView:
-    # a full status bar at 1280 pixels: every readout field (wider than the
-    # window); the sign comes first, so it is in view
-    var frame = 0
-    let since = getMonoTime()
-    var problem = ""
-    proc onFrame(f: FrameInfo) =
-      inc frame
-      if frame == 3:
-        var s = f.core.settings
-        s.readout.setLen 0
-        for x in ReadoutField: s.readout.add x
-        f.apply Command(kind: ckSettings, settings: s)
-      elif frame >= 10:
-        # the sign once the server, started on a thread of its own, listens
-        let sign = f.markOf("status.agent")
-        let bar = f.markOf("statusbar")
-        if sign.size.x <= 0:
-          if overdue(frame, 10, since):
-            problem = "no sign"
-            f.stop()
-        else:
-          if bar.size.x <= 0: problem = "no status bar"
-          elif sign.pos.x < bar.pos.x or sign.pos.x + sign.size.x > bar.pos.x + bar.size.x:
-            problem = "the sign is out of view: it spans " & $sign.pos.x & " to " &
-              $(sign.pos.x + sign.size.x) & " in a bar " & $bar.size.x & " wide"
+    block offByDefault:
+      var frame = 0
+      var wait = 0 # frames since the stage began, at `since`
+      var since = getMonoTime()
+      var problem = ""
+      var stage = 0
+      proc onFrame(f: FrameInfo) =
+        inc frame
+        inc wait
+        template fail(why: string) =
+          problem = why
           f.stop()
-    let code = run(RunOptions(windowSize: (1280, 800), theme: forceDark,
-      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-      agent: true, agentSocket: socket, onFrame: onFrame))
-    doAssert code == 0 and problem.len == 0, problem
-    echo "tguiagent: the sign in view in a full status bar at 1280 pixels"
-
-  block theSignLingers:
-    calls.open()
-    seen.open()
-    var thread: Thread[Scenario]
-    var started = false
-    var stage = 0 # 0 connecting, 1 connected, 2 gone: lingering, 3 back to "agents: on"
-    var problem = ""
-    let since = getMonoTime()
-    var gone, back: MonoTime # when the agent went, and when the sign said so
-    proc ink(f: FrameInfo): Rgba =
-      ## The sign's colour: of its pixels, the one farthest from its
-      ## background (the commonest), the core of a stroke.
-      let shot = f.readFrame()
-      let r = f.markOf("status.agent")
-      var counts: CountTable[uint32]
-      template key(c: Rgba): uint32 = (c.r.uint32 shl 16) or (c.g.uint32 shl 8) or c.b.uint32
-      for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
-        for x in int(r.pos.x) ..< int(r.pos.x + r.size.x):
-          counts.inc key(shot[y * f.width + x])
-      let bg = counts.largest[0]
-      let back = Rgba(r: uint8(bg shr 16), g: uint8((bg shr 8) and 255), b: uint8(bg and 255))
-      var far = -1
-      for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
-        for x in int(r.pos.x) ..< int(r.pos.x + r.size.x):
-          let c = shot[y * f.width + x]
-          if distance(c, back) > far: (result, far) = (c, distance(c, back))
-    proc nearest(c: Rgba; choices: openArray[Rgba]): int =
-      for i, x in choices:
-        if distance(c, x) < distance(c, choices[result]): result = i
-    proc onFrame(f: FrameInfo) =
-      template fail(why: string) =
-        problem = why
-        if stage < 2: seen.send(false) # (the agent waits for it)
-        stage = 3
-        f.stop()
-      if not started:
-        createThread(thread, shortLived, (socket, path))
-        started = true
-      let (ok, msg) = calls.tryRecv()
-      if ok and msg.startsWith("problem"): fail(msg)
-      let warning = f.theme.roles[rlWarning]
-      let dim = f.theme.roles[rlTextDim]
-      let halfway = mix(warning, dim, 0.5)
-      let colours = [warning, halfway, dim]
-      case stage
-      of 0:
-        if ok and msg == "connected": stage = 1
-      of 1:
-        # (the command's answer came before the agent said it is connected)
-        if f.markOf("status.agent connected").size.x > 0 and
-            f.agentControl.lastCall == "command show file" and
-            f.ink.nearest(colours) == 0:
-          seen.send(true)
-          stage = 2
-      of 2:
-        if ok and msg == "gone": gone = getMonoTime()
-        if gone != MonoTime() and f.agentControl.clients == 0:
-          if f.markOf("status.agent lingering").size.x > 0:
-            if f.agentControl.lastCall != "state": fail("the last call: " &
-              f.agentControl.lastCall)
-            elif f.markOf("status.agent connected").size.x > 0: fail("connected, and lingering")
-            elif f.ink.nearest(colours) != 1:
-              fail("the lingering sign is not halfway to dim: " & $f.ink)
-          elif getMonoTime() - gone < initDuration(seconds = 1):
-            fail("no lingering sign after the agent went")
+        template next(n: int) = (stage, wait, since) = (n, 0, getMonoTime())
+        # The server starts and stops on threads of its own: stages 1 and 2
+        # wait for what they check, and fail with what still does not hold.
+        template waitFor(why: string) =
+          if overdue(wait, 600, since): fail(why)
+        if stage == 0 and frame == 10:
+          if f.agentControl.running: fail("agent control is on by default")
+          elif listeningSockets() != 0: fail("a listening socket by default")
+          elif fileExists(socket) or symlinkExists(socket): fail("a socket by default")
+          elif f.markOf("status.agent").size.x > 0: fail("a sign while off")
           else:
-            back = getMonoTime()
-            if f.ink.nearest(colours) != 2: fail("the sign is not dim again: " & $f.ink)
-            else: stage = 3
-      else: f.stop()
-      if stage < 3 and getMonoTime() - since > Patience:
-        fail("stopped at stage " & $stage & ": the last call " & f.agentControl.lastCall &
-          ", " & $f.agentControl.clients & " connected, the sign " & $f.ink & " (warning " &
-          $warning & ", dim " & $dim & ")")
-    let code = run(RunOptions(windowSize: (1280, 800), theme: forceDark,
-      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-      agent: true, agentSocket: socket, onFrame: onFrame))
-    joinThread(thread)
-    calls.close()
-    seen.close()
-    doAssert code == 0 and problem.len == 0, problem
-    let lingered = (back - gone).inMilliseconds
-    # (the call was answered before the agent said it had gone)
-    doAssert lingered >= SignLinger.inMilliseconds - 1000, "it lingered " & $lingered & " ms"
-    echo "tguiagent: the sign said the agent's last call for ", lingered,
-      " ms after it went"
+            f.setAgentControl(true)
+            next 1
+        elif stage == 1 and wait > 5:
+          if f.markOf("status.agent connected").size.x > 0: fail("connected, with nobody")
+          elif listeningSockets() != 1: waitFor("no listening socket after turning it on")
+          elif f.markOf("status.agent").size.x <= 0: waitFor("no sign while on")
+          elif not f.messages.anyIt("Agent control is on" in it.text): waitFor("not said")
+          else:
+            f.setAgentControl(false)
+            next 2
+        elif stage == 2 and wait > 5:
+          if listeningSockets() != 0 or f.agentControl.running: waitFor("still listening")
+          elif fileExists(socket) or symlinkExists(socket): waitFor("the socket is still there")
+          elif f.markOf("status.agent").size.x > 0: waitFor("a sign while off")
+          else: f.stop()
+      let code = run(RunOptions(windowSize: (1200, 800), theme: forceDark,
+        userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+        agentSocket: socket, onFrame: onFrame))
+      doAssert code == 0 and problem.len == 0, problem
+      echo "tguiagent: off by default, on and off from the menu's way"
 
-  block anAgentKillsATrace:
-    results.open()
-    var thread: Thread[Scenario]
-    var frame = 0
-    let since = getMonoTime()
-    var started, connected, signSeen, done = false
-    var problem = ""
-    var got: seq[(string, string)]
-    var ink: PlotInk
-    var lines, commands = 0
-    proc onFrame(f: FrameInfo) =
-      inc frame
-      if not started:
-        createThread(thread, agent, (socket, relativePath(path, getAppDir())))
-        started = true
-      var more = true
-      while more:
-        let (ok, msg) = results.tryRecv()
-        more = ok
-        if ok:
-          got.add msg
-          case msg[0]
-          of "connected": connected = true
-          of "problem":
-            problem = msg[1]
+    block theSignInView:
+      # a full status bar at 1280 pixels: every readout field (wider than the
+      # window); the sign comes first, so it is in view
+      var frame = 0
+      let since = getMonoTime()
+      var problem = ""
+      proc onFrame(f: FrameInfo) =
+        inc frame
+        if frame == 3:
+          var s = f.core.settings
+          s.readout.setLen 0
+          for x in ReadoutField: s.readout.add x
+          f.apply Command(kind: ckSettings, settings: s)
+        elif frame >= 10:
+          # the sign once the server, started on a thread of its own, listens
+          let sign = f.markOf("status.agent")
+          let bar = f.markOf("statusbar")
+          if sign.size.x <= 0:
+            if overdue(frame, 10, since):
+              problem = "no sign"
+              f.stop()
+          else:
+            if bar.size.x <= 0: problem = "no status bar"
+            elif sign.pos.x < bar.pos.x or sign.pos.x + sign.size.x > bar.pos.x + bar.size.x:
+              problem = "the sign is out of view: it spans " & $sign.pos.x & " to " &
+                $(sign.pos.x + sign.size.x) & " in a bar " & $bar.size.x & " wide"
             f.stop()
-          of "done":
-            done = true
-            for m in f.messages:
-              if "test agent 1 (agent " in m.text: inc lines
-              if "test agent 1 (agent 1): command {" in m.text: inc commands
-            ink = plotInk(f.theme, f.core.panels[0].layers[0].display)
-            f.stop()
-          else: discard
-      if connected and not done and f.markOf("status.agent connected").size.x > 0:
-        signSeen = true
-      if getMonoTime() - since > Patience * 3: # frames are fast under Xvfb
-        problem = "the agent did not finish"
-        f.stop()
-    # the agent names the fixture relative to the program's folder, as one in a
-    # container must (it cannot know the program's own paths)
-    let relative = relativePath(path, getAppDir())
-    doAssert not relative.isAbsolute
-    let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
-      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-      agent: true, agentSocket: socket, onFrame: onFrame))
-    joinThread(thread)
-    results.close()
-    doAssert code == 0, "run() exit code " & $code
-    doAssert problem.len == 0, problem
-    doAssert done, "the agent did not finish"
-    doAssert signSeen, "no sign of the agent in the status bar"
-    # every command; the calls that change nothing once each (the rest so
-    # soon after are counted, not written)
-    doAssert commands == 10, "Messages holds " & $commands & " of the agent's 10 commands"
-    doAssert lines >= 12, "Messages holds " & $lines & " lines of the agent's calls"
-    var found: Table[string, string]
-    for (k, v) in got: found[k] = v
-    let view = parseJson(found["view"])
-    let (lo, hi) = (view["traces"]["lo"].getFloat, view["traces"]["hi"].getFloat)
+      let code = run(RunOptions(windowSize: (1280, 800), theme: forceDark,
+        userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+        agent: true, agentSocket: socket, onFrame: onFrame))
+      doAssert code == 0 and problem.len == 0, problem
+      echo "tguiagent: the sign in view in a full status bar at 1280 pixels"
 
-    proc inked(png: string): (int, int) =
-      ## Pixels of position 3's band that are not the paper, of those looked at.
-      let (pixels, w, h) = decodedPng(decode(png))
-      let ppt = float(w) / (hi - lo)
-      let centre = (3.0 - lo) * ppt - 0.5
-      for y in 0 ..< h:
-        for x in int(ceil(centre - 0.4 * ppt)) .. int(floor(centre + 0.4 * ppt)):
-          inc result[1]
-          if not close(pixels[y * w + x], ink.background): inc result[0]
+    block theSignLingers:
+      calls.open()
+      seen.open()
+      var thread: Thread[Scenario]
+      var started = false
+      var stage = 0 # 0 connecting, 1 connected, 2 gone: lingering, 3 back to "agents: on"
+      var problem = ""
+      let since = getMonoTime()
+      var gone, back: MonoTime # when the agent went, and when the sign said so
+      proc ink(f: FrameInfo): Rgba =
+        ## The sign's colour: of its pixels, the one farthest from its
+        ## background (the commonest), the core of a stroke.
+        let shot = f.readFrame()
+        let r = f.markOf("status.agent")
+        var counts: CountTable[uint32]
+        template key(c: Rgba): uint32 = (c.r.uint32 shl 16) or (c.g.uint32 shl 8) or c.b.uint32
+        for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
+          for x in int(r.pos.x) ..< int(r.pos.x + r.size.x):
+            counts.inc key(shot[y * f.width + x])
+        let bg = counts.largest[0]
+        let back = Rgba(r: uint8(bg shr 16), g: uint8((bg shr 8) and 255), b: uint8(bg and 255))
+        var far = -1
+        for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
+          for x in int(r.pos.x) ..< int(r.pos.x + r.size.x):
+            let c = shot[y * f.width + x]
+            if distance(c, back) > far: (result, far) = (c, distance(c, back))
+      proc nearest(c: Rgba; choices: openArray[Rgba]): int =
+        for i, x in choices:
+          if distance(c, x) < distance(c, choices[result]): result = i
+      proc onFrame(f: FrameInfo) =
+        template fail(why: string) =
+          problem = why
+          if stage < 2: seen.send(false) # (the agent waits for it)
+          stage = 3
+          f.stop()
+        if not started:
+          createThread(thread, shortLived, (socket, path))
+          started = true
+        let (ok, msg) = calls.tryRecv()
+        if ok and msg.startsWith("problem"): fail(msg)
+        let warning = f.theme.roles[rlWarning]
+        let dim = f.theme.roles[rlTextDim]
+        let halfway = mix(warning, dim, 0.5)
+        let colours = [warning, halfway, dim]
+        case stage
+        of 0:
+          if ok and msg == "connected": stage = 1
+        of 1:
+          # (the command's answer came before the agent said it is connected)
+          if f.markOf("status.agent connected").size.x > 0 and
+              f.agentControl.lastCall == "command show file" and
+              f.ink.nearest(colours) == 0:
+            seen.send(true)
+            stage = 2
+        of 2:
+          if ok and msg == "gone": gone = getMonoTime()
+          if gone != MonoTime() and f.agentControl.clients == 0:
+            if f.markOf("status.agent lingering").size.x > 0:
+              if f.agentControl.lastCall != "state": fail("the last call: " &
+                f.agentControl.lastCall)
+              elif f.markOf("status.agent connected").size.x > 0: fail("connected, and lingering")
+              elif f.ink.nearest(colours) != 1:
+                fail("the lingering sign is not halfway to dim: " & $f.ink)
+            elif getMonoTime() - gone < initDuration(seconds = 1):
+              fail("no lingering sign after the agent went")
+            else:
+              back = getMonoTime()
+              if f.ink.nearest(colours) != 2: fail("the sign is not dim again: " & $f.ink)
+              else: stage = 3
+        else: f.stop()
+        if stage < 3 and getMonoTime() - since > Patience:
+          fail("stopped at stage " & $stage & ": the last call " & f.agentControl.lastCall &
+            ", " & $f.agentControl.clients & " connected, the sign " & $f.ink & " (warning " &
+            $warning & ", dim " & $dim & ")")
+      let code = run(RunOptions(windowSize: (1280, 800), theme: forceDark,
+        userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+        agent: true, agentSocket: socket, onFrame: onFrame))
+      joinThread(thread)
+      calls.close()
+      seen.close()
+      doAssert code == 0 and problem.len == 0, problem
+      let lingered = (back - gone).inMilliseconds
+      # (the call was answered before the agent said it had gone)
+      doAssert lingered >= SignLinger.inMilliseconds - 1000, "it lingered " & $lingered & " ms"
+      echo "tguiagent: the sign said the agent's last call for ", lingered,
+        " ms after it went"
 
-    let (was, seen) = inked(found["before"])
-    let (now, _) = inked(found["after"])
-    echo "tguiagent: position 3's band: ", was, " of ", seen, " pixels inked before the kill, ",
-      now, " after"
-    doAssert seen > 1000 and was > 50, "the trace was blank before: " & $was
-    doAssert now == 0, "the killed trace's band: " & $now & " pixels of ink"
-    # turned: the same view, time across, the killed trace's band a row
-    let parts = found["turned"].split('|')
-    doAssert parts[0] == "time across", found["turned"]
-    let tv = parseJson(parts[1])
-    doAssert tv["traces"] == view["traces"] and tv["timeMs"] == view["timeMs"],
-      "the turn moved the view: " & parts[1] & " was " & $view
-    proc inkedRows(png: string; position: float): (int, int) =
-      ## Pixels of `position`'s band, a row when time is across, that are not
-      ## the paper, of those looked at.
-      let (pixels, w, h) = decodedPng(decode(png))
-      let ppt = float(h) / (hi - lo)
-      let centre = (position - lo) * ppt - 0.5
-      for y in int(ceil(centre - 0.4 * ppt)) .. int(floor(centre + 0.4 * ppt)):
-        for x in 0 ..< w:
-          inc result[1]
-          if not close(pixels[y * w + x], ink.background): inc result[0]
-    let (killedRow, rowSeen) = inkedRows(found["turned shot"], 3)
-    let (nextRow, _) = inkedRows(found["turned shot"], 4)
-    echo "tguiagent: turned, position 3's row: ", killedRow, " of ", rowSeen,
-      " pixels inked, position 4's: ", nextRow
-    doAssert rowSeen > 1000 and killedRow == 0 and nextRow > 50,
-      "turned: the killed trace's row " & $killedRow & ", the next one's " & $nextRow
-    let killed = found["killed"].splitWhitespace
-    doAssert parseJson(killed[0]) == %*[parseInt(killed[1])], found["killed"]
-    doAssert parseFloat(found["channel"]) == float(Channels - 3), found["channel"]
-    doAssert "window: " in found["window"], found["window"]
-    doAssert found["program"] == getAppDir(), found["program"]
-    let (shownMap, sw, sh) = decodedPng(decode(found["map shown"]))
-    let (hiddenMap, hw, hh) = decodedPng(decode(found["map hidden"]))
-    doAssert (sw, sh) == (hw, hh) and sw > 100 and sh > 100, $(sw, sh, hw, hh)
-    var gone = 0
-    for i in 0 ..< shownMap.len:
-      if not close(shownMap[i], hiddenMap[i]): inc gone
-    echo "tguiagent: the map's receivers hidden: ", gone, " pixels changed"
-    doAssert gone > 20, "hiding the receivers changed " & $gone & " pixels of the map"
-    let pp = found["perPixel"].splitWhitespace
-    doAssert abs(parseFloat(pp[0]) / parseFloat(pp[1]) - 1) < 1e-6,
-      "the map's view was not taken: " & found["perPixel"]
-    doAssert found["headers"] == "Summary SEG-Y " & $SurveyTraces, found["headers"]
-    let size = found["headers shot"].splitWhitespace # "headers: W x H pixels"
-    doAssert size[0] == "headers:" and parseInt(size[1]) > 100 and parseInt(size[3]) > 100,
-      found["headers shot"]
-    doAssert found["hidden picture"] == "nothing to draw", found["hidden picture"]
-    doAssert "hides every trace" in found["hidden shot"], found["hidden shot"]
-  doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
-  doAssert not fileExists(path & ".txt"), "the export was written"
-  echo "tguiagent: ok"
+    block anAgentKillsATrace:
+      results.open()
+      var thread: Thread[Scenario]
+      var frame = 0
+      let since = getMonoTime()
+      var started, connected, signSeen, done = false
+      var problem = ""
+      var got: seq[(string, string)]
+      var ink: PlotInk
+      var lines, commands = 0
+      proc onFrame(f: FrameInfo) =
+        inc frame
+        if not started:
+          createThread(thread, agent, (socket, relativePath(path, getAppDir())))
+          started = true
+        var more = true
+        while more:
+          let (ok, msg) = results.tryRecv()
+          more = ok
+          if ok:
+            got.add msg
+            case msg[0]
+            of "connected": connected = true
+            of "problem":
+              problem = msg[1]
+              f.stop()
+            of "done":
+              done = true
+              for m in f.messages:
+                if "test agent 1 (agent " in m.text: inc lines
+                if "test agent 1 (agent 1): command {" in m.text: inc commands
+              ink = plotInk(f.theme, f.core.panels[0].layers[0].display)
+              f.stop()
+            else: discard
+        if connected and not done and f.markOf("status.agent connected").size.x > 0:
+          signSeen = true
+        if getMonoTime() - since > Patience * 3: # frames are fast under Xvfb
+          problem = "the agent did not finish"
+          f.stop()
+      # the agent names the fixture relative to the program's folder, as one in a
+      # container must (it cannot know the program's own paths)
+      let relative = relativePath(path, getAppDir())
+      doAssert not relative.isAbsolute
+      let code = run(RunOptions(windowSize: (1600, 1000), theme: forceDark,
+        userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+        agent: true, agentSocket: socket, onFrame: onFrame))
+      joinThread(thread)
+      results.close()
+      doAssert code == 0, "run() exit code " & $code
+      doAssert problem.len == 0, problem
+      doAssert done, "the agent did not finish"
+      doAssert signSeen, "no sign of the agent in the status bar"
+      # every command; the calls that change nothing once each (the rest so
+      # soon after are counted, not written)
+      doAssert commands == 10, "Messages holds " & $commands & " of the agent's 10 commands"
+      doAssert lines >= 12, "Messages holds " & $lines & " lines of the agent's calls"
+      var found: Table[string, string]
+      for (k, v) in got: found[k] = v
+      let view = parseJson(found["view"])
+      let (lo, hi) = (view["traces"]["lo"].getFloat, view["traces"]["hi"].getFloat)
+
+      proc inked(png: string): (int, int) =
+        ## Pixels of position 3's band that are not the paper, of those looked at.
+        let (pixels, w, h) = decodedPng(decode(png))
+        let ppt = float(w) / (hi - lo)
+        let centre = (3.0 - lo) * ppt - 0.5
+        for y in 0 ..< h:
+          for x in int(ceil(centre - 0.4 * ppt)) .. int(floor(centre + 0.4 * ppt)):
+            inc result[1]
+            if not close(pixels[y * w + x], ink.background): inc result[0]
+
+      let (was, seen) = inked(found["before"])
+      let (now, _) = inked(found["after"])
+      echo "tguiagent: position 3's band: ", was, " of ", seen, " pixels inked before the kill, ",
+        now, " after"
+      doAssert seen > 1000 and was > 50, "the trace was blank before: " & $was
+      doAssert now == 0, "the killed trace's band: " & $now & " pixels of ink"
+      # turned: the same view, time across, the killed trace's band a row
+      let parts = found["turned"].split('|')
+      doAssert parts[0] == "time across", found["turned"]
+      let tv = parseJson(parts[1])
+      doAssert tv["traces"] == view["traces"] and tv["timeMs"] == view["timeMs"],
+        "the turn moved the view: " & parts[1] & " was " & $view
+      proc inkedRows(png: string; position: float): (int, int) =
+        ## Pixels of `position`'s band, a row when time is across, that are not
+        ## the paper, of those looked at.
+        let (pixels, w, h) = decodedPng(decode(png))
+        let ppt = float(h) / (hi - lo)
+        let centre = (position - lo) * ppt - 0.5
+        for y in int(ceil(centre - 0.4 * ppt)) .. int(floor(centre + 0.4 * ppt)):
+          for x in 0 ..< w:
+            inc result[1]
+            if not close(pixels[y * w + x], ink.background): inc result[0]
+      let (killedRow, rowSeen) = inkedRows(found["turned shot"], 3)
+      let (nextRow, _) = inkedRows(found["turned shot"], 4)
+      echo "tguiagent: turned, position 3's row: ", killedRow, " of ", rowSeen,
+        " pixels inked, position 4's: ", nextRow
+      doAssert rowSeen > 1000 and killedRow == 0 and nextRow > 50,
+        "turned: the killed trace's row " & $killedRow & ", the next one's " & $nextRow
+      let killed = found["killed"].splitWhitespace
+      doAssert parseJson(killed[0]) == %*[parseInt(killed[1])], found["killed"]
+      doAssert parseFloat(found["channel"]) == float(Channels - 3), found["channel"]
+      doAssert "window: " in found["window"], found["window"]
+      doAssert found["program"] == getAppDir(), found["program"]
+      let (shownMap, sw, sh) = decodedPng(decode(found["map shown"]))
+      let (hiddenMap, hw, hh) = decodedPng(decode(found["map hidden"]))
+      doAssert (sw, sh) == (hw, hh) and sw > 100 and sh > 100, $(sw, sh, hw, hh)
+      var gone = 0
+      for i in 0 ..< shownMap.len:
+        if not close(shownMap[i], hiddenMap[i]): inc gone
+      echo "tguiagent: the map's receivers hidden: ", gone, " pixels changed"
+      doAssert gone > 20, "hiding the receivers changed " & $gone & " pixels of the map"
+      let pp = found["perPixel"].splitWhitespace
+      doAssert abs(parseFloat(pp[0]) / parseFloat(pp[1]) - 1) < 1e-6,
+        "the map's view was not taken: " & found["perPixel"]
+      doAssert found["headers"] == "Summary SEG-Y " & $SurveyTraces, found["headers"]
+      let size = found["headers shot"].splitWhitespace # "headers: W x H pixels"
+      doAssert size[0] == "headers:" and parseInt(size[1]) > 100 and parseInt(size[3]) > 100,
+        found["headers shot"]
+      doAssert found["hidden picture"] == "nothing to draw", found["hidden picture"]
+      doAssert "hides every trace" in found["hidden shot"], found["hidden shot"]
+    doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
+    doAssert not fileExists(path & ".txt"), "the export was written"
+    echo "tguiagent: ok"
+
+when isMainModule:
+  main()

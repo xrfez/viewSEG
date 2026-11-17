@@ -52,87 +52,92 @@ proc offReference(s: Shot): (int, int) =
         result = (result[0] + bad, result[1] + seen)
       first = i + 1
 
-withFixtures fx:
-  let path = fx.deadAndNotANumberSegy()
-  var steps: seq[Step]
-  var at = 0
-  var started = false
-  var wait = 0 # frames since the step began, at `since`
-  var since = getMonoTime()
-  var failed = ""
-  var images, quiet = 0
-  template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
-  proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
-    steps.add Step(name: name, act: act, done: done)
-  proc noop(f: FrameInfo) = discard
-  proc settled(f: FrameInfo): bool =
-    let tiles = f.core.tiles(f.core.findPanel(MainPanel))
-    tiles.len > 0 and tiles[^1].request == f.panel.pending and
-      f.tracePanel.drawnView.sameSpans(f.panel.view) and quiet >= 2
+proc main*() =
 
-  proc shows(mode: DisplayMode; g: DisplayGain; scope: NormScope): proc (f: FrameInfo) =
-    result = proc (f: FrameInfo) =
-      var d = f.panel.layers[0].display
-      (d.mode, d.gain, d.normScope, d.overlap, d.fixedClip) = (mode, g, scope, 0.4, NaN)
-      f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+  withFixtures fx:
+    let path = fx.deadAndNotANumberSegy()
+    var steps: seq[Step]
+    var at = 0
+    var started = false
+    var wait = 0 # frames since the step began, at `since`
+    var since = getMonoTime()
+    var failed = ""
+    var images, quiet = 0
+    template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
+    proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+      steps.add Step(name: name, act: act, done: done)
+    proc noop(f: FrameInfo) = discard
+    proc settled(f: FrameInfo): bool =
+      let tiles = f.core.tiles(f.core.findPanel(MainPanel))
+      tiles.len > 0 and tiles[^1].request == f.panel.pending and
+        f.tracePanel.drawnView.sameSpans(f.panel.view) and quiet >= 2
 
-  proc blank(mode: DisplayMode; g: DisplayGain; scope: NormScope): proc (f: FrameInfo): bool =
-    let what = $mode & ", " & $g & (if g == dgNormalized: " " & $scope else: "")
-    result = proc (f: FrameInfo): bool =
-      let d = f.panel.layers[0].display
-      result = d.mode == mode and d.gain == g and d.normScope == scope and f.settled
-      if result:
-        let s = f.capture
-        let (bad, seen) = s.offReference()
-        doAssert bad == 0, what & ": " & $bad & " of " & $seen & " pixels off the reference"
-        doAssert s.ink(Dead) == 0, what & ": the dead trace's column has " & $s.ink(Dead) &
-          " pixels of ink"
-        doAssert s.ink(Live) > s.h div 4, what & ": the live trace's column has " &
-          $s.ink(Live) & " pixels of ink"
+    proc shows(mode: DisplayMode; g: DisplayGain; scope: NormScope): proc (f: FrameInfo) =
+      result = proc (f: FrameInfo) =
+        var d = f.panel.layers[0].display
+        (d.mode, d.gain, d.normScope, d.overlap, d.fixedClip) = (mode, g, scope, 0.4, NaN)
+        f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
 
-  step("the file is shown", noop, proc (f: FrameInfo): bool =
-    result = f.panel.laidOut and f.panel.layers.len > 0 and f.settled)
-  for mode in [dmWiggle, dmWiggleDensity, dmDensity]:
-    for (g, scope) in [(dgNone, perTrace), (dgAuto, perTrace), (dgFixed, perTrace),
-        (dgNormalized, perTrace), (dgNormalized, perPanel), (dgExponential, perTrace),
-        (dgFloat, perTrace), (dgAgc, perTrace)]:
-      step($mode & " " & $g, shows(mode, g, scope), blank(mode, g, scope))
-  step("over the dead trace", proc (f: FrameInfo) =
-    let s = f.capture
-    let plot = f.markOf("plot.data")
-    let x = plot.pos.x + (float32(s.column(float64(Dead))) + 0.5) * plot.size.x / float32(s.w)
-    f.moveMouse(vec2(round(x), round(plot.pos.y + plot.size.y / 2))),
-    proc (f: FrameInfo): bool =
-      result = f.pick.found and f.pick.position == Dead and quiet > 1
-      if result: doAssert "dead" in editNote(f.pick), editNote(f.pick))
+    proc blank(mode: DisplayMode; g: DisplayGain; scope: NormScope): proc (f: FrameInfo): bool =
+      let what = $mode & ", " & $g & (if g == dgNormalized: " " & $scope else: "")
+      result = proc (f: FrameInfo): bool =
+        let d = f.panel.layers[0].display
+        result = d.mode == mode and d.gain == g and d.normScope == scope and f.settled
+        if result:
+          let s = f.capture
+          let (bad, seen) = s.offReference()
+          doAssert bad == 0, what & ": " & $bad & " of " & $seen & " pixels off the reference"
+          doAssert s.ink(Dead) == 0, what & ": the dead trace's column has " & $s.ink(Dead) &
+            " pixels of ink"
+          doAssert s.ink(Live) > s.h div 4, what & ": the live trace's column has " &
+            $s.ink(Live) & " pixels of ink"
 
-  proc onFrame(f: FrameInfo) =
-    if f.index == 0: f.moveMouse(vec2(4, 4))
-    if f.tracePanel.imagesDrawn != images:
-      images = f.tracePanel.imagesDrawn
-      quiet = 0
-    else: inc quiet
-    if at >= steps.len or failed.len > 0:
-      f.stop()
-      return
-    if not started:
-      steps[at].act(f)
-      started = true
-      wait = 0
-      since = getMonoTime()
-    else:
-      inc wait
-      if wait >= 2 and steps[at].done(f):
-        inc at
-        started = false
-      elif overdue(wait, 400, since):
-        failed = steps[at].name & " did not happen"
+    step("the file is shown", noop, proc (f: FrameInfo): bool =
+      result = f.panel.laidOut and f.panel.layers.len > 0 and f.settled)
+    for mode in [dmWiggle, dmWiggleDensity, dmDensity]:
+      for (g, scope) in [(dgNone, perTrace), (dgAuto, perTrace), (dgFixed, perTrace),
+          (dgNormalized, perTrace), (dgNormalized, perPanel), (dgExponential, perTrace),
+          (dgFloat, perTrace), (dgAgc, perTrace)]:
+        step($mode & " " & $g, shows(mode, g, scope), blank(mode, g, scope))
+    step("over the dead trace", proc (f: FrameInfo) =
+      let s = f.capture
+      let plot = f.markOf("plot.data")
+      let x = plot.pos.x + (float32(s.column(float64(Dead))) + 0.5) * plot.size.x / float32(s.w)
+      f.moveMouse(vec2(round(x), round(plot.pos.y + plot.size.y / 2))),
+      proc (f: FrameInfo): bool =
+        result = f.pick.found and f.pick.position == Dead and quiet > 1
+        if result: doAssert "dead" in editNote(f.pick), editNote(f.pick))
+
+    proc onFrame(f: FrameInfo) =
+      if f.index == 0: f.moveMouse(vec2(4, 4))
+      if f.tracePanel.imagesDrawn != images:
+        images = f.tracePanel.imagesDrawn
+        quiet = 0
+      else: inc quiet
+      if at >= steps.len or failed.len > 0:
         f.stop()
+        return
+      if not started:
+        steps[at].act(f)
+        started = true
+        wait = 0
+        since = getMonoTime()
+      else:
+        inc wait
+        if wait >= 2 and steps[at].done(f):
+          inc at
+          started = false
+        elif overdue(wait, 400, since):
+          failed = steps[at].name & " did not happen"
+          f.stop()
 
-  let code = run(RunOptions(openPaths: @[path], windowSize: (1300, 900),
-    theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
-    indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert failed.len == 0, failed
-  doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
-  echo "tguidead: ", steps.len, " steps"
+    let code = run(RunOptions(openPaths: @[path], windowSize: (1300, 900),
+      theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
+      indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert failed.len == 0, failed
+    doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
+    echo "tguidead: ", steps.len, " steps"
+
+when isMainModule:
+  main()

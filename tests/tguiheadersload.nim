@@ -147,15 +147,20 @@ proc timeHeld(path: string; samples, traces: int; cache: string): float64 =
   doAssert stage == 3, "stopped at stage " & $stage
   median(held)
 
-withFixtures fx:
-  for samples in [100_000, 1_000_000]:
-    timeScrolling(fx.longTraceSegy(samples), samples, fx.dir / "cache")
-  # 32 traces side by side: a frame costs what the rows in view cost, not
-  # what the traces hold (nothing of the answer is copied a frame).
-  let small = timeHeld(fx.longTraceSegy(1_000, 32), 1_000, 32, fx.dir / "cache")
-  let large = timeHeld(fx.longTraceSegy(1_000_000, 32), 1_000_000, 32, fx.dir / "cache")
-  echo "tguiheadersload: 32 traces on screen: frames of 1 000 samples each, median ",
-    formatFloat(small, ffDecimal, 1), " ms; of 1 000 000 samples each, median ",
-    formatFloat(large, ffDecimal, 1), " ms"
-  doAssert large < max(1.5 * small, small + 5), "the Data tab's frames grow with the " &
-    "samples held: " & $large & " ms against " & $small & " ms"
+proc main*() =
+
+  withFixtures fx:
+    for samples in [100_000, 1_000_000]:
+      timeScrolling(fx.longTraceSegy(samples), samples, fx.dir / "cache")
+    # 32 traces side by side: a frame costs what the rows in view cost, not
+    # what the traces hold (nothing of the answer is copied a frame).
+    let small = timeHeld(fx.longTraceSegy(1_000, 32), 1_000, 32, fx.dir / "cache")
+    let large = timeHeld(fx.longTraceSegy(1_000_000, 32), 1_000_000, 32, fx.dir / "cache")
+    echo "tguiheadersload: 32 traces on screen: frames of 1 000 samples each, median ",
+      formatFloat(small, ffDecimal, 1), " ms; of 1 000 000 samples each, median ",
+      formatFloat(large, ffDecimal, 1), " ms"
+    doAssert large < max(1.5 * small, small + 5), "the Data tab's frames grow with the " &
+      "samples held: " & $large & " ms against " & $small & " ms"
+
+when isMainModule:
+  main()

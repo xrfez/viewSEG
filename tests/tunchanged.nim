@@ -169,57 +169,62 @@ proc showAll(st: var AppState; path: string; survey: seq[JoinFile]) =
     name & " never closed"
   doAssert st.jobs.held(s.path) == 0
 
-withFixtures fx:
-  var files: seq[string]
-  for d in PlantedDefect:
-    files.add fx.surveySegy(d)
-  let sps = fx.surveySps()
-  files.add [sps.s, sps.r, sps.x]
-  files.add [fx.twoSetSegd(), fx.threeComponentSegd(), fx.mixedOrderSegd(), fx.stationsSegd(),
-    fx.recordOnlySegd(), fx.areasSegd(), fx.pilotSegy()]
-  let relation = fx.segdRelation()
-  files.add relation
-  var survey: seq[JoinFile]
-  for p in [sps.s, sps.r, sps.x, relation]: survey.add JoinFile(path: p, kind: jkSps)
-  for name in demoFileNames:
-    files.add fx.demoFile(name)
-  let cut = fx.dir / "cut.sgy"
-  writeFile(cut, readFile(fx.surveySegy())[0 ..< SurveyTraces div 2 * (240 + 4 * Samples)])
-  let stub = fx.dir / "stub.sgd"
-  writeFile(stub, readFile(fx.twoSetSegd())[0 ..< 2000])
-  files.add [cut, stub]
-  # Modification times are compared exactly: give every file one well in the
-  # past, so that a write within this second would show.
-  let past = getTime() - initDuration(hours = 1)
-  for f in files:
-    setLastModificationTime(f, past)
-  var before: seq[Snapshot]
-  for f in files:
-    before.add snapshot(f)
-  let folder = listing(fx.dir)
-  let cache = fx.dir / "cache" / "index" # a folder of its own: not in the listing
-  var st = initAppState(indexCache = cache)
-  for round in 1 .. 2: # the second opens from the index cache
+proc main*() =
+
+  withFixtures fx:
+    var files: seq[string]
+    for d in PlantedDefect:
+      files.add fx.surveySegy(d)
+    let sps = fx.surveySps()
+    files.add [sps.s, sps.r, sps.x]
+    files.add [fx.twoSetSegd(), fx.threeComponentSegd(), fx.mixedOrderSegd(), fx.stationsSegd(),
+      fx.recordOnlySegd(), fx.areasSegd(), fx.pilotSegy()]
+    let relation = fx.segdRelation()
+    files.add relation
+    var survey: seq[JoinFile]
+    for p in [sps.s, sps.r, sps.x, relation]: survey.add JoinFile(path: p, kind: jkSps)
+    for name in demoFileNames:
+      files.add fx.demoFile(name)
+    let cut = fx.dir / "cut.sgy"
+    writeFile(cut, readFile(fx.surveySegy())[0 ..< SurveyTraces div 2 * (240 + 4 * Samples)])
+    let stub = fx.dir / "stub.sgd"
+    writeFile(stub, readFile(fx.twoSetSegd())[0 ..< 2000])
+    files.add [cut, stub]
+    # Modification times are compared exactly: give every file one well in the
+    # past, so that a write within this second would show.
+    let past = getTime() - initDuration(hours = 1)
     for f in files:
-      st.showAll(f, survey)
-    for i, f in files:
-      let now = snapshot(f)
-      doAssert now.bytes == before[i].bytes, "round " & $round & ": " & f.extractFilename &
-        " was written"
-      doAssert now.time == before[i].time, "round " & $round & ": the modification time of " &
-        f.extractFilename & " moved"
-    doAssert listing(fx.dir) == folder, "round " & $round & ": the folder changed: " &
-      $listing(fx.dir)
-  var cached = 0
-  for e in st.log:
-    if "(index from the cache)" in e.text: inc cached
-  doAssert cached > 0, "the second round read no index cache"
-  echo "tunchanged: ", files.len, " files, ", driven, " gathers worked with, ", tiled,
-    " of them read, ", sorted, " sorted panels read, ", edited, " edited panels read, ", joined,
-    " files joined"
-  doAssert joined == 2 * (PlantedDefect.high.ord + 1 + 1 + 2), "the survey's SEG-Y files " &
-    "(and the one cut short) and two SEG-D records join in each round: " & $joined
-  doAssert tiled >= 2 * (PlantedDefect.high.ord + 1) * Shots, $tiled
-  doAssert sorted == tiled * (SortPresets.len + 2), $sorted
-  doAssert edited == tiled, $edited
-  st.shutdown()
+      setLastModificationTime(f, past)
+    var before: seq[Snapshot]
+    for f in files:
+      before.add snapshot(f)
+    let folder = listing(fx.dir)
+    let cache = fx.dir / "cache" / "index" # a folder of its own: not in the listing
+    var st = initAppState(indexCache = cache)
+    for round in 1 .. 2: # the second opens from the index cache
+      for f in files:
+        st.showAll(f, survey)
+      for i, f in files:
+        let now = snapshot(f)
+        doAssert now.bytes == before[i].bytes, "round " & $round & ": " & f.extractFilename &
+          " was written"
+        doAssert now.time == before[i].time, "round " & $round & ": the modification time of " &
+          f.extractFilename & " moved"
+      doAssert listing(fx.dir) == folder, "round " & $round & ": the folder changed: " &
+        $listing(fx.dir)
+    var cached = 0
+    for e in st.log:
+      if "(index from the cache)" in e.text: inc cached
+    doAssert cached > 0, "the second round read no index cache"
+    echo "tunchanged: ", files.len, " files, ", driven, " gathers worked with, ", tiled,
+      " of them read, ", sorted, " sorted panels read, ", edited, " edited panels read, ", joined,
+      " files joined"
+    doAssert joined == 2 * (PlantedDefect.high.ord + 1 + 1 + 2), "the survey's SEG-Y files " &
+      "(and the one cut short) and two SEG-D records join in each round: " & $joined
+    doAssert tiled >= 2 * (PlantedDefect.high.ord + 1) * Shots, $tiled
+    doAssert sorted == tiled * (SortPresets.len + 2), $sorted
+    doAssert edited == tiled, $edited
+    st.shutdown()
+
+when isMainModule:
+  main()

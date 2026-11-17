@@ -46,7 +46,6 @@ type
     done: proc (f: FrameInfo): bool
 
 func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
-
 let assets = currentSourcePath().parentDir.parentDir / "assets"
 let shipped = themeFiles([assets / "themes"])
 
@@ -104,149 +103,154 @@ proc themeOf(file: string): Theme =
   for t in shipped:
     if t.name == file: result = t.theme
 
-withFixtures fx:
-  doAssert shipped.len >= 23, $shipped.len & " themes"
-  let opts = RunOptions(windowSize: (1400, 1000), theme: forceDark,
-    userThemeDir: some(fx.dir / "no-user-themes"), assetDirs: some(@[assets]),
-    indexCacheDir: some(fx.dir / "cache"))
-  var steps: seq[Step]
-  proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
-    steps.add Step(name: name, act: act, done: done)
-  proc noop(f: FrameInfo) = discard
+proc main*() =
 
-  proc openThemes(name: string) =
-    ## Steps: View clicked, then the pointer on Theme, until its entries show.
-    step(name & ": View", proc (f: FrameInfo) = f.click(f.markOf("menu.View").centre),
-      proc (f: FrameInfo): bool = f.markOf("menu.Theme").size.x > 0)
-    step(name & ": Theme", proc (f: FrameInfo) = f.moveMouse(f.markOf("menu.Theme").centre),
-      proc (f: FrameInfo): bool = f.markOf("menu.theme.white").size.x > 0)
+  withFixtures fx:
+    doAssert shipped.len >= 23, $shipped.len & " themes"
+    let opts = RunOptions(windowSize: (1400, 1000), theme: forceDark,
+      userThemeDir: some(fx.dir / "no-user-themes"), assetDirs: some(@[assets]),
+      indexCacheDir: some(fx.dir / "cache"))
+    var steps: seq[Step]
+    proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+      steps.add Step(name: name, act: act, done: done)
+    proc noop(f: FrameInfo) = discard
 
-  proc rest(file, name: string) =
-    ## A step: the pointer rests on `file`'s entry until the program is drawn
-    ## in it.
-    step("resting on " & name, proc (f: FrameInfo) =
-      let r = f.markOf("menu.theme." & file)
-      f.moveMouse(vec2(round(r.pos.x + r.size.x * 0.6), round(r.pos.y + r.size.y / 2))),
-      proc (f: FrameInfo): bool = f.theme.name == name)
+    proc openThemes(name: string) =
+      ## Steps: View clicked, then the pointer on Theme, until its entries show.
+      step(name & ": View", proc (f: FrameInfo) = f.click(f.markOf("menu.View").centre),
+        proc (f: FrameInfo): bool = f.markOf("menu.Theme").size.x > 0)
+      step(name & ": Theme", proc (f: FrameInfo) = f.moveMouse(f.markOf("menu.Theme").centre),
+        proc (f: FrameInfo): bool = f.markOf("menu.theme.white").size.x > 0)
 
-  step("the program starts", noop, proc (f: FrameInfo): bool =
-    f.theme.name == "Everforest Dark" and f.markOf("menu.View").size.x > 0)
-  openThemes("the menu")
-  step("the entries' order", noop, proc (f: FrameInfo): bool =
-    result = true
-    var dark, light: seq[(float32, string)]
-    for t in shipped:
-      let r = f.markOf("menu.theme." & t.name)
-      doAssert r.size.x > 0, t.name & " is not listed"
-      if t.theme.mode == tmDark: dark.add (r.pos.y, t.theme.name)
-      else: light.add (r.pos.y, t.theme.name)
-    let follow = f.markOf("menu.theme.follow")
-    doAssert follow.size.x > 0, "no Follow system"
-    for (y, name) in dark & light:
-      doAssert y > follow.pos.y, name & " is above Follow system"
-    for (y, name) in light:
-      for (yd, _) in dark:
-        doAssert y > yd, name & " (light) is listed among the dark ones"
-    for group in [dark, light]:
-      var byPlace = group
-      byPlace.sort()
-      var names: seq[string]
-      for (_, n) in byPlace: names.add n
-      doAssert names == names.sorted, "not in order of names: " & $names)
-  step("the swatches", noop, proc (f: FrameInfo): bool =
-    result = true
-    let white = f.swatchPixels("white", Rgba(r: 255, g: 255, b: 255, a: 255))
-    doAssert white >= 20, "White's swatch: " & $white & " white pixels"
-    let black = f.swatchPixels("white", Rgba(a: 255))
-    doAssert black >= 4, "White's swatch: " & $black & " black pixels"
-    let tokyo = f.swatchPixels("tokyo-night", themeOf("tokyo-night").roles[rlWindow])
-    doAssert tokyo >= 20, "Tokyo Night's swatch: " & $tokyo & " pixels of its window colour"
-    f.shot("themes-menu.png"))
-  rest("tokyo-night", "Tokyo Night")
-  step("Tokyo Night drawn", noop, proc (f: FrameInfo): bool =
-    result = true
-    let bar = f.markOf("menu.View")
-    doAssert distance(f.readPixel(int(bar.pos.x) - 4, int(bar.pos.y) + 2),
-      themeOf("tokyo-night").roles[rlBar]) <= 2, "the menu bar is not Tokyo Night's"
-    doAssert f.core.settings.theme == "", "a preview changed the settings"
-    f.shot("themes-preview.png"))
-  rest("white", "White")
-  step("Escape: back to Everforest Dark", proc (f: FrameInfo) =
-    f.pressKey(skEscape, true)
-    f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
-    if wait mod 10 == 9 and f.markOf("menu.Theme").size.x > 0: # a level at a time
+    proc rest(file, name: string) =
+      ## A step: the pointer rests on `file`'s entry until the program is drawn
+      ## in it.
+      step("resting on " & name, proc (f: FrameInfo) =
+        let r = f.markOf("menu.theme." & file)
+        f.moveMouse(vec2(round(r.pos.x + r.size.x * 0.6), round(r.pos.y + r.size.y / 2))),
+        proc (f: FrameInfo): bool = f.theme.name == name)
+
+    step("the program starts", noop, proc (f: FrameInfo): bool =
+      f.theme.name == "Everforest Dark" and f.markOf("menu.View").size.x > 0)
+    openThemes("the menu")
+    step("the entries' order", noop, proc (f: FrameInfo): bool =
+      result = true
+      var dark, light: seq[(float32, string)]
+      for t in shipped:
+        let r = f.markOf("menu.theme." & t.name)
+        doAssert r.size.x > 0, t.name & " is not listed"
+        if t.theme.mode == tmDark: dark.add (r.pos.y, t.theme.name)
+        else: light.add (r.pos.y, t.theme.name)
+      let follow = f.markOf("menu.theme.follow")
+      doAssert follow.size.x > 0, "no Follow system"
+      for (y, name) in dark & light:
+        doAssert y > follow.pos.y, name & " is above Follow system"
+      for (y, name) in light:
+        for (yd, _) in dark:
+          doAssert y > yd, name & " (light) is listed among the dark ones"
+      for group in [dark, light]:
+        var byPlace = group
+        byPlace.sort()
+        var names: seq[string]
+        for (_, n) in byPlace: names.add n
+        doAssert names == names.sorted, "not in order of names: " & $names)
+    step("the swatches", noop, proc (f: FrameInfo): bool =
+      result = true
+      let white = f.swatchPixels("white", Rgba(r: 255, g: 255, b: 255, a: 255))
+      doAssert white >= 20, "White's swatch: " & $white & " white pixels"
+      let black = f.swatchPixels("white", Rgba(a: 255))
+      doAssert black >= 4, "White's swatch: " & $black & " black pixels"
+      let tokyo = f.swatchPixels("tokyo-night", themeOf("tokyo-night").roles[rlWindow])
+      doAssert tokyo >= 20, "Tokyo Night's swatch: " & $tokyo & " pixels of its window colour"
+      f.shot("themes-menu.png"))
+    rest("tokyo-night", "Tokyo Night")
+    step("Tokyo Night drawn", noop, proc (f: FrameInfo): bool =
+      result = true
+      let bar = f.markOf("menu.View")
+      doAssert distance(f.readPixel(int(bar.pos.x) - 4, int(bar.pos.y) + 2),
+        themeOf("tokyo-night").roles[rlBar]) <= 2, "the menu bar is not Tokyo Night's"
+      doAssert f.core.settings.theme == "", "a preview changed the settings"
+      f.shot("themes-preview.png"))
+    rest("white", "White")
+    step("Escape: back to Everforest Dark", proc (f: FrameInfo) =
       f.pressKey(skEscape, true)
-      f.pressKey(skEscape, false)
-    f.theme.name == "Everforest Dark" and f.markOf("menu.Theme").size.x == 0)
-  step("nothing kept", noop, proc (f: FrameInfo): bool =
-    doAssert f.core.settings.theme == "", "the settings say " & f.core.settings.theme
-    wait > 10 and f.theme.name == "Everforest Dark")
-  openThemes("again")
-  rest("catppuccin-latte", "Catppuccin Latte")
-  step("a click keeps Catppuccin Latte", proc (f: FrameInfo) =
-    f.click(f.markOf("menu.theme.catppuccin-latte").centre), proc (f: FrameInfo): bool =
-    f.markOf("menu.Theme").size.x == 0 and f.core.settings.theme == "catppuccin-latte")
-  step("still Catppuccin Latte", noop, proc (f: FrameInfo): bool =
-    wait > 20 and f.theme.name == "Catppuccin Latte")
-  openThemes("ticked")
-  step("Catppuccin Latte ticked", noop, proc (f: FrameInfo): bool =
-    # Dear ImGui draws a menu item's tick at its right end, in the text colour
-    let r = f.markOf("menu.theme.catppuccin-latte")
-    let other = f.markOf("menu.theme.catppuccin")
-    proc ink(q: Rect): int =
-      for y in int(q.pos.y) ..< int(q.pos.y + q.size.y):
-        for x in int(q.pos.x + q.size.x - q.size.y * 1.5) ..< int(q.pos.x + q.size.x):
-          if distance(f.readPixel(x, y), f.theme.roles[rlText]) <= 40: inc result
-    doAssert ink(r) > 4 and ink(other) == 0, "the tick: " & $ink(r) & " on Catppuccin Latte, " &
-      $ink(other) & " on Catppuccin"
-    true)
-  drive(steps, opts)
-  echo "tguithemes: ", shipped.len, " themes listed, previewed, reverted and picked"
-
-  # Started in a named theme (VIEWSEG_THEME, `themeName`) while the settings
-  # follow the system: a click on "Follow system" after resting on another
-  # theme changes no setting, and must still leave the preview.
-  steps.setLen 0
-  var named = opts
-  named.themeName = "nord"
-  step("started in Nord", noop, proc (f: FrameInfo): bool =
-    f.theme.name == "Nord" and f.markOf("menu.View").size.x > 0 and
-      f.core.settings.theme == "")
-  openThemes("named")
-  rest("tokyo-night", "Tokyo Night")
-  step("Follow system clicked", proc (f: FrameInfo) =
-    f.click(f.markOf("menu.theme.follow").centre), proc (f: FrameInfo): bool =
-    f.markOf("menu.Theme").size.x == 0)
-  step("drawn in Everforest Dark, not the preview", noop, proc (f: FrameInfo): bool =
-    if wait > 30:
-      doAssert f.theme.name == "Everforest Dark", "drawn in " & f.theme.name &
-        " after the menu closed"
-    wait > 30)
-  drive(steps, named)
-  echo "tguithemes: a named theme, then Follow system"
-
-  # Settings that name a theme viewSEG no longer ships (Retro 82, taken out
-  # for its licence): the program starts in the theme Follow system picks,
-  # says so once, plainly, and the settings follow the system from then on.
-  steps.setLen 0
-  let config = fx.dir / "config"
-  createDir(config)
-  writeFile(config / SettingsFileName, "(.nif27)\n(.vendor \"viewSEG\")\n(settings\n" &
-    " (version 1)\n (theme \"retro-82\"))\n")
-  var gone = opts
-  (gone.theme, gone.persist, gone.configDir) = (followSystem, true, some(config))
-  gone.logDir = some(fx.dir / "logs")
-  step("started without Retro 82", noop, proc (f: FrameInfo): bool =
-    result = f.markOf("menu.View").size.x > 0 and wait > 5
-    if result:
-      doAssert f.theme.name in ["Everforest Dark", "Everforest Light"], f.theme.name
-      var said: seq[string] = @[]
-      for m in f.messages:
-        if "retro-82" in m.text: said.add m.text
-      doAssert said.len == 1, "messages about retro-82: " & $said
-      for m in f.messages:
-        doAssert m.level == mlInfo or "theme" notin m.text.toLowerAscii, m.text
+      f.pressKey(skEscape, false), proc (f: FrameInfo): bool =
+      if wait mod 10 == 9 and f.markOf("menu.Theme").size.x > 0: # a level at a time
+        f.pressKey(skEscape, true)
+        f.pressKey(skEscape, false)
+      f.theme.name == "Everforest Dark" and f.markOf("menu.Theme").size.x == 0)
+    step("nothing kept", noop, proc (f: FrameInfo): bool =
       doAssert f.core.settings.theme == "", "the settings say " & f.core.settings.theme
-      doAssert f.markOf("menu.View").size.x > 0)
-  drive(steps, gone)
-  echo "tguithemes: a theme no longer shipped falls back to Follow system"
+      wait > 10 and f.theme.name == "Everforest Dark")
+    openThemes("again")
+    rest("catppuccin-latte", "Catppuccin Latte")
+    step("a click keeps Catppuccin Latte", proc (f: FrameInfo) =
+      f.click(f.markOf("menu.theme.catppuccin-latte").centre), proc (f: FrameInfo): bool =
+      f.markOf("menu.Theme").size.x == 0 and f.core.settings.theme == "catppuccin-latte")
+    step("still Catppuccin Latte", noop, proc (f: FrameInfo): bool =
+      wait > 20 and f.theme.name == "Catppuccin Latte")
+    openThemes("ticked")
+    step("Catppuccin Latte ticked", noop, proc (f: FrameInfo): bool =
+      # Dear ImGui draws a menu item's tick at its right end, in the text colour
+      let r = f.markOf("menu.theme.catppuccin-latte")
+      let other = f.markOf("menu.theme.catppuccin")
+      proc ink(q: Rect): int =
+        for y in int(q.pos.y) ..< int(q.pos.y + q.size.y):
+          for x in int(q.pos.x + q.size.x - q.size.y * 1.5) ..< int(q.pos.x + q.size.x):
+            if distance(f.readPixel(x, y), f.theme.roles[rlText]) <= 40: inc result
+      doAssert ink(r) > 4 and ink(other) == 0, "the tick: " & $ink(r) & " on Catppuccin Latte, " &
+        $ink(other) & " on Catppuccin"
+      true)
+    drive(steps, opts)
+    echo "tguithemes: ", shipped.len, " themes listed, previewed, reverted and picked"
+
+    # Started in a named theme (VIEWSEG_THEME, `themeName`) while the settings
+    # follow the system: a click on "Follow system" after resting on another
+    # theme changes no setting, and must still leave the preview.
+    steps.setLen 0
+    var named = opts
+    named.themeName = "nord"
+    step("started in Nord", noop, proc (f: FrameInfo): bool =
+      f.theme.name == "Nord" and f.markOf("menu.View").size.x > 0 and
+        f.core.settings.theme == "")
+    openThemes("named")
+    rest("tokyo-night", "Tokyo Night")
+    step("Follow system clicked", proc (f: FrameInfo) =
+      f.click(f.markOf("menu.theme.follow").centre), proc (f: FrameInfo): bool =
+      f.markOf("menu.Theme").size.x == 0)
+    step("drawn in Everforest Dark, not the preview", noop, proc (f: FrameInfo): bool =
+      if wait > 30:
+        doAssert f.theme.name == "Everforest Dark", "drawn in " & f.theme.name &
+          " after the menu closed"
+      wait > 30)
+    drive(steps, named)
+    echo "tguithemes: a named theme, then Follow system"
+
+    # Settings that name a theme viewSEG no longer ships (Retro 82, taken out
+    # for its licence): the program starts in the theme Follow system picks,
+    # says so once, plainly, and the settings follow the system from then on.
+    steps.setLen 0
+    let config = fx.dir / "config"
+    createDir(config)
+    writeFile(config / SettingsFileName, "(.nif27)\n(.vendor \"viewSEG\")\n(settings\n" &
+      " (version 1)\n (theme \"retro-82\"))\n")
+    var gone = opts
+    (gone.theme, gone.persist, gone.configDir) = (followSystem, true, some(config))
+    gone.logDir = some(fx.dir / "logs")
+    step("started without Retro 82", noop, proc (f: FrameInfo): bool =
+      result = f.markOf("menu.View").size.x > 0 and wait > 5
+      if result:
+        doAssert f.theme.name in ["Everforest Dark", "Everforest Light"], f.theme.name
+        var said: seq[string] = @[]
+        for m in f.messages:
+          if "retro-82" in m.text: said.add m.text
+        doAssert said.len == 1, "messages about retro-82: " & $said
+        for m in f.messages:
+          doAssert m.level == mlInfo or "theme" notin m.text.toLowerAscii, m.text
+        doAssert f.core.settings.theme == "", "the settings say " & f.core.settings.theme
+        doAssert f.markOf("menu.View").size.x > 0)
+    drive(steps, gone)
+    echo "tguithemes: a theme no longer shipped falls back to Follow system"
+
+when isMainModule:
+  main()

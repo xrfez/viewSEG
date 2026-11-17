@@ -61,11 +61,6 @@ func wave(amp, phaseDeg: float64; h2 = 0.0): seq[float32] =
     let p = 2 * PI * (F0 * t + (F1 - F0) / (2 * T) * t * t)
     result[j] = float32(amp * taper(t) * (sin(p + degToRad(phaseDeg)) + h2 * sin(2 * p)))
 
-let unitRows = @[wave(1, 0), wave(1000, 15, 0.1), wave(30, 10), wave(25, -170)]
-let names = @["trace 1", "trace 2", "trace 3", "trace 4"]
-let inOrder = [vsReference: 0, vsGroundForce: 1, vsMass: 2, vsBaseplate: 3]
-let params = AnalysisParams(reactionMassKg: Mr, baseplateMassKg: Mb)
-
 func curve(r: AnalysisResult; plot: int; name: string): seq[float64] =
   for c in r.plots[plot].curves:
     if c.name == name: return c.ys
@@ -101,167 +96,177 @@ func judged(xs: seq[float64]): seq[int] =
   for m, x in xs:
     if x >= 600 and x <= 5400: result.add m
 
-block theLibrarysNumbers:
-  let r = vibratorOf(unitRows, names, inOrder, Dt, params)
-  doAssert r.problem == "", r.problem
-  doAssert r.plots.len == 5 and r.used == 4 and r.plots[2].title == "Force from M and B"
-  let lib = library(unitRows, inOrder)
-  doAssert r.plots[0].xs.sameAs(lib.tracks[vsReference].timeMs)
-  doAssert r.curve(0, "GF").sameAs(lib.tracks[vsGroundForce].phaseDeg),
-    "GF's phase is not the library's"
-  doAssert r.curve(0, "GF (M, B)").sameAs(lib.tracks[vsWeightedSum].phaseDeg)
-  doAssert r.curve(0, "M").sameAs(lib.tracks[vsMass].phaseDeg)
-  doAssert r.curve(0, "B").sameAs(lib.tracks[vsBaseplate].phaseDeg)
-  doAssert r.curve(1, "GF fundamental").sameAs(lib.tracks[vsGroundForce].amplitude[0])
-  doAssert r.curve(1, "GF peak").sameAs(lib.tracks[vsGroundForce].peak)
-  doAssert r.curve(2, "GF (M, B) fundamental").sameAs(lib.tracks[vsWeightedSum].amplitude[0])
-  doAssert r.curve(3, "Ref").sameAs(lib.tracks[vsReference].referenceHz)
-  doAssert r.curve(3, "GF").sameAs(lib.tracks[vsGroundForce].frequencyHz)
-  doAssert r.curve(4, "GF THD").sameAs(lib.tracks[vsGroundForce].thdPct)
-  doAssert r.curve(4, "GF (M, B) THD").sameAs(lib.tracks[vsWeightedSum].thdPct)
-  # no limits: none drawn, none judged
-  for p in r.plots:
-    for c in p.curves:
-      doAssert c.style == csLine, "a limit drawn while limits are off: " & c.name
-  doAssert r.table.len == 6 and r.table[0][^1] == "Max peak", $r.table[0]
+proc main*() =
 
-block whatWasMade:
-  let r = vibratorOf(unitRows, names, inOrder, Dt, params)
-  let xs = r.plots[0].xs
-  let phase = r.curve(0, "GF")
-  let fund = r.curve(1, "GF fundamental")
-  let thd = r.curve(4, "GF THD")
-  let h2 = r.curve(4, "GF H2")
-  let hz = r.curve(3, "GF")
-  # the generated force: Mr·M + Mb·B, as phasors
-  let z = Mr * 30.0 * exp(complex(0.0, degToRad(10.0))) +
-    Mb * 25.0 * exp(complex(0.0, degToRad(-170.0)))
-  let ws = r.curve(2, "GF (M, B) fundamental")
-  let wsPhase = r.curve(0, "GF (M, B)")
-  let points = judged(xs)
-  doAssert points.len > 400, $points.len
-  for m in points:
-    let t = xs[m] / 1000
-    doAssert abs(phase[m] - 15) < 0.5, "GF phase " & $phase[m] & " at " & $xs[m] & " ms"
-    doAssert abs(fund[m] - 1000) < 10, "GF fundamental " & $fund[m] & " at " & $xs[m] & " ms"
-    doAssert abs(thd[m] - 10) < 0.3, "GF THD " & $thd[m] & " % at " & $xs[m] & " ms"
-    doAssert abs(h2[m] - 10) < 0.3, "GF H2 " & $h2[m] & " %, want 10"
-    doAssert abs(hz[m] - (F0 + (F1 - F0) * t / T)) < 0.2, "GF at " & $hz[m] & " Hz"
-    doAssert abs(ws[m] - abs(z)) < 0.01 * abs(z), "GF (M, B) " & $ws[m] & ", want " & $abs(z)
-    doAssert abs(wsPhase[m] - radToDeg(phase(z))) < 0.5, "GF (M, B) at " & $wsPhase[m] &
-      "°, want " & $radToDeg(phase(z))
-  doAssert "GF (M, B) = 2450 kg·M + 1180 kg·B" in r.note, r.note
+  let unitRows = @[wave(1, 0), wave(1000, 15, 0.1), wave(30, 10), wave(25, -170)]
+  let names = @["trace 1", "trace 2", "trace 3", "trace 4"]
+  let inOrder = [vsReference: 0, vsGroundForce: 1, vsMass: 2, vsBaseplate: 3]
+  let params = AnalysisParams(reactionMassKg: Mr, baseplateMassKg: Mb)
 
-block anotherOrder:
-  # B, Ref, M, GF
-  let shuffled = @[unitRows[3], unitRows[0], unitRows[2], unitRows[1]]
-  let at = [vsReference: 1, vsGroundForce: 3, vsMass: 2, vsBaseplate: 0]
-  let a = vibratorOf(unitRows, names, inOrder, Dt, params)
-  let b = vibratorOf(shuffled, names, at, Dt, params)
-  doAssert a.plots.len == b.plots.len
-  for p in 0 ..< a.plots.len:
-    doAssert a.plots[p].curves.len == b.plots[p].curves.len
-    for c in 0 ..< a.plots[p].curves.len:
-      doAssert a.plots[p].curves[c].ys.sameAs(b.plots[p].curves[c].ys),
-        a.plots[p].curves[c].name & " differs with the roles in another order"
-  doAssert "Ref trace 2 · GF trace 4 · M trace 3 · B trace 1" in b.note, b.note
+  block theLibrarysNumbers:
+    let r = vibratorOf(unitRows, names, inOrder, Dt, params)
+    doAssert r.problem == "", r.problem
+    doAssert r.plots.len == 5 and r.used == 4 and r.plots[2].title == "Force from M and B"
+    let lib = library(unitRows, inOrder)
+    doAssert r.plots[0].xs.sameAs(lib.tracks[vsReference].timeMs)
+    doAssert r.curve(0, "GF").sameAs(lib.tracks[vsGroundForce].phaseDeg),
+      "GF's phase is not the library's"
+    doAssert r.curve(0, "GF (M, B)").sameAs(lib.tracks[vsWeightedSum].phaseDeg)
+    doAssert r.curve(0, "M").sameAs(lib.tracks[vsMass].phaseDeg)
+    doAssert r.curve(0, "B").sameAs(lib.tracks[vsBaseplate].phaseDeg)
+    doAssert r.curve(1, "GF fundamental").sameAs(lib.tracks[vsGroundForce].amplitude[0])
+    doAssert r.curve(1, "GF peak").sameAs(lib.tracks[vsGroundForce].peak)
+    doAssert r.curve(2, "GF (M, B) fundamental").sameAs(lib.tracks[vsWeightedSum].amplitude[0])
+    doAssert r.curve(3, "Ref").sameAs(lib.tracks[vsReference].referenceHz)
+    doAssert r.curve(3, "GF").sameAs(lib.tracks[vsGroundForce].frequencyHz)
+    doAssert r.curve(4, "GF THD").sameAs(lib.tracks[vsGroundForce].thdPct)
+    doAssert r.curve(4, "GF (M, B) THD").sameAs(lib.tracks[vsWeightedSum].thdPct)
+    # no limits: none drawn, none judged
+    for p in r.plots:
+      for c in p.curves:
+        doAssert c.style == csLine, "a limit drawn while limits are off: " & c.name
+    doAssert r.table.len == 6 and r.table[0][^1] == "Max peak", $r.table[0]
 
-block limits:
-  var p = params
-  p.limitsOn = true
-  p.limits = VibLimits(phaseDeg: 10)
-  let r = vibratorOf(unitRows, names, inOrder, Dt, p)
-  var drawn, marked = 0
-  for c in r.plots[0].curves:
-    if c.style == csLimit:
-      inc drawn
-      doAssert c.ys == @[10.0, 10.0] or c.ys == @[-10.0, -10.0], $c.ys
-    if c.style == csPast and c.name == "GF past a limit":
-      for y in c.ys:
-        if not y.isNaN:
-          doAssert abs(y) > 10, $y
-          inc marked
-  doAssert drawn == 2 and marked > 400, $(drawn, marked)
-  doAssert r.table[0][^1] == "Limits"
-  for row in r.table[1 .. ^1]:
-    if row[0] == "GF": doAssert row[^1] == "fail: phase", $row
-    if row[0] == "M": doAssert row[^1] == "not judged", $row
-  doAssert "judged from " in r.note, r.note
-  p.limits = VibLimits(phaseDeg: 20)
-  let ok = vibratorOf(unitRows, names, inOrder, Dt, p)
-  for row in ok.table[1 .. ^1]:
-    if row[0] == "GF": doAssert row[^1] == "pass", $row
+  block whatWasMade:
+    let r = vibratorOf(unitRows, names, inOrder, Dt, params)
+    let xs = r.plots[0].xs
+    let phase = r.curve(0, "GF")
+    let fund = r.curve(1, "GF fundamental")
+    let thd = r.curve(4, "GF THD")
+    let h2 = r.curve(4, "GF H2")
+    let hz = r.curve(3, "GF")
+    # the generated force: Mr·M + Mb·B, as phasors
+    let z = Mr * 30.0 * exp(complex(0.0, degToRad(10.0))) +
+      Mb * 25.0 * exp(complex(0.0, degToRad(-170.0)))
+    let ws = r.curve(2, "GF (M, B) fundamental")
+    let wsPhase = r.curve(0, "GF (M, B)")
+    let points = judged(xs)
+    doAssert points.len > 400, $points.len
+    for m in points:
+      let t = xs[m] / 1000
+      doAssert abs(phase[m] - 15) < 0.5, "GF phase " & $phase[m] & " at " & $xs[m] & " ms"
+      doAssert abs(fund[m] - 1000) < 10, "GF fundamental " & $fund[m] & " at " & $xs[m] & " ms"
+      doAssert abs(thd[m] - 10) < 0.3, "GF THD " & $thd[m] & " % at " & $xs[m] & " ms"
+      doAssert abs(h2[m] - 10) < 0.3, "GF H2 " & $h2[m] & " %, want 10"
+      doAssert abs(hz[m] - (F0 + (F1 - F0) * t / T)) < 0.2, "GF at " & $hz[m] & " Hz"
+      doAssert abs(ws[m] - abs(z)) < 0.01 * abs(z), "GF (M, B) " & $ws[m] & ", want " & $abs(z)
+      doAssert abs(wsPhase[m] - radToDeg(phase(z))) < 0.5, "GF (M, B) at " & $wsPhase[m] &
+        "°, want " & $radToDeg(phase(z))
+    doAssert "GF (M, B) = 2450 kg·M + 1180 kg·B" in r.note, r.note
 
-block forceInItsOwnUnit:
-  # the recorded GF (1000, as recorded) and the weighted sum (2.4e6, kg x as
-  # recorded) are on axes of their own, and a force limit is judged on GF only
-  var p = params
-  p.limitsOn = true
-  p.limits = VibLimits(forceLow: 2000)
-  let r = vibratorOf(unitRows, names, inOrder, Dt, p)
-  doAssert r.plots[1].title == "Force" and r.plots[2].title == "Force from M and B"
-  doAssert "as recorded" in r.plots[1].yLabel and "kg × as recorded" in r.plots[2].yLabel,
-    r.plots[1].yLabel & " / " & r.plots[2].yLabel
-  for c in r.plots[1].curves: doAssert not c.name.startsWith("GF (M, B)"), c.name
-  for c in r.plots[2].curves:
-    doAssert c.name.startsWith("GF (M, B)") and c.style == csLine,
-      "a force limit on the weighted sum: " & c.name
-  var lines = 0
-  for c in r.plots[1].curves:
-    if c.style == csLimit: inc lines
-  doAssert lines == 1, $lines & " force limit lines on GF"
-  for row in r.table[1 .. ^1]:
-    if row[0] == "GF": doAssert row[^1] == "fail: force low", $row
-    if row[0] == "GF (M, B)": doAssert row[^1] == "pass", $row
-  doAssert "uncalibrated without accelerometer sensitivities" in r.note and
-    "not applied" in r.note, r.note
+  block anotherOrder:
+    # B, Ref, M, GF
+    let shuffled = @[unitRows[3], unitRows[0], unitRows[2], unitRows[1]]
+    let at = [vsReference: 1, vsGroundForce: 3, vsMass: 2, vsBaseplate: 0]
+    let a = vibratorOf(unitRows, names, inOrder, Dt, params)
+    let b = vibratorOf(shuffled, names, at, Dt, params)
+    doAssert a.plots.len == b.plots.len
+    for p in 0 ..< a.plots.len:
+      doAssert a.plots[p].curves.len == b.plots[p].curves.len
+      for c in 0 ..< a.plots[p].curves.len:
+        doAssert a.plots[p].curves[c].ys.sameAs(b.plots[p].curves[c].ys),
+          a.plots[p].curves[c].name & " differs with the roles in another order"
+    doAssert "Ref trace 2 · GF trace 4 · M trace 3 · B trace 1" in b.note, b.note
 
-block noMassesNoReference:
-  let r = vibratorOf(unitRows, names, inOrder, Dt, AnalysisParams())
-  doAssert r.problem == ""
-  for c in r.plots[0].curves: doAssert c.name != "GF (M, B)"
-  doAssert "enter both masses" in r.note, r.note
-  let none = vibratorOf(unitRows, names, [vsReference: -1, vsGroundForce: 1, vsMass: 2,
-    vsBaseplate: 3], Dt, params)
-  doAssert none.problem.startsWith("no reference"), none.problem
-  # an impulse as the reference: not a sweep, said
-  var spike = newSeq[float32](N)
-  spike[100] = 1
-  let impulse = vibratorOf(@[spike, unitRows[1]], names, [vsReference: 0, vsGroundForce: 1,
-    vsMass: -1, vsBaseplate: -1], Dt, params)
-  doAssert "trace 1, the reference, is not a sweep" in impulse.problem, impulse.problem
-  # NaN settings compare equal (a window asks again only on a change)
-  doAssert AnalysisParams() == AnalysisParams()
+  block limits:
+    var p = params
+    p.limitsOn = true
+    p.limits = VibLimits(phaseDeg: 10)
+    let r = vibratorOf(unitRows, names, inOrder, Dt, p)
+    var drawn, marked = 0
+    for c in r.plots[0].curves:
+      if c.style == csLimit:
+        inc drawn
+        doAssert c.ys == @[10.0, 10.0] or c.ys == @[-10.0, -10.0], $c.ys
+      if c.style == csPast and c.name == "GF past a limit":
+        for y in c.ys:
+          if not y.isNaN:
+            doAssert abs(y) > 10, $y
+            inc marked
+    doAssert drawn == 2 and marked > 400, $(drawn, marked)
+    doAssert r.table[0][^1] == "Limits"
+    for row in r.table[1 .. ^1]:
+      if row[0] == "GF": doAssert row[^1] == "fail: phase", $row
+      if row[0] == "M": doAssert row[^1] == "not judged", $row
+    doAssert "judged from " in r.note, r.note
+    p.limits = VibLimits(phaseDeg: 20)
+    let ok = vibratorOf(unitRows, names, inOrder, Dt, p)
+    for row in ok.table[1 .. ^1]:
+      if row[0] == "GF": doAssert row[^1] == "pass", $row
 
-block meanAbsPhase:
-  # the table's mean phase is the mean of |phase|, the one the limit judges:
-  # +8° then -8° is 8 on average, not 0
-  let rows = @[unitRows[0], waveSplit(1000, 8, -8), unitRows[2], unitRows[3]]
-  var p = params
-  p.limitsOn = true
-  p.limits = VibLimits(phaseDeg: 20, meanPhaseDeg: 5)
-  let r = vibratorOf(rows, names, inOrder, Dt, p)
-  doAssert r.problem == "", r.problem
-  doAssert r.table[0][3] == "Mean |phase| (°)", r.table[0][3]
-  var found = false
-  for row in r.table[1 .. ^1]:
-    if row[0] == "GF":
-      found = true
-      let mean = parseFloat(row[3])
-      doAssert abs(mean - 8) < 0.5, "mean |phase| " & row[3] & ", want about 8"
-      doAssert row[^1] == "fail: mean phase", row[^1]
-  doAssert found
+  block forceInItsOwnUnit:
+    # the recorded GF (1000, as recorded) and the weighted sum (2.4e6, kg x as
+    # recorded) are on axes of their own, and a force limit is judged on GF only
+    var p = params
+    p.limitsOn = true
+    p.limits = VibLimits(forceLow: 2000)
+    let r = vibratorOf(unitRows, names, inOrder, Dt, p)
+    doAssert r.plots[1].title == "Force" and r.plots[2].title == "Force from M and B"
+    doAssert "as recorded" in r.plots[1].yLabel and "kg × as recorded" in r.plots[2].yLabel,
+      r.plots[1].yLabel & " / " & r.plots[2].yLabel
+    for c in r.plots[1].curves: doAssert not c.name.startsWith("GF (M, B)"), c.name
+    for c in r.plots[2].curves:
+      doAssert c.name.startsWith("GF (M, B)") and c.style == csLine,
+        "a force limit on the weighted sum: " & c.name
+    var lines = 0
+    for c in r.plots[1].curves:
+      if c.style == csLimit: inc lines
+    doAssert lines == 1, $lines & " force limit lines on GF"
+    for row in r.table[1 .. ^1]:
+      if row[0] == "GF": doAssert row[^1] == "fail: force low", $row
+      if row[0] == "GF (M, B)": doAssert row[^1] == "pass", $row
+    doAssert "uncalibrated without accelerometer sensitivities" in r.note and
+      "not applied" in r.note, r.note
 
-block noGroundForce:
-  # no recorded ground force, the masses making one: its plot is the force
-  # from M and B, labelled in that unit (kg x as recorded), not as the force's.
-  # Seen to fail: "Force (as recorded)" as the plot's axis.
-  let r = vibratorOf(unitRows, names, [vsReference: 0, vsGroundForce: -1, vsMass: 2,
-    vsBaseplate: 3], Dt, params)
-  doAssert r.problem == "", r.problem
-  let f = r.plots[1]
-  doAssert f.title == "Force from M and B" and f.yLabel == "GF (M, B) (kg × as recorded)",
-    f.title & " / " & f.yLabel
-  doAssert f.curves.len == 2 and f.curves[0].name == "GF (M, B) fundamental", $f.curves.len
+  block noMassesNoReference:
+    let r = vibratorOf(unitRows, names, inOrder, Dt, AnalysisParams())
+    doAssert r.problem == ""
+    for c in r.plots[0].curves: doAssert c.name != "GF (M, B)"
+    doAssert "enter both masses" in r.note, r.note
+    let none = vibratorOf(unitRows, names, [vsReference: -1, vsGroundForce: 1, vsMass: 2,
+      vsBaseplate: 3], Dt, params)
+    doAssert none.problem.startsWith("no reference"), none.problem
+    # an impulse as the reference: not a sweep, said
+    var spike = newSeq[float32](N)
+    spike[100] = 1
+    let impulse = vibratorOf(@[spike, unitRows[1]], names, [vsReference: 0, vsGroundForce: 1,
+      vsMass: -1, vsBaseplate: -1], Dt, params)
+    doAssert "trace 1, the reference, is not a sweep" in impulse.problem, impulse.problem
+    # NaN settings compare equal (a window asks again only on a change)
+    doAssert AnalysisParams() == AnalysisParams()
 
-echo "tvibrator: ok"
+  block meanAbsPhase:
+    # the table's mean phase is the mean of |phase|, the one the limit judges:
+    # +8° then -8° is 8 on average, not 0
+    let rows = @[unitRows[0], waveSplit(1000, 8, -8), unitRows[2], unitRows[3]]
+    var p = params
+    p.limitsOn = true
+    p.limits = VibLimits(phaseDeg: 20, meanPhaseDeg: 5)
+    let r = vibratorOf(rows, names, inOrder, Dt, p)
+    doAssert r.problem == "", r.problem
+    doAssert r.table[0][3] == "Mean |phase| (°)", r.table[0][3]
+    var found = false
+    for row in r.table[1 .. ^1]:
+      if row[0] == "GF":
+        found = true
+        let mean = parseFloat(row[3])
+        doAssert abs(mean - 8) < 0.5, "mean |phase| " & row[3] & ", want about 8"
+        doAssert row[^1] == "fail: mean phase", row[^1]
+    doAssert found
+
+  block noGroundForce:
+    # no recorded ground force, the masses making one: its plot is the force
+    # from M and B, labelled in that unit (kg x as recorded), not as the force's.
+    # Seen to fail: "Force (as recorded)" as the plot's axis.
+    let r = vibratorOf(unitRows, names, [vsReference: 0, vsGroundForce: -1, vsMass: 2,
+      vsBaseplate: 3], Dt, params)
+    doAssert r.problem == "", r.problem
+    let f = r.plots[1]
+    doAssert f.title == "Force from M and B" and f.yLabel == "GF (M, B) (kg × as recorded)",
+      f.title & " / " & f.yLabel
+    doAssert f.curves.len == 2 and f.curves[0].name == "GF (M, B) fundamental", $f.curves.len
+
+  echo "tvibrator: ok"
+
+when isMainModule:
+  main()

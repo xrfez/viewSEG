@@ -15,42 +15,47 @@ import viewSEG/core/[geometry, persist, state]
 import viewSEG/ui/imgui/app
 import utils/[faultyfs, fixtures, waiting]
 
-install()
+proc main*() =
 
-withFixtures fx:
-  let config = fx.dir / "config"
-  createDir(config)
-  var saving = 0 # frames that said so
-  var stopping = false
-  var stoppedAt: MonoTime
-  let since = getMonoTime()
-  proc onFrame(f: FrameInfo) =
-    if stopping:
-      if f.markOf("saving").size.x > 0: inc saving
-    elif f.index >= 10 and f.core.panels[f.core.findPanel(MainPanel)].laidOut:
-      fault(config, fkDelay, {foOpen}, delay = initDuration(milliseconds = 1500))
-      var s = f.core.settings
-      s.theme = "nord" # a theme there is: one that is not falls back to "" at once
-      f.apply Command(kind: ckSettings, settings: s)
-      stopping = true
-      stoppedAt = getMonoTime()
-      f.stop()
-    elif overdue(f.index, 600, since):
-      f.stop()
-  let code = run(RunOptions(persist: true, configDir: some(config),
-    logDir: some(config / "logs"), openPaths: @[fx.surveySegy()], windowSize: (1280, 800),
-    theme: forceDark, userThemeDir: some(config / "no-user-themes"),
-    assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]),
-    indexCacheDir: some(config / "cache"), onFrame: onFrame))
-  let took = getMonoTime() - stoppedAt
-  fault(config, fkNone)
-  doAssert code == 0, "run() exit code " & $code
-  doAssert stopping, "the setting was never changed"
-  doAssert "(theme \"nord\")" in readFile(config / SettingsFileName),
-    "the setting is not in the settings file"
-  doAssert saving > 0, "no frame said it was saving (the quit took " &
-    $took.inMilliseconds & " ms)"
-  doAssert uiCalls().len == 0, "the UI thread called the file system:\n" &
-    uiCalls().join("\n")
-  echo "tguiquit: the quit waited ", took.inMilliseconds, " ms for the settings, ", saving,
-    " frames saying so"
+  install()
+
+  withFixtures fx:
+    let config = fx.dir / "config"
+    createDir(config)
+    var saving = 0 # frames that said so
+    var stopping = false
+    var stoppedAt: MonoTime
+    let since = getMonoTime()
+    proc onFrame(f: FrameInfo) =
+      if stopping:
+        if f.markOf("saving").size.x > 0: inc saving
+      elif f.index >= 10 and f.core.panels[f.core.findPanel(MainPanel)].laidOut:
+        fault(config, fkDelay, {foOpen}, delay = initDuration(milliseconds = 1500))
+        var s = f.core.settings
+        s.theme = "nord" # a theme there is: one that is not falls back to "" at once
+        f.apply Command(kind: ckSettings, settings: s)
+        stopping = true
+        stoppedAt = getMonoTime()
+        f.stop()
+      elif overdue(f.index, 600, since):
+        f.stop()
+    let code = run(RunOptions(persist: true, configDir: some(config),
+      logDir: some(config / "logs"), openPaths: @[fx.surveySegy()], windowSize: (1280, 800),
+      theme: forceDark, userThemeDir: some(config / "no-user-themes"),
+      assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]),
+      indexCacheDir: some(config / "cache"), onFrame: onFrame))
+    let took = getMonoTime() - stoppedAt
+    fault(config, fkNone)
+    doAssert code == 0, "run() exit code " & $code
+    doAssert stopping, "the setting was never changed"
+    doAssert "(theme \"nord\")" in readFile(config / SettingsFileName),
+      "the setting is not in the settings file"
+    doAssert saving > 0, "no frame said it was saving (the quit took " &
+      $took.inMilliseconds & " ms)"
+    doAssert uiCalls().len == 0, "the UI thread called the file system:\n" &
+      uiCalls().join("\n")
+    echo "tguiquit: the quit waited ", took.inMilliseconds, " ms for the settings, ", saving,
+      " frames saying so"
+
+when isMainModule:
+  main()

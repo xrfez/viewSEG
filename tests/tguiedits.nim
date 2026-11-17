@@ -158,281 +158,6 @@ proc negated(after, before: Shot; trace: int): bool =
       inc n
   n > 100
 
-withFixtures fx:
-  let path = fx.surveySegy()
-  let before = (readFile(path), getLastModificationTime(path))
-  var steps: seq[Step]
-  var at = 0
-  var started = false
-  var wait = 0 # frames since the step began, at `since`
-  var since = getMonoTime()
-  var failed = ""
-  var shots: Table[string, Shot]
-
-  template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
-
-  proc answered(f: FrameInfo): bool =
-    let p = f.panel
-    let tiles = f.core.tiles(f.core.findPanel(MainPanel))
-    p.laidOut and not p.pending.isEmpty and p.pending.gen == p.requestGen and tiles.len > 0 and
-      tiles[^1].request == p.pending and f.tracePanel.drawnView.sameSpans(p.view)
-
-  proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
-    steps.add Step(name: name, act: act, done: done)
-
-  proc noop(f: FrameInfo) = discard
-
-  proc pointAt(f: FrameInfo; position: int; tMs = 702.0): Vec2 =
-    let v = f.panel.view.screenAt(f.markOf("plot.data"), DataPoint(x: float64(position),
-      tMs: tMs))
-    vec2(round(v.x), round(v.y))
-
-  proc click(f: FrameInfo; q: Vec2; button = 1) =
-    f.pressMouse(q, true, button)
-    f.pressMouse(q, false, button)
-
-  proc chord(f: FrameInfo; key: SimKey; mods: set[SimMod] = {}) =
-    ## `key` pressed and released with `mods` held, the modifiers first.
-    const modKeys: array[SimMod, SimKey] = [skCtrl, skShift, skAlt]
-    for m in mods: f.pressKey(modKeys[m], true, mods)
-    f.pressKey(key, true, mods)
-    f.pressKey(key, false, mods)
-    for m in mods: f.pressKey(modKeys[m], false)
-
-  proc look(mode: DisplayMode; fills: set[WiggleFill]): proc (f: FrameInfo) =
-    result = proc (f: FrameInfo) =
-      var d = f.panel.layers[0].display
-      (d.mode, d.fills, d.overlap, d.gain) = (mode, fills, 0.5, dgNone)
-      f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
-
-  proc traceOf(f: FrameInfo; trace: int): int = f.core.sessions[0].base + trace
-
-  proc shootStep(name: string) =
-    step("shot " & name, proc (f: FrameInfo) = f.moveMouse(vec2(4, 4)),
-      proc (f: FrameInfo): bool =
-      result = f.answered and wait > 6 and f.core.selection.hover < 0
-      if result: shots[name] = f.capture)
-
-  proc waitEdits(name: string; trace: int; want: set[TraceEdit]) =
-    ## Waits until `trace` has the edits `want` and the view's tile, drawn,
-    ## was made with them.
-    step(name, noop, proc (f: FrameInfo): bool =
-      if f.core.traceEdits(f.traceOf(trace)) != want or not f.answered or wait < 4: return false
-      let t = f.core.tiles(f.core.findPanel(MainPanel))[^1]
-      let r = t.traces.find(trace)
-      r >= 0 and t.editsAt(r) == want)
-
-  proc menuStep(name: string; position: int; target, item: string) =
-    ## A right click on `position`, the menu checked, then `item` clicked.
-    var q: Vec2
-    step(name & ": point", proc (f: FrameInfo) =
-      q = f.pointAt(position)
-      f.moveMouse(q), proc (f: FrameInfo): bool = wait > 3)
-    step(name & ": the menu opens", proc (f: FrameInfo) = f.click(q, button = 3),
-      proc (f: FrameInfo): bool =
-      result = f.markOf("plot.menu").size.x > 0 and wait > 3
-      if result:
-        var marks: seq[string]
-        for n in ["target", "reverse", "kill", "fft", "reverse all", "undo", "clear"]:
-          if f.markOf("plot.menu." & n).size.x > 0: marks.add n
-        doAssert marks.len == 7, "the menu holds " & $marks
-        doAssert f.tracePanel.menuTarget == target, "the menu acts on " &
-          f.tracePanel.menuTarget & ", not " & target)
-    var item0: Vec2
-    step(name & ": point at it", proc (f: FrameInfo) =
-      item0 = f.markOf("plot.menu." & item).centre
-      f.moveMouse(item0), proc (f: FrameInfo): bool = wait > 2)
-    step(name, proc (f: FrameInfo) = f.click(item0), proc (f: FrameInfo): bool =
-      f.markOf("plot.menu").size.x == 0)
-
-  proc keyStep(name: string; position: int; key: SimKey; mods: set[SimMod] = {}) =
-    var q: Vec2
-    step(name & ": point", proc (f: FrameInfo) =
-      q = f.pointAt(position)
-      f.moveMouse(q), proc (f: FrameInfo): bool = wait > 3 and f.pick.found)
-    step(name, proc (f: FrameInfo) = f.chord(key, mods), proc (f: FrameInfo): bool = true)
-
-  proc headerMarkStep(name: string; position, trace: int) =
-    ## The display header's row of edits marks trace `trace` over `position`.
-    step(name, noop, proc (f: FrameInfo): bool =
-      result = wait > 4
-      if result:
-        let m = f.markOf("plot.header.edit " & $(trace + 1))
-        doAssert m.size.x > 0, "no mark of the edit over trace " & $(trace + 1)
-        doAssert f.markOf("plot.header.edits").size.x > 0, "the row has no name"
-        let x = f.pointAt(position).x
-        let spacing = f.markOf("plot.data").size.x / float32(f.panel.view.traces.width)
-        doAssert abs(m.pos.x + m.size.x / 2 - x) <= spacing / 2, "the mark of trace " &
-          $(trace + 1) & " is at " & $(m.pos.x + m.size.x / 2) & ", the trace at " & $x
-        let data = f.markOf("plot.data")
-        doAssert m.pos.y + m.size.y <= data.pos.y + 1, "the mark is not above the plot")
-
-  # -------------------------------------------------------------- steps --
-  step("the file opens", noop, proc (f: FrameInfo): bool = f.answered)
-  step("wiggles, no fills", look(dmWiggle, {}), proc (f: FrameInfo): bool =
-    f.answered and f.panel.layers[0].display.gain == dgNone and wait > 3)
-  var q0: Vec2
-  step("focus the plot", proc (f: FrameInfo) =
-    q0 = f.pointAt(0)
-    f.moveMouse(q0), proc (f: FrameInfo): bool = wait > 3)
-  # the click that brings the window forward selects nothing; the next one does
-  step("a focusing click", proc (f: FrameInfo) = f.click(q0), proc (f: FrameInfo): bool =
-    wait > 4 and f.core.selection.selected.len == 0)
-  step("click", proc (f: FrameInfo) = f.click(q0), proc (f: FrameInfo): bool =
-    f.core.selection.selected.len == 1)
-  step("Esc", proc (f: FrameInfo) = f.chord(skEscape), proc (f: FrameInfo): bool =
-    f.core.selection.selected.len == 0)
-  shootStep("plain")
-  menuStep("Kill", 9, "Trace 10", "kill")
-  waitEdits("killed", 9, {teKilled})
-  headerMarkStep("the header marks it", 9, 9)
-  var q: Vec2
-  step("over the killed trace", proc (f: FrameInfo) =
-    q = f.pointAt(9)
-    f.moveMouse(q), proc (f: FrameInfo): bool =
-    result = wait > 4 and f.pick.found and f.pick.trace == 9
-    if result:
-      doAssert f.pick.editNote == "killed", f.pick.editNote
-      doAssert f.markOf("status.edits").size.x > 0, "the status bar does not say killed")
-  shootStep("killed")
-  step("Ctrl+Z", proc (f: FrameInfo) = f.chord(skZ, {smCtrl}), proc (f: FrameInfo): bool =
-    f.core.traceEdits(f.traceOf(9)) == {})
-  waitEdits("back", 9, {})
-  step("the row of edits goes", noop, proc (f: FrameInfo): bool =
-    f.markOf("plot.header.edits").size.x == 0 and f.answered and wait > 4)
-  shootStep("back")
-  menuStep("Reverse polarity", 14, "Trace 15", "reverse")
-  waitEdits("reversed", 14, {teReversed})
-  shootStep("reversed")
-  menuStep("Undo last edit", 14, "Trace 15", "undo")
-  waitEdits("put back", 14, {})
-  # density: the keys
-  step("density", look(dmDensity, {}), proc (f: FrameInfo): bool =
-    f.answered and f.panel.layers[0].display.mode == dmDensity and wait > 3)
-  shootStep("plain density")
-  keyStep("K (density)", 9, skK)
-  waitEdits("killed (density)", 9, {teKilled})
-  shootStep("killed density")
-  keyStep("R (density)", 14, skR)
-  waitEdits("reversed (density)", 14, {teReversed})
-  shootStep("reversed density")
-  step("Ctrl+Z (density)", proc (f: FrameInfo) = f.chord(skZ, {smCtrl}),
-    proc (f: FrameInfo): bool = f.core.traceEdits(f.traceOf(14)) == {})
-  waitEdits("only the last undone", 9, {teKilled})
-  menuStep("Clear all edits for this file", 3, "Trace 4", "clear")
-  waitEdits("cleared", 9, {})
-  step("the row of edits goes again", noop, proc (f: FrameInfo): bool =
-    f.markOf("plot.header.edits").size.x == 0 and f.answered and wait > 4 and
-      f.core.editsOf(0).isEmpty)
-  shootStep("cleared density")
-  # what is shown but not remembered, and the reverse: an agent's kill
-  # (for the session only) has a "*", and the user's kill an agent undid
-  # (remembered, back at the next run) is in brackets
-  proc agentKill(f: FrameInfo) =
-    f.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[f.traceOf(5)],
-      on: true, origin: coAgent)
-  step("an agent's kill", agentKill, proc (f: FrameInfo): bool = true)
-  waitEdits("killed by the agent", 5, {teKilled})
-  keyStep("K (the user's)", 7, skK)
-  waitEdits("killed by the user", 7, {teKilled})
-  proc agentUndo(f: FrameInfo) =
-    f.apply Command(kind: ckUndoEdit, panel: MainPanel, origin: coAgent)
-  step("the agent undoes the user's kill", agentUndo, proc (f: FrameInfo): bool = true)
-  waitEdits("hidden by the agent", 7, {})
-  step("the row marks what is not remembered, and what is hidden", noop,
-    proc (f: FrameInfo): bool =
-    result = wait > 4
-    if result:
-      doAssert f.markOf("plot.header.edit 6 session").size.x > 0,
-        "the agent's kill is not marked as for the session only"
-      doAssert f.markOf("plot.header.edit 8 hidden").size.x > 0,
-        "the user's kill the agent hid is not marked"
-      doAssert f.markOf("plot.header.edit 8 session").size.x == 0 and
-        f.markOf("plot.header.edit 6 hidden").size.x == 0)
-  shootStep("session and hidden density")
-  menuStep("Clear all edits (the user's)", 3, "Trace 4", "clear")
-  step("nothing kept or shown", noop, proc (f: FrameInfo): bool =
-    f.markOf("plot.header.edits").size.x == 0 and f.answered and wait > 4 and
-      f.core.editsOf(0).isEmpty and f.core.editsOf(0).kept.isEmpty)
-  # sorted by channel, descending: position p shows trace 23 - p
-  step("sorted", proc (f: FrameInfo) =
-    f.apply Command(kind: ckSort, panel: MainPanel,
-      order: @[SortKey(field: hfChannel, descending: true)])
-    look(dmWiggle, {})(f), proc (f: FrameInfo): bool =
-    f.answered and wait > 3 and f.core.tiles(0)[^1].traces[0] == Channels - 1)
-  shootStep("plain sorted")
-  menuStep("Kill (sorted)", 3, "Trace 21", "kill")
-  waitEdits("killed (sorted)", 20, {teKilled})
-  keyStep("R (sorted)", 6, skR)
-  waitEdits("reversed (sorted)", 17, {teReversed})
-  headerMarkStep("the header marks it (sorted)", 3, 20)
-  shootStep("edited sorted")
-  step("density (sorted)", look(dmDensity, {}), proc (f: FrameInfo): bool =
-    f.answered and f.panel.layers[0].display.mode == dmDensity and wait > 3)
-  shootStep("edited sorted density")
-
-  # ------------------------------------------------------------ driver --
-  proc onFrame(f: FrameInfo) =
-    if at >= steps.len or failed.len > 0:
-      f.stop()
-      return
-    if not started:
-      steps[at].act(f)
-      started = true
-      wait = 0
-      since = getMonoTime()
-    else:
-      inc wait
-      if wait >= 2 and steps[at].done(f):
-        inc at
-        started = false
-      elif overdue(wait, 300, since):
-        failed = steps[at].name & " did not happen"
-        f.stop()
-
-  let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
-    theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
-    indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert failed.len == 0, failed
-  doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
-
-  block asTheReferenceSays:
-    for name, s in shots:
-      doAssert s.w > 300 and s.h > 200, $s.w & "x" & $s.h
-      let (bad, seen) = s.mismatches()
-      echo "tguiedits: ", name, ": ", seen, " pixels, ", bad, " off the reference"
-      doAssert bad == 0, name & ": " & $bad & " of " & $seen & " pixels off the reference"
-
-  block killedIsBlank:
-    for (name, plain, position) in [("killed", "plain", 9), ("killed density", "plain density",
-        9), ("edited sorted", "plain sorted", 3), ("edited sorted density", "plain sorted", 3)]:
-      let n = shots[name].inked(float64(position))
-      doAssert n == 0, name & ": " & $n & " pixels of the trace's band are not the paper"
-      doAssert shots[plain].inked(float64(position)) > 50, plain & ": the trace was blank before"
-
-  block backAgain:
-    for (a, b) in [("back", "plain"), ("cleared density", "plain density")]:
-      var differ = 0
-      doAssert shots[a].w == shots[b].w and shots[a].h == shots[b].h
-      for k in 0 ..< shots[a].image.len:
-        if not close(shots[a].image[k], shots[b].image[k]): inc differ
-      doAssert differ == 0, a & ": " & $differ & " pixels differ from " & b
-
-  block reversedIsMirrored:
-    for (name, plain, position, trace) in [("reversed", "plain", 14, 14),
-        ("edited sorted", "plain sorted", 6, 17)]:
-      let (rows, matched) = mirrored(shots[name], shots[plain], float64(position))
-      echo "tguiedits: ", name, ": ", matched, " of ", rows, " rows mirrored"
-      doAssert rows >= 25 and matched >= rows * 9 div 10, name & ": " & $matched & " of " &
-        $rows & " rows mirrored"
-      doAssert negated(shots[name], shots[plain], trace), name & ": the values are not negated"
-    let (rows, matched) = greyMirrored(shots["reversed density"], shots["plain density"], 14)
-    doAssert rows > 100 and matched >= rows * 95 div 100, "density: " & $matched & " of " &
-      $rows & " rows turned over"
-  doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
-  echo "tguiedits: ", steps.len, " steps"
-
 # With the example files present (they are local only), the time from a key
 # to the new picture on the private land record, zoomed in on 40 traces, is
 # measured; with `VIEWSEG_SCREENSHOTS=<dir>` the record is saved with one
@@ -543,7 +268,287 @@ proc landSurvey(path: string) =
     echo "tguiedits: saved ", dir / "edits-land.png", ", ", dir /
       "edits-land-density.png"
 
-let example = privateFile("landSegd")
-if example.len > 0:
-  if getEnv("VIEWSEG_SCREENSHOTS").len > 0: createDir(getEnv("VIEWSEG_SCREENSHOTS"))
-  landSurvey(example)
+proc main*() =
+
+  withFixtures fx:
+    let path = fx.surveySegy()
+    let before = (readFile(path), getLastModificationTime(path))
+    var steps: seq[Step]
+    var at = 0
+    var started = false
+    var wait = 0 # frames since the step began, at `since`
+    var since = getMonoTime()
+    var failed = ""
+    var shots: Table[string, Shot]
+
+    template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
+
+    proc answered(f: FrameInfo): bool =
+      let p = f.panel
+      let tiles = f.core.tiles(f.core.findPanel(MainPanel))
+      p.laidOut and not p.pending.isEmpty and p.pending.gen == p.requestGen and tiles.len > 0 and
+        tiles[^1].request == p.pending and f.tracePanel.drawnView.sameSpans(p.view)
+
+    proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+      steps.add Step(name: name, act: act, done: done)
+
+    proc noop(f: FrameInfo) = discard
+
+    proc pointAt(f: FrameInfo; position: int; tMs = 702.0): Vec2 =
+      let v = f.panel.view.screenAt(f.markOf("plot.data"), DataPoint(x: float64(position),
+        tMs: tMs))
+      vec2(round(v.x), round(v.y))
+
+    proc click(f: FrameInfo; q: Vec2; button = 1) =
+      f.pressMouse(q, true, button)
+      f.pressMouse(q, false, button)
+
+    proc chord(f: FrameInfo; key: SimKey; mods: set[SimMod] = {}) =
+      ## `key` pressed and released with `mods` held, the modifiers first.
+      const modKeys: array[SimMod, SimKey] = [skCtrl, skShift, skAlt]
+      for m in mods: f.pressKey(modKeys[m], true, mods)
+      f.pressKey(key, true, mods)
+      f.pressKey(key, false, mods)
+      for m in mods: f.pressKey(modKeys[m], false)
+
+    proc look(mode: DisplayMode; fills: set[WiggleFill]): proc (f: FrameInfo) =
+      result = proc (f: FrameInfo) =
+        var d = f.panel.layers[0].display
+        (d.mode, d.fills, d.overlap, d.gain) = (mode, fills, 0.5, dgNone)
+        f.apply Command(kind: ckDisplay, panel: MainPanel, display: d)
+
+    proc traceOf(f: FrameInfo; trace: int): int = f.core.sessions[0].base + trace
+
+    proc shootStep(name: string) =
+      step("shot " & name, proc (f: FrameInfo) = f.moveMouse(vec2(4, 4)),
+        proc (f: FrameInfo): bool =
+        result = f.answered and wait > 6 and f.core.selection.hover < 0
+        if result: shots[name] = f.capture)
+
+    proc waitEdits(name: string; trace: int; want: set[TraceEdit]) =
+      ## Waits until `trace` has the edits `want` and the view's tile, drawn,
+      ## was made with them.
+      step(name, noop, proc (f: FrameInfo): bool =
+        if f.core.traceEdits(f.traceOf(trace)) != want or not f.answered or wait < 4: return false
+        let t = f.core.tiles(f.core.findPanel(MainPanel))[^1]
+        let r = t.traces.find(trace)
+        r >= 0 and t.editsAt(r) == want)
+
+    proc menuStep(name: string; position: int; target, item: string) =
+      ## A right click on `position`, the menu checked, then `item` clicked.
+      var q: Vec2
+      step(name & ": point", proc (f: FrameInfo) =
+        q = f.pointAt(position)
+        f.moveMouse(q), proc (f: FrameInfo): bool = wait > 3)
+      step(name & ": the menu opens", proc (f: FrameInfo) = f.click(q, button = 3),
+        proc (f: FrameInfo): bool =
+        result = f.markOf("plot.menu").size.x > 0 and wait > 3
+        if result:
+          var marks: seq[string]
+          for n in ["target", "reverse", "kill", "fft", "reverse all", "undo", "clear"]:
+            if f.markOf("plot.menu." & n).size.x > 0: marks.add n
+          doAssert marks.len == 7, "the menu holds " & $marks
+          doAssert f.tracePanel.menuTarget == target, "the menu acts on " &
+            f.tracePanel.menuTarget & ", not " & target)
+      var item0: Vec2
+      step(name & ": point at it", proc (f: FrameInfo) =
+        item0 = f.markOf("plot.menu." & item).centre
+        f.moveMouse(item0), proc (f: FrameInfo): bool = wait > 2)
+      step(name, proc (f: FrameInfo) = f.click(item0), proc (f: FrameInfo): bool =
+        f.markOf("plot.menu").size.x == 0)
+
+    proc keyStep(name: string; position: int; key: SimKey; mods: set[SimMod] = {}) =
+      var q: Vec2
+      step(name & ": point", proc (f: FrameInfo) =
+        q = f.pointAt(position)
+        f.moveMouse(q), proc (f: FrameInfo): bool = wait > 3 and f.pick.found)
+      step(name, proc (f: FrameInfo) = f.chord(key, mods), proc (f: FrameInfo): bool = true)
+
+    proc headerMarkStep(name: string; position, trace: int) =
+      ## The display header's row of edits marks trace `trace` over `position`.
+      step(name, noop, proc (f: FrameInfo): bool =
+        result = wait > 4
+        if result:
+          let m = f.markOf("plot.header.edit " & $(trace + 1))
+          doAssert m.size.x > 0, "no mark of the edit over trace " & $(trace + 1)
+          doAssert f.markOf("plot.header.edits").size.x > 0, "the row has no name"
+          let x = f.pointAt(position).x
+          let spacing = f.markOf("plot.data").size.x / float32(f.panel.view.traces.width)
+          doAssert abs(m.pos.x + m.size.x / 2 - x) <= spacing / 2, "the mark of trace " &
+            $(trace + 1) & " is at " & $(m.pos.x + m.size.x / 2) & ", the trace at " & $x
+          let data = f.markOf("plot.data")
+          doAssert m.pos.y + m.size.y <= data.pos.y + 1, "the mark is not above the plot")
+
+    # -------------------------------------------------------------- steps --
+    step("the file opens", noop, proc (f: FrameInfo): bool = f.answered)
+    step("wiggles, no fills", look(dmWiggle, {}), proc (f: FrameInfo): bool =
+      f.answered and f.panel.layers[0].display.gain == dgNone and wait > 3)
+    var q0: Vec2
+    step("focus the plot", proc (f: FrameInfo) =
+      q0 = f.pointAt(0)
+      f.moveMouse(q0), proc (f: FrameInfo): bool = wait > 3)
+    # the click that brings the window forward selects nothing; the next one does
+    step("a focusing click", proc (f: FrameInfo) = f.click(q0), proc (f: FrameInfo): bool =
+      wait > 4 and f.core.selection.selected.len == 0)
+    step("click", proc (f: FrameInfo) = f.click(q0), proc (f: FrameInfo): bool =
+      f.core.selection.selected.len == 1)
+    step("Esc", proc (f: FrameInfo) = f.chord(skEscape), proc (f: FrameInfo): bool =
+      f.core.selection.selected.len == 0)
+    shootStep("plain")
+    menuStep("Kill", 9, "Trace 10", "kill")
+    waitEdits("killed", 9, {teKilled})
+    headerMarkStep("the header marks it", 9, 9)
+    var q: Vec2
+    step("over the killed trace", proc (f: FrameInfo) =
+      q = f.pointAt(9)
+      f.moveMouse(q), proc (f: FrameInfo): bool =
+      result = wait > 4 and f.pick.found and f.pick.trace == 9
+      if result:
+        doAssert f.pick.editNote == "killed", f.pick.editNote
+        doAssert f.markOf("status.edits").size.x > 0, "the status bar does not say killed")
+    shootStep("killed")
+    step("Ctrl+Z", proc (f: FrameInfo) = f.chord(skZ, {smCtrl}), proc (f: FrameInfo): bool =
+      f.core.traceEdits(f.traceOf(9)) == {})
+    waitEdits("back", 9, {})
+    step("the row of edits goes", noop, proc (f: FrameInfo): bool =
+      f.markOf("plot.header.edits").size.x == 0 and f.answered and wait > 4)
+    shootStep("back")
+    menuStep("Reverse polarity", 14, "Trace 15", "reverse")
+    waitEdits("reversed", 14, {teReversed})
+    shootStep("reversed")
+    menuStep("Undo last edit", 14, "Trace 15", "undo")
+    waitEdits("put back", 14, {})
+    # density: the keys
+    step("density", look(dmDensity, {}), proc (f: FrameInfo): bool =
+      f.answered and f.panel.layers[0].display.mode == dmDensity and wait > 3)
+    shootStep("plain density")
+    keyStep("K (density)", 9, skK)
+    waitEdits("killed (density)", 9, {teKilled})
+    shootStep("killed density")
+    keyStep("R (density)", 14, skR)
+    waitEdits("reversed (density)", 14, {teReversed})
+    shootStep("reversed density")
+    step("Ctrl+Z (density)", proc (f: FrameInfo) = f.chord(skZ, {smCtrl}),
+      proc (f: FrameInfo): bool = f.core.traceEdits(f.traceOf(14)) == {})
+    waitEdits("only the last undone", 9, {teKilled})
+    menuStep("Clear all edits for this file", 3, "Trace 4", "clear")
+    waitEdits("cleared", 9, {})
+    step("the row of edits goes again", noop, proc (f: FrameInfo): bool =
+      f.markOf("plot.header.edits").size.x == 0 and f.answered and wait > 4 and
+        f.core.editsOf(0).isEmpty)
+    shootStep("cleared density")
+    # what is shown but not remembered, and the reverse: an agent's kill
+    # (for the session only) has a "*", and the user's kill an agent undid
+    # (remembered, back at the next run) is in brackets
+    proc agentKill(f: FrameInfo) =
+      f.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[f.traceOf(5)],
+        on: true, origin: coAgent)
+    step("an agent's kill", agentKill, proc (f: FrameInfo): bool = true)
+    waitEdits("killed by the agent", 5, {teKilled})
+    keyStep("K (the user's)", 7, skK)
+    waitEdits("killed by the user", 7, {teKilled})
+    proc agentUndo(f: FrameInfo) =
+      f.apply Command(kind: ckUndoEdit, panel: MainPanel, origin: coAgent)
+    step("the agent undoes the user's kill", agentUndo, proc (f: FrameInfo): bool = true)
+    waitEdits("hidden by the agent", 7, {})
+    step("the row marks what is not remembered, and what is hidden", noop,
+      proc (f: FrameInfo): bool =
+      result = wait > 4
+      if result:
+        doAssert f.markOf("plot.header.edit 6 session").size.x > 0,
+          "the agent's kill is not marked as for the session only"
+        doAssert f.markOf("plot.header.edit 8 hidden").size.x > 0,
+          "the user's kill the agent hid is not marked"
+        doAssert f.markOf("plot.header.edit 8 session").size.x == 0 and
+          f.markOf("plot.header.edit 6 hidden").size.x == 0)
+    shootStep("session and hidden density")
+    menuStep("Clear all edits (the user's)", 3, "Trace 4", "clear")
+    step("nothing kept or shown", noop, proc (f: FrameInfo): bool =
+      f.markOf("plot.header.edits").size.x == 0 and f.answered and wait > 4 and
+        f.core.editsOf(0).isEmpty and f.core.editsOf(0).kept.isEmpty)
+    # sorted by channel, descending: position p shows trace 23 - p
+    step("sorted", proc (f: FrameInfo) =
+      f.apply Command(kind: ckSort, panel: MainPanel,
+        order: @[SortKey(field: hfChannel, descending: true)])
+      look(dmWiggle, {})(f), proc (f: FrameInfo): bool =
+      f.answered and wait > 3 and f.core.tiles(0)[^1].traces[0] == Channels - 1)
+    shootStep("plain sorted")
+    menuStep("Kill (sorted)", 3, "Trace 21", "kill")
+    waitEdits("killed (sorted)", 20, {teKilled})
+    keyStep("R (sorted)", 6, skR)
+    waitEdits("reversed (sorted)", 17, {teReversed})
+    headerMarkStep("the header marks it (sorted)", 3, 20)
+    shootStep("edited sorted")
+    step("density (sorted)", look(dmDensity, {}), proc (f: FrameInfo): bool =
+      f.answered and f.panel.layers[0].display.mode == dmDensity and wait > 3)
+    shootStep("edited sorted density")
+
+    # ------------------------------------------------------------ driver --
+    proc onFrame(f: FrameInfo) =
+      if at >= steps.len or failed.len > 0:
+        f.stop()
+        return
+      if not started:
+        steps[at].act(f)
+        started = true
+        wait = 0
+        since = getMonoTime()
+      else:
+        inc wait
+        if wait >= 2 and steps[at].done(f):
+          inc at
+          started = false
+        elif overdue(wait, 300, since):
+          failed = steps[at].name & " did not happen"
+          f.stop()
+
+    let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000),
+      theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
+      indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert failed.len == 0, failed
+    doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
+
+    block asTheReferenceSays:
+      for name, s in shots:
+        doAssert s.w > 300 and s.h > 200, $s.w & "x" & $s.h
+        let (bad, seen) = s.mismatches()
+        echo "tguiedits: ", name, ": ", seen, " pixels, ", bad, " off the reference"
+        doAssert bad == 0, name & ": " & $bad & " of " & $seen & " pixels off the reference"
+
+    block killedIsBlank:
+      for (name, plain, position) in [("killed", "plain", 9), ("killed density", "plain density",
+          9), ("edited sorted", "plain sorted", 3), ("edited sorted density", "plain sorted", 3)]:
+        let n = shots[name].inked(float64(position))
+        doAssert n == 0, name & ": " & $n & " pixels of the trace's band are not the paper"
+        doAssert shots[plain].inked(float64(position)) > 50, plain & ": the trace was blank before"
+
+    block backAgain:
+      for (a, b) in [("back", "plain"), ("cleared density", "plain density")]:
+        var differ = 0
+        doAssert shots[a].w == shots[b].w and shots[a].h == shots[b].h
+        for k in 0 ..< shots[a].image.len:
+          if not close(shots[a].image[k], shots[b].image[k]): inc differ
+        doAssert differ == 0, a & ": " & $differ & " pixels differ from " & b
+
+    block reversedIsMirrored:
+      for (name, plain, position, trace) in [("reversed", "plain", 14, 14),
+          ("edited sorted", "plain sorted", 6, 17)]:
+        let (rows, matched) = mirrored(shots[name], shots[plain], float64(position))
+        echo "tguiedits: ", name, ": ", matched, " of ", rows, " rows mirrored"
+        doAssert rows >= 25 and matched >= rows * 9 div 10, name & ": " & $matched & " of " &
+          $rows & " rows mirrored"
+        doAssert negated(shots[name], shots[plain], trace), name & ": the values are not negated"
+      let (rows, matched) = greyMirrored(shots["reversed density"], shots["plain density"], 14)
+      doAssert rows > 100 and matched >= rows * 95 div 100, "density: " & $matched & " of " &
+        $rows & " rows turned over"
+    doAssert (readFile(path), getLastModificationTime(path)) == before, "the file changed"
+    echo "tguiedits: ", steps.len, " steps"
+
+  let example = privateFile("landSegd")
+  if example.len > 0:
+    if getEnv("VIEWSEG_SCREENSHOTS").len > 0: createDir(getEnv("VIEWSEG_SCREENSHOTS"))
+    landSurvey(example)
+
+when isMainModule:
+  main()

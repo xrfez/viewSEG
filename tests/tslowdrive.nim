@@ -22,9 +22,9 @@
 
 import std/[importutils, monotimes, os, strutils, times]
 import viewSEG/core/state {.all.}
+import utils/[faultyfs, fixtures, waiting]
 
 privateAccess(AppState)
-import utils/[faultyfs, fixtures, waiting]
 
 proc main(st: AppState): lent Panel = st.panel(MainPanel)
 
@@ -107,34 +107,39 @@ proc stepping(far: string; prepare: bool): tuple[calls: int; prepared: int] =
   release(far)
   discard st.shutdown()
 
-install()
+proc main*() =
 
-withFixtures fx:
-  let far = fx.dir / "far"
-  createDir(far / "folder")
-  copyFile(fx.wideShotSegy, far / "wide.sgy")
-  for i in 0 ..< 5:
-    copyFile(fx.wideShotSegy, far / "folder" / ("shot" & $i & ".sgy"))
+  install()
 
-  block panning:
-    let fast = pan(far, initDuration())
-    let slow = pan(far, initDuration(milliseconds = 300))
-    echo "panning, 30 half-view steps, 2 round trips a step: as before (a drive that " &
-      "answers at once): ", fast.waits, " steps waited, ", fast.trips, " round trips, ",
-      fast.requests, " requests; slow drive (300 ms a round trip): ", slow.waits,
-      " steps waited, ", slow.trips, " round trips, ", slow.requests, " requests"
-    doAssert not fast.slow and slow.slow, "the slow drive is found slow"
-    doAssert slow.waits < fast.waits, "fewer waits on the slow drive"
-    doAssert slow.trips < fast.trips, "fewer round trips"
+  withFixtures fx:
+    let far = fx.dir / "far"
+    createDir(far / "folder")
+    copyFile(fx.wideShotSegy, far / "wide.sgy")
+    for i in 0 ..< 5:
+      copyFile(fx.wideShotSegy, far / "folder" / ("shot" & $i & ".sgy"))
 
-  block steppingThroughAFolder:
-    let off = stepping(far, prepare = false)
-    let on = stepping(far, prepare = true)
-    echo "stepping through 4 files (200 ms a call): calls waited for after each step, in all: ",
-      "without preparing ", off.calls, " (", off.calls * 200, " ms), with ", on.calls, " (",
-      on.calls * 200, " ms; ", on.prepared, " files prepared)"
-    doAssert on.prepared == 4
-    doAssert on.calls < off.calls, "preparing the next file saves waits"
+    block panning:
+      let fast = pan(far, initDuration())
+      let slow = pan(far, initDuration(milliseconds = 300))
+      echo "panning, 30 half-view steps, 2 round trips a step: as before (a drive that " &
+        "answers at once): ", fast.waits, " steps waited, ", fast.trips, " round trips, ",
+        fast.requests, " requests; slow drive (300 ms a round trip): ", slow.waits,
+        " steps waited, ", slow.trips, " round trips, ", slow.requests, " requests"
+      doAssert not fast.slow and slow.slow, "the slow drive is found slow"
+      doAssert slow.waits < fast.waits, "fewer waits on the slow drive"
+      doAssert slow.trips < fast.trips, "fewer round trips"
 
-  doAssert uiCalls().len == 0, uiCalls().join("\n")
-echo "tslowdrive: ok"
+    block steppingThroughAFolder:
+      let off = stepping(far, prepare = false)
+      let on = stepping(far, prepare = true)
+      echo "stepping through 4 files (200 ms a call): calls waited for after each step, in all: ",
+        "without preparing ", off.calls, " (", off.calls * 200, " ms), with ", on.calls, " (",
+        on.calls * 200, " ms; ", on.prepared, " files prepared)"
+      doAssert on.prepared == 4
+      doAssert on.calls < off.calls, "preparing the next file saves waits"
+
+    doAssert uiCalls().len == 0, uiCalls().join("\n")
+  echo "tslowdrive: ok"
+
+when isMainModule:
+  main()

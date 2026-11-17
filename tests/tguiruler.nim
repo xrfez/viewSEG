@@ -48,7 +48,7 @@ proc fillOf(f: FrameInfo; mark: string): Rgba =
   let r = f.markOf(mark)
   f.readPixel(int(r.pos.x + r.size.x / 2), int(r.pos.y + r.size.y) - 3)
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let land = root / "samples" / "land"
     let shots = land / "shots.sgy"
@@ -138,4 +138,9 @@ proc main() =
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
     echo "tguiruler: the button follows the ruler"
 
-main()
+proc main*() =
+
+  runMain()
+
+when isMainModule:
+  main()

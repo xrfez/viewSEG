@@ -20,62 +20,67 @@ import std/[monotimes, os, strutils, times]
 import viewSEG/core/[diskio, inbox, state]
 import utils/[fixtures, owntime, waiting]
 
-let tmp = getTempDir() / ("viewseg_tmemorylarge_" & $getCurrentProcessId())
-removeDir(tmp)
-createDir(tmp)
-
-block millionScattered:
-  let box = initInbox()
-  var d = newDiskIo(box.poster)
-  let id = FileIdentity(size: 1 shl 33, quick: 0xfeed'u64, full: 7, fullKnown: true)
-  var r = FileRecord(identity: id, name: "big.sgy", path: tmp / "big.sgy", doc: docName(id, 1))
-  for i in 0 ..< 1_000_000: r.edits.lists[teKilled].add 2 * i
-  let want = r.edits
-  let store = Store(home: tmp / StoreFolder)
-  let t0 = ownTime()
-  d.replace(store.docPath(r.doc), r, "what is remembered about big.sgy")
-  let took = ownTime() - t0
-  doAssert took < initDuration(milliseconds = 20),
-    "handing the document over took " & $took.inMilliseconds & " ms"
-  d.flush()
-  doAssert getFileSize(store.docPath(r.doc)) > 4 shl 20, "not a large document"
-  var problems: seq[string]
-  let back = readMemoryFile(store.docPath(r.doc), problems)
-  doAssert problems.len == 0, $problems
-  doAssert back.edits == want, "the large document did not read back whole"
-
 template settle(st: var AppState; cond: untyped): bool =
   waitUntil((discard st.drainInbox(); st.persist(); cond) and
     (discard st.drainInbox(); st.persist(); cond))
 
-block millionRowsImported:
-  withFixtures fx:
-    let a = fx.surveySegy()
-    var st = initAppState()
-    st.rememberFilesIn(fx.dir / "config")
-    st.apply Command(kind: ckShowFile, panel: MainPanel, path: a)
-    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-    let n = st.sessions[0].len
-    var csv = CsvHeader & "\n"
-    for i in 0 ..< 1_000_000: csv.add $(2 * i + 1) & ",1234,567,killed,big.sgy\n"
-    let list = fx.dir / "big.csv"
-    writeFile(list, csv)
-    st.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: list)
-    var longest = Duration()
-    proc logText(st: AppState): string =
-      for e in st.log: result.add e.text & "\n"
-    doAssert waitUntil((
-      let t0 = ownTime()
-      discard st.drainInbox()
-      longest = max(longest, ownTime() - t0)
-      not st.editsOf(0).isEmpty or "Cannot import" in st.logText), initDuration(seconds = 60))
-    let said = st.logText
-    doAssert not st.editsOf(0).isEmpty, said
-    doAssert st.editsOf(0).len(teKilled) == (n + 1) div 2, $st.editsOf(0).len(teKilled)
-    doAssert "past the last trace" in said, said
-    doAssert longest < initDuration(milliseconds = 25),
-      "taking in the import held a frame " & $longest.inMilliseconds & " ms"
-    st.shutdown()
+proc main*() =
 
-removeDir(tmp)
-echo "tmemorylarge: ok"
+  let tmp = getTempDir() / ("viewseg_tmemorylarge_" & $getCurrentProcessId())
+  removeDir(tmp)
+  createDir(tmp)
+
+  block millionScattered:
+    let box = initInbox()
+    var d = newDiskIo(box.poster)
+    let id = FileIdentity(size: 1 shl 33, quick: 0xfeed'u64, full: 7, fullKnown: true)
+    var r = FileRecord(identity: id, name: "big.sgy", path: tmp / "big.sgy", doc: docName(id, 1))
+    for i in 0 ..< 1_000_000: r.edits.lists[teKilled].add 2 * i
+    let want = r.edits
+    let store = Store(home: tmp / StoreFolder)
+    let t0 = ownTime()
+    d.replace(store.docPath(r.doc), r, "what is remembered about big.sgy")
+    let took = ownTime() - t0
+    doAssert took < initDuration(milliseconds = 20),
+      "handing the document over took " & $took.inMilliseconds & " ms"
+    d.flush()
+    doAssert getFileSize(store.docPath(r.doc)) > 4 shl 20, "not a large document"
+    var problems: seq[string]
+    let back = readMemoryFile(store.docPath(r.doc), problems)
+    doAssert problems.len == 0, $problems
+    doAssert back.edits == want, "the large document did not read back whole"
+
+  block millionRowsImported:
+    withFixtures fx:
+      let a = fx.surveySegy()
+      var st = initAppState()
+      st.rememberFilesIn(fx.dir / "config")
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: a)
+      doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+      let n = st.sessions[0].len
+      var csv = CsvHeader & "\n"
+      for i in 0 ..< 1_000_000: csv.add $(2 * i + 1) & ",1234,567,killed,big.sgy\n"
+      let list = fx.dir / "big.csv"
+      writeFile(list, csv)
+      st.apply Command(kind: ckImportEdits, panel: MainPanel, listPath: list)
+      var longest = Duration()
+      proc logText(st: AppState): string =
+        for e in st.log: result.add e.text & "\n"
+      doAssert waitUntil((
+        let t0 = ownTime()
+        discard st.drainInbox()
+        longest = max(longest, ownTime() - t0)
+        not st.editsOf(0).isEmpty or "Cannot import" in st.logText), initDuration(seconds = 60))
+      let said = st.logText
+      doAssert not st.editsOf(0).isEmpty, said
+      doAssert st.editsOf(0).len(teKilled) == (n + 1) div 2, $st.editsOf(0).len(teKilled)
+      doAssert "past the last trace" in said, said
+      doAssert longest < initDuration(milliseconds = 25),
+        "taking in the import held a frame " & $longest.inMilliseconds & " ms"
+      st.shutdown()
+
+  removeDir(tmp)
+  echo "tmemorylarge: ok"
+
+when isMainModule:
+  main()

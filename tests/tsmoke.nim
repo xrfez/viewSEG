@@ -3,10 +3,15 @@
 
 import parseSEG, processSEG
 
-block libraries:
-  doAssert parseSEG.PackageVersion.len > 0
-  doAssert declared(openSeismic)
-  doAssert declared(newPrefetcher)
-  doAssert declared(FftPlan)
-  doAssert declared(SpectrumPlan)
-  doAssert sizeof(FftPlan) > 0
+proc main*() =
+
+  block libraries:
+    doAssert parseSEG.PackageVersion.len > 0
+    doAssert declared(openSeismic)
+    doAssert declared(newPrefetcher)
+    doAssert declared(FftPlan)
+    doAssert declared(SpectrumPlan)
+    doAssert sizeof(FftPlan) > 0
+
+when isMainModule:
+  main()

@@ -23,24 +23,29 @@ proc aboutFilters(st: AppState): int =
   for e in st.log:
     if "filter" in e.text.toLowerAscii: inc result
 
-withFixtures fx:
-  var st = initAppState()
-  st.apply Command(kind: ckOpen, paths: @[fx.noIntervalSegy()])
-  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
-  st.apply Command(kind: ckView, panel: MainPanel,
-    view: fitAll(st.panel(MainPanel).layout, 800, 600))
-  doAssert st.settle(st.answered)
-  let before = st.aboutFilters
-  var pr = Processing(band: pbBandPass, f1: 4, f2: 8, f3: 60, f4: 80)
-  for i in 0 ..< 6:
-    pr.f3 = 60 + float64(i)
-    st.apply Command(kind: ckProcessing, panel: MainPanel, processing: pr)
+proc main*() =
+
+  withFixtures fx:
+    var st = initAppState()
+    st.apply Command(kind: ckOpen, paths: @[fx.noIntervalSegy()])
+    doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut)
+    st.apply Command(kind: ckView, panel: MainPanel,
+      view: fitAll(st.panel(MainPanel).layout, 800, 600))
     doAssert st.settle(st.answered)
-  let said = st.aboutFilters - before
-  doAssert said <= 1, $said & " messages about the filters for 6 changes"
-  let p = st.panel(MainPanel)
-  doAssert st.tiles(0)[^1].filtered == 0, "filtered at an interval that is not known"
-  let note = pr.intervalNote(p.layout)
-  doAssert "sample interval" in note, note
-  doAssert Processing().intervalNote(p.layout) == "", "a note with no filter set"
-  st.shutdown()
+    let before = st.aboutFilters
+    var pr = Processing(band: pbBandPass, f1: 4, f2: 8, f3: 60, f4: 80)
+    for i in 0 ..< 6:
+      pr.f3 = 60 + float64(i)
+      st.apply Command(kind: ckProcessing, panel: MainPanel, processing: pr)
+      doAssert st.settle(st.answered)
+    let said = st.aboutFilters - before
+    doAssert said <= 1, $said & " messages about the filters for 6 changes"
+    let p = st.panel(MainPanel)
+    doAssert st.tiles(0)[^1].filtered == 0, "filtered at an interval that is not known"
+    let note = pr.intervalNote(p.layout)
+    doAssert "sample interval" in note, note
+    doAssert Processing().intervalNote(p.layout) == "", "a note with no filter set"
+    st.shutdown()
+
+when isMainModule:
+  main()

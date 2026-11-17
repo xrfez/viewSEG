@@ -54,143 +54,148 @@ proc accentIn(f: FrameInfo; r: Rect): int =
 proc ticked(f: FrameInfo; mark: string): bool =
   f.accentIn(f.markOf(mark).boxOf) > 4
 
-withFixtures fx:
-  var steps: seq[Step]
-  var pointAt: Vec2
-  proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
-    steps.add Step(name: name, act: act, done: done)
-  proc noop(f: FrameInfo) = discard
-  proc after(n: int): proc (f: FrameInfo): bool =
-    var frames = 0
-    result = proc (f: FrameInfo): bool =
-      inc frames
-      frames >= n
-  proc click(mark: string) =
-    step("to " & mark, proc (f: FrameInfo) =
-      let r = f.markOf(mark)
-      doAssert r.size.x > 0, mark & " is not shown"
-      pointAt = r.centre
-      f.moveMouse(pointAt), after(2))
-    step("click " & mark, proc (f: FrameInfo) =
+proc main*() =
+
+  withFixtures fx:
+    var steps: seq[Step]
+    var pointAt: Vec2
+    proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+      steps.add Step(name: name, act: act, done: done)
+    proc noop(f: FrameInfo) = discard
+    proc after(n: int): proc (f: FrameInfo): bool =
+      var frames = 0
+      result = proc (f: FrameInfo): bool =
+        inc frames
+        frames >= n
+    proc click(mark: string) =
+      step("to " & mark, proc (f: FrameInfo) =
+        let r = f.markOf(mark)
+        doAssert r.size.x > 0, mark & " is not shown"
+        pointAt = r.centre
+        f.moveMouse(pointAt), after(2))
+      step("click " & mark, proc (f: FrameInfo) =
+        f.pressMouse(pointAt, true)
+        f.pressMouse(pointAt, false), after(3))
+
+    proc answered(f: FrameInfo): bool =
+      let k = f.core.findPanel(MainPanel)
+      let tiles = f.core.tiles(k)
+      let p = f.core.panels[k]
+      p.laidOut and tiles.len > 0 and tiles[^1].request == p.pending and
+        p.pending.gen == p.requestGen
+
+    proc traceX(f: FrameInfo; position: int): Vec2 =
+      let plot = f.markOf("plot.data")
+      let v = f.core.panels[f.core.findPanel(MainPanel)].view
+      let x = plot.pos.x + float32((float64(position) - v.traces.lo) / v.traces.width) * plot.size.x
+      vec2(round(x), round(plot.pos.y + 8))
+
+    step("the record", noop, answered)
+    step("over trace 1", proc (f: FrameInfo) = f.moveMouse(f.traceX(0)),
+      proc (f: FrameInfo): bool = f.pick.found and f.pick.position == 0)
+    step("the plot's focus", proc (f: FrameInfo) =
+      pointAt = f.traceX(0)
       f.pressMouse(pointAt, true)
       f.pressMouse(pointAt, false), after(3))
-
-  proc answered(f: FrameInfo): bool =
-    let k = f.core.findPanel(MainPanel)
-    let tiles = f.core.tiles(k)
-    let p = f.core.panels[k]
-    p.laidOut and tiles.len > 0 and tiles[^1].request == p.pending and
-      p.pending.gen == p.requestGen
-
-  proc traceX(f: FrameInfo; position: int): Vec2 =
-    let plot = f.markOf("plot.data")
-    let v = f.core.panels[f.core.findPanel(MainPanel)].view
-    let x = plot.pos.x + float32((float64(position) - v.traces.lo) / v.traces.width) * plot.size.x
-    vec2(round(x), round(plot.pos.y + 8))
-
-  step("the record", noop, answered)
-  step("over trace 1", proc (f: FrameInfo) = f.moveMouse(f.traceX(0)),
-    proc (f: FrameInfo): bool = f.pick.found and f.pick.position == 0)
-  step("the plot's focus", proc (f: FrameInfo) =
-    pointAt = f.traceX(0)
-    f.pressMouse(pointAt, true)
-    f.pressMouse(pointAt, false), after(3))
-  step("F", proc (f: FrameInfo) =
-    f.pressKey(skF, true)
-    f.pressKey(skF, false), after(3))
-  step("the FFT window", noop, proc (f: FrameInfo): bool =
-    f.core.spectra.len == 2 and f.markOf("fft 1.processed").size.x > 0 and
-      not f.core.spectra[1].waiting and f.core.spectra[1].spectrum.raw.len > 0)
-  step("no filter: stored, drawn unticked", noop, proc (f: FrameInfo): bool =
-    let w = f.core.spectra[1]
-    doAssert w.display.processed and w.display.response, "the stored choice is not ticked"
-    doAssert not w.processing.hasFilters
-    result = f.markOf("fft 1.processed").size.x > 0 and f.markOf("fft 1.response").size.x > 0
-    if result:
-      doAssert not f.ticked("fft 1.processed"), "processed drawn ticked while no filter is on"
-      doAssert not f.ticked("fft 1.response"), "response drawn ticked while no filter is on")
-  click("fft 1.processed")
-  click("fft 1.response")
-  step("a click did not overwrite the stored choice", noop, proc (f: FrameInfo): bool =
-    let w = f.core.spectra[1]
-    doAssert w.display.processed and w.display.response,
-      "the stored Processed choice was overwritten"
-    not f.ticked("fft 1.processed") and not f.ticked("fft 1.response"))
-  let band = Processing(band: pbBandPass, f1: 8, f2: 12, f3: 40, f4: 50)
-  step("a filter on", proc (f: FrameInfo) =
-    f.apply(Command(kind: ckProcessing, panel: MainPanel, processing: band)),
-    proc (f: FrameInfo): bool =
+    step("F", proc (f: FrameInfo) =
+      f.pressKey(skF, true)
+      f.pressKey(skF, false), after(3))
+    step("the FFT window", noop, proc (f: FrameInfo): bool =
+      f.core.spectra.len == 2 and f.markOf("fft 1.processed").size.x > 0 and
+        not f.core.spectra[1].waiting and f.core.spectra[1].spectrum.raw.len > 0)
+    step("no filter: stored, drawn unticked", noop, proc (f: FrameInfo): bool =
       let w = f.core.spectra[1]
-      w.processing.hasFilters and not w.waiting and w.spectrum.processed.len > 0)
-  step("the stored choice shows", noop, proc (f: FrameInfo): bool =
-    let w = f.core.spectra[1]
-    doAssert w.display.processed and w.display.response
-    result = f.ticked("fft 1.processed") and f.ticked("fft 1.response")
-    if not result:
-      doAssert false, "filter on, the stored choice is not drawn")
-  step("the plot's filters off", proc (f: FrameInfo) =
-    f.apply(Command(kind: ckProcessing, panel: MainPanel, processing: Processing())),
-    proc (f: FrameInfo): bool =
-      not f.core.spectra[1].processing.hasFilters and not f.core.spectra[1].waiting)
-  step("unticked again, choice kept", noop, proc (f: FrameInfo): bool =
-    doAssert f.core.spectra[1].display.processed
-    not f.ticked("fft 1.processed") and not f.ticked("fft 1.response"))
-  let own = Processing(band: pbBandPass, f1: 8, f2: 12, f3: 40, f4: 50)
-  step("the trace's own filter", proc (f: FrameInfo) =
-    let base = f.core.sessions[0].base
-    f.apply(Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
-      processing: own, filterPlace: fpAfter)),
-    proc (f: FrameInfo): bool =
+      doAssert w.display.processed and w.display.response, "the stored choice is not ticked"
+      doAssert not w.processing.hasFilters
+      result = f.markOf("fft 1.processed").size.x > 0 and f.markOf("fft 1.response").size.x > 0
+      if result:
+        doAssert not f.ticked("fft 1.processed"), "processed drawn ticked while no filter is on"
+        doAssert not f.ticked("fft 1.response"), "response drawn ticked while no filter is on")
+    click("fft 1.processed")
+    click("fft 1.response")
+    step("a click did not overwrite the stored choice", noop, proc (f: FrameInfo): bool =
       let w = f.core.spectra[1]
-      f.core.ownChangesSamples(w) and not w.waiting and w.spectrum.raw.len > 0 and
-        w.spectrum.processed.len == 0)
-  step("an own filter leaves Processed locked", noop, proc (f: FrameInfo): bool =
-    let w = f.core.spectra[1]
-    doAssert w.display.processed
-    doAssert not w.processing.hasFilters
-    doAssert w.filterText.find("Trace 1: own filter, band-pass 12-40 Hz") >= 0, w.filterText
-    result = not f.ticked("fft 1.processed") and not f.ticked("fft 1.response")
-    if not result:
-      doAssert false, "an own filter alone enabled Processed or Response")
-  step("the trace's own filter runs instead, with no frequency filter", proc (f: FrameInfo) =
-    let base = f.core.sessions[0].base
-    f.apply(Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
-      processing: Processing(), filterPlace: fpInstead)),
-    proc (f: FrameInfo): bool =
+      doAssert w.display.processed and w.display.response,
+        "the stored Processed choice was overwritten"
+      not f.ticked("fft 1.processed") and not f.ticked("fft 1.response"))
+    let band = Processing(band: pbBandPass, f1: 8, f2: 12, f3: 40, f4: 50)
+    step("a filter on", proc (f: FrameInfo) =
+      f.apply(Command(kind: ckProcessing, panel: MainPanel, processing: band)),
+      proc (f: FrameInfo): bool =
+        let w = f.core.spectra[1]
+        w.processing.hasFilters and not w.waiting and w.spectrum.processed.len > 0)
+    step("the stored choice shows", noop, proc (f: FrameInfo): bool =
       let w = f.core.spectra[1]
-      f.core.ownChangesSamples(w) and not w.waiting and not w.spectrum.hasResponse)
-  step("Response says no filter is on in the plot", noop, proc (f: FrameInfo): bool =
-    let w = f.core.spectra[1]
-    let words = w.responseTip
-    doAssert words == "No filter is on in the plot", words
-    not f.ticked("fft 1.response"))
+      doAssert w.display.processed and w.display.response
+      result = f.ticked("fft 1.processed") and f.ticked("fft 1.response")
+      if not result:
+        doAssert false, "filter on, the stored choice is not drawn")
+    step("the plot's filters off", proc (f: FrameInfo) =
+      f.apply(Command(kind: ckProcessing, panel: MainPanel, processing: Processing())),
+      proc (f: FrameInfo): bool =
+        not f.core.spectra[1].processing.hasFilters and not f.core.spectra[1].waiting)
+    step("unticked again, choice kept", noop, proc (f: FrameInfo): bool =
+      doAssert f.core.spectra[1].display.processed
+      not f.ticked("fft 1.processed") and not f.ticked("fft 1.response"))
+    let own = Processing(band: pbBandPass, f1: 8, f2: 12, f3: 40, f4: 50)
+    step("the trace's own filter", proc (f: FrameInfo) =
+      let base = f.core.sessions[0].base
+      f.apply(Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
+        processing: own, filterPlace: fpAfter)),
+      proc (f: FrameInfo): bool =
+        let w = f.core.spectra[1]
+        f.core.ownChangesSamples(w) and not w.waiting and w.spectrum.raw.len > 0 and
+          w.spectrum.processed.len == 0)
+    step("an own filter leaves Processed locked", noop, proc (f: FrameInfo): bool =
+      let w = f.core.spectra[1]
+      doAssert w.display.processed
+      doAssert not w.processing.hasFilters
+      doAssert w.filterText.find("Trace 1: own filter, band-pass 12-40 Hz") >= 0, w.filterText
+      result = not f.ticked("fft 1.processed") and not f.ticked("fft 1.response")
+      if not result:
+        doAssert false, "an own filter alone enabled Processed or Response")
+    step("the trace's own filter runs instead, with no frequency filter", proc (f: FrameInfo) =
+      let base = f.core.sessions[0].base
+      f.apply(Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
+        processing: Processing(), filterPlace: fpInstead)),
+      proc (f: FrameInfo): bool =
+        let w = f.core.spectra[1]
+        f.core.ownChangesSamples(w) and not w.waiting and not w.spectrum.hasResponse)
+    step("Response says no filter is on in the plot", noop, proc (f: FrameInfo): bool =
+      let w = f.core.spectra[1]
+      let words = w.responseTip
+      doAssert words == "No filter is on in the plot", words
+      not f.ticked("fft 1.response"))
 
-  var at = 0
-  var started = false
-  var wait = 0
-  var since = getMonoTime()
-  var failed = ""
-  proc onFrame(f: FrameInfo) =
-    if f.index == 0: f.moveMouse(vec2(4, 4))
-    if at >= steps.len or failed.len > 0:
-      f.stop()
-      return
-    if not started:
-      steps[at].act(f)
-      started = true
-      (wait, since) = (0, getMonoTime())
-    else:
-      inc wait
-      if wait >= 2 and steps[at].done(f):
-        inc at
-        started = false
-      elif overdue(wait, 500, since):
-        failed = steps[at].name & " did not happen"
+    var at = 0
+    var started = false
+    var wait = 0
+    var since = getMonoTime()
+    var failed = ""
+    proc onFrame(f: FrameInfo) =
+      if f.index == 0: f.moveMouse(vec2(4, 4))
+      if at >= steps.len or failed.len > 0:
         f.stop()
-  let code = run(RunOptions(openPaths: @[fx.spectrumSegy()],
-    windowSize: (1600, 1000), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
-    indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert failed.len == 0, failed
-  doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
-  echo "tguispectchecks: ok"
+        return
+      if not started:
+        steps[at].act(f)
+        started = true
+        (wait, since) = (0, getMonoTime())
+      else:
+        inc wait
+        if wait >= 2 and steps[at].done(f):
+          inc at
+          started = false
+        elif overdue(wait, 500, since):
+          failed = steps[at].name & " did not happen"
+          f.stop()
+    let code = run(RunOptions(openPaths: @[fx.spectrumSegy()],
+      windowSize: (1600, 1000), theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
+      indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert failed.len == 0, failed
+    doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
+    echo "tguispectchecks: ok"
+
+when isMainModule:
+  main()

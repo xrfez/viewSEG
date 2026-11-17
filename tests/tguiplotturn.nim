@@ -303,13 +303,18 @@ proc onFrame(f: FrameInfo) =
   if getEnv("VIEWSEG_FRAMETIMES").len > 0: timing()
   f.stop()
 
-withFixtures fx:
-  let code = run(RunOptions(maxFrames: 100, windowSize: (640, 480), theme: forceDark,
-    userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
-    onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert results.len == 3 * (1 + 3 + 3 + 6 + 1 + 4), "only " & $results.len & " checks ran"
-  for (name, off, seen) in results:
-    echo "tguiplotturn: ", name, ": ", off, " of ", seen, " pixels off"
-  for (name, off, seen) in results:
-    doAssert off == 0, name & ": " & $off & " of " & $seen & " pixels off"
+proc main*() =
+
+  withFixtures fx:
+    let code = run(RunOptions(maxFrames: 100, windowSize: (640, 480), theme: forceDark,
+      userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
+      onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert results.len == 3 * (1 + 3 + 3 + 6 + 1 + 4), "only " & $results.len & " checks ran"
+    for (name, off, seen) in results:
+      echo "tguiplotturn: ", name, ": ", off, " of ", seen, " pixels off"
+    for (name, off, seen) in results:
+      doAssert off == 0, name & ": " & $off & " of " & $seen & " pixels off"
+
+when isMainModule:
+  main()

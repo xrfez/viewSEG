@@ -130,24 +130,29 @@ proc carriedZoom(path: string): float64 =
   result = st.panel(MainPanel).level.clip
   discard st.shutdown()
 
-withFixtures fx:
-  let path = fx.loudCorner()
-  let whole = steps(path, zoomed = false)
-  let zoomed = steps(path, zoomed = true)
-  for i in 0 ..< whole.len:
-    let (name, want) = whole[i]
-    let got = zoomed[i][1]
-    echo "trecordlevel: ", name, ": zoomed ", got, ", the whole record ", want
-    doAssert abs(got - want) <= 1e-6 * abs(want), name & ": zoomed " & $got &
-      ", the whole record " & $want
-  doAssert whole[1][1] < whole[0][1] and whole[2][1] == whole[0][1], $whole
-  # over every 4th trace at the fit on 256 pixels for 1000 traces: said
-  doAssert sampledAtFit == "every 4th trace", sampledAtFit
-  # a record whose first view is not all of it: its level is still all of it's
-  for (name, got) in [("a wiggle mode's first screen", wiggleFirst(path)),
-      ("the scales carried from a zoom", carriedZoom(path))]:
-    echo "trecordlevel: ", name, ": ", got, ", the whole record ", whole[0][1]
-    # (every trace or every few, a sample of it of another stride)
-    doAssert abs(got - whole[0][1]) <= 0.03 * whole[0][1], name & ": " & $got &
-      ", the whole record " & $whole[0][1]
-  echo "trecordlevel: ok"
+proc main*() =
+
+  withFixtures fx:
+    let path = fx.loudCorner()
+    let whole = steps(path, zoomed = false)
+    let zoomed = steps(path, zoomed = true)
+    for i in 0 ..< whole.len:
+      let (name, want) = whole[i]
+      let got = zoomed[i][1]
+      echo "trecordlevel: ", name, ": zoomed ", got, ", the whole record ", want
+      doAssert abs(got - want) <= 1e-6 * abs(want), name & ": zoomed " & $got &
+        ", the whole record " & $want
+    doAssert whole[1][1] < whole[0][1] and whole[2][1] == whole[0][1], $whole
+    # over every 4th trace at the fit on 256 pixels for 1000 traces: said
+    doAssert sampledAtFit == "every 4th trace", sampledAtFit
+    # a record whose first view is not all of it: its level is still all of it's
+    for (name, got) in [("a wiggle mode's first screen", wiggleFirst(path)),
+        ("the scales carried from a zoom", carriedZoom(path))]:
+      echo "trecordlevel: ", name, ": ", got, ", the whole record ", whole[0][1]
+      # (every trace or every few, a sample of it of another stride)
+      doAssert abs(got - whole[0][1]) <= 0.03 * whole[0][1], name & ": " & $got &
+        ", the whole record " & $whole[0][1]
+    echo "trecordlevel: ok"
+
+when isMainModule:
+  main()

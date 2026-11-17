@@ -73,78 +73,83 @@ proc readAll(st: var AppState; folder: string): tuple[listed, read: Duration; dr
 
 func ms(d: Duration): string = $(d.inMicroseconds div 1000) & " ms"
 
-withFixtures fx:
-  let (folder, sPath) = fx.folderOf()
-  let cache = fx.dir / "cache"
-  var st = initAppState(indexCache = cache)
-  st.apply Command(kind: ckLoadSurvey, paths: @[sPath])
-  doAssert waitUntil((discard st.drainInbox(); st.survey.layers.len == 1))
-  let first = st.readAll(folder)
-  doAssert st.shots.pointRefs.len == Files, $st.shots.pointRefs.len
-  echo "tshotsload: ", Files, " files: listed in ", first.listed.ms, ", their shots read in ",
-    first.read.ms, "; the longest drain ", first.drain.ms
-  # A new listing of the folder, while the shots are read: done as soon.
-  var again = initAppState(indexCache = fx.dir / "cache2")
-  again.apply Command(kind: ckLoadSurvey, paths: @[sPath])
-  doAssert waitUntil((discard again.drainInbox(); again.survey.layers.len == 1))
-  again.apply Command(kind: ckBrowse, paths: @[folder])
-  doAssert waitUntil((discard again.drainInbox(); again.shots.shotFiles >= 100))
-  let t1 = getMonoTime()
-  again.apply Command(kind: ckBrowse, paths: @[folder])
-  doAssert waitUntil((discard again.drainInbox(); not again.fileList.scanning))
-  let relisted = getMonoTime() - t1
-  echo "tshotsload: listed again while the shots are read: ", relisted.ms
-  doAssert relisted < first.listed * 4 + initDuration(seconds = 1), "the listing waited: " &
-    relisted.ms & " against " & first.listed.ms
-  again.shutdown()
-  # Another run: every file's shots from the shot cache.
-  st.shutdown()
-  var later = initAppState(indexCache = cache)
-  later.apply Command(kind: ckLoadSurvey, paths: @[sPath])
-  doAssert waitUntil((discard later.drainInbox(); later.survey.layers.len == 1))
-  let cached = later.readAll(folder)
-  echo "tshotsload: again, from the shot cache: listed in ", cached.listed.ms,
-    ", their shots in ", cached.read.ms, "; the longest drain ", cached.drain.ms
-  doAssert first.drain < initDuration(milliseconds = 50) and
-    cached.drain < initDuration(milliseconds = 50), "the UI thread's work: a drain of " &
-    max(first.drain, cached.drain).ms
-  # Half the files taken out of the folder at once: their shots go, in one
-  # small piece of the UI thread's work.
-  for i in countup(0, Files - 1, 2): removeFile(folder / ("shot" & align($i, 5, '0') & ".sgy"))
-  var gone = Duration()
-  let t2 = getMonoTime()
-  doAssert waitUntil((
-    let d0 = ownTime()
-    discard later.drainInbox()
-    gone = max(gone, ownTime() - d0)
-    later.shots.shotFiles == Files div 2), initDuration(seconds = 60)),
-    $later.shots.shotFiles & " files' shots left"
-  doAssert later.shots.pointRefs.len == Files div 2
-  echo "tshotsload: ", Files div 2, " files taken out: their shots gone in ",
-    (getMonoTime() - t2).ms, "; the longest drain ", gone.ms
-  doAssert gone < initDuration(milliseconds = 50), "files taken out: a drain of " & gone.ms
-  # The other half written again at once (a folder copied over): each read
-  # again, only its own shots matched again.
-  let t3 = getTime()
-  for i in countup(1, Files - 1, 2):
-    setLastModificationTime(folder / ("shot" & align($i, 5, '0') & ".sgy"),
-      t3 + initDuration(seconds = 10))
-  var (again2, busy) = (Duration(), Duration())
-  let t4 = getMonoTime()
-  doAssert waitUntil((
-    let d0 = ownTime()
-    discard later.drainInbox()
-    again2 = max(again2, ownTime() - d0)
-    busy += ownTime() - d0
-    var fresh = 0
-    for f in later.shots.files.values:
-      if f.modified > t3: inc fresh
-    fresh == Files div 2 and later.shots.pending.len == 0 and later.shots.job == NoJob),
-    initDuration(seconds = 120)), "files written again: not all read again"
-  doAssert later.shots.pointRefs.len == Files div 2
-  echo "tshotsload: ", Files div 2, " files written again: read again in ",
-    (getMonoTime() - t4).ms, "; the UI thread's drains ", busy.ms, " in all, the longest ",
-    again2.ms
-  doAssert again2 < initDuration(milliseconds = 50) and busy < initDuration(milliseconds = 1000),
-    "files written again: a drain of " & again2.ms & ", " & busy.ms & " in all"
-  later.shutdown()
+proc main*() =
+
+  withFixtures fx:
+    let (folder, sPath) = fx.folderOf()
+    let cache = fx.dir / "cache"
+    var st = initAppState(indexCache = cache)
+    st.apply Command(kind: ckLoadSurvey, paths: @[sPath])
+    doAssert waitUntil((discard st.drainInbox(); st.survey.layers.len == 1))
+    let first = st.readAll(folder)
+    doAssert st.shots.pointRefs.len == Files, $st.shots.pointRefs.len
+    echo "tshotsload: ", Files, " files: listed in ", first.listed.ms, ", their shots read in ",
+      first.read.ms, "; the longest drain ", first.drain.ms
+    # A new listing of the folder, while the shots are read: done as soon.
+    var again = initAppState(indexCache = fx.dir / "cache2")
+    again.apply Command(kind: ckLoadSurvey, paths: @[sPath])
+    doAssert waitUntil((discard again.drainInbox(); again.survey.layers.len == 1))
+    again.apply Command(kind: ckBrowse, paths: @[folder])
+    doAssert waitUntil((discard again.drainInbox(); again.shots.shotFiles >= 100))
+    let t1 = getMonoTime()
+    again.apply Command(kind: ckBrowse, paths: @[folder])
+    doAssert waitUntil((discard again.drainInbox(); not again.fileList.scanning))
+    let relisted = getMonoTime() - t1
+    echo "tshotsload: listed again while the shots are read: ", relisted.ms
+    doAssert relisted < first.listed * 4 + initDuration(seconds = 1), "the listing waited: " &
+      relisted.ms & " against " & first.listed.ms
+    again.shutdown()
+    # Another run: every file's shots from the shot cache.
+    st.shutdown()
+    var later = initAppState(indexCache = cache)
+    later.apply Command(kind: ckLoadSurvey, paths: @[sPath])
+    doAssert waitUntil((discard later.drainInbox(); later.survey.layers.len == 1))
+    let cached = later.readAll(folder)
+    echo "tshotsload: again, from the shot cache: listed in ", cached.listed.ms,
+      ", their shots in ", cached.read.ms, "; the longest drain ", cached.drain.ms
+    doAssert first.drain < initDuration(milliseconds = 50) and
+      cached.drain < initDuration(milliseconds = 50), "the UI thread's work: a drain of " &
+      max(first.drain, cached.drain).ms
+    # Half the files taken out of the folder at once: their shots go, in one
+    # small piece of the UI thread's work.
+    for i in countup(0, Files - 1, 2): removeFile(folder / ("shot" & align($i, 5, '0') & ".sgy"))
+    var gone = Duration()
+    let t2 = getMonoTime()
+    doAssert waitUntil((
+      let d0 = ownTime()
+      discard later.drainInbox()
+      gone = max(gone, ownTime() - d0)
+      later.shots.shotFiles == Files div 2), initDuration(seconds = 60)),
+      $later.shots.shotFiles & " files' shots left"
+    doAssert later.shots.pointRefs.len == Files div 2
+    echo "tshotsload: ", Files div 2, " files taken out: their shots gone in ",
+      (getMonoTime() - t2).ms, "; the longest drain ", gone.ms
+    doAssert gone < initDuration(milliseconds = 50), "files taken out: a drain of " & gone.ms
+    # The other half written again at once (a folder copied over): each read
+    # again, only its own shots matched again.
+    let t3 = getTime()
+    for i in countup(1, Files - 1, 2):
+      setLastModificationTime(folder / ("shot" & align($i, 5, '0') & ".sgy"),
+        t3 + initDuration(seconds = 10))
+    var (again2, busy) = (Duration(), Duration())
+    let t4 = getMonoTime()
+    doAssert waitUntil((
+      let d0 = ownTime()
+      discard later.drainInbox()
+      again2 = max(again2, ownTime() - d0)
+      busy += ownTime() - d0
+      var fresh = 0
+      for f in later.shots.files.values:
+        if f.modified > t3: inc fresh
+      fresh == Files div 2 and later.shots.pending.len == 0 and later.shots.job == NoJob),
+      initDuration(seconds = 120)), "files written again: not all read again"
+    doAssert later.shots.pointRefs.len == Files div 2
+    echo "tshotsload: ", Files div 2, " files written again: read again in ",
+      (getMonoTime() - t4).ms, "; the UI thread's drains ", busy.ms, " in all, the longest ",
+      again2.ms
+    doAssert again2 < initDuration(milliseconds = 50) and busy < initDuration(milliseconds = 1000),
+      "files written again: a drain of " & again2.ms & ", " & busy.ms & " in all"
+    later.shutdown()
+
+when isMainModule:
+  main()

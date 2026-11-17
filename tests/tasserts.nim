@@ -10,17 +10,22 @@
 
 import std/[os, osproc, strutils]
 
-let
-  testDir = currentSourcePath().parentDir
-  exe = getTempDir() / ("viewseg_assertprobe_" & $getCurrentProcessId()).addFileExt(ExeExt)
-try:
-  let build = execCmdEx(quoteShellCommand([getCurrentCompilerExe(), "c", "-d:release",
-    "--hints:off", "--warnings:off", "--path:" & testDir.parentDir / "src", "-o:" & exe,
-    testDir / "utils" / "assertprobe.nim"]))
-  doAssert build.exitCode == 0, "the probe did not build:\n" & build.output
-  let (output, code) = execCmdEx(quoteShell(exe))
-  echo output.strip
-  doAssert code == 0, "the release probe exited with " & $code & ":\n" & output
-  doAssert "Internal display error: Dear ImGui's check" in output, output
-finally:
-  removeFile(exe)
+proc main*() =
+
+  let
+    testDir = currentSourcePath().parentDir
+    exe = getTempDir() / ("viewseg_assertprobe_" & $getCurrentProcessId()).addFileExt(ExeExt)
+  try:
+    let build = execCmdEx(quoteShellCommand([getCurrentCompilerExe(), "c", "-d:release",
+      "--hints:off", "--warnings:off", "--path:" & testDir.parentDir / "src", "-o:" & exe,
+      testDir / "utils" / "assertprobe.nim"]))
+    doAssert build.exitCode == 0, "the probe did not build:\n" & build.output
+    let (output, code) = execCmdEx(quoteShell(exe))
+    echo output.strip
+    doAssert code == 0, "the release probe exited with " & $code & ":\n" & output
+    doAssert "Internal display error: Dear ImGui's check" in output, output
+  finally:
+    removeFile(exe)
+
+when isMainModule:
+  main()

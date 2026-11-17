@@ -26,25 +26,30 @@ import std/[os, osproc, strutils]
 
 const Scenarios = ["joinStep", "leftReader", "leftCheck", "leftInspector"]
 
-when not defined(posix):
-  echo "tstragglers: skipped (AddressSanitizer: gcc or clang on POSIX)"
-else:
-  let
-    testDir = currentSourcePath().parentDir
-    exe = getTempDir() / ("viewseg_stragglers_" & $getCurrentProcessId())
-  try:
-    let build = execCmdEx(quoteShellCommand([getCurrentCompilerExe(), "c",
-      "-d:addressSanitizer", "--hints:off", "--warnings:off",
-      "--path:" & testDir.parentDir / "src", "--path:" & testDir, "-o:" & exe,
-      testDir / "utils" / "stragglers.nim"]))
-    doAssert build.exitCode == 0, "the probe did not build:\n" & build.output
-    # The memory a quit leaves to its stragglers is kept to the end, by design.
-    putEnv("ASAN_OPTIONS", "detect_leaks=0:abort_on_error=0")
-    for s in Scenarios:
-      let (output, code) = execCmdEx(quoteShell(exe) & " " & s)
-      echo output.strip
-      doAssert code == 0 and "AddressSanitizer" notin output,
-        "scenario " & s & " exited with " & $code & ":\n" & output
-  finally:
-    removeFile(exe)
-  echo "tstragglers: ok"
+proc main*() =
+
+  when not defined(posix):
+    echo "tstragglers: skipped (AddressSanitizer: gcc or clang on POSIX)"
+  else:
+    let
+      testDir = currentSourcePath().parentDir
+      exe = getTempDir() / ("viewseg_stragglers_" & $getCurrentProcessId())
+    try:
+      let build = execCmdEx(quoteShellCommand([getCurrentCompilerExe(), "c",
+        "-d:addressSanitizer", "--hints:off", "--warnings:off",
+        "--path:" & testDir.parentDir / "src", "--path:" & testDir, "-o:" & exe,
+        testDir / "utils" / "stragglers.nim"]))
+      doAssert build.exitCode == 0, "the probe did not build:\n" & build.output
+      # The memory a quit leaves to its stragglers is kept to the end, by design.
+      putEnv("ASAN_OPTIONS", "detect_leaks=0:abort_on_error=0")
+      for s in Scenarios:
+        let (output, code) = execCmdEx(quoteShell(exe) & " " & s)
+        echo output.strip
+        doAssert code == 0 and "AddressSanitizer" notin output,
+          "scenario " & s & " exited with " & $code & ":\n" & output
+    finally:
+      removeFile(exe)
+    echo "tstragglers: ok"
+
+when isMainModule:
+  main()

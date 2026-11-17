@@ -80,98 +80,103 @@ proc runSteps(steps: seq[Step]; opts: RunOptions) =
   doAssert failed.len == 0, failed
   doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
 
-withFixtures fx:
-  let field = fx.dir / "field"
-  createDir(field)
-  let record = field / "stations-only.sgd"
-  moveFile(fx.stationsSegd(), record)
-  let survey = fx.surveySps()
-  let config = fx.dir / "config"
-  let places = fx.dir / "projects"
-  createDir(config)
-  var asked: seq[DialogKind]
-  var answer: seq[string]
-  let hook = proc (kind: DialogKind; location: string): seq[string] =
-    asked.add kind
-    answer
-  var steps: seq[Step]
-  proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
-    steps.add Step(name: name, act: act, done: done)
-  proc noop(f: FrameInfo) = discard
-  proc menu(sub, item: string; chosen: seq[string]; then: proc (f: FrameInfo): bool) =
-    step("Project > " & (if sub.len > 0: sub & " > " else: "") & item, proc (f: FrameInfo) =
-      asked.setLen 0
-      answer = chosen
-      f.click(f.markOf("menu.Project").centre), proc (f: FrameInfo): bool =
-      let it = f.markOf("menu." & item)
-      if it.size.x > 0 and wait mod 5 == 0: f.click(it.centre)
-      elif sub.len > 0 and f.markOf("menu." & sub).size.x > 0:
-        f.moveMouse(f.markOf("menu." & sub).centre) # resting on it opens the submenu
-      then(f))
-  proc press(mark: string; chosen: seq[string]; then: proc (f: FrameInfo): bool) =
-    step("click " & mark, proc (f: FrameInfo) =
-      answer = chosen, proc (f: FrameInfo): bool =
-      let r = f.markOf(mark)
-      if r.size.x > 0 and wait mod 6 == 3: f.click(r.centre)
-      then(f))
-  let dir = places / "field"
-  let opts = RunOptions(openPaths: @[record], windowSize: (1400, 900), theme: forceDark,
-    persist: true, configDir: some(config), logDir: some(fx.dir / "logs"),
-    indexCacheDir: some(fx.dir / "cache"), userThemeDir: some(fx.dir / "no-user-themes"),
-    assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]), dialogs: hook)
+proc main*() =
 
-  step("the file is shown", noop, proc (f: FrameInfo): bool =
-    f.core.panels[f.core.findPanel(MainPanel)].laidOut and f.core.fileList.folder == field)
-  menu("", "New project...", @[], proc (f: FrameInfo): bool = f.projectWindows.making)
-  press("newproject.place", @[places], proc (f: FrameInfo): bool =
-    f.projectWindows.place == places)
-  step("its data folder is the folder listed", noop, proc (f: FrameInfo): bool =
-    f.projectWindows.data == @[field])
-  press("newproject.make", @[], proc (f: FrameInfo): bool =
-    f.core.inProject and f.core.project.dir == dir and f.windowTitle == "viewSEG - field")
-  proc importSurvey(f: FrameInfo) =
-    f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: @[
-      JoinFile(path: survey.s, kind: jkSps), JoinFile(path: survey.r, kind: jkSps),
-      JoinFile(path: survey.x, kind: jkSps)])
-  step("the survey imported is kept in the project", importSurvey, proc (f: FrameInfo): bool =
-    f.core.project.survey == srLoaded and f.core.project.doc.hasStore)
-  menu("", "Close project", @[], proc (f: FrameInfo): bool =
-    not f.core.inProject and f.windowTitle == "viewSEG")
-  menu("Recent projects", "project.0", @[], proc (f: FrameInfo): bool =
-    f.core.inProject and f.core.project.survey == srLoaded and f.core.surveyLayers == 3)
-  proc grow() =
-    ## an original grows meanwhile: one more source
-    var sf = readSps(survey.s)
-    var p = sf.points[^1]
-    p.point += 1
-    p.pointName = ""
-    p.easting += 50
-    sf.points.add p
-    sf.order.setLen 0
-    sleep 20
-    doAssert writeSps(sf, survey.s).len == 0
-  proc closedAndGrown(f: FrameInfo): bool =
-    result = not f.core.inProject
-    if result: grow()
-  menu("", "Close project", @[], closedAndGrown)
-  menu("", "Open project...", @[dir], proc (f: FrameInfo): bool =
-    f.core.inProject and f.core.project.offer)
-  step("the Project window offers the update", noop, proc (f: FrameInfo): bool =
-    f.projectWindows.shown and f.markOf("project.update").size.x > 0)
-  press("project.update", @[], proc (f: FrameInfo): bool =
-    f.core.project.survey == srLoaded and f.core.project.originals.len == 3 and
-      f.core.project.originals[0].state == osAsCopied and f.core.project.doc.store.sources ==
-      Shots + 1)
-  runSteps(steps, opts)
-  doAssert asked == @[dkOpenProject], $asked
+  withFixtures fx:
+    let field = fx.dir / "field"
+    createDir(field)
+    let record = field / "stations-only.sgd"
+    moveFile(fx.stationsSegd(), record)
+    let survey = fx.surveySps()
+    let config = fx.dir / "config"
+    let places = fx.dir / "projects"
+    createDir(config)
+    var asked: seq[DialogKind]
+    var answer: seq[string]
+    let hook = proc (kind: DialogKind; location: string): seq[string] =
+      asked.add kind
+      answer
+    var steps: seq[Step]
+    proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
+      steps.add Step(name: name, act: act, done: done)
+    proc noop(f: FrameInfo) = discard
+    proc menu(sub, item: string; chosen: seq[string]; then: proc (f: FrameInfo): bool) =
+      step("Project > " & (if sub.len > 0: sub & " > " else: "") & item, proc (f: FrameInfo) =
+        asked.setLen 0
+        answer = chosen
+        f.click(f.markOf("menu.Project").centre), proc (f: FrameInfo): bool =
+        let it = f.markOf("menu." & item)
+        if it.size.x > 0 and wait mod 5 == 0: f.click(it.centre)
+        elif sub.len > 0 and f.markOf("menu." & sub).size.x > 0:
+          f.moveMouse(f.markOf("menu." & sub).centre) # resting on it opens the submenu
+        then(f))
+    proc press(mark: string; chosen: seq[string]; then: proc (f: FrameInfo): bool) =
+      step("click " & mark, proc (f: FrameInfo) =
+        answer = chosen, proc (f: FrameInfo): bool =
+        let r = f.markOf(mark)
+        if r.size.x > 0 and wait mod 6 == 3: f.click(r.centre)
+        then(f))
+    let dir = places / "field"
+    let opts = RunOptions(openPaths: @[record], windowSize: (1400, 900), theme: forceDark,
+      persist: true, configDir: some(config), logDir: some(fx.dir / "logs"),
+      indexCacheDir: some(fx.dir / "cache"), userThemeDir: some(fx.dir / "no-user-themes"),
+      assetDirs: some(@[currentSourcePath().parentDir.parentDir / "assets"]), dialogs: hook)
 
-  # Started again: the project open at the quit is opened again.
-  var again: seq[Step]
-  again.add Step(name: "the project open at the quit is opened again", act: noop,
-    done: proc (f: FrameInfo): bool =
-    f.core.inProject and f.core.project.dir == dir and f.core.project.survey == srLoaded and
-      f.core.surveyLayers == 3)
-  var o2 = opts
-  o2.openPaths = @[]
-  runSteps(again, o2)
-echo "tguiproject: done"
+    step("the file is shown", noop, proc (f: FrameInfo): bool =
+      f.core.panels[f.core.findPanel(MainPanel)].laidOut and f.core.fileList.folder == field)
+    menu("", "New project...", @[], proc (f: FrameInfo): bool = f.projectWindows.making)
+    press("newproject.place", @[places], proc (f: FrameInfo): bool =
+      f.projectWindows.place == places)
+    step("its data folder is the folder listed", noop, proc (f: FrameInfo): bool =
+      f.projectWindows.data == @[field])
+    press("newproject.make", @[], proc (f: FrameInfo): bool =
+      f.core.inProject and f.core.project.dir == dir and f.windowTitle == "viewSEG - field")
+    proc importSurvey(f: FrameInfo) =
+      f.apply Command(kind: ckJoin, joinFile: f.core.sessions[0].id, joinFiles: @[
+        JoinFile(path: survey.s, kind: jkSps), JoinFile(path: survey.r, kind: jkSps),
+        JoinFile(path: survey.x, kind: jkSps)])
+    step("the survey imported is kept in the project", importSurvey, proc (f: FrameInfo): bool =
+      f.core.project.survey == srLoaded and f.core.project.doc.hasStore)
+    menu("", "Close project", @[], proc (f: FrameInfo): bool =
+      not f.core.inProject and f.windowTitle == "viewSEG")
+    menu("Recent projects", "project.0", @[], proc (f: FrameInfo): bool =
+      f.core.inProject and f.core.project.survey == srLoaded and f.core.surveyLayers == 3)
+    proc grow() =
+      ## an original grows meanwhile: one more source
+      var sf = readSps(survey.s)
+      var p = sf.points[^1]
+      p.point += 1
+      p.pointName = ""
+      p.easting += 50
+      sf.points.add p
+      sf.order.setLen 0
+      sleep 20
+      doAssert writeSps(sf, survey.s).len == 0
+    proc closedAndGrown(f: FrameInfo): bool =
+      result = not f.core.inProject
+      if result: grow()
+    menu("", "Close project", @[], closedAndGrown)
+    menu("", "Open project...", @[dir], proc (f: FrameInfo): bool =
+      f.core.inProject and f.core.project.offer)
+    step("the Project window offers the update", noop, proc (f: FrameInfo): bool =
+      f.projectWindows.shown and f.markOf("project.update").size.x > 0)
+    press("project.update", @[], proc (f: FrameInfo): bool =
+      f.core.project.survey == srLoaded and f.core.project.originals.len == 3 and
+        f.core.project.originals[0].state == osAsCopied and f.core.project.doc.store.sources ==
+        Shots + 1)
+    runSteps(steps, opts)
+    doAssert asked == @[dkOpenProject], $asked
+
+    # Started again: the project open at the quit is opened again.
+    var again: seq[Step]
+    again.add Step(name: "the project open at the quit is opened again", act: noop,
+      done: proc (f: FrameInfo): bool =
+      f.core.inProject and f.core.project.dir == dir and f.core.project.survey == srLoaded and
+        f.core.surveyLayers == 3)
+    var o2 = opts
+    o2.openPaths = @[]
+    runSteps(again, o2)
+  echo "tguiproject: done"
+
+when isMainModule:
+  main()

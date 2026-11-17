@@ -54,7 +54,7 @@ func median(xs: seq[float64]): float64 =
   let s = xs.sorted
   s[s.len div 2]
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let t0 = getMonoTime()
     let path = fx.bigSps(Lines, Points, Spacing, Spacing)
@@ -229,4 +229,9 @@ proc main() =
       drawnRefit < selectedPoints div 2,
       $drawnRefit & " highlighted at fit again, " & $selectedDrawn & " before"
 
-main()
+proc main*() =
+
+  runMain()
+
+when isMainModule:
+  main()

@@ -194,8 +194,6 @@ proc unitsOnce() =
     drive(steps, @[record], fx.dir, answer)
     echo "tguijoinunits: ", steps.len, " steps, no unit typed"
 
-unitsOnce()
-
 # ------------------------------------------------ land survey: pictures --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the private files present (local
 # only): the land record, its S, R and X files (US survey feet)
@@ -242,7 +240,14 @@ proc landSurvey(dir: string) =
   removeDir(tmp)
   echo "tguijoinunits: saved ", dir / "joinunits-land-1.png", " and -2.png"
 
-if shots.len > 0 and privateFile("landSegd").len > 0 and
-    privateFiles("landSps", "landRps", "landXps").len == 3:
-  createDir(shots)
-  landSurvey(shots)
+proc main*() =
+
+  unitsOnce()
+
+  if shots.len > 0 and privateFile("landSegd").len > 0 and
+      privateFiles("landSps", "landRps", "landXps").len == 3:
+    createDir(shots)
+    landSurvey(shots)
+
+when isMainModule:
+  main()

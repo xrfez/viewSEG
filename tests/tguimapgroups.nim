@@ -54,7 +54,7 @@ proc tick(r: Rect): Vec2 =
   ## A checkbox's box: at the left of its item.
   vec2(round(r.pos.x + r.size.y / 2), round(r.pos.y + r.size.y / 2))
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let sps = fx.mapSps()
     let segy = fx.surveySegy()
@@ -180,4 +180,9 @@ proc main() =
     doAssert failed.len == 0, failed
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
 
-main()
+proc main*() =
+
+  runMain()
+
+when isMainModule:
+  main()

@@ -24,53 +24,6 @@ import std/[monotimes, os, sequtils, strutils, times]
 import viewSEG/core/[filejobs, filekinds, threads]
 import utils/[faultyfs, waiting]
 
-install()
-let dir = getTempDir() / "viewSEG-tfilesystem-" & $getCurrentProcessId()
-createDir(dir)
-writeFile(dir / "a.txt", "hello")
-let far = dir / "far"
-createDir(far)
-writeFile(far / "b.txt", "far away")
-
-block aSlowCallMovesTheClockOn:
-  fault(far, fkSlow, delay = initDuration(seconds = 3))
-  let t0 = fs.now()
-  doAssert fs.fileExists(far / "b.txt")
-  doAssert fs.now() - t0 >= initDuration(seconds = 3), "a slow stat moves fs.now on"
-  doAssert fs.fileExists(dir / "a.txt"), "another path is not slow"
-  release(far)
-
-block aFailingCallFails:
-  fault(far, fkFail)
-  doAssert not fs.fileExists(far / "b.txt"), "a failing drive: no such file"
-  doAssert not fs.dirExists(far)
-  doAssertRaises OSError: discard fs.getFileInfo(far / "b.txt")
-  doAssertRaises IOError: discard fs.readFile(far / "b.txt")
-  doAssert sniff(far / "b.txt") == fkUnknown
-  doAssert fs.readFile(dir / "a.txt") == "hello"
-  release(far)
-  doAssert fs.readFile(far / "b.txt") == "far away", "the drive is back"
-
-block aHungCallWaits:
-  fault(far, fkHang, {foStat})
-  var t: Thread[string]
-  proc look(path: string) {.thread.} =
-    markWorkerThread()
-    doAssert fs.fileExists(path)
-  createThread(t, look, far / "b.txt")
-  doAssert waitUntil(hung() == 1), "the stat hangs"
-  sleep 20
-  doAssert hung() == 1, "and stays hung"
-  release(far)
-  joinThread(t)
-  doAssert hung() == 0
-
-block uiCallsAreKept:
-  markUiThread()
-  discard fs.fileExists(dir / "a.txt")
-  doAssert uiCalls().len == 1 and "a.txt" in uiCalls()[0]
-  markWorkerThread()
-
 const
   FsCalls = ["fileExists", "dirExists", "getFileInfo", "getFileSize",
     "getLastModificationTime", "setLastModificationTime", "walkDir", "walkFiles", "walkDirRec",
@@ -162,41 +115,93 @@ proc callsIn(text: string; names: openArray[string]): seq[tuple[line: int; name:
         (after.startsWith(" ") and after.strip.len > 0 and after.strip[0] notin {'=', ':', ',', ')', ']'})
       if called: result.add (i + 1, name)
 
-block theScanSeesEveryForm:
-  for form in ["if fileExists(p): discard", "if p.fileExists: discard", "discard os.dirExists(p)",
-      "discard fileExists p", "for k, f in walkDir(d): discard", "let h = s.file.traceHeaders(i)",
-      "let s = newFileStream(p)"]:
-    doAssert callsIn(form, @FsCalls & @MapReaders).len == 1, "not seen: " & form
-  for fine in ["if fs.fileExists(p): discard", "## fileExists(p) in a doc comment",
-      "proc fileExists*(_: FileSystem; path: string): bool =", "say \"fileExists(p)\"",
-      "for k, f in fs.walkDir(d): discard", "let exists = fileExists"]:
-    doAssert callsIn(fine, @FsCalls & @MapReaders).len == 0, "seen: " & fine
+proc main*() =
 
-block everyCallGoesThroughTheSeam:
-  let src = currentSourcePath().parentDir.parentDir / "src/viewSEG"
-  var found: seq[string]
-  var used: seq[string]
-  for path in walkDirRec(src):
-    if not path.endsWith(".nim"): continue
-    let rel = path.relativePath(src)
-    if rel == "core/filesystem.nim": continue
-    var allowed: seq[string]
+  install()
+  let dir = getTempDir() / "viewSEG-tfilesystem-" & $getCurrentProcessId()
+  createDir(dir)
+  writeFile(dir / "a.txt", "hello")
+  let far = dir / "far"
+  createDir(far)
+  writeFile(far / "b.txt", "far away")
+
+  block aSlowCallMovesTheClockOn:
+    fault(far, fkSlow, delay = initDuration(seconds = 3))
+    let t0 = fs.now()
+    doAssert fs.fileExists(far / "b.txt")
+    doAssert fs.now() - t0 >= initDuration(seconds = 3), "a slow stat moves fs.now on"
+    doAssert fs.fileExists(dir / "a.txt"), "another path is not slow"
+    release(far)
+
+  block aFailingCallFails:
+    fault(far, fkFail)
+    doAssert not fs.fileExists(far / "b.txt"), "a failing drive: no such file"
+    doAssert not fs.dirExists(far)
+    doAssertRaises OSError: discard fs.getFileInfo(far / "b.txt")
+    doAssertRaises IOError: discard fs.readFile(far / "b.txt")
+    doAssert sniff(far / "b.txt") == fkUnknown
+    doAssert fs.readFile(dir / "a.txt") == "hello"
+    release(far)
+    doAssert fs.readFile(far / "b.txt") == "far away", "the drive is back"
+
+  block aHungCallWaits:
+    fault(far, fkHang, {foStat})
+    var t: Thread[string]
+    proc look(path: string) {.thread.} =
+      markWorkerThread()
+      doAssert fs.fileExists(path)
+    createThread(t, look, far / "b.txt")
+    doAssert waitUntil(hung() == 1), "the stat hangs"
+    sleep 20
+    doAssert hung() == 1, "and stays hung"
+    release(far)
+    joinThread(t)
+    doAssert hung() == 0
+
+  block uiCallsAreKept:
+    markUiThread()
+    discard fs.fileExists(dir / "a.txt")
+    doAssert uiCalls().len == 1 and "a.txt" in uiCalls()[0]
+    markWorkerThread()
+
+  block theScanSeesEveryForm:
+    for form in ["if fileExists(p): discard", "if p.fileExists: discard", "discard os.dirExists(p)",
+        "discard fileExists p", "for k, f in walkDir(d): discard", "let h = s.file.traceHeaders(i)",
+        "let s = newFileStream(p)"]:
+      doAssert callsIn(form, @FsCalls & @MapReaders).len == 1, "not seen: " & form
+    for fine in ["if fs.fileExists(p): discard", "## fileExists(p) in a doc comment",
+        "proc fileExists*(_: FileSystem; path: string): bool =", "say \"fileExists(p)\"",
+        "for k, f in fs.walkDir(d): discard", "let exists = fileExists"]:
+      doAssert callsIn(fine, @FsCalls & @MapReaders).len == 0, "seen: " & fine
+
+  block everyCallGoesThroughTheSeam:
+    let src = currentSourcePath().parentDir.parentDir / "src/viewSEG"
+    var found: seq[string]
+    var used: seq[string]
+    for path in walkDirRec(src):
+      if not path.endsWith(".nim"): continue
+      let rel = path.relativePath(src)
+      if rel == "core/filesystem.nim": continue
+      var allowed: seq[string]
+      for (file, calls, why) in PastTheSeam:
+        if rel == file: allowed = calls.splitWhitespace
+      for (line, name) in callsIn(readFile(path), FsCalls):
+        if name in allowed: used.add rel & " " & name
+        elif rel.startsWith("core/") or rel.startsWith("remote/"):
+          found.add rel & ":" & $line & ": " & name & " (call it through `fs`)"
+        else:
+          found.add rel & ":" & $line & ": " & name & " (past the seam: list it in PastTheSeam)"
+      if UiThread.anyIt(rel.startsWith(it)):
+        for (line, name) in callsIn(readFile(path), MapReaders):
+          found.add rel & ":" & $line & ": " & name & " (reads a file's map on the UI thread)"
+    doAssert found.len == 0, "file-system calls past the seam:\n" & found.join("\n")
     for (file, calls, why) in PastTheSeam:
-      if rel == file: allowed = calls.splitWhitespace
-    for (line, name) in callsIn(readFile(path), FsCalls):
-      if name in allowed: used.add rel & " " & name
-      elif rel.startsWith("core/") or rel.startsWith("remote/"):
-        found.add rel & ":" & $line & ": " & name & " (call it through `fs`)"
-      else:
-        found.add rel & ":" & $line & ": " & name & " (past the seam: list it in PastTheSeam)"
-    if UiThread.anyIt(rel.startsWith(it)):
-      for (line, name) in callsIn(readFile(path), MapReaders):
-        found.add rel & ":" & $line & ": " & name & " (reads a file's map on the UI thread)"
-  doAssert found.len == 0, "file-system calls past the seam:\n" & found.join("\n")
-  for (file, calls, why) in PastTheSeam:
-    for c in calls.splitWhitespace:
-      doAssert file & " " & c in used, "PastTheSeam lists " & c & " in " & file &
-        ", which no longer calls it"
+      for c in calls.splitWhitespace:
+        doAssert file & " " & c in used, "PastTheSeam lists " & c & " in " & file &
+          ", which no longer calls it"
 
-removeDir(dir)
-echo "tfilesystem: ok"
+  removeDir(dir)
+  echo "tfilesystem: ok"
+
+when isMainModule:
+  main()

@@ -81,60 +81,65 @@ func traces(b: BigSurvey; shots: int): int =
     let p = b.patch(i, k)
     result += p.lines.len * p.points.len
 
-withFixtures fx:
-  let (small, large) = (bigSurveyShape(0.001), bigSurveyShape(0.01))
-  # About ten times the traces in the larger survey's file.
-  let few = 2
-  var many = 1
-  while large.traces(many) < 10 * small.traces(few): inc many
-  let (fa, fb) = (writeBigSurvey(fx.dir / "small", small), writeBigSurvey(fx.dir / "large", large))
-  let a = best(fa, writeBigSegy(fx.dir / "small", small, few))
-  let b = best(fb, writeBigSegy(fx.dir / "large", large, many))
-  func f1(x: float64): string = formatFloat(x, ffDecimal, 1)
-  echo "tsurveygrowth: X ", getFileSize(fa.x) div 81, " -> ", getFileSize(fb.x) div 81,
-    " records, traces ",
-    small.traces(few), " -> ", large.traces(many), ": load ", f1(a.loadMs), " -> ", f1(b.loadMs),
-    " ms (", f1(b.loadMs / a.loadMs), "x), import ", f1(a.importMs), " -> ", f1(b.importMs),
-    " ms (", f1(b.importMs / a.importMs), "x); longest drain ", f1(max(a.drainMs, b.drainMs)), " ms"
-  # A little over ten times, and a few ms for what a read costs whatever its
-  # size (threads, the first chunk alone).
-  doAssert b.loadMs <= 12 * a.loadMs + 20, "the load grew " & f1(b.loadMs / a.loadMs) & "x"
-  doAssert b.importMs <= 12 * a.importMs + 20, "the import grew " &
-    f1(b.importMs / a.importMs) & "x"
-  doAssert b.drainMs < 20, "a drain of the inbox took " & f1(b.drainMs) & " ms"
-  # The plan of each survey's file: what a trace costs (each matched) does
-  # not grow with the survey (a lookup by station). Counted as allocations,
-  # which a busy machine does not change: a copy of a station table (the
-  # mistake this was written for) is one or more a lookup, two a trace;
-  # timed too (the fastest of five tries, the two surveys in turn), within
-  # three times and 2 us (a larger table misses the caches more: 1.1 to 1.9
-  # times here).
-  var perTrace: array[2, float64] = [Inf, Inf]
-  var allocsPerTrace: array[2, float64]
-  proc allocs(): int = cast[tuple[allocs, deallocs: int]](getAllocStats()).allocs
-  var files: array[2, SeismicFile]
-  var geometry: array[2, SurveyGeometry]
-  for k, (f, segy) in [(fa, writeBigSegy(fx.dir / "small", small, few)),
-      (fb, writeBigSegy(fx.dir / "large", large, many))]:
-    files[k] = openSeismic(segy, keys = true)
-    geometry[k] = initSurveyGeometry()
-    for p in [f.s, f.r, f.x]: geometry[k].addSps(p)
-  for _ in 0 ..< 5:
+proc main*() =
+
+  withFixtures fx:
+    let (small, large) = (bigSurveyShape(0.001), bigSurveyShape(0.01))
+    # About ten times the traces in the larger survey's file.
+    let few = 2
+    var many = 1
+    while large.traces(many) < 10 * small.traces(few): inc many
+    let (fa, fb) = (writeBigSurvey(fx.dir / "small", small), writeBigSurvey(fx.dir / "large", large))
+    let a = best(fa, writeBigSegy(fx.dir / "small", small, few))
+    let b = best(fb, writeBigSegy(fx.dir / "large", large, many))
+    func f1(x: float64): string = formatFloat(x, ffDecimal, 1)
+    echo "tsurveygrowth: X ", getFileSize(fa.x) div 81, " -> ", getFileSize(fb.x) div 81,
+      " records, traces ",
+      small.traces(few), " -> ", large.traces(many), ": load ", f1(a.loadMs), " -> ", f1(b.loadMs),
+      " ms (", f1(b.loadMs / a.loadMs), "x), import ", f1(a.importMs), " -> ", f1(b.importMs),
+      " ms (", f1(b.importMs / a.importMs), "x); longest drain ", f1(max(a.drainMs, b.drainMs)), " ms"
+    # A little over ten times, and a few ms for what a read costs whatever its
+    # size (threads, the first chunk alone).
+    doAssert b.loadMs <= 12 * a.loadMs + 20, "the load grew " & f1(b.loadMs / a.loadMs) & "x"
+    doAssert b.importMs <= 12 * a.importMs + 20, "the import grew " &
+      f1(b.importMs / a.importMs) & "x"
+    doAssert b.drainMs < 20, "a drain of the inbox took " & f1(b.drainMs) & " ms"
+    # The plan of each survey's file: what a trace costs (each matched) does
+    # not grow with the survey (a lookup by station). Counted as allocations,
+    # which a busy machine does not change: a copy of a station table (the
+    # mistake this was written for) is one or more a lookup, two a trace;
+    # timed too (the fastest of five tries, the two surveys in turn), within
+    # three times and 2 us (a larger table misses the caches more: 1.1 to 1.9
+    # times here).
+    var perTrace: array[2, float64] = [Inf, Inf]
+    var allocsPerTrace: array[2, float64]
+    proc allocs(): int = cast[tuple[allocs, deallocs: int]](getAllocStats()).allocs
+    var files: array[2, SeismicFile]
+    var geometry: array[2, SurveyGeometry]
+    for k, (f, segy) in [(fa, writeBigSegy(fx.dir / "small", small, few)),
+        (fb, writeBigSegy(fx.dir / "large", large, many))]:
+      files[k] = openSeismic(segy, keys = true)
+      geometry[k] = initSurveyGeometry()
+      for p in [f.s, f.r, f.x]: geometry[k].addSps(p)
+    for _ in 0 ..< 5:
+      for k in 0 .. 1:
+        let a0 = allocs()
+        let t0 = getMonoTime()
+        let plan = planJoin(addr files[k], geometry[k], JoinOptions(),
+          proc (done, total: int): bool = true)
+        perTrace[k] = min(perTrace[k], 1000 * ms(getMonoTime() - t0) / float64(files[k].len))
+        allocsPerTrace[k] = float64(allocs() - a0) / float64(files[k].len)
+        doAssert plan.traces == files[k].len and plan.matched == files[k].len, $plan.matched
+    for f in files.mitems: f.close()
+    echo "tsurveygrowth: a trace's plan ", f1(perTrace[0]), " us against the smaller survey, ",
+      f1(perTrace[1]), " us against the larger; allocations a trace ",
+      formatFloat(allocsPerTrace[0], ffDecimal, 4), " and ",
+      formatFloat(allocsPerTrace[1], ffDecimal, 4)
     for k in 0 .. 1:
-      let a0 = allocs()
-      let t0 = getMonoTime()
-      let plan = planJoin(addr files[k], geometry[k], JoinOptions(),
-        proc (done, total: int): bool = true)
-      perTrace[k] = min(perTrace[k], 1000 * ms(getMonoTime() - t0) / float64(files[k].len))
-      allocsPerTrace[k] = float64(allocs() - a0) / float64(files[k].len)
-      doAssert plan.traces == files[k].len and plan.matched == files[k].len, $plan.matched
-  for f in files.mitems: f.close()
-  echo "tsurveygrowth: a trace's plan ", f1(perTrace[0]), " us against the smaller survey, ",
-    f1(perTrace[1]), " us against the larger; allocations a trace ",
-    formatFloat(allocsPerTrace[0], ffDecimal, 4), " and ",
-    formatFloat(allocsPerTrace[1], ffDecimal, 4)
-  for k in 0 .. 1:
-    doAssert allocsPerTrace[k] < 0.5, "a trace's plan allocates: " &
-      formatFloat(allocsPerTrace[k], ffDecimal, 4) & " a trace (a table copied?)"
-  doAssert perTrace[1] <= 3 * perTrace[0] + 2, "a trace's plan grew with the survey: " &
-    f1(perTrace[0]) & " -> " & f1(perTrace[1]) & " us"
+      doAssert allocsPerTrace[k] < 0.5, "a trace's plan allocates: " &
+        formatFloat(allocsPerTrace[k], ffDecimal, 4) & " a trace (a table copied?)"
+    doAssert perTrace[1] <= 3 * perTrace[0] + 2, "a trace's plan grew with the survey: " &
+      f1(perTrace[0]) & " -> " & f1(perTrace[1]) & " us"
+
+when isMainModule:
+  main()

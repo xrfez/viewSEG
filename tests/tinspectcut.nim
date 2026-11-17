@@ -15,29 +15,34 @@ import viewSEG/core/[edits, headers, processing, viewport]
 import viewSEG/core/inspector {.all.}
 import utils/fixtures
 
-withFixtures fx:
-  let path = fx.longTraceSegy(2000)
-  var f = openSeismic(path, keys = true)
-  let dtMs = f.traceKeys(0).intervalUs / 1000
-  let pr = Processing(band: pbBandPass, f1: 4, f2: 8, f3: 30, f4: 45, dc: dcMean)
-  let flow = initPipeline([agcOp(windowMs = 200)])
-  let req = InspectRequest(samples: true, filters: pr.filterPipeline(dtMs), flow: flow)
-  let t = InspectTrace(id: 0, at: 0, trace: 0, displayed: true)
-  var d = TraceDetail(keys: f.traceKeys(0), dtMs: dtMs)
-  var ws = initWorkspace()
-  const Kept = 100
-  readSamples(d, addr f, t, req, Kept, ws)
-  doAssert d.displayed and d.samples.len == Kept and d.cut == 2000 - Kept, $d.cut
-  # the whole trace through the same steps, as the plot's reader runs them
-  var log: DiagLog
-  var whole = f.readTraces([0], log)
-  let n = whole.shape[1]
-  for plan in [req.filters.compile(float32, dtMs, n), flow.compile(float32, dtMs, n)]:
-    ws.reserve(plan)
-    plan.apply(whole, f.chunkMeta([0], dtMs = dtMs), ws)
-  for i in 0 ..< Kept:
-    doAssert abs(d.samples[i] - whole[0, i]) <= 1e-4 * max(1'f32, abs(whole[0, i])),
-      "sample " & $i & " of " & $Kept & " kept: " & $d.samples[i] &
-      "; the whole trace filtered gives " & $whole[0, i]
-  f.close()
-  echo "tinspectcut: ok"
+proc main*() =
+
+  withFixtures fx:
+    let path = fx.longTraceSegy(2000)
+    var f = openSeismic(path, keys = true)
+    let dtMs = f.traceKeys(0).intervalUs / 1000
+    let pr = Processing(band: pbBandPass, f1: 4, f2: 8, f3: 30, f4: 45, dc: dcMean)
+    let flow = initPipeline([agcOp(windowMs = 200)])
+    let req = InspectRequest(samples: true, filters: pr.filterPipeline(dtMs), flow: flow)
+    let t = InspectTrace(id: 0, at: 0, trace: 0, displayed: true)
+    var d = TraceDetail(keys: f.traceKeys(0), dtMs: dtMs)
+    var ws = initWorkspace()
+    const Kept = 100
+    readSamples(d, addr f, t, req, Kept, ws)
+    doAssert d.displayed and d.samples.len == Kept and d.cut == 2000 - Kept, $d.cut
+    # the whole trace through the same steps, as the plot's reader runs them
+    var log: DiagLog
+    var whole = f.readTraces([0], log)
+    let n = whole.shape[1]
+    for plan in [req.filters.compile(float32, dtMs, n), flow.compile(float32, dtMs, n)]:
+      ws.reserve(plan)
+      plan.apply(whole, f.chunkMeta([0], dtMs = dtMs), ws)
+    for i in 0 ..< Kept:
+      doAssert abs(d.samples[i] - whole[0, i]) <= 1e-4 * max(1'f32, abs(whole[0, i])),
+        "sample " & $i & " of " & $Kept & " kept: " & $d.samples[i] &
+        "; the whole trace filtered gives " & $whole[0, i]
+    f.close()
+    echo "tinspectcut: ok"
+
+when isMainModule:
+  main()

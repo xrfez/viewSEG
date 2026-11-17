@@ -25,7 +25,7 @@ type
     act: proc (f: FrameInfo)
     done: proc (f: FrameInfo): bool
 
-proc main() =
+proc runMain() =
   withFixtures fx:
     let metres = fx.mapSpsIn("metres", "Metres", "1.0")
     let feet = fx.mapSpsIn("feet", "Feet", "0.3048")
@@ -109,4 +109,9 @@ proc main() =
     doAssert failed.len == 0, failed
     doAssert at == steps.len, "stopped at " & steps[min(at, steps.high)].name
 
-main()
+proc main*() =
+
+  runMain()
+
+when isMainModule:
+  main()

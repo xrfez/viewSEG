@@ -17,39 +17,44 @@ import viewSEG/core/[geometry, state]
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
 
-withFixtures fx:
-  let path = fx.longRecordSegy()
-  const spans = [(0.0, 900.0), (1000.0, 1900.0), (5000.0, 5900.0), (0.0, 5998.0),
-    (40.0, 120.0)]
-  var rects: seq[Rect]
-  var stage = 0
-  var wait = 0
-  var since = getMonoTime() # when the stage began
-  template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
-  proc answered(f: FrameInfo): bool =
-    let p = f.panel
-    let tiles = f.core.tiles(f.core.findPanel(MainPanel))
-    p.laidOut and tiles.len > 0 and tiles[^1].request == p.pending and
-      f.tracePanel.drawnView.sameSpans(p.view)
-  proc onFrame(f: FrameInfo) =
-    inc wait
-    if stage < spans.len: # each view, then the data area's place
-      if wait == 1 and f.panel.laidOut:
-        var v = f.panel.view
-        v.timeMs = Span(lo: spans[stage][0], hi: spans[stage][1])
-        f.showView(v)
-      if wait > 6 and f.answered and f.tracePanel.drawnView.timeMs.lo == spans[stage][0]:
-        rects.add f.markOf("plot.data")
-        (stage, wait, since) = (stage + 1, 0, getMonoTime())
-      elif not f.panel.laidOut: wait = 0
-    else: f.stop()
-    if overdue(f.index, 3000, since): f.stop()
-  let code = run(RunOptions(openPaths: @[path], windowSize: (1400, 900),
-    theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
-    indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
-  doAssert code == 0, "run() exit code " & $code
-  doAssert rects.len == spans.len, "only " & $rects.len & " views shown"
-  for i in 1 ..< rects.len:
-    doAssert rects[i] == rects[0], "over " & $spans[i] & " ms the plot is at " & $rects[i] &
-      ", over " & $spans[0] & " ms at " & $rects[0]
-  echo "tguiedge: the plot at ", rects[0], " over ", spans.len, " views"
+proc main*() =
+
+  withFixtures fx:
+    let path = fx.longRecordSegy()
+    const spans = [(0.0, 900.0), (1000.0, 1900.0), (5000.0, 5900.0), (0.0, 5998.0),
+      (40.0, 120.0)]
+    var rects: seq[Rect]
+    var stage = 0
+    var wait = 0
+    var since = getMonoTime() # when the stage began
+    template panel(f: FrameInfo): untyped = f.core.panels[f.core.findPanel(MainPanel)]
+    proc answered(f: FrameInfo): bool =
+      let p = f.panel
+      let tiles = f.core.tiles(f.core.findPanel(MainPanel))
+      p.laidOut and tiles.len > 0 and tiles[^1].request == p.pending and
+        f.tracePanel.drawnView.sameSpans(p.view)
+    proc onFrame(f: FrameInfo) =
+      inc wait
+      if stage < spans.len: # each view, then the data area's place
+        if wait == 1 and f.panel.laidOut:
+          var v = f.panel.view
+          v.timeMs = Span(lo: spans[stage][0], hi: spans[stage][1])
+          f.showView(v)
+        if wait > 6 and f.answered and f.tracePanel.drawnView.timeMs.lo == spans[stage][0]:
+          rects.add f.markOf("plot.data")
+          (stage, wait, since) = (stage + 1, 0, getMonoTime())
+        elif not f.panel.laidOut: wait = 0
+      else: f.stop()
+      if overdue(f.index, 3000, since): f.stop()
+    let code = run(RunOptions(openPaths: @[path], windowSize: (1400, 900),
+      theme: forceDark, userThemeDir: some(fx.dir / "no-user-themes"),
+      indexCacheDir: some(fx.dir / "cache"), onFrame: onFrame))
+    doAssert code == 0, "run() exit code " & $code
+    doAssert rects.len == spans.len, "only " & $rects.len & " views shown"
+    for i in 1 ..< rects.len:
+      doAssert rects[i] == rects[0], "over " & $spans[i] & " ms the plot is at " & $rects[i] &
+        ", over " & $spans[0] & " ms at " & $rects[0]
+    echo "tguiedge: the plot at ", rects[0], " over ", spans.len, " views"
+
+when isMainModule:
+  main()

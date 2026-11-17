@@ -47,39 +47,45 @@ guardUnhandled(onDeath)
 echo v.build, " ", applyChrome(nil, ChromeLook(dark: true)), " ", setWindowIcons(nil)
 """
 
-let zig = findExe("zig")
-if zig.len == 0:
-  echo "twinchrome: skipped (no zig)"
-else:
-  let
-    root = currentSourcePath().parentDir.parentDir
-    work = getTempDir() / "viewSEG-twinchrome-" & $getCurrentProcessId()
-  createDir(work)
-  try:
-    writeFile(work / "probe.nim", probe)
-    proc build(name: string; extra: openArray[string]): string =
-      ## Builds the probe into `work/name`; returns the executable's bytes.
-      let exe = work / name
-      var args = @[getCurrentCompilerExe(), "c", "--hints:off", "--warnings:off",
-        "--skipParentCfg", "--skipUserCfg", "--skipProjCfg", "--path:" & root / "src",
-        "--os:windows", "--cpu:amd64", "-d:zigcc", "-d:release", "--cc:clang",
-        "--clang.exe:" & root / "tools" / "zigcc", "--clang.linkerexe:" & root / "tools" / "zigcc",
-        "--passC:-target x86_64-windows-gnu", "--passL:-target x86_64-windows-gnu",
-        "--nimcache:" & work / ("cache-" & name), "-o:" & exe]
-      args.add extra
-      args.add work / "probe.nim"
-      let (output, code) = execCmdEx(quoteShellCommand(args), workingDir = work)
-      doAssert code == 0, "the Windows probe does not build:\n" & output.strip
-      readFile(exe)
-    let gui = build("probe.exe", [])
-    doAssert subsystem(gui) == 2, "subsystem " & $subsystem(gui) & ", not GUI (2)"
-    doAssert "PerMonitorV2" in gui, "no manifest with per-monitor DPI v2"
-    for name in ["DwmSetWindowAttribute", "RtlGetVersion", "GetDpiForWindow", "LoadImageW",
-        "Shell_NotifyIconW", "FindWindowExW", "SetWindowSubclass", "DefSubclassProc",
-        "RemoveWindowSubclass"]:
-      doAssert name in gui, name & " is not looked up"
-    let console = build("probe-console.exe", ["-d:console"])
-    doAssert subsystem(console) == 3, "-d:console: subsystem " & $subsystem(console)
-  finally:
-    removeDir(work)
-  echo "twinchrome: ok"
+proc main*() =
+
+  let zig = findExe("zig")
+  if zig.len == 0:
+    echo "twinchrome: skipped (no zig)"
+  else:
+    let
+      root = currentSourcePath().parentDir.parentDir
+      work = getTempDir() / "viewSEG-twinchrome-" & $getCurrentProcessId()
+    createDir(work)
+    try:
+      writeFile(work / "probe.nim", probe)
+      proc build(name: string; extra: openArray[string]): string =
+        ## Builds the probe into `work/name`; returns the executable's bytes.
+        let exe = work / name
+        var args = @[getCurrentCompilerExe(), "c", "--hints:off", "--warnings:off",
+          "--skipParentCfg", "--skipUserCfg", "--skipProjCfg", "--path:" & root / "src",
+          "--os:windows", "--cpu:amd64", "-d:zigcc", "-d:release", "--cc:clang",
+          "--clang.exe:" & root / "tools" / "zigcc", "--clang.linkerexe:" & root / "tools" /
+              "zigcc",
+          "--passC:-target x86_64-windows-gnu", "--passL:-target x86_64-windows-gnu",
+          "--nimcache:" & work / ("cache-" & name), "-o:" & exe]
+        args.add extra
+        args.add work / "probe.nim"
+        let (output, code) = execCmdEx(quoteShellCommand(args), workingDir = work)
+        doAssert code == 0, "the Windows probe does not build:\n" & output.strip
+        readFile(exe)
+      let gui = build("probe.exe", [])
+      doAssert subsystem(gui) == 2, "subsystem " & $subsystem(gui) & ", not GUI (2)"
+      doAssert "PerMonitorV2" in gui, "no manifest with per-monitor DPI v2"
+      for name in ["DwmSetWindowAttribute", "RtlGetVersion", "GetDpiForWindow", "LoadImageW",
+          "Shell_NotifyIconW", "FindWindowExW", "SetWindowSubclass", "DefSubclassProc",
+          "RemoveWindowSubclass"]:
+        doAssert name in gui, name & " is not looked up"
+      let console = build("probe-console.exe", ["-d:console"])
+      doAssert subsystem(console) == 3, "-d:console: subsystem " & $subsystem(console)
+    finally:
+      removeDir(work)
+    echo "twinchrome: ok"
+
+when isMainModule:
+  main()

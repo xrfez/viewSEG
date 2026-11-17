@@ -414,9 +414,6 @@ proc byStation() =
     drive(steps, @[path, sps.s, sps.r], fx.dir)
     echo "tguilink: stations matched to the survey files, ", steps.len, " steps"
 
-fromTheHeaders()
-byStation()
-
 # ------------------------------------------ land survey: screenshots, times --
 # With `VIEWSEG_SCREENSHOTS=<dir>` and the private files present (local
 # only), the land record with its S, R and X files, in the "Plot and
@@ -510,7 +507,15 @@ proc landSurvey(dir: string) =
     ms(median(overMap)), " ms median (slowest ", ms(max(overMap)), "); saved ",
     dir / "link-land-1.png", " and -2.png"
 
-if shots.len > 0 and privateFile("landSegd").len > 0 and
-    privateFiles("landSps", "landRps", "landXps").len == 3:
-  createDir(shots)
-  landSurvey(shots)
+proc main*() =
+
+  fromTheHeaders()
+  byStation()
+
+  if shots.len > 0 and privateFile("landSegd").len > 0 and
+      privateFiles("landSps", "landRps", "landXps").len == 3:
+    createDir(shots)
+    landSurvey(shots)
+
+when isMainModule:
+  main()
