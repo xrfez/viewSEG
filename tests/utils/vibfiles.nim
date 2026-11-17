@@ -11,6 +11,9 @@
 ##   `VibClaimed` traces per ensemble.
 ## - `vibPlainSegy()`: four auxiliary traces with code 6 (sweep): no vibrator
 ##   codes.
+## - `zeroBinarySegy()`: `vibPlainSegy`'s traces with the binary header's samples per
+##   trace set to 0 (the trace headers give the length).
+## - `variableSegy()`: rev 1, two traces of different lengths.
 ## - `damagedSegy()`: binary header with 0 samples, a first trace header with 0
 ##   samples, then bytes that are not trace headers.
 
@@ -77,6 +80,10 @@ proc damagedSegy*(fx: Fixtures): string =
   result = fx.dir / "damaged.sgy"
   if fileExists(result): return
   var bytes = newSeq[byte](3600 + 240 + 60_000)
+  for card in 0 ..< 40: # an ASCII textual header
+    let text = "C" & (if card < 9: "0" else: "") & $(card + 1) & " viewSEG test fixture: damaged"
+    for i, c in text: bytes[card * 80 + i] = byte(c)
+    for i in text.len ..< 80: bytes[card * 80 + i] = byte(' ')
   bytes[3224] = 0 # format 5 (bytes 3225-3226)
   bytes[3225] = 5
   bytes[3216] = 0x07 # interval 2000 us (bytes 3217-3218)
@@ -89,3 +96,27 @@ proc damagedSegy*(fx: Fixtures): string =
   var f = open(result, fmWrite)
   doAssert f.writeBytes(bytes, 0, bytes.len) == bytes.len
   f.close()
+
+proc zeroBinarySegy*(fx: Fixtures): string =
+  result = fx.dir / "zero-binary.sgy"
+  if fileExists(result): return
+  writeVib(result, [6'i16, 6, 6, 6], 1, false)
+  var f = open(result, fmReadWriteExisting)
+  f.setFilePos(3220) # bytes 3221-3222, big-endian
+  let zero = [0'u8, 0]
+  doAssert f.writeBytes(zero, 0, 2) == 2
+  f.close()
+
+proc variableSegy*(fx: Fixtures): string =
+  result = fx.dir / "variable.sgy"
+  if fileExists(result): return
+  var w = openSeismicWriter(result, SegyOutputOptions(revision: SegyRevision(major: 1, minor: 0),
+    traceSorting: 1, text: @["C01 viewSEG test fixture: variable-length traces"]))
+  for n, samples in [100, 150, 120]:
+    var buf = newSeq[float32](samples)
+    for i in 0 ..< samples: buf[i] = vibSample(n, i)
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(n + 1), 0.0,
+      VibDtMs * 1000, tsLive)
+    w.writeTrace(k, buf)
+  discard w.close() # a variable-length file may say so in its log

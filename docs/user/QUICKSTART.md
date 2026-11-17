@@ -55,6 +55,13 @@ one ([References](references.md)).
 
 Files and folders can also be dragged from a file manager and dropped on the window.
 
+A SEG-Y file whose binary header and first trace header both say 0 samples gives no trace
+length, so what a read would find is its bytes cut into thousands of garbage traces. viewSEG
+refuses it with one line in the Messages ("Cannot open ...: the binary header and the first
+trace header both say 0 samples per trace, so the file looks damaged or is not SEG-Y"); it is
+not shown, and nothing from it reaches the map or the Records table. A binary header of 0
+with trace headers that give the length (a variable-length file) opens as usual.
+
 **Survey files** (SPS source, receiver and relation files, `.s` `.r` `.x` or `.sps` `.rps`
 `.xps`, and SEG P1 files) open the same ways: File > Open, a drop (several at once), the
 command line. viewSEG tells them by what they hold, not by their name, and loads them into

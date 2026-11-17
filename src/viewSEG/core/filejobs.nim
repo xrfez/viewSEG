@@ -65,14 +65,26 @@ proc pruneIndexCache*(dir: string; budget: int64; keep = ""): seq[string] =
       total -= c.size
       result.add c.path
 
+func damagedSegyWhy*(f: SeismicFile): string =
+  ## Why a SEG-Y file is refused as damaged, else "". A file whose binary header
+  ## says 0 samples per trace and whose first trace header says 0 samples too
+  ## gives no trace length at all: what the walk then finds is the file's bytes cut
+  ## into "traces" at random, thousands of garbage ones. (A binary header of 0 with
+  ## trace headers that give the length is an ordinary variable-length file, and
+  ## opens.)
+  if f.kind == skSegy and f.len > 0 and f.index.segy.binary.effectiveSamplesPerTrace == 0 and
+      f.index.entries[0].numSamples == 0:
+    result = "the binary header and the first trace header both say 0 samples per trace, " &
+      "so the file looks damaged or is not SEG-Y (read as " & $f.len & " traces by its size)"
+
 proc openSession*(path: string; progress: Progress = nil; cache = "";
     choice = OpenChoice()): Session =
   ## Opens `path` read-only, with its keys and gathers, reading its index
   ## from the index cache file `cache` when that is current, with the
   ## options `choice` (which may leave the cache alone: `usesCache`). Worker-only: it
   ## reads the file. Raises `IOError` or `OSError` when the file cannot be
-  ## opened, and parseSEG's `SegCancelledError` when `progress` returns
-  ## false; problems with the data are in the file's log instead. The
+  ## opened or is a damaged SEG-Y file (`damagedSegyWhy`), and parseSEG's
+  ## `SegCancelledError` when `progress` returns false; problems with the data are in the file's log instead. The
   ## session keeps the file's size and time from when the open finishes
   ## (`Session.size`), not from before it. A file cut while this open reads
   ## is the file the session holds, so the watch does not open it again for
@@ -92,6 +104,8 @@ proc openSession*(path: string; progress: Progress = nil; cache = "";
   {.cast(gcsafe).}:
     opened = openSeismic(path, keys = true, progress = progress,
       opts = openOptions(choice, cache))
+  let damaged = damagedSegyWhy(opened)
+  if damaged.len > 0: raise newException(IOError, damaged)
   let info = fs.getFileInfo(path)
   result = newSession(path, move opened, info.size, info.lastWriteTime, choice)
 
