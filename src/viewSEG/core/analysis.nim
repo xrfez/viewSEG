@@ -142,7 +142,12 @@ type
     image*: AnalysisImage ## a spectrogram's; empty otherwise
     table*: seq[seq[string]]
       ## a vibrator signature's summary per signal, the first row the
-      ## columns' names; empty for none
+      ## columns' names; empty for none. The force columns stay in the
+      ## stored unit; `forceUnits` names it so the window can show them.
+    forceUnits*: seq[string]
+      ## the stored unit of each table row after the header, for the force
+      ## columns ("N", "as recorded", "kg × m/s²", ...); empty when the
+      ## table has none
     used*: int ## traces it is of
     leftOut*: int ## of those asked about: killed, dead, not decoded
     atOtherInterval*: int ## of those asked about: sampled at another interval, or none

@@ -734,7 +734,10 @@ right of that line's first row. A change works it out again.
   the coordinate unit. **In metres** the axis
   is in cycles/km and the apparent velocity in m/s. **In feet** (international or US survey:
   the foot of the file itself) the axis is in cycles/kft (per 1000 ft) and the velocity in
-  ft/s, as a US crew reads them; the note under the title names the unit. When the spacing is
+  ft/s, as a US crew reads them; the note under the title names the unit. The velocity
+  follows the file's units when they are known, not File > Settings > Units; the readout's
+  tooltip says which. When the file names no length the velocity is in traces/s, and the
+  tooltip says the Units setting does not apply: there is no length to convert. When the spacing is
   not regular, or the unit is an angle (arc seconds, degrees) or not given, the wavenumber is
   in **cycles per trace** (velocity in traces/s), and the note says why; the axis always
   names its unit. An event arriving later on the later traces is at a positive wavenumber.
@@ -750,11 +753,13 @@ right of that line's first row. A change works it out again.
     phase to the reference is past ±90°: wiring). M and B take one polarity, together
     (the baseplate moves against the mass: one reversed alone would make their force a
     difference); automatic needs both and both masses. Ref is the phase origin.
-  - **GF from M and B.** With the reaction mass and the baseplate's mass entered (kg;
-    empty at first, as no default fits every vibrator), `GF (M, B) = Mr·M + Mb·B` is
+  - **GF from M and B.** With the reaction mass and the baseplate's mass entered (kg, or
+    lb when File > Settings > Units is Imperial; **kg** / **lb** beside the reaction mass
+    is that setting, and the number converts in place; empty at first, as no default fits
+    every vibrator), `GF (M, B) = Mr·M + Mb·B` is
     drawn with the recorded GF in the phase, frequency and distortion plots, and its row
     added to the table. Its force is in **a plot of its own** ("Force from M and B", kg ×
-    recorded units): the recorded force (counts) and the weighted sum are not in one unit,
+    recorded units, or lb × when Units is Imperial; the stored numbers stay in kilograms): the recorded force (counts) and the weighted sum are not in one unit,
     so neither shares the other's axis. Without accelerometer sensitivities it is
     uncalibrated, and the window says so.
   - **Harmonics** tracked to the 5th at first (2 to 16); THD sums them from the 2nd.
@@ -762,11 +767,19 @@ right of that line's first row. A change works it out again.
     limits** and the eight boxes, greyed while that check is off: the largest |phase| at a
     point (10° at first) and its mean (5°), THD at a point (40 %) and its mean (20 %), any one
     Harmonic (%), the fundamental's lowest and highest, the largest peak (empty: none).
-    The force limits are in the recorded force's unit: drawn and judged on GF alone, never on
-    GF (M, B), whose unit is another (with no recorded GF they apply to it).
+    The force boxes show the unit the force axis shows, written beside the box: newtons
+    under Metric, pounds-force under Imperial, counts when that force is uncalibrated
+    (and that plot's own unit when the force from M and B carries the limits). What is
+    stored stays in the stored unit, so the line and the pass or fail agree with the
+    number typed; toggling Units converts the number in place and does not store it
+    again. They are drawn and judged on GF alone, never on GF (M, B), whose unit is
+    another (with no recorded GF they apply to it).
     On, they are drawn on the plots as thin lines in the error colour, the points past
     them marked, and the table shows each signal's statistics with **pass** or **fail**
-    and the limits failed. They are judged on the two ground forces over the sweep less
+    and the limits failed. The table's mean force, minimum force and maximum peak are
+    in the same unit as that signal's axis; the column names the unit when every row
+    shares it, and a row in another unit names its own. They are judged on the two
+    ground forces over the sweep less
     its tapers (the span is said under the title); M and B are summarised, not judged.
   - The values are as recorded (no calibration yet): the force in the recorded units,
     or a weighted sum of M and B's recorded values.

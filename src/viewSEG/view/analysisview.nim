@@ -5,28 +5,54 @@
 ## frontend draws them (the highest y first, at the top).
 
 import std/[math, strutils]
-import ../core/[analysis, plotcursor]
+import ../core/[analysis, plotcursor, units]
 import curveplot, theme
 
-func curvePlots*(r: AnalysisResult; t: Theme): seq[CurvePlot] =
+func scaled(ys: seq[float64]; divisor: float64): seq[float64] =
+  ## `ys` divided by `divisor` (1: as they are). A NaN stays a NaN.
+  if divisor == 1.0: return ys
+  result = newSeq[float64](ys.len)
+  for i, y in ys:
+    result[i] = if y.isNaN: NaN else: y / divisor
+
+func scaleBound(y, divisor: float64): float64 {.inline.} =
+  if divisor == 1.0 or y.isNaN: y else: y / divisor
+
+func forceAxisLabel*(plots: openArray[AnalysisPlot]): string =
+  ## The y label of the plot the force limits are drawn on; "" when there is
+  ## none yet. With a recorded ground force that plot is "Force"; without one
+  ## it is "Force from M and B".
+  var fromMasses = ""
+  for p in plots:
+    if p.title == "Force": return p.yLabel
+    if p.title == "Force from M and B": fromMasses = p.yLabel
+  fromMasses
+
+func curvePlots*(r: AnalysisResult; t: Theme; units = usMetric): seq[CurvePlot] =
   ## The result's plots as curve plots: each data curve a colour of the
   ## theme's series, in order; a limit a thin line in the error colour, the
-  ## points past one marked in it; a NaN where a curve has no value.
+  ## points past one marked in it; a NaN where a curve has no value. `units`
+  ## renames an axis that states a metric unit and scales its values; the
+  ## stored result stays in SI.
   for p in r.plots:
-    var c = CurvePlot(xLabel: p.xLabel, yLabel: p.yLabel, xUnit: p.xUnit, yUnit: p.yUnit,
-      xs: p.xs, yFloor: p.yLo, yCeil: p.yHi, aside: p.aside)
+    let axis = axisDisplay(p.yLabel, units)
+    let yUnit = if p.yUnit.len > 0: p.yUnit else: unitOfLabel(axis.label)
+    var c = CurvePlot(xLabel: p.xLabel, yLabel: axis.label, xUnit: p.xUnit, yUnit: yUnit,
+      xs: p.xs, yFloor: scaleBound(p.yLo, axis.divisor),
+      yCeil: scaleBound(p.yHi, axis.divisor), aside: p.aside)
     var i = 0
     for curve in p.curves:
+      let ys = scaled(curve.ys, axis.divisor)
       case curve.style
       of csLine:
         c.curves.add Curve(name: curve.name, colour: t.series[i mod t.series.len],
-          ys: curve.ys, xs: curve.xs, brackets: curve.brackets)
+          ys: ys, xs: curve.xs, brackets: scaled(curve.brackets, axis.divisor))
         inc i
       of csLimit:
-        c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: curve.ys,
+        c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: ys,
           xs: curve.xs, width: 1)
       of csPast:
-        c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: curve.ys,
+        c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: ys,
           xs: curve.xs, marks: true)
     result.add c
 

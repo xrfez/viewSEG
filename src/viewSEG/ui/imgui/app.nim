@@ -45,7 +45,7 @@ import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import ../../view/jobstatus
 import aboutbox, agentshot, chrome, dpi, filelist, fonts, frames, headerswindow, icons,
-  shortcutswindow,
+  settingswindow, shortcutswindow,
   jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows, projectwindow,
   references,
   recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows
@@ -101,6 +101,7 @@ type
     reopen: ReopenUi                           ## the "Reopen with options" dialog
     about: AboutUi                             ## Help > About viewSEG
     shortcuts: ShortcutsUi                     ## Help > Keyboard shortcuts
+    settingsWin: SettingsUi                    ## File > Settings
     spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
     plotWins: PlotWindowsUi                    ## the analysis windows (New plot)
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
@@ -866,6 +867,7 @@ func everyWindow(core: AppState): seq[string] =
   result.add "join"
   result.add "memory"
   result.add "shortcuts"
+  result.add "settings"
   for w in core.spectra:
     if w.id != LiveSpectrum: result.add "fft-" & $w.id
 
@@ -1016,6 +1018,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       ui.ask(dkExportSettings,
         (if dir.len > 0: dir / "viewSEG-settings.nif" else: "viewSEG-settings.nif"))
     of maImportSettings: ui.ask(dkImportSettings)
+    of maSettings: ui.settingsWin.open()
     of maResetSettings: ui.core.apply Command(kind: ckResetSettings)
     of maSaveLayout: ui.askLayoutName = true
     of maResetWindows: ui.resetWindows()
@@ -1366,6 +1369,7 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   ui.spectra.drawFfts(ui.core, ui.theme, ui.scale, ui.marks, spectra)
   var plotWins = PlotWindowsOutput()
   ui.plotWins.drawPlotWindows(ui.core, ui.theme, ui.scale, ui.marks, plotWins)
+  for n in plotWins.notes: ui.say(n, mlWarning)
   for c in plotWins.commands.mitems:
     ui.core.apply move c
   if spectra.bringForward: ui.windows.bringForward(awSpectrum)
@@ -1404,6 +1408,9 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   if ui.windows.shortcutsOpen and not ui.shortcuts.shown:
     ui.shortcuts.shown = true
   ui.shortcuts.drawShortcuts(ui.theme, ui.marks)
+  var settingsCmds = ui.settingsWin.drawSettingsWindow(ui.core, ui.theme, ui.marks)
+  for c in settingsCmds.mitems:
+    ui.core.apply move c
   if ui.shortcuts.shown != ui.windows.shortcutsOpen:
     ui.windows.shortcutsOpen = ui.shortcuts.shown
     igMarkIniSettingsDirty_Nil()

@@ -819,7 +819,8 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   the theme, the main window's place and size, the recent files and folders, what a new
   plot window starts with (display mode, fills, overlap, colours, density's colour map,
   gain type, amount and settings, clip percentile, order, display header: whatever the
-  user chose last; polarity is not kept), scale units, per-monitor calibrations, the
+  user chose last; polarity is not kept), Units (metric or imperial, for what a plot
+  shows of a mass, force or velocity; stored values stay SI), scale units, per-monitor calibrations, the
   status bar's fields, the sort presets, the user's own sort keys, the cursor time line
   and the named display presets. Changed only by commands: `ckSettings`, and the plot window's
   `ckDisplay`, `ckSort` and `ckHeader`, which the plot defaults follow, `ckDisplayPreset`; `ckExportSettings`,

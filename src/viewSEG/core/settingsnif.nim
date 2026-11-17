@@ -7,6 +7,7 @@
 ## (settings
 ##  (version 1)
 ##  (theme "everforest-dark")
+##  (units metric)
 ##  (window (x 120) (y 80) (width 1280) (height 800) (maximized false))
 ##  (recentFiles "/data/shot1.sgd")
 ##  (recentFolders "/data")
@@ -65,7 +66,7 @@
 ## making old files unreadable.
 
 import std/strutils
-import geometry, join, log, nif, panels, readout, scales, settings, tracetable
+import geometry, join, log, nif, panels, readout, scales, settings, tracetable, units
 
 export nif
 
@@ -128,7 +129,7 @@ func persistedNames*(): seq[seq[string]] =
     @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
     @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames,
-    @PhasePictureNames, @TableScopeNames]
+    @PhasePictureNames, @TableScopeNames, @UnitNames]
 
 # ----------------------------------------------------------------- writing --
 
@@ -266,6 +267,7 @@ proc settingsDocument*(s: Settings): string =
   w.open("settings")
   w.value("version", SettingsVersion)
   w.value("theme", s.theme)
+  w.choice("units", UnitNames[s.units])
   if s.window.width > 0 and s.window.height > 0:
     w.open("window")
     w.value("x", s.window.x)
@@ -771,6 +773,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       case c.tag
       of "version": r.integer(c, 1, high(int32), version)
       of "theme": r.text(c, result.theme, allowEmpty = true)
+      of "units": r.choice(c, UnitNames, result.units)
       of "window": r.window(c, result.window)
       of "recentFiles": r.strings(c, result.recentFiles)
       of "recentFolders": r.strings(c, result.recentFolders)

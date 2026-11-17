@@ -126,6 +126,16 @@ proc main*() =
       for c in p.curves:
         doAssert c.style == csLine, "a limit drawn while limits are off: " & c.name
     doAssert r.table.len == 6 and r.table[0][^1] == "Max peak", $r.table[0]
+    # each row names the stored unit of its force columns, the one in its axis
+    # Seen to fail: with no unit kept, forceUnits was empty and the window
+    # could not scale "Max peak" when the axis said lbf.
+    doAssert r.forceUnits.len == r.table.len - 1, $r.forceUnits
+    for i, row in r.table[1 .. ^1]:
+      doAssert r.forceUnits[i].len > 0, row[0]
+      if row[0] == "GF":
+        doAssert r.forceUnits[i] in r.plots[1].yLabel, r.forceUnits[i] & " / " & r.plots[1].yLabel
+      if row[0] == "GF (M, B)":
+        doAssert r.forceUnits[i] in r.plots[2].yLabel, r.forceUnits[i] & " / " & r.plots[2].yLabel
 
   block whatWasMade:
     let r = vibratorOf(unitRows, names, inOrder, Dt, params)

@@ -8,8 +8,9 @@
 ## the latest file, where the map shows the point under the pointer, the
 ## survey import's options (File > Import > Survey), the Headers window's
 ## tabs, toggles and columns, whether killed traces are hidden, how the
-## spectrum windows show their spectra, the named display presets, and the
-## colours of a multi-component record.
+## spectrum windows show their spectra, the named display presets, the
+## colours of a multi-component record, and whether a plot shows a physical
+## value in metric or imperial units.
 ## Every field has a default.
 ##
 ## Changed only through `Command`s (`core/state`): `ckSettings` for the
@@ -22,9 +23,9 @@
 
 import std/math
 import components, displaypresets, geometry, join, log, mapkinds, panels, readout, scales,
-  spectra, tracetable
+  spectra, tracetable, units
 
-export displaypresets, join, mapkinds, readout, scales, spectra
+export displaypresets, join, mapkinds, readout, scales, spectra, units
 
 type
   Calibration* = object
@@ -150,26 +151,29 @@ type
 
   Settings* = object
     theme*: string                                ## the theme file's name; "" follows the system
+    units*: UnitSystem
+      ## how a plot shows a physical value (a mass, a force, a velocity);
+      ## Metric, the default. An older file that does not say loads as Metric.
     window*: WindowPlacement
-    recentFiles*: seq[string]                     ## the files opened last, newest first
-    recentFolders*: seq[string]                   ## their folders, newest first
-    recentProjects*: seq[string]                  ## the project folders opened last, newest first
-    lastProject*: string                          ## the project open at the quit; "" for none
-    reopenProject*: bool = true                   ## start with the project open at the quit
+    recentFiles*: seq[string] ## the files opened last, newest first
+    recentFolders*: seq[string] ## their folders, newest first
+    recentProjects*: seq[string] ## the project folders opened last, newest first
+    lastProject*: string ## the project open at the quit; "" for none
+    reopenProject*: bool = true ## start with the project open at the quit
     referenceId*: string
       ## the reference the plots use when no project is open; "" is the file's own pilot
     plot*: PlotDefaults
-    scale*: ScaleUnits                            ## per inch or cm; time as ms per length or speed
-    calibrations*: seq[Calibration]               ## one per calibrated monitor
+    scale*: ScaleUnits ## per inch or cm; time as ms per length or speed
+    calibrations*: seq[Calibration] ## one per calibrated monitor
     readout*: seq[ReadoutField] = @DefaultReadout ## the status bar's fields, in order
-    sortPresets*: seq[SortPreset] = @SortPresets  ## the plot window's sort buttons
-    customOrder*: seq[SortKey]                    ## the user's own keys, used last
-    messages*: MessagesView                       ## the Messages window's toggles
-    cursorLine*: bool                             ## the plot's cursor time line is on
-    files*: FilesView                             ## the Files window's toggles
-    map*: MapOptions                              ## the map's own settings
-    join*: JoinOptions                            ## the geometry join's options, as set last
-    headers*: HeadersView                         ## the Headers window's tabs and toggles
+    sortPresets*: seq[SortPreset] = @SortPresets ## the plot window's sort buttons
+    customOrder*: seq[SortKey] ## the user's own keys, used last
+    messages*: MessagesView ## the Messages window's toggles
+    cursorLine*: bool ## the plot's cursor time line is on
+    files*: FilesView ## the Files window's toggles
+    map*: MapOptions ## the map's own settings
+    join*: JoinOptions ## the geometry join's options, as set last
+    headers*: HeadersView ## the Headers window's tabs and toggles
     hideKilled*: bool
       ## killed traces are left out of the plot (the traces beside them close
       ## up); off: drawn blank

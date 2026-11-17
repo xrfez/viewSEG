@@ -41,6 +41,7 @@ type
     maFileMemory = "File memory...",
     maNewProject = "New project...", maOpenProject = "Open project...",
     maProject = "Project...", maCloseProject = "Close project",
+    maSettings = "Settings...",
     maResetSettings = "Reset the settings",
     maQuit = "Quit",
     maUndo = "Undo", maRedo = "Redo", maClearEdits = "Clear all edits for this file",
@@ -121,7 +122,7 @@ const
     maImportSurvey: 0, maImportSettings: 0, maImportLayout: 0, maImportEdits: 0,
     maExportLog: 0, maExportSettings: 0, maExportLayout: 0, maExportEdits: 0,
     maFileMemory: 0, maNewProject: 0, maOpenProject: 0, maProject: 0, maCloseProject: 0,
-    maResetSettings: 0,
+    maSettings: 0, maResetSettings: 0,
     maQuit: ImGui_Mod_Ctrl.cint or ImGui_Key_Q.cint,
     maUndo: ImGui_Mod_Ctrl.cint or ImGui_Key_Z.cint,
     maRedo: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_Z.cint,
@@ -141,7 +142,7 @@ const
     maImportEdits: IconWriting, maExportLog: IconExport, maExportSettings: IconSliders,
     maExportLayout: IconLayout, maExportEdits: IconWriting, maFileMemory: IconMemory,
     maNewProject: IconProject, maOpenProject: IconProject, maProject: IconProject,
-    maCloseProject: IconClose,
+    maCloseProject: IconClose, maSettings: IconSettings,
     maResetSettings: IconReset, maQuit: IconQuit, maUndo: IconUndo, maRedo: IconRedo,
     maClearEdits: IconClearAll, maToggleTheme: IconTheme,
     maResetWindows: IconHome, maBringWindows: IconFit, maSaveLayout: IconSave,
@@ -498,6 +499,8 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       tip("What viewSEG remembers about the files you opened (their kills and polarity " &
         "reversals, kept beside them, never in them): see it, and remove what is no " &
         "longer wanted")
+      item(maSettings, result)
+      tip("Units: metric or imperial, for a plot's masses, forces and velocities")
       item(maResetSettings, result)
       tip("Every setting back to its default (the recent files and the window's place " &
         "stay); the settings before are kept in a copy")

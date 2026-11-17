@@ -76,7 +76,7 @@ proc everyFieldSet(): Settings =
     tray: TrayOptions(icon: false, minimize: true),
     componentColours: [Rgba(r: 1, g: 2, b: 3, a: 255), Rgba(r: 4, g: 5, b: 6, a: 255),
       Rgba(r: 7, g: 8, b: 9, a: 255), Rgba(r: 10, g: 11, b: 12, a: 255)],
-    referenceId: "r-pilot")
+    referenceId: "r-pilot", units: usImperial)
   result.plot = PlotDefaults(
     display: DisplaySettings(orientation: orTimeAcross, mode: dmWiggleDensity,
       fills: {wfNegative}, colours: pcCustom,
@@ -122,6 +122,7 @@ proc main*() =
     doAssert problems.len == 0, $problems
     doAssert not s.cursorLine and s.recentFiles.len == 1 and s.plot.display.mode == dmWiggle
     doAssert not s.files.followLatest, "a new setting takes its default"
+    doAssert s.units == usMetric, "an older file loads as Metric"
     doAssert s.files.prepareNext, "preparing the next file is on by default"
     doAssert s.map.info == miPopup and s.map.lengths == dlSurvey and s.map.hiddenGroups == {} and
       not s.map.templateBox and s.map.spreadTemplate == TemplateSpec() and s.map.folderShots and

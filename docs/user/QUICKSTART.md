@@ -920,7 +920,8 @@ every theme readable. The seismic colour maps do not change with the theme.
 
 Everything you set is kept for the next run, in `settings.nif` in the settings folder
 (`config/` next to the program, or the folder `viewSEG --paths` names): the theme, where
-the window was and its size, the recent files and folders, how the plot looks (display
+the window was and its size, the recent files and folders, **Units** (metric or imperial,
+below), how the plot looks (display
 mode, fills, overlap, colours, the gain type and amount and every setting of every gain
 type, also the ones not in use: the AGC window, Fixed's amplitude, Normalized's choices,
 Exponential's rate, power and cutoff; the sort order and the display header: a new plot
@@ -928,6 +929,21 @@ starts as you left the last one; polarity is not kept), the cursor
 time line, scale units and screen calibrations, the status bar's fields, the sort presets
 and your own sort keys, the Messages window's toggles, and the Headers window's tabs,
 toggles and columns. It is saved a second after a change and when you quit.
+
+**File > Settings...** chooses **Units**: **Metric** (the default: kilograms, metres per
+second, newtons) or **Imperial** (pounds, feet per second, pounds-force). A plot's mass
+boxes, force-limit boxes, force and velocity labels, the vibrator table's force
+columns, and the words under a vibrator signature follow it. A mass box has **kg** / **lb** beside it, and a force-limit box
+has the unit of the force axis (pounds-force, newtons, or counts): that number converts
+in place, so the mass or the limit does not change. What is saved, and what a command
+sends, stays in kilograms, metres and newtons. An f-k's apparent velocity follows the
+file's own units
+when the file names them (metres: m/s, feet: ft/s); the readout's tooltip says so. When
+the file names no length the velocity stays in traces/s, and the tooltip says the Units
+setting does not apply: there is no length to convert. The map's ruler, scale bar and
+grid are separate: they follow the survey's coordinate units
+(the map's gear can show them in metres, feet or US survey feet). An older settings file
+that does not name Units loads as Metric.
 
 **Layouts.** The windows open where they were when you quit, the hidden ones hidden
 (`layout.nif` beside the settings). The **Window** menu arranges them:

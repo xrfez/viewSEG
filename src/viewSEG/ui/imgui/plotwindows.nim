@@ -19,7 +19,7 @@
 
 import std/[math, sets, strutils, tables]
 import imguin/cimgui
-import ../../core/[colourmaps, geometry, plotcursor, state]
+import ../../core/[colourmaps, geometry, plotcursor, state, units]
 import ../../view/[analysisview, curveplot, theme]
 import chrome, curveplot as curves, icons, marks, placement, spectrumwindow, style
 
@@ -47,6 +47,7 @@ type
 
   PlotWindowsOutput* = object
     commands*: seq[Command]
+    notes*: seq[string] ## a value the boxes refused, in the unit the user typed
 
 proc tip(text: string) =
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint or
@@ -104,24 +105,37 @@ proc numberBox(id: string; value: float64; width: float32; typed: var float64): 
   typed = float64(v)
   igIsItemDeactivatedAfterEdit()
 
+type HeldBox = object
+  text: array[64, char]
+  active: bool ## the box had the keyboard last frame: its text is the user's
+
+var heldBoxes: Table[string, HeldBox]
+  ## A limit box's text while it is being edited. Refilling from the stored
+  ## value every frame wipes a number the user has not finished.
+
 proc limitBox(id: string; value: float64; width: float32; typed: var float64): bool =
   ## A box for a limit, empty when it has none (NaN): true once the user
   ## has finished typing into it; nothing typed (or not a number) is none.
-  var buf: array[32, char]
-  let text = if value.isNaN: ""
-             elif value == round(value) and abs(value) < 1e15: $int64(value)
-             else: $value
-  for i, c in text:
-    if i < buf.high: buf[i] = c
+  if id notin heldBoxes: heldBoxes[id] = HeldBox()
+  if not heldBoxes[id].active:
+    zeroMem(addr heldBoxes[id].text[0], heldBoxes[id].text.len)
+    let text = if value.isNaN: "" else: sensible(value)
+    for i, c in text:
+      if i < heldBoxes[id].text.high: heldBoxes[id].text[i] = c
   igSetNextItemWidth(width)
-  discard igInputText(id.cstring, cast[cstring](addr buf[0]), csize_t(buf.len),
-    ImGui_InputTextFlags_CharsScientific.cint, nil, nil)
-  let got = $cast[cstring](addr buf[0])
+  discard igInputText(id.cstring, cast[cstring](addr heldBoxes[id].text[0]),
+    csize_t(heldBoxes[id].text.len), ImGui_InputTextFlags_CharsScientific.cint, nil, nil)
+  heldBoxes[id].active = igIsItemActive()
+  let got = $cast[cstring](addr heldBoxes[id].text[0])
   typed = try: parseFloat(got.strip) except ValueError: NaN
   igIsItemDeactivatedAfterEdit()
 
+proc sameMass(a, b: float64): bool {.inline.} =
+  a == b or (a.isNaN and b.isNaN)
+
 proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: float32;
-    t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool) =
+    t: Theme; marks: var Marks; p: var AnalysisParams; frozen, changed: var bool;
+    res: var PlotWindowsOutput) =
   ## A vibrator signature's roles (a table: role, trace, polarity), then its
   ## masses, harmonics and Limits..., with Freeze at the right of that line.
   ## Limits... opens the check and the eight boxes.
@@ -181,27 +195,53 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     igTextUnformatted("with M", nil)
     igEndTable()
   var typed = 0.0
+  let units = st.settings.units
+  let unitWord = massName(units)
   template label(text: string) =
     igAlignTextToFramePadding()
     igTextUnformatted(cstring(text), nil)
     igSameLine(0, -1)
+  template takeMass(which: string; stored: untyped) =
+    let kg = if typed.isNaN: NaN else: storeMass(typed, units)
+    if typed.isNaN or MassKgRange.allows(kg):
+      if not sameMass(kg, stored): (stored, changed) = (kg, true)
+    else:
+      res.notes.add "The " & which & " must be " & massLimitWords(units) & ", not " &
+        sensible(typed) & " " & unitWord & "."
   let line = beginControlLine()
   label("Masses: reaction")
-  if limitBox("##reaction", p.reactionMassKg, box, typed) and
-      (typed.isNaN or MassKgRange.allows(typed)) and typed != p.reactionMassKg:
-    (p.reactionMassKg, changed) = (typed, true)
+  let shownReaction = showMass(p.reactionMassKg, units)
+  if limitBox("##reaction." & $units, shownReaction, box, typed):
+    takeMass("reaction mass", p.reactionMassKg)
   marks.mark(name & ".reaction mass")
-  tip("The reaction mass, kg: with the baseplate's, the ground force is generated from M " &
-    "and B (Mr·M + Mb·B), drawn over the recorded one. Empty: none")
-  line.follow(textBoxWidth("kg  baseplate", box))
-  label("kg  baseplate")
-  if limitBox("##baseplate", p.baseplateMassKg, box, typed) and
-      (typed.isNaN or MassKgRange.allows(typed)) and typed != p.baseplateMassKg:
-    (p.baseplateMassKg, changed) = (typed, true)
+  tip("The reaction mass, " & unitWord & ": with the baseplate's, the ground force is " &
+    "generated from M and B (Mr·M + Mb·B), drawn over the recorded one. Empty: none. " &
+    "A mass is " & massLimitWords(units) & ".")
+  # kg / lb beside the field: it sets Units, and the number converts in place.
+  for u in UnitSystem:
+    igSameLine(0, 4)
+    let on = units == u
+    if on:
+      igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(t.roles[rlSelection]))
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
+    if igSmallButton((massName(u) & "##units").cstring) and not on:
+      var s = st.settings
+      s.units = u
+      res.commands.add Command(kind: ckSettings, settings: s)
+    if on: igPopStyleColor(2)
+    marks.mark(name & ".unit " & massName(u))
+    tip("Show masses in " & massName(u) & " (" & systemName(u) & "). The number converts " &
+      "in place, so the mass does not change. This is the Units setting.")
+  line.follow(textBoxWidth(unitWord & "  baseplate", box))
+  label(unitWord & "  baseplate")
+  let shownBase = showMass(p.baseplateMassKg, units)
+  if limitBox("##baseplate." & $units, shownBase, box, typed):
+    takeMass("baseplate's mass", p.baseplateMassKg)
   marks.mark(name & ".baseplate mass")
-  tip("The baseplate's mass, kg. Empty: none")
-  line.follow(textBoxWidth("kg  harmonics to", box))
-  label("kg  harmonics to")
+  tip("The baseplate's mass, " & unitWord & ". Empty: none. A mass is " &
+    massLimitWords(units) & ".")
+  line.follow(textBoxWidth(unitWord & "  harmonics to", box))
+  label(unitWord & "  harmonics to")
   var h = cint(p.harmonics)
   igSetNextItemWidth(box)
   if igInputInt("##harmonics", addr h, 0, 0, 0) and HarmonicRange.allows(float64(h)) and h != p.harmonics:
@@ -243,9 +283,29 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     limit("THD mean", "##meanthd", meanThdPct, "%", "The largest mean THD, %")
     limit("Harmonic", "##harmonic", harmonicPct, "%",
       "The largest level of any one harmonic at a point, % of the fundamental")
-    limit("Force from", "##forcelow", forceLow, "", "The smallest fundamental at a point")
-    limit("Force to", "##forcehigh", forceHigh, "", "The largest fundamental at a point")
-    limit("Peak force", "##peak", peakForce, "", "The largest peak at a point (the hold-down weight)")
+    # The force boxes show the unit the force axis shows, and store in the
+    # stored unit. The id includes the unit, so a toggle is a new box and
+    # does not store the converted number again.
+    let forceShown = forceLimitOf(forceAxisLabel(w.result.plots), units)
+    template forceLimit(text, id: string; field: untyped; what: string) =
+      igAlignTextToFramePadding()
+      igTextUnformatted(cstring(text), nil)
+      marks.mark(name & ".limit " & text)
+      igSameLine(0, -1)
+      let display = showScaled(p.limits.field, forceShown.divisor)
+      if limitBox(id & "." & forceShown.unit, display, box, typed):
+        let stored = storeScaled(typed, forceShown.divisor)
+        if not (stored.isNaN and p.limits.field.isNaN) and stored != p.limits.field:
+          (p.limits.field, changed) = (stored, true)
+      tip(if forceShown.unit.len > 0: what & " (" & forceShown.unit & ")" else: what)
+      if forceShown.unit.len > 0:
+        igSameLine(0, -1)
+        igTextUnformatted(cstring(forceShown.unit), nil)
+        marks.mark(name & ".limit unit " & text)
+    forceLimit("Force from", "##forcelow", forceLow, "The smallest fundamental at a point")
+    forceLimit("Force to", "##forcehigh", forceHigh, "The largest fundamental at a point")
+    forceLimit("Peak force", "##peak", peakForce,
+      "The largest peak at a point (the hold-down weight)")
     igEndDisabled()
     igEndPopup()
   if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks):
@@ -282,7 +342,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
   let mapW = round(igCalcTextSize("Red-white-blue", nil, false, -1).x +
     igGetFrameHeight() + 2 * igGetStyle().FramePadding.x)
   if w.view == avVibrator:
-    drawVibratorSettings(st, w, name, box, t, marks, p, frozen, changed)
+    drawVibratorSettings(st, w, name, box, t, marks, p, frozen, changed, res)
   else:
     let line = beginControlLine()
     case w.view
@@ -573,11 +633,13 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   igTextWrapped("%s", words.cstring)
   if w.goneNote.len > 0: igTextWrapped("%s", w.goneNote.cstring)
   elif r.problem.len > 0: igTextWrapped("%s", ("Nothing to show: " & r.problem).cstring)
-  elif r.note.len > 0: igTextWrapped("%s", r.note.cstring)
+  elif r.note.len > 0:
+    igTextWrapped("%s", shownNote(r.note, w.params.reactionMassKg, w.params.baseplateMassKg,
+      st.settings.units).cstring)
   igPopStyleColor(1)
   marks.mark(name & ".summary")
   if r.table.len > 1 and w.params.limitsOn and r.problem.len == 0:
-    drawTable(name, r.table, t, marks)
+    drawTable(name, shownTable(r.table, r.forceUnits, st.settings.units), t, marks)
   let focused = igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint)
   let lineH = igGetTextLineHeightWithSpacing()
   let avail = igGetContentRegionAvail()
@@ -586,7 +648,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     text = ui.drawImage(w, name, t, ImVec2_c(x: avail.x, y: max(80'f32, avail.y - lineH)),
       marks, focused, res)
   else:
-    let plots = r.curvePlots(t)
+    let plots = r.curvePlots(t, st.settings.units)
     var uis = ui.curves.getOrDefault(w.id)
     if uis.len != plots.len: uis.setLen plots.len
     let gap = igGetStyle().ItemSpacing.y
@@ -648,6 +710,8 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
       res.commands.add Command(kind: ckPlotCursor, plot: w.id, plotCursor: PlotCursor())
   ui.readout[w.id] = text
   igTextUnformatted((if text.len > 0: text else: " ").cstring, nil)
+  if w.view == avFk and r.image.velocityUnit.len > 0:
+    tip(fkVelocityTip(r.image.velocityUnit, st.settings.units))
   marks.mark(name & ".readout")
 
 proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: float32;

@@ -237,6 +237,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
                 for k in m.failed - ownUnit: what.add $k
                 "fail: " & what.join(", "))
     result.table.add row
+    result.forceUnits.add(if s == vsWeightedSum: weightedUnit(u.units[s])
+                           else: forceUnit(u.units[s]))
   # The words: which trace is which, and how
   var roles: seq[string] = @[]
   for role in VibRole:
