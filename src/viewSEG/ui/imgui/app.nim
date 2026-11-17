@@ -300,6 +300,13 @@ proc windowName*(frame: FrameInfo; id: string): string =
   let w = igFindWindowByName(("###" & id).cstring)
   if w == nil: "" else: $w.Name
 
+proc idConflict*(frame: FrameInfo): bool =
+  ## Dear ImGui shows its "visible items with conflicting ID" tooltip this
+  ## frame: two items under the pointer share an id (it finds that only for
+  ## the item the pointer is on). For tests.
+  let w = igFindWindowByName("##Tooltip_Error")
+  w != nil and w.Active
+
 proc chooseTheme*(frame: FrameInfo; name: string) =
   ## Picks theme file `name` ("" follows the system) as View > Theme does;
   ## it applies after this frame.

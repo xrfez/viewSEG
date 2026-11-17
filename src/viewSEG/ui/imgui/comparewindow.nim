@@ -115,7 +115,7 @@ proc drawCompare*(ui: var CompareUi; st: AppState; t: Theme; scale: float32;
     changed = true
   marks.mark("compare.whole")
   igSetNextItemWidth(160)
-  if igBeginCombo("##compare.phase", ($opt.phasePicture).cstring, 0):
+  if igBeginCombo("##compare.phasePicture", ($opt.phasePicture).cstring, 0):
     for v in PhasePicture:
       if igSelectable_Bool(($v).cstring, v == opt.phasePicture, 0, ImVec2_c(x: 0, y: 0)) and
           v != opt.phasePicture:
