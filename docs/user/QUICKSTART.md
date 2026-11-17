@@ -775,6 +775,10 @@ not an option is not remembered: the traces, the vibrator's roles, the f-k's tim
 Freeze, the zoom. **Reset options** (on the window's control line) puts the built-in options
 back, and they become the remembered ones. The node orientation plot has no options (the
 envelope's is its Phase drop-down, "Against the reference" or "Of the trace itself").
+A cross-correlation and an envelope take the reference chosen in References; when the record
+has a trace with the vibrator reference code (21), **Use this file's reference trace** in the
+window uses it instead (nothing is stored), and the same button goes back. It is never chosen
+for you. The vibrator signature's Ref list has the same entry.
 A vibrator signature's roles (Ref, GF, M, B) are taken from the traces' SEG-Y trace
 identification codes when they are the vibrator's (21 reference, 20 estimated ground
 force, 18 reaction mass, 19 baseplate), whatever order the traces are in; the window's note

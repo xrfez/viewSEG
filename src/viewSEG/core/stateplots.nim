@@ -92,21 +92,70 @@ proc keptIntervalMs(s: Session; traces, killed: openArray[int]): float64 =
       if dt > 0: return dt
   0.0
 
+const
+  FileReferenceName* = "This file's reference trace"
+  NoFileReference* = "This record has no trace with trace identification code 21 " &
+    "(the vibrator reference)."
+
+proc fileReferencePlace(s: Session; g: int): int =
+  ## The place, among the auxiliary traces of gather `g`, of its trace with the
+  ## vibrator reference code (counted from 1); 0 when it has none.
+  if g notin 0 ..< s.gathers.len or s.filePtr == nil: return 0
+  var aux = 0
+  for t in s.gathers[g].traces:
+    if t in 0 ..< s.filePtr[].len and not isSeismic(s.filePtr[].index, t):
+      inc aux
+      if s.filePtr[].traceKeys(t).traceCode == VibReferenceCode: return aux
+
+proc fileReferenceRule(s: Session; g: int): PilotRule =
+  ## The rule that takes the record's vibrator reference trace whole; `trace` 0 when
+  ## the record has none.
+  PilotRule(name: FileReferenceName, aux: true, trace: fileReferencePlace(s, g),
+    startMs: 0, spanMs: 1e9)
+
+proc hasFileReference*(state: AppState; w: int): bool =
+  ## Whether window `plots[w]`'s record has a trace with the vibrator reference code.
+  template pw: untyped = state.plots[w]
+  if pw.traces.len == 0: return false
+  let i = state.findTrace(pw.traces[0])
+  i >= 0 and fileReferencePlace(state.sessions[i], state.sessions[i].gatherOf(pw.traces[0] -
+    state.sessions[i].base)) > 0
+
+proc vibReferencePlace*(state: AppState; w: int): int =
+  ## The place, among window `plots[w]`'s traces, of the one with the vibrator
+  ## reference code; -1 when none has it.
+  template pw: untyped = state.plots[w]
+  result = -1
+  if pw.traces.len == 0: return
+  let i = state.findTrace(pw.traces[0])
+  if i < 0 or state.sessions[i].filePtr == nil: return
+  let s = state.sessions[i]
+  for n, t in pw.traces:
+    let local = t - s.base
+    if result < 0 and local in 0 ..< s.filePtr[].len and
+        s.filePtr[].traceKeys(local).traceCode == VibReferenceCode: result = n
+
 proc pilotFollowKey(state: AppState; w: int): string =
   ## "" unless window `plots[w]` is a correlation (or an envelope) against the chosen
   ## pilot of the record; else its trace and what changes it: a reversal, a kill, its
   ## own filter.
   template pw: untyped = state.plots[w]
-  if pw.view notin {avCorrelation, avEnvelope} or state.chosenRef.len == 0 or
-      not state.refsLoaded or pw.traces.len == 0: return ""
-  let at = state.refs.findId(state.chosenRef)
-  if at < 0 or not state.refs.entries[at].isPilot: return ""
+  if pw.view notin {avCorrelation, avEnvelope} or pw.traces.len == 0: return ""
+  var rule = PilotRule()
+  if pw.params.fileReference: rule.trace = -1 # the record's own
+  else:
+    if state.chosenRef.len == 0 or not state.refsLoaded: return ""
+    let at = state.refs.findId(state.chosenRef)
+    if at < 0 or not state.refs.entries[at].isPilot: return ""
+    rule = pilotRuleOf(state.refs.entries[at])
   let i = state.findTrace(pw.traces[0])
   if i < 0: return ""
   let s = state.sessions[i]
   let e = state.editsAt(s.path)
-  let (rt, _, problem) = s.pilotOfRecord(s.gatherOf(pw.traces[0] - s.base),
-    pilotRuleOf(state.refs.entries[at]), e)
+  let g = s.gatherOf(pw.traces[0] - s.base)
+  if pw.params.fileReference: rule = fileReferenceRule(s, g)
+  if rule.trace < 1: return "none|" & NoFileReference
+  let (rt, _, problem) = s.pilotOfRecord(g, rule, e)
   if rt < 0: return "none|" & problem
   $rt & "|" & $reversedOf(e, [rt]).len & "|" & ownKeyOf(e, [rt])
 
@@ -156,6 +205,30 @@ proc chosenReferenceFor(state: var AppState; w: int; s: Session; dtMs: float64;
   ## it cannot be used (none chosen, gone, another interval, a record with no
   ## such trace) and the name it has.
   template pw: untyped = state.plots[w]
+  if pw.params.fileReference:
+    # the record's own reference trace, by the rule: no archive involved
+    let local = pw.traces[0] - s.base
+    let g = s.gatherOf(local)
+    let rule = fileReferenceRule(s, g)
+    if rule.trace < 1: return (NoFileReference, FileReferenceName)
+    var records: seq[int] = @[]
+    for t in pw.traces:
+      if t in s:
+        let gt = s.gatherOf(t - s.base)
+        if gt notin records: records.add gt
+    if records.len > 1:
+      return ("These traces come from " & $records.len &
+        " records; a record's reference trace needs traces of one record.", FileReferenceName)
+    let (rt, record, problem) = s.pilotOfRecord(g, rule, edits)
+    if problem.len > 0: return (problem, FileReferenceName)
+    a.pilotTrace = rt
+    a.pilotRule = rule
+    a.pilotRecord = record
+    a.pilotReversed = reversedOf(edits, [rt]).len > 0
+    a.pilotOwn = ownOfTraces(edits, [rt])
+    a.archiveName = FileReferenceName
+    pw.reference = FileReferenceName
+    return ("", FileReferenceName)
   let blocked = state.correlationBlock(dtMs)
   if blocked.problem.len > 0: return blocked
   let e = state.refs.entries[state.refs.findId(state.chosenRef)]
@@ -219,7 +292,7 @@ proc askPlot(state: var AppState; w: int): bool =
     # the reader would keep, not a killed or dead traces[0].
     let dtMs = keptIntervalMs(s, traces, killed)
     var blocked: tuple[problem, name: string] = ("", "")
-    if pw.view == avCorrelation or state.chosenRef.len > 0:
+    if pw.view == avCorrelation or state.chosenRef.len > 0 or pw.params.fileReference:
       blocked = state.chosenReferenceFor(w, s, dtMs, edits, a)
     if pw.view == avCorrelation and blocked.problem.len > 0:
       state.showCorrelationProblem(w, blocked.problem, blocked.name)

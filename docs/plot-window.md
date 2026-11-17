@@ -771,6 +771,14 @@ right of that line's first row. A change works it out again.
     well. The window says which in one sentence under the settings ("Measured against the
     project reference ..." or "Measured against the recorded reference, trace N"); the
     choice is kept with the plot's options and put back by Reset options.
+  - **This file's reference trace.** Ref's list offers it when a trace of the window has
+    the vibrator reference code (21): that trace as Ref, measured against by itself, not
+    against the project reference. In a cross-correlation and an envelope (its phase
+    against the reference) the button **Use this file's reference trace** takes the
+    record's code-21 trace, whole, as the reference instead of the project's, with
+    nothing stored in the archive; the same button goes back. It is never chosen for you:
+    with no project reference a correlation says so and offers the button. The choice is
+    the window's, not an option remembered for new windows.
   - **Polarity.** GF as recorded, reversed, or **automatic** (reversed when its mean
     phase to the reference is past ±90°: wiring). M and B take one polarity, together
     (the baseplate moves against the mass: one reversed alone would make their force a

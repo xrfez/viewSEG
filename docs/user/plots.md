@@ -98,7 +98,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** How well each trace matches the reference, up (1 is the reference's own shape whatever its amplitude, -1 its mirror image), against the time shift in ms across, one line per trace and its envelope over it.
 
-**Computed from.** The traces chosen (the first eight at most). Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot). Lags within ±the span set above of zero. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set. A trace that is the reference delayed by T peaks at +T.
+**Computed from.** The traces chosen (the first eight at most). Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot), or, when you pick it in the window, the record's own vibrator reference trace (code 21). Lags within ±the span set above of zero. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set. A trace that is the reference delayed by T peaks at +T.
 
 **Reading it.** One sharp peak at 0 ms near +1 means the trace has the reference's shape and timing. A lower peak means a different shape; a peak away from 0 is a time shift of that many ms (a positive shift: the trace arrives after the reference). A peak near -1 means reversed polarity. The words under the plot give each trace's best match and shift. The reference's own trace, among others, is said so and not drawn.
 
@@ -108,7 +108,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Amplitude ratio in dB up, against frequency in Hz across: each trace's amplitude over the reference's; 0 dB is the same amplitude.
 
-**Computed from.** The traces chosen. Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot). Drawn only where the reference has energy, within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The traces chosen. Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot), or, when you pick it in the window, the record's own vibrator reference trace (code 21). Drawn only where the reference has energy, within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
 
 **Reading it.** A flat line near 0 dB means the trace has the reference's spectrum. A line that falls with frequency means high frequencies are lost; a step shows a band that is weaker or stronger.
 
@@ -118,7 +118,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Phase difference in degrees up, against frequency in Hz across: each trace's phase minus the reference's. Shown absolute (0 to 180 degrees; the bracketed value is the signed one); the Phase drop-down above the plot changes it.
 
-**Computed from.** The traces chosen. Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot). Drawn where the reference has energy, within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
+**Computed from.** The traces chosen. Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot), or, when you pick it in the window, the record's own vibrator reference trace (code 21). Drawn where the reference has energy, within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
 
 **Reading it.** A flat line at 0° means no phase difference. A straight slope means a time delay (a delay T reads -360° × frequency × T). A flat line at 180° means reversed polarity.
 

@@ -205,6 +205,8 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
                    max(combo, round(igCalcTextSize(projectLabel.cstring, nil, false, -1).x +
                      igGetFrameHeight() + 2 * igGetStyle().FramePadding.x))
                  else: combo
+  let planeAt = st.findPlot(w.id)
+  let fileRefPlace = if planeAt >= 0: st.vibReferencePlace(planeAt) else: -1
   const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint
   if igBeginTable(("##roles" & name).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
     igTableSetupColumn("Role", 0, 0, 0)
@@ -221,7 +223,9 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
       let project = role == "Ref" and projectName.len > 0
       igSetNextItemWidth(if project: refCombo else: combo)
       let now = p.roles.field
+      let fileRef = role == "Ref" and fileRefPlace >= 0
       let shown = if project and projectOn: projectLabel
+                  elif fileRef and now == fileRefPlace: "This file's reference trace"
                   elif now in 0 ..< names.len: names[now]
                   else: "none"
       if igBeginCombo(("##" & role).cstring, shown.cstring, 0):
@@ -233,6 +237,15 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
           tip("What the unit was meant to sweep: the phase, frequency and force are " &
             "measured against the project's chosen reference. The recorded trace is then " &
             "measured against it too (Ref (recorded))")
+        if fileRef:
+          let on = now == fileRefPlace and not projectOn
+          if igSelectable_Bool("This file's reference trace", on, 0, ImVec2_c(x: 0, y: 0)) and
+              not on:
+            (p.roles.field, changed) = (fileRefPlace, true)
+            if project: p.projectReference = false
+          marks.mark(name & ".role Ref file")
+          tip("The record's trace with the vibrator reference code (21): the Ref role, " &
+            "measured against by itself, not against the project reference")
         if igSelectable_Bool("none", now < 0 and not projectOn, 0,
             ImVec2_c(x: 0, y: 0)) and (now >= 0 or projectOn):
           (p.roles.field, changed) = (-1, true)
@@ -430,6 +443,21 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       igEndCombo()
     marks.mark(name & ".map")
     tip("The colour map, as density's")
+  let planeAt = st.findPlot(w.id)
+  let fileRefOffered = w.view in {avCorrelation, avEnvelope} and planeAt >= 0 and
+    (p.fileReference or st.hasFileReference(planeAt))
+  template fileReferenceButton(line: untyped) =
+    ## Beside the reference: the record's own reference trace instead of the project's
+    ## (and back); never turned on by itself.
+    if fileRefOffered:
+      let text = if p.fileReference: "Use the project reference"
+                 else: "Use this file's reference trace"
+      line.follow(buttonWidth(text))
+      if igSmallButton((text & "##filereference").cstring):
+        (p.fileReference, changed) = (not p.fileReference, true)
+      marks.mark(name & ".filereference")
+      tip("The record's trace with the vibrator reference code (21), whole, as the " &
+        "reference, instead of the project's chosen one; the same button goes back")
   let mapW = round(igCalcTextSize("Red-white-blue", nil, false, -1).x +
     igGetFrameHeight() + 2 * igGetStyle().FramePadding.x)
   if w.view == avVibrator:
@@ -481,6 +509,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       if w.reference.len > 0:
         line.follow(textBoxWidth("Reference: " & w.reference, 0))
         unit("Reference: " & w.reference) # no same-line: Reset options decides its own
+      if p.phaseAgainst == paReference: fileReferenceButton(line)
     of avPhase:
       label("Phase where within")
       if numberBox("##within", p.phaseWithinDb, box, typed) and PhaseWithinRange.allows(typed):
@@ -509,6 +538,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       if igSmallButton("References##bar"): res.openReferences = true
       marks.mark(name & ".references")
       tip("Open References, where the reference is chosen")
+      fileReferenceButton(line)
       line.follow(textBoxWidth("lags ±", box) + igGetStyle().ItemSpacing.x +
         igCalcTextSize("ms", nil, false, -1).x)
       label("lags ±")
@@ -774,6 +804,16 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     if igSmallButton("References##area"): res.openReferences = true
     marks.mark(name & ".references")
     tip("Open References, where the reference is chosen")
+    let at = st.findPlot(w.id)
+    if not w.params.fileReference and at >= 0 and st.hasFileReference(at):
+      igSameLine(0, -1)
+      if igSmallButton("Use this file's reference trace##area"):
+        var p = w.params
+        p.fileReference = true
+        res.commands.add Command(kind: ckPlotDisplay, plot: w.id, plotParams: p,
+          plotFrozen: w.frozen)
+      marks.mark(name & ".filereference area")
+      tip("The record's trace with the vibrator reference code (21), whole, as the reference")
   elif not r.image.isEmpty:
     text = ui.drawImage(st, w, name, t, ImVec2_c(x: avail.x, y: max(80'f32, avail.y - lineH)),
       marks, focused, res)

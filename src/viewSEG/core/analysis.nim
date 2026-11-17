@@ -94,6 +94,10 @@ type
       ## envelope (against the reference), correlation, vibrator signature: a phase
       ## difference shown as its size (0 to 180) or signed around its circular mean
     maxLagMs*: float64 = 250.0 ## cross-correlation: the lags shown, either side of 0
+    fileReference*: bool = false
+      ## envelope (against the reference), correlation: measured against the record's own
+      ## reference trace (the SEG-Y vibrator reference, code 21) instead of the project's
+      ## chosen reference; never chosen for the user
     phaseAgainst*: PhaseAgainst = paReference
       ## envelope: the phase against the chosen reference when there is one, or
       ## the trace's own

@@ -109,11 +109,12 @@ import analysis, analysisreader, closer, compare, comparejobs, components, diski
   filelist, filememory, filesystem, identity, inbox, inspector, jobs, join, layouts, log,
   mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
   recordqc, referencejobs, references, selection, session, settings, shots, spectra,
-  spectrumreader, spread, survey, surveyjobs, threads, tiles, vendorjobs, vendormaps, watch, zoom
+  spectrumreader, spread, survey, surveyjobs, threads, tiles, traceids, vendorjobs, vendormaps,
+  watch, zoom
 
 export analysis, compare, edits, filelist, filememory, identity, inbox, jobs, join, layouts, log,
   mapstate, panels, persist, pick, project, recordqc, references, selection, session, settings,
-  shots, spectra, spread, survey, threads, tiles, vendormaps, zoom
+  shots, spectra, spread, survey, threads, tiles, traceids, vendormaps, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues, MaxTableRows
 export tracetable
 export WatchInterval

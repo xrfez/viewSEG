@@ -43,7 +43,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 |---|---:|---:|---:|---:|
 | `built` | 53 (20 in part) | 175 | 33 (23 in part) | 144 |
 | `internal` | 15 | 41 | 4 | 38 |
-| `planned` | 32 | 222 | 45 | 401 |
+| `planned` | 32 | 221 | 45 | 401 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 20 | 363 | 6 | 66 |
 | all | 122 | 811 | 89 | 654 |

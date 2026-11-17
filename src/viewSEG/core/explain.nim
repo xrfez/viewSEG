@@ -276,7 +276,8 @@ func referenceWords(f: ExplainFacts): string =
   if f.live and f.reference.len > 0: "Against the reference " & f.reference & "."
   elif f.live: "No reference is chosen."
   else: "Against the reference chosen in References (a stored trace, a generated sweep, or " &
-    "the record's own pilot)."
+    "the record's own pilot), or, when you pick it in the window, the record's own " &
+    "vibrator reference trace (code 21)."
 
 func envelopeText(f: ExplainFacts): string =
   join4(part("Shows", "Amplitude against time in ms: the trace as a line, and its envelope " &
