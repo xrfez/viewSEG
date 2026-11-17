@@ -21,7 +21,7 @@ import std/[hashes, math, tables]
 import imguin/cimgui
 import ../../core/[geometry, plotcursor, references]
 import ../../view/[axisfit, curveplot, plotink, theme]
-import fittext, marks, style
+import explainmenu, fittext, marks, style
 
 type
   CurvePlotUi* = object
@@ -178,6 +178,7 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   let pos = ImPlot_GetPlotPos()
   let area = ImPlot_GetPlotSize()
   (result.plotPos, result.plotSize) = (pos, area)
+  notePlot(pos, area)
   marks.markRect(id & ".data", pos, ImVec2_c(x: pos.x + area.x, y: pos.y + area.y))
   # Peak-keep for the pixels of the range on screen, redone when the view
   # or the data changes. The cursor still reads the full series.

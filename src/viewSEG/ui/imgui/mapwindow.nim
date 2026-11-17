@@ -51,7 +51,7 @@ import imguin/cimgui
 import ../../core/[explain, geometry, join, mapthin, state]
 import ../../gpu/mappoints
 import ../../view/[maplayers, theme]
-import explainicon, focus, icons, marks, style
+import explainmenu, focus, icons, marks, style
 
 export MapRenderer
 
@@ -1277,6 +1277,7 @@ proc drawMenu(mu: var MapUi; st: AppState; marks: var Marks; res: var MapOutput)
           res.commands.add Command(kind: ckMapLayer, mapLayer: key, shown: false)
         marks.mark("map menu.hide")
         tip("Hide this layer (show it again from Layers)")
+    explainEntry("map.explain", marks)
     igEndPopup()
 
 func markStyle(t: Theme; f: MapFilter; ink: MapInk; scale: float32): MapStyle =
@@ -1488,7 +1489,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       drawInfoBox(mu.info, (if held: mu.menuAt else: igGetIO_Nil().MousePos), pos, size, t,
         marks, (if held: mu.menuRect else: Rect()))
     ImDrawList_PopClipRect(dl)
-    explainIcon("map.explain", pos, t, marks,
+    marks.markRect("map.explain", pos, ImVec2_c(x: pos.x + size.x, y: pos.y + size.y))
+    explainShow("map.explain", marks,
       explain(pkMap, st.mapFacts(units, lengths.unit.abbreviation)))
     mu.cur = after
     if after != st.map.view:

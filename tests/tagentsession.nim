@@ -176,7 +176,8 @@ const
     ## not the default, unwrapped)
 
 const PlotShown = AnalysisParams(windowMs: 64, overlap: 50, floorDb: -80, colourMap: cmGrey,
-  phaseWithinDb: 30, phasePicture: ppSigned, maxLagMs: 100, fkRaw: true, phaseAgainst: paSelf, phaseShow: psSigned,
+  phaseWithinDb: 30, phasePicture: ppSigned, maxLagMs: 100, fkRaw: true, phaseAgainst: paSelf,
+  phaseShow: psSigned,
   reactionMassKg: 3500, baseplateMassKg: 1500, harmonics: 8, projectReference: false,
   limitsOn: true,
   limits: VibLimits(phaseDeg: 12, thdPct: 30, harmonicPct: 8, forceLow: 100, forceHigh: 500,

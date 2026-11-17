@@ -1,4 +1,4 @@
-## What each plot tells you (`core/explain`), the words of the Explain icons:
+## What each plot tells you (`core/explain`), the words of every plot's Explain (right-click):
 ##
 ## - every kind of plot has words, in the four parts, none alike: a plot
 ##   added to `PlotKind` cannot be without them (the `case` is exhaustive),
@@ -9,7 +9,7 @@
 ## - the words follow the settings they name: the filters on and off, the
 ##   reference, the units, the picture of the phase, the scale, the display;
 ## - the user guide's page is these words (`tools/plotspage.nim check`);
-## - every file of the toolkit's side that draws a plot draws its icon;
+## - every file of the toolkit's side that draws a plot has Explain in its menu;
 ## - the agents' `state` carries the same words, `explain`, for the plot
 ##   windows and the spectrum windows.
 ##
@@ -19,8 +19,8 @@
 ## `filterClause`, "the filters are not named"; with `plotJson` not adding
 ## "explain", the key "explain" not found in the state. With the page's first
 ## section dropped, "docs/user/plots.md is not the explanations' page"; with a
-## file that draws a plot and no `explainIcon(`, "... draws a plot and no
-## Explain icon".
+## file that draws a plot and no `explainMenu(`, "... draws a plot and no
+## Explain".
 
 import std/[json, os, sets, strutils]
 import parseSEG
@@ -201,8 +201,8 @@ proc main*() =
       if "ImPlot_BeginPlot(" in text or "drawCurvePlot(" in text:
         if path.extractFilename == "curveplot.nim": continue # the plot's own, which says its area
         inc drawing
-        doAssert "explainIcon(" in text, path.extractFilename & " draws a plot and no " &
-          "Explain icon"
+        doAssert "explainMenu(" in text or "explainShow(" in text,
+          path.extractFilename & " draws a plot and no Explain in its right-click menu"
     doAssert drawing >= 7, "only " & $drawing & " files draw plots: the source check is blind"
 
   block the_agents_state_says_it:

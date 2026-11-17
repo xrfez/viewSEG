@@ -76,7 +76,7 @@ proc mismatches(s: Shot; step = 3): (int, int) =
   let y0 = int(s.plot.pos.y) + 3
   let x1 = int(s.plot.pos.x + s.plot.size.x) - 4
   let y1 = int(s.plot.pos.y + s.plot.size.y) - 4
-  let icon = s.mark("plot.explain") # drawn over the plot's corner: not the image
+  let icon = Rect() # no icon is drawn over the plot any more
   for y in countup(y0, y1, step):
     for x in countup(x0, x1, step):
       if float32(x) >= icon.pos.x - 1 and float32(x) <= icon.pos.x + icon.size.x + 1 and

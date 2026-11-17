@@ -19,7 +19,7 @@ import imguin/cimgui
 from parseSEG import SeismicKind
 import ../../core/[explain, state]
 import ../../view/[headerviews, theme]
-import chrome, explainicon, fonts, icons, marks, style
+import chrome, explainmenu, fonts, icons, marks, style
 
 const FindRangeExample* = "10..20"
   ## The range example, in the Find hint and in its tooltip
@@ -154,7 +154,7 @@ proc drawGraph(answer: TableAnswer; label, scope: string; first, last: int; t: T
     ImDrawList_AddRectFilled(dl, ImVec2_c(x: a.x, y: pos.y), ImVec2_c(x: max(b.x, a.x + 2),
       y: pos.y + size.y), u32(withAlpha(t.roles[rlHighlight], 50)), 0, 0)
     ImPlot_EndPlot()
-    explainIcon("table.explain", pos, t, marks, explain(pkHeaderGraph, graphFacts(label, scope)))
+    explainMenu("table.explain", pos, t, marks, explain(pkHeaderGraph, graphFacts(label, scope)))
   marks.mark("table.graph")
 
 proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; marks: var Marks;

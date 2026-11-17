@@ -6,7 +6,7 @@ import std/[algorithm, math, strutils, tables]
 import imguin/cimgui
 import ../../core/[explain, references, state]
 import ../../view/[curveplot, theme]
-import curveplot as curves, explainicon, fittext, focus, genpreview, icons, marks, placement,
+import curveplot as curves, explainmenu, fittext, focus, genpreview, icons, marks, placement,
   style
 
 type
@@ -194,7 +194,7 @@ proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; facts: ExplainFac
       count: ui.previewSamples.len, x0: 0.0, dx: ui.previewDt))
     let o = curves.drawCurvePlot(ui.signalPlot, "generate.preview", time, t,
       ImVec2_c(x: -1, y: plotH), fit, marks)
-    explainIcon("generate.explain", o.plotPos, t, marks, explain(pkGenerateSignal, facts))
+    explainMenu("generate.explain", o.plotPos, t, marks, explain(pkGenerateSignal, facts))
   if ui.previewDb.len > 1 and ui.previewHz.len > 1:
     let dx = ui.previewHz[1] - ui.previewHz[0]
     let nyquist = if ui.previewDt > 0: 500.0 / ui.previewDt else: ui.previewHz[^1]
@@ -216,7 +216,7 @@ proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; facts: ExplainFac
     let o = curves.drawCurvePlot(ui.spectrumPlot, "generate.spectrum", spec, t,
       ImVec2_c(x: -1, y: plotH), spectrumFitKey(ui.shownGen, ui.previewF1,
       ui.previewF2, nyquist), marks)
-    explainIcon("generate.explain 2", o.plotPos, t, marks,
+    explainMenu("generate.explain 2", o.plotPos, t, marks,
       explain(pkGenerateSpectrum, facts))
 
 proc followPreview(ui: var ReferencesUi; g: GeneratedReference; key, problem: string) =
@@ -844,7 +844,7 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
             count: uis.ys.len, x0: w.fromMs, dx: dt)
         let ot = curves.drawCurvePlot(uis.time, "reference.view.time", time, t,
           ImVec2_c(x: -1, y: igGetFontSize() * 12), $w.revision, marks)
-        explainIcon("reference.view.explain", ot.plotPos, t, marks,
+        explainMenu("reference.view.explain", ot.plotPos, t, marks,
           explain(pkReferenceSignal, refViewFacts(w)))
         let (hx, hy) = thinPair(w.hz, w.amps)
         var spec = CurvePlot(xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude",
@@ -853,7 +853,7 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
         if hy.len == 0: spec.note = "No spectrum."
         let os = curves.drawCurvePlot(uis.spec, "reference.view.spectrum", spec, t,
           ImVec2_c(x: -1, y: igGetFontSize() * 12), "s" & $w.revision, marks)
-        explainIcon("reference.view.explain 2", os.plotPos, t, marks,
+        explainMenu("reference.view.explain 2", os.plotPos, t, marks,
           explain(pkReferenceSpectrum, refViewFacts(w)))
         ui.viewPlots[w.id] = uis
     igEnd()

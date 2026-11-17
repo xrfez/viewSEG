@@ -67,8 +67,17 @@ proc main*() =
         inc calm
         result = calm >= 6
         if result and shots.len > 0: discard f.savePng(shots / "orient-104.png"))
-    step("to the Explain icon", proc (f: FrameInfo) =
-      f.moveMouse(f.markOf("new plot 1.explain").centre),
+    step("right-click the plot", proc (f: FrameInfo) =
+      let at = f.markOf("new plot 1.explain").centre
+      f.moveMouse(at)
+      f.pressMouse(at, true, 3)
+      f.pressMouse(at, false, 3),
+      proc (f: FrameInfo): bool = f.markOf("new plot 1.explain.menu.explain").size.x > 0)
+    step("Explain in its menu", proc (f: FrameInfo) =
+      let at = f.markOf("new plot 1.explain.menu.explain").centre
+      f.moveMouse(at)
+      f.pressMouse(at, true, 1)
+      f.pressMouse(at, false, 1),
       proc (f: FrameInfo): bool =
         let text = f.tipOf("new plot 1.explain")
         result = text.len > 0

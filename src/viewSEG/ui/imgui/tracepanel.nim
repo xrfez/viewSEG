@@ -94,7 +94,7 @@ import imguin/cimgui
 import ../../core/[components, editmarks, explain, geometry, openchoice, state, wiggle]
 import ../../gpu/[plotimage, textures]
 import ../../view/[displayheader, maplayers, plotink, strip, theme, timeaxis]
-import chrome, dpi, explainicon, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort,
+import chrome, dpi, explainmenu, focus, fonts, icons, menus, plotbars, plotfilters, plotgain, plotsort,
   shortcutkeys,
   plotviews, references, style,
   symbols
@@ -1697,6 +1697,7 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
   tipAlways("Kills, polarity reversals and a trace's own filter are remembered beside the " &
     "file, never written into it;\nclearing them shows the traces as the file has them " &
     "(Ctrl+Z brings them back).")
+  explainEntry("plot.explain", marks)
   igEndPopup()
 
 func stationCommand(st: AppState; k, under: int): Command =
@@ -2397,7 +2398,8 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
         path, st.compareA.path, st.compareB.path, st.compareA.trace, st.compareB.trace,
         st.compareA.filled, st.compareB.filled)
     ImPlot_EndPlot()
-    explainIcon("plot.explain", pos, t, marks, st.explainSeismic(k))
+    marks.markRect("plot.explain", pos, ImVec2_c(x: pos.x + size.x, y: pos.y + size.y))
+    explainShow("plot.explain", marks, st.explainSeismic(k))
     # the bar along the width goes under the values of the axis there, if any
     let barsUnder = if turn.axisAlong(saX) == axTime:
                   igGetItemRectMax().y - ImPlot_GetStyle().PlotPadding.y
@@ -2408,7 +2410,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
                  else: "Sorting by " & describe(layer.order) & "..."
       let ts = igCalcTextSize(text.cstring, nil, false, -1)
       let pad = igGetStyle().FramePadding
-      let at = ImVec2_c(x: pos.x + 6 + explainSpace(), y: pos.y + 6)
+      let at = ImVec2_c(x: pos.x + 6, y: pos.y + 6)
       ImDrawList_AddRectFilled(dl, at, ImVec2_c(x: at.x + ts.x + 2 * pad.x,
         y: at.y + ts.y + 2 * pad.y), u32(t.roles[rlPopup]), igGetStyle().FrameRounding, 0)
       ImDrawList_AddText_Vec2(dl, ImVec2_c(x: at.x + pad.x, y: at.y + pad.y),

@@ -909,13 +909,13 @@ func explainPage*(): string =
   ## `tools/plotspage.nim check`, run by tests/texplain.nim, finds a page that
   ## has drifted.
   result = "# What each plot tells you\n\n" &
-    "Every plot has a small **i** icon in the top left corner of its drawing area: the " &
-    "Seismic plot, the spectrum, spectrogram, envelope, phase, correlation, vibrator " &
-    "signature and f-k windows (each plot of a window on its own), the map, the header " &
-    "graph, the previews in Generate and in a reference's window, and each plot of " &
-    "Compare. Point at it and a tooltip says what that plot shows, what it is computed " &
-    "from, how to read it and what can mislead. The icon takes no click or key from the " &
-    "plot.\n\n" &
+    "**Right-click any plot and choose Explain.** Every plot has it: the Seismic plot, the " &
+    "spectrum, spectrogram, envelope, phase, correlation, vibrator signature and f-k " &
+    "windows (each plot of a window on its own), the map, the header graph, the previews in " &
+    "Generate and in a reference's window, and each plot of Compare. A popover says what " &
+    "that plot shows, what it is computed from, how to read it and what can mislead; Esc " &
+    "closes it. Where right-drag already zooms, a right click that does not drag opens the " &
+    "menu; the Seismic plot's and the map's menus end with Explain.\n\n" &
     "The text names the settings in force: your filters, the reference, the units. The " &
     "sections below give each text without a window's settings, as it reads in general. " &
     "An agent reads the same words in `state`, as `explain`.\n"

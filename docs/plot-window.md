@@ -933,22 +933,23 @@ with the wheel, the sideways wheel and Ctrl with the arrow keys do nothing there
 | Up / Down, Page Up / Page Down, Home / End (record list focused) | The next / previous record, a page on / back, the first / last record, in the order the list shows (a click on a column's header sorts it), shown in the plot |
 | Click a record in the record list (focused) | Show it in the plot |
 
-### The Explain icon
+### Explain, by right-click
 
-Every plot carries a small "i" in the top left corner of its drawing area: the Seismic
+Every plot has "Explain" in its right-click menu, last, after a separator: the Seismic
 plot, the map, each plot of an FFT window, of the Spectrum panel, of every New plot window
-(one icon per plot of a window that stacks several), of Compare, of a reference's window,
-of the Generate dialog, and the Headers window's graph. Pointing at it shows at once a
-wrapped tooltip: what the plot shows (each axis with its unit, what a curve or a colour
-means), what it is computed from (which traces and window, and which of the filters, the
-reversal, the time shift and the reference are applied now, and the Units setting), how to
-read it and, where it is true, what can mislead. The icon is drawn over the plot and found
-by the pointer's position: it is no item with an id, and takes no click, key or focus from
-the plot under it. The words are one module's, `core/explain` (a text from the kind of
-plot and its current settings, no toolkit types); `state` gives the same as `explain` for
-the New plot and spectrum windows, [What each plot tells you](user/plots.md) is generated
-from them (`nim plots`), and `tests/texplain.nim` fails for a plot kind without words, for
-a page that has drifted, and for a file that draws a plot and no icon.
+(one per plot of a window that stacks several), of Compare, of a reference's window, of the
+Generate dialog, and the Headers window's graph. A plot with no menu of its own gets one
+with that entry; a right click that does not drag opens it (a right drag is ImPlot's zoom
+box and stays so). Choosing it opens a popover at the pointer, closed by Esc or a click
+elsewhere: what the plot shows (each axis with its unit, what a curve or a colour means),
+what it is computed from (which traces and window, and which of the filters, the reversal,
+the time shift and the reference are applied now, and the Units setting), how to read it
+and, where it is true, what can mislead. The words are one module's, `core/explain` (a text
+from the kind of plot and its current settings, no toolkit types); `state` gives the same as
+`explain` for the New plot and spectrum windows, [What each plot tells
+you](user/plots.md) is generated from them (`nim plots`), and `tests/texplain.nim` fails for
+a plot kind without words and for a page that has drifted. Help > Keyboard shortcuts says
+"Right-click any plot: Explain".
 
 ### A right-click menu holds what it acts on
 

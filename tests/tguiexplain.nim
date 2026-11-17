@@ -84,9 +84,21 @@ proc main*() =
       step("click " & mark, proc (f: FrameInfo) =
         f.pressMouse(pointAt, true, 1)
         f.pressMouse(pointAt, false, 1), after(3))
-    proc hover(mark: string; want: proc (f: FrameInfo): string; shot = "") =
-      ## The pointer on `mark`'s icon: its tooltip is `want`, no id clashes.
+    proc rightClick(mark: string) =
+      ## A right click on plot `mark`, then Explain in the menu it opens.
       point(mark)
+      step("right-click " & mark, proc (f: FrameInfo) =
+        f.pressMouse(pointAt, true, 3)
+        f.pressMouse(pointAt, false, 3), proc (f: FrameInfo): bool =
+        f.markOf(mark & ".menu.explain").size.x > 0)
+      step("Explain in the menu of " & mark, proc (f: FrameInfo) =
+        let at = f.markOf(mark & ".menu.explain").centre
+        f.moveMouse(at)
+        f.pressMouse(at, true, 1)
+        f.pressMouse(at, false, 1), after(3))
+    proc hover(mark: string; want: proc (f: FrameInfo): string; shot = "") =
+      ## Right click on plot `mark`, Explain: its popover is `want`, no id clashes.
+      rightClick(mark)
       step("hover " & mark, noop, proc (f: FrameInfo): bool =
         let text = f.tipOf(mark)
         result = text.len > 0
@@ -94,21 +106,27 @@ proc main*() =
           doAssert not f.idConflict, mark & ": two items under the pointer share an id"
           doAssert text == want(f), mark & " says\n" & text & "\nnot\n" & want(f)
           doAssert text.startsWith("Shows: ") and "Reading it: " in text, text
-          if shots.len > 0 and shot.len > 0: discard f.savePng(shots / shot))
+          if shots.len > 0 and shot.len > 0: discard f.savePng(shots / shot)
+          f.pressKey(skEscape, true) # Esc closes the popover
+          f.pressKey(skEscape, false))
     proc hoverHas(mark: string; parts: openArray[string]) =
       ## The pointer on `mark`'s icon: its tooltip holds each of `parts`.
       let wanted = @parts
-      point(mark)
+      rightClick(mark)
       step("hover " & mark, noop, proc (f: FrameInfo): bool =
         let text = f.tipOf(mark)
         result = text.len > 0
         if result:
           doAssert not f.idConflict, mark & ": two items under the pointer share an id"
-          for part in wanted: doAssert part in text, mark & ": no \"" & part & "\" in\n" & text)
+          for part in wanted: doAssert part in text, mark & ": no \"" & part & "\" in\n" & text
+          f.pressKey(skEscape, true)
+          f.pressKey(skEscape, false))
     proc hoverAll(window: string; panes: proc (f: FrameInfo): int;
         want: proc (f: FrameInfo; pane: int): string) =
       ## The window's panes, each icon in turn (those drawn on the screen).
       var next = 0
+      var phase = 0
+      var tick = 0
       step("every pane of " & window, noop, proc (f: FrameInfo): bool =
         let n = panes(f)
         doAssert n >= 1, window & " has no plot"
@@ -119,13 +137,35 @@ proc main*() =
         if not inside:
           inc next
           return next >= n
-        if wait mod 12 == 0: f.moveMouse(r.centre)
-        let text = f.tipOf(mark)
-        if text.len > 0:
-          doAssert not f.idConflict, mark & ": two items under the pointer share an id"
-          doAssert text == want(f, next), mark & " says\n" & text & "\nnot\n" & want(f, next)
-          inc next
-          f.moveMouse(vec2(2, 500))
+        inc tick
+        let corner = vec2(r.pos.x + 40, r.pos.y + 20) # the part that is always in view
+        case phase
+        of 0:
+          f.moveMouse(corner)
+          if tick >= 3: (phase, tick) = (1, 0)
+        of 1:
+          if tick == 1:
+            f.pressMouse(corner, true, 3)
+            f.pressMouse(corner, false, 3)
+          if f.markOf(mark & ".menu.explain").size.x > 0: (phase, tick) = (2, 0)
+        of 2:
+          let at = f.markOf(mark & ".menu.explain").centre
+          if tick == 1:
+            f.moveMouse(at)
+          if tick == 3:
+            f.pressMouse(at, true, 1)
+            f.pressMouse(at, false, 1)
+          if tick >= 6: (phase, tick) = (3, 0)
+        else:
+          let text = f.tipOf(mark)
+          if text.len > 0:
+            doAssert not f.idConflict, mark & ": two items under the pointer share an id"
+            doAssert text == want(f, next), mark & " says\n" & text & "\nnot\n" & want(f, next)
+            inc next
+            f.pressKey(skEscape, true)
+            f.pressKey(skEscape, false)
+            f.moveMouse(vec2(2, 500))
+            (phase, tick) = (0, 0)
         next >= n)
 
     # --- the Seismic plot, and the map beside it

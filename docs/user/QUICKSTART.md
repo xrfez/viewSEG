@@ -36,7 +36,7 @@ folder (`viewSEG --paths` shows where it is).
 The whole list, including the plot, the map and the tables, is **Help > Keyboard
 shortcuts** (F1), and in [Keyboard shortcuts](keyboard-shortcuts.md).
 
-**Every plot has a small "i" in its top left corner.** Point at it and a tooltip says what
+**Right-click any plot and choose Explain.** A popover (Esc closes it) says what
 that plot shows, what it is computed from (your filters, the reference, the units), how to
 read it and what can mislead. The words for each plot are in
 [What each plot tells you](plots.md).

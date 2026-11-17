@@ -66,6 +66,7 @@ Mouse gestures are listed after the keys of each group.
 
 | Keys | What it does |
 |---|---|
+| Right-click a plot | Explain: what the plot shows and how to read it (Esc closes it) |
 | Left / Right | Move the held cursor a bin, or a sample in a graph |
 | Up / Down | Move the held cursor to another curve, or a frequency bin in a spectrogram |
 | Home / End | Move the held cursor to the ends |

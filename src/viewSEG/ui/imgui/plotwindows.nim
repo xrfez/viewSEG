@@ -21,7 +21,7 @@ import std/[math, sets, strutils, tables]
 import imguin/cimgui
 import ../../core/[colourmaps, explain, geometry, plotcursor, plotoptions, state, units]
 import ../../view/[analysisview, curveplot, theme]
-import chrome, curveplot as curves, explainicon, overflow, icons, marks, placement, spectrumwindow,
+import chrome, curveplot as curves, explainmenu, overflow, icons, marks, placement, spectrumwindow,
   style
 
 const
@@ -618,6 +618,7 @@ proc drawImage(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: str
     ImPlot_SetupAxisLimitsConstraints(ImAxis_Y1.cint, y0, y1)
     let pos = ImPlot_GetPlotPos()
     let area = ImPlot_GetPlotSize()
+    notePlot(pos, area)
     # only what is in view, cut to the pixels (the largest value of each bin),
     # redone when the answer, the view or the size changes: never a copy of
     # every cell a frame
@@ -661,7 +662,7 @@ proc drawImage(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: str
       marks.markRect(name & ".cursor y", ylo, yhi)
       result = img.readingText(c)
     ImPlot_EndPlot()
-    explainIcon(name & ".explain", pos, t, marks, st.explainPane(w, 0))
+    explainMenu(name & ".explain", pos, t, marks, st.explainPane(w, 0))
   igSameLine(0, -1)
   ImPlot_ColormapScale(("dB##" & name).cstring, cdouble(img.lo), cdouble(img.hi),
     ImVec2_c(x: scaleW - igGetStyle().ItemSpacing.x, y: size.y), "%g", 0, ImPlotColormap(cmap))
@@ -805,7 +806,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
                  else: PlotCursor()
       let o = uis[i].drawCurvePlot(name & ".plot " & $i, p, t, ImVec2_c(x: wide, y: each),
         key, marks, held)
-      explainIcon(name & ".explain" & (if i == 0: "" else: " " & $(i + 1)), o.plotPos, t, marks,
+      explainMenu(name & ".explain" & (if i == 0: "" else: " " & $(i + 1)), o.plotPos, t, marks,
         st.explainPane(w, i))
       if o.hovered:
         (hoveredOn, under, moved) = (i, o.under, o.moved)
