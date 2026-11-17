@@ -5,7 +5,7 @@
 
 import std/[math, strutils]
 import imguin/cimgui
-import ../../core/state
+import ../../core/[phasepicture, state]
 import ../../view/[compareview, curveplot, theme]
 import curveplot as curves, icons, marks, placement, style
 
@@ -23,6 +23,15 @@ proc chip(label, text: string; ink: Rgba; markName: string; marks: var Marks) =
   igSameLine(0, -1)
   igTextUnformatted(text.cstring, nil)
   marks.mark(markName)
+
+proc tip(text: string; marks: var Marks) =
+  ## The last item's tooltip, wrapped; marked "compare.tip:<text>" while open.
+  if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
+    igPushTextWrapPos(igGetFontSize() * 30)
+    igTextUnformatted(text.cstring, nil)
+    igPopTextWrapPos()
+    marks.markRect("compare.tip:" & text, igGetItemRectMin(), igGetItemRectMax())
+    igEndTooltip()
 
 proc drawCompare*(ui: var CompareUi; st: AppState; t: Theme; scale: float32;
     marks: var Marks): seq[Command] =
@@ -121,8 +130,11 @@ proc drawCompare*(ui: var CompareUi; st: AppState; t: Theme; scale: float32;
           v != opt.phasePicture:
         opt.phasePicture = v
         changed = true
+      marks.mark("compare.phase.entry " & $v)
+      tip(PhaseMeaning[v], marks)
     igEndCombo()
   marks.mark("compare.phasePicture")
+  tip(phasePictureTip(opt.phasePicture), marks)
   if changed:
     result.add Command(kind: ckCompareDisplay, compareShow: opt)
   if pic.refusal.len > 0:

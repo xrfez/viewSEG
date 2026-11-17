@@ -27,6 +27,20 @@ const
   PhaseHelp* = "A sweep's phase climbs steeply because its delay grows with " &
     "frequency (a linear sweep is a parabola); for vibrator QC, read the phase " &
     "against the pilot in the vibrator signature plot."
+  PhaseMeaning*: array[PhasePicture, string] = [
+    ppUnwrapped: "The phase followed along frequency without jumps: a delay is a " &
+      "straight slope, a sweep a curve.",
+    ppMagnitude: "The size of the phase, 0 to 180 degrees, whatever its sign.",
+    ppSigned: "The phase as measured, wrapped into -180 to 180 degrees; it jumps " &
+      "by a turn where it wraps.",
+    ppDelayRemoved: "The unwrapped phase minus its best straight line, a pure time " &
+      "delay: what is left is the phase's own shape."]
+    ## One line per picture: what it shows, for the drop-down's list.
+
+func phasePictureTip*(p: PhasePicture): string =
+  ## The tooltip of a phase picture's drop-down: the selected picture, then
+  ## how to read a sweep's phase.
+  "Phase: " & $p & ". " & PhaseHelp
 
 func unwrapPhase*(phaseDeg: openArray[float64]; shown: openArray[bool]): seq[float64] =
   ## `phaseDeg` (per bin, -180 to 180) unwrapped along the bins that are

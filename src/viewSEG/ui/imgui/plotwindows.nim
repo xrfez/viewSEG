@@ -393,7 +393,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
             (p.phasePicture, changed) = (v, true)
         igEndCombo()
       marks.mark(name & ".phase picture")
-      tip("Phase: " & $p.phasePicture & ". " & PhaseHelp)
+      tip(phasePictureTip(p.phasePicture))
     of avCorrelation:
       label("Reference: " & (if w.reference.len > 0: w.reference else: "none"))
       line.follow(buttonWidth("References"))

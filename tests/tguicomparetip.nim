@@ -1,16 +1,20 @@
-## The compare window's phase drop-down has an id of its own: hovering it makes
-## Dear ImGui report no "visible items with conflicting ID" (it did, with the
-## phase plot).
+## The compare window's phase drop-down: it has an id of its own (hovering it
+## makes Dear ImGui report no "visible items with conflicting ID": it did, with
+## the phase plot), its tooltip says what the selected picture means, and each
+## entry of the open list says its own meaning.
 ##
 ## Seen to fail: with the drop-down named "##compare.phase" again (the id of
 ## the phase plot), "ImGui reports items with one id under the phase drop-down".
+## With the tooltips removed, "the drop-down's tooltip says what the picture
+## means did not happen".
 
 import std/[math, monotimes, options, os, strutils]
-import viewSEG/core/[geometry, state]
+import viewSEG/core/[geometry, phasepicture, state]
 import viewSEG/ui/imgui/app
 import utils/[fixtures, waiting]
 
 const root = currentSourcePath().parentDir.parentDir
+const TipPrefix = "compare.tip:"
 const shots = root / ".scratch"
 
 type Step = object
@@ -20,6 +24,10 @@ type Step = object
 
 func centre(r: Rect): Vec2 =
   vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
+
+func tipOf(f: FrameInfo): string =
+  for n in f.markNames(TipPrefix):
+    return n[TipPrefix.len .. ^1]
 
 proc click(f: FrameInfo; q: Vec2; button = 1) =
   f.moveMouse(q)
@@ -40,6 +48,9 @@ proc main*() =
     var failed = ""
     var plot: Rect
     var shot = false
+    var tipShot = false
+    var listShot = false
+    var held = 0
 
     proc step(name: string; act: proc (f: FrameInfo); done: proc (f: FrameInfo): bool) =
       steps.add Step(name: name, act: act, done: done)
@@ -70,8 +81,25 @@ proc main*() =
       f.moveMouse(f.markOf("compare.phasePicture").centre), proc (f: FrameInfo): bool =
       if wait mod 4 == 1: f.moveMouse(f.markOf("compare.phasePicture").centre)
       doAssert not f.idConflict, "ImGui reports items with one id under the phase drop-down"
-      if wait >= 20 and not shot: shot = f.savePng(shots / "compare-tip.png")
+      if wait >= 20 and not shot: shot = f.savePng(shots / "compare-id.png")
       wait >= 20)
+
+    step("the drop-down's tooltip says what the picture means", proc (f: FrameInfo) =
+      f.moveMouse(f.markOf("compare.phasePicture").centre), proc (f: FrameInfo): bool =
+      if wait mod 4 == 1: f.moveMouse(f.markOf("compare.phasePicture").centre)
+      result = f.tipOf == phasePictureTip(f.core.compareOptions.phasePicture)
+      if result and not tipShot: tipShot = f.savePng(shots / "compare-tip.png"))
+
+    step("each entry of the open list says its own meaning", proc (f: FrameInfo) =
+      f.click(f.markOf("compare.phasePicture").centre), proc (f: FrameInfo): bool =
+      let r = f.markOf("compare.phase.entry Signed +-180")
+      if r.size.x == 0: return false
+      if wait mod 4 == 0: f.moveMouse(r.centre)
+      result = f.tipOf == PhaseMeaning[ppSigned]
+      if result:
+        inc held
+        if held == 6: listShot = f.savePng(shots / "compare-list-tip.png")
+        result = held >= 6)
 
     proc onFrame(f: FrameInfo) =
       inc wait

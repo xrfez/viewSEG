@@ -158,7 +158,7 @@ proc drawControls(w: SpectrumWindow; name: string; t: Theme;
           (d.phasePicture, changed) = (v, true)
       igEndCombo()
     marks.mark(name & ".phase picture")
-    tip("Phase: " & $d.phasePicture & ". " & PhaseHelp)
+    tip(phasePictureTip(d.phasePicture))
   group(2):
     var visible = d.time == stVisible
     if igCheckbox("Visible time", addr visible):
