@@ -16,7 +16,7 @@ import viewSEG/ui/imgui/[icons, plotviews]
 proc main*() =
 
   block order:
-    doAssert PlotEntries.len == 7
+    doAssert PlotEntries.len == 8
     doAssert PlotEntries[0].fft and PlotEntries[0].name == "FFT", "FFT is first"
     doAssert PlotEntries[0].shortcut == "F"
     var i = 0
