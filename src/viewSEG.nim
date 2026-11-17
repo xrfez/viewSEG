@@ -27,7 +27,7 @@
 ##   call, its answer printed (an image written to `--png`'s file).
 
 import std/[os, strutils]
-import viewSEG/core/versions
+import viewSEG/core/[vendormaps, versions]
 import viewSEG/platform/[paths, winres] # winres: Windows manifest, icon, version, subsystem
 import viewSEG/remote/client
 
@@ -150,11 +150,14 @@ proc pathsReport*(c: PathContext): string =
     "logs: " & c.logDir & "\n" &
     "cache: " & c.cacheDir & "\n" &
     "agent socket: " & c.agentSocket & "\n"
-  for (name, dirs) in [("assets", c.assetDirs), ("vendormaps", c.vendorMapDirs)]:
-    if dirs.len == 0:
-      result.add name & ": (none)\n"
-    for d in dirs:
-      result.add name & ": " & d & "\n"
+  if c.assetDirs.len == 0:
+    result.add "assets: (none)\n"
+  for d in c.assetDirs:
+    result.add "assets: " & d & "\n"
+  for (d, source, there) in c.vendorMapCandidates:
+    if there or source != vsEnvironment:
+      result.add "vendormaps: " & d & (if there: "" else: " (not there yet)") & "\n"
+  result.add "vendormaps in a project: <project>/vendormaps\n"
 
 when isMainModule:
   let cmd = parseCommandLine(commandLineParams())
@@ -176,6 +179,8 @@ when isMainModule:
       cmd.tool, cmd.arguments, cmd.png)
   of caRun:
     echo versionLine()
+    # beside the program, when its folder can be written to (else left alone, quietly)
+    discard prepareVendorDir(appDir() / "vendormaps", VendorNotes)
     quit run(RunOptions(openPaths: cmd.files, persist: true,
       version: ViewSEGVersion & " (parseSEG " & ParseSEGVersion & ", processSEG " &
         ProcessSEGVersion & ")",

@@ -47,7 +47,7 @@ const
     ("ui/imgui/app.nim", "fileExists createDir writeFile",
       "the theme chosen; the start-up failure's log, before any window"),
     ("ui/imgui/fonts.nim", "fileExists readFile", "the bundled fonts, at start"),
-    ("platform/paths.nim", "dirExists writeFile removeFile createDir",
+    ("platform/paths.nim", "dirExists fileExists writeFile removeFile createDir",
       "the program's own folders, probed at start"),
     ("platform/winres.nim", "writeFile", "at compile time"),
     ("core/versions.nim", "fileExists", "the libraries' nimble files, at compile time"),

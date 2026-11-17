@@ -108,7 +108,7 @@ proc main*() =
     let c = context(ofLinux, "/r", {"HOME": "/h",
       "PARSESEG_VENDOR_PATH": "/x/maps::/missing:/r/vendormaps"},
       dirs = ["/r/vendormaps", "/x/maps", "/h/.config/viewSEG/vendormaps"])
-    # user's own, shipped, then the variable; missing and repeated ones dropped
+    # user's own, beside the program, then the variable; missing and repeated ones dropped
     doAssert c.vendorMapDirs == @["/h/.config/viewSEG/vendormaps", "/r/vendormaps", "/x/maps"],
       $c.vendorMapDirs
     let p = context(ofWindows, r"E:\v", {"PARSESEG_VENDOR_PATH": r"F:\maps;G:\none"},
@@ -118,10 +118,10 @@ proc main*() =
       $p.vendorMapDirs
 
   block vendorMapDirsDevelopmentFallback:
-    # <appDir>/../vendormaps comes last, after PARSESEG_VENDOR_PATH.
+    # <appDir>/../vendormaps is beside the program: before PARSESEG_VENDOR_PATH.
     let c = context(ofLinux, "/repo/bin", {"HOME": "/h", "PARSESEG_VENDOR_PATH": "/x"},
       dirs = ["/repo/vendormaps", "/x", "/repo/bin/vendormaps"])
-    doAssert c.vendorMapDirs == @["/repo/bin/vendormaps", "/x", "/repo/vendormaps"],
+    doAssert c.vendorMapDirs == @["/repo/bin/vendormaps", "/repo/vendormaps", "/x"],
       $c.vendorMapDirs
 
   block agentSocket:

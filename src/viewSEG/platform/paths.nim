@@ -161,17 +161,41 @@ proc assetDirs*(c: PathContext): seq[string] =
   c.existing([join(c.os, c.appDir, "assets"), join(c.os, parent, "share", AppName, "assets"),
     join(c.os, parent, "assets")])
 
-proc vendorMapDirs*(c: PathContext): seq[string] =
-  ## Directories to search for parseSEG vendor header maps (`*.nif`), in order:
-  ## the user's own (`<configDir>/vendormaps`), the ones shipped with the release
-  ## (`<appDir>/vendormaps`), each directory in `PARSESEG_VENDOR_PATH`, then
-  ## `<appDir>/../vendormaps` (development, as in `assetDirs`). Only the ones
-  ## that exist.
-  var candidates = @[join(c.os, c.configDir, "vendormaps"), join(c.os, c.appDir, "vendormaps")]
+type VendorSource* = enum
+  ## Where a vendor map folder comes from, in the order they are preferred.
+  vsUser = "your settings folder"        ## `<configDir>/vendormaps`
+  vsProgram = "beside the program"       ## `<appDir>/vendormaps`, and `<appDir>/../vendormaps`
+  vsEnvironment = "PARSESEG_VENDOR_PATH" ## the variable's folders
+
+const VendorFolderName = "vendormaps"
+  ## the folder of vendor header maps, beside the program and in every project
+
+proc vendorMapCandidates*(c: PathContext): seq[(string, VendorSource, bool)] =
+  ## The directories to search for parseSEG vendor header maps (`*.nif`), in
+  ## order of preference, each with where it comes from and whether it exists:
+  ## the user's own (`<configDir>/vendormaps`), the ones beside the program
+  ## (`<appDir>/vendormaps`, then `<appDir>/../vendormaps`: development, as in
+  ## `assetDirs`), then each directory in `PARSESEG_VENDOR_PATH`. Each once.
+  var candidates: seq[(string, VendorSource)] = @[
+    (join(c.os, c.configDir, VendorFolderName), vsUser),
+    (join(c.os, c.appDir, VendorFolderName), vsProgram),
+    (join(c.os, parentOf(c.os, c.appDir), VendorFolderName), vsProgram)]
   for d in c.env(VendorPathVar).split(if c.os == ofWindows: ';' else: ':'):
-    candidates.add d.strip
-  candidates.add join(c.os, parentOf(c.os, c.appDir), "vendormaps")
-  c.existing(candidates)
+    candidates.add (d.strip, vsEnvironment)
+  var seen: seq[string] = @[]
+  for (d, source) in candidates:
+    if d.len > 0 and d notin seen:
+      seen.add d
+      result.add (d, source, c.isDir(d))
+
+proc vendorMapSources*(c: PathContext): seq[(string, VendorSource)] =
+  ## `vendorMapCandidates` that exist.
+  for (d, source, there) in c.vendorMapCandidates:
+    if there: result.add (d, source)
+
+proc vendorMapDirs*(c: PathContext): seq[string] =
+  ## `vendorMapSources` without the sources.
+  for (d, _) in c.vendorMapSources: result.add d
 
 proc agentSocket*(c: PathContext): string =
   ## Where agent control's socket goes unless a path is given: next to the
@@ -237,6 +261,23 @@ proc assetDirs*(): seq[string] =
 proc vendorMapDirs*(): seq[string] =
   ## The vendor header map search list of this process.
   currentContext().vendorMapDirs
+
+proc vendorMapSources*(): seq[(string, VendorSource)] =
+  ## The vendor header map search list of this process, with each folder's source.
+  currentContext().vendorMapSources
+
+proc prepareVendorDir*(dir: string; notes: openArray[(string, string)]): bool =
+  ## Makes the vendor map folder `dir` if it is not there, and each of `notes`
+  ## (file name, text) in it that is not there; never replaces a file. Never
+  ## fails: false when the folder is not there at the end (a folder that cannot
+  ## be written to is left alone, and the program says nothing of it).
+  try:
+    createDir(dir)
+    for (name, text) in notes:
+      if not fileExists(dir / name): writeFile(dir / name, text)
+  except IOError, OSError:
+    discard
+  result = dirExists(dir)
 
 proc agentSocket*(): string =
   ## Agent control's default socket for this process (`agentSocket(c)`);

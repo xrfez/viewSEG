@@ -11,27 +11,37 @@ map, viewSEG shows the fields by name, like any standard header.
 
 ## Adding a map
 
-1. Get or write a `.nif` map for your recording system.
-2. Put it in your own maps folder:
-   - **portable copy** (a `config/` folder next to the program): `config/vendormaps/`;
-   - **installed copy** (no `config/` folder next to the program): `vendormaps/` inside your
-     viewSEG settings folder (`viewSEG --paths` prints where that is).
-3. Start viewSEG again.
+1. Get or write a `.nif` map for your recording system: `WRITING-A-MAP.md`, in this folder,
+   is the guide to the format.
+2. Put it in a `vendormaps` folder:
+   - **for one job**: the `vendormaps` folder of the project (made with the project);
+   - **for you**: `vendormaps/` inside your viewSEG settings folder (`viewSEG --paths`
+     prints where that is; make the folder if it is not there);
+   - **for everyone using this copy of the program**: this folder, `vendormaps/`, next to the
+     program (viewSEG makes it at start when it can write there).
+3. Choose File > Reload vendor maps. A map dropped in while the program runs is read without
+   a restart, and the files already open show the new decode.
 
 ## Where viewSEG looks
 
-In this order, and only in folders that exist:
+In this order, and only in folders that exist. When two maps apply to the same block, the one
+that is more specific about the file (format, revision, manufacturer code, serial number,
+text) is used; of two maps with the same name, the one of the folder first in this list; of
+two equally specific maps of different names, the one of the folder first in this list as well.
 
-1. your own folder, `config/vendormaps/` (see above): **searched first**, so when one of your
-   maps and a shipped map fit a file equally well, yours is used;
-2. this folder, `vendormaps/`, next to the program: the maps that ship with this release;
-3. every folder listed in the environment variable `PARSESEG_VENDOR_PATH` (separated by `:`
+1. the `vendormaps` folder of the project open;
+2. your own folder, `vendormaps/` in the settings folder;
+3. this folder, `vendormaps/`, next to the program;
+4. every folder listed in the environment variable `PARSESEG_VENDOR_PATH` (separated by `:`
    on Linux and macOS, `;` on Windows).
 
 Run `viewSEG --paths` to see the folders in use on your machine (the `vendormaps:` lines).
 
-Leave this folder as it is: a new release replaces it. Keep your own maps in
-`config/vendormaps/`.
+Messages says how many maps were loaded from where, and why a map that could not be read was
+left out.
+
+Leave the files of this folder as they are when it came with a release: a new release replaces
+them. Keep your own maps in your settings folder or in the project.
 
 ---
 

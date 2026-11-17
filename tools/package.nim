@@ -176,12 +176,14 @@ proc writeVendormaps(p: Packager; dir: string) =
     ownMaps = p.root / "vendormaps"
   requireDir(parseSEGMaps, "parseSEG's vendormaps/")
   requireFile(ownMaps / "README.md", "vendormaps/README.md")
+  requireFile(ownMaps / "WRITING-A-MAP.md", "vendormaps/WRITING-A-MAP.md")
   let dest = dir / "vendormaps"
   createDir(dest)
   var seen: seq[string]
   copyMaps(parseSEGMaps, dest, seen)
   copyMaps(ownMaps, dest, seen)
   copyFile(ownMaps / "README.md", dest / "README.md")
+  copyFile(ownMaps / "WRITING-A-MAP.md", dest / "WRITING-A-MAP.md")
 
 proc writeLicences(p: Packager; t: Target; dir: string) =
   let dest = dir / "licences"
