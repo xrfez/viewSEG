@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.15.0: capabilities | names | processSEG 0.7.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 49 (20 in part) | 145 | 33 (23 in part) | 144 |
+| `built` | 49 (20 in part) | 145 | 33 (23 in part) | 143 |
 | `internal` | 15 | 43 | 4 | 38 |
-| `planned` | 35 | 250 | 45 | 400 |
+| `planned` | 35 | 250 | 45 | 401 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 20 | 356 | 6 | 66 |
 | all | 121 | 804 | 89 | 653 |
@@ -59,6 +59,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 7. **Multiplexed SEG-D read transparently** (parseSEG, Opening and indexing): the open path takes such a file, and parseSEG's note goes to Messages, but no multiplexed file has been opened in the viewer yet
 8. **Logs as files** (parseSEG, Diagnostics): a file's problems saved as NIF and opened again, attached to the QC report
 9. **Location of each problem** (parseSEG, Diagnostics): a header field
+10. **Filter response** (processSEG, Filters): `appliedResponseInto`: the viewer's folded sum is 10 to 40 times faster; switch when processSEG's is
 
 <!-- end of summary -->
 
@@ -287,7 +288,7 @@ name, so these are building blocks for code that works on raw headers.
 | Notches and zero DC | `withNotch`, `withZeroDc`, `Notch` | Seismic window: Filters in its strip, notches (50 or 60 Hz in one click, any frequency and width, with harmonics: `withNotch` once for each below Nyquist); zero DC in the processing window | built (the Seismic window's Filters: `withNotch`, `Notch`); planned (`withZeroDc`) |
 | IIR, zero or minimum phase | `initIirPlan`, `iirOp`, `IirPhase`, `IirPlan` (`order`, `phase`), `iirLanes`, `causalEnergyFraction` | Processing window: IIR, phase choice | planned |
 | Trend handling at the edges | `TrendRemoval` | Processing window, advanced | planned |
-| Filter response | `response`, `responseInto`, `gainAt`, `magnitudeAt`, `narrowestRampHz`, `appliedResponseInto` | "FFT in a new window" (`F`) and the live Spectrum panel: the response the plot's filters apply drawn under the spectrum (Response, on by default: measured by an impulse through their plan (`appliedResponseInto`), on a grid of its own dense at each notch and ramp), and the bins made finer for a narrow filter (`narrowestRampHz`); the design's response curve in the processing window | built (the spectrum windows: `narrowestRampHz`, `appliedResponseInto`); planned (`response`, `responseInto`, `gainAt`, `magnitudeAt`: the processing window) |
+| Filter response | `response`, `responseInto`, `gainAt`, `magnitudeAt`, `narrowestRampHz`, `appliedResponseInto` | "FFT in a new window" (`F`) and the live Spectrum panel: the response the plot's filters apply drawn under the spectrum (Response, on by default: measured by an impulse through their plan (`appliedResponseInto`), on a grid of its own dense at each notch and ramp), and the bins made finer for a narrow filter (`narrowestRampHz`); the design's response curve in the processing window | built (the spectrum windows: `narrowestRampHz`); planned (`response`, `responseInto`, `gainAt`, `magnitudeAt`: the processing window); to plan (`appliedResponseInto`: the viewer's folded sum is 10 to 40 times faster; switch when processSEG's is) |
 | Zoom margins | `requiredMargin`, `impulseLength`, `decodeWindow`, `energyFraction` | internal: zoomed tiles decode enough samples | internal; not applicable (`impulseLength`, `energyFraction`: a plan's `requiredMargin` gives the margin) |
 | Parameter checks against Nyquist | `validate`, `nyquistHz` | Seismic window: Filters: the sliders' range ends at Nyquist (`nyquistHz`), a corner or notch past it is cut there or left out and said; `validate` for a filter built by hand | built (the Seismic window's Filters: `nyquistHz`); not applicable (`validate`: the viewer builds each filter with `bandPass` and `withNotch`, which check it) |
 
