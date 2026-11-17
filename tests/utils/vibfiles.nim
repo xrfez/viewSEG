@@ -55,7 +55,8 @@ proc writeVib(path: string; codes: openArray[int16]; record: float64; loud: bool
       VibDtMs * 1000)
     k.traceCode = code
     # the writer keeps a code only when the status agrees with it
-    k.status = if code == 1: tsLive elif code in 18'i16 .. 21'i16 or code == 6: tsAuxiliary
+    k.status = if code == 1 or code in 11'i16 .. 17'i16: tsLive elif code in 18'i16 .. 21'i16 or
+        code == 6: tsAuxiliary
                else: tsUnknown
     if n in located:
       (k.srcX, k.srcY, k.rcvX, k.rcvY) = (500_000.0 + float64(n), 6_000_000.0 + float64(n),
@@ -83,6 +84,12 @@ proc vibOtherFourSegy*(fx: Fixtures): string =
   ## Four traces with codes 21, 18, 19, 20: a layout of its own.
   result = fx.dir / "vib-other-four.sgy"
   if not fileExists(result): writeVib(result, [21'i16, 18, 19, 20], 3, false)
+
+proc sensorsSegy*(fx: Fixtures): string =
+  ## Three traces with the multicomponent sensor codes 12, 13, 14 (vertical, cross-line,
+  ## in-line): real components.
+  result = fx.dir / "sensors.sgy"
+  if not fileExists(result): writeVib(result, [12'i16, 13, 14], 4, false)
 
 proc vibThirteenSegy*(fx: Fixtures): string =
   result = fx.dir / "vib-thirteen.sgy"

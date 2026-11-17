@@ -316,7 +316,7 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
     let kindOk = (seismic and rd.src.filter.seismic) or
       (not seismic and rd.src.filter.auxiliary)
     if kindOk and rd.src.hidden.binarySearch(g.a + k) < 0:
-      let c = keys.component
+      let c = componentOf(keys)
       if c != 0:
         if counts[c] == 0: sensors[c] = keys.sensorType
         elif sensors[c] != keys.sensorType: mixed.incl c

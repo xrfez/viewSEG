@@ -103,7 +103,7 @@ func marksOf(t: Tile; b: TileBlock; selected, hovered: openArray[bool];
     if row < hovered.len and hovered[row]: result[i] = result[i] or HoveredMark
     if t.isBlank(row): result[i] = result[i] or KilledMark
     if row < t.keys.len:
-      let code = t.keys[row].component
+      let code = componentOf(t.keys[row])
       let slot = if useSlots: int(slots[code]) else: colourSlot(code)
       result[i] = result[i] or uint8(slot shl ComponentShift)
 

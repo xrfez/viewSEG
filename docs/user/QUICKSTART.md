@@ -484,7 +484,10 @@ times only; its unit is in the ms/in box (the gear's Scales tab) and in the stat
 or smaller keeps the scale and shows more or less of the record, from the same top-left
 corner, also when the whole record was in view.
 
-**Components.** A record whose traces carry more than one component draws each trace
+**Components.** In a SEG-Y file a trace's identification code is a component only when it
+names a sensor component (11 to 17: multicomponent and rotated sensors); a vibrator's codes
+(18 to 21) and any code outside those, a manufacturer's own 28, 29, 33 and so on, give no
+button and no colour. A record whose traces carry more than one component draws each trace
 once, side by side as usual. The buttons tell the components apart by the value in the
 headers (a SEG-D group index when that is set, otherwise the sensor type; a SEG-Y
 identification code). The letter and the colour come from what the trace says it is.

@@ -15,7 +15,7 @@
 
 import std/[math, strutils, times]
 import parseSEG
-import edits, pick, traceids
+import components, edits, pick, traceids
 
 type
   ReadoutField* = enum
@@ -157,7 +157,7 @@ proc text*(p: Pick; f: ReadoutField): string =
     of rfMidpointXY: pair(k.cmpX, k.cmpY, ", ")
     of rfSourceZ: numberText(k.srcZ)
     of rfReceiverZ: numberText(k.rcvZ)
-    of rfComponent: (if k.component > 0: $k.component else: "")
+    of rfComponent: (if componentOf(k) > 0: $componentOf(k) else: "")
     of rfStatus:
       case k.status
       of tsUnknown: ""

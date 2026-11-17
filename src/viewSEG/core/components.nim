@@ -4,7 +4,8 @@
 ## By Component sort uses, and what tells traces of one station apart.
 ## SEG-D Rev 3 stores the group index there when that is set, else the
 ## sensor type; a SEG-Y trace stores an identification code when it names
-## a component. 0 means the headers do not say. A record is multi-component
+## a component and is one of 11 to 17 (`componentOf`: another code is no component).
+## 0 means the headers do not say. A record is multi-component
 ## when those traces, before any component filter, carry more than one
 ## distinct non-zero component. One button per distinct value.
 ##
@@ -27,7 +28,18 @@
 ## is shown whole again.
 
 import std/[algorithm, math]
+import parseSEG
 import geometry
+
+func componentOf*(k: TraceKeys): uint8 =
+  ## The component the viewer takes `k`'s trace to be: parseSEG's `component` for SEG-D,
+  ## SEG-2 and so on; for a SEG-Y trace (it has an identification code) only when
+  ## that code is one of the sensor-component codes 11 to 17 (multicomponent and rotated
+  ## sensors). Any other code (a vibrator's 18 to 21, a manufacturer's own 28, 29, 33)
+  ## is no component: no button, no colour.
+  if k.traceCode == 0: k.component
+  elif int(k.traceCode) in 11 .. 17: k.component
+  else: 0
 
 type
   ComponentKind* = enum
