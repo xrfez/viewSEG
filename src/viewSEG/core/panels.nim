@@ -453,32 +453,16 @@ func cpuGain(d: DisplaySettings; kind: GatherKind): DisplayGain =
   of dgNormalized: (if d.normScope == perTrace: dgNormalized else: dgNone)
   of dgAuto, dgNone, dgFixed, dgFloat: dgNone
 
-const PowerKnotStep = 1.02
-  ## the ratio of one knot's time to the one before, along a power of time:
-  ## linear in dB between them, the curve is within 0.001 dB of the power's
-
 proc heldGain*(d: DisplaySettings): GainCurve =
   ## The Exponential gain of `d` as processSEG's gain curve: `dbPerS` dB per
   ## second (`exponentialGain`) or the power of time (`powerGain`), rising
-  ## until `untilMs` and held at its value there after it: a knot curve,
-  ## which is flat past its last knot. dB per second is a straight line in
-  ## dB, so two knots give it exactly; the power of time is a knot every 2 %
-  ## of time from 1 ms (`powerGain`'s floor). Raises `ValueError` for a
-  ## setting that is not finite.
+  ## until `untilMs` and held at its value there after it (processSEG's
+  ## `heldGain`, a knot curve flat past its last knot). Raises `ValueError`
+  ## for a setting that is not finite.
   let until = if d.untilMs.isNaN: 2000.0 else: clamp(d.untilMs, MinUntilMs, MaxUntilMs)
-  var knots: seq[GainKnot]
   case d.timeGain
-  of tgDbPerSecond:
-    let c = exponentialGain(d.dbPerS)
-    knots = @[GainKnot(tMs: 0, dB: 0), GainKnot(tMs: until, dB: c.gainDbAt(until))]
-  of tgPower:
-    let c = powerGain(d.power)
-    var t = 1.0
-    while t < until:
-      knots.add GainKnot(tMs: t, dB: c.gainDbAt(t))
-      t *= PowerKnotStep
-    knots.add GainKnot(tMs: until, dB: c.gainDbAt(until))
-  knotGain(knots)
+  of tgDbPerSecond: heldGain(exponentialGain(d.dbPerS), until)
+  of tgPower: heldGain(powerGain(d.power), until)
 
 func displayPipeline*(layer: Layer; kind: GatherKind): Pipeline =
   ## What the reader runs on layer `layer`'s samples: the polarity reversal
