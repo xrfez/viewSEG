@@ -4611,7 +4611,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
         if r.path == s.path:
           (panel, replacing, gather) = (r.panel, true, r.gather)
           break
-  if follow and s.file.kind != skUnknown and filejobs.cutShort(s.file):
+  if follow and s.file.kind != skUnknown and filejobs.endsEarly(s.file):
     # Not shown early: it ends before its last trace. Shown when it changes and is whole.
     state.mark(s.path, short = true, seen = false)
     state.log.add(sevInfo, s.name, s.name & " is not shown yet: it ends before its last " &
@@ -4645,7 +4645,7 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   state.checkEdits(s)
   state.identify(s)
   let path = s.path
-  let short = filejobs.cutShort(s.file)
+  let short = filejobs.endsEarly(s.file)
   state.onDiskSaid.del path
   state.sessions.add s
   if state.project.dir.len > 0 and state.project.doc.hasSurvey:
@@ -6662,7 +6662,16 @@ proc retry(state: var AppState; k: int) =
     state.log.add(sevInfo, path.extractFilename, "Opening " & path.extractFilename & " again.")
     state.showPath(k, path, gather, follow, by) # the same open: whoever asked for it
     return
-  if state.shownFile(k) >= 0:
+  let shown = state.shownFile(k)
+  if shown >= 0:
+    if state.sessions[shown].file.readFailed:
+      # A mapped file whose read failed reads as cut for as long as it is
+      # mapped (parseSEG's guard): only a new open reads it again.
+      state.log.add(sevInfo, state.sessions[shown].name, "Opening " &
+        state.sessions[shown].name & " again: a read of it failed, and a mapped file " &
+        "stays unread until it is opened again.")
+      state.reopen(shown, now = true)
+      return
     if not state.readers[k].isNil and state.readers[k].silentFor >= StallAfter:
       state.readers[k].abandon()
     state.newSource(k) # read again, at the same scales

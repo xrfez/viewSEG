@@ -49,7 +49,7 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
 import processSEG/filter/design
-import filesystem, inbox, jobs, log, processing, spectra, threads
+import cutfile, filesystem, inbox, jobs, log, processing, spectra, threads
 
 const
   ReadTraces = 64   ## traces per prefetch chunk
@@ -147,24 +147,6 @@ proc beat(p: ptr ReaderObj; reading: string) =
   withLock p.lock:
     p.beat = now
     p.reading = reading
-
-func failedText(e: ref OSError): string =
-  var msg = e.msg
-  let cut = msg.find('\n')
-  if cut >= 0: msg.setLen cut
-  "it cannot be read now (" & (if msg.len > 0: msg else: "its drive does not answer") &
-    "): its drive went away or fails"
-
-proc unreadable(a: SpectrumAsk): string =
-  ## Why the file is not read now; "" when it can be.
-  result = ""
-  try:
-    let size = fs.getFileInfo(a.path).size
-    if a.size >= 0 and size < a.size:
-      result = "the file is shorter than when it was opened (another program cut it " &
-        "short or is writing it): it is not read until it is opened again"
-  except OSError as e:
-    result = failedText(e)
 
 proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Cache): int =
   ## Reads the traces of `list` that are not at hand into `cache`; how many
@@ -405,7 +387,7 @@ proc serve(p: ptr ReaderObj; a: SpectrumAsk; cache: var Cache): bool =
   ## given up first (then nothing is posted).
   var answer = Spectrum(gen: a.gen, id: a.id, asked: a.traces.len, fromMs: NaN, toMs: NaN)
   p.beat(a.path)
-  answer.problem = a.unreadable
+  answer.problem = cutWhy(a.file[])
   if answer.problem.len == 0:
     let f = a.file
     if cache.session != a.session:
@@ -436,10 +418,10 @@ proc serve(p: ptr ReaderObj; a: SpectrumAsk; cache: var Cache): bool =
         if read < 0: return false
         answer.read = read
         if not p.compute(a, list, dtMs, cache, answer): return false
-      except OSError as e:
-        answer.problem = failedText(e)
       except ValueError as e:
         answer.problem = e.msg
+      except CatchableError as e: # a cut file, a drive that failed
+        answer.problem = readProblem(e)
     # Kept at hand: this request's traces; the others too while they fit.
     if cache.values > MaxSpectrumSamples:
       var gone: seq[int]

@@ -31,8 +31,8 @@ import std/[algorithm, locks, math, monotimes, options, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
-import analysis, filesystem, fkanalysis, inbox, jobs, join, log, processing, references, threads,
-  vibanalysis
+import analysis, cutfile, filesystem, fkanalysis, inbox, jobs, join, log, processing, references,
+  threads, vibanalysis
 
 type
   AnalysisAsk* = object
@@ -113,21 +113,6 @@ proc beat(p: ptr ReaderObj; reading: string) =
   withLock p.lock:
     p.beat = now
     p.reading = reading
-
-proc unreadable(path: string; size: int64): string =
-  ## Why the file is not read now; "" when it can be.
-  result = ""
-  try:
-    let now = fs.getFileInfo(path).size
-    if size >= 0 and now < size:
-      result = "the file is shorter than when it was opened (another program cut it " &
-        "short or is writing it): it is not read until it is opened again"
-  except OSError as e:
-    var msg = e.msg
-    let cut = msg.find('\n')
-    if cut >= 0: msg.setLen cut
-    result = "it cannot be read now (" & (if msg.len > 0: msg else: "its drive does not " &
-      "answer") & "): its drive went away or fails"
 
 func sameDt(a, b: float64): bool {.inline.} = abs(a - b) <= 1e-9 * max(a, b)
 
@@ -298,7 +283,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
   ## request came first (nothing is posted).
   var answer = AnalysisResult(gen: a.gen, id: a.id, view: a.view)
   let f = a.file
-  var why = unreadable(a.path, a.size)
+  var why = cutWhy(f[])
   if why.len > 0:
     answer.problem = why
   elif a.view == avOrientation:
@@ -560,10 +545,10 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & through
           if a.extraNote.len > 0 and answer.problem.len == 0:
             answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & a.extraNote
-      except OSError as e:
-        answer.problem = "it cannot be read now: " & e.msg
       except ValueError as e:
         answer.problem = e.msg
+      except CatchableError as e: # a cut file, a drive that failed
+        answer.problem = readProblem(e)
   answer.gen = a.gen
   answer.id = a.id
   answer.view = a.view

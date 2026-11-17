@@ -41,8 +41,6 @@ proc storeWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading the trace"
     try:
-      if size >= 0 and fs.getFileInfo(path).size < size:
-        raise newException(IOError, "the file is shorter than when it was opened")
       var samples: seq[float32] = @[]
       var us = intervalUs
       {.cast(gcsafe).}:
@@ -186,8 +184,6 @@ proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
     var news = ReferenceNews(home: folder, act: (if preview: raPilotShown else: raViewed),
       key: key, name: name, window: window, record: record, pilotTrace: -1)
     try:
-      if size >= 0 and fs.getFileInfo(path).size < size:
-        raise newException(IOError, "the file is shorter than when it was opened")
       var samples: seq[float32] = @[]
       var us = 0.0
       {.cast(gcsafe).}:

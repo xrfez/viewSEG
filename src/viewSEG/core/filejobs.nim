@@ -19,7 +19,7 @@
 
 import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
-import filelist, filesystem, inbox, jobs, log, session, threads
+import cutfile, filelist, filesystem, inbox, jobs, log, session, threads
 from project import ProjectFileName
 
 const
@@ -95,10 +95,11 @@ proc openSession*(path: string; progress: Progress = nil; cache = "";
   let info = fs.getFileInfo(path)
   result = newSession(path, move opened, info.size, info.lastWriteTime, choice)
 
-func cutShort*(f: SeismicFile): bool =
-  ## Whether the file ends before a structure it announces is complete
-  ## (parseSEG's `truncated` diagnostic): a file still being written, or
-  ## cut short.
+func endsEarly*(f: SeismicFile): bool =
+  ## Whether the file ended before a structure it announces was complete when
+  ## it was opened (parseSEG's `truncated` diagnostic in its log): a file
+  ## still being written, or cut short before. (A cut while it is open is
+  ## parseSEG's `cutShort`.)
   for d in f.log:
     if d.code == dcTruncated: return true
   false
@@ -148,7 +149,7 @@ proc openCached(path: string; ctx: JobContext; to: Poster; cache: string; budget
         fs.setLastModificationTime(cache, getTime()) # used now: pruned last
       except OSError:
         discard
-    elif result.file.demuxPath.len == 0 and not (whole and result.file.cutShort):
+    elif result.file.demuxPath.len == 0 and not (whole and result.file.endsEarly):
       # (a demultiplexed copy is never cached)
       ctx.setPhase "saving the index cache"
       result.saveCache(cache, budget, to, ctx.id)
@@ -220,16 +221,16 @@ proc traceHeadersWork*(file: ptr SeismicFile; path: string; size: int64; index: 
   ## headers, read from the file's map (`mkTraceRead`). A drive that does
   ## not answer holds this job, never the UI thread. Submitted with the file
   ## in `reads`, so no join changes its keys meanwhile and no close takes it
-  ## away. A file shorter than it was opened is not read: its map's pages
-  ## past the end would end the program.
+  ## away. A file cut short while it is open is found by parseSEG's guard
+  ## (`cutWhy`) and fails the job in plain words.
   result = proc (ctx: JobContext) {.gcsafe.} =
     ctx.setPhase "reading a trace's headers"
-    if size >= 0 and fs.getFileInfo(path).size < size:
-      raise newException(IOError, "the file is shorter than when it was opened")
     fs.mappedRead(path, headers = true) # (tests: the drive holds the thread here)
     var keys: TraceKeys
     var rows: seq[HeaderRow]
     {.cast(gcsafe).}:
+      let why = cutWhy(file[])
+      if why.len > 0: raise newException(IOError, why)
       keys = file[].traceKeys([index])[0]
       rows = file[].traceHeaders(index)
     clearCycleRoots()

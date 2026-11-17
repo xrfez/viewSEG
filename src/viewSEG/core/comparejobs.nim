@@ -73,8 +73,6 @@ proc compareTraceWork*(file: ptr SeismicFile; path: string; size: int64; trace: 
     ctx.setPhase "reading the trace"
     var news = CompareNews(gen: gen)
     try:
-      if size >= 0 and fs.getFileInfo(path).size < size:
-        raise newException(IOError, "the file is shorter than when it was opened")
       var samples: seq[float32] = @[]
       var keys = initTraceKeys()
       var us = 0.0

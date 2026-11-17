@@ -17,13 +17,13 @@
 ##   once it has served the request or given it up, and `ask` ends those of
 ##   a request it replaces untaken. A close or a join of the file waits for
 ##   that, which is a few milliseconds.
-## - **A file another program cut short** is not read (its map past the new
-##   end would end the program), nor one that cannot be looked at (its drive
-##   went away, or fails): the answer says so for its traces.
+## - **A file another program cut short**, or whose read failed, is found by
+##   parseSEG's guard (`cutShort`; nothing reads past the new end of a map):
+##   the answer says so for its traces. A drive that went away or fails is
+##   found by the read, whose error the answer's part says.
 ## - **A drive that does not answer.** Every call it makes to the file system
-##   goes through the seam (`core/filesystem`: a `stat` of each file first,
-##   and each read of a header block or of samples from the map marked with
-##   `fs.mappedRead`). It *beats* (`fs.now`) before each, with the file it
+##   goes through the seam (`core/filesystem`: each read of a header block or
+##   of samples from the map marked with `fs.mappedRead`). It *beats* (`fs.now`) before each, with the file it
 ##   reads next; one that is busy and has not beaten for a while is stuck in
 ##   that drive (`silentFor`, `readingPath`). The UI thread then says so, and
 ##   leaves it (`leave`) when the window wants another file read: a new
@@ -45,8 +45,8 @@ import std/[heapqueue, intsets, locks, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, rows, types, workspace]
-import edits, filesystem, headers, inbox, jobs, log, processing, selection, session, threads,
-  tracetable
+import cutfile, edits, filesystem, headers, inbox, jobs, log, processing, selection, session,
+  threads, tracetable
 
 export tracetable
 
@@ -232,34 +232,11 @@ proc beat(p: ptr InspectorObj; reading: string) =
     p.beat = now
     p.reading = reading
 
-func failedText(e: ref OSError): string =
-  ## What the answer says of a read its drive failed.
-  var msg = e.msg # its first line: the system's words
-  let cut = msg.find('\n')
-  if cut >= 0: msg.setLen cut
-  "it cannot be read now (" & (if msg.len > 0: msg else: "its drive does not answer") &
-    "): its drive went away or fails"
-
-func readProblem(e: ref CatchableError): string =
-  ## What a part says of a read that failed: a drive, a cut file, or a field
-  ## the file has not. One part only; the rest of the answer stands.
-  if e of OSError: failedText(cast[ref OSError](e))
-  elif e.msg.len > 0: e.msg
-  else: $e.name
-
 proc unreadable(f: InspectFile): string =
-  ## Why nothing of the file is read now; "" when it can be. A file shorter
-  ## than when it was opened would end the program when its map is read
-  ## past the new end (`core/reader.cutShort`); one that cannot be looked at
-  ## is on a drive that went away or fails.
-  result = ""
-  try:
-    let size = fs.getFileInfo(f.path).size
-    if f.size >= 0 and size < f.size:
-      result = "the file is shorter than when it was opened (another program cut it " &
-        "short or is writing it): it is not read until it is opened again"
-  except OSError as e:
-    result = failedText(e)
+  ## Why nothing of the file is read now; "" when it can be: parseSEG's guard
+  ## found it cut short, or a read of it failed (`cutWhy`). A drive that
+  ## does not answer is found by the read itself (`readProblem`).
+  cutWhy(f.file[])
 
 func usable(x: float64): bool {.inline.} = x > 0 and x < Inf
 

@@ -80,13 +80,13 @@
 ##   empties its list of cycle roots after closing a prefetcher, before it
 ##   ends a hold, and before it exits. A tile holds no `ref`.
 
-import std/[algorithm, cpuinfo, locks, math, monotimes, os, times]
+import std/[algorithm, cpuinfo, locks, math, monotimes, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[basic, pool, rows, types, workspace]
 import processSEG/gain/stats
-import components, edits, filesystem, inbox, jobs, log, panels, processing, readout, sorting,
-  threads, tiles, viewport, wiggle
+import components, cutfile, edits, filesystem, inbox, jobs, log, panels, processing, readout,
+  sorting, threads, tiles, viewport, wiggle
 
 const
   ChunkTraces = 64    ## traces per prefetch chunk
@@ -185,7 +185,9 @@ type
     basisRaw: RawCache   ## the samples of the traces `owed` reads, as decoded
     ws: Workspace
     pool: ProcessPool    ## the processing's workers; none until first needed
-    toldShort: bool      ## the file was found shorter than when it was opened: said once
+    toldCut: bool        ## the file was found cut short while it was open: said once
+    toldIo: bool         ## a read of the file failed (its drive): said once until one succeeds
+    lastIo: bool         ## the tile just made had rows its drive failed (`serve` says so)
     toldNotNumbers: bool ## samples that are not numbers were found in the file: said once
     toldFilters: string  ## what was said last of the filters of `toldPath`: said once
     toldPath: string
@@ -248,7 +250,9 @@ proc letGo(rd: var Reader) =
   rd.owed = ReaderRequest()
   rd.hasOwed = false
   rd.basisRaw = RawCache()
-  rd.toldShort = false
+  rd.toldCut = false
+  rd.toldIo = false
+  rd.lastIo = false
   rd.toldNotNumbers = false
 
 proc arrange(rd: var Reader; order: seq[SortKey]) =
@@ -570,37 +574,26 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
     rd.note(sevError, "The display processing stopped on " & rd.name & ": " & e.msg)
     pr.processing = false
 
-proc cutShort(rd: var Reader): bool =
-  ## Whether the file cannot be read now: it is shorter than when it was
-  ## opened (another program cut it short, or is writing it again), or it
-  ## cannot be looked at (its drive went away, or fails). Reading the map
-  ## then would touch pages that are not there, which ends the program
-  ## (SIGBUS; an in-page error on Windows), so nothing is read. Said once;
-  ## the UI closes a file cut short when the folder's watch sees the change.
-  result = false
-  var why = ""
-  var cause = ucCutShort
-  try:
-    let size = fs.getFileInfo(rd.src.path).size
-    if rd.src.size >= 0 and size < rd.src.size:
-      why = rd.name & " is shorter than when it was opened: another program has cut it " &
-        "short or is writing it again, so it is not read until it is opened again."
-  except OSError as e:
-    cause = ucFailed
-    var msg = e.msg # its first line: the system's words
-    let cut = msg.find('\n')
-    if cut >= 0: msg.setLen cut
-    why = rd.name & " cannot be read now (" & (if msg.len > 0: msg else: "its drive " &
-      "does not answer") & "): its drive went away or fails, so it is not read; the plot " &
-      "keeps what it showed."
-  result = why.len > 0
-  if not result: rd.toldShort = false # (said again if it fails again)
-  if result:
-    rd.r.poster.post Msg(job: NoJob, kind: mkUnread, unreadPanel: rd.r.panel,
-      unreadGen: rd.src.gen, cause: cause, why: why)
-  if result and not rd.toldShort:
-    rd.toldShort = true
-    rd.note(sevWarning, why)
+proc tellUnread(rd: var Reader; failed, shown: int; cut, io: bool) =
+  ## Says, once, that `failed` of the `shown` traces could not be read, as
+  ## parseSEG's guard found: the file was cut short while it was open (rows
+  ## past the cut), or a read of it failed (its drive). The rows are blank;
+  ## a cut stays so until the file is opened again (said once for the
+  ## file), a drive's failure is read again (Retry), said once until a read
+  ## succeeds.
+  let what = $failed & " of the " & $shown & " traces shown"
+  if io:
+    rd.lastIo = true
+    if not rd.toldIo:
+      rd.toldIo = true
+      rd.note(sevWarning, rd.name & ": " & what & " could not be read and are drawn blank: " &
+        "its drive is not answering (a read of the file failed). They are read again with " &
+        "Retry, or when the plot moves, once it answers.")
+  elif cut and not rd.toldCut:
+    rd.toldCut = true
+    rd.note(sevWarning, rd.name & " was cut short while it was open (another program cut it " &
+      "or is writing it again): " & what & " lie past its new end and are drawn blank. Open " &
+      "it again to see what it holds now.")
 
 func heldRows(raw: RawCache; q: ReadRequest; list: seq[int]; window: Slice[int]): seq[int] =
   ## Where each row of request `q` (its traces `list`, its samples `window`)
@@ -797,7 +790,6 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
       if (if level: rd.r.levelWaits else: rd.r.interrupted and rd.r.superseded):
         given = true
         break
-  elif rd.cutShort: return
   else:
     let into = if level: addr rd.basisRaw else: addr rd.raw
     let keep = q.count * cols <= (if level: MaxBasisValues else: MaxRawSamples)
@@ -811,8 +803,13 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
       into[].failed.setLen 0
     else: into[] = RawCache() # too large to keep: the one before goes too
     var firstError = ""
+    var cutSeen, ioSeen = false # parseSEG's guard: rows past a cut, rows a drive failed
     var waitFrom = fs.now()
     let chunk = if req.chunkTraces > 0: req.chunkTraces else: ChunkTraces
+    # Asks parseSEG's guard first: a mapped file's read past a cut finds it
+    # by itself, but an unmapped one's cache keeps the bytes it holds until
+    # something asks (`cutShort`: one `fstat`), and it must not draw them.
+    discard f[].cutShort
     var pf = newPrefetcher[float32](f[], list, chunkTraces = chunk, cols = cols,
       firstSample = window.a, workers = DecodeWorkers, quickFirst = true, uniform = true)
     var c: PrefetchChunk[float32]
@@ -831,6 +828,9 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
       tile.failed += c.failed
       if c.failed > 0 and firstError.len == 0 and c.log.len > 0:
         firstError = c.log[0].msg
+      for d in c.log:
+        if d.code == dcTruncated: cutSeen = true
+        elif d.code == dcIo: ioSeen = true
       if (if level: rd.r.levelSuperseded else: rd.r.interrupted):
         given = true
         break
@@ -839,11 +839,16 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
     clearCycleRoots()
     if keep and not given:
       into[].failed = failed
-      into[].valid = true
+      into[].valid = not ioSeen # rows a drive failed are read again, not kept blank
+    rd.lastIo = false
     if not given and tile.failed > 0:
-      rd.note(sevWarning, $tile.failed & " of the " & $q.count & " traces shown could not " &
-        "be read and are drawn blank" & (if firstError.len > 0: ": " & firstError else: "") &
-        ".")
+      if cutSeen or ioSeen: rd.tellUnread(tile.failed, q.count, cutSeen, ioSeen)
+      else:
+        rd.note(sevWarning, $tile.failed & " of the " & $q.count & " traces shown could not " &
+          "be read and are drawn blank" & (if firstError.len > 0: ": " & firstError else: "") &
+          ".")
+    elif not given and not level:
+      rd.toldIo = false # (said again if its drive fails again)
   if given: return
   tile.filtered = pr.filtered
   tile.traces = list
@@ -870,8 +875,13 @@ proc serve(rd: var Reader; req: sink ReaderRequest) =
   ## comes first.
   var tile: Tile
   var given = false
+  rd.lastIo = false
   if rd.make(req, level = false, tile, given):
     rd.r.poster.post Msg(job: NoJob, kind: mkTile, tile: move tile)
+    if rd.lastIo: # after the tile, which clears it: the plot says its drive is not answering
+      rd.r.poster.post Msg(job: NoJob, kind: mkUnread, unreadPanel: rd.r.panel,
+        unreadGen: rd.src.gen, cause: ucFailed, why: "Reading " & rd.name & ": its drive is " &
+        "not answering, so some traces are blank. Retry reads them again when it answers.")
 
 proc serveLevel(rd: var Reader) =
   ## Works out the record's level owed (`askLevel`) and posts it, as a tile
@@ -942,11 +952,21 @@ proc run(r: ptr ReaderObj) {.thread.} =
       if rd.hasOwed and rd.src.file != nil and rd.sorted and not r.levelWaits:
         rd.serveLevel()
     except CatchableError as e:
-      rd.note(sevError, "Cannot read " & rd.name & ": " & e.msg)
+      # parseSEG's guard fails rows rather than raising; what raises is the
+      # seam's drive (an `OSError` or `IOError`) or a call that reads headers
+      # of a file already found cut short (`SegTruncatedError`). Said once.
+      let cut = e of SegTruncatedError and not ("could not be read" in e.msg)
+      let why = if cut: rd.name & " was cut short while it was open (another program cut " &
+          "it or is writing it again): it is not read until it is opened again."
+        else: "Cannot read " & rd.name & ": " & firstLine(e.msg) & ". Its drive is not " &
+          "answering or fails; Retry reads again when it answers."
       if rd.src.file != nil:
+        if (cut and not rd.toldCut) or (not cut and not rd.toldIo):
+          if cut: rd.toldCut = true
+          else: rd.toldIo = true
+          rd.note(sevWarning, why)
         r.poster.post Msg(job: NoJob, kind: mkUnread, unreadPanel: r.panel,
-          unreadGen: rd.src.gen, cause: ucFailed, why: "Cannot read " & rd.name & ": " &
-          e.msg & ".")
+          unreadGen: rd.src.gen, cause: (if cut: ucCutShort else: ucFailed), why: why)
       clearCycleRoots()
     withLock r.lock:
       r.busy = false

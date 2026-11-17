@@ -16,7 +16,7 @@ import parseSEG
 import processSEG/fft/spectrum
 import processSEG/vibroseis/[sweep, taper]
 import processSEG/core/workspace
-import filesystem, nif, threads, wiggle
+import cutfile, filesystem, nif, threads, wiggle
 
 const
   ReferencesFolder* = "references"
@@ -1102,10 +1102,13 @@ proc readReferenceFile*(path: string): tuple[samples: seq[float32];
 proc readRawTrace*(file: ptr SeismicFile; path: string; trace: int): seq[float32] {.gcsafe.} =
   ## Trace `trace` of an open file, decoded, with no filter, gain or
   ## polarity. A sample that is not a number becomes 0, as the plot draws
-  ## one. Empty when the trace cannot be decoded.
+  ## one. Empty when the trace cannot be decoded. Raises `IOError` in plain
+  ## words when parseSEG's guard found the file cut short or a read failed.
   assertWorkerThread()
   fs.mappedRead(path)
   {.cast(gcsafe).}:
+    let why = cutWhy(file[])
+    if why.len > 0: raise newException(IOError, why)
     result = copyRow(file[].readTraces(trace .. trace), 0)
   clearCycleRoots()
 
