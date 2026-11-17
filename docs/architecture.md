@@ -328,12 +328,15 @@ for, let the user go on, and quit.
   closed only on readers' and jobs' threads (`Prefetcher.close` joins its decoders with no
   bound). A file a thread left may still read is never closed: its hold keeps its close
   job waiting, and at the quit it is kept to the end of the process.
-- **A drive that goes away.** The reader `stat`s the file before each read and reads
-  nothing of a file it cannot look at (or that is shorter than it was opened): the plot
-  keeps its picture and says why, a drive that fails apart from a file cut short
-  (`UnreadCause`), as parseSEG's coming `readFailed` and `cutShort` will tell them apart. A fault in the middle of a read (the drive fails, or the
-  file is cut short then) still ends the program, in parseSEG's mapped read, until
-  parseSEG guards its maps.
+- **A drive that goes away, or a file cut short.** Nothing is checked before a read:
+  parseSEG's guard on its maps (and its cache, unmapped) turns a read the file or its
+  drive cannot answer into failed rows (`dcTruncated`, `dcIo`) or `SegTruncatedError`,
+  never a fault. The reader asks `cutShort` before a read (one `fstat`), draws the failed
+  rows blank and says so once in Messages; a failed read of the seam, or a drive that
+  fails a mapped file for good (`readFailed`), leaves the plot with its picture and a
+  Retry, which opens a mapped file again (`UnreadCause` tells a drive from a cut). The
+  other readers (the Headers window, FFT and analysis, compare and reference jobs) ask
+  `cutShort` first and say it in a sentence (`core/cutfile`).
 - **Slow drives.** Each tile says how long its reader waited for the samples
   (`Tile.readTime`, on `fs.now`); a panel whose reads wait 30 ms or more for 64 traces
   (`SlowPer64`, smoothed) reads `SlowReadAhead` (3) views ahead, keeps `SlowKeepAhead`

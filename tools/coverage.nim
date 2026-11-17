@@ -132,8 +132,6 @@ const
       "core/recordqc); the viewer's `Session.keysRevision` holds what it gave",
     "isSeismic": "parseSEG's is called (`f.index.isSeismic(t)`, core/shots, core/state); " &
       "the viewer's own is `FileKind.isSeismic` (core/filekinds)",
-    "cutShort": "the viewer's own: core/filejobs (the file's log has `dcTruncated`) and " &
-      "core/reader (a `stat` before each read); parseSEG's is not called yet",
     "reserveRelations": "the viewer's `SurveyFileBuilder.reserveRelations` (core/survey), " &
       "which calls parseSEG's where it compiles (core/surveyjobs)"}
     ## Library names `src/` names for something of its own too (a field, its

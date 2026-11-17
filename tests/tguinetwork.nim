@@ -173,7 +173,7 @@ proc main*() =
           f.showView(f.viewOf(1900, 1999))
           waited = 1000
         if waited > 1003 and f.wait.kind == wkUnreadable and f.tiles > 0 and
-            "cannot be read now" in f.wait.words:
+            "drive is not answering" in f.wait.words:
           said.add f.wait.words
           f.next "drive gone"
       of 11: # everything hangs; the quit ends within a second and a half

@@ -6,8 +6,8 @@
 ## that grows is marked until it stops; a file removed goes from the list;
 ## an open file another program cuts short is let go of before anything
 ## reads past its new end, and shown again once it stops changing (and the
-## reader itself reads nothing of a file shorter than it was opened, before
-## the watch looks); a file rewritten under the same name is shown again as
+## reader itself meets the cut before the watch looks: the traces past it
+## are blank, said once); a file rewritten under the same name is shown again as
 ## it is now, with its edits set aside (Ctrl+Z brings them back); a named
 ## pipe in the folder and a folder that cannot be read hold nothing, and a
 ## file that cannot be read is listed once it can; with several new files
@@ -24,9 +24,10 @@
 ## tell at first), `newFilesAreListed` never showed the file written in two
 ## parts; with `onDisk` not letting go of a file that was cut short,
 ## `openFileCutShort` found the file as it was opened still shown; with the
-## reader not looking at the file's size (`cutShort` in `serve`),
-## `readerReadsNothingPastTheEnd` ended in "Bus error" (SIGBUS, the crash of
-## the original finding).
+## reader's check against the old stat removed and parseSEG's guard not there,
+## `readerReadsOnPastTheEnd` would end in "Bus error" (SIGBUS, the crash of the
+## original finding); against the old reader it found no "cut short while it
+## was open" line.
 ##
 ## Runs alone: it bounds the time the quit takes (3 s), a look at 5 000 files
 ##   (250 ms), the frame that takes in a new file (10 ms) and those that take
@@ -231,9 +232,10 @@ proc main*() =
       doAssert st.panel(MainPanel).layers[0].display.gainDb == 4
       st.shutdown()
 
-  block readerReadsNothingPastTheEnd:
-    # Before the watch looks (here it never does), the reader itself does not
-    # read a file shorter than it was opened.
+  block readerReadsOnPastTheEnd:
+    # Before the watch looks (here it never does), the reader meets the cut
+    # itself: parseSEG's guard fails the traces past it, which are drawn
+    # blank, and the program goes on (`tcutshort` has the whole matrix).
     withFixtures fx:
       let path = fx.dir / "alone.sgy"
       copyFile(fx.surveySegy(), path)
@@ -249,7 +251,7 @@ proc main*() =
       writeFile(path, readFile(path)[0 ..< 6080])
       v.traces = Span(lo: 20, hi: 23)
       st.apply Command(kind: ckView, panel: MainPanel, view: v)
-      doAssert st.settle(st.log.has("is shorter than when it was opened", sevWarning))
+      doAssert st.settle(st.log.has("was cut short while it was open", sevWarning))
       st.shutdown()
 
   block changedFileIsShownAgain:

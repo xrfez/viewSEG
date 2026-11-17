@@ -153,10 +153,19 @@ drawing, and every button works, however slow the drive is.
   The **Headers** window says it above its tabs ("Reading shot12.sgd for the Headers
   window: not answering for 5 s") and keeps what it showed; pointing at a trace of another
   file reads that one meanwhile.
-- **A drive that goes away** while a file is shown: the plot keeps the picture and says the
-  file cannot be read now; Retry reads it again once the drive is back. The Headers window
-  says so for a trace or a record it could not read; a file whose own headers could not be
-  read as it was opened is open without them, and its Summary says why.
+- **A drive that goes away** while a file is shown: the plot keeps the picture, and
+  Messages says once that the drive is not answering; Retry reads again once it is back (a
+  file read through a map is opened again by Retry: a read that failed keeps that file
+  unread until it is). A file on a network share is read unmapped, so its failed reads
+  are simply read again. The Headers window says so for a trace or a record it could not
+  read; a file whose own headers could not be read as it was opened is open without
+  them, and its Summary says why.
+- **A file cut short while it is open** (another program truncates it, or writes it
+  again): viewSEG goes on. The traces before the cut are drawn as they were; those past
+  it are drawn blank, and Messages says once, in words, that the file was cut short and
+  that opening it again shows what it holds now. The Headers window, an FFT window and the
+  other windows that read the file say the same for what they could not read, and the
+  folder's watch opens the file again once it stops changing.
 - **Quitting** never waits for a drive: the window closes within about a second, whatever
   is stuck. A read the drive still holds is left to end on its own.
 - **A slow drive.** viewSEG times its reads; when they are slow it reads further ahead
@@ -167,11 +176,10 @@ drawing, and every button works, however slow the drive is.
   Files larger than 2 GiB are not prepared.
 - **The index cache** stays on your own disk (in the cache folder, `viewSEG --paths`),
   never beside the files, so a second visit to a file reads its index locally.
-- **What can still stop viewSEG:** a file whose drive fails, or that another program cuts
-  short, in the fraction of a second a read of it is under way ("Bus error" on Linux and
-  macOS, a crash on Windows). viewSEG checks the file before each read and reads nothing of
-  a file it cannot look at, but the read itself goes through parseSEG's memory map, which
-  will guard such a fault in a later release.
+- **What can still stop viewSEG:** nothing a file or its drive does while it is open.
+  A file cut short or a drive that fails fails the reads that need what is gone, not the
+  program (parseSEG's guard on its memory maps; on Windows a mapped file cannot be cut).
+  A hung read, as on a share that stops answering, holds only the thread that made it.
 
 ## Step through the records of a file
 

@@ -163,7 +163,7 @@ proc main*() =
 
     block aDriveThatFails:
       # A file is shown, then its drive goes away: nothing more is read of it,
-      # the plot keeps what it showed, and the log says why.
+      # the plot keeps what it showed, and the log says why once.
       var st = initAppState(watchEvery = initDuration(seconds = 30))
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: far / "c.sgy")
       doAssert st.settle(st.main.laidOut)
@@ -171,13 +171,17 @@ proc main*() =
       doAssert st.settle(st.tilesOf > 0)
       fault(far, fkFail)
       st.look(1000, 1099)
-      doAssert st.settle(st.log.has("c.sgy cannot be read now", sevWarning))
+      doAssert st.settle(st.log.has("Cannot read c.sgy", sevWarning))
       doAssert st.tilesOf > 0, "the plot keeps its tiles"
-      # A read that fails in the map itself: the reader says so and goes on.
-      release(far)
-      fault(far, fkFail, {foMapped})
+      # Said once: the drive fails the next views too.
       st.look(1500, 1599)
-      doAssert st.settle(st.log.has("Cannot read c.sgy", sevError))
+      st.look(1200, 1299)
+      sleep 100
+      discard st.drainInbox()
+      var said = 0
+      for e in st.log:
+        if "Cannot read c.sgy" in e.text: inc said
+      doAssert said == 1, "said " & $said & " times"
       release(far)
       st.look(600, 699)
       let before = st.tilesTaken
