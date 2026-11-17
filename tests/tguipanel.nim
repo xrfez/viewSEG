@@ -13,6 +13,9 @@
 ## gain amount doubles the scale the pixels are drawn with, with nothing
 ## read again, and the + button adds 3 dB; and the file is never changed.
 ##
+## The Explain icon, drawn over the plot's top left corner, is left out of the
+## pixels compared.
+##
 ## Seen to fail: with the shader taking the nearest sample instead of
 ## interpolating, `wholeGather` found 1619 of 24960 pixels off the
 ## reference; with the image's texture coordinates upside down, 5064; with
@@ -61,6 +64,11 @@ func close(a, b: Rgba): bool =
   abs(a.r.int - b.r.int) <= tolerance and abs(a.g.int - b.g.int) <= tolerance and
     abs(a.b.int - b.b.int) <= tolerance
 
+func mark(s: Shot; name: string): Rect =
+  for (n, r) in s.marks:
+    if n == name: return r
+  Rect()
+
 proc mismatches(s: Shot; step = 3): (int, int) =
   ## Pixels on a grid inside the plot (a few pixels in from its edge) that match
   ## no reference within one pixel of them, and the pixels looked at.
@@ -68,8 +76,12 @@ proc mismatches(s: Shot; step = 3): (int, int) =
   let y0 = int(s.plot.pos.y) + 3
   let x1 = int(s.plot.pos.x + s.plot.size.x) - 4
   let y1 = int(s.plot.pos.y + s.plot.size.y) - 4
+  let icon = s.mark("plot.explain") # drawn over the plot's corner: not the image
   for y in countup(y0, y1, step):
     for x in countup(x0, x1, step):
+      if float32(x) >= icon.pos.x - 1 and float32(x) <= icon.pos.x + icon.size.x + 1 and
+          float32(y) >= icon.pos.y - 1 and float32(y) <= icon.pos.y + icon.size.y + 1:
+        continue
       let got = s.pixels[y * s.width + x]
       var ok = false
       for dy in -1 .. 1:
@@ -82,11 +94,6 @@ proc mismatches(s: Shot; step = 3): (int, int) =
           echo "  pixel (", x, ", ", y, "): ", toHex(got), ", reference ",
             toHex(s.reference(float64(x) + 0.5, float64(y) + 0.5))
         inc result[0]
-
-func mark(s: Shot; name: string): Rect =
-  for (n, r) in s.marks:
-    if n == name: return r
-  Rect()
 
 type Snapshot = tuple[bytes: string; time: Time]
 
@@ -106,7 +113,8 @@ proc capture(f: FrameInfo): Shot =
   result = Shot(pixels: f.readFrame, width: f.width, plot: f.markOf("plot.data"),
     view: f.tracePanel.drawnView, scale: displayScale(p.reference, p.layers[0].display.gainDb))
   for t in f.core.tiles(k): result.tiles.add t
-  for name in ["plot.Greyscale density", "plot.Wiggle", "tool.Greyscale density", "toolbar"]:
+  for name in ["plot.Greyscale density", "plot.Wiggle", "tool.Greyscale density", "toolbar",
+      "plot.explain"]:
     result.marks.add (name, f.markOf(name))
   for field in p.shownFields: result.header.add $field
 
