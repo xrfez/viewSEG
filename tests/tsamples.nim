@@ -4,11 +4,17 @@
 ##
 ## The files are read as they are. Nothing here regenerates them.
 ##
+## The vibrator signature file (`vib_signature.sgd`) is checked for its trace
+## order, channel types and times, the weighted-sum identity and the drop-out.
+##
 ## Seen to fail: with samples/land/shots.sgy moved aside, `present` quit on
-## the missing file rather than skip the check.
+## the missing file rather than skip the check; with the reaction mass taken
+## as 3000 kg in the weighted-sum check, "sweep 1 GF (M, B) differs by ...".
 
 import std/[math, os]
 import parseSEG
+import processSEG/core/[types, units]
+import processSEG/vibroseis/vibqc
 import viewSEG/core/[join, session]
 
 const root = currentSourcePath().parentDir.parentDir
@@ -101,7 +107,8 @@ proc main*() =
   block files_are_present:
     for path in [land / "land.s", land / "land.r", land / "land.x",
         land / "shots.sgy", land / "shots.sgd", vib / "vib_uncorrelated.sgd",
-        vib / "vib_correlated.sgd", obn / "obn.s", obn / "obn.r", obn / "obn.x",
+        vib / "vib_correlated.sgd", vib / "vib_signature.sgd", obn / "obn.s", obn / "obn.r", obn /
+        "obn.x",
         obn / "obn.sgd"]:
       present(path)
 
@@ -125,6 +132,60 @@ proc main*() =
     vu.close()
     vc.close()
     o.close()
+
+  block vibrator_signature_order:
+    ## Receiver-gather order: R sweeps 1..6, then GF, M and B. One record
+    ## and one receiver per channel; each trace is a sweep, 9 s long.
+    var v = openKeys(vib / "vib_signature.sgd")
+    doAssert v.len == 24 and v.recordCount == 4 and v.maxSamples == 2250
+    let types = [0x98'u8, 0x94, 0x99, 0x95] ## pilot, measured force, mass, baseplate
+    let t0 = 1_772_367_000.0 ## 2026-03-01 12:10:00 UTC
+    for i in 0 ..< 24:
+      let (c, s) = (i div 6, i mod 6)
+      let k = v.traceKeys(i)
+      doAssert v.traceEntry(i).channelType == types[c], "trace " & $i & " type " &
+        $v.traceEntry(i).channelType
+      doAssert k.record == float64(c + 1) and k.rcvPoint == float64(c + 1), "trace " & $i
+      doAssert k.srcPoint == float64(101 + s) and k.channel == float64(s + 1)
+      doAssert k.time == t0 + 20.0 * float64(s), "trace " & $i & " time " & $k.time
+      doAssert k.intervalUs == 4000 and k.status == tsAuxiliary
+      doAssert v.traceEntry(i).numSamples == 2250
+    doAssert v.gathers.len == 4
+    for g in v.gathers: doAssert g.kind == gkReceiver, $g.kind
+    v.close()
+
+  block vibrator_signature_weighted_sum:
+    ## Mr * M + Mb * B is GF, in every sweep, to float32 accuracy.
+    var v = openKeys(vib / "vib_signature.sgd")
+    for s in 0 ..< 6:
+      let gf = rowOf(v.readTraces(6 + s .. 6 + s), 0)
+      let m = rowOf(v.readTraces(12 + s .. 12 + s), 0)
+      let b = rowOf(v.readTraces(18 + s .. 18 + s), 0)
+      var made = newSeq[float32](gf.len)
+      groundForceInto(m, b, mass(3600, muKilogram), mass(1800, muKilogram), made)
+      var peak, worst = 0.0
+      for j in 0 ..< gf.len:
+        peak = max(peak, abs(float64(gf[j])))
+        worst = max(worst, abs(float64(made[j]) - float64(gf[j])))
+      doAssert peak > 50_000, "sweep " & $(s + 1) & " peak " & $peak
+      doAssert worst < 1e-6 * peak, "sweep " & $(s + 1) & " GF (M, B) differs by " & $worst
+    v.close()
+
+  block vibrator_signature_sweeps:
+    ## The pilot is the same 8 s sweep each time, then silence; sweep 6's
+    ## force has its drop-out, mid-sweep, at 40 %.
+    var v = openKeys(vib / "vib_signature.sgd")
+    let pilot = rowOf(v.readTraces(0 .. 0), 0)
+    for s in 1 ..< 6: doAssert rowOf(v.readTraces(s .. s), 0) == pilot, "pilot " & $s
+    for j in 2001 ..< 2250: doAssert pilot[j] == 0, "listen sample " & $j
+    let five = rowOf(v.readTraces(10 .. 10), 0)
+    let six = rowOf(v.readTraces(11 .. 11), 0)
+    var (a, b) = (0.0, 0.0)
+    for j in 950 .. 1050:
+      a = max(a, abs(float64(five[j])))
+      b = max(b, abs(float64(six[j])))
+    doAssert b < 0.5 * a, "drop-out peak " & $b & " against " & $a
+    v.close()
 
   block units:
     let landS = headUnitOf(readFile(land / "land.s"), jkSps, whole = true)

@@ -45,6 +45,16 @@ const
   SweepF1 = 8.0
   SweepF2 = 80.0
   PhaseLag = 6.0
+  SigSweeps = 6
+  SigSensorLine = 9001.0             ## the unit's sensors: point 1 R, 2 GF, 3 M, 4 B
+  SigSpacing = 20.0                  ## s between sweeps
+  SigRecordMs = 9000.0               ## the 8 s sweep and 1 s of listen
+  SigGroundForce = 60_000.0          ## ground force amplitude, N
+  SigBaseplate = 12.0                ## baseplate acceleration amplitude, m/s2
+  SigReactionKg = 3600.0
+  SigBaseplateKg = 1800.0
+  SigGfNoise = 100.0                 ## seeded noise on the ground force, N
+  SigBpNoise = 0.05                  ## and on the baseplate, m/s2
   ObnDt = 2.0
   ObnSamples = 1000                  ## 2 s at 2 ms
   ObnUs = 2000.0
@@ -65,7 +75,7 @@ const
   ObnE = 500_000.0
   ObnN = 5_800_000.0
   ObnScale = 10_000.0                ## 8036 counts per unit amplitude
-  MaxBytes = 6 * 1000 * 1000
+  MaxBytes = 7 * 1000 * 1000
 
 type Station = object
   line, point, easting, northing, elevation: float64
@@ -408,6 +418,81 @@ proc writeVib(dir: string; t0: float64) =
   c.writeTrace(ka, cb.row(spread.len), channelType = sctTrueRefSweep)
   fail(c.close(), "vib_correlated.sgd")
 
+type SigSweep = object
+  ## One sweep of the vibrator signature file.
+  phaseDeg: float64      ## the ground force's phase to the pilot
+  second, third: float64 ## its 2nd and 3rd harmonics, fraction of the fundamental
+  dropout: bool          ## the force falls to 40 % for 0.5 s mid-sweep
+
+const SigTable = [
+  SigSweep(phaseDeg: 2.0, second: 0.02, third: 0.0),
+  SigSweep(phaseDeg: 4.0, second: 0.05, third: 0.01),
+  SigSweep(phaseDeg: 6.5, second: 0.09, third: 0.02),
+  SigSweep(phaseDeg: 9.0, second: 0.15, third: 0.04),
+  SigSweep(phaseDeg: 12.0, second: 0.24, third: 0.07),
+  SigSweep(phaseDeg: 6.0, second: 0.06, third: 0.02, dropout: true)]
+
+proc sigRecord(spec: SweepSpec; n: int; amp: float64; h: openArray[SweepHarmonic]):
+    seq[float32] =
+  var s = spec
+  s.amplitude = amp
+  s.sweepHarmonics(float32, h, samples = n)
+
+proc writeVibSignature(dir: string; t0: float64) =
+  ## Four channels (R, GF, M, B) of six sweeps, one record per channel:
+  ## a receiver-gather file whose traces are the sweeps, 9 s each. M is
+  ## made from GF and B so that Mr*M + Mb*B is GF to float32 accuracy.
+  let spec = linearSweep(SweepF1, SweepF2, SweepMs, VibDt,
+    initSweepTaper(VibTaperMs, VibTaperMs))
+  let pilot = generatePilot(spec, float32)
+  let n = int(SigRecordMs / VibDt)
+  var pil = newSeq[float32](n)
+  for j in 0 ..< pilot.len: pil[j] = pilot.samples[j]
+  var gf, mass, base: array[SigSweeps, seq[float32]]
+  for s in 0 ..< SigSweeps:
+    let row = SigTable[s]
+    gf[s] = sigRecord(spec, n, SigGroundForce, [
+      SweepHarmonic(phaseDeg: row.phaseDeg),
+      SweepHarmonic(order: 2, amp: row.second),
+      SweepHarmonic(order: 3, amp: row.third)])
+    if row.dropout:
+      let a = int(3750.0 / VibDt)
+      let b = int(4250.0 / VibDt)
+      for j in a - 6 .. b + 6:
+        let edge = min(min(j - (a - 6), (b + 6) - j), 6)
+        gf[s][j] *= float32(1.0 - 0.6 * float64(edge) / 6.0)
+    addNoise(gf[s], SigGfNoise, DefaultNoiseSeed + 30_000 + int64(s))
+    base[s] = sigRecord(spec, n, SigBaseplate, [
+      SweepHarmonic(phaseDeg: 10.0 + 0.5 * float64(s)),
+      SweepHarmonic(order: 2, amp: 0.04 + 0.01 * float64(s)),
+      SweepHarmonic(order: 3, amp: 0.02)])
+    addNoise(base[s], SigBpNoise, DefaultNoiseSeed + 31_000 + int64(s))
+    mass[s] = newSeq[float32](n)
+    for j in 0 ..< n:
+      mass[s][j] = float32((float64(gf[s][j]) - SigBaseplateKg * float64(base[s][j])) /
+        SigReactionKg)
+  let opts = segdOpts(VibDt * 1000, n, true, t0)
+  var o = opts
+  o.receiverGather = true
+  var w = openSeismicWriter(dir / "vib_signature.sgd", o)
+  let types = [sctSourceRefPilot, sctSourceSigMeasured, sctSourceMass, sctSourceBasePlate]
+  for c in 0 ..< 4:
+    for s in 0 ..< SigSweeps:
+      let src = landSource(s)
+      let time = t0 + SigSpacing * float64(s)
+      var sensor = landSource(0)
+      sensor.line = SigSensorLine
+      sensor.point = float64(c + 1)
+      var k = traceKey(c + 1, s + 1, src, sensor, true, time, VibDt * 1000, tsAuxiliary, 0)
+      k.offset = 0
+      let data = case c
+        of 0: pil
+        of 1: gf[s]
+        of 2: mass[s]
+        else: base[s]
+      w.writeTrace(k, data, channelType = types[c])
+  fail(w.close(), "vib_signature.sgd")
+
 proc obnNode(station: int): Station =
   let e = ObnE + float64(station - NodeFirst) * NodeSpacing
   Station(line: NodeLine, point: float64(station), easting: e, northing: ObnN,
@@ -572,6 +657,7 @@ proc main() =
   fixSegy(land / "shots.sgy", scratch / "shots.journal", offsets)
   checkLand(land)
   writeVib(root / "samples" / "vib", vibT)
+  writeVibSignature(root / "samples" / "vib", vibT + 600.0)
   writeObnSps(root / "samples" / "obn")
   writeObn(root / "samples" / "obn", obnT)
   checkObn(root / "samples" / "obn")
