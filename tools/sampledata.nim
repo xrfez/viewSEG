@@ -11,7 +11,7 @@
 ## Ocean-bottom coordinates are metres. The vibroseis record is one land
 ## source point and one receiver line, an 8-80 Hz sweep with 3 s of listen.
 
-import std/[math, os, strutils, times]
+import std/[math, options, os, strutils, times]
 import parseSEG, processSEG
 
 const
@@ -55,6 +55,8 @@ const
   SigBaseplateKg = 1800.0
   SigGfNoise = 100.0                 ## seeded noise on the ground force, N
   SigBpNoise = 0.05                  ## and on the baseplate, m/s2
+  RgNodes = 4                        ## receiver-gather file: nodes 101..104
+  RgShots = 8                        ## and eight shots, 100 m apart, 275 m west to 425 m east
   ObnDt = 2.0
   ObnSamples = 1000                  ## 2 s at 2 ms
   ObnUs = 2000.0
@@ -572,6 +574,75 @@ proc writeObn(dir: string; t0: float64) =
         inc ch
   fail(w.close(), "obn.sgd")
 
+type Attitude = object
+  ## A node's sensor orientation, degrees: roll about X (inline), pitch about
+  ## Y (crossline), azimuth about Z (down, so clockwise seen from above).
+  roll, pitch, azimuth: float64
+
+const RgAttitudes = [
+  Attitude(),
+  Attitude(pitch: 5, azimuth: 30),
+  Attitude(azimuth: 90),
+  Attitude(roll: 3, azimuth: -20)]
+
+type Mat3 = array[3, array[3, float64]]
+
+proc attitudeMatrix(a: Attitude): Mat3 =
+  ## R = Rz(azimuth) Ry(pitch) Rx(roll): the sensor axes in the survey frame.
+  let (cx, sx) = (cos(degToRad(a.roll)), sin(degToRad(a.roll)))
+  let (cy, sy) = (cos(degToRad(a.pitch)), sin(degToRad(a.pitch)))
+  let (cz, sz) = (cos(degToRad(a.azimuth)), sin(degToRad(a.azimuth)))
+  [[cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
+   [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],
+   [-sy, cy * sx, cy * cx]]
+
+proc obnShot(shot: int): Station =
+  ## Gun points 101..108 on line 4001, centred on the four nodes.
+  let centre = ObnE + float64(RgNodes - 1) * NodeSpacing / 2
+  Station(line: GunLine, point: float64(GunFirst + shot),
+    easting: centre - GunSpacing * float64(RgShots - 1) / 2 + float64(shot) * GunSpacing,
+    northing: ObnN, elevation: -GunDepth)
+
+proc writeObnReceivers(dir: string; t0: float64) =
+  ## `obn_receiver.sgd`: a receiver gather per node (one record each), whose
+  ## traces are the shots of that node, each with its four components
+  ## (hydrophone, vertical, inline, crossline). The horizontal and vertical
+  ## traces are recorded in the node's own rotated frame, which the file
+  ## states in each trace's orientation header; nothing is rotated back.
+  var o = segdOpts(ObnUs, ObnSamples, false, t0, sd8036)
+  o.receiverGather = true
+  var w = openSeismicWriter(dir / "obn_receiver.sgd", o)
+  let sensors = [1'u8, 2, 3, 4]
+  for node in 0 ..< RgNodes:
+    let rcv = obnNode(NodeFirst + node)
+    let a = RgAttitudes[node]
+    let m = attitudeMatrix(a)
+    let att = initTraceOrientation(float32(degToRad(a.roll)), float32(degToRad(a.pitch)),
+      float32(degToRad(a.azimuth)), orientationType = 1)
+    for shot in 0 ..< RgShots:
+      let src = obnShot(shot)
+      let dx = rcv.easting - src.easting
+      var rows: array[4, seq[float32]]
+      for kind in 0 ..< 4:
+        rows[kind] = newSeq[float32](ObnSamples)
+        let seed = DefaultNoiseSeed + 40_000 + int64(node) * 1000 + int64(shot) * 10 + kind
+        fillObn(rows[kind], kind, dx, seed)
+      # The survey-frame vector is (inline, crossline, down) = rows 2, 3, 1; the
+      # sensors read R^T v. The vertical's sign in `fillObn` is kept as it is.
+      for j in 0 ..< ObnSamples:
+        let v = [float64(rows[2][j]), float64(rows[3][j]), float64(rows[1][j])]
+        var r: array[3, float64]
+        for i in 0 ..< 3: r[i] = m[0][i] * v[0] + m[1][i] * v[1] + m[2][i] * v[2]
+        rows[2][j] = float32(r[0])
+        rows[3][j] = float32(r[1])
+        rows[1][j] = float32(r[2])
+      for kind in 0 ..< 4:
+        toCounts(rows[kind])
+        let k = traceKey(node + 1, shot * 4 + kind + 1, src, rcv, true,
+          t0 + 60.0 * float64(shot), ObnUs, tsLive, sensors[kind])
+        w.writeTrace(k, rows[kind], orientation = some(att))
+  fail(w.close(), "obn_receiver.sgd")
+
 proc near(a, b: float64; tol: float64): bool =
   abs(a - b) <= tol
 
@@ -660,6 +731,7 @@ proc main() =
   writeVibSignature(root / "samples" / "vib", vibT + 600.0)
   writeObnSps(root / "samples" / "obn")
   writeObn(root / "samples" / "obn", obnT)
+  writeObnReceivers(root / "samples" / "obn", obnT + 3600.0)
   checkObn(root / "samples" / "obn")
   report(root)
   echo "wrote samples/"

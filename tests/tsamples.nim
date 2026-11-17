@@ -7,11 +7,16 @@
 ## The vibrator signature file (`vib_signature.sgd`) is checked for its trace
 ## order, channel types and times, the weighted-sum identity and the drop-out.
 ##
+## The receiver-gather ocean-bottom file (`obn_receiver.sgd`) is checked for its
+## trace order, the component of each trace, the orientation of each node and
+## the rotated horizontals.
+##
 ## Seen to fail: with samples/land/shots.sgy moved aside, `present` quit on
 ## the missing file rather than skip the check; with the reaction mass taken
-## as 3000 kg in the weighted-sum check, "sweep 1 GF (M, B) differs by ...".
+## as 3000 kg in the weighted-sum check, "sweep 1 GF (M, B) differs by ..."; with node 103 written at azimuth 0,
+## "azimuth 64".
 
-import std/[math, os]
+import std/[math, options, os]
 import parseSEG
 import processSEG/core/[types, units]
 import processSEG/vibroseis/vibqc
@@ -107,7 +112,8 @@ proc main*() =
   block files_are_present:
     for path in [land / "land.s", land / "land.r", land / "land.x",
         land / "shots.sgy", land / "shots.sgd", vib / "vib_uncorrelated.sgd",
-        vib / "vib_correlated.sgd", vib / "vib_signature.sgd", obn / "obn.s", obn / "obn.r", obn /
+        vib / "vib_correlated.sgd", vib / "vib_signature.sgd", obn / "obn_receiver.sgd", obn /
+        "obn.s", obn / "obn.r", obn /
         "obn.x",
         obn / "obn.sgd"]:
       present(path)
@@ -186,6 +192,52 @@ proc main*() =
       b = max(b, abs(float64(six[j])))
     doAssert b < 0.5 * a, "drop-out peak " & $b & " against " & $a
     v.close()
+
+  block obn_receiver_gathers_and_orientation:
+    ## One record per node (101..104), eight shots each, four components a
+    ## shot (hydrophone, vertical, inline, crossline: sensor types 1..4).
+    var o = openKeys(obn / "obn_receiver.sgd")
+    doAssert o.len == 128 and o.recordCount == 4 and o.maxSamples == 1000
+    doAssert o.gathers.len == 4
+    for g in o.gathers: doAssert g.kind == gkReceiver, $g.kind
+    # roll, pitch, azimuth in degrees, per node
+    let attitude = [[0.0, 0.0, 0.0], [0.0, 5.0, 30.0], [0.0, 0.0, 90.0], [3.0, 0.0, -20.0]]
+    let t0 = 1_772_413_200.0 ## 2026-03-02 01:00:00 UTC
+    for i in 0 ..< 128:
+      let (node, shot, kind) = (i div 32, i mod 32 div 4, i mod 4)
+      let k = o.traceKeys(i)
+      doAssert k.record == float64(node + 1) and k.rcvPoint == float64(101 + node), "trace " & $i
+      doAssert k.srcPoint == float64(101 + shot) and k.channel == float64(shot * 4 + kind + 1)
+      doAssert k.sensorType == uint8(kind + 1) and k.component == uint8(kind + 1),
+        "trace " & $i & " sensor " & $k.sensorType & " component " & $k.component
+      doAssert k.time == t0 + 60.0 * float64(shot) and k.status == tsLive, "trace " & $i
+      let att = o.traceOrientation(i)
+      doAssert att.isSome, "no orientation on trace " & $i
+      let a = att.get
+      doAssert abs(radToDeg(float64(a.rotationX)) - attitude[node][0]) < 1e-4, "roll " & $i
+      doAssert abs(radToDeg(float64(a.rotationY)) - attitude[node][1]) < 1e-4, "pitch " & $i
+      doAssert abs(radToDeg(float64(a.rotationZ)) - attitude[node][2]) < 1e-4, "azimuth " & $i
+      doAssert a.orientationType == 1 and a.rotationApplied == 0, "flags " & $i
+    o.close()
+
+  block obn_receiver_horizontals_are_rotated:
+    ## Node 101 is not rotated: its converted wave is on the inline trace. Node
+    ## 103 is turned 90 degrees: that wave is on the crossline trace (the
+    ## first shot, the farthest offset).
+    var o = openKeys(obn / "obn_receiver.sgd")
+    proc energy(trace: int): float64 =
+      ## In a window round the converted wave (1 000 m/s up from the reflector).
+      let k = o.traceKeys(trace)
+      let dx = k.rcvX - k.srcX
+      let ps = int(round((hypot(dx, 333.0 - 6.0) / 1500.0 + hypot(dx, 333.0 - 60.0) / 1000.0) *
+        1000.0 / 2.0))
+      let row = rowOf(o.readTraces(trace .. trace), 0)
+      for j in ps - 20 .. ps + 20: result += float64(row[j]) * float64(row[j])
+    let (inline0, cross0) = (energy(2), energy(3))
+    let (inline2, cross2) = (energy(64 + 2), energy(64 + 3))
+    doAssert inline0 > 3 * cross0, "node 101 inline " & $inline0 & " crossline " & $cross0
+    doAssert cross2 > 3 * inline2, "node 103 inline " & $inline2 & " crossline " & $cross2
+    o.close()
 
   block units:
     let landS = headUnitOf(readFile(land / "land.s"), jkSps, whole = true)

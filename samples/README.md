@@ -130,3 +130,32 @@ two-way time through 60 m of water.
 | Converted wave, 1 000 m/s below the seabed | Mostly inline, weak on the crossline | Follows the offset |
 
 Light noise is added.
+
+## Ocean-bottom receiver gathers (`samples/obn/obn_receiver.sgd`, metres)
+
+The same survey, written as a receiver gather and with the sensors turned: SEG-D
+Rev 3.0, 24-bit integer, 2 ms, 1000 samples, four records, one per node (nodes
+101..104 of line 3001, 50 m apart). A record's 32 traces are the eight shots that
+node recorded (line 4001, points 101..108, 100 m apart, centred on the four nodes,
+60 s apart from 2026-03-02 01:00:00 UTC), each with its four components in the order
+hydrophone, vertical, inline, crossline (sensor types 1..4), so trace `4n + c` of a
+record is shot `n`, component `c`. Each trace carries the node's orientation header.
+Trace order, geometry and arrivals are those of `obn.sgd`; the hydrophone is not
+affected by the orientation.
+
+The vertical, inline and crossline traces are recorded in the node's own frame and are
+not rotated back (the header says the rotation is not applied). Angles are stored in
+radians in the file and given here in degrees. Roll is about X (inline), pitch (tilt)
+about Y (crossline), azimuth about Z (down, clockwise seen from above); the sensor
+axes are R = Rz(azimuth) Ry(pitch) Rx(roll) in the survey frame, and a sensor reads
+R transposed times the survey-frame motion.
+
+| Node | Record | Roll | Pitch (tilt) | Azimuth |
+|---|---|---|---|---|
+| 101 | 1 | 0 | 0 | 0 |
+| 102 | 2 | 0 | 5 | 30 |
+| 103 | 3 | 0 | 0 | 90 |
+| 104 | 4 | 3 | 0 | -20 |
+
+Node 101 is the reference. On node 103 the converted wave, strong on the inline
+trace of node 101, is on the crossline trace.
