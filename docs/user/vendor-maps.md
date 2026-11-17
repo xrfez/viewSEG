@@ -38,8 +38,14 @@ happens in the background; the window does not wait for it.
 
 The **Vendor** tab of File headers lists each decoded block under the name of the map that
 decoded it, its fields by name with their values, units and labels. A block no map applies
-to stays as its bytes in the tab it had. The file's own bytes are never changed. The Trace tab
-and the trace table do not show vendor fields: a trace's own vendor header is not decoded.
+to stays as its bytes in the tab it had. The file's own bytes are never changed.
+
+The **Trace** tab, Header, shows a **Vendor** group above the header table for each trace it is
+about (the selected trace, or the one under the pointer): the vendor blocks of that trace's own
+headers (a SEG-D trace header extension, a SEG-Y proprietary trace header) that a map decodes,
+each under the map's name, fields by name with value, unit and label. A field whose value is the
+map's "absent" sentinel is not listed; when no map applies there is no group. Only the traces
+the tab is about are read, once, in the background; the trace table does not show vendor fields.
 
 ## Which map is used
 

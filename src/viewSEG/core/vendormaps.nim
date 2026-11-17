@@ -284,3 +284,45 @@ proc vendorBlocks*(f: SeismicFile; record: int; reg: VendorRegistry; gen = 0): V
   for d in log:
     if d.code == dcVendorMap or d.code == dcVendorBlock:
       result.problems.add d.msg
+
+proc vendorTrace*(f: SeismicFile; trace: int; reg: VendorRegistry; gen = 0): VendorShown =
+  ## What `reg` decodes of the vendor areas of trace `trace` of `f`: a SEG-D
+  ## trace's header extensions (#2 and later), a SEG-Y trace's proprietary
+  ## headers. Reads that trace's header bytes from the file: call it where the
+  ## trace's headers are read (the inspector's thread). Nothing is read when no
+  ## map is loaded; nothing raises.
+  result = VendorShown(path: f.path, record: -1, gen: gen)
+  if reg.maps.len == 0 or trace notin 0 ..< f.len: return
+  var log: DiagLog
+  var blocks: seq[VendorBlock] = @[]
+  try:
+    let e = f.index.entries[trace]
+    {.cast(gcsafe).}:
+      case f.kind
+      of skSegd:
+        let rec = f.index.segdRecords[int(e.record)]
+        result.record = int(e.record)
+        let extra = int(e.headerBytes) - SegdTraceHeaderSize - SegdBlockSize
+        if extra > 0:
+          var t: SegdTrace
+          case rec.layout
+          of slRev2: t = SegdTrace(layout: slRev2)
+          of slRev3: t = SegdTrace(layout: slRev3)
+          t.extensions = f.copyBytes(e.offset + SegdTraceHeaderSize + SegdBlockSize, extra)
+          t.index = trace
+          blocks = decodeVendorAreas(reg, rec, t, log, f.path)
+      of skSegy:
+        let extra = int(e.headerBytes) - 2 * TraceHeaderSize
+        if extra > 0 and f.index.segy.revision.major >= 2:
+          var t = SegyTrace(index: trace)
+          t.header = decodeTraceHeader(f.copyBytes(e.offset, TraceHeaderSize),
+            f.index.segy.byteOrder)
+          t.proprietary = f.copyBytes(e.offset + 2 * TraceHeaderSize, extra)
+          blocks = decodeVendorAreas(reg, f.index.segy, t, log, f.path)
+      else: discard
+  except CatchableError as e:
+    result.problems.add "the vendor blocks of the trace cannot be decoded: " & e.msg
+  for b in blocks: result.blocks.add fact(b, reg)
+  for d in log:
+    if d.code == dcVendorMap or d.code == dcVendorBlock:
+      result.problems.add d.msg

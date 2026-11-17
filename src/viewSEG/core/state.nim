@@ -1004,7 +1004,8 @@ type
       ## the imports of edits under way: each job, and the file it is for
     notices: seq[Notice] ## the newest `MaxNotices`
     nextNotice: int
-    traceReads: seq[tuple[job: JobId; keys: TraceKeys; rows: seq[HeaderRow]]]
+    traceReads: seq[tuple[job: JobId; keys: TraceKeys; rows: seq[HeaderRow];
+      vendor: VendorShown]]
       ## traces read for agent control (`readTraceHeaders`), oldest first, until taken
     mail: seq[Msg]
     indexCache: string ## the index cache folder; "" for none
@@ -2954,7 +2955,7 @@ proc followInspect(state: var AppState) =
     return
   inc state.inspectGen
   var req = InspectRequest(gen: state.inspectGen, headers: ipTraceHeaders in ins.parts,
-    samples: ipTraceSamples in ins.parts)
+    samples: ipTraceSamples in ins.parts, vendorGen: want.vendorGen)
   var held: seq[SessionId] # by `req.files`' index; NoSession for a file that could not be held
   proc fileOf(state: var AppState; req: var InspectRequest; held: var seq[SessionId];
       i: int): int =
@@ -2972,7 +2973,6 @@ proc followInspect(state: var AppState) =
   if want.vendor[0] != NoSession:
     req.vendorAt = state.fileOf(req, held, state.findSession(want.vendor[0]))
     req.vendorRecord = want.vendor[1]
-    req.vendorGen = want.vendorGen
   if want.displayed and shown >= 0:
     let layer = state.panels[k].layers[0]
     req.flow = layer.displayPipeline(state.gatherKind(layer))
@@ -4284,13 +4284,14 @@ proc readTraceHeaders*(state: var AppState; i, index: int): JobId =
     state.inbox.poster))
 
 proc takeTraceRead*(state: var AppState; job: JobId; keys: var TraceKeys;
-    rows: var seq[HeaderRow]): bool =
+    rows: var seq[HeaderRow]; vendor: var VendorShown): bool =
   ## What job `job` of `readTraceHeaders` read, once it has posted it (then
   ## it is given once); false until then, and for any other job.
   for i in 0 ..< state.traceReads.len:
     if state.traceReads[i].job == job:
       keys = state.traceReads[i].keys
       rows = move state.traceReads[i].rows
+      vendor = move state.traceReads[i].vendor
       state.traceReads.delete(i)
       return true
   false
@@ -8247,7 +8248,7 @@ proc drainInbox*(state: var AppState): bool =
         state.unread.add (m.unreadPanel, m.cause, m.why)
         inc state.panels[k].revision
     of mkTraceRead:
-      state.traceReads.add (m.job, m.readKeys, move m.headerRows)
+      state.traceReads.add (m.job, m.readKeys, move m.headerRows, move m.readVendor)
       if state.traceReads.len > MaxTraceReads: state.traceReads.delete(0) # never taken
     of mkTile:
       let k = state.findPanel(m.tile.panel)

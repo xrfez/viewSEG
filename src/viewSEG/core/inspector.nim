@@ -535,6 +535,7 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
             fs.unmappedFail(f.path)
             d.rows = traceRows(f.file[], t.trace)
             d.blocks = namedBlocks(f.file[], d.rows)
+            d.vendor = vendorTrace(f.file[], t.trace, currentVendors(), req.vendorGen)
           if req.samples:
             p.beat(f.path)
             fs.mappedRead(f.path)

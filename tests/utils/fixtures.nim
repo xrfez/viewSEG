@@ -1075,6 +1075,64 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stat
   finally:
     sink.close()
 
+const
+  VendorTraces* = [(device: 5, serial: 1234'i64), (device: 6, serial: 0xFFFFFFFF'i64),
+    (device: 0, serial: 0'i64)]
+    ## what `vendorTraceSegd`'s three traces' vendor blocks hold: a live
+    ## trace, one whose serial is the "absent" sentinel, one all zero
+
+proc vendorTraceSegd*(fx: Fixtures; manufacturer: int): string =
+  ## One Rev 3.0 record of three traces (format 8058), made by the made-up
+  ## manufacturer code `manufacturer`, each trace with a vendor block (type
+  ## 0xB0) after its extension #1: the device (u16) and serial (u32) of
+  ## `VendorTraces`, from byte 1.
+  result = fx.dir / ("vendor-trace-" & $manufacturer & ".sgd")
+  if fileExists(result): return
+  let fmt = sd8058
+  var r = SegdRecord(layout: slRev3, format: some(fmt),
+    revision: SegdRevision(major: 3, minor: 0))
+  r.generalBlocks.add blk(0x11, "viewSEG test record")
+  r.gh1 = SegdGeneralHeader1(fileNumber: SegdRecordNo, formatCode: ord(fmt), year: 26,
+    additionalGhBlocks: 3, julianDay: 313, hour: 9, minute: 41, second: 7,
+    manufacturerCode: manufacturer, baseScanInterval16: 32, recordType: 8,
+    recordLength: BcdAllF, scanTypesPerRecord: 1, channelSetsPerScanType: 1)
+  let endUs = int32(DtMs * 1000 * 15)
+  r.gh2Rev3 = SegdGeneralHeader2Rev3(extFileNumber: SegdRecordNo, revisionMajor: 3,
+    extRecordLength: uint32(endUs), blockType: 2)
+  r.gh3 = SegdGeneralHeader3(timeZero: 1_478_000_000_000_000, blockType: 3)
+  r.scanTypes = @[SegdScanType(layout: slRev3, descriptorsRev3: @[
+    SegdChannelSetDescriptorRev3(scanTypeNumber: 1, channelSetNumber: 1, channelType: 0x10,
+      endTime: endUs, numSamples: 16, descaleMultiplier: 1.0, channelsInSet: 3,
+      samplingInterval: uint32(DtMs * 1000), traceHeaderExtensions: 2, verticalStack: 1,
+      blockType1: 0x30, blockType2: 0x31, blockType3: 0x32)])]
+  var traces: seq[SegdTrace]
+  for tn in 1 .. 3:
+    var t = SegdTrace(layout: slRev3, index: traces.len, numSamples: 16)
+    t.header = SegdTraceHeader(fileNumber: SegdRecordNo, scanTypeNumber: 1, channelSetNumber: 1,
+      traceNumber: tn, traceHeaderExtensions: 2)
+    t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(receiverLineNumber: 100,
+      receiverPointNumber: int32(100 + tn), receiverPointIndex: 1, numSamples: 16,
+      sensorType: 2, blockType: 0x40)
+    var vendor = blk(0xB0)
+    let (device, serial) = VendorTraces[tn - 1]
+    vendor[0] = byte(device shr 8)
+    vendor[1] = byte(device and 255)
+    for i in 0 .. 3: vendor[2 + i] = byte((serial shr (8 * (3 - i))) and 255)
+    t.extensions = vendor
+    var v = newSeq[float32](16)
+    for i in 0 ..< 16: v[i] = float32(tn * (i + 1))
+    t.samples = newSeq[byte](dataBytes(fmt, 16))
+    encodeSamples(fmt, v, t.samples)
+    traces.add t
+  computeRev3Sizes(r, traces)
+  r.traceCount = traces.len
+  let sink = openDiskSink(result)
+  try:
+    let log = writeSegd(sink, SegdData(records: @[SegdRecordData(record: r, traces: traces)]))
+    doAssert log.len == 0, $log
+  finally:
+    sink.close()
+
 type MapDefect* = enum
   ## A problem planted in `mapShotSegd`'s record, at the receiver
   ## `MapDefectAt` names.

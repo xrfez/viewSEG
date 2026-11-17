@@ -632,33 +632,38 @@ proc drawUserData(ui: var HeadersUi; data: openArray[UserDataFact]; fileKey: str
 
 # ------------------------------------------------------------ file headers --
 
+proc drawVendorBlocks(blocks: openArray[VendorBlockFact]; t: Theme; fonts: Fonts;
+    marks: var Marks) =
+  ## Each block the vendor maps decode, under the map that did it: its fields
+  ## by name with their values.
+  for n, b in blocks:
+    dim(t, b.name & ", decoded by the map " & b.map &
+      (if b.mapFile.len > 0: " (" & b.mapFile & ")" else: ""))
+    marks.mark("headers.vendor block " & b.name)
+    const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_BordersInnerV.cint or
+      ImGui_TableFlags_SizingFixedFit.cint
+    if igBeginTable(("##vendor" & $n).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
+      for f in b.fields:
+        igTableNextRow(0, 0)
+        discard igTableNextColumn()
+        igTextUnformatted(f.name.cstring, nil)
+        discard igTableNextColumn()
+        fonts.withFont(frMono, 0):
+          igTextUnformatted((f.value & (if f.label.len > 0: " (" & f.label & ")" else: "") &
+            (if f.flags.len > 0: " [" & f.flags & "]" else: "")).cstring, nil)
+        discard igTableNextColumn()
+        igTextUnformatted(f.unit.cstring, nil)
+        marks.mark("headers.vendor field " & f.name)
+      igEndTable()
+    igSpacing()
+
 proc drawVendor(v: VendorShown; t: Theme; fonts: Fonts; marks: var Marks) =
-  ## The blocks the vendor maps decode, each under the map that did it, its
-  ## fields by name with their values.
+  ## The File headers tab's Vendor tab: what the maps decode of the file.
   for p in v.problems: dim(t, p)
   if v.blocks.len == 0:
     dim(t, "No vendor map decodes a block of this file.")
   if igBeginChild_Str("##vendorblocks", ImVec2_c(x: 0, y: 0), 0, 0):
-    for n, b in v.blocks:
-      dim(t, b.name & ", decoded by the map " & b.map &
-        (if b.mapFile.len > 0: " (" & b.mapFile & ")" else: ""))
-      marks.mark("headers.vendor block " & b.name)
-      const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_BordersInnerV.cint or
-        ImGui_TableFlags_SizingFixedFit.cint
-      if igBeginTable(("##vendor" & $n).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
-        for f in b.fields:
-          igTableNextRow(0, 0)
-          discard igTableNextColumn()
-          igTextUnformatted(f.name.cstring, nil)
-          discard igTableNextColumn()
-          fonts.withFont(frMono, 0):
-            igTextUnformatted((f.value & (if f.label.len > 0: " (" & f.label & ")" else: "") &
-              (if f.flags.len > 0: " [" & f.flags & "]" else: "")).cstring, nil)
-          discard igTableNextColumn()
-          igTextUnformatted(f.unit.cstring, nil)
-          marks.mark("headers.vendor field " & f.name)
-        igEndTable()
-      igSpacing()
+    drawVendorBlocks(v.blocks, t, fonts, marks)
   igEndChild()
 
 func blockIs(name, prefix: string): bool =
@@ -888,6 +893,15 @@ proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; ma
   if shown == 0:
     if st.inspection.waiting: igTextDisabled("Reading the trace headers...")
     return
+  # the vendor fields of each trace the maps decode something of, above its header table
+  for k in 0 ..< answer.traces.len:
+    template v: untyped = answer.traces[k].vendor
+    if v.blocks.len > 0:
+      if igCollapsingHeader_TreeNodeFlags(("Vendor, trace " & $(answer.traces[k].trace + 1) &
+          "##vendortrace" & $k).cstring, ImGui_TreeNodeFlags_DefaultOpen.cint):
+        for p in v.problems: dim(t, p)
+        drawVendorBlocks(v.blocks, t, fonts, marks)
+      marks.mark("headers.vendor trace " & $k)
   const id = "headers.trace"
   let key = $answer.gen
   if id notin ui.tables or ui.tables[id].key != key:

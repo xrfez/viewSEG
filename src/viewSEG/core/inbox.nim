@@ -209,7 +209,8 @@ type
       readKeys*: TraceKeys
         ## the trace's keys, as the index holds them
       headerRows*: seq[HeaderRow]
-        ## the fields of its headers (parseSEG's), in file order
+      readVendor*: VendorShown ## what the vendor maps decode of its header blocks
+                                 ## the fields of its headers (parseSEG's), in file order
     of mkIdentified:
       identPath*: string ## the file
       identity*: FileIdentity ## its quick identity

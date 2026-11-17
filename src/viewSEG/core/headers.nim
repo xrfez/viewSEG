@@ -115,13 +115,16 @@ type
     keys*: TraceKeys       ## its keys, as the index holds them
     rows*: seq[FieldRow]   ## every header field (when asked for)
     blocks*: seq[RawBlock] ## the bytes of its header blocks (with `rows`)
+    vendor*: VendorShown
+      ## what the vendor maps decode of its own header blocks (with `rows`); no
+      ## blocks when no map applies
     samples*: seq[float32] ## its samples (when asked for)
-    displayed*: bool       ## `samples` as displayed: after the edits, the polarity and
-                           ## the display gain's processing; false: as recorded
-    cut*: int              ## samples left out of `samples` (too many at once); 0 for none
-    dtMs*, t0Ms*: float64  ## its sample interval and the time of its first sample
-    intervalKnown*: bool   ## its file gives `dtMs`; else it is 1 (the times count samples)
-    problem*: string       ## what could not be read; "" when all was
+    displayed*: bool ## `samples` as displayed: after the edits, the polarity and
+                       ## the display gain's processing; false: as recorded
+    cut*: int ## samples left out of `samples` (too many at once); 0 for none
+    dtMs*, t0Ms*: float64 ## its sample interval and the time of its first sample
+    intervalKnown*: bool ## its file gives `dtMs`; else it is 1 (the times count samples)
+    problem*: string ## what could not be read; "" when all was
     joined*: set[JoinGroup]
       ## the groups of its keys a geometry join gave (parseSEG's
       ## `joinedGroups`): those values are not its headers'

@@ -19,7 +19,7 @@
 
 import std/[algorithm, monotimes, os, strutils, times]
 import parseSEG
-import cutfile, filelist, filesystem, inbox, jobs, log, session, threads
+import cutfile, filelist, filesystem, inbox, jobs, log, session, threads, vendormaps
 from project import ProjectFileName
 
 const
@@ -228,13 +228,16 @@ proc traceHeadersWork*(file: ptr SeismicFile; path: string; size: int64; index: 
     fs.mappedRead(path, headers = true) # (tests: the drive holds the thread here)
     var keys: TraceKeys
     var rows: seq[HeaderRow]
+    var vendor: VendorShown
     {.cast(gcsafe).}:
       let why = cutWhy(file[])
       if why.len > 0: raise newException(IOError, why)
       keys = file[].traceKeys([index])[0]
       rows = file[].traceHeaders(index)
+      vendor = vendorTrace(file[], index, currentVendors(), 0)
     clearCycleRoots()
-    to.post Msg(job: ctx.id, kind: mkTraceRead, readKeys: keys, headerRows: move rows)
+    to.post Msg(job: ctx.id, kind: mkTraceRead, readKeys: keys, headerRows: move rows,
+      readVendor: vendor)
 
 proc closeWork*(): JobWork =
   ## The work of a close job: none. Submitted with the file in `exclusive`,

@@ -664,6 +664,17 @@ proc spectrumJson(w: SpectrumWindow; units: UnitSystem; limit: int): JsonNode =
     "filterWords": w.filterText, "cursor": cursor,
     "explain": explainSpectrumWindow(w, units)}
 
+proc vendorJson(v: VendorShown): JsonNode =
+  ## The blocks the vendor maps decode, each under its map; the fields by name
+  ## with their values.
+  result = newJArray()
+  for b in v.blocks:
+    var fields = newJArray()
+    for f in b.fields:
+      fields.add %*{"name": f.name, "value": f.value, "unit": f.unit, "label": f.label,
+        "flags": f.flags}
+    result.add %*{"map": b.map, "mapFile": b.mapFile, "block": b.name, "fields": fields}
+
 proc headersJson(state: AppState; limit: int): JsonNode =
   ## The Headers window: its tab and toggles, what it has on screen (what its
   ## reader reads), the traces its Trace tab is about and what was read of
@@ -679,7 +690,7 @@ proc headersJson(state: AppState; limit: int): JsonNode =
     let d = ins.answer.traces[i]
     answered.add %*{"trace": d.id, "file": d.file, "index": d.trace, "fields": d.rows.len,
       "samples": d.samples.len, "samplesLeftOut": d.cut, "asDisplayed": d.displayed,
-      "joined": toJson(d.joined), "problem": d.problem}
+      "joined": toJson(d.joined), "problem": d.problem, "vendor": vendorJson(d.vendor)}
   result["trace"] = %*{"chosenBy": $ins.chosen.by, "traces": clipped(ins.chosen.traces, limit),
     "total": ins.chosen.total, "reading": ins.waiting, "read": answered}
   result["notAnswering"] = %state.headersWait.words # "" while its reader answers
@@ -994,7 +1005,8 @@ proc headersAnswer*(state: var AppState; c: var HeaderCall): bool =
   if c.answer.len > 0: return true
   var keys: TraceKeys
   var rows: seq[HeaderRow]
-  if state.takeTraceRead(c.job, keys, rows):
+  var vendor: VendorShown
+  if state.takeTraceRead(c.job, keys, rows, vendor):
     var r = c.head
     r["keys"] = toJson(keys)
     var list = newJArray()
@@ -1002,6 +1014,7 @@ proc headersAnswer*(state: var AppState; c: var HeaderCall): bool =
       list.add %*{"block": h.blockName, "field": h.field, "value": $h.value,
         "offset": h.offset, "size": h.size}
     r["headers"] = list
+    r["vendor"] = vendorJson(vendor)
     c.answer = textResult($r)
     return true
   let info = state.jobs.info(c.job)
