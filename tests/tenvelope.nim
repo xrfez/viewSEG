@@ -21,6 +21,7 @@
 
 import std/[math, os, strutils]
 import parseSEG
+import processSEG/fft/spectrum
 import viewSEG/core/analysis
 
 const root = currentSourcePath().parentDir.parentDir
@@ -56,6 +57,23 @@ proc main*() =
       r.plots[1].aside
     doAssert r.plots[2].curves.len == 2 and r.plots[2].curves[1].style == csReference
 
+  block frequencyPastAQuarterOfTheRate:
+    # processSEG's instantaneous frequency is right above a quarter of the sampling rate
+    # (62.5 Hz at 4 ms): the pilot's frequency follows the sweep's line, 8 to 80 Hz over 8 s,
+    # up to its end.
+    # Seen to fail: with processSEG 0.7.0, a fold below the line past 62.5 Hz.
+    let r = envelopeOf(pilot, "pilot", dtMs, 0.0, AnalysisParams())
+    doAssert r.problem == "", r.problem
+    let hz = r.plots[2].curves[0].ys
+    let xs = r.plots[2].xs
+    var n = 0
+    for i, y in hz:
+      if xs[i] in 6500.0 .. 7500.0 and not y.isNaN:
+        inc n
+        let want = 8.0 + 72.0 * xs[i] / 8000.0
+        doAssert abs(y - want) < 2.0, "at " & $xs[i] & " ms: " & $y & " Hz, the sweep is " & $want
+    doAssert n > 100, "frequencies drawn past 62.5 Hz: " & $n
+
   block groundForce:
     let r = envelopeOf(force, "GF", dtMs, 0.0, AnalysisParams(), pilot, "the pilot")
     doAssert r.problem == "", r.problem
@@ -80,9 +98,9 @@ proc main*() =
       if xs[i] > 8600.0: doAssert y.isNaN, "drawn after the sweep at " & $xs[i] & " ms"
 
   block circularMean:
-    doAssert abs(circularMeanDeg([179.0, -179.0]).abs - 180.0) < 1e-9, "a plain mean says 0"
-    doAssert abs(circularMeanDeg([10.0, 20.0, NaN]) - 15.0) < 1e-9
-    doAssert circularMeanDeg([NaN]).isNaN
+    doAssert abs(circularMeanDeg([179.0, -179.0]).meanDeg.abs - 180.0) < 1e-9, "a plain mean says 0"
+    doAssert abs(circularMeanDeg([10.0, 20.0, NaN]).meanDeg - 15.0) < 1e-9
+    doAssert circularMeanDeg([NaN]).meanDeg.isNaN
     # a reversed trace reads 180, not a plain mean's 2.5
     var sweep = newSeq[float32](2000)
     for i in 0 ..< sweep.len:

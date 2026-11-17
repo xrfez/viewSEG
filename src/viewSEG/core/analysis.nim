@@ -367,22 +367,6 @@ proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
 
 # --------------------------------------------------------------- envelope --
 
-func circularMeanDeg*(x: openArray[float64]): float64 =
-  ## The circular mean of angles in degrees (the argument of the sum of their
-  ## unit vectors), in (-180, 180]; NaN values are left out, NaN for none. A
-  ## plain mean of wrapped angles is wrong near ±180. To move into processSEG
-  ## (it has only the track's own weighted `meanPhase`, not a plain function).
-  var sx, sy = 0.0
-  var n = 0
-  for v in x:
-    if not v.isNaN:
-      sx += cos(degToRad(v))
-      sy += sin(degToRad(v))
-      inc n
-  if n == 0 or (abs(sx) < 1e-12 and abs(sy) < 1e-12): return NaN
-  result = radToDeg(arctan2(sy, sx))
-  if result <= -180: result += 360
-
 const EnvelopeFloorDb* = -60.0
   ## the envelope plot draws a phase, a difference of phases and a frequency only
   ## where the envelope is within this of its peak
@@ -479,7 +463,7 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
       style: csReference)
     var words = "no time where both envelopes are within 60 dB of their peaks"
     if drawn > 0:
-      let mean = circularMeanDeg(diff)
+      let mean = circularMeanDeg(diff).meanDeg
       words = "mean " & formatFloat(mean, ffDecimal, 1) & "°, largest " &
         formatFloat(worst, ffDecimal, 1) & "°"
       phasePlot.aside = "Phase against the reference over the part drawn: " & words
@@ -698,7 +682,7 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
     ratioPlot.curves.add AnalysisCurve(name: name, ys: ratio)
     phasePlot.curves.add AnalysisCurve(name: name, ys: phase)
     let meanRatio = ratio.meanOf
-    let meanPhase = circularMeanDeg(phase)
+    let meanPhase = circularMeanDeg(phase).meanDeg
     var row = @[name, "-", "-", "-", "-"]
     if best >= 0:
       let match = formatFloat(cs[best], ffDecimal, 2)
