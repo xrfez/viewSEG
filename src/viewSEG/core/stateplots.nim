@@ -93,6 +93,7 @@ proc keptIntervalMs(s: Session; traces, killed: openArray[int]): float64 =
   0.0
 
 const
+  MaxCodeScan = 64 ## traces of a record whose identification codes are read on the UI thread
   FileReferenceName* = "This file's reference trace"
   NoFileReference* = "This record has no trace with trace identification code 21 " &
     "(the vibrator reference)."
@@ -102,7 +103,8 @@ proc fileReferencePlace(s: Session; g: int): int =
   ## vibrator reference code (counted from 1); 0 when it has none.
   if g notin 0 ..< s.gathers.len or s.filePtr == nil: return 0
   var aux = 0
-  for t in s.gathers[g].traces:
+  let span = s.gathers[g].traces
+  for t in span.a .. min(span.b, span.a + MaxCodeScan - 1): # the first traces only
     if t in 0 ..< s.filePtr[].len and not isSeismic(s.filePtr[].index, t):
       inc aux
       if s.filePtr[].traceKeys(t).traceCode == VibReferenceCode: return aux
@@ -114,12 +116,9 @@ proc fileReferenceRule(s: Session; g: int): PilotRule =
     startMs: 0, spanMs: 1e9)
 
 proc hasFileReference*(state: AppState; w: int): bool =
-  ## Whether window `plots[w]`'s record has a trace with the vibrator reference code.
-  template pw: untyped = state.plots[w]
-  if pw.traces.len == 0: return false
-  let i = state.findTrace(pw.traces[0])
-  i >= 0 and fileReferencePlace(state.sessions[i], state.sessions[i].gatherOf(pw.traces[0] -
-    state.sessions[i].base)) > 0
+  ## Whether window `plots[w]`'s record has a trace with the vibrator reference code (found
+  ## when the window last asked, not at every frame).
+  state.plots[w].fileRef
 
 proc vibReferencePlace*(state: AppState; w: int): int =
   ## The place, among window `plots[w]`'s traces, of the one with the vibrator
@@ -274,6 +273,8 @@ proc askPlot(state: var AppState; w: int): bool =
     if t in s:
       traces.add t - s.base
       labels.add "trace " & $(t - s.base + 1)
+  if pw.view in {avCorrelation, avEnvelope}:
+    pw.fileRef = fileReferencePlace(s, s.gatherOf(pw.traces[0] - s.base)) > 0
   var a = AnalysisAsk(id: pw.id, view: pw.view, params: pw.params, file: s.filePtr,
     path: s.path, size: s.size, traces: traces, names: labels,
     processing: pw.processing)
@@ -398,7 +399,8 @@ proc gatherOrder(state: AppState; k, i: int): seq[int] =
 proc recordCodes(s: Session; g: int): seq[int16] =
   ## The identification codes of the traces of gather `g`, in order.
   if g notin 0 ..< s.gathers.len or s.filePtr == nil: return
-  for t in s.gathers[g].traces:
+  let span = s.gathers[g].traces
+  for t in span.a .. min(span.b, span.a + MaxCodeScan - 1):
     result.add(if t in 0 ..< s.filePtr[].len: s.filePtr[].traceKeys(t).traceCode else: 0'i16)
 
 proc codeRolesIn(s: Session; fileTraces: openArray[int]; roles: VibRoles): (bool, VibRoles) =
@@ -428,12 +430,25 @@ proc shapeOpened(state: AppState; view: AnalysisView; i: int; traces: var seq[in
       if g in 0 ..< s.gathers.len:
         let record = s.gathers[g].traces
         if traces[0] in record:
-          # a record with the vibrator's codes gives the window all its traces (to the
-          # cap), so any of them can be picked for a role; else the next three
-          let (coded, _) = s.codeRolesIn(toSeq(record), VibRoles())
-          let last = if coded: min(record.b, traces[0] + MaxVibratorTraces - 1)
-                     else: min(traces[0] + 3, record.b)
-          for t in traces[0] + 1 .. last: traces.add t
+          # A record with the vibrator's codes (in its first traces) opens the window on its
+          # coded traces, whichever trace was chosen, then the traces after the first of
+          # them up to the cap, so any trace of the group can be picked for a role; else the
+          # chosen trace and the next three.
+          var coded: seq[int] = @[]
+          for t in record.a .. min(record.b, record.a + MaxCodeScan - 1):
+            let c = s.filePtr[].traceKeys(t).traceCode
+            if c in VibReactionMassCode .. VibReferenceCode and coded.len < MaxVibratorTraces:
+              coded.add t
+          let (isCoded, _) = s.codeRolesIn(coded, VibRoles())
+          if isCoded:
+            var t = coded[0]
+            while coded.len < MaxVibratorTraces and t <= record.b:
+              if t notin coded: coded.add t
+              inc t
+            coded.sort()
+            traces = coded
+          else:
+            for t in traces[0] + 1 .. min(traces[0] + 3, record.b): traces.add t
     if traces.len > MaxVibratorTraces: traces.setLen MaxVibratorTraces
   if view == avFk:
     if traces.len < MinFkTraces:
@@ -459,20 +474,25 @@ proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: Vib
   result = roles
   if fileTraces.len == 0 or roles.source == rsHand and roles.handFile == file: return
   let g = s.gatherOf(fileTraces[0])
-  let key = layoutKey(s.recordCodes(g))
+  if g notin 0 ..< s.gathers.len: return
+  let key = layoutKey(s.recordCodes(g), s.gathers[g].traces.len)
   var places: array[4, int]
-  if state.vibLayouts.choiceFor(key, places) and g in 0 ..< s.gathers.len:
+  if state.vibLayouts.choiceFor(key, places):
     let first = s.gathers[g].traces.a
-    template place(i: int): int =
-      (if places[i] < 0: -1 else: fileTraces.find(first + places[i]))
-    (result.reference, result.groundForce, result.mass, result.baseplate) =
-      (place(0), place(1), place(2), place(3))
-    (result.source, result.handFile) = (rsRemembered, "")
-    return
+    var mapped: array[4, int]
+    var reachable = true
+    for i in 0 ..< 4:
+      mapped[i] = if places[i] < 0: -1 else: fileTraces.find(first + places[i])
+      if places[i] >= 0 and mapped[i] < 0: reachable = false
+    if reachable: # a remembered choice is used only when the window holds all its traces
+      (result.reference, result.groundForce, result.mass, result.baseplate) =
+        (mapped[0], mapped[1], mapped[2], mapped[3])
+      (result.source, result.handFile) = (rsRemembered, "")
+      return
   let (found, byCodes) = s.codeRolesIn(fileTraces, roles)
   if found: result = byCodes
-  elif roles.source == rsRemembered:
-    # a choice for another layout does not carry over
+  elif roles.source in {rsRemembered, rsCodes}:
+    # what another file's codes or another layout's choice gave does not carry over
     (result.reference, result.groundForce, result.mass, result.baseplate) = (0, 1, 2, 3)
     result.source = rsPosition
 
@@ -522,7 +542,8 @@ proc rememberRoles(state: var AppState; w: int; roles: VibRoles; origin: Command
     places[n] = if p in 0 ..< state.plots[w].traces.len:
                   state.plots[w].traces[p] - s.base - first
                 else: -1
-  state.vibLayouts = state.vibLayouts.withChoice(layoutKey(s.recordCodes(g)), places)
+  state.vibLayouts = state.vibLayouts.withChoice(layoutKey(s.recordCodes(g), s.gathers[
+      g].traces.len), places)
   state.persistVibLayouts(origin)
 
 proc forgetRoles(state: var AppState; w: int; origin: CommandOrigin) =
@@ -531,8 +552,9 @@ proc forgetRoles(state: var AppState; w: int; origin: CommandOrigin) =
   if i < 0: return
   let s = state.sessions[i]
   let g = s.gatherOf(state.plots[w].traces[0] - s.base)
+  if g notin 0 ..< s.gathers.len: return
   let before = state.vibLayouts.len
-  state.vibLayouts = state.vibLayouts.withoutChoice(layoutKey(s.recordCodes(g)))
+  state.vibLayouts = state.vibLayouts.withoutChoice(layoutKey(s.recordCodes(g), s.gathers[g].traces.len))
   if state.vibLayouts.len != before: state.persistVibLayouts(origin)
 
 proc codeWordsOf(state: AppState; w: AnalysisWindow; n: int): string =
@@ -552,6 +574,18 @@ proc vibTraceNames*(state: AppState; w: AnalysisWindow): seq[string] =
   for n in 0 ..< w.traces.len:
     let said = state.codeWordsOf(w, n)
     if said.len > 0: result[n] = result[n] & " · " & said
+
+proc rememberedNotUsed(state: AppState; w: AnalysisWindow): bool =
+  ## Whether a choice is remembered for the layout of `w`'s record that the window does not
+  ## use (it does not hold all the traces the choice names).
+  if w.traces.len == 0: return false
+  let i = state.findTrace(w.traces[0])
+  if i < 0: return false
+  let s = state.sessions[i]
+  let g = s.gatherOf(w.traces[0] - s.base)
+  if g notin 0 ..< s.gathers.len: return false
+  var places: array[4, int]
+  state.vibLayouts.choiceFor(layoutKey(s.recordCodes(g), s.gathers[g].traces.len), places)
 
 proc vibRolesLine*(state: AppState; w: AnalysisWindow; long = true): string =
   ## Where each role of a vibrator signature comes from, in one line. `long`: "Reference:
@@ -574,6 +608,9 @@ proc vibRolesLine*(state: AppState; w: AnalysisWindow; long = true): string =
     of rsCodes: "from the trace identification codes"
     of rsHand: "chosen by hand"
     of rsRemembered: "remembered for this file layout")
+  if w.params.roles.source in {rsPosition, rsCodes} and state.rememberedNotUsed(w):
+    result.add "; the choice remembered for this file layout is not used: some of its " &
+      "traces are not in the window"
 
 proc openPlot(state: var AppState; cmd: Command) =
   ## `ckOpenPlot`: a new analysis window of `cmd.plotTraces` (else the

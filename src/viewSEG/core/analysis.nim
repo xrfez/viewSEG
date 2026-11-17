@@ -234,10 +234,11 @@ func withCodeRoles*(roles: VibRoles; codes: openArray[int16]; file: string): Vib
 
 const MaxLayoutKeyCodes = 64
 
-func layoutKey*(codes: openArray[int16]): string =
-  ## A file layout: how many traces the record has and their identification codes in
-  ## order ("4/21.19.18.20"; the first 64 codes of a longer record).
-  result = $codes.len & "/"
+func layoutKey*(codes: openArray[int16]; count = -1): string =
+  ## A file layout: how many traces the record has (`count`; default `codes.len`) and
+  ## their identification codes in order ("4/21.19.18.20"; the first 64 codes of a longer
+  ## record).
+  result = $(if count >= 0: count else: codes.len) & "/"
   for i, c in codes:
     if i >= MaxLayoutKeyCodes: break
     if i > 0: result.add '.'
@@ -858,6 +859,9 @@ type
     reference*: string ## a correlation's reference, in words
     archiveSeen*: string ## the chosen reference it was asked with; "" for none
     archiveRev*: int = -1 ## the archive's revision then
+    fileRef*: bool
+      ## its record has a trace with the vibrator reference code (21), found when the
+      ## window asked (a correlation's, an envelope's): the button is offered
     pilotKey*: string
       ## a correlation against a pilot of the record: its trace and what changes it
       ## (reversal, a kill, its own filter) when it was asked; "" for none

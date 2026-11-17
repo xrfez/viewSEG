@@ -9,6 +9,7 @@
 ##   four, which are auxiliary.
 ## - `vibFourAgainSegy()`: a second file of that layout; `vibOtherFourSegy()`: four
 ##   traces with codes 21, 18, 19, 20.
+## - `vibLongSegy()`: the four codes, then twenty seismic traces.
 ## - `vibThirteenSegy()`: thirteen traces with codes 21, 19, 18, 20, 29, 28, 30,
 ##   33, 34, 35, 36, 1, 1; every field record number 0; the binary header claims
 ##   `VibClaimed` traces per ensemble. Coordinates on traces 10 to 12 only.
@@ -59,7 +60,7 @@ proc writeVib(path: string; codes: openArray[int16]; record: float64; loud: bool
         (major >= 2 and code in 27'i16 .. 41'i16): tsLive elif code in 18'i16 .. 21'i16 or
         code == 6: tsAuxiliary
                else: tsUnknown
-    if n in located:
+    if n <= 15 and n in located:
       (k.srcX, k.srcY, k.rcvX, k.rcvY) = (500_000.0 + float64(n), 6_000_000.0 + float64(n),
         500_100.0 + float64(n), 6_000_100.0 + float64(n))
     w.writeTrace(k, buf)
@@ -96,6 +97,14 @@ proc rev2FieldsSegy*(fx: Fixtures): string =
   ## SEG-Y rev 2: three traces with codes 28, 29, 30 (electric field components there).
   result = fx.dir / "rev2-fields.sgy"
   if not fileExists(result): writeVib(result, [28'i16, 29, 30], 5, false, major = 2)
+
+proc vibLongSegy*(fx: Fixtures): string =
+  ## One record: codes 21, 19, 18, 20, then twenty seismic traces (code 1).
+  result = fx.dir / "vib-long.sgy"
+  if not fileExists(result):
+    var codes = @[21'i16, 19, 18, 20]
+    for i in 0 ..< 20: codes.add 1
+    writeVib(result, codes, 6, false)
 
 proc vibThirteenSegy*(fx: Fixtures): string =
   result = fx.dir / "vib-thirteen.sgy"
