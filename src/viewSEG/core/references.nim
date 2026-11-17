@@ -16,17 +16,17 @@ import parseSEG
 import processSEG/fft/spectrum
 import processSEG/vibroseis/[sweep, taper]
 import processSEG/core/workspace
-import filesystem, nif, threads
+import filesystem, nif, threads, wiggle
 
 const
   ReferencesFolder* = "references"
   ReferenceIndexName* = "index.nif"
   ReferenceVersion* = 1
   MaxReferenceName* = 120
-  PreviewPoints* = 4_000
-    ## a Generate preview draws at most this many samples
   PerUserLockName* = "files.lock"
     ## the lock the other per-user documents use, beside their folder
+
+export taper
 
 type
   ReferenceLaw* = enum
@@ -51,6 +51,14 @@ type
       f1Hz*, f2Hz*: float64
       durationMs*, dtMs*: float64
       taperStartMs*, taperEndMs*: float64
+      taperShape*: TaperShape = tpCos2
+        ## the ramp's shape; an older archive leaves it out and gets cosine
+        ## squared, which is what `initSweepTaper` uses
+      taperParam*: float64 = NaN
+        ## Kaiser beta, Gaussian sigma or the power exponent; NaN is the
+        ## shape's default, and is not written (a document has no NaN)
+      phaseDeg*: float64
+        ## start phase in degrees; 0 starts at zero, and 180 reverses the polarity
       amplitude*: float64
       boostDb*: float64
 
@@ -97,6 +105,12 @@ type
     f1Hz*, f2Hz*: float64
     durationMs*, dtMs*: float64
     taperStartMs*, taperEndMs*: float64
+    taperShape*: TaperShape = tpCos2
+      ## the ramp's shape; left out, cosine squared (`initSweepTaper`)
+    taperParam*: float64 = NaN
+      ## Kaiser beta, Gaussian sigma or the power exponent; NaN: the shape's default
+    phaseDeg*: float64
+      ## start phase in degrees (`SweepSpec.startPhaseDeg`); 180 reverses the polarity
     amplitude*: float64
     boostDb*: float64
 
@@ -173,6 +187,32 @@ func lawTitle*(law: ReferenceLaw): string =
   of rlExponential: "Exponential"
   of rlDbPerOctave: "dB/octave"
   of rlDbPerHz: "dB/Hz"
+
+func plainFieldFormat*(v: float64): string =
+  ## The printf format a Generate field shows `v` with: a plain decimal,
+  ## never scientific notation.
+  if v.isNaN or v.classify in {fcInf, fcNegInf} or abs(v) >= 1e15: return "%.6f"
+  let a = abs(v)
+  if a == 0 or abs(v - round(v)) <= 1e-9 * max(1.0, a): return "%.0f"
+  for d in 1 .. 6:
+    let scale = pow(10.0, float64(d))
+    if abs(v * scale - round(v * scale)) <= 1e-4 * max(1.0, a):
+      return "%." & $d & "f"
+  "%.6f"
+
+func plainFieldText*(v: float64): string =
+  ## `v` as a Generate field shows it: a plain number ("60000", "0.5",
+  ## "-10"), never scientific notation.
+  if v.isNaN: return "nan"
+  if v.classify == fcInf: return "inf"
+  if v.classify == fcNegInf: return "-inf"
+  let fmt = plainFieldFormat(v)
+  var prec = 6
+  if fmt.len > 3 and fmt[0] == '%' and fmt[^1] == 'f':
+    try: prec = parseInt(fmt[2 ..< fmt.high])
+    except ValueError: discard
+  result = formatFloat(v, ffDecimal, prec)
+  if result.endsWith('.'): result.setLen result.len - 1
 
 func numberText(x: float64): string =
   ## `x` without a trailing fraction when it is a whole number.
@@ -266,6 +306,13 @@ func archiveLockPath*(folder: string): string =
   ## The lock the other per-user documents of this archive's home use.
   folder.parentDir / PerUserLockName
 
+func generateSettingsKey*(g: GeneratedReference): string =
+  ## The settings a preview is for, so a result is shown only when it is the
+  ## latest ask. The name is not part of it.
+  $g.law & " " & $g.f1Hz & " " & $g.f2Hz & " " & $g.durationMs & " " & $g.dtMs & " " &
+    $g.taperStartMs & " " & $g.taperEndMs & " " & $g.taperShape & " " & $g.taperParam &
+    " " & $g.amplitude & " " & $g.boostDb & " " & $g.phaseDeg
+
 func sweepTooLong*(g: GeneratedReference): string =
   ## Why `g` is too long for processSEG, in plain words; "" when it is not.
   ## Checked before any sweep is made.
@@ -278,11 +325,10 @@ func sweepTooLong*(g: GeneratedReference): string =
   else: ""
 
 func previewGenerate*(g: GeneratedReference): GeneratedReference =
-  ## `g` shortened so a preview is at most `PreviewPoints` samples. The
-  ## sweep stored is still `g`; this is only what a dialog draws.
-  result = g
-  if g.dtMs > 0 and g.dtMs < Inf and g.durationMs / g.dtMs > float64(PreviewPoints):
-    result.durationMs = g.dtMs * float64(PreviewPoints)
+  ## The sweep a preview draws: the whole of `g`, so both tapers are in the
+  ## picture. A dense sweep is drawn as a min/max envelope (`columnEnvelope`),
+  ## not by dropping samples.
+  g
 
 func timeStart*(e: ReferenceEntry): float64 =
   ## The first sample's time, from the archive: a stored window's From, or
@@ -345,24 +391,180 @@ proc cutSamples*(samples: openArray[float32]; intervalUs, fromMs, toMs: float64)
   result = newSeq[float32](i1 - i0)
   for i in 0 ..< result.len: result[i] = samples[i0 + i]
 
+func taperShapeTitle*(shape: TaperShape): string =
+  ## The ramp shape as the Generate dialog names it.
+  case shape
+  of tpLinear: "Linear"
+  of tpCosine: "Cosine"
+  of tpCos2: "Cosine squared"
+  of tpHamming: "Hamming"
+  of tpBlackman: "Blackman"
+  of tpBlackmanHarris: "Blackman-Harris"
+  of tpKaiser: "Kaiser"
+  of tpGaussian: "Gaussian"
+  of tpPower: "Power"
+
+func taperParamLabel*(shape: TaperShape): string =
+  ## The extra field's name for a shape that has a parameter; "" for the rest.
+  case shape
+  of tpKaiser: "Beta"
+  of tpGaussian: "Sigma"
+  of tpPower: "Exponent"
+  of tpLinear, tpCosine, tpCos2, tpHamming, tpBlackman, tpBlackmanHarris: ""
+
+proc taperDefaultParam*(shape: TaperShape): float64 =
+  ## processSEG's default parameter for `shape` (NaN when the shape has none).
+  initSweepTaper(0.0, 0.0, shape).param
+
+proc sweepSpec(g: GeneratedReference): SweepSpec =
+  ## The processSEG sweep `g` names. Raises `ValueError` as `validate`.
+  let amp = if g.amplitude > 0 and g.amplitude < Inf: g.amplitude else: 1.0
+  let taper = initSweepTaper(g.taperStartMs, g.taperEndMs, g.taperShape, g.taperParam)
+  let phase = g.phaseDeg
+  case g.law
+  of rlLinear:
+    linearSweep(g.f1Hz, g.f2Hz, g.durationMs, g.dtMs, taper, startPhaseDeg = phase,
+      amplitude = amp)
+  of rlExponential:
+    exponentialSweep(g.f1Hz, g.f2Hz, g.durationMs, g.dtMs, taper, startPhaseDeg = phase,
+      amplitude = amp)
+  of rlDbPerOctave:
+    dbPerOctaveSweep(g.f1Hz, g.f2Hz, g.durationMs, g.dtMs, g.boostDb, taper,
+      startPhaseDeg = phase, amplitude = amp)
+  of rlDbPerHz:
+    dbPerHzSweep(g.f1Hz, g.f2Hz, g.durationMs, g.dtMs, g.boostDb, taper,
+      startPhaseDeg = phase, amplitude = amp)
+
+proc plainGenerateMessage(msg: string): string =
+  ## processSEG's refusal, with its field names as the dialog says them.
+  result = msg
+  result = result.replace("startPhaseDeg", "the phase")
+  result = result.replace("f1Hz", "the start frequency")
+  result = result.replace("f2Hz", "the end frequency")
+  result = result.replace("lengthMs", "the length")
+  result = result.replace("dtMs", "the sample interval")
+  result = result.replace("boostDb", "the boost")
+  result = result.replace("maxNyquistFraction", "the anti-alias fraction")
+
+proc generateProblem*(g: GeneratedReference): string =
+  ## Why `g` cannot be made, in processSEG's words; "" when it can. No
+  ## samples are made.
+  let tooLong = sweepTooLong(g)
+  if tooLong.len > 0: return tooLong
+  try:
+    discard sweepSpec(g)
+    ""
+  except CatchableError as e:
+    plainGenerateMessage(e.msg)
+
 proc generateSamples*(g: GeneratedReference): seq[float32] {.gcsafe.} =
   ## The sweep `g` names, from processSEG. Raises `ValueError` as that
   ## library does (a frequency past the anti-alias limit, a length that is
-  ## not a whole number of samples, tapers that overlap). No file is read:
-  ## a dialog may call it for a preview.
-  let amp = if g.amplitude > 0 and g.amplitude < Inf: g.amplitude else: 1.0
-  let taper = if g.taperStartMs <= 0 and g.taperEndMs <= 0: noTaper()
-              else: initSweepTaper(max(g.taperStartMs, 0.0), max(g.taperEndMs, 0.0))
-  let spec = case g.law
-    of rlLinear:
-      linearSweep(g.f1Hz, g.f2Hz, g.durationMs, g.dtMs, taper, amplitude = amp)
-    of rlExponential:
-      exponentialSweep(g.f1Hz, g.f2Hz, g.durationMs, g.dtMs, taper, amplitude = amp)
-    of rlDbPerOctave:
-      dbPerOctaveSweep(g.f1Hz, g.f2Hz, g.durationMs, g.dtMs, g.boostDb, taper, amplitude = amp)
-    of rlDbPerHz:
-      dbPerHzSweep(g.f1Hz, g.f2Hz, g.durationMs, g.dtMs, g.boostDb, taper, amplitude = amp)
-  spec.sweepSamples(float32)
+  ## not a whole number of samples, tapers that overlap, a parameter or a
+  ## phase it refuses). No file is read.
+  sweepSpec(g).sweepSamples(float32)
+
+proc columnEnvelope*(values: openArray[float32]; x0, dx: float64; columns: int):
+    tuple[xs, ys: seq[float64]] =
+  ## The whole series as a line that keeps every peak. Point `i` is at
+  ## `x0 + i·dx`. At most `columns` points: every one of them. More: the
+  ## minimum and maximum of each column (`minMaxInto`), in the order they
+  ## occur, placed inside the column, and the true samples at the two ends.
+  ## A later extreme is not moved to t=0 or t=end. Nothing is skipped.
+  ## Empty when there is nothing to draw.
+  if values.len == 0 or not (dx > 0 and dx < Inf): return
+  let cols = max(columns, 1)
+  if values.len <= cols:
+    result.xs = newSeq[float64](values.len)
+    result.ys = newSeq[float64](values.len)
+    for i, v in values:
+      result.xs[i] = x0 + float64(i) * dx
+      result.ys[i] = float64(v)
+    return
+  let n = max(1, (values.len + cols - 1) div cols)
+  let bins = (values.len + n - 1) div n
+  var dst = newSeq[float32](bins * 2)
+  minMaxInto(values, n, dst)
+  let endX = x0 + float64(values.len - 1) * dx
+  result.xs = newSeq[float64](dst.len + 2)
+  result.ys = newSeq[float64](dst.len + 2)
+  result.xs[0] = x0
+  result.ys[0] = float64(values[0])
+  for b in 0 ..< bins:
+    let i0 = b * n
+    let i1 = min(values.len - 1, i0 + n - 1)
+    let xA = x0 + float64(i0) * dx
+    let span = max(x0 + float64(i1) * dx - xA, dx)
+    var a = xA + span * 0.25
+    var c = xA + span * 0.75
+    if a <= x0: a = x0 + dx * 0.25
+    if c >= endX: c = endX - dx * 0.25
+    if c <= a: c = a + dx * 0.25
+    result.xs[1 + b * 2] = a
+    result.xs[2 + b * 2] = c
+    result.ys[1 + b * 2] = float64(dst[b * 2])
+    result.ys[2 + b * 2] = float64(dst[b * 2 + 1])
+  result.xs[^1] = endX
+  result.ys[^1] = float64(values[^1])
+  for i in 1 ..< result.xs.high:
+    if result.xs[i] <= result.xs[i - 1]:
+      result.xs[i] = result.xs[i - 1] + dx * 0.01
+  if result.xs[^1] <= result.xs[^2]:
+    result.xs[^2] = result.xs[^1] - dx * 0.25
+
+func spectrumAxis*(f1, f2, nyquist: float64): tuple[lo, hi: float64] =
+  ## The spectrum plot's frequency axis for a sweep from `f1` to `f2`: the
+  ## band plus a quarter of it on each side, held within 0 .. Nyquist. A
+  ## band of no width is a short span about that frequency, so the axis is
+  ## not a point. A Nyquist that is not a positive number is not a clamp.
+  if f1.isNaN or f2.isNaN:
+    return (lo: 0.0, hi: (if nyquist > 0 and nyquist < Inf: nyquist else: 1.0))
+  let loF = min(f1, f2)
+  let hiF = max(f1, f2)
+  let band = hiF - loF
+  let margin = 0.25 * band
+  result.lo = loF - margin
+  result.hi = hiF + margin
+  if result.lo < 0: result.lo = 0
+  if nyquist > 0 and nyquist < Inf:
+    if result.lo > nyquist: result.lo = nyquist
+    if result.hi > nyquist: result.hi = nyquist
+  if result.hi <= result.lo:
+    let pad = max(band, 1.0)
+    result.lo = max(0.0, loF - pad)
+    result.hi = loF + pad
+    if nyquist > 0 and nyquist < Inf and result.hi > nyquist: result.hi = nyquist
+    if result.hi <= result.lo: result.hi = result.lo + 1
+
+func spectrumFitKey*(gen: int; f1, f2, nyquist: float64): string =
+  ## Changes when the frequencies change, so the spectrum plot fits again.
+  let axis = spectrumAxis(f1, f2, nyquist)
+  "s" & $gen & " " & $axis.lo & " " & $axis.hi
+
+proc previewSpectrum*(samples: openArray[float32]; dtMs: float64):
+    tuple[hz, db: seq[float64]] {.gcsafe.} =
+  ## The amplitude spectrum of `samples` in dB, peak at 0, from the same
+  ## processSEG call a stored reference's window uses (`amplitudeOf`), then
+  ## `toDbInto`. Empty when there is nothing to transform.
+  let spec = amplitudeOf(samples, dtMs)
+  result.hz = spec.hz
+  result.db = newSeq[float64](spec.amp.len)
+  if spec.amp.len > 0:
+    toDbInto(spec.amp, result.db)
+
+proc buildGeneratePreview*(g: GeneratedReference): tuple[samples: seq[float32];
+    hz, db: seq[float64]; problem: string] {.gcsafe.} =
+  ## The whole sweep `g` names and its amplitude spectrum in dB, or
+  ## processSEG's reason it cannot be made (then no samples).
+  result.samples = @[]
+  result.hz = @[]
+  result.db = @[]
+  result.problem = generateProblem(g)
+  if result.problem.len > 0: return
+  result.samples = generateSamples(g)
+  let spec = previewSpectrum(result.samples, g.dtMs)
+  result.hz = spec.hz
+  result.db = spec.db
 
 # ----------------------------------------------------------------- document --
 
@@ -413,6 +615,9 @@ proc writeOrigin(w: var NifWriter; o: ReferenceOrigin) =
     w.value("dtMs", o.dtMs)
     w.value("taperStartMs", o.taperStartMs)
     w.value("taperEndMs", o.taperEndMs)
+    w.value("taperShape", $o.taperShape)
+    if not o.taperParam.isNaN: w.value("taperParam", o.taperParam)
+    w.value("phaseDeg", o.phaseDeg)
     w.value("amplitude", o.amplitude)
     w.value("boostDb", o.boostDb)
   else:
@@ -464,7 +669,9 @@ proc kidBool(n: NifNode): bool =
 proc readOrigin(n: NifNode; problems: var seq[string]): ReferenceOrigin =
   var generated = false
   var law = rlLinear
-  var f1, f2, durationMs, dt, t0, t1, amp, boost, record, fromMs, toMs = NaN
+  var shape = tpCos2
+  var f1, f2, durationMs, dt, t0, t1, amp, boost, record, fromMs, toMs, param = NaN
+  var phase = 0.0
   var fileName = ""
   var trace = 0
   var sawGenerated = false
@@ -489,6 +696,20 @@ proc readOrigin(n: NifNode; problems: var seq[string]): ReferenceOrigin =
     of "dtMs": dt = kidNumber(c)
     of "taperStartMs": t0 = kidNumber(c)
     of "taperEndMs": t1 = kidNumber(c)
+    of "taperShape":
+      let s = kidString(c)
+      var found = false
+      for v in TaperShape:
+        if $v == s:
+          shape = v
+          found = true
+      if not found and s.len > 0:
+        problems.add "a taper shape \"" & s &
+          "\" is not one this version makes: kept as cosine squared"
+    of "taperParam": param = kidNumber(c)
+    of "phaseDeg":
+      let p = kidNumber(c)
+      if p == p: phase = p
     of "amplitude": amp = kidNumber(c)
     of "boostDb": boost = kidNumber(c)
     of "fileName": fileName = kidString(c)
@@ -500,7 +721,8 @@ proc readOrigin(n: NifNode; problems: var seq[string]): ReferenceOrigin =
   if not sawGenerated: generated = f1 == f1 # a frequency was given
   if generated:
     ReferenceOrigin(generated: true, law: law, f1Hz: f1, f2Hz: f2, durationMs: durationMs,
-      dtMs: dt, taperStartMs: t0, taperEndMs: t1,
+      dtMs: dt, taperStartMs: t0, taperEndMs: t1, taperShape: shape, taperParam: param,
+      phaseDeg: phase,
       amplitude: (if amp == amp: amp else: 1.0), boostDb: (if boost == boost: boost else: 0.0))
   else:
     ReferenceOrigin(generated: false, fileName: fileName, record: record, trace: trace,
@@ -645,7 +867,8 @@ proc writeReferenceFile*(path, name: string; intervalUs: float64; samples: openA
   if origin.generated:
     lines.add "generated " & lawTitle(origin.law) & " " & numberText(origin.f1Hz) & "-" &
       numberText(origin.f2Hz) & " Hz, " & numberText(origin.durationMs) & " ms, " &
-      numberText(origin.dtMs) & " ms"
+      numberText(origin.dtMs) & " ms, " & taperShapeTitle(origin.taperShape) &
+      " taper, phase " & numberText(origin.phaseDeg) & " deg"
   elif origin.fileName.len > 0:
     lines.add "stored from " & origin.fileName & ", trace " & $origin.trace &
       ", " & numberText(origin.fromMs) & " to " & numberText(origin.toMs) & " ms"

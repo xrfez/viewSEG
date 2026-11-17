@@ -480,8 +480,11 @@ type
     of ckGenerateReference:
       refGenerate*: GeneratedReference
         ## ckGenerateReference: the sweep (frequencies, length, sample interval,
-        ## tapers, type, amplitude). `dtMs` 0: the file on show. `name` "":
-        ## one made from the parameters
+        ## tapers and their shape and parameter, type, amplitude, phase in
+        ## degrees). `dtMs` 0: the file on show. `name` "": one made from the
+        ## parameters. `taperShape` left out: cosine squared. `taperParam`
+        ## left out or null: the shape's default. `phaseDeg` left out: 0;
+        ## 180 degrees reverses the polarity. There is no separate polarity
     of ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference,
         ckViewReference, ckCloseRefView:
       refId*: string

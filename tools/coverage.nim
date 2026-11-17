@@ -126,8 +126,8 @@ const
     "readSamples": "the Headers window's reader's own (core/inspector), not SEG-2's",
     "recordIndex": "a field of the viewer's `Command` (the SEG-D record a trace counts in)",
     "tracesAt": "the viewer's own `Survey.tracesAt` (core/survey)",
-    "SweepSpec": "the type of a layer kind kept for the planned generated pilot " &
-      "(core/panels); nothing makes one yet",
+    "SweepSpec": "the viewer's own layer kind (core/panels) and the return type " &
+      "of a reference sweep (core/references); the constructors are the calls",
     "keysRevision": "parseSEG's is called (`file[].keysRevision`, core/surveyjobs and " &
       "core/recordqc); the viewer's `Session.keysRevision` holds what it gave",
     "isSeismic": "parseSEG's is called (`f.index.isSeismic(t)`, core/shots, core/state); " &

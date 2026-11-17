@@ -56,6 +56,11 @@ type
     yCeil*: float64 = NaN
       ## with `yFloor`, both numbers: the value axis is exactly that span,
       ## with no padding (a phase magnitude's 0 to 180)
+    xFloor*: float64 = NaN
+    xCeil*: float64 = NaN
+      ## both numbers, with `xCeil` above `xFloor`: the x axis is exactly
+      ## that span, not the data's first and last x (a spectrum fitted to a
+      ## sweep's band)
     note*: string ## shown over an empty plot: why it is empty
     aside*: string ## appended to the readout (a delay taken off, in ms)
 
@@ -169,8 +174,11 @@ func firstShown(p: CurvePlot): int =
     while result < p.xs.len and not (p.xs[result] > 0): inc result
 
 func xLimits*(p: CurvePlot): Span =
-  ## The x axis's limits: the data's first and last x (on a logarithmic
-  ## axis, the first positive one); 0 to 1 for none.
+  ## The x axis's limits: exactly `xFloor` to `xCeil` when both are numbers
+  ## and the span has width; otherwise the data's first and last x (on a
+  ## logarithmic axis, the first positive one); 0 to 1 for none.
+  if not p.xFloor.isNaN and not p.xCeil.isNaN and p.xCeil > p.xFloor:
+    return Span(lo: p.xFloor, hi: p.xCeil)
   let a = p.firstShown
   if a >= p.xs.len: Span(lo: (if p.logX: 1.0 else: 0.0), hi: (if p.logX: 10.0 else: 1.0))
   elif p.xs[^1] > p.xs[a]: Span(lo: p.xs[a], hi: p.xs[^1])

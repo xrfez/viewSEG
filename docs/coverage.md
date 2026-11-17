@@ -356,7 +356,7 @@ name, so these are building blocks for code that works on raw headers.
 
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
-| Sweep tapers (nine shapes) | `initSweepTaper`, `TaperShape`, `applyTaper`, `taperWeight`, `noTaper`, `SweepTaper`, `checkFits` | Operations → References → Generate a reference | built (Operations → References → Generate a reference); planned (the other shapes) |
+| Sweep tapers (nine shapes) | `initSweepTaper`, `TaperShape`, `applyTaper`, `taperWeight`, `noTaper`, `SweepTaper`, `checkFits` | Operations → References → Generate a reference | built (Operations → References → Generate a reference: every taper shape, its parameter and the phase); planned (applying a taper to samples already read) |
 | Sweep generation (linear, dB/octave, dB/Hz, exponential, table) | `linearSweep`, `dbPerOctaveSweep`, `dbPerHzSweep`, `exponentialSweep`, `tableSweep`, `generatePilot`, `sweepSamples`, `SweepSpec`, `SweepLaw`, `SweepPoint`, `sweepLen`, `sweepInto` | Operations → References → Generate a reference | built (Operations → References → Generate a reference); planned (table sweeps) |
 | Sweep harmonics (known distortion) | `SweepHarmonic`, `sweepHarmonics`, `sweepHarmonicsInto` | Sample vibrator records with known distortion, to check the vibrator QC | planned |
 | Instantaneous frequency and phase | `frequencyAt`, `phaseAt` | Compare pilots: frequency at the cursor | planned |

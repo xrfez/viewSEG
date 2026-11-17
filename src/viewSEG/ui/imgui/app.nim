@@ -44,7 +44,7 @@ import ../../core/[filesystem, geometry, screens, state, watchdog]
 import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
 import ../../view/jobstatus
-import aboutbox, agentshot, chrome, dpi, filelist, fonts, frames, headerswindow, icons,
+import aboutbox, agentshot, chrome, dpi, filelist, fonts, frames, genpreview, headerswindow, icons,
   settingswindow, shortcutswindow,
   jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows, projectwindow,
   references,
@@ -2019,6 +2019,7 @@ proc run*(opts = RunOptions()): int =
         ui.core.report(sevWarning, "frame", report.get)
     ui.echoNewLog()
     ui.core.persist()
+  stopGeneratePreview()
   hideTray() # the icon goes first: the rest of the quit can take a moment
   # The quit waits a fifth of a second for the agents' socket to go (its
   # folder may not answer), then the core's threads (`shutdown`).

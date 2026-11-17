@@ -85,7 +85,8 @@ proc generateWork*(g: GeneratedReference; folder: string; to: Poster): JobWork =
       let name = if g.name.strip.len > 0: g.name.strip else: defaultGenerateName(g)
       let origin = ReferenceOrigin(generated: true, law: g.law, f1Hz: g.f1Hz, f2Hz: g.f2Hz,
         durationMs: g.durationMs, dtMs: g.dtMs, taperStartMs: max(g.taperStartMs, 0.0),
-        taperEndMs: max(g.taperEndMs, 0.0),
+        taperEndMs: max(g.taperEndMs, 0.0), taperShape: g.taperShape,
+        taperParam: g.taperParam, phaseDeg: g.phaseDeg,
         amplitude: (if g.amplitude > 0: g.amplitude else: 1.0), boostDb: g.boostDb)
       let id = storeSamples(folder, name, g.dtMs * 1000, samples, origin)
       var news = ReferenceNews(home: folder, act: raGenerated, id: id, name: name,

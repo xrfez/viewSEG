@@ -8,14 +8,36 @@ of the file's pilot when one is chosen.
 
 ## Generate a reference
 
-**Generate a reference...** makes a sweep and stores it. Set the name (a default is filled
-from the parameters, such as "Linear 8-80 Hz 8 s"), the start and end frequency, the
-length, the sample interval (the file on show, when there is one), the taper at each end,
-and the sweep type: linear, exponential, dB/octave or dB/Hz. The amplitude is 1 unless you
-set another. A short preview of the sweep is drawn as you edit (at most a few thousand points; a
-longer sweep says it is showing the start). A sweep too long for processSEG is refused
-in plain words before any of it is made. The sweep is made by
-processSEG; viewSEG adds no sweep of its own.
+**Generate a reference...** makes a sweep and stores it. The dialog is resizable; the
+two plots take the extra room, and it does not shrink so far that the settings, the
+plots or the buttons leave the window. The settings are in three groups.
+
+**Sweep.** The name (a default is filled from the parameters, such as "Linear 8-80 Hz
+8 s"), the start and end frequency, the length, the sample interval (the file on show,
+when there is one), the amplitude (1 unless you set another) and the sweep type: linear,
+exponential, dB/octave or dB/Hz. dB/octave and dB/Hz also ask for the boost.
+
+**Taper.** The shape of the ramp at each end, every shape processSEG offers, and the
+length of the start and end ramps. Cosine squared is the usual one, and the default.
+Kaiser, Gaussian and power ask for one more number (beta, sigma, exponent), filled with
+that shape's usual value; a value processSEG refuses is said in the dialog and Generate
+is disabled. A length of 0 is no ramp at that end. A negative length is refused the
+same way, and Generate stays disabled while it stands.
+
+**Phase.** One number, in degrees. 0 starts the sweep at zero. 180 reverses the
+polarity; there is no separate polarity control.
+
+Under the settings, the whole sweep is drawn against time, as a line through each
+column's peaks. The ends of that line are the true samples there, so a taper is only
+as wide as it is: a short taper on a long sweep is a couple of pixels until the plot
+is zoomed. Under it is the amplitude spectrum in dB against frequency. The frequency
+axis fits the sweep's band, with about a quarter of
+the band spare on each side, held within 0 to Nyquist; it fits again when the
+frequencies change. Both follow the settings. A long sweep is worked out in the
+background; the last good picture stays until the new one is ready, and a finished
+picture is shown only when it is the one just asked. A setting processSEG
+refuses is said in place of the plots, in plain words, and Generate stays disabled. The
+sweep is made by processSEG; viewSEG adds no sweep of its own.
 
 ## Reference archive
 

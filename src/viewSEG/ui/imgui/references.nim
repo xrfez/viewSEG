@@ -2,11 +2,11 @@
 ## Store as reference (the plot's menu). The windows issue commands; they
 ## do not read a file.
 
-import std/[algorithm, strutils, tables]
+import std/[algorithm, math, strutils, tables]
 import imguin/cimgui
 import ../../core/[references, state]
 import ../../view/[curveplot, theme]
-import curveplot as curves, focus, icons, marks, placement, style
+import curveplot as curves, focus, genpreview, icons, marks, placement, style
 
 type
   RefSort* = enum
@@ -27,10 +27,21 @@ type
     genAsk: bool
     genName: string
     genF1, genF2, genLength, genDt, genTaper0, genTaper1, genAmp, genBoost: float64
+    genPhase: float64
+    genParam: float64
     genLaw: ReferenceLaw
+    genShape: TaperShape
     genMessage: string
-    preview: seq[float32]
-    previewKey: string
+    previewSamples: seq[float32]
+    previewHz, previewDb: seq[float64]
+    previewDt, askedDt: float64
+    previewF1, previewF2: float64
+    previewKey: string ## the settings the dialog is showing a key for
+    askedKey: string   ## the settings last sent to the worker
+    liveKey: string
+    stable: int        ## frames the settings have stayed put
+    askedGen, shownGen: int
+    signalPlot, spectrumPlot: CurvePlotUi
     viewPlots: Table[int, tuple[time, spec: CurvePlotUi]]
 
   StoreDialog* = object
@@ -72,6 +83,7 @@ proc placeAgain*(ui: var ReferencesUi) =
 proc openGenerate*(ui: var ReferencesUi; dtMs: float64) =
   ui.genAsk = true
   ui.genLaw = rlLinear
+  ui.genShape = initSweepTaper(0.0, 0.0).shape
   ui.genF1 = 8
   ui.genF2 = 80
   ui.genLength = 8000
@@ -80,9 +92,23 @@ proc openGenerate*(ui: var ReferencesUi; dtMs: float64) =
   ui.genTaper1 = 200
   ui.genAmp = 1
   ui.genBoost = 0
+  ui.genPhase = 0
+  ui.genParam = NaN
   ui.genMessage = ""
+  ui.previewSamples.setLen 0
+  ui.previewHz.setLen 0
+  ui.previewDb.setLen 0
+  ui.previewKey = ""
+  ui.askedKey = ""
+  ui.liveKey = ""
+  ui.stable = 0
+  ui.askedGen = 0
+  ui.shownGen = 0
+  ui.previewDt = 0
+  ui.previewF1 = 0
+  ui.previewF2 = 0
   let g = GeneratedReference(law: ui.genLaw, f1Hz: ui.genF1, f2Hz: ui.genF2,
-    durationMs: ui.genLength, dtMs: ui.genDt)
+    durationMs: ui.genLength, dtMs: ui.genDt, taperShape: ui.genShape)
   setBuf(ui.genName, defaultGenerateName(g))
 
 proc openStore*(d: var StoreDialog; trace: int; name: string; fromMs, toMs, durationMs: float64;
@@ -97,93 +123,184 @@ proc number(label: string; v: var float64; mark: string; marks: var Marks): bool
   igTextUnformatted(label.cstring, nil)
   igSameLine(igGetFontSize() * 12, -1)
   igSetNextItemWidth(igGetFontSize() * 8)
-  result = igInputDouble(("##" & mark).cstring, addr v, 0, 0, "%.4g", 0)
+  let fmt = plainFieldFormat(v)
+  result = igInputDouble(("##" & mark).cstring, addr v, 0, 0, fmt.cstring, 0)
   marks.mark(mark)
+
+proc asked(ui: ReferencesUi): GeneratedReference =
+  GeneratedReference(name: bufText(ui.genName), law: ui.genLaw, f1Hz: ui.genF1,
+    f2Hz: ui.genF2, durationMs: ui.genLength, dtMs: ui.genDt, taperStartMs: ui.genTaper0,
+    taperEndMs: ui.genTaper1, taperShape: ui.genShape, taperParam: ui.genParam,
+    phaseDeg: ui.genPhase, amplitude: ui.genAmp, boostDb: ui.genBoost)
+
+func settingsKey(g: GeneratedReference): string {.inline.} =
+  generateSettingsKey(g)
+
+proc pickShape(ui: var ReferencesUi; shape: TaperShape) =
+  if shape == ui.genShape: return
+  ui.genShape = shape
+  ui.genParam = taperDefaultParam(shape)
+
+proc combo(label, current, mark: string; marks: var Marks; flags = 0'i32): bool =
+  igTextUnformatted(label.cstring, nil)
+  igSameLine(igGetFontSize() * 12, -1)
+  igSetNextItemWidth(igGetFontSize() * 12)
+  result = igBeginCombo(("##" & mark).cstring, current.cstring, flags)
+  marks.mark(mark)
+
+proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; marks: var Marks) =
+  let ink = t.roles[rlAccent]
+  let scale = max(1'f32, igGetIO_Nil().DisplayFramebufferScale.x)
+  let cols = max(64, int(igGetContentRegionAvail().x * scale))
+  let fit = $ui.shownGen
+  if ui.previewSamples.len > 1 and ui.previewDt > 0:
+    let env = columnEnvelope(ui.previewSamples, 0.0, ui.previewDt, cols)
+    var time = CurvePlot(xLabel: "Time (ms)", xUnit: "ms", yLabel: "Amplitude",
+      xs: env.xs, curves: @[Curve(name: "sweep", colour: ink, ys: env.ys)])
+    discard curves.drawCurvePlot(ui.signalPlot, "generate.preview", time, t,
+      ImVec2_c(x: -1, y: plotH), fit, marks)
+  if ui.previewDb.len > 1 and ui.previewHz.len > 1:
+    let dx = ui.previewHz[1] - ui.previewHz[0]
+    let nyquist = if ui.previewDt > 0: 500.0 / ui.previewDt else: ui.previewHz[^1]
+    let axis = spectrumAxis(ui.previewF1, ui.previewF2, nyquist)
+    var i0 = 0
+    var i1 = ui.previewHz.high
+    while i0 < i1 and ui.previewHz[i0] < axis.lo: inc i0
+    while i1 > i0 and ui.previewHz[i1] > axis.hi: dec i1
+    if i1 <= i0:
+      i0 = 0
+      i1 = ui.previewHz.high
+    let n = i1 - i0 + 1
+    var db = newSeq[float32](n)
+    for i in 0 ..< n: db[i] = float32(ui.previewDb[i0 + i])
+    let env = columnEnvelope(db, ui.previewHz[i0], dx, cols)
+    var spec = CurvePlot(xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude (dB)",
+      yUnit: "dB", xs: env.xs, xFloor: axis.lo, xCeil: axis.hi,
+      curves: @[Curve(name: "amplitude", colour: ink, ys: env.ys)])
+    discard curves.drawCurvePlot(ui.spectrumPlot, "generate.spectrum", spec, t,
+      ImVec2_c(x: -1, y: plotH), spectrumFitKey(ui.shownGen, ui.previewF1,
+      ui.previewF2, nyquist), marks)
+
+proc followPreview(ui: var ReferencesUi; g: GeneratedReference; key, problem: string) =
+  let ready = takeGeneratePreview()
+  # A result is shown only when it is the latest ask, not an older one that
+  # reused the generation number.
+  if ready.got and ready.key == key:
+    if ready.problem.len == 0:
+      ui.previewSamples = ready.samples
+      ui.previewHz = ready.hz
+      ui.previewDb = ready.db
+      ui.shownGen = ready.gen
+      ui.previewDt = ui.askedDt
+      ui.previewF1 = g.f1Hz
+      ui.previewF2 = g.f2Hz
+    elif problem.len == 0:
+      ui.genMessage = ready.problem
+  if problem.len > 0:
+    ui.genMessage = problem
+    return
+  ui.genMessage = ""
+  if key != ui.liveKey:
+    ui.liveKey = key
+    ui.stable = 0
+  else:
+    inc ui.stable
+  let wait = if ui.askedKey.len == 0: 0 else: 4
+  if ui.stable >= wait and ui.askedKey != key:
+    ui.askedKey = key
+    ui.askedDt = g.dtMs
+    inc ui.askedGen
+    askGeneratePreview(ui.askedGen, g)
 
 proc drawGenerate(ui: var ReferencesUi; t: Theme; marks: var Marks): ReferencesOutput =
   const id = "Generate a reference###generate-reference"
   if ui.genAsk:
     igOpenPopup_Str(id.cstring, 0)
     ui.genAsk = false
-  igSetNextWindowSize(ImVec2_c(x: igGetFontSize() * 36, y: 0), ImGui_Cond_Appearing.cint)
-  if not igBeginPopupModal(id.cstring, nil, ImGui_WindowFlags_AlwaysAutoResize.cint): return
+  let font = igGetFontSize()
+  # font×60 holds the settings, including the optional boost and parameter,
+  # both plots and the buttons. The buttons are drawn under a child that
+  # takes the rest, so they stay inside at any size.
+  igSetNextWindowSize(ImVec2_c(x: font * 46, y: font * 62), ImGui_Cond_FirstUseEver.cint)
+  igSetNextWindowSizeConstraints(ImVec2_c(x: font * 36, y: font * 60),
+    ImVec2_c(x: 4000, y: 4000), nil, nil)
+  if not igBeginPopupModal(id.cstring, nil, 0): return
   marks.markWindow("generate")
+  let footer = igGetFrameHeightWithSpacing()
+  discard igBeginChild_Str("##generate.body", ImVec2_c(x: 0, y: -footer),
+    ImGui_ChildFlags_NavFlattened.cint, 0)
   igTextUnformatted("Name", nil)
-  igSameLine(igGetFontSize() * 12, -1)
+  igSameLine(font * 12, -1)
   igSetNextItemWidth(-1)
   if ui.genName.len < 160: setBuf(ui.genName, "")
   discard igInputText("##gen.name", cast[cstring](addr ui.genName[0]), csize_t(ui.genName.len),
     0, nil, nil)
   marks.mark("generate.name")
+  igSeparatorText("Sweep")
   discard number("Start Hz", ui.genF1, "generate.f1", marks)
   discard number("End Hz", ui.genF2, "generate.f2", marks)
   discard number("Length ms", ui.genLength, "generate.length", marks)
   discard number("Sample interval ms", ui.genDt, "generate.dt", marks)
-  discard number("Taper start ms", ui.genTaper0, "generate.taper0", marks)
-  discard number("Taper end ms", ui.genTaper1, "generate.taper1", marks)
   discard number("Amplitude", ui.genAmp, "generate.amplitude", marks)
-  igTextUnformatted("Sweep", nil)
-  igSameLine(igGetFontSize() * 12, -1)
-  if igBeginCombo("##law", lawTitle(ui.genLaw).cstring, 0):
+  if combo("Sweep", lawTitle(ui.genLaw), "generate.law", marks):
     for law in ReferenceLaw:
       if igSelectable_Bool(lawTitle(law).cstring, law == ui.genLaw, 0, ImVec2_c(x: 0, y: 0)):
         ui.genLaw = law
+      marks.mark("generate.law " & $law)
     igEndCombo()
-  marks.mark("generate.law")
   if ui.genLaw in {rlDbPerOctave, rlDbPerHz}:
     discard number("Boost dB", ui.genBoost, "generate.boost", marks)
-  let key = $ui.genLaw & $ui.genF1 & $ui.genF2 & $ui.genLength & $ui.genDt &
-    $ui.genTaper0 & $ui.genTaper1 & $ui.genAmp & $ui.genBoost
-  if key != ui.previewKey:
-    ui.previewKey = key
-    let g = GeneratedReference(law: ui.genLaw, f1Hz: ui.genF1, f2Hz: ui.genF2,
-      durationMs: ui.genLength, dtMs: ui.genDt, taperStartMs: ui.genTaper0,
-      taperEndMs: ui.genTaper1, amplitude: ui.genAmp, boostDb: ui.genBoost)
-    let tooLong = sweepTooLong(g)
-    if tooLong.len > 0:
-      ui.preview.setLen 0
-      ui.genMessage = tooLong
-    else:
-      let shown = previewGenerate(g)
-      try:
-        ui.preview = generateSamples(shown)
-        ui.genMessage = if shown.durationMs < g.durationMs:
-            "preview of the first " & msWords(shown.durationMs) & " ms"
-          else: ""
-      except CatchableError as e:
-        ui.preview.setLen 0
-        ui.genMessage = e.msg
-  if ui.preview.len > 1:
-    var xs, ys: seq[float64]
-    let step = max(1, ui.preview.len div 400)
-    var i = 0
-    while i < ui.preview.len:
-      xs.add float64(i) * ui.genDt
-      ys.add float64(ui.preview[i])
-      inc i, step
-    if ImPlot_BeginPlot("##preview", ImVec2_c(x: -1, y: igGetFontSize() * 8),
-        ImPlot_Flags_NoLegend.cint or ImPlot_Flags_NoMenus.cint):
-      ImPlot_SetupAxis(ImAxis_X1.cint, "ms", ImPlot_AxisFlags_AutoFit.cint)
-      ImPlot_SetupAxis(ImAxis_Y1.cint, nil, ImPlot_AxisFlags_AutoFit.cint)
-      ImPlot_SetupFinish()
-      ImPlot_PlotLine_doublePtrdoublePtr("sweep", addr xs[0], addr ys[0], cint(xs.len), 0, 0,
-        sizeof(float64).cint)
-      ImPlot_EndPlot()
-    marks.mark("generate.preview")
-  if ui.genMessage.len > 0:
+  igSeparatorText("Taper")
+  if combo("Shape", taperShapeTitle(ui.genShape), "generate.shape", marks,
+      ImGui_ComboFlags_HeightLargest.cint):
+    for shape in TaperShape:
+      if igSelectable_Bool(taperShapeTitle(shape).cstring, shape == ui.genShape, 0,
+          ImVec2_c(x: 0, y: 0)):
+        ui.pickShape(shape)
+      marks.mark("generate.shape " & $shape)
+    igEndCombo()
+  let paramLabel = taperParamLabel(ui.genShape)
+  if paramLabel.len > 0:
+    if ui.genParam.isNaN: ui.genParam = taperDefaultParam(ui.genShape)
+    discard number(paramLabel, ui.genParam, "generate.param", marks)
+    tip(case ui.genShape
+      of tpKaiser: "Kaiser beta, from 0 to 50"
+      of tpGaussian: "Gaussian sigma, in ramp lengths, above 0"
+      of tpPower: "Power exponent, above 0; 1 is a linear ramp"
+      else: "")
+  discard number("Taper start ms", ui.genTaper0, "generate.taper0", marks)
+  discard number("Taper end ms", ui.genTaper1, "generate.taper1", marks)
+  igSeparatorText("Phase")
+  discard number("Phase", ui.genPhase, "generate.phase", marks)
+  tip("Degrees. 180 reverses the polarity")
+  let g = ui.asked
+  let key = settingsKey(g)
+  let problem = generateProblem(g)
+  ui.followPreview(g, key, problem)
+  ui.previewKey = key
+  igDummy(ImVec2_c(x: 1, y: 1))
+  marks.mark("generate.previewkey." & key)
+  let spacing = igGetStyle().ItemSpacing.y
+  let room = igGetContentRegionAvail().y
+  let plotH = max(1'f32, (room - spacing) / 2)
+  if problem.len > 0:
     igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
-    igTextWrapped("%s", ui.genMessage.cstring)
+    igTextWrapped("%s", problem.cstring)
     igPopStyleColor(1)
-  let tooLong = sweepTooLong(GeneratedReference(law: ui.genLaw, f1Hz: ui.genF1,
-    f2Hz: ui.genF2, durationMs: ui.genLength, dtMs: ui.genDt))
-  if igButton("Generate", ImVec2_c(x: 0, y: 0)) and tooLong.len == 0 and
-      not ui.genMessage.startsWith("a sweep of"):
-    var g = GeneratedReference(name: bufText(ui.genName), law: ui.genLaw, f1Hz: ui.genF1,
-      f2Hz: ui.genF2, durationMs: ui.genLength, dtMs: ui.genDt, taperStartMs: ui.genTaper0,
-      taperEndMs: ui.genTaper1, amplitude: ui.genAmp, boostDb: ui.genBoost)
-    if g.name.len == 0: g.name = defaultGenerateName(g)
-    result.commands.add Command(kind: ckGenerateReference, refGenerate: g)
+    marks.mark("generate.message")
+  elif ui.previewSamples.len > 1:
+    ui.drawPlots(t, plotH, marks)
+  else:
+    igTextUnformatted("Computing the preview...", nil)
+    marks.mark("generate.computing")
+  igEndChild()
+  igBeginDisabled(problem.len > 0)
+  if igButton("Generate", ImVec2_c(x: 0, y: 0)) and problem.len == 0:
+    var made = g
+    if made.name.len == 0: made.name = defaultGenerateName(made)
+    result.commands.add Command(kind: ckGenerateReference, refGenerate: made)
     igCloseCurrentPopup()
+  igEndDisabled()
   marks.mark("generate.ok")
   igSameLine(0, -1)
   if igButton("Cancel", ImVec2_c(x: 0, y: 0)): igCloseCurrentPopup()

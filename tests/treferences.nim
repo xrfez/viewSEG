@@ -197,7 +197,7 @@ proc main*() =
       durationMs: 1000, dtMs: 2, amplitude: 1)).len == 0
     let shown = previewGenerate(GeneratedReference(law: rlLinear, f1Hz: 8, f2Hz: 80,
       durationMs: 100_000, dtMs: 2, amplitude: 1))
-    doAssert shown.durationMs / shown.dtMs <= float64(PreviewPoints), $shown.durationMs
+    doAssert shown.durationMs == 100_000, "a preview is the whole sweep, not its start"
 
   block the_lock_is_the_per_user_one:
     # Seen to fail: with no lock around the index write, files.lock was not made.
