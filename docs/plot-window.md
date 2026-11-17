@@ -761,7 +761,19 @@ right of that line's first row. A change works it out again.
     choice by hand and stays for that file; on another file with the codes they decide
     again (the Messages say so), and a file without them keeps the roles as they were.
     The agent state's `roles.source` says which: `window order`, `trace identification
-    codes` or `chosen by hand`.
+    codes`, `chosen by hand` or `remembered for this file layout`. The codes are not
+    always right (two converters put the mass and the baseplate in the other order), so
+    a line above the table says who is who ("Ref trace 1 · GF trace 4 · M trace 3 · B
+    trace 2 — from the trace identification codes"; its tooltip has the codes' words),
+    **Swap mass and baseplate** (beside B) puts them right in one click and **Roles from
+    the codes** (beside Ref) goes back. A hand choice is remembered per **file layout**
+    (the record's trace count and its code sequence): in the project when one is open
+    (`vibRole` entries in `project.nif`), else in the user settings, and every later
+    file of that layout opens with it; another layout is not affected. Opened on the
+    pilot of a record that has the vibrator codes, the window takes every trace of the
+    record (16 at most), and each role's list shows "trace 7 · code 30 (not in the
+    standard)", so any trace can be picked for any role (the codes outside the standard
+    have no meaning here).
   - **Which reference.** When the project has a reference chosen (References), Ref's list
     offers **Project reference: name** first, and it is the default: the phase, frequency
     and force are measured against what the unit was meant to sweep. The recorded R trace

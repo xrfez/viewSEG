@@ -7,6 +7,8 @@
 ##   trace identification codes 21, 19, 18, 20 (reference, baseplate, reaction
 ##   mass, ground force); the last is `VibLoud` times larger. Coordinates on all
 ##   four, which are auxiliary.
+## - `vibFourAgainSegy()`: a second file of that layout; `vibOtherFourSegy()`: four
+##   traces with codes 21, 18, 19, 20.
 ## - `vibThirteenSegy()`: thirteen traces with codes 21, 19, 18, 20, 29, 28, 30,
 ##   33, 34, 35, 36, 1, 1; every field record number 0; the binary header claims
 ##   `VibClaimed` traces per ensemble. Coordinates on traces 10 to 12 only.
@@ -71,6 +73,16 @@ proc writeVib(path: string; codes: openArray[int16]; record: float64; loud: bool
 proc vibFourSegy*(fx: Fixtures): string =
   result = fx.dir / "vib-four.sgy"
   if not fileExists(result): writeVib(result, VibFourCodes, 1, true, located = {0, 1, 2, 3})
+
+proc vibFourAgainSegy*(fx: Fixtures): string =
+  ## Another file of `vibFourSegy`'s layout (four traces, codes 21, 19, 18, 20).
+  result = fx.dir / "vib-four-again.sgy"
+  if not fileExists(result): writeVib(result, VibFourCodes, 2, true)
+
+proc vibOtherFourSegy*(fx: Fixtures): string =
+  ## Four traces with codes 21, 18, 19, 20: a layout of its own.
+  result = fx.dir / "vib-other-four.sgy"
+  if not fileExists(result): writeVib(result, [21'i16, 18, 19, 20], 3, false)
 
 proc vibThirteenSegy*(fx: Fixtures): string =
   result = fx.dir / "vib-thirteen.sgy"

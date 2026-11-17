@@ -187,9 +187,10 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   ## A vibrator signature's roles (a table: role, trace, polarity), then its
   ## masses, harmonics and Limits..., with Freeze at the right of that line.
   ## Limits... opens the check and the eight boxes.
-  let names = st.traceNames(w)
-  let combo = round(igCalcTextSize("trace 00000", nil, false, -1).x + igGetFrameHeight() +
-    2 * igGetStyle().FramePadding.x)
+  let names = st.vibTraceNames(w)
+  var longest = igCalcTextSize("trace 00000", nil, false, -1).x
+  for n in names: longest = max(longest, igCalcTextSize(n.cstring, nil, false, -1).x)
+  let combo = round(longest + igGetFrameHeight() + 2 * igGetStyle().FramePadding.x)
   let polar = round(igCalcTextSize("as recorded", nil, false, -1).x + igGetFrameHeight() +
     2 * igGetStyle().FramePadding.x)
   # The project's chosen reference, offered first in the Ref role's list: what the unit
@@ -207,12 +208,16 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
                  else: combo
   let planeAt = st.findPlot(w.id)
   let fileRefPlace = if planeAt >= 0: st.vibReferencePlace(planeAt) else: -1
+  # who is who, in plain sight
+  if planeAt >= 0:
+    igTextUnformatted(st.vibRolesLine(w, long = false).cstring, nil)
+    marks.mark(name & ".roles line")
+    tip(st.vibRolesLine(w))
   const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint
   if igBeginTable(("##roles" & name).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
     igTableSetupColumn("Role", 0, 0, 0)
     igTableSetupColumn("Trace", 0, 0, 0)
     igTableSetupColumn("Polarity", 0, 0, 0)
-    igTableHeadersRow()
     template roleRow(role: string; field: untyped; what: string) =
       igTableNextRow(0, 0)
       discard igTableSetColumnIndex(0)
@@ -271,7 +276,12 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
       tip(what)
     roleRow("Ref", reference, "The reference: the pilot, the phase origin")
     discard igTableSetColumnIndex(2)
-    igTextUnformatted("as recorded", nil)
+    if planeAt >= 0 and igSmallButton("Roles from the codes##codes"):
+      p.roles = st.codeRoles(planeAt)
+      changed = true
+    marks.mark(name & ".roles from codes")
+    tip("Ref is as recorded. This button: the roles as the traces' identification codes " &
+      "give them, and the choice remembered for this file layout forgotten")
     roleRow("GF", groundForce, "The ground force, as recorded")
     polarityCombo("GF", groundForcePolarity, "Reversed: times -1. Automatic: reversed " &
       "when its mean phase to the reference is past ±90° (wiring)")
@@ -281,7 +291,13 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
       "force they make")
     roleRow("B", baseplate, "The baseplate's acceleration")
     discard igTableSetColumnIndex(2)
-    igTextUnformatted("with M", nil)
+    if igSmallButton("Swap mass and baseplate##swap"):
+      swap(p.roles.mass, p.roles.baseplate)
+      changed = true
+    marks.mark(name & ".swap")
+    tip("B has M's polarity. This button: the mass takes the baseplate's trace and the " &
+      "baseplate the mass's. Remembered for files of this layout (the record's trace " &
+      "count and codes), in the project when one is open")
     igEndTable()
   var typed = 0.0
   let units = st.settings.units

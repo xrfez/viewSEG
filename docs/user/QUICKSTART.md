@@ -789,6 +789,13 @@ force, 18 reaction mass, 19 baseplate), whatever order the traces are in; the wi
 says "roles taken from the trace identification codes". Without those codes the roles are
 the window's order. A role you change stays as you set it for that file; on another file
 with the codes they are taken from the codes again, and the Messages say so.
+The codes are not always right (two converters put the mass and the baseplate the other
+way round): a line above the roles table says who is who, **Swap mass and baseplate** fixes it
+in one click, and **Roles from the codes** goes back. Your choice is remembered for files of
+the same layout (the same trace count and code sequence), in the project when one is open,
+else in your settings, so the next file of that kind needs no click. Every trace of such a
+record can be picked for a role; a code outside the standard is shown as "code 30 (not in the
+standard)", nothing more.
 Two curves: **raw**, the trace with its own filter (without the strip's filters), and
 **processed**, through the strip's filters only (a band-pass shows as the processed
 curve falling away outside its corners, a notch as a dip at its frequency). A trace's

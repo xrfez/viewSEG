@@ -52,6 +52,9 @@ type
       ## the traces carry the SEG-Y vibrator codes (21 reference, 20 ground force,
       ## 18 reaction mass, 19 baseplate), which say who is who
     rsHand = "chosen by hand" ## a choice made in the window (or given by a command)
+    rsRemembered = "remembered for this file layout"
+      ## a choice made by hand on an earlier file of the same layout (the trace count of
+      ## the record and its code sequence), kept in the project or the user's settings
 
   VibRoles* = object
     ## A vibrator signature's roles: each one's place among the window's
@@ -228,6 +231,64 @@ func withCodeRoles*(roles: VibRoles; codes: openArray[int16]; file: string): Vib
     result.baseplate = places.baseplate
     result.source = rsCodes
     result.handFile = ""
+
+const MaxLayoutKeyCodes = 64
+
+func layoutKey*(codes: openArray[int16]): string =
+  ## A file layout: how many traces the record has and their identification codes in
+  ## order ("4/21.19.18.20"; the first 64 codes of a longer record).
+  result = $codes.len & "/"
+  for i, c in codes:
+    if i >= MaxLayoutKeyCodes: break
+    if i > 0: result.add '.'
+    result.add $c
+
+func choiceText*(layout: string; places: array[4, int]): string =
+  ## A hand choice of roles kept for `layout`, as text: the layout, then the record's
+  ## trace (from 0, -1 none) of Ref, GF, M and B: "4/21.19.18.20 0.3.1.2".
+  result = layout & " "
+  for i, p in places:
+    if i > 0: result.add '.'
+    result.add $p
+
+func parseChoice*(text: string; layout: var string; places: var array[4, int]): bool =
+  ## Reads what `choiceText` wrote.
+  let parts = text.split(' ')
+  if parts.len != 2 or parts[0].len == 0: return false
+  let ps = parts[1].split('.')
+  if ps.len != 4: return false
+  var got: array[4, int]
+  for i, x in ps:
+    try: got[i] = parseInt(x)
+    except ValueError: return false
+    if got[i] notin -1 .. 100_000_000: return false
+  (layout, places) = (parts[0], got)
+  true
+
+func choiceFor*(choices: openArray[string]; layout: string; places: var array[4, int]): bool =
+  ## Whether `choices` hold one for `layout`, and its places.
+  for c in choices:
+    var l = ""
+    var p: array[4, int]
+    if parseChoice(c, l, p) and l == layout:
+      places = p
+      return true
+
+func withChoice*(choices: seq[string]; layout: string; places: array[4, int]): seq[string] =
+  ## `choices` with the one for `layout` set (the newest last; the oldest of 256 goes).
+  for c in choices:
+    var l = ""
+    var p: array[4, int]
+    if parseChoice(c, l, p) and l != layout: result.add c
+  result.add choiceText(layout, places)
+  if result.len > 256: result.delete 0
+
+func withoutChoice*(choices: seq[string]; layout: string): seq[string] =
+  ## `choices` without the one for `layout`.
+  for c in choices:
+    var l = ""
+    var p: array[4, int]
+    if parseChoice(c, l, p) and l != layout: result.add c
 
 template stopped*(stop: StopCheck): bool =
   not stop.isNil and stop()

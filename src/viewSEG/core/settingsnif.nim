@@ -339,6 +339,10 @@ proc settingsDocument*(s: Settings): string =
   w.value("lastProject", s.lastProject)
   w.value("reopenProject", s.reopenProject)
   w.value("referenceId", s.referenceId)
+  if s.vibRoles.len > 0:
+    w.open("vibRoles")
+    for c in s.vibRoles: w.add c
+    w.close()
   w.open("plot")
   w.display(s.plot.display)
   w.value("seismic", s.plot.seismic)
@@ -893,6 +897,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
       of "lastProject": r.text(c, result.lastProject, allowEmpty = true)
       of "reopenProject": r.flag(c, result.reopenProject)
       of "referenceId": r.text(c, result.referenceId, allowEmpty = true)
+      of "vibRoles": r.strings(c, result.vibRoles)
       of "plot": r.plot(c, result.plot)
       of "scale":
         for k in c.kids:

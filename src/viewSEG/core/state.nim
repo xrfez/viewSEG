@@ -983,6 +983,9 @@ type
     chosenRef: string
       ## the reference the plots use; "" is none (a vibrator signature then
       ## uses the file's pilot; a correlation draws nothing)
+    vibLayouts: seq[string]
+      ## the vibrator signature's roles chosen by hand, per file layout, in force (the
+      ## project's, else the settings'; `choiceText`)
     refsLoaded: bool
     mainRefsLoaded: bool
     refsRev: int ## bumps when the archive or the choice changes, so a plot asks again
@@ -1186,6 +1189,7 @@ proc keepSettingsIn*(state: var AppState; dir: string; loaded: LoadedSettings) =
     state.log.add(severity, "settings", text)
   state.settings = cleaned(loaded.settings)[0]
   state.kept = state.settings
+  if state.project.dir.len == 0: state.vibLayouts = state.settings.vibRoles
   state.defaults = cleaned(loaded.defaults)[0]
   state.configDir = dir
   state.keepsSettings = loaded.saveable
@@ -1291,6 +1295,7 @@ proc rememberFilesIn*(state: var AppState; dir: string) =
   if state.project.dir.len == 0:
     state.refsHome = state.mainRefsHome
     state.chosenRef = state.settings.referenceId
+    state.vibLayouts = state.settings.vibRoles
     state.loadReferences(state.mainRefsHome, main = true)
 
 func store*(state: AppState): lent Store {.inline.} =
@@ -5193,6 +5198,7 @@ proc leaveProject(state: var AppState; restoreUser: bool) =
   state.refs = state.mainRefs
   state.refsLoaded = state.mainRefsLoaded
   state.chosenRef = state.settings.referenceId
+  state.vibLayouts = state.settings.vibRoles
   inc state.refsRev
   var s = state.settings
   if p.doc.hasPresets: s.displayPresets = p.userPresets
@@ -5462,6 +5468,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   state.refs = ReferenceIndex()
   state.refsLoaded = false
   state.chosenRef = p.doc.referenceId
+  state.vibLayouts = p.doc.vibRoles
   inc state.refsRev
   state.loadReferences(state.refsHome, main = false)
   state.change(by, s):

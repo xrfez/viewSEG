@@ -93,6 +93,9 @@ type
     hasPresets*: bool              ## `displayPresets` were set in the project (else the user's)
     referenceId*: string
       ## the reference the plots use in this project; "" is the file's own pilot
+    vibRoles*: seq[string]
+      ## the vibrator signature's roles chosen by hand in this project, per file layout
+      ## (`choiceText`)
     vendorChoice*: VendorChoice
       ## the vendor map rule of the project's files (`core/vendormaps`); automatic when
       ## the document says nothing
