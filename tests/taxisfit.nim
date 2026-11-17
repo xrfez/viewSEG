@@ -62,4 +62,20 @@ proc main*() =
     doAssert not p.x and not p.y, "follow off: only options fit"
     doAssert f.plan("c", span(0, 200), span(-3, 3), follow = false).y
 
+  block unreadableAxis:
+    # an axis showing limits that are not numbers, have no span, or (the user not having
+    # zoomed it) hold none of the data is one to fit again; a zoomed one is left alone
+    # unless it has no numbers or no span; no finite data, nothing is judged
+    # Seen to fail: with `degenerate` false for a view far from the data, "far from the data".
+    doAssert degenerate(span(NaN, NaN), span(0, 1), false), "NaN"
+    doAssert degenerate(span(NaN, NaN), span(0, 1), true), "NaN, zoomed"
+    doAssert degenerate(span(3, 3), span(0, 5), false), "no span"
+    doAssert degenerate(span(4, 2), span(0, 5), true), "negative span, zoomed"
+    doAssert degenerate(span(10, 20), span(0, 5), false), "far from the data"
+    doAssert degenerate(span(-9, -8), span(0, 5), false), "far below the data"
+    doAssert not degenerate(span(10, 20), span(0, 5), true), "a zoom away from the data"
+    doAssert not degenerate(span(1, 2), span(0, 5), false), "a view inside the data"
+    doAssert not degenerate(span(-1, 9), span(0, 5), false), "a view around the data"
+    doAssert not degenerate(span(NaN, NaN), span(NaN, NaN), false), "no data"
+
 when isMainModule: main()

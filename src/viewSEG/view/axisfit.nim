@@ -77,3 +77,14 @@ func seen*(f: var AxisFit; x, y: Span) =
 func userZoomed*(f: AxisFit; x: bool): bool =
   ## Whether the user moved axis x (else y) off its fit.
   f.zoomed[if x: 0 else: 1]
+
+func finite(x: float64): bool {.inline.} = x.classify in {fcNormal, fcSubnormal, fcZero, fcNegZero}
+
+func degenerate*(view, data: Span; zoomed: bool): bool =
+  ## Whether an axis showing `view` is one the user cannot read, for data
+  ## spanning `data` (finite, or nothing is judged): the view's limits are not
+  ## numbers or have no span; or, the user not having zoomed it, it holds no
+  ## part of the data. The caller fits the axis to the data again.
+  if not (data.lo.finite and data.hi.finite): return false
+  if not (view.lo.finite and view.hi.finite) or not (view.hi > view.lo): return true
+  not zoomed and (view.hi < data.lo or view.lo > data.hi)

@@ -69,6 +69,13 @@ type
     ## PNG bytes of `pixels` (`w` by `h`, rows from the top), or "" and why
     ## not; called on the server thread
 
+  PlotAxes* = object
+    ## The axes of one plot of an analysis window as the frontend drew them last
+    ## frame (NaN limits: not drawn, or not numbers) and whether the user moved
+    ## each off its fit.
+    xLo*, xHi*, yLo*, yHi*: float64
+    xZoomed*, yZoomed*: bool
+
   Frontend* = object
     ## What only the frontend can do. A nil hook: that part is not available
     ## (a test without a window).
@@ -78,6 +85,8 @@ type
     drawnView*: proc (panel: PanelId; view: var Viewport): bool {.closure.}
       ## the view `panel`'s picture was last drawn for; false when the
       ## frontend draws no picture of that panel
+    plotAxes*: proc (id: string): PlotAxes {.closure.}
+      ## the axes of plot `id` ("new plot 2.plot 3": the window's mark, the plot's index)
     showView*: proc (panel: PanelId; view: Viewport): bool {.closure.}
       ## shows `view` in `panel`'s plot, as a pan or zoom of the user's would;
       ## false when the frontend has no plot for it
@@ -533,7 +542,14 @@ func evenlyOf(n, limit: int): seq[int] =
     for k in 0 ..< limit: result.add int(round(float64(k) * float64(n - 1) /
       float64(limit - 1)))
 
-proc plotJson(w: AnalysisWindow; units: UnitSystem; limit: int): JsonNode =
+func rangeJson(lo, hi: float64): JsonNode =
+  ## `[lo, hi]`; null when either is not a number (the plot was not drawn, or its
+  ## axis has no numbers: nothing to read on it).
+  if lo.classify in {fcNan, fcInf, fcNegInf} or hi.classify in {fcNan, fcInf, fcNegInf}:
+    newJNull()
+  else: %*[lo, hi]
+
+proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): JsonNode =
   ## An analysis window: what it shows and how, and its numbers: each plot's
   ## curves at most `limit` points (evenly), an image's size, axes and, per
   ## column (at most `limit`), the y of its largest value.
@@ -556,7 +572,11 @@ proc plotJson(w: AnalysisWindow; units: UnitSystem; limit: int): JsonNode =
       else:
         for i in at: ys.add toJson(if i < c.ys.len: c.ys[i] else: NaN)
         curves.add %*{"name": c.name, "style": $c.style, "ys": ys}
+    var axes = PlotAxes(xLo: NaN, xHi: NaN, yLo: NaN, yHi: NaN)
+    if fe.plotAxes != nil: axes = fe.plotAxes("new plot " & $w.id & ".plot " & $plots.len)
     plots.add %*{"title": p.title, "x": p.xLabel, "y": p.yLabel, "xs": xs, "curves": curves,
+      "xRange": rangeJson(axes.xLo, axes.xHi), "yRange": rangeJson(axes.yLo, axes.yHi),
+      "zoomed": {"x": axes.xZoomed, "y": axes.yZoomed},
       "explain": explainPane(w, units, plots.len)}
   result = %*{"id": w.id, "title": w.title, "view": $w.view, "frozen": w.frozen,
     "params": toJson(w.params), "traces": clipped(w.traces, limit), "reference": w.reference,
@@ -914,7 +934,7 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
     r["spectra"] = list
   if "plots" in wanted:
     var list = newJArray()
-    for w in state.plots: list.add plotJson(w, state.settings.units, limit)
+    for w in state.plots: list.add plotJson(w, fe, state.settings.units, limit)
     r["plots"] = list
   if "project" in wanted: r["project"] = state.projectJson(limit)
   if "compare" in wanted: r["compare"] = state.compareJson

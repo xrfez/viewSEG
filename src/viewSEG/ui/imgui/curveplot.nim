@@ -26,14 +26,16 @@ import marks, style
 type
   CurvePlotUi* = object
     ## A curve plot's state between frames.
-    axes: AxisFit      ## what the axes were last fitted to (`view/axisfit`)
+    axes: AxisFit        ## what the axes were last fitted to (`view/axisfit`)
     screenLo, screenHi: float64
     screenPx: int
     screenKey: string
-    screenStamp: Hash  ## of the data the screen copy was made from
-    screen: seq[Curve] ## peak-kept for the range on screen; redone when it changes
+    screenStamp: Hash    ## of the data the screen copy was made from
+    screen: seq[Curve]   ## peak-kept for the range on screen; redone when it changes
     haveScreen: bool
-    band: SignalBand   ## a dense signal's columns for the range on screen
+    band: SignalBand     ## a dense signal's columns for the range on screen
+    seen: array[2, Span] ## the limits the last frame ended with, x then y
+    haveSeen: bool
 
   CurveOutput* = object
     reading*: Reading
@@ -49,7 +51,29 @@ type
       ## where the Explain icon goes
 
 var shownLimits: Table[string, (Span, Span)]
-  ## per plot id, the x and y limits it ended its last frame with (for tests)
+  ## per plot id, the x and y limits it ended its last frame with (for tests and
+  ## agent control)
+var shownZoom: Table[string, (bool, bool)]
+  ## per plot id, whether the user has moved the x and the y axis off its fit
+var poisoned: Table[string, (Span, Span)]
+  ## tests: limits a plot takes as the ones its last frame ended with
+var refits: Table[string, int]
+  ## per plot id, how many times the guard fitted an unreadable axis again
+
+proc poisonAxes*(id: string; x, y: Span) =
+  ## Tests: the next frame of plot `id` takes `x` and `y` as the limits the last
+  ## frame ended with (a state ImPlot itself would not leave: NaN, no span, far from
+  ## the data), so that the guard against an unreadable axis is seen at work.
+  poisoned[id] = (x, y)
+
+proc axisRefitsOf*(id: string): int =
+  ## How many times the guard fitted plot `id`'s axes to its data again.
+  refits.getOrDefault(id, 0)
+
+proc axisZoomedOf*(id: string): (bool, bool) =
+  ## Whether the user has zoomed or panned plot `id`'s x and y axis since it was
+  ## fitted (false for a plot not drawn).
+  shownZoom.getOrDefault(id, (false, false))
 
 proc axisLimitsOf*(id: string): (Span, Span) =
   ## The x and y limits the plot `id` ended its last frame with, as it is
@@ -124,6 +148,20 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   let yl = p.yLimits
   ImPlot_SetupAxisLimitsConstraints(xAxis, xl.lo, xl.hi)
   ImPlot_SetupAxisLimitsConstraints(yAxis, yl.lo, yl.hi)
+  # The guard: an axis the last frame ended unreadable (limits not numbers, no span, or
+  # none of the data in view with the user not having zoomed it) is fitted to the data
+  # again on this frame.
+  if id in poisoned:
+    let (px, py) = poisoned[id]
+    ui.seen = [px, py]
+    ui.haveSeen = true
+    poisoned.del id
+  if ui.haveSeen:
+    let badX = degenerate(ui.seen[0], Span(lo: xl.lo, hi: xl.hi), ui.axes.userZoomed(true))
+    let badY = degenerate(ui.seen[1], Span(lo: yl.lo, hi: yl.hi), ui.axes.userZoomed(false))
+    if badX or badY:
+      ui.axes = AxisFit()
+      refits[id] = refits.getOrDefault(id, 0) + 1
   let fit = ui.axes.plan(fitKey, Span(lo: xl.lo, hi: xl.hi), Span(lo: yl.lo, hi: yl.hi), follow)
   ImPlot_SetupAxisLimits(xAxis, xl.lo, xl.hi,
     if fit.x: ImPlot_Cond_Always.cint else: ImPlot_Cond_Once.cint)
@@ -282,5 +320,8 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   let seenY = Span(lo: ended.Y.Min, hi: ended.Y.Max)
   ui.axes.seen(seenX, seenY)
   shownLimits[id] = (seenX, seenY)
+  shownZoom[id] = (ui.axes.userZoomed(true), ui.axes.userZoomed(false))
+  ui.seen = [seenX, seenY]
+  ui.haveSeen = true
   ImPlot_EndPlot()
   if p.roomRight: ImPlot_PopStyleVar(1)

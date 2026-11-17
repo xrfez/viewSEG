@@ -43,6 +43,7 @@ import imguin/glad/gl
 import ../../core/[filesystem, geometry, screens, state, watchdog]
 import ../../platform/[paths, trayguard, trayhost]
 import ../../remote/control
+import curveplot as curveplotui
 import ../../view/jobstatus
 import aboutbox, agentshot, chrome, dpi, filelist, fonts, frames, genpreview, headerswindow, icons,
   settingswindow, shortcutswindow,
@@ -1588,6 +1589,10 @@ proc frontendOf(ui: ptr Ui; minimized: bool): Frontend =
   result.drawnView = proc (panel: PanelId; view: var Viewport): bool =
     result = panel == MainPanel
     if result: view = ui.trace.drawnView
+  result.plotAxes = proc (id: string): PlotAxes =
+    let (x, y) = curveplotui.axisLimitsOf(id)
+    let (zx, zy) = curveplotui.axisZoomedOf(id)
+    PlotAxes(xLo: x.lo, xHi: x.hi, yLo: y.lo, yHi: y.hi, xZoomed: zx, yZoomed: zy)
   result.showView = proc (panel: PanelId; view: Viewport): bool =
     result = panel == MainPanel
     if result: ui.trace.show(view)
@@ -1599,6 +1604,10 @@ proc frontendOf(ui: ptr Ui; minimized: bool): Frontend =
       Shot(error: "the window is minimized")
   else:
     result.shoot = proc (target: string): Shot = ui[].shoot(target)
+
+proc frontend*(frame: FrameInfo): Frontend =
+  ## What agent control gets of this frontend, as this frame drew it (tests).
+  frontendOf(frame.ui, false)
 
 proc glProc(name: cstring): pointer {.cdecl, gcsafe, raises: [].} =
   ## The GL loader the GPU layer uses.

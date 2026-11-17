@@ -27,7 +27,7 @@ import std/[json, monotimes, os, strutils, tables, times]
 import ../core/state
 import protocol, server, tools
 
-export Frontend, PngEncoder, Shot, ShotTargets, ToolNames
+export Frontend, PlotAxes, PngEncoder, Shot, ShotTargets, ToolNames
 
 const
   CallsPerFrame* = 8

@@ -40,11 +40,15 @@ type
   PlotWindowsUi* = object
     ## The analysis windows' state between frames.
     curves: Table[int, seq[CurvePlotUi]] ## per window id, per plot
-    under: Table[int, PlotCursor]        ## per window id: the cell under the pointer last frame
-    readout*: Table[int, string]         ## per window id: what its cursor read last frame (tests)
-    toFront: HashSet[int]                ## windows to bring forward when next drawn
-    heat: Table[int, HeatCache]          ## per window id: the image as drawn, cut to the pixels
-    maps: array[ColourMap, int]          ## ImPlot's index of each density colour map + 1; 0: not added
+    curveKeys: Table[int, seq[string]]
+      ## per window id, what each of `curves` is the state of (a plot's axes), so a
+      ## plot put in or taken out (the force from M and B, once both masses are
+      ## entered) does not hand its neighbours its limits
+    under: Table[int, PlotCursor] ## per window id: the cell under the pointer last frame
+    readout*: Table[int, string] ## per window id: what its cursor read last frame (tests)
+    toFront: HashSet[int] ## windows to bring forward when next drawn
+    heat: Table[int, HeatCache] ## per window id: the image as drawn, cut to the pixels
+    maps: array[ColourMap, int] ## ImPlot's index of each density colour map + 1; 0: not added
 
   PlotWindowsOutput* = object
     commands*: seq[Command]
@@ -736,7 +740,16 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   else:
     let plots = r.curvePlots(t, st.settings.units)
     var uis = ui.curves.getOrDefault(w.id)
-    if uis.len != plots.len: uis.setLen plots.len
+    var keys: seq[string] = @[]
+    for p in plots: keys.add p.xLabel & "|" & p.yLabel
+    let oldKeys = ui.curveKeys.getOrDefault(w.id)
+    if oldKeys != keys:
+      var moved = newSeq[CurvePlotUi](plots.len)
+      for j, key in keys:
+        let at = oldKeys.find(key)
+        if at in 0 ..< uis.len: moved[j] = uis[at]
+      uis = moved
+      ui.curveKeys[w.id] = keys
     let gap = igGetStyle().ItemSpacing.y
     # Each plot the room shared out, but no lower than nine lines: below
     # that the plots scroll, in a region of their own.
@@ -833,6 +846,7 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
     if id notin ids: gone.add id
   for id in gone:
     ui.curves.del id
+    ui.curveKeys.del id
     ui.under.del id
     ui.heat.del id
     ui.readout.del id
