@@ -174,22 +174,24 @@ type
     r: ptr ReaderObj
     src: ReaderSource
     name: string
-    shown: Positions     ## the traces the filter keeps, in the file's order
-    positions: Positions ## the same, in the order shown
-    sorted: bool         ## `positions` follow the newest order taken
-    orderGen: uint64     ## requests from before the newest order are not served
+    shown: Positions          ## the traces the filter keeps, in the file's order
+    positions: Positions      ## the same, in the order shown
+    sorted: bool              ## `positions` follow the newest order taken
+    orderGen: uint64          ## requests from before the newest order are not served
     layout: PanelLayout
     raw: RawCache
-    owed: ReaderRequest  ## the record's level to work out when nothing else waits
+    owed: ReaderRequest       ## the record's level to work out when nothing else waits
     hasOwed: bool
-    basisRaw: RawCache   ## the samples of the traces `owed` reads, as decoded
+    basisRaw: RawCache        ## the samples of the traces `owed` reads, as decoded
     ws: Workspace
-    pool: ProcessPool    ## the processing's workers; none until first needed
-    toldCut: bool        ## the file was found cut short while it was open: said once
-    toldIo: bool         ## a read of the file failed (its drive): said once until one succeeds
-    lastIo: bool         ## the tile just made had rows its drive failed (`serve` says so)
-    toldNotNumbers: bool ## samples that are not numbers were found in the file: said once
-    toldFilters: string  ## what was said last of the filters of `toldPath`: said once
+    pool: ProcessPool         ## the processing's workers; none until first needed
+    toldCut: bool             ## the file was found cut short while it was open: said once
+    toldFile: ptr SeismicFile ## the file `toldCut` and `toldIo` are about
+    toldFilePath: string
+    toldIo: bool              ## a read of the file failed (its drive): said once until one succeeds
+    lastIo: bool              ## the tile just made had rows its drive failed (`serve` says so)
+    toldNotNumbers: bool      ## samples that are not numbers were found in the file: said once
+    toldFilters: string       ## what was said last of the filters of `toldPath`: said once
     toldPath: string
 
 proc `=destroy`*(x: PanelReader)
@@ -250,8 +252,6 @@ proc letGo(rd: var Reader) =
   rd.owed = ReaderRequest()
   rd.hasOwed = false
   rd.basisRaw = RawCache()
-  rd.toldCut = false
-  rd.toldIo = false
   rd.lastIo = false
   rd.toldNotNumbers = false
 
@@ -288,6 +288,12 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
   rd.src = src
   rd.name = rd.src.path.extractFilename
   if rd.src.file == nil: return
+  if rd.src.file != rd.toldFile or rd.src.path != rd.toldFilePath:
+    # another file, or the same opened again: what was said of the one before
+    # is said again (a gather, a filter or a hidden trace is the same file)
+    (rd.toldFile, rd.toldFilePath) = (rd.src.file, rd.src.path)
+    rd.toldCut = false
+    rd.toldIo = false
   let f = rd.src.file
   let g = rd.src.traces
   if not f[].hasKeys: # files are opened with their keys; without them nothing here works
@@ -586,9 +592,11 @@ proc tellUnread(rd: var Reader; failed, shown: int; cut, io: bool) =
     rd.lastIo = true
     if not rd.toldIo:
       rd.toldIo = true
+      let again = if rd.src.file[].readFailed:
+          "A file read through a map stays unread until it is opened again: Retry opens it again."
+        else: "They are read again with Retry, or when the plot moves, once it answers."
       rd.note(sevWarning, rd.name & ": " & what & " could not be read and are drawn blank: " &
-        "its drive is not answering (a read of the file failed). They are read again with " &
-        "Retry, or when the plot moves, once it answers.")
+        "its drive is not answering (a read of the file failed). " & again)
   elif cut and not rd.toldCut:
     rd.toldCut = true
     rd.note(sevWarning, rd.name & " was cut short while it was open (another program cut it " &
@@ -847,7 +855,7 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
         rd.note(sevWarning, $tile.failed & " of the " & $q.count & " traces shown could not " &
           "be read and are drawn blank" & (if firstError.len > 0: ": " & firstError else: "") &
           ".")
-    elif not given and not level:
+    elif not given and not level and not f[].readFailed:
       rd.toldIo = false # (said again if its drive fails again)
   if given: return
   tile.filtered = pr.filtered

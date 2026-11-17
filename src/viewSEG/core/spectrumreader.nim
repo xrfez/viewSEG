@@ -153,7 +153,8 @@ proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Ca
   ## it read, or -1 when a newer request came first.
   var missing: seq[int]
   for t in list:
-    if t notin cache.traces: missing.add t
+    # (a row that failed is read again: a drive may answer, a cut is found at once)
+    if t notin cache.traces or cache.traces[t].failed: missing.add t
   if missing.len == 0: return 0
   let f = a.file
   p.beat(a.path)
@@ -170,8 +171,10 @@ proc readMissing(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; cache: var Ca
       let n = min(c.rows.numSamples(k), b.cols)
       var h = Held(samples: newSeq[float32](max(n, 0)), failed: failed[k])
       if n > 0: copyMem(addr h.samples[0], b.rowPtr(k), n * sizeof(float32))
+      let t = missing[c.first + k]
+      if t in cache.traces: cache.values -= cache.traces[t].samples.len
       cache.values += n
-      cache.traces[missing[c.first + k]] = move h
+      cache.traces[t] = move h
     inc result, c.count
     # given up between chunks only: what is read whole is served
     if result < missing.len and p.interrupted(a.id):

@@ -33,10 +33,6 @@ const
   Traces = 2000
   Samples = 1000
   Kept = 1000 ## the traces the cut leaves
-  TraceBytes = 240 + Samples * 4
-  Reach = 128
-    ## the traces before a cut that fail with it: parseSEG fails the chunk
-    ## of traces whose read meets the cut
 
 func said(log: MessageLog; part: string): int =
   for e in log:
@@ -61,11 +57,13 @@ func hasSamples(t: Tile; row: int): bool =
 proc unreadable(st: AppState): bool = st.waiting(0).kind == wkUnreadable
 
 proc cutAt(path: string; traces: int) =
-  ## Truncates `path` (the same file, as another program would) to its
-  ## header and `traces` traces.
-  let size = 3600 + traces * TraceBytes
+  ## Truncates `path` (the same file, as another program would) to just
+  ## before trace `traces`, where the file's own index says it begins.
+  var f = openSeismic(path)
+  let size = f.index.entries[traces].offset
+  f.close()
   doAssert size < getFileSize(path)
-  writeFile(path, readFile(path)[0 ..< size])
+  writeFile(path, readFile(path)[0 ..< int(size)])
 
 proc opened(st: var AppState; path: string; access: AccessChoice) =
   st.apply Command(kind: ckReopen, reopenPath: path, openChoice: OpenChoice(access: access))
@@ -91,10 +89,10 @@ proc main*() =
       var beyond = 0 # (the tile holds the view's margins too)
       for t in across.traces:
         if t >= Kept: inc beyond
-      doAssert across.failed >= beyond and across.failed <= beyond + Reach and beyond > 0,
+      doAssert across.failed == beyond and beyond > 0,
         $access & ": failed " & $across.failed & ", " & $beyond & " lie past the cut"
       for r, t in across.traces:
-        if t < Kept - Reach:
+        if t < Kept:
           doAssert across.hasSamples(r), $access & ": trace " & $t & " before the cut"
         elif t >= Kept:
           doAssert not across.hasSamples(r), $access & ": trace " & $t & " past it"
@@ -128,6 +126,27 @@ proc main*() =
       doAssert st.settle(not st.spectra[w].waiting), "the FFT window did not answer"
       if access == acMapped:
         doAssert "cut short" in st.spectra[w].spectrum.problem, st.spectra[w].spectrum.problem
+      st.shutdown()
+
+  block cutIsSaidOnceForTheFile:
+    # Gathers stepped to past the cut, and a filter changed, make new sources
+    # for the same file: still one line.
+    withFixtures fx:
+      let path = fx.dir / "gathers.sgy"
+      copyFile(fx.manyRecordsSegy(), path)
+      var st = initAppState(watchEvery = initDuration(hours = 1))
+      st.opened(path, acMapped)
+      writeFile(path, readFile(path)[0 ..< int(getFileSize(path) div 2)])
+      for g in [90000, 90001, 90002, 90003]:
+        st.apply Command(kind: ckGather, panel: MainPanel, gather: g)
+        discard st.settle(st.panel(MainPanel).laidOut)
+        st.apply Command(kind: ckView, panel: MainPanel,
+          view: fitAll(st.panel(MainPanel).layout, 800, 600))
+        doAssert waitUntil((discard st.drainInbox(); st.tiles(0).len > 0 and
+          st.tiles(0)[^1].failed == 1)),
+          "gather " & $g & ": the trace past the cut was not read as failed"
+      doAssert st.log.said("was cut short while it was open") == 1,
+        "said " & $st.log.said("was cut short while it was open") & " times"
       st.shutdown()
 
   block aReadThatFailsIsReadAgain:

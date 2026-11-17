@@ -313,6 +313,7 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
       let cols = max(1, f.maxSamples(traces))
       ws.reserve(traceAmplitudeWorkspace(cols))
       ctx.setPhase "reading the record"
+      discard f.cutShort # parseSEG's guard: stale cached bytes are not read past a cut
       var first = if samples: traces.a else: traces.b + 1
       while first <= traces.b:
         let part = first .. min(traces.b, first + QcChunk - 1)
@@ -323,10 +324,18 @@ proc recordQcWork*(file: ptr SeismicFile; path: string; session: SessionId; base
         if own.len > 0: applyOwnQc(samples, f, part, own, ws)
         var failed: seq[int]
         for d in log:
+          # (a trace the file's cut or its drive made unreadable is not an
+          # undecodable one: it is left out of that count)
           if d.loc.trace in part and (d.loc.trace - part.a) notin failed:
             failed.add d.loc.trace - part.a
+        var notDecoded: seq[int]
+        for r in failed:
+          var unread = false
+          for d in log:
+            if d.loc.trace == part.a + r and d.code in {dcTruncated, dcIo}: unread = true
+          if not unread: notDecoded.add r
         failed.sort()
-        for r in failed: hits[mfUndecodable].traces.add base + part.a + r
+        for r in notDecoded: hits[mfUndecodable].traces.add base + part.a + r
         let dt = f.index.keys[part.a].intervalUs / 1000
         let meta = initChunkMeta(f.rowsOf(part), (if dt > 0: dt else: 1.0), 0, failed)
         traceAmplitudeInto(samples, meta, AmplitudeParams(), amps.toOpenArray(part.a - traces.a,
