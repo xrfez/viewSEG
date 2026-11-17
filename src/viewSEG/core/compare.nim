@@ -5,7 +5,7 @@
 ##
 ## The numbers are processSEG's: a spectrum and its phase
 ## (`amplitudeInto`), decibels (`toDbInto`), a correlation coefficient
-## (`crossCorrelateInto`), a sample shift (`shiftSamples`), a polarity flip
+## (`crossCorrelateInto`), a sample shift (`timeShift`), a polarity flip
 ## (`reversePolarity`), an RMS (`traceStats`) and a scale (`scale`). The
 ## phase picture is the one the FFT window already draws (`phasepicture`).
 ## Nothing here resamples. A shift is a whole number of samples, either
@@ -15,7 +15,7 @@
 ## out and the reason is said in plain words. Windowing is by sample index.
 
 import std/[math, strutils]
-import processSEG/core/[basic, shift, workspace]
+import processSEG/core/[basic, timeshift, workspace]
 import processSEG/fft/spectrum
 import processSEG/gain/stats
 import processSEG/vibroseis/[crosscorrelate, sweeptrack]
@@ -131,16 +131,6 @@ func chipText*(slot: CompareSlot; which: CompareWhich; align = ""): string =
   if slot.reversed: result.add ", reversed"
   if slot.filtered: result.add ", own filter"
   if align.len > 0: result.add " (" & align & ")"
-
-func wholeSamples*(ms, dtMs: float64): int =
-  ## The whole number of samples nearest `ms`. 0 when `ms` is not a finite
-  ## number or `dtMs` is not a positive interval. A huge ratio is clamped so
-  ## a shift past the row still zeroes it rather than overflowing.
-  if ms.classify in {fcNan, fcInf, fcNegInf} or not (dtMs > 0): return 0
-  let r = round(ms / dtMs)
-  if r.classify in {fcInf, fcNegInf} or r > 1e9: return 1_000_000_000
-  if r < -1e9: return -1_000_000_000
-  int(r)
 
 func appliedShiftMs*(ms, dtMs: float64): float64 =
   ## `ms` snapped to the nearest sample of `dtMs`. NaN when `ms` is: no
@@ -345,7 +335,7 @@ proc applyAlign(b: var seq[float32]; a: openArray[float32]; dtMs: float64;
     else:
       # A whole number of samples is a move: exact, no interpolation.
       let n = wholeSamples(ms, dtMs)
-      shiftSamples(b, float64(n))
+      timeShift(b, n)
       result.shiftMs = float64(n) * dtMs
       var text = formatFloat(result.shiftMs, ffDecimal, 1)
       if text == "-0.0": text = "0.0"
