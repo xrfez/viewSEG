@@ -86,8 +86,9 @@ proc answered(st: AppState): bool =
   not p.pending.isEmpty and p.pending.gen == p.requestGen and st.tiles(0).len > 0 and
     st.tiles(0)[^1].request == p.pending
 
-proc openPlot(st: var AppState; view: AnalysisView; traces: seq[int]): int =
-  st.apply Command(kind: ckOpenPlot, plotView: view, plotTraces: traces)
+proc openPlot(st: var AppState; view: AnalysisView; traces: seq[int];
+    params = AnalysisParams()): int =
+  st.apply Command(kind: ckOpenPlot, plotView: view, plotTraces: traces, plotParams: params)
   result = st.plots.high
   doAssert st.settle(st.plots[result].result.gen > 0 and not st.plots[result].waiting),
     "no answer for " & $view & ": " & st.plots[result].result.problem
@@ -149,7 +150,8 @@ proc main*() =
     doAssert plainPhase.len > 8, "a one-trace spectrum has no phase"
     let spec = st.openPlot(avSpectrogram, @[base + 1])
     let specBefore = st.plots[spec].result.image.values
-    let env = st.openPlot(avEnvelope, @[base + 1])
+    # the trace's own phase (a reference chosen below would make it a difference)
+    let env = st.openPlot(avEnvelope, @[base + 1], AnalysisParams(phaseAgainst: paSelf))
     let envBefore = st.plots[env].result.plots[0].curves[1].ys
     let instBefore = st.plots[env].result.plots[1].curves[0].ys
     let phase = st.openPlot(avPhase, @[base + 1])
@@ -310,7 +312,8 @@ proc main*() =
     let spec = st.spectrumOf(@[base + 1])
     let plainPhase = st.spectra[spec].spectrum.rawPhase
     let plainAmp = st.spectra[spec].spectrum.raw
-    let env = st.openPlot(avEnvelope, @[base + 1])
+    # the trace's own phase (a reference chosen below would make it a difference)
+    let env = st.openPlot(avEnvelope, @[base + 1], AnalysisParams(phaseAgainst: paSelf))
     let envBefore = st.plots[env].result.plots[0].curves[1].ys
     let instBefore = st.plots[env].result.plots[1].curves[0].ys
     let phase = st.openPlot(avPhase, @[base + 1])
@@ -386,7 +389,8 @@ proc main*() =
     let spec = st.spectrumOf(@[base + 1])
     let plainPhase = st.spectra[spec].spectrum.rawPhase
     let plainAmp = st.spectra[spec].spectrum.raw
-    let env = st.openPlot(avEnvelope, @[base + 1])
+    # the trace's own phase (a reference chosen below would make it a difference)
+    let env = st.openPlot(avEnvelope, @[base + 1], AnalysisParams(phaseAgainst: paSelf))
     let instBefore = st.plots[env].result.plots[1].curves[0].ys
     let phase = st.openPlot(avPhase, @[base + 1])
     let phaseBefore = st.plots[phase].result.plots[1].curves[0].ys
