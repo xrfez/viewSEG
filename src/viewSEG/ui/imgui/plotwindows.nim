@@ -19,7 +19,7 @@
 
 import std/[math, sets, strutils, tables]
 import imguin/cimgui
-import ../../core/[colourmaps, explain, geometry, plotcursor, state, units]
+import ../../core/[colourmaps, explain, geometry, plotcursor, plotoptions, state, units]
 import ../../view/[analysisview, curveplot, theme]
 import chrome, curveplot as curves, explainicon, icons, marks, placement, spectrumwindow,
   style
@@ -56,6 +56,9 @@ proc tip(text: string) =
       ImGui_HoveredFlags_AllowWhenDisabled.cint) and igBeginItemTooltip():
     igTextUnformatted(text.cstring, nil)
     igEndTooltip()
+
+const ResetTip = "Back to the built-in options for this kind of plot. They are then what a " &
+  "new window of this kind opens with"
 
 const PlotFreeze* = "keep these traces while the plot moves on"
   ## The Freeze pin's sentence. The pin's tooltip is that, after "Freeze: ".
@@ -131,6 +134,18 @@ proc limitBox(id: string; value: float64; width: float32; typed: var float64): b
   let got = $cast[cstring](addr heldBoxes[id].text[0])
   typed = try: parseFloat(got.strip) except ValueError: NaN
   igIsItemDeactivatedAfterEdit()
+
+proc drawReset(line: ControlLine; w: AnalysisWindow; name: string; marks: var Marks;
+    p: var AnalysisParams; changed: var bool) =
+  ## "Reset options", on the control line: this kind's options back to the
+  ## built-in ones (a plot of a kind with none has no button).
+  if not w.view.hasOptions: return
+  line.follow(buttonWidth("Reset options"))
+  if igSmallButton("Reset options##reset"):
+    p = builtin(w.view, p)
+    changed = true
+  marks.mark(name & ".reset")
+  tip(ResetTip)
 
 proc sameMass(a, b: float64): bool {.inline.} =
   a == b or (a.isNaN and b.isNaN)
@@ -261,6 +276,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     "whether they are checked. On, they are drawn on the plots, the points past them " &
     "marked, and a pass or fail table shown per signal; judged on the ground forces " &
     "over the sweep less its tapers")
+  line.drawReset(w, name, marks, p, changed)
   if igBeginPopup("##limits", 0):
     if igCheckbox("Check against limits", addr p.limitsOn): changed = true
     marks.mark(name & ".limits.check")
@@ -440,6 +456,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       tip("On: the traces as recorded. Off: through the Seismic window's filters, so the " &
         "effect of a filter shows")
     of avVibrator: discard
+    line.drawReset(w, name, marks, p, changed)
     if line.drawFreeze(name, PlotFreeze, name & ".freeze", frozen, t, marks):
       frozen = not frozen
       changed = true

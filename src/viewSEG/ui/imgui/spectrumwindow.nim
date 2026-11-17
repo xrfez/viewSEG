@@ -30,7 +30,7 @@ type
     phases: Table[int, CurvePlotUi]       ## per window id: its phase plot
     readout*: Table[int, string]          ## per window id: what the pointer read last frame (tests)
     readAt*: Table[int, int]              ## per window id: the bin it read; -1 for none (tests)
-    widths: Table[int, array[3, float32]] ## per window id: the control groups, as drawn last frame
+    widths: Table[int, array[4, float32]] ## per window id: the control groups, as drawn last frame
     front: int                            ## the live panel's `front` followed last
 
   SpectraOutput* = object
@@ -90,8 +90,8 @@ func responseTip*(w: SpectrumWindow): string =
   else: "The plot has no pass band or notch to draw"
 
 proc drawControls(w: SpectrumWindow; name: string; t: Theme;
-    widths: var array[3, float32]; marks: var Marks; res: var SpectraOutput) =
-  ## The controls in three groups that wrap as wholes (the scale, the curves,
+    widths: var array[4, float32]; marks: var Marks; res: var SpectraOutput) =
+  ## The controls in groups that wrap as wholes (the scale, the curves,
   ## Visible time), before the Freeze pin; each change is a `ckSpectrumDisplay`.
   var d = w.display
   var frozen = w.frozen
@@ -170,6 +170,14 @@ proc drawControls(w: SpectrumWindow; name: string; t: Theme;
         else: "The time this window is frozen on (" &
           valueText(w.visibleMs.lo) & " to " & valueText(w.visibleMs.hi) &
           " ms); off: the whole trace")
+  if w.id != LiveSpectrum:
+    group(3):
+      if igSmallButton("Reset options##reset"):
+        d = SpectrumDisplay()
+        changed = true
+      marks.mark(name & ".reset")
+      tip("Back to the built-in options for an FFT window. They are then what a new FFT " &
+        "window opens with")
   const sentence = "keep these traces while the plot moves on"
   if line.drawFreeze(name, sentence, name & ".freeze", frozen, t, marks):
     frozen = not frozen

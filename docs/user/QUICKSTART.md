@@ -748,6 +748,15 @@ plot: it shows the traces it was opened on until the plot changes, then the sele
 the record on show, or the traces in view when nothing is selected, and a new record or
 file. Freeze keeps those traces and that file; the title names them ("Frozen · trace 12 ·
 FFID 1 · shots.sgy"). Unfreezing follows at once.
+Each kind of graph window remembers the options you set in it, and a new window of that kind
+opens with them, also after a restart: an FFT window's scale, log frequency, curves and
+phase picture; a spectrogram's frame, overlap, floor and colour map; a phase spectrum's
+threshold and picture; a cross-correlation's lags; a vibrator signature's masses, harmonics
+and limits; an f-k's floor, colour map and Raw. Windows already open keep their own. What is
+not an option is not remembered: the traces, the vibrator's roles, the f-k's time box,
+Freeze, the zoom. **Reset options** (on the window's control line) puts the built-in options
+back, and they become the remembered ones. The envelope and node orientation plots have no
+options.
 Two curves: **raw**, the trace with its own filter (without the strip's filters), and
 **processed**, through the strip's filters only (a band-pass shows as the processed
 curve falling away outside its corners, a notch as a dip at its frequency). A trace's
@@ -996,7 +1005,8 @@ Exponential's rate, power and cutoff; the sort order and the display header: a n
 starts as you left the last one; polarity is not kept), the cursor
 time line, scale units and screen calibrations, the status bar's fields, the sort presets
 and your own sort keys, the Messages window's toggles, and the Headers window's tabs,
-toggles and columns. It is saved a second after a change and when you quit.
+toggles and columns, and the options of each kind of graph window (above). It is saved a
+second after a change and when you quit.
 
 **File > Settings...** chooses **Units**: **Metric** (the default: kilograms, metres per
 second, newtons) or **Imperial** (pounds, feet per second, pounds-force). A plot's mass
