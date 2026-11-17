@@ -74,6 +74,16 @@ proc everyFieldSet(): Settings =
       DisplayPreset(name: "Wiggles", display: DisplaySettings(fills: {}, overlap: 3,
       fixedClip: 2))],
     tray: TrayOptions(icon: false, minimize: true),
+    plotOptions: PlotOptions(
+      spectrogram: SpectrogramOptions(windowMs: 64, overlap: 50, floorDb: -80,
+        colourMap: cmRedBlack),
+      phase: PhaseOptions(phaseWithinDb: 30, phasePicture: ppSigned),
+      correlation: CorrelationOptions(maxLagMs: 100),
+      vibrator: VibratorOptions(reactionMassKg: 3500, baseplateMassKg: 1500.5, harmonics: 7,
+        limitsOn: true, limits: VibLimits(phaseDeg: 12, meanPhaseDeg: 6, thdPct: 30,
+        meanThdPct: 15, harmonicPct: 8, forceLow: 100, forceHigh: 500, peakForce: 900,
+        meanForceLow: 120, skipStartMs: 50)),
+      fk: FkOptions(floorDb: -90, colourMap: cmGrey, raw: true)),
     componentColours: [Rgba(r: 1, g: 2, b: 3, a: 255), Rgba(r: 4, g: 5, b: 6, a: 255),
       Rgba(r: 7, g: 8, b: 9, a: 255), Rgba(r: 10, g: 11, b: 12, a: 255)],
     referenceId: "r-pilot", units: usImperial)
@@ -212,6 +222,8 @@ proc main*() =
       doAssert a != b, "spectrum window field " & name & " is at its default"
     for name, a, b in fieldPairs(s.spectrum.live, d.spectrum.live):
       doAssert a != b, "spectrum live field " & name & " is at its default"
+    for name, a, b in fieldPairs(s.plotOptions, d.plotOptions):
+      doAssert a != b, "plot options " & name & " are at their defaults"
     for name, a, b in fieldPairs(s.tray, d.tray):
       doAssert a != b, "tray field " & name & " is at its default"
     let (back, problems) = roundTrip(s)

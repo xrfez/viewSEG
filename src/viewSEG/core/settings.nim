@@ -22,10 +22,10 @@
 ## change from one to the other).
 
 import std/math
-import components, displaypresets, geometry, join, log, mapkinds, panels, readout, scales,
-  spectra, tracetable, units
+import components, displaypresets, geometry, join, log, mapkinds, panels, plotoptions, readout,
+  scales, spectra, tracetable, units
 
-export displaypresets, join, mapkinds, readout, scales, spectra, units
+export displaypresets, join, mapkinds, plotoptions, readout, scales, spectra, units
 
 type
   Calibration* = object
@@ -178,6 +178,8 @@ type
       ## killed traces are left out of the plot (the traces beside them close
       ## up); off: drawn blank
     spectrum*: SpectrumOptions ## the spectrum windows' display
+    plotOptions*: PlotOptions
+      ## the New plot windows' options, per kind: a new window opens with them
     displayPresets*: seq[DisplayPreset] ## named displays, in the order made
     tray*: TrayOptions ## the tray icon and minimizing to it
     componentColours*: array[4, Rgba] = DefaultComponentColours

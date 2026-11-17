@@ -47,6 +47,12 @@
 ##    (response true) (phase false) (phasePicture unwrapped))
 ##   (live (scale db) (logFrequency false) (time visible) (raw true) (processed true)
 ##    (response true) (phase false) (phasePicture unwrapped)))
+##  (plotOptions
+##   (spectrogram (windowMs 128.0) (overlap 75.0) (floorDb -60.0) (colourMap viridis))
+##   (phase (phaseWithinDb 20.0) (phasePicture unwrapped))
+##   (correlation (maxLagMs 250.0))
+##   (vibrator (reactionMassKg 3500.0) (harmonics 5) (limitsOn false) (limits (phaseDeg 10.0)))
+##   (fk (floorDb -60.0) (colourMap viridis) (raw false)))
 ##  (displayPresets
 ##   (preset "Section" (mode density) (colourMap viridis) (gain none) ...))
 ##  (tray (icon true) (minimize false))
@@ -65,8 +71,9 @@
 ## module's own, not the program's labels, so a label can change without
 ## making old files unreadable.
 
-import std/strutils
-import geometry, join, log, nif, panels, readout, scales, settings, tracetable, units
+import std/[math, strutils]
+import analysis, geometry, join, log, nif, panels, plotoptions, readout, scales, settings,
+  tracetable, units
 
 export nif
 
@@ -231,6 +238,40 @@ proc spectrumDisplay(w: var NifWriter; tag: string; d: SpectrumDisplay) =
   w.choice("phasePicture", PhasePictureNames[d.phasePicture])
   w.close()
 
+proc writePlotOptions(w: var NifWriter; o: PlotOptions) =
+  ## The New plot windows' remembered options, a tree per kind. A mass or a
+  ## limit that is not set is left out.
+  w.open("plotOptions")
+  w.open("spectrogram")
+  w.value("windowMs", o.spectrogram.windowMs)
+  w.value("overlap", o.spectrogram.overlap)
+  w.value("floorDb", o.spectrogram.floorDb)
+  w.choice("colourMap", ColourMapNames[o.spectrogram.colourMap])
+  w.close()
+  w.open("phase")
+  w.value("phaseWithinDb", o.phase.phaseWithinDb)
+  w.choice("phasePicture", PhasePictureNames[o.phase.phasePicture])
+  w.close()
+  w.open("correlation")
+  w.value("maxLagMs", o.correlation.maxLagMs)
+  w.close()
+  w.open("vibrator")
+  if not o.vibrator.reactionMassKg.isNaN: w.value("reactionMassKg", o.vibrator.reactionMassKg)
+  if not o.vibrator.baseplateMassKg.isNaN: w.value("baseplateMassKg", o.vibrator.baseplateMassKg)
+  w.value("harmonics", o.vibrator.harmonics)
+  w.value("limitsOn", o.vibrator.limitsOn)
+  w.open("limits")
+  for name, x in fieldPairs(o.vibrator.limits):
+    if not x.isNaN: w.value(name, x)
+  w.close()
+  w.close()
+  w.open("fk")
+  w.value("floorDb", o.fk.floorDb)
+  w.choice("colourMap", ColourMapNames[o.fk.colourMap])
+  w.value("raw", o.fk.raw)
+  w.close()
+  w.close()
+
 proc writeJoinOptions*(w: var NifWriter; j: JoinOptions) =
   ## The survey import's options in a `(join ...)` tree, as the settings
   ## file holds them (a project keeps its import's the same way).
@@ -376,6 +417,7 @@ proc settingsDocument*(s: Settings): string =
   w.spectrumDisplay("window", s.spectrum.window)
   w.spectrumDisplay("live", s.spectrum.live)
   w.close()
+  w.writePlotOptions(s.plotOptions)
   w.writeDisplayPresets(s.displayPresets)
   w.open("tray")
   w.value("icon", s.tray.icon)
@@ -729,6 +771,58 @@ proc spectrumDisplay(r: var Reading; n: NifNode; d: var SpectrumDisplay) =
     elif k.isTree("phasePicture"): r.choice(k, PhasePictureNames, d.phasePicture)
     else: r.unknown(k, n.tag)
 
+proc ranged(r: var Reading; n: NifNode; range: SettingRange; x: var float64) =
+  ## `(tag v)`: `x` = v when `range` allows it.
+  var v = NaN
+  r.number(n, -Inf, Inf, v)
+  if v.isNaN: return # not a number: said already
+  if range.allows(v): x = v
+  else: r.unusable(n.kids[0], n.tag, "a number " & range.words)
+
+proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
+  for k in n.kids:
+    if k.isTree("spectrogram"):
+      for c in k.kids:
+        if c.isTree("windowMs"): r.ranged(c, WindowMsRange, o.spectrogram.windowMs)
+        elif c.isTree("overlap"): r.ranged(c, OverlapRange, o.spectrogram.overlap)
+        elif c.isTree("floorDb"): r.ranged(c, FloorDbRange, o.spectrogram.floorDb)
+        elif c.isTree("colourMap"): r.choice(c, ColourMapNames, o.spectrogram.colourMap)
+        else: r.unknown(c, "spectrogram")
+    elif k.isTree("phase"):
+      for c in k.kids:
+        if c.isTree("phaseWithinDb"): r.ranged(c, PhaseWithinRange, o.phase.phaseWithinDb)
+        elif c.isTree("phasePicture"): r.choice(c, PhasePictureNames, o.phase.phasePicture)
+        else: r.unknown(c, "phase")
+    elif k.isTree("correlation"):
+      for c in k.kids:
+        if c.isTree("maxLagMs"): r.ranged(c, LagMsRange, o.correlation.maxLagMs)
+        else: r.unknown(c, "correlation")
+    elif k.isTree("vibrator"):
+      for c in k.kids:
+        if c.isTree("reactionMassKg"): r.ranged(c, MassKgRange, o.vibrator.reactionMassKg)
+        elif c.isTree("baseplateMassKg"): r.ranged(c, MassKgRange, o.vibrator.baseplateMassKg)
+        elif c.isTree("harmonics"):
+          var h = o.vibrator.harmonics
+          r.integer(c, int(HarmonicRange.lo), int(HarmonicRange.hi), h)
+          o.vibrator.harmonics = h
+        elif c.isTree("limitsOn"): r.flag(c, o.vibrator.limitsOn)
+        elif c.isTree("limits"):
+          for l in c.kids:
+            var known = false
+            for name, x in fieldPairs(o.vibrator.limits):
+              if l.isTree(name):
+                known = true
+                r.ranged(l, NumberRange, x)
+            if not known: r.unknown(l, "limits")
+        else: r.unknown(c, "vibrator")
+    elif k.isTree("fk"):
+      for c in k.kids:
+        if c.isTree("floorDb"): r.ranged(c, FloorDbRange, o.fk.floorDb)
+        elif c.isTree("colourMap"): r.choice(c, ColourMapNames, o.fk.colourMap)
+        elif c.isTree("raw"): r.flag(c, o.fk.raw)
+        else: r.unknown(c, "fk")
+    else: r.unknown(k, "plotOptions")
+
 proc readJoinOptions*(n: NifNode; name: string; base: JoinOptions;
     problems: var seq[string]): JoinOptions =
   ## The options a `(join ...)` tree written by `writeJoinOptions` holds,
@@ -869,6 +963,7 @@ proc readSettings*(doc: openArray[NifNode]; name: string; base: Settings;
           if k.isTree("window"): r.spectrumDisplay(k, result.spectrum.window)
           elif k.isTree("live"): r.spectrumDisplay(k, result.spectrum.live)
           else: r.unknown(k, "spectrum")
+      of "plotOptions": r.plotOptions(c, result.plotOptions)
       of "displayPresets": r.displayPresets(c, result.displayPresets)
       of "tray":
         for k in c.kids:

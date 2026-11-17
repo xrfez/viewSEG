@@ -382,8 +382,12 @@ proc openPlot(state: var AppState; cmd: Command) =
       $traces.len & " traces.")
   state.shapeOpened(cmd.plotView, i, traces)
   template p: untyped = state.panels[k]
+  # Settings not given (the built-in ones) open with the options last used for the kind
+  let params = if cmd.plotParams == AnalysisParams():
+                 state.settings.plotOptions.applied(cmd.plotView, cmd.plotParams)
+               else: cmd.plotParams
   var w = AnalysisWindow(id: freePlotId(state.plots), view: cmd.plotView,
-    params: cmd.plotParams, panel: p.id, file: s.name, record: s.recordText(traces[0]),
+    params: params, panel: p.id, file: s.name, record: s.recordText(traces[0]),
     traces: traces.mapIt(it + s.base), first: traces[0], processing: spectrumFilters(p),
     since: state.plotGen + 1)
   w.filters = filtersText(w.processing)
@@ -412,6 +416,11 @@ proc showPlot(state: var AppState; cmd: Command) =
     return
   let changed = cmd.plotParams != pw.params
   pw.params = cmd.plotParams
+  # what the user set becomes what a new window of the kind opens with
+  if pw.view.hasOptions and
+      state.settings.plotOptions.applied(pw.view, cmd.plotParams) != cmd.plotParams:
+    state.change(cmd.origin, x):
+      x.plotOptions.remember(pw.view, cmd.plotParams)
   pw.frozen = cmd.plotFrozen # unfrozen, `followPlots` asks again if the plot changed
   inc pw.revision
   if changed and not state.askPlot(w):

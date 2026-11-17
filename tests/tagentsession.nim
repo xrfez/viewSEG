@@ -43,7 +43,7 @@
 ## agent's edits (`keep = true`), "the agent's edits are remembered".
 
 import std/[json, math, os, sequtils, strutils, tables]
-import viewSEG/core/[geometry, state]
+import viewSEG/core/[analysis, colourmaps, geometry, phasepicture, plotoptions, state]
 import viewSEG/remote/[schema, tools]
 import utils/[fixtures, waiting]
 
@@ -112,6 +112,15 @@ const Reached = {
   "spectrum.live.raw": "spectrum display", "spectrum.live.processed": "spectrum display",
   "displayPresets": "display preset",
   "referenceId": "select reference"}.toTable
+  # `plotOptions.<kind>.<field>`, each New plot kind's remembered options: all
+  # reached by "plot display" (`reachedBy`), and all saved when a window sets them
+
+func reachedBy(path: string): string =
+  ## The command an agent gives that changes `path` for the session, "" for none.
+  if path.startsWith("plotOptions."): "plot display"
+  else: Reached[path]
+
+func decided(path: string): bool = path.startsWith("plotOptions.") or path in Reached
 
 proc flatten[T](x: T; at: string; into: var OrderedTable[string, string]) =
   ## Every setting in `x` by its path ("plot.display.mode"), with its value
@@ -166,6 +175,17 @@ const
     ## the live panel shown otherwise than by default (its phase picture is
     ## not the default, unwrapped)
 
+const PlotShown = AnalysisParams(windowMs: 64, overlap: 50, floorDb: -80, colourMap: cmGrey,
+  phaseWithinDb: 30, phasePicture: ppSigned, maxLagMs: 100, fkRaw: true,
+  reactionMassKg: 3500, baseplateMassKg: 1500, harmonics: 8, limitsOn: true,
+  limits: VibLimits(phaseDeg: 12, thdPct: 30, harmonicPct: 8, forceLow: 100, forceHigh: 500,
+  peakForce: 900, meanPhaseDeg: 6, meanThdPct: 15, meanForceLow: 120, skipStartMs: 50,
+  skipEndMs: 60, fromMs: 10, toMs: 900))
+  ## the options of every kind of New plot window away from their defaults
+
+const PlotViews = [avSpectrogram, avPhase, avCorrelation, avVibrator, avFk]
+  ## the kinds of New plot window that have options
+
 const Filters = Processing(raw: true, aux: true, dc: dcTrend, band: pbBandPass, f1: 3, f2: 6,
   f3: 50, f4: 70, notches: @[NotchFilter(hz: 50, widthHz: 3, harmonics: 3)])
   ## filters with every field away from its default (raw is never kept)
@@ -195,7 +215,7 @@ proc main*() =
     var missing, gone: seq[string]
     let leaves = flat(Settings())
     for path in leaves.keys:
-      if path notin Reached: missing.add path
+      if not path.decided: missing.add path
     for path in Reached.keys:
       if path notin leaves: gone.add path
     doAssert missing.len == 0, "a setting nobody has decided on: " & missing.join(", ") &
@@ -347,6 +367,20 @@ proc main*() =
         "plotFrozen": true})
       doAssert st.plots[0].frozen and st.plots[0].params.windowMs == 64 and
         st.plots[0].params.overlap == AnalysisParams().overlap, $st.plots[0].params
+      # the options of every kind, for the session
+      for v in PlotViews:
+        if v != avSpectrogram:
+          st.agent(%*{"kind": "open plot", "plotView": $v, "plotTraces": [st.firstTrace,
+            st.firstTrace + 1, st.firstTrace + 2,
+            st.firstTrace + 3]})
+        st.agent(%*{"kind": "plot display", "plot": st.plots[^1].id,
+          "plotParams": toJson(PlotShown)})
+        doAssert st.settings.plotOptions.applied(v, AnalysisParams()) == PlotShown.optionsOf(v)
+          .applied(v, AnalysisParams()), "the agent's options of " & $v & " were not taken"
+      doAssert st.plots.len == PlotViews.len, $st.plots.len
+      for w in st.plots: st.agent(%*{"kind": "close plot", "plot": w.id})
+      st.agent(%*{"kind": "open plot", "plotView": "spectrogram"})
+      doAssert st.plots[0].params.windowMs == 64, "a new window opens with the agent's options"
       st.agent(%*{"kind": "plot cursor", "plot": st.plots[0].id, "plotCursor": {"held": true,
         "x": 2, "y": 3}})
       doAssert st.plots[0].cursor == PlotCursor(held: true, x: 2, y: 3)
@@ -434,13 +468,13 @@ proc main*() =
       let session = flat(st.settings)
       let kept = flat(st.keptSettings)
       for path, was in before:
-        doAssert kept[path] == was, "the agent's \"" & Reached[path] & "\" reached " & path &
+        doAssert kept[path] == was, "the agent's \"" & reachedBy(path) & "\" reached " & path &
           ", which is saved: " & was & " -> " & kept[path]
-        if Reached[path].len == 0:
+        if reachedBy(path).len == 0:
           doAssert session[path] == was, "an agent changed " & path & " for the session (" &
             was & " -> " & session[path] & "): say so in `Reached`"
         else:
-          doAssert session[path] != was, "the agent's \"" & Reached[path] & "\" did not " &
+          doAssert session[path] != was, "the agent's \"" & reachedBy(path) & "\" did not " &
             "change " & path & " for the session: this test does not show it is not saved"
       doAssert theirs in st.settings.recentFiles and agentDir in st.settings.recentFolders,
         "the recent lists of the session hold what the agent opened"
@@ -471,6 +505,10 @@ proc main*() =
       st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
         spectrumTraces: @[st.firstTrace], spectrumShow: FftShown)
       st.apply Command(kind: ckSpectrumDisplay, spectrum: LiveSpectrum, spectrumShow: LiveShown)
+      for v in PlotViews:
+        st.apply Command(kind: ckOpenPlot, plotView: v, plotTraces: @[st.firstTrace,
+          st.firstTrace + 1, st.firstTrace + 2, st.firstTrace + 3])
+        st.apply Command(kind: ckPlotDisplay, plot: st.plots[^1].id, plotParams: PlotShown)
       st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "window pilot",
         trace: st.firstTrace, fromMs: 0, toMs: -1))
       doAssert st.settle(st.references.entries.len >= 1 and busy(st, fe).len == 0),
@@ -487,7 +525,7 @@ proc main*() =
         filter: TraceFilter(seismic: false, auxiliary: true))
       let kept = flat(st.keptSettings)
       for path, was in before:
-        if Reached[path].len > 0:
+        if reachedBy(path).len > 0:
           doAssert kept[path] != was, "a window's change of " & path & " was not kept"
       doAssert kept == flat(st.settings), "what a window changed is what is kept"
       st.shutdown()
