@@ -142,6 +142,29 @@ proc main*() =
         if result:
           let plots = f.core.plots[1].result.curvePlots(f.theme, f.core.settings.units)
           for i, p in plots: fits("new plot 2.plot " & $i, p, "the harmonic", 0.0))
+    # an analysis window that follows the selection: other traces, new axes
+    step("an envelope of the selected trace", proc (f: FrameInfo) =
+      f.apply(Command(kind: ckSelect, traces: @[7], mode: smReplace))
+      f.apply(Command(kind: ckOpenPlot, plotView: avEnvelope)),
+      proc (f: FrameInfo): bool =
+        result = f.core.plots.len == 3 and not f.core.plots[2].waiting and
+          f.core.plots[2].traces == @[7] and f.markOf("new plot 3.plot 0.data").size.x > 0
+        if result:
+          let plots = f.core.plots[2].result.curvePlots(f.theme, f.core.settings.units)
+          for i, p in plots: fits("new plot 3.plot " & $i, p, "the first trace", 0.0))
+    step("the loud trace selected", proc (f: FrameInfo) =
+      f.apply(Command(kind: ckSelect, traces: @[8], mode: smReplace)),
+      proc (f: FrameInfo): bool =
+        result = f.core.plots[2].traces == @[8] and not f.core.plots[2].waiting and
+          f.markOf("new plot 3.plot 0.data").size.x > 0
+        if result:
+          let plots = f.core.plots[2].result.curvePlots(f.theme, f.core.settings.units)
+          for i, p in plots: fits("new plot 3.plot " & $i, p, "another trace selected", 0.0))
+    step("settled", noop, after(5))
+    step("still fitted", noop, proc (f: FrameInfo): bool =
+      let plots = f.core.plots[2].result.curvePlots(f.theme, f.core.settings.units)
+      for i, p in plots: fits("new plot 3.plot " & $i, p, "the same data again", 0.0)
+      true)
     # the live Spectrum panel keeps its view when the data changes
     var live: (Span, Span)
     step("the panel shown", proc (f: FrameInfo) =
