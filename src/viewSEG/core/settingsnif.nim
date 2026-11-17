@@ -50,8 +50,8 @@
 ##  (plotOptions
 ##   (spectrogram (windowMs 128.0) (overlap 75.0) (floorDb -60.0) (colourMap viridis))
 ##   (phase (phaseWithinDb 20.0) (phasePicture unwrapped))
-##   (correlation (maxLagMs 250.0))
-##   (envelope (phaseAgainst reference))
+##   (correlation (maxLagMs 250.0) (phaseShow absolute))
+##   (envelope (phaseAgainst reference) (phaseShow absolute))
 ##   (vibrator (reactionMassKg 3500.0) (harmonics 5) (limitsOn false) (limits (phaseDeg 10.0)))
 ##   (fk (floorDb -60.0) (colourMap viridis) (raw false)))
 ##  (displayPresets
@@ -120,6 +120,7 @@ const
   PhasePictureNames: array[PhasePicture, string] = ["unwrapped", "magnitude", "signed",
     "delayRemoved"]
   PhaseAgainstNames: array[PhaseAgainst, string] = ["reference", "trace"]
+  PhaseShowNames: array[PhaseShow, string] = ["absolute", "signed"]
   ReadoutNames: array[ReadoutField, string] = ["time", "trace", "channel", "receiver",
     "source", "ffid", "offset", "amplitude", "shotTime", "cursorUtc", "sample", "cdp",
     "inline", "crossline", "sourceXY", "receiverXY", "midpointXY", "sourceZ", "receiverZ",
@@ -138,7 +139,7 @@ func persistedNames*(): seq[seq[string]] =
     @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
     @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames,
-    @PhasePictureNames, @PhaseAgainstNames, @TableScopeNames, @UnitNames]
+    @PhasePictureNames, @PhaseAgainstNames, @PhaseShowNames, @TableScopeNames, @UnitNames]
 
 # ----------------------------------------------------------------- writing --
 
@@ -256,14 +257,17 @@ proc writePlotOptions(w: var NifWriter; o: PlotOptions) =
   w.close()
   w.open("correlation")
   w.value("maxLagMs", o.correlation.maxLagMs)
+  w.choice("phaseShow", PhaseShowNames[o.correlation.phaseShow])
   w.close()
   w.open("envelope")
   w.choice("phaseAgainst", PhaseAgainstNames[o.envelope.phaseAgainst])
+  w.choice("phaseShow", PhaseShowNames[o.envelope.phaseShow])
   w.close()
   w.open("vibrator")
   if not o.vibrator.reactionMassKg.isNaN: w.value("reactionMassKg", o.vibrator.reactionMassKg)
   if not o.vibrator.baseplateMassKg.isNaN: w.value("baseplateMassKg", o.vibrator.baseplateMassKg)
   w.value("harmonics", o.vibrator.harmonics)
+  w.choice("phaseShow", PhaseShowNames[o.vibrator.phaseShow])
   w.value("projectReference", o.vibrator.projectReference)
   w.value("limitsOn", o.vibrator.limitsOn)
   w.open("limits")
@@ -802,10 +806,12 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
     elif k.isTree("correlation"):
       for c in k.kids:
         if c.isTree("maxLagMs"): r.ranged(c, LagMsRange, o.correlation.maxLagMs)
+        elif c.isTree("phaseShow"): r.choice(c, PhaseShowNames, o.correlation.phaseShow)
         else: r.unknown(c, "correlation")
     elif k.isTree("envelope"):
       for c in k.kids:
         if c.isTree("phaseAgainst"): r.choice(c, PhaseAgainstNames, o.envelope.phaseAgainst)
+        elif c.isTree("phaseShow"): r.choice(c, PhaseShowNames, o.envelope.phaseShow)
         else: r.unknown(c, "envelope")
     elif k.isTree("vibrator"):
       for c in k.kids:
@@ -815,6 +821,7 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
           var h = o.vibrator.harmonics
           r.integer(c, int(HarmonicRange.lo), int(HarmonicRange.hi), h)
           o.vibrator.harmonics = h
+        elif c.isTree("phaseShow"): r.choice(c, PhaseShowNames, o.vibrator.phaseShow)
         elif c.isTree("projectReference"): r.flag(c, o.vibrator.projectReference)
         elif c.isTree("limitsOn"): r.flag(c, o.vibrator.limitsOn)
         elif c.isTree("limits"):

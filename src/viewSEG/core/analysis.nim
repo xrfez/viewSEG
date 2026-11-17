@@ -29,10 +29,10 @@ import std/[math, strutils]
 import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/[crosscorrelate, sweeptrack, vibqc]
 import processSEG/core/workspace
-import colourmaps, panels, phasepicture, plotcursor, processing
+import colourmaps, panels, phasepicture, phaseshow, plotcursor, processing
 
 export ColourMap, PlotCursor, Polarity, VibLimits
-export phasepicture
+export phasepicture, phaseshow
 
 type
   AnalysisView* = enum
@@ -77,6 +77,9 @@ type
       ## this of the peak (elsewhere it is noise)
     phasePicture*: PhasePicture = ppUnwrapped
       ## phase spectrum: which picture is drawn (unwrapped by default)
+    phaseShow*: PhaseShow = psAbsolute
+      ## envelope (against the reference), correlation, vibrator signature: a phase
+      ## difference shown as its size (0 to 180) or signed around its circular mean
     maxLagMs*: float64 = 250.0 ## cross-correlation: the lags shown, either side of 0
     phaseAgainst*: PhaseAgainst = paReference
       ## envelope: the phase against the chosen reference when there is one, or
@@ -448,29 +451,40 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
         diff[i] = wrapDeg(phase[i] - rphase[i])
         worst = max(worst, abs(diff[i]))
         inc drawn
-    # the axis fits what is drawn, at least ±10°, 0 in view, never past ±180
-    var lo, hi = 0.0
-    for d in diff:
+    # Absolute: the sizes, the signed value in brackets; Signed: around the circular mean,
+    # so a reversed trace is flat at 180
+    let shown = shownPhase(diff, p.phaseShow)
+    let centre = shown.centre
+    worst = 0.0
+    for d in shown.signed:
+      if not d.isNaN: worst = max(worst, abs(d))
+    # the axis fits what is drawn, at least ±10° (of the centre), 0 in view for the sizes
+    var lo, hi = centre
+    for d in shown.ys:
       if not d.isNaN:
         lo = min(lo, d)
         hi = max(hi, d)
     let pad = max(2.0, (hi - lo) / 20)
+    let (floorAt, ceilAt) = if p.phaseShow == psSigned: (centre - 180, centre + 180)
+                            else: (-180.0, 180.0)
     phasePlot = AnalysisPlot(title: "Phase against the reference", xLabel: "Time (ms)",
       xUnit: "ms", yLabel: "Phase difference (°)", yUnit: "°", xs: times,
-      yLo: max(-180.0, min(lo - pad, -10.0)), yHi: min(180.0, max(hi + pad, 10.0)),
-      curves: @[AnalysisCurve(name: "trace minus reference", ys: diff)])
+      yLo: max(floorAt, min(lo - pad, centre - 10)),
+      yHi: min(ceilAt, max(hi + pad, centre + 10)),
+      curves: @[AnalysisCurve(name: "trace minus reference", ys: shown.ys,
+      brackets: (if p.phaseShow == psAbsolute: shown.signed else: @[]))])
     freqPlot.curves.add AnalysisCurve(name: "reference frequency", ys: rfreq,
       style: csReference)
     var words = "no time where both envelopes are within 60 dB of their peaks"
     if drawn > 0:
-      let mean = circularMeanDeg(diff).meanDeg
-      words = "mean " & formatFloat(mean, ffDecimal, 1) & "°, largest " &
+      words = meanText(diff, p.phaseShow) & ", largest " &
         formatFloat(worst, ffDecimal, 1) & "°"
       phasePlot.aside = "Phase against the reference over the part drawn: " & words
     result.note = "Phase against " & referenceName & ": the trace's instantaneous phase " &
       "minus the reference's (the argument of the trace's analytic signal times the " &
-      "reference's conjugate), -180 to 180 degrees, drawn where both envelopes are within " &
-      "60 dB of their peaks: " & words & ". " & result.note
+      "reference's conjugate), wrapped to a turn, drawn where both envelopes are within " &
+      "60 dB of their peaks, shown " & PhaseShowWords[p.phaseShow] & ": " & words & ". " &
+      result.note
     # the shorter signal's padding is not drawn: the plots end with the trace
     for plot in [addr phasePlot, addr freqPlot]:
       plot[].xs.setLen x.len
@@ -647,7 +661,8 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
   var others = false
   for (_, s) in signals:
     if not sameSamples(s, reference): others = true
-  result.table = @[@["Trace", "Best match", "Time shift (ms)", "Amplitude (dB)", "Phase (°)"]]
+  result.table = @[@["Trace", "Best match", "Time shift (ms)", "Amplitude (dB)",
+    (if p.phaseShow == psAbsolute: "Mean |phase| (°)" else: "Phase, circular mean (°)")]]
   # Where the reference has its energy: its own spectrum (of its
   # autocorrelation's lag window) within `phaseWithinDb` of its peak;
   # elsewhere the ratio and the phase are noise.
@@ -680,9 +695,11 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
     for k in 0 ..< cp.bins:
       if not inBand[k]: (ratio[k], phase[k]) = (NaN, NaN)
     ratioPlot.curves.add AnalysisCurve(name: name, ys: ratio)
-    phasePlot.curves.add AnalysisCurve(name: name, ys: phase)
+    let shownDiff = shownPhase(phase, p.phaseShow)
+    phasePlot.curves.add AnalysisCurve(name: name, ys: shownDiff.ys,
+      brackets: (if p.phaseShow == psAbsolute: shownDiff.signed else: @[]))
     let meanRatio = ratio.meanOf
-    let meanPhase = circularMeanDeg(phase).meanDeg
+    let meanPhase = meanOfPhase(phase, p.phaseShow)
     var row = @[name, "-", "-", "-", "-"]
     if best >= 0:
       let match = formatFloat(cs[best], ffDecimal, 2)
@@ -693,11 +710,14 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
           shiftWords(lagsMs[best], dtMs) & (if cs[best] < 0: "; reversed polarity" else: "") &
           ")"
     if not meanRatio.isNaN: row[3] = signedMs(meanRatio)
-    if not meanPhase.isNaN: row[4] = signedMs(meanPhase)
+    if not meanPhase.isNaN:
+      row[4] = if p.phaseShow == psAbsolute: formatFloat(meanPhase, ffDecimal, 1)
+               else: signedMs(meanPhase)
     if best >= 0 and cs[best] < 0: row[1] = row[1] & " (reversed polarity)"
     result.table.add row
   result.plots = @[lagPlot, ratioPlot, phasePlot]
-  result.note = CorrelationHelp & "\n" & lines.join("\n")
+  result.note = CorrelationHelp & "\nPhase plot: " & PhaseShowWords[p.phaseShow] & ".\n" &
+    lines.join("\n")
 
 func peakLagMs*(r: AnalysisResult; curve = 0): float64 =
   ## A correlation's lag (ms) where curve `curve`'s envelope peaks; NaN for

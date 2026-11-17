@@ -90,6 +90,7 @@ type
     binHz*, nyquistHz*: float64 = NaN
     averaged*: int
     picture*: PhasePicture = ppUnwrapped
+    phaseShow*: PhaseShow = psAbsolute ## a phase difference, Absolute or Signed
     # the analysis windows
     windowMs*: float64 = NaN
     overlap*: float64 = NaN
@@ -289,10 +290,14 @@ func envelopeText(f: ExplainFacts): string =
     part("Careful", "Only one trace is shown, the first chosen. The envelope rings near " &
       "abrupt starts and ends."))
 
+func showWords(f: ExplainFacts): string =
+  ## Which way the phase difference is shown, in words (the option "Phase").
+  "Shown " & PhaseShowWords[f.phaseShow] & "; the Phase drop-down above the plot changes it."
+
 func instPhaseText(f: ExplainFacts): string =
   if f.against:
     return join4(part("Shows", "The instantaneous phase of the trace minus the reference's, " &
-        "in degrees (-180 to 180), against time in ms."),
+        "in degrees, against time in ms. " & f.showWords),
       part("Computed from", f.what("The first trace chosen."), f.referenceWords,
         "The angle of the trace's analytic signal times the reference's conjugate, where " &
         "both envelopes are within 60 dB of their peaks; the mean and the largest value of " &
@@ -300,8 +305,8 @@ func instPhaseText(f: ExplainFacts): string =
       part("Reading it", "0 means the trace keeps step with the reference; a steady value " &
         "is a steady phase lead (above 0, the trace ahead) or lag; a line that climbs or " &
         "falls is a time shift or a different frequency; scatter means noise."),
-      part("Careful", "A difference wraps at ±180°, so a jump from +180° to -180° is not an " &
-        "event. Where either signal is weak the difference is not defined and is not " &
+      part("Careful", "A difference is only known to a turn: Absolute shows its size, so it " &
+        "never jumps between -180° and 180°; Signed keeps it around its own mean. Where either signal is weak the difference is not defined and is not " &
         "drawn. A reference shorter or longer than the trace is zero-padded."))
   join4(part("Shows", "The trace's own instantaneous phase in degrees (-180 to 180) against " &
       "time in ms."),
@@ -383,14 +388,15 @@ func ratioText(f: ExplainFacts): string =
 
 func ratioPhaseText(f: ExplainFacts): string =
   join4(part("Shows", "Phase difference in degrees up, against frequency in Hz across: each " &
-      "trace's phase minus the reference's."),
+      "trace's phase minus the reference's. " & f.showWords),
     part("Computed from", f.what("The traces chosen."), f.referenceWords,
       "Drawn where the reference has energy, within " & (if known(f.withinDb): num(f.withinDb)
     else: "the dB set above") & " dB of its peak.", f.filterClause, f.editsClause),
     part("Reading it", "A flat line at 0° means no phase difference. A straight slope means " &
-      "a time delay (a delay T reads -360° × frequency × T). A flat line at ±180° means " &
+      "a time delay (a delay T reads -360° × frequency × T). A flat line at 180° means " &
       "reversed polarity."),
-    part("Careful", "The values wrap at ±180°, so a jump there is not an event."))
+    part("Careful", "A phase is only known to a turn: Absolute shows its size, so it never " &
+      "jumps between -180° and 180°; Signed keeps it within 180° of its own mean."))
 
 func rolesWords(f: ExplainFacts): string =
   if f.live and f.roles.len > 0: "Roles: " & f.roles & "." else: ""
@@ -419,7 +425,7 @@ func vibTrace(f: ExplainFacts): string =
 func vibPhaseText(f: ExplainFacts): string =
   join4(part("Shows", "Phase in degrees up, against sweep time in ms across (a point every " &
       "10 ms): one line per signal, GF, GF (M, B), M and B, each measured against the pilot, " &
-      "Ref."),
+      "Ref. " & f.showWords),
     part("Computed from", f.vibTrace, f.rolesWords, "Each signal's phase to the reference " &
       "where the pilot's envelope is within 40 dB of its peak.", f.filterClause, f.editsClause,
       f.limitsWords("phase")),
@@ -714,6 +720,7 @@ func factsOf*(w: AnalysisWindow; units: UnitSystem): ExplainFacts =
   let p = w.params
   result = ExplainFacts(live: true, units: units, label: w.label, count: w.traces.len,
     filters: w.filters, own: w.ownLine, reversal: w.reverseLine, picture: p.phasePicture,
+    phaseShow: p.phaseShow,
     windowMs: p.windowMs, overlap: p.overlap, floorDb: p.floorDb, withinDb: p.phaseWithinDb,
     lagMs: p.maxLagMs, reference: w.reference, fkFromMs: p.fkFromMs, fkToMs: p.fkToMs,
     fkRaw: p.fkRaw, colourMap: p.colourMap,

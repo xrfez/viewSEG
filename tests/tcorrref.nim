@@ -132,7 +132,7 @@ proc main*() =
         r.note, r.note
       doAssert "peaks at" notin r.note and "autocorrelation" notin r.note
       doAssert r.table.len == 5 and r.table[0] == @["Trace", "Best match", "Time shift (ms)",
-        "Amplitude (dB)", "Phase (°)"], $r.table
+        "Amplitude (dB)", "Mean |phase| (°)"], $r.table
       doAssert r.table[1][0] == "trace 1 (the reference)" and r.table[1][3] == "not drawn" and
         r.table[1][4] == "not drawn", $r.table[1]
       doAssert r.table[2][0] == "trace 2" and r.table[2][2] == "+10.0", $r.table[2]

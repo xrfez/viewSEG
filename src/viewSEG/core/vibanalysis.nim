@@ -51,6 +51,13 @@ func past(name: string; xs, ys: seq[float64]; at: seq[bool]): AnalysisCurve =
     ys: newSeq[float64](ys.len))
   for m in 0 ..< ys.len: result.ys[m] = if at[m]: ys[m] else: NaN
 
+func phaseCurve(name: string; deg: seq[float64]; mode: PhaseShow): AnalysisCurve =
+  ## A phase to the reference as `mode` shows it (`phaseshow`); Absolute keeps the signed
+  ## value for the readout's brackets.
+  let shown = shownPhase(deg, mode)
+  result = AnalysisCurve(name: name, ys: shown.ys)
+  if mode == psAbsolute: result.brackets = shown.signed
+
 func limitLine(name: string; xs: seq[float64]; value: float64): AnalysisCurve =
   ## A limit across the sweep: its two ends.
   AnalysisCurve(name: name, style: csLimit, xs: @[xs[0], xs[^1]], ys: @[value, value])
@@ -151,9 +158,10 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   var phase = AnalysisPlot(title: "Phase to the reference", xLabel: "Sweep time (ms)",
     xUnit: "ms", yLabel: "Phase (°)", yUnit: "°", xs: xs)
   for s in [vsGroundForce, vsWeightedSum, vsMass, vsBaseplate]:
-    if s in u.signals: phase.curves.add AnalysisCurve(name: $s, ys: u.tracks[s].phaseDeg)
+    if s in u.signals: phase.curves.add phaseCurve($s, u.tracks[s].phaseDeg, p.phaseShow)
   if withRecorded:
-    phase.curves.add AnalysisCurve(name: RecordedRef, ys: results[1].tracks[vsGroundForce].phaseDeg)
+    phase.curves.add phaseCurve(RecordedRef, results[1].tracks[vsGroundForce].phaseDeg,
+      p.phaseShow)
   # Force: the recorded ground force and the weighted sum of the masses are in
   # different units (counts; kg x counts): a plot, an axis and a unit each
   # (with no recorded ground force, the force is the one from M and B: its unit)
@@ -199,8 +207,10 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   if p.limitsOn:
     let l = p.limits
     if l.phaseDeg < Inf:
-      phase.curves.add limitLine("limit ±" & number(l.phaseDeg) & "°", xs, l.phaseDeg)
-      phase.curves.add limitLine("limit ±" & number(l.phaseDeg) & "°", xs, -l.phaseDeg)
+      phase.curves.add limitLine("limit" & (if p.phaseShow == psSigned: " ±" else: " ") &
+        number(l.phaseDeg) & "°", xs, l.phaseDeg)
+      if p.phaseShow == psSigned:
+        phase.curves.add limitLine("limit ±" & number(l.phaseDeg) & "°", xs, -l.phaseDeg)
     # the force limits are in the unit of the signal the force plot is of (`main`):
     # never drawn or judged on a curve in another unit
     if l.forceLow < Inf: force.curves.add limitLine("lowest force", xs, l.forceLow)
@@ -215,7 +225,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
         for m in 0 ..< xs.len: f[m] = (u.flags[s][m] * kinds) != {}
         f
       let ph = flagged({lkPhase})
-      if ph.anyOf: phase.curves.add past($s, xs, u.tracks[s].phaseDeg, ph)
+      if ph.anyOf: phase.curves.add past($s, xs,
+        shownPhase(u.tracks[s].phaseDeg, p.phaseShow).ys, ph)
       let lowHigh = flagged({lkForceLow, lkForceHigh})
       if lowHigh.anyOf and s == main:
         force.curves.add past($s & " fundamental", xs, u.tracks[s].amplitude[0], lowHigh)
@@ -279,6 +290,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       number(p.baseplateMassKg, 0) & " kg·B"
   elif pair:
     words.add "; enter both masses to generate GF from M and B"
+  words.add "; phase plot: " & PhaseShowWords[p.phaseShow] & "; the table's phases are " &
+    "sizes (|phase|)"
   words.add "; values as recorded; THD sums harmonics 2 to " & $clamp(p.harmonics, 2, 16) &
     " while below 80 % of Nyquist (harmonics above Nyquist are left out)"
   if vsWeightedSum in u.signals:

@@ -6,7 +6,8 @@
 ## floor and colour map; the phase spectrum's threshold and picture; the
 ## correlation's lags; the vibrator signature's harmonics, masses and limits;
 ## the f-k's floor, colour map and Raw; the envelope's phase against the reference
-## or of the trace itself. What is not an option is not: which traces, the
+## or of the trace itself; for the envelope, correlation and vibrator signature, whether a
+## phase is shown Absolute or Signed (`phaseshow`). What is not an option is not: which traces, the
 ## vibrator's roles, the f-k's time box (they belong to a file), the frozen
 ## state, the cursor, the axes' zoom. The node orientation has no options.
 ##
@@ -15,7 +16,7 @@
 ## `builtin` puts the built-in values into one (Reset options).
 
 import std/math
-import analysis, colourmaps, phasepicture
+import analysis, colourmaps, phasepicture, phaseshow
 
 type
   SpectrogramOptions* = object
@@ -30,11 +31,13 @@ type
 
   CorrelationOptions* = object
     maxLagMs*: float64 = 250.0
+    phaseShow*: PhaseShow = psAbsolute
 
   VibratorOptions* = object
     reactionMassKg*: float64 = NaN ## NaN: none entered
     baseplateMassKg*: float64 = NaN
     harmonics*: int = 5
+    phaseShow*: PhaseShow = psAbsolute
     projectReference*: bool = true
     limitsOn*: bool = false
     limits*: VibLimits = VibLimits(phaseDeg: 10, meanPhaseDeg: 5, thdPct: 40,
@@ -42,6 +45,7 @@ type
 
   EnvelopeOptions* = object
     phaseAgainst*: PhaseAgainst = paReference
+    phaseShow*: PhaseShow = psAbsolute
 
   FkOptions* = object
     floorDb*: float64 = -60.0
@@ -85,12 +89,15 @@ func optionsOf*(p: AnalysisParams; view: AnalysisView): PlotOptions =
       floorDb: p.floorDb, colourMap: p.colourMap)
   of avPhase:
     result.phase = PhaseOptions(phaseWithinDb: p.phaseWithinDb, phasePicture: p.phasePicture)
-  of avCorrelation: result.correlation = CorrelationOptions(maxLagMs: p.maxLagMs)
-  of avEnvelope: result.envelope = EnvelopeOptions(phaseAgainst: p.phaseAgainst)
+  of avCorrelation: result.correlation = CorrelationOptions(maxLagMs: p.maxLagMs,
+    phaseShow: p.phaseShow)
+  of avEnvelope: result.envelope = EnvelopeOptions(phaseAgainst: p.phaseAgainst,
+    phaseShow: p.phaseShow)
   of avVibrator:
     result.vibrator = VibratorOptions(reactionMassKg: p.reactionMassKg,
       baseplateMassKg: p.baseplateMassKg, harmonics: p.harmonics,
-      projectReference: p.projectReference, limitsOn: p.limitsOn, limits: p.limits)
+      phaseShow: p.phaseShow, projectReference: p.projectReference, limitsOn: p.limitsOn,
+      limits: p.limits)
   of avFk: result.fk = FkOptions(floorDb: p.floorDb, colourMap: p.colourMap, raw: p.fkRaw)
   of avOrientation: discard
 
@@ -116,12 +123,15 @@ func applied*(o: PlotOptions; view: AnalysisView; p: AnalysisParams): AnalysisPa
        o.spectrogram.colourMap)
   of avPhase:
     (result.phaseWithinDb, result.phasePicture) = (o.phase.phaseWithinDb, o.phase.phasePicture)
-  of avCorrelation: result.maxLagMs = o.correlation.maxLagMs
-  of avEnvelope: result.phaseAgainst = o.envelope.phaseAgainst
+  of avCorrelation: (result.maxLagMs, result.phaseShow) = (o.correlation.maxLagMs,
+      o.correlation.phaseShow)
+  of avEnvelope: (result.phaseAgainst, result.phaseShow) = (o.envelope.phaseAgainst,
+      o.envelope.phaseShow)
   of avVibrator:
-    (result.reactionMassKg, result.baseplateMassKg, result.harmonics, result.projectReference,
+    (result.reactionMassKg, result.baseplateMassKg, result.harmonics, result.phaseShow,
+     result.projectReference,
      result.limitsOn, result.limits) = (o.vibrator.reactionMassKg, o.vibrator.baseplateMassKg,
-       o.vibrator.harmonics, o.vibrator.projectReference, o.vibrator.limitsOn,
+       o.vibrator.harmonics, o.vibrator.phaseShow, o.vibrator.projectReference, o.vibrator.limitsOn,
        o.vibrator.limits)
   of avFk: (result.floorDb, result.colourMap, result.fkRaw) = (o.fk.floorDb, o.fk.colourMap, o.fk.raw)
   of avOrientation: discard

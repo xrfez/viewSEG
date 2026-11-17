@@ -116,17 +116,17 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 ## Cross-correlation: phase to the reference
 
-**Shows.** Phase difference in degrees up, against frequency in Hz across: each trace's phase minus the reference's.
+**Shows.** Phase difference in degrees up, against frequency in Hz across: each trace's phase minus the reference's. Shown absolute (0 to 180 degrees; the bracketed value is the signed one); the Phase drop-down above the plot changes it.
 
 **Computed from.** The traces chosen. Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot). Drawn where the reference has energy, within the dB set above dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
 
-**Reading it.** A flat line at 0° means no phase difference. A straight slope means a time delay (a delay T reads -360° × frequency × T). A flat line at ±180° means reversed polarity.
+**Reading it.** A flat line at 0° means no phase difference. A straight slope means a time delay (a delay T reads -360° × frequency × T). A flat line at 180° means reversed polarity.
 
-**Careful.** The values wrap at ±180°, so a jump there is not an event.
+**Careful.** A phase is only known to a turn: Absolute shows its size, so it never jumps between -180° and 180°; Signed keeps it within 180° of its own mean.
 
 ## Vibrator signature: phase to the reference
 
-**Shows.** Phase in degrees up, against sweep time in ms across (a point every 10 ms): one line per signal, GF, GF (M, B), M and B, each measured against the pilot, Ref.
+**Shows.** Phase in degrees up, against sweep time in ms across (a point every 10 ms): one line per signal, GF, GF (M, B), M and B, each measured against the pilot, Ref. Shown absolute (0 to 180 degrees; the bracketed value is the signed one); the Phase drop-down above the plot changes it.
 
 **Computed from.** The traces of the window's roles. Each signal's phase to the reference where the pilot's envelope is within 40 dB of its peak. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set. Limits you set are drawn as thin lines and the points past them marked.
 

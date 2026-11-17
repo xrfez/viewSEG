@@ -157,6 +157,26 @@ proc drawReset(line: ControlLine; w: AnalysisWindow; name: string; marks: var Ma
   marks.mark(name & ".reset")
   tip(ResetTip)
 
+proc phaseShowCombo(line: ControlLine; name: string; marks: var Marks;
+    p: var AnalysisParams; changed: var bool) =
+  ## "Phase: Absolute | Signed": the one rule of `core/phaseshow` for the phase plots.
+  let width = round(igCalcTextSize("Absolute", nil, false, -1).x + igGetFrameHeight() +
+    2 * igGetStyle().FramePadding.x)
+  line.follow(textBoxWidth("Phase:", width))
+  igAlignTextToFramePadding()
+  igTextUnformatted("Phase:", nil)
+  igSameLine(0, -1)
+  igSetNextItemWidth(width)
+  if igBeginCombo("##phaseshow", ($p.phaseShow).cstring, 0):
+    for v in PhaseShow:
+      if igSelectable_Bool(($v).cstring, v == p.phaseShow, 0, ImVec2_c(x: 0, y: 0)) and
+          v != p.phaseShow:
+        (p.phaseShow, changed) = (v, true)
+      marks.mark(name & ".phase show " & $v)
+    igEndCombo()
+  marks.mark(name & ".phase show")
+  tip(PhaseShowTip)
+
 proc sameMass(a, b: float64): bool {.inline.} =
   a == b or (a.isNaN and b.isNaN)
 
@@ -315,6 +335,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   if igInputInt("##harmonics", addr h, 0, 0, 0) and HarmonicRange.allows(float64(h)) and h != p.harmonics:
     (p.harmonics, changed) = (int(h), true)
   tip("The highest harmonic tracked (2 to 16): THD sums them from the 2nd")
+  line.phaseShowCombo(name, marks, p, changed)
   line.follow(buttonWidth("Limits..."))
   if p.limitsOn:
     igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(t.roles[rlSelection]))
@@ -455,6 +476,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
         igEndCombo()
       marks.mark(name & ".against")
       tip(PhaseAgainstTips[p.phaseAgainst])
+      if p.phaseAgainst == paReference: line.phaseShowCombo(name, marks, p, changed)
       if w.reference.len > 0:
         line.follow(textBoxWidth("Reference: " & w.reference, 0))
         label("Reference: " & w.reference)
@@ -495,6 +517,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       tip("The lags shown either side of 0, ms")
       igSameLine(0, -1)
       unit("ms")
+      line.phaseShowCombo(name, marks, p, changed)
     of avFk:
       label("From")
       if limitBox("##from", p.fkFromMs, box, typed) and

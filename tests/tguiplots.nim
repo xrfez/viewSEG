@@ -249,7 +249,7 @@ proc main*() =
         var limits = 0
         for c in f.core.plots[1].result.plots[0].curves:
           if c.style == csLimit: inc limits
-        doAssert limits == 2, $limits & " phase limits drawn"
+        doAssert limits == 1, $limits & " phase limits drawn (Absolute: the one size)"
         for label in ["Phase ±", "Phase mean", "THD", "THD mean", "Harmonic", "Force from",
             "Force to", "Peak force"]:
           doAssert f.markOf("new plot 2.limit " & label).size.x > 0, "no label " & label)

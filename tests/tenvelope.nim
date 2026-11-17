@@ -53,7 +53,7 @@ proc main*() =
     let drawn = ys.finite
     doAssert drawn.len > 1000, $drawn.len & " samples drawn"
     for i in drawn: doAssert ys[i] == 0.0, "sample " & $i & " is " & $ys[i]
-    doAssert "mean 0.0" in r.plots[1].aside and "largest 0.0" in r.plots[1].aside,
+    doAssert "mean |phase| 0.0" in r.plots[1].aside and "largest 0.0" in r.plots[1].aside,
       r.plots[1].aside
     doAssert r.plots[2].curves.len == 2 and r.plots[2].curves[1].style == csReference
 
@@ -88,8 +88,8 @@ proc main*() =
     doAssert n > 1000, "drawn inside the sweep: " & $n
     let mean = sum / float64(n)
     doAssert abs(mean - 6.0) < 1.0, "the ground force reads " & $mean & " degrees"
-    doAssert "mean 6" in r.plots[1].aside or "mean 5" in r.plots[1].aside or
-      "mean 7" in r.plots[1].aside, r.plots[1].aside
+    doAssert "mean |phase| 6" in r.plots[1].aside or "mean |phase| 5" in r.plots[1].aside or
+      "mean |phase| 7" in r.plots[1].aside, r.plots[1].aside
     # not drawn where the reference is gone: the listen time after the sweep
     doAssert r.plots[1].yLo < 0 and r.plots[1].yHi > 6 and r.plots[1].yLo >= -180 and
       r.plots[1].yHi <= 180, "the axis holds the drawn values: " & $(r.plots[1].yLo,
@@ -108,9 +108,12 @@ proc main*() =
       sweep[i] = float32(sin(2 * PI * (8 * t + 12 * t * t)))
     var rev = newSeq[float32](sweep.len)
     for i in 0 ..< sweep.len: rev[i] = -sweep[i] + float32(0.001 * sin(float64(i)))
-    let r = envelopeOf(rev, "rev", 2.0, 0.0, AnalysisParams(), sweep, "ref")
+    let r = envelopeOf(rev, "rev", 2.0, 0.0, AnalysisParams(phaseShow: psSigned), sweep,
+      "ref")
     doAssert "mean 180.0" in r.plots[1].aside or "mean -180.0" in r.plots[1].aside,
       r.plots[1].aside
+    let a = envelopeOf(rev, "rev", 2.0, 0.0, AnalysisParams(), sweep, "ref")
+    doAssert "mean |phase| 180.0" in a.plots[1].aside, a.plots[1].aside
 
   block paddingIsNotDrawn:
     var sweep = newSeq[float32](2000)

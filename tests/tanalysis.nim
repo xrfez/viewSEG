@@ -140,8 +140,12 @@ proc main*() =
       let want = -360 * hz[k] * float64(m) * DtMs / 1000
       doAssert near(ph[k], want, 1e-3), "phase at " & $hz[k] & " Hz: " & $ph[k] & ", want " & $want
     let wrapped = phaseOf(x, "impulse", DtMs, AnalysisParams(phasePicture: ppSigned))
+    var lo, hi = 0.0
     for v in wrapped.plots[1].curves[0].ys:
-      doAssert v.isNaN or abs(v) <= 180 + 1e-3, $v
+      if not v.isNaN:
+        lo = min(lo, v)
+        hi = max(hi, v)
+    doAssert hi - lo <= 360 + 1e-3, "the signed picture spans a turn at most: " & $(lo, hi)
     # a band-limited pulse: no phase where its amplitude is 20 dB under its peak
     var y = newSeq[float32](n)
     for i in 0 ..< n:

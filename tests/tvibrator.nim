@@ -96,6 +96,10 @@ func judged(xs: seq[float64]): seq[int] =
   for m, x in xs:
     if x >= 600 and x <= 5400: result.add m
 
+func sizes(deg: seq[float64]): seq[float64] =
+  ## the phase as Absolute draws it
+  shownPhase(deg, psAbsolute).ys
+
 proc main*() =
 
   let unitRows = @[wave(1, 0), wave(1000, 15, 0.1), wave(30, 10), wave(25, -170)]
@@ -109,11 +113,11 @@ proc main*() =
     doAssert r.plots.len == 5 and r.used == 4 and r.plots[2].title == "Force from M and B"
     let lib = library(unitRows, inOrder)
     doAssert r.plots[0].xs.sameAs(lib.tracks[vsReference].timeMs)
-    doAssert r.curve(0, "GF").sameAs(lib.tracks[vsGroundForce].phaseDeg),
+    doAssert r.curve(0, "GF").sameAs(sizes(lib.tracks[vsGroundForce].phaseDeg)),
       "GF's phase is not the library's"
-    doAssert r.curve(0, "GF (M, B)").sameAs(lib.tracks[vsWeightedSum].phaseDeg)
-    doAssert r.curve(0, "M").sameAs(lib.tracks[vsMass].phaseDeg)
-    doAssert r.curve(0, "B").sameAs(lib.tracks[vsBaseplate].phaseDeg)
+    doAssert r.curve(0, "GF (M, B)").sameAs(sizes(lib.tracks[vsWeightedSum].phaseDeg))
+    doAssert r.curve(0, "M").sameAs(sizes(lib.tracks[vsMass].phaseDeg))
+    doAssert r.curve(0, "B").sameAs(sizes(lib.tracks[vsBaseplate].phaseDeg))
     doAssert r.curve(1, "GF fundamental").sameAs(lib.tracks[vsGroundForce].amplitude[0])
     doAssert r.curve(1, "GF peak").sameAs(lib.tracks[vsGroundForce].peak)
     doAssert r.curve(2, "GF (M, B) fundamental").sameAs(lib.tracks[vsWeightedSum].amplitude[0])
@@ -182,18 +186,27 @@ proc main*() =
     var p = params
     p.limitsOn = true
     p.limits = VibLimits(phaseDeg: 10)
+    p.phaseShow = psSigned
+    let signed = vibratorOf(unitRows, names, inOrder, Dt, p)
+    var both = 0
+    for c in signed.plots[0].curves:
+      if c.style == csLimit: inc both
+    doAssert both == 2, "Signed: the limit at both ends, " & $both
+    p.phaseShow = psAbsolute
     let r = vibratorOf(unitRows, names, inOrder, Dt, p)
     var drawn, marked = 0
     for c in r.plots[0].curves:
       if c.style == csLimit:
         inc drawn
-        doAssert c.ys == @[10.0, 10.0] or c.ys == @[-10.0, -10.0], $c.ys
+        doAssert c.ys == @[10.0, 10.0], "Absolute: the one size, " & $c.ys
+      elif c.style == csLine:
+        for y in c.ys: doAssert y.isNaN or y >= 0, "Absolute phase below 0: " & $y
       if c.style == csPast and c.name == "GF past a limit":
         for y in c.ys:
           if not y.isNaN:
             doAssert abs(y) > 10, $y
             inc marked
-    doAssert drawn == 2 and marked > 400, $(drawn, marked)
+    doAssert drawn == 1 and marked > 400, $(drawn, marked)
     doAssert r.table[0][^1] == "Limits"
     for row in r.table[1 .. ^1]:
       if row[0] == "GF": doAssert row[^1] == "fail: phase", $row

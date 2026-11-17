@@ -11,6 +11,7 @@
 
 import std/[math, strutils]
 import processSEG/fft/spectrum
+import phaseshow
 
 type
   PhasePicture* = enum
@@ -31,8 +32,9 @@ const
     ppUnwrapped: "The phase followed along frequency without jumps: a delay is a " &
       "straight slope, a sweep a curve.",
     ppMagnitude: "The size of the phase, 0 to 180 degrees, whatever its sign.",
-    ppSigned: "The phase as measured, wrapped into -180 to 180 degrees; it jumps " &
-      "by a turn where it wraps.",
+    ppSigned: "The phase within 180 degrees either side of its circular mean " &
+      "(the shared signed rule): a reversed trace is a flat line at 180, not a jump " &
+      "between -180 and 180.",
     ppDelayRemoved: "The unwrapped phase minus its best straight line, a pure time " &
       "delay: what is left is the phase's own shape."]
     ## One line per picture: what it shows, for the drop-down's list.
@@ -79,7 +81,8 @@ func drawnPhase*(wrapped: openArray[float64]; shown: openArray[bool];
     delayMs: float64] =
   ## The phase to draw, and the signed wrapped value at each bin (NaN where
   ## `shown` is not), for `picture`. Magnitude is the absolute value, 0 to
-  ## 180. Signed is today's wrapped picture, with the gaps. Unwrapped has no
+  ## 180. Signed is within 180 either side of the drawn bins' circular mean
+  ## (`phaseshow`), with the gaps. Unwrapped has no
   ## jumps along frequency. Delay removed is that line minus its best
   ## straight line over the drawn bins (phase = a + b·f); `delayMs` is the
   ## delay that line is, in ms (a positive delay arrives later), NaN when
@@ -99,9 +102,11 @@ func drawnPhase*(wrapped: openArray[float64]; shown: openArray[bool];
     of ppMagnitude:
       result.ys[k] = if draw: abs(wrapped[k]) else: NaN
     of ppSigned:
-      result.ys[k] = result.signed[k]
+      result.ys[k] = result.signed[k] # centred below
     of ppUnwrapped, ppDelayRemoved:
       result.ys[k] = unwrapped[k]
+  if picture == ppSigned:
+    result.ys = signedAround(result.signed, centreOf(result.signed))
   if picture != ppDelayRemoved: return
   # The line is taken off the drawn bins that have a frequency.
   var on = newSeq[bool](n)
