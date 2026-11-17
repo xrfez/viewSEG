@@ -578,10 +578,10 @@ proc setupArchiveColumns(c: ArchiveColumns) =
   igTableSetupColumn("", ImGui_TableColumnFlags_NoSort.cint or fixed, c.buttons, 7)
 
 func archiveWindowWidth(c: ArchiveColumns): float32 =
-  ## The window's width that holds the table: the fixed columns, room for 16 characters of
-  ## Source, the scroll bar and the window's padding.
+  ## The window's width that holds the table: the fixed columns, room for the longest Source (40
+  ## characters at most), the scroll bar and the window's padding.
   c.name + c.length + c.interval + c.frequency + c.date + c.use + c.buttons +
-    igGetFontSize() * 16 + 2 * igGetStyle().WindowPadding.x + igGetStyle().ScrollbarSize + 16
+    min(c.source, igGetFontSize() * 40) + 2 * igGetStyle().WindowPadding.x + igGetStyle().ScrollbarSize + 16
 
 proc markCell(marks: var Marks; prefix: string; row: int; column: string; index: int) =
   ## The last item's rectangle as "<prefix>.<column>.<row>" and its column's cell as
