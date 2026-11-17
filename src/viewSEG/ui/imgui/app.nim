@@ -932,10 +932,21 @@ proc bringWindows(ui: var Ui) =
   if screens.len == 0:
     ui.say("The screens are not known: no window was moved.", mlWarning)
   else:
-    let moved = bringOnto(screens[main.homeScreen(screens, primary)], false, screens,
-      everyWindow(ui.core))
+    # every floating window, from Dear ImGui's registry: into the main window's work area
+    let vp = igGetMainViewport()
+    let moved = bringAllInto(Rect(pos: vec2(vp.WorkPos.x, vp.WorkPos.y),
+      size: vec2(vp.WorkSize.x, vp.WorkSize.y)))
     ui.say(if moved.len > 0: "Brought onto this screen: " & moved.join(", ") & "."
            else: "Every window is on this screen already.")
+
+proc moveFloatingWindow*(frame: FrameInfo; titlePart: string; x, y: float32): bool =
+  ## Puts the floating window whose title holds `titlePart` at (`x`, `y`) on the desktop,
+  ## as a layout from a file does. For tests.
+  moveFloating(titlePart, x, y)
+
+proc bringAllWindows*(frame: FrameInfo) =
+  ## Window > Bring all windows onto this screen. For tests.
+  frame.ui[].bringWindows()
 
 proc offScreenCheck(ui: var Ui) =
   ## For a few frames after a layout is applied (the desktop's windows for

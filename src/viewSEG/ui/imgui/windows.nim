@@ -281,3 +281,59 @@ proc bringOnto*(screen: Rect; onlyUnreachable: bool; screens: openArray[Rect];
       igSetWindowPos_WindowPtr(win, ImVec2_c(x: to.pos.x, y: to.pos.y), ImGui_Cond_Always.cint)
       result.add names.join(" and ")
   if result.len > 0: changed()
+
+proc windowNames(): seq[string] =
+  ## The names of every window Dear ImGui keeps settings for: the "[Window][name]" lines of
+  ## its layout text. Whatever window the program opens is in it, with no list of ours.
+  for line in splitLines($igSaveIniSettingsToMemory(nil)):
+    if line.startsWith("[Window][") and line.endsWith("]"):
+      result.add line[9 ..< line.high]
+
+proc floatingWindows(): seq[(ptr ImGuiWindow, string)] =
+  ## Every window the program has on screen that is a window of its own: not a child, a
+  ## popup or a tooltip, not one that cannot be moved (the dock host, the menu bar, the
+  ## overlays). A window docked in a tree of its own stands for that tree. Found from
+  ## `windowNames`, so a new kind of window is covered without being listed anywhere.
+  const apart = ImGui_WindowFlags_ChildWindow.cint or ImGui_WindowFlags_Popup.cint or
+    ImGui_WindowFlags_Tooltip.cint or ImGui_WindowFlags_NoMove.cint or
+    ImGui_WindowFlags_NoInputs.cint
+  for name in windowNames():
+    let win = igFindWindowByName(name.cstring)
+    if win != nil and (win.Active or win.WasActive):
+      let top = if win.DockIsActive and win.RootWindowDockTree != nil: win.RootWindowDockTree
+                else: win
+      if top != nil and (top.Flags and apart) == 0 and not ($top.Name).startsWith("##"):
+        var known = false
+        for (w, _) in result:
+          if w == top: known = true
+        if not known: result.add (top, titleText($win.Name))
+
+proc bringAllInto*(area: Rect): seq[string] =
+  ## Moves every floating window (`floatingWindows`: the analysis windows, the FFT windows,
+  ## the reference archive, About, the dialogs, and any window that is an OS window of its
+  ## own) wholly into `area`, made smaller when larger than it; a window that lay outside the
+  ## main window is then in it. Returns the names of the windows moved.
+  for (win, name) in floatingWindows():
+    let r = win.rectOf
+    let to = r.fitOnto(area)
+    if to != r:
+      if to.size != r.size:
+        igSetWindowSize_WindowPtr(win, ImVec2_c(x: to.size.x, y: to.size.y),
+          ImGui_Cond_Always.cint)
+      igSetWindowPos_WindowPtr(win, ImVec2_c(x: to.pos.x, y: to.pos.y), ImGui_Cond_Always.cint)
+      result.add name
+  if result.len > 0: changed()
+
+proc moveFloating*(titlePart: string; x, y: float32): bool =
+  ## Puts the window whose title holds `titlePart` at (`x`, `y`) in the desktop's coordinates,
+  ## taking it out of its dock first: the state a dragged window or a loaded layout leaves
+  ## (tests).
+  let ctx = igGetCurrentContext()
+  for name in windowNames():
+    let win = igFindWindowByName(name.cstring)
+    if win != nil and (win.Active or win.WasActive) and
+        (win.Flags and ImGui_WindowFlags_ChildWindow.cint) == 0 and
+        titlePart in titleText($win.Name) and not result:
+      if win.DockIsActive: igDockContextProcessUndockWindow(ctx, win, true)
+      igSetWindowPos_WindowPtr(win, ImVec2_c(x: x, y: y), ImGui_Cond_Always.cint)
+      result = true

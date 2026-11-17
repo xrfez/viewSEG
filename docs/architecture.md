@@ -1001,7 +1001,11 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
   arrangement). *Reset the windows* builds the default arrangement again (every window
   shown and docked) and brings the main window onto a screen when it is off every one;
   *Bring all windows onto this screen* moves the main window wholly onto its screen and
-  every window outside it (a window of the desktop's own) onto the same screen; each
+  every floating window (the analysis and FFT windows, the reference archive, About, the
+  dialogs, and any window that became an OS window of its own) wholly into the main
+  window's work area, smaller when larger than it; the windows are found from Dear ImGui's
+  own list of the windows it keeps settings for (`windows.floatingWindows`), not from a
+  list of ours, so a new kind of window is covered; each
   window's entry shows, hides or brings it forward. A window a layout does not name (one
   a later build added) is docked as a tab beside its neighbours of the default layout,
   else beside the plot; for a few frames after a layout is applied (the desktop's

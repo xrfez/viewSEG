@@ -1029,7 +1029,7 @@ that does not name Units loads as Metric.
 | Window menu | What it does |
 |---|---|
 | **Reset the windows** (Ctrl+Shift+R) | every window shown and docked in the main window, as at a first start; the main window is brought onto a screen if it is off every one |
-| **Bring all windows onto this screen** | the windows you dragged out of the main window, wherever they are (another screen, a screen that is gone, past a screen's edge), and the main window itself, wholly onto the screen the main window is on |
+| **Bring all windows onto this screen** | every floating window (plots, FFT, the reference archive, About, the dialogs), also those you dragged out of the main window, wherever they are (another screen, a screen that is gone, past a screen's edge): wholly into the main window, made smaller when larger; and the main window itself, wholly onto its screen |
 | Seismic, Files, Records, Map, Headers, Jobs, Messages | ticked while shown; a click on a window in sight hides it, on one hidden (or behind another tab) shows it in front; the Seismic window is always shown |
 | Wide plot, Side by side, Plot and map | the presets that ship with viewSEG |
 | Load, Save layout as... | your own layouts: saved under a name, loaded again (a layout file is written and read under File > Export and File > Import) |
