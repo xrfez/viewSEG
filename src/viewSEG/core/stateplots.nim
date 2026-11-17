@@ -258,6 +258,9 @@ proc askPlot(state: var AppState; w: int): bool =
         a.archiveIntervalUs = e.intervalUs
     a.refName = a.archiveName & " (archive)"
     pw.reference = a.refName
+  if pw.view == avVibrator and pw.params.roles.source == rsCodes:
+    a.extraNote = (if a.extraNote.len > 0: a.extraNote & "; " else: "") &
+      "roles taken from the trace identification codes"
   if not state.jobs.hold(s.path): return false
   # frozen: the kills it was frozen with; else the plot's now
   killed.sort()
@@ -351,6 +354,16 @@ proc shapeOpened(state: AppState; view: AnalysisView; i: int; traces: var seq[in
     for j in evenly(traces.len, MaxPlotTraces): kept.add traces[j]
     traces = kept
 
+proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: VibRoles;
+    file: string): VibRoles =
+  ## `roles` of a vibrator signature on `fileTraces` (indices in `s`'s file, the
+  ## window's order) of `file`: from the traces' identification codes when they
+  ## are the vibrator's and the roles were not chosen by hand on this file.
+  var codes: seq[int16] = @[]
+  for t in fileTraces:
+    codes.add(if t in 0 ..< s.filePtr[].len: s.filePtr[].traceKeys(t).traceCode else: 0'i16)
+  roles.withCodeRoles(codes, file)
+
 proc openPlot(state: var AppState; cmd: Command) =
   ## `ckOpenPlot`: a new analysis window of `cmd.plotTraces` (else the
   ## selected traces of the panel's file, else the trace under the
@@ -411,6 +424,12 @@ proc openPlot(state: var AppState; cmd: Command) =
     traces: traces.mapIt(it + s.base), first: traces[0], processing: spectrumFilters(p),
     since: state.plotGen + 1)
   w.filters = filtersText(w.processing)
+  if w.view == avVibrator:
+    if samePlaces(cmd.plotParams.roles, VibRoles()):
+      w.params.roles = state.rolesOf(s, traces, w.params.roles, s.name)
+    else: # the command names the places: that is a choice made on this file
+      w.params.roles.source = rsHand
+      w.params.roles.handFile = s.name
   state.plots.add w
   if not state.askPlot(state.plots.high):
     state.plots.delete state.plots.high
@@ -434,8 +453,16 @@ proc showPlot(state: var AppState; cmd: Command) =
   if problem.len > 0:
     state.ignore(cmd, problem)
     return
-  let changed = cmd.plotParams != pw.params
-  pw.params = cmd.plotParams
+  var params = cmd.plotParams
+  if pw.view == avVibrator:
+    # where the roles came from is the window's to say: a role given another trace
+    # is a choice made on this window's file, else they stay as they were
+    (params.roles.source, params.roles.handFile) = (pw.params.roles.source,
+      pw.params.roles.handFile)
+    if not samePlaces(params.roles, pw.params.roles):
+      (params.roles.source, params.roles.handFile) = (rsHand, pw.file)
+  let changed = params != pw.params
+  pw.params = params
   # what the user set becomes what a new window of the kind opens with
   if pw.view.hasOptions and
       state.settings.plotOptions.applied(pw.view, cmd.plotParams) != cmd.plotParams:
@@ -647,20 +674,28 @@ proc repick(state: var AppState; w, k, i: int): bool =
   let oldFirst = pw.first
   let oldFile = pw.file
   let oldRecord = pw.record
+  let oldRoles = pw.params.roles
   pw.file = s.name
   pw.record = s.recordText(seed[0])
   pw.traces = ids
+  if view == avVibrator: pw.params.roles = state.rolesOf(s, seed, oldRoles, s.name)
   pw.first = seed[0]
   pw.processing = pr
   if state.askPlot(w):
     pw.filters = filtersText(pr)
     state.stampPick(w, k, i)
+    if oldRoles.source == rsHand and oldRoles.handFile != s.name and
+        pw.params.roles.source == rsCodes:
+      state.log.add(sevInfo, s.name, "The vibrator signature's roles are taken from this " &
+        "file's trace identification codes; the roles chosen on " & oldRoles.handFile &
+        " do not apply here.")
     return true
   pw.processing = kept
   pw.traces = oldTraces
   pw.first = oldFirst
   pw.file = oldFile
   pw.record = oldRecord
+  pw.params.roles = oldRoles
   false
 
 proc filesHeldByFollow*(state: AppState): seq[SessionId] =

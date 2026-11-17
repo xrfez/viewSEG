@@ -29,7 +29,7 @@ import std/[math, strutils]
 import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/[crosscorrelate, sweeptrack, vibqc]
 import processSEG/core/workspace
-import colourmaps, panels, phasepicture, phaseshow, plotcursor, processing
+import colourmaps, panels, phasepicture, phaseshow, plotcursor, processing, traceids
 
 export ColourMap, PlotCursor, Polarity, VibLimits
 export phasepicture, phaseshow
@@ -45,18 +45,31 @@ type
     avFk = "f-k"
     avOrientation = "node orientation"
 
+  RoleSource* = enum
+    ## Where a vibrator signature's roles came from.
+    rsPosition = "window order" ## the order Ref, GF, M, B, nothing said otherwise
+    rsCodes = "trace identification codes"
+      ## the traces carry the SEG-Y vibrator codes (21 reference, 20 ground force,
+      ## 18 reaction mass, 19 baseplate), which say who is who
+    rsHand = "chosen by hand" ## a choice made in the window (or given by a command)
+
   VibRoles* = object
     ## A vibrator signature's roles: each one's place among the window's
     ## traces (0: the first), -1 for none; by default the order Ref, GF,
-    ## M, B. M and B take one polarity, as a pair (the baseplate moves
-    ## against the mass: one reversed alone would turn the force they make
-    ## into a difference).
+    ## M, B, or, when the traces carry the vibrator codes, as they say
+    ## (`withCodeRoles`). M and B take one polarity, as a pair (the baseplate
+    ## moves against the mass: one reversed alone would turn the force they
+    ## make into a difference).
     reference*: int = 0 ## the pilot (required)
     groundForce*: int = 1 ## the ground force, recorded
     mass*: int = 2 ## the reaction mass's acceleration
     baseplate*: int = 3 ## the baseplate's acceleration
     groundForcePolarity*: Polarity = poAsRecorded
     massPolarity*: Polarity = poAsRecorded ## M's and B's
+    source*: RoleSource = rsPosition ## where the places above came from
+    handFile*: string
+      ## when `source` is `rsHand`: the file the choice was made on, whose roles it
+      ## stays for; on another file the codes decide when the traces have them
 
   PhaseAgainst* = enum
     ## What an envelope window's phase plot shows.
@@ -182,6 +195,35 @@ type
 
 type StopCheck* = proc (): bool {.closure, gcsafe.}
   ## Asked between the steps of a long computation: true to give it up now.
+
+func samePlaces*(a, b: VibRoles): bool =
+  ## Whether `a` and `b` give every role the same trace.
+  a.reference == b.reference and a.groundForce == b.groundForce and a.mass == b.mass and
+    a.baseplate == b.baseplate
+
+func withCodeRoles*(roles: VibRoles; codes: openArray[int16]; file: string): VibRoles =
+  ## `roles` for a window whose traces have the trace identification `codes`
+  ## (in the window's order) and are of `file`. A choice made by hand on this
+  ## same file stays. Else, when the traces carry the vibrator reference code
+  ## (21) and at least one of the ground force (20), reaction mass (18) and
+  ## baseplate (19) codes, each role is the first trace with its code (-1: none
+  ## has it), and `source` says so. Otherwise `roles` stand as they were.
+  result = roles
+  if roles.source == rsHand and roles.handFile == file: return
+  var places = VibRoles(reference: -1, groundForce: -1, mass: -1, baseplate: -1)
+  for i, c in codes:
+    if c == VibReferenceCode and places.reference < 0: places.reference = i
+    elif c == VibGroundForceCode and places.groundForce < 0: places.groundForce = i
+    elif c == VibReactionMassCode and places.mass < 0: places.mass = i
+    elif c == VibBaseplateCode and places.baseplate < 0: places.baseplate = i
+  if places.reference >= 0 and (places.groundForce >= 0 or places.mass >= 0 or
+      places.baseplate >= 0):
+    result.reference = places.reference
+    result.groundForce = places.groundForce
+    result.mass = places.mass
+    result.baseplate = places.baseplate
+    result.source = rsCodes
+    result.handFile = ""
 
 template stopped*(stop: StopCheck): bool =
   not stop.isNil and stop()

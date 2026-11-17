@@ -754,7 +754,14 @@ right of that line's first row. A change works it out again.
     order Ref, GF, M, B. Opened on one trace (the pilot), the window takes it and the
     record's next three channels, as wireline records have them; on several, the first
     four are the roles and the others can be chosen (16 at most). A role can be "none";
-    Ref cannot.
+    Ref cannot. When the window's traces carry the SEG-Y vibrator trace identification
+    codes (21 reference, 20 estimated ground force, 18 reaction mass, 19 baseplate), the
+    roles are taken from the codes instead, whatever order the traces are in, and the
+    note says "roles taken from the trace identification codes". A role you change is a
+    choice by hand and stays for that file; on another file with the codes they decide
+    again (the Messages say so), and a file without them keeps the roles as they were.
+    The agent state's `roles.source` says which: `window order`, `trace identification
+    codes` or `chosen by hand`.
   - **Which reference.** When the project has a reference chosen (References), Ref's list
     offers **Project reference: name** first, and it is the default: the phase, frequency
     and force are measured against what the unit was meant to sweep. The recorded R trace

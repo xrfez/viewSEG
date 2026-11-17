@@ -763,6 +763,12 @@ not an option is not remembered: the traces, the vibrator's roles, the f-k's tim
 Freeze, the zoom. **Reset options** (on the window's control line) puts the built-in options
 back, and they become the remembered ones. The node orientation plot has no options (the
 envelope's is its Phase drop-down, "Against the reference" or "Of the trace itself").
+A vibrator signature's roles (Ref, GF, M, B) are taken from the traces' SEG-Y trace
+identification codes when they are the vibrator's (21 reference, 20 estimated ground
+force, 18 reaction mass, 19 baseplate), whatever order the traces are in; the window's note
+says "roles taken from the trace identification codes". Without those codes the roles are
+the window's order. A role you change stays as you set it for that file; on another file
+with the codes they are taken from the codes again, and the Messages say so.
 Two curves: **raw**, the trace with its own filter (without the strip's filters), and
 **processed**, through the strip's filters only (a band-pass shows as the processed
 curve falling away outside its corners, a notch as a dip at its frequency). A trace's
