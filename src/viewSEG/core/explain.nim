@@ -98,6 +98,9 @@ type
     lagMs*: float64 = NaN
     colour*: string
     reference*: string
+    against*: bool
+      ## an envelope's phase is the difference from the reference's (else the
+      ## trace's own, which turns once per cycle)
     fkFromMs*, fkToMs*: float64 = NaN
     fkRaw*: bool
     wavenumber*, velocity*: string ## an f-k's units
@@ -268,6 +271,12 @@ func spectrogramText(f: ExplainFacts): string =
     part("Careful", "A longer frame resolves frequency finer (" & resolves & ") but blurs " &
       "time. Colours are relative to the one brightest cell, not absolute amplitude."))
 
+func referenceWords(f: ExplainFacts): string =
+  if f.live and f.reference.len > 0: "Against the reference " & f.reference & "."
+  elif f.live: "No reference is chosen."
+  else: "Against the reference chosen in References (a stored trace, a generated sweep, or " &
+    "the record's own pilot)."
+
 func envelopeText(f: ExplainFacts): string =
   join4(part("Shows", "Amplitude against time in ms: the trace as a line, and its envelope " &
       "(the trace's strength whatever its sign) over it."),
@@ -281,17 +290,34 @@ func envelopeText(f: ExplainFacts): string =
       "abrupt starts and ends."))
 
 func instPhaseText(f: ExplainFacts): string =
-  join4(part("Shows", "Instantaneous phase in degrees (-180 to 180) against time in ms."),
+  if f.against:
+    return join4(part("Shows", "The instantaneous phase of the trace minus the reference's, " &
+        "in degrees (-180 to 180), against time in ms."),
+      part("Computed from", f.what("The first trace chosen."), f.referenceWords,
+        "The angle of the trace's analytic signal times the reference's conjugate, where " &
+        "both envelopes are within 60 dB of their peaks; the mean and the largest value of " &
+        "the part drawn are under the plot.", f.filterClause, f.editsClause),
+      part("Reading it", "0 means the trace keeps step with the reference; a steady value " &
+        "is a steady phase lead (above 0, the trace ahead) or lag; a line that climbs or " &
+        "falls is a time shift or a different frequency; scatter means noise."),
+      part("Careful", "A difference wraps at ±180°, so a jump from +180° to -180° is not an " &
+        "event. Where either signal is weak the difference is not defined and is not " &
+        "drawn. A reference shorter or longer than the trace is zero-padded."))
+  join4(part("Shows", "The trace's own instantaneous phase in degrees (-180 to 180) against " &
+      "time in ms."),
     part("Computed from", f.what("The first trace chosen."),
       "The angle of the trace's analytic signal; no value where the envelope is zero.",
       f.filterClause, f.editsClause),
     part("Reading it", "A steady signal makes a sawtooth that wraps at ±180°; its steepness " &
       "is the frequency. Where the sawtooth steepens or flattens the frequency changes, as " &
-      "through a sweep; irregular jumps mean noise or no signal."),
-    part("Careful", "The phase wraps, so a jump from +180° to -180° is not an event."))
+      "through a sweep; irregular jumps mean noise or no signal. It turns once per cycle: " &
+      "choose a reference to compare."),
+    part("Careful", "The phase wraps, so a jump from +180° to -180° is not an event. A " &
+      "sweep's own phase moves a lot; that is not a fault, nothing is compared."))
 
 func instFrequencyText(f: ExplainFacts): string =
-  join4(part("Shows", "Instantaneous frequency in Hz against time in ms."),
+  join4(part("Shows", "Instantaneous frequency in Hz against time in ms" &
+      (if f.against: ", the trace's and, dim, the reference's." else: ".")),
     part("Computed from", f.what("The first trace chosen."),
       "The step of the instantaneous phase per sample; left out where the envelope is more " &
       "than 60 dB below its peak.", f.filterClause, f.editsClause),
@@ -322,12 +348,6 @@ func phaseText(f: ExplainFacts): string =
       PhaseHelp),
     part("Careful", "Phase depends on where the trace starts. Where there is no line the " &
       "amplitude is too low for the phase to mean anything."))
-
-func referenceWords(f: ExplainFacts): string =
-  if f.live and f.reference.len > 0: "Against the reference " & f.reference & "."
-  elif f.live: "No reference is chosen."
-  else: "Against the reference chosen in References (a stored trace, a generated sweep, or " &
-    "the record's own pilot)."
 
 func correlationText(f: ExplainFacts): string =
   join4(part("Shows", "Correlation coefficient up (1 is the reference's own shape, -1 its " &
@@ -659,7 +679,7 @@ func kindOfPane*(v: AnalysisView; title: string): PlotKind =
   of avSpectrogram, avFk, avOrientation: all[0]
   of avEnvelope:
     case title
-    of "Instantaneous phase": pkInstPhase
+    of "Instantaneous phase of the trace", "Phase against the reference": pkInstPhase
     of "Instantaneous frequency": pkInstFrequency
     else: pkEnvelope
   of avPhase: (if title == "Phase": pkPhase else: pkPhaseAmplitude)
@@ -688,7 +708,10 @@ func factsOf*(w: AnalysisWindow; units: UnitSystem): ExplainFacts =
     filters: w.filters, own: w.ownLine, reversal: w.reverseLine, picture: p.phasePicture,
     windowMs: p.windowMs, overlap: p.overlap, floorDb: p.floorDb, withinDb: p.phaseWithinDb,
     lagMs: p.maxLagMs, reference: w.reference, fkFromMs: p.fkFromMs, fkToMs: p.fkToMs,
-    fkRaw: p.fkRaw, colourMap: p.colourMap, harmonics: p.harmonics, limitsOn: p.limitsOn,
+    fkRaw: p.fkRaw, colourMap: p.colourMap,
+    against: w.view == avEnvelope and w.result.plots.len > 1 and
+      w.result.plots[1].title == "Phase against the reference", harmonics: p.harmonics,
+          limitsOn: p.limitsOn,
     phaseLimit: p.limits.phaseDeg, thdLimit: p.limits.thdPct,
     harmonicLimit: p.limits.harmonicPct,
     forceLimits: known(p.limits.forceLow) or known(p.limits.forceHigh) or

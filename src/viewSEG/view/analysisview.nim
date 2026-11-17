@@ -31,7 +31,8 @@ func forceAxisLabel*(plots: openArray[AnalysisPlot]): string =
 func curvePlots*(r: AnalysisResult; t: Theme; units = usMetric): seq[CurvePlot] =
   ## The result's plots as curve plots: each data curve a colour of the
   ## theme's series, in order; a limit a thin line in the error colour, the
-  ## points past one marked in it; a NaN where a curve has no value. `units`
+  ## points past one marked in it; a reference's own curve thin and dim; a NaN
+  ## where a curve has no value. `units`
   ## renames an axis that states a metric unit and scales its values; the
   ## stored result stays in SI.
   for p in r.plots:
@@ -54,6 +55,9 @@ func curvePlots*(r: AnalysisResult; t: Theme; units = usMetric): seq[CurvePlot] 
       of csPast:
         c.curves.add Curve(name: curve.name, colour: t.roles[rlError], ys: ys,
           xs: curve.xs, marks: true)
+      of csReference:
+        c.curves.add Curve(name: curve.name, colour: t.roles[rlTextDim], ys: ys,
+          xs: curve.xs, width: 1)
     result.add c
 
 func cellAt*(img: AnalysisImage; x, y: float64): PlotCursor =

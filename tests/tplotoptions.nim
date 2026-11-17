@@ -4,7 +4,8 @@
 ## - a window of a kind that is changed (ckPlotDisplay) makes its options the
 ##   kind's; a new window of that kind opens with them, a window already open
 ##   keeps its own, and a window of another kind is not touched;
-## - the envelope and the node orientation have no options; the vibrator's
+## - the node orientation has no options (the envelope's is its phase against the
+##   reference or of the trace itself); the vibrator's
 ##   roles and the f-k's time box are not options and are not remembered;
 ## - they are saved with the settings and read again at the next start, a
 ##   mass not set staying unset; a settings document of an older version, with
@@ -41,15 +42,15 @@ proc main*() =
     doAssert o.correlation == CorrelationOptions(), "only the kind's options are taken"
     o.remember(avFk, p)
     doAssert o.fk == FkOptions(floorDb: -30, colourMap: cmGrey, raw: true)
-    o.remember(avEnvelope, p)
+    o.remember(avOrientation, p)
     doAssert o == (block: (var x = PlotOptions(); x.remember(avSpectrogram, p);
-      x.remember(avFk, p); x)), "the envelope has none to remember"
+      x.remember(avFk, p); x)), "the node orientation has none to remember"
     let q = o.applied(avFk, AnalysisParams(fkFromMs: 7, roles: p.roles))
     doAssert q.fkRaw and q.floorDb == -30 and q.fkFromMs == 7 and q.roles == p.roles,
       "the f-k's box and the roles are not options"
     doAssert builtin(avSpectrogram, p).windowMs == AnalysisParams().windowMs
     doAssert builtin(avSpectrogram, p).maxLagMs == 40, "another kind's options stay"
-    doAssert not avEnvelope.hasOptions and not avOrientation.hasOptions
+    doAssert avEnvelope.hasOptions and not avOrientation.hasOptions
     for v in AnalysisView:
       doAssert PlotOptions().applied(v, AnalysisParams()) == AnalysisParams(),
         "the built-in options agree: " & $v
@@ -120,9 +121,14 @@ proc main*() =
     let v2 = st.open(avVibrator)
     doAssert st.paramsOf(v2).reactionMassKg == 3000 and st.paramsOf(v2).harmonics == 8 and
       st.paramsOf(v2).limits.phaseDeg == 7 and st.paramsOf(v2).baseplateMassKg.isNaN
-    # the envelope has none
+    # the envelope's phase, against the reference or of the trace itself
     let e = st.open(avEnvelope)
-    doAssert st.paramsOf(e) == AnalysisParams()
+    doAssert st.paramsOf(e).phaseAgainst == paReference
+    st.show(e, AnalysisParams(phaseAgainst: paSelf))
+    let e2 = st.open(avEnvelope)
+    doAssert st.paramsOf(e2).phaseAgainst == paSelf, "the envelope did not remember its phase"
+    let o2 = st.open(avOrientation)
+    doAssert st.paramsOf(o2) == AnalysisParams(), "the node orientation has no options"
     # a window opened with its settings given keeps them
     let given = st.open(avSpectrogram, AnalysisParams(windowMs: 16))
     doAssert st.paramsOf(given).windowMs == 16 and st.paramsOf(given).overlap == 75

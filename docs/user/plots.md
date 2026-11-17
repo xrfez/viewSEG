@@ -56,13 +56,13 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 ## Envelope: instantaneous phase
 
-**Shows.** Instantaneous phase in degrees (-180 to 180) against time in ms.
+**Shows.** The trace's own instantaneous phase in degrees (-180 to 180) against time in ms.
 
 **Computed from.** The first trace chosen. The angle of the trace's analytic signal; no value where the envelope is zero. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set.
 
-**Reading it.** A steady signal makes a sawtooth that wraps at ±180°; its steepness is the frequency. Where the sawtooth steepens or flattens the frequency changes, as through a sweep; irregular jumps mean noise or no signal.
+**Reading it.** A steady signal makes a sawtooth that wraps at ±180°; its steepness is the frequency. Where the sawtooth steepens or flattens the frequency changes, as through a sweep; irregular jumps mean noise or no signal. It turns once per cycle: choose a reference to compare.
 
-**Careful.** The phase wraps, so a jump from +180° to -180° is not an event.
+**Careful.** The phase wraps, so a jump from +180° to -180° is not an event. A sweep's own phase moves a lot; that is not a fault, nothing is compared.
 
 ## Envelope: instantaneous frequency
 

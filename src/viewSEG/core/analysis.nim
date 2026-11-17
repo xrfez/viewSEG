@@ -25,9 +25,9 @@
 ## The procs are pure: they take samples and give an `AnalysisResult`, and
 ## never raise (a problem is said in `problem`).
 
-import std/math
+import std/[math, strutils]
 import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
-import processSEG/vibroseis/[crosscorrelate, vibqc]
+import processSEG/vibroseis/[crosscorrelate, sweeptrack, vibqc]
 import processSEG/core/workspace
 import colourmaps, panels, phasepicture, plotcursor, processing
 
@@ -58,6 +58,11 @@ type
     groundForcePolarity*: Polarity = poAsRecorded
     massPolarity*: Polarity = poAsRecorded ## M's and B's
 
+  PhaseAgainst* = enum
+    ## What an envelope window's phase plot shows.
+    paReference = "Against the reference" ## the trace's phase minus the reference's
+    paSelf = "Of the trace itself"        ## the trace's own instantaneous phase
+
   AnalysisParams* = object
     ## An analysis window's settings (each view uses its own).
     windowMs*: float64 = 128.0
@@ -73,6 +78,9 @@ type
     phasePicture*: PhasePicture = ppUnwrapped
       ## phase spectrum: which picture is drawn (unwrapped by default)
     maxLagMs*: float64 = 250.0 ## cross-correlation: the lags shown, either side of 0
+    phaseAgainst*: PhaseAgainst = paReference
+      ## envelope: the phase against the chosen reference when there is one, or
+      ## the trace's own
     fkFromMs*: float64 = NaN ## f-k: the box's first time, ms; NaN: the traces' start
     fkToMs*: float64 = NaN ## f-k: its last time, ms; NaN: the traces' end
     fkRaw*: bool = false
@@ -93,9 +101,10 @@ type
 
   CurveStyle* = enum
     ## How a curve is drawn.
-    csLine = "line"         ## a line: the data
-    csLimit = "limit"       ## a limit: a thin line in the colour of a failure
-    csPast = "past a limit" ## the points past a limit, marked
+    csLine = "line"           ## a line: the data
+    csLimit = "limit"         ## a limit: a thin line in the colour of a failure
+    csPast = "past a limit"   ## the points past a limit, marked
+    csReference = "reference" ## the reference's own, drawn dim beside the data
 
   AnalysisCurve* = object
     ## A curve of a plot: a value per x (NaN where there is none).
@@ -351,9 +360,30 @@ proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
 
 # --------------------------------------------------------------- envelope --
 
-proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64): AnalysisResult =
+const EnvelopeFloorDb* = -60.0
+  ## the envelope plot draws a phase, a difference of phases and a frequency only
+  ## where the envelope is within this of its peak
+
+proc paddedTo(x: openArray[float32]; n: int): seq[float32] =
+  ## `x` as `n` samples: the shorter side zero-padded, as a correlation does.
+  result = newSeq[float32](n)
+  for i in 0 ..< min(x.len, n): result[i] = x[i]
+
+proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
+    p = AnalysisParams(); reference: openArray[float32] = []; referenceName = "";
+    notUsed = ""): AnalysisResult =
   ## The trace `x`, its envelope, its instantaneous phase (degrees) and its
   ## instantaneous frequency (Hz), against time: three plots.
+  ##
+  ## With a `reference` (and `p.phaseAgainst` `paReference`) the phase plot is
+  ## the instantaneous phase difference, trace minus reference, in degrees
+  ## wrapped to -180 to 180 (`wrapDeg`: the argument of the trace's analytic
+  ## signal times the reference's conjugate), where both envelopes are within
+  ## `EnvelopeFloorDb` of their peaks; its mean and its largest magnitude are
+  ## in the plot's `aside` and the note. The frequency plot keeps the trace's
+  ## own, with the reference's dim beside it. The shorter of the two is
+  ## zero-padded to the longer. Otherwise the trace's own phase, as ever.
+  ## `notUsed` says why a reference given to the window was not used.
   result = AnalysisResult(view: avEnvelope, dtMs: dtMs, used: 1)
   if x.len < 2:
     result.problem = "the trace has no samples"
@@ -361,34 +391,78 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64): Anal
   if not (dtMs > 0 and dtMs < Inf):
     result.problem = "the sample interval is not known"
     return
+  let against = reference.len >= 2 and p.phaseAgainst == paReference
+  let n = if against: max(x.len, reference.len) else: x.len
   var hp: HilbertPlan[float32]
   try:
-    hp = initHilbertPlan(float32, x.len)
+    hp = initHilbertPlan(float32, n)
   except ValueError as e:
     result.problem = e.msg
     return
   var ws = initWorkspace()
   ws.reserve(hp.workspaceSize)
-  var env, phase, freq = newSeq[float64](x.len)
-  hp.analyticInto(x, dtMs, env, phase, freq, ws)
-  var times = newSeq[float64](x.len)
-  var signal = newSeq[float64](x.len)
-  for i in 0 ..< x.len:
+  let trace = if n == x.len: @x else: x.paddedTo(n)
+  var env, phase, freq = newSeq[float64](n)
+  hp.analyticInto(trace, dtMs, env, phase, freq, ws, EnvelopeFloorDb)
+  var times = newSeq[float64](n)
+  var signal = newSeq[float64](n)
+  for i in 0 ..< n:
     times[i] = t0Ms + float64(i) * dtMs
-    signal[i] = float64(x[i])
+    signal[i] = float64(trace[i])
+  var phasePlot = AnalysisPlot(title: "Instantaneous phase of the trace", xLabel: "Time (ms)",
+    xUnit: "ms", yLabel: "Phase (°)", yUnit: "°", xs: times,
+    curves: @[AnalysisCurve(name: "phase", ys: phase)])
+  var freqPlot = AnalysisPlot(title: "Instantaneous frequency", xLabel: "Time (ms)",
+    xUnit: "ms", yLabel: "Frequency (Hz)", yUnit: "Hz", xs: times,
+    curves: @[AnalysisCurve(name: "frequency", ys: freq)])
+  result.note = "The analytic signal's modulus (envelope) and argument (phase), the " &
+    "phase's step per sample (frequency); no frequency where the envelope is 60 dB " &
+    "below its peak"
+  if against:
+    let ref32 = reference.paddedTo(n)
+    var renv, rphase, rfreq = newSeq[float64](n)
+    hp.analyticInto(ref32, dtMs, renv, rphase, rfreq, ws, EnvelopeFloorDb)
+    var peak, refPeak = 0.0
+    for i in 0 ..< n:
+      peak = max(peak, env[i])
+      refPeak = max(refPeak, renv[i])
+    let floor = pow(10.0, EnvelopeFloorDb / 20.0)
+    var diff = newSeq[float64](n)
+    var sum, worst = 0.0
+    var drawn = 0
+    for i in 0 ..< n:
+      diff[i] = NaN
+      if env[i] > 0 and renv[i] > 0 and env[i] >= peak * floor and renv[i] >= refPeak * floor and
+          not phase[i].isNaN and not rphase[i].isNaN:
+        diff[i] = wrapDeg(phase[i] - rphase[i])
+        sum += diff[i]
+        worst = max(worst, abs(diff[i]))
+        inc drawn
+    phasePlot = AnalysisPlot(title: "Phase against the reference", xLabel: "Time (ms)",
+      xUnit: "ms", yLabel: "Phase difference (°)", yUnit: "°", xs: times, yLo: -180.0,
+      yHi: 180.0, curves: @[AnalysisCurve(name: "trace minus reference", ys: diff)])
+    freqPlot.curves.add AnalysisCurve(name: "reference frequency", ys: rfreq,
+      style: csReference)
+    var words = "no time where both envelopes are within 60 dB of their peaks"
+    if drawn > 0:
+      let mean = sum / float64(drawn)
+      words = "mean " & formatFloat(mean, ffDecimal, 1) & "°, largest " &
+        formatFloat(worst, ffDecimal, 1) & "°"
+      phasePlot.aside = "Phase against the reference over the part drawn: " & words
+    result.note = "Phase against " & referenceName & ": the trace's instantaneous phase " &
+      "minus the reference's (the argument of the trace's analytic signal times the " &
+      "reference's conjugate), -180 to 180 degrees, drawn where both envelopes are within " &
+      "60 dB of their peaks: " & words & ". " & result.note
+  else:
+    result.note = "This turns once per cycle; " & (if reference.len >= 2:
+      "choose \"Against the reference\" to compare" else: "choose a reference to compare") &
+      ". " & result.note
+  if notUsed.len > 0: result.note = "The reference was not used: " & notUsed & ". " & result.note
   result.plots = @[
     AnalysisPlot(title: "Amplitude", xLabel: "Time (ms)", xUnit: "ms", yLabel: "Amplitude",
       xs: times, curves: @[AnalysisCurve(name: name, ys: signal),
       AnalysisCurve(name: "envelope", ys: env)]),
-    AnalysisPlot(title: "Instantaneous phase", xLabel: "Time (ms)", xUnit: "ms",
-      yLabel: "Phase (°)", yUnit: "°", xs: times,
-      curves: @[AnalysisCurve(name: "phase", ys: phase)]),
-    AnalysisPlot(title: "Instantaneous frequency", xLabel: "Time (ms)", xUnit: "ms",
-      yLabel: "Frequency (Hz)", yUnit: "Hz", xs: times,
-      curves: @[AnalysisCurve(name: "frequency", ys: freq)])]
-  result.note = "The analytic signal's modulus (envelope) and argument (phase), the " &
-    "phase's step per sample (frequency); no frequency where the envelope is 60 dB " &
-    "below its peak"
+    phasePlot, freqPlot]
 
 # ---------------------------------------------------------- phase spectrum --
 

@@ -79,6 +79,7 @@ proc everyFieldSet(): Settings =
         colourMap: cmRedBlack),
       phase: PhaseOptions(phaseWithinDb: 30, phasePicture: ppSigned),
       correlation: CorrelationOptions(maxLagMs: 100),
+      envelope: EnvelopeOptions(phaseAgainst: paSelf),
       vibrator: VibratorOptions(reactionMassKg: 3500, baseplateMassKg: 1500.5, harmonics: 7,
         limitsOn: true, limits: VibLimits(phaseDeg: 12, meanPhaseDeg: 6, thdPct: 30,
         meanThdPct: 15, harmonicPct: 8, forceLow: 100, forceHigh: 500, peakForce: 900,

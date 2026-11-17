@@ -93,11 +93,12 @@ proc keptIntervalMs(s: Session; traces, killed: openArray[int]): float64 =
   0.0
 
 proc pilotFollowKey(state: AppState; w: int): string =
-  ## "" unless window `plots[w]` is a correlation against the chosen pilot of the
-  ## record; else its trace and what changes it: a reversal, a kill, its own filter.
+  ## "" unless window `plots[w]` is a correlation (or an envelope) against the chosen
+  ## pilot of the record; else its trace and what changes it: a reversal, a kill, its
+  ## own filter.
   template pw: untyped = state.plots[w]
-  if pw.view != avCorrelation or state.chosenRef.len == 0 or not state.refsLoaded or
-      pw.traces.len == 0: return ""
+  if pw.view notin {avCorrelation, avEnvelope} or state.chosenRef.len == 0 or
+      not state.refsLoaded or pw.traces.len == 0: return ""
   let at = state.refs.findId(state.chosenRef)
   if at < 0 or not state.refs.entries[at].isPilot: return ""
   let i = state.findTrace(pw.traces[0])
@@ -147,6 +148,45 @@ proc correlationBlock(state: AppState; dtMs: float64): tuple[problem, name: stri
       return (intervalRefusal(rdt, dtMs), e.name)
   ("", e.name)
 
+proc chosenReferenceFor(state: var AppState; w: int; s: Session; dtMs: float64;
+    edits: FileEdits; a: var AnalysisAsk): tuple[problem, name: string] =
+  ## Window `plots[w]`'s chosen reference, for a correlation and an envelope
+  ## alike: `a` is told which (a trace of the record by the rule, or an archive
+  ## file) and the window's `reference` is its name; else the `problem` that
+  ## it cannot be used (none chosen, gone, another interval, a record with no
+  ## such trace) and the name it has.
+  template pw: untyped = state.plots[w]
+  let blocked = state.correlationBlock(dtMs)
+  if blocked.problem.len > 0: return blocked
+  let e = state.refs.entries[state.refs.findId(state.chosenRef)]
+  if e.isPilot:
+    # a trace of the record this window is of, by the rule: each record has
+    # its own pilot, found from the keys already held
+    let rule = pilotRuleOf(e)
+    let local = pw.traces[0] - s.base
+    var records: seq[int] = @[]
+    for t in pw.traces:
+      if t in s:
+        let g = s.gatherOf(t - s.base)
+        if g notin records: records.add g
+    if records.len > 1:
+      return ("These traces come from " & $records.len &
+        " records; a record's pilot needs traces of one record.", e.name)
+    let (rt, record, problem) = s.pilotOfRecord(s.gatherOf(local), rule, edits)
+    if problem.len > 0: return (problem, e.name)
+    a.pilotTrace = rt
+    a.pilotRule = rule
+    a.pilotRecord = record
+    a.pilotReversed = reversedOf(edits, [rt]).len > 0
+    a.pilotOwn = ownOfTraces(edits, [rt])
+    a.archiveName = e.name
+  else:
+    a.archivePath = state.refsHome / e.file
+    a.archiveName = e.name
+    a.archiveIntervalUs = e.intervalUs
+  pw.reference = e.name
+  ("", e.name)
+
 proc askPlot(state: var AppState; w: int): bool =
   ## Asks the reader for window `plots[w]`'s numbers of its traces, with
   ## the filters it has; false when its file is not open any more or cannot
@@ -172,45 +212,21 @@ proc askPlot(state: var AppState; w: int): bool =
   a.offsetUnit = if imported: state.joins[joined].units.file else: offsetUnitOf(s.crs)
   let edits = state.editsAt(s.path)
   var killed = if pw.frozen: pw.killed else: killedOf(edits, traces)
-  if pw.view == avCorrelation:
-    # the chosen reference only: none, gone, or another interval is said and
-    # nothing is drawn (no auxiliary trace, no first trace). The interval is
-    # the first trace the reader would keep, not a killed or dead traces[0].
+  if pw.view in {avCorrelation, avEnvelope}:
+    # the chosen reference only: none, gone, or another interval is said (a
+    # correlation then draws nothing, no auxiliary trace, no first trace; an
+    # envelope draws the trace's own phase). The interval is the first trace
+    # the reader would keep, not a killed or dead traces[0].
     let dtMs = keptIntervalMs(s, traces, killed)
-    let blocked = state.correlationBlock(dtMs)
-    if blocked.problem.len > 0:
+    var blocked: tuple[problem, name: string] = ("", "")
+    if pw.view == avCorrelation or state.chosenRef.len > 0:
+      blocked = state.chosenReferenceFor(w, s, dtMs, edits, a)
+    if pw.view == avCorrelation and blocked.problem.len > 0:
       state.showCorrelationProblem(w, blocked.problem, blocked.name)
       return true
-    let e = state.refs.entries[state.refs.findId(state.chosenRef)]
-    if e.isPilot:
-      # a trace of the record this window is of, by the rule: each record has
-      # its own pilot, found from the keys already held
-      let rule = pilotRuleOf(e)
-      let local = pw.traces[0] - s.base
-      var records: seq[int] = @[]
-      for t in pw.traces:
-        if t in s:
-          let g = s.gatherOf(t - s.base)
-          if g notin records: records.add g
-      if records.len > 1:
-        state.showCorrelationProblem(w, "These traces come from " & $records.len &
-          " records; a record's pilot needs traces of one record.", e.name)
-        return true
-      let (rt, record, problem) = s.pilotOfRecord(s.gatherOf(local), rule, edits)
-      if problem.len > 0:
-        state.showCorrelationProblem(w, problem, e.name)
-        return true
-      a.pilotTrace = rt
-      a.pilotRule = rule
-      a.pilotRecord = record
-      a.pilotReversed = reversedOf(edits, [rt]).len > 0
-      a.pilotOwn = ownOfTraces(edits, [rt])
-      a.archiveName = e.name
-    else:
-      a.archivePath = state.refsHome / e.file
-      a.archiveName = e.name
-      a.archiveIntervalUs = e.intervalUs
-    pw.reference = e.name
+    if pw.view == avEnvelope:
+      a.notUsed = blocked.problem
+      pw.reference = if blocked.problem.len > 0: "" else: blocked.name
   elif pw.view == avVibrator and state.chosenRef.len > 0 and
       state.refsLoaded and state.refs.findId(state.chosenRef) >= 0 and
       state.refs.entries[state.refs.findId(state.chosenRef)].isPilot:
@@ -259,7 +275,7 @@ proc askPlot(state: var AppState; w: int): bool =
   inc pw.asks
   inc pw.revision
   state.analysisReaderFor(s.path).ask a
-  if pw.view in {avCorrelation, avVibrator}:
+  if pw.view in {avCorrelation, avEnvelope, avVibrator}:
     pw.archiveSeen = state.chosenRef
     pw.archiveRev = state.refsRev
   pw.pilotKey = state.pilotFollowKey(w)
@@ -568,7 +584,7 @@ proc followFilters(state: var AppState; w, k: int) =
   template pw: untyped = state.plots[w]
   let i = state.findTrace(if pw.traces.len > 0: pw.traces[0] else: -1)
   if i < 0 or state.panels[k].layers.len == 0: return
-  if pw.view == avCorrelation and state.pilotFollowKey(w) != pw.pilotKey:
+  if pw.view in {avCorrelation, avEnvelope} and state.pilotFollowKey(w) != pw.pilotKey:
     # the pilot of the record was reversed, killed or given a filter of its own
     if state.askPlot(w): return
   let pr = spectrumFilters(state.panels[k])
@@ -833,7 +849,7 @@ proc followPlots(state: var AppState) =
   for w in 0 ..< state.plots.len:
     template pw: untyped = state.plots[w]
     if pw.frozen: continue
-    if pw.view in {avCorrelation, avVibrator} and
+    if pw.view in {avCorrelation, avEnvelope, avVibrator} and
         (pw.archiveSeen != state.chosenRef or pw.archiveRev != state.refsRev):
       # The file may already be closed: `askPlot` then cannot replace the
       # picture, and the old curves must not remain.

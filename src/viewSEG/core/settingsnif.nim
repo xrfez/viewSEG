@@ -51,6 +51,7 @@
 ##   (spectrogram (windowMs 128.0) (overlap 75.0) (floorDb -60.0) (colourMap viridis))
 ##   (phase (phaseWithinDb 20.0) (phasePicture unwrapped))
 ##   (correlation (maxLagMs 250.0))
+##   (envelope (phaseAgainst reference))
 ##   (vibrator (reactionMassKg 3500.0) (harmonics 5) (limitsOn false) (limits (phaseDeg 10.0)))
 ##   (fk (floorDb -60.0) (colourMap viridis) (raw false)))
 ##  (displayPresets
@@ -118,6 +119,7 @@ const
   SpectrumTimeNames: array[SpectrumTime, string] = ["whole", "visible"]
   PhasePictureNames: array[PhasePicture, string] = ["unwrapped", "magnitude", "signed",
     "delayRemoved"]
+  PhaseAgainstNames: array[PhaseAgainst, string] = ["reference", "trace"]
   ReadoutNames: array[ReadoutField, string] = ["time", "trace", "channel", "receiver",
     "source", "ffid", "offset", "amplitude", "shotTime", "cursorUtc", "sample", "cdp",
     "inline", "crossline", "sourceXY", "receiverXY", "midpointXY", "sourceZ", "receiverZ",
@@ -136,7 +138,7 @@ func persistedNames*(): seq[seq[string]] =
     @TimeGainNames, @ScopeNames,
     @StatNames, @LengthNames, @FieldNames, @ReadoutNames, @SeverityNames, @HeadersTabNames,
     @TraceTabNames, @HeaderColumnNames, @SpectrumScaleNames, @SpectrumTimeNames,
-    @PhasePictureNames, @TableScopeNames, @UnitNames]
+    @PhasePictureNames, @PhaseAgainstNames, @TableScopeNames, @UnitNames]
 
 # ----------------------------------------------------------------- writing --
 
@@ -254,6 +256,9 @@ proc writePlotOptions(w: var NifWriter; o: PlotOptions) =
   w.close()
   w.open("correlation")
   w.value("maxLagMs", o.correlation.maxLagMs)
+  w.close()
+  w.open("envelope")
+  w.choice("phaseAgainst", PhaseAgainstNames[o.envelope.phaseAgainst])
   w.close()
   w.open("vibrator")
   if not o.vibrator.reactionMassKg.isNaN: w.value("reactionMassKg", o.vibrator.reactionMassKg)
@@ -797,6 +802,10 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
       for c in k.kids:
         if c.isTree("maxLagMs"): r.ranged(c, LagMsRange, o.correlation.maxLagMs)
         else: r.unknown(c, "correlation")
+    elif k.isTree("envelope"):
+      for c in k.kids:
+        if c.isTree("phaseAgainst"): r.choice(c, PhaseAgainstNames, o.envelope.phaseAgainst)
+        else: r.unknown(c, "envelope")
     elif k.isTree("vibrator"):
       for c in k.kids:
         if c.isTree("reactionMassKg"): r.ranged(c, MassKgRange, o.vibrator.reactionMassKg)

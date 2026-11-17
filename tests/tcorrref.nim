@@ -18,7 +18,7 @@
 ## choose one". With `carryOver` asking a frozen correlation again, "a frozen
 ## correlation was asked again".
 
-import std/[json, math, os, strutils]
+import std/[json, math, os, sequtils, strutils]
 import parseSEG
 import viewSEG/core/[analysis, references, state]
 import viewSEG/remote/schema
@@ -138,6 +138,56 @@ proc main*() =
       doAssert st.plots[w].result.problem.find("the reference is ") >= 0 and
         st.plots[w].result.problem.find("this file is ") >= 0, st.plots[w].result.problem
       doAssert st.plots[w].result.plots.len == 0, "a different interval was drawn"
+
+    block envelope_takes_the_same_reference:
+      # An envelope window uses the reference the correlation does: a trace
+      # against the pilot it was stored from is 0; with none chosen, or one at
+      # another interval (said), its own phase.
+      let again = st.chooseStored(fx.dir / "refs", base, "the pilot again")
+      proc openEnvelope(st: var AppState; trace: int): int =
+        st.apply Command(kind: ckOpenPlot, plotView: avEnvelope, plotTraces: @[trace])
+        result = st.plots.high
+        doAssert st.settle(st.answered(result)), "no answer: " & st.plots[result].result.problem
+      let w = st.openEnvelope(base)
+      doAssert st.plots[w].reference == "the pilot again", st.plots[w].reference
+      doAssert st.plots[w].result.plots[1].title == "Phase against the reference"
+      for y in st.plots[w].result.plots[1].curves[0].ys:
+        doAssert y.isNaN or y == 0.0, "the pilot against itself is " & $y
+      let moved = st.openEnvelope(base + 2)
+      doAssert st.plots[moved].result.plots[1].title == "Phase against the reference"
+      # the difference is not the trace's own phase
+      let own = st.plots[moved].result.plots[1].curves[0].ys
+      var nonZero = 0
+      for y in own:
+        if not y.isNaN and y != 0.0: inc nonZero
+      doAssert nonZero > 10, "a delayed copy against the pilot is 0 everywhere"
+      # asked "Of the trace itself", it is the trace's own, with no reference named
+      var params = st.plots[moved].params
+      params.phaseAgainst = paSelf
+      st.apply Command(kind: ckPlotDisplay, plot: st.plots[moved].id, plotParams: params)
+      doAssert st.settle(st.answered(moved)), "no answer"
+      doAssert st.plots[moved].result.plots[1].title == "Instantaneous phase of the trace"
+      # none chosen: its own phase, and nothing said about a reference not used
+      st.apply Command(kind: ckSelectReference, refId: "")
+      doAssert st.settle(st.answered(w)), "no answer"
+      doAssert st.plots[w].result.plots[1].title == "Instantaneous phase of the trace"
+      doAssert "not used" notin st.plots[w].result.note, st.plots[w].result.note
+      doAssert st.plots[w].result.problem == "" and st.plots[w].reference == ""
+      # another interval: the same words as the correlation's, its own phase
+      var g = GeneratedReference(name: "envelope interval", law: rlLinear, f1Hz: 8, f2Hz: 40,
+        durationMs: 200, dtMs: DtMs * 2, amplitude: 1)
+      st.apply Command(kind: ckGenerateReference, refGenerate: g)
+      doAssert st.settle(st.references.entries.anyIt(it.name == "envelope interval"))
+      var other = ""
+      for e in st.references.entries:
+        if e.name == "envelope interval": other = e.id
+      st.apply Command(kind: ckSelectReference, refId: other)
+      doAssert st.settle(st.answered(w) and "not used" in st.plots[w].result.note),
+        st.plots[w].result.note
+      doAssert "the reference is " in st.plots[w].result.note and
+        "this file is " in st.plots[w].result.note, st.plots[w].result.note
+      doAssert st.plots[w].result.plots[1].title == "Instantaneous phase of the trace"
+      st.apply Command(kind: ckSelectReference, refId: again)
 
     block old_window_state:
       var problems: seq[string] = @[]

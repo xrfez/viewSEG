@@ -66,6 +66,9 @@ type
     pilotReversed*: bool ## that trace is effectively reversed: turned over first
     pilotOwn*: seq[FilterEntry] ## its own filter, when it has one
     extraNote*: string ## said under the numbers, for what the choice of a reference changed
+    notUsed*: string
+      ## an envelope's chosen reference that cannot be used, and why (the trace's own
+      ## phase is drawn, and the window says so)
 
   ReaderObj = object
     lock: Lock
@@ -278,6 +281,88 @@ proc orientationAnswer(p: ptr ReaderObj; a: AnalysisAsk): AnalysisResult =
   except CatchableError as e:
     result.problem = "it cannot be read now: " & e.msg
 
+type ReferenceRead = object
+  ## What reading a window's reference gave.
+  samples: seq[float32]
+  name: string    ## in words, for the window's notes
+  problem: string ## why it cannot be used; "" when it can
+  cancelled: bool ## a newer request came first
+
+func hasReference(a: AnalysisAsk): bool {.inline.} =
+  ## Whether the window was given a reference: an archive file, a trace of the
+  ## record by a rule, or a stored one that is gone (said, not used).
+  a.archiveGone.len > 0 or a.archivePath.len > 0 or a.pilotTrace >= 0
+
+proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: float64;
+    through: var string; passed: var int): ReferenceRead =
+  ## The chosen reference of window `a`, as a correlation and an envelope take
+  ## it: an archive file read raw, else the record's trace by the rule, put
+  ## through what the plot puts a trace through (reversal, filters, its own
+  ## filter) and cut to the rule's window; refused when its interval is not
+  ## `dtMs`. `through` and `passed` say what the filters did to the pilot.
+  if a.archiveGone.len > 0:
+    result.problem = a.archiveGone
+  elif a.archivePath.len > 0:
+    var refSamples: seq[float32] = @[]
+    var rus = a.archiveIntervalUs
+    try:
+      var read: tuple[samples: seq[float32]; intervalUs: float64]
+      {.cast(gcsafe).}:
+        read = readReferenceFile(a.archivePath)
+      refSamples = read.samples
+      if read.intervalUs > 0: rus = read.intervalUs
+    except CatchableError as e:
+      result.problem = "the reference \"" & a.archiveName &
+        "\" is no longer in the archive (" & e.msg & ")"
+    if result.problem.len == 0:
+      let rdt = rus / 1000
+      if not (rus > 0 and rus < Inf):
+        result.problem = "the reference trace is at another interval: it has " &
+          "no sample interval"
+      elif not sameDt(rdt, dtMs):
+        result.problem = intervalRefusal(rdt, dtMs)
+      elif refSamples.len == 0:
+        result.problem = "the reference trace could not be read"
+      else:
+        result.name = a.archiveName & " (archive)"
+        result.samples = refSamples
+  elif a.pilotTrace >= 0:
+    let rt = a.pilotTrace
+    if rt notin 0 ..< f[].len:
+      result.problem = recordSentenceOf(a) & " has no such trace."
+      return
+    var refRows: seq[seq[float32]] = @[]
+    var refFailed: seq[bool] = @[]
+    if not p.readRows(f, a.path, @[rt], a.id, refRows, refFailed):
+      result.cancelled = true
+      return
+    let rk = f[].traceKeys(rt)
+    let rus = if rk.intervalUs > 0 and rk.intervalUs < Inf: rk.intervalUs
+              else: f[].sampleIntervalUs(rt)
+    let rdt = rus / 1000
+    if refFailed[0] or refRows[0].len == 0:
+      result.problem = "the pilot trace could not be read"
+    elif not (rus > 0 and rus < Inf):
+      result.problem = "the pilot trace has no sample interval"
+    elif not sameDt(rdt, dtMs):
+      result.problem = intervalRefusal(rdt, dtMs)
+    else:
+      var refPassed = 0
+      let refRev = if a.pilotReversed: @[rt] else: newSeq[int]()
+      let refThrough = filtered(refRows, f, @[rt], a.processing, a.pilotOwn,
+        refRev, dtMs, refPassed)
+      if refPassed > 0 and refThrough.startsWith("through "):
+        inc passed
+        let words = "the pilot is not filtered: " & AuxFilterOff
+        through = if through.len > 0: through & "; " & words else: words
+      let (cut, why) = cutPilot(refRows[0], dtMs, a.pilotRule, a.pilotRecord)
+      if why.len > 0:
+        result.problem = why
+      else:
+        result.name = a.archiveName & " (" & a.pilotRecord & ", " &
+          pilotWords(a.pilotRule.aux, a.pilotRule.trace) & ")"
+        result.samples = cut
+
 proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
   ## Reads, works out and posts what `a` asks for; false when a newer
   ## request came first (nothing is posted).
@@ -357,106 +442,50 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             answer = spectrogramOf(kept, dtMs, t0Ms, a.params, stop)
             (answer.leftOut, answer.atOtherInterval) = n
           of avEnvelope:
+            # against the chosen reference when there is one that can be used:
+            # the same reader of it as a correlation's; else the trace's own phase
+            var reference: seq[float32] = @[]
+            var refName = ""
+            var notUsed = a.notUsed
+            if a.hasReference and a.params.phaseAgainst == paReference:
+              let got = p.readReference(a, f, dtMs, through, passed)
+              if got.cancelled: return false
+              if got.problem.len > 0: notUsed = got.problem
+              else: (reference, refName) = (got.samples, got.name)
             let n = (answer.leftOut, answer.atOtherInterval)
-            answer = envelopeOf(kept[0], keptNames[0], dtMs, t0Ms)
+            answer = envelopeOf(kept[0], keptNames[0], dtMs, t0Ms, a.params, reference, refName,
+              notUsed)
             (answer.leftOut, answer.atOtherInterval) = n
+            let rule = if reference.len > 0: lengthRule(reference.len, kept[0].len) else: ""
+            if rule.len > 0 and answer.problem.len == 0:
+              answer.note = capitalizeAscii(rule) & ". " & answer.note
           of avPhase:
             let n = (answer.leftOut, answer.atOtherInterval)
             answer = phaseOf(kept[0], keptNames[0], dtMs, a.params)
             (answer.leftOut, answer.atOtherInterval) = n
           of avCorrelation:
-            # the chosen archive reference only, read raw; none is said and
-            # nothing is drawn
-            if a.archiveGone.len > 0 or a.archivePath.len > 0:
-              if a.archiveGone.len > 0:
-                answer.problem = a.archiveGone
-              else:
-                var refSamples: seq[float32] = @[]
-                var rus = a.archiveIntervalUs
-                try:
-                  var read: tuple[samples: seq[float32]; intervalUs: float64]
-                  {.cast(gcsafe).}:
-                    read = readReferenceFile(a.archivePath)
-                  refSamples = read.samples
-                  if read.intervalUs > 0: rus = read.intervalUs
-                except CatchableError as e:
-                  answer.problem = "the reference \"" & a.archiveName &
-                    "\" is no longer in the archive (" & e.msg & ")"
-                if answer.problem.len == 0:
-                  let rdt = rus / 1000
-                  if not (rus > 0 and rus < Inf):
-                    answer.problem = "the reference trace is at another interval: it has " &
-                      "no sample interval"
-                  elif not sameDt(rdt, dtMs):
-                    answer.problem = intervalRefusal(rdt, dtMs)
-                  elif refSamples.len == 0:
-                    answer.problem = "the reference trace could not be read"
-                  else:
-                    let refName = a.archiveName & " (archive)"
-                    var signals: seq[(string, seq[float32])] = @[]
-                    for i in 0 ..< min(kept.len, MaxAnalysisCurves):
-                      signals.add (keptNames[i], kept[i])
-                    let n = (answer.leftOut, answer.atOtherInterval)
-                    answer = correlationOf(signals, refSamples, refName, dtMs, a.params, stop)
-                    (answer.leftOut, answer.atOtherInterval) = n
-                    let rule = if kept.len > 0: lengthRule(refSamples.len, kept[0].len) else: ""
-                    if rule.len > 0 and answer.problem.len == 0:
-                      answer.note = "Reference: " & refName & ". " & rule &
-                        (if answer.note.len > 0: ". " & answer.note else: "")
-                    elif answer.problem.len == 0:
-                      answer.note = "Reference: " & refName &
-                        (if answer.note.len > 0: ". " & answer.note else: "")
-            elif a.pilotTrace >= 0:
-              # a trace of this record by the chosen rule, read and put through
-              # what the plot puts a trace through (reversal, filters, its own
-              # filter), then cut to the rule's window
-              let rt = a.pilotTrace
-              if rt notin 0 ..< f[].len:
-                answer.problem = recordSentenceOf(a) & " has no such trace."
-              else:
-                var refRows: seq[seq[float32]] = @[]
-                var refFailed: seq[bool] = @[]
-                if not p.readRows(f, a.path, @[rt], a.id, refRows, refFailed): return false
-                let rk = f[].traceKeys(rt)
-                let rus = if rk.intervalUs > 0 and rk.intervalUs < Inf: rk.intervalUs
-                          else: f[].sampleIntervalUs(rt)
-                let rdt = rus / 1000
-                if refFailed[0] or refRows[0].len == 0:
-                  answer.problem = "the pilot trace could not be read"
-                elif not (rus > 0 and rus < Inf):
-                  answer.problem = "the pilot trace has no sample interval"
-                elif not sameDt(rdt, dtMs):
-                  answer.problem = intervalRefusal(rdt, dtMs)
-                else:
-                  var refPassed = 0
-                  let refRev = if a.pilotReversed: @[rt] else: newSeq[int]()
-                  let refThrough = filtered(refRows, f, @[rt], a.processing, a.pilotOwn,
-                    refRev, dtMs, refPassed)
-                  if refPassed > 0 and refThrough.startsWith("through "):
-                    inc passed
-                    let words = "the pilot is not filtered: " & AuxFilterOff
-                    through = if through.len > 0: through & "; " & words else: words
-                  let (cut, why) = cutPilot(refRows[0], dtMs, a.pilotRule, a.pilotRecord)
-                  if why.len > 0:
-                    answer.problem = why
-                  else:
-                    let refName = a.archiveName & " (" & a.pilotRecord & ", " &
-                      pilotWords(a.pilotRule.aux, a.pilotRule.trace) & ")"
-                    var signals: seq[(string, seq[float32])] = @[]
-                    for i in 0 ..< min(kept.len, MaxAnalysisCurves):
-                      signals.add (keptNames[i], kept[i])
-                    let n = (answer.leftOut, answer.atOtherInterval)
-                    answer = correlationOf(signals, cut, refName, dtMs, a.params, stop)
-                    (answer.leftOut, answer.atOtherInterval) = n
-                    let rule = if kept.len > 0: lengthRule(cut.len, kept[0].len) else: ""
-                    if rule.len > 0 and answer.problem.len == 0:
-                      answer.note = "Reference: " & refName & ". " & rule &
-                        (if answer.note.len > 0: ". " & answer.note else: "")
-                    elif answer.problem.len == 0:
-                      answer.note = "Reference: " & refName &
-                        (if answer.note.len > 0: ". " & answer.note else: "")
-            else:
+            # the chosen reference only, read raw (an archive file) or cut from
+            # the record's own trace; none is said and nothing is drawn
+            if not a.hasReference:
               answer.problem = NoReferenceChosen
+            else:
+              let got = p.readReference(a, f, dtMs, through, passed)
+              if got.cancelled: return false
+              if got.problem.len > 0: answer.problem = got.problem
+              else:
+                var signals: seq[(string, seq[float32])] = @[]
+                for i in 0 ..< min(kept.len, MaxAnalysisCurves):
+                  signals.add (keptNames[i], kept[i])
+                let n = (answer.leftOut, answer.atOtherInterval)
+                answer = correlationOf(signals, got.samples, got.name, dtMs, a.params, stop)
+                (answer.leftOut, answer.atOtherInterval) = n
+                let rule = if kept.len > 0: lengthRule(got.samples.len, kept[0].len) else: ""
+                if rule.len > 0 and answer.problem.len == 0:
+                  answer.note = "Reference: " & got.name & ". " & rule &
+                    (if answer.note.len > 0: ". " & answer.note else: "")
+                elif answer.problem.len == 0:
+                  answer.note = "Reference: " & got.name &
+                    (if answer.note.len > 0: ". " & answer.note else: "")
           of avFk:
             # the trace spacing, from the keys of the traces read
             var offsets, xs, ys: seq[float64] = @[]

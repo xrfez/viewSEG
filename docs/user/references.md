@@ -118,7 +118,13 @@ reference, the title follows. If you delete it, the window says so.
 **Use** selects the one reference the plots use. **None** is the default: no
 reference is chosen. Vibrator plots then use the file's own pilot. A
 correlation needs a chosen reference. The Correlation window says
-"No reference is chosen. Choose one in References."
+"No reference is chosen. Choose one in References." The Envelope window takes the chosen
+reference too: its phase plot is then the phase of the trace minus the reference's, in
+degrees, against time ("Phase against the reference"; a trace against itself is 0). With
+none chosen, or with the window's **Phase** drop-down set to "Of the trace itself", it
+draws the trace's own instantaneous phase, which turns once per cycle. A reference at
+another sample interval is not used (the window says so); a shorter or longer one is
+zero-padded, as for the correlation.
 One reference at most is selected.
 The choice is kept in the project when one is open, and otherwise across restarts.
 Opening or closing a project switches the archive and the choice. A plot whose reference

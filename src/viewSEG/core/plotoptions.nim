@@ -5,10 +5,10 @@
 ## Only a kind's own options are remembered: the spectrogram's frame, overlap,
 ## floor and colour map; the phase spectrum's threshold and picture; the
 ## correlation's lags; the vibrator signature's harmonics, masses and limits;
-## the f-k's floor, colour map and Raw. What is not an option is not: which
-## traces, the vibrator's roles, the f-k's time box (they belong to a file),
-## the frozen state, the cursor, the axes' zoom. The envelope and the node
-## orientation have no options.
+## the f-k's floor, colour map and Raw; the envelope's phase against the reference
+## or of the trace itself. What is not an option is not: which traces, the
+## vibrator's roles, the f-k's time box (they belong to a file), the frozen
+## state, the cursor, the axes' zoom. The node orientation has no options.
 ##
 ## An `AnalysisParams` holds a window's options with those; `remember` takes
 ## the options of a kind out of one, `applied` puts them into one, and
@@ -39,6 +39,9 @@ type
     limits*: VibLimits = VibLimits(phaseDeg: 10, meanPhaseDeg: 5, thdPct: 40,
       meanThdPct: 20)
 
+  EnvelopeOptions* = object
+    phaseAgainst*: PhaseAgainst = paReference
+
   FkOptions* = object
     floorDb*: float64 = -60.0
     colourMap*: ColourMap = cmViridis
@@ -49,10 +52,11 @@ type
     spectrogram*: SpectrogramOptions
     phase*: PhaseOptions
     correlation*: CorrelationOptions
+    envelope*: EnvelopeOptions
     vibrator*: VibratorOptions
     fk*: FkOptions
 
-const OptionViews* = {avSpectrogram, avPhase, avCorrelation, avVibrator, avFk}
+const OptionViews* = {avSpectrogram, avEnvelope, avPhase, avCorrelation, avVibrator, avFk}
   ## the kinds of plot that have options to remember
 
 func `==`*(a, b: PlotOptions): bool =
@@ -81,12 +85,13 @@ func optionsOf*(p: AnalysisParams; view: AnalysisView): PlotOptions =
   of avPhase:
     result.phase = PhaseOptions(phaseWithinDb: p.phaseWithinDb, phasePicture: p.phasePicture)
   of avCorrelation: result.correlation = CorrelationOptions(maxLagMs: p.maxLagMs)
+  of avEnvelope: result.envelope = EnvelopeOptions(phaseAgainst: p.phaseAgainst)
   of avVibrator:
     result.vibrator = VibratorOptions(reactionMassKg: p.reactionMassKg,
       baseplateMassKg: p.baseplateMassKg, harmonics: p.harmonics, limitsOn: p.limitsOn,
       limits: p.limits)
   of avFk: result.fk = FkOptions(floorDb: p.floorDb, colourMap: p.colourMap, raw: p.fkRaw)
-  of avEnvelope, avOrientation: discard
+  of avOrientation: discard
 
 func remember*(o: var PlotOptions; view: AnalysisView; p: AnalysisParams) =
   ## Takes the options of kind `view` out of `p`.
@@ -95,9 +100,10 @@ func remember*(o: var PlotOptions; view: AnalysisView; p: AnalysisParams) =
   of avSpectrogram: o.spectrogram = got.spectrogram
   of avPhase: o.phase = got.phase
   of avCorrelation: o.correlation = got.correlation
+  of avEnvelope: o.envelope = got.envelope
   of avVibrator: o.vibrator = got.vibrator
   of avFk: o.fk = got.fk
-  of avEnvelope, avOrientation: discard
+  of avOrientation: discard
 
 func applied*(o: PlotOptions; view: AnalysisView; p: AnalysisParams): AnalysisParams =
   ## `p` with the options of kind `view` as `o` has them; the rest as it was.
@@ -110,12 +116,13 @@ func applied*(o: PlotOptions; view: AnalysisView; p: AnalysisParams): AnalysisPa
   of avPhase:
     (result.phaseWithinDb, result.phasePicture) = (o.phase.phaseWithinDb, o.phase.phasePicture)
   of avCorrelation: result.maxLagMs = o.correlation.maxLagMs
+  of avEnvelope: result.phaseAgainst = o.envelope.phaseAgainst
   of avVibrator:
     (result.reactionMassKg, result.baseplateMassKg, result.harmonics, result.limitsOn,
      result.limits) = (o.vibrator.reactionMassKg, o.vibrator.baseplateMassKg,
        o.vibrator.harmonics, o.vibrator.limitsOn, o.vibrator.limits)
   of avFk: (result.floorDb, result.colourMap, result.fkRaw) = (o.fk.floorDb, o.fk.colourMap, o.fk.raw)
-  of avEnvelope, avOrientation: discard
+  of avOrientation: discard
 
 func builtin*(view: AnalysisView; p: AnalysisParams): AnalysisParams =
   ## `p` with the options of kind `view` at their built-in values.
