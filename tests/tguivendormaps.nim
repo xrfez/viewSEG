@@ -64,7 +64,11 @@ proc showGroup(path: string; maps: seq[VendorFolder]; dir: string; expectGroup: 
         if expectGroup:
           doAssert group.size.x > 0 or f.markOf("headers.vendor field serial").size.x > 0,
             "the Vendor group never came"
-          doAssert f.markOf("headers.vendor field serial").size.x > 0
+          doAssert f.markOf("headers.vendor field serial").size.x > 0,
+            "the field is not shown: group " & $group & ", device " &
+            $f.markOf("headers.vendor field device") & ", header " &
+            $f.markOf("headers.vendor block vendorStatus") & ", blocks " &
+            $a.traces[0].vendor.blocks.len
           f.shootWindow("vendormaps-headers.png")
         else:
           doAssert f.markOf("headers.vendor field serial").size.x == 0,

@@ -647,13 +647,13 @@ proc drawVendorBlocks(blocks: openArray[VendorBlockFact]; t: Theme; fonts: Fonts
         igTableNextRow(0, 0)
         discard igTableNextColumn()
         igTextUnformatted(f.name.cstring, nil)
+        marks.mark("headers.vendor field " & f.name)
         discard igTableNextColumn()
         fonts.withFont(frMono, 0):
           igTextUnformatted((f.value & (if f.label.len > 0: " (" & f.label & ")" else: "") &
             (if f.flags.len > 0: " [" & f.flags & "]" else: "")).cstring, nil)
         discard igTableNextColumn()
         igTextUnformatted(f.unit.cstring, nil)
-        marks.mark("headers.vendor field " & f.name)
       igEndTable()
     igSpacing()
 
