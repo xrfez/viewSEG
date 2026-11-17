@@ -2,14 +2,15 @@
 ## default), the absolute value, the signed value within ±180°, or that line
 ## with its best straight line taken off (a pure time delay).
 ##
-## processSEG reports phase wrapped into -pi .. pi. Nothing there unwraps a
-## spectrum along frequency, so the unwrap lives here: a jump of more than
-## half a turn between one drawn bin and the next is a whole turn the other
-## way. Where the amplitude is too small for the phase to mean anything the
-## point is left out (a gap). The unwrap does not run across that gap: it
+## processSEG reports phase wrapped into -pi .. pi; its `unwrapPhaseInto` and
+## `removeDelayInto` unwrap it along frequency and take the delay off: a jump
+## of more than half a turn between one drawn bin and the next is a whole
+## turn the other way. Where the amplitude is too small for the phase to mean
+## anything the point is left out (a gap). The unwrap does not run across that gap: it
 ## starts again on the far side, from the last drawn value.
 
 import std/[math, strutils]
+import processSEG/fft/spectrum
 
 type
   PhasePicture* = enum
@@ -29,28 +30,14 @@ const
 
 func unwrapPhase*(phaseDeg: openArray[float64]; shown: openArray[bool]): seq[float64] =
   ## `phaseDeg` (per bin, -180 to 180) unwrapped along the bins that are
-  ## `shown`. A jump of more than half a turn from the last drawn bin is a
-  ## whole turn the other way. A bin that is not shown, or not a number, is
-  ## left out: the next drawn bin starts again from the last drawn value,
-  ## not from whatever sat in the gap. NaN where nothing is drawn.
+  ## `shown` (processSEG's `unwrapPhaseInto`). A bin that is not shown, or not
+  ## a number, is left out: the next drawn bin starts again from the last
+  ## drawn value. NaN where nothing is drawn.
   result = newSeq[float64](phaseDeg.len)
-  var last = NaN
-  var offset = 0.0
-  for k in 0 ..< phaseDeg.len:
-    let draw = k < shown.len and shown[k] and not phaseDeg[k].isNaN
-    if not draw:
-      result[k] = NaN
-    else:
-      if not last.isNaN:
-        var v = phaseDeg[k] + offset
-        while v - last > 180:
-          offset -= 360
-          v -= 360
-        while v - last < -180:
-          offset += 360
-          v += 360
-      result[k] = phaseDeg[k] + offset
-      last = result[k]
+  var on = newSeq[bool](phaseDeg.len)
+  for k in 0 ..< on.len:
+    on[k] = k < shown.len and shown[k]
+  unwrapPhaseInto(phaseDeg, on, result)
 
 func shownAbove*(amp: openArray[float64]; floorDb: float64): seq[bool] =
   ## Whether each amplitude is at or above `floorDb` relative to the largest
@@ -102,23 +89,13 @@ func drawnPhase*(wrapped: openArray[float64]; shown: openArray[bool];
     of ppUnwrapped, ppDelayRemoved:
       result.ys[k] = unwrapped[k]
   if picture != ppDelayRemoved: return
-  var count = 0
-  var sx, sy, sxx, sxy = 0.0
+  # The line is taken off the drawn bins that have a frequency.
+  var on = newSeq[bool](n)
+  var freq = newSeq[float64](n)
   for k in 0 ..< n:
-    if not result.ys[k].isNaN and k < hz.len and not hz[k].isNaN:
-      let (f, p) = (hz[k], result.ys[k])
-      inc count
-      sx += f
-      sy += p
-      sxx += f * f
-      sxy += f * p
-  if count < 2: return
-  let den = float64(count) * sxx - sx * sx
-  if abs(den) < 1e-12 * max(1.0, sxx): return
-  let b = (float64(count) * sxy - sx * sy) / den
-  let a = (sy - b * sx) / float64(count)
-  for k in 0 ..< n:
-    if not result.ys[k].isNaN and k < hz.len and not hz[k].isNaN:
-      result.ys[k] = result.ys[k] - (a + b * hz[k])
-  # phase degrees = -360 * f_Hz * delay_seconds, so b = -360 * delay_s.
-  result.delayMs = -b * 1000.0 / 360.0
+    freq[k] = if k < hz.len: hz[k] else: NaN
+    on[k] = not unwrapped[k].isNaN
+  var flat = newSeq[float64](n)
+  result.delayMs = removeDelayInto(unwrapped, freq, on, flat)
+  if not result.delayMs.isNaN:
+    result.ys = flat
