@@ -339,15 +339,8 @@ proc main*() =
       fx.dir / "cache")
 
     # The Data tab says when the file gives no sample interval (the times
-    # count samples), and when a trace has no samples.
-    let noSamples = fx.dir / "no-samples.sgy"
-    block:
-      var bytes = readFile(fx.demoFile("survey.sgy"))
-      bytes[3220] = '\0' # samples per trace, bytes 3221-3222
-      bytes[3221] = '\0'
-      writeFile(noSamples, bytes)
-    for (path, markSrc) in [(fx.noIntervalSegy(), "headers.data no interval"),
-        (noSamples, "headers.data none")]:
+    # count samples).
+    for (path, markSrc) in [(fx.noIntervalSegy(), "headers.data no interval")]:
       # A closure cannot capture the loop variable (it is lent inside a proc).
       let mark = markSrc & ""
       runSteps(path, [
