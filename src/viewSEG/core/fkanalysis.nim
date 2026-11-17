@@ -3,9 +3,11 @@
 ## wavenumber, in dB from its largest value, as an image in a density
 ## colour map.
 ##
-## processSEG has no 2-D f-k call: it is composed here of its real FFT
-## (`FftPlan.forward`). Each trace's samples in the box, tapered (a cosine
-## over the first and last 10 %), go through `forward` along time; then,
+## The 2-D transform is composed here of processSEG's real FFT
+## (`FftPlan.forward`), not its `fkAmplitudeInto`: that one cannot be stopped
+## part way, and an f-k of many long traces must give up when asked. Each
+## trace's samples in the box, tapered (a cosine over the first and last
+## 10 %), go through `forward` along time; then,
 ## for each frequency, the traces' complex values, tapered across the
 ## traces alike and zero-padded to twice their number, go across the
 ## traces: a complex transform made of two real ones, `F(a + ib) = F(a) +
@@ -26,7 +28,8 @@
 ## Pure: samples in, an `AnalysisResult` out; never raises.
 
 import std/math
-import processSEG/fft/plan
+import processSEG/fft/[plan, spectrum]
+import processSEG/vibroseis/taper
 import processSEG/core/workspace
 import analysis, join
 
@@ -67,7 +70,7 @@ func cosTaper(i, n: int; fraction: float64): float64 =
   ## A cosine taper's weight at `i` of `n`, over `fraction` of `n` at each end.
   let ramp = max(1, int(round(fraction * float64(n))))
   let d = min(i, n - 1 - i)
-  if d >= ramp: 1.0 else: 0.5 - 0.5 * cos(PI * (float64(d) + 0.5) / float64(ramp))
+  if d >= ramp: 1.0 else: taperWeight(tpCos2, (float64(d) + 0.5) / float64(ramp))
 
 func fkLengthOf*(unit: SurveyUnit): tuple[ok: bool; per, velocity: string] =
   ## How an f-k reads a file whose distances are in `unit`: whether its
@@ -138,7 +141,6 @@ proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
   var a, b = newSeq[float64](nk)
   var ar, ai, br, bi = newSeq[float64](kb)
   var amp = newSeq[float64](nk * nb) # [col * nb + bin]
-  var peak = 0.0
   for f in 0 ..< nb:
     if stop.stopped:
       result.cancelled = true
@@ -159,7 +161,6 @@ proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
       let col = (-signed + nk div 2 + nk) mod nk
       let v = hypot(xr, xi)
       amp[col * nb + f] = v
-      peak = max(peak, v)
   let lengths = fkLengthOf(unit)
   let irregular = spacing.isNaN or spacing <= 0
   let perTrace = irregular or not lengths.ok
@@ -174,10 +175,10 @@ proc fkOf*(rows: openArray[seq[float32]]; spacing: float64; spacingFrom: string;
     unit: "dB", lo: float32(floor), hi: 0,
     velocityUnit: (if perTrace: "traces/s" else: lengths.velocity),
     velocityScale: (if perTrace: 1.0 else: 1000.0))
+  var db = newSeq[float64](amp.len)
+  toDbInto(amp, db, dbPeak, floor)
   img.values = newSeq[float32](amp.len)
-  for i in 0 ..< amp.len:
-    img.values[i] = float32(if peak > 0 and amp[i] > 0: max(20 * log10(amp[i] / peak), floor)
-                            else: floor)
+  for i in 0 ..< amp.len: img.values[i] = float32(db[i])
   result.image = img
   let apart =
     if irregular: "the trace spacing is not regular: wavenumber per trace"

@@ -18,7 +18,8 @@
 ## with the delay taken off) and only where the amplitude is within
 ## `phaseWithinDb` of its peak (elsewhere the phase is noise), and the
 ## spectrogram of several traces, their power average (as the spectrum
-## windows average).
+## windows average), summed trace by trace so that it can be stopped between
+## traces (processSEG's `averageSpectrogramInto` is one call).
 ##
 ## The procs are pure: they take samples and give an `AnalysisResult`, and
 ## never raise (a problem is said in `problem`).
