@@ -453,7 +453,7 @@ func cpuGain(d: DisplaySettings; kind: GatherKind): DisplayGain =
   of dgNormalized: (if d.normScope == perTrace: dgNormalized else: dgNone)
   of dgAuto, dgNone, dgFixed, dgFloat: dgNone
 
-proc heldGain*(d: DisplaySettings): GainCurve =
+proc timeGainCurve*(d: DisplaySettings): GainCurve =
   ## The Exponential gain of `d` as processSEG's gain curve: `dbPerS` dB per
   ## second (`exponentialGain`) or the power of time (`powerGain`), rising
   ## until `untilMs` and held at its value there after it (processSEG's
@@ -477,7 +477,7 @@ func displayPipeline*(layer: Layer; kind: GatherKind): Pipeline =
   of dgNormalized: result.add normalizeOp(d.normStat, perTrace, percentile = d.clipPercentile)
   of dgExponential:
     try:
-      result.add gainCurveOp(heldGain(d))
+      result.add gainCurveOp(timeGainCurve(d))
     except ValueError:
       discard # a value that is not finite: no curve (the control refuses one)
   else: discard
