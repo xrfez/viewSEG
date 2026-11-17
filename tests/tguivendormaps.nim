@@ -6,7 +6,9 @@
 ##   header table, with the block under the map that decoded it and its fields by
 ##   name; a file of another manufacturer code, the same map loaded, has none.
 ##
-## Seen to fail: with `drawVendorBlocks` not called from `drawTraceHeader`, "the
+## - A click on the group's header folds it (the fold is the window's, for every trace).
+##
+## Seen to fail: with the header always drawn open, "the group did not fold"; with `drawVendorBlocks` not called from `drawTraceHeader`, "the
 ## Vendor group never came"; with the group drawn whatever the answer holds, "a
 ## file no map applies to has a Vendor group".
 ##
@@ -70,12 +72,26 @@ proc showGroup(path: string; maps: seq[VendorFolder]; dir: string; expectGroup: 
             $f.markOf("headers.vendor block vendorStatus") & ", blocks " &
             $a.traces[0].vendor.blocks.len
           f.shootWindow("vendormaps-headers.png")
+          next 2 # fold the group
         else:
           doAssert f.markOf("headers.vendor field serial").size.x == 0,
             "a file no map applies to has a Vendor group"
+          f.stop()
+          stage = 9
+      doAssert not overdue(wait, 2000, since), "the trace's headers never came"
+    of 2: # a click on the group's header folds it, and it stays folded
+      let head = f.markOf("headers.vendor trace 0")
+      doAssert head.size.x > 0, "the group's header is not shown"
+      if wait == 2:
+        let at = vec2(round(head.pos.x + 20), round(head.pos.y + head.size.y / 2))
+        f.moveMouse(at)
+        f.pressMouse(at, true)
+        f.pressMouse(at, false)
+      elif wait > 12:
+        doAssert f.markOf("headers.vendor field serial").size.x == 0,
+          "the group did not fold when its header was clicked"
         f.stop()
         stage = 9
-      doAssert not overdue(wait, 2000, since), "the trace's headers never came"
     else: discard
   let code = run(RunOptions(openPaths: @[path], windowSize: (1600, 1000), persist: true,
     configDir: some(dir / "config"), logDir: some(dir / "logs"), vendorFolders: some(maps),

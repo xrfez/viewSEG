@@ -54,6 +54,9 @@ type
   HeadersUi* = object
     ## The window's own state between frames.
     focus: FocusClicks
+    vendorClosed: bool
+      ## the "Vendor, trace N" groups of the Trace tab were folded by the user (kept for the
+      ## window's life, for every trace)
     shownTab: HeadersTab
       ## the tab the window last showed
     selecting: bool
@@ -63,9 +66,9 @@ type
       ## the summary row picked (Ctrl + C copies it); -1 for none
     pickedIn: string
       ## the file and gather it was picked in
-    summary: seq[SummaryLine]                 ## the Summary's lines, made at most twice a second
-    summaryKey: string                        ## what they were made of
-    summaryAt: MonoTime                       ## when
+    summary: seq[SummaryLine] ## the Summary's lines, made at most twice a second
+    summaryKey: string ## what they were made of
+    summaryAt: MonoTime ## when
     parts: set[InspectPart]
       ## what is on screen, as told to `core` last
     shownTraceTab: TraceTab
@@ -76,17 +79,17 @@ type
     tables: Table[string, CachedTable]
     texts: Table[string, CachedText]
     applied: Table[string, set[HeaderColumn]] ## the columns each table was given
-    setsPage: int                             ## the page of the Channel sets tab's columns shown
+    setsPage: int ## the page of the Channel sets tab's columns shown
     widths: Table[string, float32]
       ## per table, the window's width its description was last fitted to
-    sets: int                                 ## how many channel sets the record shown has
-    table: TableUi                            ## the Trace table tab's
-    fieldFind: array[64, char]                ## the header tables' Find, being typed
-    hex: HexPick                              ## the field whose bytes the hex pane shows
-    stanza: int                               ## the stanza the Stanzas tab shows
-    attachment: int                           ## the attachment the User data tab shows
-    found: Table[string, CachedTable]         ## per table, its rows Find keeps
-    toldTable: TableView                      ## the trace table's view as told to `core` last
+    sets: int ## how many channel sets the record shown has
+    table: TableUi ## the Trace table tab's
+    fieldFind: array[64, char] ## the header tables' Find, being typed
+    hex: HexPick ## the field whose bytes the hex pane shows
+    stanza: int ## the stanza the Stanzas tab shows
+    attachment: int ## the attachment the User data tab shows
+    found: Table[string, CachedTable] ## per table, its rows Find keeps
+    toldTable: TableView ## the trace table's view as told to `core` last
 
   HexPick = object
     ## A field picked for the hex pane, and its block's bytes once found.
@@ -894,16 +897,22 @@ proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; ma
   if shown == 0:
     if st.inspection.waiting: igTextDisabled("Reading the trace headers...")
     return
-  # the vendor fields of each trace the maps decode something of, above its header table
+  # the vendor fields of each trace the maps decode something of, above its header table,
+  # with room above (the search box is over it) and the fold remembered
   for k in 0 ..< answer.traces.len:
     template v: untyped = answer.traces[k].vendor
     if v.blocks.len > 0 or v.problems.len > 0 or v.rule.len > 0:
-      if igCollapsingHeader_TreeNodeFlags(("Vendor, trace " & $(answer.traces[k].trace + 1) &
-          "##vendortrace" & $k).cstring, ImGui_TreeNodeFlags_DefaultOpen.cint):
+      igDummy(ImVec2_c(x: 0, y: igGetStyle().ItemSpacing.y * 2))
+      igSetNextItemOpen(not ui.vendorClosed, ImGui_Cond_Always.cint)
+      let open = igCollapsingHeader_TreeNodeFlags(("Vendor, trace " &
+        $(answer.traces[k].trace + 1) & "##vendortrace" & $k).cstring, 0)
+      if igIsItemToggledOpen(): ui.vendorClosed = not open
+      marks.mark("headers.vendor trace " & $k)
+      if open:
         if v.rule.len > 0: dim(t, v.rule)
         for p in v.problems: dim(t, p)
         drawVendorBlocks(v.blocks, t, fonts, marks)
-      marks.mark("headers.vendor trace " & $k)
+        igDummy(ImVec2_c(x: 0, y: igGetStyle().ItemSpacing.y))
   const id = "headers.trace"
   let key = $answer.gen
   if id notin ui.tables or ui.tables[id].key != key:
