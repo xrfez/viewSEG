@@ -75,7 +75,8 @@ proc main*() =
         for xx in max(0, int(r.pos.x) - 70) ..< int(r.pos.x) - 1:
           if distance(f.readPixel(xx, yy), f.theme.roles[rlText]) <= 90: inc ink
       if curve <= 20 and getEnv("VIBFIX_SHOT").len > 0: discard f.savePng(getEnv("VIBFIX_SHOT"))
-      doAssert curve > 20, what & ": plot " & $i & " has " & $curve & " curve pixels"
+      # (the legend is outside the area: its swatches no longer count as curve pixels)
+      doAssert curve > 10, what & ": plot " & $i & " has " & $curve & " curve pixels"
       doAssert ink > 20, what & ": plot " & $i & " has " & $ink & " pixels of y tick labels"
     proc wholeInView(f: FrameInfo; i: int): bool =
       let r = f.markOf(idOf(i) & ".data")

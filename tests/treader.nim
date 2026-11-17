@@ -218,13 +218,16 @@ proc main*() =
       st.shutdown()
 
   block filteredToNothing:
-    # The pilot's one trace is auxiliary: the default filter (seismic traces)
+    # The pilot's one trace is auxiliary: the filter of seismic traces only
     # leaves no position, so the panel shows none and reads nothing.
     withFixtures fx:
       var st = initAppState()
       st.apply openCmd(fx.pilotSegy())
       doAssert st.settle(st.main.laidOut)
-      doAssert st.main.layout.traces == 0, "the auxiliary trace is shown: " & $st.main.layout
+      # (a record of only auxiliary traces opens with Aux on; the seismic-only choice is made)
+      st.apply Command(kind: ckFilter, panel: MainPanel, filter: TraceFilter(seismic: true))
+      doAssert st.settle(st.main.laidOut and st.main.layout.traces == 0),
+        "the auxiliary trace is shown: " & $st.main.layout
       st.look()
       discard st.drainInbox()
       doAssert st.main.pending.isEmpty and st.shown.len == 0, $st.main.pending

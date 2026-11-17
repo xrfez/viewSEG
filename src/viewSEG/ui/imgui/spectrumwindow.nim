@@ -21,7 +21,7 @@ import chrome, curveplot as curves, explainmenu, icons, marks, overflow, placeme
 
 const
   SpectrumWindowTitle* = IconPulse & "  Spectrum###spectrum"
-  FftSize = (560'f32, 380'f32) ## an FFT window's first size, at 100 %
+  FftSize = (560'f32, 440'f32) ## an FFT window's first size, at 100 %
 
 type
   SpectraUi* = object

@@ -43,7 +43,7 @@ type
 func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y + r.size.y / 2))
 
 const menuItems = ["plot.menu.target", "plot.menu.reverse", "plot.menu.kill", "plot.menu.fft",
-  "plot.menu.reverse all", "plot.menu.undo", "plot.menu.clear"]
+  "plot.menu.reverse all", "plot.menu.undo", "plot.menu.clear", "plot.explain.menu.explain"]
 
 proc menuMarks(f: FrameInfo): seq[string] =
   ## The marks drawn in the plot's menu this frame, in order.
@@ -156,7 +156,7 @@ proc main*() =
       doAssert f.tracePanel.menuTarget == target, "the menu acts on " &
         f.tracePanel.menuTarget & ", not " & target
       let win = f.markOf("plot.menu")
-      let last = f.markOf("plot.menu.clear")
+      let last = f.markOf("plot.explain.menu.explain") # Explain is last, after a separator
       let below = win.pos.y + win.size.y - (last.pos.y + last.size.y)
       doAssert below <= last.size.y, "the menu goes on " & $below & " pixels below its last item"
       doAssert f.markOf("plot.menu.target").pos.y - win.pos.y <= last.size.y,

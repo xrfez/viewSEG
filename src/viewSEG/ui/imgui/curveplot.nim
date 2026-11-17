@@ -174,8 +174,9 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   ImPlot_SetupAxisLimits(yAxis, yl.lo, yl.hi,
     if fit.y: ImPlot_Cond_Always.cint else: ImPlot_Cond_Once.cint)
   # One rule for every plot: the legend is outside the drawing area, never over the curves,
-  # at the right when the pane is wide enough, else in a row above it.
-  let legendRight = size.x <= 0 or size.x >= igGetFontSize() * 40
+  # at the right when the pane is wide enough or short, else in a row above it.
+  let legendRight = size.x <= 0 or size.x >= igGetFontSize() * 40 or
+    size.y < igGetFontSize() * 12 # (a short pane has no room for a row above)
   if legendRight:
     ImPlot_SetupLegend(ImPlot_Location_NorthEast.cint, ImPlot_LegendFlags_Outside.cint)
   else:

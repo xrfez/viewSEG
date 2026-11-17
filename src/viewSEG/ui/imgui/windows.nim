@@ -295,14 +295,16 @@ proc floatingWindows(): seq[(ptr ImGuiWindow, string)] =
   ## overlays). A window docked in a tree of its own stands for that tree. Found from
   ## `windowNames`, so a new kind of window is covered without being listed anywhere.
   const apart = ImGui_WindowFlags_ChildWindow.cint or ImGui_WindowFlags_Popup.cint or
-    ImGui_WindowFlags_Tooltip.cint or ImGui_WindowFlags_NoMove.cint or
-    ImGui_WindowFlags_NoInputs.cint
+    ImGui_WindowFlags_Tooltip.cint or ImGui_WindowFlags_NoMove.cint
+  const noInputs = ImGui_WindowFlags_NoInputs.cint # (a combination: all of its bits)
   for name in windowNames():
-    let win = igFindWindowByName(name.cstring)
+    var win = igFindWindowByName(("###" & name).cstring) # a window named by its ID alone
+    if win == nil: win = igFindWindowByName(name.cstring)
     if win != nil and (win.Active or win.WasActive):
       let top = if win.DockIsActive and win.RootWindowDockTree != nil: win.RootWindowDockTree
                 else: win
-      if top != nil and (top.Flags and apart) == 0 and not ($top.Name).startsWith("##"):
+      if top != nil and (top.Flags and apart) == 0 and (top.Flags and noInputs) != noInputs and
+          not ($win.Name).startsWith("##"):
         var known = false
         for (w, _) in result:
           if w == top: known = true
@@ -330,7 +332,8 @@ proc moveFloating*(titlePart: string; x, y: float32): bool =
   ## (tests).
   let ctx = igGetCurrentContext()
   for name in windowNames():
-    let win = igFindWindowByName(name.cstring)
+    var win = igFindWindowByName(("###" & name).cstring)
+    if win == nil: win = igFindWindowByName(name.cstring)
     if win != nil and (win.Active or win.WasActive) and
         (win.Flags and ImGui_WindowFlags_ChildWindow.cint) == 0 and
         titlePart in titleText($win.Name) and not result:

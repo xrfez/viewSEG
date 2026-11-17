@@ -933,9 +933,16 @@ proc bringWindows(ui: var Ui) =
     ui.say("The screens are not known: no window was moved.", mlWarning)
   else:
     # every floating window, from Dear ImGui's registry: into the main window's work area
+    # (the part of its work area that is on the screen: the main window may have been
+    # moved only a moment ago)
     let vp = igGetMainViewport()
-    let moved = bringAllInto(Rect(pos: vec2(vp.WorkPos.x, vp.WorkPos.y),
-      size: vec2(vp.WorkSize.x, vp.WorkSize.y)))
+    let work = Rect(pos: vec2(vp.WorkPos.x, vp.WorkPos.y),
+      size: vec2(vp.WorkSize.x, vp.WorkSize.y))
+    let home = screens[main.homeScreen(screens, primary)]
+    let (x0, y0) = (max(work.pos.x, home.pos.x), max(work.pos.y, home.pos.y))
+    let (x1, y1) = (min(work.pos.x + work.size.x, home.pos.x + home.size.x),
+      min(work.pos.y + work.size.y, home.pos.y + home.size.y))
+    let moved = bringAllInto(Rect(pos: vec2(x0, y0), size: vec2(max(x1 - x0, 1), max(y1 - y0, 1))))
     ui.say(if moved.len > 0: "Brought onto this screen: " & moved.join(", ") & "."
            else: "Every window is on this screen already.")
 

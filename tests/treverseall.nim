@@ -245,7 +245,10 @@ proc main*() =
     var after: seq[float64] = @[]
     for c in st.plots[w].result.plots[0].curves:
       if c.name == "GF": after = c.ys
-    let moved = shifted180(before, after)
+    # the plot shows the size of the phase (Absolute)
+    var mirrored = before
+    for v in mirrored.mitems: v = -v # 180 degrees from -v is 180 - |p| for the size shown
+    let moved = shifted180(mirrored, after)
     doAssert moved.n > 8 and moved.ok > moved.n * 9 div 10,
       "the vibrator phase did not move 180 degrees: " & $moved.ok & " of " & $moved.n
     doAssert st.plots[w].reverseLine.find("reversed") >= 0, st.plots[w].reverseLine

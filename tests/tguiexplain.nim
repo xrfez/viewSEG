@@ -86,7 +86,11 @@ proc main*() =
         f.pressMouse(pointAt, false, 1), after(3))
     proc rightClick(mark: string) =
       ## A right click on plot `mark`, then Explain in the menu it opens.
-      point(mark)
+      step("to " & mark, proc (f: FrameInfo) =
+        let r = f.markOf(mark)
+        doAssert r.size.x > 0, mark & " is not shown"
+        pointAt = vec2(r.pos.x + 40, r.pos.y + 20) # the part of the plot that is always in view
+        f.moveMouse(pointAt), after(3))
       step("right-click " & mark, proc (f: FrameInfo) =
         f.pressMouse(pointAt, true, 3)
         f.pressMouse(pointAt, false, 3), proc (f: FrameInfo): bool =
