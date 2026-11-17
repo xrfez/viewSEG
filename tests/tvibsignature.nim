@@ -1,7 +1,8 @@
 ## The vibrator signature plot's analysis (`core/vibanalysis`, the code the
 ## plot uses) on samples/vib/vib_signature.sgd: six sweeps of R, GF, M and B
-## in receiver-gather order. The four traces of a sweep are put in the roles
-## Ref, GF, M, B by their place in the window, as a user would choose them.
+## in one record, R GF M B sweep after sweep. The four adjacent traces of a
+## sweep are put in the roles Ref, GF, M, B by their place in the window, as
+## a user would choose them.
 ##
 ## - every sweep gives four roles, a table row per signal, no problem;
 ## - sweep 5 is worse than sweep 1 in mean phase and mean THD, and near what
@@ -10,7 +11,9 @@
 ## - sweep 6's mean force is below the others' (its drop-out);
 ## - the force generated from M and B follows the recorded ground force.
 ##
-## Seen to fail: with every sweep read as sweep 5, the check "sweep 5 mean
+## Seen to fail: with the file as it was before (four records of six sweeps, so
+## traces s * 4 .. s * 4 + 3 are not one sweep's), the check "phases 0.0 and 12.1"
+## failed; with every sweep read as sweep 5, the check "sweep 5 mean
 ## phase against sweep 1" failed (12.0 against 12.0); with the GF and B roles
 ## swapped, it failed too (12.0 against 10.0, the baseplate's, not the force's).
 
@@ -24,11 +27,12 @@ type Sweep = object
   phase, thd, force, generated: float64 ## mean |phase| degrees, mean THD %, mean forces
 
 proc sweepOf(f: var SeismicFile; s: int): Sweep =
-  ## The vibrator signature of sweep `s` (0..5): traces channel * 6 + s.
+  ## The vibrator signature of sweep `s` (0..5): the four adjacent traces
+  ## `s * 4 .. s * 4 + 3`, in the order R, GF, M, B.
   var rows: seq[seq[float32]] = @[]
   var names: seq[string] = @[]
   for c in 0 ..< 4:
-    let x = f.readTraces(c * 6 + s .. c * 6 + s)
+    let x = f.readTraces(s * 4 + c .. s * 4 + c)
     var r = newSeq[float32](x.shape[1])
     for j in 0 ..< r.len: r[j] = x[0, j]
     rows.add r

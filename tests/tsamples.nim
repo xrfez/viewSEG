@@ -11,7 +11,9 @@
 ## trace order, the component of each trace, the orientation of each node and
 ## the rotated horizontals.
 ##
-## Seen to fail: with samples/land/shots.sgy moved aside, `present` quit on
+## Seen to fail: with the vibrator signature file as it was before it became one
+## record (four records of six sweeps), the order check stopped at its count
+## (24 traces, 1 record); with samples/land/shots.sgy moved aside, `present` quit on
 ## the missing file rather than skip the check; with the reaction mass taken
 ## as 3000 kg in the weighted-sum check, "sweep 1 GF (M, B) differs by ..."; with node 103 written at azimuth 0,
 ## "azimuth 64"; with node 104's bump left out of `tools/sampledata.nim`, "roll 112"
@@ -141,33 +143,33 @@ proc main*() =
     o.close()
 
   block vibrator_signature_order:
-    ## Receiver-gather order: R sweeps 1..6, then GF, M and B. One record
-    ## and one receiver per channel; each trace is a sweep, 9 s long.
+    ## One record, one receiver: the traces run R, GF, M, B for sweep 1, then
+    ## for sweep 2, up to sweep 6; each is 9 s long.
     var v = openKeys(vib / "vib_signature.sgd")
-    doAssert v.len == 24 and v.recordCount == 4 and v.maxSamples == 2250
+    doAssert v.len == 24 and v.recordCount == 1 and v.maxSamples == 2250
     let types = [0x98'u8, 0x94, 0x99, 0x95] ## pilot, measured force, mass, baseplate
     let t0 = 1_772_367_000.0 ## 2026-03-01 12:10:00 UTC
     for i in 0 ..< 24:
-      let (c, s) = (i div 6, i mod 6)
+      let (s, c) = (i div 4, i mod 4)
       let k = v.traceKeys(i)
       doAssert v.traceEntry(i).channelType == types[c], "trace " & $i & " type " &
         $v.traceEntry(i).channelType
-      doAssert k.record == float64(c + 1) and k.rcvPoint == float64(c + 1), "trace " & $i
-      doAssert k.srcPoint == float64(101 + s) and k.channel == float64(s + 1)
+      doAssert k.record == 1 and k.rcvPoint == 1, "trace " & $i
+      doAssert k.srcPoint == float64(101 + s) and k.channel == float64(i + 1)
       doAssert k.time == t0 + 20.0 * float64(s), "trace " & $i & " time " & $k.time
       doAssert k.intervalUs == 4000 and k.status == tsAuxiliary
       doAssert v.traceEntry(i).numSamples == 2250
-    doAssert v.gathers.len == 4
-    for g in v.gathers: doAssert g.kind == gkReceiver, $g.kind
+    doAssert v.gathers.len == 1 and v.gathers[0].traces == 0 .. 23
+    doAssert v.gathers[0].kind == gkReceiver, $v.gathers[0].kind
     v.close()
 
   block vibrator_signature_weighted_sum:
     ## Mr * M + Mb * B is GF, in every sweep, to float32 accuracy.
     var v = openKeys(vib / "vib_signature.sgd")
     for s in 0 ..< 6:
-      let gf = rowOf(v.readTraces(6 + s .. 6 + s), 0)
-      let m = rowOf(v.readTraces(12 + s .. 12 + s), 0)
-      let b = rowOf(v.readTraces(18 + s .. 18 + s), 0)
+      let gf = rowOf(v.readTraces(s * 4 + 1 .. s * 4 + 1), 0)
+      let m = rowOf(v.readTraces(s * 4 + 2 .. s * 4 + 2), 0)
+      let b = rowOf(v.readTraces(s * 4 + 3 .. s * 4 + 3), 0)
       var made = newSeq[float32](gf.len)
       groundForceInto(m, b, mass(3600, muKilogram), mass(1800, muKilogram), made)
       var peak, worst = 0.0
@@ -183,10 +185,10 @@ proc main*() =
     ## force has its drop-out, mid-sweep, at 40 %.
     var v = openKeys(vib / "vib_signature.sgd")
     let pilot = rowOf(v.readTraces(0 .. 0), 0)
-    for s in 1 ..< 6: doAssert rowOf(v.readTraces(s .. s), 0) == pilot, "pilot " & $s
+    for s in 1 ..< 6: doAssert rowOf(v.readTraces(s * 4 .. s * 4), 0) == pilot, "pilot " & $s
     for j in 2001 ..< 2250: doAssert pilot[j] == 0, "listen sample " & $j
-    let five = rowOf(v.readTraces(10 .. 10), 0)
-    let six = rowOf(v.readTraces(11 .. 11), 0)
+    let five = rowOf(v.readTraces(17 .. 17), 0)
+    let six = rowOf(v.readTraces(21 .. 21), 0)
     var (a, b) = (0.0, 0.0)
     for j in 950 .. 1050:
       a = max(a, abs(float64(five[j])))

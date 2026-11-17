@@ -84,7 +84,7 @@ proc main*() =
     doAssert fileExists(sgd)
     var f = openSeismic(sgd, keys = true)
     for c in 0 ..< 4:
-      let t = f.readTraces(c * 6 .. c * 6)
+      let t = f.readTraces(c .. c)
       var r = newSeq[float32](t.shape[1])
       for j in 0 ..< r.len: r[j] = t[0, j]
       rows.add r

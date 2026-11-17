@@ -46,7 +46,7 @@ const
   SweepF2 = 80.0
   PhaseLag = 6.0
   SigSweeps = 6
-  SigSensorLine = 9001.0             ## the unit's sensors: point 1 R, 2 GF, 3 M, 4 B
+  SigSensorLine = 9001.0             ## the unit's one receiver, point 1
   SigSpacing = 20.0                  ## s between sweeps
   SigRecordMs = 9000.0               ## the 8 s sweep and 1 s of listen
   SigGroundForce = 60_000.0          ## ground force amplitude, N
@@ -441,9 +441,10 @@ proc sigRecord(spec: SweepSpec; n: int; amp: float64; h: openArray[SweepHarmonic
   s.sweepHarmonics(float32, h, samples = n)
 
 proc writeVibSignature(dir: string; t0: float64) =
-  ## Four channels (R, GF, M, B) of six sweeps, one record per channel:
-  ## a receiver-gather file whose traces are the sweeps, 9 s each. M is
-  ## made from GF and B so that Mr*M + Mb*B is GF to float32 accuracy.
+  ## Six sweeps of four signals (R, GF, M, B) in ONE record, a receiver gather
+  ## (one receiver, the sweep is the source): the traces run R, GF, M, B for
+  ## sweep 1, then for sweep 2, and so on, 9 s each. M is made from GF and B so
+  ## that Mr*M + Mb*B is GF to float32 accuracy.
   let spec = linearSweep(SweepF1, SweepF2, SweepMs, VibDt,
     initSweepTaper(VibTaperMs, VibTaperMs))
   let pilot = generatePilot(spec, float32)
@@ -478,14 +479,15 @@ proc writeVibSignature(dir: string; t0: float64) =
   o.receiverGather = true
   var w = openSeismicWriter(dir / "vib_signature.sgd", o)
   let types = [sctSourceRefPilot, sctSourceSigMeasured, sctSourceMass, sctSourceBasePlate]
-  for c in 0 ..< 4:
-    for s in 0 ..< SigSweeps:
+  for s in 0 ..< SigSweeps:
+    for c in 0 ..< 4:
       let src = landSource(s)
       let time = t0 + SigSpacing * float64(s)
       var sensor = landSource(0)
       sensor.line = SigSensorLine
-      sensor.point = float64(c + 1)
-      var k = traceKey(c + 1, s + 1, src, sensor, true, time, VibDt * 1000, tsAuxiliary, 0)
+      sensor.point = 1
+      var k = traceKey(1, s * 4 + c + 1, src, sensor, true, time, VibDt * 1000,
+        tsAuxiliary, 0)
       k.offset = 0
       let data = case c
         of 0: pil

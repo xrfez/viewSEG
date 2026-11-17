@@ -75,21 +75,27 @@ Recording time 2026-03-01 12:00:00 UTC.
 
 ## Vibrator signature (`samples/vib/vib_signature.sgd`)
 
-One vibrator, six sweeps, four channels: the reference (R, the pilot), the
+One vibrator, six sweeps, four signals: the reference (R, the pilot), the
 weighted-sum ground force (GF), the reaction-mass acceleration (M) and the
 baseplate acceleration (B). Open it with `bin/viewSEG samples/vib/vib_signature.sgd`.
-All 24 traces are auxiliary (switch Aux on in the plot). The vibrator signature is
-New plot, vibrator signature, in the right-click menu of a trace; the two masses are
+
+To try it: show the record, switch Aux on (all 24 traces are auxiliary, so the
+panel is empty until then), select four adjacent traces (sweep 1 is traces 1-4,
+sweep 2 is 5-8, and so on: R, GF, M, B in that order), then New plot, vibrator
+signature, in the right-click menu. The plot's default roles are the window's
+positions 0 to 3 (Ref, GF, M, B), so nothing needs changing; the two masses are
 typed in its window.
 
-SEG-D Rev 3.0, IEEE float, receiver-gather order: one record per channel
-(records 1..4, channel types pilot 0x98, measured force 0x94, mass 0x99,
-baseplate 0x95), each of six traces, one per sweep. 24 traces of 9 s: the 8 s
+SEG-D Rev 3.0, IEEE float, one record of 24 traces, a receiver gather: one
+receiver (line 9001, point 1), the sweep is the source. Across the record the
+traces read R, GF, M, B, R, GF, M, B, ... : sweep 1's four, then sweep 2's, up
+to sweep 6's. Each trace has its own channel type (pilot 0x98, measured force
+0x94, mass 0x99, baseplate 0x95), its sweep's source point 101..106 (101 for
+traces 1-4) and its recording time. The traces are 9 s: the 8 s
 linear sweep (8-80 Hz, 300 ms tapers, 4 ms) and 1 s of listen, 2250
-samples. Sweep `n` has source point 2001/(100 + n), recording time
-2026-03-01 12:10:00 UTC + 20 s a sweep, and channel number `n`; the
-receiver of each record is the sensor, line 9001, point 1 (R) .. 4 (B).
-Sorting by source point puts the four channels of one sweep together.
+samples. Sweep `n` has source point 100 + n, recording time
+2026-03-01 12:10:00 UTC + 20 s a sweep, and the traces are numbered 1..24 in file
+order.
 
 M and B are made so that the weighted sum is exact: B is a sweep with its own
 phase and harmonics, M = (GF - Mb * B) / Mr, with reaction mass Mr = 3600 kg

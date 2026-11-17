@@ -239,7 +239,7 @@ proc main*() =
     step("open the vibrator signature", proc (f: FrameInfo) =
       let b = f.core.sessions[f.core.shownFile(f.core.findPanel(MainPanel))].base
       f.apply(Command(kind: ckOpenPlot, plotView: avVibrator,
-        plotTraces: @[b, b + 6, b + 12, b + 18],
+        plotTraces: @[b, b + 1, b + 2, b + 3],
         plotParams: AnalysisParams(reactionMassKg: 3600, baseplateMassKg: 1800))),
       proc (f: FrameInfo): bool =
         f.core.plots.len == 1 and not f.core.plots[0].waiting and
