@@ -75,6 +75,13 @@ the file is used; of two that say the same, the one of the folder first in the l
 two maps with the same name the first folder's is the only one loaded, so a project can
 replace a map of the program's by keeping a copy of the same name.
 
+A map can also find a block by what it holds and not only by where it is: a target that gives
+the bytes a 32-byte block starts with decodes every such block of the extended header (each
+as a block of its own in the Headers window), and a map can ask for a block to be there
+(`hasBlock`) before it applies. A field can depend on a value in the same block or on a byte
+of a module elsewhere in the record (`when` and `group`), and fields can be read as nibbles
+(a 4-bit flag, one BCD digit). `WRITING-A-MAP.md` in a `vendormaps` folder describes each.
+
 ## Messages
 
 Each load says one line in Messages: "3 vendor header maps loaded: 2 from the project, 1
