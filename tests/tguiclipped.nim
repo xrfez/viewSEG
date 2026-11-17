@@ -66,6 +66,13 @@ proc main*() =
         if data.size.y > 0 and label.size.y > 0:
           doAssert label.size.y <= data.size.y, what & ": " & window & " plot " & $k &
             "'s y label is " & $label.size.y & " points long in a pane " & $data.size.y & " high"
+    proc legended(f: FrameInfo; window: string) =
+      ## every plot's legend is outside its drawing area (1: at the right, 2: above)
+      for k in 0 .. 5:
+        let legend = f.markOf(window & ".plot " & $k & ".legend")
+        if f.markOf(window & ".plot " & $k & ".data").size.x > 0:
+          doAssert legend.size.x in [1.0'f32, 2.0'f32], window & " plot " & $k &
+            "'s legend is over the curves"
     step("the file shown", noop, proc (f: FrameInfo): bool =
       result = f.core.sessions.len > 0 and f.core.panels[f.core.findPanel(MainPanel)].laidOut
       if result: base = f.core.sessions[0].base)
@@ -100,6 +107,7 @@ proc main*() =
         f.fits("new plot " & $i & ".overflow", "default size, " & $f.core.plots[i - 1].view)
         f.apart("new plot " & $i, "default size")
         f.labelled("new plot " & $i, "default size")
+        f.legended("new plot " & $i)
       f.fits("fft 1.overflow", "default size, FFT")
       shot = f.savePng(shots / "handtest-windows.png"), after(2))
     step("a narrow window", proc (f: FrameInfo) = f.resizeWindow(760, 640), after(30))

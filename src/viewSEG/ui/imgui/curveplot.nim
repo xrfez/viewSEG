@@ -173,7 +173,15 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
     if fit.x: ImPlot_Cond_Always.cint else: ImPlot_Cond_Once.cint)
   ImPlot_SetupAxisLimits(yAxis, yl.lo, yl.hi,
     if fit.y: ImPlot_Cond_Always.cint else: ImPlot_Cond_Once.cint)
-  ImPlot_SetupLegend(ImPlot_Location_NorthEast.cint, 0)
+  # One rule for every plot: the legend is outside the drawing area, never over the curves,
+  # at the right when the pane is wide enough, else in a row above it.
+  let legendRight = size.x <= 0 or size.x >= igGetFontSize() * 40
+  if legendRight:
+    ImPlot_SetupLegend(ImPlot_Location_NorthEast.cint, ImPlot_LegendFlags_Outside.cint)
+  else:
+    ImPlot_SetupLegend(ImPlot_Location_North.cint,
+      ImPlot_LegendFlags_Outside.cint or ImPlot_LegendFlags_Horizontal.cint)
+  marks.add (id & ".legend", Rect(pos: vec2(0, 0), size: vec2(if legendRight: 1 else: 2, 0)))
   ImPlot_SetupFinish()
   let pos = ImPlot_GetPlotPos()
   let area = ImPlot_GetPlotSize()

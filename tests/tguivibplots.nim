@@ -75,7 +75,8 @@ proc main*() =
         for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
           for x in max(0, int(r.pos.x) - 70) ..< int(r.pos.x) - 1:
             if distance(f.readPixel(x, y), f.theme.roles[rlText]) <= 90: inc ink
-        doAssert curve > 20, what & ": " & $curve & " curve pixels"
+        # (the legend is outside the area: its swatches no longer count as curve pixels)
+        doAssert curve > 10, what & ": " & $curve & " curve pixels"
         doAssert ink > 20, what & ": " & $ink & " pixels of y tick labels"
         drawn.incl i
     proc scrollTo(notches: float32) =
