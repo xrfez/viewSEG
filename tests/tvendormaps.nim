@@ -27,7 +27,8 @@
 ## request in `followInspect`, "the open file did not show the new decode";
 ## with `prepareVendorFolder` run for a project that is read-only, "a read-only
 ## project was given a folder"; with `makeProject` not writing the notes, "no
-## note in a new project".
+## note in a new project"; with the shipped map's record serial read as 8 bits instead of 12, "12-bit record
+## serial".
 import std/[os, sequtils, strutils]
 import parseSEG
 import viewSEG/core/[filesystem, state, vendormaps]
@@ -233,6 +234,39 @@ proc main*() =
       doAssert load.maps.len >= 1, "no map ships"
       doAssert load.problems.len == 0, $load.problems
       for m in load.registry.maps: doAssert m.checkVendorMap.len == 0, m.name
+
+    block shippedMapFindsModulesByTheirBytes:
+      # the code-9 map in the repository, on a generated Rev 2.0 record whose extended header holds a
+      # made-up module first and the modules it knows after it: found by their bytes, not by position
+      let repo = currentSourcePath().parentDir.parentDir / "vendormaps"
+      let load = loadVendorFolders([VendorFolder(dir: repo, origin: voProgram)])
+      proc module(head: openArray[int]): seq[byte] =
+        result = newSeq[byte](32)
+        for i, v in head: result[i] = byte(v)
+      var made = module([9, 0, 0, 9, 1, 1, 0, 1]) # content type 9: not a module of the map
+      var acq = module([9, 0, 0, 1, 1, 1, 0, 1])
+      acq[12] = 0x12; acq[13] = 0x34; acq[14] = 0x56; acq[15] = 0x78 # shot serial 0x12345678
+      acq[17] = 0xAB; acq[18] = 0xC4 # record serial 0xABC, trigger method 4
+      acq[29] = 3 # trace extension version
+      var rec = SegdRecord(layout: slRev2)
+      rec.revision = SegdRevision(major: 2, minor: 0)
+      rec.gh1.manufacturerCode = 9
+      rec.extended = made & acq
+      var log: DiagLog
+      let blocks = load.registry.decodeVendorAreas(rec, log, "generated")
+      var found = ""
+      for b in blocks:
+        if b.name == "acqDetail":
+          doAssert b.blockNumber == 2, "the module was not found at its own place"
+          doAssert b["shotSerialNumberId"].intVal == 0x12345678, "shot serial"
+          doAssert b["recordSerialNumberId"].intVal == 0xABC, "12-bit record serial"
+          doAssert b["triggerMethod"].label == "Hi-resolution Time", "trigger label"
+          found = b.name
+      doAssert found == "acqDetail", "the module was not decoded"
+      doAssert blocks.len == 3 and log.len == 0, "headers of both modules and the contents of one"
+      # without the module the map does not apply: nothing decoded, nothing logged
+      rec.extended = made
+      doAssert load.registry.decodeVendorAreas(rec, log, "generated").len == 0 and log.len == 0
 
     block oneNoteNotTwo:
       let beside = fx.dir / "note"
