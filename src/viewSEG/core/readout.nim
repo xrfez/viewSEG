@@ -164,7 +164,7 @@ proc text*(p: Pick; f: ReadoutField): string =
       of tsLive: "live"
       of tsDead: "dead"
       of tsAuxiliary: "auxiliary"
-    of rfTraceId: traceIdText(int(k.traceCode))
+    of rfTraceId: traceIdText(int(k.traceCode), k.status != tsUnknown)
     of rfTime, rfSample, rfAmplitude, rfRawAmplitude: "" # handled above
 
 func joinGroupsOf*(f: ReadoutField): set[JoinGroup] =
@@ -197,7 +197,7 @@ func editNote*(p: Pick): string =
   if not (p.inside and p.found): return ""
   if p.keys.status == tsDead: result = "dead"
   elif p.keys.status in {tsAuxiliary, tsUnknown} and p.keys.traceCode != 0:
-    result = traceIdText(int(p.keys.traceCode))
+    result = traceIdText(int(p.keys.traceCode), p.keys.status != tsUnknown)
   for (edit, word) in [(teKilled, "killed"), (teReversed, "polarity reversed")]:
     if edit in p.edits: result.add (if result.len > 0: ", " else: "") & word
   if p.filterNote.len > 0: result.add (if result.len > 0: ", " else: "") & p.filterNote

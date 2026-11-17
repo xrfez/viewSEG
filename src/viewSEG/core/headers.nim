@@ -195,7 +195,7 @@ proc nibbleSpan(kind: HeaderBlock; field: string): (int, int) =
     for s in table:
       if s.name == field: return (s.firstNibble - 2 * (firstByte - 1), s.nibbles)
 
-proc fieldRow*(r: HeaderRow): FieldRow =
+proc fieldRow*(r: HeaderRow; rev2 = false): FieldRow =
   ## One row of a parseSEG header listing as the tables show it.
   let first = int(r.offset - r.blockOffset) + 1
   result = FieldRow(blockName: r.blockName, kind: r.kind, field: r.field, value: valueText(r.value),
@@ -205,13 +205,13 @@ proc fieldRow*(r: HeaderRow): FieldRow =
   result.description = if r.field.len > 0: fieldDescription(r.kind, r.field)
                        else: wordsOf(result.value)
   if r.kind == hbSegyTrace and r.field == "traceIdCode":
-    let said = traceIdText(int(result.number))
+    let said = traceIdText(int(result.number), rev2)
     if said.len > 0: result.description.add ": " & said
 
-func fieldRows*(rows: openArray[HeaderRow]): seq[FieldRow] =
+func fieldRows*(rows: openArray[HeaderRow]; rev2 = false): seq[FieldRow] =
   ## A parseSEG header listing as the tables show it.
   result = newSeqOfCap[FieldRow](rows.len)
-  for r in rows: result.add fieldRow(r)
+  for r in rows: result.add fieldRow(r, rev2)
 
 const MaxStanzaBytes* = 256 * 1024
   ## the bytes of a stanza or an attachment kept to show, at most
@@ -334,7 +334,7 @@ proc readRecordHeaders*(f: SeismicFile; record: int): RecordHeaders =
 proc traceRows*(f: SeismicFile; trace: int): seq[FieldRow] =
   ## Every header field of trace `trace` of `f`, its extensions included.
   ## Raises `ValueError` for a trace out of range or a closed file.
-  fieldRows(f.traceHeaders(trace))
+  fieldRows(f.traceHeaders(trace), f.kind == skSegy and f.index.segy.revision.major >= 2)
 
 func segdRecordOf*(f: SeismicFile; trace: int): int =
   ## The index of the SEG-D record trace `trace` is in (the index in memory);

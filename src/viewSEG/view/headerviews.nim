@@ -8,7 +8,7 @@
 
 import std/[math, strutils, tables]
 import parseSEG
-import ../core/[properties, state]
+import ../core/[components, properties, state]
 
 export properties
 
@@ -187,7 +187,7 @@ func keyText(k: TraceKeys; name: string): string =
   of "offset": number(k.offset)
   of "cmpX": number(k.cmpX)
   of "cmpY": number(k.cmpY)
-  of "component": $k.component
+  of "component": $componentOf(k)
   else: ""
 
 func traceStandard(traces: openArray[TraceDetail]): SeismicKind =

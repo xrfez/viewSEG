@@ -46,19 +46,29 @@ proc buttonsOf(path, dir: string): tuple[codes: seq[uint8], marks: bool] =
 proc main*() =
   block unit:
     var k = initTraceKeys()
-    (k.traceCode, k.component) = (29'i16, 29'u8)
+    # rev 0 or 1: parseSEG's status for 29 is unknown, for 13 live
+    (k.traceCode, k.component, k.status) = (29'i16, 29'u8, tsUnknown)
     doAssert componentOf(k) == 0
-    (k.traceCode, k.component) = (19'i16, 19'u8)
+    (k.traceCode, k.component, k.status) = (19'i16, 19'u8, tsAuxiliary)
     doAssert componentOf(k) == 0
-    (k.traceCode, k.component) = (13'i16, 13'u8)
+    (k.traceCode, k.component, k.status) = (13'i16, 13'u8, tsLive)
     doAssert componentOf(k) == 13
-    (k.traceCode, k.component) = (0'i16, 2'u8) # SEG-D: the group index or sensor type
+    # rev 2: 29 is live; an interpolated 13 (16397) too
+    (k.traceCode, k.component, k.status) = (29'i16, 29'u8, tsLive)
+    doAssert componentOf(k) == 29
+    (k.traceCode, k.component, k.status) = (16397'i16, 13'u8, tsLive)
+    doAssert componentOf(k) == 13
+    (k.traceCode, k.component, k.status) = (0'i16, 2'u8, tsLive) # SEG-D: group index or sensor
     doAssert componentOf(k) == 2
   withFixtures fx:
     block noButtons:
       for path in [fx.vibThirteenSegy(), fx.vibFourSegy()]:
         let got = buttonsOf(path, fx.dir)
         doAssert got.codes.len == 0 and not got.marks, $got
+    block revisionTwo:
+      # rev 2 defines 27 to 41 as components: the same codes, buttons
+      let got = buttonsOf(fx.rev2FieldsSegy(), fx.dir)
+      doAssert got.codes.len == 3 and got.marks, $got
     block sensorsStay:
       let got = buttonsOf(fx.sensorsSegy(), fx.dir)
       doAssert got.codes.len == 3 and got.marks, $got

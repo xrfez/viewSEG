@@ -62,7 +62,7 @@ import parseSEG
 import processSEG/pipeline
 import processSEG/gain/[curves, gain]
 import processSEG/vibroseis/sweep
-import colourmaps, geometry, orientation, processing, session, viewport, zoom
+import colourmaps, components, geometry, orientation, processing, session, viewport, zoom
 
 export pipeline.Pipeline, pipeline.len, sweep.SweepSpec, viewport, orientation, processing,
   GatherKind, NormScope, NormStat, ColourMap
@@ -352,7 +352,7 @@ func value*(k: TraceKeys; field: HeaderField; trace: int): float64 =
   case field
   of hfRcvLine: k.rcvLine
   of hfRcvPoint: k.rcvPoint
-  of hfComponent: (if k.component == 0: NaN else: float64(k.component))
+  of hfComponent: (if componentOf(k) == 0: NaN else: float64(componentOf(k)))
   of hfChannel: k.channel
   of hfRecord: k.record
   of hfSrcLine: k.srcLine

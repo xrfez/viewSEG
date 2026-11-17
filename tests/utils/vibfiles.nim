@@ -41,8 +41,8 @@ func vibSample*(trace, i: int): float32 =
   float32((1.0 + 0.25 * float64(trace)) * sin(phase + 0.1 * float64(trace)))
 
 proc writeVib(path: string; codes: openArray[int16]; record: float64; loud: bool;
-    claimed = 0; located: set[0 .. 15] = {}; zeroFrom = 99) =
-  var w = openSeismicWriter(path, SegyOutputOptions(revision: SegyRevision(major: 1, minor: 0),
+    claimed = 0; located: set[0 .. 15] = {}; zeroFrom = 99; major = 1'u8) =
+  var w = openSeismicWriter(path, SegyOutputOptions(revision: SegyRevision(major: major, minor: 0),
     traceSorting: 1, measurementSystem: 1, text: @["C01 viewSEG test fixture: vibrator codes"]))
   var buf = newSeq[float32](VibSamples)
   for n, code in codes:
@@ -55,7 +55,8 @@ proc writeVib(path: string; codes: openArray[int16]; record: float64; loud: bool
       VibDtMs * 1000)
     k.traceCode = code
     # the writer keeps a code only when the status agrees with it
-    k.status = if code == 1 or code in 11'i16 .. 17'i16: tsLive elif code in 18'i16 .. 21'i16 or
+    k.status = if code == 1 or code in 11'i16 .. 17'i16 or
+        (major >= 2 and code in 27'i16 .. 41'i16): tsLive elif code in 18'i16 .. 21'i16 or
         code == 6: tsAuxiliary
                else: tsUnknown
     if n in located:
@@ -90,6 +91,11 @@ proc sensorsSegy*(fx: Fixtures): string =
   ## in-line): real components.
   result = fx.dir / "sensors.sgy"
   if not fileExists(result): writeVib(result, [12'i16, 13, 14], 4, false)
+
+proc rev2FieldsSegy*(fx: Fixtures): string =
+  ## SEG-Y rev 2: three traces with codes 28, 29, 30 (electric field components there).
+  result = fx.dir / "rev2-fields.sgy"
+  if not fileExists(result): writeVib(result, [28'i16, 29, 30], 5, false, major = 2)
 
 proc vibThirteenSegy*(fx: Fixtures): string =
   result = fx.dir / "vib-thirteen.sgy"

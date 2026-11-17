@@ -29,7 +29,13 @@ proc main*() =
     doAssert traceIdText(1) == "seismic data (1)"
     doAssert traceIdText(29) == "code 29 (not in the standard)", traceIdText(29)
     doAssert traceIdText(33) == "code 33 (not in the standard)"
-    doAssert traceIdText(-1) == "code -1 (not in the standard)"
+    doAssert traceIdText(-1) == "other (-1)"
+    doAssert traceIdText(29, true) == "electric field, in-line (29)", traceIdText(29, true)
+    doAssert traceIdText(41, true) == "rotational sensor, yaw (41)"
+    doAssert traceIdText(16396, true) == "interpolated multicomponent seismic sensor, vertical (16396)",
+      traceIdText(16396, true)
+    doAssert traceIdText(300, true) == "code 300 (optional use)"
+    doAssert traceIdText(300) == "code 300 (not in the standard)"
     doAssert traceIdText(0) == ""
     doAssert VibReferenceCode == 21 and VibBaseplateCode == 19 and VibReactionMassCode == 18
     doAssert VibGroundForceCode == 20

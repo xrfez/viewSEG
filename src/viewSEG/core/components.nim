@@ -32,15 +32,17 @@ import parseSEG
 import geometry
 
 func componentOf*(k: TraceKeys): uint8 =
-  ## The component the viewer takes `k`'s trace to be: parseSEG's `component` for SEG-D,
-  ## SEG-2 and so on; for a SEG-Y trace (it has an identification code) only when
-  ## that code is one of the sensor-component codes 11 to 17 (multicomponent and rotated
-  ## sensors). Any other code (a vibrator's 18 to 21, a manufacturer's own 28, 29, 33)
-  ## is no component: no button, no colour.
+  ## The component of a trace: parseSEG's `component` for SEG-D, SEG-2 and so on (no
+  ## identification code); for a SEG-Y trace only when its code names a sensor component
+  ## in the file's revision: 11 to 17 in every revision, 27 to 41 (electric and magnetic
+  ## field, rotational) in rev 2 and later, with the interpolated flag (+16384) of rev 2
+  ## ignored. parseSEG gives such a code the status live exactly in the revisions that
+  ## define it (`segyStatus`), so a rev 0 or 1 file's 28, 29 or 33, and a vibrator's 18
+  ## to 21, are no component: no button, no colour. The one function every site uses.
   if k.traceCode == 0: k.component
-  elif int(k.traceCode) in 11 .. 17: k.component
-  else: 0
-
+  else:
+    let base = int(k.traceCode) and 0x3FFF
+    if k.status == tsLive and (base in 11 .. 17 or base in 27 .. 41): k.component else: 0
 type
   ComponentKind* = enum
     ckOther = "other"

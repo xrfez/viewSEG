@@ -38,7 +38,7 @@ import parseSEG
 import processSEG/core/[rows, types, workspace]
 import processSEG/pipeline
 import processSEG/qc/[amplitude, record]
-import filesystem, inbox, jobs, mapkinds, processing, session, threads
+import components, filesystem, inbox, jobs, mapkinds, processing, session, threads
 
 export mapkinds
 
@@ -118,7 +118,7 @@ proc placeTraces*(hits: var array[MapFilter, FilterHits]; keys: openArray[TraceK
         have.incl (st.line, st.point)
         if not plan.planned(st.line, st.point, index) and k.status != tsDead:
           hits[mfUnlisted].traces.add base + t
-        let key = (st, k.component)
+        let key = (st, componentOf(k))
         if key in seen:
           dupStations.incl (st.line, st.point)
           if not firsts.containsOrIncl(seen[key]):

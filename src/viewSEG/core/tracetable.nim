@@ -18,6 +18,7 @@
 
 import std/[algorithm, math, strutils]
 import parseSEG
+import components
 
 type
   TableScope* = enum
@@ -101,7 +102,7 @@ func keyValue*(k: TraceKeys; name: string): float64 =
   of "keys.srcPoint": k.srcPoint
   of "keys.rcvLine": k.rcvLine
   of "keys.rcvPoint": k.rcvPoint
-  of "keys.component": float64(k.component)
+  of "keys.component": float64(componentOf(k))
   of "keys.offset": k.offset
   of "keys.ensemble": k.ensemble
   of "keys.inline": k.inline
