@@ -20,7 +20,7 @@
 import std/[math, sets, strutils, tables]
 import imguin/cimgui
 import ../../core/[colourmaps, explain, geometry, plotcursor, plotoptions, state, units]
-import ../../view/[analysisview, curveplot, theme]
+import ../../view/[analysisview, axisfit, curveplot, theme]
 import chrome, curveplot as curves, explainmenu, overflow, icons, marks, placement, spectrumwindow,
   style
 
@@ -48,6 +48,7 @@ type
     readout*: Table[int, string] ## per window id: what its cursor read last frame (tests)
     toFront: HashSet[int] ## windows to bring forward when next drawn
     heat: Table[int, HeatCache] ## per window id: the image as drawn, cut to the pixels
+    imageAxes: Table[int, AxisFit] ## per window id: what its image's axes were fitted to
     maps: array[ColourMap, int] ## ImPlot's index of each density colour map + 1; 0: not added
 
   PlotWindowsOutput* = object
@@ -613,7 +614,16 @@ proc drawImage(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: str
   if ImPlot_BeginPlot(("##" & name).cstring, ImVec2_c(x: max(80, size.x - scaleW), y: size.y),
       flags):
     ImPlot_SetupAxes(img.xLabel.cstring, img.yLabel.cstring, 0, 0)
-    ImPlot_SetupAxesLimits(x0, x1, y0, y1, ImPlot_Cond_Once.cint)
+    # the axes follow the data by `view/axisfit`'s rule, as a curve plot's do: an option
+    # fits both, other data (another trace, record or file) the axes not zoomed by hand
+    var options = w.params
+    options.colourMap = AnalysisParams().colourMap # a colour map moves no axis
+    let fit = ui.imageAxes.mgetOrPut(w.id, AxisFit()).plan(
+      $w.view & $options & img.xLabel & img.yLabel, Span(lo: x0, hi: x1), Span(lo: y0, hi: y1))
+    ImPlot_SetupAxisLimits(ImAxis_X1.cint, x0, x1,
+      if fit.x: ImPlot_Cond_Always.cint else: ImPlot_Cond_Once.cint)
+    ImPlot_SetupAxisLimits(ImAxis_Y1.cint, y0, y1,
+      if fit.y: ImPlot_Cond_Always.cint else: ImPlot_Cond_Once.cint)
     ImPlot_SetupAxisLimitsConstraints(ImAxis_X1.cint, x0, x1)
     ImPlot_SetupAxisLimitsConstraints(ImAxis_Y1.cint, y0, y1)
     let pos = ImPlot_GetPlotPos()
@@ -661,6 +671,12 @@ proc drawImage(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: str
       marks.markRect(name & ".cursor x", xlo, xhi)
       marks.markRect(name & ".cursor y", ylo, yhi)
       result = img.readingText(c)
+    let ended = ImPlot_GetPlotLimits(ImAxis_X1.cint, ImAxis_Y1.cint)
+    let seenX = Span(lo: ended.X.Min, hi: ended.X.Max)
+    let seenY = Span(lo: ended.Y.Min, hi: ended.Y.Max)
+    ui.imageAxes[w.id].seen(seenX, seenY)
+    curves.noteAxes(name & ".image", (seenX, seenY), (ui.imageAxes[w.id].userZoomed(true),
+      ui.imageAxes[w.id].userZoomed(false)))
     ImPlot_EndPlot()
     explainMenu(name & ".explain", pos, t, marks, st.explainPane(w, 0))
   igSameLine(0, -1)
@@ -874,6 +890,7 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
     ui.curveKeys.del id
     ui.under.del id
     ui.heat.del id
+    ui.imageAxes.del id
     ui.readout.del id
 
 func readoutOf*(ui: PlotWindowsUi; id: int): string =

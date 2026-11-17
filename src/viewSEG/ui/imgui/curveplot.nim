@@ -81,6 +81,12 @@ proc axisLimitsOf*(id: string): (Span, Span) =
   ## for a plot not drawn.
   shownLimits.getOrDefault(id, (Span(lo: NaN, hi: NaN), Span(lo: NaN, hi: NaN)))
 
+proc noteAxes*(id: string; seen: (Span, Span); zoomed: (bool, bool)) =
+  ## What a plot that is not a curve plot (an analysis window's image) ended its last
+  ## frame with, for `axisLimitsOf` and `axisZoomedOf`.
+  shownLimits[id] = seen
+  shownZoom[id] = zoomed
+
 func stampOf(p: CurvePlot): Hash =
   ## A cheap fingerprint of the data: the curves' lengths and a few of their values.
   var h: Hash = 0
