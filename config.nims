@@ -201,8 +201,9 @@ task packageTest, "nim package, then check dist/ and run the packaged Linux bina
   selfExec "c -r --hints:off" & define & " tests/package/tpackage.nim"
 
 # Every test task builds the runner tests/tester.nim once, in debug; the runner
-# compiles and runs each tests/t*.nim with the flags given after it, several
-# files at a time, each run on an Xvfb display of its own (its module doc).
+# compiles the suite as one program and runs each tests/t*.nim with the flags
+# given after it, several files at a time, each run on an Xvfb display of its
+# own (its module doc). `--separate` compiles every file alone.
 const tester = "c -r --hints:off tests/tester.nim"
 
 task test, "Run the test suite, several files at a time":

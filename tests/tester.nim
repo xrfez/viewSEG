@@ -1,8 +1,17 @@
-## Test runner: compiles and runs every `tests/t*.nim` file in a process of
-## its own, several files at a time.
+## Test runner: compiles the suite once and runs every `tests/t*.nim` file in
+## a process of its own, several files at a time.
 ##
-##   nim c -r tests/tester.nim [--jobs:N] [--runs:N] [--timeout:S] [flags] [files]
+##   nim c -r tests/tester.nim [--jobs:N] [--runs:N] [--timeout:S] [--separate] [flags] [files]
 ##
+## - The files are one program (`tests/alltests.nim`, written here, not a test
+##   of its own). It is compiled once; each file is then `alltests <name>`, so
+##   a crash or leftover state in one cannot reach another. A failure names
+##   its file. `nim c -r tests/tfoo.nim` still runs that file alone: its body
+##   is `proc main*()`, called only when the file is the main module.
+## - A file whose header holds `## Separate binary: <why>` is compiled alone,
+##   as every file used to be: it runs itself again, or it needs its own
+##   compiler switches. `--separate` compiles every file alone, for when the
+##   one program does not build.
 ## - Compiler flags (`-d:release`, `-d:addressSanitizer`, ...) are passed to the
 ##   compiler for every test, so one runner build serves each mode (the test
 ##   tasks in config.nims).
@@ -24,10 +33,11 @@
 ##   folder), so no window reaches a desktop. Without Xvfb, or off POSIX, files
 ##   go one at a time in the environment as it is.
 ## - **Folders and builds.** Tests make their temporary folders per process (the
-##   process id in the name, or `tests/utils/fixtures.nim`). Each file has its
-##   own executable in `bin/` and its own Nim cache (the compiler's default,
-##   named after the file); each compiler gets a share of the cores
-##   (`--parallelBuild`), so that the C compilers of all jobs fit the machine.
+##   process id in the name, or `tests/utils/fixtures.nim`). The one program is
+##   `bin/alltests`, with one Nim cache; a file compiled alone keeps its own
+##   executable in `bin/` and its own cache. A compile that shares the machine
+##   with runs gets a share of the cores (`--parallelBuild`). The one program
+##   is compiled before any run, on every core.
 ## - **The CPU.** The GUI tests step in frames, but Dear ImGui keeps time in
 ##   seconds (key repeat, double clicks), and slow frames change what a test
 ##   sees. So compilers run at the lowest priority, at most an eighth of the
@@ -62,11 +72,13 @@ else:
   import std/streams
 
 const
-  DefaultTimeout = 300        ## seconds a run may take; a compile, four times that
+  DefaultTimeout = 300                 ## seconds a run may take; a compile, four times that
   Screen = "1920x1080x24"
   AloneLine = "## Runs alone:"
+  SeparateLine = "## Separate binary:" ## compiled alone; the rest of the line says why
   ExpectLine = "## Expect: "
-  TimesFile = "testtimes.txt" ## in bin/: "<file> <compile s> <run s>" a line
+  AggregateFile = "alltests.nim"       ## generated, not a test; one program for the rest
+  TimesFile = "testtimes.txt"          ## in bin/: "<file> <compile s> <run s>" a line
 
 type
   Step = enum
@@ -77,6 +89,7 @@ type
     reject: bool    ## must fail to compile, printing `want`
     want: string
     alone: bool     ## runs by itself, after the others
+    joined: bool    ## runs from the one program, not a binary of its own
     took: array[Step, Duration]
     failure: string ## why it failed; "" while it passes
     first: string   ## why its first run failed, when it is run again
@@ -86,6 +99,7 @@ type
     jobs, runs: int ## steps at a time, of which runs
     timeout: Duration
     once: bool      ## a failed run is not run again
+    separate: bool  ## every file compiled alone, as before
     flags, only: seq[string]
 
   Took = tuple[compile, run: float64] ## seconds
@@ -331,6 +345,8 @@ type
     nim, testDir, binDir, logDir, xvfb: string
     prefix: seq[string]     ## what a run or a display is started through
     env, runEnv, build: seq[string]
+    aggregate: string       ## the one program, when any file joins it
+    aggregateTook: Duration
     queue: seq[(int, Step)] ## what can start, the next first
     later: seq[int]         ## compiled, waiting to run alone
     jobs: seq[Job]
@@ -350,6 +366,8 @@ proc parseOptions(params: seq[string]): Options =
       result.timeout = initDuration(seconds = parseInt(value))
     elif p == "--once":
       result.once = true
+    elif p == "--separate":
+      result.separate = true
     elif p.startsWith("-"):
       result.flags.add p
     else:
@@ -357,14 +375,19 @@ proc parseOptions(params: seq[string]): Options =
   result.jobs = max(1, result.jobs)
   result.runs = if result.runs > 0: min(result.runs, result.jobs) else: max(1, result.jobs div 8)
 
-proc testFiles(testDir, binDir, logDir: string; only: seq[string]): seq[TestFile] =
+proc testFiles(testDir, binDir, logDir: string; only: seq[string];
+    separate: bool): seq[TestFile] =
   ## The test files (all, or those named in `only`), then the reject tests.
+  ## A file joins the one program unless `separate`, or its header asks to be
+  ## compiled alone.
   for f in walkFiles(testDir / "t*.nim"):
     let name = f.extractFilename
     if name != "tester.nim" and (only.len == 0 or name in only):
+      let head = header(f)
       result.add TestFile(path: f, name: name, log: logDir / name & ".log",
         exe: binDir / name.changeFileExt(ExeExt),
-        alone: header(f).anyIt(it.startsWith(AloneLine)))
+        alone: head.anyIt(it.startsWith(AloneLine)),
+        joined: not separate and not head.anyIt(it.startsWith(SeparateLine)))
   for name in only:
     if not result.anyIt(it.name == name):
       quit "FAILURE no test file " & name & " in " & testDir
@@ -404,7 +427,7 @@ proc initRunner(opts: Options): Runner =
   let testDir = currentSourcePath().parentDir
   result = Runner(opts: opts, nim: getCurrentCompilerExe(), testDir: testDir, rerun: not opts.once,
     binDir: testDir.parentDir / "bin", logDir: createTempDir("viewseg-tests-", ""))
-  result.files = testFiles(testDir, result.binDir, result.logDir, opts.only)
+  result.files = testFiles(testDir, result.binDir, result.logDir, opts.only, opts.separate)
   if result.files.len == 0:
     quit "FAILURE no tests found in " & testDir
   when defined(posix):
@@ -437,7 +460,13 @@ proc initRunner(opts: Options): Runner =
   let files = result.files
   order.sort(proc (a, b: int): int = cmp(cost(files[a]), cost(files[b])))
   for i in order:
-    result.queue.add (i, compileStep)
+    let f = result.files[i]
+    if f.joined and f.alone:
+      result.later.add i # no compile of its own; it waits to run alone
+    elif f.joined:
+      result.queue.add (i, runStep)
+    else:
+      result.queue.add (i, compileStep)
 
 proc start(r: Runner; i: int; step: Step): Job =
   let f = r.files[i]
@@ -455,7 +484,8 @@ proc start(r: Runner; i: int; step: Step): Job =
       if r.xvfb.len > 0:
         result.display = startDisplay(r.prefix, r.xvfb, r.env, r.logDir / f.name & ".xvfb.log")
         env.add "DISPLAY=:" & $result.display.number
-    result.pid = spawn(r.prefix & @[f.exe], env, f.log)
+    let argv = if f.joined: @[r.aggregate, f.name.changeFileExt("")] else: @[f.exe]
+    result.pid = spawn(r.prefix & argv, env, f.log)
 
 proc report(r: var Runner; f: var TestFile) =
   inc r.reported
@@ -533,8 +563,105 @@ proc next(r: Runner): int =
       return k
   -1
 
+proc aggregateSource(names: seq[string]): string =
+  ## The one program: each name is a test module, called as `alltests <name>`.
+  result = "## Generated by tests/tester.nim. Not a test file: one program for\n"
+  result.add "## the suite. `alltests <name>` runs that test; `alltests --list`\n"
+  result.add "## prints the names.\n\n"
+  result.add "import std/os\n\n"
+  for n in names:
+    result.add "from " & n & " import nil\n"
+  result.add "\nconst Names = [\n"
+  for n in names:
+    result.add "  \"" & n & "\",\n"
+  result.add "]\n\n"
+  result.add "proc run(name: string) =\n"
+  result.add "  case name\n"
+  for n in names:
+    result.add "  of \"" & n & "\": " & n & ".main()\n"
+  result.add "  else:\n"
+  result.add "    quit \"FAILURE no test \" & name\n\n"
+  result.add "when isMainModule:\n"
+  result.add "  let args = commandLineParams()\n"
+  result.add "  if args.len == 0:\n"
+  result.add "    quit \"usage: alltests <name> | alltests --list\"\n"
+  result.add "  elif args[0] == \"--list\":\n"
+  result.add "    for n in Names:\n"
+  result.add "      echo n\n"
+  result.add "  else:\n"
+  result.add "    run(args[0])\n"
+
+proc writeIfChanged(path, text: string) =
+  if not fileExists(path) or readFile(path) != text:
+    writeFile(path, text)
+
+proc ensureAggregate(path: string; names: seq[string]) =
+  ## Writes `path` as nimpretty would, and leaves it when it already matches,
+  ## so a warm compile is not a rewrite.
+  let raw = path & ".raw"
+  writeFile(raw, aggregateSource(names))
+  let pretty = findExe("nimpretty")
+  if pretty.len > 0:
+    let code = execShellCmd(quoteShellCommand([pretty, "--indent:2", "--maxLineLen:100", raw]))
+    if code != 0:
+      quit "FAILURE nimpretty failed on the generated test program"
+  writeIfChanged(path, readFile(raw))
+  removeFile(raw)
+
+proc waitFor(pid: Pid; limit: Duration): Ended =
+  ## Until `pid` ends, or `limit` passes (it is then stopped).
+  let started = getMonoTime()
+  while true:
+    result = ended(pid)
+    if result.done:
+      return
+    if stopSignal != 0:
+      stop(pid)
+      return Ended(done: true, failure: "stopped")
+    if getMonoTime() - started > limit:
+      stop(pid)
+      return Ended(done: true, failure: "timed out after " & $limit.inSeconds & " s, stopped")
+    sleep 20
+
+proc compileAggregate(r: var Runner) =
+  ## Compiles the one program, if any file joins it. A failure stops the run:
+  ## `--separate` is the way around a program that does not build.
+  var names: seq[string] = @[]
+  for f in r.files:
+    if f.joined:
+      names.add f.name.changeFileExt("")
+  if names.len == 0:
+    return
+  names.sort()
+  let src = r.testDir / AggregateFile
+  ensureAggregate(src, names)
+  r.aggregate = r.binDir / "alltests".addFileExt(ExeExt)
+  let log = r.logDir / "alltests.compile.log"
+  let args = @[r.nim, "c", "--hints:off", "--parallelBuild:" & $countProcessors(),
+    "--out:" & r.aggregate] & r.opts.flags & @[src]
+  echo "Compiling ", names.len, " tests as one binary"
+  let started = getMonoTime()
+  var pid: Pid
+  try:
+    pid = spawn(args, r.env, log)
+  except OSError as e:
+    quit "FAILURE cannot compile the test binary: " & e.msg
+  let e = waitFor(pid, r.opts.timeout * 4)
+  r.aggregateTook = getMonoTime() - started
+  if e.failure.len > 0:
+    let output = if fileExists(log): readFile(log) else: ""
+    if output.len > 0:
+      stdout.write output
+      if not output.endsWith("\n"):
+        stdout.write "\n"
+    quit "FAILURE the test binary did not compile, " & e.failure &
+      ". Run again with --separate."
+  echo "  one binary in ", seconds(r.aggregateTook)
+
 proc runAll(r: var Runner) =
-  ## Runs everything, unless a signal stops the runner.
+  ## Runs everything, unless a signal stops the runner. The one program is
+  ## compiled first, so a run never starts before it exists.
+  r.compileAggregate()
   while r.reported < r.files.len and stopSignal == 0:
     if r.jobs.len == 0 and r.queue.len == 0:
       # all the others are done: the files that run alone, one by one
