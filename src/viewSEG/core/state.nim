@@ -3090,7 +3090,7 @@ proc pilotOfRecord(s: Session; g: int; rule: PilotRule; e: FileEdits): tuple[tra
   let t = span.a + at
   let who = recordSentence(result.record) & "'s " & pilotWords(rule.aux, rule.trace)
   if e.has(teKilled, t): result.problem = who & " is killed."
-  elif t in 0 ..< f[].len and f[].traceKeys(t).status == tsDead:
+  elif t in 0 ..< f[].index.keys.len and f[].index.keys[t].status == tsDead:
     result.problem = who & " is marked dead."
   else: result.trace = t
 
