@@ -609,8 +609,7 @@ proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
     let peak = amps.peakBin
     %*{"amplitude": lin, "peakHz": (if peak >= 0: toJson(float(peak) * sp.binHz) else: newJNull()),
       "peakAmplitude": toJson(amps.peakOf),
-      "peakDb": toJson(if reference > 0 and amps.peakOf > 0: 20 * log10(amps.peakOf / reference)
-                       else: NaN)}
+      "peakDb": toJson(levelDb(amps.peakOf, reference))}
   proc gains(hz, g: seq[float64]): JsonNode =
     # on its own grid, at most `limit` points: the smallest of each run, at
     # its frequency, so a notch is kept
