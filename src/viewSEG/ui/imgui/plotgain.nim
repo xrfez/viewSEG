@@ -38,7 +38,7 @@ func explanation(g: DisplayGain; d: DisplaySettings): string =
   of dgNone: "the samples as recorded, one scale for the record"
   of dgFixed: "one scale for every record and file, so they compare"
   of dgNormalized: "every trace, or the record, to the same level"
-  of dgExponential: "more gain later in the record"
+  of dgExponential: "more gain later in the record (seismic traces only)"
   of dgFloat: "the scale follows the data in view"
   of dgAgc: "automatic gain control, " & $int(round(d.agcWindowMs)) & " ms window"
   of dgAuto: ""

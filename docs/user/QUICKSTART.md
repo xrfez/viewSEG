@@ -444,7 +444,8 @@ recorded, one scale for the record), **Fixed** (one scale for every record, so r
 compare), **Normalized** (every trace, or the record, to the same level), **Exponential**
 (more gain later in the record: dB per second, or a power of time, rising until the time
 in its "until" box, 2 000 ms at first, and held after it, so the deep part of the record
-is not blown out), **Float** (the scale follows what is in view) and **AGC**. The bar
+is not blown out; it applies to seismic traces only: a pilot or other auxiliary trace is left
+as recorded), **Float** (the scale follows what is in view) and **AGC**. The bar
 says **Gain: AGC 500 ms** when you chose it, and **Gain: auto (AGC 500 ms)** or
 **Gain: auto (none)** when viewSEG chose. At the bottom of the list, **Full scale at the
 ... th percentile** sets which amplitude is drawn at full scale (the colour map's ends:

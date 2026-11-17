@@ -930,7 +930,8 @@ type
       ## files whose positions' problems were said; folders said to hold no coordinates
     panels: seq[Panel]
     heldBack: seq[PanelId]
-      ## panels that could not show their file: a job had it to itself
+    auxOnNoted: seq[string] ## files whose all-auxiliary record switched Aux on, said once
+                              ## panels that could not show their file: a job had it to itself
     sessions: seq[Session]
     opening, closing: seq[Pending]
     files: FileList ## the file list
@@ -2366,6 +2367,17 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
   let i = state.findSession(file)
   state.panels[k].layers[0].reversed = i >= 0 and
     state.editsAt(state.sessions[i].path).allReversed
+  # A record whose traces are all auxiliary opens with Aux on, not as an empty panel.
+  if i >= 0 and gather in 0 ..< state.sessions[i].records.len:
+    let r = state.sessions[i].records[gather]
+    if r.seismic == 0 and r.aux > 0 and not state.panels[k].layers[0].filter.auxiliary:
+      state.panels[k].layers[0].filter.auxiliary = true
+      let s = state.sessions[i]
+      if s.path notin state.auxOnNoted:
+        state.auxOnNoted.add s.path
+        state.log.add(sevInfo, s.name, "Every trace of " & s.name & "'s record is " &
+          "auxiliary (pilot, reference or monitor channels), so Aux is switched on: " &
+          "there are no seismic traces to show.")
   state.newSource(k)
   state.selection.activeGather = GatherRef(file: file, gather: gather)
   inc state.selection.revision
