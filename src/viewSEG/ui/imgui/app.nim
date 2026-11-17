@@ -218,6 +218,10 @@ type
       ## program does; tests choose)
     configDir*: Option[string]
       ## where the settings are kept; default `paths.configDir()`
+    vendorFolders*: Option[seq[VendorFolder]]
+      ## where vendor header maps are loaded from (besides the project's), in
+      ## order of preference; default: `<configDir>/vendormaps`, the program's
+      ## and `PARSESEG_VENDOR_PATH`'s folders. Only with `persist`.
     version*: string
       ## the program's version, logged first ("" for none)
     windowSize*: (int, int)
@@ -984,6 +988,7 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       if i >= 0: ui.core.apply Command(kind: ckClose, file: ui.core.sessions[i].id)
     of maImportSurvey: ui.join.open()
     of maReopen: ui.openReopen()
+    of maReloadVendors: ui.core.apply Command(kind: ckReloadVendors)
     of maAbout: ui.about.open()
     of maShortcuts:
       ui.shortcuts.open()
@@ -1750,6 +1755,16 @@ proc followLayouts(ui: var Ui) =
     ui.arrange(ui.arrangeNext.get)
     ui.arrangeNext = none(string)
 
+proc defaultVendorFolders(ctx: PathContext; configDir: string): seq[VendorFolder] =
+  ## The user's folder (`<configDir>/vendormaps`, there or not), then the
+  ## program's and the environment's that exist.
+  result = @[VendorFolder(dir: configDir / VendorFolderName, origin: voUser)]
+  for (dir, source) in ctx.vendorMapSources:
+    case source
+    of vsUser: discard
+    of vsProgram: result.add VendorFolder(dir: dir, origin: voProgram)
+    of vsEnvironment: result.add VendorFolder(dir: dir, origin: voEnvironment)
+
 proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
     configDir: string): Ui =
   ## The frontend's state: where its assets are, which theme, the fonts; the
@@ -1785,6 +1800,8 @@ proc initUi(window: ptr SDL_Window; opts: RunOptions; loaded: LoadedSettings;
     result.core.keepSettingsIn(configDir, loaded)
     result.core.rememberFilesIn(configDir)
     result.core.keepLayoutsIn(configDir, assets)
+    result.core.setVendorFolders(if opts.vendorFolders.isSome: opts.vendorFolders.get
+                                 else: defaultVendorFolders(ctx, configDir))
     result.keepsLayouts = true
   result.appliedTheme = result.core.settings.theme
   var names: seq[string] = @[]

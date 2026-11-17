@@ -34,6 +34,7 @@ type
     maOpenFile = "Open file...", maOpenFiles = "Open files...",
     maOpenFolder = "Open folder...", maClose = "Close",
     maReopen = "Reopen with options...",
+    maReloadVendors = "Reload vendor maps",
     maImportSurvey = "Import survey...", maImportSettings = "Import settings...",
     maImportLayout = "Import layout...", maImportEdits = "Import trace edits...",
     maExportLog = "Export messages...", maExportSettings = "Export settings...",
@@ -120,7 +121,7 @@ const
     maOpenFiles: ImGui_Mod_Ctrl.cint or ImGui_Mod_Shift.cint or ImGui_Key_O.cint,
     maOpenFolder: ImGui_Mod_Ctrl.cint or ImGui_Mod_Alt.cint or ImGui_Key_O.cint,
     maClose: ImGui_Mod_Ctrl.cint or ImGui_Key_W.cint,
-    maReopen: 0,
+    maReopen: 0, maReloadVendors: 0,
     maImportSurvey: 0, maImportSettings: 0, maImportLayout: 0, maImportEdits: 0,
     maExportLog: 0, maExportSettings: 0, maExportLayout: 0, maExportEdits: 0,
     maFileMemory: 0, maNewProject: 0, maOpenProject: 0, maProject: 0, maCloseProject: 0,
@@ -139,7 +140,7 @@ const
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
-    maReopen: IconRefresh,
+    maReopen: IconRefresh, maReloadVendors: IconRefresh,
     maImportSurvey: IconSurvey, maImportSettings: IconSliders, maImportLayout: IconLayout,
     maImportEdits: IconWriting, maExportLog: IconExport, maExportSettings: IconSliders,
     maExportLayout: IconLayout, maExportEdits: IconWriting, maFileMemory: IconMemory,
@@ -482,6 +483,11 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
       item(maReopen, result)
       igEndDisabled()
       tip(ReopenTip)
+      item(maReloadVendors, result)
+      tip("Read the vendor header maps (*.nif) again from their folders: the project's, your " &
+        "settings folder, beside the program: a map dropped in while viewSEG runs is used " &
+        "without a restart, and the files open show the new decode (Messages says what was " &
+        "loaded)")
       if igMenuItem_Bool((IconFollow & "  " & FollowWords).cstring, nil,
           input.followLatest, true):
         result.toggleFollow = true

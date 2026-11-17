@@ -632,6 +632,35 @@ proc drawUserData(ui: var HeadersUi; data: openArray[UserDataFact]; fileKey: str
 
 # ------------------------------------------------------------ file headers --
 
+proc drawVendor(v: VendorShown; t: Theme; fonts: Fonts; marks: var Marks) =
+  ## The blocks the vendor maps decode, each under the map that did it, its
+  ## fields by name with their values.
+  for p in v.problems: dim(t, p)
+  if v.blocks.len == 0:
+    dim(t, "No vendor map decodes a block of this file.")
+  if igBeginChild_Str("##vendorblocks", ImVec2_c(x: 0, y: 0), 0, 0):
+    for n, b in v.blocks:
+      dim(t, b.name & ", decoded by the map " & b.map &
+        (if b.mapFile.len > 0: " (" & b.mapFile & ")" else: ""))
+      marks.mark("headers.vendor block " & b.name)
+      const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_BordersInnerV.cint or
+        ImGui_TableFlags_SizingFixedFit.cint
+      if igBeginTable(("##vendor" & $n).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
+        for f in b.fields:
+          igTableNextRow(0, 0)
+          discard igTableNextColumn()
+          igTextUnformatted(f.name.cstring, nil)
+          discard igTableNextColumn()
+          fonts.withFont(frMono, 0):
+            igTextUnformatted((f.value & (if f.label.len > 0: " (" & f.label & ")" else: "") &
+              (if f.flags.len > 0: " [" & f.flags & "]" else: "")).cstring, nil)
+          discard igTableNextColumn()
+          igTextUnformatted(f.unit.cstring, nil)
+          marks.mark("headers.vendor field " & f.name)
+        igEndTable()
+      igSpacing()
+  igEndChild()
+
 func blockIs(name, prefix: string): bool =
   name.startsWith(prefix)
 
@@ -804,6 +833,14 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
       ui.drawHex(id, facts.blocks, fonts, t, marks)
       igEndTabItem()
   of skUnknown: discard
+  block vendor:
+    template v: untyped = st.inspection.answer.vendor
+    if v.path == ses.path and (v.blocks.len > 0 or v.problems.len > 0) and
+        (standard != skSegd or (gather in 0 ..< ses.gathers.len and
+        v.record == ses.file.segdRecordOf(ses.gathers[gather].traces.a))) and
+        subTab("Vendor", marks):
+      drawVendor(v, t, fonts, marks)
+      igEndTabItem()
   if standard != skSeg2:
     for i in 0 ..< ses.facts.raw.len:
       template b: untyped = ses.facts.raw[i]
