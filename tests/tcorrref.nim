@@ -141,13 +141,36 @@ proc main*() =
       doAssert st.plots[alone].result.plots[0].curves.len == 2
       doAssert "trace 1 is the reference" in st.plots[alone].result.note
 
+    block rotated_and_reversed:
+      # a trace rotated 90° has its envelope peak at 0 ms, the shift it reads;
+      # a mirror image is said to be reversed. A phase near ±180 means 180.
+      var reference, rot, rev: seq[float32] = @[]
+      for i in 0 ..< Samples:
+        let t = float64(i) * DtMs / 1000
+        reference.add float32(sin(2 * PI * (10 * t + 20 * t * t)))
+        rot.add float32(sin(2 * PI * (10 * t + 20 * t * t) + PI / 2))
+        rev.add -reference[^1]
+      let r = correlationOf([("rot", rot), ("rev", rev)], reference, "ref", DtMs,
+        AnalysisParams(maxLagMs: 100))
+      doAssert abs(r.peakLagMs(0)) < 1e-9
+      doAssert "rot: best match" in r.note and " at 0.0 ms (in step with the reference)" in
+        r.note, r.note
+      doAssert "reversed polarity" in r.note, r.note
+      doAssert r.table[1][2] == "0.0" and r.table[2][1].startsWith("-1.00") and
+        "reversed polarity" in r.table[2][1], $r.table
+      doAssert r.table[2][4] in ["180.0", "-180.0", "+180.0"], "mean phase of a mirror image: " &
+        r.table[2][4]
+      doAssert "-0.0" notin r.note
+
     block shift_in_words:
       # in step whatever the amplitude, and ahead of the reference (before it; a few samples of its start are lost: 0.99)
       var reference, early, loud: seq[float32] = @[]
       for i in 0 ..< Samples:
-        reference.add sweep(i)
-        early.add sweep(i + 5)
-        loud.add 3 * sweep(i)
+        let t = float64(i) * DtMs / 1000
+        reference.add float32(sin(2 * PI * (10 * t + 20 * t * t)))
+        let t5 = float64(i + 5) * DtMs / 1000
+        early.add float32(sin(2 * PI * (10 * t5 + 20 * t5 * t5)))
+        loud.add 3 * reference[^1]
       let r = correlationOf([("loud", loud), ("early", early)], reference, "ref", DtMs,
         AnalysisParams())
       doAssert r.problem == "", r.problem

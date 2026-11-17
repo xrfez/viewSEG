@@ -9,7 +9,7 @@
 ## with a file, "a rule has a file"; with the note not naming the pilot's own
 ## filter (the plot's filters off), "the pilot's own filter is not named".
 
-import std/[json, math, monotimes, os, strutils, times]
+import std/[json, math, monotimes, os, sequtils, strutils, times]
 import parseSEG
 import viewSEG/core/[analysis, edits, processing, references, state]
 import viewSEG/remote/schema
@@ -49,6 +49,25 @@ proc twoRecords(fx: Fixtures): string =
       w.writeTrace(k, buf)
   doAssert w.close().len == 0
 
+proc chirpRecord(fx: Fixtures): string =
+  ## An auxiliary pilot (a 10 to 50 Hz chirp over 0.5 s) and two seismic traces,
+  ## the pilot `Delay` and twice `Delay` ms later.
+  result = fx.dir / "chirp-record.sgy"
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test: a chirp pilot and two delayed copies"]))
+  var buf = newSeq[float32](Samples)
+  for c in 0 .. 2:
+    let shift = int(round(float64(c) * Delay / DtMs))
+    for i in 0 ..< Samples:
+      let t = float64(i - shift) * DtMs / 1000
+      buf[i] = if i < shift or t > 0.5: 0'f32 else: float32(sin(2 * PI * (10 * t + 40 * t * t)))
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs) = (1.0, float64(c + 1), 0.0, DtMs * 1000)
+    if c == 0: (k.traceCode, k.status) = (6'i16, tsAuxiliary)
+    else: k.status = tsLive
+    w.writeTrace(k, buf)
+  doAssert w.close().len == 0
+
 func peakValue(r: AnalysisResult; curve = 0): float64 =
   ## The cross-correlation's value at its peak lag, with its sign.
   result = NaN
@@ -69,6 +88,7 @@ proc shownPilot(st: var AppState; rule: PilotRule): PilotPreview =
   st.pilotPreview
 
 proc main*() =
+
   block the_rule_is_kept_and_has_no_samples:
     withFixtures fx:
       let folder = fx.dir / "refs"
@@ -368,6 +388,29 @@ proc main*() =
       doAssert c.refPilot == PilotRule(name: "agent rule", aux: true, trace: 3, startMs: 5,
         spanMs: 40)
     discard st.shutdown()
+
+  block a_cut_pilot_keeps_its_place_in_time:
+    # a pilot cut from 20 ms is the pilot from there, not placed at the trace's
+    # first sample: the delays are still read as the delays
+    withFixtures fx:
+      var g = initAppState()
+      g.apply Command(kind: ckShowFile, panel: MainPanel, path: fx.chirpRecord())
+      doAssert g.settle(g.sessions.len == 1 and g.panel(MainPanel).laidOut)
+      let base = g.sessions[0].base
+      g.readyArchive(fx.dir / "refs-chirp")
+      g.apply Command(kind: ckPilotReference, refPilot: PilotRule(name: "late pilot",
+        aux: true, trace: 1, startMs: 20, spanMs: 400))
+      doAssert g.settle(g.references.entries.len == 1), "the rule was not stored"
+      g.apply Command(kind: ckSelectReference, refId: g.references.entries[0].id)
+      g.apply Command(kind: ckOpenPlot, plotView: avCorrelation, plotTraces: @[base + 1, base + 2])
+      doAssert g.settle(g.plots[0].result.gen > 0 and not g.plots[0].waiting)
+      doAssert g.plots[0].result.problem == "", g.plots[0].result.problem
+      for c in 0 .. 1:
+        let lag = g.plots[0].result.peakLagMs(c)
+        doAssert abs(lag - Delay * float64(c + 1)) < 1e-6, "a cut pilot put at the trace's " &
+          "start: trace " & $(c + 2) & " peaks at " & $lag & " ms"
+      doAssert "taken to start with the trace" in g.plots[0].result.note
+      discard g.shutdown()
 
   echo "tpilotref: ok"
 

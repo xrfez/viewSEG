@@ -573,9 +573,17 @@ proc plotJson(w: AnalysisWindow; units: UnitSystem; limit: int): JsonNode =
       rows.add cells
     result["table"] = rows
   if r.view == avCorrelation and r.plots.len > 0:
+    # one entry per table row; null for a trace not drawn (the reference itself)
     var lags = newJArray()
-    for c in 0 ..< r.plots[0].curves.len div 2:
-      lags.add toJson(r.peakLagMs(c))
+    var drawn = 0
+    if r.table.len > 1:
+      for row in r.table[1 .. ^1]:
+        if row.len > 3 and row[3] == "not drawn": lags.add newJNull()
+        else:
+          lags.add toJson(r.peakLagMs(drawn))
+          inc drawn
+    else:
+      for c in 0 ..< r.plots[0].curves.len div 2: lags.add toJson(r.peakLagMs(c))
     result["peakLagMs"] = lags
   if not r.image.isEmpty:
     let img = r.image

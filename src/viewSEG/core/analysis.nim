@@ -360,6 +360,22 @@ proc spectrogramOf*(rows: openArray[seq[float32]]; dtMs, t0Ms: float64;
 
 # --------------------------------------------------------------- envelope --
 
+func circularMeanDeg*(x: openArray[float64]): float64 =
+  ## The circular mean of angles in degrees (the argument of the sum of their
+  ## unit vectors), in (-180, 180]; NaN values are left out, NaN for none. A
+  ## plain mean of wrapped angles is wrong near ±180. To move into processSEG
+  ## (it has only the track's own weighted `meanPhase`, not a plain function).
+  var sx, sy = 0.0
+  var n = 0
+  for v in x:
+    if not v.isNaN:
+      sx += cos(degToRad(v))
+      sy += sin(degToRad(v))
+      inc n
+  if n == 0 or (abs(sx) < 1e-12 and abs(sy) < 1e-12): return NaN
+  result = radToDeg(arctan2(sy, sx))
+  if result <= -180: result += 360
+
 const EnvelopeFloorDb* = -60.0
   ## the envelope plot draws a phase, a difference of phases and a frequency only
   ## where the envelope is within this of its peak
@@ -371,7 +387,7 @@ proc paddedTo(x: openArray[float32]; n: int): seq[float32] =
 
 proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
     p = AnalysisParams(); reference: openArray[float32] = []; referenceName = "";
-    notUsed = ""): AnalysisResult =
+    notUsed = ""; haveReference = false): AnalysisResult =
   ## The trace `x`, its envelope, its instantaneous phase (degrees) and its
   ## instantaneous frequency (Hz), against time: three plots.
   ##
@@ -383,7 +399,8 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
   ## in the plot's `aside` and the note. The frequency plot keeps the trace's
   ## own, with the reference's dim beside it. The shorter of the two is
   ## zero-padded to the longer. Otherwise the trace's own phase, as ever.
-  ## `notUsed` says why a reference given to the window was not used.
+  ## `notUsed` says why a reference given to the window was not used;
+  ## `haveReference` that the window has one, which the own-phase help names.
   result = AnalysisResult(view: avEnvelope, dtMs: dtMs, used: 1)
   if x.len < 2:
     result.problem = "the trace has no samples"
@@ -428,24 +445,34 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
       refPeak = max(refPeak, renv[i])
     let floor = pow(10.0, EnvelopeFloorDb / 20.0)
     var diff = newSeq[float64](n)
-    var sum, worst = 0.0
+    var worst = 0.0
     var drawn = 0
+    # past the end of the shorter one is padding, not signal
+    let both = min(x.len, reference.len)
     for i in 0 ..< n:
       diff[i] = NaN
-      if env[i] > 0 and renv[i] > 0 and env[i] >= peak * floor and renv[i] >= refPeak * floor and
-          not phase[i].isNaN and not rphase[i].isNaN:
+      let loud = env[i] > 0 and renv[i] > 0 and env[i] >= peak * floor and
+        renv[i] >= refPeak * floor
+      if i < both and loud and not phase[i].isNaN and not rphase[i].isNaN:
         diff[i] = wrapDeg(phase[i] - rphase[i])
-        sum += diff[i]
         worst = max(worst, abs(diff[i]))
         inc drawn
+    # the axis fits what is drawn, at least ±10°, 0 in view, never past ±180
+    var lo, hi = 0.0
+    for d in diff:
+      if not d.isNaN:
+        lo = min(lo, d)
+        hi = max(hi, d)
+    let pad = max(2.0, (hi - lo) / 20)
     phasePlot = AnalysisPlot(title: "Phase against the reference", xLabel: "Time (ms)",
-      xUnit: "ms", yLabel: "Phase difference (°)", yUnit: "°", xs: times, yLo: -180.0,
-      yHi: 180.0, curves: @[AnalysisCurve(name: "trace minus reference", ys: diff)])
+      xUnit: "ms", yLabel: "Phase difference (°)", yUnit: "°", xs: times,
+      yLo: max(-180.0, min(lo - pad, -10.0)), yHi: min(180.0, max(hi + pad, 10.0)),
+      curves: @[AnalysisCurve(name: "trace minus reference", ys: diff)])
     freqPlot.curves.add AnalysisCurve(name: "reference frequency", ys: rfreq,
       style: csReference)
     var words = "no time where both envelopes are within 60 dB of their peaks"
     if drawn > 0:
-      let mean = sum / float64(drawn)
+      let mean = circularMeanDeg(diff)
       words = "mean " & formatFloat(mean, ffDecimal, 1) & "°, largest " &
         formatFloat(worst, ffDecimal, 1) & "°"
       phasePlot.aside = "Phase against the reference over the part drawn: " & words
@@ -453,11 +480,20 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
       "minus the reference's (the argument of the trace's analytic signal times the " &
       "reference's conjugate), -180 to 180 degrees, drawn where both envelopes are within " &
       "60 dB of their peaks: " & words & ". " & result.note
+    # the shorter signal's padding is not drawn: the plots end with the trace
+    for plot in [addr phasePlot, addr freqPlot]:
+      plot[].xs.setLen x.len
+      for cv in plot[].curves.mitems: cv.ys.setLen x.len
   else:
-    result.note = "This turns once per cycle; " & (if reference.len >= 2:
+    result.note = "This turns once per cycle; " & (if haveReference or reference.len >= 2:
       "choose \"Against the reference\" to compare" else: "choose a reference to compare") &
       ". " & result.note
-  if notUsed.len > 0: result.note = "The reference was not used: " & notUsed & ". " & result.note
+  if notUsed.len > 0 and p.phaseAgainst == paReference:
+    result.note = "The reference was not used: " & notUsed & ". " & result.note
+  if against:
+    times.setLen x.len
+    signal.setLen x.len
+    env.setLen x.len
   result.plots = @[
     AnalysisPlot(title: "Amplitude", xLabel: "Time (ms)", xUnit: "ms", yLabel: "Amplitude",
       xs: times, curves: @[AnalysisCurve(name: name, ys: signal),
@@ -546,7 +582,9 @@ const CorrelationHelp* =
 func signedMs(x: float64): string =
   ## "+2.0", "-2.0", "0.0": milliseconds with their sign.
   let t = formatFloat(x, ffDecimal, 1)
-  if x > 0 and t != "0.0": "+" & t else: t
+  if t == "0.0" or t == "-0.0": "0.0"
+  elif x > 0: "+" & t
+  else: t
 
 func shiftWords(lagMs, dtMs: float64): string =
   ## What a time shift of the trace against the reference says in words.
@@ -641,10 +679,10 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
         continue
     cp.crossCorrelateInto(s, reference, c, e, ws)
     var cs, es = newSeq[float64](cp.lags)
-    var best = -1
+    var best = -1 # the envelope's peak: the time shift, as `peakLagMs` says it
     for i in 0 ..< cp.lags:
       (cs[i], es[i]) = (float64(c[i]), float64(e[i]))
-      if not cs[i].isNaN and (best < 0 or abs(cs[i]) > abs(cs[best])): best = i
+      if not es[i].isNaN and not cs[i].isNaN and (best < 0 or es[i] > es[best]): best = i
     lagPlot.curves.add AnalysisCurve(name: name, ys: cs)
     lagPlot.curves.add AnalysisCurve(name: name & " envelope", ys: es)
     cp.compareInto(s, reference, ratio, phase, ws)
@@ -653,7 +691,7 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
     ratioPlot.curves.add AnalysisCurve(name: name, ys: ratio)
     phasePlot.curves.add AnalysisCurve(name: name, ys: phase)
     let meanRatio = ratio.meanOf
-    let meanPhase = phase.meanOf
+    let meanPhase = circularMeanDeg(phase)
     var row = @[name, "-", "-", "-", "-"]
     if best >= 0:
       let match = formatFloat(cs[best], ffDecimal, 2)
@@ -661,9 +699,11 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
       row[2] = signedMs(lagsMs[best])
       if not sameSamples(s, reference):
         lines.add name & ": best match " & match & " at " & signedMs(lagsMs[best]) & " ms (" &
-          shiftWords(lagsMs[best], dtMs) & ")"
+          shiftWords(lagsMs[best], dtMs) & (if cs[best] < 0: "; reversed polarity" else: "") &
+          ")"
     if not meanRatio.isNaN: row[3] = signedMs(meanRatio)
     if not meanPhase.isNaN: row[4] = signedMs(meanPhase)
+    if best >= 0 and cs[best] < 0: row[1] = row[1] & " (reversed polarity)"
     result.table.add row
   result.plots = @[lagPlot, ratioPlot, phasePlot]
   result.note = CorrelationHelp & "\n" & lines.join("\n")

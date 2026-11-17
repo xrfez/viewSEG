@@ -47,7 +47,7 @@ proc main*() =
     let r = envelopeOf(pilot, "pilot", dtMs, 0.0, AnalysisParams(), pilot, "the pilot")
     doAssert r.problem == "", r.problem
     doAssert r.plots.len == 3 and r.plots[1].title == "Phase against the reference"
-    doAssert r.plots[1].yLo == -180 and r.plots[1].yHi == 180
+    doAssert r.plots[1].yLo == -10 and r.plots[1].yHi == 10, "a flat 0 fits a ±10° axis"
     let ys = r.plots[1].curves[0].ys
     let drawn = ys.finite
     doAssert drawn.len > 1000, $drawn.len & " samples drawn"
@@ -73,8 +73,36 @@ proc main*() =
     doAssert "mean 6" in r.plots[1].aside or "mean 5" in r.plots[1].aside or
       "mean 7" in r.plots[1].aside, r.plots[1].aside
     # not drawn where the reference is gone: the listen time after the sweep
+    doAssert r.plots[1].yLo < 0 and r.plots[1].yHi > 6 and r.plots[1].yLo >= -180 and
+      r.plots[1].yHi <= 180, "the axis holds the drawn values: " & $(r.plots[1].yLo,
+      r.plots[1].yHi)
     for i, y in ys:
       if xs[i] > 8600.0: doAssert y.isNaN, "drawn after the sweep at " & $xs[i] & " ms"
+
+  block circularMean:
+    doAssert abs(circularMeanDeg([179.0, -179.0]).abs - 180.0) < 1e-9, "a plain mean says 0"
+    doAssert abs(circularMeanDeg([10.0, 20.0, NaN]) - 15.0) < 1e-9
+    doAssert circularMeanDeg([NaN]).isNaN
+    # a reversed trace reads 180, not a plain mean's 2.5
+    var sweep = newSeq[float32](2000)
+    for i in 0 ..< sweep.len:
+      let t = float64(i) * 0.002
+      sweep[i] = float32(sin(2 * PI * (8 * t + 12 * t * t)))
+    var rev = newSeq[float32](sweep.len)
+    for i in 0 ..< sweep.len: rev[i] = -sweep[i] + float32(0.001 * sin(float64(i)))
+    let r = envelopeOf(rev, "rev", 2.0, 0.0, AnalysisParams(), sweep, "ref")
+    doAssert "mean 180.0" in r.plots[1].aside or "mean -180.0" in r.plots[1].aside,
+      r.plots[1].aside
+
+  block paddingIsNotDrawn:
+    var sweep = newSeq[float32](2000)
+    for i in 0 ..< sweep.len:
+      let t = float64(i) * 0.002
+      sweep[i] = float32(sin(2 * PI * (8 * t + 12 * t * t)))
+    let r = envelopeOf(sweep[0 ..< 1500], "short", 2.0, 0.0, AnalysisParams(), sweep, "ref")
+    doAssert r.plots[1].xs.len == 1500 and r.plots[0].curves[0].ys.len == 1500 and
+      r.plots[2].curves[1].ys.len == 1500, "the plots end with the trace"
+    doAssert r.plots[1].curves[0].ys.finite.len > 500
 
   block ownPhase:
     let own = envelopeOf(force, "GF", dtMs, 0.0)
@@ -90,6 +118,10 @@ proc main*() =
       doAssert (y.isNaN and z.isNaN) or y == z, "the trace's own phase changed at " & $i
     doAssert asked.plots[2].curves.len == 1, "a reference curve against nothing"
     doAssert "Against the reference" in asked.note, asked.note
+    let said = envelopeOf(force, "GF", dtMs, 0.0, AnalysisParams(phaseAgainst: paSelf),
+      notUsed = "gone", haveReference = true)
+    doAssert "was not used" notin said.note and "choose a reference to compare" notin said.note,
+      said.note
 
   block mismatch:
     let short = pilot[0 ..< 1000]

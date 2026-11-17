@@ -325,7 +325,9 @@ func instFrequencyText(f: ExplainFacts): string =
       "end frequency. A line that wanders or jumps means the signal is not the sweep, or " &
       "carries noise."),
     part("Careful", "Frequency is not defined where the signal is weak, so the line has gaps " &
-      "there; at the two ends of the trace there is no value."))
+      "there; at the two ends of the trace there is no value. The step is taken over two " &
+      "samples, so a frequency above a quarter of the sampling rate wraps and reads " &
+      "negative."))
 
 func phaseAmplitudeText(f: ExplainFacts): string =
   join4(part("Shows", "Amplitude in dB below its peak (0 dB at the top) against frequency in Hz."),
@@ -361,7 +363,7 @@ func correlationText(f: ExplainFacts): string =
       "shape and timing. A lower peak means a different shape; a peak away from 0 is a time " &
       "shift of that many ms (a positive shift: the trace arrives after the reference). A " &
       "peak near -1 means reversed polarity. The words under the plot give each trace's best " &
-      "match and shift."),
+      "match and shift. The reference's own trace, among others, is said so and not drawn."),
     part("Careful", "The envelope peaks at the delay even when the phases of trace and " &
       "reference differ, where the line itself peaks lower. A different reference gives a " &
       "different picture."))

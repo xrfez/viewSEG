@@ -72,7 +72,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Reading it.** A linear sweep is a straight line from its start frequency to its end frequency. A line that wanders or jumps means the signal is not the sweep, or carries noise.
 
-**Careful.** Frequency is not defined where the signal is weak, so the line has gaps there; at the two ends of the trace there is no value.
+**Careful.** Frequency is not defined where the signal is weak, so the line has gaps there; at the two ends of the trace there is no value. The step is taken over two samples, so a frequency above a quarter of the sampling rate wraps and reads negative.
 
 ## Phase spectrum: amplitude
 
@@ -100,7 +100,7 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Computed from.** The traces chosen (the first eight at most). Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot). Lags within ±the span set above of zero. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set. A trace that is the reference delayed by T peaks at +T.
 
-**Reading it.** One sharp peak at 0 ms near +1 means the trace has the reference's shape and timing. A lower peak means a different shape; a peak away from 0 is a time shift of that many ms (a positive shift: the trace arrives after the reference). A peak near -1 means reversed polarity. The words under the plot give each trace's best match and shift.
+**Reading it.** One sharp peak at 0 ms near +1 means the trace has the reference's shape and timing. A lower peak means a different shape; a peak away from 0 is a time shift of that many ms (a positive shift: the trace arrives after the reference). A peak near -1 means reversed polarity. The words under the plot give each trace's best match and shift. The reference's own trace, among others, is said so and not drawn.
 
 **Careful.** The envelope peaks at the delay even when the phases of trace and reference differ, where the line itself peaks lower. A different reference gives a different picture.
 

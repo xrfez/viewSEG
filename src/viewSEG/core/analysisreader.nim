@@ -281,6 +281,9 @@ proc orientationAnswer(p: ptr ReaderObj; a: AnalysisAsk): AnalysisResult =
   except CatchableError as e:
     result.problem = "it cannot be read now: " & e.msg
 
+const StartsTogether = "The reference is taken to start with the trace (a recording delay of " &
+  "either is not allowed for)"
+
 type ReferenceRead = object
   ## What reading a window's reference gave.
   samples: seq[float32]
@@ -361,7 +364,10 @@ proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: f
       else:
         result.name = a.archiveName & " (" & a.pilotRecord & ", " &
           pilotWords(a.pilotRule.aux, a.pilotRule.trace) & ")"
-        result.samples = cut
+        # the cut keeps its place in time: from its start, not from the trace's first sample
+        let skip = max(0, int(ceil(a.pilotRule.startMs / dtMs - 1e-9)))
+        result.samples = newSeq[float32](skip)
+        result.samples.add cut
 
 proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
   ## Reads, works out and posts what `a` asks for; false when a newer
@@ -454,11 +460,13 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               else: (reference, refName) = (got.samples, got.name)
             let n = (answer.leftOut, answer.atOtherInterval)
             answer = envelopeOf(kept[0], keptNames[0], dtMs, t0Ms, a.params, reference, refName,
-              notUsed)
+              notUsed, a.hasReference)
             (answer.leftOut, answer.atOtherInterval) = n
             let rule = if reference.len > 0: lengthRule(reference.len, kept[0].len) else: ""
             if rule.len > 0 and answer.problem.len == 0:
               answer.note = capitalizeAscii(rule) & ". " & answer.note
+            if reference.len > 0 and answer.problem.len == 0:
+              answer.note = StartsTogether & ". " & answer.note
           of avPhase:
             let n = (answer.leftOut, answer.atOtherInterval)
             answer = phaseOf(kept[0], keptNames[0], dtMs, a.params)
@@ -481,10 +489,10 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 (answer.leftOut, answer.atOtherInterval) = n
                 let rule = if kept.len > 0: lengthRule(got.samples.len, kept[0].len) else: ""
                 if rule.len > 0 and answer.problem.len == 0:
-                  answer.note = "Reference: " & got.name & ". " & rule &
+                  answer.note = "Reference: " & got.name & ". " & rule & ". " & StartsTogether &
                     (if answer.note.len > 0: ". " & answer.note else: "")
                 elif answer.problem.len == 0:
-                  answer.note = "Reference: " & got.name &
+                  answer.note = "Reference: " & got.name & ". " & StartsTogether &
                     (if answer.note.len > 0: ". " & answer.note else: "")
           of avFk:
             # the trace spacing, from the keys of the traces read
