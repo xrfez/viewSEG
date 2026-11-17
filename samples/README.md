@@ -139,7 +139,7 @@ Rev 3.0, 24-bit integer, 2 ms, 1000 samples, four records, one per node (nodes
 node recorded (line 4001, points 101..108, 100 m apart, centred on the four nodes,
 60 s apart from 2026-03-02 01:00:00 UTC), each with its four components in the order
 hydrophone, vertical, inline, crossline (sensor types 1..4), so trace `4n + c` of a
-record is shot `n`, component `c`. Each trace carries the node's orientation header.
+record is shot `n`, component `c`. Each trace carries the node's orientation header (constant over a record but for node 104, below).
 Trace order, geometry and arrivals are those of `obn.sgd`; the hydrophone is not
 affected by the orientation.
 
@@ -155,7 +155,13 @@ R transposed times the survey-frame motion.
 | 101 | 1 | 0 | 0 | 0 |
 | 102 | 2 | 0 | 5 | 30 |
 | 103 | 3 | 0 | 0 | 90 |
-| 104 | 4 | 3 | 0 | -20 |
+| 104 | 4 | 3, then 7 | 0 | -20, then -5 |
+
+Node 104 is bumped: it keeps the angles of its first row for shots 1 to 4 (traces 1
+to 16 of its record) and lies turned by 4 degrees of roll and 15 degrees of azimuth
+from shot 5 (traces 17 to 32), its recorded horizontals and vertical rotated with
+it. Its orientation headers step there, and the other nodes' stay constant, which
+the Node orientation plot (New plot) shows as a step in the roll and azimuth lines.
 
 Node 101 is the reference. On node 103 the converted wave, strong on the inline
 trace of node 101, is on the crossline trace.

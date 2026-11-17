@@ -14,7 +14,8 @@
 ## Seen to fail: with samples/land/shots.sgy moved aside, `present` quit on
 ## the missing file rather than skip the check; with the reaction mass taken
 ## as 3000 kg in the weighted-sum check, "sweep 1 GF (M, B) differs by ..."; with node 103 written at azimuth 0,
-## "azimuth 64".
+## "azimuth 64"; with node 104's bump left out of `tools/sampledata.nim`, "roll 112"
+## (trace 112 is the first one stepped).
 
 import std/[math, options, os]
 import parseSEG
@@ -200,8 +201,10 @@ proc main*() =
     doAssert o.len == 128 and o.recordCount == 4 and o.maxSamples == 1000
     doAssert o.gathers.len == 4
     for g in o.gathers: doAssert g.kind == gkReceiver, $g.kind
-    # roll, pitch, azimuth in degrees, per node
+    # roll, pitch, azimuth in degrees, per node; node 104 steps by (4, 0, 15) from its
+    # fifth shot (a bump)
     let attitude = [[0.0, 0.0, 0.0], [0.0, 5.0, 30.0], [0.0, 0.0, 90.0], [3.0, 0.0, -20.0]]
+    let bump = [4.0, 0.0, 15.0]
     let t0 = 1_772_413_200.0 ## 2026-03-02 01:00:00 UTC
     for i in 0 ..< 128:
       let (node, shot, kind) = (i div 32, i mod 32 div 4, i mod 4)
@@ -214,9 +217,13 @@ proc main*() =
       let att = o.traceOrientation(i)
       doAssert att.isSome, "no orientation on trace " & $i
       let a = att.get
-      doAssert abs(radToDeg(float64(a.rotationX)) - attitude[node][0]) < 1e-4, "roll " & $i
-      doAssert abs(radToDeg(float64(a.rotationY)) - attitude[node][1]) < 1e-4, "pitch " & $i
-      doAssert abs(radToDeg(float64(a.rotationZ)) - attitude[node][2]) < 1e-4, "azimuth " & $i
+      let step = if node == 3 and shot >= 4: bump else: [0.0, 0.0, 0.0]
+      doAssert abs(radToDeg(float64(a.rotationX)) - attitude[node][0] - step[0]) < 1e-4,
+        "roll " & $i
+      doAssert abs(radToDeg(float64(a.rotationY)) - attitude[node][1] - step[1]) < 1e-4,
+        "pitch " & $i
+      doAssert abs(radToDeg(float64(a.rotationZ)) - attitude[node][2] - step[2]) < 1e-4,
+        "azimuth " & $i
       doAssert a.orientationType == 1 and a.rotationApplied == 0, "flags " & $i
     o.close()
 

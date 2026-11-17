@@ -585,6 +585,20 @@ const RgAttitudes = [
   Attitude(azimuth: 90),
   Attitude(roll: 3, azimuth: -20)]
 
+const
+  BumpNode = 3 ## the node (0-based) that is bumped part-way through its gather: 104
+  BumpShot = 4 ## from this shot (0-based; the fifth) on it lies turned by `Bump`
+  Bump = Attitude(roll: 4, azimuth: 15)
+
+func attitudeOf(node, shot: int): Attitude =
+  ## The orientation of node `node` (0-based) while it records shot `shot`:
+  ## fixed, but for node 104, which steps by `Bump` from the fifth shot.
+  result = RgAttitudes[node]
+  if node == BumpNode and shot >= BumpShot:
+    result.roll += Bump.roll
+    result.pitch += Bump.pitch
+    result.azimuth += Bump.azimuth
+
 type Mat3 = array[3, array[3, float64]]
 
 proc attitudeMatrix(a: Attitude): Mat3 =
@@ -608,18 +622,19 @@ proc writeObnReceivers(dir: string; t0: float64) =
   ## traces are the shots of that node, each with its four components
   ## (hydrophone, vertical, inline, crossline). The horizontal and vertical
   ## traces are recorded in the node's own rotated frame, which the file
-  ## states in each trace's orientation header; nothing is rotated back.
+  ## states in each trace's orientation header; nothing is rotated back. Node
+  ## 104 is bumped before its fifth shot: its orientation steps there.
   var o = segdOpts(ObnUs, ObnSamples, false, t0, sd8036)
   o.receiverGather = true
   var w = openSeismicWriter(dir / "obn_receiver.sgd", o)
   let sensors = [1'u8, 2, 3, 4]
   for node in 0 ..< RgNodes:
     let rcv = obnNode(NodeFirst + node)
-    let a = RgAttitudes[node]
-    let m = attitudeMatrix(a)
-    let att = initTraceOrientation(float32(degToRad(a.roll)), float32(degToRad(a.pitch)),
-      float32(degToRad(a.azimuth)), orientationType = 1)
     for shot in 0 ..< RgShots:
+      let a = attitudeOf(node, shot)
+      let m = attitudeMatrix(a)
+      let att = initTraceOrientation(float32(degToRad(a.roll)), float32(degToRad(a.pitch)),
+        float32(degToRad(a.azimuth)), orientationType = 1)
       let src = obnShot(shot)
       let dx = rcv.easting - src.easting
       var rows: array[4, seq[float32]]
