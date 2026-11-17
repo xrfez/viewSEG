@@ -96,11 +96,11 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 ## Cross-correlation: correlation
 
-**Shows.** Correlation coefficient up (1 is the reference's own shape, -1 its mirror image), against lag in ms across, one line per trace and its envelope over it.
+**Shows.** How well each trace matches the reference, up (1 is the reference's own shape whatever its amplitude, -1 its mirror image), against the time shift in ms across, one line per trace and its envelope over it.
 
 **Computed from.** The traces chosen (the first eight at most). Against the reference chosen in References (a stored trace, a generated sweep, or the record's own pilot). Lags within ±the span set above of zero. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set. A trace that is the reference delayed by T peaks at +T.
 
-**Reading it.** One sharp peak at 0 ms near +1 means the trace matches the reference with no delay. A peak off zero is a timing error of that many ms. A peak near -1 means reversed polarity. A low or broad peak means a poor match.
+**Reading it.** One sharp peak at 0 ms near +1 means the trace has the reference's shape and timing. A lower peak means a different shape; a peak away from 0 is a time shift of that many ms (a positive shift: the trace arrives after the reference). A peak near -1 means reversed polarity. The words under the plot give each trace's best match and shift.
 
 **Careful.** The envelope peaks at the delay even when the phases of trace and reference differ, where the line itself peaks lower. A different reference gives a different picture.
 

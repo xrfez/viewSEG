@@ -665,7 +665,7 @@ settings works out from the traces it is frozen on.
 | View | Of | Shows | processSEG |
 |---|---|---|---|
 | **Spectrogram** | the traces (several: their power average) | amplitude against time and frequency, in dB from the largest, in a density colour map, with its scale | `spectrogramInto` |
-| **Envelope and instantaneous phase** | the first trace | the trace and its envelope; its instantaneous phase (°); its instantaneous frequency (Hz) | `analyticInto` |
+| **Envelope and instantaneous phase** | the first trace | the trace and its envelope; its instantaneous phase (°), or with a chosen reference the phase against it (trace minus reference, -180 to 180); its instantaneous frequency (Hz), with the reference's dim | `analyticInto`, `wrapDeg` |
 | **Phase spectrum** | the first trace | amplitude (dB) and phase against frequency | `amplitudeInto` |
 | **Cross-correlation** | each trace (up to 8) against a reference | the correlation coefficient and its envelope against lag; the amplitude ratio (dB) and phase difference (°) per frequency | `crossCorrelateInto`, `compareInto` |
 | **Vibrator signature** | a vibrator unit: its reference (Ref), ground force (GF), reaction-mass (M) and baseplate (B) traces | against sweep time: the phase to the reference (GF, GF from M and B, M, B); the force (fundamental and peak); the frequency (Ref's, the ground forces'); the distortion (THD, each harmonic, %); a table per signal | `analyzeVibrators` |
@@ -717,10 +717,16 @@ right of that line's first row. A change works it out again.
   plot's filters and a trace's own filter do not apply to them. Changing the choice
   redraws every open correlation that is not frozen; a frozen one keeps what it showed,
   including when the file is opened again.
-  A trace delayed by τ from the reference peaks at +τ (the words under the title give
-  each trace's peak). The amplitude ratio and the phase difference are given where the
-  reference's amplitude is within the same N dB (20) of its peak. The lags shown: ±250 ms
-  at first.
+  The first graph says how well each trace matches the reference, by time shift (the
+  correlation divided by the square root of the product of the two energies: 1 for the
+  reference's shape whatever its amplitude, -1 for its mirror image). A trace delayed by
+  τ from the reference peaks at +τ. Under the title, one line per trace says its best
+  match, its shift and which way ("arrives 2.0 ms after the reference", "before", "in
+  step"), and a table of the several traces adds the mean amplitude ratio and the mean
+  phase difference. A trace that is the reference itself is said so ("it matches exactly
+  (1.00 at 0 ms)") and is not drawn among others. The amplitude ratio and the phase
+  difference are given where the reference's amplitude is within the same N dB (20) of
+  its peak. The time shifts shown: ±250 ms at first.
 - **f-k:** the box's times (**From**, **to**, ms; empty: the traces' ends), the floor and
   the colour map as a spectrogram's, and **Raw** (off at first: through the Seismic
   window's filters, so the effect of a filter shows; on: the plot's filters left out.

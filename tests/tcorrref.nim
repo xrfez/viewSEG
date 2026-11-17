@@ -6,6 +6,12 @@
 ## the field is ignored. Changing the choice redraws an open correlation
 ## that is not frozen, and a frozen one keeps what it showed.
 ##
+## The correlation's words (titles, a line per trace, the reference's own trace said so
+## and not drawn, a table of several traces, the shift in words) are checked in
+## `says_what_it_shows` and `shift_in_words`; with the sign of the shift's words
+## swapped, "trace 2: best match 1.00 at +10.0 ms (arrives 10.0 ms after the
+## reference)" was not in the note.
+##
 ## Seen to fail: with no refusal when none is chosen (`correlationBlock`
 ## returned no problem), `askPlot` indexed the archive at -1
 ## ("index -1 not in 0 .. 0"). With `followPlots` discarding a failed
@@ -100,6 +106,55 @@ proc main*() =
         let lag = r.peakLagMs(c)
         doAssert abs(lag - Delay * float64(c + 1)) < 1e-6, "trace " & $(c + 2) &
           " peaks at " & $lag & " ms"
+
+    block says_what_it_shows:
+      # The words: titles that say what is compared, a line per trace (its best
+      # match, its shift in words), the reference's own trace said so and not
+      # drawn beside others, a table of several traces.
+      let w = st.openCorr(@[base, base + 1, base + 2, base + 3])
+      let r = st.plots[w].result
+      doAssert r.problem == "", r.problem
+      doAssert r.plots[0].title.startsWith("How well each trace matches ") and
+        r.plots[0].title.endsWith(", by time shift"), r.plots[0].title
+      doAssert r.plots[0].xLabel == "Time shift (ms)" and
+        r.plots[0].yLabel == "Match (1 = identical shape)"
+      doAssert r.plots[1].title == "Amplitude compared with the reference, by frequency"
+      doAssert r.plots[2].title == "Phase compared with the reference, by frequency"
+      doAssert r.plots[0].curves.len == 6, "the reference's own trace is drawn beside others: " &
+        $r.plots[0].curves.len
+      doAssert "A peak near 1 at 0 ms means the trace has the reference's shape and timing. " &
+        "A lower peak means a different shape; a peak away from 0 means a time shift." in r.note
+      doAssert "trace 1 is the reference: compared with itself it matches exactly " &
+        "(1.00 at 0 ms)" in r.note, r.note
+      doAssert "trace 2: best match 1.00 at +10.0 ms (arrives 10.0 ms after the reference)" in
+        r.note, r.note
+      doAssert "trace 3: best match 1.00 at +20.0 ms (arrives 20.0 ms after the reference)" in
+        r.note, r.note
+      doAssert "peaks at" notin r.note and "autocorrelation" notin r.note
+      doAssert r.table.len == 5 and r.table[0] == @["Trace", "Best match", "Time shift (ms)",
+        "Amplitude (dB)", "Phase (°)"], $r.table
+      doAssert r.table[1][0] == "trace 1 (the reference)" and r.table[1][3] == "not drawn" and
+        r.table[1][4] == "not drawn", $r.table[1]
+      doAssert r.table[2][0] == "trace 2" and r.table[2][2] == "+10.0", $r.table[2]
+      # the reference alone is drawn
+      let alone = st.openCorr(@[base])
+      doAssert st.plots[alone].result.plots[0].curves.len == 2
+      doAssert "trace 1 is the reference" in st.plots[alone].result.note
+
+    block shift_in_words:
+      # in step whatever the amplitude, and ahead of the reference (before it; a few samples of its start are lost: 0.99)
+      var reference, early, loud: seq[float32] = @[]
+      for i in 0 ..< Samples:
+        reference.add sweep(i)
+        early.add sweep(i + 5)
+        loud.add 3 * sweep(i)
+      let r = correlationOf([("loud", loud), ("early", early)], reference, "ref", DtMs,
+        AnalysisParams())
+      doAssert r.problem == "", r.problem
+      doAssert "loud: best match 1.00 at 0.0 ms (in step with the reference)" in r.note,
+        r.note
+      doAssert "early: best match 0.99 at -10.0 ms (arrives 10.0 ms before the reference)" in
+        r.note, r.note
 
     block none_chosen:
       st.apply Command(kind: ckSelectReference, refId: "")

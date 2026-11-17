@@ -350,15 +350,18 @@ func phaseText(f: ExplainFacts): string =
       "amplitude is too low for the phase to mean anything."))
 
 func correlationText(f: ExplainFacts): string =
-  join4(part("Shows", "Correlation coefficient up (1 is the reference's own shape, -1 its " &
-      "mirror image), against lag in ms across, one line per trace and its envelope over it."),
+  join4(part("Shows", "How well each trace matches the reference, up (1 is the reference's " &
+      "own shape whatever its amplitude, -1 its mirror image), against the time shift in ms " &
+      "across, one line per trace and its envelope over it."),
     part("Computed from", f.what("The traces chosen (the first eight at most)."),
       f.referenceWords, "Lags within ±" & (if known(f.lagMs): num(f.lagMs) & " ms" else:
     "the span set above") & " of zero.", f.filterClause, f.editsClause,
     "A trace that is the reference delayed by T peaks at +T."),
-    part("Reading it", "One sharp peak at 0 ms near +1 means the trace matches the reference " &
-      "with no delay. A peak off zero is a timing error of that many ms. A peak near -1 means " &
-      "reversed polarity. A low or broad peak means a poor match."),
+    part("Reading it", "One sharp peak at 0 ms near +1 means the trace has the reference's " &
+      "shape and timing. A lower peak means a different shape; a peak away from 0 is a time " &
+      "shift of that many ms (a positive shift: the trace arrives after the reference). A " &
+      "peak near -1 means reversed polarity. The words under the plot give each trace's best " &
+      "match and shift."),
     part("Careful", "The envelope peaks at the delay even when the phases of trace and " &
       "reference differ, where the line itself peaks lower. A different reference gives a " &
       "different picture."))
@@ -685,8 +688,8 @@ func kindOfPane*(v: AnalysisView; title: string): PlotKind =
   of avPhase: (if title == "Phase": pkPhase else: pkPhaseAmplitude)
   of avCorrelation:
     case title
-    of "Amplitude to the reference": pkCorrelationRatio
-    of "Phase to the reference": pkCorrelationPhase
+    of "Amplitude compared with the reference, by frequency": pkCorrelationRatio
+    of "Phase compared with the reference, by frequency": pkCorrelationPhase
     else: pkCorrelation
   of avVibrator:
     case title

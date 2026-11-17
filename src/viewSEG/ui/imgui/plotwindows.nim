@@ -616,8 +616,8 @@ proc drawImage(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: str
     res.commands.add Command(kind: ckPlotCursor, plot: w.id, plotCursor: PlotCursor())
 
 proc drawTable(name: string; table: seq[seq[string]]; t: Theme; marks: var Marks) =
-  ## A vibrator signature's table: a row per signal, its first the
-  ## columns' names; a cell that says "fail" in the error colour.
+  ## A table of a row per signal (a vibrator signature's, a correlation's), its
+  ## first row the columns' names; a cell that says "fail" in the error colour.
   let cols = table[0].len
   const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint or
     ImGui_TableFlags_ScrollX.cint
@@ -671,7 +671,10 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
       st.settings.units).cstring)
   igPopStyleColor(1)
   marks.mark(name & ".summary")
-  if r.table.len > 1 and w.params.limitsOn and r.problem.len == 0:
+  # a vibrator signature's table, with its limits on; a correlation's, of several traces
+  let tabled = if w.view == avCorrelation: r.table.len > 2
+               else: r.table.len > 1 and w.params.limitsOn
+  if tabled and r.problem.len == 0:
     drawTable(name, shownTable(r.table, r.forceUnits, st.settings.units), t, marks)
   let focused = igIsWindowFocused(ImGui_FocusedFlags_RootAndChildWindows.cint)
   let lineH = igGetTextLineHeightWithSpacing()

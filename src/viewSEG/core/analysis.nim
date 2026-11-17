@@ -536,14 +536,55 @@ proc phaseOf*(x: openArray[float32]; name: string; dtMs: float64;
 
 # ------------------------------------------------------- cross-correlation --
 
+const CorrelationHelp* =
+  "A peak near 1 at 0 ms means the trace has the reference's shape and timing. A lower " &
+  "peak means a different shape; a peak away from 0 means a time shift."
+  ## said under the correlation's title: the match is the correlation divided by
+  ## `√(Σtrace²·Σreference²)` (processSEG's `cnCoefficient`), so it is 1 for the
+  ## reference's shape whatever the amplitude, and -1 for its mirror image
+
+func signedMs(x: float64): string =
+  ## "+2.0", "-2.0", "0.0": milliseconds with their sign.
+  let t = formatFloat(x, ffDecimal, 1)
+  if x > 0 and t != "0.0": "+" & t else: t
+
+func shiftWords(lagMs, dtMs: float64): string =
+  ## What a time shift of the trace against the reference says in words.
+  if abs(lagMs) < dtMs / 2: "in step with the reference"
+  else: "arrives " & formatFloat(abs(lagMs), ffDecimal, 1) & " ms " &
+    (if lagMs > 0: "after" else: "before") & " the reference"
+
+func sameSamples(a, b: openArray[float32]): bool =
+  ## Whether the two are the same signal, sample for sample.
+  if a.len != b.len: return false
+  for i in 0 ..< a.len:
+    if a[i] != b[i]: return false
+  true
+
+func meanOf(x: openArray[float64]): float64 =
+  ## The mean of the finite values; NaN for none.
+  var sum = 0.0
+  var n = 0
+  for v in x:
+    if not v.isNaN:
+      sum += v
+      inc n
+  if n == 0: NaN else: sum / float64(n)
+
 proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[float32];
     referenceName: string; dtMs: float64; p: AnalysisParams;
     stop: StopCheck = nil): AnalysisResult =
-  ## Each of `signals` against `reference`: the correlation coefficient and
-  ## its envelope against lag (a signal that is the reference delayed by τ
-  ## peaks at +τ), and per frequency the amplitude ratio (dB) and phase
-  ## difference (degrees) of each signal to the reference, where the
-  ## reference's amplitude is within `p.phaseWithinDb` of its peak.
+  ## Each of `signals` against `reference`: how well it matches, from -1 to 1
+  ## (the correlation divided by `√(Σsignal²·Σreference²)`: 1 for the
+  ## reference's shape whatever the amplitude), and its envelope, against the
+  ## time shift (a signal that is the reference delayed by τ peaks at +τ), and
+  ## per frequency the amplitude ratio (dB) and phase difference (degrees) of
+  ## each signal to the reference, where the reference's amplitude is within
+  ## `p.phaseWithinDb` of its peak. The note says, per signal, its best match,
+  ## its time shift in words, and a signal that is the reference itself is
+  ## said so and drawn only when no other trace is; `table` has a row per
+  ## signal: the best match, the time shift, and the means of the ratio and
+  ## the phase difference inside the reference's band.
   result = AnalysisResult(view: avCorrelation, dtMs: dtMs, used: signals.len)
   var samples = reference.len
   for (_, s) in signals: samples = max(samples, s.len)
@@ -563,15 +604,21 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
   for i in 0 ..< cp.lags: lagsMs[i] = cp.lagMs(i)
   var hz = newSeq[float64](cp.bins)
   for k in 0 ..< cp.bins: hz[k] = cp.binHz(k)
-  var lagPlot = AnalysisPlot(title: "Correlation with " & referenceName, xLabel: "Lag (ms)",
-    xUnit: "ms", yLabel: "Correlation coefficient", xs: lagsMs)
-  var ratioPlot = AnalysisPlot(title: "Amplitude to the reference", xLabel: "Frequency (Hz)",
-    xUnit: "Hz", yLabel: "Amplitude ratio (dB)", yUnit: "dB", xs: hz)
-  var phasePlot = AnalysisPlot(title: "Phase to the reference", xLabel: "Frequency (Hz)",
-    xUnit: "Hz", yLabel: "Phase difference (°)", yUnit: "°", xs: hz)
+  var lagPlot = AnalysisPlot(title: "How well each trace matches " & referenceName &
+    ", by time shift", xLabel: "Time shift (ms)", xUnit: "ms",
+    yLabel: "Match (1 = identical shape)", xs: lagsMs)
+  var ratioPlot = AnalysisPlot(title: "Amplitude compared with the reference, by frequency",
+    xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude ratio (dB)", yUnit: "dB", xs: hz)
+  var phasePlot = AnalysisPlot(title: "Phase compared with the reference, by frequency",
+    xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Phase difference (°)", yUnit: "°", xs: hz)
   var c, e = newSeq[float32](cp.lags)
   var ratio, phase = newSeq[float64](cp.bins)
-  var peaks = ""
+  var lines: seq[string] = @[]
+  # the reference's own trace is drawn only when it is all there is to draw
+  var others = false
+  for (_, s) in signals:
+    if not sameSamples(s, reference): others = true
+  result.table = @[@["Trace", "Best match", "Time shift (ms)", "Amplitude (dB)", "Phase (°)"]]
   # Where the reference has its energy: its own spectrum (of its
   # autocorrelation's lag window) within `phaseWithinDb` of its peak;
   # elsewhere the ratio and the phase are noise.
@@ -586,12 +633,18 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
     if stop.stopped:
       result.cancelled = true
       return
+    if sameSamples(s, reference):
+      lines.add name & " is the reference: compared with itself it matches exactly " &
+        "(1.00 at 0 ms)"
+      if others:
+        result.table.add @[name & " (the reference)", "1.00", "0.0", "not drawn", "not drawn"]
+        continue
     cp.crossCorrelateInto(s, reference, c, e, ws)
     var cs, es = newSeq[float64](cp.lags)
     var best = -1
     for i in 0 ..< cp.lags:
       (cs[i], es[i]) = (float64(c[i]), float64(e[i]))
-      if not es[i].isNaN and (best < 0 or es[i] > es[best]): best = i
+      if not cs[i].isNaN and (best < 0 or abs(cs[i]) > abs(cs[best])): best = i
     lagPlot.curves.add AnalysisCurve(name: name, ys: cs)
     lagPlot.curves.add AnalysisCurve(name: name & " envelope", ys: es)
     cp.compareInto(s, reference, ratio, phase, ws)
@@ -599,11 +652,21 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
       if not inBand[k]: (ratio[k], phase[k]) = (NaN, NaN)
     ratioPlot.curves.add AnalysisCurve(name: name, ys: ratio)
     phasePlot.curves.add AnalysisCurve(name: name, ys: phase)
+    let meanRatio = ratio.meanOf
+    let meanPhase = phase.meanOf
+    var row = @[name, "-", "-", "-", "-"]
     if best >= 0:
-      if peaks.len > 0: peaks.add "; "
-      peaks.add name & " peaks at " & $lagsMs[best] & " ms"
+      let match = formatFloat(cs[best], ffDecimal, 2)
+      row[1] = match
+      row[2] = signedMs(lagsMs[best])
+      if not sameSamples(s, reference):
+        lines.add name & ": best match " & match & " at " & signedMs(lagsMs[best]) & " ms (" &
+          shiftWords(lagsMs[best], dtMs) & ")"
+    if not meanRatio.isNaN: row[3] = signedMs(meanRatio)
+    if not meanPhase.isNaN: row[4] = signedMs(meanPhase)
+    result.table.add row
   result.plots = @[lagPlot, ratioPlot, phasePlot]
-  result.note = "Against " & referenceName & ": " & peaks
+  result.note = CorrelationHelp & "\n" & lines.join("\n")
 
 func peakLagMs*(r: AnalysisResult; curve = 0): float64 =
   ## A correlation's lag (ms) where curve `curve`'s envelope peaks; NaN for
