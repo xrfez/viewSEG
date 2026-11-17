@@ -89,6 +89,14 @@ proc main*() =
         " ms, want " & $f
     doAssert r.plots[0].xs[10] == 20.0
 
+  block envelopeWithoutASampleInterval:
+    # Seen to fail: "analyticInto" asserts on a sample interval of 0 and the
+    # envelope raises instead of reporting the problem.
+    let x = @[1'f32, 0, -1, 0, 1, 0, -1, 0]
+    let r = envelopeOf(x, "trace", 0.0, 0)
+    doAssert r.problem == "the sample interval is not known", r.problem
+    doAssert r.plots.len == 0
+
   block frequencyWhereTheSignalFades:
     # envelope below 0.001 of its peak (60 dB): no frequency; the phase of a
     # signal that is nearly nothing is noise. Seen to fail: with the blanking

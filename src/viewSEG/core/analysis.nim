@@ -325,6 +325,9 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64): Anal
   if x.len < 2:
     result.problem = "the trace has no samples"
     return
+  if not (dtMs > 0 and dtMs < Inf):
+    result.problem = "the sample interval is not known"
+    return
   var hp: HilbertPlan[float32]
   try:
     hp = initHilbertPlan(float32, x.len)
