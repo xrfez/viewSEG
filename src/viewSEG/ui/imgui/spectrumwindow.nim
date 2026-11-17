@@ -17,7 +17,7 @@ import std/[math, sequtils, strutils, tables]
 import imguin/cimgui
 import ../../core/[explain, state]
 import ../../view/[curveplot, spectrumview, theme]
-import chrome, curveplot as curves, explainicon, icons, marks, placement, style
+import chrome, curveplot as curves, explainicon, icons, marks, overflow, placement, style
 
 const
   SpectrumWindowTitle* = IconPulse & "  Spectrum###spectrum"
@@ -334,6 +334,7 @@ proc drawFfts*(ui: var SpectraUi; st: AppState; t: Theme; scale: float32; marks:
       var open = true
       if igBegin(w.fftTitle.cstring, addr open, 0):
         ui.drawBody(st, w, t, marks, res)
+        marks.markOverflow(w.markName)
       igEnd()
       if not open: res.commands.add Command(kind: ckCloseSpectrum, spectrum: w.id)
   # The plots of windows that went.

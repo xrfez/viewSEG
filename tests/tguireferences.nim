@@ -107,6 +107,14 @@ proc main*() =
       elif wait mod 6 == 3: f.click(it.centre)
       result = f.markOf("references").size.x > 0 and f.markOf("references.row.0").size.x > 0 and
         wait > 6
+      if result:
+        # nothing clipped: each fixed column's text ends inside its column
+        for column in ["length", "interval", "frequency", "date"]:
+          let text = f.markOf("references." & column & ".0")
+          let cell = f.markOf("references." & column & " column.0")
+          if text.size.x > 0:
+            doAssert text.pos.x + text.size.x <= cell.pos.x + cell.size.x + 0.5,
+              "the " & column & " text is clipped by its column"
       if result and not shotArchive:
         shotArchive = f.savePng(shots / "reference-archive.png"))
 

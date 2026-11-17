@@ -21,7 +21,7 @@ import std/[math, sets, strutils, tables]
 import imguin/cimgui
 import ../../core/[colourmaps, explain, geometry, plotcursor, plotoptions, state, units]
 import ../../view/[analysisview, curveplot, theme]
-import chrome, curveplot as curves, explainicon, icons, marks, placement, spectrumwindow,
+import chrome, curveplot as curves, explainicon, overflow, icons, marks, placement, spectrumwindow,
   style
 
 const
@@ -479,7 +479,7 @@ proc drawSettings(st: AppState; w: AnalysisWindow; name: string; t: Theme; marks
       if p.phaseAgainst == paReference: line.phaseShowCombo(name, marks, p, changed)
       if w.reference.len > 0:
         line.follow(textBoxWidth("Reference: " & w.reference, 0))
-        label("Reference: " & w.reference)
+        unit("Reference: " & w.reference) # no same-line: Reset options decides its own
     of avPhase:
       label("Phase where within")
       if numberBox("##within", p.phaseWithinDb, box, typed) and PhaseWithinRange.allows(typed):
@@ -862,6 +862,7 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
     var open = true
     if igBegin(w.windowTitle.cstring, addr open, 0):
       ui.drawBody(st, w, t, marks, res)
+      marks.markOverflow(w.markName)
     igEnd()
     if not open: res.commands.add Command(kind: ckClosePlot, plot: w.id)
   var gone: seq[int] = @[]

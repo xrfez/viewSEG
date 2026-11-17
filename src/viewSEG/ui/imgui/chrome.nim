@@ -138,7 +138,8 @@ proc fitsBefore*(line: ControlLine; width, gap: float32): bool =
   ## Whether a control of `width`, `gap` after the previous item, fits on
   ## that item's line: before the Freeze pin on the first row, else before
   ## the window's right edge.
-  let first = igGetItemRectMin().y <= line.top + 1
+  # (a text aligned to the frame padding starts that far down on the first row)
+  let first = igGetItemRectMin().y <= line.top + igGetStyle().FramePadding.y + 1
   let edge = if first: line.rowRight else: line.right
   igGetItemRectMax().x + gap + width <= edge
 

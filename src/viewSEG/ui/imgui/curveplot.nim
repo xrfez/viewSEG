@@ -19,9 +19,9 @@
 
 import std/[hashes, math, tables]
 import imguin/cimgui
-import ../../core/[plotcursor, references]
+import ../../core/[geometry, plotcursor, references]
 import ../../view/[axisfit, curveplot, plotink, theme]
-import marks, style
+import fittext, marks, style
 
 type
   CurvePlotUi* = object
@@ -140,8 +140,14 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
                        else: (ImAxis_X1.cint, ImAxis_Y1.cint)
   let axisFlags = ImPlot_AxisFlags_NoMenus.cint
   # ImPlot's X1 runs across, Y1 up: turned, x runs down from the top.
+  # The label that runs up the left (rotated) is cut to the pane's height, so that stacked
+  # panes' labels do not run into each other; the whole label is the axis's tooltip.
+  let upLabel = if turned: p.xLabel else: p.yLabel
+  let upShown = if size.y > 0: shortenEnd(upLabel, size.y - igGetFontSize() * 4.5)
+                else: upLabel
   ImPlot_SetupAxis(ImAxis_X1.cint, (if turned: p.yLabel else: p.xLabel).cstring, axisFlags)
-  ImPlot_SetupAxis(ImAxis_Y1.cint, (if turned: p.xLabel else: p.yLabel).cstring,
+  marks.add (id & ".ylabel", Rect(pos: vec2(0, 0), size: vec2(0, textWidth(upShown))))
+  ImPlot_SetupAxis(ImAxis_Y1.cint, upShown.cstring,
     axisFlags or (if turned: ImPlot_AxisFlags_Invert.cint else: 0))
   if p.logX: ImPlot_SetupAxisScale_PlotScale(xAxis, ImPlot_Scale_Log10.cint)
   let xl = p.xLimits
@@ -318,6 +324,9 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   let ended = ImPlot_GetPlotLimits(xAxis, yAxis)
   let seenX = Span(lo: ended.X.Min, hi: ended.X.Max)
   let seenY = Span(lo: ended.Y.Min, hi: ended.Y.Max)
+  if upShown != upLabel and ImPlot_IsAxisHovered(ImAxis_Y1.cint) and igBeginItemTooltip():
+    igTextUnformatted(upLabel.cstring, nil)
+    igEndTooltip()
   ui.axes.seen(seenX, seenY)
   shownLimits[id] = (seenX, seenY)
   shownZoom[id] = (ui.axes.userZoomed(true), ui.axes.userZoomed(false))

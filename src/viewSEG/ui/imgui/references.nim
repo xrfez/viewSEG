@@ -6,7 +6,8 @@ import std/[algorithm, math, strutils, tables]
 import imguin/cimgui
 import ../../core/[explain, references, state]
 import ../../view/[curveplot, theme]
-import curveplot as curves, explainicon, focus, genpreview, icons, marks, placement, style
+import curveplot as curves, explainicon, fittext, focus, genpreview, icons, marks, placement,
+  style
 
 type
   RefSort* = enum
@@ -524,6 +525,72 @@ proc orderOf(index: ReferenceIndex; sort: RefSort; descending: bool): seq[int] =
     let c = cmp(key(a), key(b))
     if descending: -c else: c
 
+type ArchiveColumns = object
+  ## The widths the archive tables give their columns: the text each holds, at its widest.
+  ## Name, Length, Sample interval, Frequency, Date, Use and the buttons are as wide as
+  ## that; Source takes what is left and shortens its text.
+  name, length, interval, frequency, date, use, buttons, source: float32
+
+proc archiveColumns(index: ReferenceIndex; writable: bool): ArchiveColumns =
+  ## `index`'s columns sized to their texts and headers (a header takes room for the sort
+  ## arrow), the name capped at 28 characters' room.
+  let st = igGetStyle()
+  let pad = 2 * st.CellPadding.x + 2
+  let arrow = igGetFontSize() + st.ItemInnerSpacing.x
+  func head(h: string): float32 = textWidth(h) + arrow
+  result.name = head("Name")
+  result.length = head("Length")
+  result.interval = head("Sample interval")
+  result.frequency = head("Frequency")
+  result.date = head("Date")
+  result.source = head("Source")
+  for e in index.entries:
+    result.name = max(result.name, textWidth(e.name))
+    result.length = max(result.length, textWidth(lengthText(e)))
+    result.interval = max(result.interval, textWidth(intervalText(e)))
+    result.frequency = max(result.frequency, textWidth(frequencyText(e)))
+    result.date = max(result.date, textWidth(e.date))
+    result.source = max(result.source, textWidth(sourceText(e)))
+  result.name = min(result.name, igGetFontSize() * 28)
+  for w in [addr result.name, addr result.length, addr result.interval, addr result.frequency,
+      addr result.date]:
+    w[] = round(w[] + pad)
+  result.use = round(textWidth("Use") + pad + igGetFrameHeight())
+  result.buttons = round(textWidth("View") + textWidth("Compare as A") +
+    textWidth("Compare as B") + textWidth(if writable: "Delete" else: "Copy into the project") +
+    8 * st.FramePadding.x + 3 * st.ItemSpacing.x + pad)
+  result.source = round(result.source + pad)
+
+func tableKey(c: ArchiveColumns): string =
+  ## Part of the table's id: its widths, so that texts that grew give the columns a fresh fit.
+  $int(c.name + c.length + c.interval + c.frequency + c.date)
+
+proc setupArchiveColumns(c: ArchiveColumns) =
+  ## The columns, in the order `drawRows` fills them.
+  const fixed = ImGui_TableColumnFlags_WidthFixed.cint
+  igTableSetupColumn("Name", fixed, c.name, 0)
+  igTableSetupColumn("Length", fixed, c.length, 1)
+  igTableSetupColumn("Sample interval", fixed, c.interval, 2)
+  igTableSetupColumn("Frequency", fixed, c.frequency, 3)
+  igTableSetupColumn("Source", ImGui_TableColumnFlags_WidthStretch.cint, 1, 4)
+  igTableSetupColumn("Date", fixed, c.date, 5)
+  igTableSetupColumn("Use", ImGui_TableColumnFlags_NoSort.cint or fixed, c.use, 6)
+  igTableSetupColumn("", ImGui_TableColumnFlags_NoSort.cint or fixed, c.buttons, 7)
+
+func archiveWindowWidth(c: ArchiveColumns): float32 =
+  ## The window's width that holds the table: the fixed columns, room for 16 characters of
+  ## Source, the scroll bar and the window's padding.
+  c.name + c.length + c.interval + c.frequency + c.date + c.use + c.buttons +
+    igGetFontSize() * 16 + 2 * igGetStyle().WindowPadding.x + igGetStyle().ScrollbarSize + 16
+
+proc markCell(marks: var Marks; prefix: string; row: int; column: string; index: int) =
+  ## The last item's rectangle as "<prefix>.<column>.<row>" and its column's cell as
+  ## "<prefix>.<column> column.<row>" (tests: the text is inside its column).
+  marks.mark(prefix & "." & column & "." & $row)
+  let cell = igTableGetCellBgRect(igGetCurrentTable(), cint(index))
+  marks.markRect(prefix & "." & column & " column." & $row, ImVec2_c(x: cell.Min.x, y: cell.Min.y),
+    ImVec2_c(x: cell.Max.x, y: cell.Max.y))
+
 proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; home: string; writable: bool;
     chosen: string; st: AppState; marks: var Marks; res: var ReferencesOutput;
     markPrefix: string) =
@@ -549,7 +616,8 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; home: string; writabl
         else:
           ui.renameId = e.id
           ui.renameProblem = problem
-    elif igSelectable_Bool(e.name.cstring, e.id == chosen,
+    elif igSelectable_Bool((shortenEnd(e.name, igGetContentRegionAvail().x) & "###name").cstring,
+        e.id == chosen,
         ImGui_SelectableFlags_SpanAllColumns.cint, ImVec2_c(x: 0, y: 0)):
       if writable:
         ui.renameId = e.id
@@ -558,14 +626,18 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; home: string; writabl
     tip(if e.missing: "its SEG-Y file is missing" else: e.name)
     discard igTableNextColumn()
     igTextUnformatted(lengthText(e).cstring, nil)
+    markCell(marks, markPrefix, n, "length", 1)
     discard igTableNextColumn()
     igTextUnformatted(intervalText(e).cstring, nil)
+    markCell(marks, markPrefix, n, "interval", 2)
     discard igTableNextColumn()
     igTextUnformatted(frequencyText(e).cstring, nil)
+    markCell(marks, markPrefix, n, "frequency", 3)
     discard igTableNextColumn()
-    igTextUnformatted(sourceText(e).cstring, nil)
+    fittedText(sourceText(e), igGetContentRegionAvail().x)
     discard igTableNextColumn()
     igTextUnformatted(e.date.cstring, nil)
+    markCell(marks, markPrefix, n, "date", 5)
     discard igTableNextColumn()
     if writable:
       let used = e.id == chosen
@@ -621,9 +693,12 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
   if ui.placeAgain or ui.bringUp:
     igSetNextWindowPos(ImVec2_c(x: vp.WorkPos.x + 40, y: vp.WorkPos.y + 40),
       ImGui_Cond_Always.cint, ImVec2_c(x: 0, y: 0))
-    igSetNextWindowSize(ImVec2_c(x: min(vp.WorkSize.x - 80, igGetFontSize() * 72),
-      y: igGetFontSize() * 22), ImGui_Cond_Always.cint)
     ui.placeAgain = false
+  # wide enough for the table the first time; after that the size is the user's, kept with
+  # the layout
+  let columns = archiveColumns(st.references, not (st.inProject and st.project.readOnly))
+  igSetNextWindowSize(ImVec2_c(x: min(vp.WorkSize.x - 80, archiveWindowWidth(columns)),
+    y: igGetFontSize() * 22), ImGui_Cond_FirstUseEver.cint)
   if ui.bringUp:
     igSetWindowFocus_Str(title.cstring)
     ui.bringUp = false
@@ -646,18 +721,10 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
       ImGui_TableFlags_ScrollY.cint or ImGui_TableFlags_Resizable.cint or
       ImGui_TableFlags_Sortable.cint
     let height = igGetFontSize() * 12
-    if igBeginTable("##refs", 8, flags, ImVec2_c(x: 0, y: height), 0):
+    if igBeginTable(("##refs" & columns.tableKey).cstring, 8, flags,
+        ImVec2_c(x: 0, y: height), 0):
       igTableSetupScrollFreeze(0, 1)
-      igTableSetupColumn("Name", ImGui_TableColumnFlags_WidthStretch.cint, 0, 0)
-      igTableSetupColumn("Length", ImGui_TableColumnFlags_WidthFixed.cint, 0, 1)
-      igTableSetupColumn("Sample interval", ImGui_TableColumnFlags_WidthFixed.cint, 0, 2)
-      igTableSetupColumn("Frequency", ImGui_TableColumnFlags_WidthFixed.cint, 0, 3)
-      igTableSetupColumn("Source", ImGui_TableColumnFlags_WidthStretch.cint, 0, 4)
-      igTableSetupColumn("Date", ImGui_TableColumnFlags_WidthFixed.cint, 0, 5)
-      igTableSetupColumn("Use", ImGui_TableColumnFlags_NoSort.cint or
-        ImGui_TableColumnFlags_WidthFixed.cint, 0, 6)
-      igTableSetupColumn("", ImGui_TableColumnFlags_NoSort.cint or
-        ImGui_TableColumnFlags_WidthFixed.cint, 0, 7)
+      setupArchiveColumns(columns)
       igTableHeadersRow()
       let specs = igTableGetSortSpecs()
       if specs != nil and specs.SpecsCount > 0:
@@ -678,18 +745,15 @@ proc drawArchive(ui: var ReferencesUi; title: string; st: AppState; t: Theme;
         marks.mark("references.main")
         igTextDisabled("Read-only. Copy one into the project to use it.")
         if st.mainReferences.entries.len == 0: igTextDisabled("The main archive is empty.")
-        elif igBeginTable("##mainrefs", 8, flags, ImVec2_c(x: 0, y: igGetFontSize() * 8), 0):
-          igTableSetupColumn("Name", 0, 0, 0)
-          igTableSetupColumn("Length", 0, 0, 1)
-          igTableSetupColumn("Sample interval", 0, 0, 2)
-          igTableSetupColumn("Frequency", 0, 0, 3)
-          igTableSetupColumn("Source", 0, 0, 4)
-          igTableSetupColumn("Date", 0, 0, 5)
-          igTableSetupColumn("Use", ImGui_TableColumnFlags_NoSort.cint, 0, 6)
-          igTableSetupColumn("", ImGui_TableColumnFlags_NoSort.cint, 0, 7)
-          igTableHeadersRow()
-          ui.drawRows(st.mainReferences, "", false, "", st, marks, result, "references.main")
-          igEndTable()
+        else:
+          let main = archiveColumns(st.mainReferences, false)
+          if igBeginTable(("##mainrefs" & main.tableKey).cstring, 8, flags,
+              ImVec2_c(x: 0, y: igGetFontSize() * 8), 0):
+            igTableSetupScrollFreeze(0, 1)
+            setupArchiveColumns(main)
+            igTableHeadersRow()
+            ui.drawRows(st.mainReferences, "", false, "", st, marks, result, "references.main")
+            igEndTable()
   igEnd()
   if not open: ui.shown = false
   if ui.confirmAsk:
