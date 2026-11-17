@@ -41,9 +41,9 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.15.0: capabilities | names | processSEG 0.7.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 49 (20 in part) | 145 | 33 (23 in part) | 143 |
+| `built` | 49 (20 in part) | 145 | 33 (23 in part) | 142 |
 | `internal` | 15 | 43 | 4 | 38 |
-| `planned` | 35 | 250 | 45 | 401 |
+| `planned` | 35 | 250 | 45 | 402 |
 | `to plan` | 2 | 10 | 1 | 5 |
 | `not applicable` | 20 | 356 | 6 | 66 |
 | all | 121 | 804 | 89 | 653 |
