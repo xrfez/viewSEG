@@ -41,11 +41,11 @@ Capabilities are the rows below, each counted by the first part of its status ("
 
 | Status | parseSEG 0.15.0: capabilities | names | processSEG 0.6.0: capabilities | names |
 |---|---:|---:|---:|---:|
-| `built` | 49 (20 in part) | 145 | 30 (23 in part) | 134 |
+| `built` | 49 (20 in part) | 145 | 31 (23 in part) | 136 |
 | `internal` | 15 | 43 | 4 | 39 |
-| `planned` | 35 | 250 | 45 | 397 |
+| `planned` | 35 | 250 | 45 | 396 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 20 | 356 | 6 | 53 |
+| `not applicable` | 20 | 356 | 5 | 52 |
 | all | 121 | 804 | 86 | 628 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
@@ -260,7 +260,7 @@ name, so these are building blocks for code that works on raw headers.
 | Scale, clip, polarity | `scale`, `clip`, `reversePolarity`, `scaleOp`, `clipOp`, `polarityOp` | Seismic window: "Reverse polarity" of a trace or the selection (`R`, the plot's menu: `reversePolarity` on its live samples where the reader prepares them, before the pipeline, as `polarityOp` would; the Headers window's Data tab, as displayed, the same) and "Reverse polarity of all traces" (`polarityOp` first in the window's display pipeline; the analysis graphs apply the same sign flip, own reversal or reverse-all, not both); processing window: scale and clip; the wiggles' clip at the trace overlap is the shader's own | built (polarity of a trace, of the selection, of all traces); planned (the rest) |
 | Top and bottom mutes (time, table, LMO) | `timeMute`, `tableMute`, `lmoMute`, `muteTop`, `muteBottom`, `muteTopOp`, `muteBottomOp`, `muteTimeMs`, `MuteKind`, `MuteCurve`, `kind` | Processing window: mutes, drawn as a line on the panel, table picked by clicking | planned |
 | Pad tapers | `cosTaperInto`, `taperPads` | processSEG's filters pad and taper with them | not applicable (inside processSEG's filters; for a caller's own padded kernels) |
-| Fractional shifts | `shiftSamples`, `ShiftInterp` | processSEG's statics, LMO and NMO shift with them | not applicable (inside processSEG's statics, LMO and NMO) |
+| Fractional shifts | `shiftSamples`, `ShiftInterp` | Compare two traces shifts B by a whole number of samples: a typed time snapped to the nearest sample, or the correlation peak's sample lag (`shiftSamples` with a whole number, a bulk move, zeros in the gap, what moves off the end left out; no interpolation) | built (Compare two traces: `shiftSamples`); not applicable (`ShiftInterp`: a whole number of samples is a move, so no interpolation is chosen) |
 | Recorded values in physical units: sensors, masses and recorder scales | `AmplitudeUnit` (`auRecorded`, `auVolt`, `auVelocity`, `auAcceleration`, `auPressure`, `auForce`), `Sensitivity`, `SensitivityUnit`, `SensitivityForm`, `sensitivity`, `openCircuitSensitivity`, `form`, `unit`, `valueIn`, `voltsPerUnit`, `quantityOf`, `isSet`, `Mass`, `MassUnit`, `mass`, `kilograms`, `Descale`, `DescaleUnit`, `descale`, `voltsPerCount`, `FileScale`, `initFileScale`, `$` | Amplitudes in volts, m/s, m/s², Pa or N where the user sets up a sensor table (off otherwise): the readout's unit; the vibrator force plots in newtons (`auForce`, with the masses entered) | built in part (the vibrator signature: its masses entered in kg, shown in lb when Units is imperial, `mass`, and the force's unit said, `AmplitudeUnit`); planned: the sensor table, amplitudes in physical units |
 | Calibration of recorded traces | `Calibration`, `CalibrationPlan`, `CalibrationRule`, `CalibrationStatus`, `CalibrationSummary`, `CalibrationTarget`, `FactorSource`, `FileFactors`, `RatioRange`, `RowCalibration`, `RuleMatch`, `calibrate`, `calibrateInto`, `initCalibration`, `initCalibrationPlan`, `ratioDbInto`, `resolveInto`, `scaleInto`, `scaleRows`, `scaleRowsInto`, `uncalibrate`, `uncalibrateInto`, `target`, `$` | The sensor table's rules applied per trace, before any gain; what each trace was converted with, and what could not be, in Messages | planned |
 | A file's own scales | `ScaleGroup`, `fileScalesInto`, `scaleReport`, `segyUnitOverrides`, `fileScale`, `hasFileScales`, `chunkMeta(..., scales)`, `$` | The Headers window's Summary tab: each channel set's recorder scale and units as the file gives them, to check against the sensor sheet, also without a sensor table | planned |

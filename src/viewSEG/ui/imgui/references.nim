@@ -317,6 +317,22 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; home: string; writabl
     igEndDisabled()
     marks.mark(markPrefix & ".view." & $n)
     tip("Open this reference in its own window")
+    igSameLine(0, -1)
+    igBeginDisabled(e.missing or e.blocked)
+    if igSmallButton("Compare as A"):
+      res.commands.add Command(kind: ckSetCompare, compareSlot: cwA, compareRef: e.id,
+        compareTrace: -1)
+    igEndDisabled()
+    marks.mark(markPrefix & ".compareA." & $n)
+    tip("Copy this reference into compare slot A")
+    igSameLine(0, -1)
+    igBeginDisabled(e.missing or e.blocked)
+    if igSmallButton("Compare as B"):
+      res.commands.add Command(kind: ckSetCompare, compareSlot: cwB, compareRef: e.id,
+        compareTrace: -1)
+    igEndDisabled()
+    marks.mark(markPrefix & ".compareB." & $n)
+    tip("Copy this reference into compare slot B")
     if writable:
       igSameLine(0, -1)
       if igSmallButton("Delete"):

@@ -64,6 +64,12 @@ rest of the record is usually listen time. The length of the trace is shown.
 The stored samples are the file's raw samples: no plot filters, no trace filter, no gain,
 and no polarity edit. The read runs in the background; the window does not wait on the file.
 
+## Compare as A or B
+
+Each row has Compare as A and Compare as B. That copies the reference into a compare
+slot (the user guide, Compare two traces). The slot keeps that copy for this run only;
+it is not saved with the archive or the project.
+
 ## What a plot does with it
 
 When a reference is selected, a cross-correlation and a vibrator signature use it instead

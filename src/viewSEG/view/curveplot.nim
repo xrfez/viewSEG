@@ -70,6 +70,71 @@ type
     brackets*: seq[float64]
       ## per curve, the bracketed value there; NaN where it has none
 
+proc spanOf(xs: openArray[float64]; lo, hi: float64): tuple[a, b: int] =
+  ## Inclusive indices of `xs` (ascending) in `lo` .. `hi`; (-1, -1) when none.
+  if xs.len == 0 or lo.isNaN or hi.isNaN: return (-1, -1)
+  var a = 0
+  var h = xs.high
+  while a < h:
+    let mid = (a + h) div 2
+    if xs[mid] < lo: a = mid + 1 else: h = mid
+  if a >= xs.len or xs[a] > hi or xs[a] < lo: return (-1, -1)
+  var b = xs.high
+  var l = a
+  while l < b:
+    let mid = (l + b + 1) div 2
+    if xs[mid] > hi: b = mid - 1 else: l = mid
+  (a, b)
+
+proc takePoint(c: Curve; xs: openArray[float64]; j: int; outc: var Curve) =
+  outc.xs.add if j < xs.len: xs[j] else: NaN
+  outc.ys.add if j < c.ys.len: c.ys[j] else: NaN
+  if c.brackets.len > 0:
+    outc.brackets.add if j < c.brackets.len: c.brackets[j] else: NaN
+  if c.reads.len > 0:
+    outc.reads.add if j < c.reads.len: c.reads[j] else: NaN
+
+proc forScreen*(p: CurvePlot; xLo, xHi: float64; pixels: int): seq[Curve] =
+  ## The curves to draw for x in `xLo` .. `xHi`, at most about `pixels`
+  ## points each. Each bin keeps the finite sample of largest magnitude
+  ## (`peakBins`, the trace plot's `decimatePeakInto`), and a bin with none
+  ## stays a gap. A range that fits in `pixels` is every sample, so a zoom
+  ## reaches single samples. One sample either side of the range is kept, so
+  ## the line enters the view. The caller redoes this when the view changes.
+  let px = max(pixels, 1)
+  let lo = min(xLo, xHi)
+  let hi = max(xLo, xHi)
+  for c in p.curves:
+    var outc = Curve(name: c.name, colour: c.colour, width: c.width, shadeTo: c.shadeTo,
+      unit: c.unit, short: c.short, marks: c.marks)
+    let xs = if c.xs.len > 0: c.xs else: p.xs
+    let (a0, b0) = spanOf(xs, lo, hi)
+    if a0 >= 0 and a0 < c.ys.len:
+      let b = min(b0, min(c.ys.high, xs.high))
+      let n = b - a0 + 1
+      let left = if a0 > 0: a0 - 1 else: -1
+      let last = min(c.ys.high, xs.high)
+      let right = if b + 1 <= last: b + 1 else: -1
+      if n <= px:
+        let fromI = if left >= 0: left else: a0
+        let toI = if right >= 0: right else: b
+        for j in fromI .. toI: c.takePoint(xs, j, outc)
+      else:
+        if left >= 0: c.takePoint(xs, left, outc)
+        let step = (n + px - 1) div px
+        var bin = 0
+        for at in peakBins(c.ys.toOpenArray(a0, b), step):
+          if at >= 0: c.takePoint(xs, a0 + at, outc)
+          else:
+            let j = min(b, a0 + bin * step)
+            outc.xs.add if j < xs.len: xs[j] else: NaN
+            outc.ys.add NaN
+            if c.brackets.len > 0: outc.brackets.add NaN
+            if c.reads.len > 0: outc.reads.add NaN
+          inc bin
+        if right >= 0: c.takePoint(xs, right, outc)
+    result.add outc
+
 func isEmpty*(p: CurvePlot): bool =
   ## Whether `p` has nothing to draw.
   if p.xs.len == 0: return true

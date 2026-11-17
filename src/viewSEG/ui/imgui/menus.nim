@@ -53,7 +53,8 @@ type
     maShowHeaders = "Headers", maShowJobs = "Jobs", maShowMessages = "Messages",
     maShortcuts = "Keyboard shortcuts", maAbout = "About viewSEG",
     maGenerateReference = "Generate a reference...",
-    maReferenceArchive = "Reference archive..."
+    maReferenceArchive = "Reference archive...",
+    maCompare = "Compare two traces"
 
   MenuInput* = object
     ## What the menus show besides their fixed items.
@@ -90,6 +91,7 @@ type
     projectName*: string ## the project open; "" for none
     projectShown*: bool ## the Project window is open
     archiveShown*: bool ## the Reference archive window is open
+    compareShown*: bool ## the compare window is open
 
   MenuResult* = object
     actions*: set[MenuAction]
@@ -133,7 +135,7 @@ const
     maShowFiles: 0, maShowRecords: 0, maShowMap: 0, maShowHeaders: 0, maShowJobs: 0,
     maShowMessages: 0,
     maShortcuts: ImGui_Key_F1.cint, maAbout: 0, maGenerateReference: 0,
-    maReferenceArchive: 0]
+    maReferenceArchive: 0, maCompare: 0]
     ## ImGui shows Ctrl as Cmd on macOS and matches it there; 0 = none.
   menuIcons: array[MenuAction, string] = [maOpenFile: IconOpenFile,
     maOpenFiles: IconOpenFiles, maOpenFolder: IconOpenFolder, maClose: IconClose,
@@ -149,7 +151,7 @@ const
     maShowFiles: IconList, maShowRecords: IconRecords, maShowMap: IconMap,
     maShowHeaders: IconTable, maShowJobs: IconTasks, maShowMessages: IconLog,
     maShortcuts: IconList, maAbout: IconInfo, maGenerateReference: IconVibrator,
-    maReferenceArchive: IconReference]
+    maReferenceArchive: IconReference, maCompare: IconPulse]
   windowIcons: array[AppWindow, string] = [awSeismic: IconPlot, awFiles: IconList,
     awRecords: IconRecords, awMap: IconMap, awHeaders: IconTable, awJobs: IconTasks,
     awMessages: IconLog, awSpectrum: IconPulse]
@@ -543,6 +545,11 @@ proc drawMainMenu*(input: MenuInput; marks: var Marks): MenuResult =
         result.actions.incl maReferenceArchive
       marks.mark("menu." & $maReferenceArchive)
       tip("The stored references, and which one the plots use")
+      igSeparatorText("Compare")
+      if igMenuItem_Bool(label(maCompare).cstring, nil, input.compareShown, true):
+        result.actions.incl maCompare
+      marks.mark("menu." & $maCompare)
+      tip("Overlay two traces, from one file or from two, for QC")
       igEndMenu()
     let window = igBeginMenu("Window", true)
     marks.mark("menu.Window")

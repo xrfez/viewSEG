@@ -280,6 +280,20 @@ proc main*() =
       st.agent(%*{"kind": "view reference", "refId": rid})
       doAssert st.refViews.len >= 1, "view reference opened no window"
       st.agent(%*{"kind": "close reference view", "refWindow": st.refViews[0].id})
+      st.agent(%*{"kind": "set compare", "compareSlot": "A", "compareTrace": st.firstTrace})
+      doAssert st.compareA.filled and st.compareA.samples.len > 0, "compare A was not copied"
+      st.agent(%*{"kind": "set compare", "compareSlot": "B", "compareRef": rid, "compareTrace": -1})
+      doAssert st.compareB.filled and st.compareOpen, "compare B did not open the window"
+      st.agent(%*{"kind": "compare display", "compareShow": {"difference": true}})
+      doAssert st.compareOptions.difference
+      st.agent(%*{"kind": "swap compare"})
+      doAssert st.compareA.fileName.len > 0
+      let report = st.stateReport(fe, """{"parts": ["compare"]}""")
+      doAssert "slotA" in report and "shiftMs" in report, report
+      st.agent(%*{"kind": "compare window", "compareOpen": false})
+      doAssert not st.compareOpen
+      st.agent(%*{"kind": "clear compare", "compareSlot": "both"})
+      doAssert not st.compareA.filled and not st.compareB.filled
       st.agent(%*{"kind": "generate reference", "refGenerate": {"name": "agent sweep",
         "law": "linear", "f1Hz": 8, "f2Hz": 40, "durationMs": 1000, "dtMs": 2, "amplitude": 1}})
       var sweep = ""

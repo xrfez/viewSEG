@@ -234,6 +234,19 @@ proc drawRows(ui: var FileListUi; st: AppState; f: FileList; t: Theme; marks: va
         igPopStyleColor(1)
         marks.mark("files.loaded " & e.name)
         igSameLine(0, -1)
+      let badge = st.compareBadge(e.path)
+      if 'A' in badge:
+        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
+        igTextUnformatted("A", nil)
+        igPopStyleColor(1)
+        marks.mark("files.compareA " & e.name)
+        igSameLine(0, -1)
+      if 'B' in badge:
+        igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.series[1]))
+        igTextUnformatted("B", nil)
+        igPopStyleColor(1)
+        marks.mark("files.compareB " & e.name)
+        igSameLine(0, -1)
       let dim = e.status == fsWriting
       if failed or dim:
         igPushStyleColor_Vec4(ImGui_Col_Text.cint,

@@ -302,6 +302,25 @@ func decimatePeakInto*(src: openArray[float32]; n: int; dst: var openArray[float
     i += n
   for m in k ..< dst.len: dst[m] = 0
 
+func peakBins*(src: openArray[float64]; n: int): seq[int] =
+  ## One index into `src` per bin of `n` samples: the finite sample of
+  ## largest magnitude, with the same rule as `decimatePeakInto` (the first
+  ## of equal magnitude, non-finite ignored). -1 when the bin has none, so a
+  ## gap stays a gap rather than a zero. Raises `ValueError` for `n < 1`.
+  if n < 1: raise newException(ValueError, "decimation must be at least 1, got " & $n)
+  var i = 0
+  while i < src.len:
+    var best = -1.0
+    var at = -1
+    let hi = min(src.len, i + n)
+    for j in i ..< hi:
+      let v = src[j]
+      if v.classify notin {fcNan, fcInf, fcNegInf} and abs(v) > best:
+        best = abs(v)
+        at = j
+    result.add at
+    i = hi
+
 func splitBlocks*(rows, cols, maxSize: int): seq[TileBlock] =
   ## Blocks of at most `maxSize` × `maxSize` that cover a `rows` × `cols`
   ## tile. Blocks side by side in time share their edge column, so each can

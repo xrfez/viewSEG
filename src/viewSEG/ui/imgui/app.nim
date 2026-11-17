@@ -48,7 +48,7 @@ import aboutbox, agentshot, chrome, dpi, filelist, fonts, frames, headerswindow,
   settingswindow, shortcutswindow,
   jobswindow, joindialog, mapwindow, memorywindow, menus, messages, plotwindows, projectwindow,
   references,
-  recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows
+  recordlist, reopendialog, shell, spectrumwindow, style, tracepanel, windows, comparewindow
 
 export ThemeChoice, theme, messages, ImguiCheck, tracepanel, mapwindow, AppWindow, DialogKind,
   SpectraUi, readoutOf
@@ -103,6 +103,7 @@ type
     shortcuts: ShortcutsUi                     ## Help > Keyboard shortcuts
     settingsWin: SettingsUi                    ## File > Settings
     spectra: SpectraUi                         ## the spectrum windows: the live panel, the FFT windows
+    compare: CompareUi                         ## the compare window: two traces, A and B
     plotWins: PlotWindowsUi                    ## the analysis windows (New plot)
     dropped: seq[string]                       ## paths dropped on the window, until the drop ends
     dropAt: float64                            ## when a drag was last seen over the window
@@ -993,6 +994,8 @@ proc onActions(ui: var Ui; actions: set[MenuAction]) =
       else:
         ui.refs.open()
         ui.core.apply Command(kind: ckListReferences)
+    of maCompare:
+      ui.core.apply Command(kind: ckCompareWindow, compareOpen: not ui.core.compareOpen)
     of maNewProject:
       ui.project.startNew(projectsHome(), ui.core.fileList.folder)
     of maOpenProject:
@@ -1237,7 +1240,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     trayProblem: ui.trayProblem, trayAvailable: trayShown(),
     plotTraces: ui.core.selectedIn(shownAt), recentProjects: ui.core.settings.recentProjects,
     projectName: (if ui.core.inProject: ui.core.project.doc.name else: ""),
-    projectShown: ui.project.shown, archiveShown: ui.refs.shown)
+    projectShown: ui.project.shown, archiveShown: ui.refs.shown,
+    compareShown: ui.core.compareOpen)
   let menu = drawMainMenu(menuInput, ui.marks)
   if menu.newPlot:
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)
@@ -1387,6 +1391,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   for c in refs.commands.mitems:
     ui.core.apply move c
   for c in ui.refs.drawRefViews(ui.core, ui.theme, ui.scale, ui.marks):
+    ui.core.apply c
+  for c in ui.compare.drawCompare(ui.core, ui.theme, ui.scale, ui.marks):
     ui.core.apply c
   var project = ui.project.drawProjectWindows(projectTitle, newProjectTitle, ui.core, ui.theme,
     ui.marks)

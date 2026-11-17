@@ -1636,6 +1636,15 @@ proc drawTraceMenu(tp: var TracePanelUi; st: AppState; k: int; marks: var Marks;
         traceMs, sweep)
   marks.mark("plot.menu.store")
   tip("Keep this trace's raw samples as a reference (no filters, no gain, no polarity edit)")
+  # The trace under the pointer, not the selection: a comparison is one trace a slot.
+  if igMenuItem_Bool("Compare: set as A", nil, false, under >= 0):
+    res.commands.add Command(kind: ckSetCompare, compareSlot: cwA, compareTrace: under)
+  marks.mark("plot.menu.compareA")
+  tip("Copy this trace into compare slot A. The copy stays when the plot moves on.")
+  if igMenuItem_Bool("Compare: set as B", nil, false, under >= 0):
+    res.commands.add Command(kind: ckSetCompare, compareSlot: cwB, compareTrace: under)
+  marks.mark("plot.menu.compareB")
+  tip("Copy this trace into compare slot B. Filling the second slot opens the compare window.")
   let fft = fftEntry()
   if igMenuItem_Bool((fft.icon & "  " & fft.name & " in a new window").cstring,
       fft.shortcut.cstring, false, under >= 0):
@@ -1738,7 +1747,8 @@ func holds(t: Tile; position: int): bool {.inline.} =
 
 proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; view: Viewport;
     layout: PanelLayout; m: Turn; bands: HeaderBands; plotPos, plotSize: ImVec2_c; t: Theme;
-    marks: var Marks) =
+    marks: var Marks; filePath, slotAPath, slotBPath: string; slotATrace, slotBTrace: int;
+    slotAOn, slotBOn: bool) =
   ## The display header's band of edits, its last (a row under its other
   ## rows; a column next to the plot when time is across): over each edited
   ## trace in view, as the file's edits `e` are now, "K" (killed, in the
@@ -1770,6 +1780,7 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
   # Gather the marks first, so a hover can light the ones a click would take
   # before they are drawn.
   var spans: seq[EditMark]
+  var badges: seq[string]
   var drawn: seq[tuple[text: string; colour: ImU32; lo, hi: ImVec2_c; bar, outlineBar,
     session, hidden, filter: bool]]
   for k in countdown(tiles.high, 0):
@@ -1785,7 +1796,11 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
                                   else: (false, OwnFilter())
       let (keptF, keptFilter) = if pos in vis and not newer: e.keptFilter(trace)
                                 else: (false, OwnFilter())
-      if has != {} or kept != {} or shownF or keptF:
+      var badge = ""
+      if pos in vis and not newer and filePath.len > 0:
+        if slotAOn and filePath == slotAPath and trace + 1 == slotATrace: badge.add "A"
+        if slotBOn and filePath == slotBPath and trace + 1 == slotBTrace: badge.add "B"
+      if has != {} or kept != {} or shownF or keptF or badge.len > 0:
         func letters(s: set[TraceEdit]; filtered: bool): string =
           (if teKilled in s: "K" else: "") & (if teReversed in s: "R" else: "") &
             (if filtered: IconFilter else: "")
@@ -1796,7 +1811,11 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
         if filterMoved: text.add "*"
         if hidden != {} or (keptF and not shownF):
           text.add "(" & letters(hidden, keptF and not shownF) & ")"
-        let colour = u32(t.roles[editColour(has, shownF)])
+        var colour = u32(t.roles[editColour(has, shownF)])
+        if text.len == 0 and badge.len > 0:
+          colour = u32(if 'A' in badge: t.roles[rlAccent] else: t.series[1])
+        if badge.len > 0: text.add badge
+        badges.add badge
         let c = traceAt(view, m, plotPos, plotSize, float64(pos))
         let ts = igCalcTextSize(text.cstring, nil, false, -1)
         let w = ts.along(ta)
@@ -1851,6 +1870,10 @@ proc drawEditRow(tp: var TracePanelUi; e: FileEdits; tiles: openArray[Tile]; vie
       if d.session: marks.markRect("plot.header.edit " & $(span.trace + 1) & " session", d.lo, d.hi)
       if d.hidden: marks.markRect("plot.header.edit " & $(span.trace + 1) & " hidden", d.lo, d.hi)
       if d.filter: marks.markRect("plot.header.filter " & $(span.trace + 1), d.lo, d.hi)
+      if n < badges.len and 'A' in badges[n]:
+        marks.markRect("plot.header.compareA " & $(span.trace + 1), d.lo, d.hi)
+      if n < badges.len and 'B' in badges[n]:
+        marks.markRect("plot.header.compareB " & $(span.trace + 1), d.lo, d.hi)
       if lit: marks.markRect("plot.header.edit hover", d.lo, d.hi)
       inc marked
   if hit.traces.len > 0:
@@ -2234,7 +2257,7 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
   # The display header: a row per field above the plot, or a column per
   # field left of it when time is across (their names above them), and a
   # band for the edits while the gather has one.
-  let edited = st.gatherEdited(k)
+  let edited = st.gatherEdited(k) or st.compareOnGather(k)
   var bands = HeaderBands(axis: turn.along[axTime])
   var headerExtent = 0'f32 # what the header takes of the plot's length along time
   if bands.axis == saY:
@@ -2369,7 +2392,10 @@ proc drawPlot(tp: var TracePanelUi; st: AppState; k: int; t: Theme; fonts: Fonts
     tp.drawHeader(tiles, fields, stride, view, p.layout, turn, bands, headerTop, pos, size, t,
       marks)
     if edited:
-      drawEditRow(tp, st.editsOf(k), tiles, view, p.layout, turn, bands, pos, size, t, marks)
+      let path = if source >= 0: st.sessions[source].path else: ""
+      drawEditRow(tp, st.editsOf(k), tiles, view, p.layout, turn, bands, pos, size, t, marks,
+        path, st.compareA.path, st.compareB.path, st.compareA.trace, st.compareB.trace,
+        st.compareA.filled, st.compareB.filled)
     ImPlot_EndPlot()
     # the bar along the width goes under the values of the axis there, if any
     let barsUnder = if turn.axisAlong(saX) == axTime:

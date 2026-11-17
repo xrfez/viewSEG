@@ -252,6 +252,7 @@ point by default): right-click them, or their names at the left, to choose its f
 | Kill or restore the trace under the pointer (the selection, if it is in it) | right-click: Kill / Restore | `K` |
 | Reverse its polarity, or put it back | right-click: Reverse polarity | `R` |
 | Its amplitude spectrum (the selection's, averaged, if it is in it) in a window of its own | right-click: FFT in a new window | `F` |
+| Copy the trace under the pointer into a compare slot (one trace, even if several are selected) | right-click: Compare: set as A / Compare: set as B | |
 | Undo the last kill, restore or polarity change | Edit > Undo (or right-click: Undo) | Ctrl+Z, in any window |
 | Redo what was undone | Edit > Redo (or right-click: Redo) | Ctrl+Shift+Z or Ctrl+Y, in any window |
 | See the traces without the filters, or filtered again | the strip's Raw toggle | `P` |
@@ -779,6 +780,55 @@ time**; groups wrap whole. The **Freeze** pin, at the right of the first row, ke
 traces and the file it shows; the line under the controls names them. Unfreezing follows
 at once. It costs nothing while it is hidden
 or behind another tab.
+
+## Compare two traces
+
+Operations > Compare two traces opens a window with two slots, A and B. Each holds one
+trace: right-click that trace (seismic or auxiliary) and choose Compare: set as A or
+Compare: set as B. With several traces selected, the entries still copy the trace under
+the pointer. A stored reference goes into a slot from Compare as A or Compare as B on
+its row in the reference archive. The two traces may come from different files or from
+the same file. Filling the second slot opens the window.
+
+A slot keeps its own copy: the file name, the trace number, the record, channel and
+line and point where the headers name them, the sample interval, the start time and
+the time window. It does not follow the plot, a selection, a file change or a file
+close. It is replaced only when you set that slot again. The copy is what the plot
+shows of that trace: reversed when the trace is effectively reversed (reversed on its
+own, or every trace of the file is, but not both), then its own filter. The chip names
+each. A reference from the archive stays as stored, with neither. The slots are for
+this run only: they are not saved in the settings or in a project.
+
+The top of the window names the two traces, each in its own colour, "A: file, trace N,
+from-to s" and the same for B, with Swap, Clear A, Clear B and Clear both. A is the
+theme's accent, B its second series colour, and every curve of that slot uses that
+colour. The file list shows a small A or B on a file that fed a slot. The Seismic
+plot's edits row marks the trace with A or B beside the K, R and filter marks, only
+while that file and that trace are on show.
+
+The panels are stacked, so the signal and the phase can be read together:
+
+- Signal: both on one time axis. Difference (B − A) is off until you ask for it.
+- Amplitude spectrum: both curves, in dB.
+- Phase: B minus A against frequency, unwrapped by default, with the same pictures as
+  an FFT window (magnitude, signed, delay removed) and the same amplitude floor.
+- Cross-correlation of A with B: the curve, and a line with the peak value, its time
+  shift in ms, and the polarity (same or reversed).
+
+Alignment is off until you ask, and B's chip names what is on: shift B by the
+correlation peak, or by a typed number of milliseconds; match amplitudes (RMS over the
+window); flip B's polarity. From and To are one time window for both; Whole puts it
+back to the span of the two traces.
+
+Nothing is resampled. A shift is a whole number of samples, either way: the samples
+move, the gap is filled with zeros, and what moves off the end is left out. A typed
+time snaps to the nearest sample; the box and B's chip show the time that was applied,
+not a fraction of a sample. When the two traces are not on the same sample grid (a
+different sample interval, or start times a fraction of a sample apart), the signal,
+the spectra and the phase are still drawn, on the common time and up to the lower
+Nyquist. The difference and the cross-correlation are left out, and the window says why.
+
+Double-click an axis to fit it. The view stays where you left it until the pair changes.
 
 ## Headers
 

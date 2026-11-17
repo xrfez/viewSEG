@@ -11,36 +11,36 @@
 
 import std/[locks, times]
 import parseSEG
-import analysis, edits, filelist, filememory, identity, join, jobs, layouts, log, mapkinds,
+import analysis, compare, edits, filelist, filememory, identity, join, jobs, layouts, log, mapkinds,
   nif, panels, project, references, session, shotfiles, spectra, survey, tiles
 
 type
   MsgKind* = enum
-    mkOpened     ## an open job's file
-    mkLog        ## a message for the log
-    mkLayout     ## what a panel's traces span, from its reader
-    mkOrder      ## the traces at a panel's positions, in the order shown, from its reader
-    mkTile       ## samples a panel asked for, from its reader
-    mkRead       ## a document the disk thread read
-    mkListed     ## files a folder scan found
-    mkWatched    ## what a look at the listed folder found changed
-    mkSurvey     ## a survey layer: a survey file read, or an open file's positions
-    mkChecked    ## an open file's records checked against a relation file
-    mkJoining    ## survey files read for a join, and what joining them does
-    mkJoined     ## a join done
-    mkUnread     ## a panel's file cannot be read now (its drive went away, or fails), from its reader
+    mkOpened         ## an open job's file
+    mkLog            ## a message for the log
+    mkLayout         ## what a panel's traces span, from its reader
+    mkOrder          ## the traces at a panel's positions, in the order shown, from its reader
+    mkTile           ## samples a panel asked for, from its reader
+    mkRead           ## a document the disk thread read
+    mkListed         ## files a folder scan found
+    mkWatched        ## what a look at the listed folder found changed
+    mkSurvey         ## a survey layer: a survey file read, or an open file's positions
+    mkChecked        ## an open file's records checked against a relation file
+    mkJoining        ## survey files read for a join, and what joining them does
+    mkJoined         ## a join done
+    mkUnread         ## a panel's file cannot be read now (its drive went away, or fails), from its reader
     mkInspected
       ## what the Headers window shows of a record and of traces, from its reader
-    mkSpreads    ## relation records made for the map's planned spreads (`core/spread`)
-    mkShots      ## a listed file's shots, for the map (`core/shots`)
+    mkSpreads        ## relation records made for the map's planned spreads (`core/spread`)
+    mkShots          ## a listed file's shots, for the map (`core/shots`)
     mkRecordQc
       ## what the map's filters find in the record shown (`core/recordqc`)
     mkTraceRead
       ## one trace's keys and header fields, read on a job (`readTraceHeaders`)
     mkIdentified
       ## an opened file's quick identity and what is remembered about it (`core/memoryjobs`)
-    mkHashed     ## an opened file's identity with the hash of every byte
-    mkMemoryList ## every file the store remembers, for the File memory window
+    mkHashed         ## an opened file's identity with the hash of every byte
+    mkMemoryList     ## every file the store remembers, for the File memory window
     mkMemoryLooked
       ## whether the files remembered in one folder are where they were seen
     mkMemoryMerged
@@ -54,6 +54,8 @@ type
     mkProject ## what a project's job found (`core/projectjobs`)
     mkEarlier ## what is remembered about earlier outputs of a file's name (`earlierOutputs`)
     mkReferences ## a reference archive read or changed (`core/references`)
+    mkCompare ## a trace copied into a compare slot (`core/comparejobs`)
+    mkComparePicture ## the compare window's picture, computed on a job
 
   UnreadCause* = enum
     ## Why a panel's file is not read now (`mkUnread`): to the user, a drive
@@ -71,20 +73,20 @@ type
 
   Msg* = object
     ## One message for the UI thread.
-    job*: JobId                     ## the job that sent it; `NoJob` for none
+    job*: JobId                       ## the job that sent it; `NoJob` for none
     case kind*: MsgKind
     of mkOpened: session*: Session
     of mkLog: entry*: LogEntry
     of mkLayout:
       panel*: PanelId
-      sourceGen*: uint64            ## the panel's `sourceGen` it answers
+      sourceGen*: uint64              ## the panel's `sourceGen` it answers
       layout*: PanelLayout
-      known*: set[HeaderField]      ## the header fields the traces have values for
+      known*: set[HeaderField]        ## the header fields the traces have values for
       widest*: array[HeaderField, int]
         ## per field, its longest value as the header shows it, in characters
       components*: seq[uint8]
         ## distinct components before the component filter, in button order
-      componentCounts*: seq[int]    ## traces of each, before that filter
+      componentCounts*: seq[int]      ## traces of each, before that filter
       componentSensors*: seq[uint8]
         ## sensor type of each, when its traces agree; 0 when they do not,
         ## or the headers do not say (a SEG-Y trace)
@@ -262,6 +264,11 @@ type
       earlierProblems*: seq[string]
     of mkReferences:
       refNews*: ReferenceNews ## moved, never shared
+    of mkCompare:
+      compareNews*: CompareNews ## moved, never shared
+    of mkComparePicture:
+      comparePicture*: ComparePicture ## moved, never shared
+      comparePicGen*: uint64 ## the ask it answers; a newer one drops it
 
   InboxObj = object
     lock: Lock

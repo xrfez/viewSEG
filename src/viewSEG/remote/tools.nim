@@ -31,9 +31,9 @@ const
   ToolNames* = ["command", "state", "headers", "screenshot", "wait"]
   StateParts* = ["program", "fileList", "files", "panels", "selection", "map", "jobs",
     "messages", "survey", "headers", "memory", "spectra", "displayPresets", "plots", "project",
-    "properties"]
+    "properties", "compare"]
   ShotTargets* = ["window", "plot", "seismic", "map", "files", "records", "headers", "messages",
-    "jobs", "toolbar", "statusbar", "spectrum", "fft"]
+    "jobs", "toolbar", "statusbar", "spectrum", "fft", "compare"]
     ## what `screenshot` takes a picture of: the whole window, the Seismic
     ## window's picture of the traces alone, or one window ("spectrum" the
     ## live spectrum panel, "fft" the FFT window opened last; "fft 2" names
@@ -134,7 +134,9 @@ proc toolList*(): string =
        "is remembered about files (memory: as the File memory window last listed it; the " &
        "command \"list file memory\" reads it again), and the named display presets " &
        "(displayPresets: each one's name and display; each panel's displayPreset names the " &
-       "one it shows, \"\" for none). All parts unless some are named.",
+        "one it shows, \"\" for none). The compare window (compare: slot A, slot B, " &
+        "the correlation table, and why a difference is not shown). All parts unless some " &
+        "are named.",
      "inputSchema": {"type": "object", "properties": {
        "parts": {"type": "array", "items": {"type": "string", "enum": parts},
          "description": "the parts to give; all when not given"},
@@ -269,6 +271,11 @@ proc prefill(state: AppState; given: Command; c: var Command) =
       c.plotCursorOn = state.plots[w].cursorOn
   of ckClosePlot: c.plot = given.plot
   of ckSpectrumPanel: c.onScreen = true
+  of ckCompareDisplay: c.compareShow = state.compareOptions
+  of ckCompareWindow: c.compareOpen = true
+  of ckSetCompare:
+    c.compareSlot = if given.compareSlot == cwBoth: cwA else: given.compareSlot
+    c.compareTrace = given.compareTrace
   of ckJoin, ckSelectUnmatched:
     # the file the plot shows, and the join window's options
     let i = state.shownFile(state.findPanel(MainPanel))
@@ -751,6 +758,28 @@ proc propertiesJson(state: AppState): JsonNode =
   result = %*{"file": int(s.id), "path": s.path, "sections": sections,
     "openChoice": toJson(state.openChoiceOf(s.path)), "opened": toJson(s.facts.opened)}
 
+proc slotJson(slot: CompareSlot): JsonNode =
+  ## One compare slot: what it holds, not every sample.
+  %*{"filled": slot.filled, "waiting": slot.waiting, "problem": slot.problem,
+    "file": slot.fileName, "path": slot.path, "trace": slot.trace,
+    "record": slot.recordText, "channel": slot.channelText, "station": slot.stationText,
+    "dtMs": toJson(slot.dtMs), "t0Ms": toJson(slot.t0Ms), "fromMs": toJson(slot.fromMs),
+    "toMs": toJson(slot.toMs), "samples": slot.samples.len, "reversed": slot.reversed,
+    "filtered": slot.filtered,
+    "filter": slot.filterWords}
+
+proc compareJson(state: AppState): JsonNode =
+  ## Both slots and the correlation table.
+  let p = state.comparePicture
+  let t = p.table
+  %*{"open": state.compareOpen, "slotA": slotJson(state.compareA),
+    "slotB": slotJson(state.compareB), "chipA": state.compareChip(cwA),
+    "chipB": state.compareChip(cwB),
+    "table": {"available": t.available, "peak": toJson(t.peak), "shiftMs": toJson(t.shiftMs),
+      "polarity": t.polarity, "whyNot": t.whyNot},
+    "refusal": p.refusal, "align": p.alignNote, "sameGrid": p.sameGrid,
+    "options": toJson(state.compareOptions)}
+
 proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
   ## The `state` tool.
   var n: JsonNode
@@ -848,6 +877,7 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
     for w in state.plots: list.add plotJson(w, limit)
     r["plots"] = list
   if "project" in wanted: r["project"] = state.projectJson(limit)
+  if "compare" in wanted: r["compare"] = state.compareJson
   if "memory" in wanted:
     let m = state.memoryList
     var files = newJArray()
@@ -1051,6 +1081,7 @@ proc busy*(state: AppState; fe: Frontend): seq[string] =
     result.add "the Headers window's reader" & (if w.kind == wkNone: "" else: ": " & w.words)
   for w in state.spectra:
     if w.waiting: result.add w.title & ": its spectrum"
+  if state.compareWaiting: result.add "a compare slot: its copy"
   for title in state.plotsWaiting: result.add title & ": its numbers"
   for k in 0 ..< state.panels.len:
     let picture = state.pictureOf(k, fe)

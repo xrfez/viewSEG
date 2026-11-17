@@ -1244,6 +1244,7 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 | Reverse polarity | `R` | that trace or the selection, 180 degrees out of phase; ticked while the trace under the pointer is reversed, and then it puts the polarity back |
 | Kill / Restore | `K` | drawn blank (or left out of the plot: the gear popover's "Hide killed traces"), left out of the processing, of the levels the gain computes over the record and of spectra; "Restore" over a killed trace |
 | FFT in a new window | `F` | that trace's amplitude spectrum, or the selection's averaged, raw and through the plot's filters, in a window of its own ([Spectra](#spectra)); several can be open |
+| Compare: set as A / Compare: set as B | | copies the trace under the pointer into that slot, even when it is one of a selection. The copy does not follow the plot. Filling the second slot opens Compare two traces (the user guide) |
 | Select its receiver on the map | `M` | the receiver the trace was recorded at (in a receiver gather, its source), or those of the selection, with their traces; greyed out where the trace has no place on the map |
 | Reverse polarity of all traces | | every trace of the file, in the picture and every graph, ticked while on ([Polarity](#polarity)) |
 | Undo *what it was* | Ctrl + Z | takes back the file's last kill, restore, polarity change or clearing, as Edit > Undo |
@@ -1253,6 +1254,8 @@ traces"); the selection stays as it was. Over no trace it says "No trace here".
 On a selection, a trace operation does to every selected trace what it does to the one
 under the pointer: Kill kills them all (Restore, over a killed trace, restores them all),
 Reverse polarity reverses them all, or puts them all back when that trace is reversed.
+Compare does not: each slot holds the one trace under the pointer. While that file and
+that trace are on show, the edits row marks it A or B beside K, R and the filter mark.
 Later: show headers (`H`) and, perhaps, a filter on one trace (as a layer of its own,
 with the overlays).
 

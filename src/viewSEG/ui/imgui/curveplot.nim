@@ -26,7 +26,12 @@ import marks, style
 type
   CurvePlotUi* = object
     ## A curve plot's state between frames.
-    fitted: string ## the key of the data the view was last fitted to
+    fitted: string     ## the key of the data the view was last fitted to
+    screenLo, screenHi: float64
+    screenPx: int
+    screenKey: string
+    screen: seq[Curve] ## peak-kept for the range on screen; redone when it changes
+    haveScreen: bool
 
   CurveOutput* = object
     reading*: Reading
@@ -94,15 +99,23 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   let pos = ImPlot_GetPlotPos()
   let area = ImPlot_GetPlotSize()
   marks.markRect(id & ".data", pos, ImVec2_c(x: pos.x + area.x, y: pos.y + area.y))
-  # Drawn from the first x the axis shows (a logarithmic one leaves 0 out).
-  var first = 0
-  if p.logX:
-    while first < p.xs.len and not (p.xs[first] > 0): inc first
+  # Peak-keep for the pixels of the range on screen, redone when the view
+  # or the data changes. The cursor still reads the full series.
+  let lim = ImPlot_GetPlotLimits(xAxis, yAxis)
+  let px = max(1, int(if turned: area.y else: area.x))
+  if not ui.haveScreen or ui.screenKey != fitKey or ui.screenPx != px or
+      ui.screenLo != lim.X.Min or ui.screenHi != lim.X.Max:
+    ui.screen = p.forScreen(lim.X.Min, lim.X.Max, px)
+    ui.screenLo = lim.X.Min
+    ui.screenHi = lim.X.Max
+    ui.screenPx = px
+    ui.screenKey = fitKey
+    ui.haveScreen = true
   let width = max(1'f32, round(igGetIO_Nil().DisplayFramebufferScale.x))
-  for c in p.curves:
+  for c in ui.screen:
     let cxs = p.xsOf(c)
-    var from0 = if c.xs.len > 0: 0 else: first
-    if c.xs.len > 0 and p.logX:
+    var from0 = 0
+    if p.logX:
       while from0 < cxs.len and not (cxs[from0] > 0): inc from0
     let n = min(c.ys.len, cxs.len) - from0
     if n > 0:

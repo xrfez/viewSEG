@@ -105,13 +105,13 @@ import parseSEG
 from processSEG/core/workspace import Workspace, initWorkspace
 from processSEG/pipeline import Pipeline, items, initPipeline
 from processing import changesSamples, ownShownWords, reverseShownWords
-import analysis, analysisreader, closer, components, diskio, edits, filejobs, filelist, filememory,
-  filesystem, identity, inbox, inspector, jobs, join, layouts, log, mapstate, memoryjobs,
-  panels, persist, pick, project, projectjobs, projectnif, reader, recordqc, referencejobs,
-  references, selection, session, settings, shots, spectra, spectrumreader, spread, survey,
-  surveyjobs, threads, tiles, watch, zoom
+import analysis, analysisreader, closer, compare, comparejobs, components, diskio, edits, filejobs,
+  filelist, filememory, filesystem, identity, inbox, inspector, jobs, join, layouts, log,
+  mapstate, memoryjobs, panels, persist, pick, project, projectjobs, projectnif, reader,
+  recordqc, referencejobs, references, selection, session, settings, shots, spectra,
+  spectrumreader, spread, survey, surveyjobs, threads, tiles, watch, zoom
 
-export analysis, edits, filelist, filememory, identity, inbox, jobs, join, layouts, log,
+export analysis, compare, edits, filelist, filememory, identity, inbox, jobs, join, layouts, log,
   mapstate, panels, persist, pick, project, recordqc, references, selection, session, settings,
   shots, spectra, spread, survey, threads, tiles, zoom
 export InspectPart, ChosenBy, Chosen, Inspection, MaxInspected, MaxInspectedValues, MaxTableRows
@@ -246,6 +246,18 @@ type
       ## amplitude spectrum. The file under QC stays open
     ckCloseRefView = "close reference view"
       ## close that window
+    ckSetCompare = "set compare"
+      ## copy one trace into compare slot A or B. The slot keeps that copy:
+      ## it does not follow the plot, the selection or the file. Filling the
+      ## second slot opens the compare window
+    ckClearCompare = "clear compare"
+      ## clear compare slot A, B, or both
+    ckSwapCompare = "swap compare"
+      ## swap compare slots A and B
+    ckCompareDisplay = "compare display"
+      ## what the compare window draws, and how B is aligned
+    ckCompareWindow = "compare window"
+      ## open or close the compare window
 
   Command* = object
     ## A user intent: the only way the UI changes the state.
@@ -477,6 +489,17 @@ type
         ## ckRenameReference: the new name
       refWindow*: int
         ## ckCloseRefView: the window
+    of ckSetCompare, ckClearCompare, ckSwapCompare, ckCompareDisplay, ckCompareWindow:
+      compareSlot*: CompareWhich
+        ## ckSetCompare, ckClearCompare: A, B, or both (clear)
+      compareTrace*: int
+        ## ckSetCompare: a survey-wide trace id; -1 when compareRef is set
+      compareRef*: string
+        ## ckSetCompare: a reference's id; "" for a trace of an open file
+      compareShow*: CompareOptions
+        ## ckCompareDisplay: the window's alignment and what it draws
+      compareOpen*: bool
+        ## ckCompareWindow: true opens the window, false closes it
 
   CommandOrigin* = enum
     ## Where a command came from: what decides whether its changes are
@@ -912,6 +935,15 @@ type
     mainRefsLoaded: bool
     refsRev: int ## bumps when the archive or the choice changes, so a plot asks again
     refViews: seq[RefView] ## windows showing a reference, until closed
+    compareA, compareB: CompareSlot
+      ## the two traces held for comparison; session only, not saved
+    compareOptions: CompareOptions
+    comparePicture: ComparePicture
+    compareOpen: bool
+    compareRevision: int
+    compareGen: uint64
+    comparePicGen: uint64 ## the picture ask in force; an older answer is dropped
+    compareJobA, compareJobB, comparePicJob: JobId
     remembered: seq[Remembered]
       ## the files opened this run, by path, and where their edits are kept
     knownDocs: Table[string, FileRecord]
@@ -1020,7 +1052,8 @@ proc initAppState*(logCapacity: Positive = DefaultLogCapacity;
     jobs: initJobs(jobHistory), indexCache: indexCache, nextFile: 1,
     nextPanel: int(MainPanel) + 1, nextTile: 1, scratch: initWorkspace(),
     files: FileList(job: NoJob), watchEvery: watchEvery, quietScan: NoJob,
-    preparing: (NoJob, ""), prepared: (NoJob, nil), memoryJob: NoJob)
+    preparing: (NoJob, ""), prepared: (NoJob, nil), memoryJob: NoJob,
+    compareJobA: NoJob, compareJobB: NoJob, comparePicJob: NoJob)
   result.panels.add Panel(id: MainPanel)
   result.tiles.add newSeq[Tile]()
   result.readers.add PanelReader()
@@ -1579,6 +1612,56 @@ func selection*(state: AppState): lent Selection {.inline.} =
   ## The trace under the cursor, the selected traces, the gather on show.
   state.selection
 
+func compareA*(state: AppState): lent CompareSlot {.inline.} =
+  ## Compare slot A. Its copy does not follow the plot or the file.
+  state.compareA
+
+func compareB*(state: AppState): lent CompareSlot {.inline.} =
+  ## Compare slot B.
+  state.compareB
+
+func compareOptions*(state: AppState): lent CompareOptions {.inline.} =
+  ## How the compare window aligns B and what it draws.
+  state.compareOptions
+
+func comparePicture*(state: AppState): lent ComparePicture {.inline.} =
+  ## The curves and the table of the two slots, as last worked out.
+  state.comparePicture
+
+func compareOpen*(state: AppState): bool {.inline.} =
+  ## Whether the compare window is open.
+  state.compareOpen
+
+func compareRevision*(state: AppState): int {.inline.} =
+  ## Bumps when a new picture arrives. The one on screen stays until then.
+  state.compareRevision
+
+func compareChip*(state: AppState; which: CompareWhich): string =
+  ## The chip of slot `which`: file, trace, time window, and B's alignment.
+  let align = if which == cwB: state.comparePicture.alignNote else: ""
+  chipText(if which == cwB: state.compareB else: state.compareA, which, align)
+
+func compareLetters*(state: AppState; path: string; trace: int): string =
+  ## "A", "B" or "AB" when a filled slot was fed by file-index `trace`
+  ## (from 0) of `path`; "" otherwise.
+  if path.len == 0: return ""
+  if state.compareA.filled and state.compareA.path == path and
+      state.compareA.trace == trace + 1:
+    result.add "A"
+  if state.compareB.filled and state.compareB.path == path and
+      state.compareB.trace == trace + 1:
+    result.add "B"
+
+func compareBadge*(state: AppState; path: string): string =
+  ## "A", "B" or "AB" when a filled slot was fed by the file at `path`.
+  if path.len == 0: return ""
+  if state.compareA.filled and state.compareA.path == path: result.add "A"
+  if state.compareB.filled and state.compareB.path == path: result.add "B"
+
+func compareWaiting*(state: AppState): bool {.inline.} =
+  ## Whether a slot is still being copied.
+  state.compareA.waiting or state.compareB.waiting
+
 func spectra*(state: AppState): lent seq[SpectrumWindow] {.inline.} =
   ## The spectrum windows: the live panel first (id 0), then the FFT
   ## windows in the order opened.
@@ -1961,6 +2044,15 @@ func shownTraces(state: AppState; panelIndex: int): (int, Slice[int]) =
     let g = state.panels[panelIndex].layers[0].source.gather
     if g in 0 ..< state.sessions[i].gathers.len:
       result = (i, state.sessions[i].gathers[g].traces)
+
+func compareOnGather*(state: AppState; panelIndex: int): bool =
+  ## Whether a trace of the gather the panel shows fed a filled slot.
+  let (i, traces) = state.shownTraces(panelIndex)
+  if i < 0: return false
+  let path = state.sessions[i].path
+  template hit(slot: CompareSlot): bool =
+    slot.filled and slot.path == path and slot.trace >= 1 and (slot.trace - 1) in traces
+  hit(state.compareA) or hit(state.compareB)
 
 func gatherEdited*(state: AppState; panelIndex: int): bool =
   ## Whether a trace of the gather `panels[panelIndex]` shows has an edit,
@@ -5964,8 +6056,28 @@ proc showHeldBack(state: var AppState; path: string) =
   state.heldBack = kept
   for k in again: state.newSource(k)
 
+proc refreshCompare(state: var AppState)
+
 proc onFinished(state: var AppState; job: JobInfo) =
   ## Says how a job ended, and lets go of what the state kept for it.
+  if job.id == state.comparePicJob and job.state == jsFailed:
+    state.comparePicJob = NoJob
+    if job.error.len > 0:
+      state.log.add(sevWarning, "compare", "The comparison could not be drawn: " &
+        job.error & ".")
+  if job.state in {jsCancelled, jsFailed}:
+    let waiting = state.compareA.waiting or state.compareB.waiting
+    let why = if job.error.len > 0: job.error else: "the copy was cancelled"
+    if state.compareA.waiting and state.compareJobA == job.id:
+      state.compareA.waiting = false
+      state.compareA.filled = false
+      state.compareA.problem = why
+    if state.compareB.waiting and state.compareJobB == job.id:
+      state.compareB.waiting = false
+      state.compareB.filled = false
+      state.compareB.problem = why
+    if waiting and not (state.compareA.waiting or state.compareB.waiting):
+      state.refreshCompare()
   if state.endProjectWork(job): return
   if state.endMapWork(job): return
   if state.endMemoryWork(job): return
@@ -6972,6 +7084,174 @@ proc takeReferences(state: var AppState; m: sink Msg) =
   elif n.act == raCopied:
     state.log.add(sevInfo, "references", "Copied \"" & n.name & "\" into the project.")
 
+proc refreshCompare(state: var AppState) =
+  ## Asks a job for the picture. The one on screen stays until the new one
+  ## arrives. A newer ask cancels the older job; a late answer is dropped.
+  inc state.comparePicGen
+  let gen = state.comparePicGen
+  if state.comparePicJob != NoJob:
+    discard state.jobs.cancel(state.comparePicJob)
+  let a = state.compareA
+  let b = state.compareB
+  let opt = state.compareOptions
+  state.comparePicJob = state.jobs.submit(JobSpec(title: "Compare the two traces",
+    lane: jlInteractive), comparePictureWork(a, b, opt, gen, state.inbox.poster))
+
+proc armCompare(state: var AppState; which: CompareWhich): uint64 =
+  ## Marks `which` waiting for a new copy, and returns the generation the
+  ## job must answer with. A late copy of an older ask is dropped.
+  inc state.compareGen
+  result = state.compareGen
+  if which == cwB:
+    state.compareB = CompareSlot(waiting: true, gen: result)
+    state.compareJobB = NoJob
+  else:
+    state.compareA = CompareSlot(waiting: true, gen: result)
+    state.compareJobA = NoJob
+  state.refreshCompare()
+
+proc stampCompare(state: var AppState; which: CompareWhich; path, fileName, record: string;
+    trace: int) =
+  if which == cwB:
+    state.compareB.path = path
+    state.compareB.fileName = fileName
+    state.compareB.trace = trace
+    state.compareB.recordText = record
+  else:
+    state.compareA.path = path
+    state.compareA.fileName = fileName
+    state.compareA.trace = trace
+    state.compareA.recordText = record
+
+proc setCompareTrace(state: var AppState; cmd: Command) =
+  if cmd.compareSlot == cwBoth:
+    state.ignore(cmd, "name slot A or slot B")
+    return
+  let i = state.findTrace(cmd.compareTrace)
+  if i < 0:
+    state.ignore(cmd, "the trace is in no open file")
+    return
+  let s = state.sessions[i]
+  let local = cmd.compareTrace - s.base
+  if local < 0 or local >= s.len:
+    state.ignore(cmd, "the trace is in no open file")
+    return
+  let gen = state.armCompare(cmd.compareSlot)
+  state.stampCompare(cmd.compareSlot, s.path, s.name, recordText(s, local), local + 1)
+  let own = state.ownAt(s.path, local)
+  let filt = if own.has: own.filter else: OwnFilter()
+  let reversed = state.editsAt(s.path).effectivelyReversed(local)
+  let job = state.jobs.submit(JobSpec(title: "Copy a trace for compare", lane: jlInteractive,
+    reads: @[s.path]), compareTraceWork(s.filePtr, s.path, s.size, local, filt, reversed,
+    gen, state.inbox.poster))
+  if cmd.compareSlot == cwB: state.compareJobB = job else: state.compareJobA = job
+
+proc setCompareRef(state: var AppState; cmd: Command) =
+  if cmd.compareSlot == cwBoth:
+    state.ignore(cmd, "name slot A or slot B")
+    return
+  if not state.refsLoaded:
+    state.ignore(cmd, "the reference archive is still being read")
+    return
+  let i = state.refs.findId(cmd.compareRef)
+  if i < 0:
+    state.ignore(cmd, "there is no reference \"" & cmd.compareRef & "\" in the archive")
+    return
+  let e = state.refs.entries[i]
+  if e.blocked or not singleFileName(e.file):
+    state.ignore(cmd, "the reference \"" & e.name & "\" names a file outside the archive")
+    return
+  if e.missing:
+    state.ignore(cmd, "the reference \"" & e.name & "\" has no file")
+    return
+  var fileName = e.name
+  var trace = 1
+  var record = ""
+  if not e.origin.generated:
+    if e.origin.fileName.len > 0: fileName = e.origin.fileName
+    if e.origin.trace > 0: trace = e.origin.trace
+    if e.origin.record == e.origin.record and abs(e.origin.record) < 1e15:
+      record = "FFID " & $int64(e.origin.record)
+  let gen = state.armCompare(cmd.compareSlot)
+  state.stampCompare(cmd.compareSlot, "", fileName, record, trace)
+  let job = state.jobs.submit(JobSpec(title: "Copy a reference for compare",
+    lane: jlInteractive), compareRefWork(state.refsHome / e.file, gen, timeStart(e),
+    state.inbox.poster))
+  if cmd.compareSlot == cwB: state.compareJobB = job else: state.compareJobA = job
+
+proc setCompare(state: var AppState; cmd: Command) =
+  if cmd.compareRef.len > 0: state.setCompareRef(cmd)
+  else: state.setCompareTrace(cmd)
+
+proc clearCompare(state: var AppState; cmd: Command) =
+  if cmd.compareSlot in {cwA, cwBoth}:
+    state.compareA = CompareSlot()
+    state.compareJobA = NoJob
+  if cmd.compareSlot in {cwB, cwBoth}:
+    state.compareB = CompareSlot()
+    state.compareJobB = NoJob
+  state.refreshCompare()
+
+proc swapCompare(state: var AppState) =
+  swap(state.compareA, state.compareB)
+  swap(state.compareJobA, state.compareJobB)
+  state.refreshCompare()
+
+proc showCompare(state: var AppState; cmd: Command) =
+  state.compareOptions = cmd.compareShow
+  state.refreshCompare()
+
+proc setCompareWindow(state: var AppState; cmd: Command) =
+  state.compareOpen = cmd.compareOpen
+
+proc fillCompare(slot: var CompareSlot; n: CompareNews) =
+  slot.waiting = false
+  if n.failure.len > 0:
+    slot.filled = false
+    slot.problem = n.failure
+    slot.samples.setLen 0
+    return
+  slot.filled = true
+  slot.problem = ""
+  slot.samples = n.samples
+  slot.dtMs = n.dtMs
+  slot.t0Ms = n.t0Ms
+  slot.fromMs = n.fromMs
+  slot.toMs = n.toMs
+  if n.channelText.len > 0: slot.channelText = n.channelText
+  if n.stationText.len > 0: slot.stationText = n.stationText
+  slot.reversed = n.reversed
+  slot.filtered = n.filtered
+  slot.filterWords = n.filterWords
+
+proc takeComparePicture(state: var AppState; m: sink Msg) =
+  ## The picture a job worked out. One the user has since replaced is
+  ## dropped. A typed shift is stored as the whole-sample time applied, so
+  ## the box shows that.
+  if m.comparePicGen != state.comparePicGen: return
+  if not state.compareOptions.shiftMs.isNaN and not m.comparePicture.appliedShiftMs.isNaN:
+    state.compareOptions.shiftMs = m.comparePicture.appliedShiftMs
+  state.comparePicture = move m.comparePicture
+  if state.comparePicJob == m.job: state.comparePicJob = NoJob
+  inc state.compareRevision
+
+proc takeCompare(state: var AppState; m: sink Msg) =
+  ## A compare job's copy. A generation that is no longer the slot's is a
+  ## copy the user has since replaced, and is dropped.
+  let n = m.compareNews
+  if state.compareA.waiting and state.compareA.gen == n.gen:
+    state.compareA.fillCompare(n)
+  elif state.compareB.waiting and state.compareB.gen == n.gen:
+    state.compareB.fillCompare(n)
+  else:
+    return
+  state.refreshCompare()
+  if state.compareA.filled and state.compareB.filled and not state.compareA.waiting and
+      not state.compareB.waiting:
+    state.compareOpen = true
+  if n.failure.len > 0:
+    state.log.add(sevWarning, "compare", n.failure & ".")
+
 proc applyCommand(state: var AppState; cmd: Command) =
   case cmd.kind
   of ckOpen:
@@ -7519,6 +7799,11 @@ proc applyCommand(state: var AppState; cmd: Command) =
       if checked == i: # the records were checked against it
         for s in state.sessions:
           if state.joinedRelations(s.id) < 0: state.checkRecords(s)
+  of ckSetCompare: state.setCompare(cmd)
+  of ckClearCompare: state.clearCompare(cmd)
+  of ckSwapCompare: state.swapCompare()
+  of ckCompareDisplay: state.showCompare(cmd)
+  of ckCompareWindow: state.setCompareWindow(cmd)
 
 proc takeLayout(state: var AppState; m: Msg) =
   ## A layout the disk thread read: shown, and with `rpImportLayout` kept
@@ -7624,6 +7909,8 @@ proc drainInbox*(state: var AppState): bool =
     of mkProject: state.takeProject(move m)
     of mkEarlier: state.takeEarlier(move m)
     of mkReferences: state.takeReferences(move m)
+    of mkCompare: state.takeCompare(move m)
+    of mkComparePicture: state.takeComparePicture(move m)
     of mkSpreads: state.takeSpreads(move m)
     of mkShots: state.takeShots(move m)
     of mkRecordQc: state.takeRecordQc(move m)
