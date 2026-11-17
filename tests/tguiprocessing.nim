@@ -4,17 +4,16 @@
 ## nothing (nor does `P`) while there is no filter; the drop-down opens on a
 ## click and stays open while it is set: Band-pass gives the default
 ## corners and the plot is filtered (a tile whose reader filtered every
-## trace of its request); dragging the f2 slider sends the new corner
-## frame after frame, the plot following (at least three tiles made while
-## the button is held, each from the samples at hand: no read), and the
-## last tile is of the corner where the drag ended; "+ 60 Hz" adds a notch
+## trace of its request); typing a number into the f1 box and
+## pressing Enter sends exactly that corner (the plot filtered again from
+## the samples at hand: no read), Tab takes it and goes on to the f2 box, a
+## number out of order is refused with a line and leaves the corner; "+ 60 Hz" adds a notch
 ## at 60 Hz with two harmonics; the Aux box filters the auxiliary traces
 ## too; `P` shows the traces raw (the strip says so) and processed again,
 ## and the settings keep the filters for a new plot.
 ##
-## Seen to fail: with the drop-down's sliders sending only when let go
-## (`igIsItemDeactivatedAfterEdit`), "0 tiles while f2 was dragged"; with
-## `filterKeys` not called, "P did not show the traces raw".
+## Seen to fail: with the f1 box taking nothing (`hertz` returning false),
+## "f1 typed did not happen"; with `filterKeys` not called, "P did not show the traces raw".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves filters-popup.png there.
@@ -100,30 +99,44 @@ proc main*() =
         doAssert f.lastTile.filtered == f.lastTile.request.count
         doAssert f.markOf("plot.filters f2").size.x > 0, "the drop-down closed"
         lastId = f.lastTile.id)
-    # drag f2 from the left of its slider to the right, over many frames
-    step("press f2", proc (f: FrameInfo) =
-      let r = f.markOf("plot.filters f2")
-      pointAt = vec2(round(r.pos.x + 6), round(r.pos.y + r.size.y / 2))
-      f.moveMouse(pointAt)
-      f.pressMouse(pointAt, true), after(3))
-    for i in 1 .. 12:
-      step("drag f2 " & $i, proc (f: FrameInfo) =
-        pointAt.x += 14
-        f.moveMouse(pointAt),
-        proc (f: FrameInfo): bool =
-          let t = f.lastTile
-          if t.id != lastId and t.request == f.panel.pending:
-            lastId = t.id
-            dragged.add f.processing.f2
-            doAssert t.cached and t.chunks == 0, "a moved corner read the file"
-          f.answered)
-    step("let go of f2", proc (f: FrameInfo) = f.pressMouse(pointAt, false),
-      proc (f: FrameInfo): bool =
-      result = f.answered
+    # type into the low-cut's start box: exactly what was typed is the corner
+    proc typeBox(mark, text: string; enter: bool) =
+      click(mark)
+      step("type " & text, proc (f: FrameInfo) =
+        doAssert f.typing, mark & " does not take the keys"
+        f.pressKey(skCtrl, true, {smCtrl})
+        f.typeText("a")
+        f.pressKey(skCtrl, false)
+        f.typeText(text)
+        if enter:
+          f.pressKey(skEnter, true)
+          f.pressKey(skEnter, false)
+        else:
+          f.pressKey(skTab, true)
+          f.pressKey(skTab, false), after(4))
+    typeBox("plot.filters f1", "3.123456", true)
+    step("f1 typed", noop, proc (f: FrameInfo): bool =
+      result = f.processing.f1 == 3.123456 and f.answered
+      if result: doAssert f.lastTile.cached and f.lastTile.chunks == 0, "a typed corner read the file")
+    # Tab takes f1's number and goes to the next box (f2), where the typing goes on
+    typeBox("plot.filters f1", "4.5", false)
+    step("Tab to f2", noop, proc (f: FrameInfo): bool =
+      result = f.processing.f1 == 4.5 and f.typing
       if result:
-        doAssert dragged.len >= 3, $dragged.len & " tiles while f2 was dragged"
-        doAssert f.processing.f2 > Processing().f2, "f2 did not move: " & $f.processing.f2
-        echo "tguiprocessing: f2 while dragged: ", dragged)
+        f.typeText("9.25")
+        f.pressKey(skEnter, true)
+        f.pressKey(skEnter, false))
+    step("f2 typed", noop, proc (f: FrameInfo): bool =
+      result = f.processing.f2 == 9.25 and f.answered
+      if result: lastId = f.lastTile.id)
+    # an impossible number is refused with a line, and the corner stays
+    typeBox("plot.filters f1", "50", true)
+    step("f1 refused", noop, proc (f: FrameInfo): bool =
+      result = f.markOf("plot.filters refused").size.x > 0
+      if result: doAssert f.processing.f1 == 4.5, "an impossible f1 was taken: " & $f.processing.f1)
+    typeBox("plot.filters f1", "5", true)
+    step("a good number takes the line away", noop, proc (f: FrameInfo): bool =
+      result = f.processing.f1 == 5.0 and f.markOf("plot.filters refused").size.x == 0)
     click("plot.filters notch add 60")
     step("a notch", noop, proc (f: FrameInfo): bool =
       result = f.processing.notches.len == 1 and f.answered

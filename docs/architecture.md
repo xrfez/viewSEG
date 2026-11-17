@@ -1080,7 +1080,7 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    read-ahead, kept at `decimation` samples per column (at most two columns per pixel
    row), and the filters' and the display pipeline's margins (`requiredMargin`,
    `decodeWindow`); while the layer filters, whole traces, so that the samples at hand
-   stay enough when a slider changes the filters' margin (a narrower ramp has a longer
+   stay enough when a corner changes the filters' margin (a narrower ramp has a longer
    one) and a parameter moved never reads the file. The
    read-ahead of a large view shrinks on both axes alike to keep the tile within
    `MaxAheadValues` (64 MiB); the view itself is always read. The
@@ -1120,11 +1120,11 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    trace, AGC) runs on them too (`flowReachesAux`), so an auxiliary trace of 60 000 and
    one of 1 are drawn alike; the other gain types leave them as they are.
    A newer note stops the read between chunks; a tile made from the samples at hand is
-   finished first (only a new source, order or stop ends it). **A slider dragged**
+   finished first (only a new source, order or stop ends it). **A filter changed again and again**
    (`ckProcessing` frame after frame, nothing else between: `Panel.filterRun`,
    `filterGen`): a tile asked for since the run began is taken in when it is newer than
    those held, though a newer request waits, and the run's requests after the first are
-   of the view alone (`requestView(readAhead = false)`), so the plot follows the slider;
+   of the view alone (`requestView(readAhead = false)`), so the plot follows the changes;
    the read-ahead comes back with the next view.
 5. **Tile** (reader). A `Tile` (plain seqs, moved through the inbox, never shared)
    holds the values (and, for wiggles zoomed out in time, the columns' extremes), the

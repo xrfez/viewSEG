@@ -268,7 +268,7 @@ type
       ## until the first tile after it comes, then dropped
     filterRun*: uint64
       ## `requestGen` of the first request of the filter changes made one
-      ## after another, with nothing else between (a slider dragged): a tile
+      ## after another, with nothing else between (a filter changed again and again): a tile
       ## asked for since then is drawn even when a newer change waits, so
       ## the plot follows the slider; 0 for none
     filterGen*: uint64 ## `requestGen` after the newest filter change

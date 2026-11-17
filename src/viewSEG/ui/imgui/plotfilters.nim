@@ -2,11 +2,11 @@
 ## they are applied (drawn in the warning colour, not lit, when they are set
 ## but reach none of the traces shown: auxiliary traces alone with the Aux
 ## box off), whose drop-down says what the traces go through and
-## holds every setting (DC removal, the pass band's corners, notches, the
-## Aux traces), and a Raw toggle beside it that shows
+## holds every setting (DC removal, the pass band's corners and the
+## notches, typed in Hz, the Aux traces), and a Raw toggle beside it that shows
 ## the traces without the filters (`P`). Every change goes to `core` as it
-## is made (`ckProcessing`): a slider moved sends a command each frame, the
-## panel's reader filters the samples it holds again off this thread, and
+## is made (`ckProcessing`): a number typed sends its command when it is taken
+## (Enter, Tab or a click away), the panel's reader filters the samples it holds again off this thread, and
 ## the plot keeps what it drew until the new tile comes (`core/processing`).
 
 import std/[math, strutils]
@@ -36,17 +36,40 @@ func label*(pr: Processing): string =
   result = "Filters: " & describe(pr)
   if pr.raw: result.add " (raw)"
 
-proc hertz(id: string; value: var float64; lo, hi: float64; width: float32): bool =
-  ## A slider in Hz from `lo` to `hi` (logarithmic: a low-cut's corners
-  ## move finely), Ctrl + click to type; true while it changes.
+var
+  hzNote: string
+  hzWarn = ImVec4_c(x: 1, y: 0.75, z: 0.25, w: 1) ## the theme's warning colour
+
+proc hzSay() =
+  ## The refused number's line, in the warning colour, under the popup's first line.
+  if hzNote.len == 0: return
+  igPushTextWrapPos(igGetFontSize() * 40)
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, hzWarn)
+  igTextWrapped("%s", hzNote.cstring)
+  igPopStyleColor(1)
+  igPopTextWrapPos()
+  ## What the last refused number said (a corner or notch that cannot be where it
+  ## was typed); "" once a number is taken or the drop-down closes.
+
+proc hertz(id, what: string; value: var float64; lo, hi: float64; width: float32): bool =
+  ## A box for a frequency in Hz that the user types into: it applies on
+  ## Enter, Tab or a click away (the digits kept as typed, up to nine
+  ## significant ones), true then. A number outside `lo .. hi` is refused
+  ## with a line saying so (`hzNote`) and the value stays.
   var v = cdouble(value)
-  var a = cdouble(lo)
-  var b = cdouble(max(hi, lo))
   igSetNextItemWidth(width)
-  result = igSliderScalar(id.cstring, ImGui_DataType_Double.ImGuiDataType, addr v, addr a,
-    addr b, "%.1f Hz", (ImGui_SliderFlags_Logarithmic.cint or
-    ImGui_SliderFlags_AlwaysClamp.cint).ImGuiSliderFlags)
-  if result: value = float64(v)
+  discard igInputDouble(id.cstring, addr v, 0, 0, "%.9g", 0)
+  if igIsItemDeactivatedAfterEdit():
+    let hiOk = max(hi, lo)
+    if v.classify in {fcNormal, fcZero, fcSubnormal} and v >= lo and v <= hiOk:
+      value = float64(v)
+      hzNote = ""
+      result = true
+    else:
+      hzNote = what & ": " & formatFloat(float64(v), ffDefault, 9) & " Hz is not possible " &
+        "here, it must be from " & formatFloat(lo, ffDefault, 9) & " to " &
+        formatFloat(hiOk, ffDefault, 9) & " Hz (low-cut start <= its end <= high-cut " &
+        "start <= its end <= Nyquist)"
 
 func reachText*(reach: FilterReach): string =
   ## What the filters' tooltip and drop-down say of the traces they do not
@@ -89,28 +112,28 @@ proc drawSettings(p: Panel; pr: Processing; hasAux: bool; reach: FilterReach;
     igSameLine(lead, -1)
   if pr.band.hasLow:
     rampLabel("Low-cut")
-    if hertz("##f1", n.f1, 0, min(pr.f2, nyq) - MinRampHz, half): p.send(n, cmds)
+    if hertz("##f1", "Low-cut start", n.f1, 0, min(pr.f2, nyq) - MinRampHz, half): p.send(n, cmds)
     marks.mark("plot.filters f1")
-    tip("f1: the gain is 0 below this frequency (Ctrl + click to type it)")
+    tip("f1: the gain is 0 below this frequency (type it in Hz)")
     igSameLine(0, -1)
     igTextUnformatted("to", nil)
     igSameLine(0, -1)
-    if hertz("##f2", n.f2, pr.f1 + MinRampHz, if pr.band.hasHigh: min(pr.f3, nyq) else: nyq,
-        half):
+    if hertz("##f2", "Low-cut end", n.f2, pr.f1 + MinRampHz, if pr.band.hasHigh: min(pr.f3,
+        nyq) else: nyq, half):
       p.send(n, cmds)
     marks.mark("plot.filters f2")
     tip("f2: the gain is 1 above this frequency, rising from f1 as a cos² ramp")
   if pr.band.hasHigh:
     rampLabel("High-cut")
-    if hertz("##f3", n.f3, if pr.band.hasLow: pr.f2 else: MinRampHz,
+    if hertz("##f3", "High-cut start", n.f3, if pr.band.hasLow: pr.f2 else: MinRampHz,
         min(pr.f4, nyq) - MinRampHz, half):
       p.send(n, cmds)
     marks.mark("plot.filters f3")
-    tip("f3: the gain is 1 below this frequency (Ctrl + click to type it)")
+    tip("f3: the gain is 1 below this frequency (type it in Hz)")
     igSameLine(0, -1)
     igTextUnformatted("to", nil)
     igSameLine(0, -1)
-    if hertz("##f4", n.f4, pr.f3 + MinRampHz, nyq, half): p.send(n, cmds)
+    if hertz("##f4", "High-cut end", n.f4, pr.f3 + MinRampHz, nyq, half): p.send(n, cmds)
     marks.mark("plot.filters f4")
     tip("f4: the gain is 0 above this frequency, falling from f3 as a cos² ramp; " &
       "Nyquist is " & formatFloat(nyq, ffDecimal, 1) & " Hz")
@@ -126,13 +149,13 @@ proc drawSettings(p: Panel; pr: Processing; hasAux: bool; reach: FilterReach;
     igSameLine(0, -1)
     igTextUnformatted("at", nil)
     igSameLine(0, -1)
-    if hertz("##hz", n.notches[i].hz, 1, nyq, round(w * 0.5)): p.send(n, cmds)
+    if hertz("##hz", "Notch frequency", n.notches[i].hz, 1, nyq, round(w * 0.5)): p.send(n, cmds)
     marks.mark("plot.filters notch " & $i & " hz")
     tip("The notch's frequency: the gain is 0 there")
     igSameLine(0, -1)
     igTextUnformatted("width", nil)
     igSameLine(0, -1)
-    if hertz("##width", n.notches[i].widthHz, MinNotchWidthHz, 20, round(w * 0.4)):
+    if hertz("##width", "Notch width", n.notches[i].widthHz, MinNotchWidthHz, 20, round(w * 0.4)):
       p.send(n, cmds)
     marks.mark("plot.filters notch " & $i & " width")
     tip("The notch's width: the gain is 1 again half of it away")
@@ -222,13 +245,19 @@ proc drawFilterControls*(p: Panel; hasAux: bool; reach: FilterReach; t: Theme;
     igTextUnformatted(text.cstring, nil)
     if ownLine.len > 0: igTextUnformatted(ownLine.cstring, nil)
     marks.mark("plot.filters says")
-    # the sliders' tracks and the boxes stand out from the popup they are on
+    hzWarn = vec4(t.roles[rlWarning])
+    if hzNote.len > 0:
+      hzSay()
+      marks.mark("plot.filters refused")
+    # the boxes stand out from the popup they are on
     let raised = vec4(mix(t.roles[rlFrame], t.roles[rlText], 0.12))
     igPushStyleColor_Vec4(ImGui_Col_FrameBg.cint, raised)
     igPushStyleColor_Vec4(ImGui_Col_Button.cint, raised)
     drawSettings(p, pr, hasAux, reach, t, marks, cmds)
     igPopStyleColor(2)
     igEndPopup()
+  else:
+    hzNote = ""
   igSameLine(0, 2)
   igBeginDisabled(not pr.hasFilters)
   if toggle("Raw##filtersraw", pr.raw and pr.hasFilters, t):
@@ -251,7 +280,9 @@ proc drawOwnFilter*(draft: var OwnFilter; mixed: bool; n: int; dtMs: float64;
   ## in the same order and words, then whether it runs after the plot's
   ## filters or instead of them, then Apply. True when Apply is clicked.
   ## Aux and Raw are the plot's switches, not a trace's, so they are not here.
-  if not igBeginPopup(ownId, 0): return false
+  if not igBeginPopup(ownId, 0):
+    hzNote = ""
+    return false
   marks.markWindow("plot.ownfilter popup")
   let title = if n == 1: "Filter this trace" else: "Filter " & $n & " traces"
   igTextUnformatted(title.cstring, nil)
@@ -263,6 +294,9 @@ proc drawOwnFilter*(draft: var OwnFilter; mixed: bool; n: int; dtMs: float64;
   let nyq = if dt > 0 and dt < Inf: 500 / dt else: MaxFilterHz
   let w = round(igGetFontSize() * 16)
   var pr = draft.spec
+  if hzNote.len > 0:
+    hzSay()
+    marks.mark("plot.ownfilter refused")
   igSeparatorText("DC removal")
   for dc in DcRemoval:
     if dc != DcRemoval.low: igSameLine(0, -1)
@@ -283,23 +317,24 @@ proc drawOwnFilter*(draft: var OwnFilter; mixed: bool; n: int; dtMs: float64;
     igSameLine(lead, -1)
   if pr.band.hasLow:
     rampLabel("Low-cut")
-    discard hertz("##of1", pr.f1, 0, min(pr.f2, nyq) - MinRampHz, half)
+    discard hertz("##of1", "Low-cut start", pr.f1, 0, min(pr.f2, nyq) - MinRampHz, half)
     marks.mark("plot.ownfilter f1")
     igSameLine(0, -1)
     igTextUnformatted("to", nil)
     igSameLine(0, -1)
-    discard hertz("##of2", pr.f2, pr.f1 + MinRampHz, if pr.band.hasHigh: min(pr.f3, nyq) else: nyq,
+    discard hertz("##of2", "Low-cut end", pr.f2, pr.f1 + MinRampHz, if pr.band.hasHigh: min(pr.f3,
+        nyq) else: nyq,
       half)
     marks.mark("plot.ownfilter f2")
   if pr.band.hasHigh:
     rampLabel("High-cut")
-    discard hertz("##of3", pr.f3, if pr.band.hasLow: pr.f2 else: MinRampHz,
+    discard hertz("##of3", "High-cut start", pr.f3, if pr.band.hasLow: pr.f2 else: MinRampHz,
       min(pr.f4, nyq) - MinRampHz, half)
     marks.mark("plot.ownfilter f3")
     igSameLine(0, -1)
     igTextUnformatted("to", nil)
     igSameLine(0, -1)
-    discard hertz("##of4", pr.f4, pr.f3 + MinRampHz, nyq, half)
+    discard hertz("##of4", "High-cut end", pr.f4, pr.f3 + MinRampHz, nyq, half)
     marks.mark("plot.ownfilter f4")
   igSeparatorText("Notches")
   var drop = -1
@@ -311,11 +346,11 @@ proc drawOwnFilter*(draft: var OwnFilter; mixed: bool; n: int; dtMs: float64;
     igSameLine(0, -1)
     igTextUnformatted("at", nil)
     igSameLine(0, -1)
-    discard hertz("##hz", pr.notches[i].hz, 1, nyq, round(w * 0.5))
+    discard hertz("##hz", "Notch frequency", pr.notches[i].hz, 1, nyq, round(w * 0.5))
     igSameLine(0, -1)
     igTextUnformatted("width", nil)
     igSameLine(0, -1)
-    discard hertz("##width", pr.notches[i].widthHz, MinNotchWidthHz, 20, round(w * 0.4))
+    discard hertz("##width", "Notch width", pr.notches[i].widthHz, MinNotchWidthHz, 20, round(w * 0.4))
     igSameLine(0, -1)
     var h = cint(notch.harmonics)
     igSetNextItemWidth(round(w * 0.3))

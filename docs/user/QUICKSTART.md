@@ -340,16 +340,18 @@ edits, the display header and the status bar work on them too.
 
 **Filters.** The **Filters** button in the strip (a funnel, after the gain; lit while
 filters are applied; its tooltip and the top of its drop-down say which) sets what the
-traces go through before the gain, and the plot follows as you move a
-slider:
+traces go through before the gain, and the plot follows each number
+you set:
 
 - **DC removal**: none, the mean, or the mean and a linear trend of each trace.
 - **Pass band**: none, **Low-cut**, **High-cut** or **Band-pass**, each by its corners in
   Hz: the low-cut ramp from f1 (nothing below) to f2 (everything above), the high-cut ramp
   from f3 to f4 (nothing above). A band-pass of 8-14-60-80 Hz, say, takes the slow ground
-  roll out of a shot record. The sliders move finely at low frequencies; Ctrl + click one
-  to type a value. They end at the file's Nyquist frequency; a corner past it (set for
-  another file) is cut there, and the drop-down says so.
+  roll out of a shot record. Type each corner in Hz into its box and press Enter, Tab or click away: it
+  is taken exactly as typed. A number that cannot be there (a corner past its neighbour or
+  past the file's Nyquist frequency) is refused, with a line in the drop-down saying where
+  it may be. A corner past Nyquist set for another file is cut there, and the drop-down
+  says so.
 - **Notches**: **+ 50 Hz** or **+ 60 Hz** adds a notch at the power line's frequency and
   its next two harmonics (x3); **+ Notch** one of your own. Each has its frequency, its
   width (the notch is gone half the width away) and how many harmonics it takes, and can
@@ -362,7 +364,7 @@ slider:
 The **Raw** toggle beside the drop-down (or `P`) shows the traces without the filters,
 under the same gain, so you can compare; press it again for the filtered traces. The
 filters stay on for the next record and file, and a new plot starts with the ones you
-set last. Moving a slider never reads the file again: viewSEG filters the samples it
+set last. Changing a corner never reads the file again: viewSEG filters the samples it
 already holds, and only the traces and times you are looking at (and a little around
 them), so it is as quick on a huge file as on a small one.
 
