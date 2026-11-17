@@ -284,7 +284,9 @@ proc footer(f: FileList; shown: int; t: Theme) =
     for e in f.entries:
       if e.kind.isSurvey: inc surveys
     let seismic = f.entries.len - surveys
-    text = $seismic & (if seismic == 1: " seismic file" else: " seismic files")
+    text = f.subfoldersNote
+    if text.len == 0:
+      text = $seismic & (if seismic == 1: " seismic file" else: " seismic files")
     if surveys == 1: text.add ", 1 survey file"
     elif surveys > 1: text.add ", " & $surveys & " survey files"
     if shown < f.entries.len: text.add ", " & $shown & " shown"

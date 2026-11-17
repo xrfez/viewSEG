@@ -87,6 +87,7 @@ type
     entries*: seq[FileEntry] ## the seismic and survey files, in natural order of their names
     others*: int             ## files that are neither, so not listed
     unreadable*: int         ## files that could not be read
+    subfolders*: int         ## folders inside the folder listed (not hidden ones)
     scanning*: bool          ## the scan has not finished
     job*: JobId              ## the scan's job; `NoJob` for none
     gen*: uint64             ## bumped by each new listing; what a scan posts carries it
@@ -98,6 +99,14 @@ type
     changes*: seq[EntryChange]
       ## the newest changes of `entries`, oldest first, at most `MaxChanges`:
       ## the last one made `entriesRev`
+
+func subfoldersNote*(f: FileList): string =
+  ## What an empty listing of a folder that has only subfolders says, so the empty
+  ## list is not left unexplained; "" otherwise.
+  if f.title.len > 0 and not f.scanning and f.error.len == 0 and f.entries.len == 0 and
+      f.subfolders > 0:
+    result = "No seismic files here; " & $f.subfolders &
+      (if f.subfolders == 1: " subfolder" else: " subfolders")
 
 func isDigit(c: char): bool {.inline.} = c in {'0'..'9'}
 

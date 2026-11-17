@@ -6538,6 +6538,7 @@ proc takeListed(state: var AppState; m: sink Msg) =
   f.merge(m.listed)
   f.others += m.others
   f.unreadable += m.unreadable
+  f.subfolders += m.subfolders
   if m.listDone:
     f.scanning = false
     # Watched from what the scan found: a folder listed, or the files chosen.

@@ -112,6 +112,7 @@ type
       listed*: seq[FileEntry] ## seismic files, in natural order
       others*: int ## files found that are not seismic
       unreadable*: int ## files that could not be read
+      subfolders*: int ## the folders listed hold this many folders (the last message)
       listDone*: bool ## the scan's last message
       listFolder*: string ## the folder listed, once known; "" for files chosen one by one
       listChosen*: string ## the one file named, when only a file was named; "" otherwise

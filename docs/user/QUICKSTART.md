@@ -78,6 +78,10 @@ shows the newest ones); the file dialogs start in the folder of the last file op
 
 ## Step through a folder
 
+A folder with no seismic files but with subfolders (a data folder with one folder a day, say)
+is listed empty, and the Files panel says so under the list: "No seismic files here; 2
+subfolders". Open one of the subfolders.
+
 The **Files** window, at the left, lists the seismic files (SEG-Y, SEG-D, SEG-2) and the
 survey files (SPS S, R and X, P1) of a folder with their type, size and date; other files
 are counted at the bottom, not listed.

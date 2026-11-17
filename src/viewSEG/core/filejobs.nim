@@ -372,6 +372,14 @@ proc scanWork*(gen: uint64; paths: seq[string]; to: Poster): JobWork =
         batch = Msg(job: ctx.id, kind: mkListed, listGen: gen)
         last = getMonoTime()
     discard ctx.progress(names.len, names.len)
+    for p in asked:
+      if fs.dirExists(p):
+        try:
+          for kind, path in fs.walkDir(p, checkDir = true):
+            if kind in {pcDir, pcLinkToDir} and not path.extractFilename.startsWith("."):
+              inc batch.subfolders
+        except OSError:
+          discard # the files were listed: the folder count is only a hint
     batch.listDone = true
     batch.listLooked = move looked
     to.post move batch
