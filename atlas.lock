@@ -3,13 +3,13 @@
     "parseSEG": {
       "dir": "$deps/parseSEG",
       "url": "https://github.com/xrfez/parseSEG",
-      "commit": "bef173ee65aa61c3f340eb82e79bb5a24866895f",
+      "commit": "062cde02972a75de16461ec2424423d749fd5369",
       "version": ""
     },
     "processSEG": {
       "dir": "$deps/processSEG",
       "url": "https://github.com/xrfez/processSEG",
-      "commit": "d41ed9db48d9003cefb3084acedeff7a83e95932",
+      "commit": "822d80d96325946d0ecb6b48ea965cfc99eb9dda",
       "version": ""
     },
     "Arraymancer": {
