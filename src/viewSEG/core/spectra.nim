@@ -215,11 +215,9 @@ type
 
   SpectrumSum* = object
     ## The power average of many traces' spectra, block by block.
-    plan: SpectrumPlan[float32]
+    sum: SpectrumAccumulator[float32] ## the power sum (processSEG's)
+    plan: SpectrumPlan[float32]       ## for the phase of one window
     ws: Workspace
-    amp: seq[float64]
-    power: seq[float64] ## Σ amplitude² · rows over the blocks
-    used: int
 
 const
   LiveSpectrum* = 0        ## the live panel's id
@@ -481,20 +479,16 @@ proc initSpectrumSum*(dtMs: float64; windowLen: int; nfft = 0): SpectrumSum =
   ## by FFTs of `nfft` (0: the window's next power of two). Raises
   ## `ValueError` for a window of no sample, an interval that is not
   ## positive and finite, or an `nfft` shorter than the window.
-  result = SpectrumSum(plan: initSpectrumPlan(float32, dtMs, windowLen, nfft = nfft),
-    ws: initWorkspace())
+  result = SpectrumSum(sum: initSpectrumAccumulator(float32, dtMs, windowLen, nfft = nfft),
+    plan: initSpectrumPlan(float32, dtMs, windowLen, nfft = nfft), ws: initWorkspace())
+  result.ws.reserve(result.sum.workspaceSize)
   result.ws.reserve(result.plan.workspaceSize)
-  result.amp = newSeq[float64](result.plan.bins)
-  result.power = newSeq[float64](result.plan.bins)
 
 proc add*(s: var SpectrumSum; b: RowBlock[float32]; meta: ChunkMeta; firstCol: int): int =
   ## Adds the spectra of the window from `firstCol` of `b`'s live rows;
   ## the rows it used (dead, auxiliary, failed rows, rows with a sample
   ## that is not a number in the window, or none in it, are left out).
-  result = s.plan.averageAmplitudeInto(b, meta, firstCol, s.amp, s.ws)
-  if result > 0:
-    for k in 0 ..< s.amp.len: s.power[k] += s.amp[k] * s.amp[k] * float64(result)
-    s.used += result
+  s.sum.add(b, meta, firstCol, s.ws)
 
 proc phaseOf*(s: var SpectrumSum; x: openArray[float32]): seq[float64] =
   ## The phase of one window of a trace (`x`, up to the window's length),
@@ -504,36 +498,37 @@ proc phaseOf*(s: var SpectrumSum; x: openArray[float32]): seq[float64] =
   result = newSeq[float64](phase.len)
   for k, p in phase: result[k] = float64(p) * 180 / PI
 
-func used*(s: SpectrumSum): int {.inline.} = s.used
+func used*(s: SpectrumSum): int {.inline.} = s.sum.used
   ## The rows summed so far.
 
-func bins*(s: SpectrumSum): int {.inline.} = s.plan.bins
-func binHz*(s: SpectrumSum): float64 {.inline.} = s.plan.binHz(1)
-func nfft*(s: SpectrumSum): int {.inline.} = s.plan.nfft
+func bins*(s: SpectrumSum): int {.inline.} = s.sum.bins
+func binHz*(s: SpectrumSum): float64 {.inline.} = s.sum.binHz(1)
+func nfft*(s: SpectrumSum): int {.inline.} = s.sum.nfft
 
 func amplitudes*(s: SpectrumSum): seq[float64] =
   ## The power-averaged amplitude per bin: the RMS amplitude over the rows
   ## summed; all zero for none.
-  result = newSeq[float64](s.power.len)
-  if s.used > 0:
-    for k in 0 ..< s.power.len: result[k] = sqrt(s.power[k] / float64(s.used))
+  result = newSeq[float64](s.sum.bins)
+  s.sum.amplitudesInto(result)
 
 proc dbOf*(amps: openArray[float64]; reference: float64; floorDb = -120.0): seq[float64] =
   ## `20·log10(amp / reference)` per bin, at least `floorDb`: processSEG's
-  ## `toDbInto` against one sample unit, moved to the caller's reference,
-  ## so that two curves (raw and processed) compare on one scale.
+  ## `toDbInto` against `reference` (an amplitude), so that two curves (raw
+  ## and processed) compare on one scale. A reference that is not positive
+  ## and finite is one sample unit.
   result = newSeq[float64](amps.len)
-  toDbInto(amps, result, dbAbsolute, floorDb = -1000.0)
-  let shift = if reference > 0 and reference < Inf: 20 * log10(reference) else: 0.0
-  for x in result.mitems: x = max(x - shift, floorDb)
+  let ref1 = if reference > 0 and reference < Inf: reference else: 1.0
+  toDbInto(amps, result, dbAbsolute, floorDb, ref1)
 
-func levelDb*(amp, reference: float64): float64 =
+proc levelDb*(amp, reference: float64): float64 =
   ## `amp` in dB against `reference`, `20·log10(amp / reference)`, unclamped
   ## (what a spectrum's cursor reads, the window and agents alike); NaN when
   ## there is no level: an amplitude of 0 (or not finite), or no reference
   ## (a spectrum of zeros).
-  if reference > 0 and reference < Inf and amp > 0 and amp < Inf: 20 * log10(amp / reference)
-  else: NaN
+  if not (reference > 0 and reference < Inf and amp > 0 and amp < Inf): return NaN
+  var db = [0.0]
+  toDbInto([amp], db, dbAbsolute, -Inf, reference)
+  db[0]
 
 func peakOf*(amps: openArray[float64]): float64 =
   ## The largest finite amplitude; 0 for none.
