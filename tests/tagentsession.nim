@@ -111,7 +111,7 @@ const Reached = {
   "spectrum.live.logFrequency": "spectrum display", "spectrum.live.time": "spectrum display",
   "spectrum.live.raw": "spectrum display", "spectrum.live.processed": "spectrum display",
   "displayPresets": "display preset",
-  "referenceId": "select reference"}.toTable
+  "referenceId": "select reference", "vibRoles": "plot display"}.toTable
   # `plotOptions.<kind>.<field>`, each New plot kind's remembered options: all
   # reached by "plot display" (`reachedBy`), and all saved when a window sets them
 
@@ -380,6 +380,13 @@ proc main*() =
         doAssert st.settings.plotOptions.applied(v, AnalysisParams()) == PlotShown.optionsOf(v)
           .applied(v, AnalysisParams()), "the agent's options of " & $v & " were not taken"
       doAssert st.plots.len == PlotViews.len, $st.plots.len
+      # a vibrator signature's roles chosen by an agent: remembered for the session only
+      st.agent(%*{"kind": "open plot", "plotView": "vibrator signature",
+        "plotTraces": [st.firstTrace, st.firstTrace + 1, st.firstTrace + 2,
+        st.firstTrace + 3]})
+      st.agent(%*{"kind": "plot display", "plot": st.plots[^1].id,
+        "plotParams": {"roles": {"mass": 3, "baseplate": 2}}})
+      doAssert st.plots[^1].params.roles.mass == 3 and st.settings.vibRoles.len == 1
       for w in st.plots: st.agent(%*{"kind": "close plot", "plot": w.id})
       st.agent(%*{"kind": "open plot", "plotView": "spectrogram"})
       doAssert st.plots[0].params.windowMs == 64, "a new window opens with the agent's options"
@@ -514,6 +521,11 @@ proc main*() =
         st.apply Command(kind: ckOpenPlot, plotView: v, plotTraces: @[st.firstTrace,
           st.firstTrace + 1, st.firstTrace + 2, st.firstTrace + 3])
         st.apply Command(kind: ckPlotDisplay, plot: st.plots[^1].id, plotParams: PlotShown)
+      st.apply Command(kind: ckOpenPlot, plotView: avVibrator, plotTraces: @[st.firstTrace,
+        st.firstTrace + 1, st.firstTrace + 2, st.firstTrace + 3])
+      var swapped = st.plots[^1].params
+      swap(swapped.roles.mass, swapped.roles.baseplate)
+      st.apply Command(kind: ckPlotDisplay, plot: st.plots[^1].id, plotParams: swapped)
       st.apply Command(kind: ckStoreReference, refStore: StoredReference(name: "window pilot",
         trace: st.firstTrace, fromMs: 0, toMs: -1))
       doAssert st.settle(st.references.entries.len >= 1 and busy(st, fe).len == 0),
