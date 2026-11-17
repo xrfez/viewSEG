@@ -1,5 +1,5 @@
 (.nif27)
-; Vendor map for SEG-D Rev 3.0 files with manufacturer code 50, trace header extension block 0xB0.
+; Vendor map for INOVA SEG-D Rev 3.0 files (manufacturer code 50), trace header extension block 0xB0.
 ; SOURCE: a third-party compliance report (2016, covering recording software 6.003), NOT the vendor's own
 ; format document. The two fields below are inferred from ONE hex dump in that report plus its decoder
 ; output, and from agreement with sample files written by software 9.005 (the version gap is untested
@@ -11,7 +11,7 @@
 ; A raw value 0 means "no value": an all-zero B0 (seen on traces without data) shows no fields.
 (vendormap "mfr50-rev3" (version 1)
   (match (format segd) (rev 3.0 3.0) (manufacturer 50))
-  (doc "Manufacturer 50 SEG-D Rev 3.0 trace header block 0xB0: device code and device serial number, inferred from one hex dump in a third-party compliance report")
+  (doc "INOVA (manufacturer code 50) SEG-D Rev 3.0 trace header block 0xB0: device code and device serial number, inferred from one hex dump in a third-party compliance report")
   (target (kind block) (type 0xB0) (where traceHeader) (name deviceHeaderB0)
     ; inferred from one hex dump in a compliance report: device code = byte 1 (u8). 0x31 is that report's
     ; decoder label; 0x32 is what the samples hold and has no documented meaning.
