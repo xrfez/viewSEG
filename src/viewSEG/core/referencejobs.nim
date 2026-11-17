@@ -155,3 +155,71 @@ proc copyWork*(fromFolder, toFolder, id: string; to: Poster): JobWork =
       post(to, ctx.id, news)
     except CatchableError as e:
       failed(to, ctx.id, toFolder, e.msg)
+
+proc pilotRuleWork*(rule: PilotRule; folder: string; to: Poster): JobWork =
+  ## Stores the rule `rule` names (no sample is read).
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "storing the pilot reference"
+    try:
+      let name = if rule.name.strip.len > 0: rule.name.strip else: defaultPilotName(rule)
+      let id = storePilotRule(folder, rule)
+      var news = ReferenceNews(home: folder, act: raRuleStored, id: id, name: name,
+        index: loadIndex(folder))
+      post(to, ctx.id, news)
+    except CatchableError as e:
+      failed(to, ctx.id, folder, e.msg)
+
+proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
+    rule: PilotRule; flip: bool; record: string; surveyTrace, window: int;
+    key, name, folder: string; to: Poster): JobWork =
+  ## Reads trace `trace` of the open file raw, turns it over when `flip` (its
+  ## polarity as the plot shows it: the trace's own reversal or reverse-all),
+  ## and cuts the window `rule` names. For a reference window (`window` above
+  ## 0) it posts `raViewed`; else `raPilotShown` for the Generate dialog's
+  ## preview, with the amplitude spectrum in dB in `amps`. A trace or window that
+  ## is not there is said in `failure`.
+  result = proc (ctx: JobContext) {.gcsafe.} =
+    ctx.setPhase "reading the pilot"
+    let preview = window <= 0
+    var news = ReferenceNews(home: folder, act: (if preview: raPilotShown else: raViewed),
+      key: key, name: name, window: window, record: record, pilotTrace: -1)
+    try:
+      if size >= 0 and fs.getFileInfo(path).size < size:
+        raise newException(IOError, "the file is shorter than when it was opened")
+      var samples: seq[float32] = @[]
+      var us = 0.0
+      {.cast(gcsafe).}:
+        samples = readRawTrace(file, path, trace)
+        let k = file[].traceKeys(trace)
+        us = if k.intervalUs > 0 and k.intervalUs < Inf: k.intervalUs
+             else: file[].sampleIntervalUs(trace)
+      if samples.len == 0:
+        raise newException(IOError, "the trace could not be read")
+      if flip:
+        for v in samples.mitems: v = -v
+      let dt = if us > 0 and us < Inf: us / 1000 else: 0.0
+      let (cut, problem) = cutPilot(samples, dt, rule, record)
+      if problem.len > 0:
+        news.failure = problem
+      else:
+        news.dtMs = dt
+        news.fromMs = max(rule.startMs, 0.0)
+        news.pilotTrace = surveyTrace
+        news.pilotTraceMs = float64(samples.len - 1) * dt
+        news.pilotFrom = news.fromMs
+        news.pilotTo = news.fromMs + float64(cut.len - 1) * dt
+        if preview:
+          let spec = previewSpectrum(cut, dt)
+          news.hz = spec.hz
+          news.amps = spec.db
+          news.ys = newSeq[float64](cut.len)
+          for i, v in cut: news.ys[i] = float64(v)
+        else:
+          let spec = amplitudeOf(cut, dt)
+          news.hz = spec.hz
+          news.amps = spec.amp
+          news.ys = newSeq[float64](cut.len)
+          for i, v in cut: news.ys[i] = float64(v)
+    except CatchableError as e:
+      news.failure = e.msg
+    post(to, ctx.id, news)

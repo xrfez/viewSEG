@@ -37,27 +37,34 @@ import analysis, filesystem, fkanalysis, inbox, jobs, join, log, processing, ref
 type
   AnalysisAsk* = object
     ## What an analysis window asks the reader for.
-    id*: int                ## the window's
+    id*: int                    ## the window's
     gen*: uint64
     view*: AnalysisView
     params*: AnalysisParams
-    file*: ptr SeismicFile  ## held by the caller
+    file*: ptr SeismicFile      ## held by the caller
     path*: string
-    size*: int64            ## its size when it was opened; -1 when not known
-    traces*: seq[int]       ## indices in the file, in the order drawn
-    unit*: SurveyUnit       ## the unit of the file's distances (coordinates)
-    offsetUnit*: SurveyUnit ## the unit of the file's trace offsets
-    names*: seq[string]     ## per trace, what the curves call it: "trace 12"
-    killed*: seq[int]       ## those of `traces` killed, ascending: left out
-    reversed*: seq[int]     ## those of `traces` effectively reversed, ascending: samples times -1 first
-    allReversed*: bool      ## reverse-all was on for this file
-    own*: seq[FilterEntry]  ## traces that carry a filter of their own, ascending
-    processing*: Processing ## the plot's filters and its Aux toggle
+    size*: int64                ## its size when it was opened; -1 when not known
+    traces*: seq[int]           ## indices in the file, in the order drawn
+    unit*: SurveyUnit           ## the unit of the file's distances (coordinates)
+    offsetUnit*: SurveyUnit     ## the unit of the file's trace offsets
+    names*: seq[string]         ## per trace, what the curves call it: "trace 12"
+    killed*: seq[int]           ## those of `traces` killed, ascending: left out
+    reversed*: seq[int]         ## those of `traces` effectively reversed, ascending: samples times -1 first
+    allReversed*: bool          ## reverse-all was on for this file
+    own*: seq[FilterEntry]      ## traces that carry a filter of their own, ascending
+    processing*: Processing     ## the plot's filters and its Aux toggle
     refName*: string
-    archivePath*: string    ## a reference from the archive, instead of a trace
+    archivePath*: string        ## a reference from the archive, instead of a trace
     archiveName*: string
     archiveIntervalUs*: float64
-    archiveGone*: string    ## selected, but not usable: said, and nothing is drawn
+    archiveGone*: string        ## selected, but not usable: said, and nothing is drawn
+    pilotTrace*: int = -1
+      ## a chosen pilot of the record: this record's trace (an index in the file) it
+      ## takes by the rule `pilotRule`; -1 for none
+    pilotRule*: PilotRule
+    pilotRecord*: string ## which record that is, for the sentences
+    pilotReversed*: bool ## that trace is effectively reversed: turned over first
+    pilotOwn*: seq[FilterEntry] ## its own filter, when it has one
 
   ReaderObj = object
     lock: Lock
@@ -122,6 +129,9 @@ proc unreadable(path: string; size: int64): string =
       "answer") & "): its drive went away or fails"
 
 func sameDt(a, b: float64): bool {.inline.} = abs(a - b) <= 1e-9 * max(a, b)
+
+func recordSentenceOf(a: AnalysisAsk): string =
+  if a.pilotRecord.len == 0: "The record" else: capitalizeAscii(a.pilotRecord)
 
 proc readRows(p: ptr ReaderObj; f: ptr SeismicFile; path: string; list: seq[int];
     id: int; rows: var seq[seq[float32]]; failed: var seq[bool]): bool =
@@ -380,6 +390,55 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                     answer = correlationOf(signals, refSamples, refName, dtMs, a.params, stop)
                     (answer.leftOut, answer.atOtherInterval) = n
                     let rule = if kept.len > 0: lengthRule(refSamples.len, kept[0].len) else: ""
+                    if rule.len > 0 and answer.problem.len == 0:
+                      answer.note = "Reference: " & refName & ". " & rule &
+                        (if answer.note.len > 0: ". " & answer.note else: "")
+                    elif answer.problem.len == 0:
+                      answer.note = "Reference: " & refName &
+                        (if answer.note.len > 0: ". " & answer.note else: "")
+            elif a.pilotTrace >= 0:
+              # a trace of this record by the chosen rule, read and put through
+              # what the plot puts a trace through (reversal, filters, its own
+              # filter), then cut to the rule's window
+              let rt = a.pilotTrace
+              if rt notin 0 ..< f[].len:
+                answer.problem = recordSentenceOf(a) & " has no such trace."
+              else:
+                var refRows: seq[seq[float32]] = @[]
+                var refFailed: seq[bool] = @[]
+                if not p.readRows(f, a.path, @[rt], a.id, refRows, refFailed): return false
+                let rk = f[].traceKeys(rt)
+                let rus = if rk.intervalUs > 0 and rk.intervalUs < Inf: rk.intervalUs
+                          else: f[].sampleIntervalUs(rt)
+                let rdt = rus / 1000
+                if refFailed[0] or refRows[0].len == 0:
+                  answer.problem = "the pilot trace could not be read"
+                elif not (rus > 0 and rus < Inf):
+                  answer.problem = "the pilot trace has no sample interval"
+                elif not sameDt(rdt, dtMs):
+                  answer.problem = intervalRefusal(rdt, dtMs)
+                else:
+                  var refPassed = 0
+                  let refRev = if a.pilotReversed: @[rt] else: newSeq[int]()
+                  let refThrough = filtered(refRows, f, @[rt], a.processing, a.pilotOwn,
+                    refRev, dtMs, refPassed)
+                  if refPassed > 0 and refThrough.startsWith("through "):
+                    inc passed
+                    let words = "the pilot is not filtered: " & AuxFilterOff
+                    through = if through.len > 0: through & "; " & words else: words
+                  let (cut, why) = cutPilot(refRows[0], dtMs, a.pilotRule, a.pilotRecord)
+                  if why.len > 0:
+                    answer.problem = why
+                  else:
+                    let refName = a.archiveName & " (" & a.pilotRecord & ", " &
+                      pilotWords(a.pilotRule.aux, a.pilotRule.trace) & ")"
+                    var signals: seq[(string, seq[float32])] = @[]
+                    for i in 0 ..< min(kept.len, MaxAnalysisCurves):
+                      signals.add (keptNames[i], kept[i])
+                    let n = (answer.leftOut, answer.atOtherInterval)
+                    answer = correlationOf(signals, cut, refName, dtMs, a.params, stop)
+                    (answer.leftOut, answer.atOtherInterval) = n
+                    let rule = if kept.len > 0: lengthRule(cut.len, kept[0].len) else: ""
                     if rule.len > 0 and answer.problem.len == 0:
                       answer.note = "Reference: " & refName & ". " & rule &
                         (if answer.note.len > 0: ". " & answer.note else: "")

@@ -296,6 +296,10 @@ proc main*() =
       doAssert not st.compareA.filled and not st.compareB.filled
       st.agent(%*{"kind": "generate reference", "refGenerate": {"name": "agent sweep",
         "law": "linear", "f1Hz": 8, "f2Hz": 40, "durationMs": 1000, "dtMs": 2, "amplitude": 1}})
+      st.agent(%*{"kind": "pilot reference", "refPilot": {"name": "agent record pilot",
+        "aux": false, "trace": 1, "startMs": 0, "spanMs": 100}})
+      st.agent(%*{"kind": "pilot preview", "refPilot": {"aux": true, "trace": 1,
+        "startMs": 0, "spanMs": 100}})
       var sweep = ""
       for e in st.references.entries:
         if e.name == "agent sweep": sweep = e.id

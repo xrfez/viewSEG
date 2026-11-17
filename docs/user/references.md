@@ -42,6 +42,44 @@ picture is shown only when it is the one just asked. A setting processSEG
 refuses is said in place of the plots, in plain words, and Generate stays disabled. The
 sweep is made by processSEG; viewSEG adds no sweep of its own.
 
+## A trace of the record
+
+The **Source** choice at the top of the Generate dialog takes **Sweep settings** (the
+sweep above) or **A trace of the record**. The second stores a rule, not samples: which
+trace of the record, and the window cut from it.
+
+- **Which trace.** Auxiliary trace N (counted among the record's auxiliary traces: a
+  pilot, a time break), or trace N of the record (counted among all of its traces, in
+  file order). N starts at 1.
+- **Start** and **Length**, in milliseconds. The length starts as the whole trace of the
+  record on show and is required. The window runs from Start for Length and is clipped to
+  the end of the trace; if nothing is left of it, that is the error.
+- **Name**: filled in from the rule, such as "Pilot: aux 1, 0-12000 ms", and kept in step
+  with it while you do not edit it.
+
+Under the settings the dialog shows the pilot of the record on show, the same signal and
+spectrum plots as the sweep, and says which record it is from. With no file open it says
+to open one. The preview is read in the background.
+
+When this reference is the chosen one, each record uses its own trace by the rule: a
+Correlation window of the next record takes that record's trace, and its bar says which
+record and which trace the reference is ("Reference: <name> (FFID 2, auxiliary trace
+1)"). The trace is used as the plot shows it: a reversed trace (its own reversal or
+reverse-all, not both) is turned over, the plot's filters apply (an auxiliary trace
+only when Filters > Filter the Aux traces too is on) and so does the trace's own filter,
+then the window is cut. A record that lacks the trace says so in place of the plot, naming
+the record ("FFID 3 has only 1 auxiliary trace, not an auxiliary trace 2."), and no other
+trace is used instead. A frozen window keeps the pilot it showed. A vibrator signature
+still uses the file's own pilot while such a reference is chosen. The rule has no sample
+interval of its own: the trace's must be the plot's.
+
+In the archive the row says "pilot: auxiliary trace 1", the length in ms and "of each
+record", and the interval "the record's". It can be chosen, renamed, deleted and copied
+into a project like another. **View** opens the pilot of the record on show, and says
+which record; its button **Store this pilot as a fixed reference** keeps the record's cut
+pilot as an ordinary stored waveform (the file's raw samples, as Store does). A rule is not
+one waveform, so it cannot be compared as A or B.
+
 ## Reference archive
 
 **Reference archive...** lists the references you can use. The window's title says which

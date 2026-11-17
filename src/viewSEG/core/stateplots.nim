@@ -164,11 +164,29 @@ proc askPlot(state: var AppState; w: int): bool =
       state.showCorrelationProblem(w, blocked.problem, blocked.name)
       return true
     let e = state.refs.entries[state.refs.findId(state.chosenRef)]
-    a.archivePath = state.refsHome / e.file
-    a.archiveName = e.name
-    a.archiveIntervalUs = e.intervalUs
+    if e.isPilot:
+      # a trace of the record this window is of, by the rule: each record has
+      # its own pilot, found from the keys already held
+      let rule = pilotRuleOf(e)
+      let local = pw.traces[0] - s.base
+      let (rt, record, problem) = s.pilotOfRecord(s.gatherOf(local), rule)
+      if problem.len > 0:
+        state.showCorrelationProblem(w, problem, e.name)
+        return true
+      a.pilotTrace = rt
+      a.pilotRule = rule
+      a.pilotRecord = record
+      a.pilotReversed = reversedOf(edits, [rt]).len > 0
+      a.pilotOwn = ownOfTraces(edits, [rt])
+      a.archiveName = e.name
+    else:
+      a.archivePath = state.refsHome / e.file
+      a.archiveName = e.name
+      a.archiveIntervalUs = e.intervalUs
     pw.reference = e.name
-  elif pw.view == avVibrator and state.chosenRef.len > 0:
+  elif pw.view == avVibrator and state.chosenRef.len > 0 and
+      not (state.refsLoaded and state.refs.findId(state.chosenRef) >= 0 and
+      state.refs.entries[state.refs.findId(state.chosenRef)].isPilot):
     # an archive reference stands in for the file's pilot
     if not state.refsLoaded:
       a.archiveGone = "the reference archive is still being read"

@@ -32,6 +32,15 @@ type
     genLaw: ReferenceLaw
     genShape: TaperShape
     genMessage: string
+    genSource: int     ## 0: the sweep settings; 1: a trace of the record
+    autoName: string   ## the name the dialog filled in last (replaced while it is not edited)
+    pilotAux: bool
+    pilotN, pilotStart, pilotLength: float64
+    pilotAsked: string ## the pilot ask last sent
+    pilotLive: string
+    pilotStable: int
+    pilotGen: int      ## the preview's picture this dialog copied last
+    fixed: StoreDialog ## Store this pilot as a fixed reference, from a pilot's window
     previewSamples: seq[float32]
     previewHz, previewDb: seq[float64]
     previewDt, askedDt: float64
@@ -55,6 +64,10 @@ type
 
   ReferencesOutput* = object
     commands*: seq[Command]
+
+const
+  SourceSweep = "Sweep settings"
+  SourceRecord = "A trace of the record"
 
 proc setBuf(buf: var string; text: string) =
   if buf.len < 160: buf.setLen 160
@@ -95,6 +108,15 @@ proc openGenerate*(ui: var ReferencesUi; dtMs: float64) =
   ui.genPhase = 0
   ui.genParam = NaN
   ui.genMessage = ""
+  ui.genSource = 0
+  ui.pilotAux = true
+  ui.pilotN = 1
+  ui.pilotStart = 0
+  ui.pilotLength = 0
+  ui.pilotAsked = ""
+  ui.pilotLive = ""
+  ui.pilotStable = 0
+  ui.pilotGen = -1
   ui.previewSamples.setLen 0
   ui.previewHz.setLen 0
   ui.previewDb.setLen 0
@@ -110,6 +132,7 @@ proc openGenerate*(ui: var ReferencesUi; dtMs: float64) =
   let g = GeneratedReference(law: ui.genLaw, f1Hz: ui.genF1, f2Hz: ui.genF2,
     durationMs: ui.genLength, dtMs: ui.genDt, taperShape: ui.genShape)
   setBuf(ui.genName, defaultGenerateName(g))
+  ui.autoName = defaultGenerateName(g)
 
 proc openStore*(d: var StoreDialog; trace: int; name: string; fromMs, toMs, durationMs: float64;
     sweep: bool) =
@@ -132,6 +155,11 @@ proc asked(ui: ReferencesUi): GeneratedReference =
     f2Hz: ui.genF2, durationMs: ui.genLength, dtMs: ui.genDt, taperStartMs: ui.genTaper0,
     taperEndMs: ui.genTaper1, taperShape: ui.genShape, taperParam: ui.genParam,
     phaseDeg: ui.genPhase, amplitude: ui.genAmp, boostDb: ui.genBoost)
+
+func pilotRule(ui: ReferencesUi): PilotRule =
+  PilotRule(name: bufText(ui.genName), aux: ui.pilotAux,
+    trace: (if ui.pilotN.isNaN or abs(ui.pilotN) > 1e9: 0 else: int(ui.pilotN)),
+    startMs: ui.pilotStart, spanMs: ui.pilotLength)
 
 func settingsKey(g: GeneratedReference): string {.inline.} =
   generateSettingsKey(g)
@@ -214,23 +242,77 @@ proc followPreview(ui: var ReferencesUi; g: GeneratedReference; key, problem: st
     inc ui.askedGen
     askGeneratePreview(ui.askedGen, g)
 
-proc drawGenerate(ui: var ReferencesUi; t: Theme; marks: var Marks): ReferencesOutput =
+proc followPilot(ui: var ReferencesUi; st: AppState; rule: PilotRule;
+    output: var ReferencesOutput) =
+  ## The pilot of the record on show: asked when the rule or the record moves
+  ## (once it has stayed put a few frames), and shown when it arrives.
+  let key = $rule.aux & "|" & $rule.trace & "|" & $rule.startMs & "|" & $rule.spanMs & "|" &
+    st.pilotShownKey
+  if key != ui.pilotLive:
+    ui.pilotLive = key
+    ui.pilotStable = 0
+  else:
+    inc ui.pilotStable
+  let wait = if ui.pilotAsked.len == 0: 0 else: 4
+  if ui.pilotStable >= wait and ui.pilotAsked != key:
+    ui.pilotAsked = key
+    output.commands.add Command(kind: ckPilotPreview, refPilot: rule)
+  let shown = st.pilotPreview
+  if shown.gen != ui.pilotGen:
+    ui.pilotGen = shown.gen
+    ui.previewSamples = shown.samples
+    ui.previewHz = shown.hz
+    ui.previewDb = shown.db
+    ui.previewDt = shown.dtMs
+    ui.previewF1 = 0
+    ui.previewF2 = if shown.dtMs > 0: 500.0 / shown.dtMs else: 0.0
+    ui.shownGen = 1_000_000 + shown.gen
+
+proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks):
+    ReferencesOutput =
   const id = "Generate a reference###generate-reference"
   if ui.genAsk:
     igOpenPopup_Str(id.cstring, 0)
     ui.genAsk = false
   let font = igGetFontSize()
-  # font×60 holds the settings, including the optional boost and parameter,
+  # font×62 holds the settings, including the optional boost and parameter,
   # both plots and the buttons. The buttons are drawn under a child that
   # takes the rest, so they stay inside at any size.
-  igSetNextWindowSize(ImVec2_c(x: font * 46, y: font * 62), ImGui_Cond_FirstUseEver.cint)
-  igSetNextWindowSizeConstraints(ImVec2_c(x: font * 36, y: font * 60),
+  igSetNextWindowSize(ImVec2_c(x: font * 46, y: font * 64), ImGui_Cond_FirstUseEver.cint)
+  igSetNextWindowSizeConstraints(ImVec2_c(x: font * 36, y: font * 62),
     ImVec2_c(x: 4000, y: 4000), nil, nil)
   if not igBeginPopupModal(id.cstring, nil, 0): return
   marks.markWindow("generate")
   let footer = igGetFrameHeightWithSpacing()
   discard igBeginChild_Str("##generate.body", ImVec2_c(x: 0, y: -footer),
     ImGui_ChildFlags_NavFlattened.cint, 0)
+  let before = ui.genSource
+  if combo("Source", (if ui.genSource == 0: SourceSweep else: SourceRecord), "generate.source",
+      marks):
+    for (n, label) in [(0, SourceSweep), (1, SourceRecord)]:
+      if igSelectable_Bool(label.cstring, n == ui.genSource, 0, ImVec2_c(x: 0, y: 0)):
+        ui.genSource = n
+      marks.mark("generate.source " & $n)
+    igEndCombo()
+  if ui.genSource != before:
+    # the other source's picture is not this one's
+    ui.previewSamples.setLen 0
+    ui.previewHz.setLen 0
+    ui.previewDb.setLen 0
+    ui.askedKey = ""
+    ui.liveKey = ""
+    ui.stable = 0
+    ui.pilotAsked = ""
+    ui.pilotGen = -1
+    ui.shownGen = 0
+  if ui.genSource == 1 and ui.pilotLength <= 0 and st.shownLengthMs > 0:
+    ui.pilotLength = st.shownLengthMs
+  let defaultName = if ui.genSource == 0: defaultGenerateName(ui.asked)
+                    else: defaultPilotName(ui.pilotRule)
+  if bufText(ui.genName).len == 0 or bufText(ui.genName) == ui.autoName:
+    if defaultName != ui.autoName or bufText(ui.genName).len == 0:
+      setBuf(ui.genName, defaultName)
+    ui.autoName = defaultName
   igTextUnformatted("Name", nil)
   igSameLine(font * 12, -1)
   igSetNextItemWidth(-1)
@@ -238,47 +320,77 @@ proc drawGenerate(ui: var ReferencesUi; t: Theme; marks: var Marks): ReferencesO
   discard igInputText("##gen.name", cast[cstring](addr ui.genName[0]), csize_t(ui.genName.len),
     0, nil, nil)
   marks.mark("generate.name")
-  igSeparatorText("Sweep")
-  discard number("Start frequency (Hz)", ui.genF1, "generate.f1", marks)
-  discard number("End frequency (Hz)", ui.genF2, "generate.f2", marks)
-  discard number("Length (ms)", ui.genLength, "generate.length", marks)
-  discard number("Sample interval (ms)", ui.genDt, "generate.dt", marks)
-  discard number("Amplitude", ui.genAmp, "generate.amplitude", marks)
-  if combo("Type", lawTitle(ui.genLaw), "generate.law", marks):
-    for law in ReferenceLaw:
-      if igSelectable_Bool(lawTitle(law).cstring, law == ui.genLaw, 0, ImVec2_c(x: 0, y: 0)):
-        ui.genLaw = law
-      marks.mark("generate.law " & $law)
-    igEndCombo()
-  if ui.genLaw in {rlDbPerOctave, rlDbPerHz}:
-    discard number("Boost (dB)", ui.genBoost, "generate.boost", marks)
-  igSeparatorText("Taper")
-  if combo("Shape", taperShapeTitle(ui.genShape), "generate.shape", marks,
-      ImGui_ComboFlags_HeightLargest.cint):
-    for shape in TaperShape:
-      if igSelectable_Bool(taperShapeTitle(shape).cstring, shape == ui.genShape, 0,
-          ImVec2_c(x: 0, y: 0)):
-        ui.pickShape(shape)
-      marks.mark("generate.shape " & $shape)
-    igEndCombo()
-  let paramLabel = taperParamLabel(ui.genShape)
-  if paramLabel.len > 0:
-    if ui.genParam.isNaN: ui.genParam = taperDefaultParam(ui.genShape)
-    discard number(paramLabel, ui.genParam, "generate.param", marks)
-    tip(case ui.genShape
-      of tpKaiser: "Kaiser beta, from 0 to 50"
-      of tpGaussian: "Gaussian sigma, in ramp lengths, above 0"
-      of tpPower: "Power exponent, above 0; 1 is a linear ramp"
-      else: "")
-  discard number("Taper start (ms)", ui.genTaper0, "generate.taper0", marks)
-  discard number("Taper end (ms)", ui.genTaper1, "generate.taper1", marks)
-  igSeparatorText("Phase")
-  discard number("Start phase (deg)", ui.genPhase, "generate.phase", marks)
-  tip("Degrees. 180 reverses the polarity")
-  let g = ui.asked
-  let key = settingsKey(g)
-  let problem = generateProblem(g)
-  ui.followPreview(g, key, problem)
+  if ui.genSource == 0:
+    igSeparatorText("Sweep")
+    discard number("Start frequency (Hz)", ui.genF1, "generate.f1", marks)
+    discard number("End frequency (Hz)", ui.genF2, "generate.f2", marks)
+    discard number("Length (ms)", ui.genLength, "generate.length", marks)
+    discard number("Sample interval (ms)", ui.genDt, "generate.dt", marks)
+    discard number("Amplitude", ui.genAmp, "generate.amplitude", marks)
+    if combo("Type", lawTitle(ui.genLaw), "generate.law", marks):
+      for law in ReferenceLaw:
+        if igSelectable_Bool(lawTitle(law).cstring, law == ui.genLaw, 0, ImVec2_c(x: 0, y: 0)):
+          ui.genLaw = law
+        marks.mark("generate.law " & $law)
+      igEndCombo()
+    if ui.genLaw in {rlDbPerOctave, rlDbPerHz}:
+      discard number("Boost (dB)", ui.genBoost, "generate.boost", marks)
+    igSeparatorText("Taper")
+    if combo("Shape", taperShapeTitle(ui.genShape), "generate.shape", marks,
+        ImGui_ComboFlags_HeightLargest.cint):
+      for shape in TaperShape:
+        if igSelectable_Bool(taperShapeTitle(shape).cstring, shape == ui.genShape, 0,
+            ImVec2_c(x: 0, y: 0)):
+          ui.pickShape(shape)
+        marks.mark("generate.shape " & $shape)
+      igEndCombo()
+    let paramLabel = taperParamLabel(ui.genShape)
+    if paramLabel.len > 0:
+      if ui.genParam.isNaN: ui.genParam = taperDefaultParam(ui.genShape)
+      discard number(paramLabel, ui.genParam, "generate.param", marks)
+      tip(case ui.genShape
+        of tpKaiser: "Kaiser beta, from 0 to 50"
+        of tpGaussian: "Gaussian sigma, in ramp lengths, above 0"
+        of tpPower: "Power exponent, above 0; 1 is a linear ramp"
+        else: "")
+    discard number("Taper start (ms)", ui.genTaper0, "generate.taper0", marks)
+    discard number("Taper end (ms)", ui.genTaper1, "generate.taper1", marks)
+    igSeparatorText("Phase")
+    discard number("Start phase (deg)", ui.genPhase, "generate.phase", marks)
+    tip("Degrees. 180 reverses the polarity")
+  else:
+    igSeparatorText("Pilot")
+    let kind = if ui.pilotAux: "Auxiliary trace" else: "Trace of the record"
+    if combo("Which trace", kind, "generate.pilot.kind", marks):
+      for (aux, label) in [(true, "Auxiliary trace"), (false, "Trace of the record")]:
+        if igSelectable_Bool(label.cstring, aux == ui.pilotAux, 0, ImVec2_c(x: 0, y: 0)):
+          ui.pilotAux = aux
+        marks.mark("generate.pilot.kind " & $aux)
+      igEndCombo()
+    tip("An auxiliary trace is counted among the record's auxiliary traces " &
+      "(a pilot, a time break); a trace of the record is counted among all of its traces, " &
+      "in file order. Each record uses its own, by this rule.")
+    discard number("Number (from 1)", ui.pilotN, "generate.pilot.n", marks)
+    ui.pilotN = round(ui.pilotN)
+    discard number("Start (ms)", ui.pilotStart, "generate.pilot.start", marks)
+    discard number("Length (ms)", ui.pilotLength, "generate.pilot.length", marks)
+    tip("The window from Start for Length, cut to the end of the trace. The whole " &
+      "trace is filled in while a file is open.")
+  var g = GeneratedReference()
+  var rule = PilotRule()
+  var problem = ""
+  var key = ""
+  if ui.genSource == 0:
+    g = ui.asked
+    key = settingsKey(g)
+    problem = generateProblem(g)
+    ui.followPreview(g, key, problem)
+  else:
+    rule = ui.pilotRule
+    key = "record " & $rule.aux & " " & $rule.trace & " " & $rule.startMs & " " &
+      $rule.spanMs
+    problem = pilotProblem(rule)
+    if problem.len == 0: ui.followPilot(st, rule, result)
   ui.previewKey = key
   igDummy(ImVec2_c(x: 1, y: 1))
   marks.mark("generate.previewkey." & key)
@@ -290,6 +402,22 @@ proc drawGenerate(ui: var ReferencesUi; t: Theme; marks: var Marks): ReferencesO
     igTextWrapped("%s", problem.cstring)
     igPopStyleColor(1)
     marks.mark("generate.message")
+  elif ui.genSource == 1:
+    let shown = st.pilotPreview
+    let where = if shown.record.len > 0: "From " & shown.record & ", the record on show."
+                else: "Taken from each record when this reference is chosen."
+    igTextWrapped("%s", where.cstring)
+    marks.mark("generate.pilot.record")
+    if shown.problem.len > 0:
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+      igTextWrapped("%s", shown.problem.cstring)
+      igPopStyleColor(1)
+      marks.mark("generate.pilot.message")
+    elif ui.previewSamples.len > 1:
+      ui.drawPlots(t, max(1'f32, plotH - igGetTextLineHeightWithSpacing() / 2), marks)
+    else:
+      igTextUnformatted("Reading the pilot...", nil)
+      marks.mark("generate.computing")
   elif ui.previewSamples.len > 1:
     ui.drawPlots(t, plotH, marks)
   else:
@@ -298,9 +426,14 @@ proc drawGenerate(ui: var ReferencesUi; t: Theme; marks: var Marks): ReferencesO
   igEndChild()
   igBeginDisabled(problem.len > 0)
   if igButton("Generate", ImVec2_c(x: 0, y: 0)) and problem.len == 0:
-    var made = g
-    if made.name.len == 0: made.name = defaultGenerateName(made)
-    result.commands.add Command(kind: ckGenerateReference, refGenerate: made)
+    if ui.genSource == 0:
+      var made = g
+      if made.name.len == 0: made.name = defaultGenerateName(made)
+      result.commands.add Command(kind: ckGenerateReference, refGenerate: made)
+    else:
+      var made = rule
+      if made.name.strip.len == 0: made.name = defaultPilotName(made)
+      result.commands.add Command(kind: ckPilotReference, refPilot: made)
     igCloseCurrentPopup()
   igEndDisabled()
   marks.mark("generate.ok")
@@ -435,23 +568,26 @@ proc drawRows(ui: var ReferencesUi; index: ReferenceIndex; home: string; writabl
       res.commands.add Command(kind: ckViewReference, refId: e.id)
     igEndDisabled()
     marks.mark(markPrefix & ".view." & $n)
-    tip("Open this reference in its own window")
+    tip(if e.isPilot: "Open the pilot of the record on show in its own window"
+        else: "Open this reference in its own window")
     igSameLine(0, -1)
-    igBeginDisabled(e.missing or e.blocked)
+    igBeginDisabled(e.missing or e.blocked or e.isPilot)
     if igSmallButton("Compare as A"):
       res.commands.add Command(kind: ckSetCompare, compareSlot: cwA, compareRef: e.id,
         compareTrace: -1)
     igEndDisabled()
     marks.mark(markPrefix & ".compareA." & $n)
-    tip("Copy this reference into compare slot A")
+    tip(if e.isPilot: "A trace of each record is not one waveform: view it, and store it " &
+          "as a fixed reference first" else: "Copy this reference into compare slot A")
     igSameLine(0, -1)
-    igBeginDisabled(e.missing or e.blocked)
+    igBeginDisabled(e.missing or e.blocked or e.isPilot)
     if igSmallButton("Compare as B"):
       res.commands.add Command(kind: ckSetCompare, compareSlot: cwB, compareRef: e.id,
         compareTrace: -1)
     igEndDisabled()
     marks.mark(markPrefix & ".compareB." & $n)
-    tip("Copy this reference into compare slot B")
+    tip(if e.isPilot: "A trace of each record is not one waveform: view it, and store it " &
+          "as a fixed reference first" else: "Copy this reference into compare slot B")
     if writable:
       igSameLine(0, -1)
       if igSmallButton("Delete"):
@@ -573,6 +709,12 @@ proc thinPair(xs, ys: seq[float64]): (seq[float64], seq[float64]) =
     result[1].add ys[i]
     inc i, step
 
+proc pilotLine(w: RefView): string =
+  ## What a pilot of the record's window says of where it is from.
+  "From " & (if w.record.len > 0: w.record else: "the record on show") & ", " &
+    pilotWords(w.pilot.aux, w.pilot.trace) & ", " & msWords(w.pilot.startMs) & " to " &
+    msWords(w.pilot.startMs + w.pilot.spanMs) & " ms. Another record has its own pilot."
+
 proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
     marks: var Marks): seq[Command] =
   ## Each reference opened with View, in its own dockable window. The file
@@ -591,8 +733,22 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
       elif w.waiting:
         igTextUnformatted("Reading...", nil)
       elif w.note.len > 0 and w.ys.len == 0:
+        if w.pilot.trace > 0:
+          igTextWrapped("%s", pilotLine(w).cstring)
+          marks.mark("reference.view.record")
         igTextWrapped("%s", w.note.cstring)
+        marks.mark("reference.view.note")
       else:
+        if w.pilot.trace > 0:
+          igTextWrapped("%s", pilotLine(w).cstring)
+          marks.mark("reference.view.record")
+          if w.pilotTrace >= 0 and igButton("Store this pilot as a fixed reference",
+              ImVec2_c(x: 0, y: 0)):
+            ui.fixed.openStore(w.pilotTrace, w.name & " (" & w.record & ")", w.pilotFrom,
+              w.pilotTo, w.pilotTraceMs, false)
+          marks.mark("reference.view.fix")
+          tip("Saves this record's cut pilot as an ordinary stored waveform: the file's " &
+            "raw samples, as Store does")
         var uis = ui.viewPlots.getOrDefault(w.id)
         let ink = t.roles[rlAccent]
         if uis.rev != w.revision + 1 or uis.ys.len != w.ys.len:
@@ -626,5 +782,6 @@ proc drawReferences*(ui: var ReferencesUi; title: string; st: AppState; t: Theme
     marks: var Marks): ReferencesOutput =
   ## The archive window and the Generate dialog.
   result = ui.drawArchive(title, st, t, marks)
-  let gen = ui.drawGenerate(t, marks)
+  let gen = ui.drawGenerate(st, t, marks)
   result.commands.add gen.commands
+  result.commands.add drawStore(ui.fixed, st, t, marks)

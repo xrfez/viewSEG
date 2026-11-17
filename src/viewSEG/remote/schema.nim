@@ -40,7 +40,8 @@ const
     ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckTheme, ckOpenPlot, ckPlotDisplay,
     ckPlotCursor, ckClosePlot, ckNewProject, ckOpenProject,
     ckCloseProject, ckReopen, ckListReferences, ckStoreReference, ckGenerateReference,
-    ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference,
+    ckPilotReference, ckPilotPreview, ckSelectReference, ckDeleteReference, ckRenameReference,
+    ckCopyReference,
     ckViewReference, ckCloseRefView, ckSetCompare, ckClearCompare, ckSwapCompare,
     ckCompareDisplay, ckCompareWindow}
     ## what the `command` tool carries out: named one by one, so that a kind
@@ -67,8 +68,8 @@ const
     ## trace edits and survey imports are not written into it. A file opened
     ## again with other options (`ckReopen`) is read as before, read-only, for
     ## the session; a folder for a demultiplexed copy, which would be written
-    ## there, is refused. A reference (listed, stored, generated, selected,
-    ## renamed, deleted, copied into the project) is the program's own archive
+    ## there, is refused. A reference (listed, stored, generated, a pilot rule stored or
+    ## previewed, selected, renamed, deleted, copied into the project) is the program's own archive
     ## or the project's `references` folder, never a seismic file; selecting
     ## one is for the session when an agent asks, as a setting is
 

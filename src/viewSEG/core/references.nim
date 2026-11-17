@@ -46,6 +46,11 @@ type
       record*: float64  ## the record number; NaN when the headers name none
       trace*: int       ## the trace, from 1, as the plot names it
       fromMs*, toMs*: float64
+      pilot*: bool
+        ## a rule, not samples: each record's own trace by `pilotAux`, `trace`
+        ## (N from 1), `fromMs` and `spanMs`; there is no file and no sample
+      pilotAux*: bool ## `pilot`: auxiliary trace N of the record; else trace N of it
+      spanMs*: float64 ## `pilot`: the window's length
     of true:
       law*: ReferenceLaw
       f1Hz*, f2Hz*: float64
@@ -114,6 +119,17 @@ type
     amplitude*: float64
     boostDb*: float64
 
+  PilotRule* = object
+    ## What a pilot taken from the record names: which trace of the record
+    ## on show (an auxiliary one, or a numbered one), and the window cut from
+    ## it. Stored as a rule: each record's own trace is used when this is
+    ## the chosen reference.
+    name*: string
+    aux*: bool ## auxiliary trace N of the record; else trace N of the record
+    trace*: int ## N, from 1
+    startMs*: float64
+    spanMs*: float64 ## more than 0
+
   RefAct* = enum
     raListed = "listed"
     raStored = "stored"
@@ -122,6 +138,8 @@ type
     raDeleted = "deleted"
     raCopied = "copied"
     raViewed = "viewed"
+    raPilotShown = "pilot shown"
+    raRuleStored = "rule stored"
     raFailed = "failed"
 
   RefView* = object
@@ -140,17 +158,39 @@ type
     hz*: seq[float64]
     amps*: seq[float64]
     revision*: int
+    record*: string ## a pilot of the record: the record it shows
+    pilot*: PilotRule ## a pilot of the record: the rule (`pilot.trace` 0: not one)
+    pilotTrace*: int ## a pilot of the record: the survey-wide trace id; -1 for none
+    pilotTraceMs*: float64 ## ... the length of that whole trace, in ms
+    pilotFrom*, pilotTo*: float64 ## a pilot of the record: the window, in ms
+
+  PilotPreview* = object
+    ## The pilot the Generate dialog shows for the record on screen: what a
+    ## rule would take, as a job read it. `key` is the ask it answers.
+    key*: string
+    record*: string ## the record it is from; "" when none
+    waiting*: bool
+    problem*: string ## why there is none; "" when there is one
+    samples*: seq[float32]
+    dtMs*: float64
+    hz*, db*: seq[float64]
+    gen*: int ## bumps when the picture changes
 
   ReferenceNews* = object
     ## What a reference job posts.
-    home*: string ## the archive folder it acted on
-    main*: bool   ## the program's own archive, listed beside a project's
+    home*: string                 ## the archive folder it acted on
+    main*: bool                   ## the program's own archive, listed beside a project's
     index*: ReferenceIndex
     act*: RefAct
     failure*: string
     id*: string
     name*: string
-    window*: int  ## raViewed: the window it is for
+    window*: int                  ## raViewed: the window it is for
+    record*: string               ## a pilot of the record: which record it is from
+    pilotTrace*: int              ## ... its survey-wide trace id; -1 when there is none
+    pilotFrom*, pilotTo*: float64 ## ... the window cut, in ms
+    pilotTraceMs*: float64        ## ... the length of the whole trace, in ms
+    key*: string                  ## raPilotShown: the ask it answers
     fromMs*: float64
     dtMs*: float64
     ys*: seq[float64]
@@ -267,6 +307,64 @@ func defaultGenerateName*(g: GeneratedReference): string =
   lawTitle(g.law) & " " & numberText(g.f1Hz) & "-" & numberText(g.f2Hz) & " Hz " &
     numberText(g.durationMs / 1000) & " s"
 
+func pilotWords*(aux: bool; trace: int): string =
+  ## Which trace a pilot of the record takes, as the dialog says it.
+  if aux: "auxiliary trace " & $trace else: "trace " & $trace & " of the record"
+
+func defaultPilotName*(r: PilotRule): string =
+  ## "Pilot: aux 1, 0-12000 ms", from the rule.
+  "Pilot: " & (if r.aux: "aux " else: "trace ") & $r.trace & ", " & numberText(r.startMs) &
+    "-" & numberText(r.startMs + r.spanMs) & " ms"
+
+func pilotProblem*(r: PilotRule): string =
+  ## Why `r` names no pilot; "" when it does (the name is judged apart).
+  if r.trace < 1: "a trace is numbered from 1"
+  elif r.startMs.isNaN or r.startMs < 0 or r.startMs == Inf:
+    "the start is 0 ms or later"
+  elif not (r.spanMs > 0 and r.spanMs < Inf): "the length must be more than 0 ms"
+  else: ""
+
+func pilotRuleOf*(e: ReferenceEntry): PilotRule =
+  ## The rule a pilot entry stores.
+  PilotRule(name: e.name, aux: e.origin.pilotAux, trace: e.origin.trace,
+    startMs: e.origin.fromMs, spanMs: e.origin.spanMs)
+
+func isPilot*(e: ReferenceEntry): bool {.inline.} =
+  ## A pilot taken from the record: a rule with no samples and no file.
+  not e.origin.generated and e.origin.pilot
+
+func recordSentence(record: string): string =
+  ## The record's name as a sentence starts: "FFID 5", "Record 3".
+  if record.len == 0: "The record" else: capitalizeAscii(record)
+
+func pickPilotTrace*(r: PilotRule; isAux: openArray[bool]; record: string):
+    tuple[at: int; problem: string] =
+  ## Which trace of a record `r` takes. `isAux` says, for each of the
+  ## record's traces in file order, whether it is an auxiliary one. `at` is
+  ## the index among them, -1 with a `problem` naming `record` when it has
+  ## no such trace. No fallback to another trace.
+  result.at = -1
+  if r.trace < 1:
+    result.problem = pilotProblem(r)
+    return
+  if r.aux:
+    var seen = 0
+    for i, a in isAux:
+      if a:
+        inc seen
+        if seen == r.trace:
+          result.at = i
+          return
+    result.problem = recordSentence(record) & " has " & (
+      if seen == 0: "no auxiliary trace"
+      elif seen == 1: "only 1 auxiliary trace"
+      else: "only " & $seen & " auxiliary traces") & ", not an auxiliary trace " & $r.trace & "."
+  elif r.trace <= isAux.len:
+    result.at = r.trace - 1
+  else:
+    result.problem = recordSentence(record) & " has " & $isAux.len & " trace" &
+      (if isAux.len == 1: "" else: "s") & ", not a trace " & $r.trace & "."
+
 func frequencyText*(e: ReferenceEntry): string =
   ## The frequency range, for a generated reference; "" for a stored trace.
   if e.origin.generated:
@@ -278,12 +376,15 @@ func sourceText*(e: ReferenceEntry): string =
   ## Where the row's samples came from, in one line.
   if e.origin.generated:
     "generated, " & lawTitle(e.origin.law)
+  elif e.origin.pilot:
+    "pilot: " & pilotWords(e.origin.pilotAux, e.origin.trace)
   else:
     let rec = if e.origin.record.isNaN: "none" else: numberText(e.origin.record)
     e.origin.fileName & " rec " & rec & " tr " & $e.origin.trace
 
 func lengthText*(e: ReferenceEntry): string =
   ## The length in time, and the sample count.
+  if e.isPilot: return numberText(e.origin.spanMs) & " ms (of each record)"
   let ms = if e.intervalUs > 0 and e.samples > 0:
              float64(e.samples - 1) * e.intervalUs / 1000
            else:
@@ -291,6 +392,7 @@ func lengthText*(e: ReferenceEntry): string =
   numberText(ms) & " ms (" & $e.samples & ")"
 
 func intervalText*(e: ReferenceEntry): string =
+  if e.isPilot: return "the record's"
   if e.intervalUs > 0: numberText(e.intervalUs / 1000) & " ms" else: "none"
 
 func singleFileName*(file: string): bool =
@@ -390,6 +492,24 @@ proc cutSamples*(samples: openArray[float32]; intervalUs, fromMs, toMs: float64)
            else: clamp(int(round(toMs / dt)) + 1, i0, samples.len)
   result = newSeq[float32](i1 - i0)
   for i in 0 ..< result.len: result[i] = samples[i0 + i]
+
+proc cutPilot*(samples: openArray[float32]; dtMs: float64; r: PilotRule; record: string):
+    tuple[samples: seq[float32]; problem: string] =
+  ## The window of a pilot trace `r` names: from its start for its length (both
+  ## ends kept when they fall on a sample), clipped to the trace's end. Nothing
+  ## left is a `problem` naming `record`; the samples are copied, not changed.
+  let bad = pilotProblem(r)
+  if bad.len > 0: return (@[], bad)
+  if samples.len == 0: return (@[], recordSentence(record) & "'s " & pilotWords(r.aux,
+    r.trace) & " has no sample.")
+  if not (dtMs > 0 and dtMs < Inf):
+    return (@[], recordSentence(record) & "'s " & pilotWords(r.aux, r.trace) &
+      " has no sample interval.")
+  result.samples = cutSamples(samples, dtMs * 1000, r.startMs, r.startMs + r.spanMs)
+  if result.samples.len == 0:
+    result.problem = recordSentence(record) & "'s " & pilotWords(r.aux, r.trace) &
+      " ends at " & numberText(float64(samples.len - 1) * dtMs) &
+      " ms, so a window from " & numberText(r.startMs) & " ms holds no sample."
 
 func taperShapeTitle*(shape: TaperShape): string =
   ## The ramp shape as the Generate dialog names it.
@@ -667,6 +787,12 @@ proc writeOrigin(w: var NifWriter; o: ReferenceOrigin) =
     w.value("phaseDeg", o.phaseDeg)
     w.value("amplitude", o.amplitude)
     w.value("boostDb", o.boostDb)
+  elif o.pilot:
+    w.value("pilot", true)
+    w.value("pilotAux", o.pilotAux)
+    w.value("trace", o.trace)
+    w.value("fromMs", o.fromMs)
+    w.value("spanMs", o.spanMs)
   else:
     w.value("fileName", o.fileName)
     if not o.record.isNaN: w.value("record", o.record)
@@ -721,6 +847,8 @@ proc readOrigin(n: NifNode; problems: var seq[string]): ReferenceOrigin =
   var phase = 0.0
   var fileName = ""
   var trace = 0
+  var pilot, pilotAux = false
+  var spanMs = NaN
   var sawGenerated = false
   for c in n.kids:
     if c.kind != nkTree: continue
@@ -764,6 +892,9 @@ proc readOrigin(n: NifNode; problems: var seq[string]): ReferenceOrigin =
     of "trace": trace = kidInt(c)
     of "fromMs": fromMs = kidNumber(c)
     of "toMs": toMs = kidNumber(c)
+    of "pilot": pilot = kidBool(c)
+    of "pilotAux": pilotAux = kidBool(c)
+    of "spanMs": spanMs = kidNumber(c)
     else: discard
   if not sawGenerated: generated = f1 == f1 # a frequency was given
   if generated:
@@ -773,7 +904,8 @@ proc readOrigin(n: NifNode; problems: var seq[string]): ReferenceOrigin =
       amplitude: (if amp == amp: amp else: 1.0), boostDb: (if boost == boost: boost else: 0.0))
   else:
     ReferenceOrigin(generated: false, fileName: fileName, record: record, trace: trace,
-      fromMs: (if fromMs == fromMs: fromMs else: 0.0), toMs: toMs)
+      fromMs: (if fromMs == fromMs: fromMs else: 0.0), toMs: toMs, pilot: pilot,
+      pilotAux: pilotAux, spanMs: (if spanMs == spanMs: spanMs else: 0.0))
 
 proc readEntry(n: NifNode; problems: var seq[string]): ReferenceEntry =
   for c in n.kids:
@@ -823,7 +955,9 @@ proc readIndexDoc(text, name: string): ReferenceIndex =
 
 proc markMissing(folder: string; index: var ReferenceIndex) =
   for e in index.entries.mitems:
-    if not singleFileName(e.file):
+    if e.isPilot:
+      e.missing = false # a rule: it has no file
+    elif not singleFileName(e.file):
       e.blocked = true
       e.missing = true
       index.problems.add "an entry's file \"" & e.file &
@@ -1015,6 +1149,30 @@ proc storeSamples*(folder, name: string; intervalUs: float64; samples: openArray
   writeIndex(folder, index)
   e.id
 
+proc storePilotRule*(folder: string; r: PilotRule): string {.gcsafe.} =
+  ## Stores the rule `r` names (no samples, no file) and returns its id. A
+  ## name already used, or a rule that names no pilot, raises `ValueError`
+  ## and writes nothing.
+  assertWorkerThread()
+  let bad = pilotProblem(r)
+  if bad.len > 0: raise newException(ValueError, bad)
+  var lock = holdArchive(folder)
+  defer: fs.unlock(lock)
+  var index = readForChange(folder)
+  if index.newer:
+    raise newException(ValueError, index.problems.join("; "))
+  index.damaged = false
+  let name = if r.name.strip.len > 0: r.name.strip else: defaultPilotName(r)
+  let problem = index.nameProblem(name)
+  if problem.len > 0: raise newException(ValueError, problem)
+  let id = newId(index)
+  index.entries.add ReferenceEntry(id: id, name: name, date: nowText(),
+    origin: ReferenceOrigin(generated: false, pilot: true, pilotAux: r.aux, trace: r.trace,
+    fromMs: r.startMs, spanMs: r.spanMs, record: NaN, toMs: r.startMs + r.spanMs))
+  fs.createDir(folder)
+  writeIndex(folder, index)
+  id
+
 proc refuseBlocked(e: ReferenceEntry; what: string) =
   if e.blocked:
     raise newException(ValueError, "the reference \"" & e.name &
@@ -1037,6 +1195,10 @@ proc renameIn*(folder, id, name: string) {.gcsafe.} =
   let problem = index.nameProblem(name)
   if problem.len > 0 and index.findName(name.strip) != i:
     raise newException(ValueError, problem)
+  if index.entries[i].isPilot:
+    index.entries[i].name = name.strip
+    writeIndex(folder, index)
+    return
   if index.entries[i].missing:
     raise newException(ValueError, "the reference \"" & index.entries[i].name &
       "\" has no file: it cannot be renamed")
@@ -1074,6 +1236,8 @@ proc copyInto*(fromFolder, toFolder, id: string): string {.gcsafe.} =
   let i = src.findId(id)
   if i < 0:
     raise newException(ValueError, "there is no reference \"" & id & "\" in the main archive")
+  if src.entries[i].isPilot:
+    return storePilotRule(toFolder, pilotRuleOf(src.entries[i]))
   if src.entries[i].blocked:
     raise newException(ValueError, "the reference \"" & src.entries[i].name &
       "\" names a file outside the archive: it was not copied")

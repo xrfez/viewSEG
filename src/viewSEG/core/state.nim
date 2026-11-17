@@ -233,6 +233,13 @@ type
       ## store a trace's raw samples, cut to a time window, as a named reference
     ckGenerateReference = "generate reference"
       ## make a sweep with processSEG and store it as a named reference
+    ckPilotReference = "pilot reference"
+      ## store a rule as a named reference: a trace of the record (an auxiliary
+      ## one, or a numbered one) and a window of it, taken from each record
+      ## when the reference is the chosen one
+    ckPilotPreview = "pilot preview"
+      ## ask for the pilot a rule would take from the record on show (the
+      ## Generate dialog's preview); read off the UI thread
     ckSelectReference = "select reference"
       ## the reference the plots use; "" is none (a correlation draws nothing;
       ## a vibrator signature uses the file's pilot)
@@ -485,6 +492,11 @@ type
         ## parameters. `taperShape` left out: cosine squared. `taperParam`
         ## left out or null: the shape's default. `phaseDeg` left out: 0;
         ## 180 degrees reverses the polarity. There is no separate polarity
+    of ckPilotReference, ckPilotPreview:
+      refPilot*: PilotRule
+        ## ckPilotReference, ckPilotPreview: `aux` true: auxiliary trace `trace`
+        ## of the record, else trace `trace` of the record (from 1); the window
+        ## from `startMs` for `spanMs`; `name` "": one made from the rule
     of ckSelectReference, ckDeleteReference, ckRenameReference, ckCopyReference,
         ckViewReference, ckCloseRefView:
       refId*: string
@@ -943,6 +955,7 @@ type
     mainRefsLoaded: bool
     refsRev: int ## bumps when the archive or the choice changes, so a plot asks again
     refViews: seq[RefView] ## windows showing a reference, until closed
+    pilotShown: PilotPreview ## the dialog's pilot of the record on show
     compareA, compareB: CompareSlot
       ## the two traces held for comparison; session only, not saved
     compareOptions: CompareOptions
@@ -1268,6 +1281,10 @@ func referencesHome*(state: AppState): string {.inline.} =
 func referencesLoaded*(state: AppState): bool {.inline.} =
   ## Whether the archive in force has been read this run.
   state.refsLoaded
+
+func pilotPreview*(state: AppState): lent PilotPreview {.inline.} =
+  ## The pilot of the record on show that the Generate dialog asked for.
+  state.pilotShown
 
 func refViews*(state: AppState): lent seq[RefView] {.inline.} =
   ## The windows showing a reference.
@@ -3048,6 +3065,26 @@ func ownOfTraces(e: FileEdits; traces: openArray[int]): seq[FilterEntry] =
     if t > hi: hi = t
   for f in e.filtersIn(lo .. hi):
     if f.trace in traces: result.add f
+
+proc pilotOfRecord(s: Session; g: int; rule: PilotRule): tuple[trace: int; record,
+    problem: string] =
+  ## The trace of file `s` that `rule` takes from its gather `g` (the record):
+  ## its index in the file and the record's name; else a `problem` saying what
+  ## the record lacks. Reads the keys already held, never the file.
+  result.trace = -1
+  if g notin 0 ..< s.gathers.len:
+    result.problem = "There is no record on show."
+    return
+  let span = s.gathers[g].traces
+  let f = s.filePtr
+  result.record = s.recordText(span.a)
+  var isAux = newSeq[bool](max(0, span.b - span.a + 1))
+  for k in 0 ..< isAux.len:
+    let t = span.a + k
+    isAux[k] = t in 0 ..< f[].len and not isSeismic(f[].index, t)
+  let (at, problem) = pickPilotTrace(rule, isAux, result.record)
+  if at < 0: result.problem = problem
+  else: result.trace = span.a + at
 
 func killedOf(e: FileEdits; traces: openArray[int]): seq[int] =
   ## Those of `traces` killed in `e`, in their order. `e` comes from
@@ -6855,6 +6892,14 @@ proc shownDtMs(state: AppState): float64 =
   if k < 0 or not state.panels[k].laidOut or state.panels[k].layout.noInterval: return 0
   state.panels[k].layout.dtMs
 
+func shownLengthMs*(state: AppState): float64 =
+  ## The length of the longest trace of the record the Seismic window shows, in ms
+  ## (first sample to last); 0 when it shows none, or the headers give no interval.
+  let k = state.findPanel(MainPanel)
+  if k < 0 or not state.panels[k].laidOut or state.panels[k].layout.noInterval or
+      state.panels[k].layout.samples < 2: return 0
+  float64(state.panels[k].layout.samples - 1) * state.panels[k].layout.dtMs
+
 func shownIntervalMs*(state: AppState): float64 {.inline.} =
   ## `shownDtMs`, for the Generate dialog's default.
   state.shownDtMs
@@ -6910,6 +6955,79 @@ proc generateReference(state: var AppState; cmd: Command) =
       return
   discard state.jobs.submit(JobSpec(title: "Generate a reference", lane: jlInteractive),
     generateWork(g, state.refsHome, state.inbox.poster))
+
+proc pilotKey(rule: PilotRule; file, record: string; trace: int; flip: bool): string =
+  ## What a pilot of the record depends on, so a late answer is dropped.
+  file & "|" & record & "|" & $trace & "|" & $flip & "|" & $rule.aux & "|" & $rule.trace &
+    "|" & $rule.startMs & "|" & $rule.spanMs
+
+proc shownRecord(state: AppState): tuple[i, g: int] =
+  ## The file and the gather (record) the Seismic window shows; -1 for none.
+  result = (-1, -1)
+  let k = state.findPanel(MainPanel)
+  if k < 0 or not state.panels[k].laidOut or state.panels[k].layers.len == 0: return
+  let i = state.shownFile(k)
+  if i < 0: return
+  result = (i, state.panels[k].layers[0].source.gather)
+
+func pilotShownKey*(state: AppState): string =
+  ## Which record the Seismic window shows (its file and gather): what the Generate
+  ## dialog's pilot preview must follow.
+  let (i, g) = state.shownRecord
+  if i < 0: "" else: state.sessions[i].path & "#" & $g
+
+proc pilotPreviewAsk(state: var AppState; cmd: Command) =
+  ## The pilot `cmd.refPilot` would take from the record on show, read off the
+  ## UI thread; what the dialog keeps until the new one is ready.
+  let rule = cmd.refPilot
+  let (i, g) = state.shownRecord
+  template shown: untyped = state.pilotShown
+  proc say(state: var AppState; problem, record: string; key: string) =
+    inc state.pilotShown.gen
+    state.pilotShown = PilotPreview(key: key, record: record, problem: problem,
+      gen: state.pilotShown.gen)
+  let bad = pilotProblem(rule)
+  if bad.len > 0:
+    state.say(bad, "", "bad")
+    return
+  if i < 0:
+    state.say("Open a file: the pilot is taken from the record on show.", "", "none")
+    return
+  let s = state.sessions[i]
+  let (trace, record, problem) = s.pilotOfRecord(g, rule)
+  let edits = state.editsAt(s.path)
+  let flip = trace >= 0 and reversedOf(edits, [trace]).len > 0
+  let key = pilotKey(rule, s.path, record, trace, flip)
+  if problem.len > 0:
+    state.say(problem, record, key)
+    return
+  if shown.key == key and (shown.waiting or shown.problem.len == 0): return
+  shown.key = key
+  shown.waiting = true
+  shown.record = record
+  shown.problem = ""
+  discard state.jobs.submit(JobSpec(title: "Read the pilot of the record", lane: jlInteractive,
+    reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace, rule, flip, record,
+    s.base + trace, 0, key, rule.name, state.refsHome, state.inbox.poster))
+
+proc pilotReference(state: var AppState; cmd: Command) =
+  let why = state.refsWritable
+  if why.len > 0:
+    state.ignore(cmd, why)
+    return
+  var rule = cmd.refPilot
+  let bad = pilotProblem(rule)
+  if bad.len > 0:
+    state.ignore(cmd, bad)
+    return
+  if rule.name.strip.len == 0: rule.name = defaultPilotName(rule)
+  if state.refsLoaded:
+    let problem = state.refs.nameProblem(rule.name)
+    if problem.len > 0:
+      state.ignore(cmd, problem)
+      return
+  discard state.jobs.submit(JobSpec(title: "Store a pilot reference", lane: jlInteractive),
+    pilotRuleWork(rule, state.refsHome, state.inbox.poster))
 
 proc selectReference(state: var AppState; cmd: Command) =
   let id = cmd.refId
@@ -6970,6 +7088,30 @@ proc viewReference(state: var AppState; cmd: Command) =
     state.ignore(cmd, "there is no reference \"" & cmd.refId & "\" in the archive")
     return
   let e = state.refs.entries[i]
+  if e.isPilot:
+    let id = state.nextRefView()
+    let rule = pilotRuleOf(e)
+    var w = RefView(id: id, refId: e.id, name: e.name, pilot: rule, pilotTrace: -1)
+    let (si, g) = state.shownRecord
+    if si < 0:
+      w.note = "Open a file: this pilot is taken from the record on show."
+      state.refViews.add w
+      return
+    let s = state.sessions[si]
+    let (trace, record, problem) = s.pilotOfRecord(g, rule)
+    w.record = record
+    if problem.len > 0:
+      w.note = problem
+      state.refViews.add w
+      return
+    w.waiting = true
+    w.pilotTrace = s.base + trace
+    state.refViews.add w
+    let flip = reversedOf(state.editsAt(s.path), [trace]).len > 0
+    discard state.jobs.submit(JobSpec(title: "Read the reference " & e.name,
+      lane: jlInteractive, reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace,
+      rule, flip, record, s.base + trace, id, "", e.name, state.refsHome, state.inbox.poster))
+    return
   if e.blocked or not singleFileName(e.file):
     state.ignore(cmd, "the reference \"" & e.name &
       "\" names a file outside the archive: it was not opened")
@@ -7034,6 +7176,20 @@ proc clearGoneChoice(state: var AppState; name: string) =
 proc takeReferences(state: var AppState; m: sink Msg) =
   ## A reference job's result.
   let n = m.refNews
+  if n.act == raPilotShown:
+    if n.key == state.pilotShown.key:
+      inc state.pilotShown.gen
+      state.pilotShown.waiting = false
+      state.pilotShown.record = n.record
+      state.pilotShown.problem = n.failure
+      state.pilotShown.samples = @[]
+      state.pilotShown.hz = n.hz
+      state.pilotShown.db = n.amps
+      state.pilotShown.dtMs = n.dtMs
+      if n.failure.len == 0:
+        state.pilotShown.samples = newSeq[float32](n.ys.len)
+        for k, v in n.ys: state.pilotShown.samples[k] = float32(v)
+    return
   if n.act == raViewed or (n.act == raFailed and n.window > 0):
     let i = state.refViews.findIt(it.id == n.window)
     if i >= 0:
@@ -7049,6 +7205,12 @@ proc takeReferences(state: var AppState; m: sink Msg) =
         state.refViews[i].hz = n.hz
         state.refViews[i].amps = n.amps
         state.refViews[i].note = ""
+        if n.record.len > 0: state.refViews[i].record = n.record
+        if n.pilotTrace >= 0:
+          state.refViews[i].pilotTrace = n.pilotTrace
+          state.refViews[i].pilotTraceMs = n.pilotTraceMs
+          state.refViews[i].pilotFrom = n.pilotFrom
+          state.refViews[i].pilotTo = n.pilotTo
       inc state.refViews[i].revision
     if n.act == raFailed and n.failure.len > 0:
       state.log.add(sevWarning, "references", n.failure & ".")
@@ -7080,6 +7242,8 @@ proc takeReferences(state: var AppState; m: sink Msg) =
     state.log.add(sevInfo, "references", "Stored the reference \"" & n.name & "\".")
   elif n.act == raGenerated:
     state.log.add(sevInfo, "references", "Generated the reference \"" & n.name & "\".")
+  elif n.act == raRuleStored:
+    state.log.add(sevInfo, "references", "Stored the pilot reference \"" & n.name & "\".")
   elif n.act == raRenamed:
     state.log.add(sevInfo, "references", "Renamed the reference to \"" & n.name & "\".")
   elif n.act == raDeleted:
@@ -7162,6 +7326,10 @@ proc setCompareRef(state: var AppState; cmd: Command) =
     state.ignore(cmd, "there is no reference \"" & cmd.compareRef & "\" in the archive")
     return
   let e = state.refs.entries[i]
+  if e.isPilot:
+    state.ignore(cmd, "the reference \"" & e.name & "\" is a trace of each record, not " &
+      "one waveform: store it as a fixed reference first")
+    return
   if e.blocked or not singleFileName(e.file):
     state.ignore(cmd, "the reference \"" & e.name & "\" names a file outside the archive")
     return
@@ -7540,6 +7708,8 @@ proc applyCommand(state: var AppState; cmd: Command) =
       state.loadReferences(state.mainRefsHome, main = true)
   of ckStoreReference: state.storeReference(cmd)
   of ckGenerateReference: state.generateReference(cmd)
+  of ckPilotReference: state.pilotReference(cmd)
+  of ckPilotPreview: state.pilotPreviewAsk(cmd)
   of ckSelectReference: state.selectReference(cmd)
   of ckDeleteReference: state.deleteReference(cmd)
   of ckRenameReference: state.renameReference(cmd)
