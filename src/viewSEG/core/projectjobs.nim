@@ -183,6 +183,7 @@ proc prepareVendorFolder(dir: string) =
   try:
     if not fs.dirExists(folder): fs.createDir(folder)
     for (name, text) in VendorNotes:
+      if name == VendorReadmeName and fs.fileExists(folder / "README.md"): continue # one note
       if not fs.fileExists(folder / name): writeWhole(folder / name, text)
   except CatchableError:
     discard

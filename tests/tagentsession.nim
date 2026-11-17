@@ -463,6 +463,8 @@ proc main*() =
       st.agent(%*{"kind": "close project"})
       st.agent(%*{"kind": "open project", "projectPath": fx.dir / "the agent's job"})
       doAssert st.inProject
+      st.agent(%*{"kind": "vendor map", "vendorMap": "none"})
+      st.agent(%*{"kind": "vendor map", "vendorMap": "automatic"})
       st.agent(%*{"kind": "close project"})
       st.agent(%*{"kind": "reload vendor maps"})
       doAssert given == Offered, "not given: " & $(Offered - given)

@@ -47,6 +47,26 @@ each under the map's name, fields by name with value, unit and label. A field wh
 map's "absent" sentinel is not listed; when no map applies there is no group. Only the traces
 the tab is about are read, once, in the background; the trace table does not show vendor fields.
 
+## A project's vendor map
+
+A job is usually recorded with one vendor's system, but a map can only say which files it is for
+by format, revision, manufacturer code, serial number and text: two maps for one manufacturer
+cannot be told apart by the files. **Project > Vendor map** says which one the project uses:
+
+- **Automatic** (the default; also every project made before this choice existed, and every file
+  outside a project): every map loaded is offered, as described below.
+- **A map, by name**: only that map is offered to decoding for the project's files. It is never
+  forced onto a file it does not match: for a file whose format, revision, manufacturer or
+  serial number is not the map's, no vendor field is shown and Messages says once, in a
+  sentence, that the project's map does not apply to that file. A map that is not among
+  those loaded (a map dropped out of the folders) is one warning in Messages, naming it;
+  nothing is decoded and the choice stays in the project, so it works again when the map is back.
+- **None**: no vendor decoding.
+
+The choice is saved in the project (a read-only project keeps it for the run only), and the
+Vendor tab and the Trace tab's Vendor group say which rule is in force when it is not
+Automatic. Outside a project the entry is disabled: every map loaded is offered.
+
 ## Which map is used
 
 A map says which files it is for (format, revision, manufacturer code, serial number, text

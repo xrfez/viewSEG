@@ -226,6 +226,22 @@ proc main*() =
       doAssert said == 1, "said " & $said & " times"
       st.shutdown()
 
+    block everyMapOfTheRepositoryLoadsClean:
+      # the maps that ship in the release's vendormaps folder: loaded, and nothing found wrong
+      let repo = currentSourcePath().parentDir.parentDir / "vendormaps"
+      let load = loadVendorFolders([VendorFolder(dir: repo, origin: voProgram)])
+      doAssert load.maps.len >= 1, "no map ships"
+      doAssert load.problems.len == 0, $load.problems
+      for m in load.registry.maps: doAssert m.checkVendorMap.len == 0, m.name
+
+    block oneNoteNotTwo:
+      let beside = fx.dir / "note"
+      createDir(beside)
+      writeFile(beside / "README.md", "already")
+      doAssert prepareVendorDir(beside, VendorNotes)
+      doAssert not fileExists(beside / VendorReadmeName), "a README.txt beside a README.md"
+      doAssert fileExists(beside / VendorGuideName)
+
     block aProgramFolderThatCannotBeWrittenIsNoFailure:
       let beside = fx.dir / "bin"
       createDir(beside)

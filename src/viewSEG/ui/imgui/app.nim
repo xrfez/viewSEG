@@ -34,7 +34,7 @@
 ## `<logs>/startup-failure.log`, and `run` returns 1. In release builds a failed
 ## Dear ImGui check is logged instead of aborting (`asserts`).
 
-import std/[atomics, math, options, os, strutils, terminal, times]
+import std/[atomics, math, options, os, sequtils, strutils, terminal, times]
 import asserts # before imguin: Nim keys its cache of imguin's C++ objects on the
                # C flags in force when imguin is compiled, and this adds one
 import sdl3_nim
@@ -1252,6 +1252,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     trayProblem: ui.trayProblem, trayAvailable: trayShown(),
     plotTraces: ui.core.selectedIn(shownAt), recentProjects: ui.core.settings.recentProjects,
     projectName: (if ui.core.inProject: ui.core.project.doc.name else: ""),
+    vendorMaps: ui.core.vendorLoad.maps.mapIt(it.name),
+    vendorChoice: ui.core.vendorChoice.choiceWords,
     projectShown: ui.project.shown, archiveShown: ui.refs.shown,
     compareShown: ui.core.compareOpen)
   let menu = drawMainMenu(menuInput, ui.marks)
@@ -1259,6 +1261,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
     ui.core.apply Command(kind: ckOpenPlot, plotOf: MainPanel, plotView: menu.newPlotView)
   if menu.openProject.len > 0:
     ui.core.apply Command(kind: ckOpenProject, projectPath: menu.openProject)
+  if menu.vendorMap.len > 0:
+    ui.core.apply Command(kind: ckVendorMap, vendorMap: menu.vendorMap)
   if menu.toggleAgent: ui.toggleAgent()
   if menu.toggleTrayIcon or menu.toggleTrayMinimize:
     var s = ui.core.settings
@@ -1302,6 +1306,8 @@ proc drawUi(ui: var Ui): set[MenuAction] =
   result.incl bar.actions
   if bar.openProject.len > 0:
     ui.core.apply Command(kind: ckOpenProject, projectPath: bar.openProject)
+  if bar.vendorMap.len > 0:
+    ui.core.apply Command(kind: ckVendorMap, vendorMap: bar.vendorMap)
   if bar.fft:
     ui.core.apply Command(kind: ckSpectrum, spectrumOf: MainPanel,
       spectrumShow: ui.core.settings.spectrum.window)

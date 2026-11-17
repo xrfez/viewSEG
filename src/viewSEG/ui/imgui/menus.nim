@@ -91,6 +91,8 @@ type
     recentProjects*: seq[string] ## Project > Recent projects, newest first
     projectName*: string ## the project open; "" for none
     projectShown*: bool ## the Project window is open
+    vendorMaps*: seq[string] ## Project > Vendor map: the maps loaded, by name
+    vendorChoice*: string ## the project's rule: "automatic", "none" or a map's name
     archiveShown*: bool ## the Reference archive window is open
     compareShown*: bool ## the compare window is open
 
@@ -114,6 +116,7 @@ type
     newPlot*: bool            ## Window > New plot > a view was clicked: `newPlotView`
     newPlotView*: AnalysisView
     openProject*: string      ## a recent project to open; "" for none
+    vendorMap*: string        ## Project > Vendor map: the rule chosen ("automatic", "none" or a name); "" for none
 
 const
   shortcuts: array[MenuAction, ImGuiKeyChord] = [
@@ -279,6 +282,23 @@ proc drawProjects(input: MenuInput; res: var MenuResult) =
   if marked != nil: marked[].mark("menu." & $maProject)
   tip(if input.projectName.len > 0: "The project " & input.projectName & ": its data " &
         "folders and its survey" else: "No project is open")
+  igBeginDisabled(input.projectName.len == 0)
+  if igBeginMenu("Vendor map", true):
+    if marked != nil: marked[].mark("menu.project.vendor")
+    var rules = @[("Automatic", "automatic")]
+    for name in input.vendorMaps: rules.add (name, name)
+    rules.add ("None", "none")
+    for (words, name) in rules:
+      if igMenuItem_Bool(words.cstring, nil, input.vendorChoice == name, true):
+        res.vendorMap = name
+      if marked != nil: marked[].mark("menu.project.vendor " & name)
+    igEndMenu()
+  igEndDisabled()
+  tip(if input.projectName.len > 0: "Which vendor header map decodes this project's files: " &
+        "Automatic (every map loaded is offered; the most specific one that matches a file " &
+        "decodes it), one map by name (only that one, and only for the files it matches), or " &
+        "None" else: "A vendor map is chosen for a project: outside one, every map loaded is " &
+        "offered (Automatic)")
   igBeginDisabled(input.projectName.len == 0)
   item(maCloseProject, res)
   igEndDisabled()

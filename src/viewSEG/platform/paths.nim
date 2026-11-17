@@ -274,6 +274,8 @@ proc prepareVendorDir*(dir: string; notes: openArray[(string, string)]): bool =
   try:
     createDir(dir)
     for (name, text) in notes:
+      # one note, not two: a README.md already there is the note
+      if name == "README.txt" and fileExists(dir / "README.md"): continue
       if not fileExists(dir / name): writeFile(dir / name, text)
   except IOError, OSError:
     discard

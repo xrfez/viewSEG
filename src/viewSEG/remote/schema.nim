@@ -39,7 +39,7 @@ const
     ckPrepare, ckInspect, ckSpectrum, ckSpectrumDisplay, ckCloseSpectrum, ckSpectrumPanel,
     ckSpectrumCursor, ckStepTrace, ckDisplayPreset, ckTheme, ckOpenPlot, ckPlotDisplay,
     ckPlotCursor, ckClosePlot, ckNewProject, ckOpenProject,
-    ckCloseProject, ckReopen, ckListReferences, ckReloadVendors, ckStoreReference,
+    ckCloseProject, ckReopen, ckListReferences, ckReloadVendors, ckVendorMap, ckStoreReference,
     ckGenerateReference,
     ckPilotReference, ckPilotPreview, ckSelectReference, ckDeleteReference, ckRenameReference,
     ckCopyReference,

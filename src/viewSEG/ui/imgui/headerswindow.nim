@@ -659,6 +659,7 @@ proc drawVendorBlocks(blocks: openArray[VendorBlockFact]; t: Theme; fonts: Fonts
 
 proc drawVendor(v: VendorShown; t: Theme; fonts: Fonts; marks: var Marks) =
   ## The File headers tab's Vendor tab: what the maps decode of the file.
+  if v.rule.len > 0: dim(t, v.rule)
   for p in v.problems: dim(t, p)
   if v.blocks.len == 0:
     dim(t, "No vendor map decodes a block of this file.")
@@ -840,7 +841,7 @@ proc drawFileHeaders(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme;
   of skUnknown: discard
   block vendor:
     template v: untyped = st.inspection.answer.vendor
-    if v.path == ses.path and (v.blocks.len > 0 or v.problems.len > 0) and
+    if v.path == ses.path and (v.blocks.len > 0 or v.problems.len > 0 or v.rule.len > 0) and
         (standard != skSegd or (gather in 0 ..< ses.gathers.len and
         v.record == ses.file.segdRecordOf(ses.gathers[gather].traces.a))) and
         subTab("Vendor", marks):
@@ -896,9 +897,10 @@ proc drawTraceHeader(ui: var HeadersUi; st: AppState; fonts: Fonts; t: Theme; ma
   # the vendor fields of each trace the maps decode something of, above its header table
   for k in 0 ..< answer.traces.len:
     template v: untyped = answer.traces[k].vendor
-    if v.blocks.len > 0:
+    if v.blocks.len > 0 or v.problems.len > 0 or v.rule.len > 0:
       if igCollapsingHeader_TreeNodeFlags(("Vendor, trace " & $(answer.traces[k].trace + 1) &
           "##vendortrace" & $k).cstring, ImGui_TreeNodeFlags_DefaultOpen.cint):
+        if v.rule.len > 0: dim(t, v.rule)
         for p in v.problems: dim(t, p)
         drawVendorBlocks(v.blocks, t, fonts, marks)
       marks.mark("headers.vendor trace " & $k)

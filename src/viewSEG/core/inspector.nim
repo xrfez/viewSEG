@@ -119,13 +119,13 @@ type
     vendorRecord*: int = -1 ## its SEG-D record; -1 for another standard
     vendorGen*: int         ## the maps' load the answer is made with (`VendorShown.gen`)
     traces*: seq[InspectTrace]
-    headers*: bool      ## read the traces' header fields
-    samples*: bool      ## read their samples
-    flow*: Pipeline     ## the display processing, for samples as displayed
-    filters*: Pipeline  ## the plot's filters, run before `flow`
-    filterAux*: bool    ## an auxiliary trace goes through `filters` too
-    flowAux*: bool      ## and through `flow`
-    table*: TableAsk    ## the trace table's rows and columns
+    headers*: bool          ## read the traces' header fields
+    samples*: bool          ## read their samples
+    flow*: Pipeline         ## the display processing, for samples as displayed
+    filters*: Pipeline      ## the plot's filters, run before `flow`
+    filterAux*: bool        ## an auxiliary trace goes through `filters` too
+    flowAux*: bool          ## and through `flow`
+    table*: TableAsk        ## the trace table's rows and columns
 
   TableAsk* = object
     ## What the trace table asks the reader for.
@@ -499,7 +499,8 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
         answer.record = RecordHeaders(record: req.record, problem: readProblem(e))
   if req.vendorAt in 0 ..< req.files.len and why[req.vendorAt].len == 0:
     let f = req.files[req.vendorAt]
-    answer.vendor = vendorBlocks(f.file[], req.vendorRecord, currentVendors(), req.vendorGen)
+    let (reg, choice) = currentVendorSet()
+    answer.vendor = vendorBlocks(f.file[], req.vendorRecord, reg, req.vendorGen, choice)
   if req.table.at in 0 ..< req.files.len:
     let f = req.files[req.table.at]
     # Closed already: not read, so its columns are not cached again.
@@ -535,7 +536,8 @@ proc serve(p: ptr InspectorObj; req: InspectRequest; ws: var Workspace): bool =
             fs.unmappedFail(f.path)
             d.rows = traceRows(f.file[], t.trace)
             d.blocks = namedBlocks(f.file[], d.rows)
-            d.vendor = vendorTrace(f.file[], t.trace, currentVendors(), req.vendorGen)
+            let (reg, choice) = currentVendorSet()
+            d.vendor = vendorTrace(f.file[], t.trace, reg, req.vendorGen, choice)
           if req.samples:
             p.beat(f.path)
             fs.mappedRead(f.path)

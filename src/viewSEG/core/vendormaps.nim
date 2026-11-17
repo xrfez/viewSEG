@@ -56,6 +56,17 @@ type
     voProgram = "beside the program"
     voEnvironment = "PARSESEG_VENDOR_PATH"
 
+  VendorMode* = enum
+    ## The rule of a project for the vendor maps of its files.
+    vmAutomatic = "automatic" ## every map loaded is offered; parseSEG picks the most specific
+    vmNamed = "named"         ## only the map `VendorChoice.name`
+    vmNone = "none"           ## no vendor decoding
+
+  VendorChoice* = object
+    ## A project's choice of vendor map (automatic unless it says otherwise).
+    mode*: VendorMode
+    name*: string ## the map, for `vmNamed`
+
   VendorFolder* = object
     ## A folder to load maps from.
     dir*: string
@@ -108,20 +119,69 @@ type
     gen*: int              ## the maps' generation it was decoded with
     blocks*: seq[VendorBlockFact]
     problems*: seq[string] ## what parseSEG said while decoding, in its words
+    rule*: string
+      ## the project's rule when it is not automatic, in a sentence; "" otherwise
+    mismatch*: bool
+      ## the project names a map that is loaded but does not apply to this file
 
 # ------------------------------------------------------------ the registry --
 
 var
   shared: VendorRegistry
+  sharedChoice: VendorChoice
   sharedLock: Lock
 
 initLock(sharedLock)
 
-proc publishVendors*(reg: VendorRegistry) =
-  ## Makes `reg` the registry `currentVendors` gives.
+func choiceWords*(c: VendorChoice): string =
+  ## "automatic", "none" or the map's name: how an agent and the state say it.
+  if c.mode == vmNamed: c.name else: $c.mode
+
+func parseChoice*(text: string): VendorChoice =
+  ## `choiceWords` read back; any other text names a map.
+  case text
+  of "automatic", "": VendorChoice(mode: vmAutomatic)
+  of "none": VendorChoice(mode: vmNone)
+  else: VendorChoice(mode: vmNamed, name: text)
+
+func ruleWords*(c: VendorChoice): string =
+  ## The rule in force, in a sentence; "" for automatic.
+  case c.mode
+  of vmAutomatic: ""
+  of vmNamed: "The project's vendor map rule: only the map " & c.name & " is used."
+  of vmNone: "The project's vendor map rule: none; no vendor block is decoded."
+
+func effective*(reg: VendorRegistry; c: VendorChoice): VendorRegistry =
+  ## The maps decoding is offered under `c`: all, none, or the one named (none
+  ## at all when it is not among them).
+  case c.mode
+  of vmAutomatic: result = reg
+  of vmNone: discard
+  of vmNamed:
+    for m in reg.maps:
+      if m.name == c.name:
+        result.addMap m
+        break
+
+proc publishVendors*(reg: VendorRegistry; choice = VendorChoice()) =
+  ## Makes `reg` under `choice` the registry `currentVendors` gives.
+  let offered = reg.effective(choice)
   {.cast(gcsafe).}:
     withLock sharedLock:
-      shared = reg
+      shared = offered
+      sharedChoice = choice
+
+proc currentVendorSet*(): (VendorRegistry, VendorChoice) =
+  ## The registry in force and the rule it is made under, together.
+  {.cast(gcsafe).}:
+    withLock sharedLock:
+      result = (shared, sharedChoice)
+
+proc currentVendorChoice*(): VendorChoice =
+  ## The rule `currentVendors` is made under.
+  {.cast(gcsafe).}:
+    withLock sharedLock:
+      result = sharedChoice
 
 proc currentVendors*(): VendorRegistry =
   ## A copy of the registry in force; empty until maps are published.
@@ -261,21 +321,33 @@ proc fact(b: VendorBlock; reg: VendorRegistry): VendorBlockFact =
     result.fields.add VendorFieldFact(name: f.name, value: valueText(f.value),
       unit: f.value.unit, label: f.value.label, flags: f.value.flags.join(", "))
 
-proc vendorBlocks*(f: SeismicFile; record: int; reg: VendorRegistry; gen = 0): VendorShown =
+func noteRule(shown: var VendorShown; choice: VendorChoice; reg: VendorRegistry;
+    ctx: VendorContext) =
+  ## Says the rule in force, and whether the map it names does not apply to the file.
+  shown.rule = choice.ruleWords
+  if choice.mode == vmNamed and shown.blocks.len == 0 and reg.maps.len == 1 and
+      not reg.maps[0].applies(ctx):
+    shown.mismatch = true
+
+proc vendorBlocks*(f: SeismicFile; record: int; reg: VendorRegistry; gen = 0;
+    choice = VendorChoice()): VendorShown =
   ## What `reg` decodes of the vendor areas of `f`: of SEG-D record `record`'s
   ## headers and trailer, of a SEG-Y file's binary header and stanzas. Reads
   ## the index in memory only; nothing raises.
-  result = VendorShown(path: f.path, record: record, gen: gen)
+  result = VendorShown(path: f.path, record: record, gen: gen, rule: choice.ruleWords)
   var log: DiagLog
   var blocks: seq[VendorBlock] = @[]
+  var ctx = VendorContext(manufacturer: -1, serial: -1)
   try:
     {.cast(gcsafe).}: # (a code decoder registered with the registry is a plain proc)
       case f.kind
       of skSegd:
         if record in 0 ..< f.index.segdRecords.len:
+          ctx = vendorContext(f.index.segdRecords[record])
           blocks = decodeVendorAreas(reg, f.index.segdRecords[record], log, f.path)
       of skSegy:
         result.record = -1
+        ctx = vendorContext(f.index.segy)
         blocks = decodeVendorAreas(reg, f.index.segy, log, f.path)
       else: discard
   except CatchableError as e:
@@ -284,23 +356,27 @@ proc vendorBlocks*(f: SeismicFile; record: int; reg: VendorRegistry; gen = 0): V
   for d in log:
     if d.code == dcVendorMap or d.code == dcVendorBlock:
       result.problems.add d.msg
+  result.noteRule(choice, reg, ctx)
 
-proc vendorTrace*(f: SeismicFile; trace: int; reg: VendorRegistry; gen = 0): VendorShown =
+proc vendorTrace*(f: SeismicFile; trace: int; reg: VendorRegistry; gen = 0;
+    choice = VendorChoice()): VendorShown =
   ## What `reg` decodes of the vendor areas of trace `trace` of `f`: a SEG-D
   ## trace's header extensions (#2 and later), a SEG-Y trace's proprietary
   ## headers. Reads that trace's header bytes from the file: call it where the
   ## trace's headers are read (the inspector's thread). Nothing is read when no
   ## map is loaded; nothing raises.
-  result = VendorShown(path: f.path, record: -1, gen: gen)
+  result = VendorShown(path: f.path, record: -1, gen: gen, rule: choice.ruleWords)
   if reg.maps.len == 0 or trace notin 0 ..< f.len: return
   var log: DiagLog
   var blocks: seq[VendorBlock] = @[]
+  var ctx = VendorContext(manufacturer: -1, serial: -1)
   try:
     let e = f.index.entries[trace]
     {.cast(gcsafe).}:
       case f.kind
       of skSegd:
         let rec = f.index.segdRecords[int(e.record)]
+        ctx = vendorContext(rec)
         result.record = int(e.record)
         let extra = int(e.headerBytes) - SegdTraceHeaderSize - SegdBlockSize
         if extra > 0:
@@ -312,13 +388,16 @@ proc vendorTrace*(f: SeismicFile; trace: int; reg: VendorRegistry; gen = 0): Ven
           t.index = trace
           blocks = decodeVendorAreas(reg, rec, t, log, f.path)
       of skSegy:
+        # the 240 standard header bytes always (a `traceHeaderBytes` map reads them);
+        # the proprietary headers after the Rev 2 extension when the trace has them
         let extra = int(e.headerBytes) - 2 * TraceHeaderSize
+        ctx = vendorContext(f.index.segy)
+        var t = SegyTrace(index: trace)
+        t.header = decodeTraceHeader(f.copyBytes(e.offset, TraceHeaderSize),
+          f.index.segy.byteOrder)
         if extra > 0 and f.index.segy.revision.major >= 2:
-          var t = SegyTrace(index: trace)
-          t.header = decodeTraceHeader(f.copyBytes(e.offset, TraceHeaderSize),
-            f.index.segy.byteOrder)
           t.proprietary = f.copyBytes(e.offset + 2 * TraceHeaderSize, extra)
-          blocks = decodeVendorAreas(reg, f.index.segy, t, log, f.path)
+        blocks = decodeVendorAreas(reg, f.index.segy, t, log, f.path)
       else: discard
   except CatchableError as e:
     result.problems.add "the vendor blocks of the trace cannot be decoded: " & e.msg
@@ -326,3 +405,4 @@ proc vendorTrace*(f: SeismicFile; trace: int; reg: VendorRegistry; gen = 0): Ven
   for d in log:
     if d.code == dcVendorMap or d.code == dcVendorBlock:
       result.problems.add d.msg
+  result.noteRule(choice, reg, ctx)

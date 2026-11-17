@@ -51,6 +51,10 @@ Land 2026/                  the project folder: this is what is opened
 - **`survey/survey.bin`** is what parseSEG read from the copies, in a compact binary form
   (below). Opening the project reads it instead of the survey files.
 - **`cache/`** holds only what the program can make again from the data.
+- The project document also holds which vendor map decodes the project's files (`vendorMap`:
+  a map's name, empty for none; absent for Automatic): Project > Vendor map
+  (docs/user/vendor-maps.md). A document without it reads as Automatic, so projects made earlier
+  open unchanged, and a program that does not know it keeps it as it is.
 - **`vendormaps/`** holds vendor header maps for this job, preferred to the user's and the
   program's (docs/user/vendor-maps.md). It is made with the project, and added when a project
   without it is opened writable; a read-only project is left alone.

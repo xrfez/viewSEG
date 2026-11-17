@@ -234,7 +234,8 @@ proc traceHeadersWork*(file: ptr SeismicFile; path: string; size: int64; index: 
       if why.len > 0: raise newException(IOError, why)
       keys = file[].traceKeys([index])[0]
       rows = file[].traceHeaders(index)
-      vendor = vendorTrace(file[], index, currentVendors(), 0)
+      let (reg, choice) = currentVendorSet()
+      vendor = vendorTrace(file[], index, reg, 0, choice)
     clearCycleRoots()
     to.post Msg(job: ctx.id, kind: mkTraceRead, readKeys: keys, headerRows: move rows,
       readVendor: vendor)

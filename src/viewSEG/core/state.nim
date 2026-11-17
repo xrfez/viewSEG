@@ -227,6 +227,8 @@ type
     ckReopen = "reopen"
       ## open a file again with other options (its standard, its headers all checked,
       ## two's-complement mantissas, mapped or not), in the panels that show it
+    ckVendorMap = "vendor map"
+      ## the project's vendor map: a map's name, "automatic" or "none" (a project must be open)
     ckReloadVendors = "reload vendor maps"
       ## read the vendor header maps again (the project's, the user's, the program's, the
       ## environment's): files open show the new decode
@@ -483,6 +485,10 @@ type
       folderPath*: string ## the folder added or removed, or where a missing one is now
       folderWas*: string ## locate: the missing folder, as the project names it
     of ckCloseProject, ckUpdateSurvey, ckListReferences, ckReloadVendors: discard
+    of ckVendorMap:
+      vendorMap*: string
+        ## ckVendorMap: "automatic", "none", or the name of a loaded map (a map named
+        ## so cannot be chosen: its name is the rule)
     of ckStoreReference:
       refStore*: StoredReference
         ## ckStoreReference: the trace (a survey-wide id), the window in ms
@@ -782,11 +788,15 @@ type
     ## The vendor header maps (`core/vendormaps`).
     folders: seq[VendorFolder]
       ## the program's, the user's and the environment's, as the frontend gave them
-    load: VendorLoad ## the newest load taken in
-    asked: int       ## loads asked for; a load older than the last asked is dropped
-    gen: int         ## the load taken in: what a decode of a file was made with
+    load: VendorLoad        ## the newest load taken in
+    asked: int              ## loads asked for; a load older than the last asked is dropped
+    gen: int                ## the load taken in: what a decode of a file was made with
     job: JobId
-    saidNone: bool   ## "no maps" was said, and no map has been found since
+    saidNone: bool          ## "no maps" was said, and no map has been found since
+    choice: VendorChoice    ## the project's rule for the maps; automatic outside a project
+    loud: bool              ## the load asked for last was the user's (Reload vendor maps): said always
+    lastSaid: string        ## what the last load said: a load that says the same is quiet
+    mismatched: seq[string] ## the files the project's map was said not to apply to
 
   Remembered = object
     ## An opened file's place in what is remembered (`core/filememory`).
@@ -3007,12 +3017,24 @@ proc followInspect(state: var AppState) =
   ins.waiting = true
   state.inspector.ask(req)
 
+proc sayMismatch(state: var AppState; path: string) =
+  ## Says once for each file that the project's vendor map does not apply to it.
+  if path.len == 0 or path in state.vendor.mismatched: return
+  state.vendor.mismatched.add path
+  state.log.add(sevWarning, "vendor maps", "The project's vendor map " &
+    state.vendor.choice.name & " does not apply to " & path.extractFilename & " (its format, " &
+    "revision, manufacturer or serial number is not the one the map says, and a map is never " &
+    "forced onto a file it does not match): no vendor field is shown for it.")
+
 proc takeInspected(state: var AppState; m: sink Msg) =
   ## An answer of the Headers window's reader newer than the one shown (the
   ## newest asked or not: while the pointer moves, each answer is a request
   ## behind, and showing it beats waiting).
   if m.inspected.gen > state.answerGen:
     state.answerGen = m.inspected.gen
+    if m.inspected.vendor.mismatch: state.sayMismatch(m.inspected.vendor.path)
+    for d in m.inspected.traces:
+      if d.vendor.mismatch: state.sayMismatch(d.vendor.path)
     state.inspect.answer = move m.inspected
     if state.answerGen >= state.inspectGen: state.inspect.waiting = false
     inc state.inspect.revision
@@ -5265,8 +5287,11 @@ proc vendorFolders(state: AppState): seq[VendorFolder] =
     result.add VendorFolder(dir: state.project.dir.partOf(VendorFolderName), origin: voProject)
   result.add state.vendor.folders
 
-proc reloadVendorMaps(state: var AppState) =
+proc reloadVendorMaps(state: var AppState; loud = false) =
   ## Reads the vendor header maps again, on a job; `takeVendor` takes them in.
+  ## A load that says what the one before did (a project opened without maps of
+  ## its own) is quiet unless it was asked for (`loud`).
+  state.vendor.loud = loud
   inc state.vendor.asked
   state.vendor.job = state.jobs.submit(JobSpec(title: "Read the vendor header maps",
     lane: jlInteractive), vendorWork(state.vendorFolders, state.vendor.asked,
@@ -5279,30 +5304,76 @@ proc setVendorFolders*(state: var AppState; folders: sink seq[VendorFolder]) =
   state.vendor.folders = folders
   state.reloadVendorMaps()
 
+func missingMap(state: AppState): bool =
+  ## The project names a vendor map that is not among those loaded.
+  if state.vendor.choice.mode != vmNamed: return false
+  for m in state.vendor.load.maps:
+    if m.name == state.vendor.choice.name: return false
+  true
+
+func missingWords(state: AppState): string =
+  "The project's vendor map " & state.vendor.choice.name & " is not among the vendor " &
+    "header maps loaded: no vendor block is decoded in this project, and the choice is " &
+    "kept (it is used again when the map is there)."
+
 proc takeVendor(state: var AppState; m: sink Msg) =
-  ## A load of the vendor maps: made the registry in force, and said in a line
-  ## of Messages each (what it loaded, what it left out, and why).
+  ## A load of the vendor maps: made the registry in force under the project's
+  ## rule, and said in a line of Messages each (what it loaded, what it left
+  ## out, and why).
   if m.vendorGen < state.vendor.asked: return # a newer load is on its way
   state.vendor.job = NoJob
   state.vendor.load = move m.vendorLoad
   inc state.vendor.gen
   template load: untyped = state.vendor.load
-  publishVendors(load.registry)
+  publishVendors(load.registry, state.vendor.choice)
+  state.vendor.mismatched.setLen 0
+  var said: seq[(Severity, string, string)] = @[]
   if load.maps.len > 0:
-    state.vendor.saidNone = false
-    state.log.add(sevInfo, "vendor maps", load.summaryLine & ".")
-  elif load.folders.len > 0 and not state.vendor.saidNone:
-    state.vendor.saidNone = true
-    state.log.add(sevInfo, "vendor maps", "No vendor header maps found (looked in " &
-      load.foldersText & "): the vendor blocks of a file stay as bytes.")
-  for p in load.problems:
-    state.log.add(sevWarning, "vendor maps", p.problemLine, Location(file: p.file))
-  for line in load.shadowed:
-    state.log.add(sevInfo, "vendor maps", "The vendor header map " & line & ".")
+    said.add (sevInfo, load.summaryLine & ".", "")
+  elif load.folders.len > 0:
+    said.add (sevInfo, "No vendor header maps found (looked in " & load.foldersText &
+      "): the vendor blocks of a file stay as bytes.", "")
+  for p in load.problems: said.add (sevWarning, p.problemLine, p.file)
+  for line in load.shadowed: said.add (sevInfo, "The vendor header map " & line & ".", "")
+  if state.missingMap: said.add (sevWarning, state.missingWords, "")
+  var signature = ""
+  for (_, text, _) in said: signature.add text & "\n"
+  if state.vendor.loud or signature != state.vendor.lastSaid:
+    for (severity, text, file) in said:
+      # (no map anywhere is said once, however many loads find none)
+      if text.startsWith("No vendor header maps found") and state.vendor.saidNone: continue
+      state.log.add(severity, "vendor maps", text, Location(file: file))
+  state.vendor.saidNone = load.maps.len == 0
+  state.vendor.lastSaid = signature
+
+proc setVendorChoice(state: var AppState; origin: CommandOrigin; c: VendorChoice) =
+  ## The project's rule for the vendor maps: kept in its document when the user
+  ## chose it (an agent's is for the session), used from now on by every file.
+  if c == state.vendor.choice: return
+  state.vendor.choice = c
+  if keeps(origin) and not state.project.readOnly:
+    state.project.doc.vendorChoice = c
+    state.projectChanged()
+  elif keeps(origin):
+    state.log.add(sevWarning, "vendor maps", "The project is read-only: this choice is for " &
+      "this run only.")
+  publishVendors(state.vendor.load.registry, c)
+  state.vendor.mismatched.setLen 0
+  inc state.vendor.gen
+  state.log.add(sevInfo, "vendor maps", (case c.mode
+    of vmAutomatic: "The project's vendor map is automatic: every map loaded is offered, the " &
+      "most specific that matches a file decodes it."
+    of vmNone: "The project uses no vendor map: no vendor block is decoded."
+    of vmNamed: "The project uses the vendor map " & c.name & " alone."))
+  if state.missingMap: state.log.add(sevWarning, "vendor maps", state.missingWords)
 
 func vendorLoad*(state: AppState): lent VendorLoad {.inline.} =
   ## The vendor maps loaded, what they apply to and what went wrong.
   state.vendor.load
+
+func vendorChoice*(state: AppState): VendorChoice {.inline.} =
+  ## The project's rule for the vendor maps; automatic outside a project.
+  state.vendor.choice
 
 func vendorGen*(state: AppState): int {.inline.} =
   ## How many loads of the maps were taken in; a decode made with an earlier one is stale.
@@ -5377,6 +5448,7 @@ proc takeOpened(state: var AppState; m: sink Msg) =
     inc state.layoutRev # the windows as they are, the project's own from now on
     state.layoutAt = getMonoTime()
   state.logProblems("project", news.problems)
+  state.vendor.choice = p.doc.vendorChoice
   state.reloadVendorMaps()
   state.log.add(sevInfo, "project", (if news.created: "Made the project " else:
     "Opened the project ") & p.doc.name & " (" & dir & ")" &
@@ -7837,8 +7909,14 @@ proc applyCommand(state: var AppState; cmd: Command) =
       state.leaveProject(restoreUser = true)
       state.change(cmd.origin, s): s.lastProject = ""
       state.log.add(sevInfo, "project", "Closed the project " & name & ".")
+      state.vendor.choice = VendorChoice()
       state.reloadVendorMaps()
-  of ckReloadVendors: state.reloadVendorMaps()
+  of ckReloadVendors: state.reloadVendorMaps(loud = true)
+  of ckVendorMap:
+    if not state.inProject:
+      state.ignore(cmd, "no project is open: outside a project the vendor maps are chosen " &
+        "automatically")
+    else: state.setVendorChoice(cmd.origin, parseChoice(cmd.vendorMap))
   of ckProjectFolder: state.projectFolder(cmd)
   of ckUpdateSurvey:
     template p: untyped = state.project

@@ -771,7 +771,8 @@ proc vendorMapsJson(state: AppState): JsonNode =
   var problems = newJArray()
   for p in load.problems:
     problems.add %*{"file": p.file, "problem": p.text, "loaded": p.loaded}
-  %*{"folders": folders, "maps": maps, "problems": problems, "shadowed": load.shadowed,
+  %*{"choice": state.vendorChoice.choiceWords, "folders": folders, "maps": maps,
+    "problems": problems, "shadowed": load.shadowed,
     "loads": state.vendorGen}
 
 proc propertiesJson(state: AppState): JsonNode =

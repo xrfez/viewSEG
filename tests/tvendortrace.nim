@@ -12,7 +12,8 @@
 ## - the trace table and the other traces' answers are untouched: only the traces
 ##   the Trace tab is about have their blocks decoded.
 ##
-## Seen to fail: with `vendorTrace` not called in the inspector's trace read, "the
+## Seen to fail: with the SEG-Y decode only for traces with proprietary headers, "a Rev 1
+## SEG-Y trace has no vendor block"; with `vendorTrace` not called in the inspector's trace read, "the
 ## trace has no vendor block"; with the sentinel left out of the map, "the absent
 ## serial is listed"; with the manufacturer clause out of the map, "another
 ## manufacturer's file shows vendor fields".
@@ -27,6 +28,23 @@ const Map = """(.nif27)
     (field device (at 1) (enc u16))
     (field serial (at 3) (enc u32) (sentinel 0xFFFFFFFF))))
 """
+
+const SegyMap = """(.nif27)
+(vendormap "vendor-c" (version 1) (match (format segy))
+  (target (kind traceHeaderBytes) (name standardBytes)
+    (field samples (at 115) (enc u16))))
+"""
+
+proc rev1Segy(dir: string): string =
+  ## A Rev 1 SEG-Y file of one trace of 16 samples: no Rev 2 extension, no
+  ## proprietary headers.
+  result = dir / "rev1.sgy"
+  var w = openSeismicWriter(result, SegyOutputOptions(revision: SegyRevision(major: 1, minor: 0),
+    traceSorting: 1, text: @["C01 viewSEG test fixture: rev 1"]))
+  var k = initTraceKeys()
+  (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, 1.0, 0.0, 2000.0, tsLive)
+  w.writeTrace(k, newSeq[float32](16))
+  doAssert w.close().len == 0
 
 proc fieldOf(b: VendorBlockFact; name: string): string =
   for f in b.fields:
@@ -73,6 +91,14 @@ proc main*() =
     doAssert zero.blocks.len == 1 and zero.blocks[0].fieldOf("device") == "0"
     # another manufacturer: no block
     doAssert st.shown(other, 0).blocks.len == 0, "another manufacturer's file shows vendor fields"
+    # a Rev 1 SEG-Y file has no proprietary headers: a map of the standard header's bytes applies
+    writeFile(dir / "c.nif", SegyMap)
+    st.apply Command(kind: ckReloadVendors)
+    doAssert st.settle(st.vendorGen == 2 and st.vendorLoad.maps.len == 2)
+    let rev1 = st.shown(rev1Segy(fx.dir), 0)
+    doAssert rev1.blocks.len == 1 and rev1.blocks[0].name == "standardBytes" and
+      rev1.blocks[0].fieldOf("samples") == "16", "a Rev 1 SEG-Y trace has no vendor block: " &
+      $rev1.blocks.len
     # the agent's headers answer
     discard st.shown(mine, 0) # (shown again: the one the agent reads)
     let job = st.readTraceHeaders(st.sessions.high, 0)

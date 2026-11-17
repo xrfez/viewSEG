@@ -192,6 +192,7 @@ type
     ## What the toolbar asks for.
     actions*: set[MenuAction]
     openProject*: string ## a recent project chosen from the Project menu's list
+    vendorMap*: string   ## a vendor map rule chosen there; "" for none
     fft*: bool           ## FFT of the Seismic window's selection
     plot*: bool          ## a New plot view of that selection
     plotView*: AnalysisView
@@ -344,6 +345,7 @@ proc drawProjectButton(p: ProjectBar; size: float32; t: Theme; marks: var Marks;
     let asked = drawProjectItems(input, marks)
     res.actions.incl asked.actions
     if asked.openProject.len > 0: res.openProject = asked.openProject
+    if asked.vendorMap.len > 0: res.vendorMap = asked.vendorMap
     igEndPopup()
 
 proc drawToolbar*(t: Theme; marks: var Marks; input: MenuInput;

@@ -19,7 +19,7 @@
 
 import std/[os, strutils, times]
 import parseSEG
-import displaypresets, filesystem, join, nif, processing
+import displaypresets, filesystem, join, nif, processing, vendormaps
 
 const
   ProjectFileName* = "project.nif"       ## the project document, in the project folder
@@ -93,6 +93,9 @@ type
     hasPresets*: bool              ## `displayPresets` were set in the project (else the user's)
     referenceId*: string
       ## the reference the plots use in this project; "" is the file's own pilot
+    vendorChoice*: VendorChoice
+      ## the vendor map rule of the project's files (`core/vendormaps`); automatic when
+      ## the document says nothing
     later*: seq[NifNode]
       ## what the document holds that this version does not know (a later
       ## version's), written back as it was

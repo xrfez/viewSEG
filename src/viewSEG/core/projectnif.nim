@@ -30,7 +30,7 @@
 ## it can; the program then opens the project read-only.
 
 import std/[strutils, times]
-import identity, join, nif, processing, project, settingsnif
+import identity, join, nif, processing, project, settingsnif, vendormaps
 
 const
   KindNames: array[JoinFileKind, string] = ["sps", "p1", "csv"]
@@ -140,6 +140,10 @@ proc projectDocument*(d: ProjectDoc): string =
       w.close
     w.close
   w.value("referenceId", d.referenceId)
+  case d.vendorChoice.mode
+  of vmAutomatic: discard
+  of vmNamed: w.value("vendorMap", d.vendorChoice.name)
+  of vmNone: w.value("vendorMap", "") # (a named map is never empty)
   if d.hasProcessing: w.writeProcessing(d.processing)
   if d.hasPresets: w.writeDisplayPresets(d.displayPresets)
   for n in d.later: w.add n
@@ -339,6 +343,11 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
         result.displayPresets = readDisplayPresets(c, name, r.problems)
         result.hasPresets = true
       of "referenceId": r.text(c, result.referenceId)
+      of "vendorMap":
+        var name = ""
+        r.text(c, name)
+        result.vendorChoice = if name.len == 0: VendorChoice(mode: vmNone)
+                              else: VendorChoice(mode: vmNamed, name: name)
       else: result.later.add c
   if result.version == 0:
     r.problem(doc[root], "(project) gives no (version); read as version " & $ProjectVersion)

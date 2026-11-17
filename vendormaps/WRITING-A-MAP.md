@@ -47,7 +47,7 @@ maps match, the most specific one wins. Ties raise a diagnostic.
 ```
 (.nif27)
 (vendormap "vendor-a-trace-blocks" (version 1)
-  (match (format segd) (rev 3.0 3.1) (manufacturer 50))
+  (match (format segd) (rev 3.0 3.1) (manufacturer 77))
   (doc "Vendor A user trace-header blocks")
   (target (kind block) (type 0xB0) (where traceHeader) (name vendorAStatus)
     (field gpsLat   (at 1)  (enc f64) (unit "deg"))
