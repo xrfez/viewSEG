@@ -25,7 +25,7 @@ import std/[math, strutils]
 import parseSEG
 import parseSEG/common/fieldlayout
 import parseSEG/private/fieldaccess
-import fielddocs, openchoice, tracetable, vendormaps
+import fielddocs, openchoice, tracetable, traceids, vendormaps
 
 export FileSummary, ChannelSetSummary, JoinGroup, openchoice, vendormaps
 
@@ -204,6 +204,9 @@ proc fieldRow*(r: HeaderRow): FieldRow =
   (result.firstNibble, result.nibbles) = nibbleSpan(r.kind, r.field)
   result.description = if r.field.len > 0: fieldDescription(r.kind, r.field)
                        else: wordsOf(result.value)
+  if r.kind == hbSegyTrace and r.field == "traceIdCode":
+    let said = traceIdText(int(result.number))
+    if said.len > 0: result.description.add ": " & said
 
 func fieldRows*(rows: openArray[HeaderRow]): seq[FieldRow] =
   ## A parseSEG header listing as the tables show it.

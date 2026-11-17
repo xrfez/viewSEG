@@ -457,7 +457,12 @@ gain amount in dB works with every type, from -300 to +300 dB: the box shows the
 +, or press `]` and `[` (keypad `*` and `/`), 3 dB a step or 12 dB with Shift; the
 buttons and keys repeat while held, and the picture brightens or darkens at once. A trace the file
 marks dead is never drawn, whatever the gain: it is blank, like a killed trace, it does
-not count in the brightness, and the status bar says "dead" over it.
+not count in the brightness, and the status bar says "dead" over it. A trace that is not
+seismic data says what it is there too, by its SEG-Y trace identification code in words
+("vibrator baseplate (19)"); a code the standard does not list is shown as it is ("code 29
+(not in the standard)"), never guessed at. The same words follow the code in the Headers
+window's Trace tab, and **trace ID code** is a field you can add to the status bar
+(right-click it).
 
 The view never goes past the data: panning and zooming stop at the first and last trace
 (in wiggles, past them by their swing) and at the record's start and end, and zoomed out

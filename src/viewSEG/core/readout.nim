@@ -9,11 +9,13 @@
 ## be added, and the raw amplitude: the sample as the file has it, before
 ## polarity, edits, processing and gain (off by default; while it is on, the
 ## tiles carry their raw samples too, `ReaderRequest.raw`). Whatever the fields, the readout says when the trace under the
-## pointer is dead in the file, killed or its polarity reversed (`editNote`).
+## pointer is dead in the file, killed or its polarity reversed (`editNote`),
+## and, for a trace that is not seismic data, which trace identification code it
+## has, in words ("vibrator baseplate (19)").
 
 import std/[math, strutils, times]
 import parseSEG
-import edits, pick
+import edits, pick, traceids
 
 type
   ReadoutField* = enum
@@ -39,6 +41,7 @@ type
     rfReceiverZ = "receiver elevation"
     rfComponent = "component"
     rfStatus = "trace status"         ## live, dead or auxiliary
+    rfTraceId = "trace ID code"       ## the SEG-Y code in words: "vibrator baseplate (19)"
 
 const
   DefaultReadout* = [rfTime, rfTrace, rfChannel, rfReceiver, rfSource, rfRecord, rfOffset,
@@ -70,6 +73,7 @@ func caption*(f: ReadoutField): string =
   of rfReceiverZ: "rcv z"
   of rfComponent: "comp"
   of rfStatus: "status"
+  of rfTraceId: "id"
 
 func known(v: float64): bool {.inline.} = v.classify notin {fcNan, fcInf, fcNegInf}
 
@@ -160,6 +164,7 @@ proc text*(p: Pick; f: ReadoutField): string =
       of tsLive: "live"
       of tsDead: "dead"
       of tsAuxiliary: "auxiliary"
+    of rfTraceId: traceIdText(int(k.traceCode))
     of rfTime, rfSample, rfAmplitude, rfRawAmplitude: "" # handled above
 
 func joinGroupsOf*(f: ReadoutField): set[JoinGroup] =
@@ -186,9 +191,13 @@ func editNote*(p: Pick): string =
   ## What the readout says of the trace at `p` beyond its fields: "dead"
   ## when the file marks it dead (it is drawn blank), then its edits,
   ## "killed", "polarity reversed", each after a comma; "" for none (or no
-  ## trace).
+  ## trace). A trace that is not seismic data and is not dead (an auxiliary
+  ## one, or one with a code the standard does not know) says its
+  ## identification code first: "vibrator baseplate (19)".
   if not (p.inside and p.found): return ""
   if p.keys.status == tsDead: result = "dead"
+  elif p.keys.status in {tsAuxiliary, tsUnknown} and p.keys.traceCode != 0:
+    result = traceIdText(int(p.keys.traceCode))
   for (edit, word) in [(teKilled, "killed"), (teReversed, "polarity reversed")]:
     if edit in p.edits: result.add (if result.len > 0: ", " else: "") & word
   if p.filterNote.len > 0: result.add (if result.len > 0: ", " else: "") & p.filterNote
