@@ -8,7 +8,8 @@
 ## opened. Its "Reopen with options..." button opens the dialog again, with
 ## the options the file has now; Defaults then Reopen opens it as at first.
 ## Escape closes the dialog and opens nothing. Help > About viewSEG lists
-## viewSEG's, parseSEG's and processSEG's versions; Close closes it. The
+## viewSEG's, parseSEG's and processSEG's versions and shows the copyright line and
+## the author's e-mail (`authorship`); Close closes it. The
 ## file is never changed.
 ##
 ## The Seismic window says how the file was opened ("plot.opened as") while the options
@@ -17,7 +18,8 @@
 ## Seen to fail: with the dialog's Reopen giving no command (`result.add`
 ## taken out of `drawReopen`), "Reopen did not happen"; with File >
 ## Reopen with options... not acted on (`maReopen` doing nothing in
-## `onActions`), "File > Reopen with options... did not happen".
+## `onActions`), "File > Reopen with options... did not happen". With the
+## copyright line not drawn, "Help > About viewSEG did not happen".
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves reopen-*.png and about.png there.
@@ -135,7 +137,9 @@ proc main*() =
     menu("Help > About viewSEG", "Help", "About viewSEG", proc (f: FrameInfo): bool =
       result = wait > 3 and f.markOf("about").size.x > 0 and
         f.markOf("about parseSEG").size.x > 0 and f.markOf("about processSEG").size.x > 0 and
-        f.markOf("about viewSEG").size.x > 0
+        f.markOf("about viewSEG").size.x > 0 and f.markOf("about.copyright").size.x > 0 and
+        f.markOf("about.email").size.x > 0 and
+        f.markOf("about.repository").size.x > 0 and f.markOf("about.licence").size.x > 0
       if result: f.shoot("about.png"))
     clickOn("Close", "about.close", proc (f: FrameInfo): bool =
       wait > 3 and f.markOf("about").size.x == 0)

@@ -50,6 +50,26 @@ proc drawAbout*(ui: var AboutUi; t: Theme; marks: var Marks) =
     "files.", nil)
   igTextUnformatted("It reads the files it shows and never changes them.", nil)
   igPopStyleColor(1)
+  igTextUnformatted(CopyrightLine.cstring, nil)
+  marks.mark("about.copyright")
+  igTextUnformatted(AuthorEmail.cstring, nil)
+  marks.mark("about.email")
+  igTextUnformatted(RepositoryUrl.cstring, nil)
+  marks.mark("about.repository")
+  igSpacing()
+  igTextUnformatted("Released under the MIT License.", nil)
+  marks.mark("about.licence")
+  igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+  igPushTextWrapPos(igGetCursorPos().x + igGetFontSize() * 36)
+  igTextUnformatted(LicenseDisclaimer.cstring, nil)
+  igPopTextWrapPos()
+  igPopStyleColor(1)
+  if igTreeNode_Str("Licence...##full"):
+    igPushTextWrapPos(igGetCursorPos().x + igGetFontSize() * 36)
+    igTextUnformatted(LicenseText.cstring, nil)
+    igPopTextWrapPos()
+    igTreePop()
+  marks.mark("about.fulllicence")
   igSpacing()
   const flags = ImGui_TableFlags_RowBg.cint or ImGui_TableFlags_BordersInnerV.cint or
     ImGui_TableFlags_SizingFixedFit.cint
@@ -66,7 +86,7 @@ proc drawAbout*(ui: var AboutUi; t: Theme; marks: var Marks) =
     igEndTable()
   igSpacing()
   if igButton("Copy", ImVec2_c(x: 0, y: 0)):
-    igSetClipboardText(aboutText(ui.lines).cstring)
+    igSetClipboardText((CopyrightLine & '\n' & AuthorEmail & '\n' & aboutText(ui.lines)).cstring)
   marks.mark("about.copy")
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
     igTextUnformatted("Copy the version lines to the clipboard", nil)

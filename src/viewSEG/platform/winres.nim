@@ -22,6 +22,7 @@
 
 when defined(windows):
   import std/[compilesettings, os, strutils] # os: quoteShell only
+  import ../authorship
 
   const
     windresExe {.strdefine.} = ""
@@ -62,6 +63,7 @@ when defined(windows):
       "\nFILEOS 0x40004\nFILETYPE 0x1\nBEGIN\n" &
       "  BLOCK \"StringFileInfo\"\n  BEGIN\n    BLOCK \"040904B0\"\n    BEGIN\n" &
       "      VALUE \"CompanyName\", \"xrfez\"\n" &
+      "      VALUE \"LegalCopyright\", \"" & CopyrightLine.replace("©", "\\251") & "\"\n" &
       "      VALUE \"FileDescription\", \"viewSEG seismic viewer\"\n" &
       "      VALUE \"FileVersion\", \"" & v & "\"\n" &
       "      VALUE \"InternalName\", \"viewSEG\"\n" &

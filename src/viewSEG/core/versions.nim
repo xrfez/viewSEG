@@ -7,7 +7,10 @@
 
 import std/[macros, os, strutils]
 import parseSEG
+import ../authorship
 from processSEG/pipeline import Pipeline
+
+export authorship
 
 type
   AboutLine* = tuple[name, version: string]
