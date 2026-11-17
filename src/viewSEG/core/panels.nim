@@ -141,8 +141,11 @@ type
 
   Level* = object
     ## Amplitude statistics of the live traces of some data (processSEG's
-    ## `panelStats`): RMS, largest |x|, and the clip percentile of |x|. NaN
-    ## when unknown.
+    ## `panelStats`): RMS, largest |x|, and the clip percentile of |x|, of the
+    ## samples as read (before the display gain; the auxiliary traces when
+    ## there is no seismic one). The types that scale by the record or the
+    ## view use them; Normalized for each trace does not (`reference` is 1).
+    ## NaN when unknown.
     rms*: float64 = NaN
     peak*: float64 = NaN
     clip*: float64 = NaN
@@ -481,6 +484,14 @@ func displayPipeline*(layer: Layer; kind: GatherKind): Pipeline =
     except ValueError:
       discard # a value that is not finite: no curve (the control refuses one)
   else: discard
+
+func flowReachesAux*(layer: Layer; kind: GatherKind): bool =
+  ## Whether the display gain's CPU part runs on the auxiliary traces too:
+  ## the types that set each trace's own size (Normalized for each trace, AGC)
+  ## do, so a trace of 60 000 and one of 1 come out alike; the others are a
+  ## scale of the record or a curve in time, and leave an auxiliary trace as
+  ## it is.
+  layer.display.cpuGain(kind) in {dgNormalized, dgAgc}
 
 func sameProcessing*(a, b: DisplaySettings; kind: GatherKind): bool =
   ## Whether `a` and `b` give a gather of `kind` the same samples: then a

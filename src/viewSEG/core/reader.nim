@@ -67,8 +67,11 @@
 ##   from the file (the panel asks for whole traces while it filters, so
 ##   the samples at hand stay enough as the filters' margin changes). The
 ##   auxiliary traces go through the filters only when the layer asks
-##   (`Processing.aux`): processSEG passes them by otherwise, and the
-##   display gain never touches them.
+##   (`Processing.aux`): processSEG passes them by otherwise. The display gain
+##   reaches them when it sets each trace's own size (Normalized for each trace,
+##   AGC: `flowReachesAux`), so a trace of 60 000 and one of 1 are drawn alike;
+##   the other types are a scale of the record or a curve in time, and leave
+##   them as they are.
 ## - **A drive that does not answer.** The reader *beats* (`fs.now`) as it
 ##   takes each chunk; one that is busy and has not beaten for a while is
 ##   stuck in the file system (`silentFor`), where no note reaches it. The
@@ -118,6 +121,7 @@ type
     filters*: Pipeline
       ## the layer's filters (`filterPipeline`), run before `flow`; empty for none
     filterAux*: bool          ## the auxiliary traces go through `filters` too
+    flowAux*: bool            ## and through `flow` (`flowReachesAux`)
     clipPercentile*: float64
     reversed*: seq[int]       ## the gather's traces whose polarity is reversed, ascending
     killed*: seq[int]         ## the gather's traces killed, ascending
@@ -460,6 +464,7 @@ type Preparing = object
   filtering: bool
   filterPlan: PipelinePlan[float32]
   filterAux: bool
+  flowAux: bool
   filtered: int              ## rows passed to the pool for the filters
   ownAt: seq[int]            ## per row of the request: index into `ownKeys`, or -1
   ownKeys: seq[OwnFilter]
@@ -575,7 +580,13 @@ proc prepare(rd: var Reader; pr: var Preparing; b: RowBlock[float32]; rows: Trac
         pr.filtering = false
     if pr.ownAt.len > 0 and b.len > 0:
       rd.applyOwn(pr, b, rows, first, passed)
-    if pr.processing: rd.poolOf.apply(pr.plan, b, meta)
+    if pr.processing:
+      if pr.flowAux and rows.hasAuxiliary:
+        var keys: seq[TraceKeys]
+        var lengths: seq[int]
+        rd.poolOf.apply(pr.plan, b, initChunkMeta(rows.auxLiveRows(keys, lengths),
+          rd.layout.dtMs, pr.firstSample, passed))
+      else: rd.poolOf.apply(pr.plan, b, meta)
   except ValueError as e:
     rd.note(sevError, "The display processing stopped on " & rd.name & ": " & e.msg)
     pr.processing = false
@@ -658,7 +669,7 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
   let skip = q.firstSample - window.a # decoded columns before the kept ones
   let cols = window.len
   var pr = Preparing(processing: req.flow.len > 0, filtering: req.filters.len > 0,
-    filterAux: req.filterAux, firstSample: window.a)
+    filterAux: req.filterAux, flowAux: req.flowAux, firstSample: window.a)
   if pr.filtering:
     try:
       pr.filterPlan = req.filters.compile(float32, rd.layout.dtMs, cols,

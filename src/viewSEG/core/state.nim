@@ -2424,6 +2424,7 @@ proc requestView(state: var AppState; k: int; readAhead = true) =
   if first: p.basis = if req.wholeRecord(p.layout): req else: p.recordRequest(margin)
   let asked = ReaderRequest(read: req, fields: p.shownFields, flow: flow,
     filters: filters, filterAux: p.layers[0].processing.aux,
+    flowAux: p.layers[0].flowReachesAux(state.gatherKind(p.layers[0])),
     clipPercentile: p.layers[0].display.clipPercentile, reversed: reversed, killed: killed,
     own: own,
     raw: rfRawAmplitude in state.settings.readout, chunkTraces: if slow: SlowChunkTraces else: 0,
@@ -2944,6 +2945,7 @@ proc followInspect(state: var AppState) =
     req.flow = layer.displayPipeline(state.gatherKind(layer))
     req.filters = layer.processing.filterPipeline(state.panels[k].layout)
     req.filterAux = layer.processing.aux
+    req.flowAux = layer.flowReachesAux(state.gatherKind(layer))
   if want.tableOf[0] != NoSession:
     req.table = TableAsk(at: state.fileOf(req, held, state.findSession(want.tableOf[0])),
       traces: want.tableOf[1], view: want.table, joins: want.joins)

@@ -120,6 +120,7 @@ type
     flow*: Pipeline     ## the display processing, for samples as displayed
     filters*: Pipeline  ## the plot's filters, run before `flow`
     filterAux*: bool    ## an auxiliary trace goes through `filters` too
+    flowAux*: bool      ## and through `flow`
     table*: TableAsk    ## the trace table's rows and columns
 
   TableAsk* = object
@@ -286,8 +287,11 @@ proc readSamples(d: var TraceDetail; f: ptr SeismicFile; t: InspectTrace;
   if not blank and req.flow.len > 0:
     let plan = req.flow.compile(float32, d.dtMs, whole, recordSamples = n)
     ws.reserve(plan)
-    let meta = initChunkMeta(f[].rowsOf(list), d.dtMs, 0)
-    plan.apply(rowBlock(d.samples, 1, whole), meta, ws)
+    var keys: seq[TraceKeys]
+    var lengths: seq[int]
+    let rows = if req.flowAux: f[].rowsOf(list).auxLiveRows(keys, lengths)
+               else: f[].rowsOf(list)
+    plan.apply(rowBlock(d.samples, 1, whole), initChunkMeta(rows, d.dtMs, 0), ws)
   if whole > kept:
     d.samples.setLen kept # the part kept, of the trace processed whole
   if whole < n and kept < n and processed:

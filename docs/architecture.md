@@ -1100,7 +1100,9 @@ Written by the disk thread (`core/diskio`), so the UI thread only hands text ove
    request's, so the work follows the zoom, not the file's size). The auxiliary traces
    go through the filters only when the layer asks (`Processing.aux`): processSEG
    passes a row by unless it is live, so the reader gives the filters a view of the
-   chunk's keys in which they are (`auxLiveRows`); the display gain never touches them.
+   chunk's keys in which they are (`auxLiveRows`). The display gain that sets each trace's own size (Normalized for each
+   trace, AGC) runs on them too (`flowReachesAux`), so an auxiliary trace of 60 000 and
+   one of 1 are drawn alike; the other gain types leave them as they are.
    A newer note stops the read between chunks; a tile made from the samples at hand is
    finished first (only a new source, order or stop ends it). **A slider dragged**
    (`ckProcessing` frame after frame, nothing else between: `Panel.filterRun`,
