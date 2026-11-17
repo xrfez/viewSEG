@@ -32,23 +32,24 @@ type
     genLaw: ReferenceLaw
     genShape: TaperShape
     genMessage: string
-    genSource: int     ## 0: the sweep settings; 1: a trace of the record
-    autoName: string   ## the name the dialog filled in last (replaced while it is not edited)
+    genSource: int          ## 0: the sweep settings; 1: a trace of the record
+    autoName: string        ## the name the dialog filled in last (replaced while it is not edited)
     pilotAux: bool
     pilotN, pilotStart, pilotLength: float64
-    pilotAsked: string ## the pilot ask last sent
+    pilotAsked: string      ## the pilot ask last sent
     pilotLive: string
     pilotStable: int
-    pilotGen: int      ## the preview's picture this dialog copied last
-    fixed: StoreDialog ## Store this pilot as a fixed reference, from a pilot's window
+    pilotLengthFilled: bool ## the whole trace was put in Length once; a later edit stands
+    pilotGen: int           ## the preview's picture this dialog copied last
+    fixed: StoreDialog      ## Store this pilot as a fixed reference, from a pilot's window
     previewSamples: seq[float32]
     previewHz, previewDb: seq[float64]
     previewDt, askedDt: float64
     previewF1, previewF2: float64
-    previewKey: string ## the settings the dialog is showing a key for
-    askedKey: string   ## the settings last sent to the worker
+    previewKey: string      ## the settings the dialog is showing a key for
+    askedKey: string        ## the settings last sent to the worker
     liveKey: string
-    stable: int        ## frames the settings have stayed put
+    stable: int             ## frames the settings have stayed put
     askedGen, shownGen: int
     signalPlot, spectrumPlot: CurvePlotUi
     viewPlots: Table[int, tuple[time, spec: CurvePlotUi, ys: seq[float32], rev: int]]
@@ -113,6 +114,7 @@ proc openGenerate*(ui: var ReferencesUi; dtMs: float64) =
   ui.pilotN = 1
   ui.pilotStart = 0
   ui.pilotLength = 0
+  ui.pilotLengthFilled = false
   ui.pilotAsked = ""
   ui.pilotLive = ""
   ui.pilotStable = 0
@@ -185,6 +187,7 @@ proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; marks: var Marks)
     let env = columnEnvelope(ui.previewSamples, 0.0, ui.previewDt, cols)
     var time = CurvePlot(xLabel: "Time (ms)", xUnit: "ms", yLabel: "Amplitude",
       xs: env.xs, curves: @[Curve(name: "sweep", colour: ink, ys: env.ys)], legend: false,
+          roomRight: true,
       dense: DenseSignal(values: cast[ptr UncheckedArray[float32]](addr ui.previewSamples[0]),
       count: ui.previewSamples.len, x0: 0.0, dx: ui.previewDt))
     discard curves.drawCurvePlot(ui.signalPlot, "generate.preview", time, t,
@@ -205,7 +208,7 @@ proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; marks: var Marks)
     for i in 0 ..< n: db[i] = float32(ui.previewDb[i0 + i])
     let env = columnEnvelope(db, ui.previewHz[i0], dx, cols)
     var spec = CurvePlot(xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude (dB)",
-      yUnit: "dB", xs: env.xs, xFloor: axis.lo, xCeil: axis.hi, legend: false,
+      yUnit: "dB", xs: env.xs, xFloor: axis.lo, xCeil: axis.hi, legend: false, roomRight: true,
       curves: @[Curve(name: "amplitude", colour: ink, ys: env.ys)])
     discard curves.drawCurvePlot(ui.spectrumPlot, "generate.spectrum", spec, t,
       ImVec2_c(x: -1, y: plotH), spectrumFitKey(ui.shownGen, ui.previewF1,
@@ -305,8 +308,9 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
     ui.pilotAsked = ""
     ui.pilotGen = -1
     ui.shownGen = 0
-  if ui.genSource == 1 and ui.pilotLength <= 0 and st.shownLengthMs > 0:
+  if ui.genSource == 1 and not ui.pilotLengthFilled and st.shownLengthMs > 0:
     ui.pilotLength = st.shownLengthMs
+    ui.pilotLengthFilled = true
   let defaultName = if ui.genSource == 0: defaultGenerateName(ui.asked)
                     else: defaultPilotName(ui.pilotRule)
   if bufText(ui.genName).len == 0 or bufText(ui.genName) == ui.autoName:
@@ -408,6 +412,9 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
                 else: "Taken from each record when this reference is chosen."
     igTextWrapped("%s", where.cstring)
     marks.mark("generate.pilot.record")
+    if shown.note.len > 0 and shown.problem.len == 0:
+      igTextWrapped("%s", ("Pilot: " & shown.note).cstring)
+      marks.mark("generate.pilot.note")
     if shown.problem.len > 0:
       igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
       igTextWrapped("%s", shown.problem.cstring)
@@ -748,7 +755,10 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
               w.pilotTo, w.pilotTraceMs, false)
           marks.mark("reference.view.fix")
           tip("Saves this record's cut pilot as an ordinary stored waveform: the file's " &
-            "raw samples, as Store does")
+            "raw samples, as Store does (not turned over, not filtered)")
+        if w.pilotNote.len > 0:
+          igTextWrapped("%s", ("Pilot: " & w.pilotNote).cstring)
+          marks.mark("reference.view.pilotnote")
         var uis = ui.viewPlots.getOrDefault(w.id)
         let ink = t.roles[rlAccent]
         if uis.rev != w.revision + 1 or uis.ys.len != w.ys.len:
@@ -758,7 +768,8 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
         let dt = if w.dtMs > 0: w.dtMs else: 1.0
         let env = columnEnvelope(uis.ys, w.fromMs, dt, 1024)
         var time = CurvePlot(xLabel: "Time (ms)", xUnit: "ms", yLabel: "Amplitude",
-          xs: env.xs, curves: @[Curve(name: w.name, colour: ink, ys: env.ys)], legend: false)
+          xs: env.xs, curves: @[Curve(name: w.name, colour: ink, ys: env.ys)], legend: false,
+          roomRight: true)
         if uis.ys.len > 1:
           time.dense = DenseSignal(values: cast[ptr UncheckedArray[float32]](addr uis.ys[0]),
             count: uis.ys.len, x0: w.fromMs, dx: dt)
@@ -766,7 +777,8 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
           ImVec2_c(x: -1, y: igGetFontSize() * 12), $w.revision, marks)
         let (hx, hy) = thinPair(w.hz, w.amps)
         var spec = CurvePlot(xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude",
-          xs: hx, curves: @[Curve(name: "amplitude", colour: ink, ys: hy)], legend: false)
+          xs: hx, curves: @[Curve(name: "amplitude", colour: ink, ys: hy)], legend: false,
+          roomRight: true)
         if hy.len == 0: spec.note = "No spectrum."
         discard curves.drawCurvePlot(uis.spec, "reference.view.spectrum", spec, t,
           ImVec2_c(x: -1, y: igGetFontSize() * 12), "s" & $w.revision, marks)

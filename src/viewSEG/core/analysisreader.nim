@@ -65,6 +65,7 @@ type
     pilotRecord*: string ## which record that is, for the sentences
     pilotReversed*: bool ## that trace is effectively reversed: turned over first
     pilotOwn*: seq[FilterEntry] ## its own filter, when it has one
+    extraNote*: string ## said under the numbers, for what the choice of a reference changed
 
   ReaderObj = object
     lock: Lock
@@ -206,7 +207,7 @@ proc applyRowsOwn(b: RowBlock[float32]; live: TraceRows; dtMs: float64;
         ws.reserve(plan)
         plan.apply(b, initChunkMeta(live, dtMs, 0, skip), ws)
 
-proc filtered(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
+proc filtered*(rows: var seq[seq[float32]]; f: ptr SeismicFile; list: seq[int];
     pr: Processing; own: openArray[FilterEntry]; reversed: openArray[int];
     dtMs: float64; passed: var int; plotOn = true): string =
   ## `rows` (traces `list` of `f`) with each reversed trace multiplied by -1
@@ -532,6 +533,8 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
           answer.notDrawn = notDrawn
           if through.len > 0 and answer.problem.len == 0:
             answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & through
+          if a.extraNote.len > 0 and answer.problem.len == 0:
+            answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & a.extraNote
       except OSError as e:
         answer.problem = "it cannot be read now: " & e.msg
       except ValueError as e:

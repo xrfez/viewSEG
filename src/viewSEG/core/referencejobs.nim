@@ -4,7 +4,7 @@
 
 import std/[os, strutils]
 import parseSEG
-import filesystem, inbox, jobs, references, threads
+import analysis, analysisreader, filesystem, inbox, jobs, processing, references, threads
 
 proc post(to: Poster; job: JobId; news: ReferenceNews) =
   clearCycleRoots()
@@ -171,10 +171,12 @@ proc pilotRuleWork*(rule: PilotRule; folder: string; to: Poster): JobWork =
 
 proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
     rule: PilotRule; flip: bool; record: string; surveyTrace, window: int;
-    key, name, folder: string; to: Poster): JobWork =
-  ## Reads trace `trace` of the open file raw, turns it over when `flip` (its
+    key, name, folder: string; pr: Processing; own: seq[FilterEntry]; to: Poster): JobWork =
+  ## Reads trace `trace` of the open file, turns it over when `flip` (its
   ## polarity as the plot shows it: the trace's own reversal or reverse-all),
-  ## and cuts the window `rule` names. For a reference window (`window` above
+  ## puts it through what a correlation puts it through (`filtered`: the
+  ## plot's filters `pr`, an auxiliary trace only when the Aux toggle says so,
+  ## then its own filter `own`) and cuts the window `rule` names. For a reference window (`window` above
   ## 0) it posts `raViewed`; else `raPilotShown` for the Generate dialog's
   ## preview, with the amplitude spectrum in dB in `amps`. A trace or window that
   ## is not there is said in `failure`.
@@ -195,9 +197,21 @@ proc pilotWork*(file: ptr SeismicFile; path: string; size: int64; trace: int;
              else: file[].sampleIntervalUs(trace)
       if samples.len == 0:
         raise newException(IOError, "the trace could not be read")
-      if flip:
-        for v in samples.mitems: v = -v
       let dt = if us > 0 and us < Inf: us / 1000 else: 0.0
+      if dt > 0:
+        var rows = @[samples]
+        var passed = 0
+        var through = ""
+        {.cast(gcsafe).}:
+          through = filtered(rows, file, @[trace], pr, own, (if flip: @[trace] else: @[]), dt,
+            passed)
+        samples = rows[0]
+        if passed > 0 and through.startsWith("through "):
+          news.note = "not filtered: " & AuxFilterOff
+        else:
+          news.note = through
+      elif flip:
+        for v in samples.mitems: v = -v
       let (cut, problem) = cutPilot(samples, dt, rule, record)
       if problem.len > 0:
         news.failure = problem

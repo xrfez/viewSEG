@@ -162,6 +162,7 @@ type
     pilot*: PilotRule ## a pilot of the record: the rule (`pilot.trace` 0: not one)
     pilotTrace*: int ## a pilot of the record: the survey-wide trace id; -1 for none
     pilotTraceMs*: float64 ## ... the length of that whole trace, in ms
+    pilotNote*: string ## ... what the plot's filters did to it, in words
     pilotFrom*, pilotTo*: float64 ## a pilot of the record: the window, in ms
 
   PilotPreview* = object
@@ -174,6 +175,7 @@ type
     samples*: seq[float32]
     dtMs*: float64
     hz*, db*: seq[float64]
+    note*: string ## what the plot's filters did to it, in words
     gen*: int ## bumps when the picture changes
 
   ReferenceNews* = object
@@ -190,6 +192,7 @@ type
     pilotTrace*: int              ## ... its survey-wide trace id; -1 when there is none
     pilotFrom*, pilotTo*: float64 ## ... the window cut, in ms
     pilotTraceMs*: float64        ## ... the length of the whole trace, in ms
+    note*: string                 ## a pilot of the record: what the plot's filters did to it
     key*: string                  ## raPilotShown: the ask it answers
     fromMs*: float64
     dtMs*: float64
@@ -333,7 +336,7 @@ func isPilot*(e: ReferenceEntry): bool {.inline.} =
   ## A pilot taken from the record: a rule with no samples and no file.
   not e.origin.generated and e.origin.pilot
 
-func recordSentence(record: string): string =
+func recordSentence*(record: string): string =
   ## The record's name as a sentence starts: "FFID 5", "Record 3".
   if record.len == 0: "The record" else: capitalizeAscii(record)
 
@@ -496,20 +499,23 @@ proc cutSamples*(samples: openArray[float32]; intervalUs, fromMs, toMs: float64)
 proc cutPilot*(samples: openArray[float32]; dtMs: float64; r: PilotRule; record: string):
     tuple[samples: seq[float32]; problem: string] =
   ## The window of a pilot trace `r` names: from its start for its length (both
-  ## ends kept when they fall on a sample), clipped to the trace's end. Nothing
-  ## left is a `problem` naming `record`; the samples are copied, not changed.
+  ## ends kept when they fall on a sample), clipped to the trace's end. A start
+  ## past the end, or nothing left, is a `problem` naming `record`; the samples
+  ## are copied, not changed.
   let bad = pilotProblem(r)
   if bad.len > 0: return (@[], bad)
-  if samples.len == 0: return (@[], recordSentence(record) & "'s " & pilotWords(r.aux,
-    r.trace) & " has no sample.")
-  if not (dtMs > 0 and dtMs < Inf):
-    return (@[], recordSentence(record) & "'s " & pilotWords(r.aux, r.trace) &
-      " has no sample interval.")
-  result.samples = cutSamples(samples, dtMs * 1000, r.startMs, r.startMs + r.spanMs)
+  let who = recordSentence(record) & "'s " & pilotWords(r.aux, r.trace)
+  if samples.len == 0: return (@[], who & " has no sample.")
+  if not (dtMs > 0 and dtMs < Inf): return (@[], who & " has no sample interval.")
+  let lastMs = float64(samples.len - 1) * dtMs
+  if r.startMs > lastMs + dtMs / 2:
+    return (@[], who & " ends at " & numberText(lastMs) & " ms, so a window from " &
+      numberText(r.startMs) & " ms is past its end.")
+  # clamp before the sample arithmetic: a huge length is the trace's end
+  let stopMs = min(r.startMs + r.spanMs, lastMs)
+  result.samples = cutSamples(samples, dtMs * 1000, r.startMs, stopMs)
   if result.samples.len == 0:
-    result.problem = recordSentence(record) & "'s " & pilotWords(r.aux, r.trace) &
-      " ends at " & numberText(float64(samples.len - 1) * dtMs) &
-      " ms, so a window from " & numberText(r.startMs) & " ms holds no sample."
+    result.problem = who & " has no sample from " & numberText(r.startMs) & " ms."
 
 func taperShapeTitle*(shape: TaperShape): string =
   ## The ramp shape as the Generate dialog names it.

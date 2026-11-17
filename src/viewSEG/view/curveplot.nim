@@ -72,6 +72,9 @@ type
       ## that span, not the data's first and last x (a spectrum fitted to a
       ## sweep's band)
     dense*: DenseSignal ## drawn in place of the first curve; none by default
+    roomRight*: bool
+      ## leave room right of the plot for the last tick label (a plot whose x axis
+      ## ends on a number that would be clipped)
     legend*: bool = true ## the legend box; a plot of one series does not need it
     note*: string ## shown over an empty plot: why it is empty
     aside*: string ## appended to the readout (a delay taken off, in ms)

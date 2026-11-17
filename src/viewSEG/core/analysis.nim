@@ -530,6 +530,9 @@ type
     reference*: string ## a correlation's reference, in words
     archiveSeen*: string ## the chosen reference it was asked with; "" for none
     archiveRev*: int = -1 ## the archive's revision then
+    pilotKey*: string
+      ## a correlation against a pilot of the record: its trace and what changes it
+      ## (reversal, a kill, its own filter) when it was asked; "" for none
     processing*: Processing ## the plot's filters when it asked last
     filters*: string ## them in words; "" for none
     killed*: seq[int] ## its traces killed when it asked last (indices in the file)

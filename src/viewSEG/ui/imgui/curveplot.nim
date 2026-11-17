@@ -78,11 +78,12 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
     ImPlot_Flags_NoMouseText.cint or (if p.legend: 0 else: ImPlot_Flags_NoLegend.cint)
   # The last x tick label is centred on the plot's right edge: leave it room.
   let pad = ImPlot_GetStyle().PlotPadding
-  ImPlot_PushStyleVar_Vec2(ImPlot_StyleVar_PlotPadding.cint,
-    ImVec2_c(x: max(pad.x, igGetFontSize() * 2), y: pad.y))
+  if p.roomRight:
+    ImPlot_PushStyleVar_Vec2(ImPlot_StyleVar_PlotPadding.cint,
+      ImVec2_c(x: max(pad.x, igGetFontSize() * 2), y: pad.y))
   let began = ImPlot_BeginPlot(("##" & id).cstring, size, flags)
   if not began:
-    ImPlot_PopStyleVar(1)
+    if p.roomRight: ImPlot_PopStyleVar(1)
     return
   let turned = p.along == saY
   let (xAxis, yAxis) = if turned: (ImAxis_Y1.cint, ImAxis_X1.cint)
@@ -248,4 +249,4 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
     ImDrawList_AddText_Vec2(dl, ImVec2_c(x: pos.x + max(0, (area.x - ts.x) / 2),
       y: pos.y + max(0, (area.y - ts.y) / 2)), u32(t.roles[rlTextDim]), p.note.cstring, nil)
   ImPlot_EndPlot()
-  ImPlot_PopStyleVar(1)
+  if p.roomRight: ImPlot_PopStyleVar(1)

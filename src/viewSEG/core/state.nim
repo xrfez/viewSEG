@@ -3066,11 +3066,12 @@ func ownOfTraces(e: FileEdits; traces: openArray[int]): seq[FilterEntry] =
   for f in e.filtersIn(lo .. hi):
     if f.trace in traces: result.add f
 
-proc pilotOfRecord(s: Session; g: int; rule: PilotRule): tuple[trace: int; record,
-    problem: string] =
+proc pilotOfRecord(s: Session; g: int; rule: PilotRule; e: FileEdits): tuple[trace: int;
+    record, problem: string] =
   ## The trace of file `s` that `rule` takes from its gather `g` (the record):
   ## its index in the file and the record's name; else a `problem` saying what
-  ## the record lacks. Reads the keys already held, never the file.
+  ## the record lacks, or that the trace is killed or marked dead (`e`: the
+  ## file's edits). Reads the keys already held, never the file.
   result.trace = -1
   if g notin 0 ..< s.gathers.len:
     result.problem = "There is no record on show."
@@ -3083,8 +3084,15 @@ proc pilotOfRecord(s: Session; g: int; rule: PilotRule): tuple[trace: int; recor
     let t = span.a + k
     isAux[k] = t in 0 ..< f[].len and not isSeismic(f[].index, t)
   let (at, problem) = pickPilotTrace(rule, isAux, result.record)
-  if at < 0: result.problem = problem
-  else: result.trace = span.a + at
+  if at < 0:
+    result.problem = problem
+    return
+  let t = span.a + at
+  let who = recordSentence(result.record) & "'s " & pilotWords(rule.aux, rule.trace)
+  if e.has(teKilled, t): result.problem = who & " is killed."
+  elif t in 0 ..< f[].len and f[].traceKeys(t).status == tsDead:
+    result.problem = who & " is marked dead."
+  else: result.trace = t
 
 func killedOf(e: FileEdits; traces: openArray[int]): seq[int] =
   ## Those of `traces` killed in `e`, in their order. `e` comes from
@@ -6956,10 +6964,12 @@ proc generateReference(state: var AppState; cmd: Command) =
   discard state.jobs.submit(JobSpec(title: "Generate a reference", lane: jlInteractive),
     generateWork(g, state.refsHome, state.inbox.poster))
 
-proc pilotKey(rule: PilotRule; file, record: string; trace: int; flip: bool): string =
-  ## What a pilot of the record depends on, so a late answer is dropped.
+proc pilotKey(rule: PilotRule; file, record: string; trace: int; flip: bool;
+    filters, own: string): string =
+  ## What a pilot of the record depends on, so a late answer is dropped and a
+  ## change of its reversal, filters or own filter asks again.
   file & "|" & record & "|" & $trace & "|" & $flip & "|" & $rule.aux & "|" & $rule.trace &
-    "|" & $rule.startMs & "|" & $rule.spanMs
+    "|" & $rule.startMs & "|" & $rule.spanMs & "|" & filters & "|" & own
 
 proc shownRecord(state: AppState): tuple[i, g: int] =
   ## The file and the gather (record) the Seismic window shows; -1 for none.
@@ -6994,10 +7004,13 @@ proc pilotPreviewAsk(state: var AppState; cmd: Command) =
     state.say("Open a file: the pilot is taken from the record on show.", "", "none")
     return
   let s = state.sessions[i]
-  let (trace, record, problem) = s.pilotOfRecord(g, rule)
   let edits = state.editsAt(s.path)
+  let (trace, record, problem) = s.pilotOfRecord(g, rule, edits)
   let flip = trace >= 0 and reversedOf(edits, [trace]).len > 0
-  let key = pilotKey(rule, s.path, record, trace, flip)
+  let pr = state.panels[state.findPanel(MainPanel)].spectrumFilters
+  let own = if trace >= 0: ownOfTraces(edits, [trace]) else: @[]
+  let key = pilotKey(rule, s.path, record, trace, flip, filtersText(pr),
+    if trace >= 0: ownKeyOf(edits, [trace]) else: "")
   if problem.len > 0:
     state.say(problem, record, key)
     return
@@ -7008,7 +7021,7 @@ proc pilotPreviewAsk(state: var AppState; cmd: Command) =
   shown.problem = ""
   discard state.jobs.submit(JobSpec(title: "Read the pilot of the record", lane: jlInteractive,
     reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace, rule, flip, record,
-    s.base + trace, 0, key, rule.name, state.refsHome, state.inbox.poster))
+    s.base + trace, 0, key, rule.name, state.refsHome, pr, own, state.inbox.poster))
 
 proc pilotReference(state: var AppState; cmd: Command) =
   let why = state.refsWritable
@@ -7098,7 +7111,8 @@ proc viewReference(state: var AppState; cmd: Command) =
       state.refViews.add w
       return
     let s = state.sessions[si]
-    let (trace, record, problem) = s.pilotOfRecord(g, rule)
+    let edits = state.editsAt(s.path)
+    let (trace, record, problem) = s.pilotOfRecord(g, rule, edits)
     w.record = record
     if problem.len > 0:
       w.note = problem
@@ -7107,10 +7121,12 @@ proc viewReference(state: var AppState; cmd: Command) =
     w.waiting = true
     w.pilotTrace = s.base + trace
     state.refViews.add w
-    let flip = reversedOf(state.editsAt(s.path), [trace]).len > 0
+    let flip = reversedOf(edits, [trace]).len > 0
+    let pr = state.panels[state.findPanel(MainPanel)].spectrumFilters
     discard state.jobs.submit(JobSpec(title: "Read the reference " & e.name,
       lane: jlInteractive, reads: @[s.path]), pilotWork(s.filePtr, s.path, s.size, trace,
-      rule, flip, record, s.base + trace, id, "", e.name, state.refsHome, state.inbox.poster))
+      rule, flip, record, s.base + trace, id, "", e.name, state.refsHome, pr,
+      ownOfTraces(edits, [trace]), state.inbox.poster))
     return
   if e.blocked or not singleFileName(e.file):
     state.ignore(cmd, "the reference \"" & e.name &
@@ -7186,6 +7202,7 @@ proc takeReferences(state: var AppState; m: sink Msg) =
       state.pilotShown.hz = n.hz
       state.pilotShown.db = n.amps
       state.pilotShown.dtMs = n.dtMs
+      state.pilotShown.note = n.note
       if n.failure.len == 0:
         state.pilotShown.samples = newSeq[float32](n.ys.len)
         for k, v in n.ys: state.pilotShown.samples[k] = float32(v)
@@ -7208,6 +7225,7 @@ proc takeReferences(state: var AppState; m: sink Msg) =
         if n.record.len > 0: state.refViews[i].record = n.record
         if n.pilotTrace >= 0:
           state.refViews[i].pilotTrace = n.pilotTrace
+          state.refViews[i].pilotNote = n.note
           state.refViews[i].pilotTraceMs = n.pilotTraceMs
           state.refViews[i].pilotFrom = n.pilotFrom
           state.refViews[i].pilotTo = n.pilotTo

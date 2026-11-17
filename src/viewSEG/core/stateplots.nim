@@ -92,6 +92,23 @@ proc keptIntervalMs(s: Session; traces, killed: openArray[int]): float64 =
       if dt > 0: return dt
   0.0
 
+proc pilotFollowKey(state: AppState; w: int): string =
+  ## "" unless window `plots[w]` is a correlation against the chosen pilot of the
+  ## record; else its trace and what changes it: a reversal, a kill, its own filter.
+  template pw: untyped = state.plots[w]
+  if pw.view != avCorrelation or state.chosenRef.len == 0 or not state.refsLoaded or
+      pw.traces.len == 0: return ""
+  let at = state.refs.findId(state.chosenRef)
+  if at < 0 or not state.refs.entries[at].isPilot: return ""
+  let i = state.findTrace(pw.traces[0])
+  if i < 0: return ""
+  let s = state.sessions[i]
+  let e = state.editsAt(s.path)
+  let (rt, _, problem) = s.pilotOfRecord(s.gatherOf(pw.traces[0] - s.base),
+    pilotRuleOf(state.refs.entries[at]), e)
+  if rt < 0: return "none|" & problem
+  $rt & "|" & $reversedOf(e, [rt]).len & "|" & ownKeyOf(e, [rt])
+
 proc showCorrelationProblem(state: var AppState; w: int; problem, name: string) =
   ## The correlation window says `problem` and draws nothing. A later answer
   ## cannot put the old curves back.
@@ -105,6 +122,7 @@ proc showCorrelationProblem(state: var AppState; w: int; problem, name: string) 
   pw.reference = name
   pw.archiveSeen = state.chosenRef
   pw.archiveRev = state.refsRev
+  pw.pilotKey = state.pilotFollowKey(w)
   pw.since = state.plotGen
   if "no longer in the archive" in problem: pw.goneNote = problem
   else: pw.goneNote = ""
@@ -169,7 +187,16 @@ proc askPlot(state: var AppState; w: int): bool =
       # its own pilot, found from the keys already held
       let rule = pilotRuleOf(e)
       let local = pw.traces[0] - s.base
-      let (rt, record, problem) = s.pilotOfRecord(s.gatherOf(local), rule)
+      var records: seq[int] = @[]
+      for t in pw.traces:
+        if t in s:
+          let g = s.gatherOf(t - s.base)
+          if g notin records: records.add g
+      if records.len > 1:
+        state.showCorrelationProblem(w, "These traces come from " & $records.len &
+          " records; a record's pilot needs traces of one record.", e.name)
+        return true
+      let (rt, record, problem) = s.pilotOfRecord(s.gatherOf(local), rule, edits)
       if problem.len > 0:
         state.showCorrelationProblem(w, problem, e.name)
         return true
@@ -185,8 +212,11 @@ proc askPlot(state: var AppState; w: int): bool =
       a.archiveIntervalUs = e.intervalUs
     pw.reference = e.name
   elif pw.view == avVibrator and state.chosenRef.len > 0 and
-      not (state.refsLoaded and state.refs.findId(state.chosenRef) >= 0 and
-      state.refs.entries[state.refs.findId(state.chosenRef)].isPilot):
+      state.refsLoaded and state.refs.findId(state.chosenRef) >= 0 and
+      state.refs.entries[state.refs.findId(state.chosenRef)].isPilot:
+    a.extraNote = "Reference: " & state.refs.entries[state.refs.findId(state.chosenRef)].name &
+      " is a trace of each record; the file's own pilot is used."
+  elif pw.view == avVibrator and state.chosenRef.len > 0:
     # an archive reference stands in for the file's pilot
     if not state.refsLoaded:
       a.archiveGone = "the reference archive is still being read"
@@ -232,6 +262,7 @@ proc askPlot(state: var AppState; w: int): bool =
   if pw.view in {avCorrelation, avVibrator}:
     pw.archiveSeen = state.chosenRef
     pw.archiveRev = state.refsRev
+  pw.pilotKey = state.pilotFollowKey(w)
   true
 
 proc stampPick(state: var AppState; w, k, i: int) =
@@ -525,6 +556,9 @@ proc followFilters(state: var AppState; w, k: int) =
   template pw: untyped = state.plots[w]
   let i = state.findTrace(if pw.traces.len > 0: pw.traces[0] else: -1)
   if i < 0 or state.panels[k].layers.len == 0: return
+  if pw.view == avCorrelation and state.pilotFollowKey(w) != pw.pilotKey:
+    # the pilot of the record was reversed, killed or given a filter of its own
+    if state.askPlot(w): return
   let pr = spectrumFilters(state.panels[k])
   let s = state.sessions[i]
   var fileTraces: seq[int] = @[]

@@ -8,9 +8,9 @@
 ## for the pilot, "a reversed pilot is not turned over"; with the rule stored
 ## with a file, "a rule has a file".
 
-import std/[json, math, os, strutils]
+import std/[json, math, monotimes, os, strutils, times]
 import parseSEG
-import viewSEG/core/[analysis, edits, references, state]
+import viewSEG/core/[analysis, edits, processing, references, state]
 import viewSEG/remote/schema
 import utils/[chosenref, fixtures, waiting]
 
@@ -47,6 +47,16 @@ proc twoRecords(fx: Fixtures): string =
       else: k.status = tsLive
       w.writeTrace(k, buf)
   doAssert w.close().len == 0
+
+func peakValue(r: AnalysisResult; curve = 0): float64 =
+  ## The cross-correlation's value at its peak lag, with its sign.
+  result = NaN
+  if r.plots.len > 0 and 2 * curve + 1 < r.plots[0].curves.len:
+    let e = r.plots[0].curves[2 * curve + 1].ys
+    var best = -1
+    for i in 0 ..< e.len:
+      if not e[i].isNaN and (best < 0 or e[i] > e[best]): best = i
+    if best >= 0: result = r.plots[0].curves[2 * curve].ys[best]
 
 proc shownPilot(st: var AppState; rule: PilotRule): PilotPreview =
   ## Asks for the pilot of the record on show and waits for the answer.
@@ -116,8 +126,15 @@ proc main*() =
     doAssert clipped.samples.len == 6 and clipped.samples[^1] == 100, $clipped.samples
     let past = cutPilot(s, 2.0, PilotRule(aux: true, trace: 1, startMs: 500, spanMs: 100),
       "FFID 7")
+    let huge = cutPilot(s, 2.0, PilotRule(aux: true, trace: 1, startMs: 190, spanMs: 1e300),
+      "FFID 7")
+    doAssert huge.problem == "" and huge.samples.len == 6, "a huge length is not clamped: " &
+      $huge.samples.len & huge.problem
+    let farOff = cutPilot(s, 2.0, PilotRule(aux: true, trace: 1, startMs: 1e300, spanMs: 1e300),
+      "FFID 7")
+    doAssert farOff.samples.len == 0 and "is past its end" in farOff.problem, farOff.problem
     doAssert past.samples.len == 0 and past.problem ==
-      "FFID 7's auxiliary trace 1 ends at 200 ms, so a window from 500 ms holds no sample.",
+      "FFID 7's auxiliary trace 1 ends at 200 ms, so a window from 500 ms is past its end.",
       past.problem
 
   withFixtures fx:
@@ -156,7 +173,7 @@ proc main*() =
       doAssert past.samples.len == 50 and past.problem == "", past.problem
       doAssert past.samples[^1] == pilotSample(1, Samples - 1)
       let nothing = st.shownPilot(PilotRule(aux: true, trace: 1, startMs: 900, spanMs: 100))
-      doAssert nothing.samples.len == 0 and "holds no sample" in nothing.problem and
+      doAssert nothing.samples.len == 0 and "is past its end" in nothing.problem and
         "FFID" in nothing.problem, nothing.problem
       let seismic = st.shownPilot(PilotRule(aux: false, trace: 2, startMs: 0, spanMs: 1000))
       doAssert seismic.samples.len == Samples and seismic.samples[0] == 0 and
@@ -232,6 +249,82 @@ proc main*() =
       doAssert st.settle(st.panel(MainPanel).layers[0].source.gather == 0)
       doAssert st.plots[w].asks == frozenAsks and st.plots[w].result.note == frozenNote,
         "a frozen window followed the record"
+
+    block the_window_follows_the_pilots_edits:
+      st.apply Command(kind: ckSelectReference, refId: st.references.entries[0].id)
+      st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
+        plotTraces: @[base + 1, base + 2, base + 3])
+      let w = st.plots.high
+      doAssert st.settle(st.plots[w].result.gen > 0 and not st.plots[w].waiting)
+      let plain = st.plots[w].result.peakValue(0)
+      doAssert plain > 0.5, "the peak is not near +1: " & $plain
+      proc edited(st: var AppState; w: int; act: proc (st: var AppState)): bool =
+        let asks = st.plots[w].asks
+        act(st)
+        st.settle(st.plots[w].asks > asks and not st.plots[w].waiting)
+      doAssert st.edited(w, proc (st: var AppState) =
+        st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[base],
+          on: true)), "reversing the pilot did not ask again"
+      let flipped = st.plots[w].result.peakValue(0)
+      doAssert abs(flipped + plain) < 1e-6, "a reversed pilot does not show " & $(-plain) &
+        ", it shows " & $flipped
+      doAssert st.edited(w, proc (st: var AppState) =
+        st.apply Command(kind: ckEdit, panel: MainPanel, edit: teReversed, edited: @[base],
+          on: false))
+      doAssert abs(st.plots[w].result.peakValue(0) - plain) < 1e-6
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base],
+        on: true)
+      doAssert st.settle("is killed." in st.plots[w].result.problem),
+        "killing the pilot did not reach the window"
+      doAssert "is killed." in st.plots[w].result.problem and
+        st.plots[w].result.plots.len == 0, st.plots[w].result.problem
+      doAssert st.edited(w, proc (st: var AppState) =
+        st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base],
+          on: false)), "making the pilot live again did not ask again"
+      doAssert st.plots[w].result.plots.len > 0
+      doAssert st.edited(w, proc (st: var AppState) =
+        st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
+          processing: Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16),
+          filterPlace: fpAfter)), "a filter of the pilot's own did not ask again"
+      doAssert abs(st.plots[w].result.peakValue(0) - plain) > 1e-3,
+        "the pilot's own filter changed nothing"
+      st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+      doAssert st.settle(abs(st.plots[w].result.peakValue(0) - plain) < 1e-6 and
+        not st.plots[w].waiting)
+
+    block the_preview_is_what_the_correlation_uses:
+      let rule = PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 1000)
+      let plain = st.shownPilot(rule)
+      let spec = Processing(band: pbBandPass, f1: 4, f2: 8, f3: 12, f4: 16)
+      st.apply Command(kind: ckProcessing, panel: MainPanel, processing: spec)
+      let off = st.shownPilot(rule)
+      doAssert off.samples == plain.samples and "not filtered" in off.note,
+        "an auxiliary trace passed by the plot's filters: " & off.note
+      st.apply Command(kind: ckOwnFilter, panel: MainPanel, edited: @[base], on: true,
+        processing: spec, filterPlace: fpAfter)
+      let own = st.shownPilot(rule)
+      doAssert own.samples != plain.samples and own.samples.len == plain.samples.len,
+        "the pilot's own filter is not in the preview"
+      st.apply Command(kind: ckUndoEdit, panel: MainPanel)
+      st.apply Command(kind: ckProcessing, panel: MainPanel, processing: Processing())
+      doAssert st.shownPilot(rule).samples == plain.samples
+
+    block a_killed_pilot_is_not_used:
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base],
+        on: true)
+      let dead = st.shownPilot(PilotRule(aux: true, trace: 1, startMs: 0, spanMs: 100))
+      doAssert dead.samples.len == 0 and "auxiliary trace 1 is killed." in dead.problem,
+        dead.problem
+      st.apply Command(kind: ckEdit, panel: MainPanel, edit: teKilled, edited: @[base],
+        on: false)
+
+    block traces_of_two_records_are_refused:
+      st.apply Command(kind: ckOpenPlot, plotView: avCorrelation,
+        plotTraces: @[base + 1, base + 5])
+      let w = st.plots.high
+      doAssert st.settle(st.plots[w].result.gen > 0 and not st.plots[w].waiting)
+      doAssert st.plots[w].result.problem == "These traces come from 2 records; a record's " &
+        "pilot needs traces of one record.", st.plots[w].result.problem
 
     block a_record_without_the_trace_says_so:
       st.apply Command(kind: ckPilotReference, refPilot: PilotRule(name: "second aux",

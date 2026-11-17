@@ -62,22 +62,28 @@ spectrum plots as the sweep, and says which record it is from. With no file open
 to open one. The preview is read in the background.
 
 When this reference is the chosen one, each record uses its own trace by the rule: a
-Correlation window of the next record takes that record's trace, and its bar says which
-record and which trace the reference is ("Reference: <name> (FFID 2, auxiliary trace
-1)"). The trace is used as the plot shows it: a reversed trace (its own reversal or
+Correlation window of the next record takes that record's trace, and the window's note
+(under the plot) names the record and the trace ("Reference: <name> (FFID 2, auxiliary
+trace 1)"). The trace is used as the plot shows it: a reversed trace (its own reversal or
 reverse-all, not both) is turned over, the plot's filters apply (an auxiliary trace
 only when Filters > Filter the Aux traces too is on) and so does the trace's own filter,
-then the window is cut. A record that lacks the trace says so in place of the plot, naming
-the record ("FFID 3 has only 1 auxiliary trace, not an auxiliary trace 2."), and no other
-trace is used instead. A frozen window keeps the pilot it showed. A vibrator signature
-still uses the file's own pilot while such a reference is chosen. The rule has no sample
-interval of its own: the trace's must be the plot's.
+then the window is cut. The dialog's preview and the reference's window show it the same
+way, with a line saying what the filters did. Reversing the pilot, killing it or giving it
+a filter of its own asks an open correlation again. A record that lacks the trace says so
+in place of the plot, naming the record ("FFID 3 has only 1 auxiliary trace, not an
+auxiliary trace 2."), and so does a pilot that is killed or marked dead ("FFID 3's
+auxiliary trace 1 is killed."); no other trace is used instead. A window whose traces
+come from more than one record is refused ("These traces come from 2 records; a record's
+pilot needs traces of one record."). A frozen window keeps the pilot it showed. A vibrator
+signature still uses the file's own pilot while such a reference is chosen, and its note
+says so. The rule has no sample interval of its own: the trace's must be the plot's.
 
 In the archive the row says "pilot: auxiliary trace 1", the length in ms and "of each
 record", and the interval "the record's". It can be chosen, renamed, deleted and copied
 into a project like another. **View** opens the pilot of the record on show, and says
 which record; its button **Store this pilot as a fixed reference** keeps the record's cut
-pilot as an ordinary stored waveform (the file's raw samples, as Store does). A rule is not
+pilot as an ordinary stored waveform: the file's raw samples, as Store does, so not turned
+over and not filtered. A rule is not
 one waveform, so it cannot be compared as A or B.
 
 ## Reference archive
