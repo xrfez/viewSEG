@@ -36,6 +36,11 @@ folder (`viewSEG --paths` shows where it is).
 The whole list, including the plot, the map and the tables, is **Help > Keyboard
 shortcuts** (F1), and in [Keyboard shortcuts](keyboard-shortcuts.md).
 
+**Every plot has a small "i" in its top left corner.** Point at it and a tooltip says what
+that plot shows, what it is computed from (your filters, the reference, the units), how to
+read it and what can mislead. The words for each plot are in
+[What each plot tells you](plots.md).
+
 **Project**, between File and Edit, holds this job's folder: **New project...** makes
 one, **Open project...** and **Recent projects** open one, **Project...** opens its
 window (ticked while it is open) and **Close project** goes back to working without one.

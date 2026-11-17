@@ -272,6 +272,11 @@ task shortcuts, "Rewrite docs/user/keyboard-shortcuts.md from the shortcut table
   ## check` only checks; tests/tshortcuts.nim does that.
   selfExec "r --hints:off --warnings:off tools/shortcutspage.nim write"
 
+task plots, "Rewrite docs/user/plots.md from the Explain icons' words":
+  ## tools/plotspage.nim: the page is every plot kind's text in core/explain.
+  ## `nim r tools/plotspage.nim check` only checks; tests/texplain.nim does that.
+  selfExec "r --hints:off --warnings:off tools/plotspage.nim write"
+
 task coverage, "Rewrite docs/coverage.md's summary, then check the page against the libraries":
   ## tools/coverage.nim: every name parseSEG and processSEG export (at the
   ## locked commits; the next releases when linked at deps/next/<library>) is

@@ -24,7 +24,7 @@
 
 import std/[algorithm, base64, json, math, monotimes, os, sets, strutils, times]
 import parseSEG
-import ../core/[geometry, properties, shortcuts, state, versions]
+import ../core/[explain, geometry, properties, shortcuts, state, units, versions]
 import protocol, schema
 
 const
@@ -533,7 +533,7 @@ func evenlyOf(n, limit: int): seq[int] =
     for k in 0 ..< limit: result.add int(round(float64(k) * float64(n - 1) /
       float64(limit - 1)))
 
-proc plotJson(w: AnalysisWindow; limit: int): JsonNode =
+proc plotJson(w: AnalysisWindow; units: UnitSystem; limit: int): JsonNode =
   ## An analysis window: what it shows and how, and its numbers: each plot's
   ## curves at most `limit` points (evenly), an image's size, axes and, per
   ## column (at most `limit`), the y of its largest value.
@@ -556,14 +556,15 @@ proc plotJson(w: AnalysisWindow; limit: int): JsonNode =
       else:
         for i in at: ys.add toJson(if i < c.ys.len: c.ys[i] else: NaN)
         curves.add %*{"name": c.name, "style": $c.style, "ys": ys}
-    plots.add %*{"title": p.title, "x": p.xLabel, "y": p.yLabel, "xs": xs, "curves": curves}
+    plots.add %*{"title": p.title, "x": p.xLabel, "y": p.yLabel, "xs": xs, "curves": curves,
+      "explain": explainPane(w, units, plots.len)}
   result = %*{"id": w.id, "title": w.title, "view": $w.view, "frozen": w.frozen,
     "params": toJson(w.params), "traces": clipped(w.traces, limit), "reference": w.reference,
     "filters": w.filters, "waiting": w.waiting, "cursor": toJson(w.cursor),
     "cursorOn": w.cursorOn,
     "problem": r.problem, "note": r.note, "used": r.used, "leftOut": r.leftOut,
     "passedBy": r.passedBy, "notDrawn": r.notDrawn,
-    "dtMs": toJson(r.dtMs), "plots": plots}
+    "dtMs": toJson(r.dtMs), "plots": plots, "explain": explainWindow(w, units)}
   if r.table.len > 0:
     var rows = newJArray()
     for row in r.table:
@@ -590,7 +591,7 @@ proc plotJson(w: AnalysisWindow; limit: int): JsonNode =
       "y": img.yLabel, "unit": img.unit, "x0": img.x0, "dx": img.dx, "y0": img.y0,
       "dy": img.dy, "lo": img.lo, "hi": img.hi, "peakXs": times, "peakYs": peaks}
 
-proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
+proc spectrumJson(w: SpectrumWindow; units: UnitSystem; limit: int): JsonNode =
   ## A spectrum window: what it shows and how, and its numbers: per curve
   ## the amplitude at most `limit` points from 0 Hz to Nyquist (the largest
   ## of each run of `step` bins, so a peak is kept), and its peak.
@@ -652,7 +653,8 @@ proc spectrumJson(w: SpectrumWindow; limit: int): JsonNode =
       "passedBy": sp.passedBy, "filterNote": sp.filterNote,
       "filterProblem": sp.filterProblem, "response": gains(sp.responseHz, sp.response),
       "problem": sp.problem},
-    "filterWords": w.filterText, "cursor": cursor}
+    "filterWords": w.filterText, "cursor": cursor,
+    "explain": explainSpectrumWindow(w, units)}
 
 proc headersJson(state: AppState; limit: int): JsonNode =
   ## The Headers window: its tab and toggles, what it has on screen (what its
@@ -869,11 +871,11 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
     r["displayPresets"] = list
   if "spectra" in wanted:
     var list = newJArray()
-    for w in state.spectra: list.add spectrumJson(w, limit)
+    for w in state.spectra: list.add spectrumJson(w, state.settings.units, limit)
     r["spectra"] = list
   if "plots" in wanted:
     var list = newJArray()
-    for w in state.plots: list.add plotJson(w, limit)
+    for w in state.plots: list.add plotJson(w, state.settings.units, limit)
     r["plots"] = list
   if "project" in wanted: r["project"] = state.projectJson(limit)
   if "compare" in wanted: r["compare"] = state.compareJson

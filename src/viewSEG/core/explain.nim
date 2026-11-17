@@ -305,7 +305,7 @@ func phaseAmplitudeText(f: ExplainFacts): string =
     part("Computed from", f.what("The first trace chosen."),
       "The whole trace, with no taper, zero padded to four times its length; phase is drawn " &
       "only where this curve is within " & (if known(f.withinDb): num(f.withinDb) else:
-      "the dB set above") & " dB of its peak.", f.filterClause, f.editsClause),
+    "the dB set above") & " dB of its peak.", f.filterClause, f.editsClause),
     part("Reading it", "It tells where the phase below can be trusted: the phase means " &
       "something only where the amplitude is high."),
     part("Careful", "The whole trace is used, not the part shown in the Seismic window."))
@@ -316,7 +316,7 @@ func phaseText(f: ExplainFacts): string =
     part("Computed from", f.what("The first trace chosen."),
       "Phase from the trace's first sample, the trace zero padded to four times its length, " &
       "drawn where the amplitude is within " & (if known(f.withinDb): num(f.withinDb) else:
-      "the dB set above") & " dB of its peak.", f.filterClause, f.editsClause),
+    "the dB set above") & " dB of its peak.", f.filterClause, f.editsClause),
     part("Reading it", "A straight slope means a pure time delay; a flat line none. " &
       PhaseHelp),
     part("Careful", "Phase depends on where the trace starts. Where there is no line the " &
@@ -333,8 +333,8 @@ func correlationText(f: ExplainFacts): string =
       "mirror image), against lag in ms across, one line per trace and its envelope over it."),
     part("Computed from", f.what("The traces chosen (the first eight at most)."),
       f.referenceWords, "Lags within ±" & (if known(f.lagMs): num(f.lagMs) & " ms" else:
-      "the span set above") & " of zero.", f.filterClause, f.editsClause,
-      "A trace that is the reference delayed by T peaks at +T."),
+    "the span set above") & " of zero.", f.filterClause, f.editsClause,
+    "A trace that is the reference delayed by T peaks at +T."),
     part("Reading it", "One sharp peak at 0 ms near +1 means the trace matches the reference " &
       "with no delay. A peak off zero is a timing error of that many ms. A peak near -1 means " &
       "reversed polarity. A low or broad peak means a poor match."),
@@ -347,8 +347,8 @@ func ratioText(f: ExplainFacts): string =
       "amplitude over the reference's; 0 dB is the same amplitude."),
     part("Computed from", f.what("The traces chosen."), f.referenceWords,
       "Drawn only where the reference has energy, within " & (if known(f.withinDb):
-      num(f.withinDb) else: "the dB set above") & " dB of its peak.", f.filterClause,
-      f.editsClause),
+    num(f.withinDb) else: "the dB set above") & " dB of its peak.", f.filterClause,
+    f.editsClause),
     part("Reading it", "A flat line near 0 dB means the trace has the reference's spectrum. " &
       "A line that falls with frequency means high frequencies are lost; a step shows a band " &
       "that is weaker or stronger."),
@@ -360,7 +360,7 @@ func ratioPhaseText(f: ExplainFacts): string =
       "trace's phase minus the reference's."),
     part("Computed from", f.what("The traces chosen."), f.referenceWords,
       "Drawn where the reference has energy, within " & (if known(f.withinDb): num(f.withinDb)
-      else: "the dB set above") & " dB of its peak.", f.filterClause, f.editsClause),
+    else: "the dB set above") & " dB of its peak.", f.filterClause, f.editsClause),
     part("Reading it", "A flat line at 0° means no phase difference. A straight slope means " &
       "a time delay (a delay T reads -360° × frequency × T). A flat line at ±180° means " &
       "reversed polarity."),
@@ -477,8 +477,8 @@ func headerGraphText(f: ExplainFacts): string =
       "order shown (across): a band from the least to the most of each run of rows, and " &
       "a line along the most."),
     part("Computed from", "The rows of " & (if f.scope.len > 0: f.scope else:
-      "the record shown or the whole file") & ", sorted and narrowed as the table is. The " &
-      "rows on screen in the table are shaded."),
+    "the record shown or the whole file") & ", sorted and narrowed as the table is. The " &
+    "rows on screen in the table are shaded."),
     part("Reading it", "A smooth line is a steady header; steps are changes (a new line, a " &
       "new record); a spike is one trace that differs, often a mistake in the headers."),
     part("Careful", "Many rows share a pixel: a narrow band hides single traces inside it " &
@@ -552,7 +552,7 @@ func compareSignalText(f: ExplainFacts): string =
   join4(part("Shows", "Amplitude up, against time in ms across: trace A, trace B, and B minus " &
       "A when you ask for the difference."),
     part("Computed from", (if f.subject.len > 0: f.subject.closed else:
-      "The two traces set as A and B."), f.options),
+    "The two traces set as A and B."), f.options),
     part("Reading it", "Matching traces lie over each other and their difference is flat " &
       "near zero. A gap in time is a timing error, a mirror image is reversed polarity, and " &
       "a steady scale factor is a gain difference."),
@@ -731,6 +731,13 @@ func explainSpectrum*(w: SpectrumWindow; units: UnitSystem; phase: bool): string
   ## What the amplitude plot of `w` (or its phase plot) tells you.
   explain(if phase: pkSpectrumPhase else: pkSpectrum, w.factsOf(units))
 
+func explainSpectrumWindow*(w: SpectrumWindow; units: UnitSystem): string =
+  ## What every plot `w` draws tells you, each under its name: the agents'
+  ## `explain`. Its phase plot is there only while it is drawn.
+  result = explainSpectrum(w, units, false)
+  if w.display.phase and w.spectrum.rawPhase.len > 0:
+    result.add "\n\n" & $pkSpectrumPhase & "\n" & explainSpectrum(w, units, true)
+
 func kindsOfSpectrum*(): seq[PlotKind] =
   ## The plots of a spectrum window, top first.
   @[pkSpectrum, pkSpectrumPhase]
@@ -832,3 +839,28 @@ func explainWindow*(st: AppState; w: AnalysisWindow): string =
 func explainSeismic*(st: AppState; k: int): string =
   ## What the plot of panel `k` tells you now.
   explain(pkSeismic, st.seismicFacts(k))
+
+# ------------------------------------------------------------ the user guide --
+
+func explainPage*(): string =
+  ## The user guide's page of plots (`docs/user/plots.md`): one section per plot
+  ## kind, with the words its Explain icon shows when nothing is known of the
+  ## window (the icon names the settings in force). `nim plots` writes it;
+  ## `tools/plotspage.nim check`, run by tests/texplain.nim, finds a page that
+  ## has drifted.
+  result = "# What each plot tells you\n\n" &
+    "Every plot has a small **i** icon in the top left corner of its drawing area: the " &
+    "Seismic plot, the spectrum, spectrogram, envelope, phase, correlation, vibrator " &
+    "signature and f-k windows (each plot of a window on its own), the map, the header " &
+    "graph, the previews in Generate and in a reference's window, and each plot of " &
+    "Compare. Point at it and a tooltip says what that plot shows, what it is computed " &
+    "from, how to read it and what can mislead. The icon takes no click or key from the " &
+    "plot.\n\n" &
+    "The text names the settings in force: your filters, the reference, the units. The " &
+    "sections below give each text without a window's settings, as it reads in general. " &
+    "An agent reads the same words in `state`, as `explain`.\n"
+  for kind in PlotKind:
+    result.add "\n## " & $kind & "\n"
+    for line in kind.explain.splitLines:
+      let at = line.find(": ")
+      result.add "\n**" & line[0 ..< at] & ".** " & line[at + 2 .. ^1] & "\n"
