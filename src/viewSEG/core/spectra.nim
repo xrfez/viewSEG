@@ -463,49 +463,18 @@ func filterSpecs*(filters: Pipeline): seq[FilterSpec] =
 proc appliedResponse*(filters: Pipeline; dtMs: float64; samples: int;
     hz: openArray[float64]): seq[float64] =
   ## The gain `filters` apply at each of `hz` (Hz) to traces of `samples`
-  ## samples `dtMs` apart: a unit impulse in the middle of such a trace put
-  ## through them as the traces go (processSEG's plan, its edges and trend
-  ## handling, in float32), then its output's amplitude at each frequency
-  ## (a Fourier sum over the trace: the even points by folding it onto
-  ## `2·ResponseSteps` samples, the others directly). Raises `ValueError`
-  ## when the filters cannot run at `dtMs`.
-  let n = max(samples, 1)
-  var keys = @[initTraceKeys()]
-  keys[0].status = tsLive
-  keys[0].intervalUs = dtMs * 1000
-  var lengths = @[n]
-  var x = newSeq[float32](n)
-  x[n div 2] = 1
-  # The FFT filters alone, without the trend taken out before them: what
-  # depends on the trace's own trend or mean (a DC removal, the trend
-  # handling) is no gain an impulse can measure.
+  ## samples `dtMs` apart: processSEG's `appliedResponseInto` of the FFT
+  ## filters alone (a unit impulse in the middle of such a trace put through
+  ## them as the traces go, its edges included, in float32; what depends on
+  ## the trace's own trend or mean, a DC removal or the trend handling, is no
+  ## gain an impulse can measure). Raises `ValueError` when the filters
+  ## cannot run at `dtMs`.
   var alone = initPipeline()
   for op in filters:
     if op.kind == opFilter: alone.add filterOp(op.filter.spec, trend = trNone)
-  let plan = alone.compile(float32, dtMs, n, recordSamples = n)
-  var ws = initWorkspace()
-  ws.reserve(plan)
-  plan.apply(rowBlock(x, 1, n), initChunkMeta(rowsOf(keys, lengths), dtMs), ws)
   result = newSeq[float64](hz.len)
-  let fold = 2 * ResponseSteps
-  var folded = newSeq[float64](fold) # the response sampled every 1 / (fold · dt)
-  for j in 0 ..< n: folded[j mod fold] += float64(x[j])
-  let nyq = nyquistHz(dtMs)
-  for i, f in hz:
-    let even = f * float64(ResponseSteps) / nyq
-    let k = int(round(even))
-    let (data, len) = if abs(even - float64(k)) < 1e-9: (0, fold) else: (1, n)
-    # the sum of x[j]·e^(-2πi·f·j·dt), by a rotation per sample
-    let w = -2 * PI * f * dtMs / 1000
-    let (cw, sw) = (cos(w), sin(w))
-    var (c, s) = (1.0, 0.0)
-    var (re, im) = (0.0, 0.0)
-    for j in 0 ..< len:
-      let v = if data == 0: folded[j] else: float64(x[j])
-      re += v * c
-      im += v * s
-      (c, s) = (c * cw - s * sw, c * sw + s * cw)
-    result[i] = sqrt(re * re + im * im)
+  var ws = initWorkspace()
+  alone.appliedResponseInto(float32, dtMs, max(samples, 1), hz, result, ws)
 
 proc initSpectrumSum*(dtMs: float64; windowLen: int; nfft = 0): SpectrumSum =
   ## An empty sum of spectra of windows of `windowLen` samples `dtMs` apart,
