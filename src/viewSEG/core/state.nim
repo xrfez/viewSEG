@@ -4722,6 +4722,10 @@ proc adopt(state: var AppState; s: sink Session; job: JobId) =
   state.log.add(sevInfo, "open", "Opened " & s.name & ": " & plural(s.len, "trace") &
     " in " & plural(s.gathers.len, "gather") &
     (if s.file.fromCache: " (index from the cache)." else: "."))
+  if s.zeroKept > 0:
+    state.log.add(sevInfo, s.name, plural(s.zeroKept, "trace") & " with field record number " &
+      "0 " & (if s.zeroKept == 1: "was" else: "were") & " kept with the record before " &
+      (if s.zeroKept == 1: "it" else: "them") & ".")
   gather = if s.gathers.len == 0: -1 else: clamp(gather, 0, s.gathers.high)
   state.change(by, st):
     st.recentFiles.addRecent(s.path, MaxRecent)

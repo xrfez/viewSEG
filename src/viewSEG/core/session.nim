@@ -57,6 +57,8 @@ type
     facts: FileFacts ## its summary and file headers, for the Headers window
     keysRevision: int
       ## its keys' revision (parseSEG's `keysRevision`) as the UI thread knows it
+    zeroKept: int
+      ## traces with field record number 0 kept with the record before them
 
 const NoSession* = SessionId(0)
 
@@ -76,6 +78,24 @@ func lengthUnitOf*(c: CoordinateReference): string =
         low notin ["dms", "deg", "°", "1"]:
       return u
 
+proc keepZeroRecords(f: SeismicFile; gathers: var seq[Gather]): int =
+  ## A SEG-Y file gathered by field record number: a run of traces whose field
+  ## record number is 0 that directly follows a record of another number is not a
+  ## record of its own (0 is "not set"), so it joins that record, and the gather is
+  ## counted again. Returns the traces so kept. A file whose first traces are 0, or
+  ## whose every number is 0, is left as it is; so is one gathered by ensemble,
+  ## receiver or offset.
+  if f.kind != skSegy or f.index.keys.len != f.len or
+      int(f.index.segy.binary.traceSorting) in [2, 3, 4, 6, 7, 8, 9]: return
+  var kept: seq[Gather] = @[]
+  for g in gathers:
+    if kept.len > 0 and f.index.keys[g.traces.a].record == 0 and
+        f.index.keys[kept[^1].traces.a].record != 0:
+      result += g.traces.len
+      kept[^1] = f.index.classify(kept[^1].traces.a .. g.traces.b)
+    else: kept.add g
+  if result > 0: gathers = kept
+
 proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
     modified = Time(); choice = OpenChoice()): Session =
   ## A session for `file`, opened from `path`, with its gathers and the
@@ -88,6 +108,7 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   ## in `facts.problems`.
   result = Session(path: path, file: file, size: size, modified: modified)
   result.gathers = result.file.gathers
+  result.zeroKept = keepZeroRecords(result.file, result.gathers)
   result.records = recordRows(result.file, result.gathers)
   result.columns = columnsOf(result.records)
   var readable = true
@@ -131,6 +152,8 @@ func path*(s: Session): lent string {.inline.} = s.path
 func name*(s: Session): string = s.path.extractFilename
   ## The file's name, for messages and titles.
 func file*(s: Session): lent SeismicFile {.inline.} = s.file
+func zeroKept*(s: Session): int {.inline.} = s.zeroKept
+  ## Traces with field record number 0 that were kept with the record before them.
 func gathers*(s: Session): lent seq[Gather] {.inline.} = s.gathers
 func records*(s: Session): lent seq[RecordRow] {.inline.} = s.records
   ## One row per gather, for the record list.
