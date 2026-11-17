@@ -19,9 +19,10 @@
 
 import std/[math, sets, strutils, tables]
 import imguin/cimgui
-import ../../core/[colourmaps, geometry, plotcursor, state, units]
+import ../../core/[colourmaps, explain, geometry, plotcursor, state, units]
 import ../../view/[analysisview, curveplot, theme]
-import chrome, curveplot as curves, icons, marks, placement, spectrumwindow, style
+import chrome, curveplot as curves, explainicon, icons, marks, placement, spectrumwindow,
+  style
 
 const
   PlotSize = (640'f32, 620'f32)     ## a window's first size, at 100 %
@@ -482,8 +483,9 @@ func axisNumber(x: float64): string =
   if abs(x) >= 100 or x == round(x): formatFloat(x, ffDecimal, 1)
   else: formatFloat(x, ffDecimal, 2)
 
-proc drawImage(ui: var PlotWindowsUi; w: AnalysisWindow; name: string; t: Theme;
-    size: ImVec2_c; marks: var Marks; focused: bool; res: var PlotWindowsOutput): string =
+proc drawImage(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; name: string;
+    t: Theme; size: ImVec2_c; marks: var Marks; focused: bool;
+    res: var PlotWindowsOutput): string =
   ## The image (a spectrogram) in its colour map with its scale beside, the
   ## cursor's lines and values; what the cursor reads.
   result = ""
@@ -550,6 +552,7 @@ proc drawImage(ui: var PlotWindowsUi; w: AnalysisWindow; name: string; t: Theme;
       marks.markRect(name & ".cursor y", ylo, yhi)
       result = img.readingText(c)
     ImPlot_EndPlot()
+    explainIcon(name & ".explain", pos, t, marks, st.explainPane(w, 0))
   igSameLine(0, -1)
   ImPlot_ColormapScale(("dB##" & name).cstring, cdouble(img.lo), cdouble(img.hi),
     ImVec2_c(x: scaleW - igGetStyle().ItemSpacing.x, y: size.y), "%g", 0, ImPlotColormap(cmap))
@@ -639,7 +642,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     marks.mark(name & ".references")
     tip("Open References, where the reference is chosen")
   elif not r.image.isEmpty:
-    text = ui.drawImage(w, name, t, ImVec2_c(x: avail.x, y: max(80'f32, avail.y - lineH)),
+    text = ui.drawImage(st, w, name, t, ImVec2_c(x: avail.x, y: max(80'f32, avail.y - lineH)),
       marks, focused, res)
   else:
     let plots = r.curvePlots(t, st.settings.units)
@@ -672,6 +675,8 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
                  else: PlotCursor()
       let o = uis[i].drawCurvePlot(name & ".plot " & $i, p, t, ImVec2_c(x: wide, y: each),
         key, marks, held)
+      explainIcon(name & ".explain" & (if i == 0: "" else: " " & $(i + 1)), o.plotPos, t, marks,
+        st.explainPane(w, i))
       if o.hovered:
         (hoveredOn, under, moved) = (i, o.under, o.moved)
         text = p.readoutText(o.reading)

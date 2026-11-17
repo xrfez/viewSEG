@@ -48,10 +48,10 @@
 
 import std/[math, strutils]
 import imguin/cimgui
-import ../../core/[geometry, mapthin, state]
+import ../../core/[explain, geometry, join, mapthin, state]
 import ../../gpu/mappoints
 import ../../view/[maplayers, theme]
-import focus, icons, marks, style
+import explainicon, focus, icons, marks, style
 
 export MapRenderer
 
@@ -1488,6 +1488,8 @@ proc drawPlot(mu: var MapUi; st: AppState; layers: openArray[MapLayerView]; ink:
       drawInfoBox(mu.info, (if held: mu.menuAt else: igGetIO_Nil().MousePos), pos, size, t,
         marks, (if held: mu.menuRect else: Rect()))
     ImDrawList_PopClipRect(dl)
+    explainIcon("map.explain", pos, t, marks,
+      explain(pkMap, st.mapFacts(units, lengths.unit.abbreviation)))
     mu.cur = after
     if after != st.map.view:
       res.commands.add Command(kind: ckMapView, mapView: after, mapRemember: remember)

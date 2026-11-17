@@ -4,9 +4,9 @@
 
 import std/[algorithm, math, strutils, tables]
 import imguin/cimgui
-import ../../core/[references, state]
+import ../../core/[explain, references, state]
 import ../../view/[curveplot, theme]
-import curveplot as curves, focus, genpreview, icons, marks, placement, style
+import curveplot as curves, explainicon, focus, genpreview, icons, marks, placement, style
 
 type
   RefSort* = enum
@@ -178,7 +178,8 @@ proc combo(label, current, mark: string; marks: var Marks; flags = 0'i32): bool 
   result = igBeginCombo(("##" & mark).cstring, current.cstring, flags)
   marks.mark(mark)
 
-proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; marks: var Marks) =
+proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; facts: ExplainFacts;
+    marks: var Marks) =
   let ink = t.roles[rlAccent]
   let scale = max(1'f32, igGetIO_Nil().DisplayFramebufferScale.x)
   let cols = max(64, int(igGetContentRegionAvail().x * scale))
@@ -190,8 +191,9 @@ proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; marks: var Marks)
           roomRight: true,
       dense: DenseSignal(values: cast[ptr UncheckedArray[float32]](addr ui.previewSamples[0]),
       count: ui.previewSamples.len, x0: 0.0, dx: ui.previewDt))
-    discard curves.drawCurvePlot(ui.signalPlot, "generate.preview", time, t,
+    let o = curves.drawCurvePlot(ui.signalPlot, "generate.preview", time, t,
       ImVec2_c(x: -1, y: plotH), fit, marks)
+    explainIcon("generate.explain", o.plotPos, t, marks, explain(pkGenerateSignal, facts))
   if ui.previewDb.len > 1 and ui.previewHz.len > 1:
     let dx = ui.previewHz[1] - ui.previewHz[0]
     let nyquist = if ui.previewDt > 0: 500.0 / ui.previewDt else: ui.previewHz[^1]
@@ -210,9 +212,11 @@ proc drawPlots(ui: var ReferencesUi; t: Theme; plotH: float32; marks: var Marks)
     var spec = CurvePlot(xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude (dB)",
       yUnit: "dB", xs: env.xs, xFloor: axis.lo, xCeil: axis.hi, legend: false, roomRight: true,
       curves: @[Curve(name: "amplitude", colour: ink, ys: env.ys)])
-    discard curves.drawCurvePlot(ui.spectrumPlot, "generate.spectrum", spec, t,
+    let o = curves.drawCurvePlot(ui.spectrumPlot, "generate.spectrum", spec, t,
       ImVec2_c(x: -1, y: plotH), spectrumFitKey(ui.shownGen, ui.previewF1,
       ui.previewF2, nyquist), marks)
+    explainIcon("generate.explain 2", o.plotPos, t, marks,
+      explain(pkGenerateSpectrum, facts))
 
 proc followPreview(ui: var ReferencesUi; g: GeneratedReference; key, problem: string) =
   let ready = takeGeneratePreview()
@@ -421,12 +425,13 @@ proc drawGenerate(ui: var ReferencesUi; st: AppState; t: Theme; marks: var Marks
       igPopStyleColor(1)
       marks.mark("generate.pilot.message")
     elif ui.previewSamples.len > 1:
-      ui.drawPlots(t, max(1'f32, plotH - igGetTextLineHeightWithSpacing() / 2), marks)
+      ui.drawPlots(t, max(1'f32, plotH - igGetTextLineHeightWithSpacing() / 2),
+        pilotFacts(rule, shown.record, shown.note), marks)
     else:
       igTextUnformatted("Reading the pilot...", nil)
       marks.mark("generate.computing")
   elif ui.previewSamples.len > 1:
-    ui.drawPlots(t, plotH, marks)
+    ui.drawPlots(t, plotH, generateFacts(g), marks)
   else:
     igTextUnformatted("Computing the preview...", nil)
     marks.mark("generate.computing")
@@ -773,15 +778,19 @@ proc drawRefViews*(ui: var ReferencesUi; st: AppState; t: Theme; scale: float32;
         if uis.ys.len > 1:
           time.dense = DenseSignal(values: cast[ptr UncheckedArray[float32]](addr uis.ys[0]),
             count: uis.ys.len, x0: w.fromMs, dx: dt)
-        discard curves.drawCurvePlot(uis.time, "reference.view.time", time, t,
+        let ot = curves.drawCurvePlot(uis.time, "reference.view.time", time, t,
           ImVec2_c(x: -1, y: igGetFontSize() * 12), $w.revision, marks)
+        explainIcon("reference.view.explain", ot.plotPos, t, marks,
+          explain(pkReferenceSignal, refViewFacts(w)))
         let (hx, hy) = thinPair(w.hz, w.amps)
         var spec = CurvePlot(xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude",
           xs: hx, curves: @[Curve(name: "amplitude", colour: ink, ys: hy)], legend: false,
           roomRight: true)
         if hy.len == 0: spec.note = "No spectrum."
-        discard curves.drawCurvePlot(uis.spec, "reference.view.spectrum", spec, t,
+        let os = curves.drawCurvePlot(uis.spec, "reference.view.spectrum", spec, t,
           ImVec2_c(x: -1, y: igGetFontSize() * 12), "s" & $w.revision, marks)
+        explainIcon("reference.view.explain 2", os.plotPos, t, marks,
+          explain(pkReferenceSpectrum, refViewFacts(w)))
         ui.viewPlots[w.id] = uis
     igEnd()
     if not open: result.add Command(kind: ckCloseRefView, refWindow: w.id)

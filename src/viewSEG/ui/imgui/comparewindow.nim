@@ -5,9 +5,9 @@
 
 import std/[math, strutils]
 import imguin/cimgui
-import ../../core/[phasepicture, state]
+import ../../core/[explain, phasepicture, state]
 import ../../view/[compareview, curveplot, theme]
-import curveplot as curves, icons, marks, placement, style
+import curveplot as curves, explainicon, icons, marks, placement, style
 
 type
   CompareUi* = object
@@ -142,14 +142,20 @@ proc drawCompare*(ui: var CompareUi; st: AppState; t: Theme; scale: float32;
     marks.mark("compare.refusal")
   let h = igGetFontSize() * 11
   let key = $st.compareRevision
-  discard ui.signal.drawCurvePlot("compare.signal", signalPlot(pic, t), t,
+  let signal = ui.signal.drawCurvePlot("compare.signal", signalPlot(pic, t), t,
     ImVec2_c(x: -1, y: h), key, marks)
-  discard ui.spec.drawCurvePlot("compare.spectrum", spectrumPlot(pic, t), t,
+  explainIcon("compare.explain", signal.plotPos, t, marks, st.explainCompare(pkCompareSignal))
+  let spectrum = ui.spec.drawCurvePlot("compare.spectrum", spectrumPlot(pic, t), t,
     ImVec2_c(x: -1, y: h), "s" & key, marks)
-  discard ui.phase.drawCurvePlot("compare.phase", phasePlot(pic, t), t,
+  explainIcon("compare.explain 2", spectrum.plotPos, t, marks,
+    st.explainCompare(pkCompareSpectrum))
+  let phase = ui.phase.drawCurvePlot("compare.phase", phasePlot(pic, t), t,
     ImVec2_c(x: -1, y: h), "p" & key & $opt.phasePicture, marks)
-  discard ui.corr.drawCurvePlot("compare.correlation", correlationPlot(pic, t), t,
+  explainIcon("compare.explain 3", phase.plotPos, t, marks, st.explainCompare(pkComparePhase))
+  let corr = ui.corr.drawCurvePlot("compare.correlation", correlationPlot(pic, t), t,
     ImVec2_c(x: -1, y: h), "c" & key, marks)
+  explainIcon("compare.explain 4", corr.plotPos, t, marks,
+    st.explainCompare(pkCompareCorrelation))
   if pic.table.available:
     igTextUnformatted(("Peak " & formatFloat(pic.table.peak, ffDecimal, 3) &
       "    shift " & formatFloat(pic.table.shiftMs, ffDecimal, 1) &

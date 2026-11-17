@@ -14,8 +14,8 @@ import ../../view/theme
 import icons, marks, style
 
 const
-  TipWidth = 32'f32  ## the tooltip's wrap width, in text heights
-  CornerGap = 5'f32  ## from the plot's corner, at 100 %
+  TipWidth = 32'f32 ## the tooltip's wrap width, in text heights
+  CornerGap = 5'f32 ## from the plot's corner, at 100 %
 
 proc explainSpace*(): float32 =
   ## The width the icon takes at a plot's left edge, with its gap: what a note

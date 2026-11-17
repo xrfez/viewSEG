@@ -17,9 +17,9 @@
 import std/[math, strutils]
 import imguin/cimgui
 from parseSEG import SeismicKind
-import ../../core/state
+import ../../core/[explain, state]
 import ../../view/[headerviews, theme]
-import chrome, fonts, icons, marks, style
+import chrome, explainicon, fonts, icons, marks, style
 
 const FindRangeExample* = "10..20"
   ## The range example, in the Find hint and in its tooltip
@@ -118,7 +118,7 @@ proc drawChooser(ui: var TableUi; st: AppState; answer: TableAnswer; standard: S
     if changed: st.setFields(fields, commands)
     igEndPopup()
 
-proc drawGraph(answer: TableAnswer; label: string; first, last: int; t: Theme;
+proc drawGraph(answer: TableAnswer; label, scope: string; first, last: int; t: Theme;
     marks: var Marks) =
   ## The graphed field along the rows: each bucket's least and most, the
   ## rows on screen shaded.
@@ -154,6 +154,7 @@ proc drawGraph(answer: TableAnswer; label: string; first, last: int; t: Theme;
     ImDrawList_AddRectFilled(dl, ImVec2_c(x: a.x, y: pos.y), ImVec2_c(x: max(b.x, a.x + 2),
       y: pos.y + size.y), u32(withAlpha(t.roles[rlHighlight], 50)), 0, 0)
     ImPlot_EndPlot()
+    explainIcon("table.explain", pos, t, marks, explain(pkHeaderGraph, graphFacts(label, scope)))
   marks.mark("table.graph")
 
 proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; marks: var Marks;
@@ -267,8 +268,9 @@ proc drawTraceTable*(ui: var TableUi; st: AppState; fonts: Fonts; t: Theme; mark
     ImGui_TableFlags_BordersInnerV.cint or ImGui_TableFlags_SizingFixedFit.cint or
     ImGui_TableFlags_Sortable.cint
   if current and ui.view.graph.len > 0:
-    drawGraph(answer, columnLabel(ui.view.graph, answer.catalogue), ui.onScreen[0],
-      ui.onScreen[1], t, marks)
+    drawGraph(answer, columnLabel(ui.view.graph, answer.catalogue),
+      (if settings.tableScope == tsRecord: "the record shown" else: "the whole file"),
+      ui.onScreen[0], ui.onScreen[1], t, marks)
   # (one ID whatever the columns: the sort stays when a column is added)
   if not igBeginTable("##tracetable", cint(n), flags, ImVec2_c(x: 0, y: 0), 0):
     return

@@ -43,6 +43,9 @@ type
     under*: PlotCursor
       ## the point and the curve under the pointer (not held); `x` -1 when
       ## it is not over the plot
+    plotPos*, plotSize*: ImVec2_c
+      ## the plotting area, on the screen (zero when the plot was not drawn):
+      ## where the Explain icon goes
 
 proc axisBox(dl: ptr ImDrawList; text: string; along: ScreenAxis; at: float32; pos,
     area: ImVec2_c; frame: Rgba; t: Theme): (ImVec2_c, ImVec2_c) =
@@ -107,6 +110,7 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   ImPlot_SetupFinish()
   let pos = ImPlot_GetPlotPos()
   let area = ImPlot_GetPlotSize()
+  (result.plotPos, result.plotSize) = (pos, area)
   marks.markRect(id & ".data", pos, ImVec2_c(x: pos.x + area.x, y: pos.y + area.y))
   # Peak-keep for the pixels of the range on screen, redone when the view
   # or the data changes. The cursor still reads the full series.

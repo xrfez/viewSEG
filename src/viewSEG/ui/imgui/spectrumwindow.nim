@@ -15,9 +15,9 @@
 
 import std/[math, sequtils, strutils, tables]
 import imguin/cimgui
-import ../../core/state
+import ../../core/[explain, state]
 import ../../view/[curveplot, spectrumview, theme]
-import chrome, curveplot as curves, icons, marks, placement, style
+import chrome, curveplot as curves, explainicon, icons, marks, placement, style
 
 const
   SpectrumWindowTitle* = IconPulse & "  Spectrum###spectrum"
@@ -269,6 +269,7 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
   let h = max(80'f32, avail.y - lineH)
   let o = ui.plots.mgetOrPut(w.id, CurvePlotUi()).drawCurvePlot(name, p, t,
     ImVec2_c(x: avail.x, y: if phased: round(h * 0.6) else: h), key, marks, w.cursor)
+  explainIcon(name & ".explain", o.plotPos, t, marks, st.explainSpectrum(w, false))
   var text = p.readoutText(o.reading)
   if phased:
     let q = w.phasePlot(t)
@@ -277,6 +278,7 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
       key, marks, (if w.cursor.held: PlotCursor(held: true, x: w.cursor.x,
                      y: max(q.curves.mapIt(it.name).find($w.cursorCurve), 0))
       else: PlotCursor()))
+    explainIcon(name & ".explain 2", po.plotPos, t, marks, st.explainSpectrum(w, true))
     if po.hovered: text = q.readoutText(po.reading)
     elif q.aside.len > 0 and text.find(q.aside) < 0: text.add "   " & q.aside
   if w.cursor.held and text.len > 0: text = HeldNote & text
