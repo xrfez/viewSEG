@@ -227,6 +227,10 @@ proc askPlot(state: var AppState; w: int): bool =
     if pw.view == avEnvelope:
       a.notUsed = blocked.problem
       pw.reference = if blocked.problem.len > 0: "" else: blocked.name
+  elif pw.view == avVibrator and not (pw.params.projectReference and state.chosenRef.len > 0):
+    # the Ref role's recorded trace is the reference, and the window says why
+    a.vibWhy = if state.chosenRef.len == 0: "no project reference is chosen"
+               else: "the project reference is not used"
   elif pw.view == avVibrator and state.chosenRef.len > 0 and
       state.refsLoaded and state.refs.findId(state.chosenRef) >= 0 and
       state.refs.entries[state.refs.findId(state.chosenRef)].isPilot:

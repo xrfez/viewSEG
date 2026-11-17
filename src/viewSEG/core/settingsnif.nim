@@ -264,6 +264,7 @@ proc writePlotOptions(w: var NifWriter; o: PlotOptions) =
   if not o.vibrator.reactionMassKg.isNaN: w.value("reactionMassKg", o.vibrator.reactionMassKg)
   if not o.vibrator.baseplateMassKg.isNaN: w.value("baseplateMassKg", o.vibrator.baseplateMassKg)
   w.value("harmonics", o.vibrator.harmonics)
+  w.value("projectReference", o.vibrator.projectReference)
   w.value("limitsOn", o.vibrator.limitsOn)
   w.open("limits")
   for name, x in fieldPairs(o.vibrator.limits):
@@ -814,6 +815,7 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
           var h = o.vibrator.harmonics
           r.integer(c, int(HarmonicRange.lo), int(HarmonicRange.hi), h)
           o.vibrator.harmonics = h
+        elif c.isTree("projectReference"): r.flag(c, o.vibrator.projectReference)
         elif c.isTree("limitsOn"): r.flag(c, o.vibrator.limitsOn)
         elif c.isTree("limits"):
           for l in c.kids:

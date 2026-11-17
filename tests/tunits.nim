@@ -5,10 +5,12 @@
 ## Seen to fail: with `KgPerLb` set to 0.45, `factors` found
 ## "1 lb is 0.45 kg"; with `sensible` printing the raw float, `roundTrip`
 ## found "3968.320000001"; with the imperial note left in kilograms,
-## `notes` found "2450 kg·M".
+## `notes` found "2450 kg·M". With `massBoxValue` returning the raw conversion,
+## `massBox` found 7936.658599999999 where the box shows 7936.6.
 
 import std/[math, strutils]
 import viewSEG/core/[analysis, units]
+import viewSEG/authorship
 import viewSEG/view/[analysisview, theme]
 
 proc main*() =
@@ -40,6 +42,33 @@ proc main*() =
     let kg = 2450.0
     doAssert abs(storeMass(showMass(kg, usImperial), usImperial) - kg) < 1e-8
     doAssert storeMass(kg, usMetric) == kg
+
+  block massBox:
+    # the mass box: 3600 kg shows 7936.6 lb; switching the unit shows another number
+    # and stores nothing, so any number of switches leaves exactly 3600 kg; a number
+    # typed in pounds stores the kilograms it is
+    doAssert massBoxValue(3600, usMetric) == 3600
+    doAssert massBoxValue(3600, usImperial) == 7936.6
+    doAssert massBoxValue(1800, usImperial) == 3968.3
+    doAssert massBoxValue(NaN, usImperial).isNaN
+    var stored = 3600.0
+    for i in 0 ..< 1000:
+      let u = if i mod 2 == 0: usImperial else: usMetric
+      discard massBoxValue(stored, u) # what the box shows; nothing is stored back
+    doAssert stored == 3600.0
+    doAssert abs(storeMass(showMass(3600, usImperial), usImperial) - 3600) < 1e-9
+    doAssert abs(storeMass(7936.6, usImperial) - 3600) < 0.03 # the box's rounding, typed back
+    doAssert abs(storeMass(100, usImperial) - 45.359237) < 1e-12
+    doAssert massBoxValue(storeMass(100, usImperial), usImperial) == 100
+
+  block about:
+    # the About window's strings: one place, the licence read from the repository's file
+    doAssert CopyrightLine == "Copyright © 2026 Joshua Fenner", CopyrightLine
+    doAssert AuthorEmail == "Joshua.R.Fenner@gmail.com"
+    doAssert LicenseText.startsWith("MIT License") and "Joshua Fenner" in LicenseText
+    doAssert LicenseDisclaimer.startsWith("THE SOFTWARE IS PROVIDED \"AS IS\"") and
+      LicenseDisclaimer.endsWith("DEALINGS IN THE SOFTWARE.") and '\n' notin LicenseDisclaimer,
+      LicenseDisclaimer
 
   block names:
     doAssert massName(usMetric) == "kg" and massName(usImperial) == "lb"

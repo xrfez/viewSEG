@@ -59,6 +59,14 @@ func showMass*(kg: float64; u: UnitSystem): float64 =
   ## `kg` as the user sees it in `u`. NaN stays NaN (a mass not entered).
   if u == usMetric or kg.isNaN: kg else: kg / KgPerLb
 
+func massBoxValue*(kg: float64; u: UnitSystem): float64 =
+  ## The number a mass box shows for `kg` in `u`: kilograms as they are, pounds to a tenth
+  ## (3600 kg is 7936.6 lb), so a box never holds the noise of a conversion. Only a
+  ## number typed into the box is stored (`storeMass`), never this one, so switching
+  ## the unit back and forth does not move the stored kilograms.
+  let shown = showMass(kg, u)
+  if u == usMetric or shown.isNaN or abs(shown) == Inf: shown else: round(shown * 10) / 10
+
 func storeMass*(shown: float64; u: UnitSystem): float64 =
   ## A mass typed in `u`, in kilograms. NaN stays NaN.
   if u == usMetric or shown.isNaN: shown else: shown * KgPerLb

@@ -34,6 +34,9 @@ import analysis
 export VibRole, VibSignal
 
 const
+  RecordedRef* = "Ref (recorded)"
+    ## the recorded pilot measured against the project's reference: its name in the plots
+    ## and the table
   Shown = [vsReference, vsGroundForce, vsWeightedSum, vsMass, vsBaseplate]
     ## the signals in the order the plots and the table give them
 
@@ -66,12 +69,16 @@ func weightedUnit(u: AmplitudeUnit): string =
   if u == auForce: "N" elif u == auRecorded: "kg × as recorded" else: "kg × " & $u
 
 proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
-    at: array[VibRole, int]; dtMs: float64; p: AnalysisParams): AnalysisResult =
+    at: array[VibRole, int]; dtMs: float64; p: AnalysisParams;
+    recorded = -1): AnalysisResult =
   ## The vibrator signature of the unit whose role `r` is row `at[r]` of
   ## `rows` (traces from their first sample at `dtMs`, named `names`; -1:
   ## the unit has none), with the masses, polarities, harmonics and limits
   ## of `p`: four plots against sweep time (five when the force generated from the
-  ## masses has an axis of its own), and the table per signal.
+  ## masses has an axis of its own), and the table per signal. `recorded` (a
+  ## row, -1: none): the unit's recorded pilot when the reference is another
+  ## (the project's); it is measured against the reference as a signal of its own,
+  ## "Ref (recorded)": a row in the table, a line in the phase and frequency plots.
   result = AnalysisResult(view: avVibrator, dtMs: dtMs)
   if at[vsReference] notin 0 ..< rows.len:
     result.problem = "no reference (Ref): give the pilot's trace that role"
@@ -107,17 +114,23 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   unit.polarity[vsMass] = mb
   unit.polarity[vsBaseplate] = mb
   var results: seq[UnitSignature[float32]] = @[]
+  let withRecorded = recorded in 0 ..< rows.len and recorded != at[vsReference]
   try:
     if pair and masses:
       unit.reactionMass = mass(p.reactionMassKg, muKilogram)
       unit.baseplateMass = mass(p.baseplateMassKg, muKilogram)
     let limits = if p.limitsOn: p.limits else: VibLimits()
     let meta = initChunkMeta(rowsOf(keys, counts), dtMs)
-    let tp = initSweepTrackPlan(float32, TrackParams(harmonics: clamp(p.harmonics, 2, 16)),
+    let tp = initSweepTrackPlan(float32, TrackParams(harmonics: clamp(p.harmonics, 2, 16),
+      thdHarmonics: thAllThatFit),
       dtMs, cols)
     var ws = initWorkspace()
     ws.reserve(vibratorWorkspace(tp))
-    tp.analyzeVibrators(rowBlock(work, rows.len, cols), meta, [unit], limits, results, ws)
+    var units = @[unit]
+    if withRecorded:
+      units.add VibUnit(rows: [vsReference: at[vsReference], vsGroundForce: recorded,
+        vsMass: -1, vsBaseplate: -1])
+    tp.analyzeVibrators(rowBlock(work, rows.len, cols), meta, units, limits, results, ws)
   except ValueError as e:
     result.problem = e.msg
     return
@@ -139,6 +152,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     xUnit: "ms", yLabel: "Phase (°)", yUnit: "°", xs: xs)
   for s in [vsGroundForce, vsWeightedSum, vsMass, vsBaseplate]:
     if s in u.signals: phase.curves.add AnalysisCurve(name: $s, ys: u.tracks[s].phaseDeg)
+  if withRecorded:
+    phase.curves.add AnalysisCurve(name: RecordedRef, ys: results[1].tracks[vsGroundForce].phaseDeg)
   # Force: the recorded ground force and the weighted sum of the masses are in
   # different units (counts; kg x counts): a plot, an axis and a unit each
   # (with no recorded ground force, the force is the one from M and B: its unit)
@@ -160,6 +175,9 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   var freq = AnalysisPlot(title: "Frequency", xLabel: "Sweep time (ms)", xUnit: "ms",
     yLabel: "Frequency (Hz)", yUnit: "Hz", xs: xs)
   freq.curves.add AnalysisCurve(name: "Ref", ys: u.tracks[vsReference].referenceHz)
+  if withRecorded:
+    freq.curves.add AnalysisCurve(name: RecordedRef,
+      ys: results[1].tracks[vsGroundForce].frequencyHz)
   for s in forces:
     if s in u.signals: freq.curves.add AnalysisCurve(name: $s, ys: u.tracks[s].frequencyHz)
   # Distortion: THD, and each harmonic of the main ground force
@@ -239,6 +257,18 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     result.table.add row
     result.forceUnits.add(if s == vsWeightedSum: weightedUnit(u.units[s])
                            else: forceUnit(u.units[s]))
+  if withRecorded:
+    # the recorded pilot, measured against the reference: just after the Ref row
+    let m = results[1].summaries[vsGroundForce]
+    var row = @[RecordedRef, names[recorded], "as recorded", number(m.meanAbsPhaseDeg),
+      number(m.maxAbsPhaseDeg), number(m.meanThdPct), number(m.maxThdPct),
+      number(m.meanForce, 3), number(m.minForce, 3), number(m.maxPeak, 3)]
+    if p.limitsOn: row.add "not judged"
+    var at1 = result.table.len
+    for i in 1 ..< result.table.len:
+      if result.table[i][0] == $vsReference: at1 = i + 1
+    result.table.insert(row, at1)
+    result.forceUnits.insert(forceUnit(results[1].units[vsGroundForce]), at1 - 1)
   # The words: which trace is which, and how
   var roles: seq[string] = @[]
   for role in VibRole:
@@ -249,7 +279,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       number(p.baseplateMassKg, 0) & " kg·B"
   elif pair:
     words.add "; enter both masses to generate GF from M and B"
-  words.add "; values as recorded"
+  words.add "; values as recorded; THD sums harmonics 2 to " & $clamp(p.harmonics, 2, 16) &
+    " while below 80 % of Nyquist (harmonics above Nyquist are left out)"
   if vsWeightedSum in u.signals:
     words.add "; GF (M, B) is uncalibrated without accelerometer sensitivities: in " &
       weightedUnit(u.units[vsWeightedSum]) & ", on an axis of its own"

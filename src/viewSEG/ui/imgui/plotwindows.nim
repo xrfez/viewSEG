@@ -167,6 +167,19 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     2 * igGetStyle().FramePadding.x)
   let polar = round(igCalcTextSize("as recorded", nil, false, -1).x + igGetFrameHeight() +
     2 * igGetStyle().FramePadding.x)
+  # The project's chosen reference, offered first in the Ref role's list: what the unit
+  # was meant to sweep, against the recorded trace of what it says it swept.
+  var projectName = ""
+  if st.referencesLoaded:
+    let at = st.references.findId(st.chosenReference)
+    if at >= 0 and not st.references.entries[at].missing:
+      projectName = st.references.entries[at].name
+  let projectLabel = "Project reference: " & projectName
+  let projectOn = projectName.len > 0 and p.projectReference
+  let refCombo = if projectName.len > 0:
+                   max(combo, round(igCalcTextSize(projectLabel.cstring, nil, false, -1).x +
+                     igGetFrameHeight() + 2 * igGetStyle().FramePadding.x))
+                 else: combo
   const flags = ImGui_TableFlags_SizingFixedFit.cint or ImGui_TableFlags_BordersInnerH.cint
   if igBeginTable(("##roles" & name).cstring, 3, flags, ImVec2_c(x: 0, y: 0), 0):
     igTableSetupColumn("Role", 0, 0, 0)
@@ -180,16 +193,31 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
       igTextUnformatted(role, nil)
       tip(what)
       discard igTableSetColumnIndex(1)
-      igSetNextItemWidth(combo)
+      let project = role == "Ref" and projectName.len > 0
+      igSetNextItemWidth(if project: refCombo else: combo)
       let now = p.roles.field
-      let shown = if now in 0 ..< names.len: names[now] else: "none"
+      let shown = if project and projectOn: projectLabel
+                  elif now in 0 ..< names.len: names[now]
+                  else: "none"
       if igBeginCombo(("##" & role).cstring, shown.cstring, 0):
-        if igSelectable_Bool("none", now < 0, 0, ImVec2_c(x: 0, y: 0)) and now >= 0:
+        if project:
+          if igSelectable_Bool(projectLabel.cstring, projectOn, 0, ImVec2_c(x: 0, y: 0)) and
+              not projectOn:
+            (p.projectReference, changed) = (true, true)
+          marks.mark(name & ".role Ref project")
+          tip("What the unit was meant to sweep: the phase, frequency and force are " &
+            "measured against the project's chosen reference. The recorded trace is then " &
+            "measured against it too (Ref (recorded))")
+        if igSelectable_Bool("none", now < 0 and not projectOn, 0,
+            ImVec2_c(x: 0, y: 0)) and (now >= 0 or projectOn):
           (p.roles.field, changed) = (-1, true)
+          if project: p.projectReference = false
         for i, n in names:
           igPushID_Int(cint(i))
-          if igSelectable_Bool(n.cstring, i == now, 0, ImVec2_c(x: 0, y: 0)) and i != now:
+          if igSelectable_Bool(n.cstring, i == now and not projectOn, 0,
+              ImVec2_c(x: 0, y: 0)) and (i != now or projectOn):
             (p.roles.field, changed) = (i, true)
+            if project: p.projectReference = false
           igPopID()
         igEndCombo()
       marks.mark(name & ".role " & role)
@@ -224,47 +252,60 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     igAlignTextToFramePadding()
     igTextUnformatted(cstring(text), nil)
     igSameLine(0, -1)
-  template takeMass(which: string; stored: untyped) =
+  template takeMass(which: string; stored, shown: untyped) =
+    # a number left as the box showed it is no edit (the box rounds a conversion)
     let kg = if typed.isNaN: NaN else: storeMass(typed, units)
-    if typed.isNaN or MassKgRange.allows(kg):
-      if not sameMass(kg, stored): (stored, changed) = (kg, true)
-    else:
-      res.notes.add "The " & which & " must be " & massLimitWords(units) & ", not " &
-        sensible(typed) & " " & unitWord & "."
+    if not sameMass(typed, shown):
+      if typed.isNaN or MassKgRange.allows(kg):
+        if not sameMass(kg, stored): (stored, changed) = (kg, true)
+      else:
+        res.notes.add "The " & which & " must be " & massLimitWords(units) & ", not " &
+          sensible(typed) & " " & unitWord & "."
   let line = beginControlLine()
   label("Masses: reaction")
-  let shownReaction = showMass(p.reactionMassKg, units)
+  let shownReaction = massBoxValue(p.reactionMassKg, units)
   if limitBox("##reaction." & $units, shownReaction, box, typed):
-    takeMass("reaction mass", p.reactionMassKg)
+    takeMass("reaction mass", p.reactionMassKg, shownReaction)
   marks.mark(name & ".reaction mass")
-  tip("The reaction mass, " & unitWord & ": with the baseplate's, the ground force is " &
+  tip("The reaction mass, in " & unitWord & ": with the baseplate's, the ground force is " &
     "generated from M and B (Mr·M + Mb·B), drawn over the recorded one. Empty: none. " &
     "A mass is " & massLimitWords(units) & ".")
-  # kg / lb beside the field: it sets Units, and the number converts in place.
-  for u in UnitSystem:
-    igSameLine(0, 4)
+  line.follow(textBoxWidth("baseplate", box))
+  label("baseplate")
+  let shownBase = massBoxValue(p.baseplateMassKg, units)
+  if limitBox("##baseplate." & $units, shownBase, box, typed):
+    takeMass("baseplate's mass", p.baseplateMassKg, shownBase)
+  marks.mark(name & ".baseplate mass")
+  tip("The baseplate's mass, in " & unitWord & ". Empty: none. A mass is " &
+    massLimitWords(units) & ".")
+  # kg | lb after both masses: it sets Units (the Settings window's switch), the
+  # numbers convert in place and the stored kilograms stay; the unit shown is the
+  # one selected.
+  line.follow(buttonWidth("kg") + buttonWidth("lb"))
+  for i, u in [usMetric, usImperial]:
+    if i > 0: igSameLine(0, 0)
     let on = units == u
     if on:
-      igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(t.roles[rlSelection]))
-      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlAccent]))
-    if igSmallButton((massName(u) & "##units").cstring) and not on:
+      igPushStyleColor_Vec4(ImGui_Col_Button.cint, vec4(withAlpha(t.roles[rlAccent], 110)))
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlText]))
+      igPushStyleColor_Vec4(ImGui_Col_Border.cint, vec4(t.roles[rlAccent]))
+      igPushStyleVar_Float(ImGui_StyleVar_FrameBorderSize.cint, 1)
+    else:
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
+    if igButton((massName(u) & "##units").cstring, ImVec2_c(x: 0, y: 0)) and not on:
       var s = st.settings
       s.units = u
       res.commands.add Command(kind: ckSettings, settings: s)
-    if on: igPopStyleColor(2)
+    if on:
+      igPopStyleVar(1)
+      igPopStyleColor(3)
+    else: igPopStyleColor(1)
     marks.mark(name & ".unit " & massName(u))
-    tip("Show masses in " & massName(u) & " (" & systemName(u) & "). The number converts " &
-      "in place, so the mass does not change. This is the Units setting.")
-  line.follow(textBoxWidth(unitWord & "  baseplate", box))
-  label(unitWord & "  baseplate")
-  let shownBase = showMass(p.baseplateMassKg, units)
-  if limitBox("##baseplate." & $units, shownBase, box, typed):
-    takeMass("baseplate's mass", p.baseplateMassKg)
-  marks.mark(name & ".baseplate mass")
-  tip("The baseplate's mass, " & unitWord & ". Empty: none. A mass is " &
-    massLimitWords(units) & ".")
-  line.follow(textBoxWidth(unitWord & "  harmonics to", box))
-  label(unitWord & "  harmonics to")
+    tip("Show masses in " & massName(u) & " (" & systemName(u) & "). The numbers convert " &
+      "in place, so the masses do not change; they are kept in kilograms. This is the " &
+      "Units setting.")
+  line.follow(textBoxWidth("harmonics to", box))
+  label("harmonics to")
   var h = cint(p.harmonics)
   igSetNextItemWidth(box)
   if igInputInt("##harmonics", addr h, 0, 0, 0) and HarmonicRange.allows(float64(h)) and h != p.harmonics:
@@ -667,8 +708,12 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   elif r.problem.len > 0 and not refProblem:
     igTextWrapped("%s", ("Nothing to show: " & r.problem).cstring)
   elif r.note.len > 0 and not refProblem:
-    igTextWrapped("%s", shownNote(r.note, w.params.reactionMassKg, w.params.baseplateMassKg,
-      st.settings.units).cstring)
+    let said = (if r.against.len > 0: r.against & ". " else: "") &
+      shownNote(r.note, w.params.reactionMassKg, w.params.baseplateMassKg, st.settings.units)
+    # wrapped at the window's width (the settings rows above are wider than a note)
+    igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
+    igTextUnformatted(said.cstring, nil)
+    igPopTextWrapPos()
   igPopStyleColor(1)
   marks.mark(name & ".summary")
   # a vibrator signature's table, with its limits on; a correlation's, of several traces

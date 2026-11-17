@@ -86,6 +86,10 @@ type
     fkRaw*: bool = false
       ## f-k: the plot's filters left out. A trace's own filter still runs.
     roles*: VibRoles ## vibrator signature: which trace is which
+    projectReference*: bool = true
+      ## vibrator signature: measured against the project's chosen reference when it has
+      ## one (the default: what the unit was meant to sweep); false: against the Ref role's
+      ## recorded trace (what it says it swept)
     reactionMassKg*: float64 = NaN
       ## vibrator signature: the reaction mass, kg, for the ground force
       ## generated from M and B; NaN: none entered (no generated force)
@@ -168,6 +172,9 @@ type
       ## by because Filters > Filter the Aux traces too is off
     dtMs*: float64
     note*: string ## what the numbers are, in words (shown under the plot)
+    against*: string
+      ## a vibrator signature's reference in one sentence: "Measured against the project
+      ## reference X" or "Measured against the recorded reference, trace N"; "" for none
     problem*: string ## why there is none; "" when there is one
 
 type StopCheck* = proc (): bool {.closure, gcsafe.}

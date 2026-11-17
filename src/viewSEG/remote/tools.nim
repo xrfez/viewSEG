@@ -562,7 +562,8 @@ proc plotJson(w: AnalysisWindow; units: UnitSystem; limit: int): JsonNode =
     "params": toJson(w.params), "traces": clipped(w.traces, limit), "reference": w.reference,
     "filters": w.filters, "waiting": w.waiting, "cursor": toJson(w.cursor),
     "cursorOn": w.cursorOn,
-    "problem": r.problem, "note": r.note, "used": r.used, "leftOut": r.leftOut,
+    "problem": r.problem, "note": r.note, "measuredAgainst": r.against, "used": r.used,
+        "leftOut": r.leftOut,
     "passedBy": r.passedBy, "notDrawn": r.notDrawn,
     "dtMs": toJson(r.dtMs), "plots": plots, "explain": explainWindow(w, units)}
   if r.table.len > 0:
@@ -889,6 +890,7 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
         "mouse": row.gesture == gsMouse}
     r["program"] = %*{"folder": getAppDir(), "workingFolder": working,
       "theme": state.settings.theme, "themes": state.themeNames, "versions": versions,
+      "author": ProgramAuthor, "email": AuthorEmail, "copyright": CopyrightLine,
       "shortcuts": shortcuts}
   if "map" in wanted: r["map"] = state.mapJson(limit)
   if "survey" in wanted:

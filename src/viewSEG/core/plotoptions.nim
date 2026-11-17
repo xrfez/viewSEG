@@ -35,6 +35,7 @@ type
     reactionMassKg*: float64 = NaN ## NaN: none entered
     baseplateMassKg*: float64 = NaN
     harmonics*: int = 5
+    projectReference*: bool = true
     limitsOn*: bool = false
     limits*: VibLimits = VibLimits(phaseDeg: 10, meanPhaseDeg: 5, thdPct: 40,
       meanThdPct: 20)
@@ -88,8 +89,8 @@ func optionsOf*(p: AnalysisParams; view: AnalysisView): PlotOptions =
   of avEnvelope: result.envelope = EnvelopeOptions(phaseAgainst: p.phaseAgainst)
   of avVibrator:
     result.vibrator = VibratorOptions(reactionMassKg: p.reactionMassKg,
-      baseplateMassKg: p.baseplateMassKg, harmonics: p.harmonics, limitsOn: p.limitsOn,
-      limits: p.limits)
+      baseplateMassKg: p.baseplateMassKg, harmonics: p.harmonics,
+      projectReference: p.projectReference, limitsOn: p.limitsOn, limits: p.limits)
   of avFk: result.fk = FkOptions(floorDb: p.floorDb, colourMap: p.colourMap, raw: p.fkRaw)
   of avOrientation: discard
 
@@ -118,9 +119,10 @@ func applied*(o: PlotOptions; view: AnalysisView; p: AnalysisParams): AnalysisPa
   of avCorrelation: result.maxLagMs = o.correlation.maxLagMs
   of avEnvelope: result.phaseAgainst = o.envelope.phaseAgainst
   of avVibrator:
-    (result.reactionMassKg, result.baseplateMassKg, result.harmonics, result.limitsOn,
-     result.limits) = (o.vibrator.reactionMassKg, o.vibrator.baseplateMassKg,
-       o.vibrator.harmonics, o.vibrator.limitsOn, o.vibrator.limits)
+    (result.reactionMassKg, result.baseplateMassKg, result.harmonics, result.projectReference,
+     result.limitsOn, result.limits) = (o.vibrator.reactionMassKg, o.vibrator.baseplateMassKg,
+       o.vibrator.harmonics, o.vibrator.projectReference, o.vibrator.limitsOn,
+       o.vibrator.limits)
   of avFk: (result.floorDb, result.colourMap, result.fkRaw) = (o.fk.floorDb, o.fk.colourMap, o.fk.raw)
   of avOrientation: discard
 

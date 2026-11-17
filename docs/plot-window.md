@@ -755,20 +755,32 @@ right of that line's first row. A change works it out again.
     record's next three channels, as wireline records have them; on several, the first
     four are the roles and the others can be chosen (16 at most). A role can be "none";
     Ref cannot.
+  - **Which reference.** When the project has a reference chosen (References), Ref's list
+    offers **Project reference: name** first, and it is the default: the phase, frequency
+    and force are measured against what the unit was meant to sweep. The recorded R trace
+    (what it says it swept) is then measured against it too, as **Ref (recorded)**: a row
+    of the table and a line in the phase and frequency plots. Picking a trace for Ref
+    measures against that trace instead; with no reference chosen the trace is used as
+    well. The window says which in one sentence under the settings ("Measured against the
+    project reference ..." or "Measured against the recorded reference, trace N"); the
+    choice is kept with the plot's options and put back by Reset options.
   - **Polarity.** GF as recorded, reversed, or **automatic** (reversed when its mean
     phase to the reference is past ±90°: wiring). M and B take one polarity, together
     (the baseplate moves against the mass: one reversed alone would make their force a
     difference); automatic needs both and both masses. Ref is the phase origin.
   - **GF from M and B.** With the reaction mass and the baseplate's mass entered (kg, or
-    lb when File > Settings > Units is Imperial; **kg** / **lb** beside the reaction mass
-    is that setting, and the number converts in place; empty at first, as no default fits
+    lb when File > Settings > Units is Imperial; **kg | lb** after the two boxes is that
+    setting, the selected one drawn lit, and the numbers convert in place, pounds to a
+    tenth: 3600 kg reads 7936.6 lb, and what is stored stays in kilograms; empty at first, as no default fits
     every vibrator), `GF (M, B) = Mr·M + Mb·B` is
     drawn with the recorded GF in the phase, frequency and distortion plots, and its row
     added to the table. Its force is in **a plot of its own** ("Force from M and B", kg ×
     recorded units, or lb × when Units is Imperial; the stored numbers stay in kilograms): the recorded force (counts) and the weighted sum are not in one unit,
     so neither shares the other's axis. Without accelerometer sensitivities it is
     uncalibrated, and the window says so.
-  - **Harmonics** tracked to the 5th at first (2 to 16); THD sums them from the 2nd.
+  - **Harmonics** tracked to the 5th at first (2 to 16); THD sums them from the 2nd, at each
+    time only those still below 80 % of Nyquist (harmonics above Nyquist are left out, and
+    where none is below it there is no THD).
   - **Limits...** (drawn selected while they are on; off at first) opens **Check against
     limits** and the eight boxes, greyed while that check is off: the largest |phase| at a
     point (10° at first) and its mean (5°), THD at a point (40 %) and its mean (20 %), any one

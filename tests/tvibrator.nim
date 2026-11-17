@@ -76,7 +76,7 @@ proc library(rows: seq[seq[float32]]; at: array[VibRole, int]): UnitSignature[fl
   var counts = newSeq[int](rows.len)
   for c in counts.mitems: c = N
   let meta = initChunkMeta(rowsOf(keys, counts), Dt)
-  let tp = initSweepTrackPlan(float32, TrackParams(), Dt, N)
+  let tp = initSweepTrackPlan(float32, TrackParams(thdHarmonics: thAllThatFit), Dt, N)
   var ws = initWorkspace()
   ws.reserve(vibratorWorkspace(tp))
   var unit = initVibUnit(at[vsReference], at[vsGroundForce], at[vsMass], at[vsBaseplate],
@@ -275,6 +275,56 @@ proc main*() =
     doAssert f.title == "Force from M and B" and f.yLabel == "GF (M, B) (kg × as recorded)",
       f.title & " / " & f.yLabel
     doAssert f.curves.len == 2 and f.curves[0].name == "GF (M, B) fundamental", $f.curves.len
+
+  block thdPastNyquist:
+    # THD at each time sums the harmonics still below 80 % of Nyquist (400 Hz at 1 ms):
+    # with 16 tracked, H16 is measured only below 25 Hz, but THD goes on to where
+    # the 2nd is (to 200 Hz, past the sweep's 80 Hz), and the note says so.
+    # Seen to fail: with the viewer asking the library for the fixed set (every one of
+    # 2 .. 16 or no THD), "GF THD has 0 points past H16's".
+    var p = params
+    p.harmonics = 16
+    let r = vibratorOf(unitRows, names, inOrder, Dt, p)
+    doAssert r.problem == "", r.problem
+    let thd = r.curve(4, "GF THD")
+    let h16 = r.curve(4, "GF H16")
+    var (nThd, nH16, thdAfterH16) = (0, 0, 0)
+    var lastH16 = -1
+    for m in 0 ..< thd.len:
+      if not h16[m].isNaN: (inc nH16; lastH16 = m)
+    for m in 0 ..< thd.len:
+      if not thd[m].isNaN:
+        inc nThd
+        if m > lastH16: inc thdAfterH16
+    doAssert nH16 > 0 and nThd > nH16 and thdAfterH16 > 20,
+      "GF THD has " & $thdAfterH16 & " points past H16's (" & $nThd & " against " & $nH16 & ")"
+    doAssert "harmonics above Nyquist are left out" in r.note, r.note
+
+  block recordedReference:
+    # the project's reference as Ref, the recorded pilot (here 5° off it) measured against
+    # it as a signal of its own: a table row after Ref, a line in the phase and the
+    # frequency plots; with no recorded row, none of them.
+    # Seen to fail: with `recorded` ignored, "no row Ref (recorded)".
+    let rows = unitRows & @[wave(1, 5)]
+    let all = @["trace 1", "trace 2", "trace 3", "trace 4", "trace 5"]
+    let r = vibratorOf(rows, all, inOrder, Dt, params, recorded = 4)
+    doAssert r.problem == "", r.problem
+    var at = -1
+    for i, row in r.table:
+      if row[0] == RecordedRef: at = i
+    doAssert at == 2 and r.table[1][0] == "Ref", "no row " & RecordedRef & " after Ref: " &
+      $r.table
+    doAssert r.table[at][1] == "trace 5", $r.table[at]
+    doAssert r.forceUnits.len == r.table.len - 1, $r.forceUnits
+    let phase = r.curve(0, RecordedRef)
+    var sum, n = 0.0
+    for m in judged(r.plots[0].xs):
+      if not phase[m].isNaN: (sum += phase[m]; n += 1)
+    doAssert n > 10 and abs(sum / n - 5) < 0.5, "the recorded pilot's phase " & $(sum / n)
+    discard r.curve(3, RecordedRef)
+    let plain = vibratorOf(unitRows, names, inOrder, Dt, params)
+    doAssert plain.table.len == 6
+    for row in plain.table: doAssert row[0] != RecordedRef
 
   echo "tvibrator: ok"
 

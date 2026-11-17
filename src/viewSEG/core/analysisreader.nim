@@ -65,6 +65,9 @@ type
     pilotRecord*: string ## which record that is, for the sentences
     pilotReversed*: bool ## that trace is effectively reversed: turned over first
     pilotOwn*: seq[FilterEntry] ## its own filter, when it has one
+    vibWhy*: string
+      ## a vibrator signature measured against its recorded Ref trace: why not the project
+      ## reference ("no project reference is chosen", "the project reference is not used")
     extraNote*: string ## said under the numbers, for what the choice of a reference changed
     notUsed*: string
       ## an envelope's chosen reference that cannot be used, and why (the trace's own
@@ -551,24 +554,31 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                   at[role] = if q in 0 ..< a.traces.len: keptList.find(a.traces[q]) else: -1
                   if q in 0 ..< a.traces.len and at[role] < 0 and a.archivePath.len == 0:
                     missing.add $role
+                # the project's reference is the Ref; the recorded R trace, when the
+                # role has one, is measured against it as a signal of its own
+                var recorded = -1
                 if archiveSamples.len > 0:
                   let refName = a.archiveName & " (archive)"
-                  if at[vsReference] >= 0:
-                    rows[at[vsReference]] = archiveSamples
-                    names[at[vsReference]] = refName
-                  else:
-                    rows.add archiveSamples
-                    names.add refName
-                    at[vsReference] = rows.high
+                  recorded = at[vsReference]
+                  rows.add archiveSamples
+                  names.add refName
+                  at[vsReference] = rows.high
+                let against = if archiveSamples.len > 0:
+                                "Measured against the project reference " & a.archiveName
+                              elif at[vsReference] >= 0:
+                                "Measured against the recorded reference, " &
+                                  names[at[vsReference]] &
+                                  (if a.vibWhy.len > 0: " (" & a.vibWhy & ")" else: "")
+                              else: ""
                 let n = (answer.leftOut, answer.atOtherInterval)
-                answer = vibratorOf(rows, names, at, dtMs, a.params)
+                answer = vibratorOf(rows, names, at, dtMs, a.params, recorded)
                 (answer.leftOut, answer.atOtherInterval) = n
+                if answer.problem.len == 0: answer.against = against
                 if archiveSamples.len > 0 and answer.problem.len == 0:
-                  let refName = a.archiveName & " (archive)"
                   let rule = if kept.len > 0: lengthRule(archiveSamples.len, kept[0].len) else: ""
-                  let line = "Reference: " & refName &
-                    (if rule.len > 0: ". " & rule else: "")
-                  answer.note = line & (if answer.note.len > 0: ". " & answer.note else: "")
+                  if rule.len > 0:
+                    answer.note = capitalizeAscii(rule) &
+                      (if answer.note.len > 0: ". " & answer.note else: "")
                 if missing.len > 0:
                   let words = missing.join(", ") & " left out (killed, dead or unreadable)"
                   if answer.problem.len > 0: answer.problem.add "; " & words

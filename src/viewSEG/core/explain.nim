@@ -469,11 +469,14 @@ func vibDistortionText(f: ExplainFacts): string =
   join4(part("Shows", "Distortion in % up, against sweep time in ms across: the total " &
       "harmonic distortion (THD) of each ground force, and each harmonic (" & upTo & ") of " &
       "the ground force as a % of its fundamental."),
-    part("Computed from", f.vibTrace, f.rolesWords, "THD sums the harmonics from the 2nd.",
+    part("Computed from", f.vibTrace, f.rolesWords, "THD sums the harmonics from the 2nd " &
+      "to the highest set that are below 80 % of Nyquist at that time; harmonics above " &
+      "Nyquist are left out. Where none is below it, there is no THD.",
       f.filterClause, f.editsClause, f.limitsWords("distortion")),
     part("Reading it", "Lower is better. A smooth low THD is a clean sweep; a rise at one " &
       "point is a resonance or a stroke limit; one harmonic standing out is a specific fault."),
-    part("Careful", "A harmonic is measured only while it stays below 80 % of Nyquist."))
+    part("Careful", "A harmonic is measured only while it stays below 80 % of Nyquist, so " &
+      "later in the sweep THD sums fewer harmonics and its noise floor falls with them."))
 
 func fkText(f: ExplainFacts): string =
   let kind = if f.wavenumber.len > 0: "Wavenumber (" & f.wavenumber & ")"
@@ -730,7 +733,11 @@ func factsOf*(w: AnalysisWindow; units: UnitSystem): ExplainFacts =
     result.reactionMass = massText(p.reactionMassKg, units)
     result.baseplateMass = massText(p.baseplateMassKg, units)
     result.roles = "Ref, GF, M and B as the table above sets them"
-    if w.result.note.len > 0: result.roles = w.result.note.split("; ")[0]
+    for part in w.result.note.split("; "):
+      if part.find("Ref ") >= 0 and part.find(" · ") >= 0:
+        result.roles = part[part.find("Ref ") .. ^1]
+        break
+    if w.result.against.len > 0: result.roles = result.roles & ". " & w.result.against
 
 func explainPane*(w: AnalysisWindow; units: UnitSystem; pane: int): string =
   ## What pane `pane` of analysis window `w` tells you (0 for an image).

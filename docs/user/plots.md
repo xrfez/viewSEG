@@ -168,11 +168,11 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Shows.** Distortion in % up, against sweep time in ms across: the total harmonic distortion (THD) of each ground force, and each harmonic (H2 up to the highest harmonic set) of the ground force as a % of its fundamental.
 
-**Computed from.** The traces of the window's roles. THD sums the harmonics from the 2nd. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set. Limits you set are drawn as thin lines and the points past them marked.
+**Computed from.** The traces of the window's roles. THD sums the harmonics from the 2nd to the highest set that are below 80 % of Nyquist at that time; harmonics above Nyquist are left out. Where none is below it, there is no THD. Through the filters set in the Seismic window, if any are on. A trace's own filter and a reversed polarity are applied as set. Limits you set are drawn as thin lines and the points past them marked.
 
 **Reading it.** Lower is better. A smooth low THD is a clean sweep; a rise at one point is a resonance or a stroke limit; one harmonic standing out is a specific fault.
 
-**Careful.** A harmonic is measured only while it stays below 80 % of Nyquist.
+**Careful.** A harmonic is measured only while it stays below 80 % of Nyquist, so later in the sweep THD sums fewer harmonics and its noise floor falls with them.
 
 ## f-k
 
