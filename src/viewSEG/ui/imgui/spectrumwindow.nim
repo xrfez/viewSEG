@@ -262,13 +262,17 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
   template sp: untyped = w.spectrum
   # Fitted again for other data: another scale, axis or bins (the linear
   # live panel at each answer, its range moves with the traces).
-  let key = $w.display.scale & $w.display.logFrequency & $w.display.phasePicture &
-    $p.isEmpty & $sp.nfft & $sp.binHz &
-    (if w.display.scale == ssLinear and w.id == LiveSpectrum: $sp.gen else: "")
+  # The live panel's view stays where the user left it for new data; an FFT
+  # window's axes follow new data and every option (`view/axisfit`).
+  let live = w.id == LiveSpectrum
+  let key = (if live: $w.display.scale & $w.display.logFrequency & $w.display.phasePicture
+    else: $w.display) & $p.isEmpty & $sp.nfft & $sp.binHz &
+    (if w.display.scale == ssLinear and live: $sp.gen else: "")
   let phased = w.display.phase and w.hasPhase
   let h = max(80'f32, avail.y - lineH)
   let o = ui.plots.mgetOrPut(w.id, CurvePlotUi()).drawCurvePlot(name, p, t,
-    ImVec2_c(x: avail.x, y: if phased: round(h * 0.6) else: h), key, marks, w.cursor)
+    ImVec2_c(x: avail.x, y: if phased: round(h * 0.6) else: h), key, marks, w.cursor,
+    follow = not live)
   explainIcon(name & ".explain", o.plotPos, t, marks, st.explainSpectrum(w, false))
   var text = p.readoutText(o.reading)
   if phased:
@@ -277,7 +281,7 @@ proc drawBody(ui: var SpectraUi; st: AppState; w: SpectrumWindow; t: Theme; mark
       ImVec2_c(x: avail.x, y: max(60'f32, h - round(h * 0.6) - igGetStyle().ItemSpacing.y)),
       key, marks, (if w.cursor.held: PlotCursor(held: true, x: w.cursor.x,
                      y: max(q.curves.mapIt(it.name).find($w.cursorCurve), 0))
-      else: PlotCursor()))
+      else: PlotCursor()), follow = not live)
     explainIcon(name & ".explain 2", po.plotPos, t, marks, st.explainSpectrum(w, true))
     if po.hovered: text = q.readoutText(po.reading)
     elif q.aside.len > 0 and text.find(q.aside) < 0: text.add "   " & q.aside

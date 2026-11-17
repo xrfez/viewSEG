@@ -665,11 +665,16 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     let on = clamp(w.cursorOn, 0, max(plots.len - 1, 0))
     func sameXs(a, b: CurvePlot): bool =
       a.xs.len == b.xs.len and (a.xs.len == 0 or (a.xs[0] == b.xs[0] and a.xs[^1] == b.xs[^1]))
+    # What the options draw: another one fits the axes again (`view/axisfit`);
+    # a colour map is no part of a curve plot.
+    var options = w.params
+    options.colourMap = AnalysisParams().colourMap
     var hoveredOn = -1
     var under = PlotCursor(x: -1, y: -1)
     var moved = false
     for i, p in plots:
-      let key = $w.view & $i & $p.xs.len & (if p.xs.len > 0: $p.xs[0] & $p.xs[^1] else: "")
+      let key = $w.view & $i & $options & $st.settings.units & $p.xs.len &
+        (if p.xs.len > 0: $p.xs[0] & $p.xs[^1] else: "") & p.xLabel & p.yLabel
       let held = if w.cursor.held and plots.len > 0 and (i == on or p.sameXs(plots[on])):
                    PlotCursor(held: true, x: w.cursor.x, y: (if i == on: w.cursor.y else: 0))
                  else: PlotCursor()

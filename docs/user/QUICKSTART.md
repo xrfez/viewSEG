@@ -781,7 +781,10 @@ panel; the **Freeze** pin sits at the right of its first row. Its tooltip is "Fr
 keep these traces while the plot moves on". Point at the plot: the line under it reads
 the frequency and each curve's level, and, when the phase picture is not the signed
 one, the signed value in brackets. The wheel zooms, a drag pans, a double click shows
-it all again. The window's line of words says how many traces were averaged and what
+it all again. Change an option that changes the curve (dB or linear, the phase picture, a
+window length ...) and both axes fit the new curve, even over a zoom; step to another
+trace and an axis you have not zoomed fits it, one you have zoomed stays. (The live Spectrum
+panel keeps your view when its data changes.) The window's line of words says how many traces were averaged and what
 was left out (killed, dead, unreadable).
 
 **Window > Spectrum** is the same, docked and live (a tab beside the map at first): the

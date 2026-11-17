@@ -17,19 +17,20 @@
 ## (`readoutText`), with the point and curve under the pointer, for the
 ## keys to start from.
 
-import std/math
+import std/[hashes, math, tables]
 import imguin/cimgui
 import ../../core/[plotcursor, references]
-import ../../view/[curveplot, plotink, theme]
+import ../../view/[axisfit, curveplot, plotink, theme]
 import marks, style
 
 type
   CurvePlotUi* = object
     ## A curve plot's state between frames.
-    fitted: string     ## the key of the data the view was last fitted to
+    axes: AxisFit      ## what the axes were last fitted to (`view/axisfit`)
     screenLo, screenHi: float64
     screenPx: int
     screenKey: string
+    screenStamp: Hash  ## of the data the screen copy was made from
     screen: seq[Curve] ## peak-kept for the range on screen; redone when it changes
     haveScreen: bool
     band: SignalBand   ## a dense signal's columns for the range on screen
@@ -46,6 +47,25 @@ type
     plotPos*, plotSize*: ImVec2_c
       ## the plotting area, on the screen (zero when the plot was not drawn):
       ## where the Explain icon goes
+
+var shownLimits: Table[string, (Span, Span)]
+  ## per plot id, the x and y limits it ended its last frame with (for tests)
+
+proc axisLimitsOf*(id: string): (Span, Span) =
+  ## The x and y limits the plot `id` ended its last frame with, as it is
+  ## laid out (x across, y up; a plot turned has its x down); NaN limits
+  ## for a plot not drawn.
+  shownLimits.getOrDefault(id, (Span(lo: NaN, hi: NaN), Span(lo: NaN, hi: NaN)))
+
+func stampOf(p: CurvePlot): Hash =
+  ## A cheap fingerprint of the data: the curves' lengths and a few of their values.
+  var h: Hash = 0
+  for c in p.curves:
+    h = h !& hash(c.name) !& hash(c.ys.len)
+    if c.ys.len > 0:
+      for k in 0 .. 15: h = h !& hash(c.ys[k * (c.ys.len - 1) div 15])
+  h = h !& hash(p.xs.len) !& hash(p.dense.count)
+  !$h
 
 proc axisBox(dl: ptr ImDrawList; text: string; along: ScreenAxis; at: float32; pos,
     area: ImVec2_c; frame: Rgba; t: Theme): (ImVec2_c, ImVec2_c) =
@@ -71,11 +91,14 @@ proc axisBox(dl: ptr ImDrawList; text: string; along: ScreenAxis; at: float32; p
   (lo, hi)
 
 proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; size: ImVec2_c;
-    fitKey: string; marks: var Marks; held = PlotCursor()): CurveOutput =
+    fitKey: string; marks: var Marks; held = PlotCursor(); follow = true): CurveOutput =
   ## Draws `p` in a plot of `size` (ImPlot's: 0 or less takes the room
-  ## left), its view fitted to the data whenever `fitKey` changes (new
-  ## data of another kind: a new scale, another axis), else where the user
-  ## left it; `id` names it (`marks`: `id & ".data"`, the plotting area).
+  ## left); `id` names it (`marks`: `id & ".data"`, the plotting area).
+  ## The axes are fitted by `view/axisfit`'s rule: both whenever `fitKey`
+  ## (the plot's options: another scale, axis or unit) changes; with the
+  ## same options, an axis whose data's limits changed unless the user
+  ## zoomed it. `follow` false: only `fitKey` fits, as for a panel whose
+  ## view stays where the user left it.
   result.reading = Reading(index: -1, x: NaN)
   let flags = ImPlot_Flags_NoTitle.cint or ImPlot_Flags_NoMenus.cint or
     ImPlot_Flags_NoMouseText.cint or (if p.legend: 0 else: ImPlot_Flags_NoLegend.cint)
@@ -101,11 +124,11 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   let yl = p.yLimits
   ImPlot_SetupAxisLimitsConstraints(xAxis, xl.lo, xl.hi)
   ImPlot_SetupAxisLimitsConstraints(yAxis, yl.lo, yl.hi)
-  let fit = fitKey != ui.fitted
-  ui.fitted = fitKey
-  let cond = if fit: ImPlot_Cond_Always.cint else: ImPlot_Cond_Once.cint
-  ImPlot_SetupAxisLimits(xAxis, xl.lo, xl.hi, cond)
-  ImPlot_SetupAxisLimits(yAxis, yl.lo, yl.hi, cond)
+  let fit = ui.axes.plan(fitKey, Span(lo: xl.lo, hi: xl.hi), Span(lo: yl.lo, hi: yl.hi), follow)
+  ImPlot_SetupAxisLimits(xAxis, xl.lo, xl.hi,
+    if fit.x: ImPlot_Cond_Always.cint else: ImPlot_Cond_Once.cint)
+  ImPlot_SetupAxisLimits(yAxis, yl.lo, yl.hi,
+    if fit.y: ImPlot_Cond_Always.cint else: ImPlot_Cond_Once.cint)
   ImPlot_SetupLegend(ImPlot_Location_NorthEast.cint, 0)
   ImPlot_SetupFinish()
   let pos = ImPlot_GetPlotPos()
@@ -116,7 +139,8 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   # or the data changes. The cursor still reads the full series.
   let lim = ImPlot_GetPlotLimits(xAxis, yAxis)
   let px = max(1, int(if turned: area.y else: area.x))
-  if not ui.haveScreen or ui.screenKey != fitKey or ui.screenPx != px or
+  let stamp = p.stampOf
+  if not ui.haveScreen or ui.screenKey != fitKey or ui.screenStamp != stamp or ui.screenPx != px or
       ui.screenLo != lim.X.Min or ui.screenHi != lim.X.Max:
     ui.screen = if p.dense.count > 0: @[] else: p.forScreen(lim.X.Min, lim.X.Max, px)
     if p.dense.count > 0:
@@ -126,6 +150,7 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
     ui.screenHi = lim.X.Max
     ui.screenPx = px
     ui.screenKey = fitKey
+    ui.screenStamp = stamp
     ui.haveScreen = true
   let width = max(1'f32, round(igGetIO_Nil().DisplayFramebufferScale.x))
   if p.dense.count > 0 and ui.band.xs.len > 0 and p.curves.len > 0:
@@ -252,5 +277,10 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
     let ts = igCalcTextSize(p.note.cstring, nil, false, -1)
     ImDrawList_AddText_Vec2(dl, ImVec2_c(x: pos.x + max(0, (area.x - ts.x) / 2),
       y: pos.y + max(0, (area.y - ts.y) / 2)), u32(t.roles[rlTextDim]), p.note.cstring, nil)
+  let ended = ImPlot_GetPlotLimits(xAxis, yAxis)
+  let seenX = Span(lo: ended.X.Min, hi: ended.X.Max)
+  let seenY = Span(lo: ended.Y.Min, hi: ended.Y.Max)
+  ui.axes.seen(seenX, seenY)
+  shownLimits[id] = (seenX, seenY)
   ImPlot_EndPlot()
   if p.roomRight: ImPlot_PopStyleVar(1)
