@@ -1,0 +1,69 @@
+(.nif27)
+; Vendor map for SEG-D Rev 2.0 files with manufacturer code 9: Geospace GeoRes Imagine / XTC trace header
+; extensions #2 and #3 (Extended Trace Header Version 3 layout), plus the module header and the trace-extension
+; version bytes of extended header block 1.
+; SOURCE: Geospace Engineering Resources, Intl., "SEG-D Tape/Disk File Format", manual 593-00120-01, Rev. D
+; (released 8/9/21), the vendor's own format document. Byte numbers are the manual's (1-based, big-endian).
+; Enum labels are the manual's words.
+; COVERS: the GeoRes Imagine and XTC recorders. Manufacturer code 9 is the SEG code of the whole Geo Space
+; company, so a code-9 file from another product with a different layout would match this map too and be
+; decoded with these names. Nothing in the match can tell them apart.
+; ASSUMES trace-extension version 3 (Acquisition Detail module byte 30 = 3), the layouts of extension #2 bytes
+; 1-25 and extension #3 below. A map cannot test that byte, so it is shown as a field of the extended header
+; block 1 target: look at it, and at the content type beside it, before trusting the trace extension values.
+; A superseded version 0 file has no extension #3, and its extension #2 differs from byte 25 low nibble on
+; (a 12-bit Total Gain overlaps byte 25). A version 2 file may carry extension #3 without First Sample Time
+; (bytes 9-16 then undefined); both times have sentinel 0 (the GPS epoch is not a real time).
+; LEFT OUT: extended header modules and fields other than the module header and bytes 30-32 of block 1 (module
+; order is not fixed, a map addresses blocks by position); extension #2 bytes 24-25 high part (Analog Gain
+; Applied, 12-bit) and bytes 26-32 (layout depends on the orientation code); extension #3 bytes 4-5 (Applied
+; Sensor Calibration, 12-bit), bytes 6-8 (documented reserved, non-zero in samples) and bytes 25-28 (Total
+; Drift For Trace: the samples hold float bit patterns and stale values on some traces).
+(vendormap "mfr09-rev2" (version 1)
+  (match (format segd) (rev 2.0 2.0) (manufacturer 9))
+  (doc "Geospace GeoRes Imagine/XTC (manual 593-00120-01 Rev. D) SEG-D Rev 2.0 trace header extensions 2 and 3, extended trace header version 3 layout assumed (see the acqDetailTraceExt fields); manufacturer code 9 covers more than these recorders")
+  (target (kind extendedHeader) (blockIndex 1) (name acqDetailTraceExtVersion)
+    ; Module header of the first extended header block (manual p7). The three acqDetailTraceExt fields at the
+    ; end mean what their names say ONLY when moduleContentType shows Acquisition Detail; in any other module
+    ; those bytes are something else. Bytes 30-32 are at the same place in Acquisition Detail content version 0 and 1.
+    (field moduleSegMfrCode (at 1) (enc u8))
+    (field moduleSponsorshipCode (at 2) (enc u16))
+    (field moduleContentType (at 4) (enc u8)
+      (enum (1 "Acquisition Detail") (2 "Source Location") (3 "Fire Control Detail") (6 "External Header Catalog")))
+    (field moduleContentVersion (at 5) (enc u8))
+    (field moduleCompatibilityVersion (at 6) (enc u8))
+    (field moduleBlockCount (at 7) (enc u16))
+    ; Acquisition Detail only: Extended Trace Header Version (this map assumes 3), its Compatibility Version, and
+    ; the Number of Extended Trace Header Blocks Per Trace (includes trace header extension #1)
+    (field acqDetailTraceExtVersion (at 30) (enc u8))
+    (field acqDetailTraceExtCompatVersion (at 31) (enc u8))
+    (field acqDetailTraceExtBlocksPerTrace (at 32) (enc u8)))
+  (target (kind traceExt) (extension 2) (name geoResTraceExt2)
+    ; Receiver position, or the source position in a triggered receiver gather (the manual's "Receiver Easting
+    ; (X)" etc.). The gather type is in the general header, which a map cannot read. Unit not stated.
+    (field positionEasting (at 1) (enc f64))
+    (field positionNorthing (at 9) (enc f64))
+    (field positionElevation (at 17) (enc f32))
+    ; 0 = stack / composite record, else the energy point index
+    (field recordIndex (at 21) (enc u8))
+    ; the manual defines only 255; the samples hold 1 (shown without a label)
+    (field traceDataProcessDescriptor (at 22) (enc u8) (enum (255 "None applied (raw data)")))
+    (field secondaryLowCutFilter (at 23) (enc u8)
+      (enum (0 "None") (1 "8 Hz, 12dB/Octave") (2 "32 Hz, 12dB/Octave") (3 "3.2 Hz, 6dB/Octave")))
+    ; Low nibble of byte 25 read as one BCD digit: exact for 0-9, the manual defines 0-4 ("Unshown values are
+    ; reserved"). A value of 10-15 is not a documented code and shows as "invalid BCD" bytes; on a version 0 file
+    ; this nibble is part of a 12-bit gain, so a label would then be meaningless.
+    (field sensorOrientationDescription (at 25) (nibble low) (len 1 n) (enc bcd)
+      (enum (0 "No description given") (1 "Azimuth/Inclination Degrees re. Module Head End")
+            (2 "Sine of the Inclination from horizontal")
+            (3 "3-D Rotation Vector re. the as laid Module head end")
+            (4 "3-D Rotation Vector re. magnetic North"))))
+  (target (kind traceExt) (extension 3) (name geoResTraceExt3)
+    ; digitizer module serial number, 0 = unknown
+    (field moduleSerialNumber (at 1) (enc u24) (sentinel 0))
+    ; microseconds since 1980-01-06 00:00:00 GPS time (no leap seconds): 18 s ahead of UTC in 2024
+    (field firstSampleTime (at 9) (enc i64) (sentinel 0) (unit "us GPS"))
+    ; Trigger (Event) Time: the manual states neither epoch nor unit; epoch and microseconds INFERRED
+    ; (equal to First Sample Time on every trace of both samples), so no unit is given
+    (field triggerTime (at 17) (enc i64) (sentinel 0))
+    (field totalDriftOfOBX (at 29) (enc f32) (unit "us"))))
