@@ -971,7 +971,7 @@ proc drawPlotWindows*(ui: var PlotWindowsUi; st: AppState; t: Theme; scale: floa
     # a correlation of several traces has a line or two each above its plots: taller
     let size = if w.view == avVibrator: VibratorSize
                elif w.view == avCorrelation and w.traces.len > 2:
-                 (CorrelationWidth, PlotSize[1] + 2 * float32(min(w.traces.len, 8)) *
+                 (CorrelationWidth, PlotSize[1] + 5 * float32(min(w.traces.len, 8)) *
                    igGetFontSize() / scale)
                else: PlotSize
     placeNext(w.id, size, scale)
