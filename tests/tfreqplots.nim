@@ -179,6 +179,37 @@ proc main*() =
       doAssert readings[0][0] * readings[1][0] > 0,
         "the sign of k: " & $readings[0][0] & " then " & $readings[1][0]
 
+    block notANumberIsLeftOut:
+      # 8 traces of a 25 Hz cosine, trace 3 with one NaN: the New plot windows leave it
+      # out and say so (as the FFT window does), rather than draw the NaN as 0.
+      var rows: seq[seq[float32]]
+      for i in 0 ..< 8:
+        var r = newSeq[float32](500)
+        for j in 0 ..< 500: r[j] = float32(cos(2 * PI * 25.0 * float64(j) * 0.002))
+        rows.add r
+      rows[3][200] = NaN
+      let path = fx.tracesSegy("nan.sgy", rows)
+      var st = initAppState()
+      st.open(path)
+      let base = st.sessions[0].base
+      let ids = @[base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 6, base + 7]
+      for view in [avSpectrogram, avFk]:
+        st.apply Command(kind: ckOpenPlot, plotView: view, plotTraces: ids)
+        let w = st.plots.high
+        doAssert st.settle(st.answered(w) and not st.plots[w].waiting)
+        let r = st.plots[w].result
+        doAssert r.problem == "", r.problem
+        doAssert r.used == 7 and r.leftOut == 1 and r.notNumber == 1,
+          $view & ": used " & $r.used & ", left out " & $r.leftOut
+        if view == avFk:
+          doAssert "not a number left out" in r.note, r.note
+      # a Phase spectrum of the bad trace alone has nothing to use
+      st.apply Command(kind: ckOpenPlot, plotView: avPhase, plotTraces: @[base + 3])
+      let w = st.plots.high
+      doAssert st.settle(st.answered(w) and not st.plots[w].waiting)
+      doAssert st.plots[w].result.leftOut == 1 and st.plots[w].result.problem.len > 0,
+        "the phase spectrum used a trace with a NaN"
+
   echo "tfreqplots: ok"
 
 when isMainModule:

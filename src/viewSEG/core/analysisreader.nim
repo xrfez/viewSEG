@@ -126,13 +126,16 @@ func recordSentenceOf(a: AnalysisAsk): string =
   if a.pilotRecord.len == 0: "The record" else: capitalizeAscii(a.pilotRecord)
 
 proc readRows(p: ptr ReaderObj; f: ptr SeismicFile; path: string; list: seq[int];
-    id: int; rows: var seq[seq[float32]]; failed: var seq[bool]): bool =
+    id: int; rows: var seq[seq[float32]]; failed: var seq[bool];
+    notNumber: var seq[bool]): bool =
   ## Traces `list` of `f`, whole, into `rows` (in its order; a trace that
-  ## cannot be decoded is empty and `failed`); false when a newer request
-  ## came first.
+  ## cannot be decoded is empty and `failed`; one with a sample that is not a
+  ## number has it as 0 and is `notNumber`); false when a newer request came
+  ## first.
   result = true
   rows = newSeq[seq[float32]](list.len)
   failed = newSeq[bool](list.len)
+  notNumber = newSeq[bool](list.len)
   if list.len == 0: return
   p.beat(path)
   var pf = newPrefetcher[float32](f[], list, chunkTraces = 16, workers = 2, uniform = true)
@@ -146,7 +149,9 @@ proc readRows(p: ptr ReaderObj; f: ptr SeismicFile; path: string; list: seq[int]
       var s = newSeq[float32](max(n, 0))
       if n > 0: copyMem(addr s[0], b.rowPtr(k), n * sizeof(float32))
       for v in s.mitems:
-        if not (abs(v) < Inf): v = 0 # a sample that is not a number: as the plot draws it
+        if not (abs(v) < Inf):
+          v = 0 # a sample that is not a number: as the plot draws it
+          notNumber[c.first + k] = true
       rows[c.first + k] = move s
     if c.first + c.count < list.len and p.interrupted(id):
       result = false
@@ -338,8 +343,8 @@ proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: f
       result.problem = recordSentenceOf(a) & " has no such trace."
       return
     var refRows: seq[seq[float32]] = @[]
-    var refFailed: seq[bool] = @[]
-    if not p.readRows(f, a.path, @[rt], a.id, refRows, refFailed):
+    var refFailed, refNan: seq[bool] = @[]
+    if not p.readRows(f, a.path, @[rt], a.id, refRows, refFailed, refNan):
       result.cancelled = true
       return
     let rk = f[].traceKeys(rt)
@@ -419,13 +424,19 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
     else:
       try:
         var rows: seq[seq[float32]] = @[]
-        var failed: seq[bool] = @[]
-        if not p.readRows(f, a.path, list, a.id, rows, failed): return false
+        var failed, notNumber: seq[bool] = @[]
+        if not p.readRows(f, a.path, list, a.id, rows, failed, notNumber): return false
+        # A Spectrogram, an f-k and a Phase spectrum leave out a trace with a sample that is
+        # not a number, and count it, as an FFT window does; the others draw it as 0.
+        let leaveOut = a.view in {avSpectrogram, avFk, avPhase}
         var kept: seq[seq[float32]] = @[]
         var keptNames: seq[string] = @[]
         var keptList: seq[int] = @[]
         for i in 0 ..< rows.len:
           if failed[i] or rows[i].len == 0: inc answer.leftOut
+          elif leaveOut and notNumber[i]:
+            inc answer.leftOut
+            inc answer.notNumber
           else:
             kept.add move rows[i]
             keptNames.add names[i]
@@ -442,6 +453,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               through["through ".len .. ^1] & ")"
           else:
             through.add " (" & passedWords(passed) & ")"
+        let notNumbers = answer.notNumber
         if kept.len == 0:
           answer.problem = "none of the traces could be read"
         else:
@@ -584,6 +596,10 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                   if answer.problem.len > 0: answer.problem.add "; " & words
                   else: answer.note.add "; " & words
           if answer.cancelled: return false # its window closed or asked again: nothing to say
+          answer.notNumber = notNumbers
+          if notNumbers > 0 and a.view == avFk and answer.problem.len == 0:
+            answer.note.add "; " & $notNumbers & (if notNumbers == 1: " trace" else: " traces") &
+              " with a sample that is not a number left out, so the spacing is that of the rest"
           answer.gen = a.gen
           answer.id = a.id
           answer.passedBy = passed
