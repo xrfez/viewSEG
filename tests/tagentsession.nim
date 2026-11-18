@@ -188,7 +188,8 @@ const PlotShown = AnalysisParams(windowMs: 64, overlap: 50, floorDb: -80, colour
   " 4/21.19.18.20",
   hz: 210)], qcWindowMs: 250,
   qc: QcLimits(avgPhaseDeg: 4, peakPhaseDeg: 9, avgDistortionPct: 25, peakDistortionPct: 55,
-  avgForcePct: 85, peakForcePct: 130), forceHundredPct: 4000, rolesOpen: true, noteOpen: true, targetPct: 50)
+  avgForcePct: 85, peakForcePct: 130), forceHundredPct: 4000, forceHundredWeighted: 9000,
+  rolesOpen: true, noteOpen: true, targetPct: 50)
   ## the options of every kind of New plot window away from their defaults
 
 const PlotViews = [avSpectrogram, avEnvelope, avPhase, avCorrelation, avVibrator, avFk]
