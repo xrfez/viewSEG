@@ -8,12 +8,14 @@
 ## pressing Enter sends exactly that corner (the plot filtered again from
 ## the samples at hand: no read), Tab takes it and goes on to the f2 box, a
 ## number out of order is refused with a line and leaves the corner; "+ 60 Hz" adds a notch
-## at 60 Hz with two harmonics; the Aux box filters the auxiliary traces
+## at 60 Hz with two harmonics; a notch width narrower than 1/T of the record is taken
+## with a warning in the same line (a wider one clears it); the Aux box filters the auxiliary traces
 ## too; `P` shows the traces raw (the strip says so) and processed again,
 ## and the settings keep the filters for a new plot.
 ##
 ## Seen to fail: with the f1 box taking nothing (`hertz` returning false),
-## "f1 typed did not happen"; with `filterKeys` not called, "P did not show the traces raw".
+## "f1 typed did not happen"; with `filterKeys` not called, "P did not show the traces raw";
+## with the width box giving no warning, "a narrow notch warned of" never happened.
 ##
 ## Needs a display: run under `xvfb-run -a -s "-screen 0 1920x1080x24" nim test`.
 ## `VIEWSEG_SCREENSHOTS=<dir>` saves filters-popup.png there.
@@ -145,6 +147,15 @@ proc main*() =
         doAssert "notch 60 Hz x3" in label(f.processing), label(f.processing)
         if shots.len > 0:
           doAssert f.savePng(shots / "filters-popup.png"))
+    # a notch narrower than 1/T of the record is taken, with a warning in the refusals' line
+    typeBox("plot.filters notch 0 width", "0.1", true)
+    step("a narrow notch warned of", noop, proc (f: FrameInfo): bool =
+      result = f.processing.notches.len == 1 and f.processing.notches[0].widthHz == 0.1 and
+        f.markOf("plot.filters refused").size.x > 0)
+    typeBox("plot.filters notch 0 width", "2", true)
+    step("a wide notch has no warning", noop, proc (f: FrameInfo): bool =
+      result = f.processing.notches[0].widthHz == 2.0 and
+        f.markOf("plot.filters refused").size.x == 0)
     click("plot.filters aux")
     step("aux", noop, proc (f: FrameInfo): bool =
       result = f.processing.aux and f.answered)

@@ -464,3 +464,17 @@ func hasAuxiliary*(rows: TraceRows): bool =
   for k in 0 ..< rows.len:
     if rows.keysAt(k).status == tsAuxiliary: return true
   false
+
+func narrowNotchWarning*(widthHz: float64; samples: int; dtMs: float64): string =
+  ## What to tell a user who typed a notch `widthHz` for traces of `samples` samples `dtMs`
+  ## apart: a notch narrower than one over the record's length (1/T) is not resolved by
+  ## it, and can raise the level at its centre instead of cutting it. "" when it is not
+  ## narrower, or the length is not known. A warning, not a refusal: the width is taken.
+  if samples < 2 or not (dtMs > 0 and dtMs < Inf) or not (widthHz > 0): return
+  let resolve = 1000 / (float64(samples) * dtMs)
+  if widthHz < resolve:
+    result = "Notch width: " & formatFloat(widthHz, ffDefault, 9) & " Hz is narrower than 1/T, " &
+      formatFloat(resolve, ffDefault, 3) & " Hz, for traces of " &
+      formatFloat(float64(samples) * dtMs, ffDefault, 6) & " ms: the notch is not resolved " &
+      "by so short a record and can raise the level at its centre instead of cutting it. " &
+      "Use a width of at least " & formatFloat(resolve, ffDefault, 3) & " Hz."

@@ -80,6 +80,14 @@ proc main*() =
     doAssert low < -99, "the notch is drawn at " & $low
     doAssert drawn[0].ys.len <= 400 + 2, "drew " & $drawn[0].ys.len
 
+  block narrowNotchIsWarnedOf:
+    # 2000 samples at 2 ms: 4 s, so 1/T is 0.25 Hz
+    doAssert "narrower than 1/T, 0.25" in narrowNotchWarning(0.2, 2000, 2.0),
+      narrowNotchWarning(0.2, 2000, 2.0)
+    doAssert narrowNotchWarning(0.25, 2000, 2.0) == ""
+    doAssert narrowNotchWarning(2.0, 2000, 2.0) == ""
+    doAssert narrowNotchWarning(0.1, 0, 2.0) == "", "no record length known"
+
   block degreesToATenth:
     doAssert yText(-7207.04, "°") == "-7207.0" and yText(-7207.04, "deg") == "-7207.0"
     doAssert yText(12.345, "dB") == "12.3"

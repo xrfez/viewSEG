@@ -171,6 +171,8 @@ proc drawSettings(p: Panel; pr: Processing; hasAux: bool; reach: FilterReach;
     igTextUnformatted("width", nil)
     igSameLine(0, -1)
     if hertz("##width", "Notch width", n.notches[i].widthHz, MinNotchWidthHz, 20, round(w * 0.4)):
+      # taken, but a width the record cannot resolve is warned of, in the refusals' line
+      hzNote = narrowNotchWarning(n.notches[i].widthHz, p.layout.samples, dt)
       p.send(n, cmds)
     marks.mark("plot.filters notch " & $i & " width")
     tip("The notch's width: the gain is 1 again half of it away")
