@@ -837,7 +837,9 @@ proc compareJson(state: AppState): JsonNode =
     "slotB": slotJson(state.compareB), "chipA": state.compareChip(cwA),
     "chipB": state.compareChip(cwB),
     "table": {"available": t.available, "peak": toJson(t.peak), "shiftMs": toJson(t.shiftMs),
-      "polarity": t.polarity, "whyNot": t.whyNot},
+      "polarity": t.polarity, "whyNot": t.whyNot, "match": toJson(t.match.match),
+      "matchShiftMs": toJson(t.match.shiftMs), "rotationDeg": toJson(t.match.rotationDeg),
+      "words": t.matchWords},
     "refusal": p.refusal, "align": p.alignNote, "sameGrid": p.sameGrid,
     "options": toJson(state.compareOptions)}
 

@@ -109,7 +109,7 @@ func endWords*(who: string; endMs, referenceEndMs, limitMs: float64): string =
   (if who.len > 0: who & ": " else: "") & "signal ends at about " & spaced(endMs) &
     " ms; the reference runs to " & spaced(referenceEndMs) & " ms"
 
-func lengthMs*(samples: int; dtMs: float64): float64 =
+func spanMs*(samples: int; dtMs: float64): float64 =
   ## The time a trace of `samples` samples spans: `(samples - 1)·dtMs` (a trace of 1 001
   ## samples at 2 ms runs to 2 000 ms), 0 for none.
   if samples < 1: 0.0 else: float64(samples - 1) * dtMs
@@ -121,10 +121,10 @@ func signalEndMs*(x: openArray[float32]; dtMs: float64): float64 =
   let (levels, length) = blockLevels(x, dtMs)
   var times = newSeq[float64](levels.len)
   for i in 0 ..< levels.len: times[i] = float64(i) * length
-  min(lastLoudMs(levels, times, length, RippleFraction), lengthMs(x.len, dtMs))
+  min(lastLoudMs(levels, times, length, RippleFraction), spanMs(x.len, dtMs))
 
 func endWords*(who: string; x: openArray[float32]; dtMs, referenceEndMs: float64): string =
   ## `endWords` for a trace `x` (no tracker): the end found in its blocks, against
   ## where the reference's own signal ends (`signalEndMs` of the reference).
   if x.len < 4: return ""
-  endWords(who, signalEndMs(x, dtMs), referenceEndMs, lengthMs(x.len, dtMs))
+  endWords(who, signalEndMs(x, dtMs), referenceEndMs, spanMs(x.len, dtMs))

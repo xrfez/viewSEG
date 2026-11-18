@@ -40,7 +40,9 @@ type
     verdict*: MatchVerdict
     match*: float64       ## the envelope's peak, at most 1; NaN for `mvNothing`
     shiftMs*: float64     ## the peak's place, NaN unless `mvClear`
-    rotationDeg*: float64 ## -180 to 180, NaN until `withRotation` or when it cannot be read
+    rotationDeg*: float64 ## -180 to 180, NaN until `rotationOf` sets it or when it cannot be read
+    at*: int              ## the sample of the envelope's peak, -1 for none
+    offset*: float64      ## the peak's place from it in samples, within half a sample
 
 func peakAt*(y: openArray[float64]; i: int): tuple[offset, value: float64] =
   ## The vertex of the parabola through `y[i-1]`, `y[i]`, `y[i+1]` (`i` a maximum
@@ -56,13 +58,14 @@ func peakAt*(y: openArray[float64]; i: int): tuple[offset, value: float64] =
 func matchOf*(envelope, lagsMs: openArray[float64]): Match =
   ## The match and the shift from a correlation's envelope against its lags (ms,
   ## evenly spaced). NaN values are not looked at.
-  result = Match(verdict: mvNothing, match: NaN, shiftMs: NaN, rotationDeg: NaN)
+  result = Match(verdict: mvNothing, match: NaN, shiftMs: NaN, rotationDeg: NaN, at: -1)
   var best = -1
   for i in 0 ..< min(envelope.len, lagsMs.len):
     if not envelope[i].isNaN and (best < 0 or envelope[i] > envelope[best]): best = i
   if best < 0: return
   let (offset, top) = peakAt(envelope, best)
   result.match = min(top, 1.0)
+  (result.at, result.offset) = (best, offset)
   if best == 0 or best == min(envelope.len, lagsMs.len) - 1: result.verdict = mvNoPeak
   elif result.match < NoClearMatch: result.verdict = mvWeak
   else:
@@ -119,3 +122,17 @@ func noPeakWords*(shownMs: float64): string =
 func weakWords*(m: Match): string =
   ## "no clear match (0.06)".
   "no clear match (" & twoDecimals(m.match) & ")"
+
+func verdictWords*(m: Match; shownMs: float64; direction: string): string =
+  ## The verdict as both windows word it: "best match 1.00 at +3.0 ms (arrives 3.0 ms
+  ## after the reference; rotated 90°)", "no clear match (0.06)", "no peak within
+  ## ±250.0 ms: widen the time shifts"; "" for no value. `direction` is the shift in the
+  ## window's own words, said only for a clear match.
+  case m.verdict
+  of mvNothing: ""
+  of mvNoPeak: noPeakWords(shownMs)
+  of mvWeak: weakWords(m)
+  of mvClear:
+    let turn = rotationWords(m.rotationDeg)
+    "best match " & twoDecimals(m.match) & " at " & signedMs(m.shiftMs) & " ms (" & direction &
+      (if turn.len > 0: "; " & turn else: "") & ")"

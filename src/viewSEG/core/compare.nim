@@ -19,9 +19,9 @@ import processSEG/core/[basic, timeshift, workspace]
 import processSEG/fft/spectrum
 import processSEG/gain/stats
 import processSEG/vibroseis/[crosscorrelate, sweeptrack]
-import phasepicture
+import matchpeak, phasepicture
 
-export phasepicture
+export phasepicture, matchpeak.Match
 
 type
   CompareWhich* = enum
@@ -67,9 +67,14 @@ type
     ## The correlation's peak, the shift it sits at, and the polarity.
     available*: bool
     whyNot*: string
-    peak*: float64 = NaN
+    peak*: float64 = NaN ## the correlation's largest magnitude (`shiftMs` is where)
     shiftMs*: float64 = NaN
     polarity*: string
+    match*: Match
+      ## the correlation envelope's peak, shift and rotation, as the Cross-correlation
+      ## window finds them (`matchpeak`)
+    matchWords*: string
+      ## the same in the same words: "best match 1.00 at +4.0 ms (B lags A by 4.0 ms; rotated 90°)"
 
   CompareSeries* = object
     ## One curve: a value per x (NaN where it has none).
@@ -286,26 +291,41 @@ proc peakAt(ys: openArray[float64]; xs: openArray[float64]): tuple[value, at: fl
       result = (y, if i < xs.len: xs[i] else: NaN)
 
 proc correlate(a, b: openArray[float32]; dtMs: float64): tuple[xs, ys: seq[float64];
-    why: string] =
+    match: Match; why: string] =
   ## The correlation coefficient of `b` against `a` (a copy of `a` delayed
-  ## by τ peaks at +τ). `why` when it cannot be formed.
+  ## by τ peaks at +τ), over every lag, and its match (`matchOf`, with the rotation).
+  ## `why` when it cannot be formed.
+  result.match = matchOf([], [])
   if a.len < 2 or b.len < 2 or not (dtMs > 0):
-    return (newSeq[float64](), newSeq[float64](), "fewer than two samples in the window")
+    return (newSeq[float64](), newSeq[float64](), matchOf([], []),
+      "fewer than two samples in the window")
   let n = min(a.len, b.len)
   let lag = float64(n - 1) * dtMs
   try:
     let cp = initCrossCorrelationPlan(float32, lag, dtMs, n)
     var ws = initWorkspace()
     ws.reserve(cp.workspaceSize)
-    var lags = newSeq[float32](cp.lags)
-    cp.crossCorrelateInto(b.toOpenArray(0, n - 1), a.toOpenArray(0, n - 1), lags, ws)
+    var lags, env = newSeq[float32](cp.lags)
+    cp.crossCorrelateInto(b.toOpenArray(0, n - 1), a.toOpenArray(0, n - 1), lags, env, ws)
     result.xs = newSeq[float64](cp.lags)
     result.ys = newSeq[float64](cp.lags)
+    var es = newSeq[float64](cp.lags)
     for i in 0 ..< cp.lags:
       result.xs[i] = cp.lagMs(i)
       result.ys[i] = float64(lags[i])
+      es[i] = float64(env[i])
+    result.match = matchOf(es, result.xs)
+    if result.match.verdict == mvClear:
+      result.match.rotationDeg = rotationOf(lags, dtMs, result.match.at, result.match.offset)
   except ValueError as e:
     result.why = e.msg
+
+func directionWords(shiftMs: float64): string =
+  ## Which way B is from A: "B lags A by 4.0 ms" (a copy of A delayed by τ peaks at +τ),
+  ## "B leads A by", "B is in step with A".
+  if signedMs(shiftMs) == "0.0": "B is in step with A"
+  else: "B " & (if shiftMs > 0: "lags" else: "leads") & " A by " &
+    formatFloat(abs(shiftMs), ffDecimal, 1) & " ms"
 
 proc applyAlign(b: var seq[float32]; a: openArray[float32]; dtMs: float64;
     opt: CompareOptions; peakMs: float64): tuple[note: string; shiftMs: float64] =
@@ -331,7 +351,7 @@ proc applyAlign(b: var seq[float32]; a: openArray[float32]; dtMs: float64;
     if typed: ms = opt.shiftMs
     elif not peakMs.isNaN: ms = peakMs
     if ms.isNaN:
-      parts.add "not shifted (no correlation peak)"
+      parts.add "not shifted (no clear match)"
     else:
       # A whole number of samples is a move: exact, no interpolation.
       let n = wholeSamples(ms, dtMs)
@@ -339,7 +359,9 @@ proc applyAlign(b: var seq[float32]; a: openArray[float32]; dtMs: float64;
       result.shiftMs = float64(n) * dtMs
       var text = formatFloat(result.shiftMs, ffDecimal, 1)
       if text == "-0.0": text = "0.0"
-      parts.add "shifted " & text & " ms"
+      # a positive shift moves B earlier (processSEG's `timeShift`), a negative one later
+      let way = if text == "0.0": "" elif result.shiftMs > 0: " (earlier)" else: " (later)"
+      parts.add "shifted " & text & " ms" & way
   result.note = parts.join(", ")
 
 proc phaseDiff(a, b: OneSpectrum; picture: PhasePicture): tuple[hz, ys, signed: seq[float64];
@@ -436,7 +458,13 @@ proc pictureOf*(a, b: CompareSlot; opt: CompareOptions): ComparePicture =
         result.table.peak = peak.value
         result.table.shiftMs = peak.at
         result.table.polarity = if peak.value < 0: "reversed" else: "same"
-        peakMs = peak.at
+        # B is shifted by where the envelope peaks (a quarter turn leaves the correlation
+        # itself small there, and its largest magnitude elsewhere)
+        peakMs = corr.match.shiftMs
+        result.table.match = corr.match
+        let shownMs = max(abs(corr.xs[0]), abs(corr.xs[^1]))
+        result.table.matchWords = verdictWords(corr.match, shownMs,
+          directionWords(corr.match.shiftMs))
   elif result.refusal.len > 0:
     result.table.whyNot = result.refusal
   let aligned = applyAlign(workB, workA, workDt, opt, if result.sameGrid: peakMs else: NaN)

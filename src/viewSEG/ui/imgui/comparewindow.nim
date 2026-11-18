@@ -101,6 +101,7 @@ proc drawCompare*(ui: var CompareUi; st: AppState; t: Theme; scale: float32;
     opt.shiftMs = ui.shiftMs
     changed = true
   marks.mark("compare.shiftMs")
+  tip("A positive shift moves B earlier, a negative one later (whole samples)", marks)
   if igCheckbox("Match amplitudes (RMS)", addr opt.matchRms): changed = true
   marks.mark("compare.match")
   igSameLine(0, -1)
@@ -157,9 +158,11 @@ proc drawCompare*(ui: var CompareUi; st: AppState; t: Theme; scale: float32;
   explainMenu("compare.explain 4", corr.plotPos, t, marks,
     st.explainCompare(pkCompareCorrelation))
   if pic.table.available:
-    igTextUnformatted(("Peak " & formatFloat(pic.table.peak, ffDecimal, 3) &
-      "    shift " & formatFloat(pic.table.shiftMs, ffDecimal, 1) &
-      " ms    polarity " & pic.table.polarity).cstring, nil)
+    igTextWrapped("%s", ("A and B: " & pic.table.matchWords).cstring)
+    marks.mark("compare.match")
+    igTextUnformatted(("Largest correlation " & formatFloat(pic.table.peak, ffDecimal, 3) &
+      " at " & formatFloat(pic.table.shiftMs, ffDecimal, 1) & " ms    polarity " &
+      pic.table.polarity).cstring, nil)
     marks.mark("compare.table")
   elif pic.table.whyNot.len > 0:
     igTextWrapped("%s", pic.table.whyNot.cstring)

@@ -302,6 +302,9 @@ func withoutChoice*(choices: seq[string]; layout: string): seq[string] =
 template stopped*(stop: StopCheck): bool =
   not stop.isNil and stop()
 
+const RawAgainstReference* = "the plot's filters are not applied here: raw trace against " &
+  "the raw reference"
+
 const AuxFilterOff* = "Filters > Filter the Aux traces too is off"
   ## where the plot's Aux toggle is, as the words name it
 
@@ -604,7 +607,7 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
       words = meanText(diff, p.phaseShow) & ", largest " &
         formatFloat(worst, ffDecimal, 1) & "°"
       phasePlot.aside = "Phase against the reference over the part drawn: " & words
-    result.warning = shortWords("trace", lengthMs(x.len, dtMs), lengthMs(reference.len, dtMs))
+    result.warning = shortWords("trace", spanMs(x.len, dtMs), spanMs(reference.len, dtMs))
     let early = endWords("", x, dtMs, signalEndMs(reference, dtMs))
     if early.len > 0: result.warning.add (if result.warning.len > 0: "\n" else: "") & early
     result.note = "Phase against " & referenceName & ": the trace's instantaneous phase " &
@@ -822,7 +825,7 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
   var inBand = newSeq[bool](cp.bins)
   for k in 0 ..< cp.bins: inBand[k] = refDb[k] >= -abs(p.phaseWithinDb)
   let refEnd = signalEndMs(reference, dtMs)
-  let refLength = lengthMs(reference.len, dtMs)
+  let refLength = spanMs(reference.len, dtMs)
   var anyShifted = false
   var anyUnshifted = false
   for (name, s) in signals:
@@ -846,7 +849,7 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
     lagPlot.curves.add AnalysisCurve(name: name & " envelope", ys: es)
     if not sameSamples(s, reference):
       let who = if signals.len > 1: name else: "trace"
-      var said = shortWords(who, lengthMs(s.len, dtMs), refLength)
+      var said = shortWords(who, spanMs(s.len, dtMs), refLength)
       let early = endWords((if signals.len > 1: name else: ""), s, dtMs, refEnd)
       if early.len > 0: said.add (if said.len > 0: "\n" else: "") & early
       if said.len > 0:
@@ -885,19 +888,14 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
     let meanRatio = ratio.meanOf
     let meanPhase = meanOfPhase(phase, p.phaseShow)
     var row = @[name, "-", "-", "-", "-", "-"]
-    let said = name & ": "
-    if best < 0: discard
-    elif noPeak: lines.add said & noPeakWords(shownMs)
-    elif not clear:
-      row[1] = twoDecimals(match)
-      lines.add said & weakWords(m)
-    else:
-      let turn = rotationWords(rotation)
-      row[1] = twoDecimals(match) & (if turn == "reversed polarity": " (" & turn & ")" else: "")
-      row[2] = signedMs(shift)
-      row[5] = rotationCell(rotation)
-      lines.add said & "best match " & twoDecimals(match) & " at " & signedMs(shift) &
-        " ms (" & shiftWords(shift) & (if turn.len > 0: "; " & turn else: "") & ")"
+    if best >= 0:
+      lines.add name & ": " & verdictWords(m, shownMs, shiftWords(shift))
+      if not noPeak: row[1] = twoDecimals(match)
+      if clear:
+        let turn = rotationWords(rotation)
+        if turn == "reversed polarity": row[1].add " (" & turn & ")"
+        row[2] = signedMs(shift)
+        row[5] = rotationCell(rotation)
     if not meanRatio.isNaN: row[3] = signedMs(meanRatio)
     if not meanPhase.isNaN:
       row[4] = if p.phaseShow == psAbsolute: formatFloat(meanPhase, ffDecimal, 1)
