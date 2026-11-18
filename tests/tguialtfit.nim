@@ -21,7 +21,7 @@
 ##
 ## Needs a display: run under the tester, which gives each file its own.
 
-import std/[math, monotimes, options, os]
+import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[analysis, geometry, panels, references, state, viewport]
 import viewSEG/view/[analysisview, curveplot]
 import viewSEG/ui/imgui/[app, curveplot as uiplot]
@@ -41,7 +41,13 @@ func centre(r: Rect): Vec2 = vec2(round(r.pos.x + r.size.x / 2), round(r.pos.y +
 
 proc dataRange(p: CurvePlot): (float64, float64) =
   var (lo, hi) = (Inf, -Inf)
+  # (a signal the plot says is "off scale" is left out of the axis on purpose: the axis
+  # holds the judged signal and its limits)
+  var off = ""
   for c in p.curves:
+    if c.name.endsWith(" off scale"): off = c.name
+  for c in p.curves:
+    if off.len > 0 and c.name in ["M", "B"] and c.name in off: continue
     for y in c.ys:
       if y.classify notin {fcNan, fcInf, fcNegInf}:
         lo = min(lo, y)

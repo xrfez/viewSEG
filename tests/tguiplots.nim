@@ -255,7 +255,7 @@ proc main*() =
       if result:
         var limits = 0
         for c in f.core.plots[1].result.plots[0].curves:
-          if c.style == csLimit: inc limits
+          if c.style == csLimit and " limit " notin c.name: inc limits
         doAssert limits == 1, $limits & " phase limits drawn (Absolute: the one size)"
         for label in ["Phase ±", "Phase mean", "THD", "THD mean", "Harmonic", "Force from",
             "Force to", "Peak force"]:

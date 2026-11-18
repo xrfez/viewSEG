@@ -34,7 +34,7 @@ type Step = object
   done: proc (f: FrameInfo): bool
 
 proc recordRows(bad: bool): array[4, seq[float32]] =
-  var gf = SynthSweep(amp: 1000, phaseDeg: 1.5, h2: 0.04, delayMs: 115)
+  var gf = SynthSweep(amp: 1000, phaseDeg: 0.0, h2: 0.04, delayMs: 115)
   if bad:
     gf.amp = 780
     gf.burstAtS = 3.0
@@ -105,6 +105,18 @@ proc main*() =
       for part in ["verdict", "roles line", "against", "top frequency warning", "warning"]:
         let r = f.markOf("new plot 1." & part)
         doAssert r.size.y <= 26, what & ": " & part & " is " & $r.size.y & " high (wrapped)"
+      # a GF at 0 degrees is a visible line: the lowest pixel of its colour in the phase plot
+      # is clear of the plot's bottom edge (the floor is a little under 0)
+      let d0 = f.markOf("new plot 1.plot 0.data")
+      var lowest = -1
+      for y in int(d0.pos.y) + 1 ..< int(d0.pos.y + d0.size.y):
+        for x in countup(int(d0.pos.x) + 4, int(d0.pos.x + d0.size.x) - 4, 2):
+          for c in plots[0].curves:
+            if " limit" notin c.name and distance(f.readPixel(x, y), c.colour) <= 8:
+              lowest = max(lowest, y)
+      doAssert lowest >= 0, what & ": no GF pixel in the phase plot"
+      doAssert float32(lowest) <= d0.pos.y + d0.size.y - 3, what &
+        ": the 0 degree line is on the plot's bottom edge (" & $lowest & " in " & $d0 & ")"
       # the sign is the table's first column
       doAssert f.core.plots[0].result.qc.tableOf[0][0] == "Met"
     proc phase(label: string; size: (float32, float32); shot: string) =

@@ -259,11 +259,28 @@ proc chosenReferenceFor(state: var AppState; w: int; s: Session; dtMs: float64;
   pw.reference = e.name
   ("", e.name)
 
+proc recordCodes(s: Session; g: int): seq[int16] =
+  ## The identification codes of the traces of gather `g`, in order.
+  if g notin 0 ..< s.gathers.len or s.filePtr == nil: return
+  let span = s.gathers[g].traces
+  for t in span.a .. min(span.b, span.a + MaxCodeScan - 1):
+    result.add(if t in 0 ..< s.filePtr[].len: s.filePtr[].traceKeys(t).traceCode else: 0'i16)
+
+
 func vibTopKey*(state: AppState; pw: AnalysisWindow): string =
   ## What the top frequency typed in vibrator window `pw` is kept under: the project
   ## reference's id when the window is measured against a stored one (a trace of each
-  ## record, a pilot, is the recorded trace), else `RecordedKey`.
+  ## record, a pilot, is the recorded trace), else `RecordedKey` and the file layout (the
+  ## key the roles use: the record's trace count and codes), so a file of another kind
+  ## never takes a top typed for this one.
   result = RecordedKey
+  if pw.traces.len > 0:
+    let i = state.findTrace(pw.traces[0])
+    if i >= 0:
+      let s = state.sessions[i]
+      let g = s.gatherOf(pw.traces[0] - s.base)
+      if g in 0 ..< s.gathers.len:
+        result = RecordedKey & " " & layoutKey(s.recordCodes(g), s.gathers[g].traces.len)
   if pw.params.projectReference and state.chosenRef.len > 0 and
       state.refsLoaded:
     let at = state.refs.findId(state.chosenRef)
@@ -418,13 +435,6 @@ proc gatherOrder(state: AppState; k, i: int): seq[int] =
   else:
     for t in s.gathers[g].traces: result.add t
 
-proc recordCodes(s: Session; g: int): seq[int16] =
-  ## The identification codes of the traces of gather `g`, in order.
-  if g notin 0 ..< s.gathers.len or s.filePtr == nil: return
-  let span = s.gathers[g].traces
-  for t in span.a .. min(span.b, span.a + MaxCodeScan - 1):
-    result.add(if t in 0 ..< s.filePtr[].len: s.filePtr[].traceKeys(t).traceCode else: 0'i16)
-
 proc codeRolesIn(s: Session; fileTraces: openArray[int]; roles: VibRoles): (bool, VibRoles) =
   ## `roles` with the places the identification codes of `fileTraces` (indices in `s`'s
   ## file, the window's order) give, and whether they gave any.
@@ -518,7 +528,8 @@ proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: Vib
       (result.source, result.handFile) = (rsRemembered, "")
       # the polarity chosen with them comes back too (a choice kept before polarities
       # were, or left as recorded, is as recorded)
-      (result.groundForcePolarity, result.massPolarity) = (polarity[0], polarity[1])
+      (result.groundForcePolarity, result.massPolarity, result.judge) = (polarity.gf,
+        polarity.mb, polarity.judge)
       return
   let (found, byCodes) = s.codeRolesIn(fileTraces, roles)
   if found: result = byCodes
@@ -574,7 +585,8 @@ proc rememberRoles(state: var AppState; w: int; roles: VibRoles; origin: Command
                   state.plots[w].traces[p] - s.base - first
                 else: -1
   state.vibLayouts = state.vibLayouts.withChoice(layoutKey(s.recordCodes(g), s.gathers[
-      g].traces.len), places, [roles.groundForcePolarity, roles.massPolarity])
+      g].traces.len), places, ChosenPolarity(gf: roles.groundForcePolarity,
+        mb: roles.massPolarity, judge: roles.judge))
   state.persistVibLayouts(origin)
 
 proc forgetRoles(state: var AppState; w: int; origin: CommandOrigin) =
@@ -760,7 +772,7 @@ proc showPlot(state: var AppState; cmd: Command) =
       (params.roles.source, params.roles.handFile) = (rsHand, pw.file)
       state.rememberRoles(w, params.roles, cmd.origin)
     elif params.roles.groundForcePolarity != had.groundForcePolarity or
-        params.roles.massPolarity != had.massPolarity:
+        params.roles.massPolarity != had.massPolarity or params.roles.judge != had.judge:
       # a polarity chosen on the window is remembered with the roles, for the layout
       state.rememberRoles(w, params.roles, cmd.origin)
   if pw.view == avVibrator and params.tops != pw.params.tops and state.inProject and

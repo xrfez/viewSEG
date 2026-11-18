@@ -609,6 +609,9 @@ proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): J
     let s = q.stats
     result["verdict"] = %($q.verdict)
     result["verdictLine"] = %q.line
+    result["judged"] = %r.judged # the signal judged: GF, or GF (M, B)
+    result["bothSignals"] = %r.bothSignals # the unit has both: `roles.judge` chooses
+    result["judgeWarning"] = %r.judgeWarning
     result["qcLimits"] = limits
     result["windowStats"] = %*{"windowMs": toJson(s.windowMs),
         "windows": s.windows,

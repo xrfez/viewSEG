@@ -34,6 +34,7 @@
 
 import std/[math, strutils]
 import viewSEG/core/[analysis, vibalign, vibanalysis, vibjudge]
+import processSEG/vibroseis/vibqc
 import utils/vibsynth
 
 const
@@ -62,7 +63,7 @@ func failing(r: AnalysisResult): seq[QcLimit] =
 
 func near(a, b, tol: float64): bool = abs(a - b) <= tol
 
-proc main*() =
+proc baseTests() =
   block good_sweep_passes:
     var spec = good()
     spec.phaseDeg = 2
@@ -299,8 +300,8 @@ proc main*() =
     doAssert not own.band.typed and not own.band.exact
     doAssert near(own.band.hz, 100, 2), "estimated top " & $own.band.hz
     doAssert near(own.band.suggestedHz, 100, 2) and not own.band.chordHz.isNaN
-    # (the chord reads a little under the top: 3 % on this short, steep sweep: said)
-    doAssert own.band.warning.len > 0
+    # (the chord reads a little under the top, by the rate over the end taper: not a warning)
+    doAssert own.band.warning.len == 0, own.band.warning
     var slow = good()
     slow.seconds = 20
     doAssert judgeOf(slow, topHz = 100).band.warning.len == 0
@@ -316,7 +317,7 @@ proc main*() =
     doAssert exact.band.exact and exact.band.hz == 100 and not exact.band.typed
     # a typed edge more than 2 % from the largest frequency seen is warned about
     let off = judgeOf(spec, topHz = 150)
-    doAssert "% from the largest frequency measured" in off.band.warning,
+    doAssert "does not fit the largest frequency measured" in off.band.warning,
         off.band.warning
     # the note says the distortion is the in-band one
     doAssert "in-band" in own.note and "top frequency" in own.note, own.note
@@ -370,6 +371,181 @@ proc main*() =
     doAssert stored.startedAt(100, 1.0).len == stored.len + 100
     doAssert startsTogether(0).len > 0 and "start together" in startsTogether(0)
     doAssert "+100 ms" in startsTogether(100), startsTogether(100)
+
+proc fourRows(gf, m, b: SynthSweep; p: AnalysisParams; topHz = 100.0): AnalysisResult =
+  ## Ref, GF, M and B with the masses 3000 and 1000 kg typed: GF (M, B) = 3000·M + 1000·B.
+  let rows = @[gf.referenceOf.sweepRow, gf.sweepRow, m.sweepRow, b.sweepRow]
+  var q = p
+  (q.reactionMassKg, q.baseplateMassKg) = (3000.0, 1000.0)
+  if q.forceHundredPct.isNaN: q.forceHundredPct = Hundred
+  result = vibratorOf(rows, @["R", "GF", "M", "B"], [vsReference: 0, vsGroundForce: 1,
+    vsMass: 2, vsBaseplate: 3], gf.dtMs, q, -1, topHz)
+  doAssert result.problem == "", result.problem
+
+proc massesFor(phaseDeg: float64): (SynthSweep, SynthSweep) =
+  ## M of amplitude 1 and B of amplitude 2 against it: 3000·1 − 1000·2 = 1000 at `phaseDeg`.
+  var m = good()
+  (m.amp, m.phaseDeg, m.h2) = (1.0, phaseDeg, 0.0)
+  var b = m
+  (b.amp, b.phaseDeg) = (2.0, phaseDeg + 180)
+  (m, b)
+
+proc judgeChoice() =
+  block the_judged_ground_force_is_named_and_chosen:
+    # the recorded GF and the sum of M and B with the typed masses agree: no warning, the
+    # recorded GF judged, named in the line; the choice moves the verdict to the other
+    let (m, b) = massesFor(1)
+    var p = AnalysisParams()
+    let r = fourRows(good(), m, b, p)
+    doAssert r.bothSignals and r.judged == "GF" and r.judgeWarning.len == 0, r.judgeWarning
+    doAssert r.qc.line.startsWith("✓ PASS on GF:"), r.qc.line
+    p.roles.judge = joWeighted
+    let w = fourRows(good(), m, b, p)
+    doAssert w.judged == "GF (M, B)" and w.qc.line.startsWith("✓ PASS on GF (M, B):"),
+      w.qc.line
+    doAssert near(w.qc.stats.avgPhaseDeg, 1, 0.3), $w.qc.stats.avgPhaseDeg
+    doAssert near(w.qc.stats.avgForcePct, 100, 1.5), $w.qc.stats.avgForcePct
+    # a recorded GF that does not match the masses: one warning, the default kept
+    let (m2, b2) = massesFor(40)
+    let off = fourRows(good(), m2, b2, AnalysisParams())
+    doAssert off.judged == "GF" and off.qc.verdict == qvPass, off.qc.line
+    doAssert "the recorded GF does not match M and B with the typed masses (" in
+      off.judgeWarning and "or judge GF from M and B" in off.judgeWarning, off.judgeWarning
+    doAssert "39 degrees" in off.judgeWarning or "38 degrees" in off.judgeWarning or
+      "40 degrees" in off.judgeWarning, off.judgeWarning
+    # chosen by the user: judged on the sum, no warning
+    var q = AnalysisParams()
+    q.roles.judge = joWeighted
+    let chosen = fourRows(good(), m2, b2, q)
+    doAssert chosen.judgeWarning.len == 0 and chosen.judged == "GF (M, B)"
+    doAssert near(chosen.qc.stats.avgPhaseDeg, 40, 0.5), $chosen.qc.stats.avgPhaseDeg
+    # one ground force only: no choice, no name in the line
+    let single = judgeOf(good())
+    doAssert not single.bothSignals and single.qc.line.startsWith("✓ PASS:")
+
+proc targetForce() =
+  block the_target_force_is_the_drive_level:
+    # a 60 % drive: full scale 1000 typed, target 60, the amplitude 600: the average force is
+    # 100 % of the target
+    var spec = good()
+    spec.amp = 600
+    var p = AnalysisParams()
+    p.targetPct = 60
+    let r = judgeOf(spec, p)
+    doAssert r.failing.len == 0, r.qc.line
+    doAssert near(r.row(qlAvgForce).measured, 100, 1.5), $r.row(qlAvgForce).measured
+    doAssert near(r.row(qlPeakForce).measured, 60, 1.5), $r.row(qlPeakForce).measured
+    doAssert "of target" in r.row(qlAvgForce).boundText and
+      "of 100 %" in r.row(qlPeakForce).boundText
+    # with the target at 100 the same sweep is 60 % of it
+    p.targetPct = 100
+    doAssert judgeOf(spec, p).failing == @[qlAvgForce]
+    # a peak of 125 % of full scale fails the peak whatever the target
+    spec.burstAtS = 3.0
+    spec.burstLenS = 1.0
+    spec.burstGain = 2.1
+    p.targetPct = 60
+    let hi = judgeOf(spec, p)
+    doAssert hi.failing == @[qlPeakForce], $hi.failing
+    doAssert hi.row(qlPeakForce).measured > 120 and hi.row(qlPeakForce).measured < 135,
+      $hi.row(qlPeakForce).measured
+
+proc bandWarnings() =
+  block the_top_frequency_warning_fits_the_sweeps_it_sees:
+    # a correct top never warns, whatever the sweep: the chord reads under the top by the
+    # rate over the end taper; a top 10 % low or 10 % high does
+    for (f0, f1, seconds, taper, dt) in [(6.0, 220.0, 12.0, 0.2, 1.0), (10.0, 100.0, 8.0, 0.1, 1.0),
+        (8.0, 80.0, 8.0, 0.1, 1.0), (2.0, 96.0, 30.0, 0.5, 1.0), (1.0, 300.0, 10.0, 0.1, 1.0),
+        (220.0, 6.0, 12.0, 0.2, 1.0)]:
+      var spec = good()
+      (spec.f0, spec.f1, spec.seconds, spec.taperS, spec.dtMs) = (f0, f1, seconds, taper, dt)
+      let top = max(f0, f1)
+      let tag = $f0 & "-" & $f1 & " Hz in " & $seconds & " s"
+      doAssert judgeOf(spec, topHz = top).band.warning.len == 0, tag & ": " &
+        judgeOf(spec, topHz = top).band.warning
+      doAssert judgeOf(spec, topHz = 0.9 * top).band.warning.len > 0, tag & ": 10 % low"
+      doAssert judgeOf(spec, topHz = 1.1 * top).band.warning.len > 0, tag & ": 10 % high"
+
+proc fractionalShift() =
+  block the_stored_reference_is_placed_to_a_fraction_of_a_sample:
+    for (delay, dt) in [(100.3, 1.0), (100.5, 1.0), (145.2, 0.5)]:
+      var late = good()
+      (late.delayMs, late.dtMs, late.phaseDeg) = (delay, dt, 10.0)
+      let recorded = late.referenceOf.sweepRow
+      let stored = (block:
+        var o = late.referenceOf
+        o.delayMs = 0
+        o.sweepRow)
+      let al = alignStored(recorded, stored, dt)
+      doAssert al.found and near(al.shiftMs, delay, 0.2), $delay & ": shift " & $al.shiftMs
+      let moved = placedBy(stored, al.shiftMs, dt)
+      let r = vibratorOf(@[recorded, late.sweepRow, moved], @["R", "GF", "stored"],
+        [vsReference: 2, vsGroundForce: 1, vsMass: -1, vsBaseplate: -1], dt,
+        AnalysisParams(forceHundredPct: Hundred), 0, 100.0)
+      doAssert r.problem == "", r.problem
+      var recordedPhase, gfPhase = NaN
+      for x in r.table[1 .. ^1]:
+        if x[0] == RecordedRef: recordedPhase = parseFloat(x[3])
+        if x[0] == "GF": gfPhase = parseFloat(x[3])
+      doAssert recordedPhase < 0.5, $delay & " ms at " & $dt & ": recorded " & $recordedPhase
+      doAssert near(gfPhase, 10, 0.5), $delay & " ms at " & $dt & ": GF " & $gfPhase
+
+proc zeroPhaseIsClearOfTheBorder() =
+  block a_trace_against_itself_is_a_line_at_zero_above_the_floor:
+    let x = good().sweepRow
+    let e = envelopeOf(x, "t", 1.0, 0.0, AnalysisParams(), x, "itself", "", true)
+    doAssert e.problem == "", e.problem
+    var found = false
+    for plot in e.plots:
+      if plot.title == "Phase against the reference":
+        found = true
+        doAssert plot.yLo < 0 and plot.yLo > -10, "floor " & $plot.yLo
+    doAssert found
+
+proc verdictWords() =
+  block a_value_that_reads_as_its_limit_shows_two_decimals:
+    let s = WindowSummary(windows: 3, meanAbsPhaseDeg: 5.04, maxAbsPhaseDeg: 5.04,
+      maxAbsPhaseAtMs: 1000, meanThdPct: 1, maxThdPct: 1, meanForce: 1000, minForce: 1000,
+      maxPeak: 1000)
+    let r = judge(s, 500, QcLimits(), 1000)
+    doAssert "5.04° > 5°" in r.line, r.line
+
+proc plotsShowWhatIsJudged() =
+  block the_phase_plot_holds_the_judged_signal_and_its_limits:
+    var spec = good()
+    spec.phaseDeg = 2
+    var m = good()
+    (m.amp, m.phaseDeg) = (1.0, 10.0)
+    var b = m
+    b.phaseDeg = -170
+    let r = fourRows(spec, m, b, AnalysisParams())
+    let phase = r.plots[0]
+    # (the floor is a little under 0: a line at 0 is not on the plot's border)
+    doAssert phase.yLo < 0 and phase.yLo > -3 and phase.yHi >= 13 and phase.yHi < 40,
+      $[phase.yLo, phase.yHi]
+    var names: seq[string] = @[]
+    for c in phase.curves: names.add c.name
+    doAssert "window means, GF" in names and "peak phase limit 10°" in names and
+      "B off scale" in names, $names
+    for c in phase.curves:
+      if c.name == "peak phase limit 10°": doAssert c.style == csLimit
+      if c.name == "window means, GF":
+        # a stepped line: each window twice, at its start and at its end
+        doAssert c.xs.len == 2 * r.qc.stats.windows and c.xs[1] - c.xs[0] == 500
+        doAssert near(c.ys[0], 2, 0.3)
+    var dist: seq[string] = @[]
+    for c in r.plots[^1].curves: dist.add c.name
+    doAssert "peak distortion limit 60 %" in dist and "window means, GF THD" in dist, $dist
+
+proc main*() =
+  baseTests()
+  judgeChoice()
+  targetForce()
+  bandWarnings()
+  fractionalShift()
+  verdictWords()
+  zeroPhaseIsClearOfTheBorder()
+  plotsShowWhatIsJudged()
 
 when isMainModule:
   main()

@@ -6,7 +6,7 @@
 ##
 ## - every sweep gives four roles, a table row per signal, no problem;
 ## - sweep 5 is worse than sweep 1 in mean phase and mean THD, and near what
-##   the sample's table says (12 degrees, 25 %);
+##   the sample's table says (12 degrees; its THD is now the in-band one, no longer the 25 % of the old definition);
 ## - the phase and the THD grow from sweep 1 to sweep 5;
 ## - sweep 6's mean force is below the others' (its drop-out);
 ## - the force generated from M and B follows the recorded ground force.

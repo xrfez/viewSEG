@@ -431,7 +431,10 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     (if not typedTop.isNaN: "(typed)" elif band.exact: "(generated: exact)"
       elif band.hz.isNaN: "" else: "(estimate)").cstring)
   marks.mark(name & ".top frequency source")
-  let forceShown = forceLimitOf(forceAxisLabel(w.result.plots), units)
+  # the unit of the judged force (GF counts, or GF from M and B's kg x counts)
+  let judgedAxis = if w.result.judgedAxis.len > 0: w.result.judgedAxis
+                   else: forceAxisLabel(w.result.plots)
+  let forceShown = forceLimitOf(judgedAxis, units)
   qcLine.follow(textBoxWidth("100 % force =", box))
   label("100 % force =")
   let hundred = showScaled(p.forceHundredPct, forceShown.divisor)
@@ -444,15 +447,47 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
     else:
       res.notes.add "100 % force must be above 0, not " & sensible(typed) & "."
   marks.mark(name & ".force target")
-  tip("The force that is 100 %, in the file's own unit" &
+  tip("The force that is 100 % (full scale), in the file's own unit" &
     (if forceShown.unit.len > 0: " (" & forceShown.unit & ")" else: "") &
-        ": the average " &
-    "and peak force limits are in % of it. Empty: the force is not judged, and the limits " &
-    "table says so")
+        ". The file cannot tell it (no sensor sensitivities): take it from the vibrator's " &
+    "own QC of one sweep. The peak force limit is in % of it; the average force limit is " &
+    "in % of the target below. Empty: the force is not judged, and the limits table " &
+    "says which box to fill")
   if forceShown.unit.len > 0:
     igSameLine(0, -1)
     igAlignTextToFramePadding()
     igTextUnformatted(forceShown.unit.cstring, nil)
+  qcLine.follow(textBoxWidth("Target force (%)", box))
+  label("Target force (%)")
+  if limitBox("##targetpct", p.targetPct, box, typed):
+    if TargetPctRange.allows(typed):
+      if typed != p.targetPct: (p.targetPct, changed) = (typed, true)
+    elif typed.isNaN:
+      if p.targetPct != 100: (p.targetPct, changed) = (100.0, true)
+    else:
+      res.notes.add "The target force must be " & TargetPctRange.words & ", not " &
+          sensible(typed) & "."
+  marks.mark(name & ".target force")
+  tip("The drive level the sweep was set to, % of 100 % force (the vibrator's force " &
+    "setting, e.g. 60). The average force is judged as % of this target; the peak force " &
+    "as % of the 100 % force. 100 when the sweep is at full scale. Empty: 100")
+  if w.result.bothSignals:
+    qcLine.follow(buttonWidth("Judge: GF from M and B (typed masses)") + 12)
+    label("Judge:")
+    const judgeNames = [joRecorded: "GF as recorded",
+      joWeighted: "GF from M and B (typed masses)"]
+    igSetNextItemWidth(buttonWidth(judgeNames[joWeighted]) + igGetFrameHeight())
+    if igBeginCombo("##judge", judgeNames[p.roles.judge].cstring, 0):
+      for j in JudgeOn:
+        if igSelectable_Bool(judgeNames[j].cstring, j == p.roles.judge, 0,
+            ImVec2_c(x: 0, y: 0)) and j != p.roles.judge:
+          (p.roles.judge, changed) = (j, true)
+      igEndCombo()
+    marks.mark(name & ".judge")
+    tip("Which ground force the verdict judges. GF as recorded is the weighted sum of mass and " &
+      "baseplate acceleration the recorder wrote with its own masses; GF from M and B is " &
+      "the same sum formed here with the masses you typed. Remembered with the roles, for " &
+      "this file layout")
   qcLine.follow(textBoxWidth("window", box))
   label("window")
   if limitBox("##qcwindow", p.qcWindowMs, box, typed):
@@ -964,6 +999,11 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   if w.view == avVibrator and w.result.problem.len == 0 and
       w.result.qc.rows.len > 0:
     drawVerdict(name, w.result.qc, t, marks)
+    if w.result.judgeWarning.len > 0:
+      igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+      fittedText(w.result.judgeWarning, igGetContentRegionAvail().x)
+      igPopStyleColor(1)
+      marks.mark(name & ".judge warning")
   drawSettings(st, w, name, t, marks, res)
   let r = w.result
   var words = if w.frozen: "Frozen · " & w.label else: w.label

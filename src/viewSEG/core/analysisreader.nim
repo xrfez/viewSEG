@@ -607,8 +607,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                     placedAt = AlignReport(kind: (
                         if al.found: "aligned" else: "unaligned"),
                       shiftMs: al.shiftMs, match: al.match, words: al.words)
-                    if al.found: stored = placed(archiveSamples, int(round(
-                        al.shiftMs / dtMs)))
+                    if al.found: stored = placedBy(archiveSamples, al.shiftMs, dtMs)
                   else:
                     stored = startedAt(archiveSamples, a.archiveStartMs, dtMs)
                     placedAt.shiftMs = a.archiveStartMs

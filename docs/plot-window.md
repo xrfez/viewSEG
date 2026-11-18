@@ -905,14 +905,34 @@ right of that line's first row. A change works it out again.
     file's unit, that counts as 100 %): with it empty the table says which box to fill
     and the other four limits still give the verdict. A trace shorter than its reference
     is judged to its own end (the note says so).
+  - **Target force and which GF.** The average force limit is a percent of the *target*
+    (the **Target force (%)** box, 100 at first: the drive level the sweep was set to, a
+    percent of the 100 % force); the minimum shown is in the same percent; the peak force
+    limit is a percent of the 100 % force itself (the table says "of target" and "of
+    100 %"). With both ground forces the **Judge:** choice (GF as recorded, or GF from M
+    and B with the masses typed) says which the verdict judges; it is named in the verdict
+    line, remembered with the roles and the polarity for the file layout (project, else
+    settings; an agent's change is for the session) and in the agent state (`judged`,
+    `bothSignals`, `judgeWarning`, `roles.judge`). The recorded GF is the weighted sum the
+    recorder wrote with its own masses; the other is the same sum formed here. When the
+    recorded one does not match (more than 10 degrees of phase, or 3 dB in the shape of the
+    force over the windows) the default stays and one line says so.
+  - **What the plots show of the verdict.** The phase, distortion and force plots draw the
+    judged signal's window means as a stepped line and the limits as lines, and the phase
+    axis is fitted to them with a margin: M and B may run off it, the legend then says
+    "M, B off scale". With Absolute phase the axis floor lies a little under 0 so a line at
+    0 degrees is visible.
   - **In-band distortion.** The **Top frequency (Hz)** box is the sweep's top: THD sums
     the harmonics, from the 2nd, whose frequency stays within it, as the controller's
     distortion does, and is 0 where none is in band (the reference above half the top).
     It is filled in for you: exactly from a generated reference's end frequency, else
     by an estimate from the reference's frequency track (named "(estimate)" beside the
     box: type the sweep's design value). A typed value is kept with that reference in the
-    project. A line warns when it differs by more than 2 % from the largest frequency
-    measured in the flat part of the reference. The distortion plots, the table's THD
+    project. A line warns when it is below the largest frequency measured in the flat part of the
+    reference by more than 0.5 %, or above it by more than the sweep's rate over its end
+    taper and half a chord, with 25 % and 1 % to spare (the chord reads a little under the
+    top). A top typed for a recorded reference is kept per file layout; one kept before
+    that is dropped. The distortion plots, the table's THD
     columns and the verdict all use it. A harmonic above 80 % of Nyquist is never measured.
   - **The stored reference's place.** When the unit has a recorded reference trace, a
     stored reference is aligned to it by cross-correlation and the note says the shift

@@ -899,14 +899,31 @@ in the order you meet them:
    up to it, as the vibrator's own electronics do. A generated reference fills it in
    exactly; for another reference it is an estimate ("(estimate)" beside it): type the
    top frequency of the sweep design (the "6-220 Hz" sweep's 220). It is kept with the
-   reference in the project. A line warns when it is more than 2 % from the largest
-   frequency seen in the reference.
-7. **100 % force =** (the file's unit, counts or N). The force that counts as 100 %: the
+   reference in the project (for a recorded reference, per file layout: a file of another
+   kind does not take it). A line warns when it does not fit the largest frequency the
+   reference shows in its flat part (a top 10 % off, not the small shortfall every sweep
+   has).
+7. **100 % force =** (the file's unit, counts or N). The full-scale force. The file cannot
+   tell it: the recorded force is in counts and the file carries no sensor sensitivities, so
+   a number in counts has no meaning in newtons. Take it from the vibrator's own QC for one
+   sweep (the force value its log shows as 100 %), once per kind of unit. The force that counts as 100 %: the
    average and peak force limits are in percent of it. It is not known from the file:
    take it from the controller's force setting, or from a sweep you know is at full
    output. Left empty, the two force rows of the table say so and the other four limits
    still give the verdict.
-8. **window (ms).** The length of the windows the sweep is judged in (500, as the
+8. **Target force (%).** The drive level the sweep was set to, as a percent of 100 % force
+   (60 for a sweep run at 60 % drive). The average force is judged as a percent of the
+   target (100 % of it means the vibrator delivered what it was set to); the peak force is
+   a percent of the 100 % force itself. 100 (the default) for a full-scale sweep.
+8a. **Judge:** (only when the unit has both). The recorded GF is the weighted sum of mass
+   and baseplate acceleration the recorder wrote with its own masses; **GF from M and B**
+   is the same sum formed here with the masses you typed. Pick the one the crew's
+   specification means; the verdict line names it ("PASS on GF (M, B)"). When the two do
+   not agree (the phase by more than 10 degrees, or the force's shape by more than 3 dB) a
+   line under the verdict says "the recorded GF does not match M and B with the typed
+   masses": check the masses, or judge GF from M and B. The choice is remembered with the
+   roles for that file layout.
+8b. **window (ms).** The length of the windows the sweep is judged in (500, as the
    controllers use): each window gives a mean, and the limits are on the average and the
    worst of the windows.
 9. **Limits...** The six pass or fail limits, each with its unit: average phase (at most

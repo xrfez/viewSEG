@@ -23,7 +23,7 @@
 
 import std/[math, monotimes, options, os, strutils]
 import viewSEG/core/[explain, geometry, join, state]
-import viewSEG/ui/imgui/app
+import viewSEG/ui/imgui/[app, plotwindows]
 import viewSEG/view/maplayers
 import utils/[fixtures, waiting]
 
@@ -126,7 +126,7 @@ proc main*() =
           f.pressKey(skEscape, true)
           f.pressKey(skEscape, false))
     proc hoverAll(window: string; panes: proc (f: FrameInfo): int;
-        want: proc (f: FrameInfo; pane: int): string) =
+        want: proc (f: FrameInfo; pane: int): string; reach = false) =
       ## The window's panes, each icon in turn (those drawn on the screen).
       var next = 0
       var phase = 0
@@ -141,6 +141,8 @@ proc main*() =
         let win = f.markOf(window)
         let inside = r.pos.y + r.size.y < 990 and r.pos.y > 60 and
           (win.size.y == 0 or r.pos.y + 25 < win.pos.y + win.size.y)
+        doAssert inside or not reach, mark & " is out of reach: " & $r & " in " &
+          $win & " (every pane of this window is in view at its default size)"
         if not inside:
           inc next
           return next >= n
@@ -283,6 +285,10 @@ proc main*() =
     step("no reference chosen", proc (f: FrameInfo) =
       f.apply(Command(kind: ckSelectReference, refId: "")),
       proc (f: FrameInfo): bool = f.core.chosenReference.len == 0)
+    # (the window id was used by earlier windows, whose size ImGui remembers: the vibrator window
+    # is held at its default size, 780 x 980 points, as a new one opens)
+    step("the default size", proc (f: FrameInfo) =
+      forcedVibratorSize = (780'f32, 980'f32), after(2))
     step("open the vibrator signature", proc (f: FrameInfo) =
       let b = f.core.sessions[f.core.shownFile(f.core.findPanel(MainPanel))].base
       f.apply(Command(kind: ckOpenPlot, plotView: avVibrator,
@@ -293,7 +299,8 @@ proc main*() =
           f.core.plots[0].result.problem.len == 0 and f.core.plots[0].result.plots.len == 5 and
           f.markOf("new plot 1.explain").size.x > 0)
     hoverAll("new plot 1", proc (f: FrameInfo): int = f.core.plots[0].result.plots.len,
-      proc (f: FrameInfo; pane: int): string = f.core.explainPane(f.core.plots[0], pane))
+      proc (f: FrameInfo; pane: int): string = f.core.explainPane(f.core.plots[0], pane),
+      reach = true)
     step("the vibrator window closes", proc (f: FrameInfo) =
       f.apply(Command(kind: ckClosePlot, plot: f.core.plots[0].id)),
       proc (f: FrameInfo): bool = f.core.plots.len == 0)

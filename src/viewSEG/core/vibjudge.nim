@@ -116,13 +116,20 @@ func unitOf*(l: QcLimit): string =
 func isLowerBound(l: QcLimit): bool {.inline.} = l == qlAvgForce
 
 func boundText*(r: QcRow): string =
-  ## "≤ 5°", "≥ 90 %"; "off" without a limit.
+  ## "≤ 5°", "≥ 90 % of target", "≤ 120 % of full"; "off" without a limit.
+  let of100 = case r.limit
+    of qlAvgForce: " of target"
+    of qlPeakForce: " of 100 %"
+    else: ""
   if r.bound.isNaN: "off"
-  else: (if r.limit.isLowerBound: "≥ " else: "≤ ") & plain(r.bound) & r.limit.unitOf
+  else: (if r.limit.isLowerBound: "≥ " else: "≤ ") & plain(r.bound) & r.limit.unitOf & of100
 
 func measuredText*(r: QcRow): string =
-  ## "7.2°"; "-" for none.
-  if r.measured.isNaN: "-" else: plain(r.measured) & r.limit.unitOf
+  ## "7.2°"; "-" for none. Two decimals when one would read the same as the limit.
+  if r.measured.isNaN: "-"
+  else:
+    let same = not r.bound.isNaN and plain(r.measured) == plain(r.bound)
+    plain(r.measured, (if same: 2 else: 1)) & r.limit.unitOf
 
 func markText*(r: QcRow): string =
   ## The mark as text, never colour alone: "✓", "✗", or "–" (not judged).
@@ -157,12 +164,17 @@ func percent(x, hundred: float64): float64 {.inline.} =
   if hundred.isNaN or not (hundred > 0): NaN else: 100 * x / hundred
 
 func judge*(s: WindowSummary; windowMs: float64; limits: QcLimits;
-    hundredPct: float64): QcReport =
+    hundredPct: float64; targetPct = 100.0; on = ""): QcReport =
   ## The report of the window statistics `s` (of windows of `windowMs`) against
   ## `limits`, the forces turned to % of `hundredPct` (the file's unit; NaN or not above
-  ## 0: not given, the force limits not judged).
+  ## 0: not given, the force limits not judged). The average and the minimum force are
+  ## % of the target, `hundredPct` times `targetPct` / 100 (the drive level the vibrator
+  ## was set to: 60 % of full scale, say); the peak force is % of `hundredPct` itself (the
+  ## hold-down's full scale). `on` names the signal judged when there is a choice
+  ## ("GF (M, B)"): the verdict line says so.
   let hundred = if hundredPct.isNaN or not (hundredPct >
       0): NaN else: hundredPct
+  let target = if targetPct.isNaN or not (targetPct > 0): 100.0 else: targetPct
   let st = QcStats(windows: s.windows, windowMs: windowMs,
     avgPhaseDeg: s.meanAbsPhaseDeg,
     peakPhaseDeg: s.maxAbsPhaseDeg, peakPhaseAtMs: s.maxAbsPhaseAtMs,
@@ -171,8 +183,8 @@ func judge*(s: WindowSummary; windowMs: float64; limits: QcLimits;
     minForce: s.minForce,
     minForceAtMs: s.minForceAtMs, peakForce: s.maxPeak,
     peakForceAtMs: s.maxPeakAtMs,
-    avgForcePct: percent(s.meanForce, hundred), minForcePct: percent(s.minForce,
-        hundred),
+    avgForcePct: percent(s.meanForce, hundred * target / 100),
+    minForcePct: percent(s.minForce, hundred * target / 100),
     peakForcePct: percent(s.maxPeak, hundred))
   let noScale = if hundred.isNaN: "type the force that is 100 % in the \"100 % force =\" " &
                   "box (the file's unit) to judge the force" else: ""
@@ -187,6 +199,7 @@ func judge*(s: WindowSummary; windowMs: float64; limits: QcLimits;
       st.peakDistortionAtMs, ""),
     rowOf(qlAvgForce, st.avgForcePct, limits.avgForcePct, NaN, noScale),
     rowOf(qlPeakForce, st.peakForcePct, limits.peakForcePct, st.peakForceAtMs, noScale)]
+  let onWords = if on.len > 0: " on " & on else: ""
   var failed, passed = 0
   var worst = 0.0
   for i, r in result.rows:
@@ -203,12 +216,12 @@ func judge*(s: WindowSummary; windowMs: float64; limits: QcLimits;
     let w = result.rows[result.worst]
     let cmp = if w.limit.isLowerBound: " < " else: " > "
     let at = w.atText
-    result.line = "✗ FAIL: " & $w.limit & " " & w.measuredText & cmp &
+    result.line = "✗ FAIL" & onWords & ": " & $w.limit & " " & w.measuredText & cmp &
       plain(w.bound) & w.limit.unitOf & (if at.len > 0: " " & at else: "") &
       (if failed > 1: " (and " & $(failed - 1) & " more)" else: "")
   elif passed > 0:
     result.verdict = qvPass
-    result.line = "✓ PASS: " & $passed & " of " & $result.rows.len &
+    result.line = "✓ PASS" & onWords & ": " & $passed & " of " & $result.rows.len &
         " limits met" &
       (if passed < result.rows.len: " (" & $(result.rows.len - passed) &
           " not judged" &

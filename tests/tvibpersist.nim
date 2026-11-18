@@ -45,6 +45,7 @@ proc reverse(st: var AppState; w: int; origin = coWindow) =
   var p = st.plots[w].params
   p.roles.groundForcePolarity = poReversed
   p.roles.massPolarity = poReversed
+  p.roles.judge = joWeighted
   st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p, origin: origin)
   doAssert st.settle(not st.plots[w].waiting)
 
@@ -73,7 +74,8 @@ proc main*() =
       let v = back.open(fx.vibFourAgainSegy())
       let r = back.plots[v].params.roles
       doAssert r.groundForcePolarity == poReversed and r.massPolarity == poReversed and
-        r.source == rsRemembered, "the polarity did not come back: " & $r
+        r.judge == joWeighted and r.source == rsRemembered,
+        "the polarity and the judged signal did not come back: " & $r
       back.apply Command(kind: ckCloseProject)
       discard back.shutdown()
 
@@ -122,12 +124,21 @@ proc main*() =
 
     block an_older_choice_is_as_recorded:
       var places: array[4, int]
-      var polarity = [poReversed, poReversed]
+      var polarity = ChosenPolarity(gf: poReversed, mb: poReversed, judge: joWeighted)
       doAssert ["4/21.19.18.20 0.3.2.1"].choiceFor("4/21.19.18.20", places, polarity)
       doAssert places == [0, 3, 2, 1] and polarity == Recorded
       doAssert choiceText("4/21.19.18.20", [0, 3, 2, 1]) == "4/21.19.18.20 0.3.2.1"
-      doAssert choiceText("4/21.19.18.20", [0, 3, 2, 1], [poReversed, poAutomatic]) ==
-        "4/21.19.18.20 0.3.2.1 r.u"
+      doAssert choiceText("4/21.19.18.20", [0, 3, 2, 1],
+        ChosenPolarity(gf: poReversed, mb: poAutomatic)) == "4/21.19.18.20 0.3.2.1 r.u"
+      doAssert choiceText("4/21.19.18.20", [0, 3, 2, 1],
+        ChosenPolarity(gf: poReversed, mb: poAutomatic, judge: joWeighted)) ==
+        "4/21.19.18.20 0.3.2.1 r.u.m"
+      var back = Recorded
+      doAssert ["4/21.19.18.20 0.3.2.1 r.u.m"].choiceFor("4/21.19.18.20", places, back)
+      doAssert back.judge == joWeighted and back.mb == poAutomatic
+      # a top typed for "the recorded trace" alone (before tops were kept per file layout)
+      # is dropped, not migrated
+      doAssert ["200.0 recorded trace"].topsOf.len == 0
 
     proc setBoxes(p: var AnalysisParams; key: string) =
       p.reactionMassKg = 3600
@@ -155,14 +166,14 @@ proc main*() =
       var st = started(dir)
       let w = st.open(fx.vibFourSegy())
       var p = st.plots[w].params
-      p.setBoxes(RecordedKey)
+      p.setBoxes(st.vibTopKey(st.plots[w]))
       st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p,
         origin: coWindow)
       doAssert st.settle(not st.plots[w].waiting)
       discard st.shutdown()
       var back = started(dir)
       let v = back.open(fx.vibFourAgainSegy())
-      back.plots[v].params.checkBoxes(RecordedKey, "no project")
+      back.plots[v].params.checkBoxes(back.vibTopKey(back.plots[v]), "no project")
       discard back.shutdown()
 
     block the_other_boxes_in_a_project:
@@ -174,7 +185,7 @@ proc main*() =
       doAssert st.settle(st.inProject)
       let w = st.open(fx.vibFourSegy())
       var p = st.plots[w].params
-      p.setBoxes(RecordedKey)
+      p.setBoxes(st.vibTopKey(st.plots[w]))
       st.apply Command(kind: ckPlotDisplay, plot: st.plots[w].id, plotParams: p,
         origin: coWindow)
       doAssert st.settle(not st.plots[w].waiting)
@@ -186,7 +197,7 @@ proc main*() =
       back.apply Command(kind: ckOpenProject, projectPath: proj)
       doAssert back.settle(back.inProject)
       let v = back.open(fx.vibFourAgainSegy())
-      back.plots[v].params.checkBoxes(RecordedKey, "project")
+      back.plots[v].params.checkBoxes(back.vibTopKey(back.plots[v]), "project")
       back.apply Command(kind: ckCloseProject)
       discard back.shutdown()
       # the top frequency travels with the project: other settings, the same project
@@ -196,12 +207,12 @@ proc main*() =
       fresh.apply Command(kind: ckOpenProject, projectPath: proj)
       doAssert fresh.settle(fresh.inProject)
       let u = fresh.open(fx.vibFourAgainSegy())
-      doAssert fresh.plots[u].params.tops.topOf(RecordedKey) == 180,
+      doAssert fresh.plots[u].params.tops.topOf(fresh.vibTopKey(fresh.plots[u])) == 180,
         "the top frequency is not in the project"
       doAssert fresh.vibTyped(fresh.plots[u]) == 180
       # cleared on the window: gone from the project too
       var q = fresh.plots[u].params
-      q.tops = q.tops.withTop(RecordedKey, NaN)
+      q.tops = q.tops.withTop(fresh.vibTopKey(fresh.plots[u]), NaN)
       fresh.apply Command(kind: ckPlotDisplay, plot: fresh.plots[u].id, plotParams: q,
         origin: coWindow)
       doAssert fresh.settle(not fresh.plots[u].waiting)

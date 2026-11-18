@@ -63,6 +63,11 @@ type
       ## a choice made by hand on an earlier file of the same layout (the trace count of
       ## the record and its code sequence), kept in the project or the user's settings
 
+  JudgeOn* = enum
+    ## Which ground force the verdict judges when the unit has both.
+    joRecorded = "GF"        ## the recorded ground force
+    joWeighted = "GF (M, B)" ## GF from M and B: the same sum formed here with the typed masses
+
   VibRoles* = object
     ## A vibrator signature's roles: each one's place among the window's
     ## traces (0: the first), -1 for none; by default the order Ref, GF,
@@ -76,6 +81,8 @@ type
     baseplate*: int = 3 ## the baseplate's acceleration
     groundForcePolarity*: Polarity = poAsRecorded
     massPolarity*: Polarity = poAsRecorded ## M's and B's
+    judge*: JudgeOn = joRecorded
+      ## the verdict's signal when both ground forces exist (kept with the roles)
     source*: RoleSource = rsPosition ## where the places above came from
     handFile*: string
       ## when `source` is `rsHand`: the file the choice was made on, whose roles it
@@ -138,6 +145,9 @@ type
     qcWindowMs*: float64 = 500.0
       ## vibrator signature: the window of the sweep the QC statistics are of, ms
     qc*: QcLimits ## vibrator signature: the pass or fail limits (NaN: that limit off)
+    targetPct*: float64 = 100.0
+      ## vibrator signature: the drive level the sweep was set to, % of the full scale
+      ## (`forceHundredPct`): the average force is judged against it
     forceHundredPct*: float64 = NaN
       ## vibrator signature: the force that is 100 % (the file's unit), for the force
       ## limits; NaN: not given, the force limits are not judged
@@ -250,6 +260,10 @@ type
       ## a trace that cannot be matched to the whole of its reference, one line each (shown
       ## first, in the warning colour): shorter than it, or its signal stops early
       ## (`core/signalend`); "" for none
+    judged*: string ## a vibrator signature's judged signal: "GF" or "GF (M, B)"
+    bothSignals*: bool ## it has both ground forces: the user may choose which is judged
+    judgeWarning*: string ## the recorded GF does not match M and B with the typed masses; "" none
+    judgedAxis*: string ## the judged force's axis label (its unit), for the 100 % box
     qc*: QcReport ## a vibrator signature's verdict, its limits table and window statistics
     band*: BandReport ## a vibrator signature's distortion band: edge, source and warnings
     alignment*: AlignReport ## a vibrator signature's stored reference alignment
@@ -272,7 +286,10 @@ func topsOf*(texts: openArray[string]): seq[TopFrequency] =
     if at > 0 and at + 1 < t.len:
       try:
         let hz = parseFloat(t[0 ..< at])
-        if hz > 0 and hz < Inf: result.add TopFrequency(reference: t[at + 1 .. ^1], hz: hz)
+        # (an entry for "the recorded trace" alone is from before tops were kept per file
+        # layout: dropped, not migrated)
+        if hz > 0 and hz < Inf and t[at + 1 .. ^1] != RecordedKey:
+          result.add TopFrequency(reference: t[at + 1 .. ^1], hz: hz)
       except ValueError: discard
 
 func topTexts*(tops: openArray[TopFrequency]): seq[string] =
@@ -334,11 +351,14 @@ func layoutKey*(codes: openArray[int16]; count = -1): string =
     if i > 0: result.add '.'
     result.add $c
 
-type ChosenPolarity* = array[2, Polarity]
-  ## The polarity a hand choice keeps with its roles: GF's, then M's and B's
+type ChosenPolarity* = object
+  ## What a hand choice keeps with its roles: the polarity of GF and of M and B, and the
+  ## ground force the verdict judges
+  gf*, mb*: Polarity
+  judge*: JudgeOn
 
-const Recorded* = [poAsRecorded, poAsRecorded]
-  ## the polarity of a choice kept before polarities were (and of one left as recorded)
+const Recorded* = ChosenPolarity()
+  ## what a choice kept before polarities were has (and one left as it was)
 
 func polarityLetter(p: Polarity): char =
   case p
@@ -364,7 +384,8 @@ func choiceText*(layout: string; places: array[4, int];
     if i > 0: result.add '.'
     result.add $p
   if polarity != Recorded:
-    result.add " " & polarityLetter(polarity[0]) & "." & polarityLetter(polarity[1])
+    result.add " " & polarityLetter(polarity.gf) & "." & polarityLetter(polarity.mb)
+    if polarity.judge == joWeighted: result.add ".m"
 
 func parseChoice*(text: string; layout: var string; places: var array[4, int];
     polarity: var ChosenPolarity): bool =
@@ -374,8 +395,11 @@ func parseChoice*(text: string; layout: var string; places: var array[4, int];
   var pol = Recorded
   if parts.len == 3:
     let q = parts[2]
-    if q.len != 3 or q[1] != '.' or not polarityOfLetter(q[0], pol[0]) or
-        not polarityOfLetter(q[2], pol[1]): return false
+    if q.len notin [3, 5] or q[1] != '.' or not polarityOfLetter(q[0], pol.gf) or
+        not polarityOfLetter(q[2], pol.mb): return false
+    if q.len == 5:
+      if q[3] != '.' or q[4] != 'm': return false
+      pol.judge = joWeighted
   let ps = parts[1].split('.')
   if ps.len != 4: return false
   var got: array[4, int]
@@ -487,6 +511,8 @@ const
   HarmonicRange* = SettingRange(lo: 2, hi: 16, words: "from 2 to 16")
   TopHzRange* = SettingRange(lo: 0, loOpen: true, hi: 100_000,
     words: "above 0 and at most 100000 Hz")
+  TargetPctRange* = SettingRange(lo: 0, loOpen: true, hi: 1000,
+    words: "above 0 and at most 1000 %")
   MassKgRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
     words: "above 0 and at most 1000000000 kg")
   NumberRange* = SettingRange(lo: -MaxLimit, hi: MaxLimit,
@@ -532,6 +558,7 @@ func settingProblem*(p: AnalysisParams; view: AnalysisView): string =
     for name, v in fieldPairs(p.qc):
       check("qc." & name, v, NumberRange, none = true)
     check("forceHundredPct", p.forceHundredPct, MassKgRange, none = true)
+    check("targetPct", p.targetPct, TargetPctRange)
     for t in p.tops: check("tops[" & t.reference & "].hz", t.hz, TopHzRange)
   ""
 
@@ -731,7 +758,8 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
         hi = max(hi, d)
     let pad = max(2.0, (hi - lo) / 20)
     let (floorAt, ceilAt) = if p.phaseShow == psSigned: (centre - 180, centre + 180)
-                            else: (0.0, 185.0) # sizes: a half turn is not on the border
+                            else: (-0.04 * 185.0, 185.0)
+      # sizes: a half turn is not on the border, and a line at 0 is not on it either
     phasePlot = AnalysisPlot(title: "Phase against the reference", xLabel: "Time (ms)",
       xUnit: "ms", yLabel: "Phase difference (°)", yUnit: "°", xs: times,
       yLo: max(floorAt, min(lo - pad, centre - 10)),
@@ -826,7 +854,7 @@ proc phaseOf*(x: openArray[float32]; name: string; dtMs: float64;
   var phasePlot = AnalysisPlot(title: "Phase", xLabel: "Frequency (Hz)", xUnit: "Hz",
     yLabel: "Phase (°)", yUnit: "°", xs: hz, curves: @[phaseCurve])
   if p.phasePicture == ppMagnitude:
-    (phasePlot.yLo, phasePlot.yHi) = (0.0, 180.0)
+    (phasePlot.yLo, phasePlot.yHi) = (-0.04 * 180.0, 180.0) # 0 is clear of the border
   if p.phasePicture == ppDelayRemoved: phasePlot.aside = delayWords(drawn.delayMs)
   result.plots = @[
     AnalysisPlot(title: "Amplitude", xLabel: "Frequency (Hz)", xUnit: "Hz",

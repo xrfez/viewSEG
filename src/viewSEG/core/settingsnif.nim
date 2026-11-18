@@ -281,6 +281,7 @@ proc writePlotOptions(w: var NifWriter; o: PlotOptions) =
   for name, x in fieldPairs(o.vibrator.qc):
     if not x.isNaN: w.value(name, x)
   w.close()
+  w.value("targetPct", o.vibrator.targetPct)
   if not o.vibrator.forceHundredPct.isNaN: w.value("forceHundredPct",
       o.vibrator.forceHundredPct)
   w.open("tops")
@@ -857,6 +858,7 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
             if not known: r.unknown(l, "limits")
         elif c.isTree("qcWindowMs"): r.ranged(c, WindowMsRange,
             o.vibrator.qcWindowMs)
+        elif c.isTree("targetPct"): r.ranged(c, TargetPctRange, o.vibrator.targetPct)
         elif c.isTree("forceHundredPct"): r.ranged(c, MassKgRange,
             o.vibrator.forceHundredPct)
         elif c.isTree("qc"):
@@ -879,7 +881,8 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
             if named and t.kids[1].kind in {nkFloat, nkInt}:
               let hz = if t.kids[1].kind == nkFloat: t.kids[1].floatVal
                        else: float64(t.kids[1].intVal)
-              if TopHzRange.allows(hz): got = got.withTop(t.kids[0].text, hz)
+              if t.kids[0].text == RecordedKey: discard # kept per file layout since: dropped
+              elif TopHzRange.allows(hz): got = got.withTop(t.kids[0].text, hz)
               else: r.unusable(t.kids[1], "top", "a number " & TopHzRange.words)
             else: r.unusable(t, "tops", "(top \"reference\" hertz)")
           o.vibrator.tops = got

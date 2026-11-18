@@ -61,22 +61,27 @@ proc main*() =
       for i, p in plots:
         let r = f.markOf("new plot 1.plot " & $i & ".data")
         if r.size.x == 0: continue
-        if r.pos.y < top.pos.y + top.size.y or r.pos.y + r.size.y > win.pos.y + win.size.y - 30:
+        let child = f.markOf("new plot 1.plots scroll") # the plots' own region, when they scroll
+        if r.pos.y < top.pos.y + top.size.y or r.pos.y + r.size.y > win.pos.y + win.size.y - 30 or
+            (child.size.y > 0 and r.pos.y + r.size.y > child.pos.y + child.size.y):
           continue # partly scrolled out of view
         let what = p.yLabel & " (plot " & $(i + 1) & ")"
         var curve, ink = 0
-        for y in int(r.pos.y) + 1 ..< int(r.pos.y + r.size.y) - 1:
+        # (the whole area: a flat line may lie on its first or last row)
+        for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
           for x in int(r.pos.x) + 1 ..< int(r.pos.x + r.size.x) - 1:
             let px = f.readPixel(x, y)
+            # (a curve's own colour, or anything clearly off the plot's background: two curves
+            # lying on each other blend, and a flat line may be one row)
+            var drawnPx = distance(px, f.theme.roles[rlPlotBackground]) > 60
             for c in p.curves:
-              if distance(px, c.colour) <= 8:
-                inc curve
-                break
+              if distance(px, c.colour) <= 8: drawnPx = true
+            if drawnPx: inc curve
         for y in int(r.pos.y) ..< int(r.pos.y + r.size.y):
           for x in max(0, int(r.pos.x) - 70) ..< int(r.pos.x) - 1:
             if distance(f.readPixel(x, y), f.theme.roles[rlText]) <= 90: inc ink
         # (the legend is outside the area: its swatches no longer count as curve pixels)
-        doAssert curve > 10, what & ": " & $curve & " curve pixels"
+        doAssert curve > 100, what & ": " & $curve & " curve pixels"
         doAssert ink > 20, what & ": " & $ink & " pixels of y tick labels"
         drawn.incl i
     proc scrollTo(notches: float32) =

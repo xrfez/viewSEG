@@ -78,6 +78,46 @@ func placed*(stored: openArray[float32]; wholeSamples: int): seq[float32] =
     result = newSeq[float32](stored.len - drop)
     for i in 0 ..< result.len: result[i] = stored[drop + i]
 
+const SincHalf = 24 ## taps each side of the interpolator that moves a stored reference
+
+func besselI0(x: float64): float64 =
+  var term = 1.0
+  result = 1.0
+  for k in 1 .. 30:
+    term *= (x / (2 * float64(k))) ^ 2
+    result += term
+
+func placedBy*(stored: openArray[float32]; shiftMs, dtMs: float64): seq[float32] =
+  ## `stored` moved later by `shiftMs`, a fraction of a sample included: each output sample
+  ## is a Kaiser-windowed sinc (24 taps each side, beta 8) of the stored samples round the
+  ## time it lies at, so a reference leading by 100.3 ms is placed at 100.3 ms and not at
+  ## 100. The stored samples are zero outside their own length (a sweep begins and ends in
+  ## its tapers), so nothing wraps. Longer by the shift (shorter when it is negative).
+  if not (dtMs > 0) or stored.len == 0 or shiftMs.isNaN: return @stored
+  let d = shiftMs / dtMs
+  let whole = int(floor(d))
+  let frac = d - float64(whole)
+  if frac < 1e-9: return placed(stored, whole)
+  let n = max(0, stored.len + int(ceil(d)))
+  result = newSeq[float32](n)
+  let beta = 8.0
+  let norm = besselI0(beta)
+  # the taps: output j takes stored sample k = j - whole - m at x = m - frac samples
+  var taps = newSeq[float64](2 * SincHalf + 1)
+  for i in 0 .. 2 * SincHalf:
+    let m = i - SincHalf
+    let x = float64(m) - frac
+    let r = abs(x) / float64(SincHalf)
+    if r < 1:
+      let w = besselI0(beta * sqrt(1 - r * r)) / norm
+      taps[i] = (if abs(x) < 1e-12: 1.0 else: sin(PI * x) / (PI * x)) * w
+  for j in 0 ..< n:
+    var sum = 0.0
+    for i in 0 .. 2 * SincHalf:
+      let k = j - whole - (i - SincHalf)
+      if k >= 0 and k < stored.len: sum += float64(stored[k]) * taps[i]
+    result[j] = float32(sum)
+
 func startedAt*(stored: openArray[float32]; startMs, dtMs: float64): seq[float32] =
   ## `stored` placed at its own start time (an archive window's From), no alignment.
   if startMs.isNaN or not (dtMs > 0): return @stored
