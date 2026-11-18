@@ -66,16 +66,22 @@ proc pruneIndexCache*(dir: string; budget: int64; keep = ""): seq[string] =
       result.add c.path
 
 func damagedSegyWhy*(f: SeismicFile): string =
-  ## Why a SEG-Y file is refused as damaged, else "". A file whose binary header
-  ## says 0 samples per trace and whose first trace header says 0 samples too
-  ## gives no trace length at all: what the walk then finds is the file's bytes cut
-  ## into "traces" at random, thousands of garbage ones. (A binary header of 0 with
-  ## trace headers that give the length is an ordinary variable-length file, and
-  ## opens.)
+  ## Why a SEG-Y file is refused as damaged, else "". A file whose binary header says 0
+  ## samples per trace and whose first trace header says 0 samples too gives no trace
+  ## length at all; it is refused when what follows the first trace header does not
+  ## parse as trace headers either (parseSEG's log has an error or a fatal entry: the
+  ## bytes cut into "traces" at random). A headers-only file (every trace empty), a
+  ## variable-length file whose first trace is empty and one whose binary header is 0
+  ## with valid trace headers all open.
   if f.kind == skSegy and f.len > 0 and f.index.segy.binary.effectiveSamplesPerTrace == 0 and
       f.index.entries[0].numSamples == 0:
-    result = "the binary header and the first trace header both say 0 samples per trace, " &
-      "so the file looks damaged or is not SEG-Y (read as " & $f.len & " traces by its size)"
+    var bad = false
+    for d in f.log:
+      if d.severity in {sevError, sevFatal}: bad = true
+    if bad:
+      result = "the binary header and the first trace header both say 0 samples per trace " &
+        "and what follows is not made of trace headers, so the file looks damaged or is " &
+        "not SEG-Y"
 
 proc openSession*(path: string; progress: Progress = nil; cache = "";
     choice = OpenChoice()): Session =

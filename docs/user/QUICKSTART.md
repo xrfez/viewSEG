@@ -56,11 +56,13 @@ one ([References](references.md)).
 Files and folders can also be dragged from a file manager and dropped on the window.
 
 A SEG-Y file whose binary header and first trace header both say 0 samples gives no trace
-length, so what a read would find is its bytes cut into thousands of garbage traces. viewSEG
-refuses it with one line in the Messages ("Cannot open ...: the binary header and the first
-trace header both say 0 samples per trace, so the file looks damaged or is not SEG-Y"); it is
-not shown, and nothing from it reaches the map or the Records table. A binary header of 0
-with trace headers that give the length (a variable-length file) opens as usual.
+length, so a read of the rest finds its bytes cut into garbage traces. viewSEG refuses it when
+what follows is not made of trace headers either, with one line in the Messages ("Cannot open
+...: the binary header and the first trace header both say 0 samples per trace and what follows
+is not made of trace headers, so the file looks damaged or is not SEG-Y"); it is not shown, and
+nothing from it reaches the map or the Records table. A binary header of 0 with valid trace
+headers (a variable-length file, one whose first trace is empty) and a headers-only file open
+as usual.
 
 **Survey files** (SPS source, receiver and relation files, `.s` `.r` `.x` or `.sps` `.rps`
 `.xps`, and SEG P1 files) open the same ways: File > Open, a drop (several at once), the
@@ -489,10 +491,12 @@ times only; its unit is in the ms/in box (the gear's Scales tab) and in the stat
 or smaller keeps the scale and shows more or less of the record, from the same top-left
 corner, also when the whole record was in view.
 
-**Components.** In a SEG-Y file a trace's identification code is a component only when it
-names a sensor component (11 to 17: multicomponent and rotated sensors); a vibrator's codes
-(18 to 21) and any code outside those, a manufacturer's own 28, 29, 33 and so on, give no
-button and no colour. A record whose traces carry more than one component draws each trace
+**Components.** In a SEG-Y file a trace's identification code is a component only when the
+file's revision makes it a sensor component: 11 to 17 (multicomponent and rotated sensors) in
+every revision, and 27 to 41 (electric and magnetic field, rotational sensors) in rev 2 and
+later. A vibrator's codes (18 to 21) and the codes a rev 0 or 1 file leaves to a
+manufacturer (28, 29, 33 and so on) give no button and no colour; the sort By Component, the
+record checks and the trace table use the same rule. A record whose traces carry more than one component draws each trace
 once, side by side as usual. The buttons tell the components apart by the value in the
 headers (a SEG-D group index when that is set, otherwise the sensor type; a SEG-Y
 identification code). The letter and the colour come from what the trace says it is.

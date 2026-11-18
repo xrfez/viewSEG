@@ -37,11 +37,12 @@ proc main*() =
       if "Cannot open" in e.text: said = e.text
     doAssert "0 samples" in said and "damaged or is not SEG-Y" in said, said
 
-    for path in [fx.zeroBinarySegy(), fx.variableSegy()]:
+    for path in [fx.zeroBinarySegy(), fx.variableSegy(), fx.headersOnlySegy(), fx.emptyFirstSegy(),
+        fx.laterEmptySegy()]:
       st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
       doAssert st.settle(st.sessions.len == 1 and st.sessions[0].path == path and
         st.panel(MainPanel).laidOut), "did not open: " & path
-      doAssert st.sessions[0].len in 3 .. 4, $st.sessions[0].len
+      doAssert st.sessions[0].len in 3 .. 4, path & ": " & $st.sessions[0].len
       st.apply Command(kind: ckClose, file: st.sessions[0].id)
       doAssert st.settle(st.sessions.len == 0)
     discard st.shutdown()

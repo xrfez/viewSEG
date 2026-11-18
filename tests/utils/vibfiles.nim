@@ -19,6 +19,8 @@
 ## - `zeroBinarySegy()`: `vibPlainSegy`'s traces with the binary header's samples per
 ##   trace set to 0 (the trace headers give the length).
 ## - `variableSegy()`: rev 1, two traces of different lengths.
+## - `headersOnlySegy()`, `emptyFirstSegy()`, `laterEmptySegy()`: files of 0-sample traces
+##   that are not damaged.
 ## - `damagedSegy()`: binary header with 0 samples, a first trace header with 0
 ##   samples, then bytes that are not trace headers.
 
@@ -180,3 +182,46 @@ proc variableSegy*(fx: Fixtures): string =
       VibDtMs * 1000, tsLive)
     w.writeTrace(k, buf)
   discard w.close() # a variable-length file may say so in its log
+
+proc putBe(bytes: var seq[byte]; at, value, width: int) =
+  for i in 0 ..< width: bytes[at + i] = byte((value shr (8 * (width - 1 - i))) and 0xff)
+
+proc writeLengths(path: string; lengths: openArray[int]; fixedBinary: int) =
+  ## A rev 1 file written by hand: traces of `lengths` samples (IEEE float); the binary header
+  ## says `fixedBinary` samples per trace (0: variable). The writer refuses 0-sample traces.
+  var total = 3600
+  for n in lengths: total += 240 + 4 * n
+  var bytes = newSeq[byte](total)
+  for card in 0 ..< 40: # an ASCII textual header
+    let text = "C" & (if card < 9: "0" else: "") & $(card + 1) & " viewSEG test fixture"
+    for i in 0 ..< 80: bytes[card * 80 + i] = if i < text.len: byte(text[i]) else: byte(' ')
+  bytes.putBe(3216, 2000, 2) # interval, us
+  bytes.putBe(3220, fixedBinary, 2)
+  bytes.putBe(3224, 5, 2) # IEEE float
+  bytes.putBe(3500, 1, 1) # revision 1.0
+  var at = 3600
+  for n, samples in lengths:
+    bytes.putBe(at, n + 1, 4) # trace sequence number within the line
+    bytes.putBe(at + 8, 1, 4) # field record number
+    bytes.putBe(at + 114, samples, 2)
+    bytes.putBe(at + 116, 2000, 2)
+    at += 240 + 4 * samples
+  var f = open(path, fmWrite)
+  doAssert f.writeBytes(bytes, 0, bytes.len) == bytes.len
+  f.close()
+
+proc headersOnlySegy*(fx: Fixtures): string =
+  ## Four traces of 0 samples (a geometry export): the binary header says 0 too.
+  result = fx.dir / "headers-only.sgy"
+  if not fileExists(result): writeLengths(result, [0, 0, 0, 0], 0)
+
+proc emptyFirstSegy*(fx: Fixtures): string =
+  ## Variable length: a first trace of 0 samples, then traces of 100 and 120.
+  result = fx.dir / "empty-first.sgy"
+  if not fileExists(result): writeLengths(result, [0, 100, 120], 0)
+
+proc laterEmptySegy*(fx: Fixtures): string =
+  ## Binary header 0: a first trace of 100 samples, then two of 0 (the Headers window says
+  ## so, the reader notes it).
+  result = fx.dir / "later-empty.sgy"
+  if not fileExists(result): writeLengths(result, [100, 0, 0], 0)

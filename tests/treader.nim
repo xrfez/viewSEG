@@ -256,11 +256,9 @@ proc main*() =
       writeFile(empty, bytes)
       var st2 = initAppState()
       st2.apply openCmd(empty)
-      # the binary header and the first trace header both say 0 samples: the file is
-      # refused as damaged, not shown as traces without samples
-      doAssert st2.settle(st2.log.has("looks damaged or is not SEG-Y")),
-        "no refusal"
-      doAssert st2.sessions.len == 0
+      doAssert st2.settle(st2.main.laidOut and st2.sessions.len == 1)
+      doAssert st2.main.layout.traces > 0 and st2.main.layout.samples == 0, $st2.main.layout
+      doAssert st2.settle(st2.log.has("have no samples"))
       st2.shutdown()
 
   block panInsideTheReadAhead:
