@@ -97,6 +97,12 @@ proc expected*(s: Shot; i, j: int; nudge = 0.0): Rgba =
       let (_, ts) = tile.span
       if s.wiggles and t >= ts.lo and t < ts.hi:
         let ser = tile.series
+        for r in 0 ..< tile.request.count: # the marked traces' tint, under the traces
+          let m = markOf(r, hover, selected, lit)
+          let pos = float64(tile.request.position(r))
+          if m != tmNone and abs(x - pos) <= s.style.reach:
+            result = tintInk((x - pos) * s.style.pixelsPerTrace, s.style, s.ink.wiggle,
+              m).onto(result)
         for pass in 0 .. 1:
           for r in 0 ..< tile.request.count:
             let m = markOf(r, hover, selected, lit)
