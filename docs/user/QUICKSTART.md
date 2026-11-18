@@ -252,8 +252,12 @@ on working. The status bar shows the job running, how far it is and the time lef
 - **Finished:** how each ended (done, failed and why, cancelled) and how long it took;
   *Clear the list* empties it (Messages keeps the record).
 
-When a background job ends, a short notice appears in the bottom-right corner for a few
-seconds; click it for the Jobs window.
+When a background job you started ends, a short notice appears in the bottom-right corner
+for a few seconds; click it for the Jobs window. Work the program starts by itself (the check
+of a file's records against the survey as the file opens, the preparation of the next file)
+gives no notice and no "is done" line when it went well; a failure still does. A file whose
+traces are all auxiliary is not matched to the survey or checked against it, and its headers'
+units do not count in the units judgement.
 
 ## Look at a record
 

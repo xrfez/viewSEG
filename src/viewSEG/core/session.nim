@@ -165,6 +165,13 @@ func file*(s: Session): lent SeismicFile {.inline.} = s.file
 func zeroKept*(s: Session): int {.inline.} = s.zeroKept
   ## Traces with field record number 0 that were kept with the record before them.
 func gathers*(s: Session): lent seq[Gather] {.inline.} = s.gathers
+func noSeismic*(s: Session): bool =
+  ## Whether the file holds traces but no seismic one (all are auxiliary).
+  if s.records.len == 0: return false
+  for r in s.records:
+    if r.seismic > 0: return false
+  true
+
 func records*(s: Session): lent seq[RecordRow] {.inline.} = s.records
   ## One row per gather, for the record list.
 func recordColumns*(s: Session): set[RecordColumn] {.inline.} = s.columns

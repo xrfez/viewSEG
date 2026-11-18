@@ -169,7 +169,11 @@ so the wait the user notices is never behind a long job.
   lane's order, with up, down and remove) and finished ones, and turns its buttons into
   `ckCancelJob`, `ckReorderJob` and `ckRemoveJob`. A background job that ends (done or
   failed) also leaves a `Notice` (`AppState.notices`, the newest 20) that the frontend
-  shows for a few seconds; a listing of the file list does not, the list shows it.
+  shows for a few seconds; a listing of the file list does not, the list shows it, and
+  neither does a job the program started itself (`JobSpec.auto`: the records' check, the
+  prepared next file) that went well: its failure is still said. A file whose traces are
+  all auxiliary (`Session.noSeismic`) is neither matched to the project's survey nor
+  checked against a survey, and takes no part in `unitsDisagree`.
 
 **Open and close.** An open is an interactive job that reads the file; its session comes
 back as an `mkOpened` message, and `AppState` gives it a `SessionId` and the survey-wide id
@@ -671,7 +675,8 @@ and the plan resolves them (`resolved`), so neither an agent's import nor an Imp
 clicked while the window still reads records a guess. The units an import was made with
 are `Joined.units`, with where each came from. After an import, the file's confirmed unit
 stands for its headers' in `unitSources`, and a seismic file's bare "feet" beside a survey
-in US survey feet is no disagreement (`unitsDisagree`).
+in US survey feet is no disagreement (`unitsDisagree`). The same units are said to
+disagree once a session, whichever file brings them.
 
 **The Headers window** (`core/headers`, `core/fielddocs`, `core/inspector`,
 `view/headerviews`, `ui/imgui/headerswindow`). What a file is and its file-level headers

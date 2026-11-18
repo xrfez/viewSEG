@@ -927,15 +927,16 @@ type
     qcHeld: seq[tuple[job: JobId; relations: ref SurveyGeometry]]
       ## the relation records each filters' job reads in place, kept until it ends
     unitsWarned: string
-      ## the disagreement of the units the loaded files name said last
-      ## (`unitsDisagree`); "" while they agree
+    unitsSaid: HashSet[string] ## the units said to disagree, once a session
+                                 ## the disagreement of the units the loaded files name said last
+                                 ## (`unitsDisagree`); "" while they agree
     loadNamed: seq[string]
       ## the files the listing was asked for: loaded when it finds them survey files
     saidPositions: HashSet[string]
       ## files whose positions' problems were said; folders said to hold no coordinates
     panels: seq[Panel]
     heldBack: seq[PanelId]
-    auxOnNoted: seq[string] ## files whose all-auxiliary record switched Aux on, said once
+    auxOnNoted: seq[string] ## the first file whose all-auxiliary record switched Aux on: said once a session
                               ## panels that could not show their file: a job had it to itself
     sessions: seq[Session]
     opening, closing: seq[Pending]
@@ -2389,7 +2390,7 @@ proc show(state: var AppState; panel: PanelId; file: SessionId; gather: int) =
     if r.seismic == 0 and r.aux > 0 and not state.panels[k].layers[0].filter.auxiliary:
       state.panels[k].layers[0].filter.auxiliary = true
       let s = state.sessions[i]
-      if s.path notin state.auxOnNoted:
+      if state.auxOnNoted.len == 0: # once a session: the next file says the same
         state.auxOnNoted.add s.path
         state.log.add(sevInfo, s.name, "Every trace of " & s.name & "'s record is " &
           "auxiliary (pilot, reference or monitor channels), so Aux is switched on: " &
@@ -3900,7 +3901,8 @@ proc takeIdentified(state: var AppState; m: sink Msg) =
   # edits are not this file's; listed and said.
   if not state.store.isNowhere:
     let job = state.jobs.submit(JobSpec(title: "Look for earlier outputs of " & name,
-      lane: jlBackground), earlierWork(state.store, r.path, r.identity, state.inbox.poster))
+      lane: jlBackground, auto: true), earlierWork(state.store, r.path, r.identity,
+          state.inbox.poster))
     state.memoryWork.add job
 
 proc takeHashed(state: var AppState; m: sink Msg) =
@@ -4381,6 +4383,9 @@ proc checkRecords(state: var AppState; s: Session) =
   ## planned and missing stations): against the survey it was joined with
   ## when that has relation records, else against the loaded relation file;
   ## or clears the check when there is neither.
+  if s.noSeismic:
+    s.setChecks("", [], []) # nothing of it is on a survey's stations
+    return
   var gathers = newSeq[Slice[int]](s.gathers.len)
   for i, g in s.gathers: gathers[i] = g.traces
   let j = state.joinedRelations(s.id)
@@ -4389,7 +4394,8 @@ proc checkRecords(state: var AppState; s: Session) =
     template x: untyped = state.joins[j]
     let g = if x.relations.isNil: x.geometry else: x.relations
     let job = state.jobs.submit(JobSpec(title: "Check the records of " & s.name &
-      " against the survey imported", lane: jlBackground, reads: @[s.path]), checkWork(s.filePtr,
+      " against the survey imported", lane: jlBackground, auto: true, reads: @[s.path]), checkWork(
+      s.filePtr,
       s.id, gathers, addr g[], fileNames(x.files), NoSurveyLayer, state.inbox.poster,
       x.options.recordMatch, x.options.traceMatch))
     state.checking.add (job, g)
@@ -4403,7 +4409,7 @@ proc checkRecords(state: var AppState; s: Session) =
   # file's took a frame per file opened); they are kept until it ends, also
   # when the layer is unloaded meanwhile.
   let job = state.jobs.submit(JobSpec(title: "Check the records of " & s.name & " against " &
-    l.name, lane: jlBackground, reads: @[s.path]), checkWork(s.filePtr, s.id, gathers,
+    l.name, lane: jlBackground, auto: true, reads: @[s.path]), checkWork(s.filePtr, s.id, gathers,
     addr l.relations[], l.name, l.id, state.inbox.poster, opts.recordMatch, opts.traceMatch))
   state.checking.add (job, l.relations)
 
@@ -5763,7 +5769,7 @@ proc followProject(state: var AppState) =
     let id = p.queue[0]
     p.queue.delete(0)
     let i = state.findSession(id)
-    if i >= 0:
+    if i >= 0 and not state.sessions[i].noSeismic: # auxiliary traces are never matched
       state.startAutoJoin(i)
       return
 
@@ -5877,6 +5883,7 @@ func unitSources*(state: AppState): seq[tuple[what: string; unit: SurveyUnit]] =
     if l.origin == loSurveyFile and l.gridUnit.known and unitOf(l.gridUnit) != suNotGiven:
       result.add (l.name, unitOf(l.gridUnit))
   for s in state.sessions:
+    if s.noSeismic: continue # auxiliary traces have no place on the map
     let j = state.joinedOf(s.id)
     if j >= 0 and state.joins[j].units.file != suNotGiven:
       result.add ((if state.joins[j].units.fileFromHeaders: s.name & "'s headers, as imported"
@@ -5885,11 +5892,9 @@ func unitSources*(state: AppState): seq[tuple[what: string; unit: SurveyUnit]] =
       let u = headerUnitOf(s.crs)
       if u != suNotGiven: result.add (s.name & "'s headers", u)
 
-func unitsDisagree*(state: AppState): string =
-  ## When the loaded files name different units: what each says and which
-  ## the map uses, "map.s says US survey feet, shot.sgy's headers metres:
-  ## the map uses US survey feet"; "" when they agree (or none says).
-  let all = state.unitSources
+func differingUnits(state: AppState; all: seq[tuple[what: string; unit: SurveyUnit]]):
+    seq[SurveyUnit] =
+  ## The different units the sources name, the map's first; none when they agree.
   var units: seq[SurveyUnit]
   for (what, u) in all:
     # A seismic file's headers' "feet" may be US survey feet (SEG-Y cannot
@@ -5897,6 +5902,15 @@ func unitsDisagree*(state: AppState): string =
     let loose = u == suFeet and what.endsWith("'s headers") and
       not what.startsWith("the units confirmed")
     if u notin units and not (loose and suUsFeet in all.mapIt(it.unit)): units.add u
+  if units.len >= 2: units
+  else: @[]
+
+func unitsDisagree*(state: AppState): string =
+  ## When the loaded files name different units: what each says and which
+  ## the map uses, "map.s says US survey feet, shot.sgy's headers metres:
+  ## the map uses US survey feet"; "" when they agree (or none says).
+  let all = state.unitSources
+  let units = state.differingUnits(all)
   if units.len < 2: return
   var parts: seq[string]
   for u in units:
@@ -5912,7 +5926,12 @@ proc followUnits(state: var AppState) =
   let words = state.unitsDisagree
   if words != state.unitsWarned:
     state.unitsWarned = words
-    if words.len > 0: state.log.add(sevWarning, "map", words & ".")
+    # Once a session for the same units (stepping through files that say the same
+    # does not repeat it with another file's name).
+    let kind = state.differingUnits(state.unitSources).mapIt($it).join(",")
+    if words.len > 0 and kind notin state.unitsSaid:
+      state.unitsSaid.incl kind
+      state.log.add(sevWarning, "map", words & ".")
 
 func shownDomain*(state: AppState): RelationDomain =
   ## The domain of the record on show in the main panel: `rdReceiver` for a
@@ -6027,7 +6046,7 @@ proc followSpreads(state: var AppState) =
     var paths: seq[string]
     for f in want.files: paths.add f.path
     sp.job = state.jobs.submit(JobSpec(title: "Plan the spreads for the map",
-      lane: jlBackground, reads: paths), spreadWork(paths, want.spec, want.needs,
+      lane: jlBackground, auto: true, reads: paths), spreadWork(paths, want.spec, want.needs,
       state.inbox.poster))
 
 proc takeSpreads(state: var AppState; m: sink Msg) =
@@ -6136,7 +6155,8 @@ proc followShots(state: var AppState) =
     var choices: seq[OpenChoice]
     for p in x.jobPaths: choices.add state.openChoices.getOrDefault(p)
     x.job = state.jobs.submit(JobSpec(title: "Find the shots in the folder's files",
-      lane: jlBackground, reads: x.jobPaths), shotsWork(x.gen, x.jobPaths, state.indexCache,
+      lane: jlBackground, auto: true, reads: x.jobPaths), shotsWork(x.gen, x.jobPaths,
+      state.indexCache,
       state.inbox.poster, choices))
 
 proc takeShots(state: var AppState; m: sink Msg) =
@@ -6198,7 +6218,7 @@ proc followRecordQc(state: var AppState) =
   (q.record, q.byPlace) = (-1'i64, false)
   inc q.revision
   q.job = state.jobs.submit(JobSpec(title: "Check the record shown for the map's filters",
-    lane: jlBackground, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
+    lane: jlBackground, auto: true, reads: @[s.path]), recordQcWork(s.filePtr, s.path, s.id, s.base,
     g.gather, s.gathers[g.gather].traces, domain, (if rel.isNil: nil else: addr rel[]), against,
     state.settings.join.recordMatch, state.settings.join.traceMatch, placed, samples,
     own, reversed, state.inbox.poster))
@@ -6457,7 +6477,7 @@ proc onFinished(state: var AppState; job: JobInfo) =
   of jsCancelled:
     if not carriedEnd: state.log.add(sevInfo, "jobs", job.spec.title & " was cancelled.")
   of jsDone:
-    if job.spec.lane == jlBackground:
+    if job.spec.lane == jlBackground and not job.spec.auto:
       state.log.add(sevInfo, "jobs", job.spec.title & " is done.")
       state.notify(sevInfo, job.spec.title & " is done.")
   of jsQueued, jsRunning: discard
@@ -6960,7 +6980,7 @@ proc prepareNext(state: var AppState) =
   if k < 0 or not state.panels[k].laidOut or state.tiles[k].len == 0: return
   let r = state.panels[k].pending # the first view's read, as the next file is shown alike
   let job = state.jobs.submit(JobSpec(title: "Prepare " & want.extractFilename,
-    lane: jlBackground, reads: @[want]), prepareWork(want, state.inbox.poster,
+    lane: jlBackground, auto: true, reads: @[want]), prepareWork(want, state.inbox.poster,
     indexCacheFile(state.indexCache, want), r.first .. r.last, r.stride,
     r.firstSample ..< r.firstSample + r.samples))
   state.preparing = (job, want)

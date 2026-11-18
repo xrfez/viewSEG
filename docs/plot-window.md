@@ -1169,7 +1169,7 @@ under the pointer then, as desktop programs do.
   from the units confirmed with a join, else the survey file's header (`H20`, `H201`), else
   the seismic file's headers. The scale bar says "units" where nothing says; the ruler
   shows the number as the survey gives it and names no unit. Never a guess. **Files that name
-  different units** (a second survey file, the open file's headers) are said once in
+  different units** (a second survey file, the open file's headers) are said once a session in
   Messages and at the top of the Layers list ("The coordinates' units disagree (...): the
   map uses US survey feet, the first, and converts nothing"). The gear's
   Lengths shows lengths in another of the three instead, converted exactly.

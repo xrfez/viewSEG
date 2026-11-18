@@ -111,6 +111,9 @@ type
     lane*: JobLane
     reads*: seq[string]     ## files it reads; other jobs may read them too
     exclusive*: seq[string] ## files it needs to itself: no other job may use them meanwhile
+    auto*: bool
+      ## started by the program, not by a command of the user: its end is not
+      ## announced when it went well (a failure is)
     cancellable*: bool = true
       ## false for a job that must run once submitted: `cancel` and `remove`
       ## refuse it (until it has finished), `stop` does not
