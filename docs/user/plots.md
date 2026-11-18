@@ -104,8 +104,6 @@ The text names the settings in force: your filters, the reference, the units. Th
 
 **Careful.** The envelope peaks at the delay even when the phases of trace and reference differ, where the line itself peaks lower. A different reference gives a different picture.
 
-**A trace that does not reach the end of its reference.** The Vibrator signature, Cross-correlation and Envelope windows (against a reference) tell you, in a line in the warning colour above their words, when the trace cannot be matched to the whole of the reference: "trace is 9 840 ms, the reference is 12 000 ms: the last 2 160 ms of the reference have no data" when the record is shorter than the reference (the shorter side is zero-padded, as the words below say), and "signal ends at about 7 600 ms; the reference runs to 12 000 ms" when the trace is long enough but its signal stops before the reference does (a vibrator that stopped shaking early). The first is also said once in Messages for the file. The end of the signal is where it falls to a tenth of its usual level (the Vibrator signature takes it from the sweep measures of its force); a signal that ends within about 150 ms or 3 % of the reference's end is taken to end with it. A trace that is longer than the reference (a lead-in before the sweep) gets neither line: the correlation's time shift takes the lead-in up (it reads as a delay), but the phase to the reference, which is measured as if both started together, does not.
-
 ## Cross-correlation: amplitude to the reference
 
 **Shows.** Amplitude ratio in dB up, against frequency in Hz across: each trace's amplitude over the reference's; 0 dB is the same amplitude.

@@ -640,6 +640,22 @@ file by every route, and the settings keep them (not Raw) for a new plot. Measur
 **New plot** opens a window of a plot's traces in one of the signal-analysis views
 processSEG offers. It is in two places:
 
+A Vibrator signature, Cross-correlation or Envelope window (against a reference) says
+when a trace cannot be matched to the whole of its reference, in a line in the warning
+colour above its words (`AnalysisResult.warning`, `core/signalend`), and once in Messages for
+the file: "trace is 9 840 ms, the reference is 12 000 ms: the last 2 160 ms of the
+reference have no data" when the record is shorter than the reference (the shorter side is
+zero-padded), and "signal ends at about 7 600 ms; the reference runs to 12 000 ms" when the
+trace is long enough but its signal stops before the reference does. The Vibrator
+signature takes the end of the signal from the sweep tracker's fundamental of the force
+(`amplitude[0]`) and the reference's from the tracker's `extent`; the other two have
+no tracker and look at the trace in 100 ms blocks. The signal ends where it falls to a
+tenth of its usual level (the 90th percentile of the levels); one that ends within 150 ms
+or 3 % of the reference's end is taken to end with it. A trace longer than the reference
+(a lead-in before the sweep) gets neither line: the correlation's time shift takes the
+lead-in up (a delay), but the phase to the reference, measured as if both started together,
+does not.
+
 - **Window > New plot**, on the traces selected in the Seismic window (greyed out until
   some are);
 - **the plot's right-click menu > New plot**, on the trace under the pointer, or on the
