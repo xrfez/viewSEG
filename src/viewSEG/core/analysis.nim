@@ -29,7 +29,7 @@ import std/[math, strutils]
 import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/[crosscorrelate, sweeptrack, vibqc]
 import processSEG/core/workspace
-import colourmaps, panels, phasepicture, phaseshow, plotcursor, processing, traceids
+import colourmaps, panels, phasepicture, phaseshow, plotcursor, processing, signalend, traceids
 
 export ColourMap, PlotCursor, Polarity, VibLimits
 export phasepicture, phaseshow
@@ -195,6 +195,10 @@ type
       ## by because Filters > Filter the Aux traces too is off
     dtMs*: float64
     note*: string ## what the numbers are, in words (shown under the plot)
+    warning*: string
+      ## a trace that cannot be matched to the whole of its reference, one line each (shown
+      ## first, in the warning colour): shorter than it, or its signal stops early
+      ## (`core/signalend`); "" for none
     against*: string
       ## a vibrator signature's reference in one sentence: "Measured against the project
       ## reference X" or "Measured against the recorded reference, trace N"; "" for none
@@ -588,6 +592,10 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
       words = meanText(diff, p.phaseShow) & ", largest " &
         formatFloat(worst, ffDecimal, 1) & "°"
       phasePlot.aside = "Phase against the reference over the part drawn: " & words
+    let dur = reference.len.float64 * dtMs
+    result.warning = shortWords("trace", x.len.float64 * dtMs, dur)
+    let early = endWords("", x, dtMs, dur)
+    if early.len > 0: result.warning.add (if result.warning.len > 0: "\n" else: "") & early
     result.note = "Phase against " & referenceName & ": the trace's instantaneous phase " &
       "minus the reference's (the argument of the trace's analytic signal times the " &
       "reference's conjugate), wrapped to a turn, drawn where both envelopes are within " &
@@ -799,6 +807,14 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
       if not es[i].isNaN and not cs[i].isNaN and (best < 0 or es[i] > es[best]): best = i
     lagPlot.curves.add AnalysisCurve(name: name, ys: cs)
     lagPlot.curves.add AnalysisCurve(name: name & " envelope", ys: es)
+    if not sameSamples(s, reference):
+      let dur = reference.len.float64 * dtMs
+      let who = if signals.len > 1: name else: "trace"
+      var said = shortWords(who, s.len.float64 * dtMs, dur)
+      let early = endWords((if signals.len > 1: name else: ""), s, dtMs, dur)
+      if early.len > 0: said.add (if said.len > 0: "\n" else: "") & early
+      if said.len > 0:
+        result.warning.add (if result.warning.len > 0: "\n" else: "") & said
     cp.compareInto(s, reference, ratio, phase, ws)
     for k in 0 ..< cp.bins:
       if not inBand[k]: (ratio[k], phase[k]) = (NaN, NaN)

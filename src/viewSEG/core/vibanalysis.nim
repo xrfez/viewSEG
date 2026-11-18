@@ -29,7 +29,7 @@ import std/[math, strutils]
 import parseSEG
 import processSEG/core/[rows, types, units, workspace]
 import processSEG/vibroseis/[sweeptrack, vibqc]
-import analysis
+import analysis, signalend
 
 export VibRole, VibSignal
 
@@ -307,3 +307,13 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       " ms (the sweep less its tapers)"
   for s in said: words.add "; " & s
   result.note = words
+  # a trace that cannot be matched to the whole of the reference: shorter than it, or its
+  # signal stopped early (the force's fundamental, measured by the tracker, ends at about
+  # the time shown, the reference's sweep at `extent.endMs`)
+  let traceRow = if main == vsGroundForce: at[vsGroundForce] else: at[vsMass]
+  if traceRow in 0 ..< rows.len:
+    let traceMs = rows[traceRow].len.float64 * dtMs
+    result.warning = shortWords("trace", traceMs, rows[at[vsReference]].len.float64 * dtMs)
+    let early = endWords("", lastLoudMs(u.tracks[main].amplitude[0], xs), e.endMs, traceMs)
+    if early.len > 0:
+      result.warning.add (if result.warning.len > 0: "\n" else: "") & early

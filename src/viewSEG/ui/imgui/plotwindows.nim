@@ -792,6 +792,14 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
   if w.waiting: words.add " · working it out..."
   igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlTextDim]))
   igTextWrapped("%s", words.cstring)
+  if r.warning.len > 0 and r.problem.len == 0 and not w.waiting:
+    # a trace that cannot be matched to the whole of its reference, before anything else
+    igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(t.roles[rlWarning]))
+    igPushTextWrapPos(igGetCursorPos().x + igGetContentRegionAvail().x)
+    igTextUnformatted(r.warning.cstring, nil)
+    igPopTextWrapPos()
+    igPopStyleColor(1)
+    marks.mark(name & ".warning")
   let refProblem = w.view == avCorrelation and not w.waiting and r.problem.len > 0 and
     r.plots.len == 0 and r.image.isEmpty
   if w.goneNote.len > 0 and not refProblem: igTextWrapped("%s", w.goneNote.cstring)

@@ -771,6 +771,15 @@ proc takeAnalysis(state: var AppState; m: sink Msg) =
     pw.waiting = m.analysis.gen < pw.asked
     pw.result = move m.analysis
     inc pw.revision
+    if pw.result.warning.len > 0 and pw.result.problem.len == 0 and pw.traces.len > 0:
+      # said in Messages once for the file, not at every redraw of the window
+      let i = state.findTrace(pw.traces[0])
+      if i >= 0:
+        let key = state.sessions[i].path & "\n" & pw.result.warning
+        if key notin state.unmatched:
+          state.unmatched.incl key
+          state.log.add(sevWarning, state.sessions[i].name,
+            state.sessions[i].name & ": " & pw.result.warning.replace("\n", "; ") & ".")
 
 proc gatherFile(state: AppState; k, i: int): seq[int] =
   ## The gather's traces in file order, auxiliary ones included.

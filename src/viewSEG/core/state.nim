@@ -950,6 +950,9 @@ type
     showFound: PanelId ## show the first file the listing finds here; NoPanel for none
     jump: tuple[path: string; trace, record: int]
       ## a trace to show once its file is open (`ckShowTrace`); "" for none
+    unmatched: HashSet[string]
+      ## the file and the words of each warning a plot window gave of a trace that cannot be
+      ## matched to its whole reference (`core/signalend`): said in Messages once each
     oldScans: seq[JobId] ## scans replaced by a newer listing: they end quietly
     quietScan: JobId ## a listing of the folder listed last: a missing folder is said quietly
     unread: seq[tuple[panel: PanelId; cause: UnreadCause; why: string]]

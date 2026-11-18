@@ -584,8 +584,8 @@ proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): J
     "params": toJson(w.params), "traces": clipped(w.traces, limit), "reference": w.reference,
     "filters": w.filters, "waiting": w.waiting, "cursor": toJson(w.cursor),
     "cursorOn": w.cursorOn,
-    "problem": r.problem, "note": r.note, "measuredAgainst": r.against, "used": r.used,
-        "leftOut": r.leftOut,
+    "problem": r.problem, "note": r.note, "warning": r.warning, "measuredAgainst": r.against,
+        "used": r.used, "leftOut": r.leftOut,
     "passedBy": r.passedBy, "notDrawn": r.notDrawn,
     "dtMs": toJson(r.dtMs), "plots": plots, "explain": explainWindow(w, units)}
   if r.table.len > 0:
