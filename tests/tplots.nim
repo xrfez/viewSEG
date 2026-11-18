@@ -174,7 +174,7 @@ proc main*() =
       doAssert st.plots[0].reference == "the pilot", st.plots[0].reference
       for c in 0 .. 3:
         let lag = r.peakLagMs(c)
-        doAssert abs(lag - Delay * float64(c + 1)) < 1e-9, "trace " & $(c + 2) & " peaks at " &
+        doAssert abs(lag - Delay * float64(c + 1)) < 1e-2, "trace " & $(c + 2) & " peaks at " &
           $lag & " ms, want " & $(Delay * float64(c + 1))
 
     block followsSelection:

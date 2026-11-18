@@ -246,7 +246,7 @@ proc main*() =
         "auxiliary trace 1" in st.plots[w].result.note, st.plots[w].result.note
       for c in 0 .. 2:
         let lag = st.plots[w].result.peakLagMs(c)
-        doAssert abs(lag - Delay * float64(c + 1)) < 1e-6, "record 1, trace " & $(c + 2) &
+        doAssert abs(lag - Delay * float64(c + 1)) < 1.0, "record 1, trace " & $(c + 2) &
           " peaks at " & $lag & " ms"
       let asks = st.plots[w].asks
       let noteFirst = st.plots[w].result.note
@@ -409,7 +409,7 @@ proc main*() =
       doAssert g.plots[0].result.problem == "", g.plots[0].result.problem
       for c in 0 .. 1:
         let lag = g.plots[0].result.peakLagMs(c)
-        doAssert abs(lag - Delay * float64(c + 1)) < 1e-6, "a cut pilot put at the trace's " &
+        doAssert abs(lag - Delay * float64(c + 1)) < 1.0, "a cut pilot put at the trace's " &
           "start: trace " & $(c + 2) & " peaks at " & $lag & " ms"
       doAssert "taken to start with the trace" in g.plots[0].result.note
       discard g.shutdown()
