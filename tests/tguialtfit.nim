@@ -14,7 +14,8 @@
 ## The Vibrator and Cross-correlation parts passed before the change too: those windows'
 ## curves already refit by `view/axisfit`'s rule.
 ##
-## The window is 1040 high: a window's warning line (a trace that stops before its reference
+## The window is 1560 wide, so that the vibrator window (780 wide, centred) leaves the strip clicked
+## at x = 358 uncovered, and 1040 high: a window's warning line (a trace that stops before its reference
 ## does, as the sample's mixed traces do) takes a line from the plots, and a plot pushed below
 ## the fold is not drawn, so its axis is not refit.
 ##
@@ -205,7 +206,7 @@ proc main*() =
             for e in f.core.log: last = e.text
             failed.add " (no window; the log says: " & last & ")"
           f.stop()
-    let code = run(RunOptions(openPaths: @[sample], windowSize: (1500, 1040), theme: forceDark,
+    let code = run(RunOptions(openPaths: @[sample], windowSize: (1560, 1040), theme: forceDark,
       userThemeDir: some(fx.dir / "no-user-themes"), indexCacheDir: some(fx.dir / "cache"),
       persist: true, configDir: some(fx.dir / "config"), logDir: some(fx.dir / "logs"),
       onFrame: onFrame))

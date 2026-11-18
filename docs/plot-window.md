@@ -892,7 +892,7 @@ right of that line's first row. A change works it out again.
     limit was not judged. It is judged as a vibrator controller's QC does: the mean of each
     window of the sweep (500 ms, typed in the **window** box), then the average and the worst
     window against six limits, on the sweep less its tapers (dimmed on the plots). Defaults:
-    average phase at most 5°, peak phase 10°, average distortion 30 %, peak distortion
+    average phase at most 5°, peak phase at most 10°, average distortion 30 %, peak distortion
     60 %, average force at least 90 % and peak force at most 120 % of the force that is 100 %.
     The limits are in the **Limits...** popup, above the point limits; an empty box turns
     that limit off. The force limits need the **100 % force =** box (the force, in the

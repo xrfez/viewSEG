@@ -137,7 +137,10 @@ proc main*() =
         let mark = window & ".explain" & (if next == 0: "" else: " " & $(next + 1))
         let r = f.markOf(mark)
         doAssert r.size.x > 0, mark & " is not shown"
-        let inside = r.pos.y + r.size.y < 990 and r.pos.y > 60
+        # (its corner is inside the window too: a plot below the window's edge is out of reach)
+        let win = f.markOf(window)
+        let inside = r.pos.y + r.size.y < 990 and r.pos.y > 60 and
+          (win.size.y == 0 or r.pos.y + 25 < win.pos.y + win.size.y)
         if not inside:
           inc next
           return next >= n
