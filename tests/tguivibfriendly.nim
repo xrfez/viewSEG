@@ -27,6 +27,7 @@ proc main*() =
       var frames = 0
       var opened = false
       var done = false
+      var clicked = 0 # the roles' table is folded until its line is clicked
       proc onFrame(f: FrameInfo) =
         if f.index == 0: f.moveMouse(vec2(4, 4))
         inc frames
@@ -39,6 +40,18 @@ proc main*() =
         elif opened and f.core.plots.len == 1 and not f.core.plots[0].waiting and frames > 40:
           doAssert f.core.plots[0].params.roles.source == rsCodes
           doAssert f.markOf("new plot 1.roles line").size.x > 0, "no roles line"
+        let ready = opened and f.core.plots.len == 1 and frames > 40
+        if ready and clicked < 3 and not f.core.plots[0].waiting:
+          let r = f.markOf("new plot 1.roles header")
+          let at = vec2(r.pos.x + r.size.x / 2, r.pos.y + r.size.y / 2)
+          if clicked == 0: f.moveMouse(at)
+          if clicked == 2:
+            f.pressMouse(at, true, 1)
+            f.pressMouse(at, false, 1)
+          inc clicked
+          if clicked == 3: frames = 40
+        elif clicked >= 3 and f.core.plots.len == 1 and f.markOf(
+            "new plot 1.swap").size.x > 0:
           doAssert f.markOf("new plot 1.swap").size.x > 0, "no swap button"
           doAssert f.markOf("new plot 1.roles from codes").size.x > 0, "no codes button"
           if shotDir().len > 0: discard f.savePng(shotDir() / "vibfriendly-roles.png")

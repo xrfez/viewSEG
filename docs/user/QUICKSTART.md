@@ -877,6 +877,50 @@ traces and the file it shows; the line under the controls names them. Unfreezing
 at once. It costs nothing while it is hidden
 or behind another tab.
 
+## Filling in the Vibrator window
+
+Window > New plot > Vibrator signature judges one vibrator unit (its reference, ground
+force, reaction mass and baseplate traces) and says at the top whether the sweep passed.
+Nothing has to be typed to get an answer: every box starts at a sensible value. The boxes,
+in the order you meet them:
+
+1. **The verdict line.** PASS, FAIL or NOT JUDGED, with a tick or a cross. A FAIL names the
+   worst failing value and when it happened ("FAIL: peak force 157 % > 120 % at 9.5 s").
+2. **The roles line.** Who is Ref, GF, M and B ("Ref trace 1 · GF trace 2 ..."). Click it to
+   open the roles: the trace for each role, GF's and M and B's polarity, and the project
+   reference. The roles come from the traces' vibrator codes; **Swap mass and baseplate**
+   puts the two right when a converter swapped them.
+3. **Masses: reaction, baseplate** (kg or lb). Optional: with both, the ground force is
+   also made from M and B and drawn in a plot of its own. Take them from the vibrator's
+   data sheet; leave them empty otherwise.
+4. **Harmonics to** (2 to 16). How many harmonics the distortion plot draws a line for.
+5. **Phase** (Absolute or Signed). How phases are drawn.
+6. **Top frequency (Hz).** The sweep's top frequency; distortion counts only the harmonics
+   up to it, as the vibrator's own electronics do. A generated reference fills it in
+   exactly; for another reference it is an estimate ("(estimate)" beside it): type the
+   top frequency of the sweep design (the "6-220 Hz" sweep's 220). It is kept with the
+   reference in the project. A line warns when it is more than 2 % from the largest
+   frequency seen in the reference.
+7. **100 % force =** (the file's unit, counts or N). The force that counts as 100 %: the
+   average and peak force limits are in percent of it. It is not known from the file:
+   take it from the controller's force setting, or from a sweep you know is at full
+   output. Left empty, the two force rows of the table say so and the other four limits
+   still give the verdict.
+8. **window (ms).** The length of the windows the sweep is judged in (500, as the
+   controllers use): each window gives a mean, and the limits are on the average and the
+   worst of the windows.
+9. **Limits...** The six pass or fail limits, each with its unit: average phase (at most
+   5°), peak phase (10°), average distortion (30 %), peak distortion (60 %), average force
+   (at least 90 % of 100 %), peak force (at most 120 %). Change them to the crew's or the
+   client's specification; empty a box to turn that limit off. Below them are the point
+   limits, drawn as lines on the plots.
+10. **The limits table.** One row per limit: what was measured, the limit, ✓ (met), ✗
+    (failed) or – (not judged, and the last column says which box to fill), and where the
+    worst window is. The sweep's tapers are left out and shown dimmed on the plots.
+
+The window keeps its size and place when you step to the next record: only its numbers
+change, so records can be flipped through.
+
 ## Compare two traces
 
 Operations > Compare two traces opens a window with two slots, A and B. Each holds one

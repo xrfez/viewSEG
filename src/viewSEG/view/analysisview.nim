@@ -40,7 +40,7 @@ func curvePlots*(r: AnalysisResult; t: Theme; units = usMetric): seq[CurvePlot] 
     let yUnit = if p.yUnit.len > 0: p.yUnit else: unitOfLabel(axis.label)
     var c = CurvePlot(xLabel: p.xLabel, yLabel: axis.label, xUnit: p.xUnit, yUnit: yUnit,
       xs: p.xs, yFloor: scaleBound(p.yLo, axis.divisor),
-      yCeil: scaleBound(p.yHi, axis.divisor), aside: p.aside)
+      yCeil: scaleBound(p.yHi, axis.divisor), aside: p.aside, dimmed: p.dimmed)
     var i = 0
     for curve in p.curves:
       let ys = scaled(curve.ys, axis.divisor)
@@ -59,6 +59,9 @@ func curvePlots*(r: AnalysisResult; t: Theme; units = usMetric): seq[CurvePlot] 
         c.curves.add Curve(name: curve.name, colour: t.roles[rlTextDim], ys: ys,
           xs: curve.xs, width: 1)
     result.add c
+  # a vibrator's plots share one sweep time: only the last names it, so each has the room
+  if r.view == avVibrator:
+    for i in 0 ..< result.high: result[i].bareX = true
 
 func cellAt*(img: AnalysisImage; x, y: float64): PlotCursor =
   ## The cell whose centre is nearest (`x`, `y`), within the image; `x` -1

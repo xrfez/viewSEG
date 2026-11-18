@@ -151,7 +151,10 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   let upLabel = if turned: p.xLabel else: p.yLabel
   let upShown = if size.y > 0: shortenEnd(upLabel, size.y - igGetFontSize() * 4.5)
                 else: upLabel
-  ImPlot_SetupAxis(ImAxis_X1.cint, (if turned: p.yLabel else: p.xLabel).cstring, axisFlags)
+  let bare = p.bareX and not turned
+  ImPlot_SetupAxis(ImAxis_X1.cint, (if turned: p.yLabel else: p.xLabel).cstring,
+    axisFlags or (if bare: ImPlot_AxisFlags_NoLabel.cint or ImPlot_AxisFlags_NoTickLabels.cint
+    else: 0))
   marks.add (id & ".ylabel", Rect(pos: vec2(0, 0), size: vec2(0, textWidth(upShown))))
   ImPlot_SetupAxis(ImAxis_Y1.cint, upShown.cstring,
     axisFlags or (if turned: ImPlot_AxisFlags_Invert.cint else: 0))
@@ -262,6 +265,22 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
       else:
         ImPlot_PlotLine_doublePtrdoublePtr(c.name.cstring, xs, ys, cint(n), 0, 0,
           cint(sizeof(float64)))
+  # The stretches left out of a judgement (a sweep's tapers), dimmed over the curves.
+  if p.dimmed.len > 0 and not turned:
+    let dl = ImPlot_GetPlotDrawList()
+    ImDrawList_PushClipRect(dl, pos, ImVec2_c(x: pos.x + area.x, y: pos.y +
+        area.y), true)
+    for d in p.dimmed:
+      let a = ImPlot_PlotToPixels_double(d.a, lim.Y.Min, ImAxis_X1.cint,
+          ImAxis_Y1.cint)
+      let b = ImPlot_PlotToPixels_double(d.b, lim.Y.Min, ImAxis_X1.cint,
+          ImAxis_Y1.cint)
+      ImDrawList_AddRectFilled(dl, ImVec2_c(x: min(a.x, b.x), y: pos.y),
+        ImVec2_c(x: max(a.x, b.x), y: pos.y + area.y),
+        u32(withAlpha(t.roles[rlPlotBackground], 170)), 0, 0)
+      marks.markRect(id & ".dim", ImVec2_c(x: min(a.x, b.x), y: pos.y),
+        ImVec2_c(x: max(a.x, b.x), y: pos.y + area.y))
+    ImDrawList_PopClipRect(dl)
   # The cursor: where the keys hold it, else under the pointer.
   result.under = PlotCursor(x: -1, y: -1)
   result.curve = -1

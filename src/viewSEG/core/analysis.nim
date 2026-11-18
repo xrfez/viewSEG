@@ -29,11 +29,17 @@ import std/[math, strutils]
 import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/[crosscorrelate, sweeptrack, vibqc]
 import processSEG/core/workspace
-import colourmaps, matchpeak, panels, phasepicture, phaseshow, plotcursor, processing, signalend, traceids
+import colourmaps, matchpeak, panels, phasepicture, phaseshow, plotcursor,
+    processing, signalend,
+  traceids, vibjudge
 
 export ColourMap, PlotCursor, Polarity, VibLimits
 export phasepicture, phaseshow
+export vibjudge
 export matchpeak.NoClearMatch
+
+const RecordedKey* = "recorded trace"
+  ## `TopFrequency.reference` of a unit measured against its own recorded reference
 
 type
   AnalysisView* = enum
@@ -74,6 +80,12 @@ type
     handFile*: string
       ## when `source` is `rsHand`: the file the choice was made on, whose roles it
       ## stays for; on another file the codes decide when the traces have them
+
+  TopFrequency* = object
+    ## The top frequency typed for one reference (the band edge of the vibrator's
+    ## distortion), kept with it.
+    reference*: string ## the project reference's id; `RecordedKey` for the record's own trace
+    hz*: float64
 
   PhaseAgainst* = enum
     ## What an envelope window's phase plot shows.
@@ -119,6 +131,16 @@ type
       ## generated from M and B; NaN: none entered (no generated force)
     baseplateMassKg*: float64 = NaN ## vibrator signature: the baseplate's mass, kg
     harmonics*: int = 5 ## vibrator signature: the highest harmonic tracked (2 .. 16)
+    tops*: seq[TopFrequency]
+      ## vibrator signature: the top frequency typed per reference (Hz): distortion is
+      ## the harmonics up to it; a reference with none typed takes its sweep's end
+      ## frequency (a generated one) or an estimate from its frequency track
+    qcWindowMs*: float64 = 500.0
+      ## vibrator signature: the window of the sweep the QC statistics are of, ms
+    qc*: QcLimits ## vibrator signature: the pass or fail limits (NaN: that limit off)
+    forceHundredPct*: float64 = NaN
+      ## vibrator signature: the force that is 100 % (the file's unit), for the force
+      ## limits; NaN: not given, the force limits are not judged
     limitsOn*: bool = false
       ## vibrator signature: the limits drawn, the points past them marked
       ## and a pass or fail table shown
@@ -155,6 +177,8 @@ type
       ## the value axis, fixed, when both are numbers (a phase magnitude's
       ## 0 to 180); NaN: the data's
     aside*: string ## appended to the cursor readout (a delay taken off, in ms)
+    dimmed*: seq[Slice[float64]]
+      ## stretches of x drawn dimmed (a vibrator sweep's tapers, left out of its judgement)
 
   AnalysisImage* = object
     ## Values over a grid: column `i` at x `x0 + i·dx`, row `j` at y `y0 +
@@ -169,13 +193,31 @@ type
       ## times `velocityScale` ("m/s"); "": it reads none
     velocityScale*: float64 = 1.0
 
+  BandReport* = object
+    ## Where a vibrator signature's distortion band ends, and how that was set.
+    hz*: float64          ## the edge used (NaN: no band: every harmonic counted)
+    suggestedHz*: float64 ## `topFrequencyHz` of the reference (an estimate); NaN: none
+    chordHz*: float64     ## `largestChordHz`: a lower bound of the top; NaN: none
+    typed*: bool          ## the edge was typed (else prefilled)
+    exact*: bool          ## prefilled exactly: a generated reference's end frequency
+    warning*: string      ## the estimate and the chord differ by more than 2 %; "" for none
+
+  AlignReport* = object
+    ## How a stored reference was placed against the unit's records.
+    kind*: string     ## "none" (the reference is the recorded one), "aligned" (found by
+                      ## correlation), "unaligned" (no clear peak), "start" (no recorded
+                      ## reference: its own start time honoured)
+    shiftMs*: float64 ## the shift applied; NaN for none
+    match*: float64   ## the correlation peak; NaN for none
+    words*: string
+
   AnalysisResult* = object
     ## An answer for an analysis window.
     gen*: uint64
     id*: int
     view*: AnalysisView
     plots*: seq[AnalysisPlot]
-    image*: AnalysisImage ## a spectrogram's; empty otherwise
+    image*: AnalysisImage   ## a spectrogram's; empty otherwise
     table*: seq[seq[string]]
       ## a vibrator signature's summary per signal, the first row the
       ## columns' names; empty for none. The force columns stay in the
@@ -206,6 +248,9 @@ type
       ## a trace that cannot be matched to the whole of its reference, one line each (shown
       ## first, in the warning colour): shorter than it, or its signal stops early
       ## (`core/signalend`); "" for none
+    qc*: QcReport ## a vibrator signature's verdict, its limits table and window statistics
+    band*: BandReport ## a vibrator signature's distortion band: edge, source and warnings
+    alignment*: AlignReport ## a vibrator signature's stored reference alignment
     against*: string
       ## a vibrator signature's reference in one sentence: "Measured against the project
       ## reference X" or "Measured against the recorded reference, trace N"; "" for none
@@ -213,6 +258,20 @@ type
 
 type StopCheck* = proc (): bool {.closure, gcsafe.}
   ## Asked between the steps of a long computation: true to give it up now.
+
+func topOf*(tops: openArray[TopFrequency]; reference: string): float64 =
+  ## The top frequency typed for `reference` (`RecordedKey`: the record's own trace); NaN
+  ## when none is.
+  result = NaN
+  for t in tops:
+    if t.reference == reference: result = t.hz
+
+func withTop*(tops: seq[TopFrequency]; reference: string; hz: float64): seq[TopFrequency] =
+  ## `tops` with the top frequency of `reference` set to `hz`, or dropped when `hz` is NaN
+  ## (the reference then takes its sweep's end frequency or its estimated top).
+  for t in tops:
+    if t.reference != reference: result.add t
+  if not hz.isNaN: result.add TopFrequency(reference: reference, hz: hz)
 
 func samePlaces*(a, b: VibRoles): bool =
   ## Whether `a` and `b` give every role the same trace.
@@ -326,9 +385,14 @@ func `==`*(a, b: AnalysisParams): bool =
   for x, y in fields(a, b):
     when x is float64:
       if not same(x, y): return false
-    elif x is VibLimits:
+    elif x is VibLimits or x is QcLimits:
       for u, v in fields(x, y):
         if not same(u, v): return false
+    elif x is seq[TopFrequency]:
+      if x.len != y.len: return false
+      for i in 0 ..< x.len:
+        if x[i].reference != y[i].reference or not same(x[i].hz, y[
+            i].hz): return false
     else:
       if x != y: return false
   true
@@ -357,6 +421,8 @@ const
   TimeMsRange* = SettingRange(lo: -MaxTimeMs, hi: MaxTimeMs,
     words: "from -3600000 to 3600000 ms")
   HarmonicRange* = SettingRange(lo: 2, hi: 16, words: "from 2 to 16")
+  TopHzRange* = SettingRange(lo: 0, loOpen: true, hi: 100_000,
+    words: "above 0 and at most 100000 Hz")
   MassKgRange* = SettingRange(lo: 0, loOpen: true, hi: MaxLimit,
     words: "above 0 and at most 1000000000 kg")
   NumberRange* = SettingRange(lo: -MaxLimit, hi: MaxLimit,
@@ -398,6 +464,11 @@ func settingProblem*(p: AnalysisParams; view: AnalysisView): string =
     check("harmonics", float64(p.harmonics), HarmonicRange)
     for name, v in fieldPairs(p.limits):
       check(name, v, NumberRange, none = true)
+    check("qcWindowMs", p.qcWindowMs, WindowMsRange)
+    for name, v in fieldPairs(p.qc):
+      check("qc." & name, v, NumberRange, none = true)
+    check("forceHundredPct", p.forceHundredPct, MassKgRange, none = true)
+    for t in p.tops: check("tops[" & t.reference & "].hz", t.hz, TopHzRange)
   ""
 
 const

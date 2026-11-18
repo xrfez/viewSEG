@@ -31,8 +31,9 @@ import std/[algorithm, locks, math, monotimes, options, os, strutils, times]
 import parseSEG
 import processSEG/pipeline
 import processSEG/core/[rows, types, workspace]
-import analysis, cutfile, filesystem, fkanalysis, inbox, jobs, join, log, processing, references,
-  threads, vibanalysis
+import analysis, cutfile, filesystem, fkanalysis, inbox, jobs, join, log,
+    processing, references,
+  threads, vibalign, vibanalysis
 
 type
   AnalysisAsk* = object
@@ -58,6 +59,12 @@ type
     archiveName*: string
     archiveIntervalUs*: float64
     archiveGone*: string        ## selected, but not usable: said, and nothing is drawn
+    archiveStartMs*: float64 = 0.0
+      ## the stored reference's own first sample time (an archive window's From)
+    topHz*: float64 = NaN
+      ## a vibrator signature's typed top frequency for its reference (Hz); NaN: none typed
+    exactTopHz*: float64 = NaN
+      ## the generated reference's end frequency, exactly (Hz); NaN: not a generated one
     pilotTrace*: int = -1
       ## a chosen pilot of the record: this record's trace (an index in the file) it
       ## takes by the rule `pilotRule`; -1 for none
@@ -551,6 +558,7 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
               var rows = kept
               var names = keptNames
               var archiveSamples: seq[float32] = @[]
+              var alignment = AlignReport(kind: "none", shiftMs: NaN, match: NaN)
               var refused = false
               if a.archivePath.len > 0:
                 try:
@@ -589,6 +597,24 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                 if archiveSamples.len > 0:
                   let refName = a.archiveName & " (archive)"
                   recorded = at[vsReference]
+                  # Where the stored reference lies: against the recorded reference trace
+                  # when the unit has one (found by correlation, the shift said), else at
+                  # its own stored start time.
+                  var placedAt = AlignReport(kind: "start", shiftMs: NaN, match: NaN)
+                  var stored = archiveSamples
+                  if recorded >= 0:
+                    let al = alignStored(rows[recorded], archiveSamples, dtMs)
+                    placedAt = AlignReport(kind: (
+                        if al.found: "aligned" else: "unaligned"),
+                      shiftMs: al.shiftMs, match: al.match, words: al.words)
+                    if al.found: stored = placed(archiveSamples, int(round(
+                        al.shiftMs / dtMs)))
+                  else:
+                    stored = startedAt(archiveSamples, a.archiveStartMs, dtMs)
+                    placedAt.shiftMs = a.archiveStartMs
+                    placedAt.words = startsTogether(a.archiveStartMs)
+                  alignment = placedAt
+                  archiveSamples = stored
                   rows.add archiveSamples
                   names.add refName
                   at[vsReference] = rows.high
@@ -600,14 +626,23 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
                                   (if a.vibWhy.len > 0: " (" & a.vibWhy & ")" else: "")
                               else: ""
                 let n = (answer.leftOut, answer.atOtherInterval)
-                answer = vibratorOf(rows, names, at, dtMs, a.params, recorded)
+                answer = vibratorOf(rows, names, at, dtMs, a.params, recorded,
+                  a.topHz,
+                  a.exactTopHz)
                 (answer.leftOut, answer.atOtherInterval) = n
-                if answer.problem.len == 0: answer.against = against
+                if answer.problem.len == 0:
+                  answer.against = against
+                  answer.alignment = alignment
                 if archiveSamples.len > 0 and answer.problem.len == 0:
-                  let rule = if kept.len > 0: lengthRule(archiveSamples.len, kept[0].len) else: ""
-                  if rule.len > 0:
-                    answer.note = capitalizeAscii(rule) &
-                      (if answer.note.len > 0: ". " & answer.note else: "")
+                  let rule = if kept.len > 0: lengthRule(archiveSamples.len,
+                      kept[0].len) else: ""
+                  var said = if rule.len > 0: capitalizeAscii(rule) else: ""
+                  if alignment.words.len > 0:
+                    said.add (if said.len > 0: ". " else: "") &
+                      capitalizeAscii(alignment.words)
+                  if said.len > 0:
+                    answer.note = said & (if answer.note.len > 0: ". " &
+                        answer.note else: "")
                 if missing.len > 0:
                   let words = missing.join(", ") & " left out (killed, dead or unreadable)"
                   if answer.problem.len > 0: answer.problem.add "; " & words

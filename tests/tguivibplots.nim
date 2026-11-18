@@ -134,6 +134,13 @@ proc main*() =
       doAssert drawn == {0 .. 4}, "plots checked: " & $drawn
       true)
     scrollTo(3)
+    # the roles' table is folded under its line until that is clicked
+    step("the roles opened", proc (f: FrameInfo) =
+      let c = f.markOf("new plot 1.roles header").centre
+      f.moveMouse(c)
+      f.pressMouse(c, true)
+      f.pressMouse(c, false),
+      proc (f: FrameInfo): bool = f.markOf("new plot 1.role Ref").size.x > 0)
     # the masses row, its order, its switch
     step("the masses row", noop, proc (f: FrameInfo): bool =
       let (a, b) = (f.markOf("new plot 1.reaction mass"), f.markOf("new plot 1.baseplate mass"))
@@ -155,6 +162,12 @@ proc main*() =
       doAssert note.pos.x + note.size.x <= win.pos.x + win.size.x + 1,
         "the note runs past the window: " & $note & " in " & $win
       true)
+    step("the roles closed", proc (f: FrameInfo) =
+      let c = f.markOf("new plot 1.roles header").centre
+      f.moveMouse(c)
+      f.pressMouse(c, true)
+      f.pressMouse(c, false),
+      proc (f: FrameInfo): bool = f.markOf("new plot 1.role Ref").size.x == 0)
     step("lb clicked", proc (f: FrameInfo) =
       let c = f.markOf("new plot 1.unit lb").centre
       f.moveMouse(c)

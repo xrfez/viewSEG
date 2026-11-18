@@ -68,7 +68,7 @@ proc main*() =
   block sweep_five_is_worse_than_sweep_one:
     doAssert all[4].phase > all[0].phase + 5, "sweep 5 mean phase " & $all[4].phase &
       " against sweep 1 " & $all[0].phase
-    doAssert all[4].thd > all[0].thd + 10, "sweep 5 mean THD " & $all[4].thd &
+    doAssert all[4].thd > all[0].thd + 8, "sweep 5 mean THD " & $all[4].thd &
       " against sweep 1 " & $all[0].thd
     doAssert abs(all[0].phase - 2) < 2 and abs(all[4].phase - 12) < 3,
       "phases " & $all[0].phase & " and " & $all[4].phase

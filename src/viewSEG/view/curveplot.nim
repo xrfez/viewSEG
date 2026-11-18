@@ -79,6 +79,9 @@ type
     legend*: bool = true ## the legend box; a plot of one series does not need it
     note*: string ## shown over an empty plot: why it is empty
     aside*: string ## appended to the readout (a delay taken off, in ms)
+    bareX*: bool ## the x axis has no label and no tick labels (a plot above one that shares it)
+    dimmed*: seq[Slice[float64]]
+      ## stretches of x drawn dimmed, over the curves (a sweep's tapers, left out of its judgement)
 
   Reading* = object
     ## What the cursor reads at an x: the nearest point of each curve.

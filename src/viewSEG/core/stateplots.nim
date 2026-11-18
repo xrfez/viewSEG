@@ -259,6 +259,16 @@ proc chosenReferenceFor(state: var AppState; w: int; s: Session; dtMs: float64;
   pw.reference = e.name
   ("", e.name)
 
+func vibTopKey*(state: AppState; pw: AnalysisWindow): string =
+  ## What the top frequency typed in vibrator window `pw` is kept under: the project
+  ## reference's id when the window is measured against a stored one (a trace of each
+  ## record, a pilot, is the recorded trace), else `RecordedKey`.
+  result = RecordedKey
+  if pw.params.projectReference and state.chosenRef.len > 0 and
+      state.refsLoaded:
+    let at = state.refs.findId(state.chosenRef)
+    if at >= 0 and not state.refs.entries[at].isPilot: result = state.chosenRef
+
 proc askPlot(state: var AppState; w: int): bool =
   ## Asks the reader for window `plots[w]`'s numbers of its traces, with
   ## the filters it has; false when its file is not open any more or cannot
@@ -330,8 +340,12 @@ proc askPlot(state: var AppState; w: int): bool =
         a.archivePath = state.refsHome / e.file
         a.archiveName = e.name
         a.archiveIntervalUs = e.intervalUs
+        a.archiveStartMs = e.timeStart
+        if e.origin.generated: a.exactTopHz = max(e.origin.f1Hz, e.origin.f2Hz)
     a.refName = a.archiveName & " (archive)"
     pw.reference = a.refName
+  if pw.view == avVibrator:
+    a.topHz = pw.params.tops.topOf(state.vibTopKey(pw))
   if pw.view == avVibrator and pw.params.roles.source == rsCodes:
     a.extraNote = (if a.extraNote.len > 0: a.extraNote & "; " else: "") &
       "roles taken from the trace identification codes"

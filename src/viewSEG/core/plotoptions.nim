@@ -42,6 +42,10 @@ type
     limitsOn*: bool = false
     limits*: VibLimits = VibLimits(phaseDeg: 10, meanPhaseDeg: 5, thdPct: 40,
       meanThdPct: 20)
+    tops*: seq[TopFrequency]
+    qcWindowMs*: float64 = 500.0
+    qc*: QcLimits
+    forceHundredPct*: float64 = NaN
 
   EnvelopeOptions* = object
     phaseAgainst*: PhaseAgainst = paReference
@@ -96,8 +100,10 @@ func optionsOf*(p: AnalysisParams; view: AnalysisView): PlotOptions =
   of avVibrator:
     result.vibrator = VibratorOptions(reactionMassKg: p.reactionMassKg,
       baseplateMassKg: p.baseplateMassKg, harmonics: p.harmonics,
-      phaseShow: p.phaseShow, projectReference: p.projectReference, limitsOn: p.limitsOn,
-      limits: p.limits)
+      phaseShow: p.phaseShow, projectReference: p.projectReference,
+      limitsOn: p.limitsOn,
+      limits: p.limits, tops: p.tops, qcWindowMs: p.qcWindowMs, qc: p.qc,
+      forceHundredPct: p.forceHundredPct)
   of avFk: result.fk = FkOptions(floorDb: p.floorDb, colourMap: p.colourMap, raw: p.fkRaw)
   of avOrientation: discard
 
@@ -133,7 +139,11 @@ func applied*(o: PlotOptions; view: AnalysisView; p: AnalysisParams): AnalysisPa
      result.limitsOn, result.limits) = (o.vibrator.reactionMassKg, o.vibrator.baseplateMassKg,
        o.vibrator.harmonics, o.vibrator.phaseShow, o.vibrator.projectReference, o.vibrator.limitsOn,
        o.vibrator.limits)
-  of avFk: (result.floorDb, result.colourMap, result.fkRaw) = (o.fk.floorDb, o.fk.colourMap, o.fk.raw)
+    (result.tops, result.qcWindowMs, result.qc, result.forceHundredPct) = (
+      o.vibrator.tops, o.vibrator.qcWindowMs, o.vibrator.qc,
+          o.vibrator.forceHundredPct)
+  of avFk: (result.floorDb, result.colourMap, result.fkRaw) = (o.fk.floorDb,
+      o.fk.colourMap, o.fk.raw)
   of avOrientation: discard
 
 func builtin*(view: AnalysisView; p: AnalysisParams): AnalysisParams =

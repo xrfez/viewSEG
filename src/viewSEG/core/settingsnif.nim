@@ -274,6 +274,20 @@ proc writePlotOptions(w: var NifWriter; o: PlotOptions) =
   for name, x in fieldPairs(o.vibrator.limits):
     if not x.isNaN: w.value(name, x)
   w.close()
+  w.value("qcWindowMs", o.vibrator.qcWindowMs)
+  w.open("qc")
+  for name, x in fieldPairs(o.vibrator.qc):
+    if not x.isNaN: w.value(name, x)
+  w.close()
+  if not o.vibrator.forceHundredPct.isNaN: w.value("forceHundredPct",
+      o.vibrator.forceHundredPct)
+  w.open("tops")
+  for t in o.vibrator.tops:
+    w.open("top")
+    w.add t.reference
+    w.add t.hz
+    w.close()
+  w.close()
   w.close()
   w.open("fk")
   w.value("floorDb", o.fk.floorDb)
@@ -837,6 +851,34 @@ proc plotOptions(r: var Reading; n: NifNode; o: var PlotOptions) =
                 known = true
                 r.ranged(l, NumberRange, x)
             if not known: r.unknown(l, "limits")
+        elif c.isTree("qcWindowMs"): r.ranged(c, WindowMsRange,
+            o.vibrator.qcWindowMs)
+        elif c.isTree("forceHundredPct"): r.ranged(c, MassKgRange,
+            o.vibrator.forceHundredPct)
+        elif c.isTree("qc"):
+          # a limit written is on; one left out is off
+          o.vibrator.qc = QcLimits(avgPhaseDeg: NaN, peakPhaseDeg: NaN,
+            avgDistortionPct: NaN,
+            peakDistortionPct: NaN, avgForcePct: NaN, peakForcePct: NaN)
+          for l in c.kids:
+            var known = false
+            for name, x in fieldPairs(o.vibrator.qc):
+              if l.isTree(name):
+                known = true
+                r.ranged(l, NumberRange, x)
+            if not known: r.unknown(l, "qc")
+        elif c.isTree("tops"):
+          var got: seq[TopFrequency] = @[]
+          for t in c.kids:
+            let shaped = t.isTree("top") and t.kids.len == 2
+            let named = shaped and t.kids[0].kind == nkString and usableText(t.kids[0].text)
+            if named and t.kids[1].kind in {nkFloat, nkInt}:
+              let hz = if t.kids[1].kind == nkFloat: t.kids[1].floatVal
+                       else: float64(t.kids[1].intVal)
+              if TopHzRange.allows(hz): got = got.withTop(t.kids[0].text, hz)
+              else: r.unusable(t.kids[1], "top", "a number " & TopHzRange.words)
+            else: r.unusable(t, "tops", "(top \"reference\" hertz)")
+          o.vibrator.tops = got
         else: r.unknown(c, "vibrator")
     elif k.isTree("fk"):
       for c in k.kids:

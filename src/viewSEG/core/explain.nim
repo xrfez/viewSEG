@@ -491,14 +491,16 @@ func vibDistortionText(f: ExplainFacts): string =
   join4(part("Shows", "Distortion in % up, against sweep time in ms across: the total " &
       "harmonic distortion (THD) of each ground force, and each harmonic (" & upTo & ") of " &
       "the ground force as a % of its fundamental."),
-    part("Computed from", f.vibTrace, f.rolesWords, "THD sums the harmonics from the 2nd " &
-      "to the highest set that are below 80 % of Nyquist at that time; harmonics above " &
-      "Nyquist are left out. Where none is below it, there is no THD.",
+    part("Computed from", f.vibTrace, f.rolesWords, "THD is the in-band distortion a " &
+      "vibrator controller reports: it sums the harmonics, from the 2nd, whose frequency " &
+      "stays within the top frequency box (the sweep's top, Hz); where none is in band " &
+      "it is 0. A harmonic above 80 % of Nyquist is never measured.",
       f.rawClause, f.limitsWords("distortion")),
     part("Reading it", "Lower is better. A smooth low THD is a clean sweep; a rise at one " &
       "point is a resonance or a stroke limit; one harmonic standing out is a specific fault."),
-    part("Careful", "A harmonic is measured only while it stays below 80 % of Nyquist, so " &
-      "later in the sweep THD sums fewer harmonics and its noise floor falls with them."))
+    part("Careful", "Distortion falls to 0 in the later part of a sweep, where the 2nd " &
+      "harmonic is above the top frequency: that is how the controller reports it. A " &
+      "wrong top frequency changes every number (the box and the verdict use it)."))
 
 func fkText(f: ExplainFacts): string =
   let kind = if f.wavenumber.len > 0: "Wavenumber (" & f.wavenumber & ")"

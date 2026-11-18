@@ -881,11 +881,47 @@ right of that line's first row. A change works it out again.
     recorded units, or lb × when Units is Imperial; the stored numbers stay in kilograms): the recorded force (counts) and the weighted sum are not in one unit,
     so neither shares the other's axis. Without accelerometer sensitivities it is
     uncalibrated, and the window says so.
-  - **Harmonics** tracked to the 5th at first (2 to 16); THD sums them from the 2nd, at each
-    time only those still below 80 % of Nyquist (harmonics above Nyquist are left out, and
-    where none is below it there is no THD).
-  - **Limits...** (drawn selected while they are on; off at first) opens **Check against
-    limits** and the eight boxes, greyed while that check is off: the largest |phase| at a
+  - **Harmonics** tracked to the 5th at first (2 to 16): the highest harmonic the
+    distortion plot draws one line for. Distortion itself is the **in-band** one (below).
+  - **The verdict.** One line at the top of the window says PASS, FAIL or NOT JUDGED, in
+    words and a sign (a tick or a cross), never by colour alone; a FAIL names the worst
+    failing value (the one furthest past its limit, in proportion) and the time of its
+    window ("FAIL: peak force 157 % > 120 % at 9.5 s (and 1 more)"). Under the settings an
+    always-visible **limits table** has a row per limit: what was measured, the limit, a
+    tick (✓), a cross (✗) or a dash (not judged), and where the worst window is or why the
+    limit was not judged. It is judged as a vibrator controller's QC does: the mean of each
+    window of the sweep (500 ms, typed in the **window** box), then the average and the worst
+    window against six limits, on the sweep less its tapers (dimmed on the plots). Defaults:
+    average phase at most 5°, peak phase 10°, average distortion 30 %, peak distortion
+    60 %, average force at least 90 % and peak force at most 120 % of the force that is 100 %.
+    The limits are in the **Limits...** popup, above the point limits; an empty box turns
+    that limit off. The force limits need the **100 % force =** box (the force, in the
+    file's unit, that counts as 100 %): with it empty the table says which box to fill
+    and the other four limits still give the verdict. A trace shorter than its reference
+    is judged to its own end (the note says so).
+  - **In-band distortion.** The **Top frequency (Hz)** box is the sweep's top: THD sums
+    the harmonics, from the 2nd, whose frequency stays within it, as the controller's
+    distortion does, and is 0 where none is in band (the reference above half the top).
+    It is filled in for you: exactly from a generated reference's end frequency, else
+    by an estimate from the reference's frequency track (named "(estimate)" beside the
+    box: type the sweep's design value). A typed value is kept with that reference in the
+    project. A line warns when it differs by more than 2 % from the largest frequency
+    measured in the flat part of the reference. The distortion plots, the table's THD
+    columns and the verdict all use it. A harmonic above 80 % of Nyquist is never measured.
+  - **The stored reference's place.** When the unit has a recorded reference trace, a
+    stored reference is aligned to it by cross-correlation and the note says the shift
+    found ("stored reference aligned to the recorded reference: +115 ms"). With no
+    recorded reference, the stored reference's own start time (its From) is honoured and
+    the note says the two are taken to share the record's first sample. Against a
+    reference nothing is filtered: the raw trace is measured against the raw reference
+    whatever the plot's filters are, and the note says so.
+  - **Fitting.** At its default size one unit shows its verdict, its limits table and all
+    its plots with nothing to scroll; the roles' table and the note fold under one line
+    each (click to open). The plots share one time axis, labelled on the last. Stepping to
+    the next record keeps the window's size and place and only updates it.
+  - **Limits...** opens the six pass or fail limits (always applied), then **Check
+    against limits** (the point limits, drawn selected while they are on; off at first)
+    and the eight boxes, greyed while that check is off: the largest |phase| at a
     point (10° at first) and its mean (5°), THD at a point (40 %) and its mean (20 %), any one
     Harmonic (%), the fundamental's lowest and highest, the largest peak (empty: none).
     The force boxes show the unit the force axis shows, written beside the box: newtons

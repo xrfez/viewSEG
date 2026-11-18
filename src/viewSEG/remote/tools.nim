@@ -595,6 +595,43 @@ proc plotJson(w: AnalysisWindow; fe: Frontend; units: UnitSystem; limit: int): J
       for c in row: cells.add newJString(c)
       rows.add cells
     result["table"] = rows
+  if r.view == avVibrator and r.problem.len == 0 and r.qc.rows.len > 0:
+    # the verdict, judged the way a vibrator controller's QC reports it
+    let q = r.qc
+    var limits = newJArray()
+    for row in q.rows:
+      limits.add %*{"limit": $row.limit, "measured": toJson(row.measured),
+        "bound": toJson(row.bound), "unit": row.limit.unitOf.strip,
+        "pass": (if row.status == qsNotJudged: newJNull() else: %(row.status ==
+            qsPass)),
+        "status": $row.status, "worstWindowMs": toJson(row.atMs),
+            "why": row.why}
+    let s = q.stats
+    result["verdict"] = %($q.verdict)
+    result["verdictLine"] = %q.line
+    result["qcLimits"] = limits
+    result["windowStats"] = %*{"windowMs": toJson(s.windowMs),
+        "windows": s.windows,
+      "avgPhaseDeg": toJson(s.avgPhaseDeg), "peakPhaseDeg": toJson(
+          s.peakPhaseDeg),
+      "peakPhaseAtMs": toJson(s.peakPhaseAtMs),
+      "avgDistortionPct": toJson(s.avgDistortionPct),
+      "peakDistortionPct": toJson(s.peakDistortionPct),
+      "peakDistortionAtMs": toJson(s.peakDistortionAtMs),
+      "avgForce": toJson(s.avgForce), "minForce": toJson(s.minForce),
+      "minForceAtMs": toJson(s.minForceAtMs), "peakForce": toJson(s.peakForce),
+      "peakForceAtMs": toJson(s.peakForceAtMs), "avgForcePct": toJson(
+          s.avgForcePct),
+      "minForcePct": toJson(s.minForcePct), "peakForcePct": toJson(
+          s.peakForcePct),
+      "hundredPctForce": toJson(q.hundredPct), "forceNote": q.forceNote}
+    result["band"] = %*{"hz": toJson(r.band.hz), "suggestedHz": toJson(
+        r.band.suggestedHz),
+      "largestChordHz": toJson(r.band.chordHz), "typed": r.band.typed,
+      "exact": r.band.exact, "warning": r.band.warning}
+    result["alignment"] = %*{"kind": r.alignment.kind, "shiftMs": toJson(
+        r.alignment.shiftMs),
+      "match": toJson(r.alignment.match), "words": r.alignment.words}
   if r.view == avCorrelation and r.plots.len > 0:
     # one entry per table row; null for a trace not drawn (the reference itself)
     var lags = newJArray()

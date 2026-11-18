@@ -76,7 +76,8 @@ proc library(rows: seq[seq[float32]]; at: array[VibRole, int]): UnitSignature[fl
   var counts = newSeq[int](rows.len)
   for c in counts.mitems: c = N
   let meta = initChunkMeta(rowsOf(keys, counts), Dt)
-  let tp = initSweepTrackPlan(float32, TrackParams(thdHarmonics: thAllThatFit), Dt, N)
+  let tp = initSweepTrackPlan(float32, TrackParams(thdHarmonics: thAllThatFit,
+      harmonicBandAuto: true), Dt, N)
   var ws = initWorkspace()
   ws.reserve(vibratorWorkspace(tp))
   var unit = initVibUnit(at[vsReference], at[vsGroundForce], at[vsMass], at[vsBaseplate],
@@ -142,7 +143,9 @@ proc main*() =
         doAssert r.forceUnits[i] in r.plots[2].yLabel, r.forceUnits[i] & " / " & r.plots[2].yLabel
 
   block whatWasMade:
-    let r = vibratorOf(unitRows, names, inOrder, Dt, params)
+    # (distortion is in band: the band's edge typed at 1000 Hz keeps the 2nd harmonic in it
+    # all along the sweep)
+    let r = vibratorOf(unitRows, names, inOrder, Dt, params, -1, 1000.0)
     let xs = r.plots[0].xs
     let phase = r.curve(0, "GF")
     let fund = r.curve(1, "GF fundamental")
@@ -311,7 +314,7 @@ proc main*() =
         if m > lastH16: inc thdAfterH16
     doAssert nH16 > 0 and nThd > nH16 and thdAfterH16 > 20,
       "GF THD has " & $thdAfterH16 & " points past H16's (" & $nThd & " against " & $nH16 & ")"
-    doAssert "harmonics above Nyquist are left out" in r.note, r.note
+    doAssert "never one above 80 % of Nyquist" in r.note, r.note
 
   block recordedReference:
     # the project's reference as Ref, the recorded pilot (here 5° off it) measured against

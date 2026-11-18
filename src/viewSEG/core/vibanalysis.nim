@@ -29,7 +29,7 @@ import std/[math, strutils]
 import parseSEG
 import processSEG/core/[rows, types, units, workspace]
 import processSEG/vibroseis/[sweeptrack, vibqc]
-import analysis, signalend
+import analysis, signalend, vibjudge
 
 export VibRole, VibSignal
 
@@ -44,6 +44,11 @@ func number(x: float64; digits = 1): string =
   if x.isNaN or abs(x) == Inf: "–"
   elif digits == 0: $int64(round(x))
   else: formatFloat(x, ffDecimal, digits)
+
+func forceCell(x: float64): string =
+  ## A force for the table: four significant digits whatever its size (a force in volts is
+  ## 0.001 2, one in counts 13 202), scientific outside 0.001 to 10 million.
+  forceNumber(x)
 
 func past(name: string; xs, ys: seq[float64]; at: seq[bool]): AnalysisCurve =
   ## The points of `ys` where `at`, marked.
@@ -75,9 +80,33 @@ func weightedUnit(u: AmplitudeUnit): string =
   ## traces as recorded (counts) unless calibrated.
   if u == auForce: "N" elif u == auRecorded: "kg × as recorded" else: "kg × " & $u
 
+func windowPeriods(p: TrackParams; f: float64): int =
+  ## The periods of the tracker's window at reference frequency `f`: `cycles`, or where
+  ## those are shorter than `minWindowMs` the smallest even number that reaches it.
+  result = p.cycles
+  let need = p.minWindowMs * f / 1000
+  if float64(result) / f * 1000 < p.minWindowMs: result = 2 * int(ceil(need / 2))
+
+func shortEndMs(track: SweepTrack; p: TrackParams; counts: openArray[int];
+    at: array[VibRole, int]; dtMs: float64; cols: int): float64 =
+  ## The last point (ms) of the reference's track whose window lies inside the shortest
+  ## of the signal rows, when one is shorter than the reference (or than the longest row);
+  ## NaN when none is, or no point does.
+  result = NaN
+  var shortest = cols
+  for role in [vsGroundForce, vsMass, vsBaseplate]:
+    if at[role] >= 0: shortest = min(shortest, counts[at[role]])
+  if shortest < cols and shortest > 0:
+    let last = float64(shortest - 1) * dtMs
+    for m in countdown(track.len - 1, 0):
+      let f = track.referenceHz[m]
+      if result.isNaN and not f.isNaN and f > 0 and
+          track.timeMs[m] + 500.0 * float64(windowPeriods(p, f)) / f <= last:
+        result = track.timeMs[m]
+
 proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     at: array[VibRole, int]; dtMs: float64; p: AnalysisParams;
-    recorded = -1): AnalysisResult =
+    recorded = -1; topHz = NaN; exactTopHz = NaN): AnalysisResult =
   ## The vibrator signature of the unit whose role `r` is row `at[r]` of
   ## `rows` (traces from their first sample at `dtMs`, named `names`; -1:
   ## the unit has none), with the masses, polarities, harmonics and limits
@@ -86,6 +115,9 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   ## row, -1: none): the unit's recorded pilot when the reference is another
   ## (the project's); it is measured against the reference as a signal of its own,
   ## "Ref (recorded)": a row in the table, a line in the phase and frequency plots.
+  ## Distortion is the harmonics within a band whose edge is `topHz` (typed; NaN: none
+  ## typed), else `exactTopHz` (a generated reference's end frequency; NaN: not generated),
+  ## else the reference's own estimated top (`result.band` says which).
   result = AnalysisResult(view: avVibrator, dtMs: dtMs)
   if at[vsReference] notin 0 ..< rows.len:
     result.problem = "no reference (Ref): give the pilot's trace that role"
@@ -122,14 +154,20 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   unit.polarity[vsBaseplate] = mb
   var results: seq[UnitSignature[float32]] = @[]
   let withRecorded = recorded in 0 ..< rows.len and recorded != at[vsReference]
+  var limits = VibLimits()
+  var cutMs = NaN # the judged part ends here: the shortest trace's last measurable point
+  var band = NaN
   try:
     if pair and masses:
       unit.reactionMass = mass(p.reactionMassKg, muKilogram)
       unit.baseplateMass = mass(p.baseplateMassKg, muKilogram)
-    let limits = if p.limitsOn: p.limits else: VibLimits()
+    limits = if p.limitsOn: p.limits else: VibLimits()
     let meta = initChunkMeta(rowsOf(keys, counts), dtMs)
-    let tp = initSweepTrackPlan(float32, TrackParams(harmonics: clamp(p.harmonics, 2, 16),
-      thdHarmonics: thAllThatFit),
+    band = if topHz.isNaN: exactTopHz else: topHz
+    let tp = initSweepTrackPlan(float32, TrackParams(harmonics: clamp(
+        p.harmonics, 2, 16),
+      thdHarmonics: thAllThatFit, harmonicBandHz: band,
+          harmonicBandAuto: band.isNaN),
       dtMs, cols)
     var ws = initWorkspace()
     ws.reserve(vibratorWorkspace(tp))
@@ -137,7 +175,16 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     if withRecorded:
       units.add VibUnit(rows: [vsReference: at[vsReference], vsGroundForce: recorded,
         vsMass: -1, vsBaseplate: -1])
-    tp.analyzeVibrators(rowBlock(work, rows.len, cols), meta, units, limits, results, ws)
+    for pass in 0 .. 1:
+      tp.analyzeVibrators(rowBlock(work, rows.len, cols), meta, units, limits,
+          results, ws)
+      # a trace shorter than the reference ends the judged part: its zero-padded rest is no
+      # measurement (a point whose window reaches past its last sample stays out)
+      let cut = if pass == 0: shortEndMs(results[0].tracks[vsReference], tp.params, counts, at,
+                  dtMs, cols) else: NaN
+      if cut.isNaN: break
+      cutMs = cut
+      limits.toMs = if limits.toMs.isNaN: cutMs else: min(limits.toMs, cutMs)
   except ValueError as e:
     result.problem = e.msg
     return
@@ -196,7 +243,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   let t = u.tracks[main]
   var largest = newSeq[float64](xs.len) # the largest harmonic per point, %
   for m in 0 ..< xs.len: largest[m] = NaN
-  for k in 2 .. (if main in u.signals: t.amplitude.len else: 0):
+  for k in 2 .. (if main in u.signals: min(t.amplitude.len, clamp(p.harmonics,
+      2, 16)) else: 0):
     var pct = newSeq[float64](xs.len)
     for m in 0 ..< xs.len:
       let a1 = t.amplitude[0][m]
@@ -251,8 +299,8 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     let trace = if s == vsWeightedSum: "M, B" else: names[at[VibRole(s)]]
     var row = @[$s, trace, (if s in u.reversed: "reversed" else: "as recorded"),
       number(m.meanAbsPhaseDeg), number(m.maxAbsPhaseDeg), number(m.meanThdPct),
-      number(m.maxThdPct), number(m.meanForce, 3), number(m.minForce, 3),
-      number(m.maxPeak, 3)]
+      number(m.maxThdPct), forceCell(m.meanForce), forceCell(m.minForce),
+      forceCell(m.maxPeak)]
     # the force limits are not applied to a force in another unit than theirs
     let ownUnit = if s == vsWeightedSum and main != vsWeightedSum:
                     {lkForceLow, lkForceHigh, lkPeakForce, lkMeanForce}
@@ -273,13 +321,43 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     let m = results[1].summaries[vsGroundForce]
     var row = @[RecordedRef, names[recorded], "as recorded", number(m.meanAbsPhaseDeg),
       number(m.maxAbsPhaseDeg), number(m.meanThdPct), number(m.maxThdPct),
-      number(m.meanForce, 3), number(m.minForce, 3), number(m.maxPeak, 3)]
+      forceCell(m.meanForce), forceCell(m.minForce), forceCell(m.maxPeak)]
     if p.limitsOn: row.add "not judged"
     var at1 = result.table.len
     for i in 1 ..< result.table.len:
       if result.table[i][0] == $vsReference: at1 = i + 1
     result.table.insert(row, at1)
     result.forceUnits.insert(forceUnit(results[1].units[vsGroundForce]), at1 - 1)
+  # The verdict: statistics per window of the sweep, judged against the QC limits. The
+  # judged part is the sweep less its tapers (or the skips of the point limits), to the
+  # trace's end when it is shorter than the reference.
+  let judging = VibLimits(skipStartMs: limits.skipStartMs,
+    skipEndMs: limits.skipEndMs,
+    fromMs: limits.fromMs, toMs: limits.toMs)
+  let span = u.reference.extent.judgedPart(judging)
+  var summary = WindowSummary()
+  try:
+    summary = windowStats(u.tracks[main], judging, p.qcWindowMs).summary
+  except ValueError:
+    summary = windowStats(u.tracks[main], judging).summary
+  result.qc = judge(summary, p.qcWindowMs, p.qc, p.forceHundredPct)
+  let usedHz = u.tracks[main].bandHz
+  let chord = largestChordHz(u.reference)
+  result.band = BandReport(hz: usedHz, suggestedHz: topFrequencyHz(u.reference),
+      chordHz: chord,
+    typed: not topHz.isNaN, exact: topHz.isNaN and not exactTopHz.isNaN)
+  if not usedHz.isNaN and not chord.isNaN and chord > 0 and abs(usedHz -
+      chord) > 0.02 * chord:
+    result.band.warning = "top frequency " & number(usedHz, 1) & " Hz is " &
+      number(100 * abs(usedHz - chord) / chord, 1) &
+          " % from the largest frequency measured " &
+      "in the flat part (" & number(chord, 1) & " Hz): check it"
+  # the tapers, dimmed on the plots that run along the sweep
+  if not (span.a.isNaN or span.b.isNaN):
+    for plot in result.plots.mitems:
+      if plot.xs.len > 0:
+        if plot.xs[0] < span.a: plot.dimmed.add plot.xs[0] .. span.a
+        if plot.xs[^1] > span.b: plot.dimmed.add span.b .. plot.xs[^1]
   # The words: which trace is which, and how
   var roles: seq[string] = @[]
   for role in VibRole:
@@ -292,8 +370,15 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     words.add "; enter both masses to generate GF from M and B"
   words.add "; phase plot: " & PhaseShowWords[p.phaseShow] & "; the table's phases are " &
     "sizes (|phase|)"
-  words.add "; values as recorded; THD sums harmonics 2 to " & $clamp(p.harmonics, 2, 16) &
-    " while below 80 % of Nyquist (harmonics above Nyquist are left out)"
+  words.add "; values as recorded; distortion is the in-band one, as a vibrator controller " &
+    "reports it: the harmonics (to the 16th) whose frequency stays within the top frequency " &
+    (if usedHz.isNaN: "(none set: every harmonic to the " & $clamp(p.harmonics,
+        2, 16) &
+       "th counts)" else: number(usedHz, 1) & " Hz (" & (
+           if not topHz.isNaN: "typed"
+      elif not exactTopHz.isNaN: "the generated sweep's end frequency"
+      else: "estimated from the reference's frequency track") & ")") &
+    ", never one above 80 % of Nyquist"
   if vsWeightedSum in u.signals:
     words.add "; GF (M, B) is uncalibrated without accelerometer sensitivities: in " &
       weightedUnit(u.units[vsWeightedSum]) & ", on an axis of its own"
@@ -301,10 +386,19 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       words.add " (the force limits are in " & forceUnit(u.units[main]) &
         " and are not applied to it)"
   let e = u.reference.extent
-  if p.limitsOn:
-    let span = e.judgedPart(p.limits)
-    words.add "; judged from " & number(span.a, 0) & " to " & number(span.b, 0) &
-      " ms (the sweep less its tapers)"
+  words.add "; judged from " & number(span.a, 0) & " to " & number(span.b, 0) &
+      " ms (" &
+    (if judging.skipStartMs.isNaN and judging.skipEndMs.isNaN: "the sweep less its tapers"
+      else: "the sweep less " & (if judging.skipStartMs.isNaN: "its start taper"
+        else: number(max(0.0, judging.skipStartMs), 0) & " ms at its start") &
+            " and " &
+        (if judging.skipEndMs.isNaN: "its end taper"
+        else: number(max(0.0, judging.skipEndMs), 0) & " ms at its end")) &
+    (if not cutMs.isNaN: "; judged to the trace's end" else: "") & ")"
+  words.add "; verdict: windows of " & number(p.qcWindowMs, 0) & " ms from the sweep's start"
+  if u.tracks[vsReference].fundamentalCut:
+    words.add "; the fundamental is measured only below 80 % of Nyquist (to " &
+      number(u.tracks[vsReference].lastFundamentalMs, 0) & " ms of the reference)"
   for s in said: words.add "; " & s
   result.note = words
   # a trace that cannot be matched to the whole of the reference: shorter than it, or its
@@ -313,7 +407,16 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   let traceRow = if main == vsGroundForce: at[vsGroundForce] else: at[vsMass]
   if traceRow in 0 ..< rows.len:
     let traceMs = float64(rows[traceRow].len) * dtMs
-    result.warning = shortWords("trace", traceMs, float64(rows[at[vsReference]].len) * dtMs)
-    let early = endWords("", lastLoudMs(u.tracks[main].amplitude[0], xs), e.endMs, traceMs)
+    result.warning = shortWords("trace", traceMs, float64(rows[at[
+        vsReference]].len) * dtMs)
+    # where the reference's own fundamental is last measured, not the sweep's end: above 80 %
+    # of Nyquist (2 and 4 ms sampling) the fundamental is not measured, and that is no
+    # signal ending
+    let refEnd = if u.tracks[vsReference].fundamentalCut and
+                   not u.tracks[vsReference].lastFundamentalMs.isNaN:
+                   u.tracks[vsReference].lastFundamentalMs
+                 else: e.endMs
+    let early = endWords("", lastLoudMs(u.tracks[main].amplitude[0], xs),
+        refEnd, traceMs)
     if early.len > 0:
       result.warning.add (if result.warning.len > 0: "\n" else: "") & early
