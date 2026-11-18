@@ -117,7 +117,7 @@ proc main*() =
       doAssert r.plots[0].title.startsWith("How well each trace matches ") and
         r.plots[0].title.endsWith(", by time shift"), r.plots[0].title
       doAssert r.plots[0].xLabel == "Time shift (ms)" and
-        r.plots[0].yLabel == "Match (1 = identical shape)"
+        r.plots[0].yLabel == "Match, 1 = identical shape"
       doAssert r.plots[1].title == "Amplitude compared with the reference, by frequency"
       doAssert r.plots[2].title == "Phase compared with the reference, by frequency"
       doAssert r.plots[0].curves.len == 6, "the reference's own trace is drawn beside others: " &
@@ -132,7 +132,7 @@ proc main*() =
         r.note, r.note
       doAssert "peaks at" notin r.note and "autocorrelation" notin r.note
       doAssert r.table.len == 5 and r.table[0] == @["Trace", "Best match", "Time shift (ms)",
-        "Amplitude (dB)", "Mean |phase| (°)"], $r.table
+        "Amplitude (dB)", "Mean |phase| (°)", "Rotation (°)"], $r.table
       doAssert r.table[1][0] == "trace 1 (the reference)" and r.table[1][3] == "not drawn" and
         r.table[1][4] == "not drawn", $r.table[1]
       doAssert r.table[2][0] == "trace 2" and r.table[2][2] == "+10.0", $r.table[2]
@@ -153,17 +153,21 @@ proc main*() =
       let r = correlationOf([("rot", rot), ("rev", rev)], reference, "ref", DtMs,
         AnalysisParams(maxLagMs: 100))
       doAssert abs(r.peakLagMs(0)) < 1e-9
-      doAssert "rot: best match" in r.note and " at 0.0 ms (in step with the reference)" in
+      # the match is the envelope's peak (a quarter turn leaves it near 1, with the turn said);
+      # the mirror image is 1.00 at 0 ms, reversed
+      doAssert "rot: best match 0.99 at -0.3 ms (arrives 0.3 ms before the reference; rotated 87°)" in
         r.note, r.note
-      doAssert "reversed polarity" in r.note, r.note
-      doAssert r.table[1][2] == "0.0" and r.table[2][1].startsWith("-1.00") and
-        "reversed polarity" in r.table[2][1], $r.table
+      doAssert "rev: best match 1.00 at 0.0 ms (in step with the reference; reversed polarity)" in
+        r.note, r.note
+      doAssert r.table[1][1] == "0.99" and r.table[1][5] == "87", $r.table
+      doAssert r.table[2][2] == "0.0" and r.table[2][1] == "1.00 (reversed polarity)" and
+        r.table[2][5] == "180", $r.table
       doAssert r.table[2][4] in ["180.0", "-180.0", "+180.0"], "mean phase of a mirror image: " &
         r.table[2][4]
       doAssert "-0.0" notin r.note
 
     block shift_in_words:
-      # in step whatever the amplitude, and ahead of the reference (before it; a few samples of its start are lost: 0.99)
+      # in step whatever the amplitude, and ahead of the reference (before it by 10 ms; its first samples are lost: 0.99, and the sweep's slow envelope puts the peak 0.2 ms off, between samples)
       var reference, early, loud: seq[float32] = @[]
       for i in 0 ..< Samples:
         let t = float64(i) * DtMs / 1000
@@ -176,7 +180,7 @@ proc main*() =
       doAssert r.problem == "", r.problem
       doAssert "loud: best match 1.00 at 0.0 ms (in step with the reference)" in r.note,
         r.note
-      doAssert "early: best match 0.99 at -10.0 ms (arrives 10.0 ms before the reference)" in
+      doAssert "early: best match 0.99 at -9.8 ms (arrives 9.8 ms before the reference)" in
         r.note, r.note
 
     block none_chosen:

@@ -295,22 +295,35 @@ const StartsTogether = "The reference is taken to start with the trace (a record
 type ReferenceRead = object
   ## What reading a window's reference gave.
   samples: seq[float32]
-  name: string    ## in words, for the window's notes
-  problem: string ## why it cannot be used; "" when it can
-  cancelled: bool ## a newer request came first
+  name: string       ## in words, for the window's notes
+  problem: string    ## why it cannot be used; "" when it can
+  cancelled: bool    ## a newer request came first
+  filtered: bool     ## the plot's filters were run on it, as on the traces
+  unfiltered: string ## why they were not, when the plot has filters; "" otherwise
 
 func hasReference(a: AnalysisAsk): bool {.inline.} =
   ## Whether the window was given a reference: an archive file, a trace of the
   ## record by a rule, or a stored one that is gone (said, not used).
   a.archiveGone.len > 0 or a.archivePath.len > 0 or a.pilotTrace >= 0
 
+func withReference(through: string; got: ReferenceRead): string =
+  ## The words of the filters (`through`) as the reference's reading adds to them:
+  ## "trace and reference through 8-14-60-80 Hz", or that the reference is not filtered.
+  if got.filtered and through.startsWith("through "): "trace and reference " & through
+  elif got.unfiltered.len > 0:
+    (if through.len > 0: through & "; " else: "") & got.unfiltered
+  else: through
+
 proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: float64;
-    through: var string; passed: var int): ReferenceRead =
+    through: var string; passed: var int; proxy = -1): ReferenceRead =
   ## The chosen reference of window `a`, as a correlation and an envelope take
-  ## it: an archive file read raw, else the record's trace by the rule, put
-  ## through what the plot puts a trace through (reversal, filters, its own
-  ## filter) and cut to the rule's window; refused when its interval is not
-  ## `dtMs`. `through` and `passed` say what the filters did to the pilot.
+  ## it: an archive file, else the record's trace by the rule, put through the
+  ## plot's filters as the traces are (the pilot also through reversal and its
+  ## own filter) and cut to the rule's window; refused when its interval is not
+  ## `dtMs`. `through` and `passed` say what the filters did to the pilot. An
+  ## archive reference has no trace of its own: `proxy`, a live trace of the file that
+  ## is not auxiliary, stands for it where the filters ask (-1: none, it is not
+  ## filtered, and `unfiltered` says so).
   if a.archiveGone.len > 0:
     result.problem = a.archiveGone
   elif a.archivePath.len > 0:
@@ -337,6 +350,18 @@ proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: f
       else:
         result.name = a.archiveName & " (archive)"
         result.samples = refSamples
+        if a.processing.hasFilters:
+          if proxy < 0:
+            result.unfiltered = "the reference is not filtered"
+          else:
+            var one = @[refSamples]
+            var refPassed = 0
+            let words = filtered(one, f, @[proxy], a.processing, [], [], dtMs, refPassed)
+            if words.startsWith("through ") and refPassed == 0:
+              result.samples = one[0]
+              result.filtered = true
+            else:
+              result.unfiltered = "the reference is not filtered"
   elif a.pilotTrace >= 0:
     let rt = a.pilotTrace
     if rt notin 0 ..< f[].len:
@@ -362,6 +387,7 @@ proc readReference(p: ptr ReaderObj; a: AnalysisAsk; f: ptr SeismicFile; dtMs: f
       let refRev = if a.pilotReversed: @[rt] else: newSeq[int]()
       let refThrough = filtered(refRows, f, @[rt], a.processing, a.pilotOwn,
         refRev, dtMs, refPassed)
+      result.filtered = refPassed == 0 and refThrough.startsWith("through ")
       if refPassed > 0 and refThrough.startsWith("through "):
         inc passed
         let words = "the pilot is not filtered: " & AuxFilterOff
@@ -446,6 +472,11 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
         let stop = proc (): bool = p.interrupted(a.id)
         let plotOn = not (a.view == avFk and a.params.fkRaw) # f-k raw: the plot's filters only
         var passed = 0
+        var proxy = -1 # a trace that stands for an archive reference where the filters ask
+        for t in keptList:
+          if f[].traceKeys(t).status != tsAuxiliary:
+            proxy = t
+            break
         var through = if kept.len > 0: filtered(kept, f, keptList, a.processing,
           a.own, a.reversed, dtMs, passed, plotOn) else: ""
         if passed > 0 and through.startsWith("through "):
@@ -474,10 +505,12 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             var refName = ""
             var notUsed = a.notUsed
             if a.hasReference and a.params.phaseAgainst == paReference:
-              let got = p.readReference(a, f, dtMs, through, passed)
+              let got = p.readReference(a, f, dtMs, through, passed, proxy)
               if got.cancelled: return false
               if got.problem.len > 0: notUsed = got.problem
-              else: (reference, refName) = (got.samples, got.name)
+              else:
+                (reference, refName) = (got.samples, got.name)
+                through = withReference(through, got)
             let n = (answer.leftOut, answer.atOtherInterval)
             answer = envelopeOf(kept[0], keptNames[0], dtMs, t0Ms, a.params, reference, refName,
               notUsed, a.hasReference)
@@ -497,10 +530,11 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
             if not a.hasReference:
               answer.problem = NoReferenceChosen
             else:
-              let got = p.readReference(a, f, dtMs, through, passed)
+              let got = p.readReference(a, f, dtMs, through, passed, proxy)
               if got.cancelled: return false
               if got.problem.len > 0: answer.problem = got.problem
               else:
+                through = withReference(through, got)
                 var signals: seq[(string, seq[float32])] = @[]
                 for i in 0 ..< min(kept.len, MaxAnalysisCurves):
                   signals.add (keptNames[i], kept[i])
@@ -612,7 +646,9 @@ proc serve(p: ptr ReaderObj; a: AnalysisAsk): bool =
           answer.passedBy = passed
           answer.notDrawn = notDrawn
           if through.len > 0 and answer.problem.len == 0:
-            answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & through
+            # a correlation's note ends in one line a trace: the filters are a line of their own
+            let joint = if a.view == avCorrelation: "\n" else: "; "
+            answer.note = (if answer.note.len > 0: answer.note & joint else: "") & through
           if a.extraNote.len > 0 and answer.problem.len == 0:
             answer.note = (if answer.note.len > 0: answer.note & "; " else: "") & a.extraNote
       except ValueError as e:

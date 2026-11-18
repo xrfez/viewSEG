@@ -29,10 +29,11 @@ import std/[math, strutils]
 import processSEG/fft/[hilbert, plan, spectrogram, spectrum]
 import processSEG/vibroseis/[crosscorrelate, sweeptrack, vibqc]
 import processSEG/core/workspace
-import colourmaps, panels, phasepicture, phaseshow, plotcursor, processing, signalend, traceids
+import colourmaps, matchpeak, panels, phasepicture, phaseshow, plotcursor, processing, signalend, traceids
 
 export ColourMap, PlotCursor, Polarity, VibLimits
 export phasepicture, phaseshow
+export matchpeak.NoClearMatch
 
 type
   AnalysisView* = enum
@@ -589,7 +590,7 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
         hi = max(hi, d)
     let pad = max(2.0, (hi - lo) / 20)
     let (floorAt, ceilAt) = if p.phaseShow == psSigned: (centre - 180, centre + 180)
-                            else: (-180.0, 180.0)
+                            else: (0.0, 185.0) # sizes: a half turn is not on the border
     phasePlot = AnalysisPlot(title: "Phase against the reference", xLabel: "Time (ms)",
       xUnit: "ms", yLabel: "Phase difference (°)", yUnit: "°", xs: times,
       yLo: max(floorAt, min(lo - pad, centre - 10)),
@@ -603,9 +604,8 @@ proc envelopeOf*(x: openArray[float32]; name: string; dtMs, t0Ms: float64;
       words = meanText(diff, p.phaseShow) & ", largest " &
         formatFloat(worst, ffDecimal, 1) & "°"
       phasePlot.aside = "Phase against the reference over the part drawn: " & words
-    let dur = reference.len.float64 * dtMs
-    result.warning = shortWords("trace", x.len.float64 * dtMs, dur)
-    let early = endWords("", x, dtMs, dur)
+    result.warning = shortWords("trace", lengthMs(x.len, dtMs), lengthMs(reference.len, dtMs))
+    let early = endWords("", x, dtMs, signalEndMs(reference, dtMs))
     if early.len > 0: result.warning.add (if result.warning.len > 0: "\n" else: "") & early
     result.note = "Phase against " & referenceName & ": the trace's instantaneous phase " &
       "minus the reference's (the argument of the trace's analytic signal times the " &
@@ -711,18 +711,19 @@ const CorrelationHelp* =
   ## `√(Σtrace²·Σreference²)` (processSEG's `cnCoefficient`), so it is 1 for the
   ## reference's shape whatever the amplitude, and -1 for its mirror image
 
-func signedMs(x: float64): string =
-  ## "+2.0", "-2.0", "0.0": milliseconds with their sign.
-  let t = formatFloat(x, ffDecimal, 1)
-  if t == "0.0" or t == "-0.0": "0.0"
-  elif x > 0: "+" & t
-  else: t
-
-func shiftWords(lagMs, dtMs: float64): string =
-  ## What a time shift of the trace against the reference says in words.
-  if abs(lagMs) < dtMs / 2: "in step with the reference"
+func shiftWords(lagMs: float64): string =
+  ## What a time shift of the trace against the reference says in words: in step
+  ## when it reads 0.0 ms.
+  if signedMs(lagMs) == "0.0": "in step with the reference"
   else: "arrives " & formatFloat(abs(lagMs), ffDecimal, 1) & " ms " &
     (if lagMs > 0: "after" else: "before") & " the reference"
+
+func movedEarlier(x: openArray[float32]; samples: int): seq[float32] =
+  ## `x` moved `samples` earlier (later when negative), zeros where nothing comes.
+  result = newSeq[float32](x.len)
+  for j in 0 ..< x.len:
+    let at = j + samples
+    if at >= 0 and at < x.len: result[j] = x[at]
 
 func sameSamples(a, b: openArray[float32]): bool =
   ## Whether the two are the same signal, sample for sample.
@@ -750,46 +751,66 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
   ## time shift (a signal that is the reference delayed by τ peaks at +τ), and
   ## per frequency the amplitude ratio (dB) and phase difference (degrees) of
   ## each signal to the reference, where the reference's amplitude is within
-  ## `p.phaseWithinDb` of its peak. The note says, per signal, its best match,
-  ## its time shift in words, and a signal that is the reference itself is
+  ## `p.phaseWithinDb` of its peak.
+  ##
+  ## The match is the envelope's peak (the shape's match whatever the constant
+  ## phase turn of the signal), its time shift that peak's place, found between
+  ## samples by a parabola through the peak and its two neighbours. The phase
+  ## turn is the argument of the correlation's analytic signal at the peak
+  ## (90° for a signal that is the reference's Hilbert transform; 180° is a
+  ## mirror image). A peak under `NoClearMatch` is no clear match (no shift is
+  ## said); a peak at an end of the lags shown is no peak at all (the shift is
+  ## past them). The phase difference per frequency, and the table's mean of it,
+  ## are taken after the found shift is removed (a whole number of samples by
+  ## moving the signal, the rest as a linear phase term), so a delay is not read as a
+  ## phase error; a signal with no clear match or no peak is not shifted. The note says,
+  ## per signal, all this in words; a signal that is the reference itself is
   ## said so and drawn only when no other trace is; `table` has a row per
-  ## signal: the best match, the time shift, and the means of the ratio and
-  ## the phase difference inside the reference's band.
+  ## signal: the match, the time shift, the amplitude and phase means inside
+  ## the reference's band, and the phase turn.
   result = AnalysisResult(view: avCorrelation, dtMs: dtMs, used: signals.len)
   var samples = reference.len
   for (_, s) in signals: samples = max(samples, s.len)
   if signals.len == 0 or reference.len < 2 or samples < 2:
     result.problem = "no signal, or no reference with samples"
     return
-  var cp: CrossCorrelationPlan[float32]
+  var cp, cpw: CrossCorrelationPlan[float32]
   try:
     let lag = clamp(p.maxLagMs, dtMs, float64(samples - 1) * dtMs)
     cp = initCrossCorrelationPlan(float32, lag, dtMs, samples)
+    # the phase turn is read from the correlation over every lag: its analytic signal
+    # is the same wherever the lags shown end
+    cpw = initCrossCorrelationPlan(float32, float64(samples - 1) * dtMs, dtMs, samples)
   except ValueError as e:
     result.problem = e.msg
     return
   var ws = initWorkspace()
   ws.reserve(cp.workspaceSize)
+  var wsw = initWorkspace()
+  wsw.reserve(cpw.workspaceSize)
   var lagsMs = newSeq[float64](cp.lags)
   for i in 0 ..< cp.lags: lagsMs[i] = cp.lagMs(i)
+  let shownMs = max(abs(lagsMs[0]), abs(lagsMs[^1]))
   var hz = newSeq[float64](cp.bins)
   for k in 0 ..< cp.bins: hz[k] = cp.binHz(k)
   var lagPlot = AnalysisPlot(title: "How well each trace matches " & referenceName &
     ", by time shift", xLabel: "Time shift (ms)", xUnit: "ms",
-    yLabel: "Match (1 = identical shape)", xs: lagsMs)
+    yLabel: "Match, 1 = identical shape", xs: lagsMs)
   var ratioPlot = AnalysisPlot(title: "Amplitude compared with the reference, by frequency",
     xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Amplitude ratio (dB)", yUnit: "dB", xs: hz)
   var phasePlot = AnalysisPlot(title: "Phase compared with the reference, by frequency",
     xLabel: "Frequency (Hz)", xUnit: "Hz", yLabel: "Phase difference (°)", yUnit: "°", xs: hz)
   var c, e = newSeq[float32](cp.lags)
-  var ratio, phase = newSeq[float64](cp.bins)
+  var cw = newSeq[float32](cpw.lags)
+  var ratio, phase, phaseMoved, ratioMoved = newSeq[float64](cp.bins)
   var lines: seq[string] = @[]
   # the reference's own trace is drawn only when it is all there is to draw
   var others = false
   for (_, s) in signals:
     if not sameSamples(s, reference): others = true
   result.table = @[@["Trace", "Best match", "Time shift (ms)", "Amplitude (dB)",
-    (if p.phaseShow == psAbsolute: "Mean |phase| (°)" else: "Phase, circular mean (°)")]]
+    (if p.phaseShow == psAbsolute: "Mean |phase| (°)" else: "Phase, circular mean (°)"),
+    "Rotation (°)"]]
   # Where the reference has its energy: its own spectrum (of its
   # autocorrelation's lag window) within `phaseWithinDb` of its peak;
   # elsewhere the ratio and the phase are noise.
@@ -800,6 +821,10 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
   toDbInto(refAmp, refDb, dbPeak, -Inf)
   var inBand = newSeq[bool](cp.bins)
   for k in 0 ..< cp.bins: inBand[k] = refDb[k] >= -abs(p.phaseWithinDb)
+  let refEnd = signalEndMs(reference, dtMs)
+  let refLength = lengthMs(reference.len, dtMs)
+  var anyShifted = false
+  var anyUnshifted = false
   for (name, s) in signals:
     if stop.stopped:
       result.cancelled = true
@@ -808,7 +833,8 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
       lines.add name & " is the reference: compared with itself it matches exactly " &
         "(1.00 at 0 ms)"
       if others:
-        result.table.add @[name & " (the reference)", "1.00", "0.0", "not drawn", "not drawn"]
+        result.table.add @[name & " (the reference)", "1.00", "0.0", "not drawn", "not drawn",
+          "0"]
         continue
     cp.crossCorrelateInto(s, reference, c, e, ws)
     var cs, es = newSeq[float64](cp.lags)
@@ -819,39 +845,75 @@ proc correlationOf*(signals: openArray[(string, seq[float32])]; reference: seq[f
     lagPlot.curves.add AnalysisCurve(name: name, ys: cs)
     lagPlot.curves.add AnalysisCurve(name: name & " envelope", ys: es)
     if not sameSamples(s, reference):
-      let dur = reference.len.float64 * dtMs
       let who = if signals.len > 1: name else: "trace"
-      var said = shortWords(who, s.len.float64 * dtMs, dur)
-      let early = endWords((if signals.len > 1: name else: ""), s, dtMs, dur)
+      var said = shortWords(who, lengthMs(s.len, dtMs), refLength)
+      let early = endWords((if signals.len > 1: name else: ""), s, dtMs, refEnd)
       if early.len > 0: said.add (if said.len > 0: "\n" else: "") & early
       if said.len > 0:
         result.warning.add (if result.warning.len > 0: "\n" else: "") & said
+    # the verdict: no peak (at an end of the lags), no clear match, or a match
+    var m = matchOf(es, lagsMs)
+    if m.verdict == mvClear:
+      # the correlation's phase there, between the two samples round the peak
+      cpw.crossCorrelateInto(s, reference, cw, wsw)
+      m.rotationDeg = rotationOf(cw, dtMs, best - (cp.lags - 1) div 2 + (cpw.lags - 1) div 2,
+        (m.shiftMs - lagsMs[best]) / dtMs)
+    let (match, shift, rotation) = (m.match, m.shiftMs, m.rotationDeg)
+    let noPeak = m.verdict == mvNoPeak
+    let clear = m.verdict == mvClear
     cp.compareInto(s, reference, ratio, phase, ws)
+    if clear:
+      # the phase with the shift taken off: whole samples by moving the signal, the rest
+      # as a linear phase term (a delay of τ turns the phase by -360·f·τ)
+      let whole = int(round(shift / dtMs))
+      var left = shift - float64(whole) * dtMs
+      if whole != 0:
+        cp.compareInto(s.movedEarlier(whole), reference, ratioMoved, phaseMoved, ws)
+        phase = phaseMoved
+      for k in 0 ..< cp.bins:
+        if not phase[k].isNaN: phase[k] = wrapDeg(phase[k] + 360 * hz[k] * left / 1000)
+      anyShifted = true
+    else:
+      anyUnshifted = true
     for k in 0 ..< cp.bins:
       if not inBand[k]: (ratio[k], phase[k]) = (NaN, NaN)
+      elif noPeak: phase[k] = NaN # the shift is past the lags: no phase to claim
     ratioPlot.curves.add AnalysisCurve(name: name, ys: ratio)
     let shownDiff = shownPhase(phase, p.phaseShow)
     phasePlot.curves.add AnalysisCurve(name: name, ys: shownDiff.ys,
       brackets: (if p.phaseShow == psAbsolute: shownDiff.signed else: @[]))
     let meanRatio = ratio.meanOf
     let meanPhase = meanOfPhase(phase, p.phaseShow)
-    var row = @[name, "-", "-", "-", "-"]
-    if best >= 0:
-      let match = formatFloat(cs[best], ffDecimal, 2)
-      row[1] = match
-      row[2] = signedMs(lagsMs[best])
-      if not sameSamples(s, reference):
-        lines.add name & ": best match " & match & " at " & signedMs(lagsMs[best]) & " ms (" &
-          shiftWords(lagsMs[best], dtMs) & (if cs[best] < 0: "; reversed polarity" else: "") &
-          ")"
+    var row = @[name, "-", "-", "-", "-", "-"]
+    let said = name & ": "
+    if best < 0: discard
+    elif noPeak: lines.add said & noPeakWords(shownMs)
+    elif not clear:
+      row[1] = twoDecimals(match)
+      lines.add said & weakWords(m)
+    else:
+      let turn = rotationWords(rotation)
+      row[1] = twoDecimals(match) & (if turn == "reversed polarity": " (" & turn & ")" else: "")
+      row[2] = signedMs(shift)
+      row[5] = rotationCell(rotation)
+      lines.add said & "best match " & twoDecimals(match) & " at " & signedMs(shift) &
+        " ms (" & shiftWords(shift) & (if turn.len > 0: "; " & turn else: "") & ")"
     if not meanRatio.isNaN: row[3] = signedMs(meanRatio)
     if not meanPhase.isNaN:
       row[4] = if p.phaseShow == psAbsolute: formatFloat(meanPhase, ffDecimal, 1)
                else: signedMs(meanPhase)
-    if best >= 0 and cs[best] < 0: row[1] = row[1] & " (reversed polarity)"
     result.table.add row
   result.plots = @[lagPlot, ratioPlot, phasePlot]
-  result.note = CorrelationHelp & "\nPhase plot: " & PhaseShowWords[p.phaseShow] & ".\n" &
+  let phaseAfter =
+    if anyShifted and anyUnshifted:
+      "phase after removing each trace's found time shift (a trace with no clear match or " &
+        "no peak is not shifted)"
+    elif anyShifted: "phase after removing the time shift found for each trace"
+    elif anyUnshifted: "phase measured unshifted (no trace has a clear match and a peak)"
+    else: ""
+  result.note = CorrelationHelp & "\nTime shifts shown: ±" & formatFloat(shownMs, ffDecimal, 1) &
+    " ms (whole samples of " & formatFloat(dtMs, ffDecimal, 1) & " ms).\nPhase plot: " &
+    PhaseShowWords[p.phaseShow] & (if phaseAfter.len > 0: "; " & phaseAfter else: "") & ".\n" &
     lines.join("\n")
 
 func peakLagMs*(r: AnalysisResult; curve = 0): float64 =
