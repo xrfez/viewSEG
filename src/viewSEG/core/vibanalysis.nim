@@ -243,8 +243,11 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
   let t = u.tracks[main]
   var largest = newSeq[float64](xs.len) # the largest harmonic per point, %
   for m in 0 ..< xs.len: largest[m] = NaN
-  for k in 2 .. (if main in u.signals: min(t.amplitude.len, clamp(p.harmonics,
-      2, 16)) else: 0):
+  # the harmonics drawn: those asked for, of the tracked ones (a band tracks all 16)
+  let tracked = trackedHarmonics(TrackParams(harmonics: clamp(p.harmonics, 2, 16),
+    harmonicBandHz: band, harmonicBandAuto: band.isNaN))
+  for k in 2 .. (if main in u.signals: min(t.amplitude.len, min(tracked,
+      clamp(p.harmonics, 2, 16))) else: 0):
     var pct = newSeq[float64](xs.len)
     for m in 0 ..< xs.len:
       let a1 = t.amplitude[0][m]
@@ -335,12 +338,12 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
     skipEndMs: limits.skipEndMs,
     fromMs: limits.fromMs, toMs: limits.toMs)
   let span = u.reference.extent.judgedPart(judging)
-  var summary = WindowSummary()
+  var stats = WindowStats()
   try:
-    summary = windowStats(u.tracks[main], judging, p.qcWindowMs).summary
+    stats = windowStats(u.tracks[main], judging, p.qcWindowMs)
   except ValueError:
-    summary = windowStats(u.tracks[main], judging).summary
-  result.qc = judge(summary, p.qcWindowMs, p.qc, p.forceHundredPct)
+    stats = windowStats(u.tracks[main], judging)
+  result.qc = judge(stats.summary, p.qcWindowMs, p.qc, p.forceHundredPct)
   let usedHz = u.tracks[main].bandHz
   let chord = largestChordHz(u.reference)
   result.band = BandReport(hz: usedHz, suggestedHz: topFrequencyHz(u.reference),
