@@ -212,6 +212,36 @@ proc main*() =
       doAssert sp.problem == "" and sp.fromMs == 300 and sp.toMs == 400 and sp.windowLen == 51,
         "trace 2 over 300 to 400 ms: " & sp.problem & " " & $sp.fromMs & " " & $sp.windowLen
 
+    block frozenWindowKeepsItsAxis:
+      # File A starts at 100 ms and holds a tone only in samples 100 to 150 (300 to 400 ms
+      # on the plot's axis); file B starts at 0. A window frozen on A over 300 to 400 ms,
+      # the plot then moved to B, still reads A's tone when it asks again.
+      var tone = newSeq[float32](1000)
+      for j in 100 .. 150: tone[j] = float32(cos(2 * PI * 25.0 * float64(j) * 0.002))
+      let pathA = fx.tracesSegy("axis-a.sgy", [tone], t0Ms = [100.0])
+      let pathB = fx.tracesSegy("axis-b.sgy", [newSeq[float32](1000)])
+      var st = initAppState()
+      st.open(pathA)
+      let base = st.sessions[0].base
+      var v = st.panel(MainPanel).view
+      v.timeMs = Span(lo: 300, hi: 400)
+      st.apply Command(kind: ckView, panel: MainPanel, view: v)
+      let w = st.fft(@[base], SpectrumDisplay(time: stVisible))
+      st.apply Command(kind: ckSpectrumDisplay, spectrum: st.spectra[w].id,
+        spectrumShow: st.spectra[w].display, frozen: true)
+      st.apply Command(kind: ckShowFile, panel: MainPanel, path: pathB)
+      doAssert st.settle(st.sessions.len == 2 and st.panel(MainPanel).laidOut and
+        st.panel(MainPanel).layout.t0Ms == 0)
+      for time in [stWhole, stVisible]:
+        var d = st.spectra[w].display
+        d.time = time
+        st.apply Command(kind: ckSpectrumDisplay, spectrum: st.spectra[w].id, spectrumShow: d,
+          frozen: true)
+        doAssert st.settle(not st.spectra[w].waiting and st.spectra[w].spectrum.raw.len > 0)
+      var top = 0.0
+      for a in st.spectra[w].spectrum.raw: top = max(top, a)
+      doAssert top > 0.3, "the frozen window cut the wrong time: peak " & $top
+
     block notANumberIsLeftOut:
       # 8 traces of a 25 Hz cosine, trace 3 with one NaN: the New plot windows leave it
       # out and say so (as the FFT window does), rather than draw the NaN as 0.

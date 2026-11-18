@@ -1069,6 +1069,7 @@ proc followSpectrumFilters(state: var AppState; w, k: int) =
   let window = state.timeNow(w, k)
   if not window[0].isNaN and (sw.visibleMs.lo != window[0] or sw.visibleMs.hi != window[1]):
     sw.visibleMs = Span(lo: window[0], hi: window[1])
+    sw.axisT0Ms = state.axisT0Of(k)
     timeMoved = true
   let now = LiveKey(session: if i >= 0: state.sessions[i].id else: NoSession,
     traces: fileTraces, processing: pr, killed: killed)
@@ -1117,7 +1118,10 @@ proc repickSpectrum(state: var AppState; w, k, i: int): bool =
   sw.chosen = chosen
   sw.chosenCount = count
   sw.processing = pr
-  if not window[0].isNaN: sw.visibleMs = Span(lo: window[0], hi: window[1])
+  let oldAxis = sw.axisT0Ms
+  if not window[0].isNaN:
+    sw.visibleMs = Span(lo: window[0], hi: window[1])
+    sw.axisT0Ms = state.axisT0Of(k)
   if state.askAgain(w):
     state.stampSpectrum(w, k, i)
     return true
@@ -1129,6 +1133,7 @@ proc repickSpectrum(state: var AppState; w, k, i: int): bool =
   sw.chosen = oldChosen
   sw.chosenCount = oldCount
   sw.visibleMs = oldVisible
+  sw.axisT0Ms = oldAxis
   false
 
 proc followSpectra(state: var AppState) =

@@ -191,6 +191,9 @@ type
     chosenCount*: int
       ## the traces chosen (selected, in view); `traces` spreads over them
       ## evenly when they are more than a spectrum takes (`spectrumTraces`)
+    axisT0Ms*: float64 = NaN
+      ## the time of sample 0 on that plot's time axis when `visibleMs` was taken; kept
+      ## with it, so a window frozen on one file and asked again reads the same times
     visibleMs*: Span
       ## the plot's visible time when the window was opened (FFT), or now (live)
     panel*: PanelId ## the plot it is of (the live panel: the Seismic window)

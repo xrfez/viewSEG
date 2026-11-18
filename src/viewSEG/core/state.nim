@@ -3189,6 +3189,10 @@ func killedOf(e: FileEdits; traces: openArray[int]): seq[int] =
   for t in traces:
     if e.has(teKilled, t): result.add t
 
+func axisT0Of(state: AppState; k: int): float64 =
+  ## The time of sample 0 on the time axis of `panels[k]` (NaN until it is laid out).
+  if k >= 0 and state.panels[k].laidOut: state.panels[k].layout.t0Ms else: NaN
+
 proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
     window: (float64, float64); processing: Processing): bool =
   ## Asks the spectrum reader for window `spectra[w]`'s spectrum of
@@ -3204,8 +3208,7 @@ proc askSpectrum(state: var AppState; w: int; i: int; traces: seq[int];
   let reversed = reversedOf(e, traces)
   inc state.spectrumGen
   template sw: untyped = state.spectra[w]
-  let pk = state.findPanel(sw.panel)
-  let axisT0 = if pk >= 0 and state.panels[pk].laidOut: state.panels[pk].layout.t0Ms else: NaN
+  let axisT0 = sw.axisT0Ms
   sw.asked = state.spectrumGen
   sw.waiting = true
   sw.killed = killed
@@ -3348,6 +3351,7 @@ proc followLive(state: var AppState) =
     live.chosenCount = count
     live.processing = key.processing
     live.visibleMs = state.panels[k].view.timeMs
+    live.axisT0Ms = state.axisT0Of(k)
   else:
     state.liveKey = LiveKey(session: NoSession) # asked again once it can be held
 
@@ -3392,7 +3396,8 @@ proc openSpectrum(state: var AppState; cmd: Command) =
   var w = SpectrumWindow(id: freeSpectrumId(state.spectra), display: cmd.spectrumShow,
     chosen: chosen, heldOpen: true, file: s.name, record: s.recordText(traces[0]),
     traces: traces.mapIt(it + s.base), first: traces[0], chosenCount: count,
-    visibleMs: p.view.timeMs, panel: p.id, processing: spectrumFilters(p))
+    visibleMs: p.view.timeMs, axisT0Ms: state.axisT0Of(k), panel: p.id,
+    processing: spectrumFilters(p))
   w.filters = filtersText(w.processing)
   state.spectra.add w
   let window = if w.display.time == stVisible and p.view.timeMs.hi > p.view.timeMs.lo:
