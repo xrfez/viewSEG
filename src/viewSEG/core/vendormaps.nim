@@ -352,7 +352,9 @@ proc vendorBlocks*(f: SeismicFile; record: int; reg: VendorRegistry; gen = 0;
       else: discard
   except CatchableError as e:
     result.problems.add "the vendor blocks cannot be decoded: " & e.msg
-  for b in blocks: result.blocks.add fact(b, reg)
+  for b in blocks:
+    # (a block whose every field's condition failed shows nothing)
+    if b.fields.len > 0: result.blocks.add fact(b, reg)
   for d in log:
     if d.code == dcVendorMap or d.code == dcVendorBlock:
       result.problems.add d.msg
@@ -376,7 +378,7 @@ proc vendorTrace*(f: SeismicFile; trace: int; reg: VendorRegistry; gen = 0;
       case f.kind
       of skSegd:
         let rec = f.index.segdRecords[int(e.record)]
-        ctx = vendorContext(rec)
+        ctx = vendorContext(rec, reg.usesRecordBlocks)
         result.record = int(e.record)
         let extra = int(e.headerBytes) - SegdTraceHeaderSize - SegdBlockSize
         if extra > 0:
@@ -386,7 +388,7 @@ proc vendorTrace*(f: SeismicFile; trace: int; reg: VendorRegistry; gen = 0;
           of slRev3: t = SegdTrace(layout: slRev3)
           t.extensions = f.copyBytes(e.offset + SegdTraceHeaderSize + SegdBlockSize, extra)
           t.index = trace
-          blocks = decodeVendorAreas(reg, rec, t, log, f.path)
+          blocks = decodeVendorAreas(reg, ctx, rec, t, log, f.path)
       of skSegy:
         # the 240 standard header bytes always (a `traceHeaderBytes` map reads them);
         # the proprietary headers after the Rev 2 extension when the trace has them
@@ -401,7 +403,9 @@ proc vendorTrace*(f: SeismicFile; trace: int; reg: VendorRegistry; gen = 0;
       else: discard
   except CatchableError as e:
     result.problems.add "the vendor blocks of the trace cannot be decoded: " & e.msg
-  for b in blocks: result.blocks.add fact(b, reg)
+  for b in blocks:
+    # (a block whose every field's condition failed shows nothing)
+    if b.fields.len > 0: result.blocks.add fact(b, reg)
   for d in log:
     if d.code == dcVendorMap or d.code == dcVendorBlock:
       result.problems.add d.msg

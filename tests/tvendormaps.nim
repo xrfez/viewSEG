@@ -28,7 +28,8 @@
 ## with `prepareVendorFolder` run for a project that is read-only, "a read-only
 ## project was given a folder"; with `makeProject` not writing the notes, "no
 ## note in a new project"; with the shipped map's record serial read as 8 bits instead of 12, "12-bit record
-## serial".
+## serial"; with its phase error unsigned, "negative 24-bit phase error"; with extension 3 shown for every
+## version, "version 2 with two blocks has no extension 3".
 import std/[os, sequtils, strutils]
 import parseSEG
 import viewSEG/core/[filesystem, state, vendormaps]
@@ -236,34 +237,79 @@ proc main*() =
       for m in load.registry.maps: doAssert m.checkVendorMap.len == 0, m.name
 
     block shippedMapFindsModulesByTheirBytes:
-      # the code-9 map in the repository, on a generated Rev 2.0 record whose extended header holds a
-      # made-up module first and the modules it knows after it: found by their bytes, not by position
+      # the code-9 map in the repository, on generated Rev 2.0 records: modules found by their bytes, not by
+      # position (a made-up module first), one field of each kind, and the trace extensions' version gating
       let repo = currentSourcePath().parentDir.parentDir / "vendormaps"
       let load = loadVendorFolders([VendorFolder(dir: repo, origin: voProgram)])
       proc module(head: openArray[int]): seq[byte] =
         result = newSeq[byte](32)
         for i, v in head: result[i] = byte(v)
+      proc putBits(b: var seq[byte]; at: int; bits: uint64; n: int) =
+        for i in 0 ..< n: b[at + i] = byte((bits shr (8 * (n - 1 - i))) and 0xFF)
       var made = module([9, 0, 0, 9, 1, 1, 0, 1]) # content type 9: not a module of the map
-      var acq = module([9, 0, 0, 1, 1, 1, 0, 1])
-      acq[12] = 0x12; acq[13] = 0x34; acq[14] = 0x56; acq[15] = 0x78 # shot serial 0x12345678
-      acq[17] = 0xAB; acq[18] = 0xC4 # record serial 0xABC, trigger method 4
-      acq[29] = 3 # trace extension version
+      proc acqModule(version, blocks: int): seq[byte] =
+        result = module([9, 0, 0, 1, 1, 1, 0, 1])
+        result[12] = 0x12; result[13] = 0x34; result[14] = 0x56; result[15] = 0x78 # shot serial 0x12345678
+        result[17] = 0xAB; result[18] = 0xC4 # record serial 0xABC, trigger method 4
+        result[19] = 0x21 # sync 2, status 1
+        result[20] = 0xFF; result[21] = 0xFF; result[22] = 0xFB # phase error -5
+        result[24] = 0x01; result[25] = 0x02 # 258 receiver channels
+        result[29] = byte(version); result[30] = 1; result[31] = byte(blocks)
+      var where = module([9, 0, 0, 2, 0, 0, 0, 1])
+      putBits(where, 8, cast[uint64](1234567.25'f64), 8)
+      putBits(where, 24, uint64(cast[uint32](-12.5'f32)), 4)
+      let third = module([9, 1, 0, 2, 0, 0, 0, 1]) # sponsorship 256, content type 2: not a Source Location
       var rec = SegdRecord(layout: slRev2)
       rec.revision = SegdRevision(major: 2, minor: 0)
       rec.gh1.manufacturerCode = 9
-      rec.extended = made & acq
+      rec.extended = made & acqModule(3, 3) & where & third
       var log: DiagLog
       let blocks = load.registry.decodeVendorAreas(rec, log, "generated")
       var found = ""
+      var located = false
       for b in blocks:
         if b.name == "acqDetail":
           doAssert b.blockNumber == 2, "the module was not found at its own place"
           doAssert b["shotSerialNumberId"].intVal == 0x12345678, "shot serial"
           doAssert b["recordSerialNumberId"].intVal == 0xABC, "12-bit record serial"
           doAssert b["triggerMethod"].label == "Hi-resolution Time", "trigger label"
+          doAssert b["sampleClockSynchronization"].intVal == 2 and
+            b["sampleClockSynchronizationStatus"].intVal == 1, "sync nibbles"
+          doAssert b["sampleClockPhaseError"].intVal == -5, "negative 24-bit phase error"
+          doAssert b["receiverChannelCount"].intVal == 258, "receiver count beyond 255"
           found = b.name
-      doAssert found == "acqDetail", "the module was not decoded"
-      doAssert blocks.len == 3 and log.len == 0, "headers of both modules and the contents of one"
+        elif b.name == "sourceLocation":
+          doAssert b.blockNumber == 3
+          doAssert b["pointEasting"].floatVal == 1234567.25, "easting is a 64-bit float"
+          doAssert b["pointElevation"].floatVal == -12.5, "elevation is a 32-bit float"
+          located = true
+        elif b.name == "extModuleHeader" and b.blockNumber == 4:
+          doAssert "moduleContentType" notin b and b["moduleSponsoredContentType"].intVal == 2,
+            "a content type of another sponsorship got a label"
+      doAssert found == "acqDetail" and located, "a module was not decoded"
+      doAssert blocks.len == 6 and log.len == 0, "headers of four modules and the contents of two"
+      # the trace extensions follow the Extended Trace Header Version of the Acquisition Detail module
+      proc traceBlocks(version, count: int): (bool, bool, bool, bool) =
+        rec.extended = made & acqModule(version, count)
+        var t = SegdTrace(layout: slRev2, extensions: newSeq[byte](64))
+        t.extensions[24] = 0x43 # orientation 3
+        t.extensions[34] = 5 # module serial 5
+        t.extensions[47] = 1 # first sample time 1
+        var l: DiagLog
+        var two, three, orient, first = false
+        for b in load.registry.decodeVendorAreas(rec, t, l, "generated"):
+          if b.name == "geoResTraceExt2":
+            two = b.fields.len > 0
+            orient = "sensorOrientationDescription" in b
+          if b.name == "geoResTraceExt3":
+            three = "moduleSerialNumber" in b
+            first = "firstSampleTime" in b
+        (two, three, orient, first)
+      doAssert traceBlocks(3, 3) == (true, true, true, true), "version 3"
+      doAssert traceBlocks(2, 3) == (true, true, true, false), "version 2 with three blocks: no first sample time"
+      doAssert traceBlocks(2, 2) == (true, false, true, false), "version 2 with two blocks has no extension 3"
+      doAssert traceBlocks(0, 2) == (true, false, false, false), "version 0: no orientation, no extension 3"
+      doAssert traceBlocks(4, 3) == (false, false, false, false), "an unknown version decodes nothing"
       # without the module the map does not apply: nothing decoded, nothing logged
       rec.extended = made
       doAssert load.registry.decodeVendorAreas(rec, log, "generated").len == 0 and log.len == 0

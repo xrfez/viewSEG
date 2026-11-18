@@ -18,9 +18,11 @@
 ; of a content version this map does not know shows only its module header.
 ; TRACE EXTENSIONS depend on the Extended Trace Header Version, byte 30 of the Acquisition Detail module (the
 ; same byte in both of its content versions): extension #2 bytes 1-24 for versions 0-3, its orientation nibble
-; (byte 25) for versions 1-3 (version 0 differs from there), extension #3 for version 3 only. A version 2 file may
-; carry an extension #3 without First Sample Time (the manual does not say what it holds): not decoded here. A
-; version 3 file's extension #3 has First Sample Time; both times have sentinel 0 (the GPS epoch is not a real time).
+; (byte 25) for versions 1-3 (version 0 differs from there), extension #3 for version 3, and for version 2 when
+; Acquisition Detail byte 32 is 3 or more (First Sample Time for version 3 only). Both times have sentinel 0 (the
+; GPS epoch is not a real time). Every trace group also requires the Acquisition Detail module's byte 6
+; (compatibility version) to be 0 or 1; compatibility versions are not used otherwise (a module version or an
+; Extended Trace Header Version this map does not list decodes nothing, however its compatibility version reads).
 ; LEFT OUT: the external header; the general header and channel set descriptors (a map cannot reach them); the
 ; second and later blocks of a module (the catalog's entries 4 and up, the tape label module's second block): a
 ; target can only find a block by its own bytes or by its position, and those blocks begin with no identifying
@@ -36,13 +38,15 @@
   (doc "Geospace (manufacturer code 9) SEG-D Rev 2.0 files of the GeoRes System (GeoRes Imagine/XTC, manual 593-00120-01 Rev. D): extended header modules found by their leading bytes, and trace header extensions 2 and 3 by the Extended Trace Header Version; applies to files with an Acquisition Detail module")
   (target (kind extendedHeader) (name extModuleHeader)
     ; The module header (manual p7), at the start of every module's first block. Applies to every block whose
-    ; byte 1 is 9, so a later block of a multi-block module that happens to begin with 9 would show a bogus header
-    ; (none of the manual's modules does). The labels are those of the sponsorship code 0 modules; the third-party
-    ; tape label module (sponsorship code 256) has content type 0, which has no label here.
+    ; byte 1 is 9, so a later block that happens to begin with 9 (the tape label module's second block starts with
+    ; free ASCII text, the manual says nothing of its first byte) would show a bogus header; no byte test can
+    ; tell a first block from a later one. Content type labels are those of sponsorship code 0 (the manual: the
+    ; content type is interpreted per manufacturer and sponsorship code); other sponsorship codes show the number.
     (match (at 1) (bytes 9))
     (field moduleSegMfrCode (at 1) (enc u8))
     (field moduleSponsorshipCode (at 2) (enc u16))
-    (field moduleContentType (at 4) (enc u8)
+    (field moduleSponsoredContentType (at 4) (enc u8) (when (field moduleSponsorshipCode) (range 1 65535)))
+    (field moduleContentType (at 4) (enc u8) (when (field moduleSponsorshipCode) (is 0))
       (enum (1 "Acquisition Detail") (2 "Source Location") (3 "Fire Control Detail") (6 "External Header Catalog")))
     ; the manual types these two UINT-8 in the Acquisition Detail module and UINT-16 in the others (they would
     ; overlap): read as u8 each
@@ -95,7 +99,7 @@
     (field acqDetailTraceExtBlocksPerTrace (at 32) (enc u8)))
   (target (kind extendedHeader) (name acqDetailV0)
     ; Acquisition Detail, content version 0 (manual appendix A-1.1, superseded). Same content type as acqDetail;
-    ; the layout differs from byte 9 on, which is why the content version byte is part of the match.
+    ; the layout differs from byte 13 on, which is why the content version byte is part of the match.
     (match (at 1) (bytes 9 0 0 1 0))
     (field utcFractionalSecond (at 9) (enc u32) (unit "ns"))
     ; Record Time Offset (milliseconds)
@@ -222,6 +226,7 @@
     ; Bytes 1-24 are the same in Extended Trace Header Versions 0 to 3 (Acquisition Detail module byte 30); the
     ; orientation code below is not in version 0 (its bytes 25 on differ).
     (group (when (record extendedHeader (match (at 1) (bytes 9 0 0 1)) (byte 30)) (range 0 3))
+      (when (record extendedHeader (match (at 1) (bytes 9 0 0 1)) (byte 6)) (range 0 1))
       (field positionEasting (at 1) (enc f64))
       (field positionNorthing (at 9) (enc f64))
       (field positionElevation (at 17) (enc f32))
@@ -232,21 +237,25 @@
       (field secondaryLowCutFilter (at 23) (enc u8)
         (enum (0 "None") (1 "8 Hz, 12dB/Octave") (2 "32 Hz, 12dB/Octave") (3 "3.2 Hz, 6dB/Octave")))
       (group (when (record extendedHeader (match (at 1) (bytes 9 0 0 1)) (byte 30)) (range 1 3))
-        ; Low nibble of byte 25 read as one BCD digit: exact for 0-9, the manual defines 0-4 ("Unshown values are
-        ; reserved"). A value of 10-15 is not a documented code and shows as "invalid BCD" bytes.
-        (field sensorOrientationDescription (at 25) (nibble low) (len 1 n) (enc bcd)
+        (when (record extendedHeader (match (at 1) (bytes 9 0 0 1)) (byte 6)) (range 0 1))
+        ; Sensor Orientation Description, low nibble of byte 25 (the manual defines 0-4, "Unshown values are reserved")
+        (field sensorOrientationDescription (at 25) (nibble low) (len 1n) (enc unibble)
           (enum (0 "No description given") (1 "Azimuth/Inclination Degrees re. Module Head End")
                 (2 "Sine of the Inclination from horizontal")
                 (3 "3-D Rotation Vector re. the as laid Module head end")
                 (4 "3-D Rotation Vector re. magnetic North"))))))
   (target (kind traceExt) (extension 3) (name geoResTraceExt3)
-    ; Extended Trace Header Version 3 only (Acquisition Detail module byte 30); a version 2 file may carry this
-    ; block without First Sample Time, and the manual does not say what it then holds.
-    (group (when (record extendedHeader (match (at 1) (bytes 9 0 0 1)) (byte 30)) (is 3))
+    ; Extended Trace Header Version 3, or version 2 when the Number of Extended Trace Header Blocks Per Trace
+    ; (Acquisition Detail byte 32) is 3 or more (manual p23: version 3 is a superset of version 2, differing by the
+    ; addition of First Sample Time, which is therefore shown for version 3 only).
+    (group (when (record extendedHeader (match (at 1) (bytes 9 0 0 1)) (byte 30)) (in 2 3))
+      (when (record extendedHeader (match (at 1) (bytes 9 0 0 1)) (byte 6)) (range 0 1))
+      (when (record extendedHeader (match (at 1) (bytes 9 0 0 1)) (byte 32)) (range 3 255))
       ; digitizer module serial number, 0 = unknown
       (field moduleSerialNumber (at 1) (enc u24) (sentinel 0))
       ; microseconds since 1980-01-06 00:00:00 GPS time (no leap seconds): 18 s ahead of UTC in 2024
-      (field firstSampleTime (at 9) (enc i64) (sentinel 0) (unit "us GPS"))
+      (group (when (record extendedHeader (match (at 1) (bytes 9 0 0 1)) (byte 30)) (is 3))
+        (field firstSampleTime (at 9) (enc i64) (sentinel 0) (unit "us GPS")))
       ; Trigger (Event) Time: the manual states neither epoch nor unit; epoch and microseconds INFERRED
       ; (equal to First Sample Time on every trace of both samples), so no unit is given
       (field triggerTime (at 17) (enc i64) (sentinel 0))

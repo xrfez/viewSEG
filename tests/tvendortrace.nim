@@ -12,7 +12,8 @@
 ## - the trace table and the other traces' answers are untouched: only the traces
 ##   the Trace tab is about have their blocks decoded.
 ##
-## Seen to fail: with the SEG-Y decode only for traces with proprietary headers, "a Rev 1
+## Seen to fail: with `vendorTrace` listing a decoded block that has no fields, "a block without
+## fields is listed"; with the SEG-Y decode only for traces with proprietary headers, "a Rev 1
 ## SEG-Y trace has no vendor block"; with `vendorTrace` not called in the inspector's trace read, "the
 ## trace has no vendor block"; with the sentinel left out of the map, "the absent
 ## serial is listed"; with the manufacturer clause out of the map, "another
@@ -26,7 +27,9 @@ const Map = """(.nif27)
 (vendormap "vendor-b" (version 1) (match (format segd) (rev 3.0 3.1) (manufacturer 77))
   (target (kind block) (type 0xB0) (where traceHeader) (name vendorStatus)
     (field device (at 1) (enc u16))
-    (field serial (at 3) (enc u32) (sentinel 0xFFFFFFFF))))
+    (field serial (at 3) (enc u32) (sentinel 0xFFFFFFFF)))
+  (target (kind block) (type 0xB0) (where traceHeader) (name gatedOff) (match (at 1) (bytes 0 5))
+    (field never (at 3) (enc u32) (when (byte 1) (is 255)))))
 """
 
 const SegyMap = """(.nif27)
@@ -78,7 +81,7 @@ proc main*() =
     doAssert st.settle(st.inspection.answer.traces.len == 1 and
       st.inspection.answer.traces[0].vendor.gen == 1), "the new maps were not used"
     let live = st.inspection.answer.traces[0].vendor
-    doAssert live.blocks.len == 1, "the trace has no vendor block"
+    doAssert live.blocks.len == 1, "the trace has no vendor block, or a block without fields is listed"
     doAssert live.blocks[0].name == "vendorStatus" and live.blocks[0].map == "vendor-b"
     doAssert live.blocks[0].fieldOf("device") == "5" and
       live.blocks[0].fieldOf("serial") == "1234", $live.blocks[0].fields
