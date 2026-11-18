@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.1.0"
+version       = "0.2.0"
 author        = "Joshua Fenner"
 description   = "High-performance SEG-Y / SEG-D viewer built on parseSEG and processSEG"
 license       = "MIT"
