@@ -29,13 +29,21 @@ func lookOf*(t: Theme): ChromeLook =
     inactiveText: chromeRgb(t.roles[rlTextDim]),
     inactiveBorder: chromeRgb(mix(t.roles[rlBorder], t.roles[rlBar], 0.5)))
 
+type OpenedWindow* = object
+  ## A viewport window as it was created (tests).
+  viewportFlags*: cint ## `ImGuiViewportFlags_*`
+  sdlFlags*: uint64    ## `SDL_GetWindowFlags` once created
+  parent*: bool        ## it has an SDL parent window
+
 var
   look: ChromeLook
   haveLook = false
   version = UnknownVersion
   mainWindowId: SDL_WindowID
   backendCreate: proc (vp: ptr ImGuiViewport) {.cdecl.}
-  dressed*: int ## windows given a look since the start (tests)
+  dressed*: int              ## windows given a look since the start (tests)
+  opened*: seq[OpenedWindow] ## every window the backend opened for a viewport (tests)
+  mainFocusLost*: int        ## focus-lost events seen on the main window (tests)
 
 proc hwndOf(window: ptr SDL_Window): pointer =
   ## The native handle of `window`; nil elsewhere than Windows.
@@ -62,10 +70,28 @@ proc dress(window: ptr SDL_Window; kind: FrameKind; redraw: bool) =
   if kind == fkFramed:
     discard setWindowIcons(hwnd)
 
+proc keepFocusOffPopups(vp: ptr ImGuiViewport) =
+  ## A menu, popup or tooltip that spills out of its parent becomes a window of
+  ## its own. Dear ImGui marks these `NoFocusOnAppearing` and `NoFocusOnClick`, but the
+  ## SDL3 backend only honours the first, and only when it shows the window: the
+  ## window manager may still activate it, and a compositor that dims inactive
+  ## windows dims the one the pointer is working in. Such a window is made
+  ## non-focusable, so the parent stays the active window. Dialogs and windows
+  ## dragged out carry no such flag and take focus as before.
+  let window = windowOf(vp)
+  let noFocus = (ImGui_ViewportFlags_NoFocusOnAppearing.cint or
+    ImGui_ViewportFlags_NoFocusOnClick.cint)
+  if window != nil and (vp.Flags and noFocus) == noFocus:
+    discard SDL_SetWindowFocusable(window, false)
+  if window != nil:
+    opened.add OpenedWindow(viewportFlags: vp.Flags, sdlFlags: uint64(SDL_GetWindowFlags(window)),
+      parent: SDL_GetWindowParent(window) != nil)
+
 proc onCreateWindow(vp: ptr ImGuiViewport) {.cdecl.} =
   ## The backend's `Platform_CreateWindow`, then the look (the window is still
   ## hidden: the backend shows it later).
   backendCreate(vp)
+  keepFocusOffPopups(vp)
   if haveLook:
     dress(windowOf(vp), kindOf(vp), redraw = false)
 
@@ -100,6 +126,7 @@ proc dressWindows*(l: ChromeLook) =
 proc followFocus*(windowId: uint32; active: bool) =
   ## A framed window became active or inactive (`SDL_EVENT_WINDOW_FOCUS_GAINED`
   ## and `..._LOST`): its title and border as Windows would show them.
+  if not active and SDL_WindowID(windowId) == mainWindowId: inc mainFocusLost
   if not haveLook: return
   let window = SDL_GetWindowFromID(SDL_WindowID(windowId))
   if window.isNil: return
