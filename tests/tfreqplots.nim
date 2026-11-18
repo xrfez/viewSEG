@@ -7,6 +7,7 @@
 import std/[math, os, strutils]
 import viewSEG/core/[analysis, fkanalysis, panels, processing, spectra, state, viewport]
 import viewSEG/view/[curveplot, spectrumview, theme]
+import viewSEG/core/log
 import viewSEG/view/analysisview
 import utils/[fixtures, waiting]
 
@@ -260,6 +261,19 @@ proc main*() =
           inc drawn
           doAssert not curve.ys[k].isNaN, "bin " & $k & " has a signed value but no Unwrapped point"
       doAssert drawn > 20
+
+    block agentGetsTheNarrowNotchWarning:
+      # 4 s of record: 1/T is 0.25 Hz; an agent's notch of 0.1 Hz gets the popover's warning
+      let path = fx.tracesSegy("long.sgy", [newSeq[float32](2000)])
+      var st = initAppState()
+      st.open(path)
+      let before = st.log.nextSerial
+      st.apply Command(kind: ckProcessing, panel: MainPanel, origin: coAgent,
+        processing: Processing(notches: @[NotchFilter(hz: 60, widthHz: 0.1)]))
+      var said = ""
+      for e in st.log.since(before):
+        if e.source == "filters": said = e.text
+      doAssert "narrower than 1/T" in said, "no warning: " & said
 
     block notANumberIsLeftOut:
       # 8 traces of a 25 Hz cosine, trace 3 with one NaN: the New plot windows leave it

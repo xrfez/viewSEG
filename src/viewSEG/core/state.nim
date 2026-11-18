@@ -8117,6 +8117,11 @@ proc applyCommand(state: var AppState; cmd: Command) =
             state.projectChanged()
         else:
           state.change(cmd.origin, s): s.plot.processing = remembered(pr)
+        if cmd.origin == coAgent: # the popover's warning for a width the record cannot resolve
+          for n in pr.notches:
+            if n.on and n notin was.notches:
+              let words = narrowNotchWarning(n.widthHz, p.layout.samples, p.layout.dtMs)
+              if words.len > 0: state.log.add(sevWarning, "filters", words)
         # Only another set of filters (or of the traces they take) reads
         # again, from the samples at hand: the plot from before stays until
         # the first new tile, which sets the level again (a filter changes
