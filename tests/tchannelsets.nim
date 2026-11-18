@@ -7,7 +7,8 @@
 ##
 ## Seen to fail: with `value` giving the channel set's 0-based index, the
 ## cycling check found 0, 1, 2, 3; with the sort key ignoring the channel set
-## (`rows.channelSetIndex` not passed), `sortByIt` found the file's order.
+## (`rows.channelSetIndex` not passed), `sortByIt` found the file's order; with the
+## number taken as the place (index + 1), `ownNumbers` found 1, 2, 3.
 
 import std/[math, os, strutils]
 import parseSEG
@@ -25,7 +26,7 @@ proc main*() =
       doAssert f.len >= 8
       for t in 0 ..< 8:
         let k = f.traceKeys(t)
-        let v = k.value(hfChannelSet, t, f.channelSetIndexOf(t))
+        let v = k.value(hfChannelSet, t, f.channelSetNumberOf(t))
         doAssert v == float64(t mod 4 + 1), "trace " & $t & ": channel set " & $v
         let text = f.channelSetText(t)
         doAssert text.startsWith($(t mod 4 + 1) & " · "), text
@@ -35,7 +36,7 @@ proc main*() =
           f.channelSetText(1)
       doAssert headerLabel(hfChannelSet, 2, "") == "2"
       doAssert tracetable.keyValue(f.traceKeys(2), "keys.channelSet",
-          f.channelSetIndexOf(2)) == 3
+          f.channelSetNumberOf(2)) == 3
       doAssert tracetable.keyLabel("keys.channelSet").len > 0
       # the table's catalogue lists both columns
       var names: seq[string]
@@ -62,13 +63,35 @@ proc main*() =
     finally:
       f.close()
 
+  block ownNumbers:
+    # the file's own channel set numbers (7, 3, 12), not the places 1, 2, 3
+    withFixtures fx:
+      var f = openSeismic(fx.numberedSetsSegd(), keys = true)
+      try:
+        doAssert f.len == 3
+        let want = [7, 3, 12]
+        for t in 0 ..< 3:
+          doAssert f.channelSetNumberOf(t) == want[t], $t & ": " & $f.channelSetNumberOf(t)
+          doAssert f.traceKeys(t).value(hfChannelSet, t, f.channelSetNumberOf(t)) ==
+            float64(want[t])
+          doAssert f.channelSetText(t).startsWith($want[t] & " · "), f.channelSetText(t)
+          doAssert tracetable.keyValue(f.traceKeys(t), "keys.channelSet",
+            f.channelSetNumberOf(t)) == float64(want[t])
+        let rows = f.rowsOf(@[0, 1, 2])
+        let numberOf = proc (t: int): int {.gcsafe, raises: [].} = f.channelSetNumberOf(t)
+        var got: seq[int]
+        doAssert sortRowsInto(rows, [SortKey(field: hfChannelSet)], got, setNumber = numberOf)
+        doAssert got == @[1, 0, 2], "sorted by the file's numbers 3, 7, 12: " & $got
+      finally:
+        f.close()
+
   block segyHasNone:
     withFixtures fx:
       var f = openSeismic(fx.vibThirteenSegy(), keys = true)
       try:
-        doAssert f.channelSetIndexOf(1) == -1 and f.channelSetText(1) == ""
+        doAssert f.channelSetNumberOf(1) == 0 and f.channelSetText(1) == ""
         let k = f.traceKeys(1)
-        doAssert k.value(hfChannelSet, 1, f.channelSetIndexOf(1)).isNaN
+        doAssert k.value(hfChannelSet, 1, f.channelSetNumberOf(1)).isNaN
         doAssert k.value(hfTraceId, 1) == 19
         doAssert headerLabel(hfTraceId, 19, "") == "vibrator baseplate (19)"
         doAssert headerLabel(hfTraceId, NaN, "") == ""

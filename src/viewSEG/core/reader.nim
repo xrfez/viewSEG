@@ -274,7 +274,8 @@ proc arrange(rd: var Reader; order: seq[SortKey]) =
     let rows = if base.listed: f[].rowsOf(base.list) else: f[].rowsOf(base.traces)
     var perm: seq[int]
     let r = rd.r
-    if sortRowsInto(rows, order, perm, proc (): bool = r.superseded):
+    let setNumber = proc (t: int): int {.gcsafe, raises: [].} = f[].channelSetNumberOf(t)
+    if sortRowsInto(rows, order, perm, proc (): bool = r.superseded, setNumber):
       var list = newSeq[int](perm.len)
       for k, row in perm: list[k] = base.traceAt(row)
       rd.positions = Positions(traces: base.traces, listed: true, list: list)
@@ -389,7 +390,7 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
       let t = rd.positions.traceAt(k)
       let keys = f[].traceKeys(t)
       for field in HeaderField:
-        if not keys.value(field, t, f[].channelSetIndexOf(t)).isNaN: known.incl field
+        if not keys.value(field, t, f[].channelSetNumberOf(t)).isNaN: known.incl field
       k += step
     # The longest value of each field the traces have, over all of them: the
     # header's columns, time across, keep their widths as the view pans.
@@ -398,7 +399,7 @@ proc adopt(rd: var Reader; src: sink ReaderSource) =
       let keys = f[].traceKeys(t)
       for field in known:
         widest[field] = max(widest[field],
-          numberChars(keys.value(field, t, f[].channelSetIndexOf(t))))
+          numberChars(keys.value(field, t, f[].channelSetNumberOf(t))))
     if layout.samples == 0:
       rd.note(sevWarning, "The traces shown of " & rd.name & " have no samples, so the plot " &
         "stays empty.")
@@ -765,7 +766,7 @@ proc make(rd: var Reader; req: ReaderRequest; level: bool; tile: var Tile;
         if tile.joined.len == 0: tile.joined = newSeq[set[JoinGroup]](q.count)
         tile.joined[row] = joined
       for i, field in req.fields:
-        tile.header[i][row] = keys.value(field, list[row], f[].channelSetIndexOf(list[row]))
+        tile.header[i][row] = keys.value(field, list[row], f[].channelSetNumberOf(list[row]))
       if f[].kind == skSegd:
         if tile.sets.len == 0: tile.sets = newSeq[string](q.count)
         tile.sets[row] = f[].channelSetText(list[row])

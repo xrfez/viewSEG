@@ -24,8 +24,11 @@ type StopProc* = proc (): bool {.gcsafe, raises: [].}
 
 proc stopped(stop: StopProc): bool {.inline.} = stop != nil and stop()
 
+type SetNumberProc* = proc (trace: int): int {.gcsafe, raises: [].}
+  ## The channel set number of a trace (`core/channelsets`); 0 for none.
+
 proc sortRowsInto*(rows: TraceRows; order: openArray[SortKey]; dst: var seq[int];
-    stop: StopProc = nil): bool =
+    stop: StopProc = nil; setNumber: SetNumberProc = nil): bool =
   ## `dst` becomes the rows `0 ..< rows.len` of `rows` in `order` (the first
   ## key first); no keys give the rows as they are. True when done; false
   ## when `stop` said to give up, and `dst` is then not meaningful. Raises
@@ -47,7 +50,7 @@ proc sortRowsInto*(rows: TraceRows; order: openArray[SortKey]; dst: var seq[int]
       for m in i ..< last:
         let row = dst[m]
         let v = rows.keysAt(row).value(key.field, rows.traceOf(row),
-          rows.channelSetIndex(row))
+          if setNumber != nil: setNumber(rows.traceOf(row)) else: rows.channelSetIndex(row) + 1)
         cols[0][m] = if key.descending: -v else: v # NaN stays last either way
       i = last
       if stop.stopped: result = false

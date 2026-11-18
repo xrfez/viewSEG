@@ -353,15 +353,15 @@ func shows*(layer: Layer; file: SessionId): bool =
   ## Whether `layer` draws traces of `file`.
   layer.source.kind == lsRecord and layer.source.file == file
 
-func value*(k: TraceKeys; field: HeaderField; trace: int; channelSet = -1): float64 =
-  ## `field` of the trace with keys `k`, index `trace` and 0-based channel
-  ## set `channelSet` (-1 for none); NaN when unknown.
+func value*(k: TraceKeys; field: HeaderField; trace: int; channelSet = 0): float64 =
+  ## `field` of the trace with keys `k`, index `trace` and channel set number
+  ## `channelSet` (`core/channelsets`; 0 for none); NaN when unknown.
   case field
   of hfRcvLine: k.rcvLine
   of hfRcvPoint: k.rcvPoint
   of hfComponent: (if componentOf(k) == 0: NaN else: float64(componentOf(k)))
   of hfChannel: k.channel
-  of hfChannelSet: (if channelSet < 0: NaN else: float64(channelSet + 1))
+  of hfChannelSet: (if channelSet <= 0: NaN else: float64(channelSet))
   of hfTraceId: (if k.traceCode == 0: NaN else: float64(k.traceCode))
   of hfRecord: k.record
   of hfSrcLine: k.srcLine

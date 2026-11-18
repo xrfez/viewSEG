@@ -95,11 +95,11 @@ func keyLabel*(name: string): string =
   for (n, label) in KeyColumns:
     if n == name: return label
 
-func keyValue*(k: TraceKeys; name: string; channelSet = -1): float64 =
-  ## Key column `name` of a trace's keys and 0-based channel set `channelSet`
-  ## (-1 for none); NaN for a name of no key, and for a value the trace lacks.
+func keyValue*(k: TraceKeys; name: string; channelSet = 0): float64 =
+  ## Key column `name` of a trace's keys and channel set number `channelSet` (0
+  ## for none); NaN for a name of no key, and for a value the trace lacks.
   case name
-  of "keys.channelSet": (if channelSet < 0: NaN else: float64(channelSet + 1))
+  of "keys.channelSet": (if channelSet <= 0: NaN else: float64(channelSet))
   of "keys.traceCode": (if k.traceCode == 0: NaN else: float64(k.traceCode))
   of "keys.record": k.record
   of "keys.channel": k.channel

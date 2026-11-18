@@ -313,7 +313,7 @@ proc readRows(f: ptr SeismicFile; name: string; traces: openArray[int];
     let keyed = f[].index.keys.len == f[].len
     for k, t in traces:
       dst[k] = keyValue(if keyed: f[].index.keys[t] else: f[].traceKeys(t), name,
-        f[].channelSetIndexOf(t))
+        f[].channelSetNumberOf(t))
   else:
     let column = f[].traceFieldColumn(name, traces) # (the rows on screen: a few hundred)
     for k in 0 ..< column.len: dst[k] = column[k]
@@ -326,7 +326,7 @@ proc readRange(f: ptr SeismicFile; name: string; traces: Slice[int];
     for k in 0 ..< traces.len:
       let t = traces.a + k
       dst[k] = keyValue(if keyed: f[].index.keys[t] else: f[].traceKeys(t), name,
-        f[].channelSetIndexOf(t))
+        f[].channelSetNumberOf(t))
   else:
     f[].traceFieldColumnInto(name, traces, dst)
 

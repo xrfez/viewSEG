@@ -42,10 +42,10 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Status | parseSEG 0.16.1: capabilities | names | processSEG 0.7.1: capabilities | names |
 |---|---:|---:|---:|---:|
 | `built` | 53 (20 in part) | 176 | 33 (23 in part) | 144 |
-| `internal` | 15 | 41 | 4 | 38 |
-| `planned` | 32 | 221 | 45 | 401 |
+| `internal` | 15 | 43 | 4 | 38 |
+| `planned` | 32 | 220 | 45 | 401 |
 | `to plan` | 2 | 10 | 1 | 5 |
-| `not applicable` | 20 | 363 | 6 | 66 |
+| `not applicable` | 20 | 362 | 6 | 66 |
 | all | 122 | 811 | 89 | 654 |
 
 **Still to plan, most useful to field QC first** (the rows whose status says `to plan`, by their priority):
@@ -148,7 +148,7 @@ Capabilities are the rows below, each counted by the first part of its status ("
 | Capability | Library calls | Viewer feature | Status |
 |---|---|---|---|
 | Gathers derived from geometry | `gathers`, `classify`, `Gather`, `GatherKind` | Record list, next / previous gather: the Records window, a row per gather with its kind; a click, the arrow keys or Page Up / Page Down show one | built (the Records window); not applicable (`classify`: `gathers` classifies each gather) |
-| SEG-D channel sets | `channelSets`, `traceEntry(i).channelSetIndex`, `channelType` | Channel chooser; the Records window counts a record's seismic and auxiliary traces by `channelType` | internal (the Records window's counts); planned (the channel chooser) |
+| SEG-D channel sets | `channelSets`, `channelSetNumber`, `traceEntry(i).channelSetIndex`, `channelType` | Channel chooser; the Records window counts a record's seismic and auxiliary traces by `channelType`; the Channel set header row, readout field and table column show the file's own number (`channelSetNumber` of the descriptor) and the type | internal (the Records window's counts, the Channel set row and column); planned (the channel chooser) |
 | Seismic and auxiliary traces | `isSeismic`, `TraceStatus` (`tsAuxiliary`, `tsDead`) | Seismic window: the Seismic and Aux toggles (auxiliary traces in the same plot); dead traces never drawn, "dead" in the status bar; Records window: traces, aux and dead per record; the Aux window of its own | built (toggles, dead, counts); planned (the Aux window) |
 | Multi-component stations | `componentGroups`, `componentGroupIds`, `isMultiComponent`, `TraceKeys.component`, `ComponentGroup` | Seismic window: each component drawn once in its colour (hydrophone blue, vertical green, inline yellow, crossline teal), with a toggle per component | built (colours and toggles, from `TraceKeys.component`); not applicable (`componentGroups`, `componentGroupIds`, `isMultiComponent`, `ComponentGroup`: the plot counts the record's own distinct components) |
 

@@ -32,6 +32,7 @@
 ## - `recordOnlySegd()`: SEG-D Rev 3.0, one record whose headers give the
 ##   record and channel numbers only (no station, no position), and
 ##   `segdRelation()`, the X file that places its channels.
+## - `numberedSetsSegd()`: three one-trace auxiliary channel sets numbered 7, 3 and 12.
 ## - `areasSegd()`: `twoSetSegd()`'s record with an extended header and an
 ##   external header (`SegdExtendedText`, `SegdExternalText`).
 ## - `threeComponentSegd()`: SEG-D Rev 3.0, one record: a time break and three
@@ -950,6 +951,7 @@ proc hostileSurvey*(fx: Fixtures; h: HostileSurvey): string =
 type SetSpec = object
   ## One channel set of a SEG-D fixture record.
   channelType: uint8 ## 0x10 seismic, 0x20 time break, 0x98 pilot
+  number: int        ## the channel set's number in the headers; 0: its place, from 1
   line: float64      ## receiver line (seismic)
   y: float64         ## its northing
   group: uint8       ## component (group index); 0 for none
@@ -1030,7 +1032,8 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stat
   var descs: seq[SegdChannelSetDescriptorRev3]
   for n, s in sets:
     let seismic = s.channelType == 0x10
-    descs.add SegdChannelSetDescriptorRev3(scanTypeNumber: 1, channelSetNumber: uint16(n + 1),
+    descs.add SegdChannelSetDescriptorRev3(scanTypeNumber: 1,
+      channelSetNumber: uint16(if s.number > 0: s.number else: n + 1),
       channelType: s.channelType, endTime: endUs, numSamples: SegdSamples,
       descaleMultiplier: 1.0, channelsInSet: uint32(if seismic: SegdChannels else: 1),
       samplingInterval: uint32(DtMs * 1000),
@@ -1040,11 +1043,12 @@ proc writeSegdRecord(path: string; sets: openArray[SetSpec]; placed = true; stat
   var traces: seq[SegdTrace]
   for n, s in sets:
     let seismic = s.channelType == 0x10
+    let setNo = if s.number > 0: s.number else: n + 1
     for tn in 1 .. (if seismic: SegdChannels else: 1):
       var t = SegdTrace(layout: slRev3, index: traces.len, numSamples: SegdSamples)
       t.header = SegdTraceHeader(fileNumber: SegdRecordNo, scanTypeNumber: 1,
-        channelSetNumber: (if n + 1 > 99: BcdAllF else: n + 1),
-        extChannelSetNumber: (if n + 1 > 99: uint16(n + 1) else: 0), traceNumber: tn,
+        channelSetNumber: (if setNo > 99: BcdAllF else: setNo),
+        extChannelSetNumber: (if setNo > 99: uint16(setNo) else: 0), traceNumber: tn,
         traceHeaderExtensions: (if seismic and positioned: 4'u8 else: 1'u8))
       let named = seismic and stations
       t.ext1Rev3 = some SegdTraceHeaderExt1Rev3(
@@ -1258,6 +1262,15 @@ proc twoSetSegd*(fx: Fixtures): string =
     writeSegdRecord(result, [SetSpec(channelType: 0x20), SetSpec(channelType: 0x98),
       SetSpec(channelType: 0x10, line: RcvLine, y: OriginY, scale: 1),
       SetSpec(channelType: 0x10, line: RcvLine + 1, y: OriginY + 50, scale: 1)])
+
+proc numberedSetsSegd*(fx: Fixtures): string =
+  ## A record of three one-trace auxiliary channel sets whose numbers in the headers
+  ## are 7, 3 and 12, not 1 to 3 in order.
+  result = fx.dir / "numbered-sets.sgd"
+  if not fileExists(result):
+    writeSegdRecord(result, [SetSpec(channelType: 0x20, number: 7),
+      SetSpec(channelType: 0x98, number: 3), SetSpec(channelType: 0x20, number: 12)],
+      stations = false, positioned = false)
 
 proc areasSegd*(fx: Fixtures): string =
   ## `twoSetSegd`'s record with an extended header (one block, starting
