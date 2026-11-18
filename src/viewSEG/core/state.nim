@@ -983,6 +983,9 @@ type
     chosenRef: string
       ## the reference the plots use; "" is none (a vibrator signature then
       ## uses the file's pilot; a correlation draws nothing)
+    lastFolderTried: (string, string)
+      ## a project opened on the folder listed last (the first), and the data folder to list
+      ## instead should that listing fail
     vibLayouts: seq[string]
       ## the vibrator signature's roles chosen by hand, per file layout, in force (the
       ## project's, else the settings'; `choiceText`)
@@ -5144,6 +5147,28 @@ proc projectChanged(state: var AppState) =
   inc state.project.revision
   state.project.changedAt = getMonoTime()
 
+proc lastFolderText(p: ProjectState; folder: string): string =
+  ## `folder` as the project keeps its last folder: "N|rest", under the found data folder
+  ## N; "" when it lies under none (a string check, no file system).
+  for i, f in p.folders:
+    if f.state == psFound and f.path.len > 0:
+      if folder == f.path: return $i & "|"
+      if folder.startsWith(f.path & DirSep): return $i & "|" & folder[f.path.len + 1 .. ^1]
+
+proc lastFolderStart(p: ProjectState; first: string): string =
+  ## The folder a project opens listing: its last one when it lies under a data folder that
+  ## was found, else `first`, the first data folder found.
+  result = first
+  let at = p.doc.lastFolder.find('|')
+  if at > 0:
+    try:
+      let i = parseInt(p.doc.lastFolder[0 ..< at])
+      if i in 0 ..< p.folders.len and p.folders[i].state == psFound:
+        let rest = p.doc.lastFolder[at + 1 .. ^1]
+        result = if rest.len == 0: p.folders[i].path else: p.folders[i].path / rest
+    except ValueError:
+      discard
+
 proc forgetFileMemory(state: var AppState) =
   ## What is remembered about the files opened this run, written to the
   ## store it came from, then forgotten here: the next store is another's.
@@ -5507,7 +5532,8 @@ proc takeOpened(state: var AppState; m: sink Msg) =
   if not news.created and first.len > 0:
     # the folder the Files panel listed last in this project, else its first data folder
     # (the scan finds out whether the last one is still there)
-    let start = if p.doc.lastFolder.len > 0: p.doc.lastFolder else: first
+    let start = p.lastFolderStart(first)
+    state.lastFolderTried = (start, if start != first: first else: "")
     state.startListing(@[start], start, "", by)
   state.lookAtOriginals()
   if p.doc.hasImport:
@@ -6401,6 +6427,12 @@ proc onFinished(state: var AppState; job: JobInfo) =
     state.files.job = NoJob
     case job.state
     of jsFailed:
+      let (tried, instead) = state.lastFolderTried
+      state.lastFolderTried = ("", "")
+      if instead.len > 0 and state.files.title == tried:
+        # the folder listed last is gone: the project's data folder is listed in its place
+        state.startListing(@[instead], instead, "", state.listedBy)
+        return
       state.files.error = job.error
       # The folder listed last, gone since (a drive not there at start): said, not an error.
       let severity = if job.id == state.quietScan: sevInfo else: sevError
@@ -6543,10 +6575,11 @@ proc takeListed(state: var AppState; m: sink Msg) =
     f.folder = m.listFolder
     f.title = m.listFolder
     state.change(state.listedBy, st): st.recentFolders.addRecent(m.listFolder, MaxRecent)
-    if state.project.dir.len > 0 and keeps(state.listedBy) and not state.project.readOnly and
-        state.project.doc.lastFolder != m.listFolder:
-      state.project.doc.lastFolder = m.listFolder # the project opens on it again
-      state.projectChanged()
+    if state.project.dir.len > 0 and keeps(state.listedBy) and not state.project.readOnly:
+      let text = state.project.lastFolderText(m.listFolder)
+      if text.len > 0 and text != state.project.doc.lastFolder:
+        state.project.doc.lastFolder = text # the project opens on it again
+        state.projectChanged()
   for e in m.listed:
     if e.kind.isSurvey and e.path in state.loadNamed: state.loadSurvey(e.path, quiet = true)
   f.merge(m.listed)

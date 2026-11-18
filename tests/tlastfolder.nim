@@ -46,7 +46,30 @@ proc main*() =
         not st.fileList.scanning), "listed " & st.fileList.folder
       doAssert st.fileList.entries.len == 1
       discard st.shutdown()
+    block movedAndGone:
+      # the data folder moved: the last folder is found under its new place; the last
+      # folder gone: the data folder is listed, with no "Listing stopped"
+      let moved = fx.dir / "moved"
+      moveDir(data, moved)
+      var st = initAppState()
+      st.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      st.apply Command(kind: ckOpenProject, projectPath: proj)
+      doAssert st.settle(st.inProject)
+      # (the project still names the old place: Locate... would say where; here it is gone)
+      doAssert st.settle(not st.fileList.scanning)
+      doAssert st.fileList.error.len == 0, st.fileList.error
+      discard st.shutdown()
+      moveDir(moved, data)
+      removeDir(deep)
+      var again = initAppState()
+      again.keepSettingsIn(dir, loadSettings(dir / "settings.nif"))
+      again.apply Command(kind: ckOpenProject, projectPath: proj)
+      doAssert again.settle(again.inProject and again.fileList.folder == data and
+        not again.fileList.scanning), "listed " & again.fileList.folder
+      doAssert again.fileList.error.len == 0, again.fileList.error
+      discard again.shutdown()
     block inTheSettings:
+      createDir(deep)
       let dir2 = fx.dir / "config2"
       createDir(dir2)
       var st = initAppState()

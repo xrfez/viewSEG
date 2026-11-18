@@ -94,8 +94,10 @@ type
     referenceId*: string
       ## the reference the plots use in this project; "" is the file's own pilot
     lastFolder*: string
-      ## the folder the Files panel listed last in this project; listed again when the
-      ## project opens, if it is still there
+      ## the folder the Files panel listed last in this project, as "N|rest": data folder
+      ## N (from 0, as listed in `data`) and the path below it ("" for the folder itself),
+      ## so it is found again wherever the data folder is; listed again when the project
+      ## opens
     vibRoles*: seq[string]
       ## the vibrator signature's roles chosen by hand in this project, per file layout
       ## (`choiceText`)
