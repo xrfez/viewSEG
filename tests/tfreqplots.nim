@@ -4,9 +4,25 @@
 ## (the old `peakBins`), "tone is drawn at 0 dB" saw -17 dB, "narrow line" saw a level
 ## near the noise, and "deep notch" saw no notch.
 
-import std/[math, strutils]
-import viewSEG/core/[spectra]
+import std/[math, os, strutils]
+import viewSEG/core/[spectra, state]
 import viewSEG/view/[curveplot, spectrumview, theme]
+import utils/[fixtures, waiting]
+
+proc open(st: var AppState; path: string) =
+  st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
+  doAssert st.settle(st.sessions.len == 1 and st.panel(MainPanel).laidOut and
+    st.panel(MainPanel).shown.len > 0)
+  let lay = st.panel(MainPanel).layout
+  st.apply Command(kind: ckView, panel: MainPanel, view: fitAll(lay, 640, 512))
+  doAssert st.settle(st.tiles(0).len > 0)
+
+proc fft(st: var AppState; traces: seq[int]; show = SpectrumDisplay()): int =
+  ## Opens an FFT window of `traces` (survey-wide); its index in `spectra`.
+  st.apply Command(kind: ckSpectrum, spectrumOf: MainPanel, spectrumTraces: traces,
+    spectrumShow: show)
+  result = st.spectra.high
+  doAssert st.settle(not st.spectra[result].waiting and st.spectra[result].spectrum.raw.len > 0)
 
 proc bumpy(bins: int; at: int; level: float64): SpectrumWindow =
   ## A window whose raw spectrum is `level` at bin `at` over a floor of 0.001.
@@ -51,6 +67,28 @@ proc main*() =
       if not y.isNaN: low = min(low, y)
     doAssert low < -99, "the notch is drawn at " & $low
     doAssert drawn[0].ys.len <= 400 + 2, "drew " & $drawn[0].ys.len
+
+  withFixtures fx:
+    block lateArrivalPhase:
+      var spike = newSeq[float32](1000)
+      spike[700] = 1 # 1400 ms at 2 ms
+      let path = fx.tracesSegy("spike.sgy", [spike])
+      var st = initAppState()
+      st.open(path)
+      let base = st.sessions[0].base
+      for picture in [ppUnwrapped, ppDelayRemoved]:
+        let w = st.fft(@[base], SpectrumDisplay(phase: true, phasePicture: picture))
+        let sw = st.spectra[w]
+        let plot = sw.phasePlot(EverforestDark)
+        let ys = plot.curves[0].ys
+        if picture == ppUnwrapped:
+          let k = int(round(100.0 / sw.spectrum.binHz))
+          let want = -360.0 * 1.4 * float64(k) * sw.spectrum.binHz
+          doAssert abs(ys[k] - want) < 5, "unwrapped at " & $(float64(k) * sw.spectrum.binHz) &
+            " Hz: " & $ys[k] & ", want " & $want
+        else:
+          doAssert "delay 1400.0 ms" in plot.aside or "delay 1399.9" in plot.aside or
+            "delay 1400.1" in plot.aside, "the delay: " & plot.aside
 
   echo "tfreqplots: ok"
 

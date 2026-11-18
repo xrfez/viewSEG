@@ -315,12 +315,13 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
     let rows = f[].rowsOf(part)
     let live = rows.auxLiveRows(keys, lengths) # a pilot counts as a trace
     let ownHere = ownPerTrace(a.own, part)
-    template phaseOf(sum: var SpectrumSum): seq[float64] =
-      # one trace: its phase too (what the vibrator analysis compares)
+    template phaseOf(sum: var SpectrumSum): FinePhase =
+      # one trace: its phase too (what the vibrator analysis compares), on the
+      # finer grid it is unwrapped on
       let n = min(cache.traces[part[0]].samples.len - window.a, window.len)
       if list.len == 1 and failed.len == 0 and n > 0: sum.phaseOf(work.toOpenArray(window.a,
         window.a + n - 1))
-      else: @[]
+      else: FinePhase()
     if filtering and cols != planCols:
       try:
         plan = filters.compile(float32, dtMs, cols, recordSamples = cols)
@@ -343,7 +344,8 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
     if filtering: filed = work
     applyBlockOwn(b, live, dtMs, ownHere, failed, ws)
     discard raw.add(b, initChunkMeta(live, dtMs, 0, failed), window.a)
-    answer.rawPhase = raw.phaseOf()
+    answer.rawFine = raw.phaseOf()
+    answer.rawPhase = answer.rawFine.phase.atBins(raw.bins)
     if filtering:
       if filed.len == work.len: copyMem(addr work[0], addr filed[0], work.len * 4)
       var instead: seq[int]
@@ -367,7 +369,8 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
         plan.apply(b, skipped, ws)
       applyBlockOwn(b, live, dtMs, ownHere, failed, ws)
       discard processed.add(b, sumMeta, window.a)
-      answer.processedPhase = processed.phaseOf()
+      answer.processedFine = processed.phaseOf()
+      answer.processedPhase = answer.processedFine.phase.atBins(processed.bins)
     at += n
     # given up between blocks only: a spectrum computed whole is posted, so
     # the live panel moves on while a pan sends newer requests
@@ -382,7 +385,9 @@ proc compute(p: ptr ReaderObj; a: SpectrumAsk; list: seq[int]; dtMs: float64;
     if not pr.aux: answer.passedBy = raw.used - processed.used
     if processed.used > 0: answer.processed = processed.amplitudes
     if specs.len > 0: (answer.responseHz, answer.response) = (cache.responseHz, cache.response)
-  if answer.processed.len == 0: answer.processedPhase.setLen 0
+  if answer.processed.len == 0:
+    answer.processedPhase.setLen 0
+    answer.processedFine = FinePhase()
   true
 
 proc serve(p: ptr ReaderObj; a: SpectrumAsk; cache: var Cache): bool =

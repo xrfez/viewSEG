@@ -1369,3 +1369,18 @@ proc demoFile*(fx: Fixtures; name: string): string =
   result = fx.dir / "demo" / name
   if not fileExists(result):
     writeDemoFiles(fx.dir / "demo")
+
+proc tracesSegy*(fx: Fixtures; name: string; traces: openArray[seq[float32]];
+    dtMs = DtMs; t0Ms: openArray[float64] = []; offsets: openArray[float64] = []): string =
+  ## One record of `traces` (channel 1 ..), `dtMs` apart, trace `i` starting at
+  ## `t0Ms[i]` (default 0) and `offsets[i]` metres from the source (default 0).
+  result = fx.dir / name
+  var w = openSeismicWriter(result, SegyOutputOptions(traceSorting: 1,
+    text: @["C01 viewSEG test fixture: " & name]))
+  for i, buf in traces:
+    var k = initTraceKeys()
+    (k.record, k.channel, k.t0Ms, k.intervalUs, k.status) = (1.0, float64(i + 1),
+      (if i < t0Ms.len: t0Ms[i] else: 0.0), dtMs * 1000, tsLive)
+    if i < offsets.len: k.offset = offsets[i]
+    w.writeTrace(k, buf)
+  w.checkClose()

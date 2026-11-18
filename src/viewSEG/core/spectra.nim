@@ -101,6 +101,11 @@ type
     soSelection = "selection"    ## the selected traces
     soVisible = "visible traces" ## the traces the plot shows
 
+  FinePhase* = object
+    ## The amplitude and the phase (degrees) of one trace on a finer grid than
+    ## the spectrum's bins.
+    amp*, phase*: seq[float64]
+
   Spectrum* = object
     ## An answer: the averaged amplitude spectra of the traces asked about.
     gen*: uint64            ## the request's
@@ -115,6 +120,11 @@ type
     rawPhase*, processedPhase*: seq[float64]
       ## of a spectrum of one trace: per bin, its phase in degrees (-180 to
       ## 180, from the window's first sample); empty for several traces
+    rawFine*, processedFine*: FinePhase
+      ## the same on a grid `PhaseStep` times finer (the trace zero-padded), where
+      ## the phase is unwrapped: between bins the phase of energy arriving after
+      ## half the FFT's length steps more than half a turn, so on the bins alone
+      ## the unwrap folds it the wrong way; every `PhaseStep`th point is a bin
     asked*: int ## traces asked about
     averaged*: int ## traces averaged
     killed*: int ## left out: killed
@@ -216,11 +226,16 @@ type
   SpectrumSum* = object
     ## The power average of many traces' spectra, block by block.
     sum: SpectrumAccumulator[float32] ## the power sum (processSEG's)
-    plan: SpectrumPlan[float32]       ## for the phase of one window
+    plan: SpectrumPlan[float32]       ## for the phase of one window: `PhaseStep` times finer
     ws: Workspace
 
 const
-  LiveSpectrum* = 0        ## the live panel's id
+  PhaseStep* = 4
+    ## the phase's grid is this many times finer than the bins (the trace
+    ## zero-padded to `PhaseStep` times the FFT's length), as New plot's Phase
+    ## spectrum pads, so the unwrap does not alias for an arrival at any time in
+    ## the window
+  LiveSpectrum* = 0 ## the live panel's id
   MaxSpectrumTraces* = 4096
     ## traces a spectrum averages at most: more chosen are taken evenly
   MaxSpectrumSamples* = 32 * 1024 * 1024
@@ -511,7 +526,8 @@ proc initSpectrumSum*(dtMs: float64; windowLen: int; nfft = 0): SpectrumSum =
   ## `ValueError` for a window of no sample, an interval that is not
   ## positive and finite, or an `nfft` shorter than the window.
   result = SpectrumSum(sum: initSpectrumAccumulator(float32, dtMs, windowLen, nfft = nfft),
-    plan: initSpectrumPlan(float32, dtMs, windowLen, nfft = nfft), ws: initWorkspace())
+    ws: initWorkspace())
+  result.plan = initSpectrumPlan(float32, dtMs, windowLen, nfft = PhaseStep * result.sum.nfft)
   result.ws.reserve(result.sum.workspaceSize)
   result.ws.reserve(result.plan.workspaceSize)
 
@@ -521,13 +537,23 @@ proc add*(s: var SpectrumSum; b: RowBlock[float32]; meta: ChunkMeta; firstCol: i
   ## that is not a number in the window, or none in it, are left out).
   s.sum.add(b, meta, firstCol, s.ws)
 
-proc phaseOf*(s: var SpectrumSum; x: openArray[float32]): seq[float64] =
-  ## The phase of one window of a trace (`x`, up to the window's length),
-  ## in degrees per bin (processSEG's `amplitudeInto`).
+proc phaseOf*(s: var SpectrumSum; x: openArray[float32]): FinePhase =
+  ## The amplitude and the phase of one window of a trace (`x`, up to the
+  ## window's length), in degrees, on the grid `PhaseStep` times finer than
+  ## the bins (processSEG's `amplitudeInto`): bin `k` is point `PhaseStep·k`.
   var amp, phase = newSeq[float32](s.plan.bins)
   s.plan.amplitudeInto(x, amp, phase, s.ws)
-  result = newSeq[float64](phase.len)
-  for k, p in phase: result[k] = float64(p) * 180 / PI
+  result = FinePhase(amp: newSeq[float64](amp.len), phase: newSeq[float64](phase.len))
+  for k, p in phase:
+    result.amp[k] = float64(amp[k])
+    result.phase[k] = float64(p) * 180 / PI
+
+func atBins*(fine: openArray[float64]; bins: int): seq[float64] =
+  ## The values of a grid `PhaseStep` times finer at the spectrum's `bins`
+  ## bins: every `PhaseStep`th point.
+  if fine.len == 0: return
+  result = newSeq[float64](bins)
+  for k in 0 ..< bins: result[k] = fine[min(k * PhaseStep, fine.high)]
 
 func used*(s: SpectrumSum): int {.inline.} = s.sum.used
   ## The rows summed so far.

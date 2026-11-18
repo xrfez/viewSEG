@@ -102,16 +102,23 @@ func phasePlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
   for k in 0 ..< sp.rawPhase.len: result.xs[k] = float64(k) * sp.binHz
   let colours = curveColours(t)
   var named: seq[tuple[name: string; ms: float64]] = @[]
-  template addPhase(called: string; phase, amp: seq[float64]; ink: Rgba) =
-    if phase.len > 0:
-      let drawn = drawnPhase(phase, shownAbove(amp, PhaseFloorDb), result.xs, picture)
+  template addPhase(called: string; wrapped, level: seq[float64]; finer: FinePhase; ink: Rgba) =
+    if wrapped.len > 0:
+      var drawn = drawnPhase(wrapped, shownAbove(level, PhaseFloorDb), result.xs, picture)
+      if picture in {ppUnwrapped, ppDelayRemoved} and finer.phase.len > 0:
+        # unwrapped on the finer grid, then read at the bins
+        var fineHz = newSeq[float64](finer.phase.len)
+        for j in 0 ..< fineHz.len: fineHz[j] = float64(j) * sp.binHz / float64(PhaseStep)
+        let onFine = drawnPhase(finer.phase, shownAbove(finer.amp, PhaseFloorDb), fineHz, picture)
+        drawn = (ys: onFine.ys.atBins(wrapped.len), signed: drawn.signed,
+          delayMs: onFine.delayMs)
       var curve = Curve(name: called, colour: ink, ys: drawn.ys)
       if picture != ppSigned: curve.brackets = drawn.signed
       result.curves.add curve
       if picture == ppDelayRemoved: named.add (called, drawn.delayMs)
-  if w.display.raw: addPhase("raw", sp.rawPhase, sp.raw, colours[0])
+  if w.display.raw: addPhase("raw", sp.rawPhase, sp.raw, sp.rawFine, colours[0])
   if w.display.processed and sp.processedPhase.len > 0:
-    addPhase("processed", sp.processedPhase, sp.processed, colours[1])
+    addPhase("processed", sp.processedPhase, sp.processed, sp.processedFine, colours[1])
   var said: seq[string] = @[]
   for d in named:
     if not d.ms.isNaN:
