@@ -80,6 +80,12 @@ proc vibFourSegy*(fx: Fixtures): string =
   result = fx.dir / "vib-four.sgy"
   if not fileExists(result): writeVib(result, VibFourCodes, 1, true, located = {0, 1, 2, 3})
 
+proc vibClaimedSegy*(fx: Fixtures): string =
+  ## `vibFourSegy`'s layout (four auxiliary traces) whose binary header declares 4 data
+  ## traces per ensemble.
+  result = fx.dir / "vib-claimed.sgy"
+  if not fileExists(result): writeVib(result, VibFourCodes, 5, true, claimed = 4)
+
 proc vibFourAgainSegy*(fx: Fixtures): string =
   ## Another file of `vibFourSegy`'s layout (four traces, codes 21, 19, 18, 20).
   result = fx.dir / "vib-four-again.sgy"

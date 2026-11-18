@@ -7,12 +7,17 @@
 ##   a toast and without an "is done" line, a job the user started still has both;
 ## - a seismic file whose headers say other units than the survey still warns, once.
 ##
-## Seen to fail: with `checkRecords` not skipping a file without seismic traces,
+## - such a file shows no missing traces: no record counts one ("Missing" empty, no "with
+##   traces missing" in the footer), with the survey loaded or not, though the file's binary
+##   header declares 4 data traces per ensemble.
+##
+## Seen to fail: with the declared count kept for a file of auxiliary traces only, its record
+## said 4 traces missing; with `checkRecords` not skipping a file without seismic traces,
 ## `allAuxiliary` found the check; with `followUnits` counting it, a warning; with the jobs
 ## not marked `auto`, `autoJobsAreQuiet` found a notice.
 
 import std/[os, strutils]
-import viewSEG/core/[jobs, log, state]
+import viewSEG/core/[jobs, log, records, state]
 import utils/[fixtures, vibfiles, waiting]
 
 template settle(st: var AppState; cond: untyped): bool =
@@ -37,10 +42,14 @@ proc main*() =
     block allAuxiliary:
       var st = initAppState()
       fx.surveyLoaded(st)
-      for path in [fx.vibFourSegy(), fx.vibFourAgainSegy(), fx.vibOtherFourSegy()]:
+      for path in [fx.vibFourSegy(), fx.vibFourAgainSegy(), fx.vibOtherFourSegy(),
+          fx.vibClaimedSegy()]:
         st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
         doAssert st.settle(st.opened(path) >= 0 and st.jobs.active.len == 0), path
         doAssert st.sessions[st.opened(path)].checkedAgainst == "", "its records were checked"
+        for r in st.sessions[st.opened(path)].records:
+          doAssert r.missing == -1 and r.missingSource == msNone, "its record misses " &
+            $r.missing & " traces"
       doAssert st.notices.len == 0, "a toast: " & st.notices[0].text
       doAssert st.log.count(sevWarning) == 0, "a warning: " & $st.log.count(sevWarning)
       doAssert st.log.count("Check the records") == 0

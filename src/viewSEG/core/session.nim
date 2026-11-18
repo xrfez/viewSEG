@@ -120,6 +120,13 @@ proc newSession*(path: string; file: sink SeismicFile; size = -1'i64;
   result.gathers = result.file.gathers
   result.zeroKept = keepZeroRecords(result.file, result.gathers)
   result.records = recordRows(result.file, result.gathers)
+  var anySeismic = false
+  for r in result.records:
+    if r.seismic > 0: anySeismic = true
+  if result.records.len > 0 and not anySeismic:
+    # The header's count of data traces per ensemble names seismic traces; a file of
+    # auxiliary traces only has none to miss.
+    for r in result.records.mitems: r.declared = -1
   result.columns = columnsOf(result.records)
   var readable = true
   try:

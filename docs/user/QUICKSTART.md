@@ -221,7 +221,8 @@ once the survey's relation file (SPS X) is loaded, or imported for the file (Fil
 tooltip says which, and how many of the record's traces are at stations the plan does
 not list. A record with traces missing is drawn
 in the warning colour, and the footer counts them; where nothing says how many traces a
-record should hold, the cell is empty. The record shown is highlighted. Click a column's
+record should hold, the cell is empty, as it is for every record of a file whose traces
+are all auxiliary (there are no seismic traces to miss). The record shown is highlighted. Click a column's
 header to sort by it (again for the other way; **#** is the file's order): sorted by
 Missing, the short records come first.
 
