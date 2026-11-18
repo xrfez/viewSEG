@@ -162,11 +162,14 @@ proc checkBinary(t: Target) =
 
 proc copyMaps(src, dest: string; seen: var seq[string]) =
   ## Copies the `*.nif` maps of `src` into `dest`, flat (parseSEG does not
-  ## search subfolders); two maps of the same name are an error.
+  ## search subfolders). The shipped maps live in parseSEG and here: a second
+  ## copy of the same bytes is skipped, two different maps of one name are an error.
   for f in walkFiles(src / "*.nif"):
     let name = f.extractFilename
     if name in seen:
-      fail "two vendor maps named " & name & " (" & src & ")"
+      if readFile(f) != readFile(dest / name):
+        fail "two different vendor maps named " & name & " (" & src & ")"
+      continue
     seen.add name
     copyFile(f, dest / name)
 
