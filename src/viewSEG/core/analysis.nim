@@ -259,6 +259,24 @@ type
 type StopCheck* = proc (): bool {.closure, gcsafe.}
   ## Asked between the steps of a long computation: true to give it up now.
 
+func topText*(reference: string; hz: float64): string =
+  ## A typed top frequency as one text for the project's document: "220.0 reference-id".
+  $hz & " " & reference
+
+func topsOf*(texts: openArray[string]): seq[TopFrequency] =
+  ## The top frequencies `topText` wrote (an entry that does not read is left out).
+  for t in texts:
+    let at = t.find(' ')
+    if at > 0 and at + 1 < t.len:
+      try:
+        let hz = parseFloat(t[0 ..< at])
+        if hz > 0 and hz < Inf: result.add TopFrequency(reference: t[at + 1 .. ^1], hz: hz)
+      except ValueError: discard
+
+func topTexts*(tops: openArray[TopFrequency]): seq[string] =
+  ## `tops` as the project's document keeps them.
+  for t in tops: result.add topText(t.reference, t.hz)
+
 func topOf*(tops: openArray[TopFrequency]; reference: string): float64 =
   ## The top frequency typed for `reference` (`RecordedKey`: the record's own trace); NaN
   ## when none is.
@@ -314,18 +332,48 @@ func layoutKey*(codes: openArray[int16]; count = -1): string =
     if i > 0: result.add '.'
     result.add $c
 
-func choiceText*(layout: string; places: array[4, int]): string =
+type ChosenPolarity* = array[2, Polarity]
+  ## The polarity a hand choice keeps with its roles: GF's, then M's and B's
+
+const Recorded* = [poAsRecorded, poAsRecorded]
+  ## the polarity of a choice kept before polarities were (and of one left as recorded)
+
+func polarityLetter(p: Polarity): char =
+  case p
+  of poAsRecorded: 'a'
+  of poReversed: 'r'
+  of poAutomatic: 'u'
+
+func polarityOfLetter(c: char; p: var Polarity): bool =
+  result = true
+  case c
+  of 'a': p = poAsRecorded
+  of 'r': p = poReversed
+  of 'u': p = poAutomatic
+  else: result = false
+
+func choiceText*(layout: string; places: array[4, int];
+    polarity: ChosenPolarity = Recorded): string =
   ## A hand choice of roles kept for `layout`, as text: the layout, then the record's
-  ## trace (from 0, -1 none) of Ref, GF, M and B: "4/21.19.18.20 0.3.1.2".
+  ## trace (from 0, -1 none) of Ref, GF, M and B: "4/21.19.18.20 0.3.1.2"; then, when a
+  ## polarity is not as recorded, GF's and M's and B's (a, r or u): "... 0.3.1.2 r.r".
   result = layout & " "
   for i, p in places:
     if i > 0: result.add '.'
     result.add $p
+  if polarity != Recorded:
+    result.add " " & polarityLetter(polarity[0]) & "." & polarityLetter(polarity[1])
 
-func parseChoice*(text: string; layout: var string; places: var array[4, int]): bool =
-  ## Reads what `choiceText` wrote.
+func parseChoice*(text: string; layout: var string; places: var array[4, int];
+    polarity: var ChosenPolarity): bool =
+  ## Reads what `choiceText` wrote; a choice with no polarity is as recorded.
   let parts = text.split(' ')
-  if parts.len != 2 or parts[0].len == 0: return false
+  if parts.len notin 2 .. 3 or parts[0].len == 0: return false
+  var pol = Recorded
+  if parts.len == 3:
+    let q = parts[2]
+    if q.len != 3 or q[1] != '.' or not polarityOfLetter(q[0], pol[0]) or
+        not polarityOfLetter(q[2], pol[1]): return false
   let ps = parts[1].split('.')
   if ps.len != 4: return false
   var got: array[4, int]
@@ -333,25 +381,39 @@ func parseChoice*(text: string; layout: var string; places: var array[4, int]): 
     try: got[i] = parseInt(x)
     except ValueError: return false
     if got[i] notin -1 .. 100_000_000: return false
-  (layout, places) = (parts[0], got)
+  (layout, places, polarity) = (parts[0], got, pol)
   true
 
-func choiceFor*(choices: openArray[string]; layout: string; places: var array[4, int]): bool =
-  ## Whether `choices` hold one for `layout`, and its places.
+func parseChoice*(text: string; layout: var string; places: var array[4, int]): bool =
+  ## Reads what `choiceText` wrote, the polarity apart.
+  var pol: ChosenPolarity
+  parseChoice(text, layout, places, pol)
+
+func choiceFor*(choices: openArray[string]; layout: string; places: var array[4, int];
+    polarity: var ChosenPolarity): bool =
+  ## Whether `choices` hold one for `layout`, and its places and polarity.
   for c in choices:
     var l = ""
     var p: array[4, int]
-    if parseChoice(c, l, p) and l == layout:
+    var q: ChosenPolarity
+    if parseChoice(c, l, p, q) and l == layout:
       places = p
+      polarity = q
       return true
 
-func withChoice*(choices: seq[string]; layout: string; places: array[4, int]): seq[string] =
+func choiceFor*(choices: openArray[string]; layout: string; places: var array[4, int]): bool =
+  ## Whether `choices` hold one for `layout`, and its places.
+  var pol: ChosenPolarity
+  choiceFor(choices, layout, places, pol)
+
+func withChoice*(choices: seq[string]; layout: string; places: array[4, int];
+    polarity: ChosenPolarity = Recorded): seq[string] =
   ## `choices` with the one for `layout` set (the newest last; the oldest of 256 goes).
   for c in choices:
     var l = ""
     var p: array[4, int]
     if parseChoice(c, l, p) and l != layout: result.add c
-  result.add choiceText(layout, places)
+  result.add choiceText(layout, places, polarity)
   if result.len > 256: result.delete 0
 
 func withoutChoice*(choices: seq[string]; layout: string): seq[string] =

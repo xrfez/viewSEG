@@ -22,13 +22,12 @@
 ## - a stored reference is aligned to the recorded one by correlation, by the lead-in found
 ##   (D1); against none, it starts at its own stored time.
 ##
-## Seen to fail: with the window statistics left at the point maxima (judged part and
-## `windowStats` unused), "the peak phase of a stretch of 25 degrees" read 30 for the peak
-## and the average phase test of the 8 degree sweep still passed but the window-average
-## tests did not; with `toMs` not set for a short trace, "a cut trace is judged to its end"
-## failed (mean force 62 % for 100 %); with the fundamental's cut ignored, "no false signal
-## ends at 2 ms" failed; with the stored reference unplaced, "aligned: the recorded
-## reference measures 0 degrees" failed (90 degrees mean).
+## Seen to fail: with `toMs` not set for a trace shorter than its reference, "a cut trace is
+## judged to its end" read an average force of 60 % for 100 %; with the fundamental's cut
+## ignored (the reference's own last measured point not used), "no false signal end at 2 and
+## 4 ms" read "signal ends at about 9 010 ms; the reference runs to 9 9..."; the alignment
+## block's unaligned half (the stored reference as it comes) shows what the shift cures: the
+## recorded reference measures over 45 degrees to it.
 ##
 ## Peak values read a little higher or lower with processSEG 0.8.0's 16-tap peak
 ## interpolator; the tolerances below (1 %) are its error, not the old 8-tap one.

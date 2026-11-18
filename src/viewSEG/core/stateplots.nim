@@ -269,6 +269,14 @@ func vibTopKey*(state: AppState; pw: AnalysisWindow): string =
     let at = state.refs.findId(state.chosenRef)
     if at >= 0 and not state.refs.entries[at].isPilot: result = state.chosenRef
 
+func vibTyped*(state: AppState; pw: AnalysisWindow): float64 =
+  ## The top frequency typed for window `pw`'s reference: the window's own, else the one
+  ## kept in the open project; NaN when none is.
+  let key = state.vibTopKey(pw)
+  result = pw.params.tops.topOf(key)
+  if result.isNaN and state.inProject:
+    result = topsOf(state.project.doc.vibTops).topOf(key)
+
 proc askPlot(state: var AppState; w: int): bool =
   ## Asks the reader for window `plots[w]`'s numbers of its traces, with
   ## the filters it has; false when its file is not open any more or cannot
@@ -345,7 +353,7 @@ proc askPlot(state: var AppState; w: int): bool =
     a.refName = a.archiveName & " (archive)"
     pw.reference = a.refName
   if pw.view == avVibrator:
-    a.topHz = pw.params.tops.topOf(state.vibTopKey(pw))
+    a.topHz = state.vibTyped(pw)
   if pw.view == avVibrator and pw.params.roles.source == rsCodes:
     a.extraNote = (if a.extraNote.len > 0: a.extraNote & "; " else: "") &
       "roles taken from the trace identification codes"
@@ -496,7 +504,8 @@ proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: Vib
   if g notin 0 ..< s.gathers.len: return
   let key = layoutKey(s.recordCodes(g), s.gathers[g].traces.len)
   var places: array[4, int]
-  if state.vibLayouts.choiceFor(key, places):
+  var polarity = Recorded
+  if state.vibLayouts.choiceFor(key, places, polarity):
     let first = s.gathers[g].traces.a
     var mapped: array[4, int]
     var reachable = true
@@ -507,6 +516,9 @@ proc rolesOf(state: AppState; s: Session; fileTraces: openArray[int]; roles: Vib
       (result.reference, result.groundForce, result.mass, result.baseplate) =
         (mapped[0], mapped[1], mapped[2], mapped[3])
       (result.source, result.handFile) = (rsRemembered, "")
+      # the polarity chosen with them comes back too (a choice kept before polarities
+      # were, or left as recorded, is as recorded)
+      (result.groundForcePolarity, result.massPolarity) = (polarity[0], polarity[1])
       return
   let (found, byCodes) = s.codeRolesIn(fileTraces, roles)
   if found: result = byCodes
@@ -562,7 +574,7 @@ proc rememberRoles(state: var AppState; w: int; roles: VibRoles; origin: Command
                   state.plots[w].traces[p] - s.base - first
                 else: -1
   state.vibLayouts = state.vibLayouts.withChoice(layoutKey(s.recordCodes(g), s.gathers[
-      g].traces.len), places)
+      g].traces.len), places, [roles.groundForcePolarity, roles.massPolarity])
   state.persistVibLayouts(origin)
 
 proc forgetRoles(state: var AppState; w: int; origin: CommandOrigin) =
@@ -704,6 +716,10 @@ proc openPlot(state: var AppState; cmd: Command) =
     else: # the command names the places: that is a choice made on this file
       w.params.roles.source = rsHand
       w.params.roles.handFile = s.name
+    if state.inProject:
+      # the top frequencies typed in this project come with the window
+      for t in topsOf(state.project.doc.vibTops):
+        w.params.tops = w.params.tops.withTop(t.reference, t.hz)
   state.plots.add w
   if not state.askPlot(state.plots.high):
     state.plots.delete state.plots.high
@@ -743,6 +759,19 @@ proc showPlot(state: var AppState; cmd: Command) =
     elif not samePlaces(params.roles, had):
       (params.roles.source, params.roles.handFile) = (rsHand, pw.file)
       state.rememberRoles(w, params.roles, cmd.origin)
+    elif params.roles.groundForcePolarity != had.groundForcePolarity or
+        params.roles.massPolarity != had.massPolarity:
+      # a polarity chosen on the window is remembered with the roles, for the layout
+      state.rememberRoles(w, params.roles, cmd.origin)
+  if pw.view == avVibrator and params.tops != pw.params.tops and state.inProject and
+      keeps(cmd.origin) and not state.project.readOnly:
+    # a top frequency typed on the window is kept with its reference in the project
+    var kept = topsOf(state.project.doc.vibTops)
+    for t in params.tops: kept = kept.withTop(t.reference, t.hz)
+    for t in pw.params.tops:
+      if params.tops.topOf(t.reference).isNaN: kept = kept.withTop(t.reference, NaN)
+    state.project.doc.vibTops = kept.topTexts
+    state.projectChanged()
   let changed = params != pw.params
   pw.params = params
   # what the user set becomes what a new window of the kind opens with

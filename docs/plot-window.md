@@ -871,6 +871,12 @@ right of that line's first row. A change works it out again.
     phase to the reference is past ±90°: wiring). M and B take one polarity, together
     (the baseplate moves against the mass: one reversed alone would make their force a
     difference); automatic needs both and both masses. Ref is the phase origin.
+    A polarity chosen by hand is remembered with the roles for the file layout (in the
+    project when one is open, else in the user settings), so a later file of that layout
+    opens with it, also after a restart; a choice made by an agent is for the session only.
+    The other boxes (masses, harmonics, the limits and whether the point limits are on,
+    the window, **100 % force =**) are plot options kept in the user settings; the top
+    frequency is kept with its reference in the project as well, so it travels with it.
   - **GF from M and B.** With the reaction mass and the baseplate's mass entered (kg, or
     lb when File > Settings > Units is Imperial; **kg | lb** after the two boxes is that
     setting, the selected one drawn lit, and the numbers convert in place, pounds to a

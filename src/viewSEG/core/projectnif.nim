@@ -141,6 +141,7 @@ proc projectDocument*(d: ProjectDoc): string =
     w.close
   w.value("referenceId", d.referenceId)
   for c in d.vibRoles: w.value("vibRole", c)
+  for c in d.vibTops: w.value("vibTop", c)
   if d.lastFolder.len > 0: w.value("lastFolder", d.lastFolder)
   if d.includeSubfolders: w.value("includeSubfolders", true)
   case d.vendorChoice.mode
@@ -352,6 +353,10 @@ proc readProject*(doc: openArray[NifNode]; name: string; problems: var seq[strin
         var text = ""
         r.text(c, text)
         if text.len > 0 and result.vibRoles.len < 256: result.vibRoles.add text
+      of "vibTop":
+        var text = ""
+        r.text(c, text)
+        if text.len > 0 and result.vibTops.len < 256: result.vibTops.add text
       of "vendorMap":
         var name = ""
         r.text(c, name)

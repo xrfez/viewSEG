@@ -397,7 +397,7 @@ proc drawVibratorSettings(st: AppState; w: AnalysisWindow; name: string; box: fl
   let band = w.result.band
   let topKey = if planeAt >= 0: st.vibTopKey(st.plots[
       planeAt]) else: RecordedKey
-  let typedTop = p.tops.topOf(topKey)
+  let typedTop = if planeAt >= 0: st.vibTyped(st.plots[planeAt]) else: p.tops.topOf(topKey)
   let shownTop = if typedTop.isNaN: (if band.hz.isNaN: NaN else: round(band.hz *
       10) / 10)
                  else: typedTop

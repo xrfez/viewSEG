@@ -103,6 +103,9 @@ type
     vibRoles*: seq[string]
       ## the vibrator signature's roles chosen by hand in this project, per file layout
       ## (`choiceText`)
+    vibTops*: seq[string]
+      ## the vibrator signature's top frequency typed per reference in this project
+      ## (`topText`: "220.0 reference-id")
     vendorChoice*: VendorChoice
       ## the vendor map rule of the project's files (`core/vendormaps`); automatic when
       ## the document says nothing
