@@ -31,6 +31,7 @@ type
     fitted: array[2, Span] ## the limits the axes were last fitted to
     zoomed: array[2, bool] ## the view is not the one last fitted
     fresh: array[2, bool]  ## fitted this frame: its view is the fit, whatever it reads
+    stale: array[2, bool]  ## the view left its fit with no hand on the plot: fit it again
 
   FitPlan* = object
     ## Which axes to set to the data's limits this frame.
@@ -74,6 +75,8 @@ func plan*(f: var AxisFit; optionKey: string; x, y: Span; follow = true): FitPla
     f.fresh = [true, true]
     return FitPlan(x: true, y: true)
   var fit = [false, false]
+  for i in 0 .. 1:
+    if f.stale[i]: fit[i] = true # (an axis the user did not move, found off its fit)
   if follow:
     if not near(now[0], f.data[0]): fit[0] = true
     if not near(now[1], f.data[1]) and not f.zoomed[1]: fit[1] = true
@@ -83,15 +86,23 @@ func plan*(f: var AxisFit; optionKey: string; x, y: Span; follow = true): FitPla
       f.fitted[i] = now[i]
       f.zoomed[i] = false
       f.fresh[i] = true
+      f.stale[i] = false
   FitPlan(x: fit[0], y: fit[1])
 
-func seen*(f: var AxisFit; x, y: Span) =
+func seen*(f: var AxisFit; x, y: Span; touched = true) =
   ## The view the frame ended with: an axis not on the limits it was
-  ## fitted to has been zoomed or panned by the user.
+  ## fitted to has been zoomed or panned by the user. `touched` false: nothing
+  ## in the frame could have moved the view (the pointer was not over the plot
+  ## and no button was down): an axis found off its fit is no zoom, it is
+  ## fitted again at the next `plan` (ImPlot's own state left it behind).
   if not f.started: return
   let now = [x, y]
   for i in 0 .. 1:
-    f.zoomed[i] = not f.fresh[i] and not near(now[i], f.fitted[i])
+    let off = not f.fresh[i] and not near(now[i], f.fitted[i])
+    if off and not touched and not f.zoomed[i]:
+      f.stale[i] = true
+    else:
+      f.zoomed[i] = off
     f.fresh[i] = false
 
 func userZoomed*(f: AxisFit; x: bool): bool =

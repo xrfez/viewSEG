@@ -36,6 +36,8 @@ type
     band: SignalBand     ## a dense signal's columns for the range on screen
     seen: array[2, Span] ## the limits the last frame ended with, x then y
     haveSeen: bool
+    shift*: float32      ## stacked plots lined up: indent of the plot, pixels
+    widen*: float32      ## ... and what is added to its width (negative: narrower)
 
   CurveOutput* = object
     reading*: Reading
@@ -366,7 +368,11 @@ proc drawCurvePlot*(ui: var CurvePlotUi; id: string; p: CurvePlot; t: Theme; siz
   if upShown != upLabel and ImPlot_IsAxisHovered(ImAxis_Y1.cint) and igBeginItemTooltip():
     igTextUnformatted(upLabel.cstring, nil)
     igEndTooltip()
-  ui.axes.seen(seenX, seenY)
+  # (a view is moved by hand only with the pointer over the plot or an axis, or a button held)
+  let touched = ImPlot_IsPlotHovered() or ImPlot_IsAxisHovered(ImAxis_X1.cint) or
+    ImPlot_IsAxisHovered(ImAxis_Y1.cint) or igIsMouseDown_Nil(0) or igIsMouseDown_Nil(1) or
+    igIsMouseDown_Nil(2)
+  ui.axes.seen(seenX, seenY, touched)
   shownLimits[id] = (seenX, seenY)
   shownZoom[id] = (ui.axes.userZoomed(true), ui.axes.userZoomed(false))
   ui.seen = [seenX, seenY]

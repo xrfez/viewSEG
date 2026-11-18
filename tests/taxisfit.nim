@@ -83,6 +83,20 @@ proc main*() =
     doAssert not p.x and not p.y, "follow off: only options fit"
     doAssert f.plan("c", span(0, 200), span(-3, 3), follow = false).y
 
+  block leftBehind:
+    # a view found off its fit with nothing near the plot (no pointer, no button) is no zoom:
+    # the next plan fits it; the same view with the pointer over the plot is a zoom, kept
+    # Seen to fail: with `touched` ignored in `seen`, "left behind: fitted again".
+    var g = AxisFit()
+    discard g.plan("a", span(0, 100), span(0, 10))
+    g.seen(span(0, 100), span(0, 10), touched = false)
+    g.seen(span(0, 100), span(2, 10), touched = false)
+    doAssert not g.userZoomed(false), "left behind: not a zoom"
+    doAssert g.plan("a", span(0, 100), span(0, 10)).y, "left behind: fitted again"
+    g.seen(span(0, 100), span(0, 10), touched = false)
+    g.seen(span(0, 100), span(2, 10), touched = true)
+    doAssert g.userZoomed(false), "moved with the pointer over it: a zoom"
+
   block unreadableAxis:
     # an axis showing limits that are not numbers, have no span, or (the user not having
     # zoomed it) hold none of the data is one to fit again; a zoomed one is left alone

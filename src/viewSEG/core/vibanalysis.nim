@@ -358,12 +358,13 @@ proc vibratorOf*(rows: openArray[seq[float32]]; names: openArray[string];
       forcePlot[].curves.add limitLine("peak force limit", xs, hundredRaw * q.peakForcePct / 100)
   block fitPhase:
     # the axis holds the judged signal and its limits, with a margin
+    # (of the curve as drawn: signed, it runs up to a turn either side of its centre)
     var top = 0.0
-    for v in u.tracks[judged].phaseDeg:
+    for v in shownPhase(u.tracks[judged].phaseDeg, p.phaseShow).ys:
       if not v.isNaN: top = max(top, abs(v))
     for l in [q.peakPhaseDeg, q.avgPhaseDeg]:
       if l < Inf: top = max(top, l)
-    top = max(15.0, min(180.0, 1.3 * top))
+    top = max(15.0, min(if p.phaseShow == psSigned: 360.0 else: 180.0, 1.3 * top))
     var off: seq[string] = @[]
     for s in [vsMass, vsBaseplate]:
       if s in u.signals:

@@ -1183,6 +1183,7 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
     # a colour map is no part of a curve plot.
     var options = w.params
     options.colourMap = AnalysisParams().colourMap
+    var areas: seq[(float32, float32)] = @[] # each plot's area, left and right edge
     var hoveredOn = -1
     var under = PlotCursor(x: -1, y: -1)
     var moved = false
@@ -1192,8 +1193,11 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
       let held = if w.cursor.held and plots.len > 0 and (i == on or p.sameXs(plots[on])):
                    PlotCursor(held: true, x: w.cursor.x, y: (if i == on: w.cursor.y else: 0))
                  else: PlotCursor()
-      let o = uis[i].drawCurvePlot(name & ".plot " & $i, p, t, ImVec2_c(x: wide, y: each),
-        key, marks, held)
+      if uis[i].shift > 0: igIndent(uis[i].shift)
+      let o = uis[i].drawCurvePlot(name & ".plot " & $i, p, t,
+        ImVec2_c(x: max(80'f32, wide - uis[i].shift + uis[i].widen), y: each), key, marks, held)
+      if uis[i].shift > 0: igUnindent(uis[i].shift)
+      areas.add (o.plotPos.x, o.plotPos.x + o.plotSize.x)
       explainMenu(name & ".explain" & (if i == 0: "" else: " " & $(i + 1)), o.plotPos, t, marks,
         st.explainPane(w, i))
       if o.hovered:
@@ -1202,6 +1206,24 @@ proc drawBody(ui: var PlotWindowsUi; st: AppState; w: AnalysisWindow; t: Theme;
       elif held.held and i == on:
         text = p.readoutText(o.reading)
     if scrolls and not inWindow: igEndChild()
+    if w.view == avVibrator and areas.len == plots.len and plots.len > 1:
+      # The plots' legends and tick labels differ in width, so their areas would too: each
+      # is indented and made wider or narrower by what its own left (tick labels) and right
+      # (legend) edges are off the common ones, so that the time axes of the stacked plots
+      # line up. Worked from the edges the plot would have with no change, so that nothing
+      # accumulates.
+      var left = float32(-Inf)
+      var right = float32(Inf)
+      for i, a in areas:
+        if a[1] > a[0]:
+          left = max(left, a[0] - uis[i].shift)
+          right = min(right, a[1] - uis[i].widen)
+      for i, a in areas:
+        if a[1] <= a[0]: continue
+        let shift = left - (a[0] - uis[i].shift)
+        let widen = right - (a[1] - uis[i].widen)
+        if abs(shift - uis[i].shift) > 0.5 or abs(widen - uis[i].widen) > 0.5:
+          (uis[i].shift, uis[i].widen) = (shift, widen)
     ui.curves[w.id] = uis
     for p in plots:
       if p.aside.len > 0 and text.find(p.aside) < 0: text.add "   " & p.aside
