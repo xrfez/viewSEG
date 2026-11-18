@@ -5,6 +5,9 @@
 ## thousands of parseSEG diagnostics costs no more per frame than a short one;
 ## the log itself is bounded.
 ##
+## Each line starts with the time it was logged (local, HH:mm:ss); its tooltip and
+## Copy give the date too.
+##
 ## A strip over the lines: a toggle per severity (info, warnings, errors)
 ## with its count, **Auto-scroll** (on, the list follows new messages; off,
 ## it stays where the user left it), **Copy** (the lines shown, to the
@@ -43,6 +46,8 @@ type
     rows: seq[int]     ## the entries shown, as serials, oldest first
     made: tuple[serial, cleared: int; hidden: set[Severity]]
       ## what `rows` was made for
+    followed: bool     ## Auto-scroll was on when last drawn
+    scrollY: float32   ## how far the lines were scrolled when last drawn (tests)
     focus: FocusClicks ## a click on a line acts only in a window that had the focus
 
   LogOutput* = object
@@ -64,6 +69,10 @@ func levelOf*(s: Severity): MessageLevel =
 func shown*(view: LogView): int {.inline.} =
   ## How many lines the window shows (for tests).
   view.rows.len
+
+func scrolled*(view: LogView): float32 {.inline.} =
+  ## How far the lines were scrolled when last drawn (for tests).
+  view.scrollY
 
 func severityOf*(level: MessageLevel): Severity =
   case level
@@ -99,7 +108,7 @@ proc details(e: LogEntry; jumps: bool) =
   if igBeginItemTooltip():
     igPushTextWrapPos(igGetFontSize() * 40)
     igTextUnformatted(e.text.cstring, nil)
-    var facts = e.time.local.format("HH:mm:ss") & "   " & $e.severity
+    var facts = e.stamp & "   " & $e.severity
     if e.source.len > 0: facts.add "   " & e.source
     if e.loc.file.len > 0: facts.add "\n" & e.loc.file
     let at = where(e.loc)
@@ -157,7 +166,7 @@ proc strip(view: var LogView; log: MessageLog; t: Theme; marks: var Marks;
     var text = ""
     for serial in view.rows:
       let e = log[serial - (log.nextSerial - log.len)]
-      text.add line(e) & "\n"
+      text.add e.stamp & "  " & line(e) & "\n"
     igSetClipboardText(text.cstring)
   marks.mark("messages.copy")
   if igIsItemHovered(ImGui_HoveredFlags_ForTooltip.cint) and igBeginItemTooltip():
@@ -190,7 +199,12 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
     view.focus.watch()
     marks.markWindow("messages")
     view.strip(log, t, marks, result)
+    let before = view.made
     view.update(log, result.view.hidden)
+    # The end is shown when the button was just switched on, or a toggle or Clear
+    # changed which lines there are; new lines follow only a view at the end.
+    let jump = result.view.autoScroll and (not view.followed or
+      view.made.hidden != before.hidden or view.made.cleared != before.cleared)
     if igBeginChild_Str("##lines", ImVec2_c(x: 0, y: 0), 0,
         ImGui_WindowFlags_HorizontalScrollbar.cint):
       if view.rows.len == 0:
@@ -209,6 +223,8 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
           igPushStyleColor_Vec4(ImGui_Col_Text.cint, vec4(colour[level]))
           igTextUnformatted(icon[level].cstring, nil)
           igPopStyleColor(1)
+          igSameLine(0, -1)
+          igTextDisabled("%s", e.clock.cstring)
           igSameLine(0, -1)
           let text = line(e)
           let jumps = e.loc.file.len > 0 and e.loc.trace >= 0
@@ -231,9 +247,11 @@ proc draw*(view: var LogView; log: MessageLog; title: string; t: Theme;
           igPopID()
       ImGuiListClipper_End(clipper)
       ImGuiListClipper_destroy(clipper)
-      if log.nextSerial != view.seen and following and result.view.autoScroll:
+      if result.view.autoScroll and (jump or (log.nextSerial != view.seen and following)):
         igSetScrollHereY(1)
+      view.followed = result.view.autoScroll
       view.seen = log.nextSerial
+      view.scrollY = igGetScrollY()
     igEndChild()
     view.focus.settle()
   igEnd()

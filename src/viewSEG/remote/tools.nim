@@ -24,7 +24,7 @@
 
 import std/[algorithm, base64, json, math, monotimes, os, sets, strutils, times]
 import parseSEG
-import ../core/[explain, geometry, properties, shortcuts, state, units, versions]
+import ../core/[explain, geometry, log, properties, shortcuts, state, units, versions]
 import protocol, schema
 
 const
@@ -895,7 +895,8 @@ proc stateReport*(state: AppState; fe: Frontend; arguments: string): string =
     let log = state.log
     let first = max(log.nextSerial - log.len, max(since, log.nextSerial - count))
     for e in log.since(first):
-      messages.add %*{"serial": e.serial, "severity": $e.severity, "source": e.source,
+      messages.add %*{"serial": e.serial, "time": e.stamp, "severity": $e.severity,
+        "source": e.source,
         "text": e.text, "where": e.loc.where}
     r["messages"] = messages
   if "program" in wanted:

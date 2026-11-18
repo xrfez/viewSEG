@@ -112,6 +112,14 @@ func where*(loc: Location): string =
   if loc.field.len > 0: parts.add loc.field
   parts.join(", ")
 
+proc clock*(e: LogEntry): string =
+  ## When `e` was reported, local time of day: "14:03:59".
+  e.time.local.format("HH:mm:ss")
+
+proc stamp*(e: LogEntry): string =
+  ## When `e` was reported, local date and time: "2026-11-18 14:03:59".
+  e.time.local.format("yyyy-MM-dd HH:mm:ss")
+
 proc fileLine*(e: LogEntry): string =
   ## `e` as the session log file writes it: local time to the millisecond,
   ## severity, who reported it, the message, then the file, the place in it

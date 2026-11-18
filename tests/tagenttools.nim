@@ -372,6 +372,9 @@ proc main*() =
       doAssert few.len == 1 and few["panels"][0]["positions"].len == 3
       let messages = st.stateReport(fe, """{"parts":["messages"],"messages":2}""").body
       doAssert st.log.len >= 1 and messages["messages"].len == min(2, st.log.len), $messages
+      # each message says when it was logged: local date and time, as the Messages window copies it
+      doAssert messages["messages"][0]["time"].getStr.len == len("2026-11-18 14:03:59") and
+        messages["messages"][0]["time"].getStr[4] == '-', $messages
       let none = st.stateReport(fe, """{"parts":["messages"],"messages":0}""").body
       doAssert none["messages"].len == 0
       let later = st.stateReport(fe, "{\"parts\":[\"messages\"],\"since\":" &

@@ -334,6 +334,10 @@ proc shownMessages*(frame: FrameInfo): int =
   ## How many lines the Messages window shows (for tests).
   frame.ui.logView.shown
 
+proc messageScroll*(frame: FrameInfo): float32 =
+  ## How far the Messages window's lines are scrolled (for tests).
+  frame.ui.logView.scrolled
+
 proc layoutText*(frame: FrameInfo): string =
   ## How Dear ImGui would save the windows' arrangement now (for tests).
   $igSaveIniSettingsToMemory(nil)
