@@ -7,7 +7,19 @@
 import std/[math, os, strutils]
 import viewSEG/core/[spectra, state]
 import viewSEG/view/[curveplot, spectrumview, theme]
+import viewSEG/view/analysisview
 import utils/[fixtures, waiting]
+
+proc answered(st: var AppState; w: int): bool =
+  st.plots[w].result.problem.len > 0 or st.plots[w].result.image.values.len > 0
+
+proc peakK(img: AnalysisImage): float64 =
+  ## The wavenumber of the largest cell.
+  var (bc, br) = (0, 0)
+  for c in 0 ..< img.cols:
+    for r in 0 ..< img.rows:
+      if img.valueAt(c, r) > img.valueAt(bc, br): (bc, br) = (c, r)
+  img.xOf(bc)
 
 proc open(st: var AppState; path: string) =
   st.apply Command(kind: ckShowFile, panel: MainPanel, path: path)
@@ -89,6 +101,46 @@ proc main*() =
         else:
           doAssert "delay 1400.0 ms" in plot.aside or "delay 1399.9" in plot.aside or
             "delay 1400.1" in plot.aside, "the delay: " & plot.aside
+
+    block fkOrderIsTheShownOrder:
+      # A dipping 30 Hz event (12.5 ms a trace) on 8 traces 25 m apart, channel 1 .. 8.
+      var dip: seq[seq[float32]]
+      var offsets: seq[float64]
+      for i in 0 ..< 8:
+        var r = newSeq[float32](500)
+        for j in 0 ..< 500:
+          r[j] = float32(cos(2 * PI * 30.0 * (float64(j) * 0.002 - float64(i) * 0.0125)))
+        dip.add r
+        offsets.add 25.0 * float64(i)
+      let path = fx.tracesSegy("dip.sgy", dip, offsets = offsets)
+      let byChannel = @[SortKey(field: hfChannel, descending: true)]
+      let ascending = @[SortKey(field: hfChannel)]
+      var readings: seq[(float64, seq[int])]
+      for openFirst in [true, false]:
+        var st = initAppState()
+        st.open(path)
+        let base = st.sessions[0].base
+        let ids = @[base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 6, base + 7]
+        if openFirst:
+          st.apply Command(kind: ckOpenPlot, plotView: avFk, plotTraces: ids)
+          doAssert st.settle(st.answered(0))
+        st.apply Command(kind: ckSort, panel: MainPanel, order: byChannel)
+        doAssert st.settle(st.panel(MainPanel).shown.len == 8 and
+          st.panel(MainPanel).shown[0] == 7)
+        if not openFirst:
+          st.apply Command(kind: ckOpenPlot, plotView: avFk, plotTraces: ids)
+        doAssert st.settle(st.plots.len == 1 and st.plots[0].result.image.values.len > 0 and
+          st.plots[0].traces[0] == base + 7 and not st.plots[0].waiting and
+          st.plots[0].result.gen >= st.plots[0].asked)
+        var shown: seq[int]
+        for t in st.panel(MainPanel).shown: shown.add t + base
+        doAssert st.plots[0].traces == shown, "the f-k's rows: " & $st.plots[0].traces
+        readings.add (st.plots[0].result.image.peakK, st.plots[0].traces)
+      doAssert readings[0][1] == readings[1][1], "the rows differ with the order of events"
+      doAssert abs(abs(readings[0][0]) - 0.375) < 0.1, "k of the event (cycles per trace): " &
+          $readings[0][0]
+      doAssert readings[0][0] * readings[1][0] > 0,
+        "the sign of k: " & $readings[0][0] & " then " & $readings[1][0]
 
   echo "tfreqplots: ok"
 

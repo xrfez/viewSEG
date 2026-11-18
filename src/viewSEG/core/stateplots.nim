@@ -414,13 +414,15 @@ proc codeRolesIn(s: Session; fileTraces: openArray[int]; roles: VibRoles): (bool
   let r = plain.withCodeRoles(codes, "")
   (r.source == rsCodes, r)
 
-proc shapeOpened(state: AppState; view: AnalysisView; i: int; traces: var seq[int]) =
+proc shapeOpened(state: AppState; view: AnalysisView; i: int; traces: var seq[int];
+    order: openArray[int] = []) =
   ## The traces a new window of `view` is opened on, from the ones chosen:
   ## an envelope or a phase spectrum keeps the first; a vibrator signature
   ## opened on one takes the record's next three; an f-k opened on fewer
   ## than `MinFkTraces` takes the record's seismic traces; more than
   ## `MaxPlotTraces` are cut down (an f-k: the first, side by side; another
-  ## view: spread evenly).
+  ## view: spread evenly). `order`, when given, is the plot's order of the record
+  ## (`gatherOrder`): the record an f-k takes is in it, not in the file's.
   if traces.len == 0 or i < 0: return
   let s = state.sessions[i]
   if view in {avEnvelope, avPhase} and traces.len > 1: traces.setLen 1
@@ -455,7 +457,10 @@ proc shapeOpened(state: AppState; view: AnalysisView; i: int; traces: var seq[in
       let g = s.gatherOf(traces[0])
       if g in 0 ..< s.gathers.len:
         var record: seq[int] = @[]
-        for t in s.gathers[g].traces:
+        var src = @order
+        if src.len == 0:
+          for t in s.gathers[g].traces: src.add t
+        for t in src:
           if isSeismic(s.filePtr[].index, t): record.add t
         if record.len >= MinFkTraces: traces = record
     if traces.len > MaxPlotTraces: traces.setLen MaxPlotTraces
@@ -661,7 +666,14 @@ proc openPlot(state: var AppState; cmd: Command) =
     # the first ones, side by side: taken evenly, their spacing would not be
     state.log.add(sevInfo, s.name, "An f-k of the first " & $MaxPlotTraces & " of the " &
       $traces.len & " traces.")
-  state.shapeOpened(cmd.plotView, i, traces)
+  let order = state.gatherOrder(k, i)
+  if cmd.plotView == avFk:
+    # the rows go in the order the plot shows, whatever chose them, so the sign
+    # of a dip does not depend on how the window was opened
+    var rank = initTable[int, int]()
+    for j, t in order: rank[t] = j
+    traces = traces.sortedByIt(rank.getOrDefault(it, order.len))
+  state.shapeOpened(cmd.plotView, i, traces, order)
   template p: untyped = state.panels[k]
   # Settings not given (the built-in ones) open with the options last used for the kind
   let params = if cmd.plotParams == AnalysisParams():
