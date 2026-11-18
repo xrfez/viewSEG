@@ -109,7 +109,7 @@ func phasePlot*(w: SpectrumWindow; t: Theme; along = saX): CurvePlot =
         # unwrapped on the finer grid, then read at the bins
         var fineHz = newSeq[float64](finer.phase.len)
         for j in 0 ..< fineHz.len: fineHz[j] = float64(j) * sp.binHz / float64(PhaseStep)
-        let onFine = drawnPhase(finer.phase, shownAbove(finer.amp, PhaseFloorDb), fineHz, picture)
+        let onFine = drawnPhase(finer.phase, shownAbove(finer.amp, PhaseFloorDb, level), fineHz, picture)
         drawn = (ys: onFine.ys.atBins(wrapped.len), signed: drawn.signed,
           delayMs: onFine.delayMs)
       var curve = Curve(name: called, colour: ink, ys: drawn.ys)

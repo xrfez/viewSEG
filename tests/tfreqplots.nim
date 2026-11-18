@@ -242,6 +242,25 @@ proc main*() =
       for a in st.spectra[w].spectrum.raw: top = max(top, a)
       doAssert top > 0.3, "the frozen window cut the wrong time: peak " & $top
 
+    block unwrappedHasEveryBinThatIsDrawn:
+      # A tone between bins: each bin with a signed value also has an Unwrapped point.
+      var rows: seq[seq[float32]]
+      var x = newSeq[float32](1000)
+      for j in 0 ..< 1000:
+        x[j] = float32(3 * cos(2 * PI * 49.07 * float64(j) * 0.002) +
+          0.01 * sin(float64(j) * float64(j)))
+      let path = fx.tracesSegy("between.sgy", [x])
+      var st = initAppState()
+      st.open(path)
+      let w = st.fft(@[st.sessions[0].base], SpectrumDisplay(phase: true))
+      let curve = st.spectra[w].phasePlot(EverforestDark).curves[0]
+      var drawn = 0
+      for k in 0 ..< curve.ys.len:
+        if not curve.brackets[k].isNaN:
+          inc drawn
+          doAssert not curve.ys[k].isNaN, "bin " & $k & " has a signed value but no Unwrapped point"
+      doAssert drawn > 20
+
     block notANumberIsLeftOut:
       # 8 traces of a 25 Hz cosine, trace 3 with one NaN: the New plot windows leave it
       # out and say so (as the FFT window does), rather than draw the NaN as 0.

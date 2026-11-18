@@ -55,13 +55,15 @@ func unwrapPhase*(phaseDeg: openArray[float64]; shown: openArray[bool]): seq[flo
     on[k] = k < shown.len and shown[k]
   unwrapPhaseInto(phaseDeg, on, result)
 
-func shownAbove*(amp: openArray[float64]; floorDb: float64): seq[bool] =
+func shownAbove*(amp: openArray[float64]; floorDb: float64;
+    peakOf: openArray[float64] = []): seq[bool] =
   ## Whether each amplitude is at or above `floorDb` relative to the largest
   ## finite one (a floor of -60 leaves out what is a thousandth of the peak
-  ## or quieter). None are, when every amplitude is 0.
+  ## or quieter). None are, when every amplitude is 0. `peakOf`, when given, is the
+  ## series the largest is taken from (a finer grid's floor is that of its bins).
   result = newSeq[bool](amp.len)
   var peak = 0.0
-  for a in amp:
+  for a in (if peakOf.len > 0: peakOf else: amp):
     if a > peak and a < Inf: peak = a
   if peak <= 0: return
   let floor = peak * pow(10.0, floorDb / 20.0)
